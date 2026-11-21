@@ -191,7 +191,8 @@ impl Ctx<'_> {
         } else {
             let k = self.ty.kind(t).clone();
             let k = crate::types::map_children(&k, &mut |x| self.plain_type(x));
-            self.ty.intern(k)
+            let out = self.ty.intern(k);
+            self.ty.keep_readonly(t, out)
         };
         self.fn_sites.var_sets.plain.insert(t, p);
         self.fn_sites.var_sets.note_first(p, t);
@@ -592,7 +593,8 @@ impl Ctx<'_> {
         } else {
             let k = self.ty.kind(t).clone();
             let k = crate::types::map_children(&k, &mut |x| self.solved_type(x));
-            self.ty.intern(k)
+            let out = self.ty.intern(k);
+            self.ty.keep_readonly(t, out)
         };
         self.fn_sites.solved.insert(t, s);
         self.fn_sites.var_sets.note_first(s, t);
@@ -678,5 +680,13 @@ impl Ctx<'_> {
             let ps: Vec<_> = ms.into_iter().filter_map(|m| self.port_type(m)).collect();
             self.add_seed(span, ps);
         }
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    VarSets {
+        parent, members, edges, closures, assumed, exact, plain, first, plain_defs, mentions,
+        unsupported,
     }
 }

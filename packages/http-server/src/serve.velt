@@ -3,7 +3,7 @@
 // (http1/connection.velt, and HTTP/2 in h2/). Nothing on the request path is module state (#1487).
 
 import { IoError } from "velt/io";
-import { listen, listenTls, spreadsConnections, TcpListener } from "velt/net";
+import { listen, listenTls, TcpListener } from "velt/net";
 import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
 import { drained, joinStop } from "velt/dev";
 import { delay } from "velt/time";
@@ -49,7 +49,7 @@ export async function serveHttp<E>(
   if (tls != null) {
     // HTTP/2 first when the client offers it (ALPN), unless the options chose the protocols.
     const alpn = tls.alpn ?? (h2 != null ? ["h2", "http/1.1"] : ["http/1.1"]);
-    listener = await listenTls(addr, { cert: tls.cert, key: tls.key, alpn: alpn });
+    listener = await listenTls(addr, { ...tls, alpn: alpn });
   } else {
     listener = await listen(addr);
   }
@@ -70,33 +70,27 @@ export async function serveHttp<E>(
   }
   const reload = dev != null;
   const secure = tls != null;
-  // Spread over the workers only in a program without module state (`spreadsConnections`, a
-  // constant: in one with module state, `acceptSpread` is not even built) and with several
-  // workers to spread over; else every connection is a promise of one task (`acceptAll`).
+  // Spread over the workers when there are several, in a program with module state too (its
+  // handlers that touch it take the module lock for each poll); with one, every connection is a
+  // promise of one task (`acceptAll`).
   let done: Promise<void>;
-  if (spreadsConnections()) {
-    const workers = listener.workers() as i64;
-    if (workers > 1) {
-      done = spawn(
-        acceptSpread(
-          listener,
-          handler,
-          maxHead,
-          maxBody,
-          idle,
-          limits,
-          stopped,
-          reload,
-          h2,
-          secure,
-          workers,
-        ),
-      );
-    } else {
-      done = spawn(
-        acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),
-      );
-    }
+  const workers = listener.workers() as i64;
+  if (workers > 1) {
+    done = spawn(
+      acceptSpread(
+        listener,
+        handler,
+        maxHead,
+        maxBody,
+        idle,
+        limits,
+        stopped,
+        reload,
+        h2,
+        secure,
+        workers,
+      ),
+    );
   } else {
     done = spawn(
       acceptAll(listener, handler, maxHead, maxBody, idle, limits, stopped, reload, h2, secure),

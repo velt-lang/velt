@@ -1,0 +1,22 @@
+// check: no leaks
+// `unref()`'d timers still pending when the program ends are given back by a counted exit
+// (#3032): a timeout and an interval far from due, and a timeout due just after the last
+// ref'd timer has run. None of their callbacks runs, as in Node. One that is due while a ref'd
+// timer still keeps the process alive runs, and a timer made `ref()` again keeps it alive.
+
+// timing: the test is of timers: which are pending, due or run when the program ends.
+async function main() {
+  const far = setTimeout(() => console.log("far timeout"), 60000);
+  far.unref();
+  const every = setInterval(() => console.log("interval"), 60000);
+  every.unref();
+  const again = setTimeout(() => console.log("ref again"), 20);
+  again.unref();
+  again.ref();
+  const soon = setTimeout(() => console.log("due while alive"), 1);
+  soon.unref();
+  const last = setTimeout(() => console.log("due after the end"), 30);
+  last.unref();
+  console.log(far.hasRef(), every.hasRef(), again.hasRef(), soon.hasRef(), last.hasRef());
+  console.log("main done");
+}

@@ -80,7 +80,14 @@ impl FnCx<'_, '_> {
         self.literal_use_number(&recv);
         // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
         if recv.ty == self.cx.ty.str_ {
-            if let Some((hook, args)) = self.regex_string_call(prop, args) {
+            // `s.replace("a", (m, offset) => …)`: a function as the replacement of a string
+            // pattern is std's hook too, called with the same arguments.
+            let regex = self.regex_string_call(prop, args);
+            let call = regex.or_else(|| {
+                let hook = self.string_replacer_call(prop, args)?;
+                Some((hook, args.to_vec()))
+            });
+            if let Some((hook, args)) = call {
                 return self.with_temp("<string>", recv, span, span, |lw, s| {
                     let call = ast::ExprKind::Call {
                         callee: Box::new(synth(
@@ -133,6 +140,8 @@ impl FnCx<'_, '_> {
         };
         // A comparator of `any` values may throw from what it reads: std/prelude/sort.velt.
         let dynamic_sort = self.dynamic_sort_name(recv.ty, prop, args);
+        // The method as written, for the read-only check (`sort` is renamed just below).
+        let written = prop;
         let prop = dynamic_sort.as_ref().unwrap_or(prop);
         // Methods of a literal type are its base type's (`kind.toUpperCase()`).
         let recv = self.widen_literal_receiver(recv, &prop.name);
@@ -201,7 +210,11 @@ impl FnCx<'_, '_> {
             },
             false => recv,
         };
-        self.readonly_method_call(&recv, &prop.name, args, prop.span);
+        self.readonly_method_call(&recv, &written.name, args, prop.span);
+        // A read-only array has its array's methods; the mutating ones are refused just above
+        // (#3061). The twin is the same array for lowering.
+        let mut recv = recv;
+        recv.ty = self.cx.ty.mutable_twin(recv.ty);
         let Some(r) = self.resolve_method(recv.ty, &prop.name) else {
             // A method of an interface every member of a union extends.
             let recv = match self.cx.union_def(recv.ty).is_some() {
@@ -558,11 +571,6 @@ impl FnCx<'_, '_> {
                 n.word(),
                 prop.name
             ));
-        } else if prop.name == "writeString" && self.is_std_stdout(recv.ty) {
-            d = d.with_note(
-                "`writeString` was removed: write a string with `process.stdout.write(s)` (no \
-                 import); `stdout.write` of `velt/process` takes bytes",
-            );
         }
         self.cx.error(d);
         self.check_args_loose(args);
@@ -573,17 +581,6 @@ impl FnCx<'_, '_> {
     fn is_record_read(&self, h: &hir::Expr) -> bool {
         matches!(&h.kind, H::Call { callee: hir::Callee::Def(d, _), .. }
             if self.cx.try_fn(*d).is_some_and(|f| f.name.ends_with(concat!("Record.", velt_common::std_key!(record_get)))))
-    }
-
-    /// Is `t` the `Stdout` of `velt/process` (the byte sink `stdout`)?
-    fn is_std_stdout(&self, t: TyId) -> bool {
-        match self.cx.ty.kind(t) {
-            TyKind::Adt(d, _) => self
-                .cx
-                .adt(*d)
-                .is_some_and(|a| a.qual_name == velt_common::std_item!(process_stdout, "Stdout")),
-            _ => false,
-        }
     }
 
     /// Call a zero-argument method on a checked receiver (desugarings such as `entries()`).

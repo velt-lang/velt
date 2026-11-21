@@ -32,7 +32,7 @@ export const BUDGET: u64 = 128;
 const SPENT = new ThreadLocal<u64>(0);
 
 /** The key of the task poll running on this thread; 0 outside one (no budget applies). */
-@inline
+@inline("always")
 function pollKey(): u64 {
   const e = t.here();
   if (e === 0) {
@@ -68,7 +68,7 @@ export function spend(): bool {
  * after them (sched_node.velt `run`, sched_run.velt `runWoken`), so that one connection of a server
  * whose task drives them all spends only its own.
  */
-@inline
+@inline("always")
 export function refill(): void {
   SPENT.set(0);
 }

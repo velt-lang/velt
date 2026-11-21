@@ -1,0 +1,83 @@
+// Finding the lists nearest to a vector without scoring every centroid: the centroids are
+// themselves clustered into about sqrt(nlist) groups, a vector scores the group centres first
+// and then only the centroids of the `fan` nearest groups. With 4,096 lists that is 64 + 8 x 64
+// dot products instead of 4,096, for the build's assignment (once per row) and for a query.
+import { dotF32 } from "./kernels";
+import { kmeans, nearest } from "./kmeans";
+import { TopK } from "./topk";
+
+export type Router = {
+  dim: i64;
+  nlist: i64;
+  groups: i64;
+  centres: shared<f32[]>; // one row per group
+  grouped: shared<f32[]>; // the centroids, group after group
+  starts: shared<i64[]>; // where each group starts in `grouped` (groups + 1 entries)
+  lists: shared<i64[]>; // the list each row of `grouped` is the centroid of
+};
+
+export async function makeRouter(centroids: shared<f32[]>, nlist: i64, dim: i64): Promise<Router> {
+  const d = dim as usize;
+  const groups = Math.max(1, Math.round(Math.sqrt(nlist as number))) as i64;
+  const centres = await kmeans(centroids, nlist, dim, groups, 10, 7);
+  const of: i64[] = [];
+  const sizes: i64[] = new Array<i64>(groups as number).fill(0);
+  for (let c: i64 = 0; c < nlist; c++) {
+    const g = nearest(centres, groups, centroids, (c as usize) * d, d);
+    of.push(g);
+    sizes[g] += 1;
+  }
+  const starts: i64[] = [0];
+  for (let g: i64 = 0; g < groups; g++) {
+    starts.push(starts[g] + sizes[g]);
+  }
+  const next = starts.slice(0, groups as number);
+  const lists: i64[] = new Array<i64>(nlist as number).fill(0);
+  const grouped: f32[] = new Array<f32>((nlist * dim) as number).fill(0);
+  for (let c: i64 = 0; c < nlist; c++) {
+    const at = next[of[c]];
+    next[of[c]] += 1;
+    lists[at] = c;
+    for (let i: usize = 0; i < d; i++) {
+      grouped[(at as usize) * d + i] = centroids[(c as usize) * d + i];
+    }
+  }
+  return {
+    dim,
+    nlist,
+    groups,
+    centres: shared(centres),
+    grouped: shared(grouped),
+    starts: shared(starts),
+    lists: shared(lists),
+  };
+}
+
+/// How many groups a search for `nprobe` lists looks into.
+export function fanFor(r: Router, nprobe: i64): i64 {
+  const fan = 8 + (16 * nprobe * r.groups) / r.nlist;
+  return fan < r.groups ? fan : r.groups;
+}
+
+/// Pushes into `out` (keyed by list) the centroids of the `fan` groups nearest to the `dim`
+/// floats of `q` at `qAt`; `near` is scratch for the groups.
+export function route(r: Router, q: f32[], qAt: usize, fan: i64, near: TopK, out: TopK) {
+  const d = r.dim as usize;
+  near.reset(fan);
+  for (let g: i64 = 0; g < r.groups; g++) {
+    const s = dotF32(r.centres, (g as usize) * d, q, qAt, d);
+    if (s > near.floor()) {
+      near.push(g, s);
+    }
+  }
+  for (let i = 0; i < near.keys.length; i++) {
+    const g = near.keys[i];
+    const end = r.starts[g + 1];
+    for (let at = r.starts[g]; at < end; at++) {
+      const s = dotF32(r.grouped, (at as usize) * d, q, qAt, d);
+      if (s > out.floor()) {
+        out.push(r.lists[at], s);
+      }
+    }
+  }
+}

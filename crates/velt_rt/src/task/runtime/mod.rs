@@ -1,5 +1,4 @@
-//! The async runtime behind the runtime's own tasks, and `velt_rt_block_on` (the entry for `async
-//! main` in programs compiled before #2649's switch, and on WebAssembly's other runtime).
+//! The async runtime behind the runtime's own tasks.
 //!
 //! Programs run on the executor in Velt (std/lang/hooks/sched.velt). What is left here is the host
 //! of the runtime's Rust glue ([`host`], #2649 D1): one tokio runtime with one worker thread and
@@ -23,14 +22,10 @@ pub mod time;
 pub use handle::{AbortHandle, JoinError, JoinHandle};
 pub use host::runtime;
 
-use super::compiled::{Borrowed, Compiled};
-
 /// The stack of every thread that runs tasks: 8 MiB, as the main thread has on every platform
 /// (https://veltlang.com/docs/tooling/platforms/), so code recurses as deep in a task as in `main` (Rust's
 /// default for a spawned thread is 2 MiB). Only reserved: pages are committed as they are used.
 pub(crate) const TASK_THREAD_STACK: usize = 8 << 20;
-use super::{PollFn, SendPtr};
-use crate::panic::ThrowLoc;
 use std::cell::Cell;
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -147,8 +142,8 @@ pub fn worker_count() -> usize {
 /// the rest of the process, so the leaves it polls find the host's timers and I/O.
 ///
 /// `2` also marks the process as one whose tasks are the Velt executor's ([`velt_executor`]):
-/// they have no runtime task (`velt_rt_task_id` is 0 in all of them), so what the runtime keeps
-/// per task must not take them for code outside a task.
+/// they have no runtime task (`task::local::task_key` is 0 in all of them), so what the runtime
+/// keeps per task must not take them for code outside a task.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_set_scheduler(kind: u32) {
     if kind == 2 {
@@ -187,19 +182,6 @@ pub extern "C-unwind" fn velt_rt_current_worker() -> u64 {
     })
 }
 
-/// `spawn(p, { worker })` of a program compiled before the switch: out of range is a panic; the
-/// host has one worker, so the task is spawned as usual.
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_spawn_target(worker: i64) {
-    let n = velt_rt_worker_count();
-    if worker < 0 || worker as u64 >= n {
-        let s = if n == 1 { "" } else { "s" };
-        crate::panic::fatal(&format!(
-            "spawn: worker {worker} is out of range (the runtime has {n} worker{s})"
-        ));
-    }
-}
-
 /// Spawns a task on the host. Every task the runtime starts goes through here.
 pub fn spawn<F>(fut: F) -> JoinHandle<F::Output>
 where
@@ -233,48 +215,6 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
 /// How many tasks are alive (spawned and not finished); 0 if the host never started.
 pub(crate) fn alive_tasks() -> usize {
     host::alive_tasks()
-}
-
-/// Drop fn for a root state that always runs to completion (never cancelled).
-unsafe extern "C-unwind" fn never_dropped(_: *mut u8) {}
-
-/// Run the compiled future `(poll, state)` to completion on the runtime's workers and return when
-/// it is `READY`; the result is then at offset 0 of `state`, which stays owned by the caller.
-/// Must not be called from inside a task. Spawned tasks still running afterwards keep running on
-/// the workers (the program's exit waits for them, entry.rs). When the future can never finish
-/// (it waits for a promise nobody can settle any more, and nothing else can happen: quiet.rs),
-/// the program ends here, as Node exits with `main`'s promise pending.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
-    // The module state initialized before `main` is the tasks' from now on.
-    super::local::module_release_outside();
-    // What the modules' top-level code printed on this thread comes before anything `main`
-    // prints on a worker, and is not left here for a `process.exit` there to drop (#1399).
-    crate::io::publish_before_handoff();
-    let root = Compiled::from_store(poll, never_dropped, Borrowed(SendPtr(state)));
-    // Run the root on a worker (not this thread) so its spawns take the fast local-queue path.
-    // The worker that finished it hands over where its error (if any) was thrown: the caller
-    // reports it on this thread.
-    // One flag per call, for the park hook to read while this thread waits (quiet.rs).
-    let done: &'static std::sync::atomic::AtomicBool =
-        Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
-    let finished = done;
-    let join = spawn(async move {
-        root.await;
-        finished.store(true, Ordering::SeqCst);
-        // Its worker may not go idle soon (another task runs there): wake the wait now.
-        super::quiet::signal();
-        ThrowLoc::current()
-    });
-    if !super::quiet::wait(&QUIET, done) {
-        crate::entry::exit_unfinished();
-    }
-    match block_on(join) {
-        Ok(loc) => loc.restore(),
-        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
-        Err(_) => crate::panic::fatal("async main was cancelled"),
-    }
-    crate::io::flush_stdout();
 }
 
 #[cfg(test)]

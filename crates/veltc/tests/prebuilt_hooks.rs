@@ -189,10 +189,11 @@ fn an_object_built_for_one_program_serves_another() {
 fn an_edited_std_file_retires_the_object() {
     let dir = test_dir::TestDir::new();
     let dir = dir.path();
-    velt(dir, "a.velt", FIRST, &["run"], &[FILL]);
+    let run: &[&str] = &["run"];
+    velt(dir, "a.velt", FIRST, run, &[FILL]);
     // With the build stamp: the std files the object came from are its inputs too.
     let on = ("VELT_BUILD_STAMP", "on");
-    let served = velt(dir, "a.velt", FIRST, &["run"], &[on]);
+    let served = velt(dir, "a.velt", FIRST, run, &[on]);
     assert_eq!(found(&served), "object");
     let hooks = std_in(dir).join("lang/hooks/prebuilt_probe.velt");
     let src = std::fs::read_to_string(&hooks).unwrap();
@@ -202,7 +203,7 @@ fn an_edited_std_file_retires_the_object() {
     file.set_modified(time + std::time::Duration::from_secs(5))
         .unwrap();
     drop(file);
-    let touched = velt(dir, "a.velt", FIRST, &["run"], &[]);
+    let touched = velt(dir, "a.velt", FIRST, run, &[]);
     assert_eq!(found(&touched), "object");
     let edited = src.replace(
         "let text = x < 0 ? \"-\" : \"\";",
@@ -210,7 +211,7 @@ fn an_edited_std_file_retires_the_object() {
     );
     assert_ne!(src, edited);
     std::fs::write(&hooks, edited).unwrap();
-    let stale = velt(dir, "a.velt", FIRST, &["run"], &[on]);
+    let stale = velt(dir, "a.velt", FIRST, run, &[on]);
     assert_eq!(found(&stale), "module");
     assert_eq!(text(&stale.stdout), FIRST_OUT.replace("-42", "~42"));
 }

@@ -47,8 +47,17 @@ pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 #[macro_use]
 mod hook;
 pub use hook::Hook;
+#[macro_use]
+mod weak_hooks;
+#[macro_use]
+mod string_hooks;
+#[macro_use]
+mod module_hooks;
+pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-hooks! {
+// The table: these rows, then module state's (`module_hooks.rs`), the string methods'
+// (`string_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
+with_module_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -178,19 +187,6 @@ hooks! {
     prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
         sig((&string, usize, usize) -> f64), prebuilt;
 
-    // velt/lang/string/search: the string searches (#2198), which the prelude's methods call by
-    // role (`hookCall`), so a program loads them only when live code calls one.
-    /// `s.indexOf(needle, from)`.
-    string_index_of => lang_string_search, "indexOf", sig((&string, &string, i64) -> i64);
-    /// `s.lastIndexOf(needle, from)`.
-    string_last_index_of => lang_string_search, "lastIndexOf", sig((&string, &string, i64) -> i64);
-    /// `s.includes(needle, position)`.
-    string_includes => lang_string_search, "includes", sig((&string, &string, i64) -> bool);
-    /// `s.startsWith(prefix)`.
-    string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
-    /// `s.endsWith(suffix)`.
-    string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
-
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`
@@ -253,11 +249,21 @@ hooks! {
     /// set (std/sync/output.velt, #2771).
     stdout_written => lang_hooks_process, "stdoutWritten", sig(() -> void), lowered;
 
+    // clock.velt: `Date.now()` and `performance.now()` over the OS's clocks (`#clock`), called
+    // in a program that reads one; the prelude's `Date` imports the module, so it is always loaded.
+    /// `performance.now()`: milliseconds since the time origin.
+    perf_now => lang_hooks_clock, "perfNow", sig(() -> f64), lowered,
+        replaces("velt_rt_perf_now"), bench("clock_now"), constructs(Clock);
+    /// `Date.now()` (and `new Date()`'s time): milliseconds since the Unix epoch.
+    date_now => lang_hooks_clock, "dateNow", sig(() -> i64), lowered,
+        replaces("velt_rt_date_now"), bench("clock_now"), constructs(Clock);
+    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir `entry.rs`).
+    clock_start => lang_hooks_clock, "clockStart", sig(() -> void), lowered, constructs(Clock);
+
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.
     /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's
-    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
-    /// otherwise.
+    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic` otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
@@ -268,17 +274,27 @@ hooks! {
     heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
     /// `velt_rt_free`'s: `(p, size, align)`.
     heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
+    /// cpu.velt, after the statics (`entry.rs`, #3222): the CPU word, the `--cpu` check.
+    cpu_start => lang_hooks_cpu, "cpuStart", sig(() -> void), lowered, replaces("velt_rt_check_cpu");
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).
     program_thread => lang_hooks_program_thread, "programThread", sig(() -> void), lowered;
+    /// The C function of an `@export` begins its call, then ends it (#2196): the tasks a C
+    /// library's thread starts meanwhile wait for its end, so its synchronous run comes first, as
+    /// in JS (sched_foreign.velt).
+    sched_export_enter => lang_hooks_sched, "schedExportEnter", sig(() -> void), lowered;
+    sched_export_exit => lang_hooks_sched, "schedExportExit", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
     sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
-    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the
-    /// tasks left run).
-    sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
+    /// `await yieldNow()`'s: `(cx)`; a stored `yieldNow()`'s heap future (#2196 9d); then the end
+    /// of `velt_main` with its exit code (0: the tasks left run).
+    sched_yield => lang_hooks_sched_yield, "schedYield", sig((usize) -> void), lowered;
+    sched_yield_fut => lang_hooks_sched_yield, "schedYieldFut", sig(() -> usize), lowered;
+    /// `await yieldNow()`'s resume: `(cx)`, 1 to go on, 0 to stay suspended (#3241).
+    sched_yield_ready => lang_hooks_sched_yield, "schedYieldReady", sig((usize) -> u32), lowered;
     sched_finish => lang_hooks_sched, "schedFinish", sig((i32) -> void), lowered;
     /// `velt_rt_fut_box`'s: `(poll, drop, state, size, align)`, the lazy boxed promise.
     sched_box => lang_hooks_sched, "schedBox", sig((usize, usize, usize, u64, u64) -> usize), lowered;
@@ -548,6 +564,10 @@ hooks! {
     array_view_sync => lang_hooks_array_view, "arrayViewSync", sig(<A>(&mut ArrayView(A)) -> void), lowered;
     /// The mirror written back to the original after a change through the view.
     array_view_flush => lang_hooks_array_view, "arrayViewFlush", sig(<A>(&ArrayView(A)) -> void), lowered;
+    /// The mirror kept as it is before a write into it by address (a C buffer, `readSync`).
+    array_view_keep => lang_hooks_array_view, "arrayViewKeep", sig(<A>(&mut ArrayView(A)) -> void), lowered;
+    /// After that write: the elements it changed written back to the original.
+    array_view_flush_kept => lang_hooks_array_view, "arrayViewFlushKept", sig(<A>(&mut ArrayView(A)) -> void), lowered;
     /// `array_view_flush` of the mirror's elements from an index on (after a `push`).
     array_view_flush_from => lang_hooks_array_view, "arrayViewFlushFrom", sig(<A>(&ArrayView(A), usize) -> void), lowered;
     /// `length` of a view: the original's, nothing converted.
@@ -577,7 +597,8 @@ hooks! {
 
     // string.velt: the characters a `for...of` over a string iterates.
     /// The code points `for (const c of s)` iterates (`velt_sema` `loops.rs`).
-    string_code_points => lang_hooks_string, "stringCodePoints", sig((&string) -> [string]);
+    string_code_points => lang_hooks_string, "stringCodePoints", sig((&string) -> [string]),
+        replaces("velt_rt_str_code_points");
 
     // iter.velt, async_iter.velt: iterable object literals.
     /// `{ async *[Symbol.asyncIterator]() { … } }` (`velt_sema` `object_method.rs`).
@@ -741,14 +762,19 @@ hooks! {
 
     // lang/intrinsics/decorators.velt: the compile-time decorators the compiler acts on (#2203),
     // found by these roles, never by the name a use is written with.
-    /// `@inline` on a std function or method: every call is inlined in release builds
-    /// (`vir::Inline::Always`; `velt_sema` `decorators/known.rs`, `velt_vir` lowering).
+    /// `@inline` on a function or method (any module; velt/compiler re-exports it):
+    /// `@inline("always")` inlines every call in release builds (`vir::Inline::Always`), the
+    /// default `"hint"` is `vir::Inline::Default` while a program is one unit (`velt_sema`
+    /// `decorators/known.rs`, `velt_vir` lowering).
     decorator_inline => lang_intrinsics_decorators, "inline", decorator;
     /// `@noInline`: calls stay calls (`vir::Inline::Never`).
     decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
     /// `@intrinsic declare function`: the declaration of a compiler intrinsic
     /// (`velt_sema` `intrinsic_decls.rs`).
     decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
+    /// `@targetFeature("sha-arm")` on a function (any module; velt/compiler re-exports it): the
+    /// CPU extension it is compiled for (`velt_sema` `body/gated.rs`, `hir::Program::cpu_targets`).
+    decorator_target_feature => lang_intrinsics_decorators, "targetFeature", decorator;
     // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
     // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
     /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C

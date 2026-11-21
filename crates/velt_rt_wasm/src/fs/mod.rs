@@ -7,26 +7,22 @@
 mod ops;
 #[path = "../../../velt_rt/src/fs/sync.rs"]
 pub mod sync;
+mod tree;
+mod whole;
 
-pub use ops::{kind, VeltDirents, VeltStat};
+pub use ops::VeltStat;
+pub use tree::{kind, VeltDirents};
 
 use crate::str::VeltStr;
 use crate::task::leaf::ready_leaf;
 use crate::task::VeltFut;
 use ops::{data_arg, path_arg};
 
-/// `readFile(path)` → `IoResult<VeltStr>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_read_file(path: *const VeltStr) -> *mut VeltFut {
-    let p = path_arg(path);
-    ready_leaf(move || ops::read_text(p))
-}
-
 /// `readFileBytes(path)` → `IoResult<VeltBytes>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_read_file_bytes(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::read_bytes(p))
+    ready_leaf(move || whole::read_bytes(p))
 }
 
 /// `writeFile(path, data)` → `IoResult<()>`.
@@ -36,7 +32,7 @@ pub unsafe extern "C" fn velt_rt_fs_write_file(
     data: *const VeltStr,
 ) -> *mut VeltFut {
     let (p, d) = (path_arg(path), data_arg(data));
-    ready_leaf(move || ops::write(p, d, false))
+    ready_leaf(move || whole::write(p, d, false))
 }
 
 /// `appendFile(path, data)` → `IoResult<()>`.
@@ -46,35 +42,35 @@ pub unsafe extern "C" fn velt_rt_fs_append_file(
     data: *const VeltStr,
 ) -> *mut VeltFut {
     let (p, d) = (path_arg(path), data_arg(data));
-    ready_leaf(move || ops::write(p, d, true))
+    ready_leaf(move || whole::write(p, d, true))
 }
 
 /// `readDir(path)` → `IoResult<VeltStrArray>` of sorted names.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_read_dir(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::read_dir(p))
+    ready_leaf(move || tree::read_dir(p))
 }
 
 /// `stat(path)` → `IoResult<VeltStat>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_stat(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::stat(p))
+    ready_leaf(move || whole::stat(p))
 }
 
 /// `readDir(path, { withFileTypes: true })` → `IoResult<VeltDirents>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_read_dir_typed(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::read_dir_typed(p))
+    ready_leaf(move || tree::read_dir_typed(p))
 }
 
 /// `lstat(path)` → `IoResult<VeltStat>` (a symlink's own metadata).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_lstat(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::lstat(p))
+    ready_leaf(move || whole::lstat(p))
 }
 
 /// `readlink(path)` → `IoResult<VeltStr>`.
@@ -105,14 +101,14 @@ pub unsafe extern "C" fn velt_rt_fs_symlink(
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_mkdir(path: *const VeltStr, recursive: u8) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::mkdir(p, recursive != 0))
+    ready_leaf(move || tree::mkdir(p, recursive != 0))
 }
 
 /// `rm(path, { recursive })` → `IoResult<()>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_remove(path: *const VeltStr, recursive: u8) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::remove(p, recursive != 0))
+    ready_leaf(move || tree::remove(p, recursive != 0))
 }
 
 /// `rename(from, to)` → `IoResult<()>`.
@@ -139,5 +135,5 @@ pub unsafe extern "C" fn velt_rt_fs_copy_file(
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_exists(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::exists(p))
+    ready_leaf(move || whole::exists(p))
 }

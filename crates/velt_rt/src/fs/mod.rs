@@ -9,4 +9,4 @@ mod ops;
 pub mod stream;
 pub mod sync;
 
-pub use ops::{kind, VeltDirents, VeltStat};
+pub use ops::VeltStat;

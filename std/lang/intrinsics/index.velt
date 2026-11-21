@@ -13,6 +13,8 @@ export {
   addressAtomicLoad,
   addressAtomicRmw,
   addressAtomicStore,
+  addressArray,
+  addressArrayOwned,
   addressLoad,
   addressStore,
   exportedAddress,
@@ -28,9 +30,13 @@ export {
   stdUsed,
 } from "velt/lang/intrinsics/any";
 export {
+  arrayByteLength,
+  arrayBytesWritten,
   arrayCopyBytes,
+  arrayDataAddress,
   arrayMove,
   arrayPrefetch,
+  arrayReadAddress,
   arrayRemove,
   arrayReserve,
   arrayRotateLeft,
@@ -54,6 +60,8 @@ export {
 export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
 export {
   addressCall,
+  addressCall3,
+  addressCallWord,
   fnAddress,
   futDrop,
   futPoll,
@@ -81,7 +89,7 @@ export {
   generatorThrow,
   generatorValue,
 } from "velt/lang/intrinsics/generator";
-export { inline, intrinsic, noInline } from "velt/lang/intrinsics/decorators";
+export { inline, intrinsic, noInline, targetFeature } from "velt/lang/intrinsics/decorators";
 export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
 export { share, transfer } from "velt/lang/intrinsics/ownership";
 export {
@@ -96,9 +104,10 @@ export {
 } from "velt/lang/intrinsics/reflect";
 export { hookCall } from "velt/lang/intrinsics/hook_call";
 export { errorText, inspect, inspectNested, throwLoc } from "velt/lang/intrinsics/report";
-export { strLoadPartialU8x16, strLoadU8x16, targetFeature } from "velt/lang/intrinsics/simd";
+export { strLoadPartialU8x16, strLoadU8x16 } from "velt/lang/intrinsics/simd";
 export {
   strAsciiWords,
+  strAt,
   strByteAt,
   strByteLen,
   strbufPushAsciiWord,
@@ -119,7 +128,7 @@ export {
   recordViewSet,
   recordViewSync,
 } from "velt/lang/intrinsics/record_view";
-export { symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
+export { symbolAddress, symbolAt, symbolRegistry, symbolStatic } from "velt/lang/intrinsics/symbol";
 export { firstFulfilled, moduleStateUsed, spawnHandled } from "velt/lang/intrinsics/task";
 export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_local";
 export {
@@ -132,10 +141,12 @@ export {
 } from "velt/lang/intrinsics/types";
 export {
   weakMapDelete,
+  weakMapDrop,
   weakMapGet,
   weakMapHas,
   weakMapSet,
   weakMapValue,
   weakRefDeref,
+  weakRefDrop,
   weakRefNew,
 } from "velt/lang/intrinsics/weak";

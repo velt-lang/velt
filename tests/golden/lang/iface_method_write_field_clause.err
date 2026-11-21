@@ -1,0 +1,1 @@
+15:3: error: a function assigned to method `update` throws `Other`, which a field storing it does not allow

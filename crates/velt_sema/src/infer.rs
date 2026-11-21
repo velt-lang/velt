@@ -128,6 +128,11 @@ impl Ctx<'_> {
             (TyKind::Op(TyOp::Intersect, parts), _) => {
                 self.match_intersection(&parts, actual, slots)
             }
+            (TyKind::FnPtr { rest: true, .. }, TyKind::FnPtr { rest: false, .. })
+                if self.rest_tuple_matches(pat, actual) =>
+            {
+                self.match_rest_tuple(pat, actual, slots)
+            }
             (
                 TyKind::FnPtr {
                     params: pp,
@@ -363,7 +368,12 @@ impl Ctx<'_> {
 
     /// An error type (`throws` of a function type, rejection of a promise): unlike other
     /// positions, `never` binds a parameter (the function does not throw).
-    fn match_error(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) -> bool {
+    pub(crate) fn match_error(
+        &mut self,
+        pat: TyId,
+        actual: TyId,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
         match self.error_param(pat) {
             Some(i) if actual == self.ty.never && (i as usize) < slots.len() => {
                 match slots[i as usize] {
@@ -479,7 +489,12 @@ impl Ctx<'_> {
         ok
     }
 
-    fn match_all(&mut self, ps: &[TyId], as_: &[TyId], slots: &mut [Option<TyId>]) -> bool {
+    pub(crate) fn match_all(
+        &mut self,
+        ps: &[TyId],
+        as_: &[TyId],
+        slots: &mut [Option<TyId>],
+    ) -> bool {
         if ps.len() != as_.len() {
             return false;
         }
@@ -614,6 +629,16 @@ impl Ctx<'_> {
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Error
             ) || self.atomic_ref(ty);
         }
+        // The prelude's `Numeric` is the compiler's too: the number types, whose values are
+        // their bytes (a type parameter only through its own bound, below).
+        if Some(b.iface) == self.prelude_iface("Numeric")
+            && !matches!(self.ty.kind(ty), TyKind::Param(_))
+        {
+            return matches!(
+                self.ty.kind(ty),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Error
+            );
+        }
         // The prelude's `Frozen`: a type `frozen_readable_in` takes (type parameters through their
         // own `Frozen` bounds).
         if Some(b.iface) == self.prelude_iface("Frozen")
@@ -623,11 +648,12 @@ impl Ctx<'_> {
         }
         if let TyKind::Param(n) = self.ty.kind(ty) {
             let declared = bounds.get(*n as usize).cloned().unwrap_or_default();
-            // Only a direct `T extends AtomicValue` (or `Frozen`): nothing else can stand for the
-            // compiler's.
+            // Only a direct `T extends AtomicValue` (or `Frozen`, or `Numeric`): nothing else can
+            // stand for the compiler's.
             let known = [
                 self.prelude_iface("AtomicValue"),
                 self.prelude_iface("Frozen"),
+                self.prelude_iface("Numeric"),
             ];
             if known.contains(&Some(b.iface)) {
                 return declared.contains(b);

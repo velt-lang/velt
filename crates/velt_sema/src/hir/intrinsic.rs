@@ -66,6 +66,23 @@ pub enum Intrinsic {
     /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
     /// load of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
     ArrayCopyBytes,
+    /// std only, unsafe: `arrayDataAddress<T>(xs (modified)) -> usize`, the address of `xs`'s
+    /// buffer (0 for an array without one), whose elements own nothing (a number type or
+    /// `bool`; sema checks it, and lowering each instance of a type parameter). Good only
+    /// until `xs` is grown or dropped. With `ArrayByteLength`, how a generic function hands a
+    /// number array's own memory to a C function (velt/fs's `readSync`). Additive.
+    ArrayDataAddress,
+    /// std only, unsafe: `arrayReadAddress<T>(xs) -> usize`, `ArrayDataAddress` for memory
+    /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
+    /// in a `read` callback: velt/fs's `writeSync`). Additive.
+    ArrayReadAddress,
+    /// std only: `arrayBytesWritten<T>(xs (modified))`, said after bytes were written at
+    /// `ArrayDataAddress`'s address: a view (velt_vir array_view.rs) writes its mirror back to
+    /// the array it views; nothing for a plain array. Additive.
+    ArrayBytesWritten,
+    /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
+    /// numbers (checked as `ArrayDataAddress`). Additive.
+    ArrayByteLength,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
@@ -88,8 +105,7 @@ pub enum Intrinsic {
     /// permutation: every element stays owned once, so it moves elements of any type, where a
     /// loop of moves would count or check each one. Additive.
     ArrayRotateRight,
-    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
-    /// Additive.
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`. Additive.
     ArrayRotateLeft,
     /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize,
     /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
@@ -137,12 +153,12 @@ pub enum Intrinsic {
     /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
     Share,
     /// `(parts: borrow P0, P1, …) -> TyOp::Spread(P0, P1, …)`: an object literal with a spread
-    /// whose fields are known only per instantiation (#350). Each part is an object value: a
-    /// spread source (a place, borrowed) or a one-field object literal holding an explicit
-    /// property (owned). Lowering builds the reduced object type, each field shared from the
-    /// last part that has it (an optional field only while present, as JavaScript copies only
-    /// the keys an object has).
+    /// whose fields are known only per instantiation (#350): each part is a spread source
+    /// (borrowed) or a one-field literal (owned), each field shared from the last part with it.
     SpreadObject,
+    /// `(value: borrow A) -> U[]`, `U` dynamic: `f(...args)` with `args: A` into a rest of `U[]`
+    /// (#943); per instantiation, a tuple's or an array's elements, each shared and boxed.
+    SpreadParam,
     /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with
     /// `K extends keyof T`, #350): at every instantiation `K` is one key of the object type `T`
     /// (sema checks it), and lowering reads that field, shared, as `object.<key>` would.
@@ -288,12 +304,14 @@ pub enum Intrinsic {
     /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
     /// false the symbol has no description (`desc` is `""`).
     SymbolStatic,
-    /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of
-    /// the program's read-only table of the registry's records (the `SymbolStatic` records with
-    /// ids from 2^40): their addresses, one per 8-byte slot, ending with a null slot. It is typed
-    /// `symbol` only to be passed on as a pointer, to `velt_rt_symbol_for`, whose registry
-    /// gives these records for their keys (rt_abi.md "Symbols").
+    /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of the program's
+    /// null-ended table of registry records (`SymbolStatic`, ids from 2^40) std's registry reads.
     SymbolRegistry,
+    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, `symbolAt(address)` back; `strAt(address)`
+    /// another reference to the string there, a symbol's description, rt_abi.md "Symbols").
+    SymbolAddress,
+    SymbolAt,
+    StrAt,
     /// Compiler-internal (no source syntax): `ToString` of a template literal part whose type
     /// mentions a type parameter (`${x}` with `x: T`). It is `ToString`, except that where the
     /// value is a symbol once substituted (`symbol`, or the active member of a union or `T | null`
@@ -379,6 +397,13 @@ pub enum Intrinsic {
     /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
     /// Additive.
     AddressStore,
+    /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
+    /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
+    /// `lower/array`): dropping it frees nothing, a copy is an ordinary array. Unchecked, never
+    /// written or grown: std hands it out only as `shared<T[]>` (`MappedFile`). Additive.
+    AddressArray,
+    /// std only: `addressArray` with an owner block, whose first word is called at the drop.
+    AddressArrayOwned,
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the
@@ -434,6 +459,14 @@ pub enum Intrinsic {
     /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
     /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
     AddressCall,
+    /// std only: `addressCallWord(f: usize, a: u64)`: the call of the C function at address `f`,
+    /// which takes one 64-bit word and returns nothing (a weak map value's retain and release
+    /// glue, rt_abi.md "Weak references"). Additive.
+    AddressCallWord,
+    /// std only: `addressCall3(f: usize, a: usize, b: usize, c: usize)`: the call of the C
+    /// function at address `f`, which takes three pointer-sized values and returns nothing (trace
+    /// glue's `(obj, visit, ctx)`). Additive.
+    AddressCall3,
     /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
     /// with no type arguments; sema checks it is not async or throwing and passes only numbers
     /// and `bool`), callable from C with the C calling convention (#2649). Additive.
@@ -502,8 +535,7 @@ pub enum Intrinsic {
     /// is set, else static (0), heap or slice).
     StrWord2,
     /// std only: `(s: borrow string) -> usize`, the address of `s`'s UTF-8 bytes: inside the value
-    /// for an inline string, the buffer otherwise (#2778). Valid while `s` is alive and unchanged;
-    /// read with `addressLoad`.
+    /// for an inline string, the buffer otherwise (#2778), while `s` lives unchanged.
     StrDataAddress,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
     /// value, of type `T | E` (or `E | null` when `T` is `void`); hir_encodings.md "Errors".
@@ -593,6 +625,12 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
+    /// to std's weak core (`Construct::Weak`), which a program without weak collections
+    /// doesn't load.
+    WeakMapDrop,
+    /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
+    WeakRefDrop,
 
     // Record views (#379; std/prelude/record.velt, velt_vir lower/record_view.rs): a record an
     // `any` is converted to with `any` values is a view of the object the `any` holds. Each is

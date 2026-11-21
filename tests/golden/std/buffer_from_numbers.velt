@@ -1,0 +1,4 @@
+// `Buffer.from` of a `number[]` variable is a compile error, whose note says how to convert the
+// numbers to bytes (an array literal is a byte array there: buffer_from.velt).
+const xs: number[] = [1, 2, 3];
+console.log(Buffer.from(xs).length);

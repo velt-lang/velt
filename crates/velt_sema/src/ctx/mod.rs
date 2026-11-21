@@ -1,5 +1,7 @@
 //! Whole-program checking context shared by all passes: definitions, module scopes, types.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Diagnostics, Span};
@@ -12,6 +14,7 @@ use crate::SourceModule;
 mod access;
 mod classes;
 pub(crate) mod def_table;
+mod slots;
 
 pub(crate) use def_table::DefTable;
 
@@ -26,6 +29,15 @@ impl Ctx<'_> {
     /// Is `d` a finished unit's definition (`crate::units`), which nothing writes any more?
     pub(crate) fn is_frozen(&self, d: DefId) -> bool {
         self.info.is_frozen(d.0 as usize)
+    }
+
+    /// The checked functions of the unit being checked (from [`Ctx::unit_base`] on): what a
+    /// pass over function bodies after the bodies' check goes through.
+    pub(crate) fn unit_fns(&self) -> Vec<DefId> {
+        (self.fn_defs.iter().copied())
+            .filter(|d| d.0 >= self.unit_base)
+            .filter(|d| self.fn_info(*d).state == crate::defs::BodyState::Done)
+            .collect()
     }
 
     /// Lift the freeze: the passes that still run over every unit at once.
@@ -97,6 +109,15 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
+    /// What each generic function of a finished unit needs of the types it is given, for `json`'s
+    /// check (converted, printed or read without a lock through a type parameter): that unit's
+    /// summary, which a later unit's check starts from (`crate::units`).
+    pub json_needs: crate::json::JsonNeeds,
+    /// Which part of a check by units this context checks (`crate::units`).
+    pub units_stage: crate::units::Stage,
+    /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
+    /// their functions from here ([`Ctx::unit_fns`]). 0 in a whole-program check.
+    pub unit_base: u32,
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -117,6 +138,7 @@ pub(crate) struct Ctx<'m> {
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
+    pub(crate) method_writes: crate::iface_method_writes::MethodWrites,
     pub(crate) part_ifaces: crate::intersection_members::PartIfaces,
     /// Interfaces made for intersections and `Pick`s of interfaces with methods.
     pub(crate) synth_ifaces: crate::synth_ifaces::SynthIfaces,
@@ -157,6 +179,14 @@ pub(crate) struct Ctx<'m> {
     /// anonymous object type of their fields. With a template, the twin's type arguments are
     /// the template's types with the original arguments substituted (a param order change).
     pub readonly_twins: FxHashMap<DefId, (DefId, Option<Vec<TyId>>)>,
+    /// Anonymous object type defs with a field holding a read-only array (`{ xs: readonly T[] }`,
+    /// #3061) → their twin with mutable arrays, which `crate::readonly` makes them before
+    /// lowering. Apart from [`Self::readonly_twins`], which other conversions take as one type
+    /// in both directions: only `readonly_nested` converts between these, in one direction.
+    pub array_twins: FxHashMap<DefId, DefId>,
+    /// The `(from, to, out)` pairs `readonly_widens` is comparing: one met again inside itself
+    /// (a recursive type, `L<T> { next: L<T> | null }`) holds, as structural relations take it.
+    pub readonly_widening: Vec<(TyId, TyId, bool)>,
     /// A container of `any` was used as one of `unknown` or back (`same_but_any_unknown`):
     /// `unknown` is erased to `any` before lowering (`crate::readonly`), so both are one type.
     pub any_unknown_views: bool,
@@ -304,7 +334,7 @@ pub(crate) struct Ctx<'m> {
     /// ownership pass track `FnInfo::modified_params`.
     pub frozen_reads: bool,
     /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
-    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
+    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTargets>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
@@ -544,13 +574,26 @@ pub(crate) struct Ctx<'m> {
 
 impl<'m> Ctx<'m> {
     pub fn new(modules: &'m [SourceModule], root: usize) -> Self {
+        Self::over(modules.iter().collect(), root)
+    }
+
+    /// A context over `modules`, in this order (a decoded unit's, `units::codec`).
+    pub(crate) fn over(modules: Vec<&'m SourceModule>, root: usize) -> Self {
+        let import_targets = crate::collect::exports::import_targets(&modules);
+        let scopes = (modules.iter())
+            .map(|m| ModuleScope {
+                is_std: m.is_std,
+                is_library: m.is_std || m.is_dependency,
+                ..Default::default()
+            })
+            .collect();
         Ctx {
-            modules: modules.iter().collect(),
+            modules,
             fn_shapes: Default::default(),
             root,
             gen: Default::default(),
             export_memo: Default::default(),
-            import_targets: crate::collect::exports::import_targets(modules),
+            import_targets,
             loads: None,
             loads_added: 0,
             recursive_union_instances: 0,
@@ -560,14 +603,10 @@ impl<'m> Ctx<'m> {
             info: DefTable::default(),
             def_spans: DefTable::default(),
             units: false,
-            scopes: modules
-                .iter()
-                .map(|m| ModuleScope {
-                    is_std: m.is_std,
-                    is_library: m.is_std || m.is_dependency,
-                    ..Default::default()
-                })
-                .collect(),
+            unit_base: 0,
+            json_needs: Default::default(),
+            units_stage: crate::units::Stage::Both,
+            scopes,
             prelude: FxHashMap::default(),
             prelude_type_keys: false,
             aliases: vec![],
@@ -577,6 +616,7 @@ impl<'m> Ctx<'m> {
             extension_names: (0, FxHashMap::default()),
             impls: vec![],
             iface_writes: Default::default(),
+            method_writes: Default::default(),
             part_ifaces: Default::default(),
             synth_ifaces: Default::default(),
             generic_fns: Default::default(),
@@ -595,6 +635,8 @@ impl<'m> Ctx<'m> {
             impl_scope: vec![],
             anon: FxHashMap::default(),
             readonly_twins: FxHashMap::default(),
+            array_twins: FxHashMap::default(),
+            readonly_widening: vec![],
             any_unknown_views: false,
             objects: Default::default(),
             brands: FxHashMap::default(),

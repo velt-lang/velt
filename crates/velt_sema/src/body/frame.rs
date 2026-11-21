@@ -8,12 +8,13 @@ use super::*;
 #[derive(Clone)]
 pub(crate) struct Frame {
     pub kind: FnKind,
-    /// The CPU extension this function is gated on (`targetFeature`, `body::gated`): it
+    /// The CPU extension this function is gated on (`@targetFeature`, `body::gated`): it
     /// may call the gated functions of that target. A closure's frame starts without it.
-    pub target: Option<crate::hir::CpuTarget>,
+    pub target: Option<crate::hir::CpuTargets>,
     /// The checks of CPU extensions that hold where the code being checked runs: the `then`
-    /// branches of the `if (u32x4.hasShaArm())` being checked, innermost last.
-    pub cpu_guards: Vec<crate::hir::CpuTarget>,
+    /// branches of the `if (Avx2.isSupported() && Bmi2.isSupported())` being checked, innermost
+    /// last.
+    pub cpu_guards: Vec<crate::hir::CpuTargets>,
     /// The `typeIs<A, B>()` tests that hold where the code being checked runs: the `then`
     /// branches of `if (typeIs<A, B>())` (`body::type_guards`), innermost last.
     pub type_guards: Vec<(TyId, TyId)>,

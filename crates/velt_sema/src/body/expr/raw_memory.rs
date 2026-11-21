@@ -24,7 +24,7 @@ impl FnCx<'_, '_> {
         use Intrinsic as I;
         let t = type_args.first().copied();
         match i {
-            I::AddressLoad | I::AddressStore => {
+            I::AddressLoad | I::AddressStore | I::AddressArray | I::AddressArrayOwned => {
                 let ok = t.is_none_or(|t| self.raw_value_ty(t, false));
                 self.raw_type_error(i, t, ok, "a number type or `bool`", span)?;
                 Some(args)

@@ -125,6 +125,11 @@ impl Ctx<'_> {
         if a == b {
             return true;
         }
+        // A read-only array and a mutable one are not one type (#3061): a mutable container of
+        // one would let a write reach the read-only array.
+        if self.ty.is_readonly_array(a) != self.ty.is_readonly_array(b) {
+            return false;
+        }
         let top = |t: TyId| matches!(self.dynamic(t), Some(Dynamic::Any) | Some(Dynamic::Unknown));
         if top(a) && top(b) {
             return true;
@@ -525,5 +530,12 @@ impl Ctx<'_> {
         if let Some(a) = &mut self.any {
             a.members = true;
         }
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    AnyDefs {
+        any, unknown, object, function, imp, members,
     }
 }

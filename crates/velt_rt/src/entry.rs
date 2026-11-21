@@ -16,7 +16,6 @@
 
 /// Initialize runtime state. Called by `main` before `velt_main`.
 pub fn init() {
-    crate::cpu::init();
     crate::panic::install_hook();
     crate::process::init_clock();
     crate::process::init_script();
@@ -57,14 +56,6 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     finish(code)
 }
 
-/// `main` cannot finish (`async main` waits for a promise nothing can settle any more, and
-/// nothing else can happen, task/quiet.rs): end the program as if it had returned, as Node exits
-/// with `main`'s promise pending; with Node's warning and exit code 13 when it waits at a
-/// top-level `await` (top_level_await.rs).
-pub(crate) fn exit_unfinished() -> ! {
-    std::process::exit(finish(crate::top_level_await::unfinished_exit_code()))
-}
-
 /// What happens once `main` returned `code`: the program's end (returns its exit code).
 fn finish(code: i32) -> i32 {
     // A synchronous `main` is done with the module state: tasks may take it now.
@@ -77,10 +68,10 @@ fn finish(code: i32) -> i32 {
     if code == 0 {
         crate::task::runtime::wait_for_the_end();
         crate::str::stats::settle(crate::task::runtime::tasks_may_run);
-        // The leak counters see what module state holds as freed. Otherwise it is kept to the
-        // end, as in Node, where nothing runs at exit.
+        // The leak counters see what the runtime keeps per process as freed (std dropped module
+        // state already: module_blocks.velt). Otherwise it is kept to the end, as in Node, where
+        // nothing runs at exit.
         if crate::str::stats::counting() {
-            crate::task::local::module_drop_at_exit();
             crate::fn_props::drop_at_exit();
             statics_drop_at_exit();
         }

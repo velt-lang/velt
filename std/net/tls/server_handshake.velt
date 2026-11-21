@@ -1,0 +1,422 @@
+// velt/net (internal): `ServerHandshake`, the TLS 1.3 server's handshake logic (RFC 8446 §4, full
+// handshake without PSK, #2392 step 4): the ClientHello's choices (suite, group, ALPN), a
+// HelloRetryRequest when the client sent no usable key share, the server's flight
+// (ServerHello, EncryptedExtensions, Certificate, CertificateVerify signed with ECDSA P-256,
+// Finished), and the client's Finished checked. It does no I/O: `TlsEngine` feeds it messages and
+// sends what it says. No client certificates are asked for, no tickets are issued, and early data
+// is never accepted (a client only sends it when resuming with a ticket).
+
+import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
+import { randomBytes } from "velt/crypto/random";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384 } from "velt/crypto/sha512";
+import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
+import { utf8Encode } from "velt/encoding/utf8";
+import {
+  DECRYPT_ERROR,
+  HANDSHAKE_FAILURE,
+  ILLEGAL_PARAMETER,
+  NO_APPLICATION_PROTOCOL,
+  TlsFailure,
+  UNEXPECTED_MESSAGE,
+} from "velt/net/tls/alert";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+import {
+  CERTIFICATE,
+  CERTIFICATE_VERIFY,
+  CLIENT_HELLO,
+  ENCRYPTED_EXTENSIONS,
+  FINISHED,
+  SERVER_HELLO,
+} from "velt/net/tls/client_handshake";
+import {
+  EXT_ALPN,
+  EXT_KEY_SHARE,
+  EXT_SUPPORTED_VERSIONS,
+  SECP256R1,
+  SECP384R1,
+  X25519,
+} from "velt/net/tls/client_hello";
+import { ClientOffer, parseClientHello } from "velt/net/tls/client_hello_parse";
+import {
+  exchangeKey,
+  exchangePublic,
+  exchangeSecret,
+  groupSupported,
+} from "velt/net/tls/key_exchange";
+import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
+import { HRR_RANDOM } from "velt/net/tls/server_hello";
+import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
+import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
+import { ServerKey } from "velt/net/tls/server_key";
+import { u8x16 } from "velt/simd";
+
+/** ecdsa_secp256r1_sha256, the signature scheme of the server's CertificateVerify. */
+const ECDSA_P256_SHA256: usize = 0x0403;
+
+// Where the handshake is.
+const WAIT_HELLO = 0;
+const WAIT_RETRY_HELLO = 1;
+const WAIT_FINISHED = 2;
+const DONE = 3;
+
+/** What the engine must do after a message: keep reading. */
+export const S_KEEP_READING = 0;
+/** Send `retry` in plaintext (with a ChangeCipherSpec after it when `compat`), keep reading. */
+export const S_SEND_RETRY = 1;
+/**
+ * Send `hello` in plaintext (with a ChangeCipherSpec after it when `compat` and none went yet),
+ * then `flight` under `serverHandshake`, then write with `serverApplication` and read with
+ * `clientHandshake`.
+ */
+export const S_SEND_FLIGHT = 2;
+/** The client's Finished is checked: read with `clientApplication`. */
+export const S_DONE = 3;
+/** TLS 1.2: send `hello` (ServerHello to ServerHelloDone) in plaintext, keep reading. */
+export const S_SEND_PLAIN = 4;
+/**
+ * TLS 1.2: the client's Finished is checked: send a ChangeCipherSpec, then `flight` under
+ * `writeCipher`.
+ */
+export const S_DONE12 = 5;
+
+/** The server's side of one handshake. */
+export class ServerHandshake {
+  private key: ServerKey;
+  private protocols: string[];
+  private state: i32 = WAIT_HELLO;
+  private transcript: u8[] = [];
+  /** The transcript's hash through the server's Finished, which the client's Finished covers. */
+  private flightHash: u8[] | null = null;
+  private group: usize = 0;
+  /** The legacy session id was not empty: middlebox compatibility (§D.4) is on. */
+  compat: bool = false;
+  /** A ChangeCipherSpec went out already (after the HelloRetryRequest). */
+  ccsSent: bool = false;
+  /** The cipher suite chosen. */
+  suite: usize = 0;
+  /** The protocol chosen with ALPN, or null. */
+  alpn: string | null = null;
+  /** The SNI host name the client sent ("" for none). */
+  serverName: string = "";
+  /**
+   * What to send, per the step `onMessage` returned. These and the secrets are null until set
+   * (no array of their own meanwhile: an empty one costs a heap block where arrays are counted).
+   */
+  retry: u8[] | null = null;
+  hello: u8[] | null = null;
+  flight: u8[] | null = null;
+  /** The traffic secrets, once known. */
+  serverHandshake: u8[] | null = null;
+  clientHandshake: u8[] | null = null;
+  serverApplication: u8[] | null = null;
+  clientApplication: u8[] | null = null;
+  /** The rest of the handshake when the client has only TLS 1.2, else null. */
+  tls12: ServerHandshake12 | null = null;
+  /** TLS 1.2: the write keys, after `S_DONE12`. */
+  writeCipher: RecordCipher | null = null;
+  /** TLS 1.2: the server random and the ECDHE private key to use instead of new ones (tests). */
+  fixedRandom: u8[] | null = null;
+  fixedKey: u8[] | null = null;
+
+  /** A handshake that presents `key` and chooses among `protocols` with ALPN (none: no ALPN). */
+  constructor(key: ServerKey, protocols: string[]) {
+    this.key = key;
+    this.protocols = protocols;
+  }
+
+  /** Whether the client's Finished was checked. */
+  done(): bool {
+    return this.state == DONE;
+  }
+
+  /** Whether the handshake keys are in use (the server's flight went out). */
+  keyed(): bool {
+    return this.state >= WAIT_FINISHED;
+  }
+
+  /**
+   * The client's ChangeCipherSpec: in TLS 1.2 the read keys from the next record on, in TLS 1.3
+   * null (middlebox compatibility's, which changes nothing).
+   */
+  ccs(): RecordCipher | null {
+    const t = this.tls12;
+    return t == null ? null : t.ccs();
+  }
+
+  private add(m: u8[]) {
+    const at = this.transcript.length;
+    const n = m.length;
+    // At least doubled, as `push` grows: `arrayReserve` reserves exactly what it is asked for.
+    arrayReserve(this.transcript, n > at ? n : at);
+    arraySetLen(this.transcript, at + n);
+    arrayMove(this.transcript, at, m, 0, n);
+  }
+
+  /** Handles the client's handshake message `m` (with its 4-byte header): what to do next. */
+  onMessage(m: u8[]): i32 {
+    const t = this.tls12;
+    if (t != null) {
+      if (!t.onMessage(m)) {
+        return S_KEEP_READING;
+      }
+      this.flight = t.finished;
+      this.writeCipher = t.writeCipher;
+      this.state = DONE;
+      return S_DONE12;
+    }
+    const type = m[0];
+    if ((this.state == WAIT_HELLO || this.state == WAIT_RETRY_HELLO) && type == CLIENT_HELLO) {
+      return this.clientHello(m, parseClientHello(m.slice(4)));
+    }
+    if (this.state == WAIT_FINISHED && type == FINISHED) {
+      return this.finished(m);
+    }
+    throw new TlsFailure(
+      UNEXPECTED_MESSAGE,
+      `unexpected handshake message ${type} during the handshake`,
+    );
+  }
+
+  private clientHello(m: u8[], offer: ClientOffer): i32 {
+    const retried = this.state == WAIT_RETRY_HELLO;
+    if (!retried) {
+      this.compat = offer.sessionId.length > 0;
+      this.serverName = offer.serverName;
+      if (!offer.schemes.includes(ECDSA_P256_SHA256)) {
+        throw new TlsFailure(
+          HANDSHAKE_FAILURE,
+          "the client accepts no signature scheme of the certificate's key (ecdsa_secp256r1_sha256)",
+        );
+      }
+      this.alpn = this.chooseAlpn(offer.alpn);
+      if (!offer.tls13) {
+        // A TLS 1.2 client (parseClientHello refuses older ones).
+        const t = new ServerHandshake12(
+          this.key,
+          m,
+          offer,
+          this.alpn,
+          u8x16.hasAes(),
+          this.fixedRandom,
+          this.fixedKey,
+        );
+        this.tls12 = t;
+        this.suite = t.suite;
+        this.hello = t.hello;
+        this.state = WAIT_FINISHED;
+        return S_SEND_PLAIN;
+      }
+      this.suite = chooseSuite(offer.suites, u8x16.hasAes());
+    } else if (!offer.tls13) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "the second ClientHello drops TLS 1.3");
+    } else if (offer.cookie) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "a cookie the HelloRetryRequest did not send");
+    } else if (!offer.suites.includes(this.suite)) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "the second ClientHello drops the chosen suite");
+    }
+    let share: u8[] = [];
+    let group: usize = 0;
+    if (offer.x25519Share.length > 0 && (!retried || this.group == X25519)) {
+      group = X25519;
+      share = offer.x25519Share;
+    } else if (offer.p256Share.length > 0 && (!retried || this.group == SECP256R1)) {
+      group = SECP256R1;
+      share = offer.p256Share;
+    } else if (offer.p384Share.length > 0 && (!retried || this.group == SECP384R1)) {
+      group = SECP384R1;
+      share = offer.p384Share;
+    }
+    if (group == 0) {
+      if (retried) {
+        throw new TlsFailure(
+          ILLEGAL_PARAMETER,
+          "the second ClientHello has no key share for the group asked for",
+        );
+      }
+      return this.helloRetry(m, offer);
+    }
+    this.group = group;
+    this.add(m);
+    let secret: u8[];
+    let ours: u8[];
+    try {
+      const k = exchangeKey(group);
+      ours = exchangePublic(group, k);
+      secret = exchangeSecret(group, k, share);
+    } catch (e) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "the client's key share is not a valid point");
+    }
+    const hello = serverHello13(randomBytes(32), offer.sessionId, this.suite, group, ours);
+    this.add(hello);
+    this.hello = hello;
+    const hs = handshakeSecret(secret, hashLength(this.suite));
+    const h1 = this.hashOf(this.transcript);
+    this.clientHandshake = expandLabel(hs, "c hs traffic", h1, h1.length);
+    this.serverHandshake = expandLabel(hs, "s hs traffic", h1, h1.length);
+    const w = new ByteWriter();
+    // EncryptedExtensions: ALPN's choice, if any.
+    const ee = new ByteWriter();
+    ee.u8(ENCRYPTED_EXTENSIONS);
+    const eb = ee.begin(3);
+    const exts = ee.begin(2);
+    const chosen = this.alpn;
+    if (chosen != null) {
+      ee.u16(EXT_ALPN);
+      const e = ee.begin(2);
+      const list = ee.begin(2);
+      const one = ee.begin(1);
+      ee.put(utf8Encode(chosen));
+      ee.end(one, 1);
+      ee.end(list, 2);
+      ee.end(e, 2);
+    }
+    ee.end(exts, 2);
+    ee.end(eb, 3);
+    this.add(ee.bytes);
+    w.put(ee.bytes);
+    // Certificate: the chain, no request context, no extensions per entry.
+    const cert = new ByteWriter();
+    cert.u8(CERTIFICATE);
+    const cb = cert.begin(3);
+    cert.u8(0);
+    const list = cert.begin(3);
+    for (const der of this.key.chain) {
+      const one = cert.begin(3);
+      cert.put(der);
+      cert.end(one, 3);
+      cert.u16(0);
+    }
+    cert.end(list, 3);
+    cert.end(cb, 3);
+    this.add(cert.bytes);
+    w.put(cert.bytes);
+    // CertificateVerify: the transcript so far, signed (§4.4.3).
+    const signed: u8[] = [];
+    for (let i = 0; i < 64; i++) {
+      signed.push(0x20);
+    }
+    // By index: a `for...of` over these arrays leaks them in a release build where `u8[]` is
+    // counted (#2455).
+    const context = utf8Encode("TLS 1.3, server CertificateVerify");
+    for (let i: usize = 0; i < context.length; i++) {
+      signed.push(context[i]);
+    }
+    signed.push(0);
+    const th = this.hashOf(this.transcript);
+    for (let i: usize = 0; i < th.length; i++) {
+      signed.push(th[i]);
+    }
+    const sig = p256Sign(this.key.key, sha256(signed));
+    const cv = new ByteWriter();
+    cv.u8(CERTIFICATE_VERIFY);
+    const vb = cv.begin(3);
+    cv.u16(ECDSA_P256_SHA256);
+    const s = cv.begin(2);
+    cv.put(sig);
+    cv.end(s, 2);
+    cv.end(vb, 3);
+    this.add(cv.bytes);
+    w.put(cv.bytes);
+    // Finished.
+    const fin = new ByteWriter();
+    fin.u8(FINISHED);
+    const fb = fin.begin(3);
+    fin.put(finishedMac(this.serverHandshake!, this.hashOf(this.transcript)));
+    fin.end(fb, 3);
+    this.add(fin.bytes);
+    w.put(fin.bytes);
+    this.flight = w.bytes;
+    const master = masterSecret(hs);
+    const h2 = this.hashOf(this.transcript);
+    this.flightHash = h2;
+    this.clientApplication = expandLabel(master, "c ap traffic", h2, h2.length);
+    this.serverApplication = expandLabel(master, "s ap traffic", h2, h2.length);
+    this.state = WAIT_FINISHED;
+    return S_SEND_FLIGHT;
+  }
+
+  // A HelloRetryRequest for the first group of the client's that this server has.
+  private helloRetry(m: u8[], offer: ClientOffer): i32 {
+    let group: usize = 0;
+    for (const g of offer.groups) {
+      if (groupSupported(g)) {
+        group = g;
+        break;
+      }
+    }
+    if (group == 0) {
+      throw new TlsFailure(
+        HANDSHAKE_FAILURE,
+        "no key exchange group in common (the server has X25519, secp256r1 and secp384r1)",
+      );
+    }
+    this.group = group;
+    // The transcript restarts with message_hash(ClientHello1) (§4.4.1), with the chosen
+    // suite's hash.
+    const first = this.hashOf(m);
+    this.transcript = [254, 0, 0, first.length as u8];
+    this.add(first);
+    const w = new ByteWriter();
+    w.u8(SERVER_HELLO);
+    const b = w.begin(3);
+    w.u16(0x0303);
+    w.put(HRR_RANDOM);
+    const sid = w.begin(1);
+    w.put(offer.sessionId);
+    w.end(sid, 1);
+    w.u16(this.suite);
+    w.u8(0);
+    const exts = w.begin(2);
+    w.u16(EXT_SUPPORTED_VERSIONS);
+    w.u16(2);
+    w.u16(0x0304);
+    w.u16(EXT_KEY_SHARE);
+    w.u16(2);
+    w.u16(group);
+    w.end(exts, 2);
+    w.end(b, 3);
+    this.add(w.bytes);
+    this.retry = w.bytes;
+    this.state = WAIT_RETRY_HELLO;
+    return S_SEND_RETRY;
+  }
+
+  // The hash of `bytes` with the chosen suite's hash.
+  private hashOf(bytes: u8[]): u8[] {
+    return this.suite == AES_256_GCM_SHA384 ? sha384(bytes) : sha256(bytes);
+  }
+
+  private finished(m: u8[]): i32 {
+    // Nothing joined the transcript since the server's Finished (no client certificate).
+    const expected = finishedMac(this.clientHandshake!, this.flightHash!);
+    const n = expected.length;
+    let diff: u8 = m.length == 4 + n ? 0 : 1;
+    for (let i: usize = 0; i < n && 4 + i < m.length; i++) {
+      diff |= expected[i] ^ m[4 + i];
+    }
+    if (diff != 0) {
+      throw new TlsFailure(DECRYPT_ERROR, "the client's Finished does not match the handshake");
+    }
+    this.state = DONE;
+    this.transcript = [];
+    return S_DONE;
+  }
+
+  // The first protocol of this server's that the client offers; null when there's no ALPN.
+  private chooseAlpn(offered: string[]): string | null {
+    if (offered.length == 0 || this.protocols.length == 0) {
+      return null;
+    }
+    for (const p of this.protocols) {
+      if (offered.includes(p)) {
+        return p;
+      }
+    }
+    throw new TlsFailure(
+      NO_APPLICATION_PROTOCOL,
+      `the client offers no ALPN protocol of the server's (${this.protocols.join(", ")})`,
+    );
+  }
+}

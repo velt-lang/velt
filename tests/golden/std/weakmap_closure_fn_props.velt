@@ -1,0 +1,34 @@
+// check: no leaks
+// A function with a property (`a.tag = …`): its environment's drop entry is the runtime's, so
+// the trace glue can't tell which closure it is and leaves it out (glue/trace_env.rs). The
+// key is kept until the map goes, a leak at worst, never a free of something live (#3119
+// step 3).
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: () => number;
+  constructor(read: () => number) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const f = (): number => raw.n;
+  const a: any = f;
+  a.tag = "t";
+  cache.set(raw, new Handler(f));
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 6);
+  console.log("freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

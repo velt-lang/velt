@@ -11,7 +11,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::Duration;
 
 const PRELUDE: &str = r#"
 #include <stdint.h>
@@ -43,12 +42,6 @@ static inline void write_i64(uint32_t stream, int64_t v) {
     if (v < 0) { VeltStr m = LIT("-"); velt_rt_write_str(stream, &m); }
     write_u64(stream, v < 0 ? 0 - (uint64_t)v : (uint64_t)v);
 }
-typedef struct VeltFut { uint32_t (*poll)(struct VeltFut*, void*); void (*drop)(struct VeltFut*); } VeltFut;
-typedef uint32_t (*PollFn)(void*, void*);
-typedef void (*DropFn)(void*);
-VeltFut* velt_rt_sleep(int64_t);
-VeltFut* velt_rt_spawn(PollFn, DropFn, const void*, uint64_t, uint64_t, uint64_t, void (*)(void*));
-void velt_rt_block_on(PollFn, void*);
 "#;
 
 const HELLO: &str = r#"
@@ -92,38 +85,15 @@ int32_t velt_main(void) {
 }
 "#;
 
-/// `async function square(x) { return x * x; }` spawned from
-/// `async function main() { console.log(1); await sleep(10); console.log(await spawn(square(7))); return 5; }`
-/// (the two lines may be printed from different workers: their order must still hold).
-const ASYNC: &str = r#"
-typedef struct { int64_t result; int64_t x; } Square;
-static uint32_t square_poll(void* s, void* cx) { Square* q = s; q->result = q->x * q->x; return 1; }
-static void square_drop(void* s) { (void)s; }
-typedef struct { int32_t result; uint32_t tag; VeltFut* f; } Main;
-static uint32_t main_poll(void* s, void* cx) {
-    Main* m = s;
-    for (;;) switch (m->tag) {
-    case 0: write_i64(1, 1); velt_rt_write_byte(1, 10); m->f = velt_rt_sleep(10); m->tag = 1; break;
-    case 1: {
-        Square q = { 0, 7 };
-        if (!m->f->poll(m->f, cx)) return 0;
-        m->f->drop(m->f);
-        m->f = velt_rt_spawn(square_poll, square_drop, &q, sizeof q, 8, 8, 0);
-        m->tag = 2;
-        break;
-    }
-    default: {
-        int64_t r;
-        if (!m->f->poll(m->f, cx)) return 0;
-        r = *(int64_t*)((char*)m->f + 16);
-        m->f->drop(m->f);
-        write_i64(1, r); velt_rt_write_byte(1, '\n');
-        m->result = 5;
-        return 1;
-    }
-    }
+/// A worker of the executor in Velt starts with `velt_rt_set_scheduler(2)`, which starts the
+/// runtime's host (tokio) and enters it on this thread.
+const HOST: &str = r#"
+void velt_rt_set_scheduler(uint32_t);
+int32_t velt_main(void) {
+    velt_rt_set_scheduler(2);
+    write_i64(1, 1); velt_rt_write_byte(1, '\n');
+    return 5;
 }
-int32_t velt_main(void) { Main m = { 0, 0, 0 }; velt_rt_block_on(main_poll, &m); return m.result; }
 "#;
 
 fn target_dir() -> PathBuf {
@@ -305,10 +275,10 @@ fn staticlib_links_and_runs() {
     assert_eq!(text(&out.stdout), expected);
     assert_eq!(out.status.code(), Some(7));
 
-    // The async runtime (tokio) links with the same native libs.
-    let exe = build("async", ASYNC).unwrap();
+    // The async runtime's host (tokio) links with the same native libs.
+    let exe = build("host", HOST).unwrap();
     let out = run(&exe);
-    assert_eq!(text(&out.stdout), "1\n49\n");
+    assert_eq!(text(&out.stdout), "1\n");
     assert_eq!(out.status.code(), Some(5));
 
     let exe = build("json", JSON).unwrap();
@@ -375,190 +345,6 @@ int32_t velt_main(void) {
     return 0;
 }
 "#;
-
-/// `async function main() { console.log("ready"); await sleep(86_400_000); }` — like a server
-/// that logs and then waits for connections, for a day.
-const IDLE: &str = r#"
-typedef struct { int32_t result; uint32_t tag; VeltFut* f; } Idle;
-static uint32_t idle_poll(void* s, void* cx) {
-    Idle* m = s;
-    if (m->tag == 0) {
-        VeltStr r = LIT("ready");
-        velt_rt_write_str(1, &r); velt_rt_write_byte(1, 10);
-        m->f = velt_rt_sleep(86400000);
-        m->tag = 1;
-    }
-    if (!m->f->poll(m->f, cx)) return 0;
-    m->f->drop(m->f);
-    return 1;
-}
-int32_t velt_main(void) { Idle m = { 0, 0, 0 }; velt_rt_block_on(idle_poll, &m); return 0; }
-"#;
-
-/// Kills the child when dropped, so a failing assertion does not leave it sleeping.
-struct KillOnDrop(std::process::Child);
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// Output written before the workers go idle reaches a pipe while the program is still running,
-/// not when it exits. The program sleeps for a day after printing, so the line can only arrive
-/// through the idle flush: no deadline on how soon (a loaded machine may take seconds just to
-/// start the process), only a hang guard in case it never does.
-#[test]
-fn piped_output_is_flushed_when_workers_idle() {
-    use std::io::BufRead;
-    let Some(exe) = build("idle", IDLE) else {
-        eprintln!("NOTE: no C toolchain found; idle flush check skipped");
-        return;
-    };
-    let mut child = KillOnDrop(
-        command(&exe)
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let stdout = child.0.stdout.take().unwrap();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        let read = std::io::BufReader::new(stdout).read_line(&mut line);
-        let _ = tx.send(read.map(|_| line));
-    });
-    let line = rx
-        .recv_timeout(Duration::from_secs(120))
-        .expect("no output after 120 s: buffered output is not flushed when the workers idle")
-        .unwrap();
-    assert_eq!(line.trim_end(), "ready");
-    // The line arrived while the program sleeps: it was flushed at idle, not at exit.
-    assert!(
-        child.0.try_wait().unwrap().is_none(),
-        "the program exited before its output arrived"
-    );
-}
-
-/// 64 tasks each print 1000 lines built from several `write_*` calls (like one `console.log` with
-/// several arguments). Even tasks yield every 100 lines (migrating between workers), odd ones print
-/// everything in one poll (crossing the buffer size mid-line).
-const STDOUT_STRESS: &str = r#"
-void velt_rt_yield_now(void*);
-static char PAD[128];
-typedef struct { int32_t result; uint32_t tag; int64_t id, line; } Printer;
-static uint32_t printer_poll(void* s, void* cx) {
-    Printer* p = s;
-    while (p->line < 1000) {
-        VeltStr t = LIT("t="), l = LIT(" l="), sp = LIT(" ");
-        int64_t n = (p->id * 7 + p->line * 13) % 120;
-        VeltStr pad = { (uint8_t*)PAD, (uint64_t)n, 0 };
-        velt_rt_write_str(1, &t); write_i64(1, p->id);
-        velt_rt_write_str(1, &l); write_i64(1, p->line);
-        velt_rt_write_str(1, &sp); velt_rt_write_str(1, &pad);
-        velt_rt_write_str(1, &sp); write_i64(1, n); velt_rt_write_byte(1, '\n');
-        p->line++;
-        if (p->line % ((p->id & 1) ? 1000 : 100) == 0) { velt_rt_yield_now(cx); return 0; }
-    }
-    return 1;
-}
-static void printer_drop(void* s) { (void)s; }
-typedef struct { int32_t result; uint32_t tag; int64_t i; VeltFut* h[64]; } Main;
-static uint32_t main_poll(void* s, void* cx) {
-    Main* m = s;
-    if (m->tag == 0) {
-        int64_t i;
-        for (i = 0; i < 128; i++) PAD[i] = 'x';
-        for (i = 0; i < 64; i++) {
-            Printer p = { 0, 0, i, 0 };
-            m->h[i] = velt_rt_spawn(printer_poll, printer_drop, &p, sizeof p, 8, 0, 0);
-        }
-        m->tag = 1;
-    }
-    for (; m->i < 64; m->i++) {
-        if (!m->h[m->i]->poll(m->h[m->i], cx)) return 0;
-        m->h[m->i]->drop(m->h[m->i]);
-    }
-    return 1;
-}
-int32_t velt_main(void) { Main m = { 0 }; velt_rt_block_on(main_poll, &m); return 0; }
-"#;
-
-/// Check one stress line: `t=<id> l=<line> <n x's> <n>`; returns (id, line).
-fn parse_stress_line(line: &str) -> (usize, usize) {
-    let num = |s: Option<&str>| -> usize {
-        s.and_then(|v| v.parse().ok())
-            .unwrap_or_else(|| panic!("corrupted line: {line:?}"))
-    };
-    let parts: Vec<&str> = line.split(' ').collect();
-    let [t, l, pad, n] = parts[..] else {
-        panic!("corrupted line: {line:?}")
-    };
-    let (id, no, n) = (
-        num(t.strip_prefix("t=")),
-        num(l.strip_prefix("l=")),
-        num(Some(n)),
-    );
-    let pad_ok = pad.len() == n && pad.bytes().all(|b| b == b'x');
-    assert!(
-        pad_ok && n == (id * 7 + no * 13) % 120,
-        "corrupted line: {line:?}"
-    );
-    (id, no)
-}
-
-/// Lines from 64 tasks on 8 workers arrive whole and in order per task, and piped output goes out
-/// in large blocks: the debug runtime counts its writes to stdout (`VELT_STDOUT_STATS=1`), which
-/// must be far fewer than the lines (one write per line is the regression this guards against). A
-/// count, not a duration: a small write to a pipe costs 25 times more on macOS than on Linux, so a
-/// time limit set for one platform misses the regression on the other.
-#[test]
-fn concurrent_tasks_never_interleave_within_a_line() {
-    let Some(exe) = build("stdout_stress", STDOUT_STRESS) else {
-        eprintln!("NOTE: no C toolchain found; stdout stress check skipped");
-        return;
-    };
-    for _ in 0..3 {
-        let out = command(&exe)
-            .env("VELT_THREADS", "8")
-            .env("VELT_STDOUT_STATS", "1")
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{}", out.status);
-        let stdout = text(&out.stdout);
-        let mut next = vec![0usize; 64];
-        let mut count = 0;
-        for line in stdout.lines() {
-            let (id, no) = parse_stress_line(line);
-            assert_eq!(no, next[id], "task {id} lines out of order");
-            next[id] += 1;
-            count += 1;
-        }
-        assert_eq!(count, 64_000);
-        // The counter exists in the debug runtime, which this profile links.
-        if cfg!(debug_assertions) {
-            let writes = stdout_writes(&text(&out.stderr));
-            eprintln!(
-                "stdout stress: 64000 lines, {} bytes in {writes} writes",
-                stdout.len()
-            );
-            assert!(
-                writes <= count / 100,
-                "stdout stress: {writes} writes for {count} lines (piped output must be block-buffered)"
-            );
-        }
-    }
-}
-
-/// The `writes=` count of the `stdout stats:` line a debug runtime prints at exit.
-fn stdout_writes(stderr: &str) -> usize {
-    stderr
-        .lines()
-        .find_map(|l| l.strip_prefix("stdout stats: writes="))
-        .and_then(|n| n.trim().parse().ok())
-        .unwrap_or_else(|| panic!("no `stdout stats` line in stderr:\n{stderr}"))
-}
 
 #[path = "../../../tests/common/command.rs"]
 mod command;

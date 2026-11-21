@@ -38,6 +38,7 @@ impl<'h> Cx<'h> {
             native_inits: vec![],
             view_fn: None,
             std_fns: std::cell::OnceCell::new(),
+            prelude_defs: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
             heap_hooks: false,
@@ -45,6 +46,8 @@ impl<'h> Cx<'h> {
             cpu_checks: Default::default(),
             unavailable: vec![],
             unreduced: vec![],
+            rest_closures: Default::default(),
+            spread_errors: vec![],
             c_clashes: vec![],
             c_symbols: Default::default(),
             c_globals: Default::default(),
@@ -80,6 +83,7 @@ impl<'h> Cx<'h> {
             fut_header: None,
             sched_tasks: false,
             sched_used: false,
+            module_hooks_declared: std::cell::OnceCell::new(),
             held: Some(vec![]),
             statics_table: None,
             value_ids: FxHashMap::default(),
@@ -279,6 +283,7 @@ impl<'h> Cx<'h> {
                 | Work::CExport(_)
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
+                | Work::ArrayOwnerDrop
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = self.generated_instance(work);
@@ -470,6 +475,7 @@ impl<'h> Cx<'h> {
     fn heap_hook_for(&mut self, r: Rt) {
         let name = match r {
             Rt::Alloc => velt_common::std_hook!(heap_alloc),
+            Rt::Realloc => velt_common::std_hook!(heap_realloc),
             Rt::Free => velt_common::std_hook!(heap_free),
             _ => return,
         };
@@ -634,6 +640,7 @@ pub(super) fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>
         | Work::EnvDrop(d, a)
         | Work::EnvDropFrame(d, a)
         | Work::EnvClone(d, a)
+        | Work::EnvTrace(d, a)
         | Work::EnvTransfer(d, a)
         | Work::Tracked(d, a, _)
         | Work::Frozen(d, a, _, _, _)
@@ -644,7 +651,8 @@ pub(super) fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>
         | Work::ValuePoll(d, a)
         | Work::ValueDrop(d, a)
         | Work::GenNew(d, a)
-        | Work::GenFree(d, a) => Some((d, a)),
+        | Work::GenFree(d, a)
+        | Work::GenTrace(d, a) => Some((d, a)),
         _ => None,
     }
 }
@@ -657,6 +665,7 @@ pub(super) fn work_def(work: &Work) -> Option<DefId> {
         | Work::EnvDrop(d, _)
         | Work::EnvDropFrame(d, _)
         | Work::EnvClone(d, _)
+        | Work::EnvTrace(d, _)
         | Work::EnvTransfer(d, _)
         | Work::Tracked(d, _, _)
         | Work::Frozen(d, _, _, _, _)
@@ -667,7 +676,8 @@ pub(super) fn work_def(work: &Work) -> Option<DefId> {
         | Work::ValuePoll(d, _)
         | Work::ValueDrop(d, _)
         | Work::GenNew(d, _)
-        | Work::GenFree(d, _) => Some(*d),
+        | Work::GenFree(d, _)
+        | Work::GenTrace(d, _) => Some(*d),
         _ => None,
     }
 }

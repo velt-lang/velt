@@ -21,6 +21,9 @@ pub(super) enum Work {
     /// not freed.
     EnvDropFrame(DefId, Vec<TyId>),
     EnvClone(DefId, Vec<TyId>),
+    /// `(env, visit, ctx)`: the trace glue of closure `(def, targs)`'s heap environment, which
+    /// visits the counted objects its captures own (glue/trace_env.rs).
+    EnvTrace(DefId, Vec<TyId>),
     /// `(env: ptr) -> ptr`: the environment of closure `(def, targs)` made safe for another
     /// thread (glue/transfer.rs).
     EnvTransfer(DefId, Vec<TyId>),
@@ -59,6 +62,11 @@ pub(super) enum Work {
     /// `()`: the panic of an array that would grow past `MAX_ARRAY_LEN` (never returns, so its
     /// calls stay cold and small).
     ArrayTooLong,
+    /// `(block: ptr)`: the call of the function in the first word of `block`, the owner of an
+    /// array's buffer (`addressArrayOwned`, lower/array), never inlined: the array drops that
+    /// call it don't call through a pointer themselves (a release build's std cache keeps such
+    /// callers in the program).
+    ArrayOwnerDrop,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
     /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
@@ -105,6 +113,9 @@ pub(super) enum Work {
     /// function freeing such an object (async_fn/gen_object.rs).
     GenNew(DefId, Vec<TyId>),
     GenFree(DefId, Vec<TyId>),
+    /// `(state, visit, ctx)`: the trace glue of a generator instance's state, in a program with
+    /// weak references (async_fn/gen_trace.rs).
+    GenTrace(DefId, Vec<TyId>),
     /// `(state: ptr)`: the initializer of module state slots `from..to` (module_state.rs):
     /// the state's own (`0..deferred`), or the root file's slots its `main` initializes.
     ModuleInit(u32, u32),

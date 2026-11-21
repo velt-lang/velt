@@ -1,37 +1,76 @@
-//! The CPU-extension operations (`SimdCall::Inst`, `SimdCall::Has`, #1330): the ARMv8 and x86 SHA
+//! The CPU-feature operations (`SimdCall::Inst`, `SimdCall::Has`, #1330): the ARMv8 and x86 SHA
 //! instructions and carry-less multiplications (x86 PCLMULQDQ, ARM PMULL) as LLVM intrinsics on
-//! the architecture that has them, and the runtime's flag that says whether this CPU does. On
-//! any other architecture the flag is `false` and an operation, dead behind it, gives zeros.
+//! the architecture that has them; the build's own answer to a feature check, the architecture
+//! guard and std's feature word (#3222 step 3). On any other architecture every check is `false`
+//! and an operation, dead behind it, gives zeros.
 
-use velt_vir::simd::{Ext, ExtOp};
+use velt_vir::simd::{CpuArch, Ext, ExtOp};
 
 use super::{Arch, Body};
 
-/// Whether `ext`'s instructions exist on `arch`.
-pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
-    matches!(
-        (arch, ext),
-        (Arch::Neon, Ext::ShaArm | Ext::ClmulArm | Ext::AesArm)
-            | (
-                Arch::Sse2,
-                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86
-            )
-    )
+/// The feature architecture `arch` is.
+fn cpu_arch(arch: Arch) -> Option<CpuArch> {
+    match arch {
+        Arch::Neon => Some(CpuArch::Aarch64),
+        Arch::Sse2 => Some(CpuArch::X86_64),
+        _ => None,
+    }
 }
 
-/// `velt_simd_has_<ext>()`: the runtime's flag byte (0 or 1), read as invariant: it is set
-/// before any Velt code runs and never changes, so LLVM hoists the read out of loops. An
-/// extension without a flag (AES, `Ext::has_flag`) is 0 here: its check is 1 only where the
-/// function is gated on it (`own_extension_check`), and std computes the run-time answer.
-pub(super) fn has(b: &mut Body, arch: Arch, ext: Ext) -> String {
-    if !has_ext(arch, ext) || !ext.has_flag() {
+/// Whether `ext`'s instructions exist on `arch`.
+pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
+    cpu_arch(arch) == Some(ext.arch())
+}
+
+/// `velt_simd_has_<feature>()` where the build doesn't guarantee the feature: 0. Where it does (a
+/// gated set that covers it, or `--cpu`), the call site makes it 1 first (`own_extension_check`);
+/// the run-time answer is std's, from its feature word ([`cpu_word`]).
+pub(super) fn has() -> String {
+    "0".to_string()
+}
+
+/// `velt_simd_on_x86()` / `velt_simd_on_arm()`: whether this code is for that architecture.
+pub(super) fn on_arch(arch: Arch, of: CpuArch) -> String {
+    if cpu_arch(arch) == Some(of) { "1" } else { "0" }.to_string()
+}
+
+/// The CPU's feature word: one `i64` per program, defined by every object that reads or sets it
+/// (`linkonce_odr`, so the linker keeps one), written by std's start-up hook before any other
+/// Velt code runs (rt_abi.md "CPU check"). In a COFF object it is in a comdat of its own
+/// ([`word_definition`]): a `linkonce_odr` global without one is a weak external there whose
+/// default is named after a symbol of its object, and link.exe refuses two objects' defaults
+/// (LNK1227).
+pub(crate) const WORD: &str = "@velt_cpu_word = linkonce_odr hidden global i64 0, align 8";
+
+/// [`WORD`] as an object for a target with COFF objects (`coff`) defines it.
+pub(crate) fn word_definition(coff: bool) -> String {
+    match coff {
+        true => "$velt_cpu_word = comdat any\n\
+                 @velt_cpu_word = linkonce_odr hidden global i64 0, comdat, align 8"
+            .to_string(),
+        false => WORD.to_string(),
+    }
+}
+
+/// `velt_simd_cpu_word()`: the word, which never changes after the start-up hook's store: read as
+/// invariant, so LLVM hoists it out of loops. 0 where no feature of this architecture exists
+/// (wasm).
+pub(super) fn cpu_word(b: &mut Body, arch: Arch) -> String {
+    if cpu_arch(arch).is_none() {
         return "0".to_string();
     }
-    let flag = ext.flag_symbol();
-    b.declarations.push(format!("@{flag} = external global i8"));
-    b.inst(format!(
-        "load i8, ptr @{flag}, align 1, !invariant.load !{{}}"
-    ))
+    b.declarations.push(WORD.to_string());
+    b.inst("load i64, ptr @velt_cpu_word, align 8, !invariant.load !{}".to_string())
+}
+
+/// `velt_simd_cpu_word_set(%a0)`: the start-up hook's one store of the word; nothing on wasm.
+pub(super) fn cpu_word_set(b: &mut Body, arch: Arch) {
+    if cpu_arch(arch).is_none() {
+        return;
+    }
+    b.declarations.push(WORD.to_string());
+    b.lines
+        .push_str("  store i64 %a0, ptr @velt_cpu_word, align 8\n");
 }
 
 /// The operation `op` on the helper's arguments (`%a0`, …), as the `<16 x i8>` (or the `i32` of
@@ -48,6 +87,9 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
     }
     if matches!(op.ext(), Ext::AesX86 | Ext::AesArm) {
         return super::aes::op(b, op);
+    }
+    if op == ExtOp::Bfdot {
+        return bfdot(b);
     }
     if op == ExtOp::Sha1H {
         b.declarations
@@ -83,9 +125,9 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
         _ => {
             let vectors = op.vector_operands();
             let values: Vec<String> = (0..vectors).map(|i| b.arg(i, V)).collect();
-            let prefix = match op.ext() {
-                Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => "aarch64.crypto",
-                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86 => "x86",
+            let prefix = match op.ext().arch() {
+                CpuArch::Aarch64 => "aarch64.crypto",
+                CpuArch::X86_64 => "x86",
             };
             (
                 format!("{prefix}.{}", op.name()),
@@ -98,6 +140,19 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
         .push(format!("declare {V} @llvm.{name}({})", params.join(", ")));
     let result = b.inst(format!("call {V} @llvm.{name}({})", args.join(", ")));
     b.bytes(&result, V)
+}
+
+/// Arm's `bfdot` on `%a0` (the `f32x4` sum) and the bf16 lanes of `%a1` and `%a2`, as the
+/// `<16 x i8>` of the new sum.
+fn bfdot(b: &mut Body) -> String {
+    const F: &str = "<4 x float>";
+    const H: &str = "<8 x bfloat>";
+    const NAME: &str = "llvm.aarch64.neon.bfdot.v4f32.v8bf16";
+    let (acc, x, y) = (b.arg(0, F), b.arg(1, H), b.arg(2, H));
+    b.declarations
+        .push(format!("declare {F} @{NAME}({F}, {H}, {H})"));
+    let r = b.inst(format!("call {F} @{NAME}({F} {acc}, {H} {x}, {H} {y})"));
+    b.bytes(&r, F)
 }
 
 /// A carry-less multiplication of the 64-bit lanes of `%a0` and `%a1` that `imm` selects (bit 0:

@@ -21,7 +21,6 @@ use crate::dispatch::{class_chain, Rounds};
 use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::types::collect_params;
 use crate::types::Types;
-use crate::visit;
 
 /// The types one function body (or one type's field initializers) mentions, and the
 /// definitions it instantiates.
@@ -102,7 +101,7 @@ fn collect_with(
     let mut converts = cx.type_level.converts.clone();
     converts.extend(cx.type_level.inline.reads.iter().map(|(&k, &v)| (k, v)));
     let tys = &cx.ty;
-    for (i, d) in cx.defs.iter_mut().enumerate().skip(from) {
+    for (i, d) in cx.defs.iter().enumerate().skip(from) {
         let Some(Def::Fn(f)) = d else { continue };
         if !wanted(DefId(i as u32)) {
             continue;
@@ -110,7 +109,7 @@ fn collect_with(
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
-        let guards = guards_of(tys, &mut f.body.block);
+        let guards = guards_of(tys, &f.body.block);
         if signature && types {
             let span = f.body.block.span;
             for t in f.params.iter().map(|p| p.ty).chain([f.ret]) {
@@ -124,7 +123,7 @@ fn collect_with(
                 u.types.push((l.ty, l.span));
             }
         }
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             add_site(tys, &mut u, &mut news, &mut seen, e, guard, types);
             if !converts.is_empty() {
@@ -134,7 +133,7 @@ fn collect_with(
         out.push((DefId(i as u32), u, news));
     }
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
-    for_each_init(&cx.ty, &mut cx.info, globals, &mut |tys, d, e| {
+    for_each_init(&cx.ty, &cx.info, globals, &mut |tys, d, e| {
         if (d.0 as usize) < from || !wanted(d) {
             return;
         }
@@ -146,16 +145,16 @@ fn collect_with(
     });
     // A module constant's initializer: lowering evaluates it where it is read
     // (`hir::GlobalDef::init`), in whichever function reads it, so it is a unit of its own.
-    for (i, info) in cx.info.iter_mut().enumerate().skip(from) {
+    for (i, info) in cx.info.iter().enumerate().skip(from) {
         let DefInfo::Global(g) = info else { continue };
         if !wanted(DefId(i as u32)) {
             continue;
         }
-        let Some(init) = g.init.as_mut() else {
+        let Some(init) = g.init.as_ref() else {
             continue;
         };
         let (u, news, seen) = inits.entry(DefId(i as u32)).or_default();
-        visit::exprs_in(init, &mut |e: &mut Expr| {
+        crate::visit_ref::exprs_in(init, &mut |e: &Expr| {
             add_site(&cx.ty, u, news, seen, e, 0, types);
             if !converts.is_empty() {
                 convert_site(u, seen, e, &converts);
@@ -354,26 +353,24 @@ pub(crate) fn constructed(cx: &mut Ctx, def: DefId, targs: Vec<TyId>) -> Vec<(De
 /// it gives an initializer), in terms of its type parameters, with the type's def.
 pub(crate) fn for_each_init(
     tys: &Types,
-    infos: &mut crate::ctx::DefTable<DefInfo>,
+    infos: &crate::ctx::DefTable<DefInfo>,
     globals: bool,
-    f: &mut dyn FnMut(&Types, DefId, &mut Expr),
+    f: &mut dyn FnMut(&Types, DefId, &Expr),
 ) {
-    for (i, info) in infos.iter_mut().enumerate() {
+    for (i, info) in infos.iter().enumerate() {
         let d = DefId(i as u32);
         if let DefInfo::Global(g) = info {
-            if let Some(e) = g.init.as_mut().filter(|_| globals) {
-                crate::visit::exprs_in(e, &mut |e| f(tys, d, e));
+            if let Some(e) = g.init.as_ref().filter(|_| globals) {
+                crate::visit_ref::exprs_in(e, &mut |e| f(tys, d, e));
             }
             continue;
         }
         let DefInfo::Adt(a) = info else { continue };
         let start = a.own_fields_start;
-        let own = a.fields[start..]
-            .iter_mut()
-            .filter_map(|x| x.default.as_mut());
-        let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
+        let own = a.fields[start..].iter().filter_map(|x| x.default.as_ref());
+        let redefined = a.redefined.iter().filter_map(|r| r.init.as_ref());
         for e in own.chain(redefined) {
-            crate::visit::exprs_in(e, &mut |e| f(tys, d, e));
+            crate::visit_ref::exprs_in(e, &mut |e| f(tys, d, e));
         }
     }
 }
@@ -571,7 +568,7 @@ pub(crate) fn resolve_param_calls(
 }
 
 /// Guard bits (a bit per type parameter whose primitive guard encloses a call or a
-/// requirement: `visit::primitive_guards`, issue #1251) of a requirement of `g` with bits
+/// requirement: `visit_ref::primitive_guards`, issue #1251) of a requirement of `g` with bits
 /// `need`, carried to a call `g<targs>` with bits `site` in the caller: `None` when a guarded
 /// parameter of `g` is given an object type, so the branch the requirement comes from is not
 /// instantiated there; else `site` and the caller's parameter each guarded one is given as is
@@ -592,14 +589,21 @@ pub(crate) fn carry_guard(cx: &Ctx, need: u64, targs: &[TyId], site: u64) -> Opt
     Some(out)
 }
 
-/// The guard bits of each expression of `b` (`visit::primitive_guards`), keyed by address.
+/// The guard bits of each expression of `b` (`visit_ref::primitive_guards`), keyed by address.
 pub(crate) fn guards_of(
     ty: &crate::types::Types,
-    b: &mut crate::hir::Block,
+    b: &crate::hir::Block,
 ) -> FxHashMap<*const Expr, u64> {
     let param_of = |t: TyId| match ty.kind(t) {
         crate::hir::TyKind::Param(p) => Some(*p),
         _ => None,
     };
-    visit::primitive_guards(b, &param_of)
+    crate::visit_ref::primitive_guards(b, &param_of)
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ParamCall {
+        recv, iface, slot, margs,
+    }
 }

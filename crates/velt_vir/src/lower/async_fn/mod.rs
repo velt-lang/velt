@@ -29,6 +29,8 @@ mod ctor;
 mod foreign_promise;
 mod gen_object;
 mod gen_send;
+mod gen_trace;
+pub(in crate::lower) use gen_trace::TABLE_TRACE;
 mod generator;
 mod kept;
 mod spawn;
@@ -61,8 +63,19 @@ const DROP_BIT: i128 = 0x8000_0000;
 /// `return()`): at a `yield` it runs the `finally` blocks and disposals, which may `await`.
 /// `DONE | CLOSE_BIT` is `DONE`.
 const CLOSE_BIT: i128 = 0x4000_0000;
+/// Tag bit of a generator's trace (gen_trace.rs): the case `TRACE_BIT | k` visits what the state
+/// holds at suspension `k`, with `cx` pointing to the trace glue's `(visit, ctx)`.
+const TRACE_BIT: i128 = 0x2000_0000;
 /// Tag of a finished state machine (never resumed; dropping it is a no-op).
 const DONE: i128 = 0x7FFF_FFFF;
+/// Tag of an async function's state while its poll runs, in a program that catches panics
+/// (cleanup.rs): no dispatch case, so polling or dropping it does nothing. A poll that unwinds
+/// through a call with a cleanup pad ends `DONE`, its state's values dropped by the pad; one
+/// that unwinds through a call without a pad (an extern's) leaves this tag, and the frame
+/// holding the state then drops it as nothing, where the tag of its last suspension would
+/// name values the poll has moved or dropped since. A generator has `GEN_RUNNING`. No program is
+/// known that unwinds through such a call (review of #3180), so no test pins this store.
+const POLLING: i128 = 0x7FFF_FFFD;
 
 /// Layout facts of a compiled async function instance, known once its poll function is built.
 #[derive(Clone, Debug)]
@@ -141,7 +154,7 @@ impl Cx<'_> {
         let f = self.fn_def(def);
         let (mut func, inputs, result) = {
             let mut lw = FnLower::bare(self, targs.to_vec());
-            let inputs = lw.lower_poll_body(f);
+            let inputs = lw.lower_poll_body(def, f);
             let result = lw.result_region();
             let sym = format!("{}$poll", lw.cx.instance_symbol(&f.name, targs));
             (
@@ -151,8 +164,7 @@ impl Cx<'_> {
             )
         };
         let stored: Vec<Local> = inputs.iter().flatten().copied().collect();
-        let links = std::mem::take(&mut self.unwinding.links);
-        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored, &links);
+        let (state, fields) = spill::spill(self, &mut func, result, &f.name, &stored);
         func.is_poll = true;
         func.param_attrs = self.poll_param_attrs(state);
         let inputs = inputs
@@ -178,7 +190,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Params `(state, cx)`, the dispatch switch, then the body. Returns the VIR local of each
     /// input (param/capture) for the state layout.
-    fn lower_poll_body(&mut self, f: &FnDef) -> Vec<Option<Local>> {
+    fn lower_poll_body(&mut self, def: DefId, f: &FnDef) -> Vec<Option<Local>> {
         let state = self.new_local(Ty::Ptr, Some("state".into()));
         let cx = self.new_local(Ty::Ptr, Some("cx".into()));
         let targs = self.targs.clone();
@@ -208,7 +220,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let scan = FlagScan::run_picking(hir, &f.body, Some(&mut pick));
         self.ref_bindings = scan.ref_bindings.iter().copied().collect();
         self.epoch_exempt = f.name.starts_with(super::epoch_sections::EPOCH_MODULE);
-        let inputs = self.declare_async_locals(f);
+        let inputs = self.declare_async_locals(def, f);
         self.declare_drop_flags(f, &scan);
         self.lower_body(f);
         self.emit_dispatch();
@@ -216,14 +228,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Params and captures are values stored in the state (owned/copied), or pointers for
-    /// borrowed aggregates; every other local is declared as in a sync function.
-    fn declare_async_locals(&mut self, f: &FnDef) -> Vec<Option<Local>> {
+    /// borrowed aggregates; every other local is declared as in a sync function. A rest tuple
+    /// the constructor builds from its elements (`ctor.rs`) is owned by the state, whatever
+    /// its mode: no caller holds it.
+    fn declare_async_locals(&mut self, def: DefId, f: &FnDef) -> Vec<Option<Local>> {
         let mut info: Vec<Option<LInfo>> = f.body.locals.iter().map(|_| None).collect();
         let modes: FxHashMap<hir::LocalId, PassMode> =
             f.captures.iter().map(|c| (c.inner, c.mode)).collect();
         let mut inputs = vec![];
         for p in &f.params {
-            let mode = modes.get(&p.local).copied().unwrap_or(p.mode);
+            let mode = match self.rest_tuple_of(def, f, p) {
+                Some(_) => PassMode::Owned,
+                None => modes.get(&p.local).copied().unwrap_or(p.mode),
+            };
             let name = f.body.locals[p.local.0 as usize].name.clone();
             let ty = self.sub(p.ty);
             let by_ref = matches!(mode, PassMode::Borrow | PassMode::BorrowMut);
@@ -363,11 +380,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.cancel_cases(0, d);
         if self.in_generator() {
             self.throw_start_cases(f);
+            self.trace_start_case(f);
         }
     }
 
-    /// Drop the owned inputs of a state machine that has not started.
+    /// Drop the owned inputs of a state machine that has not started. What the body's scopes
+    /// own does not hold here (the drop flags are not set yet), so a pad of one of these drops
+    /// must not read it: the inputs not dropped yet are the only things owned, each until its
+    /// own drop begins.
     fn drop_inputs(&mut self, f: &FnDef) {
+        let outer = std::mem::take(&mut self.scopes);
+        self.push_scope(super::ScopeKind::Block);
+        let mut owned = vec![];
+        for p in f.params.iter().rev() {
+            let info = &self.info[p.local.0 as usize];
+            if !info.cell && info.droppable {
+                let ty = info.ty;
+                let place = self.local_place(p.local);
+                self.own_place(place.clone(), ty);
+                owned.push((p.local, place, ty));
+            }
+        }
         for p in &f.params {
             let info = &self.info[p.local.0 as usize];
             if info.cell {
@@ -375,12 +408,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 // after the capture): release the state's reference to the cell, as the
                 // started paths do, not the value inside it.
                 self.release_cell(p.local);
-            } else if info.droppable {
-                let ty = info.ty;
-                let place = self.local_place(p.local);
+            } else if let Some((_, place, ty)) = owned.iter().find(|(l, ..)| *l == p.local) {
+                let (place, ty) = (place.clone(), *ty);
+                self.take_temp(&place);
                 self.drop_glue(place, ty);
             }
         }
+        self.scopes = outer;
     }
 
     /// Fill the entry block: `switch state.tag`.
@@ -397,7 +431,22 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.switch_to(BlockId(0));
         }
         let other = self.new_block();
-        let cases = std::mem::take(&mut self.actx().cases);
+        let mut cases = std::mem::take(&mut self.actx().cases);
+        if !self.in_generator() && self.cx.unwind_pads() {
+            // The start and each resume go through a block of their own that marks the state
+            // as being polled (`POLLING`); a cancellation runs drops only.
+            for (k, b) in &mut cases {
+                if *k & (DROP_BIT | CLOSE_BIT) == 0 {
+                    let mark = self.new_block();
+                    self.live[mark.0 as usize] = true;
+                    self.switch_to(mark);
+                    self.set_tag(POLLING);
+                    self.goto(*b);
+                    *b = mark;
+                }
+            }
+            self.switch_to(BlockId(0));
+        }
         self.terminate(Terminator::Switch {
             value: tag,
             cases,

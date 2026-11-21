@@ -31,6 +31,8 @@
 //! type. A construct present demands the integer hooks, all of them
 //! ([`constructs::demanded_for`]), and they are live.
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::std_hooks::{hook_index, Construct, ConstructSet, HookSet, HOOKS};
 
@@ -92,6 +94,9 @@ pub(crate) struct Live {
     /// Live code runs on the executor ([`Walk::tasks`]): the executor in Velt's hooks are needed
     /// (#2649 P3(a)).
     pub(super) tasks: bool,
+    /// The program has module state (a live stored global): on a native target lowering calls
+    /// module_blocks.velt's hooks for it ([`super::module_hooks`], #2196 9c).
+    pub(super) module_state: bool,
 }
 
 impl Live {
@@ -142,11 +147,14 @@ struct Walk {
     generators: [bool; 2],
     /// An async host function: lowering awaits its call's `HostSettled` (`velt_vir` `host.rs`).
     async_host: bool,
-    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`).
+    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`), a clock
+    /// (`Clock`), a weak collection's intrinsic (`Weak`).
     constructs: ConstructSet,
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).
     tasks: bool,
+    /// A slot of the module state: a stored global ([`super::module_hooks`]).
+    module_state: bool,
     /// Calls of `hookCall`'s stubs not bound yet, `(caller, stub)` (`hook_stubs.rs`).
     stub_calls: Vec<(DefId, DefId)>,
     /// The last type added to `types` (a body repeats the same type many times in a row).
@@ -190,6 +198,7 @@ pub(crate) fn assume(cx: &mut Ctx, assumed: &Assumed) {
     cx.lazy.live.assumed = assumed.defs.clone();
     cx.lazy.record_conversion = assumed.record_conversion;
     cx.lazy.live.tasks = assumed.tasks;
+    cx.lazy.live.module_state = assumed.module_state;
     cx.lazy.stubs.demand_at_check(&assumed.hooks);
 }
 
@@ -220,7 +229,7 @@ pub(crate) fn live_defs(cx: &mut Ctx, unchecked: &FxHashSet<DefId>) -> Option<Fx
 
 /// Work out what is live since the last step, checking what enters the set, and demand and check
 /// the hooks its constructs need, and what they reach. Gives the operands of the text conversions
-/// that count for the float hooks ([`note_program_code`]).
+/// that count for the float hooks ([`constructs::note_program_code`]).
 pub(super) fn step(cx: &mut Ctx) -> Vec<TyId> {
     loop {
         walk_set(cx);
@@ -258,6 +267,9 @@ fn demand_hooks(cx: &mut Ctx) -> bool {
     }
     let mut marked = false;
     for h in newly_demanded(before, now).filter(|h| !constructs::gated(h.name)) {
+        if super::hook_stubs::declared_lowered(cx, h) {
+            continue;
+        }
         cx.demand_std(&h.module());
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             marked = true;
@@ -296,7 +308,7 @@ fn walk_set(cx: &mut Ctx) {
             }
             super::hook_stubs::demand_hook_calls(cx, d);
             if program_code(cx, d) {
-                note_program_code(cx, &w, start);
+                constructs::note_program_code(cx, &w, start);
             }
         }
         evaluate(cx, &w);
@@ -333,28 +345,6 @@ fn program_code(cx: &Ctx, d: DefId) -> bool {
     }
 }
 
-/// What one definition of a non-std module, walked into `w` from `start` on, tells the hooks that
-/// wait for what the program does. std's own code doesn't count here: it puts its records into
-/// `any` values in most programs, and where lowering builds its text conversions and a float hook
-/// stayed unchecked, it calls the runtime. The integer hooks, which have no such fallback, count
-/// the constructs of live code, std's included.
-fn note_program_code(
-    cx: &mut Ctx,
-    w: &Walk,
-    (types, conversions, into_any, first_text): (usize, usize, usize, usize),
-) {
-    cx.lazy.live.texts.extend(&w.texts[first_text..]);
-    constructs::note_program_dyn(cx, &w.into_any[into_any..]);
-    if !cx.lazy.record_hooks {
-        super::record_conversions::note_user_conversions(
-            cx,
-            &w.types[types..],
-            &w.conversions[conversions..],
-            &w.into_any[into_any..],
-        );
-    }
-}
-
 /// What `w` found is live.
 fn add_walk(cx: &mut Ctx, w: Walk) {
     cx.lazy.dyn_held.extend(w.into_any.iter().map(|&(t, _)| t));
@@ -366,6 +356,7 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     }
     cx.lazy.live.kinds |= w.kinds;
     cx.lazy.live.tasks |= w.tasks;
+    cx.lazy.live.module_state |= w.module_state;
     cx.lazy.live.ifaces.extend(w.ifaces);
     let bound = match w.stub_calls.is_empty() {
         true => FxHashMap::default(),
@@ -513,6 +504,8 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 return false;
             }
             note_ty(ty, g.ty, w);
+            // A stored global, or a constant of the program's, kept later (kept_consts.rs).
+            w.module_state |= g.stored || !cx.modules[g.module].is_std;
             if let Some(e) = &mut g.init {
                 crate::visit::exprs_in(e, &mut |e| visit(e, w));
             }
@@ -593,9 +586,34 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             ..
         } => w.conversions.push(e.ty),
         E::Call {
-            callee: Callee::Intrinsic(I::CatchUnwind | I::CatchUnwindAt),
+            callee:
+                Callee::Intrinsic(i @ (I::CatchUnwind | I::CatchUnwindAt | I::PerfNow | I::DateNow)),
             ..
-        } => w.constructs |= Construct::CatchUnwind.bit(),
+        } => {
+            let clock = matches!(i, I::PerfNow | I::DateNow);
+            w.constructs |= [Construct::CatchUnwind, Construct::Clock][usize::from(clock)].bit();
+        }
+        E::Call {
+            callee:
+                Callee::Intrinsic(
+                    I::WeakMapSet
+                    | I::WeakMapGet
+                    | I::WeakMapHas
+                    | I::WeakMapDelete
+                    | I::WeakMapValue
+                    | I::WeakRefNew
+                    | I::WeakRefDeref
+                    | I::WeakMapDrop
+                    | I::WeakRefDrop,
+                ),
+            ..
+        } => w.constructs |= Construct::Weak.bit(),
+        // A yield or a sleep is a leaf of the executor (velt_vir `sched_rt`: `schedYieldFut`,
+        // `schedSleep`), even kept as a promise in code that is not async.
+        E::Call {
+            callee: Callee::Intrinsic(I::YieldNow | I::Sleep),
+            ..
+        } => w.tasks = true,
         E::Call {
             callee: Callee::Dyn {
                 method_type_args, ..
@@ -745,32 +763,6 @@ fn live_impls(cx: &mut Ctx) {
     }
 }
 
-/// The bit of a kind of type an implementation may be for, other than a class or struct (0 for
-/// the others).
-fn kind_bit(kind: &TyKind) -> u32 {
-    match kind {
-        TyKind::Int(it) | TyKind::Literal(hir::LitValue::Int(it, _)) => 1 << (*it as u32 % 16),
-        TyKind::Float(_) | TyKind::Literal(hir::LitValue::Float(..)) => 1 << 16,
-        TyKind::Bool | TyKind::Literal(hir::LitValue::Bool(_)) => 1 << 17,
-        TyKind::Str | TyKind::Literal(hir::LitValue::Str(_)) => 1 << 18,
-        TyKind::Symbol => 1 << 19,
-        TyKind::Simd(_) => 1 << 20,
-        TyKind::Array(_) => 1 << 21,
-        TyKind::Map(..) => 1 << 22,
-        TyKind::Dyn(..) => 1 << 27,
-        TyKind::Promise(..) => 1 << 24,
-        TyKind::Tuple(_) => 1 << 25,
-        TyKind::FnPtr { .. } | TyKind::Closure(_) => 1 << 26,
-        _ => 0,
-    }
-}
-
-/// The kinds of [`kind_bit`] that gate a root ([`gate`]): values lowering does not make up.
-const GATE_KINDS: u32 = (1 << 21) | (1 << 22) | DYNAMIC | (1 << 24) | (1 << 25) | (1 << 26);
-
-/// The bit of a dynamic type (`any`, `unknown`, `object`, `Function`) among [`kind_bit`]'s.
-const DYNAMIC: u32 = 1 << 23;
-
 #[path = "live_again.rs"]
 mod again;
 #[path = "live_constructs.rs"]
@@ -782,6 +774,7 @@ pub(super) use constructs::def_name;
 use constructs::{demanded_for, evaluate, format_bit, hook_class};
 pub(crate) use constructs::{too_late, Assumed};
 use roots::seed;
+use roots::{kind_bit, DYNAMIC};
 
 #[cfg(test)]
 #[path = "live_tests.rs"]

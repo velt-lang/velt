@@ -29,21 +29,15 @@ pub use catch::{
     velt_rt_catch_take,
 };
 pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
-pub(crate) use losers::give_up;
 pub use losers::velt_rt_fut_detach;
 pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
 pub(crate) use module_state::{
-    drop_at_exit as module_drop_at_exit, held as module_held, mutex_locked, mutex_unlocked,
-    release_outside as module_release_outside, touch as module_touch, used as module_used,
+    held as module_held, mutex_locked, mutex_unlocked, release_outside as module_release_outside,
+    touch as module_touch, used as module_used,
 };
-pub use module_state::{
-    velt_rt_module_block, velt_rt_module_ready, velt_rt_module_state, velt_rt_module_with,
-    velt_rt_module_with_end,
-};
+pub use module_state::{velt_rt_module_with, velt_rt_module_with_end};
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
-pub(crate) use timers::TimerLeaf;
-pub use unhandled::{velt_rt_uncaught_now, velt_rt_unhandled_defer};
 
 use std::cell::Cell;
 use std::future::Future;
@@ -53,7 +47,7 @@ use std::task::{Context, Poll, Waker};
 use self::gate::Gate;
 use self::set::LocalSet;
 use self::timers::Timers;
-use super::all::ResultDropFn;
+use super::ResultDropFn;
 use super::{DropFn, PollFn, VeltFut};
 use std::sync::Arc;
 
@@ -63,7 +57,7 @@ struct TaskCx {
     /// reached from the task's poll uses it re-entrantly.
     set: *mut *mut LocalSet,
     waker: *const Waker,
-    /// The task's id for `velt_rt_task_id` (0 until first asked for).
+    /// The task's id for [`task_key`] (0 until first asked for).
     id: *mut u64,
     /// The task's timers (none until its first `sleep`; timers.rs).
     timers: *mut Option<Arc<Timers>>,
@@ -73,13 +67,6 @@ struct TaskCx {
     /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
     /// can only have been woken by the poll's own code, never by a timer or another event.
     turn: u32,
-    /// Something yielded during this poll (`yieldNow()`): it must not run again before the
-    /// task's next poll (losers.rs).
-    yielded: Cell<bool>,
-    /// The task's root yielded during this poll, itself or through a promise it adopted (whose
-    /// leaves hold its waker): it is not resumed again before the task's next poll, which its
-    /// wake brings. A promise it merely started yields on its own waker.
-    root_yielded: Cell<bool>,
     /// Microtask jobs under way, one inside the other (micro.rs `timer_turn_free`).
     micro_jobs: Cell<u32>,
     /// The task's await word (micro.rs): its queued microtasks plus the synchronous runs under
@@ -116,11 +103,26 @@ fn current_set() -> *mut LocalSet {
     unsafe { *(*tcx).set }
 }
 
-/// Which logical task is being polled (0 outside a task): its [`velt_rt_task_id`], never reused,
-/// and kept by the task's local promises when they outlive its root (the orphan task driving
-/// them has the same id). Shared promises (task/shared.rs) check that they stay on one task.
+/// Which logical task is being polled (0 outside a task): a unique id assigned on first use from
+/// a global counter, never reused, and kept by the task's local promises when they outlive its
+/// root (the orphan task driving them has the same id). Shared promises (task/shared.rs) check
+/// that they stay on one task; the debug cell check keys a cell's owner by it (cell_owner.rs).
+/// Compiled code and std ask the executor in Velt instead (sched_id.velt).
 pub(crate) fn task_key() -> u64 {
-    velt_rt_task_id()
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let tcx = CURRENT.with(Cell::get);
+    if tcx.is_null() {
+        return 0;
+    }
+    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`), and `id` points into the
+    // task's own `SetPtr`, which only this task's polls touch.
+    unsafe {
+        let id = &mut *(*tcx).id;
+        if *id == 0 {
+            *id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        *id
+    }
 }
 
 /// The turn of the task being polled (0 outside a task).
@@ -128,20 +130,6 @@ fn current_turn() -> u32 {
     let tcx = CURRENT.with(Cell::get);
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     unsafe { tcx.as_ref() }.map_or(0, |t| t.turn)
-}
-
-/// `yieldNow()` in the task being polled: what yielded waits for the task's next poll, so no
-/// promise of this poll runs early (losers.rs). `waker` is the yielding code's.
-pub(crate) fn note_yield(waker: &Waker) {
-    let tcx = CURRENT.with(Cell::get);
-    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
-    if let Some(t) = unsafe { tcx.as_ref() } {
-        t.yielded.set(true);
-        // SAFETY: `t.waker` is the waker of the task being polled.
-        if waker.will_wake(unsafe { &*t.waker }) {
-            t.root_yielded.set(true);
-        }
-    }
 }
 
 /// The turn after `turn`: turns count task polls in `1..node::TURNS` (0 means none).
@@ -215,9 +203,7 @@ impl SetPtr {
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
-    /// after its last poll, then run the microtasks that queued. A root that yielded
-    /// (`yieldNow()`) is not polled again in this poll: the wake it made brings the next one,
-    /// after the other ready tasks had their turn.
+    /// after its last poll, then run the microtasks that queued.
     ///
     /// # Safety
     /// `waker` must stay valid during the call.
@@ -234,8 +220,6 @@ impl SetPtr {
                 took: Cell::new(took),
             },
             turn: self.3,
-            yielded: Cell::new(false),
-            root_yielded: Cell::new(false),
             micro_jobs: Cell::new(0),
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
             credit: Cell::new(false),
@@ -244,11 +228,6 @@ impl SetPtr {
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.enter();
         }
-        let root = &mut || {
-            if !tcx.root_yielded.get() {
-                root();
-            }
-        };
         let timers = self.2.as_deref();
         if self.0.is_null() {
             // Only the root can wait for timers here; it is polled below.
@@ -501,10 +480,9 @@ fn current_set_or_new() -> *mut LocalSet {
 /// The owner hands promise `f` to another task (`spawn`, a channel, a settled promise): its
 /// result is transferred with `transfer` (in place, compiled transfer glue) on the task that
 /// produces it, so the other task never sees an object the producing task still references
-/// (#160). A started or lazy promise node keeps the function for when its state finishes; a
-/// race passes it on to its children (the winner's result is theirs); anything else (a join
-/// handle, whose task already had its inputs transferred, or a runtime leaf) produces nothing
-/// to transfer. A null `transfer` (a result with nothing to move or copy) only hands over a
+/// (#160). A started or lazy promise node keeps the function for when its state finishes;
+/// anything else (a join handle, whose task already had its inputs transferred, or a runtime
+/// leaf) produces nothing to transfer. A null `transfer` (a result with nothing to move or copy) only hands over a
 /// holder of a shared promise (task/shared.rs).
 #[no_mangle]
 pub unsafe extern "C-unwind" fn velt_rt_fut_transfer(
@@ -520,9 +498,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_transfer(
     }
     // Whatever its result needs, the promise is the other task's now (#1497).
     node::mark_handed_over(f);
-    if crate::task::race::pass_transfer(f, transfer) {
-        return;
-    }
     if let Some(t) = transfer {
         node::set_transfer(f, t);
     }
@@ -644,29 +619,5 @@ pub unsafe extern "C-unwind" fn velt_rt_futs_handled(
             node::alias_claimed(f);
         }
         node::mark_handled(f, quiet_drop);
-        crate::task::spawn::mark_join_handled(*futs.add(i), quiet_drop);
-    }
-}
-
-/// A unique id of the task being polled (0 outside a task): assigned on first use from a global
-/// counter, never reused, and kept by the task's local promises when they outlive it (they stay
-/// on that one logical task). `new Promise` compares it to decide whether a resolved value stays
-/// on its task or must be copied for another one (stage 2: counted objects never cross tasks,
-/// docs/internals/design/semantics-stage2.md §6).
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_task_id() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    let tcx = CURRENT.with(Cell::get);
-    if tcx.is_null() {
-        return 0;
-    }
-    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`), and `id` points into the
-    // task's own `SetPtr`, which only this task's polls touch.
-    unsafe {
-        let id = &mut *(*tcx).id;
-        if *id == 0 {
-            *id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-        *id
     }
 }

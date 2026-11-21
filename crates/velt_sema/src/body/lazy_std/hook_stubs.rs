@@ -29,6 +29,10 @@
 //! is neither: its calls name a `declare function` typed the same way ([`declared`]), which
 //! never binds, and its module is never loaded. That function is a plain extern to the rest of
 //! the check and to lowering, which calls the object's entry point as it called the runtime's.
+//! A lowered prebuilt hook its constructs demand is declared the same way ([`declared_lowered`]),
+//! and lowering's builder calls the declared function (`velt_vir` `hook_calls.rs`). A program
+//! that loads any of the module's private modules (`prebuilt::private`, the module itself
+//! among them) calls none: the object keeps their state, which would then be in two copies.
 
 use rustc_hash::FxHashMap;
 use velt_common::hook_sig::{FnSig, Mode, Sig, T};
@@ -167,7 +171,10 @@ pub(crate) fn declared(cx: &mut Ctx, index: usize, module: usize) -> Option<DefI
     if let Some(&d) = cx.lazy.stubs.declared.get(&index) {
         return d;
     }
-    let linked = (cx.loads.and_then(|l| l.prebuilt)).is_some_and(|linked| linked(index));
+    let private = prebuilt::private(HOOKS[index].module_entry);
+    let own_loaded = (private.iter()).any(|m| crate::collect::exports::std_module(cx, m).is_some());
+    let linked =
+        !own_loaded && (cx.loads.and_then(|l| l.prebuilt)).is_some_and(|linked| linked(index));
     let d = match (linked, &HOOKS[index].sig) {
         (true, Sig::Fn(sig)) => stub_info(cx, index, sig, module).map(|mut f| {
             f.name = prebuilt::symbol(&HOOKS[index]);
@@ -178,6 +185,20 @@ pub(crate) fn declared(cx: &mut Ctx, index: usize, module: usize) -> Option<DefI
     };
     cx.lazy.stubs.declared.insert(index, d);
     d
+}
+
+/// For lowered hook `h` its constructs demand: whether it is a prebuilt hook whose module is not
+/// loaded and whose object the build links, now declared ([`declared`]), so that its module is
+/// not loaded either. Lowering finds the declared function by its symbol.
+pub(super) fn declared_lowered(cx: &mut Ctx, h: &velt_common::std_hooks::Hook) -> bool {
+    if !h.prebuilt || crate::collect::exports::std_module(cx, &h.module()).is_some() {
+        return false;
+    }
+    let Some(index) = HOOKS.iter().position(|x| x.name == h.name) else {
+        return false;
+    };
+    // Its module, would it be loaded: the prelude's, whose names its signature's types are.
+    declared(cx, index, 0).is_some()
 }
 
 /// The stub's signature: the table's, with its passing modes fixed.
@@ -451,5 +472,12 @@ fn rebind(cx: &mut Ctx, caller: DefId) {
             }
         }
         _ => {}
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Stubs {
+        by_hook, hooks, first_call, at_check, declared, hook_calls,
     }
 }

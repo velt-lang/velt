@@ -1,0 +1,102 @@
+// The cases the runtime's Rust tests of `split`, `trim`, `replace`, `repeat` and `padStart` /
+// `padEnd` had (crates/velt_rt/tests/abi/js_table.rs), which went with that Rust when the methods
+// became Velt code (std/lang/string/, #2198). Each runs on the text as a literal and as a string
+// built at run time, which is a heap string when long enough. The expected output is Node's
+// (this file runs there unchanged, with `main()` called).
+
+/** `s` built at run time: the same text, not the literal's static string. */
+function built(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charAt(i);
+  }
+  return out;
+}
+
+function split(s: string, sep: string) {
+  console.log(JSON.stringify(s.split(sep)), JSON.stringify(built(s).split(built(sep))));
+}
+
+function trims(s: string) {
+  const b = built(s);
+  console.log(
+    JSON.stringify([s.trim(), s.trimStart(), s.trimEnd(), b.trim(), b.trimStart(), b.trimEnd()]),
+  );
+}
+
+function replaces(s: string, from: string, to: string) {
+  const b = built(s);
+  console.log(
+    JSON.stringify([
+      s.replace(from, to),
+      s.replaceAll(from, to),
+      b.replace(from, to),
+      b.replaceAll(from, to),
+    ]),
+  );
+}
+
+function pads(s: string, n: number, fill: string) {
+  const b = built(s);
+  console.log(
+    JSON.stringify([
+      s.padStart(n, fill),
+      s.padEnd(n, fill),
+      b.padStart(n, fill),
+      b.padEnd(n, fill),
+    ]),
+  );
+}
+
+function main() {
+  split("a,b,,c,", ",");
+  split("", ",");
+  split("", "");
+  split("abc", "");
+  split("h\u00e9llo", "");
+  split("a--b--c", "--");
+  split("abc", "abc");
+  split("abc", "x");
+  split("aaa", "aa");
+  split(",", ",");
+  split("a b  c", " ");
+  split("x\u00e9y\u00e9z", "\u00e9");
+  trims("  x  ");
+  trims("\t\n\u000b\f\r \u00a0\u1680\u2000\u200a\u2028\u2029\u202f\u205f\u3000\ufeffx y\ufeff");
+  trims("\u0085x\u0085");
+  trims("");
+  trims("   ");
+  trims("\u180ex");
+  trims("x");
+  trims(" \u00e9 ");
+  replaces("aXbXc", "X", "-");
+  replaces("abc", "", "-");
+  replaces("abc", "b", "[$&]");
+  replaces("abc", "b", "$`");
+  replaces("abc", "b", "$'");
+  replaces("abc", "b", "$$");
+  replaces("abc", "b", "$1");
+  replaces("abc", "b", "$<n>");
+  replaces("abc", "x", "y");
+  replaces("aaa", "aa", "b");
+  replaces("", "", "x");
+  replaces("abc", "b", "$");
+  replaces("h\u00e9\u00e9", "\u00e9", "e");
+  replaces("a.b.c", ".", "$'$`");
+  replaces("xx", "x", "$&$&");
+  replaces("h\u00e9llo", "", "_");
+  console.log(JSON.stringify("ab".repeat(0)));
+  console.log(JSON.stringify("ab".repeat(3)));
+  console.log(JSON.stringify("".repeat(5)));
+  console.log(JSON.stringify("x".repeat(1)));
+  console.log(JSON.stringify("\u00e9".repeat(2)));
+  pads("5", 3, "0");
+  pads("abc", 2, "x");
+  pads("abc", 10, "12345");
+  pads("abc", 6, "");
+  pads("abc", 8, "xy");
+  pads("", 3, "ab");
+  pads("abc", -1, "x");
+  pads("abc", 4, " ");
+  pads("42", 5, "0");
+}

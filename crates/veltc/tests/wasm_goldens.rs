@@ -1,5 +1,6 @@
 //! The goldens on WebAssembly: every `tests/golden/{m1,m2,m3,m4,lang}/*.velt` with a `.out`
-//! file, except the ones using sockets or threads-only features (see [`UNSUPPORTED`]), built
+//! file, except the ones using sockets or threads-only features (see [`UNSUPPORTED`]) and the
+//! ones marked `// requires: unix` or `// requires: windows` ([`needs_an_os`]), built
 //! with `--target wasm32-wasip1` (debug and `--release`) and run under wasmtime by
 //! `velt run`, must print exactly that output and exit with its `.code` (default 0). The M1, M2
 //! and M3 (async) goldens also run as browser modules (`wasm32-unknown-unknown`) through the JS
@@ -54,6 +55,27 @@ const UNSUPPORTED: &[&str] = &[
     "promise_identity_defer_twice",
     "promise_identity_rejection",
     "promise_widen_compare",
+    // The combinators of the executor in Velt settle in the microtask Node runs for their
+    // deciding input, and a promise `resolve` settled resumes its one waiter in the microtask
+    // `resolve` queued; wasm's executor is still the runtime's, which keeps the steps it had.
+    "promise_all_settled_resolver_ticks",
+    "promise_combinator_ticks_pending",
+    "promise_combinator_ticks_settled",
+    "promise_combinator_ticks_stored",
+    "promise_shared_resolve_ticks",
+    // wasm's race is still the runtime's (#3077).
+    "promise_race_inline_children_order",
+    // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
+    // still the runtime's, which keeps it parked (#3247).
+    "promise_abandoned_freed",
+    // The same for a spawned task parked on such a promise (#3126).
+    "task_parked_freed",
+    // wasm's executor is still the runtime's, whose `yieldNow()` wakes at once instead of taking
+    // its turn after the microtasks queued before it, as the executor in Velt does (#3307).
+    "yield_now_order",
+    "yield_now_immediates",
+    "yield_now_due_sleep",
+    "yield_now_turn_passed",
     // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
     // WebAssembly stacks overflow.
     "deep_generator_frames",
@@ -61,7 +83,7 @@ const UNSUPPORTED: &[&str] = &[
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
 
-fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
+fn programs(root: &Path, dirs: &[&str], skip: &[&str], only: Option<&[&str]>) -> Vec<PathBuf> {
     // `VELT_GOLDEN` as in tests/golden.rs: substrings separated by `,`, any of them matches.
     let filter = std::env::var("VELT_GOLDEN").unwrap_or_default();
     let mut filters: Vec<&str> = filter
@@ -82,6 +104,11 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
             p.extension().is_some_and(|e| e == "velt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
+                && match only {
+                    // Named one by one: known to run here, whatever OS it asks for natively.
+                    Some(names) => names.contains(&stem.as_ref()),
+                    None => !needs_an_os(p),
+                }
                 && {
                     // The path in the checkout, as in tests/golden.rs.
                     let rel = p.strip_prefix(root).unwrap_or(p);
@@ -92,6 +119,51 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
     }
     files.sort();
     files
+}
+
+/// Whether the golden's first lines say `// requires: unix` or `// requires: windows`, which
+/// tests/golden.rs skips on the other OS: WebAssembly is neither (no unwinding, so no
+/// `catchPanic`; no POSIX or Win32 functions).
+fn needs_an_os(file: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return false;
+    };
+    text.lines()
+        .take(20)
+        .filter_map(|l| l.trim().strip_prefix("// requires:"))
+        .flat_map(str::split_whitespace)
+        .any(|w| w == "unix" || w == "windows")
+}
+
+#[test]
+fn a_golden_that_needs_an_os_is_skipped() {
+    let dir = std::env::temp_dir().join(format!("velt-wasm-requires-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases = [
+        ("unix.velt", "// requires: unix\nconsole.log(1);\n", true),
+        (
+            "windows.velt",
+            "// requires: windows\nconsole.log(1);\n",
+            true,
+        ),
+        (
+            "crlf.velt",
+            "// requires: unix\r\nconsole.log(1);\r\n",
+            true,
+        ),
+        (
+            "symlinks.velt",
+            "// requires: symlinks\nconsole.log(1);\n",
+            false,
+        ),
+        ("plain.velt", "console.log(1);\n", false),
+    ];
+    for (name, text, skipped) in cases {
+        let p = dir.join(name);
+        std::fs::write(&p, text).unwrap();
+        assert_eq!(needs_an_os(&p), skipped, "{name}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Run one golden; `Err` describes the mismatch.
@@ -167,9 +239,15 @@ const SHARDS: usize = 8;
 /// The wasm32-wasip1 goldens: every file with an `.out` in these directories,
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
-/// the std code written with them, and `random` (its seed is WASI's, through wasi-libc).
+/// the std code written with them, `random` (its seed is WASI's, through wasi-libc),
+/// `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
+/// of its own there), and two ephemeron caches, whose trials call between
+/// std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
+    "clock_reads",
+    "fs_mapped_file_getters",
+    "fs_mapped_file_portable",
     "half_dot",
     "half_dot_bf16_lengths",
     "half_dot_bf16_lengths_short",
@@ -207,6 +285,10 @@ const WASI_STD: &[&str] = &[
     "typed_arrays_basic",
     "typed_arrays_edges",
     "utf8_valid",
+    // The weak core in std calls trace glue, which calls the core's `visit` back: an indirect
+    // call whose signature must match on wasm32 (#3145).
+    "weakmap_ephemeron",
+    "weakmap_nested",
 ];
 
 /// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so each shard gets a
@@ -228,12 +310,8 @@ fn wasi_shard(shard: usize) {
     }
     let root = root();
     build_runtime(&root, "wasm32-wasip1");
-    let mut files = programs(&root, WASI_DIRS, UNSUPPORTED);
-    let std_files = programs(&root, &["std"], &[]);
-    files.extend(std_files.into_iter().filter(|p| {
-        let stem = p.file_stem().unwrap_or_default().to_string_lossy();
-        WASI_STD.contains(&stem.as_ref())
-    }));
+    let mut files = programs(&root, WASI_DIRS, UNSUPPORTED, None);
+    files.extend(programs(&root, &["std"], &[], Some(WASI_STD)));
     files.sort();
     let files = shard_of(&files, shard);
     // A directory of this process's own: shards run at the same time, and a path that a
@@ -285,7 +363,7 @@ wasi_shards! {
 fn wasmtime_shards_cover_every_golden_once() {
     assert_eq!(SHARD_TESTS, (0..SHARDS).collect::<Vec<_>>());
     let root = root();
-    let files = programs(&root, WASI_DIRS, UNSUPPORTED);
+    let files = programs(&root, WASI_DIRS, UNSUPPORTED, None);
     let mut sharded: Vec<PathBuf> = (0..SHARDS).flat_map(|s| shard_of(&files, s)).collect();
     assert_eq!(sharded.len(), files.len(), "a golden is in two shards");
     sharded.sort();
@@ -308,7 +386,7 @@ fn goldens_in_the_browser_glue() {
     let root = root();
     build_runtime(&root, "wasm32-unknown-unknown");
     let skip: Vec<&str> = UNSUPPORTED.iter().chain(NEEDS_FS).copied().collect();
-    let files = programs(&root, &["m1", "m2", "m3"], &skip);
+    let files = programs(&root, &["m1", "m2", "m3"], &skip, None);
     let work = work_dir::work_dir(&root, "golden-work-web");
     let failures = run_all(&files, "wasm32-unknown-unknown", &[None], &work, 4);
     let _ = std::fs::remove_dir_all(&work);

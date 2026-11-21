@@ -47,3 +47,51 @@ export function truncateFd(fd: i32, length: i64): i32 {
 export function fstatFd(fd: i32): Stat | null {
   return null;
 }
+
+export function statPath(path: readonly u8[], follow: bool): Stat | null {
+  return null;
+}
+
+export function listDir(
+  path: readonly u8[],
+  names: string[],
+  types: u8[],
+  unknown: ((child: readonly u8[]) => u8) | null,
+): i32 {
+  return ENOSYS;
+}
+
+export function makeDir(path: readonly u8[], mode: u32): i32 {
+  return -1;
+}
+
+export function removeDir(path: readonly u8[]): i32 {
+  return -1;
+}
+
+export function removeTree(path: readonly u8[]): i32 {
+  return ENOSYS;
+}
+
+export function mapRead(fd: i32, len: usize, offset: i64): usize {
+  return 0;
+}
+
+/** Fails, touching nothing. Unsafe: only so that it has the variants' signature. */
+export unsafe function unmapRead(address: usize, len: usize): i32 {
+  return -1;
+}
+
+export function adviseMap(address: usize, len: usize, advice: i32): i32 {
+  return -1;
+}
+
+/** Fails (ENOSYS), touching nothing. Unsafe: only so that it has the variants' signature. */
+export unsafe function readAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  return -1;
+}
+
+/** Fails (ENOSYS), touching nothing. Unsafe: only so that it has the variants' signature. */
+export unsafe function writeAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  return -1;
+}

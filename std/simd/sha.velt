@@ -3,18 +3,19 @@
 // ones (Intel's `_mm_sha256rnds2_epu32` & co.), named after the instruction, with the operands
 // in its order and lane 0 the low 32 bits.
 //
-// Every method always works: it is the instruction where the CPU has it (`u32x4.hasShaArm()`,
-// `u32x4.hasShaX86()`: the runtime's flags, rt_abi.md "SIMD") and otherwise an exact emulation
+// Every method always works: it is the instruction where the CPU has it (velt/arch's
+// `Sha256.isSupported()` on arm64, `Sha.isSupported()` on x86-64; `u32x4.hasShaArm()` and
+// `u32x4.hasShaX86()` are the older names) and otherwise an exact emulation
 // (std/simd/sha_emulation.velt, from the ARM Architecture Reference Manual's and the Intel SDM's
 // pseudocode). The checks are false on another architecture, on WebAssembly and in debug
 // (Cranelift) builds, and with `VELT_SIMD_DISABLE=sha`, which runs the emulation on a CPU that has
 // the instructions. In release code built for a CPU that has them (`--cpu native`, or a CPU name
-// with SHA) `u32x4.hasShaX86()` is true without reading the flag, and `VELT_SIMD_DISABLE`
-// changes nothing.
+// with SHA) the x86 check is true without reading the CPU's word, and `VELT_SIMD_DISABLE` changes
+// nothing.
 //
-// The instructions are as fast as the checks around them allow: in a loop of them the flag is
+// The instructions are as fast as the checks around them allow: in a loop of them the word is
 // read once, before the loop, and tested in every iteration. In a function gated on the
-// extension (`targetFeature`, std only, as std/crypto/index.velt's) the check is true and the
+// extension (`@targetFeature`, as in std/crypto/index.velt), the check is true and the
 // methods are the bare instructions.
 
 import {
@@ -32,11 +33,9 @@ import {
   sha1Rounds,
   sha256Hash,
 } from "velt/simd/sha_emulation";
+import { Sha256 } from "velt/arch/arm/sha256";
+import { Sha } from "velt/arch/x86/sha";
 
-// Whether the CPU has the ARMv8 SHA instructions (the runtime's `velt_cpu_sha_arm`).
-declare function velt_simd_has_sha_arm(): bool;
-// Whether the CPU has the x86 SHA extensions with SSSE3 and SSE4.1 (`velt_cpu_sha_x86`).
-declare function velt_simd_has_sha_x86(): bool;
 // The instructions themselves: only where the check is true.
 declare function velt_simd_u32x4_sha1c(abcd: u32x4, e: u32, wk: u32x4): u32x4;
 declare function velt_simd_u32x4_sha1p(abcd: u32x4, e: u32, wk: u32x4): u32x4;
@@ -60,19 +59,19 @@ declare function velt_simd_u32x4_sha1msg1(a: u32x4, b: u32x4): u32x4;
 declare function velt_simd_u32x4_sha1msg2(a: u32x4, b: u32x4): u32x4;
 
 extend u32x4 {
-  /** Whether the CPU has the ARMv8 SHA-1/SHA-256 instructions (false off arm64, in debug builds, and with `VELT_SIMD_DISABLE=sha`). */
+  /** Whether the CPU has the ARMv8 SHA-1/SHA-256 instructions (false off arm64, in debug builds, and with `VELT_SIMD_DISABLE=sha`). Deprecated: velt/arch/arm's `Sha256.isSupported()`. */
   static hasShaArm(): bool {
-    return velt_simd_has_sha_arm();
+    return Sha256.isSupported();
   }
 
-  /** Whether the CPU has the x86 SHA extensions, with SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=sha`; true in release code built for a CPU that has them, `--cpu`). */
+  /** Whether the CPU has the x86 SHA extensions, with SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=sha`; true in release code built for a CPU that has them, `--cpu`). Deprecated: velt/arch/x86's `Sha.isSupported()`. */
   static hasShaX86(): bool {
-    return velt_simd_has_sha_x86();
+    return Sha.isSupported();
   }
 
   /** ARM SHA1C: four SHA-1 rounds with the choose function on state `abcd` (a in lane 0), `e` and `wk` (W + K per round). */
   sha1c(e: u32, wk: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha1c(this, e, wk);
     }
     return sha1Rounds(this, e, wk, 0);
@@ -80,7 +79,7 @@ extend u32x4 {
 
   /** ARM SHA1P: four SHA-1 rounds with the parity function. */
   sha1p(e: u32, wk: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha1p(this, e, wk);
     }
     return sha1Rounds(this, e, wk, 1);
@@ -88,7 +87,7 @@ extend u32x4 {
 
   /** ARM SHA1M: four SHA-1 rounds with the majority function. */
   sha1m(e: u32, wk: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha1m(this, e, wk);
     }
     return sha1Rounds(this, e, wk, 2);
@@ -96,7 +95,7 @@ extend u32x4 {
 
   /** ARM SHA1H: `e` rotated left by 30 (the next `e` after four rounds). */
   static sha1h(e: u32): u32 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha1h(e);
     }
     return rol(e, 30);
@@ -104,7 +103,7 @@ extend u32x4 {
 
   /** ARM SHA1SU0: the first half of the SHA-1 message schedule update, of `this` (w0), `w1` and `w2` (each word W0 of its four in lane 0). */
   sha1su0(w1: u32x4, w2: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha1su0(this, w1, w2);
     }
     return emulSha1su0(this, w1, w2);
@@ -112,7 +111,7 @@ extend u32x4 {
 
   /** ARM SHA1SU1: the second half of the SHA-1 message schedule update, of `this` and `w3` (W0 in lane 0). */
   sha1su1(w3: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha1su1(this, w3);
     }
     return emulSha1su1(this, w3);
@@ -120,7 +119,7 @@ extend u32x4 {
 
   /** ARM SHA256H: four SHA-256 rounds, the new `abcd` from `this` (abcd, a in lane 0), `efgh` (e in lane 0) and `wk`. */
   sha256h(efgh: u32x4, wk: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha256h(this, efgh, wk);
     }
     return sha256Hash(this, efgh, wk, true);
@@ -128,7 +127,7 @@ extend u32x4 {
 
   /** ARM SHA256H2: four SHA-256 rounds, the new `efgh` from `this` (efgh, e in lane 0), `abcd` (a in lane 0, as it was before `sha256h`) and `wk`. */
   sha256h2(abcd: u32x4, wk: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha256h2(this, abcd, wk);
     }
     return sha256Hash(abcd, this, wk, false);
@@ -136,7 +135,7 @@ extend u32x4 {
 
   /** ARM SHA256SU0: the first half of the SHA-256 message schedule update, of `this` (w0) and `w1` (W0 in lane 0). */
   sha256su0(w1: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha256su0(this, w1);
     }
     return emulSha256su0(this, w1);
@@ -144,7 +143,7 @@ extend u32x4 {
 
   /** ARM SHA256SU1: the second half of the SHA-256 message schedule update, of `this`, `w2` and `w3` (W0 in lane 0). */
   sha256su1(w2: u32x4, w3: u32x4): u32x4 {
-    if (velt_simd_has_sha_arm()) {
+    if (Sha256.isSupported()) {
       return velt_simd_u32x4_sha256su1(this, w2, w3);
     }
     return emulSha256su1(this, w2, w3);
@@ -156,7 +155,7 @@ extend u32x4 {
    * instruction's implicit `xmm0`).
    */
   sha256rnds2(abef: u32x4, wk: u32x4): u32x4 {
-    if (velt_simd_has_sha_x86()) {
+    if (Sha.isSupported()) {
       return velt_simd_u32x4_sha256rnds2(this, abef, wk);
     }
     return emulSha256rnds2(this, abef, wk);
@@ -164,7 +163,7 @@ extend u32x4 {
 
   /** x86 SHA256MSG1: the first part of the SHA-256 message schedule, of `this` and `b` (W0 in lane 0). */
   sha256msg1(b: u32x4): u32x4 {
-    if (velt_simd_has_sha_x86()) {
+    if (Sha.isSupported()) {
       return velt_simd_u32x4_sha256msg1(this, b);
     }
     return emulSha256msg1(this, b);
@@ -172,7 +171,7 @@ extend u32x4 {
 
   /** x86 SHA256MSG2: the last part of the SHA-256 message schedule, of `this` and `b` (W0 in lane 0). */
   sha256msg2(b: u32x4): u32x4 {
-    if (velt_simd_has_sha_x86()) {
+    if (Sha.isSupported()) {
       return velt_simd_u32x4_sha256msg2(this, b);
     }
     return emulSha256msg2(this, b);
@@ -187,7 +186,7 @@ extend u32x4 {
     if (func > 3) {
       panic("RangeError: u32x4.sha1rnds4: func must be 0, 1, 2 or 3");
     }
-    if (velt_simd_has_sha_x86()) {
+    if (Sha.isSupported()) {
       if (func == 0) {
         return velt_simd_u32x4_sha1rnds4_0(this, ewk);
       }
@@ -204,7 +203,7 @@ extend u32x4 {
 
   /** x86 SHA1NEXTE: `b` with the next E (from lane 3 of `this`, rotated left by 30) added to its lane 3. */
   sha1nexte(b: u32x4): u32x4 {
-    if (velt_simd_has_sha_x86()) {
+    if (Sha.isSupported()) {
       return velt_simd_u32x4_sha1nexte(this, b);
     }
     return b.withLane(3, b.lane(3) + rol(this.lane(3), 30));
@@ -212,7 +211,7 @@ extend u32x4 {
 
   /** x86 SHA1MSG1: the first part of the SHA-1 message schedule, of `this` and `b` (W0 in lane 3, as Intel's state). */
   sha1msg1(b: u32x4): u32x4 {
-    if (velt_simd_has_sha_x86()) {
+    if (Sha.isSupported()) {
       return velt_simd_u32x4_sha1msg1(this, b);
     }
     return emulSha1msg1(this, b);
@@ -220,7 +219,7 @@ extend u32x4 {
 
   /** x86 SHA1MSG2: the last part of the SHA-1 message schedule, of `this` and `b` (W0 in lane 3, as Intel's state). */
   sha1msg2(b: u32x4): u32x4 {
-    if (velt_simd_has_sha_x86()) {
+    if (Sha.isSupported()) {
       return velt_simd_u32x4_sha1msg2(this, b);
     }
     return emulSha1msg2(this, b);

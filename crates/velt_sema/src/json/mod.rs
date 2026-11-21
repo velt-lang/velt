@@ -32,7 +32,6 @@ use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::inst_sites::{carry_guard, constructed, for_each_init, guards_of};
 use crate::object_copies::Seen;
 use crate::types::children;
-use crate::visit;
 
 pub(crate) mod handles;
 mod identity;
@@ -90,6 +89,11 @@ impl Uses {
 /// their guard bits (`inst_sites::carry_guard`).
 type Needs = FxHashMap<DefId, Vec<(TyId, Need, u64)>>;
 
+/// A finished unit's needs (`Ctx::json_needs`, `crate::units`), which a later unit's check
+/// starts from.
+#[derive(Clone, Default)]
+pub(crate) struct JsonNeeds(Needs);
+
 pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut uses = collect(cx);
     let mut dispatch = Dispatch::default();
@@ -111,7 +115,8 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         .collect();
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
-    let mut needs: Needs = FxHashMap::default();
+    // What a finished unit's functions need (its summary), then the unit's own.
+    let mut needs: Needs = cx.json_needs.0.clone();
     let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
@@ -156,6 +161,9 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         }
     }
     add_work(Pass::Json, work);
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.json_needs = JsonNeeds(needs);
+    }
 }
 
 /// The types a function needs: those it gives the JSON intrinsics, those of the generic
@@ -240,14 +248,16 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         lookers: &lookers,
     };
     let mut bodies: Vec<(DefId, Uses, News)> = vec![];
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    // The unit's definitions (`crate::units`): a finished unit's come with its summary.
+    let base = cx.unit_base as usize;
+    for (i, d) in cx.defs.iter().enumerate().skip(base) {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
         let mut seen: FxHashSet<TyId> = FxHashSet::default();
         walk.ids.f = DefId(i as u32);
-        let guards = guards_of(walk.ids.tys, &mut f.body.block);
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        let guards = guards_of(walk.ids.tys, &f.body.block);
+        crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
             let guard = guards.get(&(e as *const Expr)).copied().unwrap_or(0);
             walk.expr(&mut u, &mut news, &mut seen, e, guard);
         });
@@ -257,7 +267,10 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     walk.ids.f = crate::copy_flow::GLOBAL;
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
     let tys = walk.ids.tys;
-    for_each_init(tys, &mut cx.info, true, &mut |_, d, e| {
+    for_each_init(tys, &cx.info, true, &mut |_, d, e| {
+        if (d.0 as usize) < base {
+            return;
+        }
         let (u, news, seen) = inits.entry(d).or_default();
         walk.expr(u, news, seen, e, 0);
     });
@@ -370,5 +383,18 @@ impl Ctx<'_> {
     /// Is type definition `d` declared in a std module?
     pub(crate) fn declared_in_std(&self, d: DefId) -> bool {
         self.adt(d).is_some_and(|a| self.scopes[a.module].is_std)
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field and variant, so a new one fails to
+// build.
+crate::units::codec::tuples! {
+    JsonNeeds(needs)
+}
+crate::units::codec::enums! {
+    Need {
+        0 => NoLock,
+        1 => Json(how),
+        2 => Seen(how),
     }
 }

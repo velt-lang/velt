@@ -22,7 +22,7 @@ import * as sh from "./sched_share";
 import * as t from "./sched_task";
 
 /** A node's flag: it is a converted promise standing for another (its side block's alias). */
-const ALIASED: u32 = 8192;
+export const ALIASED: u32 = 8192;
 
 /**
  * `velt_rt_fut_alias` (the hook lowering calls under `VELT_SCHEDULER=std`): converted promise `w`
@@ -86,7 +86,7 @@ export function holder(n: usize): usize {
  * The owner of node `n` took its result or handed it to a handler: if `n` is converted, a claim of
  * the promise it stands for.
  */
-@inline
+@inline("always")
 export function claimed(n: usize): void {
   if ((m.load32(n + nd.N_FLAGS) & ALIASED) !== 0) {
     claimedSlow(n);
@@ -102,13 +102,13 @@ function claimedSlow(n: usize): void {
  * The drop glue for node `n`'s result nobody claimed (`rdrop`, which reports a rejection), or its
  * quiet one when it is converted and someone handled the promise it stands for.
  */
-@inline
+@inline("always")
 export function resultDrop(n: usize, rdrop: usize): usize {
   return handledElsewhere(n) ? m.ld(x.get(n) + x.X_QUIET) : rdrop;
 }
 
 /** Did someone handle the promise converted node `n` stands for (its rejection is quiet)? */
-@inline
+@inline("always")
 export function handledElsewhere(n: usize): bool {
   if ((m.load32(n + nd.N_FLAGS) & ALIASED) === 0) {
     return false;
@@ -117,12 +117,23 @@ export function handledElsewhere(n: usize): bool {
 }
 
 /**
+ * Node `n` rejected (sched_node.velt `run`): its owner may claim the result on another worker, so
+ * it keeps where it threw (the state's poll is not needed any more), published before FINISHED.
+ * Out of line: `run` is inlined at every start.
+ */
+@noInline
+export function keepWhereThrown(n: usize): void {
+  loc.keep(n + nd.N_FLAGS, n + nd.N_HEAD + 16, n + nd.N_POLL);
+  keepLoc(n);
+}
+
+/**
  * Converted node `n` finished with an error but no location of its own (the conversion's glue
  * raised it again, which records none): it keeps the location the promise it stands for threw at
  * (sched_node_loc.velt), so its report points at the `throw`. That promise's node is alive: the
  * holder `n` keeps is one of its roles.
  */
-@inline
+@inline("always")
 export function keepLoc(n: usize): void {
   if ((m.load32(n + nd.N_FLAGS) & (ALIASED | loc.LOC)) === ALIASED) {
     keepLocSlow(n);
@@ -143,7 +154,7 @@ function keepLocSlow(n: usize): void {
 }
 
 /** The owner of node `n` drops it: a converted one gives up its holder (on the promise's task). */
-@inline
+@inline("always")
 export function forget(n: usize): void {
   if ((m.load32(n + nd.N_FLAGS) & ALIASED) !== 0) {
     forgetSlow(n);

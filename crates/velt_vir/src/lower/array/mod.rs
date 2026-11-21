@@ -4,9 +4,16 @@
 //! doubling (the shared `ArrayGrow` helper, starting at 4). A buffer has its element's
 //! alignment, and `LINE_ALIGN` when the element's size is a multiple of 64 bytes, so each element
 //! of such an array is whole cache lines ([`FnLower::stride`]). `cap == 0` with elements is a
-//! buffer the array does not own: a module constant table's read-only data (`table_read` in
-//! `expr.rs`), seen only by the code that reads an element, the length or iterates. Indexing is
-//! bounds-checked
+//! buffer the array does not own, which nothing may write, grow or free. There are two: a
+//! module constant table's read-only data (`table_read` in `expr.rs`), seen only by the code
+//! that reads an element, the length or iterates; and memory at an address (the std-only
+//! `addressArray`, docs/internals/design/intrinsics.md "Memory at an address"), which is a value:
+//! it is passed, transferred to other tasks and dropped ([`FnLower::free_buffer`] frees nothing
+//! when `cap == 0`, and a copy sizes from `len` and owns its buffer). What keeps that one sound
+//! is not here: std hands it out only inside a `shared<T[]>`, which sema refuses to write or
+//! grow. Such an array can have an owner (`addressArrayOwned`): `cap` is then the address of
+//! the owner's block with the top bit set ([`OWNER`]), and `free_buffer` calls the function in
+//! the block's first word with the block instead of freeing. Indexing is bounds-checked
 //! (the `Oob` helper panics with `index out of bounds: the len is L but the index is I`).
 //! A buffer holds at most [`crate::MAX_ARRAY_LEN`] bytes, so an array at most that many
 //! elements (fewer of larger ones, [`max_elems`]) and a byte size never wraps. It is checked where
@@ -19,6 +26,11 @@
 
 mod builtins;
 mod ops;
+mod spread_param;
+
+/// The top bit of `cap`: the buffer is not the array's, and the rest of `cap` is the address of
+/// its owner's block (`addressArrayOwned`). A capacity is never that large ([`crate::MAX_ARRAY_LEN`]).
+pub(super) const OWNER: u64 = 1 << 63;
 
 /// A cache line, in bytes, on most CPUs: elements whose size is a multiple of it are whole lines.
 const LINE: u32 = 64;
@@ -171,7 +183,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Array value `{ data, len, cap }` registered as an owned temp of concrete type `ty`.
-    fn array_value(&mut self, ty: TyId, data: Operand, len: Operand, cap: Operand) -> Operand {
+    pub(super) fn array_value(
+        &mut self,
+        ty: TyId,
+        data: Operand,
+        len: Operand,
+        cap: Operand,
+    ) -> Operand {
         let a = self.cx.array_agg();
         let t = self.temp(Ty::Agg(a));
         self.assign(Place::local(t), Rvalue::Aggregate(a, vec![data, len, cap]));
@@ -231,12 +249,33 @@ impl FnLower<'_, '_> {
     pub(super) fn free_buffer(&mut self, arr: &Place, elem: TyId) {
         let (stride, align) = self.stride(elem);
         let cap = Self::arr_field(arr, 2);
-        let has = self.rvalue_temp(
+        // One test on the usual path: a capacity read as a signed number is positive for a
+        // buffer of the array's own, 0 for none, and negative for one with an owner
+        // (`addressArrayOwned`: the owner's block with the top bit set, [`OWNER`]).
+        let signed = self.rvalue_temp(Ty::I64, Rvalue::Cast(cap.clone(), Ty::I64));
+        let own = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Ne, cap.clone(), cint(0, Ty::U64)),
+            Rvalue::Binary(BinOp::Gt, signed.clone(), cint(0, Ty::I64)),
         );
-        let (free_bb, join) = (self.new_block(), self.new_block());
-        self.branch(has, free_bb, join);
+        let (other_bb, free_bb, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(own, free_bb, other_bb);
+        self.switch_to(other_bb);
+        let owned = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Lt, signed, cint(0, Ty::I64)),
+        );
+        let release_bb = self.new_block();
+        self.branch(owned, release_bb, join);
+        self.switch_to(release_bb);
+        // The block's first word is the function to call with it.
+        let block = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::BitXor, cap.clone(), cint(OWNER as i128, Ty::U64)),
+        );
+        let block = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(block, Ty::Ptr));
+        let f = self.cx.func(Work::ArrayOwnerDrop);
+        self.call(vir::Callee::Func(f), vec![block], None, false);
+        self.goto(join);
         self.switch_to(free_bb);
         let size = self.rvalue_temp(
             Ty::U64,

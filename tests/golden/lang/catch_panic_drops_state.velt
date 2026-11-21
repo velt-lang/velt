@@ -1,0 +1,163 @@
+// check: no leaks
+// requires: unix
+// (The drops below are the cleanup pads', which exist where panics unwind as Itanium exceptions:
+// Linux and macOS. On Windows a caught panic leaks what the abandoned frames held, as before.)
+// A caught panic drops what the panicked async functions and generators held across their
+// awaits and yields, each value once, with the futures they awaited (#2818): the cleanup pads
+// of a poll function dropped only the frame's temporaries, and everything in the state leaked
+// with it, about 5 KB a panic in a server whose handler panics.
+import { catchPanic, PanicError } from "velt/task";
+
+class Held {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  [Symbol.dispose]() {
+    console.log("  freed " + this.name);
+  }
+}
+
+function fail(why: string): number {
+  panic(why);
+}
+
+function take(h: Held): number {
+  return h.name.length;
+}
+
+// Holds `h` and `xs` across an await, then panics.
+async function leaf(tag: string): Promise<number> {
+  const h = new Held(tag + ".leaf");
+  const xs = [tag, tag];
+  await yieldNow();
+  return fail(tag + " panicked") + xs.length + h.name.length;
+}
+
+// An awaited call: its state is a part of this one's.
+async function nested(tag: string): Promise<number> {
+  const h = new Held(tag + ".nested");
+  await yieldNow();
+  const n = await leaf(tag);
+  return n + h.name.length;
+}
+
+// A started promise, awaited later.
+async function started(tag: string): Promise<number> {
+  const h = new Held(tag + ".started");
+  const p = leaf(tag);
+  await yieldNow();
+  await yieldNow();
+  return (await p) + h.name.length;
+}
+
+// One value given away after the await, one made on one path only, one made after it.
+async function moved(tag: string, both: boolean): Promise<number> {
+  const gone = new Held(tag + ".moved");
+  let maybe: Held | null = null;
+  if (both) {
+    maybe = new Held(tag + ".maybe");
+  }
+  await yieldNow();
+  const n = take(gone);
+  const late = new Held(tag + ".late");
+  await yieldNow();
+  return n + fail(tag + " panicked") + late.name.length + (maybe ? 1 : 0);
+}
+
+// Panics on a later turn of a loop that awaits.
+async function looped(tag: string): Promise<number> {
+  let total = 0;
+  for (let i = 0; i < 3; i++) {
+    const h = new Held(tag + ".turn" + i);
+    await yieldNow();
+    if (i === 1) {
+      total += fail(tag + " panicked");
+    }
+    total += h.name.length;
+  }
+  return total;
+}
+
+function* counted(tag: string): Generator<number> {
+  const h = new Held(tag + ".generator");
+  yield 1;
+  yield fail(tag + " panicked") + h.name.length;
+}
+
+async function throughGenerator(tag: string): Promise<number> {
+  const h = new Held(tag + ".caller");
+  let total = 0;
+  await yieldNow();
+  for (const v of counted(tag)) {
+    total += v;
+  }
+  return total + h.name.length;
+}
+
+async function* stream(tag: string): AsyncGenerator<number> {
+  const h = new Held(tag + ".stream");
+  yield 1;
+  await yieldNow();
+  yield fail(tag + " panicked") + h.name.length;
+}
+
+async function throughStream(tag: string): Promise<number> {
+  let total = 0;
+  for await (const v of stream(tag)) {
+    total += v;
+  }
+  return total;
+}
+
+// Finishes after its sibling has panicked.
+async function slow(tag: string): Promise<number> {
+  const h = new Held(tag + ".slow");
+  await yieldNow();
+  await yieldNow();
+  await yieldNow();
+  return h.name.length;
+}
+
+// A join's other child is still pending when one panics: the join's children are compiled into
+// this state, and the pad of the child's poll drops them as the `await`'s cancellation does.
+async function joined(tag: string): Promise<number> {
+  const h = new Held(tag + ".joined");
+  const rs = await Promise.all([leaf(tag), slow(tag)]);
+  return rs[0] + rs[1] + h.name.length;
+}
+
+// The same through an array: the promises are started, so the sibling runs on and frees what
+// it holds when it finishes.
+async function joinedArray(tag: string): Promise<number> {
+  const h = new Held(tag + ".array");
+  const ps = [leaf(tag), slow(tag)];
+  const rs = await Promise.all(ps);
+  return rs[0] + rs[1] + h.name.length;
+}
+
+async function attempt(what: string, run: () => Promise<number>): Promise<void> {
+  console.log(what);
+  try {
+    console.log("  result", await catchPanic(run));
+  } catch (e) {
+    console.log("  caught", e instanceof PanicError);
+  }
+}
+
+async function main() {
+  await attempt("leaf", () => leaf("a"));
+  await attempt("nested", () => nested("b"));
+  await attempt("started", () => started("c"));
+  await attempt("moved", () => moved("d", true));
+  await attempt("moved, one path", () => moved("e", false));
+  await attempt("looped", () => looped("f"));
+  await attempt("generator", () => throughGenerator("g"));
+  await attempt("async generator", () => throughStream("h"));
+  await attempt("joined", () => joined("i"));
+  await attempt("joined, array", () => joinedArray("j"));
+  for (let i = 0; i < 6; i++) {
+    await yieldNow();
+  }
+  console.log("done");
+}

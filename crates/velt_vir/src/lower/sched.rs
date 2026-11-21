@@ -3,10 +3,10 @@
 //! where it would call the runtime's executor: `velt_main`'s root (`velt_rt_block_on`), a spawn
 //! from an initial state (`velt_rt_spawn`, `velt_rt_spawn_transfer`) or of a heap future
 //! (`velt_rt_spawn_fut`), the pin of the next spawn to a worker (`velt_rt_spawn_target`),
-//! `await yieldNow()`
-//! (`velt_rt_yield_now`), boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`,
-//! `_start_rejecting`), what `console.log` peeks at (`velt_rt_fut_peek`), the hand-over of a
-//! promise to another task (`velt_rt_fut_transfer`), the microtask step of `await`
+//! `await yieldNow()` (`velt_rt_yield_now`) and a stored `yieldNow()` (`velt_rt_yield_now_fut`),
+//! boxed and started promises (`velt_rt_fut_box`, `velt_rt_fut_start`, `_start_rejecting`), what
+//! `console.log` peeks at (`velt_rt_fut_peek`), the hand-over of a promise to another task
+//! (`velt_rt_fut_transfer`), the microtask step of `await`
 //! (`velt_rt_await_tick`, `_ready`), the
 //! prelude's microtasks (`velt_rt_microtask`), the process lifetime (keep-alive references,
 //! a due `unref()`'d timer's question, the top-level `await` waiting now: `velt_rt_tla_at`),
@@ -57,8 +57,64 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The start (`enter`) or end of an exported function's call from C (c_export.rs): the tasks
+    /// a C library's thread starts during the call wait for its end (sched_foreign.velt). Nothing
+    /// for a program that runs nothing on the executor.
+    pub(super) fn sched_export_call(&mut self, enter: bool) {
+        let hook = if enter {
+            velt_common::std_hook!(sched_export_enter)
+        } else {
+            velt_common::std_hook!(sched_export_exit)
+        };
+        if !self.std_sched() || !self.sched_hook_live(hook) {
+            return;
+        }
+        if enter {
+            hooks::sched_export_enter(self).emit(self);
+        } else {
+            hooks::sched_export_exit(self).emit(self);
+        }
+    }
+
+    /// std's `cpuStart` (std/lang/hooks/cpu.velt): the CPU's feature word and the start-up check
+    /// of the build's requirement, `velt_main`'s step before any other Velt code.
+    pub(super) fn cpu_start(&mut self) {
+        if self.sched_hook_live(velt_common::std_hook!(cpu_start)) {
+            hooks::cpu_start(self).emit(self);
+        }
+    }
+
     fn sched_hook_live(&self, name: &str) -> bool {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
+    }
+
+    /// Does module state go to module_blocks.velt's hooks: a native program that sema found with
+    /// module state (velt_sema `lazy_std` `module_hooks`, #2196 9c) and without the executor (which
+    /// has its own, `module_sched`)? Else the runtime's entries (a wasm target's).
+    pub(super) fn module_hooks(&self) -> bool {
+        self.std_sched()
+            && !self.cx.module_sched()
+            && self.module_hook_live(velt_common::std_hook!(module_state))
+    }
+
+    /// Can lowering call module_blocks.velt's hook `name`: sema declared the hooks in the
+    /// module's object (prebuilt, the module not loaded; all of them or none), or checked it?
+    fn module_hook_live(&self, name: &str) -> bool {
+        let declared = *self.cx.module_hooks_declared.get_or_init(|| {
+            let index = velt_common::std_hooks::hook_index::module_state;
+            let hook = &velt_common::std_hooks::HOOKS[index];
+            self.cx.hook_declared(hook).is_some()
+        });
+        declared || self.sched_hook_live(name)
+    }
+
+    /// Does a synchronous `main` that starts no tasks end with module_blocks.velt's `moduleExit`
+    /// (the blocks go at a counted normal end)? Whenever sema loaded it (a native program with
+    /// module state): its blocks are module_blocks.velt's whether they were reached through its
+    /// own hooks or the executor's (sched_module.velt), and without tasks no `schedFinish` drops
+    /// them.
+    pub(super) fn module_exit_live(&self) -> bool {
+        self.std_sched() && self.module_hook_live(velt_common::std_hook!(module_exit))
     }
 
     /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
@@ -85,7 +141,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
-    fn as_usize(&mut self, op: Operand) -> Operand {
+    pub(super) fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))
     }
 
@@ -171,6 +227,15 @@ impl FnLower<'_, '_> {
         hooks::sched_yield(self, ty::USize::arg(cx)).emit(self);
     }
 
+    /// `await yieldNow()`'s question when it resumes: 1 (a `u32`) to go on, 0 to stay suspended,
+    /// when the poll it yielded in polls it again (#3241).
+    pub(super) fn sched_yield_ready(&mut self, cx: Operand) -> Operand {
+        let cx = self.as_usize(cx);
+        hooks::sched_yield_ready(self, ty::USize::arg(cx))
+            .emit(self)
+            .op()
+    }
+
     /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to
     /// completion.
     pub(super) fn sched_finish(&mut self, code: &Operand) {
@@ -235,6 +300,7 @@ impl FnLower<'_, '_> {
                 | Rt::TlaAt
                 | Rt::SpawnTarget
                 | Rt::Sleep
+                | Rt::YieldNowFut
                 | Rt::CellUse
                 | Rt::CellGive
                 | Rt::CellCopy
@@ -341,6 +407,9 @@ impl FnLower<'_, '_> {
                     hooks::sched_pinned(self, ty::I64::arg(w.clone())).emit(self);
                     None
                 }
+                // A stored `yieldNow()` (sched_yield.velt `schedYieldFut`): a leaf ready on its
+                // second poll.
+                (Rt::YieldNowFut, []) => Some(hooks::sched_yield_fut(self).emit(self).op()),
                 (Rt::Sleep, [ms]) => Some(
                     hooks::sched_sleep(self, ty::I64::arg(ms.clone()))
                         .emit(self)
@@ -434,7 +503,8 @@ impl FnLower<'_, '_> {
     }
 
     /// `velt_rt_cell_new`'s job under the executor in Velt (sched_cells.velt): the new cell `ptr`
-    /// of the variable whose name is at `name` (a string's address). False (nothing emitted) for the runtime's executor.
+    /// of the variable whose name is at `name` (a string's address). False (nothing emitted) for
+    /// the runtime's executor.
     pub(super) fn sched_cell_new(&mut self, ptr: Operand, name: Operand) -> bool {
         if !self.std_cells() {
             return false;

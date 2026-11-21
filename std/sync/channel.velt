@@ -189,7 +189,7 @@ function take<T>(b: usize): T {
  * whether it waits for it or comes later, so this thread's output is published first (#249): out
  * of line, and only when this thread wrote to stdout, while the lock is held.
  */
-@inline
+@inline("always")
 function freeRoom(b: usize): usize {
   publishOutput();
   return wakeFirst(b, SEND);

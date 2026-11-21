@@ -149,6 +149,13 @@ impl Ctx<'_> {
             return t;
         }
         let c = |cx: &mut Self, x: TyId| cx.canon_depth(x, depth + 1);
+        // A read-only array stays one (its kind is its array's: `Types::readonly_array`).
+        if let (true, &TyKind::Array(e)) = (self.ty.is_readonly_array(t), self.ty.kind(t)) {
+            let e = c(self, e);
+            let out = self.ty.readonly_array(e);
+            self.canon_memo.insert(t, out);
+            return out;
+        }
         let k = match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|a| c(self, *a)).collect()),
             TyKind::Dyn(d, args) => TyKind::Dyn(d, args.iter().map(|a| c(self, *a)).collect()),
@@ -456,6 +463,19 @@ impl Ctx<'_> {
                 .collect();
             let (twin, _) = self.anon_def_with(&plain, module);
             self.readonly_twins.insert(d, (twin, None));
+        } else if norm.iter().any(|f| self.plain_arrays(f.ty) != f.ty) {
+            // A field holding a read-only array (`{ xs: readonly number[] }`, #3061) is the
+            // plain field for lowering too: one object, which a `{ xs: number[] }` converts to
+            // (`readonly_nested`).
+            let plain: Vec<ShapeField> = norm
+                .iter()
+                .map(|f| ShapeField {
+                    ty: self.plain_arrays(f.ty),
+                    ..f.clone()
+                })
+                .collect();
+            let (twin, _) = self.anon_def_with(&plain, module);
+            self.array_twins.insert(d, twin);
         }
         (d, params)
     }
@@ -715,4 +735,15 @@ pub(crate) fn has_presence(ty: &crate::types::Types, kind: AdtKind, f: &FieldInf
 /// (`crate::absent_fields`).
 pub(crate) fn absent_is_null(ty: &crate::types::Types, kind: AdtKind, f: &FieldInfo) -> bool {
     f.optional && kind != AdtKind::Class && !has_presence(ty, kind, f)
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    ObjectState {
+        frozen, frozen_defs, null_proto_records, record_accessors, ctor_reads, record_fills,
+        brands, hidden, layouts, class_values, expansive_cut,
+    }
+    ShapeField {
+        name, ty, readonly, optional,
+    }
 }

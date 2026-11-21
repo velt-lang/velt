@@ -4,18 +4,33 @@
 // strings with escapes are decoded while parsing), and each array's elements and each object's keys
 // listed together in one array of positions, so `at(i)` is O(1).
 //
-// A tape's values never change after it is built (only `find` adds the hash index of a large
-// object it searches); values share it. Editing a value (`set`, `push`, …) turns that value into
-// the runtime's tree (prelude `JsonValue`), so it never shows through the tape.
+// Frozen once parsed (#3098): the parser fills a `TapeBuilder` (tape_builder.velt: the words, the
+// kids, `decoded`) on its own task, and only then makes the `Tape`, a struct (its fields
+// never change), which `JsonValue` puts in a `shared(...)`: the box holds the struct itself, so a
+// read reaches the arrays with one pointer step fewer than through an object. From then on every
+// task reads it through that `shared<Tape>` (tape_ref.velt), with no writes and no count changes
+// (sema refuses writes through a shared value; lowering reads it frozen), so the values of a
+// document sent to other tasks share one tape instead of copying it. What a reader adds later is
+// not the tape's: the hash index of a wide object lives in the `TapeRef` (tape_ref.velt), which
+// a task's values share and a crossing to another task copies. A `TapeRef` reached from several
+// cores at once is NOT safe: see tape_ref.velt on frozen constants (#1487) and unlocked module
+// state (#2726). Editing a value (`set`, `push`, …) turns that value into the runtime's tree
+// (prelude `JsonValue`), so it never shows through the tape.
+//
+// The readers are functions, not methods of the struct: a struct method is handed its own copy of
+// the struct where it can't be read in place (a method call that isn't inlined, or a result that
+// may refer into it), and a copy taken out of a `shared` box copies the arrays too. A parameter is
+// read in place. The reads every value goes through (kind, number, child, `find` in a small
+// object) are `TapeRef`'s own, straight out of the box (tape_ref.velt says why).
 
-import { noInline, strByteAt, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
+import { inline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
-declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
-declare function velt_simd_mask8x16_all(m: mask8x16): bool;
 
-/** Objects with more keys than this get a hash index (`find`), built on their first lookup. */
+/** Objects with more keys than this get a hash index (`TapeRef.find`), made on first lookup. */
 export const INDEX_THRESHOLD: usize = 16;
+/** What `findOther` returns for an object over `INDEX_THRESHOLD` keys: look it up in the index. */
+export const FIND_WIDE: i64 = -2;
 /** Value kinds (the low byte of a value's first word). */
 export const T_NULL: u64 = 1;
 export const T_FALSE: u64 = 2;
@@ -26,14 +41,14 @@ export const T_ARRAY: u64 = 6;
 export const T_OBJECT: u64 = 7;
 
 /**
- * A string's first word: bit 8 is set when it had escapes (its text is `decoded[second word]`;
- * otherwise the second word is `start | end << 32`, a byte range of the source), and bits 32
- * and up hold its UTF-16 length.
+ * A string's first word: bit 8 is set when it had escapes, and bits 32 and up hold its UTF-16
+ * length. Its second word is `start | end << 32`, a byte range of the source, or, when it had
+ * escapes, the index of its text in `decoded`.
  */
 export const ESCAPED: u64 = 0x100;
 /**
  * An object's first word: bit 9 is set when a key is repeated (its value is the last one), bit
- * 10 when it has a member list in `ordered`, bit 11 when a key had escapes.
+ * 10 when it has a member list (`Tape`), bit 11 when a key had escapes.
  */
 export const REPEATED: u64 = 0x200;
 export const ORDERED: u64 = 0x400;
@@ -41,251 +56,140 @@ export const ESCAPED_KEY: u64 = 0x800;
 
 /**
  * A parsed document. Value `v`'s words are `words[2v]` (kind, and a container's member count
- * from bit 32) and `words[2v + 1]` (a number's bits, a string's range or decoded index, a
+ * from bit 32) and `words[2v + 1]` (a number's bits, a string's byte range, a
  * container's first position in `kids`). An array's `kids` are its elements; an object's are its
  * key strings, each followed on the tape by its value (`key + 1`). Value 0 is the root.
  *
- * Every lookup is O(1) but `find` in a small object (at most `INDEX_THRESHOLD` keys, compared in
- * place), so walking any value is linear in its size.
+ * An object whose members are not its keys in order (index-like or repeated keys, flagged
+ * `ORDERED`) has its member list in `kids` right after its keys: its length, then one key
+ * position per distinct key, in JS order (a repeated key's is its last occurrence, whose value is
+ * the one that counts, at the place of its first).
+ *
+ * Every lookup is O(1) but `find` in a small object (at most `INDEX_THRESHOLD` keys, compared
+ * in place), so walking any value is linear in its size.
  */
-export class Tape {
+export struct Tape {
   src: string;
-  words: u64[] = [];
-  kids: u32[] = [];
-  /** The text of the strings that had escapes (such a string's second word indexes it). Made
-   *  with the first one: a tape without escapes (and its copy) allocates no array for it. */
-  decoded: string[] | null = null;
-  /** Objects whose members are not their keys in order (index-like or repeated keys, flagged
-   *  `ORDERED`): one key position per distinct key, in JS order; a repeated key's is its last
-   *  occurrence (whose value is the one that counts), at the place of its first. Made with
-   *  the first such object, so a tape without one (and its copy) allocates no map. */
-  ordered: Map<u32, u32[]> | null = null;
-  /** The hash index of each object over `INDEX_THRESHOLD` keys that `find` was asked about:
-   *  key text to the value's position (a repeated key's last). A cache: the tape is unchanged.
-   *  Made with the first such lookup. */
-  index: Map<u32, Map<string, u32>> | null = null;
+  words: u64[];
+  kids: u32[];
+  /**
+   * The texts of the strings that had escapes, each stored once (such a string's second word is
+   * its index here), so a read shares the stored string instead of making one. Read through an
+   * argument (`wordText`, `writeFrom`), as the other arrays are.
+   */
+  decoded: string[];
+}
 
-  constructor(src: string) {
-    this.src = src;
+/** A container's member count (an object's keys as written, repeats included), else 0. */
+@inline("always")
+export function wordRawCount(words: u64[], v: u32): u32 {
+  const w = words[2 * (v as usize)];
+  const k = w & 0xff;
+  return k == T_ARRAY || k == T_OBJECT ? (w >> 32) as u32 : 0;
+}
+
+/** The number of members: elements, an object's distinct keys (from the tape's `words`, `kids`). */
+export function countIn(words: u64[], kids: u32[], v: u32): i64 {
+  const w = words[2 * (v as usize)];
+  if ((w & ORDERED) != 0) {
+    // The member list's length follows the keys in `kids`.
+    return kids[(words[2 * (v as usize) + 1] + (w >> 32)) as usize] as i64;
   }
+  return wordRawCount(words, v) as i64;
+}
 
-  kind(v: u32): u64 {
-    return this.words[2 * (v as usize)] & 0xff;
-  }
-
-  /** A container's member count (an object's keys as written, repeats included), else 0. */
-  rawCount(v: u32): u32 {
-    const w = this.words[2 * (v as usize)];
-    const k = w & 0xff;
-    return k == T_ARRAY || k == T_OBJECT ? (w >> 32) as u32 : 0;
-  }
-
-  number(v: u32): f64 {
-    return f64.fromBits(this.words[2 * (v as usize) + 1]);
-  }
-
-  /** A string value's (or key's) text. */
-  text(v: u32): string {
-    const w = this.words[2 * (v as usize)];
-    const p = this.words[2 * (v as usize) + 1];
-    if ((w & ESCAPED) != 0) {
-      return this.decoded![p as usize];
-    }
-    // The range lies between a string's quotes: whole characters, no check needed.
-    return velt_rt_str_byte_slice(this.src, p & 0xffffffff, p >> 32);
-  }
-
-  /** A string's UTF-16 length. */
-  units(v: u32): i64 {
-    return (this.words[2 * (v as usize)] >> 32) as i64;
-  }
-
-  /** Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object). */
-  find(v: u32, name: string): i64 {
-    const w = this.words[2 * (v as usize)];
-    if ((w & 0xff) != T_OBJECT) {
-      return -1;
-    }
-    const n = (w >> 32) as usize;
-    const len = strByteLen(name);
-    if (n > INDEX_THRESHOLD || len > 16 || (w & (REPEATED | ESCAPED_KEY)) != 0) {
-      return this.findOther(v, name);
-    }
-    // No key had escapes: each is a range of the source, compared to `name` with one vector
-    // compare when the lengths match (both sides' bytes in the low lanes, zeros in the others;
-    // `name`'s side loaded once).
-    const first = this.words[2 * (v as usize) + 1] as usize;
-    const nv = strLoadPartialU8x16(name, 0, len as u64);
-    for (let i: usize = 0; i < n; i++) {
-      const k = this.kids[first + i];
-      const p = this.words[2 * (k as usize) + 1];
-      if ((p >> 32) - (p & 0xffffffff) == len as u64) {
-        const kv = strLoadPartialU8x16(this.src, p & 0xffffffff, len as u64);
-        if (velt_simd_mask8x16_all(velt_simd_u8x16_eq(kv, nv))) {
-          return (k + 1) as i64;
-        }
-      }
-    }
+/**
+ * Member `i` of container `v` (an object's: the key's position, its value at `key + 1`), from the
+ * tape's `words` and `kids`; -1 past the end.
+ */
+@inline("always")
+export function memberIn(words: u64[], kids: u32[], v: u32, i: i64): i64 {
+  const w = words[2 * (v as usize)];
+  const k = w & 0xff;
+  if (k != T_ARRAY && k != T_OBJECT) {
     return -1;
   }
-
-  // `find` in an object over `INDEX_THRESHOLD` keys, through its hash index (made the first
-  // time), or in a small one with a repeated or escaped key, or of a name over 16 bytes (out of
-  // line: `find` stays small).
-  @noInline
-  private findOther(v: u32, name: string): i64 {
-    const n = this.rawCount(v) as usize;
-    const first = this.words[2 * (v as usize) + 1] as usize;
-    if (n <= INDEX_THRESHOLD) {
-      // A repeated key's value is its last: from the end.
-      for (let i = n; i > 0; i--) {
-        const k = this.kids[first + i - 1];
-        if (this.keyIs(k, name)) {
-          return (k + 1) as i64;
-        }
-      }
-      return -1;
-    }
-    let all = this.index;
-    if (all == null) {
-      all = new Map<u32, Map<string, u32>>();
-      this.index = all;
-    }
-    let ix = all.get(v);
-    if (ix == undefined) {
-      const m = new Map<string, u32>();
-      // In order, so a repeated key ends at its last value.
-      for (let i: usize = 0; i < n; i++) {
-        const k = this.kids[first + i];
-        m.set(this.text(k), k + 1);
-      }
-      all.set(v, m);
-      ix = m;
-    }
-    const at = ix.get(name);
-    return at == undefined ? -1 : at as i64;
+  const first = words[2 * (v as usize) + 1];
+  if ((w & ORDERED) != 0) {
+    return orderedMember(kids, (first + (w >> 32)) as usize, i);
   }
+  if (i >= ((w >> 32) as i64)) {
+    return -1;
+  }
+  return kids[(first + (i as u64)) as usize] as i64;
+}
 
-  /** Whether key string `k` is `name`, compared in place. */
-  keyIs(k: u32, name: string): bool {
-    const p = this.words[2 * (k as usize) + 1];
-    const w = this.words[2 * (k as usize)];
-    if ((w & ESCAPED) != 0) {
-      return this.decoded![p as usize] == name;
+// Member `i` of the member list at `at` in `kids` (its length, then the list), or -1.
+function orderedMember(kids: u32[], at: usize, i: i64): i64 {
+  return i < (kids[at] as i64) ? (kids[at + 1 + (i as usize)] as i64) : -1;
+}
+
+/**
+ * Object `v`'s value for `name` where `TapeRef.find`'s vector compare can't tell (a key repeated
+ * or with escapes, a name over 16 bytes): in a small object, from the last key (a repeated key's
+ * value is its last); `FIND_WIDE` for one over `INDEX_THRESHOLD` keys.
+ */
+export function findOther(t: shared<Tape>, v: u32, name: string): i64 {
+  const n = wordRawCount(t.words, v) as usize;
+  if (n > INDEX_THRESHOLD) {
+    return FIND_WIDE;
+  }
+  const first = t.words[2 * (v as usize) + 1] as usize;
+  for (let i = n; i > 0; i--) {
+    const k = t.kids[first + i - 1];
+    if (keyIs(t, k, name)) {
+      return (k + 1) as i64;
     }
-    const start = (p & 0xffffffff) as usize;
-    const n = strByteLen(name);
-    if ((p >> 32) as usize - start != n) {
+  }
+  return -1;
+}
+
+// Whether key string `k` is `name`, compared in place.
+function keyIs(t: shared<Tape>, k: u32, name: string): bool {
+  const p = t.words[2 * (k as usize) + 1];
+  if ((t.words[2 * (k as usize)] & ESCAPED) != 0) {
+    return decodedIs(t.decoded, p, name);
+  }
+  return rangeIs(t.src, p, name);
+}
+
+// Whether the decoded text at index `p` is `name`.
+function decodedIs(decoded: string[], p: u64, name: string): bool {
+  return decoded[p as usize] == name;
+}
+
+// Whether the byte range `p` (`start | end << 32`) of `s` is `name`.
+function rangeIs(s: string, p: u64, name: string): bool {
+  const start = (p & 0xffffffff) as usize;
+  const n = strByteLen(name);
+  if ((p >> 32) as usize - start != n) {
+    return false;
+  }
+  for (let i: usize = 0; i < n; i++) {
+    if (strByteAt(s, (start + i) as u64) != strByteAt(name, i as u64)) {
       return false;
     }
-    for (let i: usize = 0; i < n; i++) {
-      if (strByteAt(this.src, (start + i) as u64) != strByteAt(name, i as u64)) {
-        return false;
-      }
-    }
-    return true;
   }
+  return true;
+}
 
-  /** Whether keys `a` and `b` have the same text, compared in place. */
-  sameKey(a: u32, b: u32): bool {
-    const wa = this.words[2 * (a as usize)];
-    const wb = this.words[2 * (b as usize)];
-    if ((wa & ESCAPED) != 0 || (wb & ESCAPED) != 0) {
-      return this.text(a) == this.text(b);
-    }
-    const pa = this.words[2 * (a as usize) + 1];
-    const pb = this.words[2 * (b as usize) + 1];
-    const sa = (pa & 0xffffffff) as usize;
-    const sb = (pb & 0xffffffff) as usize;
-    const n = (pa >> 32) as usize - sa;
-    if ((pb >> 32) as usize - sb != n) {
-      return false;
-    }
-    for (let i: usize = 0; i < n; i++) {
-      if (strByteAt(this.src, (sa + i) as u64) != strByteAt(this.src, (sb + i) as u64)) {
-        return false;
-      }
-    }
-    return true;
-  }
+/** A string value's (or key's) text. */
+@inline("always")
+export function tapeText(t: shared<Tape>, v: u32): string {
+  return wordText(t.src, t.decoded, t.words[2 * (v as usize)], t.words[2 * (v as usize) + 1]);
+}
 
-  /** Whether key `k` may be an array index: its first byte is a digit (no string is made). */
-  digitFirst(k: u32): bool {
-    const w = this.words[2 * (k as usize)];
-    const p = this.words[2 * (k as usize) + 1];
-    if ((w & ESCAPED) != 0) {
-      const d = this.decoded![p as usize];
-      return d.length > 0 && d.charCodeAt(0) - 48 >= 0 && d.charCodeAt(0) - 48 <= 9;
-    }
-    const start = (p & 0xffffffff) as usize;
-    return (p >> 32) as usize > start && strByteAt(this.src, start as u64) - 48 <= 9;
+/** The text of the string whose words are `w` and `p`, from the tape's `src` and `decoded`. */
+export function wordText(src: string, decoded: string[], w: u64, p: u64): string {
+  if ((w & ESCAPED) != 0) {
+    return decoded[p as usize];
   }
+  // A range between a string's quotes: whole characters, no check needed.
+  return velt_rt_str_byte_slice(src, p & 0xffffffff, p >> 32);
+}
 
-  /** An object's member list (`ordered`), or null when its members are its keys in order. */
-  members(v: u32): u32[] | null {
-    if ((this.words[2 * (v as usize)] & ORDERED) == 0) {
-      return null;
-    }
-    const o = this.ordered;
-    return o == null ? null : o.get(v) ?? null;
-  }
-
-  /** Adds the text of a string that had escapes; returns its index in `decoded`. */
-  addDecoded(text: string): u64 {
-    let d = this.decoded;
-    if (d == null) {
-      d = [];
-      this.decoded = d;
-    }
-    d.push(text);
-    return (d.length - 1) as u64;
-  }
-
-  /** Records object `v`'s member list (`members`; the caller flags it `ORDERED`). */
-  setMemberList(v: u32, list: u32[]) {
-    let o = this.ordered;
-    if (o == null) {
-      o = new Map<u32, u32[]>();
-      this.ordered = o;
-    }
-    o.set(v, list);
-  }
-
-  /** The number of members: elements, an object's distinct keys. */
-  count(v: u32): i64 {
-    const m = this.members(v);
-    return m != null ? m.length as i64 : this.rawCount(v) as i64;
-  }
-
-  /**
-   * Member `i` of container `v` (an object's: the key's position, its value at `key + 1`), or -1
-   * past the end.
-   */
-  member(v: u32, i: i64): i64 {
-    const m = this.members(v);
-    if (m != null) {
-      return i < (m.length as i64) ? (m[i as usize] as i64) : -1;
-    }
-    if (i >= (this.rawCount(v) as i64)) {
-      return -1;
-    }
-    return this.kids[(this.words[2 * (v as usize) + 1] + (i as u64)) as usize] as i64;
-  }
-
-  /** Element `i` of array `v`, or the value of member `i` of object `v`; -1 if there is none. */
-  child(v: u32, i: i64): i64 {
-    const w = this.words[2 * (v as usize)];
-    const k = w & 0xff;
-    if (k == T_ARRAY) {
-      if (i >= ((w >> 32) as i64)) {
-        return -1;
-      }
-      return this.kids[(this.words[2 * (v as usize) + 1] + (i as u64)) as usize] as i64;
-    }
-    if (k != T_OBJECT) {
-      return -1;
-    }
-    const m = this.member(v, i);
-    return m < 0 ? -1 : m + 1;
-  }
+/** Key `i` of object `v` (`i` below its `wordRawCount`), as written. */
+@inline("always")
+export function tapeKey(t: shared<Tape>, v: u32, i: usize): u32 {
+  return t.kids[(t.words[2 * (v as usize) + 1] as usize) + i];
 }

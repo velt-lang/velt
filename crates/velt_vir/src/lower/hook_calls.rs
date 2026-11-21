@@ -26,8 +26,10 @@
 //! the runtime instead. The builder of a hook whose entry lists `constructs(…)` takes the
 //! [`Construct`] the call site lowers, and asserts (in release compilers too: one bit test) that
 //! sema demanded the hook (`hir::Program::hooks_demanded`, velt_common `hook_demand.rs`): a
-//! construct missing from the table is an ICE naming it. Builders are `#[inline]` and allocate
-//! only the call's argument list.
+//! construct missing from the table is an ICE naming it. A `prebuilt` hook whose module the
+//! program doesn't load is a call of the function sema declared for it in the module's object
+//! (`velt_hook_<name>`, `velt_sema` `lazy_std/hook_stubs.rs` `declared_lowered`), as an extern
+//! ([`Call::declared`]). Builders are `#[inline]` and allocate only the call's argument list.
 //!
 //! `velt_vir::hook_args`'s doctest shows that a call with the wrong markers does not compile.
 
@@ -35,10 +37,10 @@ use std::marker::PhantomData;
 
 pub(super) use velt_common::std_hooks::Construct;
 use velt_common::std_hooks::Mode;
-use velt_sema::hir::{DefId, PassMode, TyId};
+use velt_sema::hir::{self, DefId, PassMode, TyId};
 
 use super::{ice, unit, Cx, FnLower};
-use crate::vir::{Callee, Const, FuncId, Operand, Place, Proj, StaticId, Ty};
+use crate::vir::{Callee, Const, ExternId, FuncId, Operand, Place, Proj, StaticId, Ty};
 
 /// The marker types of the hooks' type language (velt_common `hook_sig.rs`): what a builder's
 /// argument or result is. A std class is the marker of its name; type arguments are given to the
@@ -236,29 +238,62 @@ impl<R> Val<R> {
     }
 }
 
+/// The prebuilt hook whose qualified name is `name` (`std/lang/hooks/module_blocks::moduleState`).
+fn prebuilt_named(name: &str) -> Option<&'static velt_common::std_hooks::Hook> {
+    let (module, item) = name.rsplit_once("::")?;
+    (velt_common::std_hooks::HOOKS.iter())
+        .find(|h| h.prebuilt && h.item == item && h.module() == module)
+}
+
+impl Cx<'_> {
+    /// The function sema declared for prebuilt hook `hook` in place of loading its module
+    /// (`velt_sema` `lazy_std/hook_stubs.rs` `declared_lowered`), if it did.
+    pub(super) fn hook_declared(&self, hook: &velt_common::std_hooks::Hook) -> Option<DefId> {
+        let symbol = velt_common::std_hooks::prebuilt::symbol(hook);
+        let found = self.hir.defs.iter().position(
+            |d| matches!(d, hir::Def::ExternFn(x) if x.symbol == symbol || x.name == symbol),
+        );
+        found.map(|i| DefId(i as u32))
+    }
+}
+
 /// The function a hook call goes to: one instance per shape with its dictionary when the hook is
 /// shared in this pass (shape/), else the instance of these type arguments. [`Call::emit_std`]
 /// and [`Call::emit_owned`] always call the latter, so a hook they emit stays per type.
-struct Target(FuncId, Option<StaticId>);
+/// A prebuilt hook's declared function (`Call::declared`) is called as an extern.
+enum Target {
+    Func(FuncId, Option<StaticId>),
+    Extern(ExternId),
+}
 
 impl Target {
     #[inline]
     fn of(lw: &mut FnLower<'_, '_>, def: DefId, targs: Vec<TyId>) -> Self {
+        if let hir::Def::ExternFn(x) = lw.cx.hir.def(def) {
+            let (symbol, ret) = (x.symbol.clone(), x.ret);
+            let params: Vec<Ty> = x.params.clone().into_iter().map(|p| lw.cx.ty(p)).collect();
+            let ret = lw.cx.ty(ret);
+            return Target::Extern(lw.cx.extern_sym(&symbol, params, ret, false));
+        }
         match lw.cx.shared_call(def, &targs, lw.mode) {
-            Some((f, dict)) => Target(f, Some(dict)),
-            None => Target(lw.cx.func_for_direct(def, targs, lw.mode), None),
+            Some((f, dict)) => Target::Func(f, Some(dict)),
+            None => Target::Func(lw.cx.func_for_direct(def, targs, lw.mode), None),
         }
     }
 
     /// The call, with every argument in `argv` (an out-pointer too).
     #[inline]
     fn call(self, lw: &mut FnLower<'_, '_>, mut argv: Vec<Operand>, dest: Option<Place>) {
-        let Target(f, dict) = self;
-        if let Some(d) = dict {
-            let d = Operand::Const(Const::Static(d), Ty::Ptr);
-            lw.cx.with_dict(f, &mut argv, d);
+        match self {
+            Target::Func(f, dict) => {
+                if let Some(d) = dict {
+                    let d = Operand::Const(Const::Static(d), Ty::Ptr);
+                    lw.cx.with_dict(f, &mut argv, d);
+                }
+                lw.call(Callee::Func(f), argv, dest, false);
+            }
+            Target::Extern(e) => lw.call(Callee::Extern(e), argv, dest, false),
         }
-        lw.call(Callee::Func(f), argv, dest, false);
     }
 }
 
@@ -285,13 +320,20 @@ impl<R> Call<R> {
         args: [Passed; N],
     ) -> Self {
         let task = super::module_state::executor_task_hook(name);
-        let def = (lw.cx.prelude_def(name)).unwrap_or_else(|| match task {
-            Some(item) => ice(format_args!(
-                "lowering calls the executor's `{item}` in a program sema found running nothing \
-                 on it (no live async code or executor extern, velt_sema `lazy_std` `sched_hooks`)"
-            )),
-            None => ice(format_args!("std without the hook `{name}`")),
-        });
+        let Some(def) = lw.cx.prelude_def(name) else {
+            // A prebuilt hook whose module the program doesn't load: sema declared it.
+            if let Some(hook) = prebuilt_named(name) {
+                return Self::declared(lw, hook, args);
+            }
+            match task {
+                Some(item) => ice(format_args!(
+                    "lowering calls the executor's `{item}` in a program sema found running \
+                     nothing on it (no live async code or executor extern, velt_sema `lazy_std` \
+                     `sched_hooks`)"
+                )),
+                None => ice(format_args!("std without the hook `{name}`")),
+            }
+        };
         lw.cx.sched_used |= task.is_some();
         Self::with(lw, def, targs, args)
     }
@@ -321,7 +363,39 @@ impl<R> Call<R> {
             hook.name,
             c.name()
         );
+        if hook.prebuilt && lw.cx.prelude_def(name).is_none() {
+            return Self::declared(lw, hook, args);
+        }
         Self::must(lw, name, targs, args)
+    }
+
+    /// The call of prebuilt hook `hook` in its module's object: the function sema declared for
+    /// it in place of loading its module (`velt_sema` `lazy_std/hook_stubs.rs`
+    /// `declared_lowered`), which takes and returns numbers and `bool`s by value.
+    fn declared<const N: usize>(
+        lw: &mut FnLower<'_, '_>,
+        hook: &velt_common::std_hooks::Hook,
+        args: [Passed; N],
+    ) -> Self {
+        let Some(def) = lw.cx.hook_declared(hook) else {
+            ice(format_args!(
+                "the hook `{}` is neither loaded nor declared (`{}`)",
+                hook.name,
+                velt_common::std_hooks::prebuilt::symbol(hook)
+            ))
+        };
+        let argv = (args.into_iter())
+            .map(|Passed(how, mode)| match (how, mode) {
+                (How::As(op), Mode::Value) => op,
+                _ => ice("a prebuilt hook's argument not passed by value"),
+            })
+            .collect();
+        Call {
+            def,
+            targs: vec![],
+            argv,
+            _r: PhantomData,
+        }
     }
 
     fn with<const N: usize>(
@@ -381,8 +455,20 @@ impl<R> Call<R> {
         }
     }
 
+    /// A prebuilt hook's declared function returns numbers alone: [`Call::emit`] and
+    /// [`Call::emit_to`] call it, never the forms that take an owned result.
+    fn not_declared(&self, lw: &FnLower<'_, '_>) {
+        if matches!(lw.cx.hir.def(self.def), hir::Def::ExternFn(_)) {
+            ice("a prebuilt hook's call emitted for an owned result");
+        }
+    }
+
     /// The result type and its VIR form, for a call that cannot throw.
     fn ret(&self, lw: &mut FnLower<'_, '_>) -> (TyId, Ty) {
+        if let hir::Def::ExternFn(x) = lw.cx.hir.def(self.def) {
+            let ret = x.ret;
+            return (ret, lw.cx.ty(ret));
+        }
         let fd = lw.cx.fn_def(self.def);
         let (ret, throws) = lw.cx.call_sig(fd);
         if throws.is_some() {
@@ -442,12 +528,14 @@ impl<R> Call<R> {
     /// on; an error it throws is uncaught.
     #[inline]
     pub(super) fn emit_std(self, lw: &mut FnLower<'_, '_>) -> Operand {
+        self.not_declared(lw);
         lw.call_std_hook(self.def, self.targs, self.argv)
     }
 
     /// The call as a user call (`finish_call`): its owned result, registered for drop.
     #[inline]
     pub(super) fn emit_owned(self, lw: &mut FnLower<'_, '_>) -> Operand {
+        self.not_declared(lw);
         let (ret, _) = self.ret(lw);
         let f = lw.cx.func_for(self.def, self.targs);
         lw.finish_call(Callee::Func(f), self.argv, ret, None)

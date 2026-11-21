@@ -29,6 +29,7 @@
 mod conflict;
 mod iteration;
 mod let_borrow;
+mod method_setter;
 mod share_value_reads;
 mod this_alias;
 mod uses;
@@ -38,7 +39,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::defs::BodyState;
 use crate::defs::FnKind;
 use crate::hir::{
     Callee, Capture, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalDef, LocalId,
@@ -54,12 +54,7 @@ use super::closure_names::Closures;
 use super::soft::make_share;
 
 pub(crate) fn check_exclusive(cx: &mut Ctx) {
-    let fns: Vec<DefId> = cx
-        .fn_defs
-        .iter()
-        .copied()
-        .filter(|d| cx.fn_info(*d).state == BodyState::Done)
-        .collect();
+    let fns: Vec<DefId> = cx.unit_fns();
     // Which closure a local names, for the closures and functions used as values of the
     // program (`Checker::relaxed_callee`): built once, when the first of them is checked, while
     // every body is in place.
@@ -128,9 +123,9 @@ pub(crate) fn check_exclusive(cx: &mut Ctx) {
         // would see it change under the borrow.
         let (mut kept, mut conflicts) = (vec![], vec![]);
         for (c, outer, err) in shares {
-            match modifies_capture(cx, c, outer, 0) {
-                true => conflicts.push(err),
-                false => kept.push((c, outer)),
+            match err {
+                Some(err) if modifies_capture(cx, c, outer, 0) => conflicts.push(err),
+                _ => kept.push((c, outer)),
             }
         }
         errors.extend(conflicts);
@@ -446,8 +441,8 @@ struct Checker<'a, 'm> {
     soft: &'a FxHashSet<Span>,
     errors: Vec<Diagnostic>,
     /// Captures that may share their variable ([`share_borrowed_captures`]), with the error
-    /// to report if the closure modifies it.
-    shares: Vec<(DefId, LocalId, Diagnostic)>,
+    /// to report if the closure modifies it (`None`: shared whatever it does, `method_setter`).
+    shares: Vec<(DefId, LocalId, Option<Diagnostic>)>,
 }
 
 /// The argument uses of one call: `(direct, nested)` per argument.
@@ -554,6 +549,9 @@ impl Checker<'_, '_> {
             usize::from(held.is_some()),
             false,
         );
+        if self.method_setter_call(&mut uses, usize::from(held.is_some()), args, callee) {
+            return;
+        }
         let shared = share_borrowed_captures(&mut uses);
         // Two whole params passed on to a callee checked with its params as one place
         // (`relaxed_callee`) are what it was checked for. Only such a pair of direct uses: a
@@ -581,7 +579,7 @@ impl Checker<'_, '_> {
             }
             if let Some(err) = first_conflict(&uses, &skip) {
                 for (_, _, c, outer) in shared {
-                    self.shares.push((c, outer, err.clone()));
+                    self.shares.push((c, outer, Some(err.clone())));
                 }
             }
         }

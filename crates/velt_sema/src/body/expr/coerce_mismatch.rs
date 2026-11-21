@@ -18,6 +18,33 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }
+        // A read-only array where a mutable one is expected (#3061): TypeScript's TS4104 (also
+        // the elaboration of its TS2322 and TS2345). Before the widening report, which says
+        // TypeScript allows a conversion it refuses here.
+        let core = self.cx.ty.core(expected).unwrap_or(expected);
+        let mutable = matches!(self.cx.ty.kind(core), TyKind::Array(_))
+            && !self.cx.ty.is_readonly_array(core);
+        let top = self.cx.ty.is_readonly_array(found.ty) && mutable;
+        // Or one inside (`{ xs: readonly T[] }` where `{ xs: T[] }` is expected).
+        let nested = !top
+            && self.cx.ty.has_readonly_arrays()
+            && self.cx.erased_alike_but_errors(found.ty, expected)
+            && !self.cx.readonly_widens(found.ty, expected, true, 0)
+            && self.cx.readonly_widens(expected, found.ty, true, 0);
+        if top || nested {
+            let (s, d) = (self.cx.display(found.ty), self.cx.display(expected));
+            self.cx.error(
+                velt_common::Diagnostic::error(
+                    match top {
+                        true => format!("the type `{s}` is 'readonly' and cannot be assigned to the mutable type `{d}` (TypeScript's TS4104)"),
+                        false => format!("the type `{s}` cannot be assigned to `{d}`: a 'readonly' array in it would be a mutable one (TypeScript's TS4104)"),
+                    },
+                    found.span,
+                )
+                .with_note("code could change the array through the mutable type; copy it (`[...xs]`) to get an array you may change"),
+            );
+            return;
+        }
         if self.shared_widening_error(expected, found) {
             return;
         }
@@ -86,6 +113,11 @@ impl FnCx<'_, '_> {
                     d = d.with_note(note);
                 }
             }
+        }
+        if self.numbers_for_bytes(expected, found.ty) {
+            d = d.with_note(
+                "a `number[]` is not a byte array (`u8[]`): `Uint8Array.from(xs)` converts its numbers to bytes as JavaScript does (256 is 0, -1 is 255), or declare the array `u8[]`",
+            );
         }
         if let Some(note) = self.narrowing_note(found.ty) {
             d = d.with_note(note);
@@ -176,6 +208,28 @@ impl FnCx<'_, '_> {
             "build one from it: `{{ {} }}`, or give `{e}` a method to make it an interface classes implement",
             fields.join(", ")
         ))
+    }
+
+    /// Is `found` a `number[]` where a union expected takes both a byte array and std's buffer
+    /// views (`string | u8[] | ViewBytes`, as `Buffer.from` takes)? Then `Uint8Array.from(xs)`
+    /// is an argument it takes; a union of the program's own with a `u8[]` gets no such note.
+    fn numbers_for_bytes(&mut self, expected: TyId, found: TyId) -> bool {
+        const VIEW_BYTES: &str = velt_common::std_item!(lang_bytes_view_bytes, "ViewBytes");
+        if !matches!(self.cx.ty.kind(found), TyKind::Array(e) if *e == self.cx.ty.f64) {
+            return false;
+        }
+        let Some(members) = self.cx.union_members(expected) else {
+            return false;
+        };
+        let bytes = members.iter().any(|&m| {
+            matches!(self.cx.ty.kind(m), TyKind::Array(e)
+                if matches!(self.cx.ty.kind(*e), TyKind::Int(crate::hir::IntTy::U8)))
+        });
+        bytes
+            && members.iter().any(|&m| {
+                (self.cx.class_of(m).and_then(|(d, _)| self.cx.adt(d)))
+                    .is_some_and(|a| a.qual_name == VIEW_BYTES)
+            })
     }
 
     /// Is `t` an anonymous object type (`{ v: number }`, a generic alias's instance)?

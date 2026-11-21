@@ -18,6 +18,7 @@ import * as x from "./sched_node_ext";
 import * as al from "./sched_share_alias";
 import * as sh from "./sched_share";
 import * as shh from "./sched_share_hand";
+import * as lt from "./sched_task_lost";
 
 /** A node's flag: its owner handed it to another task, which claims its result. */
 export const HANDED_OVER: u32 = 2048;
@@ -64,8 +65,10 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
     // The first hand-over: its glue is the node's from now on (the word is read only with the
     // flag set, so a node never handed over pays no store for it).
     m.st(x.make(n) + x.X_TRANSFER, glue);
-    if (glue !== 0 && (m.load32(n + nd.N_FLAGS) & (nd.FINISHED | nd.DELIVERED)) === nd.FINISHED) {
-      finished(n);
+    const now = m.load32(n + nd.N_FLAGS);
+    if (glue !== 0 && (now & (nd.FINISHED | nd.DELIVERED)) === nd.FINISHED) {
+      // Finished before: only its result's transfer is left (`finished` ran at the finish).
+      finishedRare(n, now);
     }
     // A converted promise gives up the holder it keeps here, on the task the promise it stands
     // for is shared on: dropped on the other task with the node, it would touch that hub from
@@ -75,10 +78,13 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
   return true;
 }
 
-/** Node `n`'s state finished: `finished`, then its flags `fl` (FINISHED, maybe DELIVERED) show. */
-@inline
-export function finish(n: usize, fl: u32): void {
-  finished(n);
+/**
+ * Node `n` of task `task` (its `N_TASK`) finished: `finished`, then its flags `fl` (FINISHED,
+ * maybe DELIVERED) show.
+ */
+@inline("always")
+export function finish(n: usize, task: usize, fl: u32): void {
+  finished(n, task);
   nd.setFlags(n, fl);
   if ((fl & nd.DELIVERED) !== 0) {
     // The owner took the result: a converted promise's claim (sched_share_alias.velt).
@@ -96,10 +102,29 @@ export function finish(n: usize, fl: u32): void {
  * after: that first hand-over happens on the task that drives the node, or before another task
  * polls a lazy one, so it is never written while the node finishes on another thread. Later
  * hand-overs keep it, as the runtime keeps a node's first transfer, and so it runs once.
+ *
+ * A node counted among its task's promises only their owner can run (`task`, its `N_TASK`, which
+ * the caller has) leaves the count here (sched_task_lost.velt): one test for both, as neither is
+ * common on a finish that never suspended under its owner's poll.
  */
-@inline
-export function finished(n: usize): void {
-  if ((m.load32(n + nd.N_FLAGS) & (HANDED_OVER | nd.PANICKED | nd.DETACHED)) === HANDED_OVER) {
+@inline("always")
+export function finished(n: usize, task: usize): void {
+  const fl = m.load32(n + nd.N_FLAGS);
+  if ((fl & (HANDED_OVER | lt.LISTED)) !== 0) {
+    if ((fl & lt.LISTED) !== 0) {
+      // Listed nodes finish in a poll of their task (their owner's adoption), whose count it is.
+      lt.unlist(task, n, fl);
+    }
+    if ((fl & HANDED_OVER) !== 0) {
+      finishedRare(n, fl);
+    }
+  }
+}
+
+/** `finished` for node `n` (flags `fl`) that was handed over. */
+@noInline
+function finishedRare(n: usize, fl: u32): void {
+  if ((fl & (HANDED_OVER | nd.PANICKED | nd.DETACHED)) === HANDED_OVER) {
     transferResult(n);
   }
 }

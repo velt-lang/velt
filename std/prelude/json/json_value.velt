@@ -16,6 +16,8 @@ import {
   Tape,
 } from "velt/encoding/json/tape";
 import { TapeError } from "velt/encoding/json/tape_error";
+import { TapeRef } from "velt/encoding/json/tape_ref";
+import { inline } from "velt/lang/intrinsics";
 import {
   jsonValueEquals,
   jsonValueFrom,
@@ -26,7 +28,6 @@ import {
 import { JSON } from "velt/prelude/json/json";
 import { JsonError, JsonParseOptions } from "velt/prelude/json/json_error";
 import { JsonReplacer } from "velt/prelude/json/layout";
-import { tapeStringify, writeTape } from "velt/encoding/json/tape_write";
 import {
   JsonHandleSlot,
   treeDelete,
@@ -76,26 +77,32 @@ const KIND_OBJECT: u32 = 6;
  * std makes one: the constructor is private, so no class can extend `JsonValue`.
  *
  * Two forms (#1660). A parsed value is a position on a tape (velt/encoding/json/tape): reading it makes
- * nothing, and its children share the tape. A value built or edited here (`object()`, `set`, …)
- * or read from a database driver is a tree of reference-counted runtime nodes behind `#handle`
- * (which stays the first field: compiled glue writes it); an edit turns a tape value into such
- * a tree first, so it never shows through the tape.
+ * nothing, and its children share the tape. The tape is frozen and shared between tasks: a value
+ * sent to another task reads the same tape there (velt/encoding/json/tape_ref, #3098). A value
+ * built or edited here (`object()`, `set`, …) or read from a database driver is a tree of
+ * reference-counted runtime nodes behind `#handle` (which stays the first field: compiled glue
+ * writes it); an edit turns a tape value into such a tree first, so it never shows through the
+ * tape.
  */
 export class JsonValue {
   #handle: u64;
-  #tape: Tape | null;
-  #node: u32;
+  #tape: TapeRef | null = null;
+  #node: u32 = 0;
 
-  // A `JsonValue` owning the runtime handle `h`, or value `node` of tape `t`.
-  private constructor(h: u64, t: Tape | null = null, node: u32 = 0) {
+  // A `JsonValue` owning the runtime handle `h` (0 for a tape value, which `onTape` fills in).
+  // Kept this small so that every `new` of it is inlined (the optimizer can then keep a value
+  // that never leaves its function out of the heap).
+  private constructor(h: u64) {
     this.#handle = h;
-    this.#tape = t;
-    this.#node = node;
   }
 
   // Value `node` of tape `t`.
-  private static onTape(t: Tape, node: u32): JsonValue {
-    return new JsonValue(0, t, node);
+  @inline("always")
+  private static onTape(t: TapeRef, node: u32): JsonValue {
+    const v = new JsonValue(0);
+    v.#tape = t;
+    v.#node = node;
+    return v;
   }
 
   /** Parses any JSON document, like `JSON.parseValue` (throws `JsonError`). */
@@ -105,7 +112,7 @@ export class JsonValue {
     if (r instanceof TapeError) {
       throw new JsonError(r.message);
     }
-    return JsonValue.onTape(r as Tape, 0);
+    return JsonValue.onTape(new TapeRef(shared(r as Tape)), 0);
   }
 
   // A `JsonValue` owning `h`, or null for the runtime's null handle.
@@ -189,7 +196,7 @@ export class JsonValue {
     const t = this.#tape;
     if (t != null) {
       const node = this.#node;
-      writeTape(t, out, node);
+      t.write(out, node);
       return;
     }
     const h = this.#handle;
@@ -418,7 +425,7 @@ export class JsonValue {
   stringify(): string {
     const t = this.#tape;
     if (t != null) {
-      return tapeStringify(t, this.#node);
+      return t.stringify(this.#node);
     }
     return velt_rt_json_value_stringify(this.#handle);
   }
@@ -449,8 +456,8 @@ export class JsonValue {
 }
 
 // A runtime tree made from value `node` of tape `t` (its JSON text, parsed by the runtime).
-function treeOf(t: Tape, node: u32): u64 {
-  const text = tapeStringify(t, node);
+function treeOf(t: TapeRef, node: u32): u64 {
+  const text = t.stringify(node);
   let slot: JsonHandleSlot = { handle: 0 };
   let err = "";
   if (!velt_rt_json_parse_value_with(text, 0, slot, err)) {

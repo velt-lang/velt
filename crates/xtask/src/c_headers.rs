@@ -34,9 +34,14 @@ const PATHS: &[&str] = &[
     // std's own `declare c("c")` functions and the variants that load them per target
     // (`velt native headers --std`, tests/c_headers.rs).
     "std/fs/fd/",
+    "std/fs/tree/",
+    "std/fs/whole/",
     "std/imports.velt",
     // The other files crates/veltc/src/native/headers/std_check.rs checks (`CHECKED`,
     // `CHECKED_POSIX`): a change to one of them runs the check too.
+    "std/lang/hooks/clock_darwin.velt",
+    "std/lang/hooks/clock_linux.velt",
+    "std/lang/hooks/clock_win32.velt",
     "std/lang/hooks/os_posix.velt",
     "std/lang/hooks/sched_cells.velt",
     "std/lang/hooks/sched_end.velt",
@@ -44,7 +49,6 @@ const PATHS: &[&str] = &[
     "std/lang/hooks/sched_id.velt",
     "std/lang/hooks/sched_io_write.velt",
     "std/lang/hooks/sched_mem.velt",
-    "std/lang/hooks/sched_module.velt",
     "std/lang/hooks/sched_node_loc.velt",
     "std/lang/hooks/sched_off.velt",
     "std/lang/hooks/sched_peek.velt",
@@ -58,8 +62,13 @@ const PATHS: &[&str] = &[
     "std/net/fd_until.velt",
     "std/net/rt_later_flush.velt",
     "std/process/child/",
+    "std/process/stdin_buffer.velt",
+    "std/process/stdin_posix.velt",
+    "std/process/stdin_win32.velt",
     "std/sync/output.velt",
     "std/sync/slot.velt",
+    "std/time/localtime_posix.velt",
+    "std/time/localtime_win32.velt",
     // The runtime's exports, which the check skips (std_check.rs `runtime_exports`).
     "crates/velt_common/tests/runtime_exports.txt",
     "crates/veltc/src/native/headers/std_check.rs",

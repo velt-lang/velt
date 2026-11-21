@@ -4,8 +4,14 @@
 
 The package's native library (`native/`, crate `velt_postgres_native`, library
 `velt_native_postgres`), built on the native-package SDK (`velt_native` with `tokio`, `velt_text`,
-`velt_tls`); its functions are `velt_postgres__*` exports with the signatures below, declared in
-`src/native.velt`. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream ("Batches" below). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
+`velt_tls`); its functions are `velt_postgres__*` exports with the signatures below. The
+package's Velt client (`src/`) does not declare or call them, and `package.velt` does not build
+the library: it is a standalone Rust driver kept as a performance reference
+([#2370](https://github.com/velt-lang/velt/issues/2370)). It runs over `tokio-postgres`
+(`default-features = false`), connected over the runtime's own sockets
+(`velt_native::net::TcpStream`) and wire stream ("Batches" below). Rows are written into the
+result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not
+copied.
 TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
 roots (`velt_tls`); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
 `verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into
@@ -69,10 +75,10 @@ other column types ⇒ `ENOTSUP` (checked before any row).
 | `velt_postgres__pool_end` | `(VeltPgPool p)` | closes idle connections, fails later acquires with `ECLOSED`, releases the handle; null ⇒ no-op |
 
 Linking: tokio-postgres' `whoami` needs `-framework SystemConfiguration -framework
-CoreFoundation` on macOS and `secur32.lib` on Windows (added to `velt_link`'s native library
-lists). Not available on WebAssembly: a package with native code is an error there. In a release build
-the library is a prelinked object that brings no system libraries of its own: `velt_link` adds
-the ones above to every executable.
+CoreFoundation` on macOS and `secur32.lib` on Windows. `velt native build` records them in the
+bundle (`system_libs` in its `native.json`, from rustc's `native-static-libs`), so only programs
+that link the library link them. Not available on WebAssembly: a package with native code is an
+error there.
 
 ## COPY
 Writers (`VeltPgCopyIn`) and readers (`VeltPgCopyOut`) are registry keys (`u64`, rt_abi_async.md §3.2).
@@ -92,7 +98,7 @@ against the client.
 ## Batches
 One prepared statement run with N parameter sets in one message group — `Bind` + `Execute` per
 set and **one** `Sync` (pgx's `Batch`): one round trip and one implicit transaction on the server
-instead of N. tokio-postgres has no API for it, so every connection now runs over a wire stream
+instead of N. tokio-postgres has no API for it, so every connection runs over a wire stream
 (`postgres/wire`) between tokio-postgres and the socket/TLS stream that injects the group between
 two driver requests and routes the server's replies up to its `ReadyForQuery` back to the batch.
 The runtime opens the socket itself for that (`Config::connect_raw`): hosts/`hostaddr`s/ports in

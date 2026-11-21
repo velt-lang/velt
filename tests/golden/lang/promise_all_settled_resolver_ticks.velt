@@ -1,0 +1,25 @@
+// `Promise.allSettled` over `withResolvers` promises settled while another promise steps through
+// microtasks settles on Node's tick (#3210).
+async function tick(name: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(name, i);
+    await Promise.resolve();
+  }
+}
+
+async function main() {
+  const a = Promise.withResolvers<string>();
+  const b = Promise.withResolvers<string>();
+  const s = Promise.allSettled([a.promise, b.promise, Promise.resolve("c")]).then((r) =>
+    console.log("settled", r.length),
+  );
+  const t = tick("t", 6);
+  b.reject(new Error("b"));
+  console.log("rejected b");
+  await Promise.resolve();
+  console.log("after one");
+  a.resolve("a");
+  console.log("resolved a");
+  await t;
+  await s;
+}

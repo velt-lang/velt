@@ -65,7 +65,7 @@ pub use clang_search::{
     available, clang_version, describe_clang, find_clang, no_clang_compiles, rejected_clang,
 };
 pub use llc::{find_wasm_tools, set_zig, LlvmTools, ZigSource};
-pub use target::is_wasm;
+pub use target::{calls_outline_atomics, is_wasm};
 /// Options for [`emit_object`]: the same struct as the Cranelift backend's, so the driver can
 /// pass one value to either backend.
 pub use velt_codegen_cl::CodegenOptions;
@@ -120,7 +120,7 @@ fn emit_object_cached(
 
 /// [`emit_object_timed`] for large programs: one object per codegen unit, compiled by parallel
 /// clang processes (see `units`), at most one per core. `units`: how many (`None`: from the size
-/// of the program, one below about 32 000 VIR statements). WebAssembly targets always get one
+/// of the program, one below 64 000 VIR statements). WebAssembly targets always get one
 /// object.
 pub fn emit_objects_timed(
     program: &vir::Program,

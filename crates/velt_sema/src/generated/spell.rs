@@ -124,6 +124,10 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
             LitValue::Float(_, bits) => float_literal(bits),
             LitValue::Bool(b) => b.to_string(),
         },
+        // A read-only array is spelled read-only (#3061), or generated code could change it.
+        TyKind::Array(e) if cx.ty.is_readonly_array(t) => {
+            format!("readonly ({})[]", spell_depth(cx, e, d1, params)?)
+        }
         TyKind::Array(e) => format!("({})[]", spell_depth(cx, e, d1, params)?),
         TyKind::Tuple(ts) => format!("[{}]", all(cx, &ts, depth, params)?.join(", ")),
         TyKind::Option(x, n) => {

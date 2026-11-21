@@ -52,7 +52,7 @@ pub(super) use self::panicked::{
 use self::transfer::run_transfer;
 use self::waker::NODE_WAKER;
 use super::set::Shared;
-use crate::task::all::ResultDropFn;
+use crate::task::ResultDropFn;
 use crate::task::{DropFn, PollFn, VeltFut, READY};
 
 /// The state finished; its result is in the slot (unless it was handed out).
@@ -506,8 +506,7 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
     d.map_or(std::ptr::null_mut(), |d| d as *mut ())
 }
 
-/// Dispose of the unclaimed result of `f`; an unhandled rejection may wait for the task's
-/// microtasks (unhandled.rs).
+/// Dispose of the unclaimed result of `f` (unhandled.rs).
 unsafe fn drop_result(f: *mut VeltFut) {
     if panicked::is_panicked(f) {
         // Its slot holds nothing (panicked.rs).

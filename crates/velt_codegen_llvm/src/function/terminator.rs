@@ -262,13 +262,20 @@ impl Emitter<'_> {
         self.program
             .funcs
             .get(id.0 as usize)
-            .is_some_and(|f| f.target.is_some() && f.target != self.function.target)
+            .is_some_and(|f| !f.target.is_empty() && f.target != self.function.target)
     }
 
-    /// Whether the CPU the code is built for has `ext` (`--cpu`'s x86 features hold all it
-    /// needs).
+    /// Whether the CPU the code is built for has `ext`: `--cpu`'s features (the start-up check's
+    /// list of this architecture) hold all it needs, or it is Arm's bf16 and clang has it for
+    /// `--cpu` (what makes `velt_simd_f32x4_dot_add_fast_bf16x8` a `bfdot` too).
     fn baseline_has(&self, ext: velt_vir::simd::Ext) -> bool {
-        let needs = velt_codegen_cl::ext_x86_features(ext);
+        if ext == velt_vir::simd::Ext::Bf16Arm {
+            return self.simd_caps.bf16_dot;
+        }
+        let needs = match ext.arch() {
+            velt_vir::simd::CpuArch::X86_64 => ext.x86_mask(),
+            velt_vir::simd::CpuArch::Aarch64 => ext.arm_mask(),
+        };
         needs != 0 && self.cpu_features & needs == needs
     }
 
@@ -284,7 +291,7 @@ impl Emitter<'_> {
         matches!(
             velt_vir::simd::SimdCall::of_symbol(&e.symbol),
             Some(velt_vir::simd::SimdCall::Has(ext))
-                if (self.function.target.is_some_and(|t| t.covers(ext)) || self.baseline_has(ext))
+                if (self.function.target.covers(ext) || self.baseline_has(ext))
                     && crate::simd::has_ext(self.simd, ext)
         )
     }

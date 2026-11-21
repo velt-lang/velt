@@ -4,10 +4,10 @@
 use rustc_hash::FxHashSet;
 use velt_common::std_hooks::HOOKS;
 
-use super::{kind_bit, mark, Gate, DYNAMIC, GATE_KINDS};
+use super::{mark, Gate};
 use crate::ctx::Ctx;
 use crate::defs::{DefInfo, FnKind};
-use crate::hir::{DefId, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind};
 
 /// The roots: the program's own definitions (its root module's, whether or not in std), and the
 /// free functions lowering looks up by name ([`seed_std`]). Methods are lowering's only where it
@@ -38,14 +38,18 @@ pub(super) fn seed(cx: &mut Ctx) {
 
 /// The free functions lowering looks up by name, of the definitions from `from` on: the helpers
 /// of the prelude, those of the modules it looks into ([`super::super::BY_NAME`]), and the hooks no
-/// construct lists, of which some wait for what the program does (`Live::waiting`). Such a
+/// construct lists, of which some wait for what the program does (`Live::waiting`, and the hooks
+/// of module state, live with a stored global). Such a
 /// function that takes a value only live code can give (an array, a class instance, an `any`) is
 /// live once live code has a value of that type ([`gate`]).
 fn seed_std(cx: &mut Ctx, from: usize) {
     let mut hooks = FxHashSet::default();
+    // Not module_blocks.velt's (`super::super::module_hooks`): they are live once the program has
+    // module state, also where std is loaded up front and holds their module in every program.
+    let blocks = velt_common::std_hooks::BLOCKS_MODULE_ENTRY;
     for h in HOOKS
         .iter()
-        .filter(|h| h.lowered && h.constructs.is_empty())
+        .filter(|h| h.lowered && h.constructs.is_empty() && h.module_entry != blocks)
     {
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             // A process static (#2779): `velt_main` hands the runtime its address in every
@@ -129,3 +133,29 @@ fn gate(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> Vec<Gate> {
         false => heads,
     }
 }
+
+/// The bit of a kind of type an implementation may be for, other than a class or struct (0 for
+/// the others).
+pub(super) fn kind_bit(kind: &TyKind) -> u32 {
+    match kind {
+        TyKind::Int(it) | TyKind::Literal(hir::LitValue::Int(it, _)) => 1 << (*it as u32 % 16),
+        TyKind::Float(_) | TyKind::Literal(hir::LitValue::Float(..)) => 1 << 16,
+        TyKind::Bool | TyKind::Literal(hir::LitValue::Bool(_)) => 1 << 17,
+        TyKind::Str | TyKind::Literal(hir::LitValue::Str(_)) => 1 << 18,
+        TyKind::Symbol => 1 << 19,
+        TyKind::Simd(_) => 1 << 20,
+        TyKind::Array(_) => 1 << 21,
+        TyKind::Map(..) => 1 << 22,
+        TyKind::Dyn(..) => 1 << 27,
+        TyKind::Promise(..) => 1 << 24,
+        TyKind::Tuple(_) => 1 << 25,
+        TyKind::FnPtr { .. } | TyKind::Closure(_) => 1 << 26,
+        _ => 0,
+    }
+}
+
+/// The kinds of [`kind_bit`] that gate a root ([`gate`]): values lowering does not make up.
+const GATE_KINDS: u32 = (1 << 21) | (1 << 22) | DYNAMIC | (1 << 24) | (1 << 25) | (1 << 26);
+
+/// The bit of a dynamic type (`any`, `unknown`, `object`, `Function`) among [`kind_bit`]'s.
+pub(super) const DYNAMIC: u32 = 1 << 23;

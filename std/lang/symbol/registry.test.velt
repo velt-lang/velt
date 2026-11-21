@@ -1,0 +1,64 @@
+// velt/lang/symbol (tests): tests of registry.velt, run by `velt test std/`. The record layout
+// the registry reads and writes is pinned against the records the compiler emits: a change to
+// either (velt_vir's symbols.rs, std's record.velt) fails here instead of corrupting
+// `Symbol.keyFor`.
+import { describe, expect, it } from "velt/test";
+import { Symbol, SymbolConstructor } from "velt/lang/symbol";
+import { addressLoad, strWord1, symbolAddress, symbolStatic } from "velt/lang/intrinsics";
+import {
+  DESCRIBED,
+  KEY_REGISTERED,
+  RECORD_KEY_AT,
+  isRegistered,
+  registeredSymbol,
+} from "velt/lang/symbol/registry";
+
+/**
+ * A registry record the compiler emits, as for a module constant initialized with
+ * `Symbol.for("registry-test-compiled")`: ids from 2^40 are the registry's, listed in the table
+ * the registry starts with.
+ */
+const COMPILED = symbolStatic(1099511628800, "registry-test-compiled", true);
+/** Another record the compiler emits, as for `const OWN = Symbol("registry-test-own")`. */
+const OWN = symbolStatic(900, "registry-test-own", true);
+
+function keyWord(s: symbol): u64 {
+  // SAFETY: every symbol is the address of a 32-byte record, its key word at `RECORD_KEY_AT`.
+  return unsafe { addressLoad<u64>(symbolAddress(s) + RECORD_KEY_AT) };
+}
+
+describe("the record layout", () => {
+  it("is the compiler's: a registry record's key word", () => {
+    expect(keyWord(COMPILED)).toBe(KEY_REGISTERED | DESCRIBED);
+  });
+  it("is the compiler's: another record's key word is neither", () => {
+    expect((keyWord(OWN) & ~DESCRIBED) != KEY_REGISTERED).toBe(true);
+    expect(keyWord(OWN) & DESCRIBED).toBe(DESCRIBED);
+  });
+  it("is the runtime's: Symbol() and Symbol.iterator are not registered", () => {
+    expect(isRegistered(Symbol("fresh"))).toBe(false);
+    expect(isRegistered(Symbol())).toBe(false);
+    expect(isRegistered(SymbolConstructor.iterator)).toBe(false);
+  });
+  it("writes the description's words as the compiler's records hold them", () => {
+    const made = registeredSymbol("registry-test-run-time");
+    expect(made.description).toBe("registry-test-run-time");
+    // The second word (length and units for a static or heap string) is the key string's.
+    // SAFETY: a record's description words start at its address; the second is at 8.
+    const w1 = unsafe { addressLoad<u64>(symbolAddress(made) + 8) };
+    expect(w1).toBe(strWord1("registry-test-run-time"));
+    expect(keyWord(made)).toBe(KEY_REGISTERED | DESCRIBED);
+  });
+});
+
+describe("the registry", () => {
+  it("starts with the compiler's records", () => {
+    expect(registeredSymbol("registry-test-compiled") === COMPILED).toBe(true);
+  });
+  it("gives one symbol per key", () => {
+    const a = registeredSymbol("registry-test-same");
+    expect(registeredSymbol("registry-test-same") === a).toBe(true);
+    expect(registeredSymbol("registry-test-other") === a).toBe(false);
+    expect(isRegistered(a)).toBe(true);
+  });
+});

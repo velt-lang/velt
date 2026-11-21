@@ -1,134 +1,11 @@
-//! The CPU extensions beyond the 128-bit baseline that some SIMD operations use (#1330): the SHA
-//! instructions, carry-less multiplication and the AES rounds (#2401), and the instructions of
-//! each; and x86's FMA, which std's `pow` is compiled for where the CPU has it (#1676).
+//! The CPU features some operations need (#1330), and the instructions of those that have SIMD
+//! instructions of their own: the SHA instructions, carry-less multiplication and the AES rounds
+//! (#2401); x86's FMA, which std's `pow` is compiled for where the CPU has it (#1676); Arm's bf16
+//! dot product (#3129). The features themselves, with their implications, names and LLVM feature
+//! lists, are velt_common's table (`cpu_features`, #3222 step 3), which sema shares: [`Ext`] is
+//! one feature and [`ExtSet`] a gated function's set of them.
 
-/// A CPU extension beyond the 128-bit baseline that some operations use (#1330).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Ext {
-    /// The ARMv8 SHA-1 and SHA-256 instructions (aarch64 `sha2`).
-    ShaArm,
-    /// The x86 SHA extensions (SHA-NI), with the SSSE3 and SSE4.1 every such CPU has.
-    ShaX86,
-    /// The x86 carry-less multiplication (PCLMULQDQ), with the SSSE3 and SSE4.1 every such CPU
-    /// has.
-    ClmulX86,
-    /// The ARMv8 64-bit polynomial multiplication (PMULL, FEAT_PMULL: LLVM's `aes`).
-    ClmulArm,
-    /// The x86 AES round instructions (AES-NI) with the PCLMULQDQ, SSSE3 and SSE4.1 every such
-    /// CPU has: what AES-GCM needs, so a function gated on it also has [`Ext::ClmulX86`].
-    AesX86,
-    /// The ARMv8 AES instructions with PMULL (FEAT_AES and FEAT_PMULL, LLVM's `aes`; FEAT_PMULL
-    /// implies FEAT_AES), so a function gated on it also has [`Ext::ClmulArm`].
-    AesArm,
-    /// x86's fused multiply-add (FMA3) with the AVX it needs: no SIMD instructions of its own,
-    /// but `MathOp::FmaF64` is one `vfmadd` in a function gated on it (std's `pow`). Every arm64
-    /// CPU has FMA, so it needs no extension there.
-    FmaX86,
-}
-
-impl Ext {
-    /// Every extension.
-    pub const ALL: [Ext; 7] = [
-        Ext::ShaArm,
-        Ext::ShaX86,
-        Ext::ClmulX86,
-        Ext::ClmulArm,
-        Ext::AesX86,
-        Ext::AesArm,
-        Ext::FmaX86,
-    ];
-
-    /// The name `targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`,
-    /// `aes-x86`, `aes-arm`, `fma-x86`.
-    pub fn name(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "sha-arm",
-            Ext::ShaX86 => "sha-x86",
-            Ext::ClmulX86 => "clmul-x86",
-            Ext::ClmulArm => "clmul-arm",
-            Ext::AesX86 => "aes-x86",
-            Ext::AesArm => "aes-arm",
-            Ext::FmaX86 => "fma-x86",
-        }
-    }
-
-    /// Whether code gated on `self` may take `other`'s check as true: `other` is `self`, or an
-    /// extension every CPU with `self` has (the carry-less multiplication of an AES target).
-    pub fn covers(self, other: Ext) -> bool {
-        self == other
-            || matches!(
-                (self, other),
-                (Ext::AesX86, Ext::ClmulX86) | (Ext::AesArm, Ext::ClmulArm)
-            )
-    }
-
-    /// Whether the runtime keeps a flag byte for it ([`Ext::flag_symbol`]). The AES extensions
-    /// and FMA have none (no new runtime code, #2241): their check is true only where the build
-    /// guarantees them, and std computes the run-time answer in Velt (std/simd/aes.velt,
-    /// std/lang/math/fma_check.velt).
-    pub fn has_flag(self) -> bool {
-        !matches!(self, Ext::AesX86 | Ext::AesArm | Ext::FmaX86)
-    }
-
-    /// The extension `targetFeature(name)` names.
-    pub fn named(name: &str) -> Option<Ext> {
-        Ext::ALL.into_iter().find(|e| e.name() == name)
-    }
-
-    /// The runtime's byte that says whether the CPU has it (1) or not (0): set before any Velt
-    /// code runs, and 0 with `VELT_SIMD_DISABLE=sha` (or `clmul`; rt_abi.md "SIMD"). Code built
-    /// for a CPU that has the extension (`--cpu`) does not read it.
-    pub fn flag_symbol(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "velt_cpu_sha_arm",
-            Ext::ShaX86 => "velt_cpu_sha_x86",
-            Ext::ClmulX86 => "velt_cpu_clmul_x86",
-            Ext::ClmulArm => "velt_cpu_clmul_arm",
-            Ext::AesX86 | Ext::AesArm | Ext::FmaX86 => "",
-        }
-    }
-
-    /// Whether it is an extension of the same architecture as `other` (code gated on one runs
-    /// only there, so the other architecture's checks are false in it).
-    pub fn same_arch(self, other: Ext) -> bool {
-        self.on_arch("aarch64") == other.on_arch("aarch64")
-    }
-
-    /// Whether its instructions exist on an architecture (`aarch64`, `x86_64`, …).
-    pub fn on_arch(self, arch: &str) -> bool {
-        match self {
-            Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => arch == "aarch64",
-            Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 | Ext::FmaX86 => arch == "x86_64",
-        }
-    }
-
-    /// The LLVM features a function that contains one of its operations gets: only the
-    /// extension itself, which LLVM uses for nothing but those operations, so such a function
-    /// is safe on a CPU without it (each operation is behind the runtime check).
-    pub fn op_features(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "+sha2",
-            Ext::ShaX86 => "+sha",
-            Ext::ClmulX86 => "+pclmul",
-            Ext::ClmulArm | Ext::AesArm => "+aes",
-            Ext::AesX86 => "+aes",
-            Ext::FmaX86 => "+fma",
-        }
-    }
-
-    /// The LLVM features of a gated function: everything a CPU with the extension has, which
-    /// LLVM may use anywhere in the function.
-    pub fn gated_features(self) -> &'static str {
-        match self {
-            Ext::ShaArm => "+sha2",
-            Ext::ShaX86 => "+sha,+ssse3,+sse4.1",
-            Ext::ClmulX86 => "+pclmul,+ssse3,+sse4.1",
-            Ext::ClmulArm | Ext::AesArm => "+aes",
-            Ext::AesX86 => "+aes,+pclmul,+ssse3,+sse4.1",
-            Ext::FmaX86 => "+fma,+avx,+ssse3,+sse4.1",
-        }
-    }
-}
+pub use velt_common::cpu_features::{CpuArch, CpuFeature as Ext, CpuFeatures as ExtSet};
 
 /// An instruction of a CPU extension, with the operands in the instruction's own order: the SHA
 /// ones on `u32x4` values (lane 0 the low 32 bits), the carry-less multiplications on `u64x2`,
@@ -201,11 +78,14 @@ pub enum ExtOp {
     Aesmc,
     /// ARM `AESIMC (a)`: InvMixColumns.
     AesimcArm,
+    /// ARM `BFDOT (acc: f32x4, a: bf16x8, b: bf16x8) -> f32x4`: lane `k` of `acc` plus the
+    /// products of lanes `2k` and `2k + 1` of `a` and `b`, as the instruction rounds them.
+    Bfdot,
 }
 
 impl ExtOp {
     /// Every operation (with each immediate of `Sha1Rnds4`).
-    pub const ALL: [ExtOp; 38] = [
+    pub const ALL: [ExtOp; 39] = [
         ExtOp::Sha1C,
         ExtOp::Sha1P,
         ExtOp::Sha1M,
@@ -244,6 +124,7 @@ impl ExtOp {
         ExtOp::Aesd,
         ExtOp::Aesmc,
         ExtOp::AesimcArm,
+        ExtOp::Bfdot,
     ];
 
     /// The extension it belongs to.
@@ -268,6 +149,7 @@ impl ExtOp {
             | ExtOp::AesimcX86
             | ExtOp::Aeskeygenassist => Ext::AesX86,
             ExtOp::Aese | ExtOp::Aesd | ExtOp::Aesmc | ExtOp::AesimcArm => Ext::AesArm,
+            ExtOp::Bfdot => Ext::Bf16Arm,
             _ => Ext::ShaX86,
         }
     }
@@ -315,17 +197,19 @@ impl ExtOp {
             ExtOp::Aesd => "aesd",
             ExtOp::Aesmc => "aesmc",
             ExtOp::AesimcArm => "aesimc_arm",
+            ExtOp::Bfdot => "bfdot",
             ExtOp::Sha1Rnds4(_) | ExtOp::Pclmulqdq(_) | ExtOp::Pmull(_) => {
                 panic!("ICE: {self:?} is not an instruction")
             }
         }
     }
 
-    /// The vector type whose symbols it is among: `u32x4` (SHA), `u64x2` (carry-less) or
-    /// `u8x16` (AES).
+    /// The vector type whose symbols it is among: `u32x4` (SHA), `u64x2` (carry-less), `u8x16`
+    /// (AES) or `f32x4` (`bfdot`, by its result).
     pub fn type_name(self) -> &'static str {
         match self {
             ExtOp::Pclmulqdq(_) | ExtOp::Pmull(_) => "u64x2",
+            ExtOp::Bfdot => "f32x4",
             _ if matches!(self.ext(), Ext::AesX86 | Ext::AesArm) => "u8x16",
             _ => "u32x4",
         }
@@ -340,7 +224,8 @@ impl ExtOp {
             | ExtOp::Sha256H
             | ExtOp::Sha256H2
             | ExtOp::Sha256Su1
-            | ExtOp::Sha256Rnds2 => 3,
+            | ExtOp::Sha256Rnds2
+            | ExtOp::Bfdot => 3,
             _ => 2,
         }
     }

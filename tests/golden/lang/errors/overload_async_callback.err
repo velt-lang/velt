@@ -1,0 +1,8 @@
+overload_async_callback.velt:15:18: error: an async callback can't be passed here yet: the overload's implementation calls it as a function of `unknown` values, which can't return a promise yet (#924)
+  = note: make the callback return its value, not a promise
+
+overload_async_callback.velt:16:21: error: an async callback can't be passed here yet: the overload's implementation calls it as a function of `unknown` values, which can't return a promise yet (#924)
+  = note: make the callback return its value, not a promise
+
+overload_async_callback.velt:17:20: error: an async callback can't be passed here yet: the overload's implementation calls it as a function of `unknown` values, which can't return a promise yet (#924)
+  = note: make the callback return its value, not a promise

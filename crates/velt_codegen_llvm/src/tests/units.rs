@@ -125,6 +125,44 @@ fn huge_callers_import_nothing() {
     assert_eq!(main.declares, [0, 2]);
 }
 
+/// An `@inline` function is imported into every unit that calls it, a huge caller's too: the
+/// marker asks for its body at every call (#3097: `heapAlloc` in a large `main`).
+#[test]
+fn huge_callers_import_inline_functions() {
+    let mut p = program();
+    p.funcs[0].inline = Inline::Always;
+    let func = &mut p.funcs[3];
+    let x = Local(func.locals.len() as u32);
+    func.locals.push(LocalDecl::new(I64, None));
+    for i in 0..5_000 {
+        func.blocks[0]
+            .stmts
+            .push(Stmt::Assign(Place::local(x), Rvalue::Use(int(i, I64))));
+    }
+    let plan = plan_placed(&p, &SPLIT);
+    let main = &plan.units[2];
+    assert_eq!(
+        (main.imports.as_slice(), main.declares.as_slice()),
+        (&[0][..], &[2][..])
+    );
+}
+
+/// An `@inline` callee is imported however large it is, with the `@inline` callees of the bodies
+/// imported: c's unit takes `b` (62, past the import limit) and the `a` it calls.
+#[test]
+fn inline_functions_are_imported_with_their_inline_callees() {
+    let mut p = program();
+    p.funcs[0].inline = Inline::Always;
+    p.funcs[1].inline = Inline::Always;
+    let plan = plan_placed(&p, &[0, 1, 2, 2]);
+    // `a` in unit 0, `b` in 1, `c` and main in 2: c calls `b`, whose body calls `a`.
+    let c = &plan.units[2];
+    assert_eq!(c.imports, [0, 1]);
+    // Without the markers, `b` is too large to import and `a` only main's.
+    let plain = plan_placed(&program(), &[0, 1, 2, 2]);
+    assert_eq!(plain.units[2].imports, [0]);
+}
+
 /// An imported function (vir.rs invariant 11) is defined by no unit, never copied in for
 /// inlining, and declared `hidden` by every unit that refers to it; so is it in one module.
 #[test]
@@ -179,10 +217,11 @@ fn unit_count_from_size_unless_requested() {
     // Never more units than functions.
     assert_eq!(unit_count(&p, Some(64)), 4);
     assert_eq!(plan(&p, 64).units.len(), 4);
-    // One unit per 16 000 statements, from 32 000 on, at most 4; a request overrides it.
+    // One unit below 64 000 statements, 4 from there on (one per 16 000, at most 4); a request
+    // overrides it.
     assert_eq!(unit_count(&sized(31), None), 1);
-    assert_eq!(unit_count(&sized(32), None), 2);
-    assert_eq!(unit_count(&sized(48), None), 3);
+    assert_eq!(unit_count(&sized(63), None), 1);
+    assert_eq!(unit_count(&sized(64), None), 4);
     assert_eq!(unit_count(&sized(200), None), 4);
     assert_eq!(unit_count(&sized(200), Some(1)), 1);
     assert_eq!(unit_count(&sized(200), Some(12)), 12);
@@ -192,7 +231,7 @@ fn unit_count_from_size_unless_requested() {
 /// the count is as for any program.
 #[test]
 fn large_programs_get_bounded_units() {
-    assert_eq!(count_for(31_999), 1);
+    assert_eq!(count_for(63_999), 1);
     assert_eq!(count_for(64_000), 4);
     assert_eq!(count_for(800_000), 4);
     assert_eq!(count_for(800_001), 5);

@@ -90,7 +90,11 @@ pub struct Plan {
     /// merge queue sets from the change's plan and the checks after merging always set.
     pub wasm: bool,
     /// `declare c` checked against C headers on every target through the pinned zig: the
-    /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` knows no changes, so it doesn't run it.
+    /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` (a dispatched run such
+    /// as a merge train's, a pull request labelled `ci:full`) knows no changes, so it runs it: a
+    /// gate that skipped it let a change whose own `c-headers` job was red reach `main` (#3120's
+    /// Windows declarations, landed by a merge train's `--full` run). A local run turns the zig
+    /// tests on only with `VELT_ZIG_TESTS=1`, whatever this says.
     pub c_headers: bool,
 }
 
@@ -122,7 +126,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: true,
-            c_headers: false,
+            c_headers: true,
         }
     }
 
@@ -424,6 +428,15 @@ impl Plan {
     }
 
     /// Whether the WebAssembly goldens (`veltc::wasm_goldens`) run.
+    /// Leaves the WebAssembly goldens out of the tests: another job runs them
+    /// (`VELT_WASM_GOLDENS=skip`).
+    pub fn skip_wasm_goldens(&mut self) {
+        self.wasm = false;
+        if let Veltc::Some(binaries) = &mut self.veltc {
+            binaries.remove("wasm_goldens");
+        }
+    }
+
     pub fn wasm_goldens(&self) -> bool {
         match &self.veltc {
             Veltc::All => self.wasm,

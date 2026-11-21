@@ -117,6 +117,15 @@ pub fn is_wasm(target: &str) -> bool {
     wasm_os(target.trim()).is_some()
 }
 
+/// Whether this backend's code for `target` calls the outline-atomics helpers (`__aarch64_*`,
+/// [`Target::outline_atomics`]), which only some links have: a static runtime's (Rust's
+/// compiler_builtins in it) or libgcc's; the shared runtime does not export them, and the bundled
+/// linker's kit has no libgcc archive. For the driver: objects of this backend go into a debug
+/// link only where this is false. `false` for a target this backend does not know.
+pub fn calls_outline_atomics(target: &str) -> bool {
+    normalize(target).is_ok_and(|t| t.outline_atomics())
+}
+
 impl Target {
     /// String attributes shared by every defined function:
     /// - Apple's arm64/x86_64 ABIs expect frame pointers (clang's darwin default is non-leaf);
@@ -258,6 +267,26 @@ impl Target {
         }
     }
 
+    /// The function attributes of code compiled for the baseline CPU whatever `--cpu` says
+    /// (`vir::Function::baseline`, std's start-up check of the CPU, and the helpers it inlines):
+    /// on x86-64 clang's `x86-64` with its own features only; on arm64 the target's default CPU,
+    /// where `--cpu` names another. `None` where code is for the baseline already (WebAssembly,
+    /// an arm64 build without `--cpu`).
+    pub fn baseline_attributes(&self) -> Option<&'static str> {
+        let named = self.cpu.as_deref().filter(|c| *c != "baseline");
+        if self.is_wasm() {
+            None
+        } else if self.triple.starts_with("x86_64") {
+            Some(" \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx8,+fxsr,+mmx,+sse,+sse2,+x87\"")
+        } else if named.is_none() {
+            None
+        } else if self.os == Os::Darwin {
+            Some(" \"target-cpu\"=\"apple-m1\" \"target-features\"=\"+neon\"")
+        } else {
+            Some(" \"target-cpu\"=\"generic\" \"target-features\"=\"+neon,+fp-armv8\"")
+        }
+    }
+
     /// Whether the target has NEON (`simd.rs` counts mask lanes with its widening sum).
     pub fn has_neon(&self) -> bool {
         self.triple.starts_with("aarch64") || self.triple.starts_with("arm64")
@@ -315,6 +344,12 @@ mod tests {
             .unwrap()
             .outline_atomics());
         assert!(is_wasm(" wasm32-wasip1") && !is_wasm("aarch64-apple-darwin"));
+        assert!(calls_outline_atomics("aarch64-unknown-linux-gnu"));
+        assert!(calls_outline_atomics("aarch64-unknown-linux-musl"));
+        assert!(!calls_outline_atomics("aarch64-apple-darwin"));
+        assert!(!calls_outline_atomics("x86_64-unknown-linux-gnu"));
+        assert!(!calls_outline_atomics("x86_64-pc-windows-msvc"));
+        assert!(!calls_outline_atomics("not a target"));
         assert!(!normalize("aarch64-apple-darwin")
             .unwrap()
             .wide_pointer_slots());

@@ -74,8 +74,14 @@ const HUNG: i32 = -2;
 /// Runs `exe` with `threads` workers, `VELT_RESCUE` as [`RESCUE`] has it, the checking allocator,
 /// the block count and the rescue count; killed at [`DEADLINE`] (a lost wake hangs).
 fn run(exe: &Path, threads: &str) -> Run {
+    run_with(exe, threads, &[])
+}
+
+/// [`run`] with the environment variables `env` set as well.
+fn run_with(exe: &Path, threads: &str, env: &[(&str, &str)]) -> Run {
     let mut c = command(exe);
-    c.env("VELT_THREADS", threads)
+    c.envs(env.iter().copied())
+        .env("VELT_THREADS", threads)
         .env("VELT_RT_DEBUG_ALLOC", "1")
         .env("VELT_RC_STATS", "1")
         .env("VELT_RESCUE_STATS", "1")
@@ -198,9 +204,7 @@ fn a_spawn_storm_crosses_the_hand_over_of_a_lazy_worker() {
         for i in 0..RUNS {
             let r = run(&exe, threads);
             let what = format!("storm, VELT_THREADS={threads}, run {i}");
-            // About one run in 50 leaves 2 blocks unfreed, at one worker and at two, with main's
-            // std before this change too: allowed until #2887 is found.
-            check(&r, &what, want, 2);
+            check(&r, &what, want, 0);
             if threads == "1" {
                 // At least once: after the spares retire, worker 0 is lazy again, and on a loaded
                 // machine a later poll of `main` may be rescued too, turning them on again (#2967).
@@ -472,6 +476,82 @@ async function main() {
   while (MOVED.load() == 0) {}
   console.log("main");
   await t;
+}
+"#;
+
+/// Starting a spare worker's thread counts no block (std/lang/hooks/thread_posix.velt
+/// `startThread`): the monitor's thread starts it while the program runs on, so a counted block
+/// it freed after `pthread_create` could still be unfreed when the spare had finished the last
+/// task and the program took its counts (one run in a few thousand on a loaded Linux machine:
+/// `blocks=20/19`). The program needs one spare, or two with `DEEP=1` (the task on the first
+/// spare spins until one queued behind it ran, which only a second rescue does); its tasks and
+/// what they allocate are the same either way, so the blocks made are too.
+#[test]
+fn starting_a_spare_counts_no_block() {
+    // The threads of thread_posix.velt; Windows' `CreateThread` takes no room of ours.
+    if !has_threads() || !cfg!(unix) || !cfg!(debug_assertions) {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "spares", SPARES);
+    // The spares a run started and the blocks it made.
+    let counts = |deep: &str| {
+        let what = format!("DEEP={deep}");
+        let r = run_with(&exe, "1", &[("DEEP", deep)]);
+        check(&r, &what, "done\n", 0);
+        let spares = rescue_count(&r.err, "spares").unwrap();
+        let stats = r.err.lines().rev().find(|l| l.starts_with("rc stats:"));
+        let made = stats
+            .and_then(|l| l.split_whitespace().find_map(|w| w.strip_prefix("blocks=")))
+            .and_then(|b| b.split_once('/'))
+            .and_then(|(made, _)| made.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("{what}: no block counts in {}", r.err));
+        (spares, made)
+    };
+    // On a loaded machine the monitor may start a spare more than a run needs: every run makes
+    // the same blocks all the same, and one pair of runs at least differs in its spares.
+    let mut differed = false;
+    for _ in 0..RUNS {
+        let (one, deep) = (counts("0"), counts("1"));
+        assert_eq!(
+            one.1, deep.1,
+            "blocks made with {} and with {} spares",
+            one.0, deep.0
+        );
+        differed |= one.0 != deep.0;
+    }
+    assert!(differed, "no pair of runs differed in its spares");
+}
+
+/// The program of [`starting_a_spare_counts_no_block`].
+const SPARES: &str = r#"const A_DONE = new Atomic<i64>(0);
+const B_DONE = new Atomic<i64>(0);
+
+async function a(deep: bool): Promise<void> {
+  await yieldNow();
+  if (deep) {
+    // On the spare that took worker 0's queue, with `b` queued behind: only a second rescue,
+    // onto a second spare, runs `b` while this poll spins.
+    while (B_DONE.load() == 0) {}
+  }
+  A_DONE.store(1);
+}
+
+async function b(): Promise<void> {
+  await yieldNow();
+  B_DONE.store(1);
+}
+
+async function main() {
+  const deep = process.env.DEEP === "1";
+  const ta = spawn(a(deep));
+  const tb = spawn(b());
+  await yieldNow();
+  // Only a rescue runs `a` while this poll spins.
+  while (A_DONE.load() == 0) {}
+  await ta;
+  await tb;
+  console.log("done");
 }
 "#;
 

@@ -45,7 +45,7 @@ export function awaitNode(n: usize, cx: usize): u32 {
  * `awaitNode` with waker `cw` (cloned), not a cx's: a shared promise's hub on another task
  * (sched_share_away.velt) registers its first waiting holder's waker.
  */
-@inline
+@inline("always")
 export function awaitWith(n: usize, cw: usize): u32 {
   const w = m.wakerClone(cw);
   if (lk.mode() === lk.LK_NONE || wk.taskOf(cw) === m.ld(n + nd.N_TASK)) {
@@ -75,7 +75,7 @@ export function awaitWith(n: usize, cw: usize): u32 {
  * word), so no other task's await can swap into the word meanwhile. Combinators poll with wakers
  * of their own, which map to no task and take the swap.
  */
-@inline
+@inline("always")
 export function finishAwaiter(n: usize, task: usize): usize {
   if (lk.mode() === lk.LK_NONE) {
     return takePlain(n);
@@ -94,7 +94,7 @@ export function finishAwaiter(n: usize, task: usize): usize {
 }
 
 /** Takes node `n`'s awaiter (0 if none), which no other thread touches meanwhile. */
-@inline
+@inline("always")
 export function takePlain(n: usize): usize {
   const w = m.ld(n + N_AWAITER);
   if (w !== 0) {
@@ -107,12 +107,13 @@ export function takePlain(n: usize): usize {
  * Does the owner of started node `n` run on its task's thread, so that the finish never runs
  * meanwhile (module docs)?
  */
-@inline
+@inline("always")
 export function ownSide(n: usize): bool {
+  const e = t.here();
   if (lk.mode() === lk.LK_NONE) {
-    return true;
+    // One worker, but the owner may be a thread that isn't one (sched_foreign.velt `start`).
+    return e !== 0;
   }
-  const e = t.exec();
   return e !== 0 && m.ld(e + t.E_CURRENT) === m.ld(n + nd.N_TASK);
 }
 

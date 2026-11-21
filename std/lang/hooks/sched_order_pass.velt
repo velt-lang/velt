@@ -75,7 +75,7 @@ export const P_FULL: usize = l.O_WAITER + 8;
  * takes the timer out of its list before its task can be freed (sched_order.velt `leave`), and 0
  * is no task.
  */
-@inline
+@inline("always")
 export function busy(b: usize, h: usize): bool {
   // A timer that names no task (every timer with one worker: sched_order.velt `inserted`) costs
   // the look one load; one of the task whose step looks (the common case: a task's own timer at
@@ -94,7 +94,7 @@ function busyTask(b: usize, k: usize): bool {
     }
   }
   const s = m.load32(k + t.T_STATE);
-  if (s !== t.RUNNING && s !== t.NOTIFIED) {
+  if (s !== t.RUNNING && s !== t.NOTIFIED && s !== t.YIELDED) {
     return false;
   }
   if ((m.cas32(k + t.T_SKIPPED, 0, t.SK_SKIPPED) & t.SK_ENDING) !== 0) {
@@ -185,7 +185,7 @@ export function wakeAt(b: usize): usize {
  * `stepAlone`): the first list's expiry, as Node's loop wakes (no later than `wakeAt`; a list
  * whose first timer is due later is passed over then and gets its new place); 0: no list.
  */
-@inline
+@inline("always")
 export function firstExpiry(b: usize): usize {
   const first = m.ld(b + l.O_FIRST);
   return first !== 0 ? m.ld(first + l.L_EXPIRY) : 0;

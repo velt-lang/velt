@@ -24,7 +24,7 @@ connection stays open.
 |---|---|
 | `src/protocol.velt` | message unions, decoders, how the client shows a message |
 | `src/room.velt` | `Room`: members, names, sockets (behind a `Mutex` in the server) |
-| `src/server.velt` | `startChat(port)`: std/http + WebSocket upgrade, one `session` task per client |
+| `src/server.velt` | `startChat(port)`: `http-server` + WebSocket upgrade, one `session` task per client |
 | `src/client.velt` | terminal client: a spawned task prints, the stdin loop sends |
 | `src/main.velt` | `serve` / `connect` subcommands |
 | `tests/*.test.velt` | `velt test`: the protocol, and two clients against a server on port 0 |

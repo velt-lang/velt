@@ -1,0 +1,6 @@
+through unknown caught true unknown
+written as the interface caught true written
+through an upcast caught true upcast
+through an adapter caught true adapter
+before the write caught true before
+after the write ok

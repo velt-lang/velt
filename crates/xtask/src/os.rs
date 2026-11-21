@@ -103,6 +103,7 @@ pub(crate) const MACOS_PATHS: &[&str] = &[
     "crates/velt_fmt/src/print/thread_cpu.rs",
     "crates/velt_sema/tests/common/process_work.rs",
     "crates/veltc/src/commands/doctor/",
+    "crates/veltc/src/dev/fault_unix.rs",
     "crates/veltc/src/dev/supervisor.rs",
     "crates/veltc/src/generate/process.rs",
     "crates/veltc/tests/debugger.rs",
@@ -213,10 +214,11 @@ pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-late
 /// (.github/workflows/queue-goldens.yml), after one job built them. Windows, whose goldens take
 /// longest, gets the most. macOS gets two: in one job its goldens grew to the job's 30-minute
 /// limit (2026-10). With 5 macOS runners for everything, more shards would let queue entries
-/// starve each other.
+/// starve each other. Linux gets three: with two, a shard's goldens (about 38 minutes) and its
+/// half of the VIR identity (about 18) outgrew the job's limit on a ten-PR train (2026-11-20).
 /// Every runner in [`QUEUE_OSES`] needs an entry: the workflow fails when an OS has no shards.
 pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
-    ("ubuntu-latest", 2),
+    ("ubuntu-latest", 3),
     ("windows-latest", 3),
     ("macos-latest", 2),
 ];
@@ -234,7 +236,7 @@ pub const WASM_SHARDS: &[(&str, usize)] = &[
 ];
 
 /// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
-/// JSON object: `{"ubuntu-latest":["1/2","2/2"],…}`. A runner without a [`GOLDEN_SHARDS`] entry
+/// JSON object: `{"ubuntu-latest":["1/3","2/3","3/3"],…}`. A runner without a [`GOLDEN_SHARDS`] entry
 /// gets none, which fails the queue (never a silent skip of its goldens).
 pub fn golden_shards_json(oses: &[&str]) -> String {
     shards_json(GOLDEN_SHARDS, oses)
@@ -302,7 +304,7 @@ mod tests {
     fn every_os_gets_its_shards() {
         assert_eq!(
             golden_shards_json(&["ubuntu-latest"]),
-            r#"{"ubuntu-latest":["1/2","2/2"]}"#
+            r#"{"ubuntu-latest":["1/3","2/3","3/3"]}"#
         );
         let all = golden_shards_json(QUEUE_OSES);
         let total: usize = GOLDEN_SHARDS.iter().map(|(_, n)| n).sum();

@@ -80,13 +80,13 @@ fn an_extern_of_shared_state_is_refused() {
     ] {
         let externs = ["velt_rt_alloc", symbol];
         let calls = program(vec![body("_V3stdN1f", call(1))], &externs, vec![]);
-        let err = shares_nothing(&calls).unwrap_err();
+        let err = shares_nothing(&calls, &HashSet::new()).unwrap_err();
         assert!(err.contains(symbol), "{err}");
         let address = Terminator::Return(Operand::Const(Const::Extern(ExternId(1)), Ty::Ptr));
         let takes = program(vec![body("_V3stdN1f", address)], &externs, vec![]);
-        assert!(shares_nothing(&takes).is_err(), "{symbol}");
+        assert!(shares_nothing(&takes, &HashSet::new()).is_err(), "{symbol}");
         let listed = program(vec![body("_V3stdN1f", call(0))], &externs, vec![]);
-        assert_eq!(shares_nothing(&listed), Ok(()), "{symbol}");
+        assert_eq!(shares_nothing(&listed, &HashSet::new()), Ok(()), "{symbol}");
     }
 }
 
@@ -95,13 +95,53 @@ fn an_extern_of_shared_state_is_refused() {
 fn a_module_hook_of_the_executor_is_refused() {
     let symbol = velt_vir::mangle::mangle("velt/async/sched_hooks::schedModuleInit");
     let with_body = body(&symbol, Terminator::Goto(BlockId(1)));
-    let err = shares_nothing(&program(vec![with_body], &[], vec![])).unwrap_err();
-    assert!(err.contains("schedModule"), "{err}");
+    let blocks = &[BLOCKS_MODULE][..];
+    for private in [&[][..], blocks] {
+        let p = program(vec![with_body.clone()], &[], vec![]);
+        let err = holds_no_module_state(&p, private).unwrap_err();
+        assert!(err.contains("schedModule"), "{err}");
+    }
     let declared = vir::Function::new(symbol, vec![], Ty::Unit, Linkage::Import);
     assert_eq!(
-        shares_nothing(&program(vec![declared], &[], vec![])),
+        holds_no_module_state(&program(vec![declared], &[], vec![]), &[]),
         Ok(())
     );
+}
+
+/// The blocks of module state are the state of module_blocks.velt's object alone: its functions
+/// are taken in that module's own object (its private list names it), and refused in any other
+/// module's, where they would be a second copy of the blocks' table. A call of the module's entry
+/// points is refused in every object: only a program that reaches module state links theirs.
+#[test]
+fn the_blocks_of_module_state_are_one_module_s_own() {
+    let symbol = velt_vir::mangle::mangle("std/lang/hooks/module_blocks::newBlock");
+    assert!(symbol.contains(BLOCKS_CODE), "{symbol}");
+    let code = || {
+        program(
+            vec![body(&symbol, Terminator::Goto(BlockId(1)))],
+            &[],
+            vec![],
+        )
+    };
+    assert_eq!(holds_no_module_state(&code(), &[BLOCKS_MODULE]), Ok(()));
+    let weak = velt_common::std_hooks::prebuilt::private("lang_hooks_weak");
+    for other in [&[][..], weak] {
+        let err = holds_no_module_state(&code(), other).unwrap_err();
+        assert!(err.contains(BLOCKS_CODE), "{err}");
+    }
+    // The table's own list is what `build` passes for the module.
+    let own = velt_common::std_hooks::prebuilt::private("lang_hooks_module_blocks");
+    assert_eq!(holds_no_module_state(&code(), own), Ok(()));
+    for entry in ["velt_hook_module_state", "velt_hook_module_drop"] {
+        let externs = ["velt_rt_alloc", entry];
+        let calls = || program(vec![body("_V3stdN1f", call(1))], &externs, vec![]);
+        for private in [&[][..], own] {
+            let err = holds_no_module_state(&calls(), private).unwrap_err();
+            assert!(err.contains(entry), "{err}");
+        }
+        let listed = program(vec![body("_V3stdN1f", call(0))], &externs, vec![]);
+        assert_eq!(holds_no_module_state(&listed, &[]), Ok(()));
+    }
 }
 
 /// A static the code names that a program could see or write too is refused: a static atomic,
@@ -134,23 +174,29 @@ fn a_mutable_or_named_static_is_refused() {
     };
     for shared in [atomic, named, imported] {
         let direct = program(vec![names_static(1)], &[], vec![literal(), shared.clone()]);
-        assert!(shares_nothing(&direct).is_err(), "{shared:?}");
+        assert!(
+            shares_nothing(&direct, &HashSet::new()).is_err(),
+            "{shared:?}"
+        );
         let statics = vec![literal(), table.clone(), shared.clone()];
         let through = program(vec![names_static(1)], &[], statics);
         assert!(
-            shares_nothing(&through).is_err(),
+            shares_nothing(&through, &HashSet::new()).is_err(),
             "{shared:?} through a relocation"
         );
         let unnamed = program(vec![names_static(0)], &[], vec![literal(), shared.clone()]);
         assert_eq!(
-            shares_nothing(&unnamed),
+            shares_nothing(&unnamed, &HashSet::new()),
             Ok(()),
             "{shared:?} named by nothing"
         );
     }
     let statics = vec![literal(), table, literal()];
     assert_eq!(
-        shares_nothing(&program(vec![names_static(1)], &[], statics)),
+        shares_nothing(
+            &program(vec![names_static(1)], &[], statics),
+            &HashSet::new()
+        ),
         Ok(())
     );
 }
@@ -165,7 +211,7 @@ fn an_extern_reached_through_a_relocation_is_refused() {
         ..StaticData::default()
     };
     let p = program(vec![names_static(0)], &["velt_tls_slot"], vec![table]);
-    assert!(shares_nothing(&p).is_err());
+    assert!(shares_nothing(&p, &HashSet::new()).is_err());
 }
 
 const F64: Param = Param {
@@ -179,6 +225,10 @@ const USIZE: Param = Param {
 const TEXT: Param = Param {
     mode: Mode::Borrow,
     ty: T::Str,
+};
+const BOOL: Param = Param {
+    mode: Mode::Value,
+    ty: T::Bool,
 };
 
 fn sig(params: &'static [Param], ret: T) -> FnSig {
@@ -201,6 +251,11 @@ fn an_entry_point_lowered_otherwise_is_refused() {
     assert!(crosses(&text, &[Ty::F64, Ty::U64, Ty::Ptr], Ty::Unit));
     assert!(crosses(&value, &[Ty::Ptr, Ty::U64], Ty::F64));
     assert!(crosses(&nothing, &[Ty::F64], Ty::Unit));
+    // A `bool` crosses as `Ty::Bool`, and only as that.
+    let flag = sig(&[BOOL, USIZE], T::Bool);
+    assert!(crosses(&flag, &[Ty::Bool, Ty::U64], Ty::Bool));
+    assert!(!crosses(&flag, &[Ty::U8, Ty::U64], Ty::Bool));
+    assert!(!crosses(&flag, &[Ty::Bool, Ty::U64], Ty::U8));
     // A `&string` as a scalar.
     assert!(!crosses(&value, &[Ty::I64, Ty::U64], Ty::F64));
     // A number as a pointer, a `bool` or an aggregate; a `bool` result.
@@ -226,4 +281,50 @@ fn an_entry_point_lowered_otherwise_is_refused() {
         &[Ty::F64, Ty::U64, Ty::Ptr, Ty::Ptr],
         Ty::Unit
     ));
+}
+
+/// The module's own state (`own_state`: its private modules' thread-local values and static
+/// atomics) is taken; another constant's, a thread-local extern of another form, and a named
+/// static are still refused.
+#[test]
+fn the_module_s_own_state_is_taken() {
+    use velt_vir::tls::TlsCall;
+    let own: HashSet<u64> = [7, 9].into();
+    let get = |id| {
+        TlsCall::Get {
+            id,
+            bits: 64,
+            init: 0,
+        }
+        .symbol()
+    };
+    let (mine, other) = (get(7), get(8));
+    let calls = program(vec![body("_V3stdN1f", call(0))], &[mine.as_str()], vec![]);
+    assert_eq!(shares_nothing(&calls, &own), Ok(()));
+    assert!(shares_nothing(&calls, &HashSet::new()).is_err());
+    let calls = program(vec![body("_V3stdN1f", call(0))], &[other.as_str()], vec![]);
+    assert!(shares_nothing(&calls, &own).is_err());
+    let calls = program(
+        vec![body("_V3stdN1f", call(0))],
+        &["velt_tls_get_i64"],
+        vec![],
+    );
+    assert!(shares_nothing(&calls, &own).is_err());
+    let atomic = |id| StaticData {
+        bytes: vec![0; 8],
+        align: 8,
+        mutable: Some(id),
+        ..StaticData::default()
+    };
+    let p = program(vec![names_static(0)], &[], vec![atomic(9)]);
+    assert_eq!(shares_nothing(&p, &own), Ok(()));
+    let p = program(vec![names_static(0)], &[], vec![atomic(10)]);
+    assert!(shares_nothing(&p, &own).is_err());
+    let named = StaticData {
+        symbol: Some("_Vs0123".into()),
+        linkage: Linkage::Export,
+        ..atomic(9)
+    };
+    let p = program(vec![names_static(0)], &[], vec![named]);
+    assert!(shares_nothing(&p, &own).is_err());
 }

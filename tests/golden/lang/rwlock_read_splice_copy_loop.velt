@@ -1,0 +1,58 @@
+// check: no leaks
+// A copy or a literal a `read` callback keeps in a variable and stores into the caller's array
+// on each turn of a loop is one array, stored more than once, as in JavaScript (#3171): it is
+// not a value made for one store.
+
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function copied(a: RwLock<Box>) {
+  const out: number[][][] = [[[1]], [[2]], [[3]], [[4]]];
+  a.read((x) => {
+    const c = structuredClone(x.items.slice());
+    for (let i = 0; i < 2; i++) {
+      console.log("loop", out.splice(i, 1, c).length);
+    }
+  });
+  out[0][0].push(99);
+  out[1].push([77]);
+  console.log(out.length, JSON.stringify(out), out[0] === out[1]);
+}
+
+function literal(a: RwLock<Box>) {
+  const out: number[][][] = [[[1]], [[2]], [[3]], [[4]]];
+  a.read((x) => {
+    const c = [[5, x.items.length]];
+    for (let i = 0; i < 2; i++) {
+      console.log("loop", out.splice(i, 1, c).length);
+    }
+  });
+  out[0][0].push(99);
+  out[1].push([77]);
+  console.log(out.length, JSON.stringify(out), out[0] === out[1]);
+}
+
+// Made anew on each turn: each store's own.
+function each(a: RwLock<Box>) {
+  const out: number[][][] = [[[1]], [[2]], [[3]], [[4]]];
+  a.read((x) => {
+    for (let i = 0; i < 2; i++) {
+      const c = structuredClone(x.items.slice());
+      console.log("loop", out.splice(i, 1, c).length);
+    }
+  });
+  out[0][0].push(99);
+  out[1].push([77]);
+  console.log(out.length, JSON.stringify(out), out[0] === out[1]);
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const groups = new Map<string, number[][][]>();
+  groups.set("z", [[[0]]]);
+  copied(a);
+  literal(a);
+  each(a);
+  console.log(a.read((x) => JSON.stringify(x.items)), groups.size);
+}

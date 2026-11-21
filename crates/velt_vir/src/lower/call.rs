@@ -211,7 +211,7 @@ impl FnLower<'_, '_> {
             ice("not an extern")
         };
         // Only the runtime's declarations: the executor's own `declare c` of one of these symbols
-        // (sched_end.velt's probe, sched.velt's `velt_rt_uncaught_now$rt`) calls the runtime.
+        // (sched_end.velt's probe) calls the runtime.
         if super::sched::EXTERNS.contains(&x.symbol.as_str()) && x.c.is_none() && self.std_sched() {
             let (symbol, ret) = (x.symbol.clone(), x.ret);
             return self.sched_extern(&symbol, args, ret);
@@ -312,8 +312,8 @@ impl FnLower<'_, '_> {
     ///
     /// `in_place` (a synchronous extern): an array whose elements need no converting is passed
     /// as its own header (the box's, when its type is boxed), not a copy, so an extern that
-    /// writes it (an out parameter, `velt_rt_regex_exec`'s offsets; `velt_rt_bytes_fill`'s
-    /// elements) changes the array itself (#1831). A view (array_view.rs) passes its mirror,
+    /// writes it (an out parameter, `velt_rt_regex_exec`'s offsets; `velt_rt_bytes_copy`'s
+    /// destination) changes the array itself (#1831). A view (array_view.rs) passes its mirror,
     /// written back to the original after the call. It also keeps the inlined SIMD helpers
     /// from reading a copy (which LLVM would redo after every element store, tbaa.rs in
     /// velt_codegen_llvm).
@@ -498,7 +498,7 @@ impl FnLower<'_, '_> {
         // (a frozen or kept argument, one lent to the caller): the value it points to, read
         // when the callee would have read it.
         // Last to first, as one operand may become several.
-        let pointed: Vec<(usize, super::abi::RegParam, Ty)> = (0..args.len())
+        let pointed: Vec<(usize, super::reg_args::RegParam, Ty)> = (0..args.len())
             .filter(|i| !in_reg.contains(i) && starts.get(*i).is_some_and(|&k| k < argv.len()))
             .filter_map(|i| {
                 let (a, mode) = (&args[i], modes[i]);

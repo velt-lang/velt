@@ -425,6 +425,7 @@ impl FnCx<'_, '_> {
         module: usize,
         span: Span,
     ) -> hir::Expr {
+        let (values, method_sites) = self.method_value_sites(values, methods, &slots);
         // The struct is generic over the type params its fields and the interface's arguments
         // mention (a literal in a generic function).
         let mut ps: Vec<u32> = vec![];
@@ -453,8 +454,8 @@ impl FnCx<'_, '_> {
             self.cx
                 .hidden_struct_def(&format!("{iname} literal"), &field_tys, ps.len(), module);
         self.cx.literal_structs.insert(d);
-        // Methods using `this` get the object itself, so the interface value must hold it
-        // rather than a copy: the literal is then an object (a class instance).
+        (method_sites.into_iter()).for_each(|(i, at)| self.cx.note_method_field_site(d, i, at));
+        // Methods using `this` get the object itself, so it is an object (a class instance).
         if values.iter().any(|v| v.2) {
             self.cx.adt_mut(d).kind = hir::AdtKind::Class;
         }
@@ -479,10 +480,10 @@ impl FnCx<'_, '_> {
         let this_of = |j: u32| takes[j as usize].then_some((dyn_self, impl_index));
         let setters = super::iface_object_setters::literal_setters(
             self.cx,
-            (iface, methods.len()),
+            (iface, &niargs, methods.len()),
             &slots,
             &field_tys,
-            (d, self_ty),
+            (d, self_ty, impl_index),
             &this_of,
             span,
         );
@@ -687,28 +688,6 @@ impl FnCx<'_, '_> {
         self.restore_trial_frames(frames);
         let t = self.fn_throws(h.ty).filter(|_| ok)?;
         (!self.cx.ty.has_error(t)).then_some(t)
-    }
-
-    /// The value `e` written for slot `slot` of `iface` (expected type `exp`).
-    pub(super) fn slot_value(
-        &mut self,
-        e: &ast::Expr,
-        exp: TyId,
-        (iface, slot): (DefId, usize),
-    ) -> hir::Expr {
-        let at = Some((iface, slot as u32, e.span));
-        let saved = std::mem::replace(&mut self.literal_slot, at);
-        let h = self.expr(e, Some(exp), Want::Move);
-        self.literal_slot = saved;
-        self.bind_slot_result(Some(e), h, (iface, slot))
-    }
-
-    /// A closure written at `span` throws what `srcs` throw: for the interface slot it fills, if
-    /// it is a value of an object literal implementing an interface ([`Self::slot_value`]).
-    pub(super) fn provisional_slot(&mut self, span: Span, srcs: &[crate::defs::ThrowSrc]) {
-        if let Some((iface, slot, _)) = self.literal_slot.filter(|l| l.2 == span) {
-            self.cx.provisional_slots.push((iface, slot, srcs.to_vec()));
-        }
     }
 
     /// `(params) => ret throws err` (`err` unknown: `error`, so a closure's comes from its body).

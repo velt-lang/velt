@@ -65,7 +65,12 @@ impl FnLower<'_, '_> {
     }
 
     /// Is `e` a variable `plain_made` finds (through a share)?
-    fn plain_made_value(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn plain_made_value(&mut self, e: &hir::Expr) -> bool {
+        self.plain_local(e).is_some_and(|l| self.plain_made(l))
+    }
+
+    /// The variable `e` names, through a share.
+    fn plain_local(&self, e: &hir::Expr) -> Option<LocalId> {
         let mut x = e;
         while let K::Call {
             callee: hir::Callee::Intrinsic(Intrinsic::Share),
@@ -74,10 +79,13 @@ impl FnLower<'_, '_> {
         {
             match args.as_slice() {
                 [a] => x = a,
-                _ => return false,
+                _ => return None,
             }
         }
-        matches!(x.kind, K::Local(l, _) if self.plain_made(l))
+        match x.kind {
+            K::Local(l, _) => Some(l),
+            _ => None,
+        }
     }
 
     /// What the stored value `e` is made of, for `keep_value`.
@@ -299,7 +307,10 @@ impl FnLower<'_, '_> {
     pub(super) fn keep_mut_arg(&mut self, a: &hir::Expr) -> Operand {
         let ty = self.sub(a.ty);
         let vt = self.cx.ty(ty);
-        if self.lock_ref(ty).is_none() && !self.hand_ok(ty) {
+        // A boxed array literal (a rest parameter's) is the reader's alone: kept, and after the
+        // call handed back element by element and dropped (hand_result.rs `hand_boxed`).
+        let literal = self.boxed_literal(a, ty);
+        if self.lock_ref(ty).is_none() && !self.hand_ok(ty) && !literal {
             return self.copy_mut_arg(a, ty, vt);
         }
         let p = match a.kind {
@@ -320,7 +331,7 @@ impl FnLower<'_, '_> {
                 let p = Place::local(self.copy_to_temp(v, vt));
                 // The call's own value: the reader drops it after handing it back (`Agg`; a
                 // counted object is the reader's to borrow from then on).
-                if matches!(vt, Ty::Agg(_)) {
+                if matches!(vt, Ty::Agg(_)) || literal {
                     self.kept_drops.push((p.clone(), ty, self.mode));
                 }
                 p
@@ -331,6 +342,21 @@ impl FnLower<'_, '_> {
             Ty::Agg(_) => self.addr(p),
             _ => Operand::Copy(p),
         }
+    }
+
+    /// Is `a` an array literal of type `ty`, a boxed array outside the lock set whose elements
+    /// can be handed to the reader (`hand_ok`)? The call sees the very objects in it (one the
+    /// reader still references in a variable is the same object in each store, as in
+    /// JavaScript), where `copy_mut_arg` would give it copies of those.
+    pub(super) fn boxed_literal(&mut self, a: &hir::Expr, ty: TyId) -> bool {
+        let TyKind::Array(e) = self.cx.kind(ty) else {
+            return false;
+        };
+        matches!(a.kind, K::ArrayLit(_) | K::ConstArray(_))
+            && self.cx.boxed(ty)
+            && self.cx.ty(ty) == Ty::Ptr
+            && !self.cx.lock_counted(ty)
+            && self.hand_ok(e)
     }
 
     /// Is the array at `p` (of type `ty`, a lock-set object) the reader's own, referenced once
@@ -581,8 +607,34 @@ impl FnLower<'_, '_> {
         }
         match self.cx.kind(ty) {
             TyKind::Array(e) | TyKind::Option(e, _) if self.inline(ty) => self.hand_ok(e),
+            _ if self.inline_parts(ty) || self.inline_cases(ty) => {
+                let tys = self.cx.part_types(ty);
+                tys.into_iter().all(|t| self.hand_ok(t))
+            }
             _ => false,
         }
+    }
+
+    /// Is a `ty` a union's or an enum's value held inline (a tag and the case's payload)? The
+    /// payload of the case it holds is handed to the reader (`hand_place`).
+    fn inline_cases(&mut self, ty: TyId) -> bool {
+        matches!(self.cx.kind(ty), TyKind::Adt(..)) && self.inline(ty) && self.is_enum(ty)
+    }
+
+    /// Is a `ty` an object type's or a tuple's value held inline, every field in it (not a
+    /// class's object, an enum, or one with a field held out of line)? Its fields are handed
+    /// to the reader one by one (`hand_place`).
+    fn inline_parts(&mut self, ty: TyId) -> bool {
+        if !matches!(self.cx.kind(ty), TyKind::Adt(..) | TyKind::Tuple(_))
+            || !self.inline(ty)
+            || self.cx.is_class(ty)
+            || self.is_enum(ty)
+            || self.cx.proxiable(ty)
+        {
+            return false;
+        }
+        let n = self.cx.part_types(ty).len() as u32;
+        (0..n).all(|i| self.cx.cell_field(ty, i).is_none())
     }
 
     /// Is a `ty` held inline (not behind a pointer)?
@@ -641,6 +693,24 @@ impl FnLower<'_, '_> {
                 self.hand_place(&proj(p, Proj::Field(1)), e);
                 self.goto(done);
                 self.switch_to(done);
+            }
+            _ if self.inline_parts(ty) => {
+                let tys = self.cx.part_types(ty);
+                for (i, t) in tys.into_iter().enumerate() {
+                    if self.cx.reaches_lock_set(t) {
+                        let fp = self.field_place(p, ty, i as u32);
+                        self.hand_place(&fp, t);
+                    }
+                }
+            }
+            _ if self.inline_cases(ty) => {
+                self.for_each_variant(p, ty, |lw, _, parts| {
+                    for (pp, pt) in parts {
+                        if lw.cx.reaches_lock_set(pt) {
+                            lw.hand_place(&pp, pt);
+                        }
+                    }
+                });
             }
             _ => self.hand_boxed(p, ty),
         }

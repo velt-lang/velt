@@ -7,14 +7,14 @@
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
 //!   methods and builders, number formatting, JSON (incl. `json.Value` handles), byte buffers
 //!   and their bulk operations, BigInts, results, object handles, hashing (also `velt/hash`'s
-//!   FNV-1a), HTML escaping, symbols, math, memory, weak references, the fs operations and the
+//!   FNV-1a), HTML escaping, math, memory, the fs operations and the
 //!   `*_sync` fs calls. Their
 //!   `repr(C)` types put a pointer only where an 8-byte field follows, so on wasm32 each pointer
 //!   occupies the first half of its 8-byte VIR slot (see `velt_codegen_llvm`'s
 //!   `Target::wide_pointer_slots`): identical layouts, identical behavior.
 //! - **own**: `platform` (host services per target), `host` (what host functions and `HostRef`
 //!   need of the JS glue), `host_promise` and `host_turn` (async host functions, and the turns a
-//!   JS host drives), `entry`, `io`, `localtime` (UTC),
+//!   JS host drives), `entry`, `io`,
 //!   `memory_usage`, `panic`, `process`, `shared`, `net` and the current-thread executor in
 //!   `task` (no tokio, no threads). Every
 //!   function has exactly the signature `std/*.velt` declares (WebAssembly links only exact
@@ -59,7 +59,6 @@ mod inspect_cycles;
 mod inspect_layout;
 pub mod io;
 pub mod json;
-pub mod localtime;
 #[path = "../../velt_rt/src/math.rs"]
 pub mod math;
 #[path = "../../velt_rt/src/mem.rs"]
@@ -84,8 +83,6 @@ pub mod str_array;
 pub mod str_ops;
 #[path = "../../velt_rt/src/strbuf.rs"]
 pub mod strbuf;
-#[path = "../../velt_rt/src/symbol.rs"]
-pub mod symbol;
 pub mod task;
 #[path = "../../velt_rt/src/top_level_await.rs"]
 pub mod top_level_await;
@@ -93,7 +90,5 @@ pub mod top_level_await;
 pub mod transfer_map;
 #[path = "../../velt_rt/src/view.rs"]
 pub mod view;
-#[path = "../../velt_rt/src/weak/mod.rs"]
-pub mod weak;
 
 pub use crate::str::VeltStr;

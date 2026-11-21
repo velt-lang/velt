@@ -1,0 +1,33 @@
+// velt/lang/hooks (tests): the blocking pool (sched_blocking.velt) at the program's end, run by
+// `velt test std/`, whose leak verdict is the check. A job's waiter resumes at its give, while the
+// pool's thread still drops the job's closure and what it captured; the program's end waits for
+// the job, so all of that is freed before the block counters report (`VELT_RC_STATS=1`). Without
+// that wait, the last job's closure was counted unfreed now and then (`readAt`'s test, #3205).
+import { describe, expect, it } from "velt/test";
+import { hookCall } from "velt/lang/intrinsics";
+
+/** `n` arrays of one byte each: as many blocks to free for whoever drops the last reference. */
+function blocks(n: usize): u8[][] {
+  const all: u8[][] = [];
+  for (let i: usize = 0; i < n; i++) {
+    all.push([i as u8]);
+  }
+  return all;
+}
+
+describe("the blocking pool", () => {
+  it("gives a job's result to its waiter", async () => {
+    const held: u8[] = [1, 2, 3];
+    const n = await hookCall<usize>("sched_blocking_run", () => held.length);
+    expect(n).toBe(3 as usize);
+  });
+
+  it("drops what the last job captured before the program ends", async () => {
+    // The job's closure holds the only reference: the pool's thread frees the 100,000 arrays
+    // after its give has resumed this test, which is the file's last, so `main` returns while
+    // that thread still frees them.
+    const held = blocks(100000);
+    const n = await hookCall<usize>("sched_blocking_run", () => held.length);
+    expect(n).toBe(100000 as usize);
+  });
+});

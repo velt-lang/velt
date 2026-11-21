@@ -14,7 +14,7 @@
 //! that compares function values, a closure without captures gets an empty env all the same,
 //! as the identity of that evaluation (`identity_closure`).
 
-use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId};
+use velt_sema::hir::{self, DefId, FnDef, PassMode, TyId, TyKind};
 
 use super::operand::proj;
 use super::rt::Rt;
@@ -118,6 +118,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }` of closure `def`; `borrowed`: only borrowed by a call (see
     /// [`borrowed_arg`](Self::borrowed_arg)), so value captures may stay in a frame env too.
     fn closure_value(&mut self, def: DefId, ty: TyId, borrowed: bool) -> Operand {
+        // A closure with a rest parameter: at an instance where it is a tuple, the closure's
+        // code takes the tuple's elements, as its normalized function type does (`abi.rs`).
+        if matches!(self.cx.raw_kind(ty), TyKind::FnPtr { rest: true, .. }) {
+            self.cx.rest_closures.insert(def);
+        }
         self.note_closure_made(def);
         self.note_wrapper_made(def);
         self.note_closure_env(def, ty);
@@ -138,6 +143,17 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // in such a callback also those of the callbacks around it (leave_levels.rs). A
         // function instance counting by the counts outside read mode (`Work::Deferred`) is
         // such code for its callbacks too, at a depth of reads not known here (`own_deep`).
+        // A closure only ever called here, in such a callback (not one nested in another, whose
+        // captures' frames differ): it runs as part of that callback, so its code is a
+        // `Work::ReadOwn` too, which knows the caller's containers among what it captured
+        // through the callback (leave_levels.rs `caller_capture`).
+        let inner = !read_callback
+            && in_frame
+            && !borrowed
+            && self.mode == LkMode::Read
+            && self.own_captures
+            && !self.own_nested()
+            && !self.own_deep;
         let deep = read_callback && self.mode == LkMode::Deferred && !self.own_captures;
         let own = read_callback && (self.mode == LkMode::Plain || self.own_captures || deep);
         let mode = match callback {
@@ -171,7 +187,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let frozen = self.frozen_captures(def);
         let code = match frozen {
             _ if generic => cint(0, Ty::Ptr),
-            0 if own => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()), deep)),
+            0 if own || inner => cfunc(self.cx.func_read_own(Work::Fn(def, targs.clone()), deep)),
             // Code whose mode is asked: the thread's mode picks the callback's instance.
             0 if read_callback && self.mode == LkMode::Checked => self.read_callback_code(def),
             0 => cfunc(self.cx.func_direct(Work::Fn(def, targs.clone()), mode)),
@@ -459,7 +475,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             lw.counted_free(Operand::Copy(Place::local(env)), Ty::Agg(ea));
         };
-        lw.release(Operand::Copy(Place::local(env)), |lw| match glue {
+        let weak = lw.cx.boxing.weak_envs;
+        lw.release_as(Operand::Copy(Place::local(env)), weak, |lw| match glue {
             Some(glue) => lw.bracket_object(Operand::Copy(Place::local(env)), glue, drop),
             None => drop(lw),
         });

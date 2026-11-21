@@ -26,7 +26,7 @@ declare function velt_simd_u8x16_aesenc(state: u8x16, rk: u8x16): u8x16;
 declare function velt_simd_u8x16_aesenclast(state: u8x16, rk: u8x16): u8x16;
 
 // E(K, block) with the round keys `k`.
-@inline
+@inline("always")
 function encryptBlock(k: Rounds, block: u8x16): u8x16 {
   let s = velt_simd_u8x16_aesenc(block.xor(k.k0), k.k1);
   s = velt_simd_u8x16_aesenc(velt_simd_u8x16_aesenc(velt_simd_u8x16_aesenc(s, k.k2), k.k3), k.k4);
@@ -40,9 +40,17 @@ function encryptBlock(k: Rounds, block: u8x16): u8x16 {
   return velt_simd_u8x16_aesenclast(s, k.k14);
 }
 
+/** GCM's hash key H = E(K, 0^128) under the round keys `keys` (16 bytes). */
+@targetFeature("aes-x86")
+export function gcmHashKeyX86(keys: u8x16[]): u8[] {
+  const h = Buffer.alloc(16);
+  store16(encryptBlock(rounds(keys), u8x16.splat(0)), h, 0);
+  return h;
+}
+
 // XORs `buf[start..end]` in place with the keystream from counter 2.
+@targetFeature("aes-x86")
 function ctrX86(keys: u8x16[], k: Rounds, base: u32x4, buf: u8[], start: usize, end: usize) {
-  targetFeature("aes-x86");
   const last = keys.length - 1;
   let ctr: u32 = 2;
   let off = start;
@@ -117,6 +125,7 @@ function tagX86(
  * Encrypts `buf[start..end]` in place under the round keys `keys`, the hash powers `hp`
  * (`hashPowers`), `nonce` and the additional data `aad`; returns the tag.
  */
+@targetFeature("aes-x86")
 export function gcmSealX86(
   keys: u8x16[],
   hp: u64x2[],
@@ -126,7 +135,6 @@ export function gcmSealX86(
   start: usize,
   end: usize,
 ): u8x16 {
-  targetFeature("aes-x86");
   const base = counterBase(nonce);
   const k = rounds(keys);
   ctrX86(keys, k, base, buf, start, end);
@@ -138,6 +146,7 @@ export function gcmSealX86(
  * that in place: true. False with `buf` not written to when it does not match. `scratch` holds 16
  * bytes.
  */
+@targetFeature("aes-x86")
 export function gcmOpenX86(
   keys: u8x16[],
   hp: u64x2[],
@@ -148,7 +157,6 @@ export function gcmOpenX86(
   end: usize,
   scratch: u8[],
 ): bool {
-  targetFeature("aes-x86");
   const base = counterBase(nonce);
   const k = rounds(keys);
   tagX86(k, hp, base, aad, buf, start, end).store(scratch, 0);

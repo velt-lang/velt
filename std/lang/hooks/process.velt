@@ -8,6 +8,7 @@
 
 import { processId } from "#process-pid";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
+import { getEnv } from "#env-sys";
 
 declare function velt_rt_write_str(stream: u32, s: string);
 
@@ -36,7 +37,7 @@ const LAZY_PANY = new ThreadLocal<usize>(0);
 export const PRINTED: usize = 8;
 
 /** Marks that this thread wrote to standard output: before each write of it. */
-@inline
+@inline("always")
 export function stdoutWritten(): void {
   if (!STDOUT_WRITTEN.get()) {
     firstWrite();
@@ -74,18 +75,16 @@ export function setLazyWorker(a: usize): void {
 }
 
 /** Whether this thread wrote to standard output since a hand-off last published it (kept set). */
-@inline
+@inline("always")
 export function stdoutWrittenSince(): bool {
   return STDOUT_WRITTEN.get();
 }
 
 /** Clears the mark: the hand-off that saw it publishes the output (std/sync/output.velt). */
-@inline
+@inline("always")
 export function clearStdoutWritten(): void {
   STDOUT_WRITTEN.set(false);
 }
-
-declare function velt_rt_env_get(name: string, out: string): bool;
 
 /**
  * Writes `s` to standard output (`stream` 1) or standard error (2), without a newline, ordered
@@ -101,11 +100,7 @@ export function processWrite(stream: u32, s: string): bool {
 
 /** The value of environment variable `name`, or `undefined` if it is unset. */
 export function processEnv(name: string): string | undefined {
-  let out = "";
-  if (velt_rt_env_get(name, out)) {
-    return out;
-  }
-  return undefined;
+  return getEnv(name);
 }
 
 declare function velt_rt_process_node_argv(): string[];

@@ -25,13 +25,14 @@ mod pipeline;
 mod recover;
 mod std_load;
 mod std_summary;
+mod units_key;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
 mod warm;
 pub use warm::{compile_for_jit_warm, copy_files};
 pub(crate) mod stamp;
 mod std_cache;
-pub(crate) use std_cache::prebuilt_warm;
+pub(crate) use std_cache::{prebuilt_ship, prebuilt_warm};
 mod timings;
 
 use executable::build_on_current_thread;
@@ -423,6 +424,7 @@ fn sema_stage(
         require_main: scope.require_main,
         eager_std: scope.eager_std,
         units: scope.units,
+        std_key: units_key::units_std_key(sess, scope, loaded),
         native_executor: native_executor(opts),
     };
     let packages = opts.packages.as_ref();
@@ -636,6 +638,9 @@ fn lower_checked(
         )));
     }
 
+    // What runs before std's start-up check of the CPU is compiled for the baseline CPU, and
+    // the std cache never serves it compiled for `--cpu` (`velt_vir::start_up`).
+    velt_vir::start_up::mark_baseline(&mut program);
     // The std cache (#1728), around the optimizer. A generator host stays whole:
     // `check_generator_host` looks through its code.
     let std_use = match dest == VirFor::Link && !sess.generator_build {
@@ -648,7 +653,7 @@ fn lower_checked(
         None => std_cache::stage::optimize(sess, opts, &target, std_use, &mut program)?,
     }
     if dest == VirFor::Link {
-        std_cache::prebuilt_link(sess, opts, &target, &program)?;
+        std_cache::prebuilt_link(sess, opts, &target, &mut program)?;
     }
     if opts.report_numbers {
         sess.reports.push(crate::numbers_report::render(&program));

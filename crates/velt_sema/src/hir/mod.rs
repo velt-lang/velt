@@ -59,7 +59,9 @@ pub use intrinsic::Intrinsic;
 pub use modes::{Conversion, PassMode, UseMode};
 pub use module_state::{CConst, CGlobal, CValue, GlobalDef, ModuleState};
 pub use nothing::Nothing;
-pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
+pub use numeric::{
+    arch_check, cpu_check, cpu_check_call, CpuTarget, CpuTargets, FloatTy, IntTy, SimdTy,
+};
 pub use ops::{BinOp, Lit, LogicOp, UnOp};
 pub use pattern::{Pat, PatKind};
 pub use stmt::{Block, Stmt, StmtKind};
@@ -243,9 +245,9 @@ pub struct Program {
     /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
     /// each target for the same type, in `upcasts` order. Additive.
     pub upcast_impls: HashMap<u32, Vec<u32>>,
-    /// Gated functions (`targetFeature`) and the CPU extension each is compiled for
+    /// Gated functions (`@targetFeature`) and the CPU extension each is compiled for
     /// (#1330): lowering gives the VIR function its target.
-    pub cpu_targets: HashMap<DefId, CpuTarget>,
+    pub cpu_targets: HashMap<DefId, CpuTargets>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
     pub type_names: HashMap<TyId, String>,
     /// The generic interface methods called with type arguments of their own through tables:

@@ -1,0 +1,27 @@
+// An overload taking a generic options object whose implementation takes it at `unknown`
+// (sigx's `serverFn`, #379): `Options<S, R>` converts to `Options<unknown, unknown>` through an
+// adapter. Its handler's input is checked when the implementation calls it, and its result,
+// a value or a promise of one (`R | Promise<R>`), comes back as `unknown`. `S` and `R` are
+// inferred from the handler. Node prints the same.
+interface Ctx {
+  id: string;
+}
+
+interface Options<S, R> {
+  name: string;
+  handler(rq: Ctx, input: S): R | Promise<R>;
+}
+
+function run<S = void, R = unknown>(options: Options<S, R>, input: S): Promise<unknown>;
+async function run(options: Options<unknown, unknown>, input: unknown): Promise<unknown> {
+  return await options.handler({ id: options.name }, input);
+}
+
+async function main(): Promise<void> {
+  const doubled = await run({ name: "double", handler: (rq: Ctx, n: number): number => n * 2 }, 21);
+  const greeted = await run(
+    { name: "greet", handler: async (rq: Ctx, who: string): Promise<string> => rq.id + " " + who },
+    "ann",
+  );
+  console.log(doubled, greeted);
+}

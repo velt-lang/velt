@@ -1,0 +1,48 @@
+// velt/fs (tests): `readAt`'s result is as large as what was read, not as what was asked for.
+import { closeSync, openSync, readAt, removeSync, writeFileSync } from "velt/fs";
+import { arrayDataAddress, arrayReserve, arrayWithCapacity } from "velt/lang/intrinsics";
+import { platform, tmpdir } from "velt/os";
+import { describe, expect, it } from "velt/test";
+
+/**
+ * Whether `xs` already has room for `extra` more elements: reserving them then leaves its
+ * buffer where it is. An array without that room gets a new buffer, at another address when
+ * `extra` is megabytes and the array a few bytes (no allocator grows such a block in place).
+ * It asks the array itself, so nothing else in the process changes the answer.
+ */
+function hasRoom<T extends Numeric>(xs: T[], extra: usize): bool {
+  // SAFETY: the addresses are compared, never read through.
+  const before = unsafe { arrayDataAddress(xs) };
+  arrayReserve(xs, extra);
+  // SAFETY: as above.
+  const after = unsafe { arrayDataAddress(xs) };
+  return before == after;
+}
+
+describe("readAt", () => {
+  it("keeps no more than it read when the file ends first", async () => {
+    if (platform() == "win32") {
+      // No descriptors there (`openSync`).
+      return;
+    }
+    const path = `${tmpdir()}/velt-read-at-short-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+    writeFileSync(path, "0123456789");
+    const fd = openSync(path, "r");
+    const asked: usize = 8 * 1024 * 1024;
+    let bytes = await readAt(fd, asked as number, 0);
+    let words = await readAt<u16>(fd, asked as number, 1);
+    closeSync(fd);
+    removeSync(path);
+    expect(bytes.length).toBe(10);
+    expect(words.length).toBe(4);
+    // Ten bytes and four words: neither holds half the room its read asked for.
+    expect(hasRoom(bytes, asked / 2)).toBe(false);
+    expect(hasRoom(words, asked / 4)).toBe(false);
+    // And an array that does keep such room says so: the question can be answered "yes".
+    let kept: u8[] = arrayWithCapacity<u8>(asked);
+    for (let i = 0; i < 10; i++) {
+      kept.push(i as u8);
+    }
+    expect(hasRoom(kept, asked / 2)).toBe(true);
+  });
+});

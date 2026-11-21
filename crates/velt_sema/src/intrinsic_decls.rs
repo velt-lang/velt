@@ -16,9 +16,6 @@ use crate::hir::Intrinsic;
 pub(crate) enum DeclaredIntrinsic {
     /// An [`Intrinsic`] call, its arguments checked against the declaration.
     Op(Intrinsic),
-    /// `targetFeature("sha-arm")`: the statement that gates a std function on a CPU extension
-    /// (`body::gated`).
-    TargetFeature,
     /// `anyToPrimitive(value, hint, at)` in the hook `anyPrimitive`: the per-class
     /// dispatch sema writes out (`body::expr::any_prim`).
     AnyToPrimitive,
@@ -30,7 +27,7 @@ pub(crate) enum DeclaredIntrinsic {
     Invalid,
 }
 
-use DeclaredIntrinsic::{AnyToPrimitive, HookCall, Op, TargetFeature};
+use DeclaredIntrinsic::{AnyToPrimitive, HookCall, Op};
 use Intrinsic as I;
 
 /// Every declared intrinsic: its name in `std/lang/intrinsics` and what a call of it is.
@@ -45,7 +42,11 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("proxyArrayHole", Op(I::ProxyArrayHole)),
     ("stdUsed", Op(I::StdUsed)),
     // array.velt
+    ("arrayByteLength", Op(I::ArrayByteLength)),
     ("arrayCopyBytes", Op(I::ArrayCopyBytes)),
+    ("arrayDataAddress", Op(I::ArrayDataAddress)),
+    ("arrayReadAddress", Op(I::ArrayReadAddress)),
+    ("arrayBytesWritten", Op(I::ArrayBytesWritten)),
     ("arrayMove", Op(I::ArrayMove)),
     ("arrayPrefetch", Op(I::ArrayPrefetch)),
     ("arrayRemove", Op(I::ArrayRemove)),
@@ -110,8 +111,9 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // simd.velt
     ("strLoadPartialU8x16", Op(I::StrLoadPartialU8x16)),
     ("strLoadU8x16", Op(I::StrLoadU8x16)),
-    ("targetFeature", TargetFeature),
     // address.velt
+    ("addressArray", Op(I::AddressArray)),
+    ("addressArrayOwned", Op(I::AddressArrayOwned)),
     ("addressLoad", Op(I::AddressLoad)),
     ("addressStore", Op(I::AddressStore)),
     ("exportedAddress", Op(I::ExportedAddress)),
@@ -122,6 +124,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("addressAtomicStore", Op(I::AddressAtomicStore)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
+    ("addressCall3", Op(I::AddressCall3)),
+    ("addressCallWord", Op(I::AddressCallWord)),
     ("fnAddress", Op(I::FnAddress)),
     ("futDrop", Op(I::FutDrop)),
     ("futPoll", Op(I::FutPoll)),
@@ -149,9 +153,12 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strWord0", Op(I::StrWord0)),
     ("strWord1", Op(I::StrWord1)),
     ("strWord2", Op(I::StrWord2)),
+    ("strAt", Op(I::StrAt)),
     ("strbufPushAsciiWord", Op(I::StrbufPushAsciiWord)),
     ("strbufPushAsciiWords", Op(I::StrbufPushAsciiWords)),
     // symbol.velt
+    ("symbolAddress", Op(I::SymbolAddress)),
+    ("symbolAt", Op(I::SymbolAt)),
     ("symbolRegistry", Op(I::SymbolRegistry)),
     ("symbolStatic", Op(I::SymbolStatic)),
     // task.velt
@@ -178,11 +185,13 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("recordViewSync", Op(I::RecordViewSync)),
     // weak.velt
     ("weakMapDelete", Op(I::WeakMapDelete)),
+    ("weakMapDrop", Op(I::WeakMapDrop)),
     ("weakMapGet", Op(I::WeakMapGet)),
     ("weakMapHas", Op(I::WeakMapHas)),
     ("weakMapSet", Op(I::WeakMapSet)),
     ("weakMapValue", Op(I::WeakMapValue)),
     ("weakRefDeref", Op(I::WeakRefDeref)),
+    ("weakRefDrop", Op(I::WeakRefDrop)),
     ("weakRefNew", Op(I::WeakRefNew)),
 ];
 

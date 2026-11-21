@@ -30,6 +30,7 @@ pub mod hir;
 pub mod js_protos;
 
 mod absent_fields;
+mod analysis;
 mod ctx_lookup;
 mod lib_dom_names;
 mod not_found_notes;
@@ -87,10 +88,13 @@ pub use hooks::NAMES as HOOK_NAMES;
 mod canon_key;
 mod glue_reach;
 pub mod ide;
+mod iface_method_checks;
+mod iface_method_writes;
 mod iface_overloads;
 mod iface_writes;
 mod index_signatures;
 mod infer;
+mod infer_rest;
 mod inst_sites;
 mod instantiation_cycles;
 pub mod interface;
@@ -166,6 +170,7 @@ mod unique_symbols;
 mod units;
 mod utility_types;
 mod visit;
+mod visit_ref;
 mod void_fields;
 mod weak_threads;
 mod written_types;
@@ -378,28 +383,34 @@ fn check_timed(
     }
     // What a round found it needed once it was too late to demand or check it.
     let assumed = std::cell::RefCell::new(body::lazy_std::Assumed::default());
-    let new_cx = |round: &'static str,
-                  held_borrows: bool,
-                  seeds: &throws::FnTypeSeeds,
-                  last: bool,
-                  views: &union_views::Families| {
-        timings::note_round();
-        let mut cx = ctx::Ctx::new(modules, root);
+    // A check by units with std as a check of its own (`units::stage2`): the stage the next
+    // round checks, and std's frozen unit the app's rounds start from.
+    let stage = std::cell::Cell::new(units::Stage::Both);
+    // std's modules first, which std's unit is checked over alone, then the app's.
+    let mut order = (opts.units && units::stage2()).then(|| units::Order::of(modules, root));
+    // Where std's unit is kept on disk, when it is (`units::disk`): not for a program that
+    // changes what std's stage makes of std.
+    let disk = (order.as_ref())
+        .and_then(|_| {
+            units::disk::path(opts, [null_proto, record_accessors, ctor_reads, gen_throw])
+        })
+        .filter(|_| !units::disk::shaped_by_program(input, &brands, &global_ns));
+    let std_snap: std::cell::RefCell<Option<ctx::Ctx>> = Default::default();
+    // What every context of this check holds of the program, which a unit does not save
+    // (`units::codec::unit`'s `skip`): the rewrites' facts, the generator, the loads. Installed in
+    // a fresh context and in std's unit loaded from disk.
+    let install = on_cx(|cx| {
         if opts.eager_std {
             cx.lazy.on = false;
         }
         cx.units = opts.units;
         cx.lazy.native_executor = opts.native_executor;
-        body::lazy_std::assume(&mut cx, &assumed.borrow());
         cx.loads = loads;
-        generating::install(&mut cx, gen, generator.as_ref());
-        cx.union_views.assumed = views.clone();
-        cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
+        generating::install(cx, gen, generator.as_ref());
         cx.stack_budget = stack_budget;
         // A check that keeps itself records its bodies, for the kept check to check them again.
         cx.body_records = kept::wanted(input).then(Default::default);
         cx.source_facts = facts.clone();
-        cx.held_borrows = held_borrows;
         cx.ns_private = ns_private.clone();
         cx.global_namespaces = global_ns.clone();
         cx.gen_throw = gen_throw;
@@ -421,15 +432,112 @@ fn check_timed(
         cx.recovered = (recovered.iter())
             .map(|&(m, src)| (m, collect::exports::words(src)))
             .collect();
-        cx.diags.extend(merge_diags.iter().cloned());
         cx.promoted_consts = chunks.promoted.clone();
         cx.asserted_rmw = asserted.rmw.clone();
         if let Some(c) = &closures {
-            cx.diags.extend(c.diags.iter().cloned());
             cx.kept_nested = c.kept.clone();
             cx.set_closure_groups(&c.groups);
         }
-        let entry = timings::pass(round, || analyze(&mut cx, root, root_mod, opts));
+    });
+    // The rewrites' diagnostics: the program's, so not std's unit's (a unit on disk serves other
+    // programs); the app's copy of it takes them.
+    let rewrite_diags = on_cx(|cx| {
+        cx.diags.extend(merge_diags.iter().cloned());
+        if let Some(c) = &closures {
+            cx.diags.extend(c.diags.iter().cloned());
+        }
+    });
+    // std's unit from disk, with the program's facts installed as in a fresh context. Its AST
+    // lives as long as the process: the program built from the check keeps references to it.
+    let loaded_std = match (&disk, order.take()) {
+        (Some(path), Some(o)) => {
+            // The arena of a unit that loads is never freed: left as the raw pointer it is read
+            // through, so the box is not moved while the context borrows from it.
+            let arena = Box::into_raw(Box::<units::codec::Arena>::default());
+            // SAFETY: `arena` is the box made above, alive for the load and, when the unit
+            // loads, for the rest of the process.
+            match unsafe { units::disk::load(path, &*arena, &o.std_modules(modules)) } {
+                Some((mut cx, at)) => {
+                    let o = o.reorder_std(&at);
+                    // std's stage first: `install` adds no generated module to std's unit.
+                    cx.units_stage = units::Stage::Std;
+                    install(&mut cx);
+                    units::remap_module_facts(&mut cx, &|m| o.in_std(m));
+                    cx.unit_base = cx.defs.len() as u32;
+                    order = Some(o);
+                    Some(cx)
+                }
+                None => {
+                    // SAFETY: a unit that does not load gives no context, so nothing borrows
+                    // the arena: the box made above is taken back and dropped, with whatever
+                    // nodes a damaged unit decoded before it was refused.
+                    drop(unsafe { Box::from_raw(arena) });
+                    order = Some(o);
+                    None
+                }
+            }
+        }
+        (_, o) => {
+            order = o;
+            None
+        }
+    };
+    let new_cx = |round: &'static str,
+                  held_borrows: bool,
+                  seeds: &throws::FnTypeSeeds,
+                  last: bool,
+                  views: &union_views::Families| {
+        timings::note_round();
+        let from_std = match stage.get() {
+            units::Stage::App => timings::pass("units: copy std", || std_snap.borrow().clone()),
+            _ => None,
+        };
+        let fresh = from_std.is_none();
+        let mut cx = match (from_std, &order) {
+            (Some(cx), _) => cx,
+            (None, Some(o)) if stage.get() == units::Stage::Std => {
+                ctx::Ctx::over(o.std_modules(modules), 0)
+            }
+            (None, _) => ctx::Ctx::new(modules, root),
+        };
+        cx.units_stage = stage.get();
+        if !fresh {
+            cx.union_views.assumed = views.clone();
+            cx.fn_sites.reseed(seeds.clone(), last);
+            cx.held_borrows = held_borrows;
+            // The app's modules after std's unit, with what the rewrites found of them.
+            if let Some(o) = &order {
+                o.add_app(&mut cx, modules);
+                let base = o.app_base(&cx);
+                cx.global_props = global_props.clone();
+                cx.objects.brands = brands.clone();
+                cx.ns_private = ns_private.clone();
+                cx.global_namespaces = global_ns.clone();
+                cx.recovered = (recovered.iter())
+                    .map(|&(m, src)| (m, collect::exports::words(src)))
+                    .collect();
+                units::remap_module_facts(&mut cx, &|m| o.in_app(m, base));
+                rewrite_diags(&mut cx);
+                // The generated modules handed in apart, which std's unit does not hold.
+                generating::add_sources(&mut cx, gen);
+            }
+        }
+        if fresh {
+            cx.units_stage = stage.get();
+            install(&mut cx);
+            body::lazy_std::assume(&mut cx, &assumed.borrow());
+            cx.union_views.assumed = views.clone();
+            cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
+            cx.held_borrows = held_borrows;
+            if stage.get() != units::Stage::Std {
+                rewrite_diags(&mut cx);
+            }
+        }
+        if let (true, Some(o), units::Stage::Std) = (fresh, &order, stage.get()) {
+            units::remap_module_facts(&mut cx, &|m| o.in_std(m));
+        }
+        let cx_root = cx.root;
+        let entry = timings::pass(round, || analyze(&mut cx, cx_root, root_mod, opts));
         global_this::drop_site_errors(&mut cx);
         if let Some(o) = &overloaded {
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
@@ -443,17 +551,36 @@ fn check_timed(
     // moves into `main`, which is checked again anyway (`script_locals`).
     let given = merge_diags.len() + closures.as_ref().map_or(0, |c| c.diags.len());
     let doubt = |cx: &ctx::Ctx| {
-        let moves = script_locals::moves_more(cx, &modules[root].ast);
+        let moves = script_locals::moves_more(cx, &cx.modules[cx.root].ast);
         cx.diags.len() > given && !moves && !throws::first_check_only()
     };
     // The check checked again, kept while that one runs: when that one reports an error this
     // one did not, this one's diagnostics stay the program's (`throws::adds_errors`).
+    if opts.units && units::stage2() {
+        let std_cx = match loaded_std {
+            Some(cx) => cx,
+            None => {
+                stage.set(units::Stage::Std);
+                let run = rounds::run(&new_cx, &|_: &ctx::Ctx| false, &assumed, false, None);
+                let mut std_cx = match run {
+                    Ok((cx, _, _)) => cx,
+                    Err(stopped) => return *stopped,
+                };
+                units::finish_std(&mut std_cx);
+                if let Some(path) = &disk {
+                    units::disk::save(path, &std_cx);
+                }
+                std_cx
+            }
+        };
+        *std_snap.borrow_mut() = Some(std_cx);
+        stage.set(units::Stage::App);
+    }
     let (cx, entry, generated) = match rounds::run(
         &new_cx,
         &doubt,
         &assumed,
         !recovered.is_empty(),
-        root,
         generator.as_ref(),
     ) {
         Ok(done) => done,
@@ -461,7 +588,9 @@ fn check_timed(
     };
     // A kept check (`kept`) of a check in which no generator ran.
     let none_generated = generator.as_ref().is_none_or(|g| g.kept().next().is_none());
-    let kept = (kept::wanted(input) && none_generated).then(|| kept::detach(cx.clone()));
+    // Not with std as a unit of its own: a kept check reloads over the load's module order.
+    let kept = (kept::wanted(input) && none_generated && order.is_none())
+        .then(|| kept::detach(cx.clone()));
     let checked = (modules.as_ptr(), modules.len());
     let (program, diags) = program::build_checked(cx, entry, generated);
     if let Some(kept) = kept {
@@ -516,202 +645,12 @@ pub(crate) const FN_SITE_ROUNDS: usize = 8;
 /// the last, a use without an arm is an error.
 pub(crate) const VIEW_ROUNDS: usize = 4;
 
-/// Steps 1–5 and the checks of the whole program: the entry point, if there is one.
-fn analyze(
-    cx: &mut ctx::Ctx,
-    root: usize,
-    root_mod: &SourceModule,
-    opts: CheckOptions,
-) -> Option<hir::DefId> {
-    check_definitions(cx);
-    // A check that keeps itself keeps this point too, once the generated code is checked: a
-    // reload checks edited bodies again from here and runs the rest (`reanalyze`), the
-    // generated code's check only when the edit demands other instances of it.
-    if cx.body_records.is_some() {
-        generated_phase(cx);
-        // What the phase demanded last; nothing when it had no generated code to check.
-        cx.kept_demand = cx.gen.binding.last_found.clone();
-        kept::stash(cx);
-        analyze_after_phase(cx);
-    } else {
-        analyze_after_bodies(cx);
-    }
-    let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
-    alias_expand::check_unused_aliases(cx);
-    entry
-}
+pub(crate) use analysis::{
+    analyze, analyze_after_phase, analyze_bodies, demanded, error_count, retry_sharing,
+};
 
-/// Should the program be checked again with held closures and `const me = this` sharing?
-/// Borrowing in them only changes the cost, never which programs are accepted
-/// (https://veltlang.com/docs/reference/functions/ "Captures"). So when some of them borrowed and a pass from
-/// `demote_local_closures` on reported an error, the program is checked again with them
-/// sharing, as it was before. Errors from the earlier passes (type errors) don't depend on
-/// borrowing and never cause a second check. The CLI and the IDE both use this rule.
-pub(crate) fn retry_sharing(cx: &ctx::Ctx) -> bool {
-    cx.held_borrows_used && cx.borrow_pass_errors
-}
-
-pub(crate) fn error_count(cx: &ctx::Ctx) -> usize {
-    cx.diags.iter().filter(|d| d.is_error()).count()
-}
-
-/// Steps 1–5: every definition and body checked ([`check_definitions`]), then ownership and
-/// throws inferred and moves checked ([`analyze_after_bodies`]).
-fn analyze_bodies(cx: &mut ctx::Ctx) {
-    check_definitions(cx);
-    analyze_after_bodies(cx);
-}
-
-/// Every definition collected and every body checked.
-fn check_definitions(cx: &mut ctx::Ctx) {
-    if cx.units {
-        units::check_definitions(cx);
-        return;
-    }
-    timings::pass("script_tdz::check", || script_tdz::check(cx));
-    timings::pass("collect::collect", || collect::collect(cx));
-    cx.collected_defs = cx.defs.len();
-    timings::pass("decorators::check", || decorators::check(cx, 0));
-    timings::pass("global_this::declare", || global_this::declare(cx));
-    timings::pass("build_fill_bodies", || {
-        body::expr::virtual_defaults::build_fill_bodies(cx, 0)
-    });
-    timings::pass("body::check_bodies", || body::check_bodies(cx));
-}
-
-/// What follows the bodies' check: generated code, ownership and throws inferred, moves checked.
-fn analyze_after_bodies(cx: &mut ctx::Ctx) {
-    generated_phase(cx);
-    analyze_after_phase(cx);
-}
-
-/// The generated code collected, checked and bound ([`generated::phase`]).
-fn generated_phase(cx: &mut ctx::Ctx) {
-    timings::pass("generated::phase", || generated::phase::run(cx));
-}
-
-/// The instances of generated functions the checked code reaches, without where.
-fn demanded(cx: &mut ctx::Ctx) -> Vec<(hir::DefId, Vec<hir::TyId>)> {
-    let found = generated::demand::compute(cx);
-    found.into_iter().map(|(g, targs, _)| (g, targs)).collect()
-}
-
-/// [`analyze_after_bodies`] after the generated phase.
-fn analyze_after_phase(cx: &mut ctx::Ctx) {
-    timings::pass("global_this::check_sites", || global_this::check_sites(cx));
-    timings::pass("module_scripts::declare", || module_scripts::declare(cx));
-    timings::pass("make_dynamic_impls", || {
-        body::expr::dynamic_fn_views::make_dynamic_impls(cx)
-    });
-    timings::pass("check_adapter_writes", || cx.check_adapter_writes());
-    timings::pass("check_adapted_array_reads", || {
-        cx.check_adapted_array_reads()
-    });
-    timings::pass("absent_fields::check", || absent_fields::check(cx));
-    timings::pass("fresh_returns::check", || fresh_returns::check(cx));
-    timings::pass("generic_override_sites::check", || {
-        generic_override_sites::check(cx)
-    });
-    timings::pass("generic_fns::mark_shared_values", || {
-        generic_fns::mark_shared_values(cx)
-    });
-    // Growing generic recursion, and generic types that refer to themselves at a growing type
-    // argument, have infinitely many instantiations: the passes below would never finish.
-    if timings::pass("instantiation_cycles::check", || {
-        instantiation_cycles::check(cx) || expansive_types::check(cx)
-    }) {
-        return;
-    }
-    // After the cycles: it carries calls and conversions through instantiations.
-    timings::pass("any_iface_sites::check", || any_iface_sites::check(cx));
-    // Before the passes that read instantiated types: deferred types reduced per instance.
-    timings::pass("type_level::instances::reach", || {
-        type_level::instances::reach(cx)
-    });
-    timings::pass("hooks::check_shapes", || hooks::check_shapes(cx));
-    body::lazy_std::finish_live(cx);
-    let before = error_count(cx);
-    generated::bind::fix_modes(cx);
-    timings::pass("ownership_passes", || ownership_passes(cx));
-    if cx.fn_sites.again() {
-        return;
-    }
-    cx.borrow_pass_errors = error_count(cx) > before;
-    kept_consts::keep_readers(cx);
-    // After `ownership_passes`: the JSON pass records the types `JSON.stringify` writes.
-    // Conversions are all made: a check below widens no layout (`collect::extended_layouts`).
-    cx.objects.layouts.sealed = true;
-    layout_merge::check_looks(cx);
-    timings::pass("object_copies::check", || object_copies::check(cx));
-    timings::pass("replaced_holders::check", || replaced_holders::check(cx));
-    cx.module_slots = module_state::order(cx);
-    timings::pass("module_state::check_locked_access", || {
-        module_state::check_locked_access(cx)
-    });
-}
-
-/// The passes from `demote_local_closures` on: the ones whose errors may come from a held
-/// closure or `const me = this` borrowing ([`retry_sharing`]).
-fn ownership_passes(cx: &mut ctx::Ctx) {
-    timings::pass("ownership::demote_local_closures", || {
-        ownership::demote_local_closures(cx)
-    });
-    timings::pass("ownership::infer_local_async", || {
-        ownership::infer_local_async(cx)
-    });
-    timings::pass("ownership::infer_modes", || ownership::infer_modes(cx));
-    timings::pass("ownership::check_crossing_changes", || {
-        ownership::check_crossing_changes(cx)
-    });
-    timings::pass("throws::infer_all", || throws::infer_all(cx));
-    // The program is checked again with the error types of function types written without
-    // `throws` that this check found (`throws::fn_types`): the rest would be redone.
-    if cx.fn_sites.again() {
-        return;
-    }
-    timings::pass("hooks::check_throws", || hooks::check_throws(cx));
-    decorators::export_throws(cx);
-    let uses = timings::pass("record_keys::check_instantiations", || {
-        record_keys::check_instantiations(cx)
-    });
-    timings::pass("json::check_json_types", || json::check_json_types(cx));
-    timings::pass("void_fields::check_instantiations", || {
-        void_fields::check_instantiations(cx)
-    });
-    timings::pass("struct_tuples::check_instantiations", || {
-        struct_tuples::check_instantiations(cx);
-        struct_tuples::check_generic_bodies(cx, &uses);
-        struct_tuples::check_field_writes(cx, &uses);
-        struct_tuples::check_proxy_targets(cx, &uses)
-    });
-    timings::pass("undefined_args::check_instantiations", || {
-        undefined_args::check_instantiations(cx)
-    });
-    timings::pass("ownership::soften_moves", || ownership::soften_moves(cx));
-    timings::pass("ownership::validate_moves", || {
-        ownership::validate_moves(cx)
-    });
-    let moved = timings::pass("moves::check_all", || moves::check_all(cx));
-    timings::pass("ownership::clone_reused", || {
-        ownership::clone_reused(cx, &moved.reused)
-    });
-    timings::pass("atomic_copies::check", || atomic_copies::check(cx));
-    timings::pass("thread_locals::check", || thread_locals::check(cx));
-    timings::pass("ownership::box_cells", || {
-        ownership::box_cells(cx, &moved.boxed, &moved.per_iteration)
-    });
-    timings::pass("ownership::check_exclusive", || {
-        ownership::check_exclusive(cx)
-    });
-    timings::pass("ownership::check_boundaries", || {
-        ownership::check_boundaries(cx)
-    });
-    let weak = timings::pass("ownership::check_locked", || ownership::check_locked(cx));
-    timings::pass("ownership::record_changed_captures", || {
-        ownership::record_changed_captures(cx)
-    });
-    timings::pass("ownership::check_many_threads", || {
-        ownership::check_many_threads(cx)
-    });
-    timings::pass("weak_threads::check", || weak_threads::check(cx, weak));
+/// `f`, a function of one check's contexts (their modules' lifetime fixed: a closure's own
+/// parameter would get a lifetime of its own).
+fn on_cx<'m, F: Fn(&mut ctx::Ctx<'m>)>(f: F) -> F {
+    f
 }

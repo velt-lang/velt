@@ -1,0 +1,78 @@
+// The distance kernels. Rows are read from the files straight into `f32[]` (store.velt's
+// `readAt`, or a `MappedFile` view), so the float kernel works on arrays. The int8 codes stay
+// bytes: a record is a row id and its codes back to back, and a list is scanned as it lies.
+import { f32x4, i32x4, i8x16, u8x16 } from "velt/simd";
+
+/// Dot product of two `f32[]` rows: `dim` floats of `a` from `aAt` and of `b` from `bAt`.
+export function dotF32(a: f32[], aAt: usize, b: f32[], bAt: usize, dim: usize): f32 {
+  let s0 = f32x4.splat(0);
+  let s1 = f32x4.splat(0);
+  let s2 = f32x4.splat(0);
+  let s3 = f32x4.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim && f32x4.fits(a, aAt + i + 12) && f32x4.fits(b, bAt + i + 12)) {
+    s0 = f32x4.load(a, aAt + i).mulAddFast(f32x4.load(b, bAt + i), s0);
+    s1 = f32x4.load(a, aAt + i + 4).mulAddFast(f32x4.load(b, bAt + i + 4), s1);
+    s2 = f32x4.load(a, aAt + i + 8).mulAddFast(f32x4.load(b, bAt + i + 8), s2);
+    s3 = f32x4.load(a, aAt + i + 12).mulAddFast(f32x4.load(b, bAt + i + 12), s3);
+    i += 16;
+  }
+  while (i + 4 <= dim) {
+    s0 = f32x4.load(a, aAt + i).mulAddFast(f32x4.load(b, bAt + i), s0);
+    i += 4;
+  }
+  let s = s0.add(s1).add(s2.add(s3)).sum();
+  while (i < dim) {
+    s += a[aAt + i] * b[bAt + i];
+    i++;
+  }
+  return s;
+}
+
+/// Dot product of the `dim` int8 codes at byte `at` of `bytes` with the int8 query `q`
+/// (`q` holds the query's codes as bytes too).
+export function dotI8Bytes(bytes: u8[], at: usize, q: u8[], dim: usize): i32 {
+  let s0 = i32x4.splat(0);
+  let s1 = i32x4.splat(0);
+  let i: usize = 0;
+  while (i + 32 <= dim && u8x16.fits(bytes, at + i + 16) && u8x16.fits(q, i + 16)) {
+    s0 = s0.dotAdd(u8x16.load(bytes, at + i).asI8x16(), u8x16.load(q, i).asI8x16());
+    s1 = s1.dotAdd(u8x16.load(bytes, at + i + 16).asI8x16(), u8x16.load(q, i + 16).asI8x16());
+    i += 32;
+  }
+  while (i + 16 <= dim) {
+    s0 = s0.dotAdd(u8x16.load(bytes, at + i).asI8x16(), u8x16.load(q, i).asI8x16());
+    i += 16;
+  }
+  let s = s0.add(s1).sum();
+  while (i < dim) {
+    s += ((bytes[at + i] as i8) as i32) * ((q[i] as i8) as i32);
+    i++;
+  }
+  return s;
+}
+
+/// Scales `xs[from..from+dim]` to unit length in place (a zero vector stays zero).
+export function normalize(xs: f32[], from: usize, dim: usize) {
+  const n = Math.sqrt(dotF32(xs, from, xs, from, dim) as number) as f32;
+  if (n > 0) {
+    const inv: f32 = 1 / n;
+    for (let i: usize = 0; i < dim; i++) {
+      xs[from + i] = xs[from + i] * inv;
+    }
+  }
+}
+
+/// The int8 codes of `dim` floats of `xs` from `from`, written to byte `at` of `out`:
+/// `round(x * scale)` clamped to [-127, 127].
+export function quantize(xs: f32[], from: usize, dim: usize, scale: f32, out: u8[], at: usize) {
+  for (let i: usize = 0; i < dim; i++) {
+    let v = Math.round((xs[from + i] * scale) as number);
+    if (v > 127) {
+      v = 127;
+    } else if (v < -127) {
+      v = -127;
+    }
+    out[at + i] = ((v as i32) as i8) as u8;
+  }
+}

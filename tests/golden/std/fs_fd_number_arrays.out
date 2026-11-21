@@ -1,0 +1,15 @@
+write f32 16
+write i8 5
+write u32 part 8
+file 0,0,192,63,0,0,16,192,0,0,64,64,0,0,0,63,255,2,253,127,128,239,190,173,222,9,10,11,12
+read f32 16 1.5,-2.25,3,0.5
+read i8 5 0,-1,2,-3,127,-128
+read u32 8 0,3735928559,202050057
+read f64 at end 8 7
+read f32 unaligned 4 0,2.2869190937781015e-41
+read u32 at fd position 8 1069547520,3222274048
+and the next 4 1077936128,3222274048
+RangeError The value of "length" is out of range. It must be <= 8. Received 9
+0
+TypeError The argument 'buffer' is empty and cannot be written. Received Float64Array(0) []
+RangeError The value of "length" is out of range. It must be <= 6. Received 7

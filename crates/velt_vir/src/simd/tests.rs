@@ -320,7 +320,11 @@ fn std_declarations_are_operations() {
             let call = SimdCall::of_symbol(&symbol)
                 .unwrap_or_else(|| panic!("{symbol} is not a SIMD operation"));
             let list = params.split_once(')').expect("`)`").0;
-            let declared = list.split(", ").filter(|p| !p.is_empty()).count();
+            let mut declared = list.split(", ").filter(|p| !p.is_empty()).count();
+            // A 256-bit operation writes a vector result through one more pointer (`wide`).
+            if matches!(call, SimdCall::Wide(..)) && !line.trim_end().ends_with(");") {
+                declared += 1;
+            }
             assert_eq!(call.signature().0.len(), declared, "{symbol}");
             seen += 1;
         }
@@ -347,18 +351,59 @@ fn signatures() {
     );
 }
 
-/// Every CPU target sema knows (the names `targetFeature` takes) is the extension of the same
-/// name, which lowering gives a gated function (`lower/abi.rs`), and every extension is one;
+/// Arm's `bfdot` (#3129) is an instruction of the extension `bf16-arm`, among `f32x4`'s symbols,
+/// `(acc, a, b) -> acc`; the extension has no runtime flag (std asks the operating system), and
+/// the other `f32x4` symbols are still vector operations.
+#[test]
+fn bfdot_is_an_instruction_of_bf16_arm() {
+    let call = SimdCall::of_symbol("velt_simd_f32x4_bfdot");
+    assert_eq!(call, Some(SimdCall::Inst(ExtOp::Bfdot)));
+    assert_eq!(
+        call.map(SimdCall::signature),
+        Some((vec![Ty::V128, Ty::V128, Ty::V128], Ty::V128))
+    );
+    assert_eq!(ExtOp::Bfdot.ext(), Ext::Bf16Arm);
+    assert_eq!(
+        SimdCall::of_symbol("velt_simd_has_bf16_arm"),
+        Some(SimdCall::Has(Ext::Bf16Arm))
+    );
+    assert!(Ext::Bf16Arm.on_arch("aarch64") && !Ext::Bf16Arm.on_arch("x86_64"));
+    assert!(!Ext::Bf16Arm.covers(Ext::ClmulArm) && !Ext::AesArm.covers(Ext::Bf16Arm));
+    assert_eq!(
+        SimdCall::of_symbol("velt_simd_f32x4_dot_add_fast_bf16x8"),
+        Some(SimdCall::Vector(Lanes::F32, Op::DotAddFast(Lanes::BF16)))
+    );
+    assert_eq!(
+        SimdCall::of_symbol("velt_simd_f32x4_add"),
+        Some(SimdCall::Vector(Lanes::F32, Op::Add))
+    );
+}
+
+/// Sema's CPU targets and velt_vir's features are one table (velt_common `cpu_features`): every
+/// feature's check symbol names it; the new intrinsics have their signatures;
 /// `velt_simd_xgetbv` is `(u32) -> u64`.
 #[test]
 fn cpu_targets_are_extensions() {
     use velt_sema::hir::CpuTarget;
-    for t in CpuTarget::ALL {
-        let ext = Ext::named(t.name()).expect("an extension");
-        assert_eq!(ext.name(), t.name());
+    for &t in CpuTarget::ALL {
+        let ext: Ext = t;
+        let symbol = format!("velt_simd_has_{}", ext.symbol_suffix());
+        assert_eq!(
+            SimdCall::of_symbol(&symbol),
+            Some(SimdCall::Has(ext)),
+            "{symbol}"
+        );
     }
-    assert_eq!(CpuTarget::ALL.len(), Ext::ALL.len());
     assert_eq!(Ext::named("fma-x86"), Some(Ext::FmaX86));
+    assert_eq!(
+        SimdCall::of_symbol("velt_simd_has_sse4_2_x86"),
+        Some(SimdCall::Has(Ext::Sse42X86))
+    );
+    let sig = |s: &str| SimdCall::of_symbol(s).map(SimdCall::signature);
+    assert_eq!(sig("velt_simd_on_x86"), Some((vec![], Ty::Bool)));
+    assert_eq!(sig("velt_simd_on_arm"), Some((vec![], Ty::Bool)));
+    assert_eq!(sig("velt_simd_cpu_word"), Some((vec![], Ty::U64)));
+    assert_eq!(sig("velt_simd_cpu_required"), Some((vec![], Ty::U64)));
     let xgetbv = SimdCall::of_symbol("velt_simd_xgetbv").map(SimdCall::signature);
     assert_eq!(xgetbv, Some((vec![Ty::U32], Ty::U64)));
 }

@@ -24,7 +24,8 @@ use velt_vir::vir::{self, Ty};
 use crate::debug::{DebugInfo, FnDebug};
 use crate::inlining::Caps;
 use crate::module::{
-    define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS, STOP_UNWIND_ATTRS,
+    allocator_group, define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS,
+    STOP_UNWIND_ATTRS,
 };
 use crate::statics::StaticNames;
 use crate::target::Target;
@@ -144,6 +145,20 @@ pub(crate) fn emit_function(
     program_features: Option<&str>,
 ) -> CodegenResult<String> {
     check_shape(function)?;
+    // Start-up code (`vir::Function::baseline`) is emitted for the baseline CPU throughout: its
+    // attributes, and every choice of instructions the emitter makes from the CPU.
+    let base;
+    let baseline = match function.baseline {
+        true => target.baseline_attributes(),
+        false => None,
+    };
+    let target = match baseline {
+        Some(_) => {
+            base = target.clone().with_cpu(Some("baseline"))?;
+            &base
+        }
+        None => target,
+    };
     let debug = debug.map(|d| {
         let f = d.function(function, how == Definition::Own);
         (d, f)
@@ -206,6 +221,7 @@ pub(crate) fn emit_function(
     let personality = format!("{}{}", emitter.finish_pad(), emitter.landing_blocks());
     let ext_features;
     let features = match (emitter.uses_simd, emitter.simd) {
+        _ if baseline.is_some() => baseline.unwrap_or_default(),
         (true, crate::simd::Arch::Wasm) => crate::simd::WASM_SIMD,
         (_, arch) => match extension_features(function, arch, program_features) {
             Some(f) => {
@@ -220,10 +236,11 @@ pub(crate) fn emit_function(
         false => FN_ATTRS,
     };
     Ok(format!(
-        "{} {}({}) {attrs}{}{features}{personality}{define_dbg} {{\n{}}}\n",
+        "{} {}({}) {attrs}{}{}{features}{personality}{define_dbg} {{\n{}}}\n",
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
+        allocator_group(function),
         inline_attrs(
             function,
             caps.too_large(index),
@@ -240,8 +257,9 @@ fn extension_features(
     arch: crate::simd::Arch,
     program_features: Option<&str>,
 ) -> Option<String> {
-    if let Some(ext) = function.target {
-        return crate::simd::has_ext(arch, ext).then(|| ext.gated_features().to_string());
+    let set = function.target;
+    if let Some(first) = set.iter().next() {
+        return crate::simd::has_ext(arch, first).then(|| set.gated_features());
     }
     program_features.map(str::to_string)
 }

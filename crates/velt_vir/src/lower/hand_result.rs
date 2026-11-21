@@ -12,12 +12,17 @@ use super::operand::proj;
 use super::FnLower;
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
+/// The prelude's `structuredClone` (std/prelude/clone.velt), which returns `value.clone()`.
+const STRUCTURED_CLONE: &str = "std/prelude/clone::structuredClone";
+
 impl FnLower<'_, '_> {
     /// Can the result of type `ty` of a call changing the caller's containers, given `args`
     /// passed by `modes`, be handed to the reader (`hand_to_reader`): none to hand, `hand_ok`,
     /// or a boxed array of what is (module docs) when the call is given nothing it could put
-    /// in it uncounted, only the caller's places, what it keeps (owned, `keep_for_caller`) and
-    /// values outside the lock set (`out.splice(i, n)`, not `all.concat(s.items)`)?
+    /// in it uncounted, only the caller's places, what it keeps (owned, `keep_for_caller`; a
+    /// boxed array literal, counted by the counts outside read mode before the call whatever
+    /// is in it, `keep_mut_arg`) and values outside the lock set (`out.splice(i, n)`, not
+    /// `all.concat(s.items)`)?
     pub(super) fn hand_result_ok(
         &mut self,
         ty: TyId,
@@ -34,17 +39,19 @@ impl FnLower<'_, '_> {
             return false;
         }
         self.hand_ok(e)
-            && args
-                .iter()
-                .zip(modes)
-                .all(|(a, m)| *m == PassMode::Owned || self.lent_fresh(a))
+            && args.iter().zip(modes).all(|(a, m)| {
+                let t = self.sub(a.ty);
+                *m == PassMode::Owned || self.boxed_literal(a, t) || self.lent_fresh(a)
+            })
     }
 
-    /// Is the argument `a` outside the lock set, the caller's place, or made here of literals
-    /// and what sema transferred (a rest parameter's array literal, call.rs `lent_copy`)?
+    /// Is the argument `a` outside the lock set, the caller's place, or made here of literals,
+    /// explicit copies (`explicit_copy`, #1992) and what sema transferred (a rest parameter's
+    /// array literal, call.rs `lent_copy`), also through a variable holding only such a value
+    /// and used for nothing else (`plain_made`)?
     fn lent_fresh(&mut self, a: &hir::Expr) -> bool {
         let t = self.sub(a.ty);
-        if !self.cx.reaches_lock_set(t) || self.captured_root(a) {
+        if !self.cx.reaches_lock_set(t) || self.captured_root(a) || self.plain_made_value(a) {
             return true;
         }
         match &a.kind {
@@ -55,6 +62,22 @@ impl FnLower<'_, '_> {
                 callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
                 ..
             } => true,
+            _ => self.explicit_copy(a),
+        }
+    }
+
+    /// Is `e` an explicit copy (`structuredClone(x.items.slice())`, `x.clone()`)? New objects
+    /// all the way down, whatever they are copies of: in a `read` callback, the reader's own.
+    pub(super) fn explicit_copy(&mut self, e: &hir::Expr) -> bool {
+        match &e.kind {
+            K::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::Clone),
+                ..
+            } => true,
+            K::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } => self.cx.fn_def(*d).name == STRUCTURED_CLONE,
             _ => false,
         }
     }

@@ -1,11 +1,11 @@
 //! Async executor ABI (docs/internals/contracts/rt_abi_async.md): the awaitable protocol shared by compiled
-//! state machines and runtime leaf futures, plus spawning, joining and `block_on` on tokio.
+//! state machines and runtime leaf futures. Programs spawn, join and run `main` on the executor in
+//! Velt (std/lang/hooks/sched.velt); the runtime keeps only its own tasks (runtime/).
 //!
 //! * A compiled `async function` is a state machine: `poll(state, cx) -> u32` (0 = Pending,
 //!   1 = Ready, result at offset 0 of the state) and `drop(state)`. Awaiting a compiled child whose
 //!   state is embedded in the parent's state is a direct call; no runtime involvement.
-//! * Everything the runtime produces (timers, fs/net/http operations, join handles, boxed compiled
-//!   futures) is a heap `VeltFut`: a 16-byte header `{ poll, drop }` followed by the result slot at
+//! * Everything the runtime produces (fs/net/http operations, boxed compiled futures) is a heap `VeltFut`: a 16-byte header `{ poll, drop }` followed by the result slot at
 //!   offset 16. Awaiting one is `poll_fut(f, cx)` then reading the slot, then
 //!   `drop_fut(f)`.
 //! * `cx` is a [`VeltCx`]: the task's await word (local/micro.rs) and its waker, a pointer to a
@@ -13,7 +13,6 @@
 //!   pointer. Runtime leaves get a Rust `Context` for it with [`with_context`].
 
 pub mod abort;
-pub mod all;
 pub mod compiled;
 pub mod coop;
 pub mod identity;
@@ -21,10 +20,8 @@ pub mod latch;
 pub mod leaf;
 pub mod local;
 pub(crate) mod quiet;
-pub mod race;
 pub mod runtime;
 pub mod shared;
-pub mod spawn;
 pub mod waker;
 
 use std::ffi::c_void;
@@ -46,6 +43,8 @@ pub type PollFn = unsafe extern "C-unwind" fn(state: *mut u8, cx: *mut c_void) -
 /// Compiled state-machine drop function: drops the live locals of the current suspension point.
 /// Never drops the result slot (it is moved out by whoever observes `READY`).
 pub type DropFn = unsafe extern "C-unwind" fn(state: *mut u8);
+/// Drops one result value in place: `void result_drop(void* slot)`.
+pub type ResultDropFn = unsafe extern "C-unwind" fn(slot: *mut u8);
 
 /// Header of every heap future owned by generated code. The result slot follows at offset 16.
 #[repr(C)]
@@ -101,28 +100,4 @@ pub unsafe fn poll_fut(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 /// `f` is a live heap future, not used after.
 pub unsafe fn drop_fut(f: *mut VeltFut) {
     ((*f).drop)(f)
-}
-
-/// `await yieldNow()`: schedule the current task again. Generated code calls this and then returns
-/// `PENDING`; the task is re-polled after other ready tasks had a turn. Allocation-free.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_yield_now(cx: *mut c_void) {
-    with_context(cx, |c| {
-        local::note_yield(c.waker());
-        c.waker().wake_by_ref();
-    });
-}
-
-/// `yieldNow()` as a heap future (for when the promise is stored or passed to `Promise.all`
-/// instead of awaited directly). Result: none.
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_yield_now_fut() -> *mut VeltFut {
-    leaf::new_inner_leaf(async {
-        std::future::poll_fn(|cx| {
-            local::note_yield(cx.waker());
-            std::task::Poll::Ready(())
-        })
-        .await;
-        coop::yield_now().await
-    })
 }

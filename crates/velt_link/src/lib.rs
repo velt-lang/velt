@@ -7,9 +7,13 @@
 //! - Otherwise the system linker:
 //!   - Windows (MSVC): `link.exe` is located with `cc::windows_registry::find_tool`, which reads
 //!     the registry / vswhere and returns the `LIB`/`PATH` environment for the MSVC + Windows
-//!     SDK libraries, so no "Developer Command Prompt" is needed.
-//!   - Linux / macOS: the system C compiler driver (`cc`) is used as the linker; on Linux with
-//!     `-fuse-ld=mold`/`lld` when those are installed ([`fast_ld`]).
+//!     SDK libraries, so no "Developer Command Prompt" is needed. With `lld-link.exe` on `PATH`
+//!     the link runs that, in the same environment ([`fast_ld`]).
+//!   - Linux / macOS: the system C compiler driver (`cc`) is used as the linker, on macOS only
+//!     to say once what `ld` command it runs, which later links run themselves ([`macos_ld`]);
+//!     on Linux with
+//!     `-fuse-ld=mold`/`lld` when those are installed, lld under a versioned name
+//!     (`ld.lld-18`) too ([`fast_ld`]).
 //! - Debug builds may link the runtime as a shared library instead ([`shared`]): the
 //!   `runtime_lib` of a [`LinkRequest`] then names it (see [`find_shared_runtime_lib`]).
 //!
@@ -32,6 +36,7 @@ mod fast_ld;
 mod host;
 pub mod kit;
 mod lld;
+mod macos_ld;
 mod native;
 mod runtime_profile;
 mod shared;
@@ -64,6 +69,13 @@ pub struct LinkRequest<'a> {
     /// The C libraries of packages' `declare c` functions, as linker arguments (`-lsqlite3`,
     /// `-framework Accelerate`, `sqlite3.lib`): linked into every build of the program.
     pub c_libs: &'a [String],
+    /// An archive a link against the shared runtime searches last, for what the objects call
+    /// and neither the shared runtime nor a C library defines: the static runtime, for the
+    /// outline-atomics helpers (`__aarch64_*`) LLVM's code calls on arm64 Linux
+    /// ([`shared::helpers_arg`]). The linker takes only the members that define a symbol still
+    /// undefined there. Never among `objects`, where it would bring the runtime a second time.
+    /// A link of the static runtime ignores it.
+    pub helpers_lib: Option<&'a Path>,
 }
 
 /// Operating-system family a target triple links for.
@@ -158,7 +170,19 @@ fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
     match os {
         TargetOs::Windows => {
             let cmd = msvc_linker(req.target)?;
-            run_coff_linker(cmd, msvc_args(req)?, req.output)?;
+            let args = msvc_args(req)?;
+            // lld-link when it is installed, with what `link.exe` was found with; `link.exe`
+            // when there is none or its link fails (`fast_ld`).
+            let fast = fast_ld::applies_on_windows(os, linker_override().is_some())
+                .then(|| fast_ld::lld_link(&cmd))
+                .flatten();
+            let linked = match fast {
+                Some(lld) => run_coff_linker(lld, args.clone(), req.output).is_ok(),
+                None => false,
+            };
+            if !linked {
+                run_coff_linker(cmd, args, req.output)?;
+            }
             if shared {
                 shared::place_dll(req.runtime_lib, req.output)?;
             }
@@ -167,13 +191,24 @@ fn link_with_system(req: &LinkRequest, os: TargetOs) -> Result<(), String> {
         TargetOs::Linux | TargetOs::MacOs => {
             let args = unix_args(req, os);
             let fast = fast_ld::applies(os, linker_override().is_some())
-                .then(fast_ld::fuse_ld_flag)
+                .then(fast_ld::fast)
                 .flatten();
-            if let Some(flag) = fast {
+            // Kept to the end of the link: it may hold a directory the link reads.
+            if let Some(fast) = &fast {
                 let mut cmd = unix_linker();
-                cmd.arg(flag).args(&args);
+                cmd.args(&fast.args).args(&args);
                 if run_linker(cmd).is_ok() {
                     return Ok(());
+                }
+            }
+            // macOS: `ld` itself, with the arguments the driver would give it, where those are
+            // known (`macos_ld`); through the driver otherwise, and when that link fails.
+            if macos_ld::applies(os, linker_override().is_some()) {
+                if let Some(macos_ld::Direct { command, kept }) = macos_ld::direct(&args) {
+                    if run_linker(command).is_ok() {
+                        return Ok(());
+                    }
+                    kept.forget();
                 }
             }
             let mut cmd = unix_linker();
@@ -581,6 +616,7 @@ mod tests {
             release: false,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         })
         .unwrap_err();
         assert!(err.contains("cross-OS linking"), "{err}");

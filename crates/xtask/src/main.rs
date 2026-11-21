@@ -245,14 +245,21 @@ fn run() -> Result<(), String> {
     }
 }
 
+/// The plan for `args`, without the WebAssembly goldens when `VELT_WASM_GOLDENS=skip` (another
+/// job runs them: the merge queue's shards, a pull request's `golden` job).
 fn plan(root: &Path, args: &Args) -> Result<Plan, String> {
+    let mut plan = changes_plan(root, args)?;
+    if std::env::var("VELT_WASM_GOLDENS").as_deref() == Ok("skip") {
+        plan.skip_wasm_goldens();
+        plan.reasons
+            .push("VELT_WASM_GOLDENS=skip: no WebAssembly goldens".into());
+    }
+    Ok(plan)
+}
+
+fn changes_plan(root: &Path, args: &Args) -> Result<Plan, String> {
     if args.full {
         let mut plan = Plan::everything("--full");
-        if std::env::var("VELT_WASM_GOLDENS").as_deref() == Ok("skip") {
-            plan.wasm = false;
-            plan.reasons
-                .push("VELT_WASM_GOLDENS=skip: no WebAssembly goldens".into());
-        }
         if std::env::var("VELT_VIR_IDENTITY").as_deref() == Ok("skip") {
             plan.vir_identity = false;
             plan.reasons
@@ -721,9 +728,9 @@ name = \"a\"
     #[test]
     fn ci_learns_whether_the_header_check_runs() {
         let mut plan = Plan::everything("test");
-        assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
-        plan.c_headers = true;
         assert!(github_output_text(&plan).contains("\nc_headers=true\n"));
+        plan.c_headers = false;
+        assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
     }
 
     #[test]

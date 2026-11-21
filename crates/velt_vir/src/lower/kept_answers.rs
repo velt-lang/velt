@@ -58,7 +58,8 @@
 //!   `closure`, `dyn_value`, `all_wrap`, `settle_wraps`, `race_boxes`, `widen_boxes`,
 //!   `adopt_boxes`, `vtables`, `slot_tables`, `generic_slots`, `drop_memo`, `foreign`).
 //! - `prelude_proxy`, `view_fn`, `std_fns`, `prelude_error`, `prelude_type_error`,
-//!   `tla_marks`, `ffi_hooks`: std's definitions.
+//!   `tla_marks`, `ffi_hooks`: std's definitions. (`prelude_defs`, the prelude's definitions by
+//!   name, borrows the program's names: a splice starts it again.)
 //! - `native_inits`, `c_symbols`, `c_globals`, `reg_slot_agg`, `fut_header`:
 //!   `declare` items and C layouts.
 //! - `types`, `aggs`, `externs`, `extern_map`, `statics`, `static_map`, `str_objects`,

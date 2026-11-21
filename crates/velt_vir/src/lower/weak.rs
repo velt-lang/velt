@@ -1,5 +1,6 @@
 //! `WeakMap`, `WeakSet` and `WeakRef` (std/prelude/weak.velt, weak_set.velt, weak_ref.velt) on
-//! velt_rt's weak-reference core (rt_abi.md "Weak references"; docs/internals/design/weak-refs.md).
+//! std's weak core (std/lang/hooks/weak.velt, reached through its hooks; rt_abi.md "Weak
+//! references"; docs/internals/design/weak-refs.md).
 //!
 //! Keys and `WeakRef` targets are counted objects passed by address (the map does not count
 //! them). A map value is one `u64` word ([`WordKind`]): the bits of a small plain value, a
@@ -10,8 +11,8 @@
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
 use super::glue::Glue;
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
-use super::rt::Rt;
 use super::{cfunc, cint, ice, FnLower, Work};
 use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
 
@@ -91,17 +92,28 @@ impl FnLower<'_, '_> {
                         _ => Operand::Const(crate::vir::Const::Bool(false), Ty::Bool),
                     };
                 };
+                let (m, k) = (ty::U32::arg(m), ty::USize::arg(self.as_usize(k)));
                 match i {
-                    I::WeakMapGet => {
-                        let found = self.temp(Ty::U8);
-                        let fa = self.addr(Place::local(found));
-                        let d = self.temp(Ty::U64);
-                        self.call_rt(Rt::WeakmapGet, vec![m, k, fa], Some(Place::local(d)));
-                        Operand::Copy(Place::local(d))
-                    }
-                    I::WeakMapHas => self.rt_u8(Rt::WeakmapHas, vec![m, k]),
-                    _ => self.rt_u8(Rt::WeakmapDelete, vec![m, k]),
+                    I::WeakMapGet => hooks::weak_map_get(self, Construct::Weak, m, k)
+                        .emit(self)
+                        .op(),
+                    I::WeakMapHas => hooks::weak_map_has(self, Construct::Weak, m, k)
+                        .emit(self)
+                        .op(),
+                    _ => hooks::weak_map_delete(self, Construct::Weak, m, k)
+                        .emit(self)
+                        .op(),
                 }
+            }
+            (I::WeakMapDrop, [m]) => {
+                let m = ty::U32::arg(self.expr(m));
+                hooks::weak_map_drop(self, Construct::Weak, m).emit(self);
+                super::unit()
+            }
+            (I::WeakRefDrop, [r]) => {
+                let r = ty::U32::arg(self.expr(r));
+                hooks::weak_ref_drop(self, Construct::Weak, r).emit(self);
+                super::unit()
             }
             (I::WeakMapValue, [w]) => {
                 let w = self.expr(w);
@@ -120,9 +132,10 @@ impl FnLower<'_, '_> {
                 let Some(k) = self.weak_key(target, false) else {
                     return cint(0, Ty::U32);
                 };
-                let d = self.temp(Ty::U32);
-                self.call_rt(Rt::WeakrefNew, vec![k], Some(Place::local(d)));
-                Operand::Copy(Place::local(d))
+                let k = ty::USize::arg(self.as_usize(k));
+                hooks::weak_ref_new(self, Construct::Weak, k)
+                    .emit(self)
+                    .op()
             }
             (I::WeakRefDeref, [r]) => {
                 let r = self.expr(r);
@@ -146,14 +159,13 @@ impl FnLower<'_, '_> {
                 if let TyKind::Option(e, _) = self.cx.kind(t) {
                     self.cx.note_weak_seed(e);
                 }
-                let d = self.temp(Ty::Ptr);
-                self.call_rt(Rt::WeakrefDeref, vec![r], Some(Place::local(d)));
+                let d = self.weakref_deref_ptr(r);
                 if self.cx.ty(t) != Ty::Ptr {
                     // The target is counted in the next pass.
                     self.cx.facts.unmet = true;
                     return self.none_value(t);
                 }
-                self.own_value(Operand::Copy(Place::local(d)), t)
+                self.own_value(d, t)
             }
             _ => ice(format_args!(
                 "intrinsic {i:?} called with {} arguments",
@@ -266,23 +278,34 @@ impl FnLower<'_, '_> {
                 (r, d, t)
             }
         };
-        self.call_rt(
-            Rt::WeakmapNew,
-            vec![key_trace, retain, release, trace],
-            Some(Place::local(out)),
-        );
+        let [key_trace, retain, release, trace] =
+            [key_trace, retain, release, trace].map(|g| ty::USize::arg(self.as_usize(g)));
+        hooks::weak_map_new(self, Construct::Weak, key_trace, retain, release, trace)
+            .emit_to(self, Place::local(out));
         self.goto(join);
         self.switch_to(join);
-        let w = self.value_word(v, vty);
+        let w = ty::U64::arg(self.value_word(v, vty));
         let mo = Operand::Copy(Place::local(out));
+        let (m, k) = (ty::U32::arg(mo.clone()), ty::USize::arg(self.as_usize(k)));
         match &dyn_key {
             Some(d) => {
                 let tr = self.dyn_key_trace(d);
-                self.call_rt(Rt::WeakmapSetTraced, vec![mo.clone(), k, w, tr], None);
+                let tr = ty::USize::arg(self.as_usize(tr));
+                hooks::weak_map_set_traced(self, Construct::Weak, m, k, w, tr).emit(self);
             }
-            None => self.call_rt(Rt::WeakmapSet, vec![mo.clone(), k, w], None),
+            None => {
+                hooks::weak_map_set(self, Construct::Weak, m, k, w).emit(self);
+            }
         }
         mo
+    }
+
+    /// `ref.deref()`'s target word as a pointer (retained), or null once it was freed.
+    pub(super) fn weakref_deref_ptr(&mut self, r: Operand) -> Operand {
+        let w = hooks::weak_ref_deref(self, Construct::Weak, ty::U32::arg(r))
+            .emit(self)
+            .op();
+        self.cast_to(w, Ty::U64, Ty::Ptr)
     }
 
     /// The word of the owned `ty` value `v` (its ownership moves into the word).

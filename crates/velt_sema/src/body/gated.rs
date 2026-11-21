@@ -1,49 +1,50 @@
-//! Gated functions (#1330): a std function whose first statement is
-//! `targetFeature("sha-x86")` (the intrinsic of std/lang/intrinsics/simd.velt) is compiled for that
-//! CPU extension (backends may use it
-//! anywhere in the function), so it must only run where the CPU has it. Sema checks every call:
-//! it sits in the `then` branch of `if (u32x4.hasShaX86())` (velt/simd's method, resolved by
-//! definition), or in a function gated on the same target. `f.call(this, …)` and
-//! `f.apply(this, [...])` are direct calls of `f` and checked as such. A gated function cannot
-//! be used as a value, and a closure written inside one starts without its target
-//! (`Frame::target`).
+//! Gated functions (#1330): a function decorated `@targetFeature("sha-x86")` (std/lang/intrinsics/
+//! decorators.velt, re-exported by velt/compiler; any module, docs/internals/design/
+//! package-machine-code.md §2) is compiled for that CPU extension (backends may use it anywhere
+//! in the function), so it must only run where the CPU has it. Sema checks every call: it sits in
+//! the `then` branch of `if (Sha.isSupported())` (velt/arch's checks, or velt/simd's older methods
+//! such as `u32x4.hasShaX86()`, resolved by definition), or in a function gated on features that
+//! cover its target. `f.call(this, …)` and `f.apply(this, [...])` are direct
+//! calls of `f` and checked as such. A gated function cannot be used as a value, and a closure
+//! written inside one starts without its target (`Frame::target`). The decorator's type keeps it
+//! off methods (and closures take no decorators), and [`FnCx::ungateable`] refuses the functions
+//! nothing would check before running them (the program's `main`, one C calls) and those whose
+//! body is compiled into another function that the target would not reach (a nested, async or
+//! generator function), or that their overload signatures call unchecked.
 
-use velt_common::{Diagnostic, Span};
-use velt_syntax::ast;
+use velt_common::{std_hook, Diagnostic, Span};
 
 use super::FnCx;
 use crate::ctx::Item;
-use crate::defs::FnSource;
-use crate::hir::{self, CpuTarget, DefId};
-use crate::intrinsic_decls::DeclaredIntrinsic;
-
-/// The callee's name and the target name of a statement `name("…")`, where `name` may be the
-/// intrinsic `targetFeature` (`FnCx::fn_target` resolves it).
-fn target_call(stmt: &ast::Stmt) -> Option<(&str, &str)> {
-    let ast::StmtKind::Expr(e) = &stmt.kind else {
-        return None;
-    };
-    let ast::ExprKind::Call { callee, args, .. } = &e.kind else {
-        return None;
-    };
-    let ast::ExprKind::Ident(id) = &callee.kind else {
-        return None;
-    };
-    match args.as_slice() {
-        [arg] => match &arg.kind {
-            ast::ExprKind::Lit(ast::Lit::Str(s)) => Some((id.name.as_str(), s.as_str())),
-            _ => None,
-        },
-        _ => None,
-    }
-}
+use crate::defs::FnKind;
+use crate::hir::{self, ConstTree, CpuTarget, CpuTargets, DecoratorTarget, DefId};
 
 impl FnCx<'_, '_> {
-    /// The CPU extension the condition `c` checks: a call of velt/simd's `u32x4.hasShaArm()`,
-    /// `u32x4.hasShaX86()`, `u64x2.hasClmulX86()` or `u64x2.hasClmulArm()`, resolved to its
-    /// definition (so also through `import { u32x4 as V }`,
-    /// and never a user type or function that is only named like it).
-    pub(super) fn cpu_guard(&self, c: &hir::Expr) -> Option<CpuTarget> {
+    /// The CPU features the condition `c` checks: checks joined by `&&` (`Avx2.isSupported() &&
+    /// Bmi2.isSupported()`), each a call of velt/arch's `isSupported()` or one of velt/simd's older
+    /// methods ([`FnCx::cpu_check_of`]). Another operand of the `&&` (`n > 64 && Avx2.isSupported()`)
+    /// adds nothing; a condition with no check is `None`.
+    pub(super) fn cpu_guard(&self, c: &hir::Expr) -> Option<CpuTargets> {
+        let set = self.cpu_checks_in(c, CpuTargets::NONE);
+        (!set.is_empty()).then_some(set)
+    }
+
+    fn cpu_checks_in(&self, c: &hir::Expr, set: CpuTargets) -> CpuTargets {
+        match &c.kind {
+            hir::ExprKind::Logical {
+                op: hir::LogicOp::And,
+                lhs,
+                rhs,
+            } => self.cpu_checks_in(rhs, self.cpu_checks_in(lhs, set)),
+            _ => self.cpu_check_of(c).map_or(set, |t| set.with(t)),
+        }
+    }
+
+    /// The CPU feature the call `c` checks: velt/arch's `Avx2.isSupported()` (any class of
+    /// `velt/arch/x86` or `velt/arch/arm`), or one of velt/simd's older methods
+    /// (`u32x4.hasShaArm()`, `u64x2.hasClmulX86()`, …), resolved to its definition (so also
+    /// through `import { Avx2 as A }`, and never a user type or function only named like it).
+    fn cpu_check_of(&self, c: &hir::Expr) -> Option<CpuTarget> {
         let hir::ExprKind::Call {
             callee: hir::Callee::Def(d, _),
             args,
@@ -55,84 +56,151 @@ impl FnCx<'_, '_> {
         if !args.is_empty() || !self.cx.scopes[f.module].is_std {
             return None;
         }
-        CpuTarget::ALL.into_iter().find(|t| f.name == t.check())
+        hir::arch_check(&f.name).or_else(|| {
+            (CpuTarget::ALL.iter().copied()).find(|t| hir::cpu_check(*t) == Some(f.name.as_str()))
+        })
     }
 
-    /// The target function `d` is gated on: its first statement names it (std functions only),
-    /// calling what its module binds to the intrinsic `targetFeature`.
-    pub(crate) fn fn_target(&self, d: DefId) -> Option<CpuTarget> {
-        let f = self.cx.fn_info(d);
-        if !self.cx.scopes[f.module].is_std {
+    /// The use of `@targetFeature` on function `d` (found by its role, never by the name it is
+    /// imported under), if any.
+    fn target_use(&self, d: DefId) -> Option<&hir::Decorator> {
+        let uses = self.cx.decorator_uses.get(&DecoratorTarget::Def(d))?;
+        let Some(Item::Def(role)) = self.cx.std_def(std_hook!(decorator_target_feature)) else {
+            return None;
+        };
+        uses.iter().find(|u| u.def == role)
+    }
+
+    /// The features function `d` is gated on: the arguments of its `@targetFeature`. Read at
+    /// every call, so a function without decorators costs one map lookup. A function the
+    /// decorator can't gate ([`FnCx::ungateable`], reported at its body) is not gated.
+    pub(crate) fn fn_target(&self, d: DefId) -> Option<CpuTargets> {
+        let u = self.target_use(d)?;
+        if self.cx.fn_info(d).kind != FnKind::Free || self.ungateable(d).is_some() {
             return None;
         }
-        let Some(FnSource::Decl(decl)) = &f.source else {
-            return None;
+        let names = match u.args.first() {
+            Some(ConstTree::Array(items)) => items.as_slice(),
+            _ => return None,
         };
-        let (callee, target) = target_call(decl.body.stmts.first()?)?;
-        let Some(&Item::Def(t)) = self.cx.scopes[f.module].items.get(callee) else {
-            return None;
-        };
-        let is_target = self
-            .cx
-            .try_fn(t)
-            .is_some_and(|t| t.intrinsic == Some(DeclaredIntrinsic::TargetFeature));
-        is_target.then(|| CpuTarget::named(target)).flatten()
+        let set = (names.iter()).fold(CpuTargets::NONE, |set, n| match n {
+            ConstTree::Str(t) => CpuTarget::named(t).map_or(set, |t| set.with(t)),
+            _ => set,
+        });
+        (!set.is_empty()).then_some(set)
     }
 
-    /// The statement `targetFeature("sha-x86")`: allowed only as the first statement of a
-    /// function declared in std (not a method or closure). Records the function as gated.
-    pub(super) fn target_stmt(&mut self, args: &[ast::Expr], span: Span) -> hir::Expr {
-        let named = match args {
-            [arg] => match &arg.kind {
-                ast::ExprKind::Lit(ast::Lit::Str(s)) => CpuTarget::named(s),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(target) = named else {
-            let names: Vec<&str> = CpuTarget::ALL.iter().map(|t| t.name()).collect();
-            let message = format!(
-                "`targetFeature` takes the target as a string literal: one of {}",
-                names.join(", ")
-            );
-            self.cx.err(message, span);
-            return self.unit_expr(span);
-        };
-        let gated = self
-            .body_def
-            .filter(|&d| self.outer.is_empty() && self.cx.fn_info(d).this.is_none())
-            .filter(|&d| self.fn_target(d) == Some(target));
-        let Some(d) = gated else {
-            self.cx.err(
-                "`targetFeature` must be the first statement of a function (not a method or closure)",
-                span,
-            );
-            return self.unit_expr(span);
-        };
-        self.cx.cpu_targets.insert(d, target);
-        self.f.target = Some(target);
-        self.unit_expr(span)
+    /// Why `@targetFeature` can't gate function `d`, as (what it is, a note), when it can't.
+    /// Nothing checks the CPU before the runtime calls `main` or C calls an `@export` function;
+    /// a nested function is compiled as a closure, and an async function or a generator into a
+    /// function that resumes it, neither of which lowering gives the target
+    /// (`velt_vir` `lower/abi.rs` reads `cpu_targets` by the declaration only); and an overload
+    /// signature's body calls the implementation without the check.
+    fn ungateable(&self, d: DefId) -> Option<(&'static str, &'static str)> {
+        let f = self.cx.fn_info(d);
+        if f.module == self.cx.root && f.name == "main" {
+            return Some((
+                "the program's entry, `main`",
+                "the runtime calls it without checking the CPU: gate a function `main` calls behind the check",
+            ));
+        }
+        let exported = (self.cx.std_def(std_hook!(decorator_export)))
+            .zip(self.cx.decorator_uses.get(&DecoratorTarget::Def(d)))
+            .is_some_and(|(e, uses)| uses.iter().any(|u| Some(Item::Def(u.def)) == Some(e)));
+        if exported {
+            return Some((
+                "a function C calls (`@export`)",
+                "C calls it without checking the CPU: export a function that calls the gated one behind the check",
+            ));
+        }
+        if f.is_async || f.is_async_gen || f.is_generator {
+            return Some((
+                "an async function or a generator",
+                "its body is compiled into a function that resumes it, which the target would not reach: gate a plain function it calls",
+            ));
+        }
+        if self.cx.nested_locals.contains_key(&d) {
+            return Some((
+                "a function declared inside another",
+                "it is compiled as a closure, which the target would not reach: declare it at the top level of its module",
+            ));
+        }
+        let overloaded = crate::overloads::sig_of(&f.name).is_some()
+            || (self.cx.scopes[f.module].items)
+                .contains_key(&crate::overloads::sig_name(&f.name, 0));
+        if overloaded {
+            return Some((
+                "an overloaded function",
+                "its signatures call the implementation without checking the CPU: gate a plain function the implementation calls behind the check",
+            ));
+        }
+        None
     }
 
-    /// A call of function `d` (named `name`): a gated one must be behind its target's check.
+    /// The body of function `d` is being checked: a gated one records its target
+    /// (`hir::Program::cpu_targets`) and may call that target's gated functions; the decorator on
+    /// a function it can't gate is an error.
+    pub(super) fn gated_body(&mut self, d: DefId) {
+        if let Some(target) = self.fn_target(d) {
+            self.cx.cpu_targets.insert(d, target);
+            self.f.target = Some(target);
+            // Features of both architectures: no CPU has them all, so the function never runs
+            // (each call needs every check), which is a mistake rather than a dispatch.
+            let mut arches = target.iter().map(|t| t.arch());
+            let first = arches.next();
+            if arches.any(|a| Some(a) != first) {
+                let span = self.target_use(d).map_or_else(Span::default, |u| u.span);
+                self.cx.error(
+                    Diagnostic::error(
+                        "`@targetFeature` names features of both x86-64 and arm64".to_string(),
+                        span,
+                    )
+                    .with_note("no CPU has them all, so the function could never run: gate one function per architecture, each behind its own checks"),
+                );
+            }
+            return;
+        }
+        let Some(u) = self.target_use(d) else {
+            return;
+        };
+        let span = u.span;
+        // `@targetFeature()`: the rest parameter allows no name, and no feature gates nothing.
+        if matches!(u.args.first(), Some(ConstTree::Array(items)) if items.is_empty())
+            && self.ungateable(d).is_none()
+        {
+            self.cx.error(
+                Diagnostic::error("`@targetFeature` names no feature".to_string(), span)
+                    .with_note("name the features the function is compiled for: `@targetFeature(\"avx2-x86\")`"),
+            );
+            return;
+        }
+        if let Some((what, note)) = self.ungateable(d) {
+            self.cx.error(
+                Diagnostic::error(format!("`@targetFeature` can't gate {what}"), span)
+                    .with_note(note),
+            );
+        }
+    }
+
+    /// A call of function `d` (named `name`): a gated one must be behind checks of its features,
+    /// or in a function gated on a set that covers them: every feature of its set is covered by
+    /// the caller's set together with the checks around the call.
     pub(super) fn check_gated_call(&mut self, d: DefId, name: &str, span: Span) {
         let Some(target) = self.fn_target(d) else {
             return;
         };
-        let covered = |t: &CpuTarget| t.covers(target);
-        if self.f.target.as_ref().is_some_and(covered) || self.f.cpu_guards.iter().any(covered) {
+        let have = (self.f.cpu_guards.iter().flat_map(|g| g.iter()))
+            .fold(self.f.target.unwrap_or_default(), |set, g| set.with(g));
+        if target.iter().all(|t| have.covers(t)) {
             return;
         }
+        let (names, checks) = described(target);
         let d = Diagnostic::error(
-            format!(
-                "`{name}` runs only where the CPU has `{}`, so it must be called behind that check",
-                target.name()
-            ),
+            format!("`{name}` runs only where the CPU has {names}, so it must be called behind {}", if target.iter().count() == 1 { "that check" } else { "those checks" }),
             span,
         )
         .with_note(format!(
-            "call it inside `if ({}()) {{ … }}`, or from a function gated on the same target (a closure does not count)",
-            target.check_call()
+            "call it inside {checks}, or from a function gated on the same features (a closure does not count)"
         ));
         self.cx.error(d);
     }
@@ -142,18 +210,31 @@ impl FnCx<'_, '_> {
         let Some(target) = self.fn_target(d) else {
             return false;
         };
+        let (names, checks) = described(target);
         let d = Diagnostic::error(
-            format!(
-                "`{name}` is compiled for `{}` and can only be called directly",
-                target.name()
-            ),
+            format!("`{name}` is compiled for {names} and can only be called directly"),
             span,
         )
         .with_note(format!(
-            "a gated function cannot be stored, passed or returned: call it inside `if ({}()) {{ … }}`",
-            target.check_call()
+            "a gated function cannot be stored, passed or returned: call it inside {checks}"
         ));
         self.cx.error(d);
         true
     }
+}
+
+/// A gated set for messages: its names (`` `avx2-x86` and `bmi2-x86` ``) and the checks that
+/// cover it, joined by `&&`.
+fn described(set: CpuTargets) -> (String, String) {
+    let names: Vec<String> = set.iter().map(|t| format!("`{}`", t.name())).collect();
+    let checks: Vec<String> = set.iter().map(hir::cpu_check_call).collect();
+    let mut modules: Vec<&str> = set.iter().map(|t| t.arch_module()).collect();
+    modules.dedup();
+    let checks = format!(
+        "`if ({}) {{ … }}` (the {} from {})",
+        checks.join(" && "),
+        if checks.len() == 1 { "check" } else { "checks" },
+        modules.join(" and ")
+    );
+    (names.join(" and "), checks)
 }

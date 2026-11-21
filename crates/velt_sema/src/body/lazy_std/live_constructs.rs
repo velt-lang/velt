@@ -61,6 +61,8 @@ pub(crate) struct Assumed {
     pub(in super::super) record_conversion: bool,
     /// Code running on the executor that those passes reached ([`super::live::Live::tasks`]).
     pub(in super::super) tasks: bool,
+    /// Module state that those passes reached ([`super::live::Live::module_state`]).
+    pub(in super::super) module_state: bool,
     /// Hooks (`HOOKS` indexes) that a `hookCall` reached by those passes calls: their modules are
     /// demanded when the call is checked ([`super::hook_stubs`]).
     pub(in super::super) hooks: Vec<usize>,
@@ -88,10 +90,12 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     let mut added = !new_defs.is_empty()
         || assumed.constructs | late.constructs != assumed.constructs
         || late.record_conversion && !assumed.record_conversion
-        || late.tasks && !assumed.tasks;
+        || late.tasks && !assumed.tasks
+        || late.module_state && !assumed.module_state;
     assumed.constructs |= late.constructs;
     assumed.record_conversion |= late.record_conversion;
     assumed.tasks |= late.tasks;
+    assumed.module_state |= late.module_state;
     assumed.defs.extend(new_defs);
     for h in late.hooks {
         if !assumed.hooks.contains(&h) {
@@ -428,14 +432,19 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach); so is `PowFloat`, std's `pow`. `TextFloat` is
-/// its own too, which `Dynamic` implies: a numeric key read through `any` is a float's text. A
-/// program that converts, formats or prints nothing that may hold a float checks no float hook.
-/// `WriteFloat`, `console.log`'s float writers, is its own as well, so that a program that prints
-/// only floats checks none of the text hooks; `TextFloat` implies it (an optional float printed
-/// alone is written by them too, and a type that may hold a float may be such a value).
+/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `Clock`, and
+/// `Weak`: it demands the weak core, which only a program with weak collections needs, and which
+/// prints nothing. `TextFloat` is its own too, which `Dynamic` implies: a numeric key read
+/// through `any` is a float's text. A program that converts, formats or prints nothing that may
+/// hold a float checks no float hook. `WriteFloat`, `console.log`'s float writers, is its own as
+/// well, so that a program that prints only floats checks none of the text hooks; `TextFloat`
+/// implies it (an optional float printed alone is written by them too, and a type that may hold
+/// a float may be such a value).
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
-    let alone = Construct::CatchUnwind.bit() | Construct::PowFloat.bit();
+    let alone = Construct::CatchUnwind.bit()
+        | Construct::PowFloat.bit()
+        | Construct::Clock.bit()
+        | Construct::Weak.bit();
     let (text, write) = (Construct::TextFloat.bit(), Construct::WriteFloat.bit());
     let own = alone | text | write;
     let integer = match present & !own {
@@ -538,4 +547,33 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
     };
     cx.lazy.live.int_text.insert(t, may);
     may
+}
+
+/// What one definition of a non-std module, walked into `w` from `start` on, tells the hooks that
+/// wait for what the program does. std's own code doesn't count here: it puts its records into
+/// `any` values in most programs, and where lowering builds its text conversions and a float hook
+/// stayed unchecked, it calls the runtime. The integer hooks, which have no such fallback, count
+/// the constructs of live code, std's included.
+pub(super) fn note_program_code(
+    cx: &mut Ctx,
+    w: &super::Walk,
+    (types, conversions, into_any, first_text): (usize, usize, usize, usize),
+) {
+    cx.lazy.live.texts.extend(&w.texts[first_text..]);
+    note_program_dyn(cx, &w.into_any[into_any..]);
+    if !cx.lazy.record_hooks {
+        super::super::record_conversions::note_user_conversions(
+            cx,
+            &w.types[types..],
+            &w.conversions[conversions..],
+            &w.into_any[into_any..],
+        );
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Assumed {
+        constructs, defs, record_conversion, tasks, hooks, module_state,
+    }
 }

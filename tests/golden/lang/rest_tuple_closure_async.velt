@@ -1,0 +1,58 @@
+// A closure made with a rest parameter whose type is a tuple at the instantiation (#379): an
+// async one takes the tuple's elements one parameter each, as a plain one does
+// (`rest_tuple_closure`), and so does one with a `void` element, which is passed as nothing.
+// An async rest arrow's state owns the tuple it builds, whose elements may be objects.
+// Node prints the same.
+interface Ctx {
+  id: string;
+}
+
+function keep<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R): (rq: Ctx, ...args: A) => R {
+  return f;
+}
+
+function noArg(): void {}
+
+function count<A extends unknown[]>(): (...args: A) => number {
+  return (...args) => args.length;
+}
+
+// Rest arrows made in a generic body: an async one's constructor takes the elements.
+function asyncFirst<A extends unknown[]>(): (...args: A) => Promise<string> {
+  return async (...args) => {
+    await Promise.resolve();
+    return args.length + ": " + JSON.stringify(args);
+  };
+}
+
+function asyncLength<A extends unknown[]>(): (...args: A) => Promise<number> {
+  return async (...args) => args.length;
+}
+
+// A rest arrow at the tuple inferred from a callback (`A = [void]`).
+function restOf<A extends unknown[]>(f: (rq: Ctx, ...args: A) => number): (rq: Ctx, ...args: A) => number {
+  return (rq, ...args) => args.length + 10;
+}
+
+async function main(): Promise<void> {
+  const add = keep(async (rq: Ctx, a: number, b: number): Promise<number> => a + b);
+  console.log(await add({ id: "a" }, 2, 5));
+  const greet = keep(async (rq: Ctx, who: string): Promise<string> => rq.id + " " + who);
+  console.log(await greet({ id: "hi" }, "ann"));
+  const none = keep(async (rq: Ctx): Promise<string> => rq.id + "!");
+  console.log(await none({ id: "bare" }));
+  const v = keep((rq: Ctx, v: void, n: number): number => n + 1);
+  console.log(v({ id: "v" }, noArg(), 41));
+  const av = keep(async (rq: Ctx, v: void): Promise<string> => rq.id);
+  console.log(await av({ id: "async void" }, noArg()));
+  console.log(count<[void]>()(noArg()), count<[void, number]>()(noArg(), 3));
+  console.log(await asyncFirst<[string, number]>()("s", 1));
+  console.log(await asyncFirst<[]>()());
+  console.log(await asyncFirst<[{ n: number }]>()({ n: 2 }));
+  const o = { n: 5 };
+  console.log(await asyncFirst<[string, { n: number }]>()("t", o), o.n);
+  const len = asyncLength<[{ n: number }]>();
+  console.log(await len({ n: 2 }), await len(o), o.n);
+  console.log(restOf((rq: Ctx, v: void): number => 1)({ id: "r" }, noArg()));
+}
+main();

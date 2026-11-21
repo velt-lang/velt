@@ -1,0 +1,108 @@
+// velt/lang/hooks (internal): an anchored task offered to another worker takes its sleeps along
+// (#3097). A sleep lives in the timer block of the worker that polled it, and only that worker
+// touches the block (sched_sleep.velt), so the task was anchored there. An offer may move such a
+// task when it has no sleep due (its due list is empty) and its worker's block has no fired sleep
+// left unseen (`TM_UNSEEN` counts per block, and the poll that sees one may run elsewhere):
+// - `carry`, on the offering worker: the pending sleeps of the offered tasks (the task a sleep's
+//   waker wakes; one whose waker is not a task's stays, `owner`) leave the block, in one walk,
+//   for a list in their task's `T_TIMERS`, in timer order, and such a task is marked `CARRIED`.
+// - `adopt`, on the worker that polls it next (sched_run.velt `runWoken`), wherever the offer
+//   went (a helper's steal, or a retired spare's hand-on to worker 0): they join its block.
+// Each block is still touched by its own worker only, and the task's sleeps keep their order and
+// numbers, so they fire as Node's timers do (in deadline order, created first on a tie).
+// Tasks anchored for good (`FIXED`: an I/O wait with a deadline, an unref'd timer's look) stay.
+
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** May worker `e`'s offer carry anchored tasks' sleeps now (no fired sleep left unseen)? */
+export function canCarry(e: usize): bool {
+  const b = m.ld(e + t.E_TIMERS);
+  return b === 0 || m.ld(b + sl.TM_UNSEEN) === 0;
+}
+
+/**
+ * Worker `e` offers the tasks of `chain` (linked through `T_NEXT`): the anchored ones
+ * (`t.carryable`) take their pending sleeps along. One walk over the block, however many tasks.
+ */
+export function carry(e: usize, chain: usize): void {
+  const b = m.ld(e + t.E_TIMERS);
+  if (b === 0) {
+    return;
+  }
+  let any = false;
+  let k = chain;
+  while (k !== 0) {
+    if (t.has(k, t.ANCHORED)) {
+      // Marks it for the walk; it keeps the flag only with sleeps to carry.
+      t.flags(k, t.CARRIED, 0);
+      any = true;
+    }
+    k = m.ld(k + t.T_NEXT);
+  }
+  if (!any) {
+    return;
+  }
+  // From the last, so each task's list comes out first to last.
+  let f = m.ld(b + sl.TM_LAST);
+  while (f !== 0) {
+    const prev = m.ld(f + sl.S_PREV);
+    const o = owner(f);
+    if (o !== 0) {
+      sl.carried(b, f);
+      m.st(f + sl.S_NEXT, m.ld(o + t.T_TIMERS));
+      m.st(o + t.T_TIMERS, f);
+    }
+    f = prev;
+  }
+  k = chain;
+  while (k !== 0) {
+    if (t.has(k, t.CARRIED)) {
+      if (m.ld(k + t.T_TIMERS) === 0) {
+        t.flags(k, 0, t.CARRIED);
+      } else {
+        t.flags(k, t.LOCALS, 0);
+      }
+    }
+    k = m.ld(k + t.T_NEXT);
+  }
+}
+
+/**
+ * The offered task pending sleep `f` goes with, or 0. Its expiry touches the task its waker wakes
+ * (sched_sleep.velt `expire`: that task's due list and flags, from the expiring worker's thread),
+ * so a sleep whose waker is a task's goes with that task alone: one handed on to another task
+ * (polled again there) stays with the task that polls it now. A sleep whose waker is not a
+ * task's (a combinator's) goes with no task: nothing keeps the task that polled it into the
+ * block alive, so the sleep names none (sched_sleep.velt `sleepPoll`). It stays in this block,
+ * its waker is woken from any thread when it expires, and a poll of it on another worker asks
+ * this one for it, as for any handed-on sleep.
+ */
+function owner(f: usize): usize {
+  const w = wk.taskOf(sl.waiter(f));
+  return w !== 0 && t.has(w, t.CARRIED) ? w : 0;
+}
+
+/** Worker `e`, about to poll task `k`, takes the sleeps it carries into its timer block. */
+export function adopt(e: usize, k: usize): void {
+  t.flags(k, 0, t.CARRIED);
+  let f = m.ld(k + t.T_TIMERS);
+  m.st(k + t.T_TIMERS, 0);
+  const b = sl.block(e);
+  while (f !== 0) {
+    const next = m.ld(f + sl.S_NEXT);
+    // Numbers from the block it came from: this block's next sleeps come after them on a tie.
+    const seq = m.ld(f + sl.S_SEQ);
+    if (seq > m.ld(b + sl.TM_SEQ)) {
+      m.st(b + sl.TM_SEQ, seq);
+    }
+    // No owner word: the one it had named the task that polled it first (sched_sleep.velt).
+    m.storeRelaxed(f + sl.S_OWNER, 0);
+    // Unordered: `insert` stores the state after it, released.
+    m.storeRelaxed(f + sl.S_HOME, e);
+    sl.insert(b, f);
+    f = next;
+  }
+}

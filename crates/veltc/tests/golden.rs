@@ -32,8 +32,8 @@
 //!   std's heap hooks, so its blocks are counted). Tasks
 //!   still running when `main` returns are waited for (up to a minute) while blocks are unfreed;
 //!   the count is taken at a moment when every block was freed, or once no task can run any
-//!   more (blocks held by tasks that wait forever, or by pending `unref()`'d timers, count as
-//!   unfreed).
+//!   more (blocks held by tasks that wait forever count as unfreed; pending `unref()`'d timers
+//!   are given back first, #3032).
 //! - A golden whose first lines contain `// check: unfreed blocks at most N` is checked the same
 //!   way, but may leave up to N blocks unfreed: for programs that keep memory on purpose until
 //!   they exit.
@@ -158,6 +158,8 @@ fn golden() {
     }
     let known = known_failing();
     let results = run_parallel(velt, &runnable, &work);
+    report_slowest(&runnable, &results);
+    let results = results.into_iter().map(|(errs, _)| errs);
     let mut failures = vec![];
     let mut pending_failures = 0;
     let mut known_failures = 0;
@@ -199,6 +201,34 @@ fn golden() {
 "
             )
         );
+    }
+}
+
+/// The `VELT_GOLDEN_SLOWEST` (default 20) goldens that took longest, with their share of the
+/// time all of them took (build and run, every mode): where the end-to-end tests' time goes.
+fn report_slowest(files: &[(PathBuf, String)], results: &[(Vec<String>, std::time::Duration)]) {
+    let n = std::env::var("VELT_GOLDEN_SLOWEST")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(20);
+    let total: f64 = results.iter().map(|(_, d)| d.as_secs_f64()).sum();
+    let mut timed: Vec<_> = files
+        .iter()
+        .zip(results)
+        .map(|((_, rel), (_, d))| (d, rel))
+        .collect();
+    timed.sort_by(|a, b| b.0.cmp(a.0));
+    if n == 0 || timed.is_empty() {
+        return;
+    }
+    println!(
+        "golden: {:.0} s of builds and runs in all; the {} slowest:",
+        total,
+        n.min(timed.len())
+    );
+    for (d, rel) in timed.into_iter().take(n) {
+        let share = 100.0 * d.as_secs_f64() / total.max(f64::MIN_POSITIVE);
+        println!("golden:   {:7.2} s {share:4.1}% {rel}", d.as_secs_f64());
     }
 }
 
@@ -625,13 +655,28 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
+/// The line a program's own `process.exit` writes before the `rc stats` report.
+const EXIT_NOTE: &str = "rc stats: the program called process.exit: no leak verdict";
+
 /// The leak in a `rc stats: ... alloc=A free=F blocks=A/F` report: more than `allowed` blocks
 /// allocated but not freed, a heap string buffer allocated but not freed (strings have no
 /// allowance: nothing keeps one on purpose), or no report.
 fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
-    let Some(report) = stderr.lines().rev().find(|l| l.starts_with("rc stats:")) else {
+    // The program ended itself with `process.exit`: the frames live then keep what they hold,
+    // as Node runs no cleanup there, and the report says so in place of a verdict
+    // (std/prelude/process.velt `processExit`).
+    // It is the line just before the report: the same text printed anywhere else is the
+    // program's own output.
+    let mut last = stderr
+        .lines()
+        .rev()
+        .skip_while(|l| !l.starts_with("rc stats: retain="));
+    let Some(report) = last.next() else {
         return Some("leak check: no `rc stats` report on stderr".into());
     };
+    if last.next() == Some(EXIT_NOTE) {
+        return None;
+    }
     let field = |name: &str| report.split_whitespace().find_map(|w| w.strip_prefix(name));
     let unfreed = |a: &str, f: &str| a.parse::<u64>().ok()?.checked_sub(f.parse().ok()?);
     let blocks = match field("blocks=").and_then(|b| b.split_once('/')) {
@@ -677,14 +722,18 @@ fn modes() -> Vec<Option<&'static str>> {
 /// never collide; and no build ever overwrites an executable that has just run, which on Windows
 /// can stay locked for a moment, even when two programs share a name). Returns each file's
 /// errors, in `files` order.
-fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec<String>> {
+fn run_parallel(
+    velt: &str,
+    files: &[(PathBuf, String)],
+    work: &Path,
+) -> Vec<(Vec<String>, std::time::Duration)> {
     let jobs = std::env::var("VELT_GOLDEN_JOBS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(16)))
         .max(1);
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(vec![Vec::new(); files.len()]);
+    let results = std::sync::Mutex::new(vec![(Vec::new(), Default::default()); files.len()]);
     std::thread::scope(|scope| {
         for _ in 0..jobs {
             let (next, results) = (&next, &results);
@@ -696,11 +745,13 @@ fn run_parallel(velt: &str, files: &[(PathBuf, String)], work: &Path) -> Vec<Vec
                 let dir = work.join(format!("p{i}"));
                 let _ = std::fs::remove_dir_all(&dir);
                 std::fs::create_dir_all(&dir).unwrap();
+                let started = std::time::Instant::now();
                 let errs = check_file(velt, f, rel, &dir);
+                let took = started.elapsed();
                 // Delete this program's build outputs (exe, obj, pdb): kept around they add up
                 // to tens of GB.
                 let _ = std::fs::remove_dir_all(&dir);
-                results.lock().unwrap()[i] = errs;
+                results.lock().unwrap()[i] = (errs, took);
             });
         }
     });

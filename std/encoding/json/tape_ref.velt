@@ -1,0 +1,232 @@
+// velt/encoding/json (internal): a task's handle to a frozen tape (#3098): what a parsed
+// `JsonValue` holds. The tape is a `shared<Tape>` (tape.velt: frozen once parsed), so the values of
+// one document on different tasks read the same tape. A `TapeRef` is one task's: the values a task
+// takes from a document (`get`, `at`, `clone`) share its `TapeRef` with plain counts, and only a
+// value crossing to another task copies it, which takes one more reference to the tape (atomic),
+// released when the copy goes.
+//
+// That holds for values that cross by transfer, not for one `JsonValue` that several cores read at
+// once. Today a module constant is such a value only under the module lock, so it is safe; it
+// stops being safe when either lands: frozen constants read without the lock (#1487), or the
+// module lock replaced by per-piece locks (#2726 (c)). `find` on a wide object writes `index`
+// (`findSlow`), the same race #1487 is about. A `JsonValue` reachable from frozen or unlocked
+// shared state must have its wide objects' indexes built when it is frozen (published race-free,
+// one `Atomic` slot per wide object), or `find` on a wide object must count as a write there.
+//
+// Reads never touch the tape's count. The reads every value goes through (kind, number, child,
+// `find` in a small object) read numbers straight out of the box, with no call while they read:
+// a part of the box lent to a call would retain the box for the statement (atomically: another
+// owner of `this` could replace `tape` meanwhile), and `this.tape` lent to a function that isn't
+// quiet (velt_vir lower/quiet.rs) retains `this`. The rest hand `this.tape` or its arrays to
+// tape.velt, at those costs.
+//
+// The hash index of the wide objects (over `INDEX_THRESHOLD` keys) a task searched is the
+// `TapeRef`'s: at most one map per such object of the tape, each with one entry per key, so it
+// never outgrows the document. It goes with the `TapeRef`, when the last of the task's values on
+// that document goes, and holds nothing of the tape (key texts and positions): it never keeps a
+// tape alive. A copy for another task takes the index made so far with it.
+
+import {
+  ESCAPED,
+  ESCAPED_KEY,
+  FIND_WIDE,
+  INDEX_THRESHOLD,
+  ORDERED,
+  REPEATED,
+  T_ARRAY,
+  T_OBJECT,
+  Tape,
+  findOther,
+  memberIn,
+  tapeKey,
+  tapeText,
+  wordRawCount,
+} from "velt/encoding/json/tape";
+import { tapeStringify, writeTape } from "velt/encoding/json/tape_write";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { inline, noInline, strByteLen, strLoadPartialU8x16 } from "velt/lang/intrinsics";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_all(m: mask8x16): bool;
+
+/** One task's reference to a frozen tape, with that task's hash index of its wide objects. */
+export class TapeRef {
+  tape: shared<Tape>;
+  /** Object position to its keys' value positions (a repeated key's last); made on first use. */
+  index: TapeIndex | null = null;
+
+  constructor(tape: shared<Tape>) {
+    this.tape = tape;
+  }
+
+  /**
+   * Printable (a `shared` field is not), so a `JsonValue` holding one is: `console.log` shows the
+   * value itself (the compiler's glue for `JsonValue`), never this.
+   */
+  [INSPECT](): string {
+    return "TapeRef {}";
+  }
+
+  // The readers below read numbers straight out of the box, with no call while they read: that
+  // holds no count (a call lent a part of `this.tape` would retain the box, atomically, and one
+  // lent `this.tape` itself, unless quiet, would retain `this`).
+
+  @inline("always")
+  kind(v: u32): u64 {
+    return this.tape.words[2 * (v as usize)] & 0xff;
+  }
+
+  @inline("always")
+  number(v: u32): f64 {
+    return f64.fromBits(this.tape.words[2 * (v as usize) + 1]);
+  }
+
+  /**
+   * String value `v`'s text, read here rather than by `tapeText`: lending a part of the box to a
+   * function that calls the runtime (not quiet) would retain the box, atomically, for every read,
+   * while a direct runtime call needs no such hold.
+   */
+  @inline("always")
+  text(v: u32): string {
+    const w = this.tape.words[2 * (v as usize)];
+    const p = this.tape.words[2 * (v as usize) + 1];
+    if ((w & ESCAPED) != 0) {
+      return this.tape.decoded[p as usize];
+    }
+    // A range between a string's quotes: whole characters.
+    return velt_rt_str_byte_slice(this.tape.src, p & 0xffffffff, p >> 32);
+  }
+
+  @inline("always")
+  units(v: u32): i64 {
+    return (this.tape.words[2 * (v as usize)] >> 32) as i64;
+  }
+
+  /** The number of members (`countIn`), read straight out of the box. */
+  @inline("always")
+  count(v: u32): i64 {
+    const w = this.tape.words[2 * (v as usize)];
+    const k = w & 0xff;
+    if (k != T_ARRAY && k != T_OBJECT) {
+      return 0;
+    }
+    if ((w & ORDERED) != 0) {
+      // The member list's length follows the keys in `kids`.
+      return this.tape.kids[(this.tape.words[2 * (v as usize) + 1] + (w >> 32)) as usize] as i64;
+    }
+    return (w >> 32) as i64;
+  }
+
+  member(v: u32, i: i64): i64 {
+    return memberIn(this.tape.words, this.tape.kids, v, i);
+  }
+
+  /** Element `i` of array `v`, or the value of member `i` of object `v`; -1 if there is none. */
+  @inline("always")
+  child(v: u32, i: i64): i64 {
+    const w = this.tape.words[2 * (v as usize)];
+    const k = w & 0xff;
+    if (k == T_ARRAY) {
+      if (i >= ((w >> 32) as i64)) {
+        return -1;
+      }
+      return this.tape.kids[(this.tape.words[2 * (v as usize) + 1] + (i as u64)) as usize] as i64;
+    }
+    if (k != T_OBJECT) {
+      return -1;
+    }
+    let first = this.tape.words[2 * (v as usize) + 1];
+    let n = w >> 32;
+    if ((w & ORDERED) != 0) {
+      // The member list after the keys: its length, then the list.
+      n = this.tape.kids[(first + n) as usize] as u64;
+      first = first + (w >> 32) + 1;
+    }
+    if (i >= (n as i64)) {
+      return -1;
+    }
+    // A member is its key: the value follows it.
+    return (this.tape.kids[(first + (i as u64)) as usize] as i64) + 1;
+  }
+
+  /** Appends value `v` as `JSON.stringify` writes it to the builder `out`. */
+  write(out: string, v: u32): void {
+    writeTape(this.tape, out, v);
+  }
+
+  /** Value `v`'s JSON text. */
+  stringify(v: u32): string {
+    return tapeStringify(this.tape, v);
+  }
+
+  /** Object `v`'s value for `name` (the last, if repeated), or -1 (also when `v` is no object). */
+  @inline("always")
+  find(v: u32, name: string): i64 {
+    const w = this.tape.words[2 * (v as usize)];
+    if ((w & 0xff) != T_OBJECT) {
+      return -1;
+    }
+    const n = (w >> 32) as usize;
+    const len = strByteLen(name);
+    if (n > INDEX_THRESHOLD || len > 16 || (w & (REPEATED | ESCAPED_KEY)) != 0) {
+      return this.findSlow(v, name);
+    }
+    // No key had escapes: each is a range of the source, compared to `name` with one vector
+    // compare when the lengths match (both sides' bytes in the low lanes, zeros in the others;
+    // `name`'s side loaded once).
+    const first = this.tape.words[2 * (v as usize) + 1] as usize;
+    const nv = strLoadPartialU8x16(name, 0, len as u64);
+    for (let i: usize = 0; i < n; i++) {
+      const k = this.tape.kids[first + i];
+      const p = this.tape.words[2 * (k as usize) + 1];
+      if ((p >> 32) - (p & 0xffffffff) == len as u64) {
+        const kv = strLoadPartialU8x16(this.tape.src, p & 0xffffffff, len as u64);
+        if (velt_simd_mask8x16_all(velt_simd_u8x16_eq(kv, nv))) {
+          return (k + 1) as i64;
+        }
+      }
+    }
+    return -1;
+  }
+
+  // `find` where the vector compare can't answer: a key repeated or with escapes, a long name, or
+  // an object over `INDEX_THRESHOLD` keys, which goes through its hash index (made the first
+  // time: a write, so not safe where several cores read one `TapeRef`, the header says).
+  @noInline
+  private findSlow(v: u32, name: string): i64 {
+    const other = findOther(this.tape, v, name);
+    if (other != FIND_WIDE) {
+      return other;
+    }
+    let all = this.index;
+    if (all == null) {
+      all = new TapeIndex();
+      this.index = all;
+    }
+    let ix = all.maps.get(v);
+    if (ix == undefined) {
+      const m = keyIndex(this.tape, v);
+      all.maps.set(v, m);
+      ix = m;
+    }
+    const at = ix.get(name);
+    return at == undefined ? -1 : at as i64;
+  }
+}
+
+// Object `v`'s key texts to their value positions, in order, so a repeated key ends at its last.
+function keyIndex(t: shared<Tape>, v: u32): Map<string, u32> {
+  const m = new Map<string, u32>();
+  const n = wordRawCount(t.words, v) as usize;
+  for (let i: usize = 0; i < n; i++) {
+    const k = tapeKey(t, v, i);
+    m.set(tapeText(t, k), k + 1);
+  }
+  return m;
+}
+
+// The hash indexes of a `TapeRef`: object position to its key texts' value positions.
+class TapeIndex {
+  maps: Map<u32, Map<string, u32>> = new Map<u32, Map<string, u32>>();
+}

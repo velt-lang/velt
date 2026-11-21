@@ -1,46 +1,23 @@
 // velt/process (internal): the runtime functions velt/process calls, in a build compiled with the
 // executor in Velt (`VELT_SCHEDULER=std`, #2649 step 4): the `std-scheduler` variant of
-// `#process-rt` (std/imports.velt), with the names and signatures of the runtime's
-// (std/process/rt.velt). Reading standard input runs the runtime's synchronous twin on the
-// executor's blocking pool (std/lang/hooks/sched_blocking.velt), which has threads on every OS a
-// native build targets, and shares the runtime's input buffer with `readLineSync` and the rest.
-// `readLine` takes even a line already buffered on the pool's thread: the runtime has no call
-// that only looks at its buffer.
+// `#process-rt` (std/imports.velt), with the names and signatures of the default variant
+// (std/process/rt.velt). Reading standard input runs std's synchronous read
+// (std/process/stdin_buffer.velt) on the executor's blocking pool
+// (std/lang/hooks/sched_blocking.velt), which has threads on every OS a native build targets, and
+// shares the input buffer with `readLineSync` and the rest. `readLine` takes even a line already
+// buffered on the pool's thread.
 
-import { IoResult } from "velt/native/result";
 import { hookCall } from "velt/lang/intrinsics";
-import * as rt from "./rt";
-import { LineRead } from "./rt";
+import { StdinRead, readAll, readLine } from "./stdin_buffer";
 
-export {
-  LineRead,
-  lineOf,
-  velt_rt_env_all,
-  velt_rt_env_remove,
-  velt_rt_env_set,
-  velt_rt_process_args,
-  velt_rt_process_chdir,
-  velt_rt_process_cwd,
-  velt_rt_stdin_read_all_bytes_sync,
-  velt_rt_stdin_read_all_sync,
-  velt_rt_stdin_read_line_sync,
-  velt_rt_stdout_write_bytes,
-} from "./rt";
+export { velt_rt_process_args, velt_rt_stdout_write_bytes } from "./rt";
 
-export async function velt_rt_stdin_read_line(): Promise<LineRead> {
-  return await hookCall<LineRead>("sched_blocking_run", () => rt.velt_rt_stdin_read_line_sync());
+/** Standard input's next line, read on the blocking pool. */
+export async function stdinReadLine(): Promise<StdinRead> {
+  return await hookCall<StdinRead>("sched_blocking_run", () => readLine());
 }
 
-export async function velt_rt_stdin_read_all(): Promise<IoResult<string>> {
-  return await hookCall<IoResult<string>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_stdin_read_all_sync(),
-  );
-}
-
-export async function velt_rt_stdin_read_all_bytes(): Promise<IoResult<u8[]>> {
-  return await hookCall<IoResult<u8[]>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_stdin_read_all_bytes_sync(),
-  );
+/** Standard input's rest, read on the blocking pool (`asText`: as text, else as bytes). */
+export async function stdinReadAll(asText: bool): Promise<StdinRead> {
+  return await hookCall<StdinRead>("sched_blocking_run", () => readAll(asText));
 }

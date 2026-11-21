@@ -1,0 +1,247 @@
+// velt/lang/bytes (internal): Node's text encodings for byte arrays (std/prelude/bytes.velt): their
+// names, the length of a string in each (`Buffer.byteLength`) and its bytes (`Buffer.from`),
+// decoded as Node decodes them: hex up to the first pair that is not hex, Base64 leniently.
+//
+// Hex, Base64 and Latin-1 read each UTF-16 code unit's low byte, as Node does (`"Ł"`, U+0141,
+// reads as `A`): the string's bytes for ASCII text, else its UTF-16 code units decoded from the
+// UTF-8 the string keeps (a lone surrogate as its three-byte form). Hex and Base64 decode in
+// place, in the array of those bytes, which is then cut to what they wrote.
+
+import { arrayTruncate, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { copyText } from "velt/lang/bytes/text";
+import { writeUtf8 } from "velt/lang/bytes/copy";
+
+declare function velt_rt_bytes_uninit(n: u64): u8[];
+
+// What `encodingOf` returns for each encoding Node has (an unknown name is -1).
+const UTF8: i32 = 0;
+const UTF16LE: i32 = 1;
+const LATIN1: i32 = 2;
+const HEX: i32 = 3;
+const BASE64: i32 = 4;
+
+/**
+ * The encoding Node's `encoding` names, as Node reads it (any case): `utf8` / `utf-8`,
+ * `utf16le` / `utf-16le` / `ucs2` / `ucs-2`, `latin1` / `binary` / `ascii` (Node writes ASCII
+ * as Latin-1), `hex`, `base64` / `base64url` (one lenient decoder reads both alphabets); -1 for
+ * any other name.
+ */
+function encodingOf(encoding: string): i32 {
+  if (encoding == "utf8") {
+    return UTF8;
+  }
+  const e = encoding.toLowerCase();
+  if (e == "utf8" || e == "utf-8") {
+    return UTF8;
+  }
+  if (e == "utf16le" || e == "utf-16le" || e == "ucs2" || e == "ucs-2") {
+    return UTF16LE;
+  }
+  if (e == "latin1" || e == "binary" || e == "ascii") {
+    return LATIN1;
+  }
+  if (e == "hex") {
+    return HEX;
+  }
+  if (e == "base64" || e == "base64url") {
+    return BASE64;
+  }
+  return -1;
+}
+
+/**
+ * `Buffer.byteLength` in a named encoding (kept out of the inlined default, UTF-8), Node's
+ * count: from the string's length alone for hex (one byte per two characters) and Base64 (3
+ * bytes per 4 characters, up to two final `=` not counted), so text that does not decode
+ * whole counts more bytes than `Buffer.from` makes, as in Node. An unknown name counts UTF-8.
+ */
+export function byteLengthIn(s: string, encoding: string): usize {
+  const e = encodingOf(encoding);
+  if (e == UTF16LE) {
+    return strLen(s) * 2;
+  }
+  if (e == LATIN1) {
+    return strLen(s);
+  }
+  if (e == HEX) {
+    return strLen(s) / 2;
+  }
+  if (e == BASE64) {
+    let n = strLen(s);
+    if (n > 0 && s.charCodeAt((n - 1) as i64) == 61) {
+      n--;
+    }
+    if (n > 1 && s.charCodeAt((n - 1) as i64) == 61) {
+      n--;
+    }
+    return n * 3 / 4;
+  }
+  return strByteLen(s);
+}
+
+/**
+ * The bytes of `s` in `encoding` (Node's `Buffer.from(s, encoding)`), in a new array. An
+ * empty name is UTF-8; an unknown one throws Node's `TypeError` (`ERR_UNKNOWN_ENCODING`).
+ */
+export function textBytes(s: string, encoding: string): u8[] {
+  const e = encoding == "" ? UTF8 : encodingOf(encoding);
+  if (e < 0) {
+    unknownEncoding(encoding);
+  }
+  if (e == UTF8) {
+    return utf8Bytes(s);
+  }
+  const n = strLen(s);
+  if (e == UTF16LE) {
+    const out = velt_rt_bytes_uninit((n * 2) as u64);
+    writeUnits(out, s, true);
+    return out;
+  }
+  const text = velt_rt_bytes_uninit(n as u64);
+  if (n > 0 && strByteLen(s) == n) {
+    // ASCII: the string's bytes are its code units.
+    copyText(text, s, 0, n);
+  } else {
+    writeUnits(text, s, false);
+  }
+  if (e == HEX || e == BASE64) {
+    const k = e == HEX ? decodeHex(text) : decodeBase64(text);
+    arrayTruncate(text, k);
+  }
+  return text;
+}
+
+/** The UTF-8 bytes of `s`, a lone surrogate as U+FFFD's (Node's `Buffer.from(s)`). */
+export function utf8Bytes(s: string): u8[] {
+  const out = velt_rt_bytes_uninit(strByteLen(s) as u64);
+  if (out.length > 0) {
+    writeUtf8(out, s, 0);
+  }
+  return out;
+}
+
+// An encoding name Node does not know (cold): its `ERR_UNKNOWN_ENCODING` error.
+function unknownEncoding(encoding: string): never {
+  throw new TypeError(`Unknown encoding: ${encoding}`);
+}
+
+// The UTF-16 code units of `s` into `out` (as many bytes as `s` has code units, or twice that
+// with `wide`): each one's low byte, or with `wide` both bytes, the low one first. Decoded from
+// the string's UTF-8 (a lone surrogate's three bytes are its code unit, a character from
+// U+10000 on its surrogate pair).
+function writeUnits(out: u8[], s: string, wide: bool) {
+  const len = strByteLen(s) as u64;
+  let i: u64 = 0;
+  let o: usize = 0;
+  while (i < len) {
+    const b = strByteAt(s, i) as u32;
+    let u = b;
+    if (b < 0x80) {
+      i += 1;
+    } else if (b < 0xe0) {
+      u = ((b & 0x1f) << 6) | (cont(s, i + 1));
+      i += 2;
+    } else if (b < 0xf0) {
+      u = ((b & 0x0f) << 12) | (cont(s, i + 1) << 6) | cont(s, i + 2);
+      i += 3;
+    } else {
+      const c =
+        (((b & 0x07) << 18) | (cont(s, i + 1) << 12) | (cont(s, i + 2) << 6) | cont(s, i + 3)) -
+        0x10000;
+      o = putUnit(out, o, 0xd800 + (c >> 10), wide);
+      u = 0xdc00 + (c & 0x3ff);
+      i += 4;
+    }
+    o = putUnit(out, o, u, wide);
+  }
+}
+
+// The six bits a continuation byte of `s` at `i` holds.
+function cont(s: string, i: u64): u32 {
+  return (strByteAt(s, i) as u32) & 0x3f;
+}
+
+// Code unit `u` at `out[o]` (its low byte, or with `wide` both); returns the end.
+function putUnit(out: u8[], o: usize, u: u32, wide: bool): usize {
+  out[o] = (u & 0xff) as u8;
+  if (wide) {
+    out[o + 1] = (u >> 8) as u8;
+    return o + 2;
+  }
+  return o + 1;
+}
+
+// The value of hex digit `c` (either case), or -1.
+function hexDigit(c: u8): i32 {
+  if (c >= 48 && c <= 57) {
+    return (c as i32) - 48;
+  }
+  const l = (c | 0x20) as i32;
+  return l >= 97 && l <= 102 ? l - 87 : -1;
+}
+
+// Decodes the hex digits in `t` in place, as Node does: pairs from the start up to the first
+// that is not two digits (an odd last digit is dropped). Returns the number of bytes.
+function decodeHex(t: u8[]): usize {
+  const n = t.length;
+  let k: usize = 0;
+  while (2 * k + 1 < n) {
+    const hi = hexDigit(t[2 * k]);
+    const lo = hexDigit(t[2 * k + 1]);
+    if (hi < 0 || lo < 0) {
+      break;
+    }
+    t[k] = ((hi << 4) | lo) as u8;
+    k++;
+  }
+  return k;
+}
+
+// The value of Base64 digit `c` in either alphabet (`+` and `-` are 62, `/` and `_` 63), or -1.
+function base64Digit(c: u8): i32 {
+  const v = c as i32;
+  if (v >= 65 && v <= 90) {
+    return v - 65;
+  }
+  if (v >= 97 && v <= 122) {
+    return v - 71;
+  }
+  if (v >= 48 && v <= 57) {
+    return v + 4;
+  }
+  if (v == 43 || v == 45) {
+    return 62;
+  }
+  if (v == 47 || v == 95) {
+    return 63;
+  }
+  return -1;
+}
+
+// Decodes the Base64 in `t` in place, as Node's lenient decoder does: digits of either alphabet,
+// any other character skipped, up to the first `=` (padding is optional); the bits of a last
+// partial byte are dropped. Returns the number of bytes (each written behind the digit read).
+function decodeBase64(t: u8[]): usize {
+  const n = t.length;
+  let o: usize = 0;
+  let acc: u32 = 0;
+  let bits: u32 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const c = t[i];
+    const v = base64Digit(c);
+    if (v < 0) {
+      if (c == 61) {
+        break;
+      }
+      continue;
+    }
+    acc = ((acc << 6) | (v as u32)) & 0xffff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      t[o] = ((acc >> bits) & 0xff) as u8;
+      o++;
+    }
+  }
+  return o;
+}

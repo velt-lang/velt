@@ -134,11 +134,7 @@ export function anyStr_split(s: string, args: any[]): any {
     const whole: string[] = [s.slice(0)];
     return whole;
   }
-  const parts = s.split(anyStrArg(args, 0));
-  if (lim < (parts.length as number)) {
-    return parts.slice(0, lim as i64);
-  }
-  return parts;
+  return s.split(anyStrArg(args, 0), lim);
 }
 
 /** JavaScript's `ToUint32` of the number `n`. */

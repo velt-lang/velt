@@ -182,3 +182,19 @@ pub(crate) fn short_name(cx: &Ctx, d: DefId) -> String {
     let name = &cx.fn_info(d).name;
     name.rsplit("::").next().unwrap_or(name).to_string()
 }
+
+#[cfg(test)]
+impl crate::units::codec::unit::Fresh for RecState {
+    fn shape(&self) -> String {
+        let (p, r, c, g) = (
+            self.pending.len(),
+            self.reported.len(),
+            self.completed.len(),
+            self.globals_done.len(),
+        );
+        format!(
+            "{p} pending, {r} reported, {} returning, {c} completed, {g} globals",
+            self.in_return
+        )
+    }
+}

@@ -51,6 +51,31 @@ export const imports: Imports = {
   // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
   // `SwitchToThread` and the performance counter.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
+  // The memory of the symbol records made at run time: `Symbol.for`'s one at a time
+  // (std/lang/symbol/registry.velt) and `Symbol()`'s in 4 KiB chunks (record.velt). The C
+  // library's where there is one, the compiled code's allocator (not zeroed) in the browser.
+  "#symbol-record": {
+    js: "./lang/symbol/record_mem_js.velt",
+    default: "./lang/symbol/record_mem.velt",
+  },
+  // The clocks of `Date.now()` and `performance.now()` (std/lang/hooks/clock.velt): the C
+  // library's `clock_gettime` on macOS and Linux, the performance counter and the precise system
+  // time on Windows, WASI's `clock_time_get`, a JS host's own. No default: a target without one
+  // fails here, at compile time.
+  "#clock": {
+    darwin: "./lang/hooks/clock_darwin.velt",
+    linux: "./lang/hooks/clock_linux.velt",
+    win32: "./lang/hooks/clock_win32.velt",
+    wasi: "./lang/hooks/clock_wasi.velt",
+    js: "./lang/hooks/clock_js.velt",
+  },
+  // The C library calls of the weak core (std/lang/hooks/weak_mem.velt), apart from the
+  // executor's so a program without tasks loads none of it: memory, and `sched_yield` or on
+  // Windows `SwitchToThread` while its lock is contended.
+  "#weak-os": {
+    win32: "./lang/hooks/weak_os_win32.velt",
+    default: "./lang/hooks/weak_os_posix.velt",
+  },
   // The layout of `sigaction` for the executor in Velt's signals (std/lang/hooks/
   // sched_signal.velt): per OS; elsewhere none.
   "#sched-signal": {
@@ -71,6 +96,13 @@ export const imports: Imports = {
   "#spawn-open": {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
+  },
+  // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
+  // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
+  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.
+  "#promise-race-step": {
+    "std-scheduler": "./lang/promise/race_step_sched.velt",
+    default: "./lang/promise/race_step_rt.velt",
   },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
@@ -117,18 +149,27 @@ export const imports: Imports = {
   // (WebAssembly) none, `ENOTSUP`.
   "#net-udp": { "std-scheduler": "./net/udp/udp_sched.velt", default: "./net/udp/rt.velt" },
   "#net-dns": { "std-scheduler": "./net/dns/rt_sched.velt", default: "./net/dns/rt.velt" },
-  // An `AbortSignal.timeout`'s timer, which a counted exit gives back (std/task/signal_timeout.velt):
-  // the executor in Velt's order marks it; elsewhere nothing is counted that way.
-  "#timer-give-back": {
-    "std-scheduler": "./task/timer_give_back_sched.velt",
-    default: "./task/timer_give_back_none.velt",
-  },
   // velt/fs's and velt/process's runtime functions: the runtime's (std/fs/rt.velt, std/process/
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
   "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
+  // `readAt`'s read off the calling task's thread: on the executor's blocking pool in a native
+  // program; on the calling thread elsewhere, where there are no file descriptors to read.
+  "#fs-read-at": {
+    "std-scheduler": "./fs/fd/read_at_sched.velt",
+    default: "./fs/fd/read_at_inline.velt",
+  },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
+  // Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
+  // Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
+  // host.
+  "#stdin-sys": {
+    win32: "./process/stdin_win32.velt",
+    native: "./process/stdin_posix.velt",
+    wasi: "./process/stdin_posix.velt",
+    default: "./process/stdin_none.velt",
+  },
   // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
   // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
   // which `#child-os` serves: `posix_spawn` with the exit and the pipes on its reactor, or on
@@ -165,6 +206,9 @@ export const imports: Imports = {
   // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
   // which the C library's `memset` gives; JS hosts have none, and index the arrays.
   "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },
+  // The limb loops of `Mont` (std/crypto/mont.velt, RSA's arithmetic): on the limbs' addresses
+  // as `#nat-rows`, or on JS hosts on the arrays.
+  "#mont-rows": { js: "./crypto/mont_rows_checked.velt", default: "./crypto/mont_rows_raw.velt" },
   // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
   // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
   // stat`; elsewhere each fails with ENOSYS.
@@ -173,6 +217,20 @@ export const imports: Imports = {
     linux: "./fs/fd/linux.velt",
     default: "./fs/fd/unsupported.velt",
   },
+  // Whole files (`readFile`, `writeFile`, `appendFile`, `stat`, `lstat`, `exists`) in a native
+  // build: the C library's file descriptors (`#fd-system`), or Win32's on Windows.
+  "#fs-whole": { win32: "./fs/whole/win32.velt", default: "./fs/whole/posix.velt" },
+  // What a `MappedFile` is made of (velt/fs): a mapping of the file (`mmap` through
+  // `#fd-system`, Win32's file mappings on Windows), the file read into memory on WebAssembly.
+  "#mapped-source": {
+    win32: "./fs/mapped_win32.velt",
+    wasi: "./fs/mapped_buffer.velt",
+    js: "./fs/mapped_buffer.velt",
+    default: "./fs/mapped_posix.velt",
+  },
+  // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
+  // library's directory functions (`#fd-system`), or Win32's on Windows.
+  "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },
   // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
   // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
   // of the builtin `process`, which every program loads, imports the variant.
@@ -205,13 +263,61 @@ export const imports: Imports = {
     arm64: "./lang/math/fma_arm64.velt",
     default: "./lang/math/fma_check_needed.velt",
   },
+  // The arm64 features of this CPU (std/lang/cpu, read by `cpuStart` at start-up): the kernel's
+  // capability words on Linux, sysctls on macOS, `IsProcessorFeaturePresent` on Windows; none
+  // elsewhere, where std has no way to ask.
+  // The start-up check of the CPU's features (std/lang/hooks/cpu.velt): CPUID on x86-64, the
+  // operating system's answer on arm64 (`#cpu-arm`), nothing on WebAssembly.
+  "#cpu-start": {
+    x64: "./lang/cpu/start_x64.velt",
+    arm64: "./lang/cpu/start_arm64.velt",
+    wasm: "./lang/cpu/start_none.velt",
+  },
+  "#cpu-arm": {
+    darwin: "./lang/cpu/arm_darwin.velt",
+    linux: "./lang/cpu/arm_linux.velt",
+    win32: "./lang/cpu/arm_win32.velt",
+    default: "./lang/cpu/arm_none.velt",
+  },
+  // The environment's variables: the C library's on macOS and Linux (each with its own way to
+  // `environ`), Win32's on Windows, the WebAssembly runtime's there. Nothing in them throws: the
+  // executor reads variables.
+  "#env-sys": {
+    darwin: "./process/env_darwin.velt",
+    linux: "./process/env_linux.velt",
+    win32: "./process/env_win32.velt",
+    default: "./process/env_wasm.velt",
+  },
+  // The working directory (`cwd`, `chdir`), apart from the variables: it throws `IoError`.
+  "#cwd-sys": {
+    win32: "./process/cwd_win32.velt",
+    native: "./process/cwd_posix.velt",
+    default: "./process/cwd_wasm.velt",
+  },
   // Winsock for velt/os' `hostname()` on Windows, started once per process; nothing elsewhere.
   "#os-winsock": { win32: "./os/winsock_win32.velt", default: "./os/winsock_none.velt" },
+  // `process.memoryUsage()`'s two figures (std/prelude/process.velt): `/proc/self/statm` on
+  // Linux, `task_info` on macOS, kernel32's process counters on Windows, the WebAssembly
+  // runtime's answer there.
+  "#memory-sys": {
+    darwin: "./process/memory_darwin.velt",
+    linux: "./process/memory_linux.velt",
+    win32: "./process/memory_win32.velt",
+    default: "./process/memory_wasm.velt",
+  },
   // Whether a file descriptor is a terminal: the C library's `isatty` on macOS and Linux, a
   // console handle on Windows, the WebAssembly runtime's answer there.
   "#tty": {
     win32: "./process/tty_win32.velt",
     native: "./process/tty_posix.velt",
     default: "./process/tty_wasm.velt",
+  },
+  // The local time zone's offset (`Date`'s local getters, `velt/time`'s `localParts()`): the C
+  // library's `localtime_r` on macOS and Linux, Win32's time-zone functions on Windows, UTC on
+  // WebAssembly.
+  "#localtime": {
+    win32: "./time/localtime_win32.velt",
+    native: "./time/localtime_posix.velt",
+    default: "./time/localtime_none.velt",
   },
 };

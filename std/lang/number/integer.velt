@@ -83,7 +83,7 @@ export function digits8(x: u64): u64 {
  * The four ASCII digits of `x` (below 10^4), leading zeros included, the first in the low byte:
  * `x` split into two halves of two digits, each into two digits, as `digits8` does.
  */
-@inline
+@inline("always")
 function digits4(x: u64): u64 {
   const hi = (x * 5243) >> 19;
   const tens = ((x - hi * 100) << 16) | hi;
@@ -94,7 +94,7 @@ function digits4(x: u64): u64 {
 // The leading zeros of the ASCII digits `d` (first digit in the low byte) as bits: 8 for each
 // byte before the first that isn't "0". `stop` is a bit in the byte of the last digit, which is
 // never dropped: a zero keeps its last digit, and the count needs no test for no bits at all.
-@inline
+@inline("always")
 function leadingZeroBits(d: u64, stop: u64): u64 {
   return velt_rt_math_ctz64((d ^ 0x3030303030303030) | stop) & 56;
 }
@@ -115,10 +115,10 @@ export function intWords(v: u64, neg: bool): Words {
 /**
  * The digits of a `v` below 10^8: one group, its leading zeros shifted out, the four-digit split
  * for the smallest numbers (counters, coordinates, indexes). Inlined into every caller
- * (`@inline`): the entry points' common case, whose three-word result would otherwise go through
- * memory. A negative number's text is `eightWords`'.
+ * (`@inline("always")`): the entry points' common case, whose three-word result would otherwise
+ * go through memory. A negative number's text is `eightWords`'.
  */
-@inline
+@inline("always")
 function shortWords(v: u64): Words {
   if (v >= 10000) {
     return eightWords(v, false);
@@ -131,11 +131,11 @@ function shortWords(v: u64): Words {
 
 /**
  * The digits of a `v` below 10^8, after a `-` when `neg`, by eight at a time alone: their leading
- * zeros shifted out. Inlined (`@inline`): `console.log`'s writer
+ * zeros shifted out. Inlined (`@inline("always")`): `console.log`'s writer
  * (velt/lang/number/integer_write) and negative text use it for every number below 10^8,
  * `shortWords` from 10^4 up.
  */
-@inline
+@inline("always")
 export function eightWords(v: u64, neg: bool): Words {
   const all = digits8(v);
   const z = leadingZeroBits(all, 0x0100000000000000);
@@ -154,11 +154,11 @@ export function eightWords(v: u64, neg: bool): Words {
  * digits are at most 20 bytes): with a minus, the last one dropped becomes it. Dropping them
  * shifts `end` to just after the last digit. The first group is below 1845, so at most four digits
  * (`digits4`), in the upper half of its word, and its lower half is never read. Inlined
- * (`@inline`) into `longPositive`, `longNegative` and `console.log`'s writer
+ * (`@inline("always")`) into `longPositive`, `longNegative` and `console.log`'s writer
  * (velt/lang/number/integer_write), each out of line, whose three-word result would otherwise
  * come back through memory.
  */
-@inline
+@inline("always")
 export function longWords(v: u64, neg: bool, end: u64): Words {
   const lo = v % 100000000;
   const rest = v / 100000000;
@@ -278,7 +278,7 @@ export function pushU64(buf: string, v: u64): void {
 
 // Appends the text of `a`, as `u64Text` makes it (inlined into each entry point). The builder
 // is passed on with locals only after it (CLAUDE.md "the string builder passed as a `string`").
-@inline
+@inline("always")
 function push(buf: string, a: u64): void {
   if (a < 100000000) {
     const w = shortWords(a);
@@ -291,7 +291,7 @@ function push(buf: string, a: u64): void {
 }
 
 // Appends `-a`, as `push` appends `a`: up to 8 bytes as one word here.
-@inline
+@inline("always")
 function pushNegative(buf: string, a: u64): void {
   if (a < 10000000) {
     const w = eightWords(a, true);

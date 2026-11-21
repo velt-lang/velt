@@ -99,7 +99,7 @@ function block(s: string, i: usize, n: usize): u8x16 {
 // plain run after it. Each byte becomes at most six and the bytes before `first` stay one each,
 // so with ten bytes to spare every store fits, even at the last byte. Compiled into its two
 // entry points, `escapeFromPlain` and `escapeFromHex`, each with `hexApos` fixed.
-@inline
+@inline("always")
 function escapeFrom(s: string, first: usize, n: usize, hexApos: bool): string {
   const room = first + (n - first) * 6 + 10;
   const buf: u8[] = arrayWithCapacity(room);

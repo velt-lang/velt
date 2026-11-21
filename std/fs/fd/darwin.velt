@@ -8,14 +8,30 @@ import {
   closeFd as posixCloseFd,
   fcntlInt as posixFcntlInt,
   fstatAt as posixFstatAt,
+  statAt as posixStatAt,
   fsyncFd as posixFsyncFd,
+  adviseMap as posixAdviseMap,
   lastError as posixLastError,
+  mapRead as posixMapRead,
   openPath as posixOpenPath,
+  readAddress as posixReadAddress,
   readInto as posixReadInto,
   truncateFd as posixTruncateFd,
   unlinkPath as posixUnlinkPath,
+  unmapRead as posixUnmapRead,
+  writeAddress as posixWriteAddress,
   writeFrom as posixWriteFrom,
 } from "velt/fs/fd/posix";
+import { checkPath } from "velt/fs/fd/guards";
+import {
+  DirSystem,
+  listPath as posixListPath,
+  removeDir as posixRemoveDir,
+  removeTree as posixRemoveTree,
+} from "velt/fs/fd/dirs";
+
+/** `mode_t` is 16 bits on macOS. */
+declare c("c", { errno: true }) function mkdir(path: readonly u8[], mode: u16): i32;
 
 /**
  * The `fcntl` commands whose argument is an `int` (or none): `F_GETFD`, `F_SETFD`, `F_GETFL`,
@@ -57,6 +73,17 @@ export function fstatFd(fd: i32): Stat | null {
   return posixFstatAt(fd, 4, true, 96, 48);
 }
 
+/**
+ * `stat(path)` (`follow`) or `lstat(path)`'s fields, at `fstatFd`'s offsets (on x86-64 the
+ * symbols `stat` and `lstat` are the 32-bit-inode ones too), or `null`.
+ */
+export function statPath(path: readonly u8[], follow: bool): Stat | null {
+  if (arch() == "x64") {
+    return posixStatAt(path, follow, 8, true, 72, 40);
+  }
+  return posixStatAt(path, follow, 4, true, 96, 48);
+}
+
 // The functions both POSIX variants share, from posix.velt (a variant defines what it exports:
 // `velt check` compares the variants' own signatures).
 
@@ -93,4 +120,84 @@ export function writeFrom(fd: i32, bytes: readonly u8[], start: usize, end: usiz
 /** `ftruncate(fd, length)`: 0, or -1. */
 export function truncateFd(fd: i32, length: i64): i32 {
   return posixTruncateFd(fd, length);
+}
+
+/** Maps the `len` bytes of `fd` from byte `offset` read-only: the address, or 0. */
+export function mapRead(fd: i32, len: usize, offset: i64): usize {
+  return posixMapRead(fd, len, offset);
+}
+
+/** `munmap` of a mapping of `mapRead`: 0, or -1. Unsafe: as posix.velt's. */
+export unsafe function unmapRead(address: usize, len: usize): i32 {
+  // SAFETY: the caller's statement, handed on.
+  return unsafe { posixUnmapRead(address, len) };
+}
+
+/** `madvise` on part of a mapping of `mapRead`: 0, or -1. */
+export function adviseMap(address: usize, len: usize, advice: i32): i32 {
+  return posixAdviseMap(address, len, advice);
+}
+
+/** `read` or `pread` into the memory at `address`: the number read, or -1. Unsafe: as posix.velt's. */
+export unsafe function readAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  // SAFETY: the caller's statement, handed on.
+  return unsafe { posixReadAddress(fd, address, len, at) };
+}
+
+/** `write` or `pwrite` of the memory at `address`: the number written, or -1. Unsafe: as posix.velt's. */
+export unsafe function writeAddress(fd: i32, address: usize, len: usize, at: i64): isize {
+  // SAFETY: the caller's statement, handed on.
+  return unsafe { posixWriteAddress(fd, address, len, at) };
+}
+
+// Directories (std/fs/fd/dirs.velt), with macOS's `struct dirent`, `open` flags and `AT_`
+// constants.
+
+/**
+ * macOS's `struct dirent`: on arm64 `readdir` fills the 64-bit-inode one (`d_type` at 20,
+ * `d_name` at 21); on x86-64 the symbols `opendir`, `fdopendir` and `readdir` are the
+ * 32-bit-inode ones, as `fstat` is (`d_type` at 6, `d_name` at 8). `O_NOFOLLOW` 0x100,
+ * `O_DIRECTORY` 0x100000, `O_CLOEXEC` 0x1000000; `AT_FDCWD` -2, `AT_REMOVEDIR` 0x80; `ELOOP` 62.
+ */
+function dirSystem(): DirSystem {
+  const x64 = arch() == "x64";
+  return {
+    typeAt: x64 ? 6 : 20,
+    nameAt: x64 ? 8 : 21,
+    openDir: 0x1100100,
+    cwd: -2,
+    removeDir: 0x80,
+    loop: 62,
+  };
+}
+
+/**
+ * The entries of the directory at `path` into `names` and `types` (`d_type`, from `unknown` for
+ * an entry that has none): 0, or the errno.
+ */
+export function listDir(
+  path: readonly u8[],
+  names: string[],
+  types: u8[],
+  unknown: ((child: readonly u8[]) => u8) | null,
+): i32 {
+  return posixListPath(path, dirSystem(), names, types, unknown);
+}
+
+/** `mkdir(path, mode)`: 0, or -1. */
+export function makeDir(path: readonly u8[], mode: u32): i32 {
+  checkPath("mkdir", path);
+  // SAFETY: `path` ends with its only 0 byte (checked above); C keeps no pointer to it.
+  return unsafe { mkdir(path, mode as u16) };
+}
+
+/** `rmdir(path)`: 0, or -1. */
+export function removeDir(path: readonly u8[]): i32 {
+  return posixRemoveDir(path);
+}
+
+/** Removes the directory at `path` and everything in it, following no link: 0, or the errno. */
+export function removeTree(path: readonly u8[]): i32 {
+  const sys = dirSystem();
+  return posixRemoveTree(sys.cwd, path, sys, true);
 }

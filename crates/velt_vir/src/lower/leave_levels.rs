@@ -14,6 +14,7 @@
 use rustc_hash::FxHashMap;
 use velt_sema::hir::{self, DefId, ExprKind as K, Intrinsic, LocalId, TyId};
 
+use super::caller_aliases::binds;
 use super::frozen::place_root;
 use super::rt::Rt;
 use super::{cfunc, cint, FnLower, LkMode, Work};
@@ -102,9 +103,21 @@ impl FnLower<'_, '_> {
         let parent = |d: Option<DefId>| d.and_then(|d| self.cx.closure_parents.get(&d).copied());
         self.own_captures
             && matches!(
-                parent(parent(self.cx.cur_def).and_then(|p| p.0)),
+                parent(parent(self.read_callback_def()).and_then(|p| p.0)),
                 Some((_, true))
             )
+    }
+
+    /// The `read` callback this `Work::ReadOwn` code runs as: the function being built, or the
+    /// callback around a closure only called there (closure.rs `closure_value`: such a closure
+    /// is the one `Work::ReadOwn` function that is no `read` callback itself, so this does not
+    /// depend on which instance of the callback made its value last).
+    fn read_callback_def(&self) -> Option<DefId> {
+        let mut def = self.cx.cur_def?;
+        while let Some(&(Some(p), false)) = self.cx.closure_parents.get(&def) {
+            def = p;
+        }
+        Some(def)
     }
 
     /// Is `root`, a variable this `Work::ReadOwn` callback captured, one of the code outside
@@ -112,13 +125,25 @@ impl FnLower<'_, '_> {
     /// code declaring it, which calls the outermost (`own_nested`)? A variable of a callback
     /// around this one is that reader's, counted by read mode's rules.
     pub(super) fn caller_capture(&mut self, root: LocalId) -> bool {
-        if !self.own_nested() {
-            return true;
-        }
         let Some(mut def) = self.cx.cur_def else {
             return false;
         };
         let mut var = root;
+        // A closure only called in its callback (`read_callback_def`): the variable is the
+        // caller's when the callback captured it too, not when it is the callback's own.
+        while let Some(&(Some(p), false)) = self.cx.closure_parents.get(&def) {
+            let f = self.cx.fn_def(def);
+            let Some(c) = f.captures.iter().find(|c| c.inner == var) else {
+                return false;
+            };
+            (var, def) = (c.outer, p);
+            if !self.cx.fn_def(def).captures.iter().any(|c| c.inner == var) {
+                return false;
+            }
+        }
+        if !self.own_nested() {
+            return true;
+        }
         loop {
             // The code calling the outermost callback, outside read mode for counting: its
             // variables are the caller's, declared there or captured by it (a closure
@@ -212,7 +237,11 @@ impl FnLower<'_, '_> {
             }
             let mut found = FxHashMap::default();
             let value = self.lock_value();
-            for (keys, roots) in stores.found {
+            for store in stores.found {
+                let reads = self.only_reads(&store);
+                let Store {
+                    keys, roots, temps, ..
+                } = store;
                 // The places that could hold what the reader made.
                 let roots: Vec<LocalId> = roots
                     .into_iter()
@@ -227,6 +256,18 @@ impl FnLower<'_, '_> {
                 // outer reader's lock) is lent to the call and dropped by this reader, which
                 // keeps it as its own (no callback out).
                 if !roots.is_empty() && roots.iter().all(|&r| Some(r) == value) {
+                    for k in keys {
+                        found.insert(k, 0);
+                    }
+                    continue;
+                }
+                // No place among the call's arguments, only temporaries the reader made of its
+                // lock's value and of literals (`y.items[0].slice().concat(x.items[0].slice())`):
+                // the copy is lent to a method of such a temporary, which this reader drops as
+                // its own too (no callback out). With a place, the place decides.
+                // Or the call changes none of them: then it stores the copy nowhere, whatever
+                // they are (`y.objs.filter((q) => big(q)).concat(x.objs.slice())`).
+                if roots.is_empty() && (reads || self.readers_own(&temps, value)) {
                     for k in keys {
                         found.insert(k, 0);
                     }
@@ -248,6 +289,57 @@ impl FnLower<'_, '_> {
         levels.unwrap_or(OUTSIDE)
     }
 
+    /// Does the call of `store` only read each of its arguments that is no transfer: a function
+    /// called by name whose parameter for it is a borrow its body does not change (hir_encodings.md
+    /// "Mutation inference")? A copy given to such a call is stored in none of them.
+    fn only_reads(&self, store: &Store) -> bool {
+        let Some((def, n)) = store.callee else {
+            return false;
+        };
+        let hir::Def::Fn(f) = self.cx.hir.def(def) else {
+            return false;
+        };
+        // After the captures, which lead the parameters.
+        let Some(first) = f.params.len().checked_sub(n) else {
+            return false;
+        };
+        !f.is_async
+            && !f.is_generator
+            && store.others.iter().all(|&i| {
+                let p = &f.params[first + i];
+                p.mode == hir::PassMode::Borrow && !f.body.locals[p.local.0 as usize].mutable
+            })
+    }
+
+    /// Could the arguments `temps` of a call (those that are no places and hold no transfer)
+    /// hold a lock-set object at all, and are they all the reader's own temporaries: made of
+    /// literals and of the lock's value `value` (never a store's destination), by std's
+    /// functions only? A function of the program may return anything it can reach; a variable
+    /// other than the lock's value may name the caller's container, which a call on it
+    /// (`out.at(0)`) could give a part of. No program is known that tells this answer from
+    /// "yes" for every such store: sema refuses the stores of a part of a lock's value that the
+    /// refused temporaries would make (review of #3170). It states what level 0 rests on.
+    fn readers_own(&mut self, temps: &[Temp], value: Option<LocalId>) -> bool {
+        let mut any = false;
+        for t in temps {
+            let ty = self.sub(t.ty);
+            if !self.cx.reaches_lock_set(ty) {
+                continue;
+            }
+            any = true;
+            let known = !t.opaque
+                && t.outer().all(|l| Some(l) == value)
+                && t.callees.iter().all(|d| {
+                    let span = self.cx.fn_def(*d).span;
+                    self.cx.locs.as_ref().is_some_and(|m| m.is_std(span))
+                });
+            if !known {
+                return false;
+            }
+        }
+        any
+    }
+
     /// Does the store whose transfer's arguments start at `key` put the value only into
     /// containers of the code outside every read: places rooted in variables this
     /// `Work::ReadOwn` callback captured from that code (`caller_capture`)? Only then does what
@@ -267,7 +359,7 @@ impl FnLower<'_, '_> {
                 None => vec![],
             };
             let mut found = FxHashMap::default();
-            for (keys, roots) in stores.found {
+            for Store { keys, roots, .. } in stores.found {
                 let callers = !roots.is_empty()
                     && roots
                         .iter()
@@ -331,7 +423,123 @@ impl FnLower<'_, '_> {
 /// of a call (`s.add(v)`, `stash(out, v)`; also through a rest parameter's array literal).
 #[derive(Default)]
 struct Stores {
-    found: Vec<(Vec<usize>, Vec<Root>)>,
+    found: Vec<Store>,
+}
+
+/// One store: its transfers, the roots of the places it may put the value in, and its other
+/// arguments (`temps`), which are values the callback computes. For a call of a function by
+/// name: `callee`, with the number of arguments, and `others`, the arguments that hold no
+/// transfer.
+struct Store {
+    keys: Vec<usize>,
+    roots: Vec<Root>,
+    temps: Vec<Temp>,
+    callee: Option<(DefId, usize)>,
+    others: Vec<usize>,
+}
+
+/// An argument of a storing call that is no place and holds no transfer: its type, the
+/// variables it reads, those it binds itself (`pats`: a pattern's in `v!` or `a ?? b`; `own`: a
+/// `let`'s in the block a spread literal or `Array.from` becomes) and the functions it calls.
+/// `opaque`: it also does what these do not tell (a call through a value or a table, module
+/// state, a closure, an `await`, a jump out of it).
+struct Temp {
+    ty: TyId,
+    locals: Vec<LocalId>,
+    own: Vec<LocalId>,
+    pats: Vec<hir::Pat>,
+    callees: Vec<DefId>,
+    opaque: bool,
+}
+
+impl Temp {
+    fn of(e: &hir::Expr) -> Temp {
+        let mut t = Temp {
+            ty: e.ty,
+            locals: vec![],
+            own: vec![],
+            pats: vec![],
+            callees: vec![],
+            opaque: false,
+        };
+        t.read(e);
+        t
+    }
+
+    /// The variables it reads that it did not bind itself.
+    fn outer(&self) -> impl Iterator<Item = LocalId> + '_ {
+        (self.locals.iter().copied())
+            .filter(|l| !self.own.contains(l) && !self.pats.iter().any(|p| binds(p, *l)))
+    }
+
+    fn read(&mut self, e: &hir::Expr) {
+        match &e.kind {
+            K::Local(l, _) => self.locals.push(*l),
+            K::Call {
+                callee: hir::Callee::Def(d, _),
+                ..
+            } => self.callees.push(*d),
+            K::Call {
+                callee: hir::Callee::Intrinsic(_),
+                ..
+            } => {}
+            K::Call { .. } | K::Global(_) | K::Closure(_) | K::Await(_) => self.opaque = true,
+            K::Match { arms, .. } => {
+                for a in arms {
+                    self.pats.push(a.pat.clone());
+                }
+            }
+            K::Block(b) => return self.block(b),
+            _ => {}
+        }
+        super::frame_envs::children(e, &mut |x| self.read(x));
+    }
+
+    /// A block's statements: what its `let`s and loops bind is its own; a jump out of it is
+    /// not told by what it reads.
+    fn block(&mut self, b: &hir::Block) {
+        use hir::StmtKind as S;
+        for s in &b.stmts {
+            match &s.kind {
+                S::Let { local, init } => {
+                    self.own.push(*local);
+                    init.iter().for_each(|e| self.read(e));
+                }
+                S::LetPat { pat, init } => {
+                    self.pats.push(pat.clone());
+                    self.read(init);
+                }
+                S::Expr(e) => self.read(e),
+                S::If { cond, then, els } => {
+                    self.read(cond);
+                    self.block(then);
+                    els.iter().for_each(|b| self.block(b));
+                }
+                S::While {
+                    cond, body, step, ..
+                } => {
+                    self.read(cond);
+                    self.block(body);
+                    step.iter().for_each(|e| self.read(e));
+                }
+                S::ForOf {
+                    binding,
+                    iter,
+                    body,
+                    ..
+                } => {
+                    self.pats.push(binding.clone());
+                    self.read(iter);
+                    self.block(body);
+                }
+                S::Block(b) => self.block(b),
+                S::Return(_) | S::Break(_) | S::Continue(_) | S::Try { .. } => self.opaque = true,
+            }
+        }
+        if let Some(e) = &b.value {
+            self.read(e);
+        }
+    }
 }
 
 /// A place's root variable, with the type of what the place holds.
@@ -386,7 +594,13 @@ impl Stores {
                 let keys = transfers_in(std::slice::from_ref(&**value));
                 if !keys.is_empty() {
                     let root = place_root(place).map(|r| (r, place.ty));
-                    self.found.push((keys, root.into_iter().collect()));
+                    self.found.push(Store {
+                        keys,
+                        roots: root.into_iter().collect(),
+                        temps: vec![],
+                        callee: None,
+                        others: vec![],
+                    });
                 }
             }
             // A transfer is no store: the store it is part of names its destination.
@@ -394,14 +608,33 @@ impl Stores {
                 callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
                 ..
             } => {}
-            K::Call { args, .. } => {
+            K::Call { callee, args } => {
                 let keys = transfers_in(args);
                 if !keys.is_empty() {
+                    let callee = match callee {
+                        hir::Callee::Def(d, _) => Some((*d, args.len())),
+                        _ => None,
+                    };
+                    let others = (0..args.len())
+                        .filter(|&i| transfers_in(std::slice::from_ref(&args[i])).is_empty())
+                        .collect();
                     let roots = args
                         .iter()
                         .filter_map(|a| Some((place_root(a)?, a.ty)))
                         .collect();
-                    self.found.push((keys, roots));
+                    let temps = args
+                        .iter()
+                        .filter(|a| place_root(a).is_none())
+                        .filter(|a| transfers_in(std::slice::from_ref(*a)).is_empty())
+                        .map(Temp::of)
+                        .collect();
+                    self.found.push(Store {
+                        keys,
+                        roots,
+                        temps,
+                        callee,
+                        others,
+                    });
                 }
             }
             _ => {}

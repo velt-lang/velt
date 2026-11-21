@@ -1,0 +1,25 @@
+round 0: a
+round 0: a's microtask
+round 0: b
+round 0: b's microtask
+round 0: c
+round 0: c's microtask
+round 1: a
+round 1: a's microtask
+round 1: b
+round 1: b's microtask
+round 1: c
+round 1: c's microtask
+round 2: a
+round 2: a's microtask
+round 2: b
+round 2: b's microtask
+round 2: c
+round 2: c's microtask
+round 3: a
+round 3: a's microtask
+round 3: b
+round 3: b's microtask
+round 3: c
+round 3: c's microtask
+done

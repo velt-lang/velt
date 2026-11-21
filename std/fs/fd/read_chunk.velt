@@ -1,0 +1,55 @@
+// velt/fs (internal): one positioned read into an array of its own, as a value another thread
+// can hand back: what `readAt` runs off the calling task's thread (`#fs-read-at`).
+
+import { EINTR } from "velt/fs/fd/system";
+import { lastError, readAddress } from "#fd-system";
+import {
+  arrayByteLength,
+  arrayDataAddress,
+  arraySetLen,
+  arrayTruncate,
+  arrayWithCapacity,
+} from "velt/lang/intrinsics";
+
+/**
+ * The values one read gave (fewer than asked for at the end of the file; the bytes of a value
+ * the file ends inside are left out), or its `errno`.
+ */
+export type ReadChunk<T> = { values: T[]; error: i32 };
+
+/** How many bytes one `T` is. */
+export function valueSize<T extends Numeric>(): usize {
+  const one: T[] = arrayWithCapacity<T>(1);
+  arraySetLen(one, 1);
+  return arrayByteLength(one);
+}
+
+/**
+ * Reads up to `count` values of `T` from `fd` at byte `position` (`pread`, retried after a
+ * signal) into an array of its own, blocking the calling thread.
+ */
+export function readChunk<T extends Numeric>(fd: i32, count: usize, position: i64): ReadChunk<T> {
+  const values: T[] = arrayWithCapacity<T>(count);
+  arraySetLen(values, count);
+  const bytes = arrayByteLength(values);
+  // SAFETY: `values` has room for `count` values, `bytes` bytes at its address, and stays
+  // where it is until the read returns; any bytes are values of a number type.
+  const address = unsafe { arrayDataAddress(values) };
+  while (true) {
+    // SAFETY: as above.
+    const n = unsafe { readAddress(fd, address, bytes, position) };
+    if (n >= 0) {
+      // Only the values the read filled whole: the rest of the array was never written.
+      const whole = count == 0 ? 0 : (n as usize) / (bytes / count);
+      arrayTruncate(values, whole);
+      // A read the file's end cut short gives an array of its own size, not one that holds
+      // the room that was asked for as long as it is kept.
+      return { values: whole == count ? values : values.slice(0, whole as i64), error: 0 };
+    }
+    const e = lastError();
+    if (e != EINTR) {
+      arrayTruncate(values, 0);
+      return { values, error: e };
+    }
+  }
+}

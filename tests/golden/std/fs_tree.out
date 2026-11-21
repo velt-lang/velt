@@ -1,0 +1,25 @@
+10 9 C.txt a a.txt b.txt plain x z é.txt Ａ.txt 😀.txt
+10 9 C.txt a a.txt b.txt plain x z é.txt Ａ.txt 😀.txt
+10:file 9:file C.txt:file a:dir a.txt:file b.txt:file plain:dir x:dir z:file é.txt:file Ａ.txt:file 😀.txt:file
+10:file 9:file C.txt:file a:dir a.txt:file b.txt:file plain:dir x:dir z:file é.txt:file Ａ.txt:file 😀.txt:file
+c d 0
+0 12
+list missing ENOENT ENOENT: no such file or directory, scandir 'velt_fs_tree_tmp/missing'
+list a file ENOTDIR ENOTDIR: not a directory, scandir 'velt_fs_tree_tmp/a.txt'
+entries of missing ENOENT ENOENT: no such file or directory, scandir 'velt_fs_tree_tmp/missing'
+entries of a file ENOTDIR ENOTDIR: not a directory, scandir 'velt_fs_tree_tmp/a.txt'
+mkdir existing EEXIST EEXIST: file already exists, mkdir 'velt_fs_tree_tmp/plain'
+mkdir without its parent ENOENT ENOENT: no such file or directory, mkdir 'velt_fs_tree_tmp/no/parent'
+mkdir over a file EEXIST EEXIST: file already exists, mkdir 'velt_fs_tree_tmp/a.txt'
+mkdir recursive over a file EEXIST EEXIST: file already exists, mkdir 'velt_fs_tree_tmp/a.txt'
+mkdir recursive under a file ENOTDIR ENOTDIR: not a directory, mkdir 'velt_fs_tree_tmp/a.txt/x/y'
+mkdir of nothing ENOENT ENOENT: no such file or directory, mkdir ''
+mkdir recursive of nothing ENOENT ENOENT: no such file or directory, mkdir ''
+remove a full directory ENOTEMPTY ENOTEMPTY: directory not empty, rmdir 'velt_fs_tree_tmp/a'
+remove missing ENOENT ENOENT: no such file or directory, lstat 'velt_fs_tree_tmp/missing'
+remove missing, recursive ENOENT ENOENT: no such file or directory, lstat 'velt_fs_tree_tmp/missing'
+async list ENOENT ENOENT: no such file or directory, scandir 'velt_fs_tree_tmp/missing'
+async mkdir EEXIST EEXIST: file already exists, mkdir 'velt_fs_tree_tmp/plain'
+async remove ENOTEMPTY ENOTEMPTY: directory not empty, rmdir 'velt_fs_tree_tmp/a'
+10 9 C.txt b.txt é.txt Ａ.txt 😀.txt
+false

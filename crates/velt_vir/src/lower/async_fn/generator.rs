@@ -152,15 +152,17 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(cint(yielded, Ty::U32)));
         self.close_block(k);
         self.throw_block(k);
+        self.trace_block(k);
         self.switch_to(resume);
         self.set_tag(GEN_RUNNING);
         self.received(dflt, ty)
     }
 
-    /// On the unwind out of the generator's body (cleanup.rs `gen_resume_block`): the generator
-    /// is finished, like a panicked state machine (#2008), not running. Closing or dropping it
-    /// then does nothing (what its state held leaks with it) instead of panicking, which during
-    /// the cleanup of the frame holding it would abort, and `next()` reports done.
+    /// On the unwind out of a state machine's body (cleanup.rs `machine_resume_block`), after
+    /// the pad dropped what its state held: it is finished, not running. Closing or dropping it
+    /// then does nothing instead of dropping those values again (a generator: instead of
+    /// panicking, which during the cleanup of the frame holding it would abort), and a
+    /// generator's `next()` reports done.
     pub(in crate::lower) fn mark_unwound(&mut self) {
         self.set_tag(DONE);
     }

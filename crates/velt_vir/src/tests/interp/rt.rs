@@ -179,6 +179,13 @@ impl Interp<'_> {
                 return Err(101);
             }
             "velt_rt_exit" => return Err(a[0] as u32 as i32),
+            // The CPU's features (std/lang/hooks/cpu.velt): the interpreter runs no gated code, as
+            // Cranelift doesn't, so it is on no architecture whose checks run.
+            "velt_simd_on_x86" | "velt_simd_on_arm" | "velt_simd_cpu_word" => return Ok(0),
+            "velt_simd_cpu_required" | "velt_simd_xgetbv" => return Ok(0),
+            "velt_simd_cpu_word_set" => {}
+            // The variables the check reads (`VELT_CPU_DISABLE`, `VELT_SIMD_DISABLE`): unset.
+            "getenv" => return Ok(0),
             "velt_rt_uncaught_report" => {}
             "velt_rt_set_throw_loc" => self.throw_loc = a[0],
             "velt_rt_throw_loc" => return Ok(self.throw_loc),
@@ -192,6 +199,39 @@ impl Interp<'_> {
                 return Ok(self.heap_alloc(a[0]));
             }
             "velt_rt_realloc" => return Ok(self.realloc(a[0], a[1], a[3])),
+            // The C library std's clocks call (std/lang/hooks/clock_darwin.velt, clock_linux.velt): its buffer is
+            // C memory, kept for the thread's life, so not counted as a leak; the clocks read the
+            // emulated time (`exec.now`, ms), the wall clock from 2023-11-14.
+            "calloc" => return Ok(self.raw_alloc(a[0] * a[1])),
+            "clock_gettime" => {
+                let ns = (self.exec.now * 1e6) as u64 + 1;
+                let ns = if a[0] == 0 {
+                    ns + 1_700_000_000_000_000_000
+                } else {
+                    ns
+                };
+                self.write_bytes(a[1], &(ns / 1_000_000_000).to_le_bytes());
+                self.write_bytes(a[1] + 8, &(ns % 1_000_000_000).to_le_bytes());
+                return Ok(0);
+            }
+            // Windows' clocks (std/lang/hooks/clock_win32.velt), the same emulated time: the
+            // performance counter counts nanoseconds (its frequency is 10^9), and the system
+            // time is 100 ns ticks since 1601, 11,644,473,600 s before the Unix epoch.
+            "QueryPerformanceFrequency" => {
+                self.write_bytes(a[0], &1_000_000_000u64.to_le_bytes());
+                return Ok(1);
+            }
+            "QueryPerformanceCounter" => {
+                let ns = (self.exec.now * 1e6) as u64 + 1;
+                self.write_bytes(a[0], &ns.to_le_bytes());
+                return Ok(1);
+            }
+            "GetSystemTimePreciseAsFileTime" => {
+                let ns = (self.exec.now * 1e6) as u64 + 1 + 1_700_000_000_000_000_000;
+                let ticks = ns / 100 + 116_444_736_000_000_000;
+                self.write_bytes(a[0], &ticks.to_le_bytes());
+                return Ok(0);
+            }
             "velt_rt_free" => {
                 assert_eq!(
                     self.allocs.get(&a[0]).copied(),
@@ -240,6 +280,14 @@ impl Interp<'_> {
             "velt_rt_math_ctz64" => return Ok(a[0].trailing_zeros() as u64),
             "velt_rt_math_popcount64" => return Ok(a[0].count_ones() as u64),
             "velt_rt_math_umulh" => return Ok(((a[0] as u128 * a[1] as u128) >> 64) as u64),
+            // The start-up CPU check's OS queries (std/lang/cpu): the interpreter has no CPU
+            // to ask, so every feature reads as absent and programs take the baseline path.
+            "sysctlbyname" => return Ok(-1i64 as u64),
+            // macOS's detector maps a page for the sysctls' answers: none here (`MAP_FAILED`).
+            "mmap" => return Ok(u64::MAX),
+            "munmap" => return Ok(0),
+            "getauxval" => return Ok(0),
+            "IsProcessorFeaturePresent" => return Ok(0),
             m if m.starts_with("velt_rt_math_") => {
                 return Ok(math(m, f64::from_bits(a[0])).to_bits())
             }

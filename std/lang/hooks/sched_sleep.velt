@@ -14,8 +14,10 @@
 //   whose deadline passed move, in order, to their task's due list (a circular list whose first
 //   entry is the task's `T_TIMERS`) and the task is woken with flag `TIMED` (and `LOCALS`). Its
 //   next poll fires them one at a time, in order: each resumes its waiter at once (the root, or a
-//   promise of the task) and the task's microtasks run before the next (sched_run.velt
-//   `fireDue`), as Node's timer phase runs them. A waiter that polls several of them (`Promise.all` over sleeps) sees
+//   promise of the task) and the task's microtasks run before the next (sched_fire.velt
+//   `fireDue`), as Node's timer phase runs them. A poll that fires the task's yields first moves
+//   its sleeps due by then there (`dueNow`), as Node's timers phase comes before its check phase.
+//   A waiter that polls several of them (`Promise.all` over sleeps) sees
 //   only those fired so far ready, so they finish in timer order whoever polls them; and a due
 //   sleep polled while it is first on its task's due list fires itself, once every sleep fired
 //   before it was seen and no microtask is queued or running (the runtime's rule: no earlier
@@ -26,6 +28,9 @@
 
 import { fnAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as mv from "./sched_sleep_move";
+import * as rl from "./sched_sleep_rule";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -44,24 +49,52 @@ export const TM_ORDER: usize = 32;
 export const TM_DUE: usize = 288;
 export const TM_SIZE: usize = 296;
 
-// A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
-// list), state, and the task whose due list holds it.
-const S_DEADLINE: usize = 16;
-const S_SEQ: usize = 24;
-const S_WAKER: usize = 32;
-const S_PREV: usize = 40;
-const S_NEXT: usize = 48;
-const S_STATE: usize = 56;
-const S_TASK: usize = 64;
-const S_SIZE: usize = 72;
+/**
+ * A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
+ * list), state, and the task whose due list holds it.
+ */
+export const S_DEADLINE: usize = 16;
+export const S_SEQ: usize = 24;
+export const S_WAKER: usize = 32;
+export const S_PREV: usize = 40;
+export const S_NEXT: usize = 48;
+export const S_STATE: usize = 56;
+export const S_TASK: usize = 64;
+/**
+ * While it is pending: the await word (`T_WORD`) of the task that polled it into its worker's
+ * timer block, what that task's contexts point at, if the waker it was registered with keeps
+ * that task alive (`sleepPoll`); else 0. A word that is not 0 names a live task, never an
+ * address a task made later was given.
+ */
+export const S_OWNER: usize = 72;
+/**
+ * The worker whose timer block holds it, once it was polled there (read from other threads:
+ * sched_sleep_move.velt).
+ */
+export const S_HOME: usize = 80;
+/** The hand-overs and the drop under way for it, on other workers' lists (sched_sleep_move.velt). */
+export const S_ASKS: usize = 88;
+export const S_SIZE: usize = 96;
 
-// A sleep's states: not polled yet; pending; due (on its task's due list); fired (counted in
-// `TM_UNSEEN` until its leaf sees it); seen.
-const NEW: usize = 0;
-const PENDING: usize = 1;
-const DUE: usize = 2;
-const FIRED: usize = 3;
-const SEEN: usize = 4;
+/**
+ * The bit in which the place of a task's own context in the task (`T_CX`) differs from the place
+ * of a promise's in its node (`N_CX`): with it set, either offset is `T_CX` (`sleepPoll`).
+ */
+const OWN_BIT: usize = t.T_CX ^ nd.N_CX;
+
+/**
+ * A sleep's states: not polled yet; seen; pending; due (on its task's due list); fired (counted in
+ * `TM_UNSEEN` until its leaf sees it); carried by an offered task (in its `T_TIMERS`,
+ * sched_sleep_carry.velt); dropped while a hand-over was under way (sched_sleep_move.velt). The
+ * two that are on no list come first: those above `SEEN` hold a place somewhere (`sleepDrop`).
+ */
+export const NEW: usize = 0;
+export const SEEN: usize = 1;
+export const PENDING: usize = 2;
+export const DUE: usize = 3;
+export const FIRED: usize = 4;
+export const CARRIED: usize = 5;
+export const GONE: usize = 6;
 
 /** The clock timers count by: nanoseconds since the process started (`performance.now()`). */
 export function clock(): u64 {
@@ -96,50 +129,97 @@ export function sleep(e: usize, ms: i64): usize {
   m.st(b + TM_SEQ, seq);
   m.st(f + S_SEQ, seq);
   m.st(f + S_WAKER, 0);
-  m.st(f + S_PREV, 0);
-  m.st(f + S_NEXT, 0);
   m.st(f + S_STATE, NEW);
-  m.st(f + S_TASK, 0);
+  // The links, `S_HOME` and `S_TASK` are written when a state that reads them begins: the links
+  // and `S_HOME` with `PENDING` (`sleepPoll`, `insert`; `adopt`), `S_TASK` with `DUE` (`pushDue`).
+  m.st(f + S_ASKS, 0);
   return f;
 }
 
 function sleepPoll(f: usize, cx: usize): u32 {
-  const s = m.ld(f + S_STATE);
-  if (s >= FIRED) {
-    if (s === FIRED) {
-      seen(f);
+  // Loaded as shared: a worker that gave this sleep up stored its state last
+  // (sched_sleep_move.velt `release`).
+  const s = m.load(f + S_STATE);
+  if (s <= SEEN) {
+    if (s === SEEN) {
+      return 1;
     }
-    return 1;
-  }
-  if (s === DUE && firesItself(f)) {
-    unlinkDue(m.ld(f + S_TASK), f);
-    m.st(f + S_STATE, SEEN);
-    return 1;
+  } else {
+    // Polled before: is it in this worker's block? The task that polled it there is anchored
+    // there with it; another task's poll (the promise was handed on) may run anywhere.
+    if (s === FIRED) {
+      // Seen by this poll, which registers nothing: all it needs is that this worker holds the
+      // sleep (the worker is at hand, for `seenOn`), whichever task polls. The state first, then
+      // the worker, as `here` reads them.
+      const e = t.exec();
+      if (m.load(f + S_HOME) !== e) {
+        return mv.ask(f, m.ld(cx + 8));
+      }
+      seenOn(e, f);
+      return 1;
+    }
+    if (s === DUE) {
+      // Due for a task (`S_TASK`, the one its waker wakes: `expire`), which that waker keeps
+      // alive until the sleep fires. So a poll whose context names that task (its first word
+      // points at the polling task's `T_WORD`: a task's own context, a promise's, and a
+      // combinator's, which passes its poller's on) is that task's and no other's: an address
+      // compared here is never one a task made later was given (#3207). That task registered
+      // its waker in a poll on the worker that holds the sleep and is anchored there. Any
+      // other poll asks the worker.
+      if (m.ld(cx) !== m.ld(f + S_TASK) + t.T_WORD && !here(f, s)) {
+        return mv.ask(f, m.ld(cx + 8));
+      }
+      if (firesItself(t.exec(), f)) {
+        unlinkDue(m.ld(f + S_TASK), f);
+        m.storeRelease(f + S_STATE, SEEN);
+        return 1;
+      }
+    } else if (m.ld(cx) !== m.loadRelaxed(f + S_OWNER) && !here(f, s)) {
+      // Pending in another worker's block, or carried by an offered task: its worker gives it
+      // up, and this task polls it again as a new one. The shortcut: a poll whose context
+      // names the task the sleep keeps as its owner (`S_OWNER`, a live task: below) is that
+      // task's, which is anchored to the worker that holds the sleep.
+      return mv.ask(f, m.ld(cx + 8));
+    }
   }
   const w = m.ld(cx + 8);
   const old = m.ld(f + S_WAKER);
   if (old !== w) {
+    // The owner word, an address, may only name a task that cannot be freed while the sleep
+    // names it, or a task made later at that address would pass for the owner on whatever
+    // worker it runs (#3207). What keeps the polling task is the sleep's own waker when it
+    // is that task's or a promise's of it, the waker of the context itself then (a context
+    // sits inside the object its waker is: `T_CX`, `N_CX`): a clone of it is a reference. A
+    // combinator's waker keeps no task, and neither does a waker registered later. Stored
+    // before the clone's call, which then needs no context: the task is the one polling.
+    // One compare for both: the two offsets differ in one bit (`OWN_BIT`).
+    const own = s === NEW && ((cx - w) | OWN_BIT) === t.T_CX;
+    m.storeRelaxed(f + S_OWNER, own ? m.ld(cx) : 0);
     m.st(f + S_WAKER, m.wakerClone(w));
     if (old !== 0) {
       m.wakerDrop(old);
     }
   }
   if (s === NEW) {
-    // Pending in this worker's timer block: its task stays on this worker.
-    sp.anchor();
-    insert(block(t.exec()), f);
+    // Pending in this worker's timer block: its task stays on this worker, unless an offer
+    // carries it with its sleeps (sched_sleep_carry.velt).
+    const e = t.exec();
+    sp.anchorOn(e);
+    // Unordered: `insert` stores the state after it, released.
+    m.storeRelaxed(f + S_HOME, e);
+    insert(block(e), f);
   }
   return 0;
 }
 
 function sleepDrop(f: usize): void {
-  const s = m.ld(f + S_STATE);
-  if (s === PENDING) {
-    unlinkPending(block(t.exec()), f);
-  } else if (s === DUE) {
-    unlinkDue(m.ld(f + S_TASK), f);
-  } else if (s === FIRED) {
-    seen(f);
+  const s = m.load(f + S_STATE);
+  const asks = m.load(f + S_ASKS);
+  // The usual drop in one test: on no list (new or seen, the two states below `PENDING`)
+  // and named by no request.
+  if (((s >> 1) | asks) !== 0) {
+    mv.dropHeld(f, s, asks);
+    return;
   }
   const w = m.ld(f + S_WAKER);
   if (w !== 0) {
@@ -148,20 +228,34 @@ function sleepDrop(f: usize): void {
   m.release(f, S_SIZE);
 }
 
-/** Fired sleep `f` was seen (polled ready, or dropped). */
-function seen(f: usize): void {
-  const b = block(t.exec());
+/**
+ * Sleep `f` (state `s`), polled before: is it in this worker's block? Then the task polling it
+ * stays with it from now on, as the first that polled it did (anchored). No when another
+ * worker's block holds it or an offered task carries it.
+ */
+@noInline
+function here(f: usize, s: usize): bool {
+  if (s === CARRIED || m.load(f + S_HOME) !== t.exec()) {
+    return false;
+  }
+  sp.anchor();
+  return true;
+}
+
+/** Fired sleep `f` was seen (polled ready, or dropped) on its worker `e`. */
+@inline("always")
+export function seenOn(e: usize, f: usize): void {
+  const b = block(e);
   m.st(b + TM_UNSEEN, m.ld(b + TM_UNSEEN) - 1);
-  m.st(f + S_STATE, SEEN);
+  m.storeRelease(f + S_STATE, SEEN);
 }
 
 /**
  * May due sleep `f` fire itself now? It is first on its task's due list, that task is being
  * polled, every sleep fired before it was seen, and no microtask is queued or running.
  */
-function firesItself(f: usize): bool {
+function firesItself(e: usize, f: usize): bool {
   const k = m.ld(f + S_TASK);
-  const e = t.exec();
   return (
     m.ld(k + t.T_TIMERS) === f &&
     m.ld(e + t.E_CURRENT) === k &&
@@ -172,14 +266,29 @@ function firesItself(f: usize): bool {
 }
 
 /** Does sleep `a` come before a sleep due at `d` numbered `seq`? */
-@inline
+@inline("always")
 function before(a: usize, d: usize, seq: usize): bool {
   const ad = m.ld(a + S_DEADLINE);
   return ad < d || (ad === d && m.ld(a + S_SEQ) < seq);
 }
 
-/** Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end). */
-function insert(b: usize, f: usize): void {
+/**
+ * Puts sleep `f` among the pending ones of block `b`, in order (its place found from the end).
+ *
+ * The state is stored last, released: the registration this ends (`S_OWNER`, `S_HOME`, the
+ * links) comes with it to a worker that reads the state with an acquiring load (`sleepPoll`,
+ * `here`, `sleepDrop`, sched_sleep_move.velt `release`). The holder's later states, `DUE` and
+ * `FIRED`, are stored unordered (relaxed), and a reader that loads one of them sees this
+ * registration all the same: they are stored by the thread that released `PENDING`, to the same
+ * word, after it, and both targets keep one thread's stores to one word in that order (x86-64
+ * is TSO; arm64 orders a store after an earlier store to the same location from the same thread
+ * and is other-multi-copy atomic), while no compiler moves a store above a release store to the
+ * same word. The language's release sequences would not carry it (they continue only through
+ * read-modify-writes); this is the reason it holds. So a reader that finds its own worker in
+ * `S_HOME` while the state is `DUE` or `FIRED` reads this registration's home, never an older
+ * one. `SEEN` stays released: a worker that reads it may free the sleep.
+ */
+export function insert(b: usize, f: usize): void {
   const d = m.ld(f + S_DEADLINE);
   const seq = m.ld(f + S_SEQ);
   let at = m.ld(b + TM_LAST);
@@ -200,10 +309,16 @@ function insert(b: usize, f: usize): void {
   } else {
     m.st(next + S_PREV, f);
   }
-  m.st(f + S_STATE, PENDING);
+  // Released, last (the doc comment above).
+  m.storeRelease(f + S_STATE, PENDING);
 }
 
-function unlinkPending(b: usize, f: usize): void {
+/**
+ * Takes pending sleep `f` out of block `b`. Its state is left as it was: the caller stores the
+ * state it means (or frees the sleep). No state in between, since a task on another worker may
+ * read it (`sleepPoll`), and a new sleep is one it may register (#3207).
+ */
+export function unlinkPending(b: usize, f: usize): void {
   const prev = m.ld(f + S_PREV);
   const next = m.ld(f + S_NEXT);
   if (prev === 0) {
@@ -216,11 +331,10 @@ function unlinkPending(b: usize, f: usize): void {
   } else {
     m.st(next + S_PREV, prev);
   }
-  m.st(f + S_STATE, NEW);
 }
 
 /** Appends sleep `f` to task `k`'s due list (circular: the first entry's `S_PREV` is the last). */
-function pushDue(k: usize, f: usize): void {
+export function pushDue(k: usize, f: usize): void {
   const first = m.ld(k + t.T_TIMERS);
   if (first === 0) {
     m.st(f + S_PREV, f);
@@ -234,12 +348,14 @@ function pushDue(k: usize, f: usize): void {
     m.st(first + S_PREV, f);
   }
   m.st(f + S_TASK, k);
-  m.st(f + S_STATE, DUE);
+  // Released: a poll on another worker that reads `DUE` reads this `S_TASK` (`sleepPoll`).
+  m.storeRelease(f + S_STATE, DUE);
   const b = m.ld(t.exec() + t.E_TIMERS);
   m.st(b + TM_DUE, m.ld(b + TM_DUE) + 1);
 }
 
-function unlinkDue(k: usize, f: usize): void {
+/** Takes due sleep `f` off task `k`'s due list; its state is the caller's to store, as `unlinkPending`'s. */
+export function unlinkDue(k: usize, f: usize): void {
   const next = m.ld(f + S_NEXT);
   if (next === f) {
     m.st(k + t.T_TIMERS, 0);
@@ -251,20 +367,18 @@ function unlinkDue(k: usize, f: usize): void {
       m.st(k + t.T_TIMERS, next);
     }
   }
-  m.st(f + S_TASK, 0);
-  m.st(f + S_STATE, NEW);
   const b = m.ld(t.exec() + t.E_TIMERS);
   m.st(b + TM_DUE, m.ld(b + TM_DUE) - 1);
 }
 
 /** The first sleep on task `k`'s due list, or 0. */
-@inline
+@inline("always")
 export function firstDue(k: usize): usize {
   return m.ld(k + t.T_TIMERS);
 }
 
 /** The waker of due sleep `f` (borrowed). */
-@inline
+@inline("always")
 export function waiter(f: usize): usize {
   return m.ld(f + S_WAKER);
 }
@@ -275,7 +389,8 @@ export function waiter(f: usize): usize {
  */
 export function fire(k: usize, f: usize): usize {
   unlinkDue(k, f);
-  m.st(f + S_STATE, FIRED);
+  // Unordered: see `insert`.
+  m.storeRelaxed(f + S_STATE, FIRED);
   const b = block(t.exec());
   m.st(b + TM_UNSEEN, m.ld(b + TM_UNSEEN) + 1);
   const w = m.ld(f + S_WAKER);
@@ -283,54 +398,33 @@ export function fire(k: usize, f: usize): usize {
   return w;
 }
 
-/**
- * Task `k`, which never runs again (the program ends on an uncaught error: sched_exit.velt), gives
- * back its sleeps pending in block `b` (its worker's) and those due on its list: each leaves its
- * list, drops its waker and is freed. `k`'s state, which still points at them, is never polled
- * or dropped.
- */
-export function forget(b: usize, k: usize): void {
-  let p = m.ld(b + TM_FIRST);
-  while (p !== 0) {
-    const next = m.ld(p + S_NEXT);
-    if (wk.taskOf(m.ld(p + S_WAKER)) === k) {
-      unlinkPending(b, p);
-      gone(p);
-    }
-    p = next;
-  }
-  let d = m.ld(k + t.T_TIMERS);
-  while (d !== 0) {
-    unlinkDue(k, d);
-    gone(d);
-    d = m.ld(k + t.T_TIMERS);
-  }
+/** Sleep `f` leaves its worker's block for an offered task's list (sched_sleep_carry.velt `carry`). */
+export function carried(b: usize, f: usize): void {
+  unlinkPending(b, f);
+  m.storeRelease(f + S_STATE, CARRIED);
 }
 
-/** Sleep `f`, on no list: its waker dropped, freed. */
-function gone(f: usize): void {
-  const w = m.ld(f + S_WAKER);
-  if (w !== 0) {
-    m.wakerDrop(w);
-  }
-  m.release(f, S_SIZE);
+/** The deadline of sleep `f` (nanoseconds on `clock`). */
+@inline("always")
+export function deadline(f: usize): u64 {
+  return m.ld(f + S_DEADLINE) as u64;
 }
 
 /** Are sleeps of block `b` on due lists, not fired yet? */
-@inline
+@inline("always")
 export function due(b: usize): bool {
   return m.ld(b + TM_DUE) !== 0;
 }
 
 /** The deadline of block `b`'s first pending sleep (0: none). */
-@inline
+@inline("always")
 export function nextDeadline(b: usize): u64 {
   const f = m.ld(b + TM_FIRST);
   return f === 0 ? 0 : m.ld(f + S_DEADLINE) as u64;
 }
 
 /** Are sleeps pending in block `b`? */
-@inline
+@inline("always")
 export function pending(b: usize): bool {
   return m.ld(b + TM_FIRST) !== 0;
 }
@@ -340,15 +434,19 @@ export function pending(b: usize): bool {
  * and the tasks are woken (flag `TIMED`); the deadline of the first one left (0: none).
  */
 export function expire(b: usize, now: u64): u64 {
+  if (wk.counting()) {
+    rl.checkExpiring(b, now);
+  }
   let f = m.ld(b + TM_FIRST);
   while (f !== 0 && (m.ld(f + S_DEADLINE) as u64) <= now) {
     unlinkPending(b, f);
     const w = m.ld(f + S_WAKER);
     const k = wk.taskOf(w);
     if (k === 0) {
-      // Polled by a waker that is not a task's: fired by waking it.
-      m.st(f + S_STATE, SEEN);
+      // Polled by a waker that is not a task's: fired by waking it. The waker goes first: a
+      // drop that sees `SEEN` frees the sleep and drops the waker it finds.
       m.st(f + S_WAKER, 0);
+      m.storeRelease(f + S_STATE, SEEN);
       m.wakeOwned(w);
     } else {
       pushDue(k, f);

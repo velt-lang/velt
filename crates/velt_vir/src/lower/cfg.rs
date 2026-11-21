@@ -10,22 +10,27 @@ use crate::vir::{
 use crate::vir::{Terminator, Ty};
 
 /// Successor blocks of a terminator.
-pub(crate) fn successors(t: &Terminator) -> Vec<BlockId> {
+pub(crate) fn successors(t: &Terminator) -> Successors {
+    use smallvec::smallvec;
     match t {
-        Terminator::Goto(b) => vec![*b],
-        Terminator::Branch { then, els, .. } => vec![*then, *els],
+        Terminator::Goto(b) => smallvec![*b],
+        Terminator::Branch { then, els, .. } => smallvec![*then, *els],
         Terminator::Switch { cases, default, .. } => cases
             .iter()
             .map(|c| c.1)
             .chain(std::iter::once(*default))
             .collect(),
         Terminator::Call { next, unwind, .. } => match unwind {
-            Some(pad) => vec![*next, *pad],
-            None => vec![*next],
+            Some(pad) => smallvec![*next, *pad],
+            None => smallvec![*next],
         },
-        Terminator::Return(_) | Terminator::Unreachable => vec![],
+        Terminator::Return(_) | Terminator::Unreachable => Successors::new(),
     }
 }
+
+/// A terminator's successors ([`successors`]): two kept inline, so asking a block's (lowering
+/// does it in every pass over a function's blocks) allocates only for a switch's.
+pub(crate) type Successors = smallvec::SmallVec<[BlockId; 2]>;
 
 pub(super) fn remap_term(t: Terminator, map: impl Fn(BlockId) -> BlockId) -> Terminator {
     match t {
@@ -226,13 +231,6 @@ impl FnLower<'_, '_> {
             }
         }
         self.place_sections();
-        // A poll function's pad links, renumbered as `into_parts` renumbers (cleanup.rs).
-        let mut remap = vec![None; self.live.len()];
-        let live = self.live.iter().enumerate().filter(|(_, l)| **l);
-        for (n, (i, _)) in live.enumerate() {
-            remap[i] = Some(BlockId(n as u32));
-        }
-        self.take_pad_links(|b| remap[b.0 as usize]);
         let (locals, blocks, locs) = self.into_parts(&symbol);
         Function {
             locals,

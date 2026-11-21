@@ -4,12 +4,10 @@
 //! (`VELT_RT_DEBUG_ALLOC=1`), which aborts on a free of a block it did not hand out, a double
 //! free or a use after free.
 
+use super::fake::{block_on_state, yield_once};
 use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start};
-use crate::task::runtime::velt_rt_block_on;
 use crate::task::shared::velt_rt_fut_share;
-use crate::task::{
-    drop_fut, poll_fut, velt_rt_yield_now_fut, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
-};
+use crate::task::{drop_fut, poll_fut, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 use std::ffi::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -53,7 +51,7 @@ struct Value {
 unsafe extern "C-unwind" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Value);
     if st.tag == 0 {
-        st.y = velt_rt_yield_now_fut();
+        st.y = yield_once();
         st.tag = 1;
     }
     if poll_fut(st.y, cx) == PENDING {
@@ -150,7 +148,7 @@ fn await_both() {
         r: null_mut(),
         a: 0,
     };
-    unsafe { velt_rt_block_on(await_both_poll, &mut st as *mut AwaitBoth as *mut u8) };
+    unsafe { block_on_state(await_both_poll, &mut st as *mut AwaitBoth as *mut u8) };
     assert_eq!(st.result, 77);
 }
 
@@ -170,7 +168,7 @@ unsafe extern "C-unwind" fn drop_unsettled_poll(s: *mut u8, cx: *mut c_void) -> 
         let q = share(p);
         drop_fut(p);
         drop_fut(q);
-        st.y = velt_rt_yield_now_fut();
+        st.y = yield_once();
         st.tag = 1;
     }
     if poll_fut(st.y, cx) == PENDING {
@@ -186,7 +184,7 @@ fn drop_unsettled() {
         y: null_mut(),
     };
     unsafe {
-        velt_rt_block_on(
+        block_on_state(
             drop_unsettled_poll,
             &mut st as *mut DropUnsettled as *mut u8,
         )

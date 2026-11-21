@@ -18,6 +18,9 @@ use super::locate::{module_path, Origin, Target};
 use super::Loader;
 use vpm::sources::is_test_file;
 
+/// Where the std docs are published (an installed toolchain has no `docs/`).
+const STD_DOCS_URL: &str = "https://veltlang.com/docs/std/";
+
 impl Loader<'_, '_> {
     /// `target` with a std origin when it is one of std's test files (`file`, whose
     /// [`super::file_key`] is `key`) reached from outside std by `velt test`'s harness
@@ -162,7 +165,7 @@ fn internal(rel: &str, spec: &str, has_index: &dyn Fn(&str) -> bool) -> (String,
                 format!("`{spec}` is internal to the standard library"),
                 vec![format!(
                     "user code imports a module's `index.velt` (the modules: {})",
-                    super::moved::STD_DOCS_URL
+                    STD_DOCS_URL
                 )],
             ),
         },

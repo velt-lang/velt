@@ -2,11 +2,57 @@
 //! the simplest async functions, written by hand against the C ABI.
 
 use crate::result::IoResult;
-use crate::task::runtime::velt_rt_block_on;
-use crate::task::{drop_fut, poll_fut, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use crate::task::compiled::{Borrowed, Compiled};
+use crate::task::runtime::{block_on, spawn, JoinHandle};
+use crate::task::{
+    drop_fut, poll_fut, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
+};
 use crate::VeltStr;
 use std::ffi::c_void;
 use std::mem::MaybeUninit;
+
+/// Drop fn of a state that runs to completion (never cancelled).
+unsafe extern "C-unwind" fn never_dropped(_: *mut u8) {}
+
+/// Start the compiled future `(poll, state)` as a task on the runtime's host, with the module
+/// state handed over to the tasks, as `async main` started before programs ran on the executor in
+/// Velt. `state` stays owned by the caller and must outlive the task; its result is at offset 0
+/// once the returned handle is joined.
+pub unsafe fn spawn_state(poll: PollFn, state: *mut u8) -> JoinHandle<()> {
+    crate::task::local::module_release_outside();
+    spawn(Compiled::from_store(
+        poll,
+        never_dropped,
+        Borrowed(SendPtr(state)),
+    ))
+}
+
+/// A leaf that completes `ms` milliseconds after this call, with an empty result (what
+/// `sleep(ms)` was before the executor in Velt took timers over).
+pub fn sleep(ms: i64) -> *mut VeltFut {
+    let at = tokio::time::Instant::now() + std::time::Duration::from_millis(ms.max(0) as u64);
+    crate::task::leaf::new_leaf(async move { tokio::time::sleep_until(at).await })
+}
+
+/// A leaf that is pending once (waking its task) and ready on the next poll, with an empty
+/// result (what a stored `yieldNow()` was before the executor in Velt took it over).
+pub fn yield_once() -> *mut VeltFut {
+    crate::task::leaf::new_inner_leaf(tokio::task::yield_now())
+}
+
+/// Wait for a task [`spawn_state`] started (its panic goes on here).
+pub fn join(h: JoinHandle<()>) {
+    match block_on(h) {
+        Ok(()) => {}
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        Err(e) => panic!("task did not finish: {e}"),
+    }
+}
+
+/// Run the compiled future `(poll, state)` to completion as a task ([`spawn_state`]).
+pub unsafe fn block_on_state(poll: PollFn, state: *mut u8) {
+    join(spawn_state(poll, state));
+}
 
 /// Read the result slot of a READY heap future (a move: the slot is left logically empty).
 pub unsafe fn fut_result<R>(f: *mut VeltFut) -> R {
@@ -32,14 +78,14 @@ pub unsafe extern "C-unwind" fn awaiter_poll<R>(s: *mut u8, cx: *mut c_void) -> 
     READY
 }
 
-/// `async main() { return await f; }` driven by `velt_rt_block_on`.
+/// `async main() { return await f; }` driven by [`block_on_state`].
 pub fn block_on_fut<R>(f: *mut VeltFut) -> R {
     let mut st = Awaiter::<R> {
         result: MaybeUninit::uninit(),
         fut: f,
     };
     unsafe {
-        velt_rt_block_on(awaiter_poll::<R>, &mut st as *mut Awaiter<R> as *mut u8);
+        block_on_state(awaiter_poll::<R>, &mut st as *mut Awaiter<R> as *mut u8);
         st.result.assume_init()
     }
 }

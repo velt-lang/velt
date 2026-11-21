@@ -109,9 +109,12 @@ pub(crate) struct Outcome {
 
 /// Check every function body.
 pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
+    // The unit's functions (`crate::units`): the closures a function makes are of its unit, so
+    // the tables below need nothing of a finished unit.
+    let base = cx.unit_base as usize;
     let mut captures = FxHashMap::default();
     let mut escaping = FxHashSet::default();
-    for (i, d) in cx.defs.iter().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate().skip(base) {
         if let Some(Def::Fn(f)) = d {
             let def = DefId(i as u32);
             captures.insert(def, f.captures.clone());
@@ -121,11 +124,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
         }
     }
     let never = cx.ty.never;
-    let local_tys: Vec<Vec<TyId>> = cx
-        .defs
-        .iter()
-        .map(|d| match d {
-            Some(Def::Fn(f)) => f.body.locals.iter().map(|l| l.ty).collect(),
+    let local_tys: Vec<Vec<TyId>> = (cx.defs.iter().enumerate())
+        .map(|(i, d)| match d {
+            Some(Def::Fn(f)) if i >= base => f.body.locals.iter().map(|l| l.ty).collect(),
             _ => vec![],
         })
         .collect();
@@ -172,7 +173,9 @@ pub(crate) fn check_all(cx: &mut Ctx) -> Outcome {
     // on several threads (`crate::par`) and only read the HIR and these tables.
     let held = |c: DefId| cx.try_fn(c).is_some_and(|i| !i.escaping);
     let mut weight = 0;
-    let inputs: Vec<FnInput> = (cx.defs.iter().enumerate())
+    // The unit's bodies (`crate::units`): a finished unit's moves were checked with it.
+    let base = cx.unit_base as usize;
+    let inputs: Vec<FnInput> = (cx.defs.iter().enumerate().skip(base))
         .filter_map(|(i, d)| {
             let Some(Def::Fn(f)) = d else { return None };
             let def = DefId(i as u32);
@@ -296,12 +299,12 @@ fn assigned_locals(
     // A closure is created once, inside its enclosing function: no cycle (the empty entry
     // guards against a malformed one).
     memo.insert(d, FxHashSet::default());
-    let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+    let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) else {
         return FxHashSet::default();
     };
     let mut assigned = FxHashSet::default();
     let mut closures = vec![];
-    crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+    crate::visit::exprs(&f.body.block, &mut |e: &crate::hir::Expr| {
         use crate::hir::ExprKind as E;
         match &e.kind {
             E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
@@ -313,7 +316,6 @@ fn assigned_locals(
             _ => {}
         }
     });
-    cx.defs[d.0 as usize] = Some(Def::Fn(f));
     direct.insert(d, assigned.clone());
     for c in closures {
         let inner = assigned_locals(cx, c, memo, direct);
@@ -339,10 +341,10 @@ fn assigned_locals(
 /// step, both spanning the whole loop (`crate::body::loops`); a block written as such ends
 /// with its closing brace, so it never spans the same code as the `while` it holds.
 fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
-    use crate::visit::VisitMut;
+    use crate::visit_ref::Visit;
     struct ForHeads(Vec<LocalId>);
-    impl VisitMut for ForHeads {
-        fn stmt(&mut self, s: &mut Stmt) {
+    impl Visit for ForHeads {
+        fn stmt(&mut self, s: &Stmt) {
             let StmtKind::Block(b) = &s.kind else {
                 return;
             };
@@ -360,13 +362,12 @@ fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
         }
     }
     let mut out = FxHashSet::default();
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for (i, def) in cx.defs.iter().enumerate().skip(cx.unit_base as usize) {
+        let Some(Def::Fn(f)) = def else {
             continue;
         };
         let mut heads = ForHeads(vec![]);
-        crate::visit::block(&mut f.body.block, &mut heads);
-        cx.defs[i] = Some(Def::Fn(f));
+        crate::visit_ref::block(&f.body.block, &mut heads);
         out.extend(heads.0.into_iter().map(|l| (DefId(i as u32), l)));
     }
     out
@@ -378,17 +379,16 @@ fn per_iteration(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
 /// generators stay on the task that creates them, so their captures may live in cells.
 pub(crate) fn async_captured(cx: &mut Ctx) -> FxHashSet<(DefId, LocalId)> {
     let mut out = FxHashSet::default();
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for i in cx.unit_base as usize..cx.defs.len() {
+        let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;
         };
         let mut closures = vec![];
-        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+        crate::visit::exprs(&f.body.block, &mut |e: &crate::hir::Expr| {
             if let crate::hir::ExprKind::Closure(c) = e.kind {
                 closures.push(c);
             }
         });
-        cx.defs[i] = Some(Def::Fn(f));
         for c in closures {
             if let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] {
                 if cf.is_async && !cf.is_generator && !cf.shares_captures {

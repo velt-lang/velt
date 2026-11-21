@@ -43,6 +43,13 @@ pub(crate) struct Forms {
     pub(crate) written: rustc_hash::FxHashSet<crate::hir::DefId>,
 }
 
+impl Forms {
+    /// Form `i` as written.
+    pub(crate) fn form_ty(&self, i: u32) -> &ast::TypeExpr {
+        &self.forms[i as usize].ty
+    }
+}
+
 impl Ctx<'_> {
     /// A deferred type as written: `PropsAccessor<TProps>` (`names`: as for `display_in`).
     pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
@@ -474,5 +481,15 @@ pub(crate) fn type_text(t: &ast::TypeExpr) -> String {
         K::Null => "null".into(),
         K::Undefined => "undefined".into(),
         _ => "…".into(),
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Forms {
+        forms, ids, reads, written,
+    }
+    Form {
+        module, params, this_ty, ty, shown, read, write,
     }
 }

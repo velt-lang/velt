@@ -11,6 +11,7 @@ import * as m from "./sched_mem";
 import * as mk from "./sched_make";
 import * as nc from "./sched_node_catch";
 import * as t from "./sched_task";
+import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
 
 declare function velt_rt_flush(): void;
@@ -153,7 +154,7 @@ export function isJoin(f: usize): bool {
  * of kind `kind` counted): no lock, in line; the joiner is woken behind the tasks queued already,
  * as `joinDone`'s.
  */
-@inline
+@inline("always")
 export function joinDoneLazy(e: usize, k: usize, kind: u32): void {
   const s = m.ld32(k + t.T_JOIN_STATE);
   const joiner = m.ld(k + t.T_JOINER);
@@ -177,7 +178,7 @@ function joinPollLocking(f: usize, cx: usize): u32 {
 }
 
 /** `joinPoll`, the operation of kind `kind` (sched_lock.velt). */
-@inline
+@inline("always")
 function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
   const k = f - t.T_JOIN;
   const s = mk.lockJoin(k, kind);
@@ -213,14 +214,15 @@ function joinPollAs(f: usize, cx: usize, kind: u32): u32 {
 /**
  * Task `k`'s root panicked with exception `x` (the message) under a catch (sched_run.velt
  * `pollRootCaught`): done with no result (nothing transferred, copied or dropped: the join word's
- * `J_PANICKED` says so), its state abandoned (the task is never freed: a leaf in it may still wake
- * it), `x` kept for a join, which raises the panic again; with nobody joining it, the panic ends
- * there. The same on a solo worker (`joinPollSolo`'s tasks) as with other threads.
+ * `J_PANICKED` says so), its state abandoned (never polled or dropped again: the pads of its
+ * poll dropped what it held), `x` kept in place of its poll for a join, which raises the panic
+ * again; with nobody joining it, the panic ends there. The task is freed with its last reference
+ * like any other, `x` with it (sched_wake.velt `release`): a leaf that still holds its waker
+ * holds a reference. The same on a solo worker (`joinPollSolo`'s tasks) as with other threads.
  */
 @noInline
 export function rootPanicked(e: usize, k: usize, x: usize): void {
   m.st(k + t.T_POLL, x);
-  m.inc(k + t.T_REFS);
   t.flags(k, t.ROOT_DONE | nc.T_PANICKED, 0);
   if (lk.mode() === lk.LK_ON) {
     // The slot ends at the poll's end, as a finished root's (`polledFlags`).
@@ -300,12 +302,16 @@ function joinDropLocking(f: usize): void {
 }
 
 /** `joinDrop`, the operation of kind `kind` (sched_lock.velt). */
-@inline
+@inline("always")
 function joinDropAs(f: usize, kind: u32): void {
   const k = f - t.T_JOIN;
   const s = mk.lockJoin(k, kind);
   const joiner = m.ld(k + t.T_JOINER);
   m.st(k + t.T_JOINER, 0);
+  if ((s & (t.J_PARKED | t.J_DONE)) === t.J_PARKED) {
+    // Parked with only this handle keeping it: woken to find that out (sched_task_lost.velt).
+    return lt.handleDropped(k, s, kind, joiner);
+  }
   mk.unlockJoin(k, s & ~t.J_HANDLE, kind);
   if (joiner !== 0) {
     m.wakerDrop(joiner);

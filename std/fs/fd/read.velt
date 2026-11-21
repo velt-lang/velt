@@ -1,9 +1,11 @@
 // velt/fs (internal): reading from a file descriptor (`readSync`).
 
 import { EINTR } from "velt/fs/fd/system";
-import { lastError, readInto } from "#fd-system";
+import { lastError, readAddress, readInto } from "#fd-system";
 import { bufferOffset, checkRead, descriptor, readLength, readPosition } from "velt/fs/fd/args";
 import { osError } from "velt/fs/errors";
+import { arrayByteLength, arrayBytesWritten, arrayDataAddress } from "velt/lang/intrinsics";
+import { emptyBufferText } from "velt/fs/fd/number_bytes";
 import { ArrayBufferView, BufferView } from "velt/lang/typed_array/buffer_view";
 import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
 
@@ -13,23 +15,23 @@ import { VIEW_EMPTY_TEXT, VIEW_SIZE } from "velt/lang/hooks/keys";
  * is left out, `null` or -1. Returns the number of bytes read, 0 at the end of the file.
  * `offset` defaults to 0 and `length` to the rest of the buffer; a number is coerced as Node
  * does (`length` truncated to a 32-bit integer, `position` validated strictly). `buffer` is a
- * `u8[]` (Node's `Buffer`), a typed array or a `DataView`; `offset` and `length` count bytes of
- * it. Velt's typed API takes positional arguments, not Node's `(fd, buffer, options)` object.
+ * `u8[]` (Node's `Buffer`), an array of any other number type (`f32[]`, `i8[]`, `u32[]`, …, as
+ * Node's `Float32Array` and the like), a typed array or a `DataView`. The bytes are read into
+ * the buffer's own memory, and `offset`, `length` and the result count bytes of it whatever its
+ * elements are, as in Node: an offset inside an element reads part of one. Velt's typed API
+ * takes positional arguments, not Node's `(fd, buffer, options)` object.
  */
-export function readSync(
+export function readSync<T extends Numeric = u8>(
   fd: number,
-  buffer: u8[] | ArrayBufferView,
+  buffer: T[] | ArrayBufferView,
   offset: number | null = 0,
   length?: number | null,
   position?: number | null,
 ): number {
   const f = descriptor(fd);
-  // The bytes a view holds are `buffer.buf.bytes`; the write loop takes those alone, so the
-  // view is never passed beside its own bytes (which the exclusive-access check would reject).
-  const bytes = buffer instanceof BufferView ? buffer.buf.bytes : buffer;
-  const base = buffer instanceof BufferView ? buffer.off : (0 as usize);
+  // An array of numbers counts in bytes, as a view does: its own memory is the buffer.
   const size =
-    buffer instanceof BufferView ? buffer.len * buffer[VIEW_SIZE]() : (buffer.length as usize);
+    buffer instanceof BufferView ? buffer.len * buffer[VIEW_SIZE]() : arrayByteLength(buffer);
   // A `null` offset is Node's options argument (`typeof null` is "object") with no options:
   // the whole buffer, at the file's own position, whatever `length` and `position` say.
   const options = offset === null;
@@ -39,23 +41,52 @@ export function readSync(
     return 0;
   }
   if (size == 0) {
-    const shown = buffer instanceof BufferView ? buffer[VIEW_EMPTY_TEXT]() : "<Buffer >";
+    const shown =
+      buffer instanceof BufferView ? buffer[VIEW_EMPTY_TEXT]() : emptyBufferText(buffer);
     throw new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${shown}`);
   }
   checkRead(size, off, len);
-  return readLoop(
-    f,
-    bytes,
-    base + (off as usize),
-    base + ((off + len) as usize),
-    options ? -1 : readPosition(position),
-  );
+  const at = options ? -1 : readPosition(position);
+  if (buffer instanceof BufferView) {
+    // The bytes a view holds are `buffer.buf.bytes`; the read loop takes those alone, so the
+    // view is never passed beside its own bytes (which the exclusive-access check would
+    // reject).
+    const base = buffer.off;
+    return readLoop(f, buffer.buf.bytes, base + (off as usize), base + ((off + len) as usize), at);
+  }
+  // SAFETY: the address is `buffer`'s memory, which stays where it is: nothing grows or drops
+  // `buffer` before `readMemory` returns. `checkRead` kept `off..off + len` inside its `size`
+  // bytes, the system writes only those, and any bytes are values of a number type.
+  const address = unsafe { arrayDataAddress(buffer) } + (off as usize);
+  // SAFETY: as above.
+  const n = unsafe { readMemory(f, address, len as usize, at) };
+  // A view of another array (an `any` converted to `T[]`) gives what was read back to it.
+  arrayBytesWritten(buffer);
+  return n;
 }
 
 // `read` / `pread` into the bytes `start..end` of `bytes`, retried after a signal.
 function readLoop(f: i32, bytes: u8[], start: usize, end: usize, at: i64): number {
   while (true) {
     const n = readInto(f, bytes, start, end, at);
+    if (n >= 0) {
+      return n as number;
+    }
+    const e = lastError();
+    if (e != EINTR) {
+      throw osError(e, "read");
+    }
+  }
+}
+
+/**
+ * `read` / `pread` of up to `len` bytes into the memory at `address`, retried after a signal.
+ * Unsafe: `address` must be `len` writable bytes that nothing else uses during the call.
+ */
+unsafe function readMemory(f: i32, address: usize, len: usize, at: i64): number {
+  while (true) {
+    // SAFETY: the caller's statement about `address` and `len`.
+    const n = unsafe { readAddress(f, address, len, at) };
     if (n >= 0) {
       return n as number;
     }

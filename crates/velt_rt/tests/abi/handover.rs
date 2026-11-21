@@ -7,9 +7,8 @@
 //! The tasks run one after the other here, in the order that raced: the starting task's
 //! checkpoint first, then the other task claiming the result.
 
-use crate::task::local::velt_rt_unhandled_defer;
+use super::fake::block_on_state;
 use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start_rejecting, velt_rt_fut_transfer};
-use crate::task::runtime::velt_rt_block_on;
 use crate::task::{drop_fut, poll_fut, VeltFut, READY};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,12 +33,11 @@ unsafe extern "C-unwind" fn make_drop(_: *mut u8) {}
 /// Reports of unhandled rejections, by the value rejected with (each test its own values).
 static REPORTS: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
 
-/// The unclaimed-result glue compiled code passes to `velt_rt_fut_start_rejecting`: a deferred
-/// rejection waits for the checkpoint, any other one is reported (counted here instead of
-/// printed with an exit).
+/// The unclaimed-result glue compiled code passes to `velt_rt_fut_start_rejecting`: a rejection
+/// is reported (counted here instead of printed with an exit).
 unsafe extern "C-unwind" fn report(slot: *mut u8) {
     let r = &*(slot as *const Rejected);
-    if r.tag == 0 || velt_rt_unhandled_defer() != 0 {
+    if r.tag == 0 {
         return;
     }
     REPORTS[(r.value / 10 - 1) as usize].fetch_add(1, Ordering::SeqCst);
@@ -68,7 +66,7 @@ unsafe extern "C-unwind" fn start_and_hand_over(s: *mut u8, _: *mut c_void) -> u
 /// Task A's whole run, its checkpoint included; returns the promise it handed over.
 fn hand_over(n: i64) -> *mut VeltFut {
     let mut st = [0i64, n];
-    unsafe { velt_rt_block_on(start_and_hand_over, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(start_and_hand_over, st.as_mut_ptr() as *mut u8) };
     st[1] as *mut VeltFut
 }
 
@@ -95,7 +93,7 @@ fn a_rejection_handed_to_another_task_is_that_tasks_to_claim() {
     let f = hand_over(1);
     assert_eq!(reports(1), 0, "the task that started it reported it");
     let mut st = [0i64, f as i64];
-    unsafe { velt_rt_block_on(claim, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(claim, st.as_mut_ptr() as *mut u8) };
     assert_eq!(st[0], 11);
     assert_eq!(reports(1), 0, "a claimed rejection was reported");
 }
@@ -105,6 +103,6 @@ fn a_handed_over_rejection_given_up_there_is_reported_once() {
     let f = hand_over(2);
     assert_eq!(reports(2), 0, "the task that started it reported it");
     let mut st = [0i64, f as i64];
-    unsafe { velt_rt_block_on(give_up, st.as_mut_ptr() as *mut u8) };
+    unsafe { block_on_state(give_up, st.as_mut_ptr() as *mut u8) };
     assert_eq!(reports(2), 1);
 }

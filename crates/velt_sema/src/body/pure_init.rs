@@ -432,11 +432,11 @@ fn decide(cx: &mut Ctx, f: DefId) -> Result<(), Impure> {
     };
     let name_span = info.name_span;
     // `Symbol.for(key)` gives the same symbol for a key at every call, so a constant it
-    // initializes is the same at each use (std/symbol's runtime function, which only std may
-    // declare).
-    if info.kind == FnKind::Extern
-        && info.name == "velt_rt_symbol_for"
-        && cx.modules[info.module].path == velt_common::std_module!(lang_symbol)
+    // initializes is the same at each use (std's registry, std/lang/symbol/registry.velt, whose
+    // map and lock are not the constant's).
+    if info.kind != FnKind::Extern
+        && info.name.rsplit([':', '.']).next() == Some("registeredSymbol")
+        && cx.modules[info.module].path == velt_common::std_module!(lang_symbol_registry)
     {
         return Ok(());
     }
@@ -613,6 +613,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::StrWord1
         | I::StrWord2
         | I::StrDataAddress
+        | I::StrAt
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrAsciiWords
@@ -638,6 +639,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::FieldAbsent
         | I::FieldPresent
         | I::SpreadObject
+        | I::SpreadParam
         | I::KeyRead
         | I::KeyWrite
         | I::NeedsTransfer
@@ -668,6 +670,8 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::SourceLocation
         | I::SymbolStatic
         | I::SymbolRegistry
+        | I::SymbolAddress
+        | I::SymbolAt
         | I::TemplateToString => return None,
         _ => return Some("uses an operation with effects".into()),
     };

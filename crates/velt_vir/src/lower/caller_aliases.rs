@@ -285,7 +285,8 @@ impl Bindings {
 
 impl FnLower<'_, '_> {
     /// Is `l` a variable of this `read` callback that holds only what the callback made of
-    /// literals (`const c = [[i, n]]`), and that nothing changes or captures? Stored into the
+    /// literals (`const c = [[i, n]]`) and explicit copies (`const c = structuredClone(x.items)`),
+    /// and that nothing changes or captures? Stored into the
     /// caller's containers it holds nothing of the caller's or the store's, so it needs no
     /// transfer: it stays the reader's own (`LOCAL`), which code outside read mode ignores and
     /// a later transfer clears (caller_stores.rs `keep_for_caller`).
@@ -301,6 +302,7 @@ impl FnLower<'_, '_> {
                 closures,
                 uses,
                 reads,
+                ..
             } = p;
             // A closure may change what it captures.
             for n in closures {
@@ -330,8 +332,8 @@ impl FnLower<'_, '_> {
             .is_some_and(|p| p.contains(&l))
     }
 
-    /// Is `e` an array or object literal of such literals and of values that reach no
-    /// lock-set object (numbers, strings)?
+    /// Is `e` an array or object literal of such literals, of explicit copies and of values that
+    /// reach no lock-set object (numbers, strings), or an explicit copy itself?
     fn plain_literal(&mut self, e: &hir::Expr) -> bool {
         match &e.kind {
             K::ArrayLit(xs) | K::Tuple(xs) | K::AdtLit { fields: xs, .. } => xs.iter().all(|x| {
@@ -342,7 +344,7 @@ impl FnLower<'_, '_> {
                 let t = self.sub(x.ty);
                 !self.cx.reaches_lock_set(t) || self.plain_literal(&x)
             }),
-            _ => false,
+            _ => self.explicit_copy(e),
         }
     }
 }
@@ -420,7 +422,9 @@ impl Plain {
             K::Local(l, hir::UseMode::BorrowMut) => {
                 self.changed.insert(*l);
             }
-            K::Local(l, _) => *self.uses.entry(*l).or_insert(0) += 1,
+            K::Local(l, _) => {
+                *self.uses.entry(*l).or_insert(0) += 1;
+            }
             K::Assign { place, .. } | K::CompoundAssign { place, .. } => {
                 if let Some(l) = place_root(place) {
                     self.changed.insert(l);

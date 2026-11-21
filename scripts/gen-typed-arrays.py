@@ -148,6 +148,22 @@ export class TypedArray extends BufferView {
     panic("ICE: TypedArray[TYPED_ARRAY_KIND]");
   }
 
+  /**
+   * The bytes Node's `Buffer.from` makes of the array, in a new one: each element converted to
+   * a byte (`ToUint8`: a `Uint16Array`'s 256 is 0, a `Float64Array`'s -1.5 is 255), which for
+   * elements of one byte are their bytes as they are.
+   */
+  override [VIEW_BYTES](): u8[] {
+    if (this[VIEW_SIZE]() == 1) {
+      const o = this.off as i64;
+      return this.buf.bytes.slice(o, o + (this.len as i64));
+    }
+    const out = Buffer.allocUnsafe(this.len);
+    for (let i: usize = 0; i < this.len; i++) {
+      out[i] = toUint8(this[TYPED_ARRAY_GET](i));
+    }
+    return out;
+  }
 }
 
 /** Any element, of any kind, as a number (std only). */
@@ -862,7 +878,7 @@ BASE_NAMES = ["TypedArray", "ascending", "elementsOf", "localeNumber"]
 LAYOUT_NAMES = ["Layout", "layout"]
 # The keys of the methods the compiler and std call (std/lang/hooks/keys.velt).
 KEY_NAMES = ["INDEX", "INSPECT", "SET_INDEX", "TYPED_ARRAY_GET", "TYPED_ARRAY_KIND", "TYPED_ARRAY_PUT",
-             "VIEW_EMPTY_TEXT", "VIEW_SIZE"]
+             "VIEW_BYTES", "VIEW_EMPTY_TEXT", "VIEW_SIZE"]
 
 
 def snake(c):

@@ -27,13 +27,13 @@ declare function velt_simd_u8x16_aese(state: u8x16, key: u8x16): u8x16;
 declare function velt_simd_u8x16_aesmc(a: u8x16): u8x16;
 
 // One round: AESE (the key XORed in first) and AESMC.
-@inline
+@inline("always")
 function round(s: u8x16, k: u8x16): u8x16 {
   return velt_simd_u8x16_aesmc(velt_simd_u8x16_aese(s, k));
 }
 
 // E(K, block) with the round keys `k`.
-@inline
+@inline("always")
 function encryptBlock(k: Rounds, block: u8x16): u8x16 {
   let s = round(round(round(round(round(block, k.k0), k.k1), k.k2), k.k3), k.k4);
   s = round(round(round(round(s, k.k5), k.k6), k.k7), k.k8);
@@ -44,9 +44,17 @@ function encryptBlock(k: Rounds, block: u8x16): u8x16 {
   return velt_simd_u8x16_aese(s, k.k13).xor(k.k14);
 }
 
+/** GCM's hash key H = E(K, 0^128) under the round keys `keys` (16 bytes). */
+@targetFeature("aes-arm")
+export function gcmHashKeyArm(keys: u8x16[]): u8[] {
+  const h = Buffer.alloc(16);
+  store16(encryptBlock(rounds(keys), u8x16.splat(0)), h, 0);
+  return h;
+}
+
 // XORs `buf[start..end]` in place with the keystream from counter 2.
+@targetFeature("aes-arm")
 function ctrArm(keys: u8x16[], k: Rounds, base: u32x4, buf: u8[], start: usize, end: usize) {
-  targetFeature("aes-arm");
   const last = keys.length - 1;
   let ctr: u32 = 2;
   let off = start;
@@ -113,6 +121,7 @@ function tagArm(
  * Encrypts `buf[start..end]` in place under the round keys `keys`, the hash powers `hp`
  * (`hashPowers`), `nonce` and the additional data `aad`; returns the tag.
  */
+@targetFeature("aes-arm")
 export function gcmSealArm(
   keys: u8x16[],
   hp: u64x2[],
@@ -122,7 +131,6 @@ export function gcmSealArm(
   start: usize,
   end: usize,
 ): u8x16 {
-  targetFeature("aes-arm");
   const base = counterBase(nonce);
   const k = rounds(keys);
   ctrArm(keys, k, base, buf, start, end);
@@ -134,6 +142,7 @@ export function gcmSealArm(
  * that in place: true. False with `buf` not written to when it does not match. `scratch` holds 16
  * bytes.
  */
+@targetFeature("aes-arm")
 export function gcmOpenArm(
   keys: u8x16[],
   hp: u64x2[],
@@ -144,7 +153,6 @@ export function gcmOpenArm(
   end: usize,
   scratch: u8[],
 ): bool {
-  targetFeature("aes-arm");
   const base = counterBase(nonce);
   const k = rounds(keys);
   tagArm(k, hp, base, aad, buf, start, end).store(scratch, 0);

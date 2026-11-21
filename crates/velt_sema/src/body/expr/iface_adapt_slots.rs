@@ -295,13 +295,26 @@ pub(super) fn adapter_method(
         let read = g.mk(H::Local(l, mode), q.ty, span);
         args.push(g.adapt_value(read, *from));
     }
+    let src = ThrowSrc::Slot {
+        iface: p.iface,
+        slot,
+        args: fargs,
+        span,
+    };
+    // A promise slot's result converted to a promise of another type (`adapt_promise`): the
+    // call's promise rejects with what the slot's implementations reject with, as a call
+    // through the interface is typed (`slot_result`), and so does the converted one. The
+    // conversion is a `then`, whose own promise is laid out by that error type; typed as the
+    // signature writes it (`Promise<T>`), it would be made for a promise that never rejects.
+    let (mut call_ty, mut want) = (ret_from, ret);
     if !promise_slot(g.cx, p.iface, slot) {
-        g.throw_src(ThrowSrc::Slot {
-            iface: p.iface,
-            slot,
-            args: fargs,
-            span,
-        });
+        g.throw_src(src);
+    } else if ret != ret_from {
+        call_ty = g.slot_result(p.iface, slot, src, ret_from, span);
+        let e = g.cx.ty.promise_error(call_ty);
+        if let (Some(e), Some(b)) = (e, g.cx.ty.promise_payload(ret)) {
+            want = g.cx.ty.promise_rejecting(b, e);
+        }
     }
     let call = g.mk(
         H::Call {
@@ -311,10 +324,12 @@ pub(super) fn adapter_method(
             },
             args,
         },
-        ret_from,
+        call_ty,
         span,
     );
-    let value = g.adapt_value(call, ret);
+    let mut value = g.adapt_value(call, want);
+    // The slot's own result type: its error type is the dispatch group's, not the type's.
+    value.ty = ret;
     let unit = g.cx.ty.unit;
     let stmt = |kind| hir::Stmt { kind, span };
     let result = if ret == unit {
@@ -379,6 +394,47 @@ fn promise_slot(cx: &mut Ctx, iface: DefId, slot: u32) -> bool {
     groups
         .slot_group(iface, slot)
         .is_some_and(|g| groups.list[g].promise)
+}
+
+/// The setter slot of method `j` written as a property (`crate::iface_method_writes`) of an
+/// adapter: it writes the wrapped value's, the function converted as an argument would be.
+/// `None` when the function can't convert.
+pub(crate) fn adapter_method_setter(cx: &mut Ctx, p: &AdapterParts, j: usize) -> Option<DefId> {
+    let m = cx.iface(p.iface)?.methods.get(j)?.clone();
+    let slot = cx.method_setter_slot(p.iface, j)?;
+    let throws = m.throws.and_then(|t| t.ty).unwrap_or(cx.ty.never);
+    let params: Vec<TyId> = m.params.iter().map(|q| q.ty).collect();
+    let fty = cx.ty.intern(TyKind::FnPtr {
+        params,
+        ret: m.ret,
+        throws,
+        rest: false,
+    });
+    let mut targs = p.to.clone();
+    targs.push(p.self_ty);
+    let mut fargs = p.from.clone();
+    fargs.push(p.inner);
+    let (to, from) = (cx.subst(fty, &targs), cx.subst(fty, &fargs));
+    let mut mode = Mode {
+        generic: p.generics > 0,
+        ..Mode::default()
+    };
+    if !cx.ty.has_error(to) && !value_ok(cx, to, from, false, &mut mode) {
+        return None;
+    }
+    let sig = SlotSig {
+        name: format!("<set {}()>", m.name),
+        params: vec![ParamSig {
+            name: "v".into(),
+            span: p.span,
+            ty: fty,
+            mode: PassMode::Owned,
+            default: None,
+        }],
+        ret: cx.ty.unit,
+        own: 0,
+    };
+    Some(adapter_method(cx, p, slot, &sig, true))
 }
 
 /// The setter slot of field `field` for the adapter `p` (`iface_writes`, a field written through
@@ -462,4 +518,11 @@ pub(super) fn unresolved_slot(
         let (f, g) = (cx.subst(t, fa), cx.subst(t, ta));
         cx.ty.has_error(f) || cx.ty.has_error(g)
     })
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    AdapterParts {
+        def, self_ty, inner, iface, iname, from, to, generics, module, span,
+    }
 }

@@ -1,12 +1,13 @@
 // velt/lang/hooks (internal): the executor in Velt (#2649 steps 3.1 and 3), its workers: worker 0
 // is the thread that runs `main`, the others are threads it starts (`VELT_THREADS`, else the
 // online cores; `#sched-thread`), each with its own queue, inbox and reactor. A task stays on its
-// home worker (the spawning one, or the one `spawn(p, { worker })` pins it to). A program compiled with `VELT_SCHEDULER=std` runs here instead of on the
-// runtime's executor: its root (`schedBlockOn`), its spawned tasks (`schedSpawn`), `await
-// yieldNow()` (`schedYield`), boxed and started promises (`schedBox`, `schedStart`,
-// sched_node.velt), the microtask steps of `await` and the prelude's microtasks (`schedAwaitTick`,
-// `schedAwaitReady`, `schedMicrotask`, sched_micro.velt), the process lifetime (keep-alive
-// references, a due `unref()`'d timer's question, the top-level `await` waiting: sched_end.velt),
+// home worker (the spawning one, or the one `spawn(p, { worker })` pins it to). A program runs
+// here instead of on the runtime's executor: its root (`schedBlockOn`), its spawned tasks
+// (`schedSpawn`), `await yieldNow()` and a stored one (sched_yield.velt), boxed and
+// started promises (`schedBox`, `schedStart`, sched_node.velt), the microtask steps of `await`
+// and the prelude's microtasks (`schedAwaitTick`, `schedAwaitReady`, `schedMicrotask`,
+// sched_micro.velt), the process lifetime (keep-alive references, a due `unref()`'d timer's
+// question, the top-level `await` waiting: sched_end.velt),
 // `sleep` (`schedSleep`, sched_sleep.velt) and Node's timer order (`schedTimer*`,
 // sched_timers.velt); `schedFinish` drives the tasks still alive once `main` is done. The
 // runtime's other leaves (channels, files, sockets) stay Rust: they wake a task through its C
@@ -23,7 +24,7 @@
 // starts on one too.
 
 import { Ptr } from "velt/ffi";
-import { fnAddress, futDrop, inline, noInline } from "velt/lang/intrinsics";
+import { fnAddress, futDrop, inline, noInline, noteStdUse, stdUsed } from "velt/lang/intrinsics";
 import * as end from "./sched_end";
 import * as ex from "./sched_exit";
 import * as io from "./sched_io";
@@ -35,27 +36,46 @@ import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
+import * as al from "./sched_share_alias";
 import * as nc from "./sched_node_catch";
 import * as wn from "./sched_node_woken";
-import * as off from "./sched_off";
+import * as fg from "./sched_foreign";
 import { taskId } from "./sched_id";
 import * as pk from "./sched_peek";
 import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
+import * as mv from "./sched_sleep_move";
 import * as sp from "./sched_spread";
 import * as st from "./sched_stats";
 import * as t from "./sched_task";
 import * as tm from "./sched_timers";
 import * as workers from "./sched_workers";
-// `spawn`'s hooks live in sched_spawn.velt; loaded with this module (std loaded up front too).
+// `spawn`'s and `yieldNow()`'s hooks live in sched_spawn.velt and sched_yield.velt; loaded with this
+// module (std loaded up front too).
 export { schedSpawn, schedSpawnFut } from "./sched_spawn";
+export { schedYield, schedYieldFut } from "./sched_yield";
 import * as mk from "./sched_make";
 import * as wk from "./sched_wake";
 
 /** The executor, started on first use (by the worker: `main`'s thread). */
-@inline
+@inline("always")
 function exec(): usize {
   return workers.started();
+}
+
+/**
+ * The C function of an `@export` begins its call (sched_foreign.velt `exportEnter`). Only a
+ * program with such a function has threads that aren't the executor's running Velt code, so only
+ * it builds what they need (`stdUsed("foreignCalls")`).
+ */
+export function schedExportEnter(): void {
+  noteStdUse("foreignCalls");
+  fg.exportEnter();
+}
+
+/** The C function of an `@export` ends its call (sched_foreign.velt `exportExit`). */
+export function schedExportExit(): void {
+  fg.exportExit();
 }
 
 /**
@@ -65,15 +85,23 @@ function exec(): usize {
  */
 export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
   const e = exec();
+  // The modules' initializers ran as the start of the root task's poll if they used the executor
+  // (sched_foreign.velt `initTask`): their microtasks share its queue.
+  let k = fg.mainBegins(e);
   if (stay !== 0) {
     sp.stay(e);
   }
-  // The executor's reference and this one: the root is read after it is done.
-  const k = mk.task(e, poll, 0, 0, 0, 0, 2);
+  if (k === 0) {
+    // The executor's reference and this one: the root is read after it is done.
+    k = mk.task(e, poll, 0, 0, 0, 0, 2);
+    m.st(k + t.T_TRANSFER, 0);
+  } else {
+    m.st(k + t.T_POLL, poll);
+    m.store32(k + t.T_STATE, t.SCHEDULED);
+  }
   m.st(k + t.T_JOIN_STATE, 0);
-  m.st(k + t.T_TRANSFER, 0);
   m.st(k + t.T_ROOT, state);
-  m.st32(k + t.T_FLAGS, t.ROOT);
+  m.st32(k + t.T_FLAGS, m.ld32(k + t.T_FLAGS) | t.ROOT);
   wk.push(e, k);
   // The synchronous code before is done: tasks may take the module lock.
   mod.handOver();
@@ -125,15 +153,20 @@ export function schedFinish(code: i32): void {
     return;
   }
   mod.handOver();
+  // The blocking pool's jobs count too (sched_blocking.velt): a job's waiter resumes at its give,
+  // so `main` may have returned while the pool's thread still drops the job's closure and what it
+  // captured. A park waits for them (their keep-alive references), and a job's end wakes worker 0.
   if (m.ld32(e + t.E_MODE) === 0 && m.ld(e + t.E_LAZY) === 0) {
     // Tasks spawned by threads that aren't workers count too (`E_LIVE_F`, sched_foreign.velt).
-    while (m.ld(e + t.E_LIVE) !== 0 || m.load(e + t.E_LIVE_F) !== 0) {
+    while (
+      m.ld(e + t.E_LIVE) !== 0 || m.load(e + t.E_LIVE_F) !== 0 || m.load(e + t.E_BLOCKING) !== 0
+    ) {
       loop.turnSolo(e);
     }
   } else {
-    while (mk.live(e) !== 0) {
+    while (mk.live(e) !== 0 || m.load(e + t.E_BLOCKING) !== 0) {
       if (m.ld(e + t.E_LAZY) !== 0 && loop.alone(e)) {
-        while (mk.live(e) !== 0) {
+        while (mk.live(e) !== 0 || m.load(e + t.E_BLOCKING) !== 0) {
           if (!loop.turnLazy(e)) {
             break;
           }
@@ -144,8 +177,14 @@ export function schedFinish(code: i32): void {
     }
   }
   wk.settleWakes();
+  mv.settle(e);
   // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
   tb.releaseBuffers();
+  if (wk.counting()) {
+    // The block counters see what module state holds as freed (velt_rt entry.rs `finish` then
+    // drops the function properties and statics); otherwise it is kept to the end, as in Node.
+    mod.dropAtExit();
+  }
   st.report();
 }
 
@@ -171,6 +210,15 @@ export function schedWorkerCount(): u64 {
 }
 
 /**
+ * Do this program's tasks stay on their worker (sched_spread.velt `stay`, set before `main`
+ * runs): it may give a declared function properties through `any`, which the runtime keeps under
+ * a lock only worker 0 holds, so a task elsewhere that reaches them would never run on.
+ */
+export function schedStays(): bool {
+  return m.ld(m.ld(exec() + t.E_MAIN) + t.E_STAY) !== 0;
+}
+
+/**
  * `currentWorker()`: this thread's worker index (0 off the workers); a spare worker reports one
  * of the configured ones, so the index stays below `workerCount()` (#2371).
  */
@@ -182,27 +230,12 @@ export function schedCurrentWorker(): u64 {
   return (m.ld(w + t.E_INDEX) % m.ld(m.ld(w + t.E_MAIN) + t.E_COUNT)) as u64;
 }
 
-/** `await yieldNow()`: the task polled with `cx` runs again after the other ready tasks. */
-export function schedYield(cx: usize): void {
-  const w = m.ld(cx + 8);
-  if (m.ld(w) === t.main() + t.E_VT) {
-    // Running: polled again once this poll returns, at the back of the queue. While it runs,
-    // only a wake changes its state, from RUNNING to NOTIFIED: a store, not a swap.
-    m.store32(w + t.T_STATE, t.NOTIFIED);
-    return;
-  }
-  m.wakeByRef(w);
-}
-
 /**
- * `velt_rt_fut_box`: a lazy boxed promise of the initial state at `state`; off the worker (a
- * pinned spawn's code), the runtime's, which its start and detach there start.
+ * `velt_rt_fut_box`: a lazy boxed promise of the initial state at `state` (on any thread: a C
+ * library's thread's start hands it to worker 0, sched_foreign.velt).
  */
 export function schedBox(poll: usize, drop: usize, state: usize, size: u64, align: u64): usize {
   exec();
-  if (!t.onWorker()) {
-    return off.box(poll, drop, state, size, align);
-  }
   return node.boxed(poll, drop, state, size, fnAddress(node.nodePoll), fnAddress(node.nodeDrop));
 }
 
@@ -211,19 +244,21 @@ export function schedTaskId(): u64 {
   return taskId();
 }
 
-/** `velt_rt_fut_start` (`rejecting`: `_start_rejecting`): promise `f` starts now. */
+/**
+ * `velt_rt_fut_start` (`rejecting`: `_start_rejecting`): promise `f` starts now, on the task being
+ * polled; with none (off the workers, or a module's initializer), on a task of its own
+ * (sched_foreign.velt `start`).
+ */
 export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
   mk.refuseInRead();
-  const e = t.exec();
-  if (e === 0) {
-    return;
-  }
-  if (!t.onWorker()) {
-    off.start(f, rdrop, rejecting);
+  const e = t.here();
+  const cur = e === 0 ? 0 : m.ld(e + t.E_CURRENT);
+  if (cur === 0) {
+    fg.start(f, rdrop, rejecting);
     return;
   }
   const c = m.ld(e + nc.E_CATCHING);
-  node.start(m.ld(e + t.E_CURRENT), f, rdrop, rejecting, fnAddress(node.nodePoll), c);
+  node.start(cur, f, rdrop, rejecting, fnAddress(node.nodePoll), c);
 }
 
 /**
@@ -232,16 +267,17 @@ export function schedStart(f: usize, rdrop: usize, rejecting: bool): void {
  */
 export function schedDetach(f: usize, qdrop: usize): void {
   const isNode = m.ld(f) === fnAddress(node.nodePoll);
-  if (!t.onWorker()) {
-    if (!isNode && !jn.isJoin(f)) {
-      // Off the worker: the runtime's box, or a leaf of its.
-      off.detach(f, qdrop);
-      return;
-    }
-    if (isNode) {
-      // A started promise belongs to a worker's task; one never reaches another thread (#3085).
-      panic("ICE: a promise of the executor given up off its workers");
-    }
+  if (isNode) {
+    // Given up to a handler (a combinator that settled without it): for a converted promise
+    // that is a claim of the promise it stands for (sched_share_alias.velt), whose rejection is
+    // then nobody's to report when this node lets go of it.
+    al.claimed(node.nodeOf(f));
+  }
+  if (isNode && t.here() === 0) {
+    // Off the workers: on a task of its own (sched_foreign.velt `start`).
+    fg.start(f, qdrop, false);
+    node.nodeDrop(f);
+    return;
   }
   if (!isNode) {
     // A spawned task's join handle: the task runs on, its rejection handled.
@@ -253,8 +289,14 @@ export function schedDetach(f: usize, qdrop: usize): void {
     return;
   }
   const e = exec();
-  const c = m.ld(e + nc.E_CATCHING) & ~1;
-  node.start(m.ld(e + t.E_CURRENT), f, qdrop, false, fnAddress(node.nodePoll), c);
+  const cur = m.ld(e + t.E_CURRENT);
+  if (cur === 0) {
+    // Outside any task: on a task of its own.
+    fg.start(f, qdrop, false);
+  } else {
+    const c = m.ld(e + nc.E_CATCHING) & ~1;
+    node.start(cur, f, qdrop, false, fnAddress(node.nodePoll), c);
+  }
   node.nodeDrop(f);
 }
 
@@ -269,10 +311,6 @@ export function schedPeek(f: usize): u32 {
  * quietly.
  */
 export function schedHandled(futs: usize, n: u64, qdrop: usize): void {
-  if (!t.onWorker()) {
-    off.handled(futs, n, qdrop);
-    return;
-  }
   const poll = fnAddress(node.nodePoll);
   for (let i: usize = 0; i < (n as usize); i++) {
     const f = m.ld(futs + 8 * i);
@@ -325,17 +363,17 @@ export function schedKeepAliveRelease(): void {
 /** `velt_rt_timer_unref_due`: a heap future, whether a due `unref()`'d timer's process ends. */
 export function schedUnrefDue(): usize {
   exec();
-  sp.anchor();
+  sp.anchorFixed();
   return end.unrefDue();
 }
 
 /**
- * `velt_rt_sleep`: a heap future that completes `ms` milliseconds from now, in timer order; off
- * the worker (a pinned spawn's code), the runtime's.
+ * `velt_rt_sleep`: a heap future that completes `ms` milliseconds from now, in timer order; on a
+ * C library's thread, one that waits for a worker's first poll (sched_foreign.velt `sleep`).
  */
 export function schedSleep(ms: i64): usize {
-  if (!t.onWorker()) {
-    return off.sleep(ms);
+  if (stdUsed("foreignCalls") && !t.onWorker() && fg.foreign()) {
+    return fg.sleep(ms);
   }
   const e = exec();
   sp.anchor();
@@ -344,7 +382,7 @@ export function schedSleep(ms: i64): usize {
 
 /**
  * `velt_rt_timer_new`: a Node timer due `ms` milliseconds from now, queued; its handle (bit 0
- * set; off the worker, the runtime's handle, bit 0 clear).
+ * set; on a C library's thread, a record's, bit 0 clear: sched_foreign_timer.velt).
  */
 export function schedTimerNew(ms: i64): u64 {
   return tm.timerNew(ms);
@@ -372,7 +410,7 @@ export function schedTimerFree(h: u64): void {
 
 /**
  * `velt_rt_uncaught_now`: the next rejection nobody handles is an error a timer or microtask
- * callback threw, reported at once (sched_node.velt), not after the task's microtasks.
+ * callback threw, reported at once (sched_node_report.velt), not after the task's microtasks.
  */
 export function schedUncaughtNow(): void {
   ex.uncaughtNow(exec());

@@ -14,6 +14,8 @@
 //! [`Portable`] type, classes and interfaces (`unknown` is one) by `DefId` and declaration span
 //! (collected before any body is checked, so the same in every check of one program).
 
+mod codec;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Span;
@@ -32,7 +34,8 @@ pub(crate) enum Portable {
     /// A value of an interface type (`unknown`, `any`, a thrown interface value): the
     /// interface's id, declaration span and type arguments.
     Dyn(DefId, Span, Vec<Portable>),
-    Array(Box<Portable>),
+    /// An array, read-only (`readonly T[]`, #3061) or not.
+    Array(Box<Portable>, bool),
     Option(Box<Portable>, Nothing),
 }
 
@@ -44,7 +47,7 @@ impl Portable {
             Portable::Def(_, _, args) | Portable::Dyn(_, _, args) => {
                 1 + args.iter().map(Portable::size).sum::<usize>()
             }
-            Portable::Array(e) | Portable::Option(e, _) => 1 + e.size(),
+            Portable::Array(e, _) | Portable::Option(e, _) => 1 + e.size(),
         }
     }
 }
@@ -69,6 +72,10 @@ pub(crate) struct FnTypeSeeds {
     /// the one their type is an instance of (`Ctx::closure_site_for`, #3033; unit-tested in
     /// `fn_flows`, an end-to-end golden waits on #3038: #3042).
     pub(super) closure_targets: FxHashMap<Span, Vec<Span>>,
+    /// The names of interface methods the program writes as properties (`crate::iface_method_writes`):
+    /// an object literal's function property of such a name is a site from the next check on,
+    /// so what is assigned to the method reaches the field storing it.
+    pub(crate) methods: FxHashSet<String>,
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
@@ -212,6 +219,23 @@ impl FnSites {
             last,
             ..Default::default()
         }
+    }
+
+    /// These sites for another round of a check by units (`crate::units`), which starts from
+    /// std's frozen unit: what std's check recorded (where types are written, std's sites and
+    /// flows) stays; what depends on the round's sets starts as [`Self::new`] starts it.
+    pub fn reseed(&mut self, seeds: FnTypeSeeds, last: bool) {
+        let fresh = FnSites::new(seeds, last);
+        self.use_vars = fresh.use_vars;
+        self.user_vars = fresh.user_vars;
+        self.found = fresh.found;
+        self.seeds = fresh.seeds;
+        self.last = last;
+        self.grew = false;
+        self.sites_grew = false;
+        self.quiet.clear();
+        self.indirect.clear();
+        self.indirect_sites.clear();
     }
 
     /// The sets to check the program with again, when this check added to them.
@@ -477,7 +501,7 @@ impl Ctx<'_> {
     /// user module, and the traps of std/lang/proxy's `ProxyHandler` (the only function types
     /// those modules write), so a trap may throw: a proxy operation throws what its trap throws
     /// (hir_encodings.md "Proxy and Reflect").
-    fn site_module(&self, module: usize) -> bool {
+    pub(super) fn site_module(&self, module: usize) -> bool {
         match self.scopes.get(module) {
             None => false,
             Some(s) if s.is_std => self.modules.get(module).is_some_and(|m| {
@@ -694,7 +718,10 @@ impl Ctx<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 Portable::Dyn(*d, span, args)
             }
-            TyKind::Array(e) => Portable::Array(Box::new(self.port(*e, depth + 1)?)),
+            TyKind::Array(e) => Portable::Array(
+                Box::new(self.port(*e, depth + 1)?),
+                self.ty.is_readonly_array(t),
+            ),
             TyKind::Option(e, n) => Portable::Option(Box::new(self.port(*e, depth + 1)?), *n),
             _ => return None,
         })
@@ -722,7 +749,11 @@ impl Ctx<'_> {
                     .collect::<Option<Vec<_>>>()?;
                 TyKind::Dyn(*d, args)
             }
-            Portable::Array(e) => TyKind::Array(self.unport(e)?),
+            Portable::Array(e, true) => {
+                let e = self.unport(e)?;
+                return Some(self.ty.readonly_array(e));
+            }
+            Portable::Array(e, false) => TyKind::Array(self.unport(e)?),
             Portable::Option(e, n) => TyKind::Option(self.unport(e)?, *n),
         };
         Some(self.ty.intern(k))

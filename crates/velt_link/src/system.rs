@@ -44,11 +44,13 @@ const WINDOWS: Platform = Platform {
         "msvcrt.lib",
     ],
     // Besides the C library and kernel32, what std's own `declare c` functions call on Windows
-    // under `VELT_SCHEDULER=std` (std/lang/hooks/reactor_afd.velt: Winsock, ntdll's AFD calls,
-    // `WaitOnAddress`): std declares them from `c`, so the program links their import libraries
-    // itself. An import library adds nothing a program doesn't call.
+    // (std/lang/hooks/reactor_afd.velt: Winsock, ntdll's AFD calls, `WaitOnAddress`; the time
+    // zones std/time/localtime_win32.velt enumerates, advapi32's): std declares them from `c`, so
+    // the program links their import libraries itself. An import library adds nothing a program
+    // doesn't call.
     shared_native_libs: &[
         "kernel32.lib",
+        "advapi32.lib",
         "ws2_32.lib",
         "ntdll.lib",
         "synchronization.lib",
@@ -190,6 +192,7 @@ pub(crate) fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
     let covered: Vec<&str> = libs.iter().copied().chain(["-lSystem"]).collect();
     args.extend(native::system_lib_args(req.native, &covered));
     args.extend(native::c_lib_args(req.c_libs, &covered));
+    args.extend(shared::helpers_arg(req, os));
     args.push("-o".into());
     args.push(req.output.into());
     args
@@ -274,6 +277,7 @@ mod tests {
             release: true,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         };
         let args = msvc_args(&req).unwrap();
         assert!(args.iter().any(|a| a == "/STACK:8388608"), "{args:?}");
@@ -290,6 +294,7 @@ mod tests {
                 release: false,
                 native: &[],
                 c_libs: &[],
+                helpers_lib: None,
             };
             let os = TargetOs::from_triple(target).unwrap();
             unix_args(&req, os)
@@ -355,6 +360,7 @@ mod tests {
                 release: false,
                 native: &[],
                 c_libs: &[],
+                helpers_lib: None,
             };
             let a = unix_args(&req, TargetOs::from_triple(target).unwrap());
             let i = a.iter().position(|s| s == "-arch")?;
@@ -377,6 +383,7 @@ mod tests {
             release: false,
             native: &[],
             c_libs: &[],
+            helpers_lib: None,
         };
         let a: Vec<String> = msvc_args(&req)
             .unwrap()
@@ -418,6 +425,7 @@ mod tests {
                 release: false,
                 native: &[],
                 c_libs: &[],
+                helpers_lib: None,
             };
             let os = TargetOs::from_triple(target).unwrap();
             let a = match os {
@@ -447,12 +455,47 @@ mod tests {
         assert!(
             win.contains(&"msvcrt.lib".to_string()) && win.contains(&"kernel32.lib".to_string())
         );
-        assert!(!win.contains(&"advapi32.lib".to_string()), "{win:?}");
-        // std's own C functions under `VELT_SCHEDULER=std` (Winsock, AFD, WaitOnAddress).
-        for lib in ["ws2_32.lib", "ntdll.lib", "synchronization.lib"] {
+        // std's own C functions (Winsock, AFD, WaitOnAddress, the time zones' advapi32).
+        for lib in [
+            "advapi32.lib",
+            "ws2_32.lib",
+            "ntdll.lib",
+            "synchronization.lib",
+        ] {
             assert!(win.contains(&lib.to_string()), "{win:?}");
         }
         let win = args("x86_64-pc-windows-msvc", "C:/t/velt_rt.lib");
         assert!(win.contains(&"ws2_32.lib".to_string()), "{win:?}");
+    }
+
+    /// `cc`'s link names the helpers archive (#3315) after the objects, the shared runtime and
+    /// the C libraries it names (a program's `fmod` is libm's, not the archive's); not when it
+    /// links the static runtime.
+    #[test]
+    fn the_helpers_archive_follows_the_shared_runtime() {
+        let objs = [PathBuf::from("main.o"), PathBuf::from("hook.o")];
+        let args = |rt: &str| -> Vec<String> {
+            let req = LinkRequest {
+                target: "aarch64-unknown-linux-gnu",
+                objects: &objs,
+                runtime_lib: Path::new(rt),
+                output: Path::new("out"),
+                release: false,
+                native: &[],
+                c_libs: &[],
+                helpers_lib: Some(Path::new("/t/libvelt_rt.a")),
+            };
+            let a = unix_args(&req, TargetOs::Linux);
+            a.iter().map(|s| s.to_string_lossy().into_owned()).collect()
+        };
+        let pos = |a: &[String], item: &str| a.iter().position(|x| x == item);
+        let a = args("/t/libvelt_rt_shared.so");
+        let at = pos(&a, "/t/libvelt_rt.a").expect("the helpers archive");
+        assert!(pos(&a, "hook.o").unwrap() < at, "{a:?}");
+        assert!(pos(&a, "-lvelt_rt_shared").unwrap() < at, "{a:?}");
+        assert!(pos(&a, "-lm").unwrap() < at, "{a:?}");
+        assert!(pos(&a, "-lc").unwrap() < at, "{a:?}");
+        let fixed = args("/t/other/libvelt_rt.a");
+        assert_eq!(pos(&fixed, "/t/libvelt_rt.a"), None, "{fixed:?}");
     }
 }

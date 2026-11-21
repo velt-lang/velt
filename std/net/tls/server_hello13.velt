@@ -1,0 +1,69 @@
+// velt/net (internal): the TLS 1.3 server's suite choice and its ServerHello (RFC 8446 §4.1.3),
+// for `ServerHandshake`.
+
+import { HANDSHAKE_FAILURE, TlsFailure } from "velt/net/tls/alert";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+import { SERVER_HELLO } from "velt/net/tls/client_handshake";
+import { EXT_KEY_SHARE, EXT_SUPPORTED_VERSIONS } from "velt/net/tls/client_hello";
+import {
+  AES_128_GCM_SHA256,
+  AES_256_GCM_SHA384,
+  CHACHA20_POLY1305_SHA256,
+} from "velt/net/tls/record_cipher";
+
+/**
+ * The suite the server chooses from `offered`, by the server's order rather than the client's (as
+ * Go's crypto/tls does): with AES instructions (`hasAes`), AES-128-GCM, AES-256-GCM, then
+ * ChaCha20-Poly1305; without them ChaCha20-Poly1305 first. Clients such as rustls and OpenSSL list
+ * AES-256-GCM first, which would put every handshake on SHA-384; AES-128-GCM is as strong a
+ * choice for them, and a client that offers only AES-256-GCM still gets it.
+ */
+export function chooseSuite(offered: usize[], hasAes: bool): usize {
+  const order =
+    hasAes
+      ? [AES_128_GCM_SHA256, AES_256_GCM_SHA384, CHACHA20_POLY1305_SHA256]
+      : [CHACHA20_POLY1305_SHA256, AES_128_GCM_SHA256, AES_256_GCM_SHA384];
+  for (let i: usize = 0; i < order.length; i++) {
+    if (offered.includes(order[i])) {
+      return order[i];
+    }
+  }
+  throw new TlsFailure(
+    HANDSHAKE_FAILURE,
+    "no cipher suite in common (the server has TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384 and TLS_CHACHA20_POLY1305_SHA256)",
+  );
+}
+
+/** The ServerHello message for `suite` with the key share `share` of `group`. */
+export function serverHello13(
+  random: u8[],
+  sessionId: u8[],
+  suite: usize,
+  group: usize,
+  share: u8[],
+): u8[] {
+  const w = new ByteWriter();
+  w.u8(SERVER_HELLO);
+  const b = w.begin(3);
+  w.u16(0x0303);
+  w.put(random);
+  const sid = w.begin(1);
+  w.put(sessionId);
+  w.end(sid, 1);
+  w.u16(suite);
+  w.u8(0);
+  const exts = w.begin(2);
+  w.u16(EXT_SUPPORTED_VERSIONS);
+  w.u16(2);
+  w.u16(0x0304);
+  w.u16(EXT_KEY_SHARE);
+  const ks = w.begin(2);
+  w.u16(group);
+  const k = w.begin(2);
+  w.put(share);
+  w.end(k, 2);
+  w.end(ks, 2);
+  w.end(exts, 2);
+  w.end(b, 3);
+  return w.bytes;
+}

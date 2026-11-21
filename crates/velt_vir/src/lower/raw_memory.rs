@@ -116,6 +116,30 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(t, Rvalue::Cast(Operand::Copy(Place::local(r)), t))
     }
 
+    /// `addressCallWord(f, a)` and `addressCall3(f, a, b, c)`: the call of the C function at
+    /// address `f`, which takes `args` (each converted to its VIR type) and returns nothing.
+    pub(super) fn address_call_void(
+        &mut self,
+        f: &hir::Expr,
+        args: &[(&hir::Expr, Ty)],
+    ) -> Operand {
+        let v = self.expr(f);
+        let target = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr));
+        let ops: Vec<Operand> = (args.iter())
+            .map(|&(e, t)| {
+                let v = self.expr(e);
+                self.rvalue_temp(t, Rvalue::Cast(v, t))
+            })
+            .collect();
+        let callee = Callee::Ptr {
+            target,
+            params: args.iter().map(|&(_, t)| t).collect(),
+            ret: Ty::Unit,
+        };
+        self.header_call(callee, ops, None);
+        unit()
+    }
+
     /// `fnAddress(f)`: the address of the function `f` names (sema checked that C can call it),
     /// as a value of type `ty` (`usize`).
     pub(super) fn fn_address(&mut self, f: &hir::Expr, ty: TyId) -> Operand {
@@ -168,6 +192,23 @@ impl FnLower<'_, '_> {
             Operand::Const(..) => f,
             _ => self.rvalue_temp(Ty::Ptr, Rvalue::Use(f)),
         }
+    }
+
+    /// `owner->drop(owner)`: the call of the function in the first word of the block `owner`,
+    /// the owner of an array's buffer (`addressArrayOwned`, lower/array), when that array is
+    /// dropped.
+    pub(in crate::lower) fn owner_drop_call(&mut self, owner: Operand) {
+        let first = proj(
+            &self.operand_place(owner.clone(), Ty::Ptr),
+            Proj::Deref(Ty::Ptr),
+        );
+        let drop = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(first)));
+        let callee = Callee::Ptr {
+            target: drop,
+            params: vec![Ty::Ptr],
+            ret: Ty::Unit,
+        };
+        self.header_call(callee, vec![owner], None);
     }
 
     /// Entry `i` (0 poll, 1 drop) of the header of heap future `f`.

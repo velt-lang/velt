@@ -12,18 +12,17 @@ use crate::visit;
 /// The definitions of every type whose field is the target of an assignment in some body.
 pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
     let mut out = FxHashSet::default();
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+    for def in cx.defs.iter() {
+        let Some(Def::Fn(f)) = def else {
             continue;
         };
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        visit::exprs(&f.body.block, &mut |e: &Expr| {
             if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
                 if let Some(d) = written_object(cx, place) {
                     out.insert(d);
                 }
             }
         });
-        cx.defs[i] = Some(Def::Fn(f));
     }
     // `x[k] = v` in a generic body, at each instantiation (`Intrinsic::KeyWrite`).
     out.extend(cx.type_level.inline.written.iter().copied());
@@ -46,6 +45,32 @@ pub(crate) fn assigned_objects(cx: &mut Ctx) -> FxHashSet<DefId> {
         }
     }
     out
+}
+
+/// Object type `d` has a field assigned by a setter made after [`assigned_objects`] ran (a
+/// method setter of an upcast's implementation, `crate::iface_method_writes`): it joins
+/// `Ctx::assigned_objects`, with the anonymous types of its field names (see above).
+pub(crate) fn mark_assigned(cx: &mut Ctx, d: DefId) {
+    if !cx.assigned_objects.insert(d) {
+        return;
+    }
+    let names = |a: &crate::defs::AdtInfo<'_>| -> Vec<String> {
+        a.fields.iter().map(|f| f.name.clone()).collect()
+    };
+    let Some(DefInfo::Adt(a)) = cx.info.get(d.0 as usize) else {
+        return;
+    };
+    if a.kind != AdtKind::Anon {
+        return;
+    }
+    let mine = names(a);
+    let same: Vec<DefId> = (cx.info.iter().enumerate())
+        .filter_map(|(i, info)| match info {
+            DefInfo::Adt(b) if b.kind == AdtKind::Anon && names(b) == mine => Some(DefId(i as u32)),
+            _ => None,
+        })
+        .collect();
+    cx.assigned_objects.extend(same);
 }
 
 /// The object type whose field `place` writes: directly (`x.f = …`) or a part of it held inline,

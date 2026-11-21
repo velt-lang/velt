@@ -8,8 +8,10 @@ import { inline, noInline } from "velt/lang/intrinsics";
 import { clearStdoutWritten, stdoutWrittenSince } from "./process";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
+import * as nc from "./sched_node_catch";
 import * as q from "./sched_queue";
 import * as tk from "./sched_task";
+import * as yl from "./sched_yield_list";
 
 declare function velt_rt_flush(): void;
 declare c("c") function velt_rt_latch_open$rt(l: u64): void;
@@ -68,7 +70,7 @@ export function countWakes(): void {
 }
 
 /** Are wakes counted? */
-@inline
+@inline("always")
 export function counting(): bool {
   return COUNTING.load("relaxed") !== 0;
 }
@@ -117,11 +119,54 @@ export function wake(t: usize): void {
   }
 }
 
-/** Gives back one reference to task `t`: the last frees it. */
+/**
+ * Gives back one reference to task `t`: the last frees it, and the exception of a root that
+ * panicked under a catch with it (sched_join.velt `rootPanicked`).
+ */
 export function release(t: usize): void {
+  releaseHere(t);
+}
+
+/** `release`, in line where it is called: a task's end (sched_run.velt `finish`), once per task. */
+@inline("always")
+export function releaseHere(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
-    m.release(t, m.ld(t + tk.T_BYTES));
+    if ((m.load32(t + tk.T_JOIN_STATE) & tk.J_LOCK) !== 0) {
+      // Another thread gives a reference back with a wake (sched_task_lost.velt
+      // `releaseAway`): it touches the task until it gives the lock back.
+      awaitUnlocked(t);
+    }
+    freed(t);
   }
+}
+
+/**
+ * Frees task `t`, whose last reference the caller gave back by its own count (`release`'s end,
+ * and sched_task_lost.velt `releaseAway`'s): its root's exception, its yield block, the task.
+ */
+@inline("always")
+export function freed(t: usize): void {
+  if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
+    freePanicked(t);
+  }
+  if (yl.hasBlock(t)) {
+    yl.freeBlock(t);
+  }
+  m.release(t, m.ld(t + tk.T_BYTES));
+}
+
+/** Waits until the join slot's lock of task `t`, about to be freed, is given back. */
+@noInline
+function awaitUnlocked(t: usize): void {
+  while ((m.load32(t + tk.T_JOIN_STATE) & tk.J_LOCK) !== 0) {
+    m.yieldCore();
+  }
+}
+
+/** The exception of task `t`, whose root panicked: out of line, so `release` stays small. */
+@noInline
+function freePanicked(t: usize): void {
+  nc.freePanic(m.ld(t + tk.T_POLL));
 }
 
 /**
@@ -131,7 +176,7 @@ export function release(t: usize): void {
  * running; with one thread at the queues, at the end of the second queue instead); from another worker's thread running a task, in that worker's slot (it runs there
  * next and keeps its home) unless it may not move; else on its home's inbox, waking the home.
  */
-@inline
+@inline("always")
 export function schedule(t: usize): void {
   const w = tk.here();
   if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
@@ -198,7 +243,7 @@ export function schedule(t: usize): void {
  * Queues task `t`, just spawned on this thread (`w`: its worker block, `tk.here()`): behind the
  * input on its home, or on its home's inbox.
  */
-@inline
+@inline("always")
 export function scheduleNew(w: usize, t: usize): void {
   if (w !== 0 && m.ld32(w + tk.E_SOLO) !== 0) {
     // The only thread at the executor: no lock, its spawns counted (sched_tick.velt `interval`).
@@ -308,7 +353,7 @@ export function toInbox(h: usize, t: usize): void {
  * thread prints from now on (the runtime's `publish_before_handoff`, reached through the opening
  * of a latch that is open already); worker `w` is this thread's.
  */
-@inline
+@inline("always")
 export function publish(w: usize): void {
   // SAFETY: the worker's latch handle, open, never freed.
   unsafe {
@@ -330,7 +375,7 @@ export function publish(w: usize): void {
  * before it queues a task where the monitor may take it during the poll (`pendOn`), so no task the
  * rescue moves prints before what was printed ahead of it on worker 0 (#2977).
  */
-@inline
+@inline("always")
 export function publishPolled(w: usize): void {
   publishPrinted(w);
 }
@@ -344,7 +389,7 @@ export function publishPolled(w: usize): void {
  * runtime's call (#2786). A mark left set by a publish that did not clear it (the runtime's) costs
  * one publish of nothing.
  */
-@inline
+@inline("always")
 export function publishPrinted(w: usize): void {
   if (stdoutWrittenSince()) {
     publishMarked(w);
@@ -394,7 +439,7 @@ export function unpark(w: usize): void {
 }
 
 /** The task a waker header belongs to (a task, or a promise one drives); 0 for another table. */
-@inline
+@inline("always")
 export function taskOf(w: usize): usize {
   const e = tk.main();
   const vt = m.ld(w);

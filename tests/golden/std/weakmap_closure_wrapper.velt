@@ -1,0 +1,35 @@
+// check: no leaks
+// The cycle through a function wrapper: the closure doesn't throw and is stored as a function
+// type that may, so sema wraps it, and the wrapper's environment holds the closure (#2688).
+// The trace goes through both environments (#3119 step 3).
+type Read = () => number throws unknown;
+
+class Raw {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Handler {
+  read: Read;
+  constructor(read: Read) {
+    this.read = read;
+  }
+}
+
+function track(cache: WeakMap<Raw, Handler>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  const f = (): number => raw.n;
+  const handler = new Handler(f);
+  cache.set(raw, handler);
+  console.log("reads", cache.get(raw)!.read());
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Handler>();
+  const r = track(cache, 4);
+  console.log("key freed:", r.deref() == null);
+  console.log("map still in use:", cache.has(new Raw(0)));
+}

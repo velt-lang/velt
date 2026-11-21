@@ -14,16 +14,27 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// package.velt to list them in), per target: `velt native headers --std` reads them. Windows
 /// targets load none of std's POSIX declarations (the `#fd-system` variant there declares
 /// nothing), only the C library's memory and string functions and `errno`'s location
-/// (velt/ffi's `#errno-location`); `<unwind.h>` has the Itanium unwinder's
+/// (velt/ffi's `#errno-location`), and after `<windows.h>` kernel32's process counters
+/// (`<psapi.h>`, std/process/memory_win32.velt); `<unwind.h>` has the Itanium unwinder's
 /// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
-/// calls (std/net/calls_posix.velt).
+/// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt).
+/// On Windows `<winternl.h>` has ntdll's `NtCreateFile` and `RtlNtStatusToDosError`
+/// (std/fs/tree/win_remove.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
-        return vec!["<errno.h>", "<stdlib.h>", "<string.h>", "<windows.h>"];
+        return vec![
+            "<errno.h>",
+            "<stdlib.h>",
+            "<string.h>",
+            "<windows.h>",
+            "<winternl.h>",
+            "<psapi.h>",
+        ];
     }
     let mut headers = vec![
         "<arpa/inet.h>",
+        "<dirent.h>",
         "<errno.h>",
         "<fcntl.h>",
         "<netdb.h>",
@@ -34,6 +45,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<stdlib.h>",
         "<string.h>",
         "<strings.h>",
+        "<sys/mman.h>",
         "<sys/socket.h>",
         "<sys/stat.h>",
         "<sys/wait.h>",
@@ -41,10 +53,16 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<unistd.h>",
         "<unwind.h>",
     ];
-    // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt), and velt/os' on
-    // macOS (`sysctlbyname`, std/os/sys_darwin.velt).
+    // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt), and on macOS
+    // velt/os' (`sysctlbyname`, std/os/sys_darwin.velt) and velt/process' (`_NSGetEnviron`,
+    // std/process/env_darwin.velt).
     if target.contains("-apple-") {
-        headers.extend(["<mach/mach.h>", "<sys/event.h>", "<sys/sysctl.h>"]);
+        headers.extend([
+            "<crt_externs.h>",
+            "<mach/mach.h>",
+            "<sys/event.h>",
+            "<sys/sysctl.h>",
+        ]);
     } else if target.contains("-linux") {
         headers.extend(["<sys/epoll.h>", "<sys/eventfd.h>"]);
     }
@@ -71,7 +89,20 @@ const CHECKED: &[&str] = &[
     "ffi/errno_linux.velt",
     "ffi/errno_windows.velt",
     "ffi/read.velt",
+    "fs/fd/darwin.velt",
+    "fs/fd/dirs.velt",
+    "fs/fd/linux.velt",
     "fs/fd/posix.velt",
+    "fs/tree/order.velt",
+    "fs/tree/win32.velt",
+    "fs/tree/win_handle.velt",
+    "fs/tree/win_remove.velt",
+    "fs/whole/read_all.velt",
+    "fs/whole/win32.velt",
+    "fs/whole/win_path.velt",
+    "lang/hooks/clock_darwin.velt",
+    "lang/hooks/clock_linux.velt",
+    "lang/hooks/clock_win32.velt",
     "lang/hooks/os_posix.velt",
     "lang/hooks/pid_posix.velt",
     "lang/hooks/pid_win32.velt",
@@ -79,11 +110,8 @@ const CHECKED: &[&str] = &[
     "lang/hooks/reactor_kqueue.velt",
     "lang/hooks/sched_cells.velt",
     "lang/hooks/sched_end.velt",
-    "lang/hooks/sched_exit.velt",
-    "lang/hooks/sched_id.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_mem.velt",
-    "lang/hooks/sched_module.velt",
     "lang/hooks/sched_node_loc.velt",
     "lang/hooks/sched_off.velt",
     "lang/hooks/sched_peek.velt",
@@ -106,9 +134,23 @@ const CHECKED: &[&str] = &[
     "process/child/handle_list_win32.velt",
     "process/child/pipes_win32.velt",
     "process/child/spawn_win32.velt",
+    "process/cwd_posix.velt",
+    "process/cwd_win32.velt",
+    "process/env_darwin.velt",
+    "process/env_linux.velt",
+    "process/env_posix.velt",
+    "process/env_win32.velt",
+    "process/memory_darwin.velt",
+    "process/memory_linux.velt",
+    "process/memory_win32.velt",
+    "process/stdin_buffer.velt",
+    "process/stdin_posix.velt",
+    "process/stdin_win32.velt",
     "process/tty_posix.velt",
     "sync/output.velt",
     "sync/slot.velt",
+    "time/localtime_posix.velt",
+    "time/localtime_win32.velt",
 ];
 
 /// The std files [`CHECKED`] would list but that only macOS and Linux builds reach: child
@@ -227,7 +269,7 @@ mod tests {
     fn only_the_runtime_s_exports_are_skipped() {
         let exports = runtime_exports();
         assert!(exports.contains("velt_rt_timer_new"));
-        assert!(exports.contains("velt_rt_sleep"));
+        assert!(exports.contains("velt_rt_keep_alive_acquire"));
         assert!(!exports.contains("velt_rt_not_exported"));
         assert!(!exports.contains("strlen"));
         // The WebAssembly runtime's lines are not velt_rt's.
@@ -244,7 +286,7 @@ mod tests {
                 panic!("std/{file}, which CHECKED or CHECKED_POSIX lists: {e}")
             });
             assert!(
-                text.contains("declare c(\"c\")"),
+                text.contains("declare c(\"c\""),
                 "std/{file} declares no C functions: take it out of CHECKED"
             );
         }

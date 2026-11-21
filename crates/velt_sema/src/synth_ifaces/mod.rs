@@ -670,3 +670,16 @@ fn iface_mut<'a, 'm>(cx: &'a mut Ctx<'m>, d: DefId) -> &'a mut IfaceInfo<'m> {
         _ => panic!("ICE: def {d:?} is not an interface"),
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    SynthIfaces {
+        by_form, forms, written, pending, flattened, upcasts, bound_upcasts, span, tried,
+    }
+}
+crate::units::codec::enums! {
+    @fielded Form {
+        0 => Meet { ifaces, object },
+        1 => Pick { iface, keys, omit },
+    }
+}

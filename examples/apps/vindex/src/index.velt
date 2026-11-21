@@ -1,0 +1,191 @@
+// Searching the index. A query scores the centroids, reads the `nprobe` nearest lists from
+// disk, ranks their int8 codes, and reranks the best `rerank` candidates against their full
+// vectors (one positioned read each), so the answer's scores are exact.
+//
+// The files are read in one of two ways. Mapped (`MappedFile`, the default): the lists and
+// the vectors are memory the system pages in, the kernels run on the mapping itself, and
+// nothing is copied. Positioned reads (`pread`): each list is copied into the searcher's buffer
+// first, and each reranked vector costs a system call.
+//
+// An `Index` is cheap plain data plus the centroids in `shared` memory, so it can be handed
+// to every worker; each worker makes its own `Searcher`, which owns the scratch buffers.
+import * as fs from "velt/fs";
+import { MappedFile } from "velt/fs";
+import { dotF32, dotI8Bytes, normalize, quantize } from "./kernels";
+import { HEADER, openVectors, readAt, readMeta, rowPos, u32At } from "./store";
+import { fanFor, makeRouter, route } from "./router";
+import type { Router } from "./router";
+import { TopK } from "./topk";
+import type { Hit } from "./topk";
+
+export type Index = {
+  dim: i64;
+  n: i64;
+  nlist: i64;
+  scale: f32;
+  offsets: shared<i64[]>;
+  router: Router;
+  lists: number; // fd of lists.bin
+  vectors: number; // fd of vectors.f32
+  mapped: bool;
+  listBytes: shared<u8[]>; // lists.bin, when mapped
+  rows: shared<f32[]>; // the rows of vectors.f32, when mapped
+  listMap: MappedFile | null;
+  rowMap: MappedFile | null;
+};
+
+export async function openIndex(dir: string, mapped: bool = true): Promise<Index> {
+  const m = readMeta(dir);
+  const centroids: f32[] = new Array<f32>((m.nlist * m.dim) as number).fill(0);
+  const cfd = fs.openSync(`${dir}/centroids.f32`, "r");
+  readAt(cfd, centroids, m.nlist * m.dim * 4, 0);
+  fs.closeSync(cfd);
+  const listMap = mapped ? MappedFile.open(`${dir}/lists.bin`) : null;
+  const rowMap = mapped ? MappedFile.open(`${dir}/vectors.f32`) : null;
+  // Lists are read front to back, rows one at a time.
+  listMap?.advise("random");
+  rowMap?.advise("random");
+  return {
+    dim: m.dim,
+    n: m.n,
+    nlist: m.nlist,
+    scale: m.scale,
+    offsets: shared(m.offsets),
+    router: await makeRouter(shared(centroids), m.nlist, m.dim),
+    lists: fs.openSync(`${dir}/lists.bin`, "r"),
+    vectors: openVectors(`${dir}/vectors.f32`).fd,
+    mapped,
+    listBytes: listMap == null ? shared([]) : listMap.bytes,
+    rows: rowMap == null ? shared([]) : rowMap.f32s(HEADER as number, (m.n * m.dim) as number),
+    listMap,
+    rowMap,
+  };
+}
+
+export function closeIndex(ix: Index) {
+  fs.closeSync(ix.lists);
+  fs.closeSync(ix.vectors);
+}
+
+/// Scores the `count` records of `rec` bytes from byte `at` of `bytes` against the int8 query
+/// `qc`, keeping the best in `cands` (keyed by row id).
+function scanList(bytes: u8[], at: usize, count: i64, rec: usize, qc: u8[], d: usize, cands: TopK) {
+  let floor = cands.floor();
+  const n = count as usize;
+  for (let r: usize = 0; r < n; r++) {
+    const base = at + r * rec;
+    const s = dotI8Bytes(bytes, base + 4, qc, d) as f32;
+    if (s > floor) {
+      cands.push(u32At(bytes, base) as i64, s);
+      floor = cands.floor();
+    }
+  }
+}
+
+/// `prefetch` (mapped only): tell the system which lists and rows are about to be read, so
+/// that it reads them from the disk all at once instead of page by page as the scan reaches
+/// them. It costs a system call per list and per row, so it pays only when they are not in memory.
+export type SearchOptions = { k: i64; nprobe: i64; rerank: i64; prefetch?: bool };
+
+export class Searcher {
+  ix: Index;
+  q: f32[];
+  qc: u8[];
+  buf: u8[] = Buffer.alloc(1 << 20);
+  row: f32[];
+  probes: TopK = new TopK(1);
+  near: TopK = new TopK(1);
+  /// Records scanned by the last search.
+  scanned: i64 = 0;
+
+  constructor(ix: Index) {
+    this.ix = ix;
+    this.q = new Array<f32>(ix.dim as number).fill(0);
+    this.qc = Buffer.alloc(ix.dim as usize);
+    this.row = new Array<f32>(ix.dim as number).fill(0);
+  }
+
+  /// The `k` rows nearest to the `dim` floats of `queries` at row `at`, best first.
+  search(queries: f32[], at: i64, o: SearchOptions): Hit[] {
+    const ix = this.ix;
+    const d = ix.dim as usize;
+    const rec = ix.dim + 4;
+    for (let i: usize = 0; i < d; i++) {
+      this.q[i] = queries[(at as usize) * d + i];
+    }
+    normalize(this.q, 0, d);
+    quantize(this.q, 0, d, ix.scale, this.qc, 0);
+
+    const probes = this.probes;
+    probes.reset(o.nprobe);
+    route(ix.router, this.q, 0, fanFor(ix.router, o.nprobe), this.near, probes);
+
+    const prefetch = ix.mapped && (o.prefetch ?? false);
+    if (prefetch) {
+      for (let p = 0; p < probes.keys.length; p++) {
+        const c = probes.keys[p];
+        const first = ix.offsets[c];
+        ix.listMap?.advise(
+          "willneed",
+          (first * rec) as number,
+          ((ix.offsets[c + 1] - first) * rec) as number,
+        );
+      }
+    }
+
+    // Candidates by int8 score; the key is the row id.
+    const cands = new TopK(o.rerank > o.k ? o.rerank : o.k);
+    this.scanned = 0;
+    for (let p = 0; p < probes.keys.length; p++) {
+      const c = probes.keys[p];
+      const first = ix.offsets[c];
+      const count = ix.offsets[c + 1] - first;
+      if (count == 0) {
+        continue;
+      }
+      const len = count * rec;
+      this.scanned += count;
+      if (ix.mapped) {
+        scanList(ix.listBytes, (first * rec) as usize, count, rec as usize, this.qc, d, cands);
+        continue;
+      }
+      if (len > this.buf.length) {
+        this.buf = Buffer.alloc((len * 2) as usize);
+      }
+      readAt(ix.lists, this.buf, len, first * rec);
+      scanList(this.buf, 0, count, rec as usize, this.qc, d, cands);
+    }
+
+    if (o.rerank <= 0) {
+      const inv: f32 = 1 / (ix.scale * ix.scale);
+      const hits = cands.sorted();
+      const out: Hit[] = [];
+      for (let i = 0; i < hits.length && i < o.k; i++) {
+        out.push({ key: hits[i].key, score: hits[i].score * inv });
+      }
+      return out;
+    }
+    // Rerank in row order: nearby rows share pages.
+    const rows = cands.keys.clone();
+    rows.sort((a, b) => a - b);
+    if (prefetch) {
+      for (const row of rows) {
+        ix.rowMap?.advise("willneed", rowPos(ix.dim, row) as number, (ix.dim * 4) as number);
+      }
+    }
+    const best = new TopK(o.k);
+    for (const row of rows) {
+      let s: f32;
+      if (ix.mapped) {
+        s = dotF32(ix.rows, (row as usize) * d, this.q, 0, d);
+      } else {
+        readAt(ix.vectors, this.row, ix.dim * 4, rowPos(ix.dim, row));
+        s = dotF32(this.row, 0, this.q, 0, d);
+      }
+      if (s > best.floor()) {
+        best.push(row, s);
+      }
+    }
+    return best.sorted();
+  }
+}

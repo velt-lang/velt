@@ -83,12 +83,27 @@ impl Translator<'_, '_> {
         Some(match call {
             SimdCall::Mask(bits, op) => Inlined::Value(self.simd_mask(bits, op, values)),
             SimdCall::Vector(lanes, op) => self.simd_vector(lanes, op, args, values),
+            SimdCall::Wide(lanes, op) => self.simd_wide(lanes, op, args, values),
             // Cranelift has none of these instructions: the CPU "lacks" them here, so every
             // check is false and the operations sit behind it as dead code (std/simd/sha.velt
             // runs the emulation). They give a zero value, never computed at run time.
-            SimdCall::Has(_) => Inlined::Value(self.builder.ins().iconst(types::I8, 0)),
+            SimdCall::Has(_) | SimdCall::OnArch(_) => {
+                Inlined::Value(self.builder.ins().iconst(types::I8, 0))
+            }
+            // No gated code runs here, so std's feature word reads as "nothing" and the
+            // requirement (filled in by the driver for a build, `driver/cpu_check.rs`) as none.
+            SimdCall::CpuWord | SimdCall::CpuRequired => {
+                Inlined::Value(self.builder.ins().iconst(types::I64, 0))
+            }
+            SimdCall::CpuWordSet => Inlined::Unit,
             SimdCall::Inst(ExtOp::Sha1H) => {
                 Inlined::Value(self.builder.ins().iconst(types::I32, 0))
+            }
+            // On x86-64 a call of the function the module defines (cpuid.rs), elsewhere zeros.
+            SimdCall::Cpuid | SimdCall::Xgetbv
+                if matches!(self.decls.externs.get(id.0 as usize), Some(Some(_))) =>
+            {
+                return None
             }
             SimdCall::Inst(_) | SimdCall::Cpuid => Inlined::Value(self.zero_vector()),
             SimdCall::Xgetbv => Inlined::Value(self.builder.ins().iconst(types::I64, 0)),
@@ -134,7 +149,7 @@ impl Translator<'_, '_> {
         }
     }
 
-    fn simd_vector(
+    pub(super) fn simd_vector(
         &mut self,
         lanes: Lanes,
         op: Op,

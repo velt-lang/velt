@@ -19,6 +19,7 @@ mod rounding;
 mod static_atomic;
 mod tls;
 mod variadic;
+mod wide;
 mod winx64_unwind;
 
 use velt_vir::vir::*;

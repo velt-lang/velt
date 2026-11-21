@@ -1,0 +1,102 @@
+// velt/lang/hooks (internal): the reaction step of `Promise.all`'s join and `Promise.race`'s race
+// under the executor in Velt (sched_all.velt, sched_race.velt). Node settles a combinator in the
+// reaction it queues on the deciding input, a microtask of its own: the combinator subscribes
+// when it is made, a child's wake on the awaiting task queues the awaiter (that entry is the
+// reaction, `J_TICKET`), and one that settles otherwise is ready a step later unless the
+// reaction's turn (`J_MADE`) has passed.
+
+import { inline } from "velt/lang/intrinsics";
+import * as al from "./sched_all";
+import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/**
+ * The top bit of `J_MADE`: the join settled before its awaiter polled it, its step not decided
+ * yet (tickets never reach it).
+ */
+export const PEND: usize = 1 << 63;
+
+/**
+ * Does join `j`, being made on worker `e` (0 off the workers), look at its children now, as
+ * Node subscribes to the inputs at the call? On a task whose await word is not 0, yes: its first pass runs here, so a child that
+ * settles later wakes it then (and marks where Node queued the reaction, `allWakeByRef`).
+ */
+export function subscribes(j: usize, e: usize): bool {
+  const k = e === 0 ? 0 : m.ld(e + t.E_CURRENT);
+  // With the task's await word 0 nothing is queued that the reaction could come before or
+  // after: the awaiter's first pass looks at the children then, at no extra cost.
+  if (k === 0 || m.ld32(k + t.T_WORD) === 0) {
+    return false;
+  }
+  m.st(j + al.J_STARTED, 1);
+  m.st(j + al.J_CX, k + t.T_WORD);
+  return true;
+}
+
+/**
+ * Has the turn of join `j`'s step entry (`J_TICKET`) come for its awaiter polling with `cx`? Then
+ * the ticket is cleared; if not, the entry resumes that awaiter.
+ */
+export function stepReached(j: usize, cx: usize): bool {
+  const w = m.ld(cx + 8);
+  const k = t.exec() === 0 ? 0 : wk.taskOf(w);
+  if (k === 0 || micro.reached(k, m.ld(j + al.J_TICKET) as u64, w)) {
+    m.st(j + al.J_TICKET, 0);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Join `j` settled in a poll of its awaiter (`cx`): ready now when a child's wake queued that poll
+ * (`via`, Node's reaction), else after the reaction's step (`settleStep`).
+ */
+@inline("always")
+export function settled(j: usize, cx: usize, via: bool): u32 {
+  // Nothing could run first while the awaiter's await word (`cx`'s first word points at it) is
+  // 0, as for an `await`'s step (sched.velt `schedAwaitTick`).
+  if (via || m.ld32(m.ld(cx)) === 0) {
+    return 1;
+  }
+  return settleStep(j, cx);
+}
+
+/**
+ * Join `j` settled without a wake that queued its awaiter: Node runs the reaction that settles
+ * the combinator as a microtask of its own (queued at the call for an input that had settled, or
+ * when the deciding input settled: `J_MADE`), so the join is ready one step later, at its turn in
+ * the task's queue (0 while it waits; 1 off a task, when nothing could run first, or when that
+ * reaction's turn has passed).
+ */
+export function settleStep(j: usize, cx: usize): u32 {
+  // Nothing could run first while the awaiter's await word (`cx`'s first word points at it) is
+  // 0 (`settled` checks it first); and the reaction's turn has passed once the task ran an entry
+  // queued after it.
+  if (m.ld32(m.ld(cx)) === 0) {
+    return 1;
+  }
+  const w = m.ld(cx + 8);
+  const k = t.exec() === 0 ? 0 : wk.taskOf(w);
+  if (k === 0 || micro.ranAfter(k, m.ld(j + al.J_MADE))) {
+    return 1;
+  }
+  m.st(j + al.J_TICKET, micro.enqueue(k, m.wakerClone(w), false) as usize);
+  return 0;
+}
+
+/** The poll of join `j` once it settled: 1, after its reaction step (`settleStep`) if it has one. */
+export function settledPoll(j: usize, cx: usize): u32 {
+  const ticket = m.ld(j + al.J_TICKET) as u64;
+  if (ticket === 0) {
+    const made = m.ld(j + al.J_MADE);
+    if ((made & PEND) !== 0) {
+      // Settled when made (`subscribes`): its step, from the call.
+      m.st(j + al.J_MADE, made & ~PEND);
+      return settleStep(j, cx);
+    }
+    return 1;
+  }
+  return stepReached(j, cx) ? 1 : 0;
+}

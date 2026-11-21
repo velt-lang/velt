@@ -11,15 +11,330 @@
 // - Worker 0 is woken only once the executor started; before that, the program's thread takes the
 //   inbox when it starts.
 // - It runs outside any `catch` (worker 0's catch state is not this thread's).
+//
+// The rest of such a thread's async code goes the same way (#2196): it never touches a worker's
+// own structures (its queues, its sleeps, Node's timer order), only allocates the executor's
+// objects, sets atomic flags and counts, and hands work over:
+// - `post(job, ctx)`: the one entry for any thread (a C library's, the program's before the
+//   start, a worker): a task of worker 0 whose root polls `job(ctx, cx)`.
+// - A promise started (or given up) with no task to drive it (`start`): bound at once to a new
+//   task of worker 0, whose first poll runs it.
+// - `sleep`: a future that keeps its deadline until a worker first polls it.
+// - Node timers: sched_foreign_timer.velt.
+// A promise of such a thread is the executor's node (sched_node.velt), its owner on this thread:
+// its drop takes the atomic path (sched_node_await.velt `ownSide`).
 
-import { exportedAddress, fnAddress } from "velt/lang/intrinsics";
+import {
+  exportedAddress,
+  fnAddress,
+  futDrop,
+  futPoll,
+  noInline,
+  statePoll,
+} from "velt/lang/intrinsics";
+import * as fr from "./sched_fut_root";
 import * as jn from "./sched_join";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
-import * as run from "./sched_run";
+import * as node from "./sched_node";
+import * as lost from "./sched_node_lost";
+import * as pt from "./program_thread";
+import * as sl from "./sched_sleep";
+import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 import * as workers from "./sched_workers";
+
+/** Is this thread neither a worker nor the program's (a C library's thread)? */
+export function foreign(): bool {
+  return !t.onWorker() && !pt.isProgramThread();
+}
+
+/**
+ * Runs `job(ctx, cx)` (a state poll's signature: 1 once done) on worker 0, as the root of a task
+ * of its own, from any thread; polled again when a waker it registered wakes it. The program waits
+ * for it as for a C library's thread's spawn.
+ */
+export function post(job: usize, ctx: usize): void {
+  const g = workers.zeroBlock();
+  push(g, made(g, job, ctx));
+}
+
+/** A task of worker 0 (`g`) running `job(ctx, cx)`, made and not pushed (`push`). */
+function made(g: usize, job: usize, ctx: usize): usize {
+  // The executor's reference only: no handle.
+  const k = mk.task(g, fnAddress(jobPoll), 0, 0, 0, 16, 1);
+  const at = m.ld(k + t.T_ROOT);
+  m.st(at, job);
+  m.st(at + 8, ctx);
+  m.st(k + t.T_TRANSFER, 0);
+  // Its end counts down `E_LIVE_F` (sched_run.velt `finish`).
+  m.st(k + t.T_JOIN_STATE, t.J_FOREIGN as usize);
+  return k;
+}
+
+/** The root of a `post`ed task. */
+function jobPoll(state: usize, cx: usize): u32 {
+  // SAFETY: `job` has a state poll's signature (`post`).
+  return unsafe { statePoll(m.ld(state), m.ld(state + 8), cx) };
+}
+
+/**
+ * Task `k` of worker 0 (`g`), counted, pushed on `g`'s inbox; held instead while this thread is in
+ * an exported function's call from C (`exportEnter`).
+ */
+function push(g: usize, k: usize): void {
+  // Counted before it can be taken: worker 0 never sees the task without its count.
+  m.inc(g + t.E_LIVE_F);
+  if (DEPTH.get() !== 0) {
+    hold(k);
+    return;
+  }
+  enqueue(g, k);
+}
+
+/** Task `k` of worker 0 (`g`), counted, pushed on `g`'s inbox now (a spawn: it runs beside us). */
+function pushNow(g: usize, k: usize): void {
+  m.inc(g + t.E_LIVE_F);
+  enqueue(g, k);
+}
+
+/** Pushes counted task `k` on worker 0's (`g`'s) inbox, and wakes it once the executor started. */
+function enqueue(g: usize, k: usize): void {
+  m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+  if (workers.isStarted()) {
+    wk.unpark(g);
+  }
+}
+
+/**
+ * How deep this thread, a C library's, is in calls of exported functions (0 on any other thread).
+ * While it is in one, the tasks it starts (promises, timers, sleeps, posted jobs; not spawns, which
+ * run beside it) wait for the outermost call to return, in the order they were made: its
+ * synchronous run comes before any of them runs, as a JS callback's comes before its microtasks.
+ * So a rejection the call handles later in its run is not reported as unhandled meanwhile.
+ */
+const DEPTH = new ThreadLocal<u64>(0);
+/** The tasks held (`push`), first and last, linked through `T_NEXT`. */
+const HELD_FIRST = new ThreadLocal<u64>(0);
+const HELD_LAST = new ThreadLocal<u64>(0);
+
+/** An exported function's call from C begins (`schedExportEnter`). */
+export function exportEnter(): void {
+  if (foreign()) {
+    DEPTH.set(DEPTH.get() + 1);
+  }
+}
+
+/** An exported function's call from C ends (`schedExportExit`): the outermost hands tasks on. */
+export function exportExit(): void {
+  const d = DEPTH.get();
+  if (d === 0) {
+    return;
+  }
+  DEPTH.set(d - 1);
+  if (d === 1) {
+    release();
+  }
+}
+
+/** Holds task `k` until this thread's outermost export call returns. */
+function hold(k: usize): void {
+  m.st(k + t.T_NEXT, 0);
+  const last = HELD_LAST.get() as usize;
+  if (last === 0) {
+    HELD_FIRST.set(k as u64);
+  } else {
+    m.st(last + t.T_NEXT, k);
+  }
+  HELD_LAST.set(k as u64);
+}
+
+/** Pushes the held tasks on worker 0's inbox, in the order they were made. */
+function release(): void {
+  let k = HELD_FIRST.get() as usize;
+  if (k === 0) {
+    return;
+  }
+  HELD_FIRST.set(0);
+  HELD_LAST.set(0);
+  const g = workers.zeroBlock();
+  while (k !== 0) {
+    const next = m.ld(k + t.T_NEXT);
+    m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+    k = next;
+  }
+  if (workers.isStarted()) {
+    wk.unpark(g);
+  }
+}
+
+/**
+ * `velt_rt_fut_start` with no task to drive promise `f` (a C library's thread, the program's
+ * before the start, a worker outside any task: a module's initializer): a lazy node becomes a
+ * started promise of a new task of worker 0 now, so its owner's drop can't cancel it. Its first
+ * run is synchronous, as an async call's in JS, on the program's thread or a worker (the program's
+ * thread starts the executor first, as for its spawns); a C library's thread leaves it to that
+ * task's first poll. Anything else stays as it is (a spawn's handle runs already). Out of line: a
+ * start on a task stays small enough to inline.
+ */
+@noInline
+export function start(f: usize, rdrop: usize, rejecting: bool): void {
+  if (m.ld(f) !== fnAddress(node.nodePoll)) {
+    return;
+  }
+  const n = node.nodeOf(f);
+  if ((m.load32(n + node.N_FLAGS) & (node.STARTED | node.FINISHED)) !== 0) {
+    return;
+  }
+  const e = foreign() ? 0 : workers.started();
+  const g = workers.zeroBlock();
+  if (e !== g) {
+    // A C library's thread (or another worker): worker 0 runs it.
+    const k = made(g, fnAddress(startJob), n);
+    // No other thread sees `k` before it is pushed.
+    node.bind(k, n, rdrop, rejecting);
+    // The hand-off's reference, given back after the first run (`startJob`). Until then it stands
+    // for the caller's: the owner on this thread may drop its handle before worker 0 has polled
+    // the node, and a node left with the task's reference and one waker's is not one nobody can
+    // wake (sched_node_lost.velt `unreachable` counts two references as the caller's and the
+    // task's).
+    m.inc(n + node.N_REFS);
+    push(g, k);
+    return;
+  }
+  const init = initTask(e);
+  if (init !== 0) {
+    // A module's initializer: a promise of the initializers' task, which is current now.
+    node.bind(init, n, rdrop, rejecting);
+    node.firstRun(init, n);
+    return;
+  }
+  // Its root has nothing to do: the task lives while the promise runs.
+  const k = made(g, fnAddress(doneJob), 0);
+  node.bind(k, n, rdrop, rejecting);
+  // Run here as a poll of `k` would (no task is current): what it wakes or queues waits on `k`,
+  // which runs once pushed.
+  m.st(e + t.E_CURRENT, k);
+  node.firstRun(k, n);
+  m.st(e + t.E_CURRENT, 0);
+  push(g, k);
+}
+
+/** Set once `main`'s root is about to run (`mainBegins`): the modules' initializers are done. */
+const MAIN_BEGUN = new Atomic<bool>(false);
+
+/**
+ * On worker 0 `e` (the program's thread) while the modules' initializers run, after the executor
+ * started: the task they run as, current from its first use on (made now), as if they were the
+ * start of one poll of it. It becomes `main`'s root task (`mainBegins`): Node runs the modules'
+ * code and `main()` as one macrotask, so the microtasks the initializers queued run after
+ * `main`'s synchronous code, in one queue with its own. A timer they set names it, so no other
+ * worker gives its turn before that poll ends (sched_order_pass.velt `busy`); the promises they
+ * start are its own. 0 at any other time.
+ */
+export function initTask(e: usize): usize {
+  if (MAIN_BEGUN.load("acquire") || !pt.isProgramThread() || t.here() !== e) {
+    return 0;
+  }
+  const cur = m.ld(e + t.E_CURRENT);
+  if (cur !== 0) {
+    return cur;
+  }
+  // The root's references (`schedBlockOn`): the executor's and the reader of its result. Its root
+  // state and poll come with `main`.
+  const k = mk.task(e, fnAddress(doneJob), 0, 0, 0, 0, 2);
+  m.st(k + t.T_TRANSFER, 0);
+  m.store32(k + t.T_SKIPPED, 0);
+  m.store32(k + t.T_STATE, t.RUNNING);
+  m.storeRelease(e + t.E_CURRENT, k);
+  return k;
+}
+
+/**
+ * `main`'s root is about to be queued on worker 0 `e`: the initializers' task, if any (`initTask`),
+ * is current no more, and is the one the root becomes.
+ */
+export function mainBegins(e: usize): usize {
+  MAIN_BEGUN.store(true, "release");
+  const k = m.ld(e + t.E_CURRENT);
+  if (k !== 0) {
+    m.storeRelease(e + t.E_CURRENT, 0);
+  }
+  return k;
+}
+
+/** The first run of node `n`, bound to the task polling it (`start`). */
+function startJob(n: usize, cx: usize): u32 {
+  // The task is the cx's waker (sched_task.velt `T_CX`).
+  node.firstRun(m.ld(cx + 8), n);
+  // The hand-off's reference (`start`). A node that is unreachable now is found when its owner
+  // drops the handle, or was already dropped and is found here.
+  lost.handedOff(n);
+  return 1;
+}
+
+/** The root of a task whose promise ran its first run already (`start`). */
+function doneJob(ctx: usize, cx: usize): u32 {
+  return 1;
+}
+
+/** A sleep's future made off the workers: header, deadline (`sl.clock`), the executor's sleep. */
+const S_DEADLINE: usize = 16;
+const S_INNER: usize = 24;
+const S_SIZE: usize = 32;
+
+/**
+ * `velt_rt_sleep` on a C library's thread: a heap future that completes `ms` milliseconds from now.
+ * A worker's sleep is made at its first poll, for the time left.
+ */
+export function sleep(ms: i64): usize {
+  const f = m.alloc(S_SIZE);
+  m.st(f, fnAddress(sleepPoll));
+  m.st(f + 8, fnAddress(sleepDrop));
+  m.st(f + S_DEADLINE, deadline(ms) as usize);
+  m.st(f + S_INNER, 0);
+  return f;
+}
+
+/** `sl.clock()` `ms` milliseconds from now (negative: now). */
+export function deadline(ms: i64): u64 {
+  const d = ms < 0 ? 0 : ms;
+  return sl.clock() + (d as u64) * 1000000;
+}
+
+/** Milliseconds from now to `at` (a `deadline`), rounded up; 0 once it passed. */
+export function left(at: u64): i64 {
+  const now = sl.clock();
+  if (at <= now) {
+    return 0;
+  }
+  return ((at - now + 999999) / 1000000) as i64;
+}
+
+function sleepPoll(f: usize, cx: usize): u32 {
+  let inner = m.ld(f + S_INNER);
+  if (inner === 0) {
+    // Polled on a worker, by the task awaiting it.
+    const e = workers.started();
+    sp.anchor();
+    inner = sl.sleep(e, left(m.ld(f + S_DEADLINE) as u64));
+    m.st(f + S_INNER, inner);
+  }
+  // SAFETY: the executor's sleep, a heap future this one owns.
+  return unsafe { futPoll(inner, cx) };
+}
+
+function sleepDrop(f: usize): void {
+  const inner = m.ld(f + S_INNER);
+  if (inner !== 0) {
+    // SAFETY: as `sleepPoll`; not used afterwards.
+    unsafe {
+      futDrop(inner);
+    }
+  }
+  m.release(f, S_SIZE);
+}
 
 /** `schedSpawn` on a thread that isn't a worker: the handle (as `schedSpawn`'s). */
 export function spawn(
@@ -41,7 +356,7 @@ export function spawn(
 /** `schedSpawnFut` on a thread that isn't a worker: the handle (as `schedSpawnFut`'s). */
 export function spawnFut(f: usize, rsize: u64, rdrop: usize): usize {
   const g = workers.pending();
-  const k = mk.task(g, fnAddress(run.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
+  const k = mk.task(g, fnAddress(fr.futRootPoll), 0, rsize, rdrop, 16 + ((rsize + 15) & ~15), 2);
   const at = m.ld(k + t.T_ROOT);
   m.st(at, f);
   m.st(at + 8, rsize as usize);
@@ -58,12 +373,7 @@ function handOver(g: usize, k: usize): usize {
     m.st(k + t.T_JOIN + 8, exportedAddress(jn.joinDropForeign));
   }
   m.st(k + t.T_JOIN_STATE, (t.J_HANDLE | t.J_FOREIGN) as usize);
-  // Counted before it can be taken: worker 0 never sees the task without its count.
-  m.inc(g + t.E_LIVE_F);
-  m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
-  if (workers.isStarted()) {
-    wk.unpark(g);
-  }
+  pushNow(g, k);
   return k + t.T_JOIN;
 }
 

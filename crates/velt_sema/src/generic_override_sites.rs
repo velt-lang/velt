@@ -357,3 +357,10 @@ impl GenericCalls {
         on.chain(self.on_params)
     }
 }
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    GenericCalls {
+        on, on_params, upcasts,
+    }
+}

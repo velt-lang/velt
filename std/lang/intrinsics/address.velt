@@ -13,6 +13,30 @@ import type { Copied } from "./modes";
 export declare unsafe function addressLoad<T>(address: usize): T;
 
 /**
+ * An array of the `length` `T`s (a number type or `bool`) at `address` that does not own them:
+ * dropping it frees nothing. Unsafe: the memory must be there, aligned for `T`, and stay there
+ * and unchanged for as long as the array or a `shared` handle of it lives; the array must never
+ * be written or grown, so hand it out only as `shared<T[]>`.
+ */
+@intrinsic
+export declare unsafe function addressArray<T>(address: usize, length: usize): T[];
+
+/**
+ * As `addressArray`, with an owner that is told when the array is dropped: `owner` is the
+ * address of a block whose first word is the address of a function C can call with the block
+ * (`fnAddress`, or `exportedAddress` of an `@export` function), and dropping the array calls
+ * it, once. A copy of the array is an ordinary array without an owner. Unsafe: as
+ * `addressArray`, where the memory and the block must stay until that call; the block's
+ * address is not 0 and is below 2^63.
+ */
+@intrinsic
+export declare unsafe function addressArrayOwned<T>(
+  address: usize,
+  length: usize,
+  owner: usize,
+): T[];
+
+/**
  * Writes `value`, a `T` (a number type or `bool`), at `address`, unchecked. Unsafe: the memory
  * must be writable and hold a `T` nothing else reads or writes meanwhile.
  */

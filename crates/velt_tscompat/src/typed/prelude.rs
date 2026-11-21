@@ -139,6 +139,10 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "keep thread-shared state out of code shared with TypeScript",
     ),
     (
+        "Numeric",
+        "a bound on Velt's number types; TypeScript has `number` alone",
+    ),
+    (
         "Frozen",
         "keep thread-shared state out of code shared with TypeScript",
     ),
@@ -192,6 +196,7 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
         "processMemoryUsage",
         "keep process information out of code shared with TypeScript",
     ),
+    ("processExit", "use `process.exit(…)`"),
     ("promiseAllSettled", "use `Promise.allSettled(…)`"),
     ("promiseAny", "use `Promise.any(…)`"),
     ("promiseCatch", "use `p.catch(…)`"),
@@ -521,6 +526,8 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
         &[
             ("alloc", "pass bytes in instead"),
             ("allocUnsafe", "pass bytes in instead"),
+            ("concat", "pass bytes in instead"),
+            ("from", "pass bytes in instead"),
             (
                 "byteLength",
                 "keep byte counting out of shared code (`TextEncoder` is planned, #377 phase 4)",

@@ -1,0 +1,19 @@
+// velt/lang/symbol (internal): the memory of the symbol records made at run time, by the registry
+// (registry.velt, one record at a time) and by `Symbol()` (record.velt, 4 KiB chunks), on a
+// target with a C library: from `calloc`, so a record that lives as long as the process stays
+// outside the leak counters (`#symbol-record`, std/imports.velt; record_mem_js.velt for the
+// browser).
+
+import { Ptr } from "velt/ffi";
+
+declare c("c") function calloc$symbol(n: usize, size: usize): Ptr<u8> | null;
+
+/** `n` bytes set to 0, aligned to 16, never freed. */
+export function recordMemory(n: usize): usize {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const raw = unsafe { calloc$symbol(1, n) };
+  if (raw === null) {
+    panic("out of memory");
+  }
+  return Ptr.addressOf(raw);
+}

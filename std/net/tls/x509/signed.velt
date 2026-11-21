@@ -1,0 +1,93 @@
+// velt/net (internal): whether a certificate's signature is its issuer's, with the algorithms
+// rustls's webpki accepts with the ring provider: ECDSA on P-256 or P-384 with SHA-256 or
+// SHA-384 (any of the four pairs), Ed25519, RSA PKCS#1 v1.5 and RSA-PSS with SHA-256, SHA-384
+// or SHA-512 (an RSA key of 2048 to 8192 bits, in whole bytes at the low end). ECDSA with
+// SHA-512 is not among them.
+
+import { p256Verify } from "velt/crypto/ecdsa_p256";
+import { p384Verify } from "velt/crypto/ecdsa_p384";
+import { ed25519Verify } from "velt/crypto/ed25519_verify";
+import { rsaPkcs1Verify, rsaPssVerify } from "velt/crypto/rsa_verify";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384, sha512 } from "velt/crypto/sha512";
+import {
+  KEY_ED25519,
+  KEY_P256,
+  KEY_P384,
+  KEY_RSA,
+  SIG_ECDSA_SHA256,
+  SIG_ECDSA_SHA384,
+  SIG_ED25519,
+  SIG_RSA_PKCS1_SHA256,
+  SIG_RSA_PKCS1_SHA384,
+  SIG_RSA_PKCS1_SHA512,
+  SIG_RSA_PSS_SHA256,
+  SIG_RSA_PSS_SHA384,
+  SIG_RSA_PSS_SHA512,
+} from "velt/net/tls/x509/algorithms";
+import {
+  INVALID_SIGNATURE,
+  UNSUPPORTED_SIGNATURE_ALGORITHM,
+  UNSUPPORTED_SIGNATURE_FOR_KEY,
+  VALID,
+} from "velt/net/tls/x509/verify_error";
+
+/**
+ * Whether `signature` over `message` with the algorithm `algorithm` (`SIG_*`) is by the key
+ * `key` of kind `keyAlgorithm` (`KEY_*`): `VALID`, `INVALID_SIGNATURE`,
+ * `UNSUPPORTED_SIGNATURE_ALGORITHM`, or `UNSUPPORTED_SIGNATURE_FOR_KEY` when the algorithm is
+ * one of the accepted ones and the key is of another kind.
+ */
+export function verifySignature(
+  algorithm: i32,
+  keyAlgorithm: i32,
+  key: u8[],
+  message: u8[],
+  signature: u8[],
+): i32 {
+  let ok = false;
+  if (algorithm == SIG_ECDSA_SHA256 || algorithm == SIG_ECDSA_SHA384) {
+    if (keyAlgorithm != KEY_P256 && keyAlgorithm != KEY_P384) {
+      return UNSUPPORTED_SIGNATURE_FOR_KEY;
+    }
+    const digest = algorithm == SIG_ECDSA_SHA256 ? sha256(message) : sha384(message);
+    ok =
+      keyAlgorithm == KEY_P256
+        ? p256Verify(key, digest, signature)
+        : p384Verify(key, digest, signature);
+  } else if (algorithm == SIG_ED25519) {
+    if (keyAlgorithm != KEY_ED25519) {
+      return UNSUPPORTED_SIGNATURE_FOR_KEY;
+    }
+    ok = ed25519Verify(key, message, signature);
+  } else if (
+    algorithm == SIG_RSA_PKCS1_SHA256 ||
+    algorithm == SIG_RSA_PKCS1_SHA384 ||
+    algorithm == SIG_RSA_PKCS1_SHA512
+  ) {
+    if (keyAlgorithm != KEY_RSA) {
+      return UNSUPPORTED_SIGNATURE_FOR_KEY;
+    }
+    ok = rsaPkcs1Verify(key, rsaDigest(algorithm - SIG_RSA_PKCS1_SHA256, message), signature);
+  } else if (
+    algorithm == SIG_RSA_PSS_SHA256 ||
+    algorithm == SIG_RSA_PSS_SHA384 ||
+    algorithm == SIG_RSA_PSS_SHA512
+  ) {
+    if (keyAlgorithm != KEY_RSA) {
+      return UNSUPPORTED_SIGNATURE_FOR_KEY;
+    }
+    ok = rsaPssVerify(key, rsaDigest(algorithm - SIG_RSA_PSS_SHA256, message), signature);
+  } else {
+    return UNSUPPORTED_SIGNATURE_ALGORITHM;
+  }
+  return ok ? VALID : INVALID_SIGNATURE;
+}
+
+// SHA-256, SHA-384 or SHA-512 of `message` for `which` 0, 1 or 2.
+function rsaDigest(which: i32, message: u8[]): u8[] {
+  if (which == 0) {
+    return sha256(message);
+  }
+  return which == 1 ? sha384(message) : sha512(message);
+}

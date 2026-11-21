@@ -492,6 +492,13 @@ impl Ctx<'_> {
         self.iface(iface).map_or(String::new(), |i| i.name.clone())
     }
 
+    /// [`Self::add_setters`] for `crate::iface_method_writes`.
+    pub(crate) fn add_setters_pub(&mut self, index: u32) {
+        if self.iface_writes.sources.contains_key(&index) {
+            self.add_setters(index);
+        }
+    }
+
     /// Appends the setters of implementation `index` (once).
     fn add_setters(&mut self, index: u32) {
         let imp = &self.impls[index as usize];
@@ -499,7 +506,11 @@ impl Ctx<'_> {
         let Some(i) = self.iface(iface) else {
             return;
         };
-        if imp.methods.len() != i.methods.len() + i.fields.len() {
+        let base = i.methods.len() + i.fields.len();
+        // Placeholders a method write put where the field setters go (`iface_method_writes`):
+        // the real setters replace them.
+        let placeholder = self.method_writes_placeholder(index);
+        if imp.methods.len() != base && !placeholder {
             return;
         }
         let srcs = self.iface_writes.sources[&index].clone();
@@ -596,6 +607,16 @@ impl Ctx<'_> {
                 }
             }
         }
+        if placeholder {
+            let methods = &mut self.impls[index as usize].methods;
+            for (k, def) in defs.into_iter().enumerate() {
+                if let Some(slot) = methods.get_mut(base + k) {
+                    *slot = def;
+                }
+            }
+            self.method_writes_filled(index);
+            return;
+        }
         self.impls[index as usize].methods.extend(defs);
     }
 
@@ -625,5 +646,23 @@ impl Ctx<'_> {
         let unit = self.ty.unit;
         let target = Target::Field { index, fn_ty, this };
         synth_method(self, &host, self_ty, name, params, unit, false, target)
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    IfaceWrites {
+        written, sources, parts, copied_names, fields, unwritable, array_reads,
+    }
+}
+crate::units::codec::enums! {
+    @fielded SetterSrc {
+        0 => Field { d, self_ty, index, ty },
+        1 => Call { d, self_ty, index, fn_ty, param, this },
+        2 => Method { def, d, name },
+        3 => GetterOnly { d, self_ty, name, ty },
+        4 => Adapter { parts, field },
+        5 => Missing { span, name },
+        6 => Unwritable { span, name, d, self_ty, ty },
     }
 }

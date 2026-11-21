@@ -1,0 +1,13 @@
+two 1,2,3,4,5
+none 0
+none, total 3 []
+none, total -1 []
+with empty 1,2,3
+total shorter 1,2,3,4
+total longer 1,2,3,4,5,0,0,0
+total zero 0
+total fraction RangeError The value of "length" is out of range. It must be an integer. Received 2.7
+total negative RangeError The value of "length" is out of range. It must be >= 0 && <= 9007199254740991. Received -1
+total NaN RangeError The value of "length" is out of range. It must be an integer. Received NaN
+copy, not shared 1 99
+nonzero padding 0

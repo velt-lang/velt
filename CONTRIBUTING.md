@@ -340,8 +340,8 @@ programs faster. Velt is a native backend language, not a way to compile to Java
 proposal for a Velt-only feature is welcome when it shows the speed it buys.
 
 1. **Open an issue** describing the problem, with real code that is awkward or impossible today.
-2. **Write a design note** for anything beyond a small fix, in the style of
-   [docs/internals/design](docs/internals/design): the syntax (as close to TypeScript as
+2. **Write a design note** for anything beyond a small fix, following the rules in
+   [docs/internals/design/README.md](docs/internals/design/README.md): the syntax (as close to TypeScript as
    possible), the semantics, how it compiles, what it costs at run time, and the diagnostics
    users will see, including fixes for code that breaks.
 3. **Show the performance impact** on `bench/` for anything that touches code generation or the
@@ -403,13 +403,14 @@ Work on a branch and open a pull request against `main`; nothing is pushed to `m
 Reference the issue it resolves (`Closes #123`), and go through the self-check below before
 opening it.
 
-- **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
+- **CI**: every approved pull request runs the checks its changes need (as `scripts/check.sh` selects
   them) on Linux, as three parallel jobs: lint, test and golden; a change to OS-specific code
   (below) is also linted (fmt, clippy) on Windows, and on macOS when the queue checks it there,
   so `cfg(windows)`-only findings show before the queue. The label `ci:full` makes them check everything (add it before
   pushing, or close and reopen the pull request). When a pull
-  request is approved, the maintainer who approves it adds it to the **merge queue** in the same
-  step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
+  request is approved, the maintainer who approves it adds the label `ci:approved`, which starts
+  those checks (a push starts none; run `scripts/check.sh` locally),
+  and adds it to the **merge queue** in the same step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows when the change touches OS-specific code (the runtime, code generation and linking,
   `veltc`, `vpm`, the parts of the standard library that talk to the OS and its test suites, and
@@ -468,7 +469,9 @@ go through this list:
 2. **Docs**: user-visible changes have a docs-sync issue on the website repo, linked from the
    pull request ([The website's docs](#the-websites-docs)), and the README or a package's docs
    in this repository are updated where they describe the change; otherwise there is no
-   user-visible change.
+   user-visible change. A change to behavior a design note or contract describes rewrites
+   that text in the same pull request, so it states the current design without a history
+   ([design note rules](docs/internals/design/README.md)).
 3. **Tests**: each bug fix has a regression test that fails without the fix.
 4. **Panics**: no `unwrap()` or `expect()` on a path user input reaches (source, `package.velt`,
    command-line arguments, files, the network); `expect("ICE: …")` only for invariants.

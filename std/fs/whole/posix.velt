@@ -1,0 +1,137 @@
+// velt/fs (internal): reading, writing and describing whole files on macOS and Linux (the default
+// variant of `#fs-whole`, std/imports.velt), over the C library's file descriptors
+// (`#fd-system`). The errors are Node's: a failed `open` names the path (`ENOENT: no such file or
+// directory, open 'x'`), a failed `read` or `write` doesn't, and reading a directory fails at the
+// read (`EISDIR: illegal operation on a directory, read`). A call a signal interrupted is made
+// again. Each function takes the path as C bytes (checked on the caller's thread) and as
+// the text its error names.
+
+import { IoError } from "velt/io/error";
+import { EINTR, isMac } from "velt/fs/fd/system";
+import { closeFd, fstatFd, lastError, openPath, readInto, statPath, writeFrom } from "#fd-system";
+import { statsOf } from "velt/fs/fd/sync";
+import { osError } from "velt/fs/errors";
+import { Stats } from "velt/fs/stats";
+import { Done } from "velt/fs/whole/done";
+import { readAll } from "velt/fs/whole/read_all";
+import { utf8Encode } from "velt/encoding/utf8";
+
+/** EIO: a write that wrote nothing. */
+const EIO: i32 = 5;
+
+/** `O_RDONLY | O_CLOEXEC` (Node's "r"; libuv adds `O_CLOEXEC`). */
+function readFlags(): i32 {
+  return isMac() ? 0x1000000 : 0x80000;
+}
+
+/** `O_WRONLY | O_CREAT | O_CLOEXEC`, with `O_APPEND` (Node's "a") or `O_TRUNC` ("w"). */
+function writeFlags(append: bool): i32 {
+  const mac = isMac();
+  const creat: i32 = mac ? 0x200 : 0x40;
+  const how: i32 = append ? (mac ? 0x8 : 0x400) : mac ? 0x400 : 0x200;
+  return 1 | creat | how | (mac ? 0x1000000 : 0x80000);
+}
+
+/** `open(c, flags)`, again after `EINTR`: the descriptor, or -1 with the error for `lastError()`. */
+function openRetry(c: readonly u8[], flags: i32): i32 {
+  while (true) {
+    const fd = openPath(c, flags, 0o666);
+    if (fd >= 0 || lastError() != EINTR) {
+      return fd;
+    }
+  }
+}
+
+/** `read` into `bytes[start..end]`, again after `EINTR`: the count, or -1 (`lastError()`). */
+function readRetry(fd: i32, bytes: u8[], start: usize, end: usize): isize {
+  while (true) {
+    const n = readInto(fd, bytes, start, end, -1);
+    if (n >= 0 || lastError() != EINTR) {
+      return n;
+    }
+  }
+}
+
+/** The rest of `fd` (std/fs/whole/read_all.velt), from the size `fstat` gives. */
+function readRest(fd: i32): Done<u8[]> {
+  const st = fstatFd(fd);
+  const hint: usize = st === null || st.st_size < 0 ? 0 : st.st_size as usize;
+  const bytes = readAll(hint, (b, start, end) => readRetry(fd, b, start, end) as i64);
+  if (bytes === null) {
+    // errno is this thread's slot, stored right after the failed read.
+    return { value: null, error: osError(lastError(), "read") };
+  }
+  return { value: bytes, error: null };
+}
+
+/** The bytes of the file at `c` (`path` in errors). */
+export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
+  const fd = openRetry(c, readFlags());
+  if (fd < 0) {
+    return { value: null, error: osError(lastError(), "open", path) };
+  }
+  const r = readRest(fd);
+  closeFd(fd);
+  return r;
+}
+
+/** The text of the file at `c`, UTF-8 with an invalid sequence as U+FFFD (as Node decodes). */
+export function readText(c: readonly u8[], path: string): Done<string> {
+  const r = readBytes(c, path);
+  const bytes = r.value;
+  if (bytes === null) {
+    return { value: null, error: r.error };
+  }
+  return { value: bytes.utf8Slice(), error: null };
+}
+
+/** Writes `data` as UTF-8 to the file at `c`, created if missing, truncated (or `append`ed to). */
+export function writeText(c: readonly u8[], path: string, data: string, append: bool): Done<bool> {
+  const fd = openRetry(c, writeFlags(append));
+  if (fd < 0) {
+    return { value: null, error: osError(lastError(), "open", path) };
+  }
+  const bytes = utf8Encode(data);
+  const total = bytes.length as usize;
+  let at: usize = 0;
+  let error: IoError | null = null;
+  while (at < total) {
+    const n = writeFrom(fd, bytes, at, total, -1);
+    if (n < 0) {
+      const e = lastError();
+      if (e != EINTR) {
+        error = osError(e, "write");
+        break;
+      }
+    } else if (n == 0) {
+      // Nothing written with bytes left: an error, not a loop (Rust's `write_all`'s WriteZero).
+      error = osError(EIO, "write");
+      break;
+    } else {
+      at += n as usize;
+    }
+  }
+  closeFd(fd);
+  return error === null ? { value: true, error: null } : { value: null, error: error };
+}
+
+/** `stat` (`follow`) or `lstat` of the path at `c`. */
+export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats> {
+  const st = statPath(c, follow);
+  if (st === null) {
+    return { value: null, error: osError(lastError(), follow ? "stat" : "lstat", path) };
+  }
+  return { value: statsOf(st), error: null };
+}
+
+/** Whether anything is at `c`, following symlinks (a broken one is not there). */
+export function existsAt(c: readonly u8[], path: string): bool {
+  return statPath(c, true) !== null;
+}
+
+/** `path` as the C bytes the functions here take: its UTF-8 and a 0 (it holds no 0). */
+export function cBytes(path: string): u8[] {
+  const c = utf8Encode(path);
+  c.push(0);
+  return c;
+}

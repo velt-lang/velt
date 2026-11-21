@@ -8,12 +8,8 @@ velt build --release bench/shared/store_reads.velt -o /tmp/store_reads
 /usr/bin/time -l /tmp/store_reads   # macOS: peak RSS and instructions retired
 ```
 
-Instructions retired (M-series Mac, release runtime, 3 runs each, identical output):
-
-| compiler | instructions |
-|---|---:|
-| each call gets a copy of the store (#36 first step) | 0.92 G |
-| frozen instances: calls borrow the store (#708) | 0.04 G |
+Instructions retired: 0.04 G (M-series Mac, release runtime, 3 runs, 2026-10-22, commit
+ac09752c5). Calls borrow the frozen store instead of copying it; a copy per call costs 0.92 G.
 
 ## `RwLock` against `Mutex`
 
@@ -25,7 +21,8 @@ velt build --release bench/shared/lock_mix.velt -o /tmp/lock_mix
 /tmp/lock_mix rwlock 10 90   # 10 tasks, 90 reads per 100 operations: M operations/s
 ```
 
-`RwLock` / `Mutex` throughput, median of 5 interleaved runs (M-series Mac, 4+6 cores):
+`RwLock` / `Mutex` throughput, median of 5 interleaved runs (M-series Mac, 4+6 cores,
+2026-10-23, commit 5210639c9):
 
 | reads | tasks | `lock_mix` | `lock_mix_tiny` |
 |---:|---:|---:|---:|

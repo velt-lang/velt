@@ -182,7 +182,7 @@ impl FnCx<'_, '_> {
 impl FnCx<'_, '_> {
     /// `Ctx::frozen_readable_in` with this body's type parameters bounded by the prelude's `Frozen`
     /// taken as readable (checked where the generic is instantiated).
-    /// The name of `t` when it is the prelude's `AtomicValue` or `Frozen` as a value type:
+    /// The name of `t` when it is the prelude's `AtomicValue`, `Frozen` or `Numeric` as a value type:
     /// interfaces the compiler implements, only ever bounds.
     pub(crate) fn bound_only_iface(&self, t: TyId) -> Option<&'static str> {
         let TyKind::Dyn(d, _) = self.cx.ty.kind(t) else {
@@ -192,6 +192,7 @@ impl FnCx<'_, '_> {
         [
             ("AtomicValue", self.cx.prelude_iface("AtomicValue")),
             ("Frozen", self.cx.prelude_iface("Frozen")),
+            ("Numeric", self.cx.prelude_iface("Numeric")),
         ]
         .into_iter()
         .find(|(_, i)| *i == Some(d))

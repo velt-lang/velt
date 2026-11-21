@@ -1,0 +1,163 @@
+// velt/lang/hooks (internal): a Node timer made on a C library's thread (sched_foreign.velt,
+// sched_timers.velt, #2196). Node's order (sched_order.velt) takes no lock with one worker, so such
+// a thread never changes it: its handle (bit 0 clear) is a record that keeps the timer's deadline,
+// and the timer's task, on a worker, puts it in the order at its first turn, for the time left.
+// - The record's word: 0 before that, `CLEARED` when `clearTimeout` on such a thread came first
+//   (the turn then completes at once), the order's handle after, `BUSY` while a posted job
+//   changes it, `FREED` once its task freed it.
+// - A clear or free on such a thread after the insertion is posted to worker 0 (`post`), which
+//   holds a reference to the record until it ran. The timer's task waits for the end of the
+//   exported function's call that made it (sched_foreign.velt `exportEnter`), so a clear in that
+//   call always finds the word 0; a later one needs the timer from elsewhere.
+// The callback runs as on a worker: as a promise of the task that started it (sched_foreign.velt
+// `start`), its order Node's from the insertion on.
+
+import { fnAddress } from "velt/lang/intrinsics";
+import * as fg from "./sched_foreign";
+import * as m from "./sched_mem";
+import * as order from "./sched_order";
+import * as t from "./sched_task";
+import * as workers from "./sched_workers";
+
+/** The record: its word, its deadline (`fg.deadline`), its reference count. */
+const R_WORD: usize = 0;
+const R_AT: usize = 8;
+const R_REFS: usize = 16;
+const R_SIZE: usize = 24;
+
+/** The word's states besides an order's handle (an allocation, aligned to 8). */
+const CLEARED: usize = 2;
+const BUSY: usize = 4;
+const FREED: usize = 6;
+
+/** `velt_rt_timer_new` on a C library's thread: the record's handle (bit 0 clear). */
+export function timerNew(ms: i64): u64 {
+  const r = m.alloc(R_SIZE);
+  m.st(r + R_WORD, 0);
+  m.st(r + R_AT, fg.deadline(ms) as usize);
+  m.st(r + R_REFS, 1);
+  return r as u64;
+}
+
+/**
+ * Record `r`'s timer in the order, on a worker: put there now, for the time left, if it isn't yet
+ * (cleared there at once when `clearTimeout` came first, so that its turn completes).
+ */
+function inOrder(r: usize): usize {
+  while (true) {
+    const w = m.load(r + R_WORD);
+    if (w === BUSY) {
+      continue;
+    }
+    if (w !== 0 && w !== CLEARED) {
+      return w;
+    }
+    const e = workers.started();
+    const cleared = w === CLEARED;
+    const h = order.timerNew(e, cleared ? 0 : fg.left(m.ld(r + R_AT) as u64)) as usize;
+    if (cleared) {
+      order.timerClear(h);
+    }
+    if (m.cas(r + R_WORD, w, h) === w) {
+      return h;
+    }
+    // A clear came meanwhile: once more, cleared.
+    order.timerFree(h);
+  }
+}
+
+/** `velt_rt_timer_turn` of record `r`, on its task's worker. */
+export function turn(r: usize): usize {
+  return order.turn(inOrder(r));
+}
+
+/** `velt_rt_timer_again` of record `r`, on its task's worker. */
+export function again(r: usize, ms: i64): void {
+  order.timerAgain(workers.started(), inOrder(r), ms);
+}
+
+/** `velt_rt_timer_clear` of record `r` (`clearTimeout`), on any thread. */
+export function clear(r: usize): void {
+  if (t.onWorker()) {
+    order.timerClear(inOrder(r));
+    return;
+  }
+  while (true) {
+    const w = m.load(r + R_WORD);
+    if (w === CLEARED || w === FREED) {
+      return;
+    }
+    if (w === BUSY) {
+      continue;
+    }
+    if (w === 0) {
+      if (m.cas(r + R_WORD, 0, CLEARED) === 0) {
+        return;
+      }
+      continue;
+    }
+    // In the order: worker 0 clears it.
+    m.inc(r + R_REFS);
+    fg.post(fnAddress(clearJob), r);
+    return;
+  }
+}
+
+/** `velt_rt_timer_free` of record `r`: its task is done with it. */
+export function free(r: usize): void {
+  if (!t.onWorker()) {
+    fg.post(fnAddress(freeJob), r);
+    return;
+  }
+  freeNow(r);
+}
+
+/** A posted clear of record `r` (`clear`). */
+function clearJob(r: usize, cx: usize): u32 {
+  const h = take(r);
+  if (h !== 0) {
+    order.timerClear(h);
+    m.storeRelease(r + R_WORD, h);
+  }
+  release(r);
+  return 1;
+}
+
+/** A posted free of record `r` (`free`). */
+function freeJob(r: usize, cx: usize): u32 {
+  freeNow(r);
+  return 1;
+}
+
+/** Frees record `r`'s timer, on a worker, and gives back the task's reference. */
+function freeNow(r: usize): void {
+  const h = take(r);
+  m.storeRelease(r + R_WORD, FREED);
+  if (h !== 0) {
+    order.timerFree(h);
+  }
+  release(r);
+}
+
+/** Record `r`'s order handle, its word `BUSY` until the caller stores it (0: none, word as it was). */
+function take(r: usize): usize {
+  while (true) {
+    const w = m.load(r + R_WORD);
+    if (w === BUSY) {
+      continue;
+    }
+    if (w === 0 || w === CLEARED || w === FREED) {
+      return 0;
+    }
+    if (m.cas(r + R_WORD, w, BUSY) === w) {
+      return w;
+    }
+  }
+}
+
+/** Gives back a reference to record `r`: the last frees it. */
+function release(r: usize): void {
+  if (m.dec(r + R_REFS) === 1) {
+    m.release(r, R_SIZE);
+  }
+}

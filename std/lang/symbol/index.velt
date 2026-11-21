@@ -1,22 +1,16 @@
 // velt/lang/symbol: JavaScript's `Symbol` (a global, std/prelude/global/symbol.velt;
 // https://veltlang.com/docs/std/prelude/symbol/).
 //
-// A `symbol` is the address of a record the runtime or the compiler made (rt_abi.md "Symbols"),
+// A `symbol` is the address of a record std (record.velt) or the compiler made (rt_abi.md "Symbols"),
 // compared by identity. A module constant initialized with `Symbol("d")` is a record the
 // compiler emits (as is one initialized with `Symbol.for("k")`, which `Symbol.for` at run time
 // finds), so each use of the constant is the same symbol, and such a constant can name a member: `[KEY]: T` in an object type, an
 // interface or a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The
 // well-known symbols are records the compiler emits too.
 
-import { symbolRegistry, symbolStatic } from "velt/lang/intrinsics";
-
-// `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings").
-declare function velt_rt_symbol_new(description: string, described: bool): symbol;
-// `table`: the compiler's records of the registry's symbols (`symbolRegistry()`).
-declare function velt_rt_symbol_for(key: string, table: symbol): symbol;
-declare function velt_rt_symbol_registered(s: symbol): bool;
-declare function velt_rt_symbol_described(s: symbol): bool;
-declare function velt_rt_symbol_description(s: symbol): string;
+import { symbolStatic } from "velt/lang/intrinsics";
+import { newSymbol, symbolDescribed, symbolDescription } from "velt/lang/symbol/record";
+import { isRegistered, registeredSymbol } from "velt/lang/symbol/registry";
 
 /**
  * A new symbol, different from every other one, with an optional description (shown by
@@ -25,9 +19,9 @@ declare function velt_rt_symbol_description(s: symbol): string;
  */
 export function Symbol(description?: string): symbol {
   if (description == null) {
-    return velt_rt_symbol_new("", false);
+    return newSymbol("", false);
   }
-  return velt_rt_symbol_new(description, true);
+  return newSymbol(description, true);
 }
 
 /**
@@ -124,29 +118,29 @@ export class SymbolConstructor {
 
   /** The symbol of the global registry for `key`, made on first use: the same for every call. */
   static for(key: string): symbol {
-    return velt_rt_symbol_for(key, symbolRegistry());
+    return registeredSymbol(key);
   }
 
   /** The key of a symbol `Symbol.for` made, or `undefined` for others. */
   static keyFor(sym: symbol): string | undefined {
-    if (!velt_rt_symbol_registered(sym)) {
+    if (!isRegistered(sym)) {
       return undefined;
     }
-    return velt_rt_symbol_description(sym);
+    return symbolDescription(sym);
   }
 }
 
 extend symbol {
   /** The description given to `Symbol(description)`, or `undefined`. */
   get description(): string | undefined {
-    if (!velt_rt_symbol_described(this)) {
+    if (!symbolDescribed(this)) {
       return undefined;
     }
-    return velt_rt_symbol_description(this);
+    return symbolDescription(this);
   }
 
   /** `Symbol(description)`. */
   toString(): string {
-    return "Symbol(" + velt_rt_symbol_description(this) + ")";
+    return "Symbol(" + symbolDescription(this) + ")";
   }
 }

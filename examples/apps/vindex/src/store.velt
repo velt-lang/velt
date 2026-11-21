@@ -1,0 +1,124 @@
+// The files of an index directory and positioned I/O on them.
+//
+//   vectors.f32   16-byte header (magic, dim u32, n u64), then n rows of dim little-endian f32,
+//                 unit length: the input of a build, and what a search reranks against
+//   centroids.f32 nlist rows of dim f32
+//   lists.bin     the inverted lists back to back; a record is the row's id (u32) and its
+//                 dim int8 codes
+//   meta.json     dim, n, nlist, the int8 scale and where each list starts (in records)
+import * as fs from "velt/fs";
+
+export const HEADER: i64 = 16;
+const MAGIC: u32 = 0x43455656; // "VVEC"
+
+export type VectorFile = { fd: number; dim: i64; n: i64 };
+
+export type Meta = { dim: i64; n: i64; nlist: i64; scale: f32; offsets: i64[] };
+
+/// Reads exactly `len` bytes at `pos` into the memory of `buf` from its byte `from`: `buf` is
+/// an array of any number type (`f32[]` for rows, `u8[]` for records), filled in place.
+export function readAt<T extends Numeric = u8>(
+  fd: number,
+  buf: T[],
+  len: i64,
+  pos: i64,
+  from: i64 = 0,
+) {
+  let got: i64 = 0;
+  while (got < len) {
+    const n = fs.readSync(
+      fd,
+      buf,
+      (from + got) as number,
+      (len - got) as number,
+      (pos + got) as number,
+    );
+    if (n == 0) {
+      throw new RangeError(`short read: ${got} of ${len} bytes at ${pos}`);
+    }
+    got += n as i64;
+  }
+}
+
+/// Writes `len` bytes of the memory of `buf`, from its byte `from`, at `pos`.
+export function writeAt<T extends Numeric = u8>(
+  fd: number,
+  buf: T[],
+  len: i64,
+  pos: i64,
+  from: i64 = 0,
+) {
+  let put: i64 = 0;
+  while (put < len) {
+    put +=
+      fs.writeSync(
+        fd,
+        buf,
+        (from + put) as number,
+        (len - put) as number,
+        (pos + put) as number,
+      ) as i64;
+  }
+}
+
+function putU32(b: u8[], at: usize, v: u32) {
+  b[at] = (v & 0xff) as u8;
+  b[at + 1] = ((v >> 8) & 0xff) as u8;
+  b[at + 2] = ((v >> 16) & 0xff) as u8;
+  b[at + 3] = ((v >> 24) & 0xff) as u8;
+}
+
+export function u32At(b: u8[], at: usize): u32 {
+  return (
+    (b[at] as u32) |
+    ((b[at + 1] as u32) << 8) |
+    ((b[at + 2] as u32) << 16) |
+    ((b[at + 3] as u32) << 24)
+  );
+}
+
+export { putU32 };
+
+/// Creates `path` as a vector file of `n` rows of `dim` floats (rows are written afterwards).
+export function createVectors(path: string, dim: i64, n: i64): VectorFile {
+  const fd = fs.openSync(path, "w+");
+  const h: u32[] = [MAGIC, dim as u32, (n & 0xffffffff) as u32, (n >> 32) as u32];
+  writeAt(fd, h, HEADER, 0);
+  fs.ftruncateSync(fd, (HEADER + n * dim * 4) as number);
+  return { fd, dim, n };
+}
+
+export function openVectors(path: string): VectorFile {
+  const fd = fs.openSync(path, "r");
+  const h: u32[] = [0, 0, 0, 0];
+  readAt(fd, h, HEADER, 0);
+  if (h[0] != MAGIC) {
+    throw new RangeError(`${path} is not a vector file`);
+  }
+  const dim = h[1] as i64;
+  const n = (h[2] as i64) | ((h[3] as i64) << 32);
+  return { fd, dim, n };
+}
+
+/// The byte position of row `row`.
+export function rowPos(dim: i64, row: i64): i64 {
+  return HEADER + row * dim * 4;
+}
+
+export function writeMeta(dir: string, m: Meta) {
+  fs.writeFileSync(`${dir}/meta.json`, JSON.stringify(m));
+}
+
+export function readMeta(dir: string): Meta {
+  return JSON.parse(fs.readFileSync(`${dir}/meta.json`)) as Meta;
+}
+
+/// Row ranges `[start, end)` splitting `n` rows into at most `parts` pieces.
+export function ranges(n: i64, parts: i64): i64[][] {
+  const out: i64[][] = [];
+  const step = (n + parts - 1) / parts;
+  for (let s: i64 = 0; s < n; s += step) {
+    out.push([s, s + step < n ? s + step : n]);
+  }
+  return out;
+}

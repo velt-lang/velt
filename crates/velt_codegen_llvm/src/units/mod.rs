@@ -27,7 +27,8 @@
 //!   optimizer (devirtualization through vtables);
 //! - small functions of other units that a unit's (not huge) functions call are imported as
 //!   `available_externally` copies (like ThinLTO's function import): LLVM can inline them, and
-//!   emits no code for them.
+//!   emits no code for them; a function marked `@inline` is imported into every unit that calls
+//!   it, whatever the caller's size, as are the `@inline` callees of the bodies imported.
 //!
 //! The rest of cross-unit optimization is lost (inlining of larger callees and interprocedural
 //! analyses of the functions made external). With placement keeping hot call chains together,
@@ -84,11 +85,17 @@ pub(crate) struct Plan {
     pub shared: Shared,
 }
 
-/// Statements (VIR, after `velt_opt`) per unit when the count is chosen from the program's size:
-/// a program below twice this is one unit. Small programs build fast in one unit and lose the
-/// most to a split (cross-unit calls in their hot loops); every benchmark program stays one unit
-/// (the largest, `bench/sort.velt`, has about 4 000 statements).
+/// Statements (VIR, after `velt_opt`) per unit when the count is chosen from the program's size.
 const MIN_UNIT_WEIGHT: usize = 16_000;
+/// A program below this many statements is one unit. Small programs build fast in one unit and
+/// lose the most to a split: cross-unit calls in their hot loops, and the entry file's code alone
+/// in a unit ([`plan_apart`]), where its callees are other modules' symbols (the awaits of
+/// bench/async/await_chain.velt cost one more instruction each on x86-64, 3.6 %). Since the
+/// executor is std code, every program with a task carries about 31 000 statements of it, so
+/// the bound is twice that: std's growth does not move a small program across it. (It was
+/// 32 000; five bench/async rows crossed it as std grew, #3097.) A split saves no build time
+/// worth having below it.
+const ONE_UNIT_BELOW: usize = 4 * MIN_UNIT_WEIGHT;
 /// At most this many units when the count is chosen from the size, up to `MAX_UNIT_WEIGHT`
 /// statements per unit. Programs split into 4 run as fast as in one unit (within ±3 %,
 /// bench/RESULTS.md); in 8, binary-trees and fib ran 5 % slower (the same machine code, placed
@@ -97,13 +104,14 @@ const MAX_UNITS: usize = 4;
 /// Larger programs get units of at most this many statements (about 600,000 IR lines; clang takes
 /// minutes on one), so that one clang process does not take the whole build: sigx's small-page,
 /// 22 million IR lines in 4 units, spent 907 of its 1,091 seconds of code generation in one.
-/// Every benchmark program is far below (`MIN_UNIT_WEIGHT`).
+/// Every benchmark program is far below.
 const MAX_UNIT_WEIGHT: usize = 200_000;
 /// ...at most this many of them.
 const MAX_LARGE_UNITS: usize = 16;
 
 /// Number of units for `program`: `requested` (at least 1, at most one per function), else one
-/// per `MIN_UNIT_WEIGHT` statements, at most `MAX_UNITS`, one below twice that; a program too
+/// below `ONE_UNIT_BELOW` statements, from there one per `MIN_UNIT_WEIGHT`, at most `MAX_UNITS`
+/// (which a program at the bound has: there is no count in between); a program too
 /// large for `MAX_UNITS` units of `MAX_UNIT_WEIGHT` gets units of that weight, at most
 /// `MAX_LARGE_UNITS`. The count depends on the program only, never on the machine, so the objects
 /// are the same everywhere.
@@ -114,7 +122,7 @@ pub(crate) fn unit_count(program: &vir::Program, requested: Option<usize>) -> us
 
 /// [`unit_count`] of a program of `total` statements.
 pub(crate) fn count_for(total: usize) -> usize {
-    if total < 2 * MIN_UNIT_WEIGHT {
+    if total < ONE_UNIT_BELOW {
         1
     } else if total <= MAX_UNITS * MAX_UNIT_WEIGHT {
         (total / MIN_UNIT_WEIGHT).min(MAX_UNITS)
@@ -288,19 +296,31 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
         // Functions whose bodies this unit contains: its own, then the imported ones.
         let mut bodies: BTreeSet<usize> = unit.defines.iter().copied().collect();
         let mut imports = BTreeSet::new();
-        for &f in unit
-            .defines
-            .iter()
-            .filter(|&&f| weights[f] <= IMPORT_CALLER_WEIGHT)
-        {
+        // A caller's other-unit callee whose body may be copied in (not this unit's, not an
+        // import's, not a root-module body into a library unit).
+        let importable = |f: usize, callee: usize| {
+            owner[callee] != u && !imported[callee] && !(is_own(callee) && !is_own(f))
+        };
+        for &f in &unit.defines {
+            let small_caller = weights[f] <= IMPORT_CALLER_WEIGHT;
             for &callee in &refs[f].calls {
-                let library_imports_own = is_own(callee) && !is_own(f);
-                if owner[callee] != u
-                    && weights[callee] <= IMPORT_WEIGHT
-                    && !imported[callee]
-                    && !library_imports_own
-                {
+                let small = small_caller && weights[callee] <= IMPORT_WEIGHT;
+                if (small || always_inline(program, callee)) && importable(f, callee) {
                     imports.insert(callee);
+                }
+            }
+        }
+        // `@inline` asks for the body at every call, so an `@inline` callee is copied into every
+        // unit that calls it, whatever the caller's weight, with the `@inline` callees of the
+        // bodies copied in (LLVM inlines them there too): a program that grows past one unit
+        // keeps its calls of std's small entry points inlined (`heapAlloc` into a large `main`,
+        // #3097: race_select +4.4% instructions as two units).
+        let mut todo: Vec<usize> = imports.iter().copied().collect();
+        while let Some(f) = todo.pop() {
+            for &callee in &refs[f].calls {
+                if always_inline(program, callee) && importable(f, callee) && imports.insert(callee)
+                {
+                    todo.push(callee);
                 }
             }
         }
@@ -415,6 +435,11 @@ fn own_exported_statics(
         }
     }
     unit.declares = declares.into_iter().collect();
+}
+
+/// Whether function `f` of `program` is marked `@inline` (`vir::Inline::Always`).
+fn always_inline(program: &vir::Program, f: usize) -> bool {
+    program.funcs[f].inline == vir::Inline::Always
 }
 
 /// Size of a function for balancing: statements plus terminators.

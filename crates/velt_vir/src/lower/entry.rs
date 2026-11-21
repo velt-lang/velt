@@ -35,8 +35,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower::bare(cx, vec![]);
         // Before any string can be freed: the runtime's position cache reads std's epoch.
         lw.register_statics();
+        // Before any other Velt code: every run-time CPU check reads the word this computes.
+        lw.cpu_start();
         // Before any C code (natives' setup, initializers) can start a thread that calls back.
         lw.mark_program_thread();
+        // `performance.now()`'s time origin, in a program that reads a clock: as near the start
+        // of the process as Velt code gets (std/lang/hooks/clock.velt).
+        let clock = velt_common::std_hooks::hook_index::clock_start;
+        if lw.cx.hir.hooks_demanded.contains(clock) {
+            hooks::clock_start(&mut lw, velt_common::std_hooks::Construct::Clock).emit(&mut lw);
+        }
         if lw.cx.uses_placement {
             // Before anything starts the runtime (#211).
             lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);
@@ -77,7 +85,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 None => cint(0, Ty::I32),
             }
         } else {
-            lw.call_main(def, None)
+            let code = lw.call_main(def, None);
+            if lw.cx.hir.module_state.is_some() && lw.module_exit_live() {
+                // The blocks go at a normal end with the debug counters on (module_blocks.velt),
+                // as `sched_finish` drops them in a program that reaches tasks.
+                let c = lw.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
+                hooks::module_exit(&mut lw, ty::I32::arg(c)).emit(&mut lw);
+            }
+            code
         };
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();

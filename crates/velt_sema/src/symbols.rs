@@ -11,7 +11,7 @@
 //! A module constant initialized with `Symbol(...)` or `Symbol.for("k")` is a record the compiler
 //! emits (`Intrinsic::SymbolStatic`): module constants are evaluated at each use, and every use
 //! must be the same symbol, as in JavaScript (and reading it costs no call). The registry's
-//! records (`Symbol.for`) are listed in a table the runtime's registry consults
+//! records (`Symbol.for`) are listed in a table std's registry starts with
 //! (`Intrinsic::SymbolRegistry`), so `Symbol.for(k)` at run time finds the same record.
 
 use rustc_hash::FxHashMap;
@@ -551,4 +551,28 @@ pub(crate) fn has_instance_member(
 ) -> bool {
     (!is_private(name) && fields.iter().any(|f| f.name == name))
         || has_instance_method(methods, name)
+}
+
+// The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    KeyNames {
+        names, taken, spelled, registered, given,
+    }
+}
+crate::units::codec::enums! {
+    @fielded KnownSymbol {
+        0 => Own(f0, f1),
+        1 => Registered(f0),
+    }
+    @fielded SymbolOwner {
+        0 => Constant(f0),
+        1 => Key(f0),
+    }
+}
+
+/// `SymbolOwner` is listed `@fielded`: it ends from zeros, so damaged input ends in it.
+#[cfg(test)]
+#[test]
+fn symbol_owner_ends_on_damaged_input() {
+    assert!(crate::units::codec::ends_from_zeros::<SymbolOwner>());
 }

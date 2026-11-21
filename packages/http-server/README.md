@@ -11,10 +11,11 @@ they run concurrently. With several workers (`workerCount()`: `VELT_THREADS`, el
 core) each connection is served on a task of its own, which gets the next worker in turn and
 stays there, as in thread-per-core servers, so a handler that computes for a long time holds
 back the other connections on its worker. A program with module state (a module-level `let`, or
-a module constant computed at startup) keeps its connections on one worker for now: its
-handlers would wait for each other on the process-wide lock that guards module state, and serve
-fewer requests than on one worker (until that lock is replaced, #2726); pass such state to the
-handler as a captured value to use every core. A listening server keeps the process alive after
+a module constant computed at startup) spreads its connections too, but its handlers that touch
+module state take the process-wide lock that guards it for each poll, so they wait for each
+other on it; pass such state to the handler as a captured value to use every core. A program
+that gives a declared function properties through `any` keeps its connections on one worker
+(`spreadsConnections()` is false there). A listening server keeps the process alive after
 `main` returns, like Node, until `server.close()`; dropping the `HttpServer` value does not stop
 it. A
 `main` that fails (an uncaught error, or a nonzero exit code) ends the process at once, servers
@@ -93,7 +94,8 @@ key that does not parse) throws `IoError`.
   collection's own methods (`m.set(k, v)`, `xs.push(x)`, `BTreeMap.set`) and an interface or
   overridden method that changes its object. Reading a captured object is fine.
 
-  Known limits (#854): the check does not see every change, and these still change only the
+  Known limits ([#854](https://github.com/velt-lang/velt/issues/854)): the check does not see
+  every change, and these still change only the
   request's copy, silently; use `shared(...)`, an `Atomic` or a `Mutex` for state requests
   must share:
   - an element of a spread copy (`[...list][0].visits++`, `const xs = [...list]; xs[0]…`) and
@@ -103,8 +105,8 @@ key that does not parse) throws `IoError`.
     `Int32Array`, `fill`, `sort`, `reverse`, `copyWithin`, `subarray().fill`, a view over a
     captured buffer (`new Uint8Array(b.buffer)`), I/O that reads into a captured buffer;
   - a field of a new object filled from the captured value by `Reflect.set(this, "out", …)`,
-    then `ctx.out.push(…)` (std's `Reflect.set` is not looked into yet; the same store through
-    an `any` or a helper of the program's is reported);
+    then `ctx.out.push(…)` (the check does not look into std's `Reflect.set`; the same store
+    through an `any` or a helper of the program's is reported);
   - a `RegExp` with the `g` or `y` flag used with `test` or `exec` (its `lastIndex`), and the
     caches of `Headers` and `URLSearchParams` reads, which each request keeps for itself;
   - a library `struct` (a handle such as `Channel` or `TcpStream`, whose copies share what they
@@ -185,8 +187,8 @@ key that does not parse) throws `IoError`.
   response already streaming when the panic happens can't become a 500: its connection (or
   HTTP/2 stream) is closed. A panic in a task the handler `spawn`s still ends the process.
   On Windows the frames the panic unwinds leak what they owned. Under `velt dev`'s JIT and on
-  Windows on arm64, where generated code can't catch a panic yet, a panic in a handler ends the
-  process with 101, as an uncaught one does (#2649, #2008).
+  Windows on arm64, where generated code can't catch a panic, a panic in a handler ends the
+  process with 101, as an uncaught one does.
 
 ## The request
 
@@ -389,7 +391,7 @@ is built on this.
 ## On a JS host (`velt build --host`)
 
 The same program serves on a JavaScript platform: on a `velt build --host <package>` build (the
-first host package is packages/host-cloudflare, for Cloudflare Workers), `serve` runs over the
+host packages include packages/host-cloudflare, for Cloudflare Workers), `serve` runs over the
 host's request queue (std's `velt/host/worker`) instead of a TCP listener: the JS-host variant,
 src/hosted/standard.velt, which `imports` in package.velt picks by the built-in condition `js`, so
 it serves on every host package's platform. The handler, its `Request` and

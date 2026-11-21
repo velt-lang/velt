@@ -1,0 +1,90 @@
+// The k best (key, score) pairs seen so far, as a bounded min-heap: the root is the worst
+// kept score, so a candidate costs one comparison unless it gets in.
+
+export type Hit = { key: i64; score: f32 };
+
+export class TopK {
+  k: i64;
+  keys: i64[] = [];
+  scores: f32[] = [];
+
+  constructor(k: i64) {
+    this.k = k;
+  }
+
+  /// The score a candidate must beat to get in (-Infinity until the heap is full).
+  floor(): f32 {
+    return this.keys.length < this.k ? (-Infinity as f32) : this.scores[0];
+  }
+
+  /// Empties it, to keep the best `k` from now on.
+  reset(k: i64) {
+    this.k = k;
+    this.keys.length = 0;
+    this.scores.length = 0;
+  }
+
+  push(key: i64, score: f32) {
+    if (this.keys.length < this.k) {
+      this.keys.push(key);
+      this.scores.push(score);
+      this.up(this.keys.length - 1);
+    } else if (score > this.scores[0]) {
+      this.keys[0] = key;
+      this.scores[0] = score;
+      this.down(0);
+    }
+  }
+
+  /// The kept hits, best first (ties by key).
+  sorted(): Hit[] {
+    const out: Hit[] = [];
+    for (let i = 0; i < this.keys.length; i++) {
+      out.push({ key: this.keys[i], score: this.scores[i] });
+    }
+    out.sort((a, b) => (a.score == b.score ? a.key - b.key : b.score > a.score ? 1 : -1));
+    return out;
+  }
+
+  private swap(i: i64, j: i64) {
+    const r = this.keys[i];
+    this.keys[i] = this.keys[j];
+    this.keys[j] = r;
+    const s = this.scores[i];
+    this.scores[i] = this.scores[j];
+    this.scores[j] = s;
+  }
+
+  private up(at: i64) {
+    let i = at;
+    while (i > 0) {
+      const p = (i - 1) / 2;
+      if (this.scores[i] >= this.scores[p]) {
+        return;
+      }
+      this.swap(i, p);
+      i = p;
+    }
+  }
+
+  private down(at: i64) {
+    let i = at;
+    const n: i64 = this.keys.length;
+    while (true) {
+      const l = 2 * i + 1;
+      const r = l + 1;
+      let m = i;
+      if (l < n && this.scores[l] < this.scores[m]) {
+        m = l;
+      }
+      if (r < n && this.scores[r] < this.scores[m]) {
+        m = r;
+      }
+      if (m == i) {
+        return;
+      }
+      this.swap(i, m);
+      i = m;
+    }
+  }
+}
