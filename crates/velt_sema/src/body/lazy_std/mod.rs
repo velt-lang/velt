@@ -126,7 +126,10 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
     let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
     (velt_common::std_hooks::is_lowered(qualified)
         && velt_common::std_hooks::find(qualified).is_some_and(|h| {
-            !h.fallback && h.constructs.is_empty() && !SCHED_HOOKS.contains(&qualified)
+            !h.fallback
+                && h.constructs.is_empty()
+                && !SCHED_HOOKS.contains(&qualified)
+                && !MODULE_HOOKS.contains(&qualified)
         }))
         || HELPER_NAMES.contains(&name)
         || name
@@ -199,6 +202,8 @@ pub(crate) struct Lazy {
     record_hooks: bool,
     /// Have [`SCHED_HOOKS`] been reached?
     sched_hooks: bool,
+    /// Have [`MODULE_HOOKS`] been reached?
+    module_hooks: bool,
     /// [`cpu_hook`] has demanded std/lang/hooks/cpu.
     cpu_hook: bool,
     /// The program's code converts a value that may hold a float to text: the float hooks are
@@ -244,6 +249,7 @@ impl Lazy {
             record_conversion: false,
             record_hooks: false,
             sched_hooks: false,
+            module_hooks: false,
             cpu_hook: false,
             float_text: false,
             float_write: false,
@@ -404,6 +410,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
         // A std function C calls (`@export`) is live though no checked code refers to it.
         found.extend(cx.c_exports.iter().map(|e| e.def));
         sched_hooks(cx, &mut found);
+        module_hooks(cx, &mut found);
         cpu_hook(cx, &mut found);
         let mut checked = false;
         for d in found {
@@ -465,7 +472,6 @@ const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_module_state),
     velt_common::std_hook!(sched_module_block),
     velt_common::std_hook!(sched_module_ready),
-    velt_common::std_hook!(sched_module_exit),
     velt_common::std_hook!(sched_task_id),
 ];
 
@@ -481,8 +487,9 @@ const SCHED_CELL_HOOKS: &[&str] = &[
 
 /// Adds [`SCHED_HOOKS`] to `found` the first time, on a native target (`Lazy::native_executor`)
 /// when live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
-/// program without such code doesn't load the executor; lowering then keeps the runtime's
-/// module state (velt_vir `module_state.rs`), and never calls a task or timer hook (#2649 P3(a)).
+/// program without such code doesn't load the executor; lowering then calls module_blocks.velt's
+/// hooks for module state ([`module_hooks`], velt_vir `module_state.rs`), and never calls a task or
+/// timer hook (#2649 P3(a)).
 fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     let wanted = cx.lazy.live.tasks && cx.lazy.native_executor;
     if cx.lazy.sched_hooks || !wanted {
@@ -502,6 +509,45 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
         cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));
         found.extend(SCHED_CELL_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
     }
+}
+
+/// The hooks of module state in a program without the executor (module_blocks.velt): lowering
+/// calls them in place of the runtime's `velt_rt_module_state`, `_block` and `_ready`, and at the
+/// end of `velt_main` (#2196 9c).
+const MODULE_HOOKS: &[&str] = &[
+    velt_common::std_hook!(module_state),
+    velt_common::std_hook!(module_block),
+    velt_common::std_hook!(module_ready),
+    velt_common::std_hook!(module_exit),
+];
+
+/// Adds [`MODULE_HOOKS`] to `found` the first time, on a native target, when the program has
+/// module state (`live::Live::module_state`: a live stored global). Lowering calls them only for a
+/// program with module state, so a program without any (hello) never loads their module.
+fn module_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
+    let wanted = cx.lazy.live.module_state && cx.lazy.native_executor;
+    if cx.lazy.module_hooks || !wanted {
+        return;
+    }
+    if cx.lazy.live.finishing {
+        // Reached by what the passes after the check made: the next round has it.
+        cx.lazy.live.late.module_state = true;
+        return;
+    }
+    cx.lazy.module_hooks = true;
+    // Prebuilt: where the build links their module's object, each is declared and lowering calls
+    // the declaration (`hook_stubs::declared_lowered`); the module is not loaded.
+    let blocks = velt_common::std_hooks::BLOCKS_MODULE_ENTRY;
+    let lowered = velt_common::std_hooks::prebuilt::of_module(blocks).filter(|(_, h)| h.lowered);
+    let mut declared = true;
+    for (_, h) in lowered {
+        declared &= hook_stubs::declared_lowered(cx, h);
+    }
+    if declared {
+        return;
+    }
+    cx.demand_std(velt_common::std_module!(lang_hooks_module_blocks));
+    found.extend(MODULE_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
 }
 
 /// Adds std's `cpuStart` (std/lang/hooks/cpu.velt) to `found` the first time: `velt_main` calls
@@ -654,7 +700,7 @@ crate::units::codec::structs! {
     Lazy {
         on, check_all, native_executor, modules, subclasses, user_record, generic_any,
         record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, float_write, dyn_held,
-        dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable,
+        dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable, module_hooks,
     }
     Mode {
         whole, named,

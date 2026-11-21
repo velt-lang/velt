@@ -14,12 +14,14 @@ pub struct HookTests {
     pub guard: bool,
 }
 
-/// The table (with the string methods' and the weak core's rows), the type language its signatures are written in
-/// (whose macros build every `Sig`) and the std module table it names modules by.
+/// The table (with module state's, the string methods' and the weak core's rows), the type
+/// language its signatures are written in (whose macros build every `Sig`) and the std module
+/// table it names modules by.
 const TABLE: &[&str] = &[
     "crates/velt_common/src/std_hooks.rs",
     "crates/velt_common/src/std_hooks/string_hooks.rs",
     "crates/velt_common/src/std_hooks/weak_hooks.rs",
+    "crates/velt_common/src/std_hooks/module_hooks.rs",
     "crates/velt_common/src/hook_sig.rs",
     "crates/velt_common/src/std_modules.rs",
 ];
