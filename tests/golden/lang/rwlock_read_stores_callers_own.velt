@@ -51,6 +51,36 @@ function main() {
   }
   console.log("array", n, queue.length, JSON.stringify(queue));
 
+  // Made by a helper closure in the callback: stored by the helper itself, and through a
+  // `const` of the callback's.
+  const o1 = fresh();
+  const made1: (() => number)[] = [];
+  for (let r = 0; r < 2; r++) {
+    a.read((x) => {
+      const mk = () => {
+        made1.push(() => o1.pop()!.length);
+      };
+      mk();
+      o1.push([[r]]);
+    });
+  }
+  for (const f of made1) {
+    n += f();
+  }
+  console.log("inner-store", n, o1.length, JSON.stringify(o1));
+  const o2 = fresh();
+  let l2: (() => number) | null = null;
+  for (let r = 0; r < 2; r++) {
+    a.read((x) => {
+      const mk = () => () => o2.pop()!.length;
+      const made = mk();
+      l2 = made;
+      o2.push([[r]]);
+    });
+    n += l2!();
+  }
+  console.log("via-const", n, o2.length, JSON.stringify(o2));
+
   // The caller's array itself, stored as it is and inside new objects and arrays.
   const own = fresh();
   const holder: number[][][][] = [];
