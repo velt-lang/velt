@@ -5,10 +5,11 @@ use velt_syntax::ast;
 
 use velt_common::{Diagnostic, Span};
 
+use super::accessor_rmw::{block, stmt};
 use super::assign::AssignTarget;
 use super::assign_paths::is_pure_place;
 use crate::body::{FnCx, Want};
-use crate::hir::{self, DefId, TyId, TyKind};
+use crate::hir::{self, DefId, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// `Type.NAME = v` (or `this.NAME = v` in a static method) on a static field: its slot when
@@ -196,6 +197,31 @@ impl FnCx<'_, '_> {
                 | AssignTarget::Dynamic(..)
                 | AssignTarget::Keyed(..),
             ) => {}
+        }
+        // `b[i] ||= v` on an integer array: `if (!b[i]) b[i] = v`, whose store converts an `any`
+        // `v` (element_store.rs).
+        if let Some(AssignTarget::Place(p)) = &checked {
+            if self.logical_element_store(p) {
+                let cond = self.decides(op, target.clone(), span);
+                let write = self.assign(None, target, value, span);
+                let unit = self.cx.ty.unit;
+                let then = self.mk(
+                    H::Block(block(
+                        vec![stmt(hir::StmtKind::Expr(write), span)],
+                        None,
+                        span,
+                    )),
+                    unit,
+                    span,
+                );
+                let els = self.mk(H::Block(block(vec![], None, span)), unit, span);
+                let kind = H::If {
+                    cond: Box::new(cond),
+                    then: Box::new(then),
+                    els: Box::new(els),
+                };
+                return self.mk(kind, unit, span);
+            }
         }
         let rhs = ast::Expr {
             id: ast::NodeId(u32::MAX),

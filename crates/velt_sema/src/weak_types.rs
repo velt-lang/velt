@@ -115,6 +115,8 @@ fn both_if(undefined: bool) -> Nothing {
 pub(crate) enum WeakPlace {
     /// A class's own field (not a static one).
     ClassField,
+    /// An abstract property (`abstract a: weak T | null`, given as abstract accessors).
+    AbstractProperty,
     /// An interface's or an object type's member, a variable, a static field.
     Other,
 }
@@ -190,8 +192,10 @@ impl Ctx<'_> {
         nothing: Nothing,
         place: WeakPlace,
     ) -> Option<&'static str> {
-        if place != WeakPlace::ClassField {
-            return Some("outside a class's own field");
+        match place {
+            WeakPlace::ClassField => {}
+            WeakPlace::AbstractProperty => return Some("on an abstract property"),
+            WeakPlace::Other => return Some("outside a class's own field"),
         }
         if nothing != Nothing::Null {
             return Some("with `undefined`");
@@ -200,6 +204,33 @@ impl Ctx<'_> {
             TyKind::Adt(d, _) if self.adt(d).is_some_and(|a| a.kind == AdtKind::Class) => None,
             _ => Some("to anything but a class instance"),
         }
+    }
+
+    /// The signature of an abstract property's accessor (`abstract a: weak T | null`, which the
+    /// parser gives as an abstract getter and setter) without `weak`, when its type has one: the
+    /// property is a field's declaration, checked as a field's type once (on the getter).
+    pub(crate) fn abstract_weak_sig(&mut self, m: &ast::Method, env: &TyEnv) -> Option<ast::FnSig> {
+        if !(m.is_abstract && m.is_property) {
+            return None;
+        }
+        let sig = &m.decl.sig;
+        let t = match m.is_getter {
+            true => sig.ret.as_ref()?,
+            false => &sig.params.first()?.ty,
+        };
+        if matches!(weak_shape(t), WeakShape::None) {
+            return None;
+        }
+        if m.is_getter {
+            let place = WeakPlace::AbstractProperty;
+            self.resolve_weak_annotation(t, env, place, &mut |cx, t, env| cx.resolve_type(t, env));
+        }
+        let mut out = sig.clone();
+        match m.is_getter {
+            true => out.ret = Some(without_weak(t)),
+            false => out.params[0].ty = without_weak(t),
+        }
+        Some(out)
     }
 
     /// A `weak T` where it may not go: an error naming where it may, and `T` as if written alone.
@@ -222,7 +253,18 @@ impl Ctx<'_> {
     fn weak_target(&mut self, t: TyId) -> Result<(), String> {
         let shown = self.display(t);
         match self.ty.kind(t).clone() {
-            TyKind::Array(_) | TyKind::Map(..) | TyKind::Dyn(..) => Ok(()),
+            // `any` and `unknown` may hold a number or a string; `object` and `Function` are
+            // dynamic values too: only a real interface is a target.
+            TyKind::Dyn(..) => match self.dynamic(t) {
+                None => Ok(()),
+                Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown) => Err(format!(
+                    "`{shown}` may hold a value without an identity (a number, a string)"
+                )),
+                Some(_) => Err(format!(
+                    "`{shown}` is a dynamic value: name the class, object type or interface it refers to"
+                )),
+            },
+            TyKind::Array(_) | TyKind::Map(..) => Ok(()),
             TyKind::Adt(d, _) => match self.adt(d).map(|a| a.kind) {
                 Some(AdtKind::Struct) => Err(format!(
                     "`{shown}` is stored by value (a struct, or an interface of fields only)"

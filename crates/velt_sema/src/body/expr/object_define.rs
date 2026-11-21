@@ -62,7 +62,7 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
-        let Some(ot) = self.trial_type(o) else {
+        let Some(ot) = self.trial_type(o).filter(|t| !self.cx.ty.is_bottom(*t)) else {
             self.check_args_loose(args);
             return self.error_expr(span);
         };

@@ -71,8 +71,13 @@ impl FnCx<'_, '_> {
             _ => self.dynamic_arith(op, cur, v, span),
         };
         let lty = place.ty;
+        // `buf[i] += v` stores what `+` gave (a string, when `v` holds one) as `buf[i] = r`
+        // does: an integer array's element converts it (element_store.rs).
         let r = match self.cx.dynamic(r.ty) {
+            Some(_) if self.converting_store(&place, &r) => self.any_element_value(r, lty),
             Some(_) => self.coerce(r, lty),
+            // `buf[i] -= v`: the number `-` gave wraps as the store converts it (#3453).
+            None if self.logical_element_store(&place) => self.number_element_value(r, lty),
             None => self.coerce_number(r, lty),
         };
         let unit = self.cx.ty.unit;

@@ -303,6 +303,82 @@ describe("MappedFile", () => {
     expect(MappedFile.open("/proc/self/status").length).toBe(0);
   });
 
+  it("dispose drops the MappedFile; arrays handed out before stay readable", () => {
+    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-dispose`;
+    writeFileSync(path, "0123456789abcdef");
+    const m = MappedFile.open(path);
+    const bytes = m.bytes;
+    const words = m.u32s(4, 2);
+    expect(m.getUint32(4)).toBe(0x34353637);
+    m[Symbol.dispose]();
+    expect(bytes[15]).toBe(102);
+    expect(words[1]).toBe(0x62613938);
+  });
+
+  it("gives the mapping back with the MappedFile and the last array over it, not before", () => {
+    if (platform() != "linux") {
+      return;
+    }
+    const name = `velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-maps`;
+    const path = `${tmpdir()}/${name}`;
+    writeFileSync(path, "0123456789abcdef");
+    const mapped = () => readFileSync("/proc/self/maps").includes(name);
+    expect(mapped()).toBe(false);
+    {
+      using m = MappedFile.open(path);
+      expect(mapped()).toBe(true);
+      expect(m.bytes[0]).toBe(48);
+    }
+    expect(mapped()).toBe(false);
+    const m = MappedFile.open(path);
+    let kept: shared<u8[]> | null = m.bytes;
+    expect(m.getUint16(2, true)).toBe(0x3332);
+    m[Symbol.dispose]();
+    expect(mapped()).toBe(true);
+    expect(kept![2]).toBe(50);
+    kept = null;
+    expect(mapped()).toBe(false);
+    // Dropped at the end of the function that opened it.
+    openAndDrop(path);
+    expect(mapped()).toBe(false);
+  });
+
+  it("keeps the mapping for good once a typed array is made", () => {
+    if (platform() != "linux") {
+      return;
+    }
+    const name = `velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-pinned`;
+    const path = `${tmpdir()}/${name}`;
+    writeFileSync(path, "0123456789abcdef");
+    const mapped = () => readFileSync("/proc/self/maps").includes(name);
+    const m = MappedFile.open(path);
+    let words: shared<u32[]> | null = m.u32s(4, 2);
+    m[Symbol.dispose]();
+    expect(words![1]).toBe(0x62613938);
+    words = null;
+    expect(mapped()).toBe(true);
+  });
+
+  it("opens a file more often than the system has mappings, when each is let go", () => {
+    if (platform() != "linux") {
+      return;
+    }
+    // Linux's limit is `vm.max_map_count`: 65,530 on older systems. Current ones allow
+    // 1,048,576, too many to open in a test: the test before this one shows the release there.
+    const limit = Number.parseInt(readFileSync("/proc/sys/vm/max_map_count").trim());
+    if (!(limit <= 300000)) {
+      return;
+    }
+    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-many`;
+    writeFileSync(path, "0123456789abcdef");
+    let sum = 0;
+    for (let i = 0; i < limit + 1000; i++) {
+      using m = MappedFile.open(path);
+      sum += m.bytes[i % 16];
+    }
+    expect(sum > 0).toBe(true);
+  });
+
   // The tests above write their files through the fd API, which Windows does not have: these
   // write text, so they run there too.
   it("maps a text file, whole and in part, on every system", () => {
@@ -368,3 +444,8 @@ describe("MappedFile", () => {
     expect(() => MappedFile.open(tmpdir())).toThrow("EISDIR");
   });
 });
+
+function openAndDrop(path: string) {
+  const m = MappedFile.open(path);
+  expect(m.bytes.length).toBe(16);
+}

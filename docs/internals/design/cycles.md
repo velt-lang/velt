@@ -359,13 +359,15 @@ button.onClick(() => self?.refresh());
   only before a type name or `(` on the same line, so TypeScript that names a type `weak` keeps
   parsing, written without semicolons too (`a: weak` then `b: number` on the next line,
   `x as weak as T`). It is allowed in the type of a class field (a constructor's parameter
-  property included: its parameter takes the type without `weak`), an object type or interface
+  property included: its parameter takes the type without `weak`; and an abstract property,
+  whose getter and setter do), an object type or interface
   member, and a `let`, `const` or `var` (which Velt reads as `let`); anywhere else (parameters,
   results, elements, type arguments) it is an error naming the places it may go.
 - **Typing.** The target is a type whose values are objects with an identity: a class, an object
   type, an interface value (an interface with methods: a reference to an object and its table,
   which the weak field keeps beside the slot), an array, a map or set. A struct, an interface of
-  fields only (stored by value) and a type parameter are not. The written type must include
+  fields only (stored by value), a type parameter, and the dynamic types `any`, `unknown` (which
+  may hold a number or a string) and `object` are not. The written type must include
   `null`: `parent: weak Node` is an error with a fix-it to `weak Node | null`. A read has the
   type `T | null` and yields a counted reference; a write takes `T | null`. Sema narrows nothing
   through a weak field, since the target may be gone between two reads: the "possibly null" error
