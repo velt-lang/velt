@@ -258,6 +258,17 @@ impl FnLower<'_, '_> {
         if unpack {
             return self.any_unpack(v, cty, ty);
         }
+        // A program running no async code holds no promise, and can't build the table of one
+        // (its glue is the executor's): a union's promise member, which sema boxes in its own arm
+        // (`(r as any)` of a `Later | Promise<number>`), never comes (any_member.rs).
+        if matches!(self.cx.kind(cty), TyKind::Promise(..)) && !self.cx.executor_loaded() {
+            self.panic_msg("TypeError: a promise held as `any` without async code");
+            self.terminate(crate::vir::Terminator::Unreachable);
+            let next = self.new_block();
+            self.switch_to(next);
+            let vt = self.cx.ty(ty);
+            return self.zero_value(vt);
+        }
         self.value_to_dyn(v, cty, ty, impl_index)
     }
 

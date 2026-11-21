@@ -500,6 +500,17 @@ impl FnLower<'_, '_> {
             }
             return self.own_value(v, ty);
         }
+        // A program running no async code holds no promise, and can't build the table of one
+        // that the unboxing compares with (its glue is the executor's): a union's promise member
+        // (`View | Promise<View>`) never comes (any_member.rs boxes none either).
+        if matches!(self.cx.kind(ty), TyKind::Promise(..)) && !self.cx.executor_loaded() {
+            self.panic_msg("TypeError: a promise held as `any` without async code");
+            self.terminate(Terminator::Unreachable);
+            let next = self.new_block();
+            self.switch_to(next);
+            let vt = self.cx.ty(ty);
+            return self.zero_value(vt);
+        }
         let fvt = self.cx.ty(from);
         let p = Place::local(self.copy_to_temp(v, fvt));
         let r = self.any_unbox(&p, from, ty);
