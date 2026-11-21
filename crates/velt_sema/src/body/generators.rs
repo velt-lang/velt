@@ -430,7 +430,8 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// The error for `what` copying a value of type `t`, which holds a weak collection, at `span`
+/// The error for `what` copying a value of type `t`, which holds a weak collection or a `weak`
+/// field, at `span`
 /// ([`FnCx::no_weak_copy`]; also `crate::weak_threads`).
 pub(crate) fn weak_copy_error(
     cx: &mut crate::ctx::Ctx,
@@ -442,8 +443,24 @@ pub(crate) fn weak_copy_error(
     let direct = matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.is_weak_class(*d));
     let it = match direct {
         true => format!("a weak collection (`{tn}`)"),
+        false if cx.holds_weak_field_only(t) => format!("`{tn}`, which holds a `weak` field,"),
         false => format!("`{tn}`, which holds a weak collection,"),
     };
+    // A class with a `weak` field (velt_sema `weak_types`): copying one maps the field to its
+    // target's copy or to `null` once #3119 gets there.
+    let weak_field = matches!(cx.ty.kind(t), TyKind::Adt(d, _)
+        if matches!(&cx.info[d.0 as usize], crate::defs::DefInfo::Adt(a) if a.fields.iter().any(|f| f.weak)));
+    if weak_field && matches!(what, GenCopy::Clone | GenCopy::Task | GenCopy::Shared) {
+        let (verb, why) = match what {
+            GenCopy::Clone => ("copied", "cloning"),
+            GenCopy::Task => ("passed to another task", "passing to another task"),
+            _ => ("shared between threads", "sharing between threads"),
+        };
+        return Diagnostic::error(format!("`{tn}`, which has a `weak` field, cannot be {verb}"), span)
+            .with_note(format!(
+                "a `weak` field refers to its target through the weak core of the task that has the target; {why} a value with one is not implemented yet (#3119)"
+            ));
+    }
     let (msg, note) = match what {
         GenCopy::Clone => (
             format!("{it} cannot be copied"),

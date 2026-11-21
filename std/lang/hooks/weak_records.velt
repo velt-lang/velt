@@ -16,6 +16,7 @@
 import { inline, noInline } from "velt/lang/intrinsics";
 import {
   RC_COUNT,
+  RC_GATED,
   RC_WEAK,
   W,
   alloc,
@@ -112,6 +113,8 @@ export const R_UNEXAMINED: usize = 80;
  * while entries keyed by the object are unexamined: a decrement that leaves the count above it
  * needs nothing more, which `weakRelease` decides with one comparison. A higher hint or
  * `observed` raises it; a lower one leaves it, and `weakRelease` lowers it on its slow path.
+ * Once nonzero it marks the object `RC_GATED` (weak_mem.velt): until then a decrement needs no
+ * look at the record.
  */
 export const R_GATE: usize = 84;
 /** The slot of the object's `weak T` references (weak_slots.velt), or 0. */
@@ -291,7 +294,16 @@ export function setObserved(rec: usize, v: u32): void {
 
 function raise(rec: usize, v: u32): void {
   if (v > ld32(rec + R_GATE)) {
-    st32(rec + R_GATE, v);
+    setGateWord(rec, v);
+  }
+}
+
+/** Stores `R_GATE`; a nonzero one marks the object `RC_GATED` (kept until its record goes). */
+function setGateWord(rec: usize, v: u32): void {
+  st32(rec + R_GATE, v);
+  if (v !== 0) {
+    const w = rcWord(ld(rec + R_OBJ));
+    st64(w, ld64(w) | RC_GATED);
   }
 }
 
@@ -302,11 +314,11 @@ export function unexamined(rec: usize): usize {
 export function setUnexamined(rec: usize, n: usize): void {
   st32(rec + R_UNEXAMINED, n as u32);
   if (n !== 0) {
-    st32(rec + R_GATE, 0xffff_ffff);
+    setGateWord(rec, 0xffff_ffff);
   } else {
     const a = ld32(rec + R_HINT);
     const b = ld32(rec + R_OBSERVED);
-    st32(rec + R_GATE, a > b ? a : b);
+    setGateWord(rec, a > b ? a : b);
   }
 }
 
@@ -318,7 +330,7 @@ export function gate(rec: usize): u64 {
 /** Lowers `R_GATE` to `level` (`max(hint, observed)`) unless an entry keyed by it is unexamined. */
 export function setGate(rec: usize, level: u64): void {
   if (ld32(rec + R_UNEXAMINED) === 0) {
-    st32(rec + R_GATE, level as u32);
+    setGateWord(rec, level as u32);
   }
 }
 

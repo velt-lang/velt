@@ -233,9 +233,12 @@ to programs that have no cycles.
 
 The cycle-capability analysis and the trace glue above are built, and so are `weak T`'s syntax and
 checks (`velt_sema` `weak_types`: where it may go, its target, its `null`), its formatting, its
-`velt doc` TypeScript output and its `--ts-compat` rule (`weak-type`). A well-formed `weak` is
-reported as not implemented yet. Its representation and lowering, the collector, the lint and
-`clone()` of cyclic graphs are accepted design, described here.
+`velt doc` TypeScript output, its `--ts-compat` rule (`weak-type`), its slots in the weak core and
+the lowering of a class's `weak` field whose target is a class (`velt_vir` `weak_fields`). Other
+`weak` references (variables and the closures capturing them, object type and interface members,
+interface, array and map targets, a field declared with `?`) are reported as not implemented yet,
+and so are a transfer or a `clone()` of a value with a `weak` field and a destructuring of one.
+They, the collector, the lint and `clone()` of cyclic graphs are accepted design, described here.
 
 ### The collector
 
@@ -374,9 +377,17 @@ button.onClick(() => self?.refresh());
   more, and keeps it until the target is freed, which sets `slot.target = 0`. A read is inline
   and takes no lock: `s = field; p = s ? s.target : 0; if p { retain p }`. A write gets the new
   target's slot through the `weakSlot(obj)` std hook and gives up the old one with
-  `weakSlotDrop(s)` (`std/lang/hooks/weak_slots.velt`, rt_abi.md "Weak references").
+  `weakSlotDrop(s)` (`std/lang/hooks/weak_slots.velt`, rt_abi.md "Weak references"). The target
+  is weakly held, but a release of it that leaves its count above 0 stays inline: a slot alone
+  gives its record no release gate (`RC_GATED`, rt_abi.md), so a walk up `weak` parents costs a
+  slot load per step more than one up strong parents (`bench/weak_parent_walk.velt`: 1.27 times
+  the instructions of `bench/weak_parent_walk_strong.velt`).
 - **The rest of the language.** A `weak` field is not an edge of the ownership graph and is
-  skipped by trace glue, so `TreeNode` above is not cycle-capable. A closure captures a `weak`
+  skipped by trace glue, so a cycle that only a back reference closes (a connection holding its
+  streams, each referring back to it) is gone once that reference is `weak`. A type that holds
+  values of its own type stays cycle-capable: a weak target is counted (its count word carries
+  the weak flag), and a counted `TreeNode` can be put among its own `children`, which `weak`
+  parents do not change. A closure captures a `weak`
   variable as its slot. A transfer to another task, and `clone()`, map a weak field to the copy
   of its target when the target is part of the copied graph, and to `null` when it is not: the
   copy never refers to an object of another task. A store into a weak field of a value locked by
@@ -412,7 +423,8 @@ other types, and maps `weak` fields as transfers do.
 A collection's pause is proportional to the graph reachable from its roots, not to the heap, and
 only the collecting task waits; it is not bounded by a constant. A large long-lived structure of
 a cycle-capable type (a tree with parent pointers) is traversed whenever one of its objects is a
-root; `weak` parent pointers take the type out of the set, and the lint says where. Every
+root; a back reference made `weak` takes the type out of the set when no other field closes a
+cycle (a stream's connection; a tree's `children` still do), and the lint says where. Every
 `bench/` row is held to the 3% rule by instructions with the collector on: benchmarks measure
 what users run.
 
@@ -429,9 +441,9 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
   address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,
   and the leak check on `tests/golden/lang/const_used_by_its_closures.velt`;
-- `weak T`'s slots in the weak core, and its lowering: field and variable reads and writes, drop
-  glue, trace glue and the cycle analysis skipping weak fields, closure captures, transfers and
-  `clone()`, and the narrowing note;
+- the rest of `weak T`'s lowering (class fields with class targets are done): variables and
+  closure captures, object type and interface members, interface, array and map targets,
+  destructuring, transfers and `clone()`;
 - `clone()` of cyclic graphs, which recurses until the stack overflows on a cycle
   ([#508](https://github.com/velt-lang/velt/issues/508));
 - the `perf/cycle-capable` lint.

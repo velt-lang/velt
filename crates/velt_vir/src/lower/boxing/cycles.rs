@@ -476,7 +476,11 @@ impl Cx<'_> {
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![a, b],
             TyKind::Tuple(es) => es,
             TyKind::Adt(d, args) => {
-                let mut tys = self.part_types(t);
+                // A class's weak fields are no edges (weak_fields.rs).
+                let mut tys = match self.is_class(t) {
+                    true => self.adt_edge_tys(t),
+                    false => self.part_types(t),
+                };
                 // What a standard-library container keeps behind its own pointers; but a weak
                 // collection's entries are the runtime's (the ephemeron edges stand for them),
                 // while its fields and a subclass's are its own.

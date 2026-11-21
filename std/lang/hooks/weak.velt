@@ -17,7 +17,9 @@
 // `weakRelease` removes a dying object from every map and `WeakRef`, and, on a decrement that may
 // leave the object referenced only by its own entries' values (the `raw -> proxy` ephemeron),
 // runs a bounded trial deletion (weak_trial.velt) that frees the cycle when nothing outside
-// refers to it.
+// refers to it. A decrement of an object that has no release gate (`RC_GATED` clear: it is no
+// map's key and on no entry's path back to one, as a `weak T` or `WeakRef` target alone is not)
+// leaves the count above 0 without the lock; the lock is for the decrement that frees it.
 //
 // Lock discipline: no generated code runs under the lock except trace glue, which only reads
 // fields and calls `visit` (weak_graph.velt), and the values' retain glue (`count += 1`). Values
@@ -33,9 +35,11 @@ import * as wm from "./weak_maps";
 import * as wr from "./weak_refs";
 import * as rec from "./weak_records";
 import { examine } from "./weak_examine";
-import { slotDrop, slotFor } from "./weak_slots";
+import { slotDrop, slotFor, slotsLive } from "./weak_slots";
 import { trial } from "./weak_trial";
 import {
+  RC_COUNT,
+  RC_GATED,
   count,
   free,
   ld,
@@ -191,6 +195,21 @@ function untagged(obj: usize): void {
 @noInline
 export function weakRelease(obj: usize): bool {
   untagged(obj);
+  // An object without a release gate (`RC_GATED` clear: no map has it as a key, and no entry's
+  // value refers back to one through it) needs the record only when it is freed: a decrement
+  // above that is the shared path's, without the lock. Its count changes only on the task that
+  // uses it (a gate, set under the lock, is set by that task too).
+  const w = ld64(rcWord(obj));
+  if ((w & RC_GATED) === 0 && (w & RC_COUNT) > 1) {
+    st64(rcWord(obj), w - 1);
+    return false;
+  }
+  return released(obj);
+}
+
+/** [`weakRelease`] past its decrement without the lock. */
+@noInline
+function released(obj: usize): bool {
   const h = enter();
   let r = rec.find(h, obj);
   if (r === 0) {
@@ -415,6 +434,12 @@ export function weakSlotDrop(s: usize): void {
   if (s !== 0) {
     slotDrop(s);
   }
+}
+
+/** The slot blocks alive (tests and leak checks). */
+@noInline
+export function weakSlotsLive(): u64 {
+  return slotsLive();
 }
 
 /** The records of weakly held objects (tests and leak checks). */

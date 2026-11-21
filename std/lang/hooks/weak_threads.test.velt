@@ -18,7 +18,7 @@ import {
   weakRelease,
   weakTracked,
 } from "velt/lang/hooks/weak";
-import { RC_COUNT, RC_WEAK, ld64, st64 } from "velt/lang/hooks/weak_mem";
+import { RC_COUNT, RC_GATED, RC_WEAK, ld64, st64 } from "velt/lang/hooks/weak_mem";
 import {
   count,
   finish,
@@ -202,7 +202,9 @@ describe("internal errors", () => {
       return;
     }
     const obj = plain();
-    st64(obj - 8, ld64(obj - 8) | RC_WEAK); // as corruption would
+    // As corruption would. With a gate, as here, every release looks the record up; without
+    // one, only the last does (a decrement above it is plain).
+    st64(obj - 8, ld64(obj - 8) | RC_WEAK | RC_GATED);
     for (const n of [1, 2]) {
       if (n === 2) {
         retain(obj);

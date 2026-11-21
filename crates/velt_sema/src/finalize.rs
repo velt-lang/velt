@@ -133,6 +133,7 @@ fn iface_def(cx: &mut Ctx, d: DefId) -> InterfaceDef {
                 presence: false,
                 hidden: hidden.contains(&f.name),
                 cell: false,
+                weak: false,
             })
             .collect(),
         methods: i
@@ -287,6 +288,7 @@ fn adt_def(cx: &mut Ctx, d: DefId, memo: &mut FxHashMap<DefId, Vec<Option<hir::E
             presence: crate::anon::has_presence(&cx.ty, a.kind, f),
             hidden: hidden.contains(&f.name),
             cell: cx.cell_field(d, i),
+            weak: f.weak,
         })
         .collect();
     let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some() && !cx.place_struct(d);
