@@ -27,15 +27,21 @@ pub(crate) fn soften_moves(cx: &mut Ctx) {
         let disposed = disposed_places(&mut f);
         let spawned = spawned_promises(cx, &mut f);
         // A `using` variable is disposed at the end of its block: moving it out stays an
-        // error (`crate::moves`) instead of sharing a value about to be disposed.
+        // error (`crate::moves`) instead of sharing a value about to be disposed. A part of it
+        // (`m.bytes`) is shared as any other place's: the variable stays whole for its cleanup,
+        // and the part's value gets another reference (#3433). A narrowed or downcast read of
+        // the variable (`if (m) return m;`, `m!`) is still the variable itself; destructuring
+        // it (`const { bytes } = m`) reads its parts, so it is shared like them.
         let kinds = cx.fn_info(d).local_kinds.clone();
         let using = |e: &Expr| {
-            crate::body::places::place_root(e)
+            whole_local(e)
                 .is_some_and(|l| kinds.get(l.0 as usize) == Some(&crate::body::LocalKind::Using))
         };
+        let parts = destructured_inits(&mut f);
         let mut spans = vec![];
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
-            _ if disposed.contains(&e.span) || (is_moved_place(e) && using(e)) => {}
+            _ if disposed.contains(&e.span) => {}
+            _ if is_moved_place(e) && using(e) && !parts.contains(&e.span) => {}
             _ if spawned.contains(&e.span) => {}
             _ if is_moved_place(e) && cx.is_shared_value(e.ty) => spans.push(e.span),
             E::Closure(c) if !shared_captures(cx, *c).is_empty() => spans.push(e.span),
@@ -43,6 +49,36 @@ pub(crate) fn soften_moves(cx: &mut Ctx) {
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         cx.fn_info_mut(d).soft_moves.extend(spans);
+    }
+}
+
+/// Spans of the initializers of destructuring declarations (`const { a } = x`, `const [a] = x`):
+/// the pattern reads parts of the value, so a `using` variable there stays whole.
+fn destructured_inits(f: &mut crate::hir::FnDef) -> Vec<velt_common::Span> {
+    struct Inits(Vec<velt_common::Span>);
+    impl visit::VisitMut for Inits {
+        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+            if let crate::hir::StmtKind::LetPat { pat, init } = &s.kind {
+                if !matches!(pat.kind, crate::hir::PatKind::Binding(..)) {
+                    self.0.push(init.span);
+                }
+            }
+        }
+    }
+    let mut v = Inits(vec![]);
+    visit::block(&mut f.body.block, &mut v);
+    v.0
+}
+
+/// The local a place reads as a whole: the local itself, narrowed (`UnwrapSome`,
+/// `UnwrapVariant`) or downcast, but not a field or element of it.
+fn whole_local(e: &Expr) -> Option<LocalId> {
+    match &e.kind {
+        E::Local(l, _) => Some(*l),
+        E::UnwrapSome(base, _) | E::UnwrapVariant { expr: base, .. } | E::Downcast(base) => {
+            whole_local(base)
+        }
+        _ => None,
     }
 }
 
