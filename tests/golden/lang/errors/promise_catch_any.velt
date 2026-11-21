@@ -1,0 +1,28 @@
+// A `catch` handler giving `any` is refused: TypeScript types the result `Promise<any>`, which
+// Velt doesn't make yet, and taking the value as the promise's value type would be a checked
+// conversion that fails at run time for the error object or another value.
+async function fail(b: boolean): Promise<number> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return 7;
+}
+
+function fallback(): any {
+  return "text";
+}
+
+async function failU(b: boolean): Promise<number | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return 7;
+}
+
+async function main() {
+  const v = await fail(true).catch((e: any) => e);
+  const w = await failU(true).catch(() => fallback());
+  console.log("a", typeof v, typeof w);
+}
+
+main();

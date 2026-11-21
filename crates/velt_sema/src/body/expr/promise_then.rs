@@ -288,9 +288,19 @@ impl FnCx<'_, '_> {
                 _ => vec![reason],
             };
             let error = self.cx.ty.error;
+            // `p.catch(() => null)` (or `undefined`): the literal is of the promise's value type,
+            // as TypeScript's `Promise<T | null>` infers it, where nothing else would type it.
+            let ret = match (method, super::args::as_arrow(a)) {
+                ("catch", Some(arrow))
+                    if nothing_body(arrow) && self.cx.ty.opt_payload(t).is_some() =>
+                {
+                    t
+                }
+                _ => error,
+            };
             let hint = self.cx.ty.intern(TyKind::FnPtr {
                 params: params.clone(),
-                ret: error,
+                ret,
                 throws: error,
                 rest: false,
             });
@@ -424,7 +434,9 @@ impl FnCx<'_, '_> {
                 };
                 (name, vec![e, *u, g], recv.ty, *u, g)
             }
-            ("catch", [(u, xg)]) if t != *u => {
+            // Not a dynamic value (`(e: any) => e`): TypeScript's `Promise<T | any>` is a
+            // `Promise<any>`, which a checked conversion to `T` would get wrong at run time.
+            ("catch", [(u, xg)]) if t != *u && self.cx.dynamic(*u).is_none() => {
                 // A handler that only throws (`p.catch((e) => { throw e; })`), or that gives a
                 // value of the promise's value type (`undefined` for a `T | undefined`): the
                 // promise's value type, as TypeScript types it (`Promise<T | U>` is `T` when
@@ -469,7 +481,15 @@ impl FnCx<'_, '_> {
                 };
                 (name, vec![t, e, g], recv.ty, t, g)
             }
-            ("catch", [(_, xg)]) => {
+            ("catch", [(u, xg)]) => {
+                if *u != t {
+                    let (a, b) = (self.cx.display(t), self.cx.display(*u));
+                    self.cx.err(
+                        format!("the callback of `catch` must give the promise's value type `{a}`, found `{b}`"),
+                        span,
+                    );
+                    return self.error_expr(span);
+                }
                 let g = xg.unwrap_or(never);
                 let name = if all_async {
                     "promiseCatchAsync"
@@ -530,4 +550,22 @@ impl FnCx<'_, '_> {
         };
         self.mk(kind, ret, span)
     }
+}
+
+/// Is `arrow` (`() => null`, `() => undefined`, without a written result type) a function giving
+/// only a nothing?
+fn nothing_body(arrow: &ast::Expr) -> bool {
+    let ast::ExprKind::Arrow {
+        ret: None,
+        is_async: false,
+        body: ast::ArrowBody::Expr(body),
+        ..
+    } = &arrow.kind
+    else {
+        return false;
+    };
+    matches!(
+        body.kind,
+        ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+    )
 }

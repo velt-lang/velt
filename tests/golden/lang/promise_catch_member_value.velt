@@ -35,3 +35,17 @@ async function main() {
 }
 
 main();
+
+// `() => null` for a `T | null`, written without a result type, as TypeScript infers it.
+async function failN(b: boolean): Promise<number | null> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return 7;
+}
+
+async function nulls() {
+  console.log("a", await failN(true).catch(() => null), "b", await failN(false).catch(() => null));
+}
+
+nulls();
