@@ -35,6 +35,12 @@ export function dropPending(n: usize): void {
   if (w !== 0) {
     m.wakerDrop(w);
   }
+  if (isProxy(n) && !polledHere(n)) {
+    // With one thread at the executor, a proxy its handed holder dropped in that task's poll:
+    // given to its own task, as off its thread (`droppedAway`), whose poll gives it up.
+    handBack(m.ld(n + nd.N_TASK), n);
+    return;
+  }
   nd.release(n);
   if (unreachable(n, 1) || idleProxy(n)) {
     giveUp(m.ld(n + nd.N_TASK), n);
@@ -51,6 +57,18 @@ export function dropPending(n: usize): void {
 @inline("always")
 export function isProxy(n: usize): bool {
   return m.ld(n + nd.N_POLL) === fnAddress(hand.proxyPoll);
+}
+
+/**
+ * Is node `n`'s task the one this thread polls? sched_node.velt `nodeDrop`'s own side is that
+ * task's thread, which with one thread at the executor is every task's: a proxy dropped in
+ * another task's poll (the one its holder was handed to) must not give up its role there, which
+ * would reach the hub from that task (sched_share_drop.velt `release`).
+ */
+@inline("always")
+function polledHere(n: usize): bool {
+  const e = t.here();
+  return e !== 0 && m.ld(e + t.E_CURRENT) === m.ld(n + nd.N_TASK);
 }
 
 /**
@@ -110,6 +128,16 @@ export function droppedAway(n: usize): void {
     // last poll, or the frame's own promise given up there): the own side of `nodeDrop`.
     panic("ICE: a promise on its task's list of owner-only promises is dropped off its task");
   }
+  handBack(task, n);
+}
+
+/**
+ * Gives started node `n`'s dropped owner's reference to its task `task`, on its woken stack, and
+ * wakes the task, which holds a reference of its own meanwhile (`droppedAway`): its poll gives it
+ * up, or frees it, on its own thread.
+ */
+@inline("always")
+function handBack(task: usize, n: usize): void {
   m.inc(task + t.T_REFS);
   nw.give(n);
   lt.releaseAway(task);
