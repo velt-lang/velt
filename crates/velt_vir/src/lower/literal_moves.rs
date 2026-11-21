@@ -11,9 +11,12 @@
 //! Such an operand is read in place and shared instead (a reference of its own) when it is a
 //! string: the local keeps its part and drops it as usual. Otherwise it is lowered after the
 //! operands that follow it, the order the move analysis checks, unless one of them may write
-//! the local (`{ a: b.inner, c: run(() => { b.tag = "x"; ... }) }`): then a reference to an
-//! object is shared too (its type counted), as JavaScript's literal and local refer to one
-//! object, and an inline value is moved where it is.
+//! the local (`{ a: b.inner, c: run(() => { b.tag = "x"; ... }) }`): then the part is shared
+//! too, whatever its kind (#3402): a reference to an object once its type is counted, and a
+//! value (an optional object, a plain object type, a tuple, a function, a union of classes)
+//! through its share glue, as JavaScript's literal and local refer to the same part. Only a
+//! reference to an object whose type is not counted yet is moved where it is (the next pass
+//! counts it).
 
 use rustc_hash::FxHashSet;
 use velt_sema::hir::{self, LocalId, UseMode};
@@ -51,7 +54,7 @@ impl FnLower<'_, '_> {
                     vals.push(unit());
                     continue;
                 }
-                Some(_) if self.shared_object_part(e) => self.consume_shared(e),
+                Some(_) if self.shared_part(e) => self.consume_shared(e),
                 _ => self.consume(e),
             };
             let v = self.hold_owned(v, e.ty, later);
@@ -116,19 +119,26 @@ impl FnLower<'_, '_> {
         matches!(self.cx.kind(ty), hir::TyKind::Str)
     }
 
-    /// Can the part `e` moves be shared when a later operand may write its local? A reference to
-    /// an object: a share is a reference of its own, which the next pass counts (`note_share`)
-    /// when its type is not counted yet; until then the part is moved where it is.
-    fn shared_object_part(&mut self, e: &hir::Expr) -> bool {
+    /// Can the part `e` moves be shared when a later operand may write its local? A value with
+    /// parts of its own (an optional object, a plain object type, a tuple, a union), a function,
+    /// an interface value or a `shared<T>` through its share; a reference to an object as a reference of its
+    /// own, which the next pass counts (`note_share`) when its type is not counted yet (until
+    /// then the part is moved where it is). A plain value is copied as it is moved.
+    fn shared_part(&mut self, e: &hir::Expr) -> bool {
         let ty = self.sub(e.ty);
-        if self.cx.share_kind(ty) != ShareKind::Object {
-            return false;
+        match self.cx.share_kind(ty) {
+            ShareKind::Value | ShareKind::Closure | ShareKind::Dyn | ShareKind::Shared => true,
+            ShareKind::Object => {
+                self.cx.note_share(ty);
+                self.cx.counted(ty)
+            }
+            // A promise has one owner (sema never shares it); a plain value is copied as it is
+            // moved, and a string is `shareable_part`'s.
+            ShareKind::Promise | ShareKind::Plain | ShareKind::Str => false,
         }
-        self.cx.note_share(ty);
-        self.cx.counted(ty)
     }
 
-    /// `e` for a `shareable_part` or a `shared_object_part`: the moved part read in place, then
+    /// `e` for a `shareable_part` or a `shared_part`: the moved part read in place, then
     /// shared. The share is owned by the caller, as `consume` hands over a value: the literal
     /// takes it, and `consume_each` registers it for dropping while later operands may throw.
     fn consume_shared(&mut self, e: &hir::Expr) -> Operand {

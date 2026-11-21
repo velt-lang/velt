@@ -1,0 +1,160 @@
+// check: no leaks
+// Expected output is Node's (v24): `node --experimental-strip-types` on a copy named .ts.
+// A literal that moves a part of a narrowed parameter while a later operand's closure writes the
+// parameter (#3402, after #3399): the literal and the parameter share the part whatever its kind
+// (an array, a Map, an object type assigned in place, an optional class, a tuple, a plain object
+// type, a closure, a union of classes), in object, array, tuple and nested literals and for a
+// narrowed union member. Without the share the closure read an empty or freed part.
+class Inner {
+  v: string;
+  constructor(v: string) {
+    this.v = v;
+  }
+}
+class Other {
+  w: string;
+  constructor(w: string) {
+    this.w = w;
+  }
+}
+function run(f: () => number): number {
+  return f();
+}
+
+type BArr = { xs: string[]; tag: string };
+function arr(b: BArr | null): string {
+  if (b) {
+    const r = { a: b.xs, c: run(() => { b.tag = "c"; return b.xs[0].length; }) };
+    return `${r.a.join(",")}|${r.c}`;
+  }
+  return "none";
+}
+
+type BMap = { m: Map<string, string>; tag: string };
+function map(b: BMap | null): string {
+  if (b) {
+    const r = { a: b.m, c: run(() => { b.tag = "c"; return (b.m.get("k") ?? "").length; }) };
+    return `${r.a.get("k")}|${r.c}`;
+  }
+  return "none";
+}
+
+type Pt = { s: string; n: number };
+type BPt = { p: Pt; tag: string };
+function assignedObj(b: BPt | null): string {
+  if (b) {
+    const r = { a: b.p, c: run(() => { b.tag = "c"; b.p.n = 5; return b.p.s.length; }) };
+    return `${r.a.s}|${r.a.n}|${r.c}`;
+  }
+  return "none";
+}
+
+type Plain = { s: string };
+type BPlain = { q: Plain; tag: string };
+function plainObj(b: BPlain | null): string {
+  if (b) {
+    const r = { a: b.q, c: run(() => { b.tag = "c"; return b.q.s.length; }) };
+    return `${r.a.s}|${r.c}`;
+  }
+  return "none";
+}
+
+type BOpt = { o: Inner | null; tag: string };
+function opt(b: BOpt | null): string {
+  if (b) {
+    const r = { a: b.o, c: run(() => { b.tag = "c"; return b.o ? b.o.v.length : -1; }) };
+    return `${r.a ? r.a.v : "null"}|${r.c}`;
+  }
+  return "none";
+}
+
+type BTup = { t: [string, number]; tag: string };
+function tup(b: BTup | null): string {
+  if (b) {
+    const r = { a: b.t, c: run(() => { b.tag = "c"; return b.t[0].length; }) };
+    return `${r.a[0]}|${r.a[1]}|${r.c}`;
+  }
+  return "none";
+}
+
+type BFn = { f: () => string; tag: string };
+function fn(b: BFn | null): string {
+  if (b) {
+    const r = { a: b.f, c: run(() => { b.tag = "c"; return b.f().length; }) };
+    return `${r.a()}|${r.c}`;
+  }
+  return "none";
+}
+
+type BUn = { u: Inner | Other; tag: string };
+function un(b: BUn | null): string {
+  if (b) {
+    const r = { a: b.u, c: run(() => { b.tag = "c"; const u = b.u; return u instanceof Inner ? u.v.length : u.w.length; }) };
+    const a = r.a;
+    return `${a instanceof Inner ? a.v : a.w}|${r.c}`;
+  }
+  return "none";
+}
+
+type BStrNum = { inner: Inner; tag: string };
+function arrayLit(b: BStrNum | null): string {
+  if (b) {
+    const r: Inner[] = [b.inner, new Inner(`${run(() => { b.tag = "c"; return b.inner.v.length; })}`)];
+    return `${r[0].v}|${r[1].v}`;
+  }
+  return "none";
+}
+
+function tupleLit(b: BStrNum | null): string {
+  if (b) {
+    const r: [Inner, number] = [b.inner, run(() => { b.tag = "c"; return b.inner.v.length; })];
+    return `${r[0].v}|${r[1]}`;
+  }
+  return "none";
+}
+
+function nestedLit(b: BStrNum | null): string {
+  if (b) {
+    const r = { x: { a: b.inner }, c: run(() => { b.tag = "c"; return b.inner.v.length; }) };
+    return `${r.x.a.v}|${r.c}`;
+  }
+  return "none";
+}
+
+type U = { kind: "a"; inner: Inner; tag: string } | { kind: "b"; n: number };
+function member(u: U): string {
+  if (u.kind === "a") {
+    const r = { a: u.inner, c: run(() => { u.tag = "c"; return u.inner.v.length; }) };
+    return `${r.a.v}|${r.c}|${u.tag}`;
+  }
+  return "b";
+}
+
+function twoParts(b: BStrNum | null): string {
+  if (b) {
+    const r = { a: b.inner, t: b.tag, c: run(() => { b.tag = "c2"; return b.inner.v.length + b.tag.length; }) };
+    return `${r.a.v}|${r.t}|${r.c}|${b.tag}`;
+  }
+  return "none";
+}
+
+function inner(i: number): Inner {
+  return new Inner(`inner heap string long enough ${i}`);
+}
+
+for (let i = 0; i < 2; i++) {
+  const s = `fn heap string long enough ${i}`;
+  console.log("arr", arr({ xs: [`arr heap string long enough ${i}`], tag: "t" }));
+  console.log("map", map({ m: new Map([["k", `map heap string long enough ${i}`]]), tag: "t" }));
+  console.log("assignedObj", assignedObj({ p: { s: `pt heap string long enough ${i}`, n: i }, tag: "t" }));
+  console.log("plainObj", plainObj({ q: { s: `plain heap string long enough ${i}` }, tag: "t" }));
+  console.log("opt", opt({ o: inner(i), tag: "t" }));
+  console.log("tup", tup({ t: [`tup heap string long enough ${i}`, i], tag: "t" }));
+  console.log("fn", fn({ f: () => s, tag: "t" }));
+  console.log("un", un({ u: i % 2 == 0 ? inner(i) : new Other(`other heap string long enough ${i}`), tag: "t" }));
+  console.log("arrayLit", arrayLit({ inner: inner(i), tag: "t" }));
+  console.log("tupleLit", tupleLit({ inner: inner(i), tag: "t" }));
+  console.log("nestedLit", nestedLit({ inner: inner(i), tag: "t" }));
+  console.log("member", member({ kind: "a", inner: inner(i), tag: "t" }));
+  console.log("twoParts", twoParts({ inner: inner(i), tag: `tag heap string long enough ${i}` }));
+}
