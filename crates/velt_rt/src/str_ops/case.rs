@@ -1,56 +1,10 @@
-//! Trimming and case mapping: `trim`, `trimStart`, `trimEnd`, `toUpperCase`, `toLowerCase`.
+//! Case mapping: `toUpperCase` and `toLowerCase` of text that is not ASCII (std maps ASCII text
+//! itself, std/lang/string/case.velt, and trims in Velt, std/lang/string/trim.velt; #2198).
 
-use super::{bytes, is_js_whitespace_cp, sub_string, text};
+use super::text;
 use crate::str::velt_rt_str_own;
 use crate::str::wtf8;
 use crate::str::VeltStr;
-
-/// Bytes of JS whitespace at the start of the WTF-8 `t` (a lone surrogate is not whitespace).
-fn trimmed_start(t: &[u8]) -> usize {
-    let mut i = 0;
-    while i < t.len() {
-        let (cp, n) = wtf8::decode_at(t, i);
-        if !is_js_whitespace_cp(cp) {
-            break;
-        }
-        i += n;
-    }
-    i
-}
-
-/// The end of the WTF-8 `t` without its trailing JS whitespace (at least `start`).
-fn trimmed_end(t: &[u8], start: usize) -> usize {
-    let mut end = t.len();
-    while end > start {
-        let at = wtf8::start_before(t, end);
-        if !is_js_whitespace_cp(wtf8::decode_at(t, at).0) {
-            break;
-        }
-        end = at;
-    }
-    end
-}
-
-/// `s.trim()`: strips JS whitespace and line terminators from both ends.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_trim(s: *const VeltStr, out: *mut VeltStr) {
-    let t = bytes(s);
-    let start = trimmed_start(t);
-    out.write(sub_string(s, start, trimmed_end(t, start)));
-}
-
-/// `s.trimStart()`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_trim_start(s: *const VeltStr, out: *mut VeltStr) {
-    let t = bytes(s);
-    out.write(sub_string(s, trimmed_start(t), t.len()));
-}
-
-/// `s.trimEnd()`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_trim_end(s: *const VeltStr, out: *mut VeltStr) {
-    out.write(sub_string(s, 0, trimmed_end(bytes(s), 0)));
-}
 
 /// Case-map `s` with `map` (applied to well-formed text). Lone surrogates have no case and are
 /// kept as they are; they also end a word for the context-dependent rules (final sigma), since

@@ -121,14 +121,6 @@ export function lastingRelease(p: usize): void {
   }
 }
 
-/** Sets the `n` bytes at `p` to 0. */
-export function clear(p: usize, n: usize): void {
-  // SAFETY: `p` holds `n` bytes (the caller's block).
-  unsafe {
-    memset$sched(ptr(p), 0, n);
-  }
-}
-
 /** Copies `n` bytes from `src` to `dst` (which do not overlap). */
 export function copy(dst: usize, src: usize, n: usize): void {
   // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.
@@ -187,6 +179,18 @@ export function load32(a: usize): u32 {
 export function loadRelaxed(a: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicLoad<usize>(a, "relaxed") };
+}
+
+/**
+ * Stores `v` at `a` atomically but unordered: the same instruction as `st`, for a word another
+ * thread reads with an atomic load while this one may write it (no data race).
+ */
+@inline("always")
+export function storeRelaxed(a: usize, v: usize): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressAtomicStore<usize>(a, v, "relaxed");
+  }
 }
 
 @inline("always")
@@ -277,6 +281,13 @@ export function inc(a: usize): usize {
   return unsafe { addressAtomicRmw<usize>(a, "add", 1, "relaxed") };
 }
 
+/** Adds `v` to the word at `a` (wrapping), ordered as `dec`; the word before. */
+@inline("always")
+export function addOrdered(a: usize, v: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { addressAtomicRmw<usize>(a, "add", v, "acqrel") };
+}
+
 /** Takes 1 from the count at `a`; the count before. */
 @inline("always")
 export function dec(a: usize): usize {
@@ -289,6 +300,13 @@ export function dec(a: usize): usize {
 export function or32(a: usize, v: u32): u32 {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<u32>(a, "or", v, "seqcst") };
+}
+
+/** Flips the bits `v` in the `u32` at `a`; the word before. */
+@inline("always")
+export function xor32(a: usize, v: u32): u32 {
+  // SAFETY: as `load`.
+  return unsafe { addressAtomicRmw<u32>(a, "xor", v, "seqcst") };
 }
 
 /** Clears the bits not in `v` in the `u32` at `a`; the word before. */

@@ -376,13 +376,9 @@ fn std_keeps_only_the_gated_code_of_the_target() {
     let ir = emitted(&dir, AES, &x86);
     expect(&x86, &["aesenc"], true, &ir);
     expect(&x86, &["crypto.aese", "crypto.aesmc"], false, &ir);
+    // (CPUID is left: the start-up check's, std/lang/cpu, not the AES check's.)
     let vir = emitted(&dir, AES, &debug);
-    expect(
-        &debug,
-        &["velt_simd_cpuid", "velt_simd_u8x16_aesenc"],
-        false,
-        &vir,
-    );
+    expect(&debug, &["velt_simd_u8x16_aesenc"], false, &vir);
 
     // CRC-32 has a check nested in a check.
     let fold = ["foldX86"];

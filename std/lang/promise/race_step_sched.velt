@@ -1,0 +1,8 @@
+// velt/lang/promise (internal): `#promise-race-step` under the executor in Velt
+// (std/lang/hooks/sched_race.velt), whose race settles a microtask after the input that decides
+// it, as Node settles a combinator in the reaction it queues on that input.
+
+/** Does the race take Node's reaction step itself (`Promise.any`, std/prelude/promise.velt)? */
+export function raceTakesStep(): bool {
+  return true;
+}

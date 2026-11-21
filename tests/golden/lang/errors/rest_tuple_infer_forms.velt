@@ -1,0 +1,18 @@
+// Callbacks whose parameters at a rest typed by a type parameter (`...args: A`) have no tuple
+// form Velt has a type for yet: an optional parameter (`[a?: number]`) and a rest parameter
+// after fixed ones (`[number, ...string[]]`). tsc infers both. Velt reports the callback's
+// parameter, as it does without a type parameter there.
+interface Ctx {
+  id: string;
+}
+
+function resultOf<A extends unknown[], R>(f: (rq: Ctx, ...args: A) => R, fallback: R): R {
+  console.log(typeof f);
+  return fallback;
+}
+
+function main(): void {
+  const a = resultOf((rq: Ctx, n?: number): number => n ?? 0, 0);
+  const b = resultOf((rq: Ctx, n: number, ...more: string[]): number => n + more.length, 0);
+  console.log(a, b);
+}

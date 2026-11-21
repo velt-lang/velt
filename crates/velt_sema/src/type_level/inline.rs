@@ -43,6 +43,13 @@ pub(crate) struct Forms {
     pub(crate) written: rustc_hash::FxHashSet<crate::hir::DefId>,
 }
 
+impl Forms {
+    /// Form `i` as written.
+    pub(crate) fn form_ty(&self, i: u32) -> &ast::TypeExpr {
+        &self.forms[i as usize].ty
+    }
+}
+
 impl Ctx<'_> {
     /// A deferred type as written: `PropsAccessor<TProps>` (`names`: as for `display_in`).
     pub(crate) fn display_op(&self, o: TyOp, args: &[TyId], names: &[String]) -> String {
