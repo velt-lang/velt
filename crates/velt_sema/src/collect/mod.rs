@@ -173,7 +173,7 @@ fn collect_added_in(cx: &mut Ctx, ms: &[usize], unit: Option<bool>) -> Added {
     let mut items = ItemDefs::new();
     // The app's unit is collected as a whole program's is: a type query in a signature that
     // needs a body defers it until collection is done, whether std's stage left bodies allowed
-    // (checked in this process) or not (a unit kept from an earlier check).
+    // (checked in this process) or not (loaded from disk, `crate::units::disk`).
     let app = unit == Some(false);
     if app {
         cx.bodies_ok = false;
