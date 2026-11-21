@@ -1,0 +1,39 @@
+// check: no leaks
+// An object literal that moves a part of a narrowed param (`a: b.inner`) moves it after its
+// later fields are evaluated when they cannot assign `b`: a closure they pass to a call reads
+// `b.inner` again, and must see it in place. A closure that assigns another variable (`k++`)
+// writes only that one, so the move is still deferred.
+
+class Inner {
+  v: string;
+  constructor(v: string) {
+    this.v = v;
+  }
+}
+type Box = { inner: Inner; tag: string };
+
+function run(f: () => number): number {
+  return f();
+}
+
+// The closure only reads `b`.
+function partBorrow(b: Box | null): void {
+  if (b) {
+    const r = { a: b.inner, c: run(() => b.inner.v.length) };
+    console.log("borrow", r.a.v, r.c);
+  }
+}
+
+// The closure also assigns `k`, a variable of its own.
+function partMut(b: Box | null): void {
+  let k = 0;
+  if (b) {
+    const r = { a: b.inner, c: run(() => { k++; return b.inner.v.length; }) };
+    console.log("mut", r.a.v, r.c, k);
+  }
+}
+
+for (let i = 0; i < 3; i++) {
+  partBorrow({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
+  partMut({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
+}

@@ -1,0 +1,82 @@
+// velt/lang/cpu (internal): the arm64 features of this CPU on macOS (`#cpu-arm`'s darwin variant,
+// std/imports.velt), as the feature word's arm64 bits: one `hw.optional` sysctl per feature (1
+// where the CPU has it, absent on an older CPU or an Intel Mac). Called on arm64 only.
+
+import { addressLoad, addressStore, noInline, strDataAddress } from "velt/lang/intrinsics";
+
+// Addresses, not velt/ffi's `Out` boxes or the arrays and `CString` velt/os has (the same C
+// types): the start-up check allocates nothing on the heap (an `Out` is a heap box per call), and
+// arrays and `CString` in code every program runs would bring their helpers into every program.
+declare c("c") function sysctlbyname(
+  name: usize,
+  old: usize,
+  oldLen: usize,
+  newValue: usize,
+  newLen: usize,
+): i32;
+declare c("c") function mmap(
+  addr: usize,
+  len: usize,
+  prot: i32,
+  flags: i32,
+  fd: i32,
+  offset: i64,
+): usize;
+declare c("c") function munmap(addr: usize, len: usize): i32;
+
+// `PROT_READ | PROT_WRITE`, `MAP_PRIVATE | MAP_ANON` on macOS, and `MAP_FAILED`.
+const PROT_RW: i32 = 3;
+const MAP_PRIVATE_ANON: i32 = 0x1002;
+const MAP_FAILED: usize = 0xffffffffffffffff;
+
+// Whether the `int` sysctl `name` (a literal ending in `\0`) is 1, asked with the `int` at
+// `words` and its length (a `size_t`: 64 bits on arm64) at `words + 8`.
+@noInline
+function on(words: usize, name: string): bool {
+  // SAFETY: `words` is the page `detectArm` mapped, 16 bytes of it used here.
+  unsafe {
+    addressStore<i32>(words, 0);
+    addressStore<u64>(words + 8, 4);
+  }
+  const r =
+    // SAFETY: a NUL-terminated name; room for one `int` at `words`, which the length at
+    // `words + 8` says; no new value.
+    unsafe { sysctlbyname(strDataAddress(name), words, words + 8, 0, 0) };
+  // SAFETY: as above.
+  const len = unsafe { addressLoad<u64>(words + 8) };
+  // SAFETY: as above.
+  const value = unsafe { addressLoad<i32>(words) };
+  return r === 0 && len === 4 && value === 1;
+}
+
+// The word bit `b` where `yes`.
+function flag(yes: bool, b: u64): u64 {
+  return yes ? (1 as u64) << b : 0;
+}
+
+/** This CPU's feature word arm64 bits. */
+export function detectArm(): u64 {
+  // Where the sysctls write: a page of its own, not the heap, so the program's heap is its own
+  // from its first statement and no static (an `Atomic`, which brings velt/sync/epoch and the
+  // printing it reaches into every program) is needed. No page: no feature.
+  // SAFETY: an anonymous private mapping, unmapped below.
+  const w = unsafe { mmap(0, 16, PROT_RW, MAP_PRIVATE_ANON, -1, 0) };
+  if (w === MAP_FAILED || w === 0) {
+    return 0;
+  }
+  const found =
+    flag(on(w, "hw.optional.arm.FEAT_DotProd\0"), 32) |
+    flag(on(w, "hw.optional.arm.FEAT_SHA256\0"), 33) |
+    flag(on(w, "hw.optional.arm.FEAT_PMULL\0"), 34) |
+    flag(on(w, "hw.optional.armv8_crc32\0"), 35) |
+    flag(on(w, "hw.optional.arm.FEAT_SHA3\0") && on(w, "hw.optional.arm.FEAT_SHA512\0"), 36) |
+    flag(on(w, "hw.optional.arm.FEAT_FP16\0"), 37) |
+    flag(on(w, "hw.optional.arm.FEAT_I8MM\0"), 38) |
+    flag(on(w, "hw.optional.arm.FEAT_BF16\0"), 39) |
+    flag(on(w, "hw.optional.arm.FEAT_AES\0"), 40);
+  // SAFETY: the page mapped above, used no more.
+  unsafe {
+    munmap(w, 16);
+  }
+  return found;
+}
