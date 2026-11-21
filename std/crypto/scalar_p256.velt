@@ -2,7 +2,8 @@
 // in the Montgomery domain, with the textbook interleaved reduction (CIOS, the multiplier from
 // -n^-1 mod 2^64, since n has no special form). Carries are `(a < b) as u64` and the final
 // subtraction of n is a masked select, so multiplication is constant time; `invert` runs a
-// fixed 4-bit window over the public exponent n - 2.
+// fixed 4-bit window over the public exponent n - 2, and `invertPublic`, for public values only
+// (verification), follows its input's bits.
 //
 // Registers of four limbs in one array, like `FeP256` (#2403).
 
@@ -15,6 +16,9 @@ const NINV: u64 = 0xccd1c8aaee00bc4f;
 
 /** 2^512 mod n: multiplying by it enters the Montgomery domain. */
 const R2: u64[] = [0x83244c95be79eea2, 0x4699799c49bd6fa6, 0x2845b2392b6bec59, 0x66e12d94f3d95620];
+
+/** 2^768 mod n: a product with it takes a plain inverse of a domain value back into the domain. */
+const R3: u64[] = [0xac8ebec90b65a624, 0x111f28ae0c0555c9, 0x2543b9246ba5e93f, 0x503a54e76407be65];
 
 // n - 2, little-endian limbs: the inversion's exponent.
 const NM2: u64[] = [0xf3b9cac2fc63254f, 0xbce6faada7179e84, 0xffffffffffffffff, 0xffffffff00000000];
@@ -31,6 +35,69 @@ function mac(t: u64, a: u64, b: u64, c: u64): [u64, u64] {
 function sbb(a: u64, b: u64, c: u64): [u64, u64] {
   const d = a - b;
   return [d - c, ((a < b) as u64) | ((d < c) as u64)];
+}
+
+// Whether the four limbs of `a` are the number 1.
+function isOne(a: u64[]): bool {
+  return a[0] == 1 && (a[1] | a[2] | a[3]) == 0;
+}
+
+// `a >>= 1`, with `top` (0 or 1) shifted in above its four limbs.
+function halveLimbs(a: u64[], top: u64) {
+  a[0] = (a[0] >> 1) | (a[1] << 63);
+  a[1] = (a[1] >> 1) | (a[2] << 63);
+  a[2] = (a[2] >> 1) | (a[3] << 63);
+  a[3] = (a[3] >> 1) | (top << 63);
+}
+
+// `x = x / 2` mod n: x itself when it is even, else x + n, halved.
+function halveMod(x: u64[]) {
+  let top: u64 = 0;
+  if ((x[0] & 1) == 1) {
+    let c: u64 = 0;
+    for (let i: usize = 0; i < 4; i++) {
+      const m = i == 0 ? N0 : i == 1 ? N1 : i == 2 ? N2 : N3;
+      const s = x[i] + m;
+      const s2 = s + c;
+      c = ((s < m) as u64) | ((s2 < s) as u64);
+      x[i] = s2;
+    }
+    top = c;
+  }
+  halveLimbs(x, top);
+}
+
+// `a -= b` over four limbs; the borrow out.
+function subLimbs(a: u64[], b: u64[]): u64 {
+  let w: u64 = 0;
+  for (let i: usize = 0; i < 4; i++) {
+    [a[i], w] = sbb(a[i], b[i], w);
+  }
+  return w;
+}
+
+// `x = x - y` mod n (both below n).
+function subMod(x: u64[], y: u64[]) {
+  if (subLimbs(x, y) != 0) {
+    let c: u64 = 0;
+    for (let i: usize = 0; i < 4; i++) {
+      const m = i == 0 ? N0 : i == 1 ? N1 : i == 2 ? N2 : N3;
+      const s = x[i] + m;
+      const s2 = s + c;
+      c = ((s < m) as u64) | ((s2 < s) as u64);
+      x[i] = s2;
+    }
+  }
+}
+
+// Whether `a >= b` over four limbs.
+function atLeast(a: u64[], b: u64[]): bool {
+  for (let i: usize = 4; i > 0; i--) {
+    if (a[i - 1] != b[i - 1]) {
+      return a[i - 1] > b[i - 1];
+    }
+  }
+  return true;
 }
 
 /** `n` registers of scalars mod the P-256 order, all zero. */
@@ -160,6 +227,54 @@ export class ScalarP256 {
     }
     this.mul(tmp, a, tmp);
     return [this.r[4 * tmp], this.r[4 * tmp + 1], this.r[4 * tmp + 2], this.r[4 * tmp + 3]];
+  }
+
+  /**
+   * `d = 1 / a` for a public `a` (a signature's s; `d` may be `a`), 0 for 0: the binary extended
+   * Euclidean algorithm, whose steps follow a's bits, a tenth of `invert`'s work. Never for a
+   * secret.
+   */
+  invertPublic(d: usize, a: usize) {
+    // x1 a = u and x2 a = v mod n throughout; u and v only shrink, and one of them reaches 1
+    // (n is prime).
+    const u: u64[] = [this.r[4 * a], this.r[4 * a + 1], this.r[4 * a + 2], this.r[4 * a + 3]];
+    const v: u64[] = [N0, N1, N2, N3];
+    const x1: u64[] = [1, 0, 0, 0];
+    const x2: u64[] = [0, 0, 0, 0];
+    if ((u[0] | u[1] | u[2] | u[3]) == 0) {
+      for (let k: usize = 0; k < 4; k++) {
+        this.r[4 * d + k] = 0;
+      }
+      return;
+    }
+    while (!isOne(u) && !isOne(v)) {
+      while ((u[0] & 1) == 0) {
+        halveLimbs(u, 0);
+        halveMod(x1);
+      }
+      while ((v[0] & 1) == 0) {
+        halveLimbs(v, 0);
+        halveMod(x2);
+      }
+      if (atLeast(u, v)) {
+        subLimbs(u, v);
+        subMod(x1, x2);
+      } else {
+        subLimbs(v, u);
+        subMod(x2, x1);
+      }
+    }
+    // The limbs held a R; their inverse is R^-1 / a, and a product with R^3 makes it R / a.
+    const x = isOne(u) ? x1 : x2;
+    const t = new ScalarP256(2);
+    for (let k: usize = 0; k < 4; k++) {
+      t.r[k] = x[k];
+      t.r[4 + k] = R3[k];
+    }
+    t.mul(0, 0, 1);
+    for (let k: usize = 0; k < 4; k++) {
+      this.r[4 * d + k] = t.r[k];
+    }
   }
 
   /** `d = 1 / a` as a^(n - 2) (`d` not `a`); the exponent is public, so this branches on it. */

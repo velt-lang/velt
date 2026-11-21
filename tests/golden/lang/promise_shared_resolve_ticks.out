@@ -1,0 +1,15 @@
+c 1
+c 2
+captured 1
+c 3
+r 1
+r 2
+then 2
+r 3
+q 2
+waiting
+s 1
+resolved
+s 2
+woken 3
+s 3

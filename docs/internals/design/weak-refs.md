@@ -25,11 +25,13 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
 ([semantics.md](semantics.md) "Which types are counted"). The core adds:
 
 - **A flag in the count word.** Bit 63 (`RC_WEAK`, the sign bit) is set while the object is
-  weakly held: a weak-map key, a `WeakRef` target, or a member of an ephemeron cycle (below).
+  weakly held: a weak-map key, a `WeakRef` target, the target of a `weak T` reference, or a member
+  of an ephemeron cycle (below).
   Counts never get near 2^63, so the bit costs no range, and retain stays `count += 1`.
 - **One side table for the process**, behind a lock, from object address to a record: the maps
-  the object is a key of, the entries whose value graph refers to it, its `WeakRef` slots, and two
-  small counts used by the ephemeron rule (`hint`, `observed`). A weakly held object is used by
+  the object is a key of, the entries whose value graph refers to it, its `WeakRef` slots, the
+  slot of its `weak T` references, and two small counts used by the ephemeron rule (`hint`,
+  `observed`). A weakly held object is used by
   one task at a time (its count is not atomic), but not on one thread: an async task resumes on
   any worker after an `await`, and a `shared` `Mutex` hands its value to whichever task locks it.
   So map ids, `WeakRef` slots and records mean the same on every thread. The lock is taken only
@@ -40,6 +42,10 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
   release glue is 0 (`null`, `undefined`) or a counted object pointer: the compiler boxes strings
   and unions stored as such values. A `WeakSet` is a weak map whose values are plain words. A
   **`WeakRef`** is a slot holding the target's address, cleared when the target is freed.
+- **`weak T` slots** ([cycles.md](cycles.md) "`weak T`"; `weak_slots.velt`): a counted block
+  `[count][target]` per object, shared by every weak field and variable referring to it, so a read
+  needs no lock. The record holds one reference to it from the first weak reference until the
+  object is freed, which sets the target to 0.
 
 ### The core
 

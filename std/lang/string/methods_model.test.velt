@@ -1,0 +1,361 @@
+// velt/lang/string (internal): tests of `split`, `replace`, `replaceAll`, `repeat`, `padStart`,
+// `padEnd` and `trim` against a model on UTF-16 code units, run by `velt test std/`.
+//
+// The methods work on a string's WTF-8 bytes (split.velt, replace.velt, fill.velt, trim.velt);
+// JavaScript defines them on code units. Here random strings of ASCII, other BMP characters,
+// surrogate pairs and lone surrogates go through both: each result must be the model's code
+// units, and the very text those units make when appended one by one (so two halves that meet
+// are their pair's one character). These are the checks velt_rt's property tests made of the
+// Rust the methods replaced (crates/velt_rt/tests/abi/utf16_props.rs).
+import { describe, expect, it } from "velt/test";
+
+/** xorshift64*: small and deterministic. */
+function next(seed: u64[]): u64 {
+  let x = seed[0];
+  x = x ^ (x >> 12);
+  x = x ^ (x << 25);
+  x = x ^ (x >> 27);
+  seed[0] = x;
+  return x.wrappingMul(0x2545f4914f6cdd1d);
+}
+
+function below(seed: u64[], n: usize): usize {
+  return ((next(seed) >> 33) % (n as u64)) as usize;
+}
+
+function pick(seed: u64[], xs: i64[]): i64 {
+  return xs[below(seed, xs.length)];
+}
+
+/** Appends one character of alphabet `a` to `s`: ASCII, BMP, a pair, or a lone surrogate. */
+function pushChar(seed: u64[], a: usize, s: i64[]) {
+  if (a == 0) {
+    s.push(
+      pick(seed, [
+        0x61,
+        0x62,
+        0x63,
+        0x20,
+        0x2c,
+        0x24,
+        0x26,
+        0x27,
+        0x60,
+        0x9,
+        0xa,
+        0x78,
+        0x5a,
+        0x30,
+      ]),
+    );
+  } else if (a == 1) {
+    s.push(
+      pick(seed, [
+        0xe9,
+        0xf6,
+        0xa0,
+        0x20ac,
+        0x65e5,
+        0x672c,
+        0x3000,
+        0xe000,
+        0xff5e,
+        0xfeff,
+        0xfffd,
+      ]),
+    );
+  } else if (a == 2) {
+    const cp = pick(seed, [0x1f600, 0x1f680, 0x10000, 0x10ffff, 0x1d11e]);
+    s.push(0xd800 + ((cp - 0x10000) >> 10));
+    s.push(0xdc00 + ((cp - 0x10000) & 0x3ff));
+  } else {
+    s.push(pick(seed, [0xd83d, 0xde00, 0xd800, 0xdbff, 0xdc00, 0xdfff]));
+  }
+}
+
+/** A random string: mostly one alphabet, sometimes an even mix. */
+function genUnits(seed: u64[]): i64[] {
+  const lengths: i64[] = [0, 1, 2, 3, 15, 16, 17, 22, 23, 24, 31, 32, 33, 64, 65];
+  const len = below(seed, 10) < 7 ? pick(seed, lengths) as usize : below(seed, 120);
+  const main = below(seed, 4);
+  const mixed = below(seed, 10) < 3;
+  const s: i64[] = [];
+  while (s.length < len) {
+    const alphabet = mixed || below(seed, 10) == 0 ? below(seed, 4) : main;
+    pushChar(seed, alphabet, s);
+  }
+  return s;
+}
+
+/** A needle for `s`: often a piece of it, which may cut a pair, else a short random string. */
+function genNeedle(seed: u64[], s: i64[]): i64[] {
+  if (s.length > 0 && below(seed, 10) < 6) {
+    const a = below(seed, s.length + 1);
+    const b = a + below(seed, 4);
+    return s.slice(a as i64, (b < s.length ? b : s.length) as i64);
+  }
+  const n: i64[] = [];
+  const count = below(seed, 3);
+  for (let i: usize = 0; i < count; i++) {
+    const alphabet = below(seed, 4);
+    pushChar(seed, alphabet, n);
+  }
+  return n;
+}
+
+/** The string of the code units `u`, appended one by one. */
+function text(u: i64[]): string {
+  let out = "";
+  for (const c of u) {
+    out += String.fromCharCode(c as f64);
+  }
+  return out;
+}
+
+function unitsOf(s: string): i64[] {
+  const out: i64[] = [];
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    out.push(s.charCodeAt(i));
+  }
+  return out;
+}
+
+function show(u: i64[]): string {
+  let out = "";
+  for (const c of u) {
+    out += c.toString(16) + " ";
+  }
+  return `[${out}]`;
+}
+
+function same(a: i64[], b: i64[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Whether `got` is the text of the units `want`: the units, and the canonical bytes. */
+function is(got: string, want: i64[]): bool {
+  return same(unitsOf(got), want) && got == text(want);
+}
+
+function matchesAt(s: i64[], n: i64[], k: usize): bool {
+  if (k + n.length > s.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < n.length; i++) {
+    if (s[k + i] != n[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function indexOf(s: i64[], n: i64[], from: usize): i64 {
+  for (let k = from; k + n.length <= s.length; k++) {
+    if (matchesAt(s, n, k)) {
+      return k as i64;
+    }
+  }
+  return -1;
+}
+
+function append(out: i64[], s: i64[], a: usize, b: usize) {
+  for (let i = a; i < b; i++) {
+    out.push(s[i]);
+  }
+}
+
+function modelSplit(s: i64[], sep: i64[]): i64[][] {
+  const out: i64[][] = [];
+  if (sep.length == 0) {
+    for (const c of s) {
+      out.push([c]);
+    }
+    return out;
+  }
+  let last: usize = 0;
+  let k: usize = 0;
+  while (k + sep.length <= s.length) {
+    if (matchesAt(s, sep, k)) {
+      out.push(s.slice(last as i64, k as i64));
+      k += sep.length;
+      last = k;
+    } else {
+      k++;
+    }
+  }
+  out.push(s.slice(last as i64));
+  return out;
+}
+
+/** GetSubstitution for a string pattern; `plain`: the replacement is taken as it is. */
+function substitute(out: i64[], to: i64[], s: i64[], pos: usize, matched: usize, plain: bool) {
+  let i: usize = 0;
+  while (i < to.length) {
+    const c: i64 = !plain && to[i] == 0x24 && i + 1 < to.length ? to[i + 1] : 0;
+    if (c == 0x24) {
+      out.push(0x24);
+    } else if (c == 0x26) {
+      append(out, s, pos, pos + matched);
+    } else if (c == 0x60) {
+      append(out, s, 0, pos);
+    } else if (c == 0x27) {
+      append(out, s, pos + matched, s.length);
+    } else {
+      out.push(to[i]);
+      i++;
+      continue;
+    }
+    i += 2;
+  }
+}
+
+function modelReplace(s: i64[], from: i64[], to: i64[], all: bool, plain: bool): i64[] {
+  const out: i64[] = [];
+  let copied: usize = 0;
+  let k = indexOf(s, from, 0);
+  while (k >= 0) {
+    const pos = k as usize;
+    append(out, s, copied, pos);
+    substitute(out, to, s, pos, from.length, plain);
+    copied = pos + from.length;
+    const step = from.length > 0 ? from.length : 1;
+    if (!all || pos + step > s.length) {
+      break;
+    }
+    k = indexOf(s, from, pos + step);
+  }
+  append(out, s, copied, s.length);
+  return out;
+}
+
+function modelPad(s: i64[], target: i64, fill: i64[], atStart: bool): i64[] {
+  const want = target > (s.length as i64) && fill.length > 0 ? (target as usize) - s.length : 0;
+  const pad: i64[] = [];
+  for (let i: usize = 0; i < want; i++) {
+    pad.push(fill[i % fill.length]);
+  }
+  return atStart ? pad.concat(s) : s.concat(pad);
+}
+
+function isSpace(c: i64): bool {
+  return (c >= 9 && c <= 13) ||
+    c == 0x20 ||
+    c == 0xa0 ||
+    c == 0x1680 ||
+    (c >= 0x2000 && c <= 0x200a) ||
+    c == 0x2028 ||
+    c == 0x2029 ||
+    c == 0x202f ||
+    c == 0x205f ||
+    c == 0x3000 ||
+    c == 0xfeff;
+}
+
+function modelTrim(s: i64[], start: bool, end: bool): i64[] {
+  let a: usize = 0;
+  let b = s.length;
+  while (start && a < b && isSpace(s[a])) {
+    a++;
+  }
+  while (end && b > a && isSpace(s[b - 1])) {
+    b--;
+  }
+  return s.slice(a as i64, b as i64);
+}
+
+/** One random check; "" when the method agrees with the model, else what differed. */
+function check(seed: u64[]): string {
+  const s = genUnits(seed);
+  const n = genNeedle(seed, s);
+  const to = genNeedle(seed, s);
+  // Often with one of a replacement's patterns: `$$`, `$&`, `` $` ``, `$'`, or a `$` that is none.
+  if (below(seed, 10) < 4) {
+    to.push(0x24);
+    to.push(pick(seed, [0x24, 0x26, 0x60, 0x27, 0x31]));
+    const alphabet = below(seed, 4);
+    pushChar(seed, alphabet, to);
+  }
+  const st = text(s);
+  const nt = text(n);
+  const tt = text(to);
+  const op = below(seed, 9);
+  const what = `op ${op}: ${show(s)} ${show(n)} ${show(to)}`;
+  if (op == 0) {
+    const got = st.split(nt);
+    const want = modelSplit(s, n);
+    if (got.length != want.length) {
+      return what;
+    }
+    for (let i: usize = 0; i < got.length; i++) {
+      if (!is(got[i], want[i])) {
+        return what;
+      }
+    }
+    const limit = below(seed, want.length + 2);
+    const cut = st.split(nt, limit as f64);
+    if (cut.length != (limit < want.length ? limit : want.length)) {
+      return what;
+    }
+    for (let i: usize = 0; i < cut.length; i++) {
+      if (!is(cut[i], want[i])) {
+        return what;
+      }
+    }
+    return "";
+  }
+  if (op == 1) {
+    return is(st.replace(nt, tt), modelReplace(s, n, to, false, false)) ? "" : what;
+  }
+  if (op == 2) {
+    return is(st.replaceAll(nt, tt), modelReplace(s, n, to, true, false)) ? "" : what;
+  }
+  if (op == 3) {
+    const all = below(seed, 2) == 0;
+    const got = all ? st.replaceAll(nt, () => tt) : st.replace(nt, () => tt);
+    return is(got, modelReplace(s, n, to, all, true)) ? "" : what;
+  }
+  if (op == 4 || op == 5) {
+    const target = (below(seed, s.length + 8) as i64) - 2;
+    const got = op == 4 ? st.padStart(target, nt) : st.padEnd(target, nt);
+    return is(got, modelPad(s, target, n, op == 4)) ? "" : `${what} ${target}`;
+  }
+  if (op == 6) {
+    const k = below(seed, 6);
+    const want: i64[] = [];
+    for (let i: usize = 0; i < k; i++) {
+      append(want, s, 0, s.length);
+    }
+    return is(st.repeat(k as i64), want) ? "" : `${what} ${k}`;
+  }
+  if (op == 7) {
+    const ok =
+      is(st.trim(), modelTrim(s, true, true)) &&
+      is(st.trimStart(), modelTrim(s, true, false)) &&
+      is(st.trimEnd(), modelTrim(s, false, true));
+    return ok ? "" : what;
+  }
+  let chars = 0;
+  let joined = "";
+  for (const c of st) {
+    chars += c.length == 2 || c.length == 1 ? 1 : 1000;
+    joined += c;
+  }
+  return joined == st && [...st].length == chars ? "" : what;
+}
+
+describe("string methods against a model of UTF-16 code units", () => {
+  it("agree on random strings with pairs and lone surrogates", () => {
+    const seed: u64[] = [0x9e3779b97f4a7c15];
+    for (let i = 0; i < 4000; i++) {
+      expect(check(seed)).toBe("");
+    }
+  });
+});
