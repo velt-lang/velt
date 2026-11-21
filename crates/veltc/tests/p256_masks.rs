@@ -111,6 +111,16 @@ fn p256_masks_stay_masks() {
             p256.iter().any(|f| f.contains("N10entryMasks(")),
             "{target}: nothing calls `entryMasks`"
         );
+        // The negation of a negative digit's entry: inlined, its mask is one bit of the secret
+        // window.
+        assert!(
+            named("N8signMask"),
+            "{target}: `signMask` was inlined, so the negation sees its mask is a bit of the window"
+        );
+        assert!(
+            p256.iter().any(|f| f.contains("N8signMask(")),
+            "{target}: nothing calls `signMask`"
+        );
         checked += 1;
     }
     assert!(checked > 0, "clang has none of the targets");
