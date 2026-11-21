@@ -2,7 +2,7 @@
 // of characters it cannot tell apart, which are the automaton's alphabet: worked out once,
 // when the pattern is compiled (assemble.velt).
 
-import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 import { OP_ASSERT, OP_CHAR, OP_MASK, Program } from "velt/text/regex/program";
 
 /** The most classes of characters and instructions an automaton is built for. */
@@ -42,15 +42,21 @@ export function classify(prog: Program): void {
     low |= lo ^ (lo << 1);
     high |= hi ^ ((hi << 1) | (lo >> 63));
     const r = prog.sets[k].ranges;
-    for (let j: usize = 0; j < r.length && cuts.length <= 8 * MAX_CLASSES; j++) {
+    for (let j: usize = 0; j < r.length; j++) {
       const c = r[j] + ((j & 1) as u32);
       if (c > 128) {
         cuts.push(c);
       }
+      // Every cut counts: a long list is made distinct, and one too long for the classes
+      // makes no automaton (a missing cut would put characters the program tells apart in
+      // one class).
+      if (cuts.length > 8 * MAX_CLASSES && !distinct(cuts)) {
+        return;
+      }
     }
   }
-  if (cuts.length > 1) {
-    cuts.sort((x, y) => (x as f64) - (y as f64));
+  if (!distinct(cuts)) {
+    return;
   }
   const starts: u32[] = [];
   const classes: u8[] = arrayWithCapacity(256);
@@ -62,9 +68,7 @@ export function classify(prog: Program): void {
   }
   starts.push(128);
   for (let i: usize = 0; i < cuts.length; i++) {
-    if (cuts[i] != starts[starts.length - 1]) {
-      starts.push(cuts[i]);
-    }
+    starts.push(cuts[i]);
   }
   if (starts.length > MAX_CLASSES) {
     return;
@@ -76,4 +80,20 @@ export function classify(prog: Program): void {
   prog.asciiClass = classes;
   prog.classStarts = starts;
   prog.automaton = true;
+}
+
+/** Sorts `cuts` and keeps each value once: false when more are left than the classes hold. */
+function distinct(cuts: u32[]): bool {
+  if (cuts.length > 1) {
+    cuts.sort((x, y) => (x as f64) - (y as f64));
+  }
+  let n: usize = 0;
+  for (let i: usize = 0; i < cuts.length; i++) {
+    if (n == 0 || cuts[i] != cuts[n - 1]) {
+      cuts[n] = cuts[i];
+      n++;
+    }
+  }
+  arrayTruncate(cuts, n);
+  return n < MAX_CLASSES;
 }

@@ -47,6 +47,9 @@ export class Parser {
   lookaround: u32 = 0;
   /** The set an escape or a class member stood for, when it was no single character. */
   set: CharSet = new CharSet();
+  /** The `v` flag's class member read last may match a string (`\q{ab}`, `\p{RGI_Emoji}`): a
+   * negated class that may is an error. */
+  strings: bool = false;
 
   constructor(source: string, flags: string) {
     this.source = source;

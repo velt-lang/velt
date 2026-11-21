@@ -57,6 +57,30 @@ describe("Automaton", () => {
     expect(ends.forward(m, "x".repeat(400), 400, 0, false, false)).toBe(-1);
   });
 
+  it("works out the classes from every set, however many cuts they have", () => {
+    // A thousand sets of non-ASCII ranges have thousands of cuts, few of them distinct: a cut
+    // left out would put characters the program tells apart in one class.
+    const many = program("(?:" + "[\u00e0-\u00e9]".repeat(1021) + "|x)[\u00f6-\u00f8]");
+    const x = "x".repeat(300);
+    const m = new Search(2);
+    expect(find(many, m, x + "\u00f6", 0, false)).toBe(true);
+    expect(find(many, m, x + "\u00f9", 0, false)).toBe(false);
+    const counted = program("(?:[\u00e0-\u00e9]{1021}|x)[\u00f6-\u00f8]");
+    expect(find(counted, m, x + "\u00f6", 0, false)).toBe(true);
+    expect(find(counted, m, x + "\u00f9", 0, false)).toBe(false);
+    // Too many distinct cuts for the classes: no automaton, and the same answers.
+    let ranges = "";
+    for (let c = 0x100; c < 0x100 + 2 * 300; c += 2) {
+      ranges += String.fromCodePoint(c);
+    }
+    const wide = program("(?:[" + ranges + "]|x)y");
+    expect(wide.automaton).toBe(false);
+    expect(find(wide, m, x + "y", 0, false)).toBe(true);
+    expect(find(wide, m, x + "\u0101y", 0, false)).toBe(false);
+    expect(find(wide, m, x + "\u0102y", 0, false)).toBe(true);
+    expect(find(wide, m, x + "\u0102z", 0, false)).toBe(false);
+  });
+
   it("is none for a program with an assertion", () => {
     expect(program("\\bab").automaton).toBe(false);
     expect(program("a$").automaton).toBe(false);

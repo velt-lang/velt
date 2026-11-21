@@ -176,6 +176,15 @@ function loops() {
     /\p{Lu}/iu.test("a"),
     /[\P{Ll}]/iu.test("a"),
   );
+  // With the `v` flag the set is closed over case before its complement is taken.
+  console.log(
+    /\P{Lu}/iv.test("A"),
+    /\P{Lu}/iv.test("a"),
+    /[^\P{Lu}]/iv.test("a"),
+    /\P{Lt}/iv.test("\u01c5"),
+    /[\P{Lu}\P{Ll}]/iv.test("k"),
+    /[^\P{Lu}a]/iv.test("A"),
+  );
   // Long subjects: the same answers from the matchers that take over there.
   const as = "a".repeat(5000);
   console.log(
@@ -186,6 +195,10 @@ function loops() {
     /([^,]*,)*x/.exec("aa,".repeat(1000) + "x")?.[1],
     /.*.*=.*/.exec("x".repeat(3000) + "=y")?.index,
     ("ab".repeat(2000) + "c").replace(/(?:a|(b))*c/, "[$1]"),
+    new RegExp("(?:" + "[\u00e0-\u00e9]".repeat(1021) + "|x)[\u00f6-\u00f8]").test(
+      "x".repeat(300) + "\u00f6",
+    ),
+    /(?:[\u00e0-\u00e9]{1021}|x)[\u00f6-\u00f8]/.test("x".repeat(300) + "\u00f9"),
   );
 }
 

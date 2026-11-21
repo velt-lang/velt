@@ -15,7 +15,7 @@ const STRING_PROPERTIES: string =
   ",Basic_Emoji,Emoji_Keycap_Sequence,RGI_Emoji_Modifier_Sequence,RGI_Emoji_Flag_Sequence,RGI_Emoji_Tag_Sequence,RGI_Emoji_ZWJ_Sequence,RGI_Emoji,";
 
 /** What `classAtom` and `charEscape` return for a set, left in the parser's `set`. */
-const A_SET: i64 = -1;
+export const A_SET: i64 = -1;
 
 function isDigit(c: i64): bool {
   return c >= 0x30 && c <= 0x39;
@@ -40,8 +40,9 @@ function octal(p: Parser): i64 {
   return v;
 }
 
-/** `\p{…}` or `\P{…}` after its letter `e`, into the parser's `set`. */
-function property(p: Parser, e: i64): void {
+/** `\p{…}` or `\P{…}` after its letter `e`, into the parser's `set`; `inClass` for one inside
+ * `[…]`. */
+function property(p: Parser, e: i64, inClass: bool): void {
   let name = "";
   let value = "";
   let k: usize = 1;
@@ -61,20 +62,32 @@ function property(p: Parser, e: i64): void {
     }
   }
   if (closed && p.sets && e == 0x70 && !inValue && STRING_PROPERTIES.includes("," + name + ",")) {
-    p.fail("Properties of strings are not supported");
+    // A set of strings: not matched (refused at the end), and an error in a negated class
+    // (parse_class_set.velt).
+    p.strings = true;
+    p.at += k;
+    refuse(p, "Properties of strings are not supported");
+    p.set = new CharSet();
+    return;
   }
   const set = closed ? propertySet(name, value, inValue) : null;
   if (set == null) {
-    p.fail("Invalid property name");
+    p.fail(inClass ? "Invalid property name in character class" : "Invalid property name");
   }
   p.at += k;
-  // `\P{…}` is the complement first, and what matches a member of that whatever the case
-  // second (`/\P{Lu}/iu` matches `A`, as `a` is no upper case letter).
+  // With the `u` flag `\P{…}` is the complement first, and what matches a member of that
+  // whatever the case second (`/\P{Lu}/iu` matches `A`, as `a` is no upper case letter). With
+  // the `v` flag the set is closed over case first and the complement taken then
+  // (`/\P{Lu}/iv` matches neither `A` nor `a`).
   set.normalize();
-  if (e == 0x50) {
-    set.negate(maxChar(p));
+  if (p.sets) {
+    finish(p, set, e == 0x50);
+  } else {
+    if (e == 0x50) {
+      set.negate(maxChar(p));
+    }
+    finish(p, set, false);
   }
-  finish(p, set, false);
   p.set = set;
 }
 
@@ -87,7 +100,7 @@ function charEscape(p: Parser, c: i64, inClass: bool): i64 {
     return A_SET;
   }
   if (lower == 0x70 && p.unicode) {
-    property(p, c);
+    property(p, c, inClass);
     return A_SET;
   }
   if (c == 0x66) {
@@ -241,15 +254,13 @@ export function refuse(p: Parser, why: string): Node {
 }
 
 /** With the `v` flag, a class member that starts with `c`, just read: an error when it is one
- * of the characters that flag reserves in a class, as in JavaScript, or set syntax, which is
- * not supported (a nested class, `--`, `&&`, `\q{…}`). */
-function setSyntax(p: Parser, c: i64, first: bool): void {
+ * of the characters that flag reserves in a class, as in JavaScript. */
+function setSyntax(p: Parser, c: i64): void {
   const next = p.peek();
-  if (first && c == 0x26 && next == c) {
+  // An operator where an operand should be (the class's own `&&` and `--` are read by
+  // parse_class_set.velt).
+  if (c == 0x26 && next == c) {
     p.fail("Invalid set operation in character class");
-  }
-  if (c == 0x5b || (c == 0x5c && next == 0x71) || (c == 0x26 && next == c)) {
-    p.fail("Set operations in character classes are not supported");
   }
   // `!! ## $$ %% ** ++ ,, .. :: ;; << == >> ?? @@ ^^ `` ~~` are reserved.
   const doubled =
@@ -275,13 +286,12 @@ function setSyntax(p: Parser, c: i64, first: bool): void {
   }
 }
 
-/** One member of a class, after its `[` (`first`: the first one): a character, or `A_SET` for
- * a class escape. */
-function classAtom(p: Parser, first: bool): i64 {
+/** One member of a class, after its `[`: a character, or `A_SET` for a class escape. */
+export function classAtom(p: Parser): i64 {
   const c = p.peek();
   p.at++;
   if (p.sets) {
-    setSyntax(p, c, first);
+    setSyntax(p, c);
   }
   if (c != 0x5c) {
     return c;
@@ -301,22 +311,18 @@ function classAtom(p: Parser, first: bool): i64 {
   return charEscape(p, e, true);
 }
 
-/** The class after its `[`, up to and including its `]`. */
+/** The class after its `[`, up to and including its `]`, without the `v` flag (with it:
+ * parse_class_set.velt). */
 export function parseClass(p: Parser): Node {
   const negated = p.eat(0x5e);
   const set = new CharSet();
-  let first = true;
   while (!p.eat(0x5d)) {
     if (p.done()) {
       p.fail("Unterminated character class");
     }
-    const a = classAtom(p, first);
-    first = false;
+    const a = classAtom(p);
     if (a == A_SET) {
       set.addSet(p.set);
-    }
-    if (p.sets && p.peek() == 0x2d && p.peekAt(1) == 0x2d) {
-      p.fail("Set operations in character classes are not supported");
     }
     if (p.peek() != 0x2d || p.peekAt(1) == 0x5d || p.peekAt(1) < 0) {
       if (a != A_SET) {
@@ -325,7 +331,7 @@ export function parseClass(p: Parser): Node {
       continue;
     }
     p.at++;
-    const b = classAtom(p, false);
+    const b = classAtom(p);
     if (a != A_SET && b != A_SET) {
       if (a > b) {
         p.fail("Range out of order in character class");

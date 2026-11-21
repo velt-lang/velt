@@ -363,6 +363,115 @@ describe("Parser", () => {
         "v",
         "Invalid regular expression: /[a++]/v: Invalid set operation in character class",
       ],
+      [
+        "[a&&&b]",
+        "v",
+        "Invalid regular expression: /[a&&&b]/v: Invalid character in character class",
+      ],
+      ["[a--]", "v", "Invalid regular expression: /[a--]/v: Invalid character in character class"],
+      [
+        "[^\\p{RGI_Emoji}]",
+        "v",
+        "Invalid regular expression: /[^\\p{RGI_Emoji}]/v: Negated character class may contain strings",
+      ],
+      ["[\\d-]", "v", "Invalid regular expression: /[\\d-]/v: Invalid character class"],
+      [
+        "[\\p{Nope}]",
+        "u",
+        "Invalid regular expression: /[\\p{Nope}]/u: Invalid property name in character class",
+      ],
+      [
+        "[\\P{Nope}]",
+        "u",
+        "Invalid regular expression: /[\\P{Nope}]/u: Invalid property name in character class",
+      ],
+      [
+        "[\\p{Script=Nope}]",
+        "u",
+        "Invalid regular expression: /[\\p{Script=Nope}]/u: Invalid property name in character class",
+      ],
+      [
+        "[\\p{Nope}-]",
+        "v",
+        "Invalid regular expression: /[\\p{Nope}-]/v: Invalid property name in character class",
+      ],
+      [
+        "[\\p{RGI_Emoji}]",
+        "u",
+        "Invalid regular expression: /[\\p{RGI_Emoji}]/u: Invalid property name in character class",
+      ],
+      ["[a&&]", "v", "Invalid regular expression: /[a&&]/v: Invalid character in character class"],
+      [
+        "[a&&b&&&c]",
+        "v",
+        "Invalid regular expression: /[a&&b&&&c]/v: Invalid character in character class",
+      ],
+      [
+        "[a--b--]",
+        "v",
+        "Invalid regular expression: /[a--b--]/v: Invalid character in character class",
+      ],
+      [
+        "[ab&&c]",
+        "v",
+        "Invalid regular expression: /[ab&&c]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a-c&&b]",
+        "v",
+        "Invalid regular expression: /[a-c&&b]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a&&b--c]",
+        "v",
+        "Invalid regular expression: /[a&&b--c]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a--&&b]",
+        "v",
+        "Invalid regular expression: /[a--&&b]/v: Invalid set operation in character class",
+      ],
+      [
+        "[a---b]",
+        "v",
+        "Invalid regular expression: /[a---b]/v: Invalid character in character class",
+      ],
+      ["[a-c-d]", "v", "Invalid regular expression: /[a-c-d]/v: Invalid character class"],
+      ["[a-[b]]", "v", "Invalid regular expression: /[a-[b]]/v: Invalid character class"],
+      ["[[a]-b]", "v", "Invalid regular expression: /[[a]-b]/v: Invalid character class"],
+      ["[\\q{a}-b]", "v", "Invalid regular expression: /[\\q{a}-b]/v: Invalid character class"],
+      ["[z-", "v", "Invalid regular expression: /[z-/v: Unterminated character class"],
+      ["[[\\d]-", "v", "Invalid regular expression: /[[\\d]-/v: Unterminated character class"],
+      [
+        "[^[\\p{RGI_Emoji}]]",
+        "v",
+        "Invalid regular expression: /[^[\\p{RGI_Emoji}]]/v: Negated character class may contain strings",
+      ],
+      [
+        "[[^\\q{ab}]]",
+        "v",
+        "Invalid regular expression: /[[^\\q{ab}]]/v: Negated character class may contain strings",
+      ],
+      [
+        "[^\\q{ab}--\\q{ab}]",
+        "v",
+        "Invalid regular expression: /[^\\q{ab}--\\q{ab}]/v: Negated character class may contain strings",
+      ],
+      [
+        "[^!\\q{ab}(",
+        "v",
+        "Invalid regular expression: /[^!\\q{ab}(/v: Invalid character in character class",
+      ],
+      ["[\\qa]", "v", "Invalid regular expression: /[\\qa]/v: Invalid escape"],
+      [
+        "[\\q{[a]",
+        "v",
+        "Invalid regular expression: /[\\q{[a]/v: Invalid character in character class",
+      ],
+      ["[\\q{\\d}]", "v", "Invalid regular expression: /[\\q{\\d}]/v: Invalid escape"],
+      ["[\\q{ab}", "v", "Invalid regular expression: /[\\q{ab}/v: Unterminated character class"],
+      ["[^\\q{a}]", "v", ""],
+      ["[\\wa-[", "v", "Invalid regular expression: /[\\wa-[/v: Unterminated character class"],
       ["[a&b]", "v", ""],
       ["[^^a]", "v", ""],
       ["[a-z]", "v", ""],
@@ -394,6 +503,10 @@ describe("Parser", () => {
       "Set operations in character classes are not supported",
     );
     expect(errorOf("[a&&b]", "v")).toContain(
+      "Set operations in character classes are not supported",
+    );
+    // A negated class that may match no string: refused, not a syntax error.
+    expect(errorOf("[^[\\q{ab}]&&a]", "v")).toContain(
       "Set operations in character classes are not supported",
     );
     expect(errorOf("[\\q{ab}]", "v")).toContain(

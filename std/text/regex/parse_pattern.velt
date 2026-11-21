@@ -23,6 +23,7 @@ import {
   setNode,
   UNBOUNDED,
 } from "velt/text/regex/node";
+import { parseSetClass } from "velt/text/regex/parse_class_set";
 import { atomEscape, charNode, parseClass, refuse } from "velt/text/regex/parse_escape";
 import { groupName } from "velt/text/regex/parse_name";
 import { Parser } from "velt/text/regex/parser";
@@ -112,7 +113,7 @@ function term(p: Parser): Node {
     return quantified(p, setNode(dotSet(p)));
   }
   if (c == 0x5b) {
-    const set = parseClass(p);
+    const set = p.sets ? parseSetClass(p) : parseClass(p);
     return quantified(p, set);
   }
   if (c == 0x5c) {
