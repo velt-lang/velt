@@ -19,6 +19,11 @@ describe("the Ed25519 probe", () => {
     const signature = ed25519Sign(seed, pub, message);
     // X25519's public key shares the multiplication: in one program with the signer, as here.
     const other = x25519PublicKey(seed);
+    // The end of what ct-counts.py counts (scripts/ct-shim.c).
+    const stop = process.env.VELT_CT_STOP;
+    if (stop != null) {
+      readFileBytesSync(stop);
+    }
     // Nothing is done with the results that depends on their value: memcheck, with the seed
     // marked undefined, would report it (scripts/ct-counts.py --memcheck).
     expect(signature.length + pub.length + other.length).toBe(128);
