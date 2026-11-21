@@ -488,6 +488,12 @@ The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
+velt/arch's instructions are externs too, `velt_arch_<class>_<method>`
+(`velt_arch_sse42_crc32_u64`), declared by `std/arch/x86` and `std/arch/arm` (#3222 step 4) and
+defined by no runtime: `velt_vir::arch` gives each one's row (`SimdCall::Arch`), with its
+feature, its VIR signature (scalars, or `V128` for a 128-bit lane type) and how LLVM computes it.
+Only a function gated on the row's feature calls one (`vir::Function::target`; the verifier
+checks it). LLVM emits it inline; Cranelift, which never runs gated code, gives a zero.
 A 256-bit vector (`f32x8`) is not a VIR type: it is a value of two `V128` halves,
 the low lanes first (32 bytes, 8-byte aligned as a `V128` is; the helpers' loads and stores are
 unaligned), and `velt_simd_f32x8_<op>` (`SimdCall::Wide`, `velt_vir::simd::wide`)
