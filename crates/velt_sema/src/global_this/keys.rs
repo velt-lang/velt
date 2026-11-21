@@ -88,6 +88,10 @@ pub(super) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
     else {
         return None;
     };
+    // `const K = Symbol.for("k")`: the registry's symbol, the same one in every module.
+    if let Some(k) = registry_symbol(init) {
+        return v.ty.is_none().then(|| (n.name.clone(), symbol_key(&k)));
+    }
     let s = string_lit(init)?;
     if !casts_keep(init, &s) {
         return None;
@@ -132,6 +136,33 @@ pub(super) fn string_lit(e: &ast::Expr) -> Option<String> {
         E::Call { args, .. } if is_satisfies(e) => string_lit(&args[0]),
         _ => None,
     }
+}
+
+/// `k` of `Symbol.for("k")`.
+fn registry_symbol(e: &ast::Expr) -> Option<String> {
+    let E::Call { callee, args, .. } = &e.kind else {
+        return None;
+    };
+    let E::Member { object, prop, .. } = &callee.kind else {
+        return None;
+    };
+    let named_symbol = matches!(&object.kind, E::Ident(i) if i.name == "Symbol");
+    match args.as_slice() {
+        [k] if named_symbol && prop.name == "for" => string_lit(k),
+        _ => None,
+    }
+}
+
+/// The key of the property of `globalThis` that `Symbol.for(k)` names. No string key is
+/// spelled with the brackets (a string key's variable is `globalThis.<key>`), so it can't be
+/// mistaken for one in practice, and the registry makes it one symbol for the process.
+pub(super) fn symbol_key(k: &str) -> String {
+    format!("[Symbol.for({k:?})]")
+}
+
+/// Is `key` the key of a symbol ([`symbol_key`])?
+pub(super) fn is_symbol_key(key: &str) -> bool {
+    key.starts_with("[Symbol.for(") && key.ends_with(")]")
 }
 
 /// `any` or `unknown`: an assertion that says nothing about the properties.
