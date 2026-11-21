@@ -575,6 +575,11 @@ impl FnCx<'_, '_> {
                 }
             }
             TyKind::FnPtr { rest: false, .. } => return self.fn_member_test(x, owned, m, span),
+            // The promise member: the value's table is a promise's (#924).
+            TyKind::Promise(..) => {
+                let x = read(self);
+                self.intrinsic(Intrinsic::AnyIsPromise, vec![x], b, span)
+            }
             _ => {
                 let (class, _) = self.cx.class_of(m)?;
                 let arms = vec![

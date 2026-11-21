@@ -78,7 +78,8 @@ impl FnCx<'_, '_> {
         let some = self.pat(P::Some(Box::new(bind)), opt, span);
         let p = self.mk(H::Local(b, UseMode::Move), promise, span);
         self.await_throws(&p);
-        self.f.adopt_stmt = true;
+        // One arm adopts, the other returns a value: still a `return` (as a union holding a
+        // promise is, `await_union_with`), not a statement that only adopts (`adopt_stmt`).
         let adopted = self.adopt(p, ret, span);
         let value = self.mk(H::Local(l, UseMode::Move), unknown, span);
         let value = self.coerce(value, ret);
