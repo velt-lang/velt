@@ -1,0 +1,75 @@
+// velt/lang/symbol (tests): tests of record.velt, run by `velt test std/`: the records
+// `Symbol(description)` makes at run time, read back as the compiler's are.
+import { describe, expect, it } from "velt/test";
+import { Symbol } from "velt/lang/symbol";
+import { addressLoad, strWord2, symbolAddress, symbolStatic } from "velt/lang/intrinsics";
+import { newSymbol, symbolDescribed, symbolDescription } from "velt/lang/symbol/record";
+import { DESCRIBED, RECORD_KEY_AT } from "velt/lang/symbol/registry";
+
+/** A record the compiler emits, as for `const OWN = Symbol("record-test-own")`. */
+const OWN = symbolStatic(901, "record-test-own", true);
+
+function keyWord(s: symbol): u64 {
+  // SAFETY: every symbol is the address of a 32-byte record, its key word at `RECORD_KEY_AT`.
+  return unsafe { addressLoad<u64>(symbolAddress(s) + RECORD_KEY_AT) };
+}
+
+/** A heap string of `n` copies of `part`, made at run time. */
+function heap(part: string, n: i64): string {
+  let s = "";
+  for (let i: i64 = 0; i < n; i++) {
+    s += part;
+  }
+  return s;
+}
+
+describe("Symbol(description)", () => {
+  it("makes a fresh record with the description", () => {
+    const s = Symbol("abc");
+    expect(keyWord(s)).toBe(DESCRIBED);
+    expect(symbolDescribed(s)).toBe(true);
+    expect(symbolDescription(s)).toBe("abc");
+    expect(s.description).toBe("abc");
+    expect(s.toString()).toBe("Symbol(abc)");
+  });
+
+  it("tells Symbol() from Symbol(\"\")", () => {
+    const none = Symbol();
+    const empty = Symbol("");
+    expect(keyWord(none)).toBe(0);
+    expect(none.description).toBe(undefined);
+    expect(none.toString()).toBe("Symbol()");
+    expect(empty.description).toBe("");
+    expect(newSymbol("ignored", false).description).toBe(undefined);
+  });
+
+  it("keeps a heap description after the caller's copy is gone", () => {
+    const made: symbol[] = [];
+    for (let i: i64 = 0; i < 20; i++) {
+      made.push(Symbol(heap(`p${i}-`, 30)));
+    }
+    for (let i: i64 = 0; i < 20; i++) {
+      const d = made[i as usize].description;
+      expect(d).toBe(heap(`p${i}-`, 30));
+      // A heap string (not inline, not static): its record holds a reference of its own.
+      expect(strWord2(made[i as usize].toString()) != 0).toBe(true);
+    }
+  });
+
+  it("keeps text that is not ASCII and a lone surrogate as it was", () => {
+    const d = "päron 日本 😀 " + String.fromCharCode(0xd800) + "!";
+    const s = Symbol(d);
+    expect(s.description).toBe(d);
+    expect(s.description!.length).toBe(d.length);
+    expect(s.description!.charCodeAt(12)).toBe(0xd800);
+  });
+
+  it("is different from every other symbol", () => {
+    expect(Symbol("x") == Symbol("x")).toBe(false);
+  });
+
+  it("reads the compiler's records the same way", () => {
+    expect(symbolDescription(OWN)).toBe("record-test-own");
+    expect(symbolDescribed(OWN)).toBe(true);
+  });
+});

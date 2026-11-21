@@ -1,0 +1,134 @@
+// velt/crypto (internal): the limb loops of `Mont` (std/crypto/mont.velt) where the limbs have
+// no address to run on (#mont-rows; JS hosts): mont_rows_raw.velt's API on the arrays, each
+// access checked. No loop's length and no branch depends on a limb's value.
+
+import { noInline } from "velt/lang/intrinsics";
+
+/** All ones for `bit` 1, 0 for 0; out of line for mont_rows_raw.velt's reason. */
+@noInline
+export function maskOf(bit: u64): u64 {
+  return 0 - bit;
+}
+
+// `r[ro..ro + n] += a[ao..ao + n] * word`; the carry out.
+function addMulRow(r: u64[], ro: usize, a: u64[], ao: usize, n: usize, word: u64): u64 {
+  let c: u64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const x = a[ao + i];
+    let hi = Math.umulh(x, word);
+    const s = x * word + c;
+    hi += (s < c) as u64;
+    const t = s + r[ro + i];
+    hi += (t < s) as u64;
+    r[ro + i] = t;
+    c = hi;
+  }
+  return c;
+}
+
+/** `w[0..2 k] = a[0..k] * b[0..k]`. */
+export function productWhole(w: u64[], a: u64[], b: u64[], k: usize) {
+  for (let i: usize = 0; i < 2 * k; i++) {
+    w[i] = 0;
+  }
+  for (let i: usize = 0; i < k; i++) {
+    w[i + k] = addMulRow(w, i, b, 0, k, a[i]);
+  }
+}
+
+/**
+ * `w[0..2 k] = a[0..k]^2`: each product of two different limbs once, doubled, plus each limb's
+ * square.
+ */
+export function squareWhole(w: u64[], a: u64[], k: usize) {
+  for (let i: usize = 0; i < 2 * k; i++) {
+    w[i] = 0;
+  }
+  for (let i: usize = 0; i + 1 < k; i++) {
+    w[i + k] = addMulRow(w, 2 * i + 1, a, i + 1, k - 1 - i, a[i]);
+  }
+  let shifted: u64 = 0;
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < k; i++) {
+    const x = a[i];
+    const y0 = w[2 * i];
+    const y1 = w[2 * i + 1];
+    const lo = x * x;
+    const s0 = ((y0 << 1) | shifted) + carry;
+    const t0 = s0 + lo;
+    carry = ((s0 < carry) as u64) + ((t0 < lo) as u64);
+    w[2 * i] = t0;
+    const hi = Math.umulh(x, x);
+    const s1 = ((y1 << 1) | (y0 >> 63)) + carry;
+    const t1 = s1 + hi;
+    carry = ((s1 < carry) as u64) + ((t1 < hi) as u64);
+    w[2 * i + 1] = t1;
+    shifted = y1 >> 63;
+  }
+}
+
+// `r[0..k]` = `t[at..at + k]` with `top` above it (a number below 2n), minus n when that is not
+// negative.
+function settle(r: u64[], t: u64[], at: usize, n: u64[], k: usize, top: u64) {
+  let borrow: u64 = 0;
+  for (let i: usize = 0; i < k; i++) {
+    const x = t[at + i];
+    const y = n[i];
+    const d = x - y;
+    r[i] = d - borrow;
+    borrow = ((x < y) as u64) | ((d < borrow) as u64);
+  }
+  const keep = maskOf(borrow & (1 ^ top));
+  for (let i: usize = 0; i < k; i++) {
+    const x = r[i];
+    r[i] = x ^ ((x ^ t[at + i]) & keep);
+  }
+}
+
+/**
+ * `r[0..k] = w[0..2 k] / 2^(64 k)` mod `n[0..k]`, for `w` below n 2^(64 k) and `ninv` =
+ * -n^-1 mod 2^64. `w` is overwritten.
+ */
+export function reduceWhole(r: u64[], w: u64[], n: u64[], k: usize, ninv: u64) {
+  let top: u64 = 0;
+  for (let i: usize = 0; i < k; i++) {
+    const c = addMulRow(w, i, n, 0, k, w[i] * ninv);
+    const s = w[i + k] + c;
+    const s2 = s + top;
+    w[i + k] = s2;
+    top = ((s < c) as u64) + ((s2 < top) as u64);
+  }
+  settle(r, w, k, n, k, top);
+}
+
+/** `r[0..k] = t[0..k + 1]` (below 2n) mod `n[0..k]`. */
+export function storeBelow(r: u64[], t: u64[], n: u64[], k: usize) {
+  settle(r, t, 0, n, k, t[k]);
+}
+
+/**
+ * `regs[d]` = `regs[first + index]`, one of the `count` arrays from `first`, each of k limbs,
+ * read by a masked scan of all of them. `d` is none of them.
+ */
+export function pickMasked(
+  regs: u64[][],
+  d: usize,
+  first: usize,
+  count: usize,
+  index: u64,
+  k: usize,
+) {
+  const r = regs[d];
+  for (let j: usize = 0; j < k; j++) {
+    r[j] = 0;
+  }
+  for (let i: usize = 0; i < count; i++) {
+    const x = (i as u64) ^ index;
+    // All ones when x is 0: the top bit of x | -x is set for every other x.
+    const mask = maskOf(((x | (0 - x)) >> 63) ^ 1);
+    const from = regs[first + i];
+    for (let j: usize = 0; j < k; j++) {
+      r[j] |= from[j] & mask;
+    }
+  }
+}

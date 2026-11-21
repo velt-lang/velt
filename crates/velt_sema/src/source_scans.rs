@@ -56,7 +56,8 @@ pub(crate) struct Found {
     pub null_proto: bool,
     /// Some module reads a `constructor` ([`reads_constructor`]).
     pub ctor_reads: bool,
-    /// Some module defines accessors (`crate::defined_accessors::defines_accessors`).
+    /// Some module defines accessors, or data properties that are not enumerable
+    /// (`crate::defined_accessors::defines_accessors`).
     pub record_accessors: bool,
     /// Some module calls a `throw()` method (`crate::ts_protocol::calls_throw`).
     pub gen_throw: bool,

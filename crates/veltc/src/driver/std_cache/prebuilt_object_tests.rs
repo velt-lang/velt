@@ -95,13 +95,53 @@ fn an_extern_of_shared_state_is_refused() {
 fn a_module_hook_of_the_executor_is_refused() {
     let symbol = velt_vir::mangle::mangle("velt/async/sched_hooks::schedModuleInit");
     let with_body = body(&symbol, Terminator::Goto(BlockId(1)));
-    let err = shares_nothing(&program(vec![with_body], &[], vec![]), &HashSet::new()).unwrap_err();
-    assert!(err.contains("schedModule"), "{err}");
+    let blocks = &[BLOCKS_MODULE][..];
+    for private in [&[][..], blocks] {
+        let p = program(vec![with_body.clone()], &[], vec![]);
+        let err = holds_no_module_state(&p, private).unwrap_err();
+        assert!(err.contains("schedModule"), "{err}");
+    }
     let declared = vir::Function::new(symbol, vec![], Ty::Unit, Linkage::Import);
     assert_eq!(
-        shares_nothing(&program(vec![declared], &[], vec![]), &HashSet::new()),
+        holds_no_module_state(&program(vec![declared], &[], vec![]), &[]),
         Ok(())
     );
+}
+
+/// The blocks of module state are the state of module_blocks.velt's object alone: its functions
+/// are taken in that module's own object (its private list names it), and refused in any other
+/// module's, where they would be a second copy of the blocks' table. A call of the module's entry
+/// points is refused in every object: only a program that reaches module state links theirs.
+#[test]
+fn the_blocks_of_module_state_are_one_module_s_own() {
+    let symbol = velt_vir::mangle::mangle("std/lang/hooks/module_blocks::newBlock");
+    assert!(symbol.contains(BLOCKS_CODE), "{symbol}");
+    let code = || {
+        program(
+            vec![body(&symbol, Terminator::Goto(BlockId(1)))],
+            &[],
+            vec![],
+        )
+    };
+    assert_eq!(holds_no_module_state(&code(), &[BLOCKS_MODULE]), Ok(()));
+    let weak = velt_common::std_hooks::prebuilt::private("lang_hooks_weak");
+    for other in [&[][..], weak] {
+        let err = holds_no_module_state(&code(), other).unwrap_err();
+        assert!(err.contains(BLOCKS_CODE), "{err}");
+    }
+    // The table's own list is what `build` passes for the module.
+    let own = velt_common::std_hooks::prebuilt::private("lang_hooks_module_blocks");
+    assert_eq!(holds_no_module_state(&code(), own), Ok(()));
+    for entry in ["velt_hook_module_state", "velt_hook_module_drop"] {
+        let externs = ["velt_rt_alloc", entry];
+        let calls = || program(vec![body("_V3stdN1f", call(1))], &externs, vec![]);
+        for private in [&[][..], own] {
+            let err = holds_no_module_state(&calls(), private).unwrap_err();
+            assert!(err.contains(entry), "{err}");
+        }
+        let listed = program(vec![body("_V3stdN1f", call(0))], &externs, vec![]);
+        assert_eq!(holds_no_module_state(&listed, &[]), Ok(()));
+    }
 }
 
 /// A static the code names that a program could see or write too is refused: a static atomic,

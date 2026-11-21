@@ -267,7 +267,10 @@ thread_local! {
     /// thread's reads (`velt_rt_lk_kept_again`), by address, until the outermost read ends.
     /// Sound because such an object is never freed, and its address never reused, before then:
     /// the store that kept it holds a reference, and one its parts are kept under holds the
-    /// reference `velt_rt_lk_leave` adds until the reads end.
+    /// reference `velt_rt_lk_leave` adds until the reads end. A `read` callback also records an
+    /// object of its caller's before storing a value made with it (velt_vir callers_own.rs
+    /// `note_callers_own`), only one a variable of the caller's holds that nothing can assign
+    /// during the reads: that variable keeps it alive until they end, stored or not.
     static KEPT: RefCell<std::collections::HashSet<usize>> = RefCell::new(std::collections::HashSet::new());
 }
 

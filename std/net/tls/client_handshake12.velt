@@ -6,8 +6,6 @@
 // verification); the server's Finished is always checked. No resumption and no renegotiation; a
 // CertificateRequest is answered with an empty Certificate (RFC 5246 §7.4.6). It does no I/O.
 
-import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
-import { x25519 } from "velt/crypto/x25519";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
   DECODE_ERROR,
@@ -18,7 +16,14 @@ import {
 } from "velt/net/tls/alert";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
-import { SCHEMES, SECP256R1, X25519 } from "velt/net/tls/client_hello";
+import { SCHEMES, X25519 } from "velt/net/tls/client_hello";
+import {
+  exchangeKey,
+  exchangePublic,
+  exchangeSecret,
+  groupSupported,
+  pointFormOk,
+} from "velt/net/tls/key_exchange";
 import { KeyBlock12, keyBlock12, masterSecret12, verifyData12 } from "velt/net/tls/key_schedule12";
 import { hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { groupName } from "velt/net/tls/server_hello";
@@ -61,7 +66,7 @@ export class ClientHandshake12 {
   private ems: bool;
   private x25519Key: u8[];
   private x25519Public: u8[];
-  private p256Key: u8[] | null;
+  private curveKey: u8[] | null;
   private certificateRequested: bool = false;
   private serverPoint: u8[] | null = null;
   private group: usize = 0;
@@ -88,7 +93,8 @@ export class ClientHandshake12 {
    * The handshake after the ServerHello: `transcript` holds the ClientHello and the ServerHello.
    * `x25519Key` and `x25519Public` are the keys of the ClientHello's X25519 share, used again if
    * the server chooses X25519 (the share was used for nothing else: a server takes one
-   * version); `p256Key` a P-256 key to use instead of a new one (tests), or null.
+   * version); `curveKey` a key to use for secp256r1 or secp384r1 instead of a new one (tests), or
+   * null.
    */
   constructor(
     transcript: u8[],
@@ -98,7 +104,7 @@ export class ClientHandshake12 {
     ems: bool,
     x25519Key: u8[],
     x25519Public: u8[],
-    p256Key: u8[] | null,
+    curveKey: u8[] | null,
   ) {
     this.transcript = transcript;
     this.suite = suite;
@@ -108,7 +114,7 @@ export class ClientHandshake12 {
     this.ems = ems;
     this.x25519Key = x25519Key;
     this.x25519Public = x25519Public;
-    this.p256Key = p256Key;
+    this.curveKey = curveKey;
   }
 
   private add(m: u8[]) {
@@ -208,18 +214,18 @@ export class ClientHandshake12 {
     const s = r.vector(2);
     const signature = s.bytes(s.left());
     r.finish();
-    if (group == X25519) {
-      if (point.length != 32) {
-        throw new TlsFailure(ILLEGAL_PARAMETER, "an X25519 point that is not 32 bytes");
-      }
-    } else if (group == SECP256R1) {
-      if (point.length != 65 || point[0] != 4) {
-        throw new TlsFailure(ILLEGAL_PARAMETER, "a secp256r1 point that is not uncompressed");
-      }
-    } else {
+    if (!groupSupported(group)) {
       throw new TlsFailure(
         ILLEGAL_PARAMETER,
         `the server chose key exchange ${groupName(group)}, which was not offered`,
+      );
+    }
+    if (!pointFormOk(group, point)) {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        group == X25519
+          ? "an X25519 point that is not 32 bytes"
+          : `a ${groupName(group)} point that is not uncompressed`,
       );
     }
     // The scheme must be one offered, of the kind of key the suite says the server has: ECDSA
@@ -248,18 +254,18 @@ export class ClientHandshake12 {
     try {
       if (this.group == X25519) {
         ours = this.x25519Public;
-        shared = x25519(this.x25519Key, point);
+        shared = exchangeSecret(X25519, this.x25519Key, point);
       } else {
-        const k = this.p256Key ?? p256PrivateKey();
-        ours = p256PublicKey(k);
-        shared = p256Ecdh(k, point);
+        const k = this.curveKey ?? exchangeKey(this.group);
+        ours = exchangePublic(this.group, k);
+        shared = exchangeSecret(this.group, k, point);
       }
     } catch (e) {
       throw new TlsFailure(
         ILLEGAL_PARAMETER,
         this.group == X25519
           ? "the server's X25519 point is a small-order point"
-          : "the server's secp256r1 point is not on the curve",
+          : `the server's ${groupName(this.group)} point is not on the curve`,
       );
     }
     const w = new ByteWriter();

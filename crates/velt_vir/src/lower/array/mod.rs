@@ -26,6 +26,7 @@
 
 mod builtins;
 mod ops;
+mod spread_param;
 
 /// The top bit of `cap`: the buffer is not the array's, and the rest of `cap` is the address of
 /// its owner's block (`addressArrayOwned`). A capacity is never that large ([`crate::MAX_ARRAY_LEN`]).
