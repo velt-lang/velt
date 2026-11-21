@@ -1,0 +1,50 @@
+import { currentWorker } from "velt/task";
+
+// A sleep that leaves its first task through module state, not through a hand-over: a task on
+// worker 1 polls it there and keeps it in a module variable, then ends; a task on worker 2, made
+// right after, takes it from the variable and awaits it.
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+let kept: Holder[] = [];
+
+async function first(): Promise<number> {
+  const s = sleep(1);
+  await Promise.race([s, yieldNow()]);
+  kept.push(new Holder(s));
+  return 1;
+}
+
+async function blocker(): Promise<i64> {
+  const until = performance.now() + 3.0;
+  let n = 0;
+  while (performance.now() < until) {
+    n++;
+  }
+  return n;
+}
+
+async function second(): Promise<i64> {
+  const h = kept.pop()!;
+  await h.p;
+  return currentWorker();
+}
+
+async function main() {
+  let on2 = 0;
+  for (let i = 0; i < 150; i++) {
+    await spawn(first(), { worker: 1 });
+    const b = spawn(blocker(), { worker: 1 });
+    const w = spawn(second(), { worker: 2 });
+    await b;
+    if ((await w) == 2) {
+      on2++;
+    }
+  }
+  console.log(`awaited on worker 2: ${on2}`);
+}

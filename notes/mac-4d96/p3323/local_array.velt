@@ -1,0 +1,34 @@
+// No hand-off: a suspended promise held in an array (or alone) and dropped by its own task.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inArray(): Promise<number> {
+  const hs: Holder[] = [];
+  hs.push(new Holder(dead()));
+  await yieldNow();
+  return 1;
+}
+
+async function alone(): Promise<number> {
+  const h = new Holder(dead());
+  await yieldNow();
+  return 1;
+}
+
+async function main() {
+  const which = process.argv.length > 2 ? process.argv[2] : "array";
+  if (which == "array") {
+    console.log(`array ${await spawn(inArray())}`);
+  } else {
+    console.log(`alone ${await spawn(alone())}`);
+  }
+}

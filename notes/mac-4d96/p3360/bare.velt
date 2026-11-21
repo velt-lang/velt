@@ -1,0 +1,28 @@
+// A bare promise resolved into main's promise from a task on worker 1 (the review's p2h shape).
+
+async function soon(n: i64): Promise<number> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function maker(give: (p: Promise<number>) => void): Promise<number> {
+  give(soon(2));
+  for (let y: i64 = 0; y < 6; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 20; r++) {
+    const got = Promise.withResolvers<Promise<number>>();
+    const mk = spawn(maker(got.resolve), { worker: 1 });
+    const p = await got.promise;
+    sum += await p;
+    sum += await mk;
+  }
+  console.log(`done ${sum}`);
+}

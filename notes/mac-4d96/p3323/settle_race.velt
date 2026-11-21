@@ -1,0 +1,43 @@
+// No hand-off to a third task and nothing dropped away: a task on worker 1 settles main's
+// promise with an object that holds a suspended promise, while main's task is being polled
+// continuously (a second promise of main keeps yielding), so main takes the settled value the
+// moment it is there, perhaps before the settling step on worker 1 has let go of it.
+
+const DONE = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function maker(give: (h: Holder) => void): Promise<number> {
+  give(new Holder(dead()));
+  return 1;
+}
+
+// Keeps main's task in its polls until round `r` is over.
+async function busy(r: i64): Promise<number> {
+  while (DONE.load() <= r) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 2000; r++) {
+    const got = Promise.withResolvers<Holder>();
+    const b = busy(r);
+    sum += await spawn(maker(got.resolve), { worker: 1 });
+    const h = await got.promise;
+    DONE.store(r + 1);
+    sum += await b;
+  }
+  console.log(`done ${sum}`);
+}

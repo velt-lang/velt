@@ -1,0 +1,47 @@
+import { currentWorker } from "velt/task";
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+// On worker 1: polls a sleep there (pending in worker 1's timer block), then hands it on and ends.
+async function first(): Promise<Holder> {
+  const s = sleep(1);
+  await Promise.race([s, yieldNow()]);
+  return new Holder(s);
+}
+
+// On worker 1: keeps the worker in one poll past the sleep's deadline, so the request for the
+// sleep waits on its list meanwhile; then the worker is out of work, and its park looks at its
+// timers (the sleep is due by now) before it serves the request.
+async function blocker(): Promise<i64> {
+  const until = performance.now() + 3.0;
+  let n = 0;
+  while (performance.now() < until) {
+    n++;
+  }
+  return n;
+}
+
+// On worker 2: awaits the sleep worker 1's block holds.
+async function second(h: Holder): Promise<i64> {
+  await h.p;
+  return currentWorker();
+}
+
+async function main() {
+  let on2 = 0;
+  for (let i = 0; i < 300; i++) {
+    const h = await spawn(first(), { worker: 1 });
+    const b = spawn(blocker(), { worker: 1 });
+    const w = spawn(second(h), { worker: 2 });
+    await b;
+    if ((await w) == 2) {
+      on2++;
+    }
+  }
+  console.log(`awaited on worker 2: ${on2}`);
+}

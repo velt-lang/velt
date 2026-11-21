@@ -1,0 +1,36 @@
+// A suspended promise handed out of its task through a resolver (not the task's result), then
+// handed to a task on worker 2 and dropped there, while its task goes on and ends.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function maker(give: (h: Holder) => void): Promise<number> {
+  give(new Holder(dead()));
+  for (let y = 0; y < 10; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function dropper(h: Holder): Promise<number> {
+  for (let y = 0; y < 3; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function main() {
+  const got = Promise.withResolvers<Holder>();
+  const mk = spawn(maker(got.resolve), { worker: 1 });
+  const h = await got.promise;
+  const d = spawn(dropper(h), { worker: 2 });
+  console.log(`done ${(await mk) + (await d)}`);
+}

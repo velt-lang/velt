@@ -1,0 +1,38 @@
+const MOVED = new Atomic<i64>(0);
+const GO = new Atomic<i64>(0);
+
+async function task(r: i64, done: (v: i64) => void): Promise<void> {
+  console.log(`task ${r} before`);
+  await yieldNow();
+  // On a spare from here (only a rescue runs this while `main` spins).
+  console.log(`task ${r} after`);
+  await yieldNow();
+  MOVED.store(r + 1);
+  while (GO.load() <= r) {}
+  // Wakes `main` while this poll still runs, then runs on a little.
+  done(r);
+  let x = 0;
+  for (let i = 0; i < 200000; i++) {
+    x += i % 3;
+  }
+  if (x < 0) {
+    console.log("never");
+  }
+}
+
+async function main() {
+  for (let r = 0; r < 5; r++) {
+    const { promise, resolve } = Promise.withResolvers<i64>();
+    const t = spawn(task(r, resolve));
+    await yieldNow();
+    while (MOVED.load() <= r) {}
+    console.log(`main ${r} moved`);
+    await yieldNow();
+    GO.store(r + 1);
+    await promise;
+    console.log(`main ${r} woken`);
+    // The spares go idle and retire; worker 0 becomes lazy again.
+    await sleep(40);
+    await t;
+  }
+}

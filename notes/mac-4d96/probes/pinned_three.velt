@@ -1,0 +1,41 @@
+import { currentWorker } from "velt/task";
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+class Trio {
+  a: Holder;
+  b: Holder;
+  c: Holder;
+  constructor(p: Promise<void>) {
+    this.a = new Holder(p);
+    this.b = new Holder(p);
+    this.c = new Holder(p);
+  }
+}
+
+// On worker 1: polls the sleep there (it is pending in worker 1's timer block), then hands it on.
+async function first(): Promise<Trio> {
+  const s = sleep(20);
+  await Promise.race([s, yieldNow()]);
+  return new Trio(s);
+}
+
+// Three tasks, none on worker 1, await the same sleep: each asks the worker that holds it, while
+// another's request for it may be on its way or just served.
+async function waits(h: Holder): Promise<i64> {
+  await h.p;
+  return currentWorker();
+}
+
+async function main() {
+  const trio = await spawn(first(), { worker: 1 });
+  const a = spawn(waits(trio.a), { worker: 2 });
+  const b = spawn(waits(trio.b), { worker: 2 });
+  const c = spawn(waits(trio.c), { worker: 0 });
+  console.log(`awaited on workers ${await a} ${await b} ${await c}`);
+}

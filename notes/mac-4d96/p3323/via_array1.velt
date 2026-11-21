@@ -1,0 +1,44 @@
+// As via_resolver.velt, with N suspended promises handed out in one array and each dropped by a
+// task of its own on worker 2.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function maker(give: (hs: Holder[]) => void): Promise<number> {
+  const hs: Holder[] = [];
+  for (let j = 0; j < 1; j++) {
+    hs.push(new Holder(dead()));
+  }
+  give(hs);
+  for (let y = 0; y < 10; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function dropper(h: Holder): Promise<number> {
+  for (let y = 0; y < 3; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function main() {
+  const got = Promise.withResolvers<Holder[]>();
+  const mk = spawn(maker(got.resolve), { worker: 1 });
+  const hs = await got.promise;
+  let sum = await mk;
+  while (hs.length > 0) {
+    const h = hs.pop()!;
+    sum += await spawn(dropper(h), { worker: 2 });
+  }
+  console.log(`done ${sum}`);
+}

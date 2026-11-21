@@ -1,0 +1,30 @@
+// #3323: a suspended promise handed to a task on another worker and dropped there, while the
+// task that started it has ended its root.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+// On worker 1: starts the promise (it runs and suspends under this task), then hands it on.
+async function maker(): Promise<Holder> {
+  const p = dead();
+  await yieldNow();
+  return new Holder(p);
+}
+
+// On worker 2: drops what it was given, unawaited.
+async function dropper(h: Holder): Promise<number> {
+  return 1;
+}
+
+async function main() {
+  const h = await spawn(maker(), { worker: 1 });
+  console.log(`dropped on worker 2: ${await spawn(dropper(h), { worker: 2 })}`);
+}

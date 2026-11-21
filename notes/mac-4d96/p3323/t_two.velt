@@ -1,0 +1,49 @@
+// #3323 under contention: a task on worker 1 starts two promises nobody settles, hands one to a
+// task on worker 2 and one to a task on worker 3, and ends its root. The two drop theirs at the
+// same moment (both spin on one flag, released once both are spinning), so one hands its promise
+// to the task while the other is still giving back its own reference: the task may give both up
+// and end in between.
+
+const GO = new Atomic<i64>(0);
+const READY = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+// Drops what it was given once round `r` is released.
+async function dropper(h: Holder, r: i64): Promise<void> {
+  READY.add(1);
+  while (GO.load() <= r) {}
+  DONE.add(1);
+}
+
+async function maker(r: i64): Promise<number> {
+  void spawn(dropper(new Holder(dead()), r), { worker: 2 });
+  void spawn(dropper(new Holder(dead()), r), { worker: 3 });
+  return 1;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 300; r++) {
+    sum += await spawn(maker(r), { worker: 1 });
+    // Both droppers spin before they are released, so they drop at the same moment.
+    while (READY.load() < 2 * (r + 1)) {
+      await yieldNow();
+    }
+    GO.store(r + 1);
+    while (DONE.load() < 2 * (r + 1)) {
+      await yieldNow();
+    }
+  }
+  console.log(`done ${sum} rounds, ${DONE.load()} drops`);
+}

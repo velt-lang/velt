@@ -1,0 +1,34 @@
+import { currentWorker } from "velt/task";
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+async function inner(): Promise<void> {
+  await sleep(20);
+}
+
+// On worker 1: starts a promise whose body sleeps (the sleep is pending in worker 1's timer
+// block, polled by this task through the promise), then hands the promise on.
+async function first(): Promise<i64> {
+  const p = inner();
+  await Promise.race([p, yieldNow()]);
+  // Stays alive (its promise not handed over) while a task on worker 2 drives it.
+  const other = spawn(waits(new Holder(p)), { worker: 2 });
+  await sleep(60);
+  return await other;
+}
+
+// On worker 2: awaits the promise, so polls the sleep inside it, through a context and a waker
+// that still name the task that started it.
+async function waits(h: Holder): Promise<i64> {
+  await h.p;
+  return currentWorker();
+}
+
+async function main() {
+  console.log(`awaited on worker ${await spawn(first(), { worker: 1 })}`);
+}

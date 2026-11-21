@@ -1,0 +1,47 @@
+// #3323 stress, two droppers for one task: a task on worker 1 starts two promises that never
+// settle, hands one to a task on worker 2 and the other to a task on worker 3, and ends its
+// root. Both droppers drop at the same moment (they spin on one flag), so one hands its promise
+// to the task and wakes it while the other is still giving back its reference to the task: the
+// task may give both promises up and end in between.
+
+const GO = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function maker(a: (h: Holder) => void, b: (h: Holder) => void): Promise<number> {
+  const pa = dead();
+  const pb = dead();
+  a(new Holder(pa));
+  b(new Holder(pb));
+  return 1;
+}
+
+// Drops what it was given once round `r` is released.
+async function dropper(h: Holder, r: i64): Promise<number> {
+  while (GO.load() <= r) {}
+  return 1;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 300; r++) {
+    const ga = Promise.withResolvers<Holder>();
+    const gb = Promise.withResolvers<Holder>();
+    sum += await spawn(maker(ga.resolve, gb.resolve), { worker: 1 });
+    const da = spawn(dropper(await ga.promise, r), { worker: 2 });
+    const db = spawn(dropper(await gb.promise, r), { worker: 3 });
+    await sleep(1);
+    GO.store(r + 1);
+    sum += (await da) + (await db);
+  }
+  console.log(`done ${sum}`);
+}

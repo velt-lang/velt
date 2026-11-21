@@ -1,0 +1,83 @@
+// #3323 stress: promises handed to tasks on other workers and dropped or awaited there while the
+// task that drives them is in its own polls (it keeps yielding), suspended or finishing, and
+// some of those tasks then park for ever. Every block is given back.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+// Finishes after `n` turns of its task.
+async function soon(n: i64): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 1: starts promises (some never settle, some finish after a few turns), hands them
+// all on, keeps running for a while, then ends or parks for ever.
+async function maker(i: i64, give: (hs: Holder[]) => void, parks: boolean): Promise<number> {
+  const hs: Holder[] = [];
+  for (let j = 0; j < 8; j++) {
+    hs.push(new Holder(soon((i + j) % 6)));
+  }
+  give(hs);
+  for (let y = 0; y < 10 + (i % 7); y++) {
+    await yieldNow();
+  }
+  if (parks) {
+    return await dead();
+  }
+  return 1;
+}
+
+// Drops what it was given after `wait` turns, unawaited.
+async function dropper(h: Holder, wait: i64): Promise<number> {
+  for (let y = 0; y < wait; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// Awaits what it was given (one that finishes) and drops it.
+async function user(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function main() {
+  let sum = 0;
+  const waits: Promise<number>[] = [];
+  for (let i: i64 = 0; i < 60; i++) {
+    const got = Promise.withResolvers<Holder[]>();
+    const parks = i % 3 == 0;
+    if (parks) {
+      void spawn(maker(i, got.resolve, true), { worker: 1 });
+    } else {
+      waits.push(spawn(maker(i, got.resolve, false), { worker: 1 }));
+    }
+    const hs = await got.promise;
+    let j: i64 = 0;
+    while (hs.length > 0) {
+      const h = hs.pop()!;
+      const w = 2 + (j % 2);
+      // Popped last first: even `j` here is a promise that finishes.
+      if (j % 4 == 0) {
+        waits.push(spawn(user(h), { worker: w }));
+      } else {
+        waits.push(spawn(dropper(h, (i + j) % 9), { worker: w }));
+      }
+      j++;
+    }
+  }
+  while (waits.length > 0) {
+    sum += await waits.pop()!;
+  }
+  console.log(`done ${sum}`);
+}

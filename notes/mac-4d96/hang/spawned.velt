@@ -1,0 +1,19 @@
+async function child(i: i64): Promise<i64> {
+  await sleep(1 + (i % 3));
+  await yieldNow();
+  return i;
+}
+
+async function main() {
+  let total: i64 = 0;
+  for (let r = 0; r < 10; r++) {
+    const hs: Promise<i64>[] = [];
+    for (let i: i64 = 0; i < 500; i++) {
+      hs.push(spawn(child(i)));
+    }
+    for (const v of await Promise.all(hs)) {
+      total += v;
+    }
+  }
+  console.log(`rounds 10, total ${total}`);
+}

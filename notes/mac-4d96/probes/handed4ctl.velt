@@ -1,0 +1,70 @@
+class Gate {
+  stop: Atomic<i64> = new Atomic<i64>(0);
+  fired: Atomic<i64> = new Atomic<i64>(0);
+}
+
+class Holder {
+  p: Promise<void>;
+  constructor(p: Promise<void>) {
+    this.p = p;
+  }
+}
+
+async function busy(gate: shared<Gate>): Promise<void> {
+  while (gate.stop.load() == 0) {
+    let x = 0;
+    for (let i = 0; i < 20000; i++) {
+      x += i % 7;
+    }
+    if (x < 0) {
+      console.log("never");
+    }
+    await yieldNow();
+  }
+}
+
+async function maker(gate: shared<Gate>, i: i64): Promise<Holder> {
+  const s = sleep(5 + (i % 7));
+
+  await Promise.race([s, yieldNow()]);
+  return new Holder(s);
+}
+
+// Anchored by a pending sleep, queued again and again: what offers carry.
+async function anchored(i: i64): Promise<void> {
+  const long = sleep(30 + (i % 5));
+  const short = sleep(1);
+  await Promise.race([long, short]);
+  for (let y = 0; y < 40; y++) {
+    await yieldNow();
+  }
+}
+
+async function user(gate: shared<Gate>, i: i64): Promise<void> {
+  const h = await maker(gate, i);
+  await Promise.race([h.p, yieldNow()]);
+  for (let y = 0; y < 30 + (i % 7); y++) {
+    await yieldNow();
+  }
+  await h.p;
+  gate.fired.add(1);
+}
+
+async function main() {
+  const gate = shared(new Gate());
+  const busyOnes: Promise<void>[] = [];
+  for (let i = 0; i < 8; i++) {
+    busyOnes.push(spawn(busy(gate)));
+  }
+  for (let round = 0; round < 5; round++) {
+    const ps: Promise<void>[] = [];
+    for (let i = 0; i < 200; i++) {
+      ps.push(spawn(user(gate, i)));
+      ps.push(spawn(anchored(i)));
+    }
+    await Promise.all(ps);
+  }
+  gate.stop.store(1);
+  await Promise.all(busyOnes);
+  console.log(`fired ${gate.fired.load()}`);
+}

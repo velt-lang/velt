@@ -1,0 +1,39 @@
+import { currentWorker } from "velt/task";
+
+class Holder {
+  p: Promise<void>;
+  at: f64;
+  constructor(p: Promise<void>, at: f64) {
+    this.p = p;
+    this.at = at;
+  }
+}
+
+// On worker 2: spins until just around the sleep's deadline (a little before to a little after,
+// by round), then awaits the sleep worker 1's block holds. Worker 1 is out of work, asleep until
+// that deadline: the request and the deadline reach it together, so it gives the sleep up
+// pending, due or fired, whichever its timer look made of it first.
+async function second(h: Holder): Promise<i64> {
+  while (performance.now() < h.at) {}
+  await h.p;
+  return currentWorker();
+}
+
+// On worker 1: polls a sleep there, hands it to a task on worker 2 and waits for that task.
+async function first(round: i64): Promise<i64> {
+  const start = performance.now();
+  const s = sleep(2);
+  await Promise.race([s, yieldNow()]);
+  const jitter = ((round % 21) - 10) as f64 * 0.02;
+  return await spawn(second(new Holder(s, start + 4.0 + jitter)), { worker: 2 });
+}
+
+async function main() {
+  let on2 = 0;
+  for (let i = 0; i < 400; i++) {
+    if ((await spawn(first(i), { worker: 1 })) == 2) {
+      on2++;
+    }
+  }
+  console.log(`awaited on worker 2: ${on2}`);
+}

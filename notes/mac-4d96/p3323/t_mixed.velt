@@ -1,0 +1,77 @@
+// #3323 while the starting task keeps running: 400 tasks on worker 1 each start a promise (one
+// that never settles, or one that finishes after a few turns), hand it to a task on worker 2 or 3
+// that drops it or awaits it, keep polling a while, and then end or park for ever; the hand-overs
+// race the starting task's own polls.
+
+const DONE = new Atomic<i64>(0);
+const SUM = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+// Finishes after `n` turns of its task.
+async function soon(n: i64): Promise<number> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// Drops what it was given after `wait` turns, unawaited.
+async function dropper(h: Holder, wait: i64): Promise<void> {
+  for (let y: i64 = 0; y < wait; y++) {
+    await yieldNow();
+  }
+  DONE.add(1);
+}
+
+// Awaits what it was given (one that finishes) and drops it.
+async function user(h: Holder): Promise<void> {
+  SUM.add((await h.p) as i64);
+  DONE.add(1);
+}
+
+async function maker(i: i64): Promise<number> {
+  const finishes = i % 2 == 1;
+  const h = new Holder(finishes ? soon(i % 6) : dead());
+  const w = 2 + (i % 2);
+  if (finishes && i % 4 == 1) {
+    void spawn(user(h), { worker: w });
+  } else {
+    void spawn(dropper(h, i % 9), { worker: w });
+  }
+  for (let y: i64 = 0; y < 4 + (i % 7); y++) {
+    await yieldNow();
+  }
+  if (i % 3 == 0) {
+    return await dead();
+  }
+  return 1;
+}
+
+async function main() {
+  const waits: Promise<number>[] = [];
+  for (let i: i64 = 0; i < 400; i++) {
+    if (i % 3 == 0) {
+      void spawn(maker(i), { worker: 1 });
+    } else {
+      waits.push(spawn(maker(i), { worker: 1 }));
+    }
+  }
+  let ended = 0;
+  while (waits.length > 0) {
+    ended += await waits.pop()!;
+  }
+  while (DONE.load() < 400) {
+    await yieldNow();
+  }
+  console.log(`${ended} ended, ${DONE.load()} handed on, ${SUM.load()} awaited`);
+}

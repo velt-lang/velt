@@ -1,0 +1,47 @@
+// #3323, the second case: a promise handed to a task on another worker finishes there and is
+// freed there, while the task that started it is parked for ever on a promise nobody settles.
+// The promise's reference to its task goes on worker 2, and nothing polls the task again.
+
+const DONE = new Atomic<i64>(0);
+const GOT = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function chain(g: Promise<number>): Promise<number> {
+  return (await g) + 1;
+}
+
+// On worker 2: awaits the chain it was given, and drops it there.
+async function user(h: Holder): Promise<void> {
+  GOT.store((await h.p) as i64);
+  DONE.add(1);
+}
+
+// On worker 1: starts a chain on `main`'s promise, hands it to a task on worker 2, and parks for
+// ever on a promise nobody settles.
+async function maker(open: Promise<number>): Promise<number> {
+  void spawn(user(new Holder(chain(open))), { worker: 2 });
+  return await dead();
+}
+
+async function main() {
+  for (let r: i64 = 0; r < 20; r++) {
+    const gate = Promise.withResolvers<number>();
+    void spawn(maker(gate.promise), { worker: 1 });
+    await yieldNow();
+    gate.resolve(41);
+    while (DONE.load() <= r) {
+      await yieldNow();
+    }
+  }
+  console.log(`the user got ${GOT.load()} in ${DONE.load()} rounds`);
+}

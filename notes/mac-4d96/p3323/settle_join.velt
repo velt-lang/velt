@@ -1,0 +1,39 @@
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+// Finishes after `n` turns of its task.
+async function soon(n: i64): Promise<number> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 1: settles main's promise with an object that holds a promise of this task, and
+// returns. The settling step runs at the task's next poll.
+async function maker(r: i64, give: (h: Holder) => void): Promise<number> {
+  const p = soon(1 + (r % 4));
+  give(new Holder(p));
+  return 1;
+}
+
+// On worker 2: awaits the promise in what it was given.
+async function user(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 300; r++) {
+    const got = Promise.withResolvers<Holder>();
+    sum += await spawn(maker(r, got.resolve), { worker: 1 });
+    // Handed on the moment it is settled: main is awake, and the task on worker 1 may still be
+    // in the step that settled it.
+    sum += await spawn(user(await got.promise), { worker: 2 });
+  }
+  console.log(`done ${sum}`);
+}

@@ -1,0 +1,42 @@
+// #3323's second case: a promise handed to a task on another worker finishes and is freed there,
+// while the task that drives it is parked for ever on a promise only it can run. The node's
+// reference to that task goes on worker 2, and nothing polls the task again.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function chain(g: Promise<number>): Promise<number> {
+  return (await g) + 1;
+}
+
+// On worker 1: starts a chain main settles later, hands it to main, then parks for ever on a
+// promise nobody settles.
+async function maker(open: Promise<number>, give: (h: Holder) => void): Promise<number> {
+  give(new Holder(chain(open)));
+  await yieldNow();
+  return await dead();
+}
+
+// On worker 2: awaits the chain it was given and drops it there.
+async function user(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function main() {
+  const gate = Promise.withResolvers<number>();
+  const got = Promise.withResolvers<Holder>();
+  void spawn(maker(gate.promise, got.resolve), { worker: 1 });
+  const h = await got.promise;
+  const u = spawn(user(h), { worker: 2 });
+  await sleep(2);
+  gate.resolve(41);
+  console.log(`user got ${await u}`);
+}

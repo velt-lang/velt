@@ -1,0 +1,46 @@
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+// Finishes after `n` turns of its task.
+async function soon(n: i64): Promise<number> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 1: settles main's promise with an object that holds a promise of this task, then
+// runs on until that promise has finished.
+async function maker(r: i64, give: (h: Holder) => void): Promise<number> {
+  const p = dead();
+  give(new Holder(p));
+  for (let y: i64 = 0; y < 8; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 2: awaits the promise in what main was given.
+async function user(h: Holder): Promise<number> {
+  return 1;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 200; r++) {
+    const got = Promise.withResolvers<Holder>();
+    const mk = spawn(maker(r, got.resolve), { worker: 1 });
+    const h = await got.promise;
+    sum += await spawn(user(h), { worker: 2 });
+    sum += await mk;
+  }
+  console.log(`done ${sum}`);
+}
