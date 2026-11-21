@@ -28,3 +28,27 @@ const handler = {
 };
 const proxied = new Proxy(target, handler) as CallOptions;
 console.log(describe(proxied));
+
+// `for...in` over a lock-holding value, of a class and of an object type with an optional field
+// left out and given: the same split, with the same conversion in the proxy branch.
+class Req {
+  signal: AbortSignal;
+  name: string;
+  constructor(s: AbortSignal, n: string) {
+    this.signal = s;
+    this.name = n;
+  }
+}
+
+const req = new Req(new AbortController().signal, "b");
+for (const k in req) {
+  console.log("for-in", k);
+}
+const given: CallOptions = { signal: req.signal, headers: {} };
+for (const k in given) {
+  console.log("for-in", k);
+}
+const left: CallOptions = { fresh: false };
+for (const k in left) {
+  console.log("for-in", k);
+}

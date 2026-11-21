@@ -111,7 +111,11 @@ impl FnCx<'_, '_> {
             // conversion to `any` is left out where `o`'s type cannot hold a proxy.
             let read = self.expr(&operand, None, Want::Borrow);
             let cond = self.intrinsic(Intrinsic::IsTypedProxy, vec![read], bool_, obj.span);
+            // A proxy holds none of its type's fields, so it converts even where the type holds
+            // a lock (`FnCx::typed_proxy_branch`).
+            let outer = std::mem::replace(&mut self.typed_proxy_branch, true);
             let then = hooks::proxy_any(ty::Any::of(operand.clone())).check(self, obj.span);
+            self.typed_proxy_branch = outer;
             let any = then.ty;
             let none = syn.expr(E::Lit(ast::Lit::Undefined));
             let els = self.expr(&none, Some(any), Want::Move);

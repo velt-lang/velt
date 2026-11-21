@@ -3,3 +3,8 @@ none true [ 'signal' ]
 has headers
 has headers
 headers
+for-in signal
+for-in name
+for-in signal
+for-in headers
+for-in fresh
