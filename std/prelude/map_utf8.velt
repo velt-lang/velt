@@ -6,7 +6,6 @@ import { sharedValue } from "velt/lang/map/slots";
 import { FIB, POS_MASK } from "velt/lang/map/layout";
 import { utf8KeyEquals, utf8KeyHash } from "velt/lang/map/utf8_key";
 
-
 /**
  * A map with string keys, looked up by the UTF-8 bytes of a key (Velt): a server reading keys
  * from the network finds them without making a string per request. Each method is the one
