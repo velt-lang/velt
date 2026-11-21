@@ -371,7 +371,7 @@ async function main() {
 
 /// Runs of [`BARE_PROMISE`] and [`RECORD_PROMISE`] at each worker count. Both failed every run
 /// before the fix, so a few runs are enough.
-const BARE_RUNS: usize = 3;
+const PROMISE_RUNS: usize = 3;
 
 /// A task on worker 1 settles `main`'s promise with a bare promise of its own task, and with an
 /// object type holding one. `needsTransfer` said a promise has nothing to transfer, so `resolve`
@@ -393,7 +393,7 @@ fn a_promise_settled_from_another_task_reaches_its_awaiter_handed_over() {
     ] {
         let exe = build_std(dir.path(), name, src);
         for threads in ["4", "8"] {
-            for i in 0..BARE_RUNS {
+            for i in 0..PROMISE_RUNS {
                 let (code, out, err) = run(&exe, threads);
                 if code != 0 || out != "done 40\n" || !all_freed(&err) {
                     bad.push(format!(
