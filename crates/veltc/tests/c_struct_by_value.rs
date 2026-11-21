@@ -11,9 +11,9 @@
 //!
 //! **Another target's convention**: with `VELT_ABI_TARGET` set to a triple, the programs are
 //! built for it (`velt build --target`, whose runtime and linker `VELT_RT_LIB` and
-//! `VELT_LINKER` can name) and run with `VELT_ABI_RUNNER` (an emulator: `qemu-aarch64-static`,
-//! `wine`), so one Linux machine checks every convention (docs/internals/design/c-ffi.md "C
-//! structs").
+//! `VELT_LINKER` can name) and run with `VELT_ABI_RUNNER` (an emulator, its words split at
+//! whitespace: `qemu-aarch64-static`, `wine`), so one Linux machine checks every convention
+//! (docs/internals/design/c-ffi.md "C structs").
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -504,12 +504,18 @@ fn types(s: &str) -> Vec<Vec<String>> {
     while !rest.is_empty() {
         let (tok, tail) = match rest.as_bytes()[0] {
             b'[' | b'{' | b'(' => {
-                let close = match rest.as_bytes()[0] {
-                    b'[' => ']',
-                    b'{' => '}',
-                    _ => ')',
-                };
-                let end = rest.find(close).map_or(rest.len(), |e| e + 1);
+                // To the matching close, past nested ones (`[2 x [4 x i8]]`).
+                let mut depth = 0;
+                let end = (rest.char_indices())
+                    .find(|&(_, ch)| {
+                        match ch {
+                            '[' | '{' | '(' => depth += 1,
+                            ']' | '}' | ')' => depth -= 1,
+                            _ => {}
+                        }
+                        depth == 0
+                    })
+                    .map_or(rest.len(), |(e, _)| e + 1);
                 (&rest[..end], &rest[end..])
             }
             _ => {

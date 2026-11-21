@@ -8,7 +8,7 @@
 //! - **On the stack** (System V): a pointer to a copy, marked `CParam::ByVal`: the callee gets
 //!   its own.
 //! - **By reference** (Win64, AAPCS64 over 16 bytes): the address of a copy, a plain pointer.
-//! - **A result in registers**: an `Agg` of its one or two words is the extern's result
+//! - **A result in registers**: an `Agg` of its one to four words is the extern's result
 //!   (`CRet::Words`), which the call writes whole and which is read back as the struct. (Writing a
 //!   word into a slot field and reading the slot as the struct would hide the write from the
 //!   optimizer, which keeps the fields of one aggregate apart from another's view of it.)
