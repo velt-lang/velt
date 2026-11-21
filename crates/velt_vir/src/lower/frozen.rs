@@ -180,6 +180,20 @@ impl FnLower<'_, '_> {
         v
     }
 
+    /// A value the format paths hand to the format glue (`inspect` and an error's text,
+    /// `console.log`, a template's and `String`'s text, `push_formatted`): a copy of frozen
+    /// counted `e` (`frozen_borrow` with no frozen arguments around), `None` for anything else,
+    /// which the caller evaluates as usual. The glue is not specialized for frozen values and
+    /// calls std code that counts what it reads (`inspectElements`' `for…of`, a class's own
+    /// `[inspect]` or `toString`), and a module table a frozen instance reads in place has no
+    /// count word in front of its header (#3414).
+    pub(super) fn formatted_input(&mut self, e: &hir::Expr) -> Option<Operand> {
+        if !self.frozen_counted(e) {
+            return None;
+        }
+        Some(self.unfrozen_args(|lw| lw.frozen_borrow(e)))
+    }
+
     /// May this function's code give local `l` another value (an assignment anywhere in it,
     /// also in a closure through a capture by reference, or a `BorrowMut` use)? Such a
     /// variable is no cell, but a read of a `shared` handle in it must keep the box alive.
