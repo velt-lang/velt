@@ -50,8 +50,10 @@ impl Cx<'_> {
     /// Does the program run the executor in Velt (std's `schedStart` is loaded)? Without it no
     /// promise exists, and a promise's table, whose glue is the executor's, can't be built.
     pub(super) fn executor_loaded(&self) -> bool {
-        self.prelude_def(velt_common::std_hook!(sched_start))
-            .is_some()
+        let start = self.prelude_def(velt_common::std_hook!(sched_start));
+        // Defined but unchecked: loaded with its module for something else (module state's
+        // blocks, #3261), not run.
+        start.is_some_and(|d| !self.hir.unchecked.contains(&d))
     }
 
     /// `Promise<unknown, unknown>`, what a promise held as `any` is awaited as.
