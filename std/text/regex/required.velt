@@ -1,0 +1,66 @@
+// velt/text (internal): a byte every match of a pattern has, when there is one (`(\w+)=(\d+);`
+// has `=` and `;`): a subject without it from the search's start on has no match, which one
+// byte scan says (find.velt) before any matcher runs. Only ASCII bytes count, which are never
+// part of another character's bytes; of several, the one least likely in text is taken.
+
+import { ALT, CAT, CHAR, GROUP, Node, REPEAT, SET } from "velt/text/regex/node";
+
+/** How unlikely ASCII byte `b` is in text: 0 for a letter, a digit or a space, 1 for common
+ * punctuation, 2 for the rest. */
+function rarity(b: u32): u32 {
+  const l = b | 0x20;
+  if ((l >= 0x61 && l <= 0x7a) || (b >= 0x30 && b <= 0x39) || b == 0x20) {
+    return 0;
+  }
+  return b == 0x2c || b == 0x2e || b == 0x2d || b == 0x5f || b == 0x3a || b == 0x2f ? 1 : 2;
+}
+
+/** The ASCII bytes every match of `n` has, as two 64-bit masks into `out`. */
+function bytesOf(n: Node, out: u64[]): void {
+  out[0] = 0;
+  out[1] = 0;
+  const kind = n.kind;
+  if (kind == CHAR) {
+    if (n.a < 0x80) {
+      out[(n.a >> 6) as usize] = (1 as u64) << ((n.a & 63) as u64);
+    }
+  } else if (kind == SET) {
+    const set = n.set;
+    if (set != null && set.ranges.length == 2 && set.ranges[0] == set.ranges[1]) {
+      const c = set.ranges[0];
+      if (c < 0x80) {
+        out[(c >> 6) as usize] = (1 as u64) << ((c & 63) as u64);
+      }
+    }
+  } else if (kind == GROUP || (kind == REPEAT && n.a > 0)) {
+    bytesOf(n.kids[0], out);
+  } else if (kind == CAT || kind == ALT) {
+    const kid: u64[] = [0, 0];
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      bytesOf(n.kids[i], kid);
+      if (kind == CAT) {
+        out[0] |= kid[0];
+        out[1] |= kid[1];
+      } else {
+        out[0] = i == 0 ? kid[0] : out[0] & kid[0];
+        out[1] = i == 0 ? kid[1] : out[1] & kid[1];
+      }
+    }
+  }
+}
+
+/** The byte every match of `tree` has that is least likely in text, or -1 for none (or none
+ * that is likely to be missing: a letter, a digit or a space). */
+export function requiredByte(tree: Node): i64 {
+  const mask: u64[] = [0, 0];
+  bytesOf(tree, mask);
+  let best: i64 = -1;
+  let rank: u32 = 0;
+  for (let b: u32 = 0; b < 128; b++) {
+    if (((mask[(b >> 6) as usize] >> ((b & 63) as u64)) & 1) != 0 && rarity(b) > rank) {
+      best = b as i64;
+      rank = rarity(b);
+    }
+  }
+  return best;
+}

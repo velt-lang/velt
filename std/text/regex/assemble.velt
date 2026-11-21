@@ -8,6 +8,7 @@ import { hint } from "velt/text/regex/hints";
 import { parsePattern } from "velt/text/regex/parse_pattern";
 import { Parser } from "velt/text/regex/parser";
 import { Program } from "velt/text/regex/program";
+import { requiredByte } from "velt/text/regex/required";
 
 /** The program of `pattern` with `flags` (valid ones); the names of its groups are added to
  * `names`. Throws `RegExpError` for a pattern that is none. */
@@ -20,10 +21,11 @@ export function assemble(pattern: string, flags: string, names: string[]): Progr
     names.push(name);
   }
   const prog = compiler.prog;
-  // A literal is found by the scan alone (find.velt): it needs neither.
+  // A literal is found by the scan alone (find.velt): it needs none of these.
   if (!prog.exact) {
     hint(prog);
     classify(prog);
+    prog.required = requiredByte(tree);
   }
   if (prog.automaton) {
     const back = new Compiler(parser, true);

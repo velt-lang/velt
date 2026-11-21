@@ -104,6 +104,11 @@ export class Program {
   asciiClass: u8[] = [];
   /** The program that reads a match backwards, when `automaton`. */
   backward: Program | null = null;
+  /** An ASCII byte every match has, or -1 (required.velt). */
+  required: i64 = -1;
+  /** The program has `$` (without the `m` flag), the one assertion an automaton runs: a match
+   * read off between the automaton's ends is read with the whole subject after it. */
+  atEnd: bool = false;
 
   /** Per instruction, which hint a split has, plus one (0: none), and the hints: 128 bytes
    * each, per ASCII character whether the split's first way can start with it (1), its second

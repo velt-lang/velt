@@ -15,6 +15,7 @@ import {
   arrayReadAddress,
   arrayTruncate,
   inline,
+  strByteLen,
   strDataAddress,
 } from "velt/lang/intrinsics";
 import { before, byteAt, charAt } from "velt/text/regex/decode";
@@ -46,14 +47,18 @@ const NO_START: u8 = 2;
 const DEAD: u8 = 4;
 /** The state a search anywhere starts in, while the scan skips from it. */
 const SKIPS: u8 = 8;
+/** A state holds a match where the subject ends: a thread waits at `$` and leads to one. */
+const ENDS: u8 = 16;
 /** A transition that is not worked out; in one that is, where the row of its state starts
  * (`ROW`), that a run has to look at that state (`SLOW`), and that it holds a match (`HIT`). */
 const UNKNOWN: u32 = 0xffffffff;
 const ROW: u32 = 0x3fffffff;
 const SLOW: u32 = 0x80000000;
 const HIT: u32 = 0x40000000;
-/** After how many scans in a row that skipped nothing the scan is left alone. */
-const SKIP_MISSES: u32 = 4;
+/** The scan from the start state is left alone, for good, when after `SKIP_TRIES` scans it
+ * skipped fewer than `SKIP_GAIN` bytes a scan: it costs more than reading those bytes. */
+const SKIP_TRIES: usize = 4;
+const SKIP_GAIN: usize = 8;
 
 /** The class of the byte at address `at`, from the table of classes at `kinds`. */
 @inline("always")
@@ -68,8 +73,10 @@ export class Dfa {
    * found does not end the threads the program likes less. */
   readonly longest: bool;
   readonly classes: usize;
-  /** The lists the program's threads are followed in (pike.velt `add`). */
+  /** The lists the program's threads are followed in (pike.velt `add`), and those a thread
+   * waiting at `$` is followed in where the subject ends. */
   scratch: Search = new Search(0);
+  ending: Search = new Search(0);
   /** The threads of every state, one state after another, and where each state's start. */
   threads: u32[] = [];
   bounds: usize[] = [0];
@@ -79,20 +86,29 @@ export class Dfa {
    * never worked out): `UNKNOWN`, or where the row of the state it leads to starts, with `HIT`
    * when that state holds a match and `SLOW` when a run has to look at it. */
   next: u32[] = [];
-  /** The scan skips from the state a search anywhere starts in (`SKIPS` is set there). */
+  /** The scan skips from the state a search anywhere starts in (`SKIPS` is set there); and
+   * whether it still may (it is given up when it does not pay), with the scans so far and the
+   * bytes they skipped. */
   armed: bool = false;
+  skipping: bool = true;
+  scans: usize = 0;
+  skipped: usize = 0;
   /** The first position the last `forward` looked at for a match: its start, or where its
    * scan first took it. */
   began: usize = 0;
   /** The states a search starts in, plus one: anywhere, and at a fixed start. */
   anywhere: u32 = 0;
   fixed: u32 = 0;
+  /** The state a search at a fixed start where the subject ends starts in, plus one (`$`
+   * holds there: the backward automaton of a match that ends with the subject). */
+  fixedAtEnd: u32 = 0;
 
   constructor(prog: Program, longest: bool) {
     this.prog = prog;
     this.longest = longest;
     this.classes = prog.classStarts.length;
     pikeReset(prog, this.scratch);
+    pikeReset(prog, this.ending);
   }
 
   /** The state of the threads in the scratch list, made if it is new; -1 when the automaton
@@ -111,6 +127,11 @@ export class Dfa {
       }
       if (op == OP_CHAR || op == OP_CLASS || op == OP_SPAN || op == OP_MATCH) {
         this.threads.push(pc);
+      }
+      // A thread waiting at `$`: a character ends it; where the subject ends it goes on.
+      if (op == OP_ASSERT && (pc as usize) < prog.length) {
+        this.threads.push(pc);
+        flags |= this.ends(pc as usize) ? ENDS : 0;
       }
       // What the program likes less than a match is never run.
       if (op == OP_MATCH && !this.longest) {
@@ -143,16 +164,38 @@ export class Dfa {
     return (this.flags.length - 1) as i64;
   }
 
-  /** The state a search starts in (`fixed`: at one position only); -1 when full. */
-  private start(fixed: bool): i64 {
-    const known = fixed ? this.fixed : this.anywhere;
+  /** Does the thread waiting at `$` at `pc` lead to a match where the subject ends? */
+  private ends(pc: usize): bool {
+    const prog = this.prog;
+    const m = this.ending;
+    m.count[1] = 0;
+    // A subject of no bytes, at its end: `$` holds.
+    add(prog, m, "", 0, 1, pc + 1, 0);
+    const width = prog.length + (prog.marks as usize);
+    for (let i: usize = 0; i < m.count[1]; i++) {
+      const at = m.dense[width + i] as usize;
+      if (at < prog.length && (prog.code[3 * at] & OP_MASK) == OP_MATCH) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The state a search starts in (`fixed`: at one position only; `atEnd`: where the subject
+   * ends, so that `$` holds); -1 when full. */
+  private start(fixed: bool, atEnd: bool = false): i64 {
+    const known = atEnd ? this.fixedAtEnd : fixed ? this.fixed : this.anywhere;
     if (known != 0) {
       return (known as i64) - 1;
     }
     this.scratch.count[1] = 0;
-    add(this.prog, this.scratch, "", 0, 1, 0, 0);
-    const st = this.intern(fixed);
-    if (fixed) {
+    // The threads are followed as in a subject of one byte, at its start: `$` does not hold
+    // (the thread waits there), unless the search starts where the subject ends.
+    add(this.prog, this.scratch, "", atEnd ? 0 : 1, 1, 0, 0);
+    const st = this.intern(fixed || atEnd);
+    if (atEnd) {
+      this.fixedAtEnd = (st + 1) as u32;
+    } else if (fixed) {
       this.fixed = (st + 1) as u32;
     } else {
       this.anywhere = (st + 1) as u32;
@@ -171,16 +214,16 @@ export class Dfa {
       const pc = this.threads[i] as usize;
       const op = code[3 * pc] & OP_MASK;
       const a = code[3 * pc + 1];
-      if (op == OP_MATCH) {
+      if (op == OP_MATCH || op == OP_ASSERT) {
         continue;
       }
       if (op == OP_CHAR ? a == char : prog.has(a, char)) {
-        add(prog, m, "", 0, 1, op == OP_SPAN ? pc : pc + 1, 0);
+        add(prog, m, "", 1, 1, op == OP_SPAN ? pc : pc + 1, 0);
       }
     }
     const done = (this.flags[st] & (NO_START | MATCH)) != 0;
     if (!done) {
-      add(prog, m, "", 0, 1, 0, 0);
+      add(prog, m, "", 1, 1, 0, 0);
     }
     const to = this.intern(done);
     if (to >= 0) {
@@ -239,8 +282,7 @@ export class Dfa {
     // The state a search anywhere starts in holds no thread but the start's: from it the scan
     // can skip to where a match may start. It is marked while that pays.
     const first = st as usize;
-    let misses: u32 = 0;
-    if (!fixed && prog.scan != SCAN_NONE && !this.armed) {
+    if (!fixed && prog.scan != SCAN_NONE && !this.armed && this.skipping) {
       this.arm(first, true);
     }
     const stop = any ? SLOW | HIT : SLOW;
@@ -249,7 +291,7 @@ export class Dfa {
     let end: i64 = -1;
     while (st >= 0) {
       const flags = this.flags[st as usize];
-      if ((flags & MATCH) != 0) {
+      if ((flags & MATCH) != 0 || (pos >= len && (flags & ENDS) != 0)) {
         end = pos as i64;
         if (any) {
           break;
@@ -263,9 +305,11 @@ export class Dfa {
         if (at < 0) {
           break;
         }
-        misses = at as usize == pos ? misses + 1 : 0;
         this.began = pos == from ? at as usize : this.began;
-        if (misses >= SKIP_MISSES) {
+        this.scans++;
+        this.skipped += (at as usize) - pos;
+        if (this.scans >= SKIP_TRIES && this.skipped < SKIP_GAIN * this.scans) {
+          this.skipping = false;
           this.arm(first, false);
         }
         pos = at as usize;
@@ -342,7 +386,7 @@ export class Dfa {
     const base = strDataAddress(s);
     const prog = this.prog;
     const width = this.classes + 1;
-    let st = this.start(true);
+    let st = this.start(true, end == strByteLen(s));
     let pos = end;
     let found = end as i64;
     while (st >= 0) {

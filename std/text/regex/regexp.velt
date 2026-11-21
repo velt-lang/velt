@@ -29,7 +29,7 @@ import { escapePattern, replaceMatches, splitMatches } from "velt/text/regex/rep
 import { Search } from "velt/text/regex/search";
 // The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
-import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** The program of `pattern` with `flags`, and the names of its groups in `names`. */
 function compile(pattern: string, flags: string, names: string[]): Program {
@@ -42,10 +42,23 @@ function compile(pattern: string, flags: string, names: string[]): Program {
   return assemble(pattern, flags, names);
 }
 
-/** A `RegExp`'s `lastIndex`: in an object of its own, which the methods that set it reach
- * through a receiver they may not change. */
+/** A `RegExp`'s `lastIndex`, and the matchers' memory kept from one call to the next: in an
+ * object of its own, which the methods reach through a receiver they may not change. */
 class Cursor {
   at: Atomic<f64> = new Atomic<f64>(0);
+  /** Whether a call holds the regex's kept search memory (`RegExp.#memory`). */
+  busy: Atomic<bool> = new Atomic<bool>(false);
+}
+
+/** `m` made ready for a new subject, with `n` slots (all unset). */
+function sized(m: Search, n: usize): void {
+  m.forget();
+  if (m.slots.length > n) {
+    arrayTruncate(m.slots, n);
+  }
+  while (m.slots.length < n) {
+    m.slots.push(-1);
+  }
 }
 
 /** A compiled regular expression: `new RegExp("(\\d+)-(\\d+)", "g")`. */
@@ -61,6 +74,11 @@ export class RegExp implements Pattern {
   #prog: Program;
   #names: string[] = [];
   #cursor: shared<Cursor> = shared(new Cursor());
+  /** The search memory kept from one call to the next, with the automatons it built
+   * (dfa.velt), so building them is paid once per regex, not once per call. A call claims it
+   * with the cursor's `busy`, so its lock is never waited for; a call that finds it claimed (by
+   * another thread) makes its own. */
+  #memory: shared<Mutex<Search>> = shared(new Mutex<Search>(new Search(0)));
 
   /** Throws `RegExpError` for an invalid pattern or flags. */
   constructor(pattern: string, flags: string = "") {
@@ -83,8 +101,20 @@ export class RegExp implements Pattern {
     if (start > s.length) {
       return false;
     }
-    const m = new Search(0);
-    return find(this.#prog, m, s, positionOf(s, start, this.#prog.units), this.sticky);
+    const prog = this.#prog;
+    const at = positionOf(s, start, prog.units);
+    const sticky = this.sticky;
+    const cursor = this.#cursor;
+    // The previous value: true when another call holds it.
+    if (cursor.busy.compareExchange(false, true, "acquire")) {
+      return find(prog, new Search(0), s, at, sticky);
+    }
+    const found = this.#memory.with((m) => {
+      sized(m, 0);
+      return find(prog, m, s, at, sticky);
+    });
+    cursor.busy.store(false, "release");
+    return found;
   }
 
   /**
@@ -298,11 +328,21 @@ export class RegExp implements Pattern {
     if (from > s.length) {
       return null;
     }
-    const m = new Search(2 * (prog.groups as usize) + 2);
-    if (!find(prog, m, s, positionOf(s, from, prog.units), this.sticky)) {
-      return null;
+    const stride = 2 * (prog.groups as usize) + 2;
+    const at = positionOf(s, from, prog.units);
+    const sticky = this.sticky;
+    const cursor = this.#cursor;
+    // The previous value: true when another call holds it.
+    if (cursor.busy.compareExchange(false, true, "acquire")) {
+      const own = new Search(stride);
+      return find(prog, own, s, at, sticky) ? this.matchOf(s, own.slots, 0) : null;
     }
-    return this.matchOf(s, m.slots, 0);
+    const slots = this.#memory.with((m) => {
+      sized(m, stride);
+      return find(prog, m, s, at, sticky) ? m.slots.clone() : null;
+    });
+    cursor.busy.store(false, "release");
+    return slots == null ? null : this.matchOf(s, slots, 0);
   }
 
   // Where the search goes on after an empty match at `end`: JavaScript's AdvanceStringIndex,

@@ -26,7 +26,8 @@ import {
 } from "velt/text/regex/program";
 
 /** Fills `slots` with the groups of the match of `prog` in `s` that starts at byte `start`
- * and ends at `end`; false, with `slots` in any state, when the program has to choose. */
+ * and ends at `end` (all of them: a group the match does not enter is -1); false, with `slots`
+ * in any state, when the program has to choose. */
 export function straight(prog: Program, s: string, start: usize, end: usize, slots: i64[]): bool {
   // Every group has its slots, so a save is a store.
   if (prog.hintAt.length == 0 || slots.length != 2 * (prog.groups as usize) + 2) {
@@ -38,6 +39,10 @@ export function straight(prog: Program, s: string, start: usize, end: usize, slo
   const hints = unsafe { arrayReadAddress(prog.hints) };
   const ascii = unsafe { arrayReadAddress(prog.ascii) };
   const count = slots.length;
+  // A group the match does not enter is unset, whatever an earlier attempt left there.
+  for (let k: usize = 0; k < count; k++) {
+    slots[k] = -1;
+  }
   const slotsAt = unsafe { arrayDataAddress(slots) };
   let pc: usize = 0;
   let pos = start;

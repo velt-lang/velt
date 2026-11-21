@@ -3,6 +3,7 @@
 // when the pattern is compiled (assemble.velt).
 
 import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
+import { AT_END } from "velt/text/regex/node";
 import { OP_ASSERT, OP_CHAR, OP_MASK, Program } from "velt/text/regex/program";
 
 /** The most classes of characters and instructions an automaton is built for. */
@@ -10,8 +11,9 @@ const MAX_CLASSES: usize = 255;
 const MAX_INSTRUCTIONS: usize = 4096;
 
 /** Works out the classes of characters `prog` cannot tell apart, and whether it can be an
- * automaton: it has no assertion (what holds at a position is no part of a state), and not too
- * many classes or instructions. */
+ * automaton: it has no assertion but `$` (what holds at a position is no part of a state; `$`
+ * holds only where the subject ends, which the automaton is told), and not too many classes or
+ * instructions. */
 export function classify(prog: Program): void {
   const code = prog.code;
   // Where a class starts: in ASCII a bit per character, past it a list.
@@ -20,8 +22,11 @@ export function classify(prog: Program): void {
   const cuts: u32[] = [];
   for (let i: usize = 0; i < code.length; i += 3) {
     const op = code[i] & OP_MASK;
-    if (op == OP_ASSERT || i > 3 * MAX_INSTRUCTIONS) {
+    if ((op == OP_ASSERT && code[i + 1] != AT_END) || i > 3 * MAX_INSTRUCTIONS) {
       return;
+    }
+    if (op == OP_ASSERT) {
+      prog.atEnd = true;
     }
     if (op == OP_CHAR) {
       for (let c = code[i + 1]; c <= code[i + 1] + 1; c++) {
