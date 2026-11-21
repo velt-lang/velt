@@ -1,4 +1,5 @@
-//! P-256's masks stay masks in optimized code (`isZero` and `blend`, `std/crypto/field_p256.velt`).
+//! P-256's masks stay masks in optimized code (`isZero` and `blend`, `std/crypto/field_p256.velt`;
+//! `entryMasks`, the masks of the base table's scan in `std/crypto/p256_base_select.velt`).
 //! Inlined, `isZero` is one comparison to LLVM, so `blend`'s `(a & m) | (b & ~m)` becomes a select
 //! of two loads, and the backend makes that one load through a selected pointer: a memory address
 //! that depends on whether a window of the secret scalar is zero. No test run sees the difference.
@@ -11,7 +12,7 @@
 
 mod optimized_ir;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use optimized_ir::{optimized, release_ir, values};
@@ -37,6 +38,133 @@ fn selects_of_memory(function: &str) -> Vec<String> {
             (pointers || memory).then(|| l.to_string())
         })
         .collect()
+}
+
+/// One function's definitions: each `%name` and its right-hand side, without the metadata.
+fn definitions(function: &str) -> HashMap<&str, &str> {
+    function
+        .lines()
+        .filter_map(|l| {
+            let (name, rhs) = l.trim().split_once(" = ")?;
+            let rhs = rhs.split(", !").next().unwrap_or(rhs);
+            Some((name.strip_prefix('%')?, rhs))
+        })
+        .collect()
+}
+
+/// Whether a `getelementptr`'s indices are all constants: a field at a fixed offset (an array's
+/// length, its data pointer), not an element at a computed index.
+fn constant_offset(gep: &str) -> bool {
+    gep.split(", ").skip(2).all(|index| !index.contains('%'))
+}
+
+/// The branches, selects, switches and addresses in `function` that depend on a secret, which is
+/// any value that comes from an element loaded at a computed index (the scalar's bytes, the
+/// masks, the table's entries), from a call to one of `secret_calls`, or from the parameters at
+/// `secret_args`. A public loop counter or a length (a field at a fixed offset) is not one, nor is
+/// a comparison kept as a value (a borrow, `(a < b) as u64`): only a condition that steers control
+/// or an address that picks memory is found.
+fn secret_dependences(function: &str, secret_args: &[usize], secret_calls: &[&str]) -> Vec<String> {
+    let head = function.lines().next().unwrap_or("");
+    let params = values(head);
+    let defs = definitions(function);
+    let mut secret: HashSet<&str> = secret_args
+        .iter()
+        .filter_map(|&i| params.get(i).copied())
+        .collect();
+    loop {
+        let before = secret.len();
+        for (&name, &rhs) in &defs {
+            if secret.contains(name) {
+                continue;
+            }
+            let operands = values(rhs);
+            let from_secret = if rhs.starts_with("load ") {
+                operands.first().is_some_and(|p| {
+                    secret.contains(p)
+                        || defs
+                            .get(p)
+                            .is_some_and(|g| g.starts_with("getelementptr") && !constant_offset(g))
+                })
+            } else if rhs.contains("call ") {
+                secret_calls.iter().any(|c| rhs.contains(c))
+                    || operands.iter().any(|o| secret.contains(o)) && rhs.contains("call i")
+            } else {
+                operands.iter().any(|o| secret.contains(o))
+            };
+            if from_secret {
+                secret.insert(name);
+            }
+        }
+        if secret.len() == before {
+            break;
+        }
+    }
+    let mut found = vec![];
+    for line in function.lines().map(str::trim) {
+        let condition = if let Some(rest) = line.strip_prefix("br i1 ") {
+            values(rest).first().copied()
+        } else if let Some(rest) = line.strip_prefix("switch ") {
+            values(rest).first().copied()
+        } else {
+            line.split_once(" = ")
+                .and_then(|(_, rhs)| rhs.strip_prefix("select i1 "))
+                .and_then(|rest| values(rest).first().copied())
+        };
+        if condition.is_some_and(|c| secret.contains(c)) {
+            found.push(line.to_string());
+        }
+        if let Some((_, rhs)) = line.split_once(" = ") {
+            if rhs.starts_with("getelementptr") {
+                let rhs = rhs.split(", !").next().unwrap_or(rhs);
+                if values(rhs).iter().skip(1).any(|i| secret.contains(i)) {
+                    found.push(line.to_string());
+                }
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn a_branch_on_a_secret_is_found() {
+    // An element loaded at a computed index, compared, steering a branch: found.
+    let element = "define void @f(ptr %a, i64 %j) {\n\
+                   %p = getelementptr inbounds i64, ptr %a, i64 %j\n\
+                   %m = load i64, ptr %p, align 8\n\
+                   %z = icmp eq i64 %m, 0\n\
+                   br i1 %z, label %skip, label %take\n";
+    assert_eq!(secret_dependences(element, &[], &[]).len(), 1);
+    // The same through a select, and an address computed from the element.
+    let select = "define void @f(ptr %a, i64 %j) {\n\
+                  %p = getelementptr inbounds i64, ptr %a, i64 %j\n\
+                  %m = load i64, ptr %p, align 8\n\
+                  %z = icmp eq i64 %m, 0\n\
+                  %s = select i1 %z, i64 1, i64 2\n\
+                  %q = getelementptr inbounds i64, ptr %a, i64 %m\n";
+    assert_eq!(secret_dependences(select, &[], &[]).len(), 2);
+    // A secret parameter, and a secret call's result.
+    let param = "define void @f(ptr %a, i64 %d) {\n\
+                 %z = icmp eq i64 %d, 0\n\
+                 br i1 %z, label %x, label %y\n";
+    assert_eq!(secret_dependences(param, &[1], &[]).len(), 1);
+    assert!(secret_dependences(param, &[], &[]).is_empty());
+    let call = "define void @f(i64 %w) {\n\
+                %n = call i64 @_V3N8signMask(i64 %w)\n\
+                %z = icmp ne i64 %n, 0\n\
+                br i1 %z, label %x, label %y\n";
+    assert_eq!(secret_dependences(call, &[], &["N8signMask("]).len(), 1);
+    // Public: a loop counter against a length at a fixed offset, and a borrow kept as a value.
+    let public = "define void @f(ptr %a, i64 %j) {\n\
+                  %lp = getelementptr inbounds i8, ptr %a, i64 8\n\
+                  %len = load i64, ptr %lp, align 8\n\
+                  %c = icmp ult i64 %j, %len\n\
+                  br i1 %c, label %in, label %out\n\
+                  %p = getelementptr inbounds i64, ptr %a, i64 %j\n\
+                  %m = load i64, ptr %p, align 8\n\
+                  %b = icmp ult i64 %m, 5\n\
+                  %w = zext i1 %b to i64\n";
+    assert!(secret_dependences(public, &[], &[]).is_empty());
 }
 
 #[test]
@@ -99,6 +227,34 @@ fn p256_masks_stay_masks() {
         assert!(
             named("M6isZero"),
             "{target}: `isZero` was inlined, so the caller sees its mask is a comparison"
+        );
+        // Nothing in the fixed-base multiplication steers control or picks an address by the
+        // secret scalar: its bytes, the window's digit, the masks or the table entries they keep
+        // (a scan that skips an entry by its mask, say, which no name check sees).
+        let mut secret_found = vec![];
+        for f in &p256 {
+            let head = f.lines().next().unwrap_or("");
+            let digit_last = head.contains("N10selectBase") || head.contains("N10entryMasks");
+            if head.contains("N12baseMultiply") || digit_last {
+                let last = values(head).len().saturating_sub(1);
+                let args: &[usize] = if digit_last { &[last] } else { &[] };
+                secret_found.extend(secret_dependences(f, args, &["N8signMask("]));
+            }
+        }
+        assert!(
+            secret_found.is_empty(),
+            "{target}: the fixed-base multiplication branches on or addresses by the secret:\n{}",
+            secret_found.join("\n")
+        );
+        // `baseMultiply`'s scan of the base table: inlined, the masks were a comparison of the
+        // secret digit, and LLVM made the scan a branch that loaded only the selected entry.
+        assert!(
+            named("N10entryMasks"),
+            "{target}: `entryMasks` was inlined, so the scan of the base table sees its masks are a comparison"
+        );
+        assert!(
+            p256.iter().any(|f| f.contains("N10entryMasks(")),
+            "{target}: nothing calls `entryMasks`"
         );
         checked += 1;
     }
