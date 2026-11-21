@@ -85,3 +85,34 @@ fn a_parameter_is_not_a_field() {
     assert_eq!(e.len(), 1, "{e:?}");
     assert!(e[0].starts_with(MISPLACED), "{e:?}");
 }
+
+#[test]
+fn dynamic_values_are_not_targets() {
+    // `any` and `unknown` may hold a number or a string; `object` is a dynamic value too.
+    let e = errors(
+        "let a: weak any | null = null;\n\
+         let u: weak unknown | null = null;\n\
+         let o: weak object | null = null;\n\
+         console.log(a, u, o);",
+    );
+    assert_eq!(
+        e,
+        [
+            "`weak` refers to an object with an identity: `any` may hold a value without an identity (a number, a string)",
+            "`weak` refers to an object with an identity: `unknown` may hold a value without an identity (a number, a string)",
+            "`weak` refers to an object with an identity: `object` is a dynamic value: name the class, object type or interface it refers to",
+        ],
+        "{e:?}"
+    );
+}
+
+#[test]
+fn an_abstract_property_is_a_field() {
+    // One diagnostic each, the field's: its getter and setter take the type without `weak`.
+    let e = errors(
+        "class Node {}\n\
+         abstract class A {\n  abstract a: weak Node | null;\n  abstract readonly r: weak Node | null;\n}\n\
+         console.log(1);",
+    );
+    assert_eq!(e, [NOT_YET, NOT_YET], "{e:?}");
+}
