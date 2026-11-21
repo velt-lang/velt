@@ -1,0 +1,37 @@
+// A `catch` handler whose value is of the promise's value type without being that type
+// (`undefined` for a `T | undefined`, one member of a union) gives a promise of the value type,
+// as TypeScript types it: `Promise<T | U>` is a `Promise<T>` when every `U` is a `T` (sigx's
+// island chunk loader, `loader().then(unwrap).catch(() => undefined)`).
+interface Factory {
+  name: string;
+}
+
+function unwrap(x: number): Factory | undefined {
+  return x > 0 ? { name: "f" + x } : undefined;
+}
+
+async function load(n: number): Promise<number> {
+  if (n < 0) {
+    throw new Error("bad " + n);
+  }
+  return n;
+}
+
+async function resolve(n: number): Promise<Factory | undefined> {
+  const r = load(n).then((x) => unwrap(x)).catch((err) => {
+    console.log("caught", (err as Error).message);
+    return undefined;
+  });
+  return r;
+}
+
+async function label(n: number): Promise<string | number> {
+  return load(n).then((x): string | number => `n${x}`).catch(() => 0);
+}
+
+async function main() {
+  console.log(await resolve(1), await resolve(0), await resolve(-1));
+  console.log(await label(2), await label(-2));
+}
+
+main();

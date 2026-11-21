@@ -424,9 +424,11 @@ impl FnCx<'_, '_> {
                 };
                 (name, vec![e, *u, g], recv.ty, *u, g)
             }
-            ("catch", [(u, xg)]) if self.cx.ty.is_bottom(*u) && t != *u => {
-                // A handler that only throws (`p.catch((e) => { throw e; })`): the promise's value
-                // type, as TypeScript types it; the handler converts to a function giving it.
+            ("catch", [(u, xg)]) if t != *u => {
+                // A handler that only throws (`p.catch((e) => { throw e; })`), or that gives a
+                // value of the promise's value type (`undefined` for a `T | undefined`): the
+                // promise's value type, as TypeScript types it (`Promise<T | U>` is `T` when
+                // every `U` is a `T`); the handler converts to a function giving it.
                 let g = xg.unwrap_or(never);
                 let (ret, throws) = match all_async {
                     true => (self.cx.ty.promise_rejecting(t, g), never),
@@ -446,8 +448,16 @@ impl FnCx<'_, '_> {
                     let taken = std::mem::replace(h, placeholder);
                     match self.try_coerce(taken, exp) {
                         Ok(w) => *h = w,
-                        Err(w) => {
+                        Err(w) if self.cx.ty.is_bottom(*u) => {
                             self.report_mismatch(exp, &w);
+                            return self.error_expr(span);
+                        }
+                        Err(_) => {
+                            let (a, b) = (self.cx.display(t), self.cx.display(*u));
+                            self.cx.err(
+                                format!("the callback of `catch` must give the promise's value type `{a}`, found `{b}`"),
+                                span,
+                            );
                             return self.error_expr(span);
                         }
                     }
@@ -459,15 +469,7 @@ impl FnCx<'_, '_> {
                 };
                 (name, vec![t, e, g], recv.ty, t, g)
             }
-            ("catch", [(u, xg)]) => {
-                if *u != t {
-                    let (a, b) = (self.cx.display(t), self.cx.display(*u));
-                    self.cx.err(
-                        format!("the callback of `catch` must give the promise's value type `{a}`, found `{b}`"),
-                        span,
-                    );
-                    return self.error_expr(span);
-                }
+            ("catch", [(_, xg)]) => {
                 let g = xg.unwrap_or(never);
                 let name = if all_async {
                     "promiseCatchAsync"
