@@ -1,0 +1,39 @@
+// A named function given as an interface method's value in an object literal may take more
+// parameters than the method passes when those have defaults or are optional, as for a
+// property of a function type (sigx's `claimBase: claimAppBase`, whose `config` parameter
+// defaults to the current configuration). Calls through the interface fill them in.
+interface Cfg {
+  name: string;
+}
+
+function current(): Cfg | undefined {
+  return { name: "current" };
+}
+
+function claim(base: string, config: Cfg | undefined = current()): string {
+  return `${base} for ${config?.name}`;
+}
+
+function scaled(n: number, by?: number): number {
+  return n * (by ?? 10);
+}
+
+interface Seam {
+  claimBase(base: string): string;
+  scale(n: number): number;
+  get label(): string;
+}
+
+function make(): Seam {
+  return {
+    get label(): string {
+      return "seam";
+    },
+    claimBase: claim,
+    scale: scaled,
+  };
+}
+
+const seam = make();
+console.log(seam.label, seam.claimBase("/a"), seam.scale(4));
+console.log(claim("/b", { name: "given" }), scaled(4, 2));

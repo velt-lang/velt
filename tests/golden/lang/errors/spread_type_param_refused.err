@@ -1,0 +1,15 @@
+spread_type_param_refused.velt:15:14: error: cannot spread a value of type `A` into an array
+  = note: what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)
+spread_type_param_refused.velt:19:18: error: a spread argument must have a tuple type or fill a rest parameter (`...xs: T[]`)
+  = note: the length of a value of type `A` is only known at run time, and JavaScript would pass `undefined` for the parameters it does not fill, which Velt does not have
+  = note: pass the elements (`f(xs[0], xs[1])`), or give the value a tuple type (`const t: [number, number] = [1, 2];`)
+spread_type_param_refused.velt:23:18: error: cannot spread a value of type `T` into an array
+  = note: what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)
+spread_type_param_refused.velt:32:21: error: cannot spread a value of type `A` into an array
+  = note: what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)
+spread_type_param_refused.velt:41:20: error: cannot spread a value of type `A` into an array
+  = note: what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)
+spread_type_param_refused.velt:49:18: error: cannot spread a value of type `Pick1<T>` into an array
+  = note: what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)
+spread_type_param_refused.velt:53:18: error: cannot spread a value of type `keyof T` into an array
+  = note: what `for...of` iterates can be spread: arrays, strings, `Map`s, generators and iterables (values with a `[Symbol.iterator]()` method)

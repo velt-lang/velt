@@ -1,0 +1,194 @@
+// velt/lang/hooks (internal): a task's yield list under the executor in Velt (sched_yield.velt,
+// #3241), in its yield block (`T_YIELDS`, made when the task first needs one): its yields
+// waiting for their turn (the last of a circular list; flag `YIELDS`), in the order they were
+// made (their numbers), which its next poll fires one at a time (sched_fire.velt `fireYields`).
+// A yield joins it on the thread polling its task, and only that thread takes and fires it.
+
+import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as node from "./sched_node";
+import * as t from "./sched_task";
+
+/**
+ * A yield: a heap future's header (0, 0 for an awaited yield's record), the next on its task's
+ * list (the list is circular: the block's `B_LAST` is the last), the waker to wake at its turn
+ * (0: none yet), its state, its task (a stored one's), and its stamp (`stamp`).
+ */
+export const Y_NEXT: usize = 16;
+export const Y_WAKER: usize = 24;
+export const Y_STATE: usize = 32;
+export const Y_TASK: usize = 40;
+export const Y_STAMP: usize = 48;
+export const Y_SIZE: usize = 56;
+/**
+ * A yield's states: made (a stored one, on no list); waiting on the list; its turn came; dropped
+ * while waiting (the list frees it at its turn); its turn is taking its waker (`fire`: whoever
+ * holds it waits for `FIRED` before it frees it, which `fire` touches until then).
+ */
+export const NEW: usize = 0;
+export const QUEUED: usize = 1;
+export const FIRED: usize = 2;
+export const DROPPED: usize = 3;
+export const FIRING: usize = 4;
+/**
+ * A yield's waker when it is its own task's root's: no reference is held, as the task does not
+ * end while its list holds the yield (sched_run.velt `runEnd`).
+ */
+export const ROOT: usize = 1;
+
+// A task's yield block: its list's last yield (0: none), its last stamp, and the stamp of the
+// yield its root waits for with no record (flag `ROOT_ALONE`). A stamp is a yield's generation
+// (the high 32 bits: one more in each poll after one that made stored yields, flag `FRESH`) and
+// its number: stamps grow in the order yields are made.
+const B_LAST: usize = 0;
+export const B_STAMP: usize = 8;
+export const B_ROOT: usize = 16;
+export const B_SIZE: usize = 24;
+/** One generation in a stamp. */
+export const GEN: usize = 4294967296;
+
+/** Task `k`'s yield block, made now if it has none (on its thread). */
+@inline("always")
+export function block(k: usize): usize {
+  const b = m.ld(k + t.T_YIELDS);
+  return b !== 0 ? b : makeBlock(k);
+}
+
+@noInline
+function makeBlock(k: usize): usize {
+  const b = m.alloc(B_SIZE);
+  m.st(b + B_LAST, 0);
+  m.st(b + B_STAMP, 0);
+  m.st(b + B_ROOT, 0);
+  m.st(k + t.T_YIELDS, b);
+  if (m.load32(k + t.T_STATE) === t.YIELDED) {
+    // Its root yielded in this poll, before any yield was made: its turn comes first (stamp 0).
+    t.flags(k, t.ROOT_ALONE, 0);
+  }
+  return b;
+}
+
+/** Yield block `b`'s next stamp (on its task's thread). */
+@inline("always")
+export function nextStamp(b: usize): usize {
+  const s = m.ld(b + B_STAMP) + 1;
+  m.st(b + B_STAMP, s);
+  return s;
+}
+
+/**
+ * An awaited yield's record, stamped `stamp`, to wake `w` (a waker's clone, or `ROOT`) at its turn.
+ */
+export function record(w: usize, stamp: usize): usize {
+  const r = m.alloc(Y_SIZE);
+  m.st(r, 0);
+  m.st(r + 8, 0);
+  m.st(r + Y_WAKER, w);
+  m.st(r + Y_STAMP, stamp);
+  return r;
+}
+
+/**
+ * Yield `y` joins task `k`'s list (on the thread polling `k`) by its number: at the end, unless a
+ * yield made after it joined first. The root's turn placed with no record (`ROOT_ALONE`) gets one
+ * first, so the yields made after it come after it (a yield of the same number, made before the
+ * root's, comes before it).
+ */
+export function join(k: usize, y: usize): void {
+  const b = block(k);
+  m.st(y + Y_STATE, QUEUED);
+  let last = m.ld(b + B_LAST);
+  if (last === 0 && t.has(k, t.ROOT_ALONE) && m.load32(k + t.T_STATE) === t.YIELDED) {
+    t.flags(k, 0, t.ROOT_ALONE);
+    last = record(ROOT, m.ld(b + B_ROOT));
+    m.st(last + Y_STATE, QUEUED);
+    m.st(last + Y_NEXT, last);
+    m.st(b + B_LAST, last);
+  }
+  const seq = m.ld(y + Y_STAMP);
+  if (last === 0) {
+    m.st(y + Y_NEXT, y);
+    m.st(b + B_LAST, y);
+  } else if (m.ld(last + Y_STAMP) < seq) {
+    m.st(y + Y_NEXT, m.ld(last + Y_NEXT));
+    m.st(last + Y_NEXT, y);
+    m.st(b + B_LAST, y);
+  } else {
+    // Made before the last: after the last one made before it (from the first).
+    let p = last;
+    while (m.ld(m.ld(p + Y_NEXT) + Y_STAMP) < seq) {
+      p = m.ld(p + Y_NEXT);
+    }
+    m.st(y + Y_NEXT, m.ld(p + Y_NEXT));
+    m.st(p + Y_NEXT, y);
+  }
+  // Its next poll fires them (sched_run.velt `runWoken`), and this one's end queues it again.
+  t.flags(k, t.YIELDS | t.LOCALS, 0);
+}
+
+/**
+ * Takes task `k`'s yields made so far, the first of them (0: none), linked through `next`: those
+ * made from now on wait for the poll after.
+ */
+export function take(k: usize): usize {
+  t.flags(k, 0, t.YIELDS);
+  const b = m.ld(k + t.T_YIELDS);
+  const last = b === 0 ? 0 : m.ld(b + B_LAST);
+  if (last === 0) {
+    return 0;
+  }
+  m.st(b + B_LAST, 0);
+  const first = m.ld(last + Y_NEXT);
+  m.st(last + Y_NEXT, 0);
+  return first;
+}
+
+/** Has task `k` yields waiting for their turn? Never in a program that never yields. */
+@inline("always")
+export function waiting(k: usize): bool {
+  // The list is not empty exactly while flag `YIELDS` is set (`join`, `take`).
+  return stdUsed("yields") && t.has(k, t.YIELDS);
+}
+
+/** Has task `k` a yield block, to go with it? Never in a program that never yields. */
+@inline("always")
+export function hasBlock(k: usize): bool {
+  return stdUsed("yields") && m.ld(k + t.T_YIELDS) !== 0;
+}
+
+/** Task `k`'s yield block goes with the task (its list is empty: the task ended). */
+@noInline
+export function freeBlock(k: usize): void {
+  m.release(m.ld(k + t.T_YIELDS), B_SIZE);
+}
+
+/** The yield after `y` in a list `take` gave. */
+@inline("always")
+export function next(y: usize): usize {
+  return m.ld(y + Y_NEXT);
+}
+
+/**
+ * Yield `y`'s turn: the waker to resume (a clone the caller owns, or `ROOT`: its task's, with no
+ * reference), 0 when nothing waits for it. An awaited yield's record is freed, and a dropped
+ * stored one.
+ */
+export function fire(y: usize): usize {
+  if (m.ld(y) === 0) {
+    const w = m.ld(y + Y_WAKER);
+    m.release(y, Y_SIZE);
+    if (w > ROOT && m.ld(w) === t.main() + t.E_NODE_VT) {
+      m.and32(w + node.N_FLAGS, ~node.YIELDING);
+    }
+    return w;
+  }
+  // Dropped (for good: nothing else touches it), or dropped meanwhile (the CAS fails).
+  if (m.load(y + Y_STATE) === DROPPED || m.cas(y + Y_STATE, QUEUED, FIRING) !== QUEUED) {
+    m.release(y, Y_SIZE);
+    return 0;
+  }
+  const w = m.swap(y + Y_WAKER, 0);
+  // From here on, whoever holds it may free it.
+  m.storeRelease(y + Y_STATE, FIRED);
+  return w;
+}
