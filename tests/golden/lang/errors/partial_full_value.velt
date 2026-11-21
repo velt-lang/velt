@@ -1,0 +1,35 @@
+// A full `I` where `Partial<I>` is expected: TypeScript converts it keeping the value, which
+// Velt's `Partial<I>` of an interface with methods (an object type of its own) can't yet.
+interface Ctx {
+  url: string;
+  status(code: number): void;
+}
+
+class Impl implements Ctx {
+  url = "/impl";
+  status(code: number): void {
+    console.log(code);
+  }
+}
+
+const full: Ctx = { url: "/lit", status: (c) => console.log(c) };
+
+const fromClass: Partial<Ctx> = new Impl();
+const fromLiteral: Partial<Ctx> = full;
+
+function take(p: Partial<Ctx>): void {
+  console.log(p.url);
+}
+take(full);
+
+const cast = full as Partial<Ctx>;
+
+type Source = string | Partial<Ctx>;
+const source: Source = full;
+
+interface Named {
+  readonly name: string;
+  rename(n: string): void;
+}
+const named: Partial<Named> = { name: "a" };
+named.name = "b";

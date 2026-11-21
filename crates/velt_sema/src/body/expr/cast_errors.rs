@@ -28,7 +28,7 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         }
-        if !self.cx.ty.has_error(h.ty) {
+        if !self.cx.ty.has_error(h.ty) && !self.partial_conversion_error(target, h.ty, span) {
             let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
             let diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
             let mut diag = self.cx.with_layout_note(diag, target);

@@ -2,7 +2,7 @@
 //! (`coerce.rs`), with the notes that say why: a nullable value, a brand, a class instance
 //! where a data type is expected, optional fields, an interface the value does not implement.
 
-use velt_common::Diagnostic;
+use velt_common::{Diagnostic, Span};
 
 use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
@@ -63,6 +63,9 @@ impl FnCx<'_, '_> {
         let undefined = |t: TyId| self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined());
         if undefined(found.ty) && !undefined(expected) && self.optional_slot_error(found.span, true)
         {
+            return;
+        }
+        if self.partial_conversion_error(expected, found.ty, found.span) {
             return;
         }
         let e = self.cx.display(expected);
@@ -273,5 +276,32 @@ impl FnCx<'_, '_> {
                 .adt(d)
                 .is_some_and(|a| a.kind == crate::hir::AdtKind::Anon);
         object && self.cx.is_callable_object(from) && !self.cx.is_callable_object(to)
+    }
+
+    /// `I` (or a class implementing it) where `Partial<I>` is expected (`Ctx::partial_source`),
+    /// reported as the limit it is. `true` when reported.
+    pub(super) fn partial_conversion_error(
+        &mut self,
+        expected: TyId,
+        found: TyId,
+        span: Span,
+    ) -> bool {
+        let Some(iface) = self.cx.partial_source(expected, found) else {
+            return false;
+        };
+        let (f, i) = (self.cx.display(found), self.cx.display(iface));
+        self.cx.error(
+            Diagnostic::error(
+                format!("a value of type `{f}` cannot convert to `Partial<{i}>` yet"),
+                span,
+            )
+            .with_note(format!(
+                "`Partial<{i}>` of an interface with methods is an object type of its own: the conversion would copy the members into a new object, where JavaScript keeps the one value (`===`, later writes)"
+            ))
+            .with_note(format!(
+                "take `{i}` itself where a full value is passed, or build the `Partial<{i}>` as an object literal"
+            )),
+        );
+        true
     }
 }

@@ -19,6 +19,22 @@ impl Ctx<'_> {
     /// `Partial<t>` of interface value type `t` (module docs); `None` when `t` is no interface
     /// with methods.
     pub(crate) fn partial_iface(&mut self, t: TyId, module: usize, span: Span) -> Option<TyId> {
+        match self.partial_fields(t)? {
+            Ok(fields) => Some(self.anon_type_with(&fields, module)),
+            Err(why) => {
+                let shown = self.display(t);
+                self.error(Diagnostic::error(
+                    format!("`Partial<{shown}>` is not supported yet: {why}"),
+                    span,
+                ));
+                Some(self.ty.error)
+            }
+        }
+    }
+
+    /// The fields of `Partial<t>` (module docs), or why it is not supported; `None` when `t`
+    /// is no interface with methods.
+    fn partial_fields(&mut self, t: TyId) -> Option<Result<Vec<ShapeField>, String>> {
         if !self.is_method_iface(t) {
             return None;
         }
@@ -40,27 +56,51 @@ impl Ctx<'_> {
                     readonly: false,
                     optional: false,
                 }),
-                Err(why) => {
-                    let shown = self.display(t);
-                    self.error(Diagnostic::error(
-                        format!("`Partial<{shown}>` is not supported yet: {why}"),
-                        span,
-                    ));
-                    return Some(self.ty.error);
-                }
+                Err(why) => return Some(Err(why)),
             }
         }
         for f in &mut fields {
             f.optional = true;
         }
-        Some(self.anon_type_with(&fields, module))
+        Some(Ok(fields))
+    }
+
+    /// The interface `I`, among `found`'s own and those class `found` implements, whose
+    /// `Partial<I>` is `exp` or a member of union `exp`. TypeScript converts every `I` to
+    /// `Partial<I>` keeping the value; Velt's `Partial<I>` is an object type of its own, which
+    /// the value would be copied into (`body/expr/coerce_mismatch.rs` reports it).
+    pub(crate) fn partial_source(&mut self, exp: TyId, found: TyId) -> Option<TyId> {
+        let exp = self.ty.core(exp).unwrap_or(exp);
+        let targets = self.union_members(exp).unwrap_or_else(|| vec![exp]);
+        let found = self.ty.core(found).unwrap_or(found);
+        let mut sources = vec![found];
+        let mut class = self.class_of(found);
+        for _ in 0..32 {
+            let Some((c, args)) = class else { break };
+            let Some(a) = self.adt(c) else { break };
+            let (implements, base) = (a.implements.clone(), a.base);
+            for b in implements {
+                let t = self.ty.intern(TyKind::Dyn(b.iface, b.args));
+                sources.push(self.subst(t, &args));
+            }
+            class = base
+                .map(|b| self.subst(b, &args))
+                .and_then(|b| self.class_of(b));
+        }
+        sources.into_iter().find(|&s| {
+            self.partial_fields(s)
+                .and_then(Result::ok)
+                .is_some_and(|f| targets.contains(&self.anon_type_with(&f, 0)))
+        })
     }
 
     /// The function type of method `name` of interface `d` at `args`, from its declaration.
     fn partial_method_ty(&mut self, d: DefId, args: &[TyId], name: &str) -> Result<TyId, String> {
         let (owner, sig) = self
             .method_declaration(d, name, 0)
-            .ok_or_else(|| format!("the declaration of method `{name}` is not found"))?;
+            .ok_or_else(|| {
+                format!("method `{name}` comes from a type Velt made (`Pick`, `Omit` or an intersection of interfaces with methods), which has no written signature to make optional")
+            })?;
         if !sig.generics.is_empty() {
             return Err(format!("method `{name}` is generic"));
         }
