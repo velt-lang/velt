@@ -54,12 +54,13 @@ extend TlsServer implements ReactorTls {
     cert: string,
     key: string,
     alpn: string,
+    handed: u64,
   ): Promise<IoResult<u64> | null> {
     // The program can listen with TLS on the reactor: tcp_sched's `stdUsed("reactorTls")`
     // tests are true, so its operations check for TLS handles.
     noteStdUse("reactorTls");
     try {
-      return await LISTEN.listen(addr, cert, key, alpn);
+      return await LISTEN.listen(addr, cert, key, alpn, handed);
     } catch (e) {
       return fs.failed(status(e), 0);
     }

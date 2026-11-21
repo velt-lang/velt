@@ -9,7 +9,7 @@
 import { IoError } from "velt/io/error";
 import { noteStdUse } from "velt/lang/intrinsics";
 import { IoResult } from "velt/native/result";
-import * as fio from "velt/net/fd_io";
+import { velt_rt_tcp_close, velt_rt_tcp_connect } from "#net-tcp";
 import * as fs from "velt/net/fd_socket";
 import { TcpStream } from "velt/net/tcp_stream";
 import { FdTlsConn } from "velt/net/tls/fd_conn";
@@ -44,7 +44,7 @@ export async function connectTls(
   alpn: string,
 ): Promise<IoResult<u64>, IoError> {
   const name = serverName == "" ? hostOf(addr) : serverName;
-  const d = await fs.connect(addr);
+  const d = await velt_rt_tcp_connect(addr);
   if (d.code !== 0) {
     return d;
   }
@@ -58,7 +58,7 @@ export async function connectTls(
     const c: Conn = shared(new Mutex<TlsSession>(new FdTlsConn(fd, engine, null, 0)));
     return fs.value(addConn(c));
   } catch (e) {
-    fio.close(fd);
+    velt_rt_tcp_close(fd);
     // A failure of the crypto (a point off the curve, say) is the handshake's, as TLS reports it.
     throw e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
   }
@@ -111,7 +111,7 @@ export async function handshakeOn(
   await Promise.race(racers);
   if (!a.done) {
     // Closing the socket fails the handshake's wait, so its task ends.
-    fio.close(fd);
+    velt_rt_tcp_close(fd);
     await running;
     if (signal != null) {
       signal.throwIfAborted();
@@ -120,7 +120,7 @@ export async function handshakeOn(
   }
   const failure = a.failure;
   if (failure != null) {
-    fio.close(fd);
+    velt_rt_tcp_close(fd);
     throw failure;
   }
   const c: Conn = shared(new Mutex<TlsSession>(new FdTlsConn(fd, a.engine!, null, 0)));
