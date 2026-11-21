@@ -559,7 +559,7 @@ fn fn_value_type(cx: &mut Ctx, d: DefId, params: Vec<TyId>) -> TyId {
 /// parameter, an interface or a dynamic value, whose contents aren't known? A parameter of another
 /// type that crosses carries no closure across (std's `Symbol(description)` puts its string in the
 /// symbol's record with `slotPut`, a channel's boundary), so it makes no argument of a call through
-/// a function value cross: through `unknown` that value's calls are every call (#154).
+/// a function value cross: through `unknown` that value's calls are every call (#3429).
 fn carries_fn(cx: &mut Ctx, t: TyId) -> bool {
     types::may_hold_fn(cx, t)
 }

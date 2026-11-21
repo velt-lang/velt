@@ -222,7 +222,7 @@ fn generic_parameters_keep_the_callers_types() {
     );
 }
 
-/// A crossing parameter that can't hold a function value carries no closure across (#154).
+/// A crossing parameter that can't hold a function value carries no closure across (#3429).
 /// std's `Symbol(description)` puts its string in the symbol's record with `slotPut`, a channel's
 /// boundary for this check. sigx uses `Symbol` as a generic function value through `unknown`
 /// (`createToken`), whose type then matches the calls through every generic function type: their
