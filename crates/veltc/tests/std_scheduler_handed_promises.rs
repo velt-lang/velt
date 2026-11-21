@@ -287,3 +287,294 @@ async function main() {
   console.log(`waited ${sum}, marked ${MARKED.load()}`);
 }
 "#;
+
+/// Runs of [`ARG_TO_SPAWNED_CALL`] and [`COPIES_HANDED_OVER`] at each worker count. Both failed every
+/// run before the fix, at one worker too.
+const COPY_RUNS: usize = 3;
+
+/// A promise passed to an async closure that is called and spawned at once
+/// (`spawn((async (held) => await held)(p))`, #3424). The spawn copies the argument for the task
+/// and hands the copy over (its holder forwards to a proxy on this task); the callee then keeps a
+/// copy of its argument, made on this task after the hand-over. That copy shared the proxy here,
+/// a hub of this task, and the spawned task dropped a handle of it: an `ICE:` every run. A copy
+/// of a holder handed over from its task is now handed over too. [`COPIES_HANDED_OVER`] has the
+/// same with a record, with the caller awaiting the promise as well, a named async function, and
+/// one promise passed to two spawned calls.
+#[test]
+fn a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let mut bad = Vec::new();
+    for (name, src, want) in [
+        ("arg_to_spawned_call", ARG_TO_SPAWNED_CALL, "done 190\n"),
+        ("copies_handed_over", COPIES_HANDED_OVER, "done 1140\n"),
+        ("settled_before", SETTLED_BEFORE, "done 235\n"),
+    ] {
+        let exe = build_std(dir.path(), name, src);
+        for threads in ["1", "4", "8"] {
+            for i in 0..COPY_RUNS {
+                let (code, out, err) = run(&exe, threads);
+                if code != 0 || out != want || !all_freed(&err) {
+                    bad.push(format!(
+                        "{name}, {threads} workers, run {i}: exit {code}, stdout {out:?}, stderr {err}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// Promises already settled when they are passed, for
+/// [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`] (the review of #3426): the
+/// hand-over's proxy then finished at once, before the callee's copy, which shared it on this task
+/// again. Node prints the same sum. The rejected promise gets a handler before it is passed: it
+/// is handed over only after the task awaits twice, and Node reports a rejection still without a
+/// handler once its microtask queue drains ([`REJECTED_BEFORE`] hands one over at once).
+const SETTLED_BEFORE: &str = r#"// A promise that has settled before it is passed to an async closure that is called and spawned at
+// once: resolved, awaited before, settled without being awaited, rejected before (the callee
+// catches), and resolved by another task before.
+async function soon(n: number): Promise<number> {
+  await yieldNow();
+  return n;
+}
+
+async function fails(n: number): Promise<number> {
+  await yieldNow();
+  throw new Error(`no ${n}`);
+}
+
+async function settle(give: (v: number) => void, n: number): Promise<void> {
+  give(n);
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 10; r++) {
+    // Resolved.
+    const a = Promise.resolve(r);
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(a));
+    // Awaited before.
+    const b = soon(r);
+    sum += await b;
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(b));
+    // Settled, not awaited.
+    const c = soon(r);
+    await yieldNow();
+    await yieldNow();
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(c));
+    // Rejected before; the callee catches.
+    const d = fails(r);
+    d.catch((e: Error): number => 0);
+    await yieldNow();
+    await yieldNow();
+    sum += await spawn(
+      (async (held: Promise<number>): Promise<number> => {
+        try {
+          return await held;
+        } catch (e) {
+          return 1;
+        }
+      })(d),
+    );
+    // Resolved by another task before.
+    const got = Promise.withResolvers<number>();
+    await spawn(settle(got.resolve, r));
+    const e = got.promise;
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(e));
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;
+
+/// A promise that has rejected already, handed to another task that catches its rejection, is
+/// not reported as unhandled: the hand-over handles it. The hand-over's proxy runs first in its
+/// task's next poll (so a copy of the holder made right after finds it waiting, [`SETTLED_BEFORE`]),
+/// which comes after the task's check of rejections nobody handled; a promise that finished
+/// already settles into its hub as it is handed over, as the proxy's first run would settle it.
+/// Each program was reported as an unhandled rejection, every run, when the hand-over left that
+/// settle to the proxy's first run (the re-review of #3426). Node prints the same.
+#[test]
+fn a_rejected_promise_handed_to_another_task_is_handled_by_the_hand_over() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let mut bad = Vec::new();
+    for (name, src, want) in [
+        ("shared_rejected", SHARED_REJECTED, "got 1\n"),
+        (
+            "shared_rejected_awaited",
+            SHARED_REJECTED_AWAITED,
+            "got 1 2\n",
+        ),
+        ("rejected_before", REJECTED_BEFORE, "done 20\n"),
+    ] {
+        let exe = build_std(dir.path(), name, src);
+        for threads in ["1", "4", "8"] {
+            for i in 0..COPY_RUNS {
+                let (code, out, err) = run(&exe, threads);
+                if code != 0 || out != want || !all_freed(&err) {
+                    bad.push(format!(
+                        "{name}, {threads} workers, run {i}: exit {code}, stdout {out:?}, stderr {err}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// A rejected promise with a second holder (so it is shared), the second handed to a named async
+/// function's spawned call (its argument is transferred), for
+/// [`a_rejected_promise_handed_to_another_task_is_handled_by_the_hand_over`].
+const SHARED_REJECTED: &str = r#"async function failsNow(): Promise<number> {
+  throw new Error("f");
+}
+
+async function catcher(held: Promise<number>): Promise<number> {
+  try {
+    return await held;
+  } catch (e) {
+    return 1;
+  }
+}
+
+async function main(): Promise<void> {
+  const q = failsNow();
+  const q2 = q;
+  const v = await spawn(catcher(q2));
+  console.log(`got ${v}`);
+  q.catch((e: Error): number => 0);
+}
+main();
+"#;
+
+/// [`SHARED_REJECTED`] with the caller awaiting the promise too.
+const SHARED_REJECTED_AWAITED: &str = r#"async function failsNow(): Promise<number> {
+  throw new Error("f");
+}
+
+async function catcher(held: Promise<number>): Promise<number> {
+  try {
+    return await held;
+  } catch (e) {
+    return 1;
+  }
+}
+
+async function main(): Promise<void> {
+  const q = failsNow();
+  const q2 = q;
+  const v = await spawn(catcher(q2));
+  let w = 0;
+  try {
+    w = await q;
+  } catch (e) {
+    w = 2;
+  }
+  console.log(`got ${v} ${w}`);
+}
+main();
+"#;
+
+/// A promise rejected before it is passed to an async closure that is called and spawned at once
+/// (the form of #3424), with no tick in between.
+const REJECTED_BEFORE: &str = r#"async function failsNow(n: number): Promise<number> {
+  throw new Error(`no ${n}`);
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 10; r++) {
+    const d = failsNow(r);
+    sum += await spawn(
+      (async (held: Promise<number>): Promise<number> => {
+        try {
+          return await held;
+        } catch (e) {
+          return 2;
+        }
+      })(d),
+    );
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;
+
+/// The program of #3424 for [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`].
+const ARG_TO_SPAWNED_CALL: &str = r#"async function soon(n: number): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 20; r++) {
+    const p = soon(r);
+    const t = spawn((async (held: Promise<number>): Promise<number> => await held)(p));
+    sum += await t;
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;
+
+/// The other shapes of [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`].
+const COPIES_HANDED_OVER: &str = r#"type R = { p: Promise<number> };
+
+async function soon(n: number): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function named(held: Promise<number>): Promise<number> {
+  return await held;
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 20; r++) {
+    // A record holding the promise, passed to a spawned call through a closure value.
+    const p = soon(r);
+    const t = spawn((async (held: R): Promise<number> => await held.p)({ p: p }));
+    sum += await t;
+    // The caller awaits the promise too, after handing a copy over.
+    const q = soon(r);
+    const u = spawn((async (held: Promise<number>): Promise<number> => await held)(q));
+    sum += await q;
+    sum += await u;
+    // A named async function: its arguments are transferred, not copied.
+    const s = soon(r);
+    sum += await spawn(named(s));
+    // The same promise to two spawned calls.
+    const w = soon(r);
+    const a = spawn((async (held: Promise<number>): Promise<number> => await held)(w));
+    const b = spawn((async (held: Promise<number>): Promise<number> => await held)(w));
+    sum += await a;
+    sum += await b;
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;
