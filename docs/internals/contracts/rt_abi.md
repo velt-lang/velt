@@ -490,7 +490,10 @@ velt/arch's instructions are externs too, `velt_arch_<class>_<method>`
 defined by no runtime: `velt_vir::arch` gives each one's row (`SimdCall::Arch`), with its
 feature, its VIR signature (scalars, or `V128` for a 128-bit lane type) and how LLVM computes it.
 Only a function gated on the row's feature calls one (`vir::Function::target`; the verifier
-checks it). LLVM emits it inline; Cranelift, which never runs gated code, gives a zero.
+checks it). LLVM emits it inline; Cranelift, which never runs gated code, gives a zero. A row on
+velt/arch/x86's `Vector256<T>` or `Vector512<T>` (std structs of two or four `V128`s) takes each
+by address, as `f32x8`'s operations do: a `Ptr` per operand, and a result through one more `Ptr`,
+the last parameter.
 A 256-bit vector (`f32x8`) is not a VIR type: it is a value of two `V128` halves,
 the low lanes first (32 bytes, 8-byte aligned as a `V128` is; the helpers' loads and stores are
 unaligned), and `velt_simd_f32x8_<op>` (`SimdCall::Wide`, `velt_vir::simd::wide`)

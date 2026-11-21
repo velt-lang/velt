@@ -518,7 +518,12 @@ mod tests {
                 );
                 assert!(index.contains(&format!("`{}`", f.name())), "{}", f.name());
             }
-            assert_eq!(index.matches("export {").count(), features.len(), "{dir}");
+            // Beside the classes, velt/arch/x86 exports its wide vector types (#3222 step 5).
+            let types = ["Vector256", "Vector512"];
+            let others = (types.iter())
+                .filter(|t| index.contains(&format!("export {{ {t} }}")))
+                .count();
+            assert_eq!(index.matches("export {").count(), features.len() + others, "{dir}");
         }
     }
 

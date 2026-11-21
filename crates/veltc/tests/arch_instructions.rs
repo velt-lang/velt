@@ -6,7 +6,7 @@
 //! each row is the instruction clang makes of its C intrinsic; this one checks what it computes,
 //! operand order included.
 
-use velt_vir::arch::{Row, Val, ROWS};
+use velt_vir::arch::{Lane, Row, Val, ROWS};
 use velt_vir::simd::{CpuArch, Ext};
 
 mod no_window;
@@ -34,6 +34,15 @@ fn detected(ext: Ext) -> bool {
             Ext::Bmi1X86 => std::arch::is_x86_feature_detected!("bmi1"),
             Ext::Bmi2X86 => std::arch::is_x86_feature_detected!("bmi2"),
             Ext::Ssse3X86 => std::arch::is_x86_feature_detected!("ssse3"),
+            Ext::AvxX86 => std::arch::is_x86_feature_detected!("avx"),
+            Ext::Avx2X86 => std::arch::is_x86_feature_detected!("avx2"),
+            Ext::FmaX86 => std::arch::is_x86_feature_detected!("fma"),
+            Ext::Avx512fX86 => std::arch::is_x86_feature_detected!("avx512f"),
+            Ext::Avx512bwX86 => std::arch::is_x86_feature_detected!("avx512bw"),
+            Ext::Avx512cdX86 => std::arch::is_x86_feature_detected!("avx512cd"),
+            Ext::Avx512dqX86 => std::arch::is_x86_feature_detected!("avx512dq"),
+            Ext::Avx512vbmiX86 => std::arch::is_x86_feature_detected!("avx512vbmi"),
+            Ext::Avx512bitalgX86 => std::arch::is_x86_feature_detected!("avx512bitalg"),
             _ => panic!("ICE: no detection for {ext:?}"),
         }
     }
@@ -61,9 +70,72 @@ enum Arg {
     Bytes([u8; 16]),
     Words([u32; 4]),
     Quads([u64; 2]),
+    /// A `Vector256` or `Vector512`: its lanes' bits.
+    Wide(Wide),
 }
 
-fn arg(v: Val, i: usize) -> Arg {
+/// The lanes of a 256- or 512-bit vector, each lane's bits in a `u64`.
+#[derive(Clone, Debug)]
+struct Wide {
+    lane: Lane,
+    lanes: Vec<u64>,
+}
+
+impl Wide {
+    /// Lane `k` as a signed number (its bits sign-extended), for an integer lane type.
+    fn signed(&self, k: usize) -> i64 {
+        let shift = 64 - 8 * self.lane.bytes();
+        ((self.lanes[k] << shift) as i64) >> shift
+    }
+
+    fn f32(&self, k: usize) -> f32 {
+        f32::from_bits(self.lanes[k] as u32)
+    }
+
+    fn f64(&self, k: usize) -> f64 {
+        f64::from_bits(self.lanes[k])
+    }
+
+    /// As the program prints it: the lanes joined by `,`.
+    fn show(&self) -> String {
+        join((0..self.lanes.len()).map(|k| match self.lane {
+            Lane::I8 | Lane::I16 | Lane::I32 | Lane::I64 => self.signed(k).to_string(),
+            Lane::F32 => self.f32(k).to_string(),
+            Lane::F64 => self.f64(k).to_string(),
+            _ => self.lanes[k].to_string(),
+        }))
+    }
+}
+
+/// The bits of `x` as a lane of type `lane`.
+fn mask_lane(lane: Lane, x: u64) -> u64 {
+    match lane.bytes() {
+        8 => x,
+        b => x & ((1u64 << (8 * b)) - 1),
+    }
+}
+
+/// Lane `k` of wide argument `i` named `name`: a hash of both, small exact halves for floats;
+/// every third lane of the second argument the first's (so comparisons find equal lanes), and
+/// shift counts from 0 to 39.
+fn wide_lane(lane: Lane, name: &str, i: usize, k: usize) -> u64 {
+    if i == 1 && k % 3 == 0 && name != "count" && name != "indices" && name != "mask" {
+        return wide_lane(lane, "", 0, k);
+    }
+    match lane {
+        Lane::F32 => ((((k * 3 + i * 5) % 17) as f32 - 6.0) / 2.0).to_bits() as u64,
+        Lane::F64 => ((((k * 7 + i * 3) % 13) as f64 - 5.0) / 2.0).to_bits(),
+        _ if name == "count" => ((k * 5 + 3) % 40) as u64,
+        _ => {
+            let h = (k as u64 + 1)
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .wrapping_add((i as u64 + 1).wrapping_mul(0x632b_e59b_d9b4_e019));
+            mask_lane(lane, h ^ (h >> 29))
+        }
+    }
+}
+
+fn arg(v: Val, i: usize, name: &str) -> Arg {
     let bytes = |m: u32, a: u32| -> [u8; 16] { std::array::from_fn(|k| (k as u32 * m + a) as u8) };
     match v {
         Val::U8 => Arg::Int([0xa5, 0x3c][i % 2]),
@@ -75,6 +147,13 @@ fn arg(v: Val, i: usize) -> Arg {
             Arg::Bytes([bytes(17, 3), bytes(29, 0x87), bytes(11, 200)][i % 3])
         }
         Val::U32x4 | Val::I32x4 => Arg::Words([1, 0x7fff_fff0, 0xffff_fffe, 1000]),
+        Val::V256(lane) | Val::V512(lane) => {
+            let n = v.wide().unwrap_or(256) as usize / 8 / lane.bytes() as usize;
+            Arg::Wide(Wide {
+                lane,
+                lanes: (0..n).map(|k| wide_lane(lane, name, i, k)).collect(),
+            })
+        }
         Val::U64x2 => Arg::Quads(
             [
                 [0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210],
@@ -113,7 +192,27 @@ fn velt_arg(a: &Arg, v: Val) -> String {
             "u64x2.load([{}])",
             list(q.iter().map(|x| x.to_string()).collect())
         ),
+        Arg::Wide(w) => format!(
+            "Vector{}.load{}([{}])",
+            v.wide().unwrap_or(256),
+            w.lane.suffix(),
+            w.show().replace(',', ", ")
+        ),
     }
+}
+
+/// The Velt function printing a wide vector of type `v` (`showV256U32`), and its name.
+fn wide_show(v: Val) -> Option<(String, String)> {
+    let (Val::V256(lane) | Val::V512(lane)) = v else {
+        return None;
+    };
+    let width = v.wide().unwrap_or(256);
+    let (t, n) = (lane.scalar(), width / 8 / lane.bytes());
+    let name = format!("showV{width}{}", lane.suffix());
+    let f = format!(
+        "function {name}(v: Vector{width}<{t}>): string {{\n  const o: {t}[] = [];\n  for (let i: usize = 0; i < {n}; i++) {{\n    o.push(0);\n  }}\n  v.store(o);\n  return o.join(\",\");\n}}\n\n"
+    );
+    Some((name, f))
 }
 
 /// The Velt expression printing the result `x` of type `v`.
@@ -125,6 +224,7 @@ fn velt_show(v: Val) -> &'static str {
         Val::U32x4 => "lanes4(x)",
         Val::I32x4 => "lanes4(x.asU32x4())",
         Val::U64x2 => "String(x.lane(0)) + \",\" + String(x.lane(1))",
+        Val::V256(_) | Val::V512(_) => "",
     }
 }
 
@@ -135,23 +235,34 @@ fn program(arch: CpuArch) -> String {
     classes.sort_unstable();
     classes.dedup();
     let module = rows[0].ext.arch_module();
+    // The functions printing the wide results the rows give.
+    let mut shows: Vec<(String, String)> = (rows.iter()).filter_map(|r| wide_show(r.ret)).collect();
+    shows.sort();
+    shows.dedup();
+    if arch == CpuArch::X86_64 {
+        classes.extend(["Vector256", "Vector512"]);
+    }
     let mut s = format!(
-        "import {{ {} }} from \"{module}\";\nimport {{ i32x4, i8x16, u32x4, u64x2, u8x16 }} from \"velt/simd\";\n\n\
+        "import {{ {} }} from \"{module}\";\nimport {{ i32x4, i8x16, u32x4, u64x2, u8x16 }} from \"velt/simd\";\n\n{}\
          function lanes16(v: u8x16): string {{\n  let s = \"\";\n  for (let i: usize = 0; i < 16; i++) {{\n    s += (i > 0 ? \",\" : \"\") + String(v.lane(i));\n  }}\n  return s;\n}}\n\n\
          function lanes4(v: u32x4): string {{\n  let s = \"\";\n  for (let i: usize = 0; i < 4; i++) {{\n    s += (i > 0 ? \",\" : \"\") + String(v.lane(i));\n  }}\n  return s;\n}}\n\nfunction main() {{\n",
-        classes.join(", ")
+        classes.join(", "),
+        shows.iter().map(|(_, f)| f.as_str()).collect::<String>()
     );
     for r in rows {
         let class = r.ext.arch_class();
         let args: Vec<String> = (r.params.iter().enumerate())
-            .map(|(i, (_, v))| velt_arg(&arg(*v, i), *v))
+            .map(|(i, (n, v))| velt_arg(&arg(*v, i, n), *v))
             .collect();
+        let show = match wide_show(r.ret) {
+            Some((name, _)) => format!("{name}(x)"),
+            None => velt_show(r.ret).to_string(),
+        };
         s.push_str(&format!(
-            "  if ({class}.isSupported()) {{\n    const x = {class}.{}({});\n    console.log(\"{}=\" + {});\n  }} else {{\n    console.log(\"{}=-\");\n  }}\n",
+            "  if ({class}.isSupported()) {{\n    const x = {class}.{}({});\n    console.log(\"{class}.{}=\" + {show});\n  }} else {{\n    console.log(\"{class}.{}=-\");\n  }}\n",
             r.method,
             args.join(", "),
             r.method,
-            velt_show(r.ret),
             r.method
         ));
     }
@@ -274,8 +385,11 @@ fn join<T: ToString>(xs: impl IntoIterator<Item = T>) -> String {
 /// What row `r` computes from its arguments, as the program prints it.
 fn reference(r: &Row) -> String {
     let a: Vec<Arg> = (r.params.iter().enumerate())
-        .map(|(i, (_, v))| arg(*v, i))
+        .map(|(i, (n, v))| arg(*v, i, n))
         .collect();
+    if r.ret.wide().is_some() || r.params.iter().any(|(_, v)| v.wide().is_some()) {
+        return wide_reference(r, &a);
+    }
     let m32 = |x: u64| x as u32 as u64;
     match r.c {
         "_mm_crc32_u8" | "__crc32cb" => crc(CRC32C, int(&a[0]) as u32, int(&a[1]), 1).to_string(),
@@ -368,6 +482,118 @@ fn reference(r: &Row) -> String {
     }
 }
 
+fn wide(a: &Arg) -> &Wide {
+    match a {
+        Arg::Wide(w) => w,
+        _ => panic!("ICE: not a wide vector"),
+    }
+}
+
+/// A wide result of lane type `lane` from each lane's bits.
+fn wide_of(lane: Lane, lanes: impl IntoIterator<Item = u64>) -> String {
+    let lanes = lanes.into_iter().map(|x| mask_lane(lane, x)).collect();
+    Wide { lane, lanes }.show()
+}
+
+/// What row `r`, with a 256- or 512-bit vector, computes from its arguments `a`.
+fn wide_reference(r: &Row, a: &[Arg]) -> String {
+    let lane = |i: usize| wide(&a[i]).lane;
+    let n = |i: usize| wide(&a[i]).lanes.len();
+    let u = |i: usize, k: usize| wide(&a[i]).lanes[k];
+    let sg = |i: usize, k: usize| wide(&a[i]).signed(k);
+    let ret_lane = match r.ret {
+        Val::V256(l) | Val::V512(l) => Some(l),
+        _ => None,
+    };
+    let each = |f: &dyn Fn(usize) -> u64| -> String {
+        let l = ret_lane.expect("ICE: a wide result");
+        let count = r.ret.wide().unwrap_or(256) as usize / 8 / l.bytes() as usize;
+        wide_of(l, (0..count).map(f))
+    };
+    let floats = |k: usize, op: &dyn Fn(f64, f64, f64) -> f64| -> u64 {
+        let get = |i: usize| match lane(0) {
+            Lane::F32 => wide(&a[i]).f32(k) as f64,
+            _ => wide(&a[i]).f64(k),
+        };
+        let c = if a.len() > 2 { get(2) } else { 0.0 };
+        let x = op(get(0), get(1), c);
+        match lane(0) {
+            Lane::F32 => (x as f32).to_bits() as u64,
+            _ => x.to_bits(),
+        }
+    };
+    // A byte shuffle within each 128-bit part (`pshufb`).
+    let pshufb = |k: usize| {
+        let m = u(1, k);
+        if m & 0x80 != 0 {
+            0
+        } else {
+            u(0, (k & !15) | (m & 15) as usize)
+        }
+    };
+    match r.c {
+        "_mm256_add_ps" | "_mm256_add_pd" | "_mm512_add_ps" => {
+            each(&|k| floats(k, &|x, y, _| x + y))
+        }
+        "_mm256_mul_ps" | "_mm256_mul_pd" => each(&|k| floats(k, &|x, y, _| x * y)),
+        "_mm256_fmadd_ps" | "_mm256_fmadd_pd" => each(&|k| floats(k, &|x, y, z| x * y + z)),
+        "_mm256_cmpeq_epi8" => each(&|k| if u(0, k) == u(1, k) { 0xff } else { 0 }),
+        "_mm256_movemask_epi8" => (0..n(0))
+            .map(|k| (u(0, k) >> 7) << k)
+            .sum::<u64>()
+            .to_string(),
+        "_mm512_movepi8_mask" => (0..n(0))
+            .map(|k| (u(0, k) >> 7) << k)
+            .sum::<u64>()
+            .to_string(),
+        "_mm256_shuffle_epi8" | "_mm512_shuffle_epi8" => each(&pshufb),
+        "_mm256_add_epi8" | "_mm256_add_epi32" | "_mm256_add_epi64" | "_mm512_add_epi32"
+        | "_mm512_add_epi8" => each(&|k| u(0, k).wrapping_add(u(1, k))),
+        "_mm256_sub_epi32" => each(&|k| u(0, k).wrapping_sub(u(1, k))),
+        "_mm256_mullo_epi32" | "_mm512_mullo_epi32" | "_mm512_mullo_epi64" => {
+            each(&|k| u(0, k).wrapping_mul(u(1, k)))
+        }
+        "_mm256_permutevar8x32_epi32" => each(&|k| u(0, (u(1, k) & 7) as usize)),
+        "_mm512_permutexvar_epi32" => each(&|k| u(0, (u(1, k) & 15) as usize)),
+        "_mm512_permutexvar_epi8" => each(&|k| u(0, (u(1, k) & 63) as usize)),
+        "_mm256_min_epu8" | "_mm512_min_epu8" => each(&|k| u(0, k).min(u(1, k))),
+        "_mm256_max_epu8" => each(&|k| u(0, k).max(u(1, k))),
+        "_mm256_madd_epi16" => each(&|k| {
+            let s = sg(0, 2 * k) * sg(1, 2 * k) + sg(0, 2 * k + 1) * sg(1, 2 * k + 1);
+            s as i32 as u32 as u64
+        }),
+        "_mm256_maddubs_epi16" => each(&|k| {
+            let s = u(0, 2 * k) as i64 * sg(1, 2 * k) + u(0, 2 * k + 1) as i64 * sg(1, 2 * k + 1);
+            s.clamp(i16::MIN as i64, i16::MAX as i64) as u64
+        }),
+        "_mm256_sad_epu8" => each(&|k| {
+            (0..8)
+                .map(|j| u(0, 8 * k + j).abs_diff(u(1, 8 * k + j)))
+                .sum()
+        }),
+        "_mm256_blendv_epi8" => each(&|k| {
+            if u(2, k) & 0x80 != 0 {
+                u(1, k)
+            } else {
+                u(0, k)
+            }
+        }),
+        "_mm256_sllv_epi32" => each(&|k| if u(1, k) > 31 { 0 } else { u(0, k) << u(1, k) }),
+        "_mm256_srlv_epi32" => each(&|k| if u(1, k) > 31 { 0 } else { u(0, k) >> u(1, k) }),
+        "_mm512_cmpeq_epi32_mask" | "_mm512_cmpeq_epi8_mask" => (0..n(0))
+            .map(|k| u64::from(u(0, k) == u(1, k)) << k)
+            .sum::<u64>()
+            .to_string(),
+        "_mm512_mask_blend_epi32" => {
+            let m = int(&a[0]);
+            each(&|k| if (m >> k) & 1 != 0 { u(2, k) } else { u(1, k) })
+        }
+        "_mm512_lzcnt_epi32" => each(&|k| (u(0, k) as u32).leading_zeros() as u64),
+        "_mm512_popcnt_epi8" => each(&|k| u(0, k).count_ones() as u64),
+        other => panic!("no reference for `{other}`: add one"),
+    }
+}
+
 #[test]
 fn every_instruction_computes_what_its_manual_says() {
     let Some(arch) = host() else {
@@ -392,7 +618,7 @@ fn every_instruction_computes_what_its_manual_says() {
     let mut bad = vec![];
     for r in ROWS.iter().filter(|r| r.ext.arch() == arch) {
         let line = (stdout.lines())
-            .find_map(|l| l.strip_prefix(&format!("{}=", r.method)))
+            .find_map(|l| l.strip_prefix(&format!("{}.{}=", r.ext.arch_class(), r.method)))
             .unwrap_or_else(|| panic!("no line for {}:\n{stdout}", r.method));
         let want = if detected(r.ext) {
             reference(r)

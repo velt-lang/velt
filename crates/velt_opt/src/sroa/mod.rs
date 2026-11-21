@@ -114,13 +114,17 @@ fn candidates(aggs: &[AggLayout], func: &Function) -> FxHashMap<Local, Candidate
     out
 }
 
-/// Whether `layout` is two 128-bit vectors and nothing else: the shape of a 256-bit vector
-/// (`f32x8`, `velt_vir::simd::wide`), which its operations take by address. Such a local stays
-/// whole: LLVM keeps it as one 256-bit value, in a register across a loop, where two field
-/// locals would be joined before every operation and split after it. LLVM's own scalar
-/// replacement still takes apart one that nothing reads as a whole.
-fn is_wide_vector(layout: &AggLayout) -> bool {
-    matches!(layout.fields[..], [(Ty::V128, 0), (Ty::V128, 16)]) && layout.size == 32
+/// Whether `layout` is two or four 128-bit vectors and nothing else: the shape of a 256-bit
+/// vector (`f32x8`, `velt_vir::simd::wide`; velt/arch's `Vector256<T>`) or a 512-bit one
+/// (`Vector512<T>`), which their operations take by address. Such a local stays whole: LLVM
+/// keeps it as one wide value, in a register across a loop, where field locals would be joined
+/// before every operation and split after it. LLVM's own scalar replacement still takes apart
+/// one that nothing reads as a whole.
+pub(crate) fn is_wide_vector(layout: &AggLayout) -> bool {
+    let n = layout.fields.len();
+    matches!(n, 2 | 4)
+        && layout.size == 16 * n as u32
+        && (layout.fields.iter().enumerate()).all(|(i, f)| *f == (Ty::V128, 16 * i as u32))
 }
 
 /// Whether the fields hold every meaningful byte of the layout, i.e. the only gaps are

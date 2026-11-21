@@ -69,8 +69,8 @@ export class Avx512F {
   /**
    * Lane `i` is `right`'s where bit `i` of `mask` is set, else `left`'s.
    *
-   * `_mm512_mask_blend_epi32` (`vpblendmd`). Runs only where the CPU has it: call it behind
-   * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
+   * `_mm512_mask_blend_epi32` (`vpblendmd|vmovdqa32|vmovdqu32`). Runs only where the CPU has it:
+   * call it behind `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
    */
   static blendU32(mask: u16, left: Vector512<u32>, right: Vector512<u32>): Vector512<u32> {
     return velt_arch_avx512f_blend_u32(mask, left, right);
@@ -79,7 +79,7 @@ export class Avx512F {
   /**
    * Lane `i` is lane `indices[i] & 15` of `value`.
    *
-   * `_mm512_permutexvar_epi32` (`vpermd`). Runs only where the CPU has it: call it behind
+   * `_mm512_permutexvar_epi32` (`vpermd|vpermps`). Runs only where the CPU has it: call it behind
    * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
    */
   static permuteVarU32(value: Vector512<u32>, indices: Vector512<u32>): Vector512<u32> {

@@ -204,7 +204,8 @@ pub struct Row {
     /// The C intrinsic (Intel's guide, Arm's ACLE): `_mm_crc32_u64`.
     pub c: &'static str,
     /// The instruction's mnemonic as the assembler prints it for this row (`crc32q`), which the
-    /// LLVM tests look for.
+    /// LLVM tests look for: `*` stands for any text (`vfmadd*ps`: LLVM picks the operand order),
+    /// and `|` separates the equivalent forms LLVM may choose (`vpermd|vpermps`).
     pub instr: &'static str,
     /// The parameters' names and types.
     pub params: &'static [(&'static str, Val)],

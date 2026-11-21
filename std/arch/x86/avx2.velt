@@ -110,8 +110,8 @@ export class Avx2 {
   /**
    * Lane `i` is lane `indices[i] & 7` of `value`.
    *
-   * `_mm256_permutevar8x32_epi32` (`vpermd`). Runs only where the CPU has it: call it behind
-   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   * `_mm256_permutevar8x32_epi32` (`vpermd|vpermps`). Runs only where the CPU has it: call it
+   * behind `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
    */
   static permuteVarU32(value: Vector256<u32>, indices: Vector256<u32>): Vector256<u32> {
     return velt_arch_avx2_permute_var_u32(value, indices);

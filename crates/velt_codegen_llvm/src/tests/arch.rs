@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use velt_vir::arch::{ArchOp, Row, Val, ROWS};
+use velt_vir::arch::{ArchOp, Lane, Row, Val, ROWS};
 use velt_vir::simd::CpuArch;
 
 use crate::simd::{Arch, Caps};
@@ -28,10 +28,17 @@ fn gated_module(op: ArchOp, arch: Arch) -> String {
     let formals: Vec<String> = (ps.iter().enumerate())
         .map(|(i, t)| format!("{t} %p{i}"))
         .collect();
+    // `ret` takes the plain type (`i16`), the signature its ABI form (`zeroext i16`).
+    let plain = crate::types::llvm_type(ret).unwrap_or("void");
     let ret = abi_ret(ret).unwrap();
+    // A wide result is stored through the last argument: the helper returns nothing.
+    let (call, give) = match ret.as_str() {
+        "void" => (String::new(), "ret void".to_string()),
+        _ => ("%v = ".to_string(), format!("ret {plain} %v")),
+    };
     let mut m = decls.join("\n");
     m.push_str(&format!(
-        "\ndefine {ret} @t({}) #0 {{\n  %v = call {ret} {name}({})\n  ret {ret} %v\n}}\n\
+        "\ndefine {ret} @t({}) #0 {{\n  {call}call {ret} {name}({})\n  {give}\n}}\n\
          attributes #0 = {{ \"target-features\"=\"{}\" }}\n",
         formals.join(", "),
         formals.join(", "),
@@ -47,6 +54,12 @@ fn c_type(v: Val, arch: CpuArch) -> &'static str {
         (Val::U16, _) => "uint16_t",
         (Val::U32, _) => "uint32_t",
         (Val::U64, _) => "uint64_t",
+        (Val::V256(Lane::F32), _) => "__m256",
+        (Val::V256(Lane::F64), _) => "__m256d",
+        (Val::V256(_), _) => "__m256i",
+        (Val::V512(Lane::F32), _) => "__m512",
+        (Val::V512(Lane::F64), _) => "__m512d",
+        (Val::V512(_), _) => "__m512i",
         (_, CpuArch::X86_64) => "__m128i",
         (Val::U8x16, _) => "uint8x16_t",
         (Val::I8x16, _) => "int8x16_t",
@@ -79,7 +92,11 @@ fn c_function(r: &Row) -> String {
             format!("{t} a{i}")
         })
         .collect();
-    let args: Vec<String> = (0..r.params.len()).map(|i| format!("a{i}")).collect();
+    let mut args: Vec<String> = (0..r.params.len()).map(|i| format!("a{i}")).collect();
+    // Intel's `permutexvar` takes the indices first; the method takes the value first.
+    if r.c.starts_with("_mm512_permutexvar_") {
+        args.swap(0, 1);
+    }
     format!(
         "#include <stdint.h>\n{header}{ret} t({}) {{ return {}({}); }}\n",
         formals.join(", "),
@@ -117,15 +134,26 @@ fn assembly(clang: &Path, lang: &str, source: &str, triple: &str, features: &str
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// Whether `asm` has the instruction `instr` (on x86, AT&T's operand-size suffix aside).
-fn has_instruction(asm: &str, instr: &str, arch: CpuArch) -> bool {
+/// Whether `asm` has the instruction `instr` (on x86, AT&T's operand-size suffix aside; a `*`
+/// stands for any text, as in `vfmadd*ps`, and `|` separates equivalent forms LLVM may choose,
+/// as in `vpermd|vpermps`) on a `register` (`ymm`, `zmm`; any where `None`).
+fn has_instruction(asm: &str, instr: &str, arch: CpuArch, register: Option<&str>) -> bool {
+    let one = |m: &str, form: &str| match form.split_once('*') {
+        Some((head, tail)) => {
+            m.len() >= head.len() + tail.len() && m.starts_with(head) && m.ends_with(tail)
+        }
+        None => {
+            m == form
+                || (arch == CpuArch::X86_64
+                    && m.len() == form.len() + 1
+                    && m.starts_with(form)
+                    && m.ends_with(['b', 'w', 'l', 'q']))
+        }
+    };
+    let named = |m: &str| instr.split('|').any(|form| one(m, form));
     asm.lines().any(|line| {
         let m = line.split_whitespace().next().unwrap_or("");
-        m == instr
-            || (arch == CpuArch::X86_64
-                && m.len() == instr.len() + 1
-                && m.starts_with(instr)
-                && m.ends_with(['b', 'w', 'l', 'q']))
+        named(m) && register.is_none_or(|r| line.contains(r))
     })
 }
 
@@ -143,7 +171,14 @@ fn every_row_is_the_instruction_clang_makes_of_its_c_intrinsic() {
         let ours = assembly(&clang, "ir", &gated_module(op, arch), triple, features);
         let theirs = assembly(&clang, "c", &c_function(r), triple, features);
         for (who, asm) in [("velt", &ours), ("clang", &theirs)] {
-            if !has_instruction(asm, r.instr, r.ext.arch()) {
+            // A 256-bit row is one `ymm` instruction and a 512-bit one a `zmm` one, not
+            // split into narrower halves.
+            let register = match op.width() {
+                256 => Some("ymm"),
+                512 => Some("zmm"),
+                _ => None,
+            };
+            if !has_instruction(asm, r.instr, r.ext.arch(), register) {
                 bad.push(format!(
                     "{} ({}): {who} has no `{}`:\n{asm}",
                     r.method, r.c, r.instr
