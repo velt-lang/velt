@@ -207,12 +207,11 @@ export function retiredLook(e: usize): void {
       mv.serve(e);
     }
     if (s === t.R_ASKED) {
-      // Pending sleeps go with their tasks to worker 0 when they can (#3117); not while a
-      // request waits on this worker (`keeps`).
-      if (
-        keeps(e) &&
-        (m.ld(e + t.E_UNREF) !== 0 || m.load(e + t.E_SLEEP_ASKS) !== 0 || !sc.carryHome(e, g))
-      ) {
+      // Pending sleeps go with their tasks to worker 0 when they can (#3117). A request for one
+      // that comes meanwhile, or waits here for a sleep an offered task carries, may wait on a
+      // retired spare: the loop serves its list on every pass and never sleeps on it, and the
+      // request goes on to the sleep's worker once one holds it (sched_sleep_move.velt `one`).
+      if (keeps(e) && (m.ld(e + t.E_UNREF) !== 0 || !sc.carryHome(e, g))) {
         m.cas32(e + t.E_RETIRED, t.R_ASKED, t.R_DECLINED);
         continue;
       }
@@ -259,10 +258,6 @@ export function retiredLook(e: usize): void {
  * leaf to see it (that task's poll reads them from this worker's block)?
  */
 function keeps(e: usize): bool {
-  if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
-    // A request that waits for a carried sleep's task (sched_sleep_move.velt).
-    return true;
-  }
   const b = m.ld(e + t.E_TIMERS);
   if (m.ld(e + t.E_UNREF) !== 0) {
     return true;
