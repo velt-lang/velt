@@ -1,0 +1,362 @@
+// velt/crypto (internal): RSA signing (RFC 8017): RSASSA-PKCS1-v1_5 (§8.2.1) and RSASSA-PSS
+// (§8.1.1) with SHA-256, SHA-384 or SHA-512, for a TLS server's CertificateVerify and
+// ServerKeyExchange with an RSA key (#2392 step 4).
+//
+// The private operation is ring's design: the Chinese remainder theorem (§5.1.2, 2b) on `Mont`,
+// a constant-time exponentiation, and a check of the result.
+// - The exponentiations by dP and dQ go through fixed 4-bit windows, the same squarings and
+//   products whatever the exponent, each window's power picked by a masked scan of the table.
+// - The result is raised to e again and compared with the message before it is returned
+//   (§5.1.2's check against a faulty computation: one wrong half would give the key away).
+// - There is no blinding, as in ring: with the exponentiation constant time it only adds cost.
+//
+// Constant time is a property of the machine code, not of this source: LLVM turns a mask it can
+// see through into a branch (`Mont`'s masks come from a function kept out of line for that).
+// So it is checked on a release build, with the key's secret numbers as the secret:
+//   scripts/ct-counts.py rsa_sign             the instructions executed do not vary with the key
+//   scripts/ct-counts.py --memcheck rsa_sign  memcheck, with p, q, dP, dQ and qInv marked
+//                                             undefined, reports no branch or address that
+//                                             depends on them in the signing path
+// What memcheck does report is by design and counted in bench/crypto/ct/rsa_sign.probe: the
+// shape checks of the constructor, `Mont`'s constructor finding each prime's bit length (the
+// key's size, which is public), and the result check's one branch.
+//
+// The caller decides which public exponents it takes: ring refuses a key with e below 65537,
+// and the code that reads a server's key file refuses it too; this class takes any odd e from 3.
+
+import { CryptoError } from "velt/crypto/errors";
+import { Mont } from "velt/crypto/mont";
+import { randomBytes } from "velt/crypto/random";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384, sha512 } from "velt/crypto/sha512";
+
+// Registers of the fields mod p and mod q.
+const BASE: usize = 0;
+const ACC: usize = 1;
+const SEL: usize = 2;
+const X: usize = 3;
+const Y: usize = 4;
+const PLAIN: usize = 5;
+const TABLE: usize = 6; // 16 powers
+const PRIME_REGS: usize = TABLE + 16;
+
+// Registers of the field mod n.
+const N_A: usize = 0;
+const N_B: usize = 1;
+const N_C: usize = 2;
+const N_ONE: usize = 3;
+const N_S: usize = 4;
+const N_REGS: usize = 5;
+
+/** An RSA private key, ready to sign. */
+export class RsaSigner {
+  /** The modulus's length in bytes: a signature's length. */
+  size: usize;
+  private n: Mont;
+  private p: Mont;
+  private q: Mont;
+  private e: u64;
+  private pLen: usize;
+  private qLen: usize;
+  // dP and dQ as long as their primes, q's bytes and qInv.
+  private dp: u8[];
+  private dq: u8[];
+  private qBytes: u8[];
+  private qinv: u8[];
+
+  /**
+   * The key of RFC 8017 §A.1.2's numbers, each big-endian without a leading zero: the modulus
+   * `n` (2048 to 8192 bits), the public exponent `e` (odd, 3 to 2^33 - 1), the primes `p` and
+   * `q`, `dp` = d mod (p - 1), `dq` = d mod (q - 1) and `qinv` = 1/q mod p. Throws
+   * `CryptoError` for numbers of the wrong shape; numbers that do not belong together are
+   * found when signing (the result is checked).
+   */
+  constructor(n: u8[], e: u8[], p: u8[], q: u8[], dp: u8[], dq: u8[], qinv: u8[]) {
+    const shaped =
+      magnitude(n) &&
+      magnitude(p) &&
+      magnitude(q) &&
+      magnitude(e) &&
+      n.length >= 256 &&
+      n.length <= 1024 &&
+      e.length <= 5 &&
+      p.length + q.length >= n.length &&
+      p.length + q.length <= n.length + 1 &&
+      p.length >= 64 &&
+      q.length >= 64 &&
+      dp.length <= p.length &&
+      dq.length <= q.length &&
+      qinv.length <= p.length;
+    if (!shaped) {
+      throw new CryptoError("not an RSA private key of 2048 to 8192 bits");
+    }
+    let exponent: u64 = 0;
+    for (const b of e) {
+      exponent = (exponent << 8) | (b as u64);
+    }
+    const odd = (n[n.length - 1] & p[p.length - 1] & q[q.length - 1] & 1) == 1;
+    if (!odd || (exponent & 1) == 0 || exponent < 3 || exponent >> 33 != 0) {
+      throw new CryptoError("not an RSA private key of 2048 to 8192 bits");
+    }
+    this.size = n.length;
+    this.e = exponent;
+    this.n = new Mont(n, 0, n.length, N_REGS);
+    this.p = new Mont(p, 0, p.length, PRIME_REGS);
+    this.q = new Mont(q, 0, q.length, PRIME_REGS);
+    this.pLen = p.length;
+    this.qLen = q.length;
+    this.dp = padded(dp, p.length);
+    this.dq = padded(dq, q.length);
+    this.qBytes = q.slice();
+    this.qinv = padded(qinv, p.length);
+  }
+
+  /**
+   * The RSASSA-PKCS1-v1_5 signature of `digest`, a SHA-256, SHA-384 or SHA-512 hash (told by
+   * its length). Throws `CryptoError` for another length, or a key whose numbers do not belong
+   * together.
+   */
+  signPkcs1(digest: u8[]): u8[] {
+    const info = digestInfo(digest.length);
+    const em = Buffer.alloc(this.size);
+    const at = this.size - info.length - digest.length;
+    em[1] = 1;
+    for (let i: usize = 2; i < at - 1; i++) {
+      em[i] = 0xff;
+    }
+    for (let i: usize = 0; i < info.length; i++) {
+      em[at + i] = info[i];
+    }
+    for (let i: usize = 0; i < digest.length; i++) {
+      em[at + info.length + i] = digest[i];
+    }
+    return this.sign(em);
+  }
+
+  /**
+   * The RSASSA-PSS signature of `digest`, a SHA-256, SHA-384 or SHA-512 hash (told by its
+   * length), with MGF1 over the same hash and a salt as long as the hash: random, or `salt`
+   * (tests). Throws `CryptoError` as `signPkcs1`.
+   */
+  signPss(digest: u8[], salt: u8[] | null = null): u8[] {
+    const hLen = digest.length;
+    digestInfo(hLen);
+    const s = salt ?? randomBytes(hLen);
+    const bits = this.n.bits - 1;
+    const emLen = (bits + 7) >> 3;
+    if (s.length + hLen + 2 > emLen) {
+      throw new CryptoError("the PSS salt is too long for the key");
+    }
+    // H = Hash(eight zero bytes, the digest, the salt).
+    const m = Buffer.alloc(8 + hLen + s.length);
+    for (let i: usize = 0; i < hLen; i++) {
+      m[8 + i] = digest[i];
+    }
+    for (let i: usize = 0; i < s.length; i++) {
+      m[8 + hLen + i] = s[i];
+    }
+    const h = hash(hLen, m);
+    // DB = zeros, 01, the salt; masked with MGF1(H), and its top bits cleared.
+    const dbLen = emLen - hLen - 1;
+    const em = Buffer.alloc(this.size);
+    const start = this.size - emLen;
+    em[start + dbLen - s.length - 1] = 1;
+    for (let i: usize = 0; i < s.length; i++) {
+      em[start + dbLen - s.length + i] = s[i];
+    }
+    let counter: u32 = 0;
+    let done: usize = 0;
+    while (done < dbLen) {
+      const seed = h.slice();
+      seed.push((counter >> 24) as u8);
+      seed.push(((counter >> 16) & 0xff) as u8);
+      seed.push(((counter >> 8) & 0xff) as u8);
+      seed.push((counter & 0xff) as u8);
+      const block = hash(hLen, seed);
+      for (let i: usize = 0; i < block.length && done < dbLen; i++) {
+        em[start + done] ^= block[i];
+        done++;
+      }
+      counter++;
+    }
+    em[start] &= (0xff >> ((8 * emLen - bits) as u8)) as u8;
+    for (let i: usize = 0; i < hLen; i++) {
+      em[start + dbLen + i] = h[i];
+    }
+    em[this.size - 1] = 0xbc;
+    return this.sign(em);
+  }
+
+  // `em` (as long as the modulus, below it) to the private exponent, as bytes.
+  private sign(em: u8[]): u8[] {
+    const n = this.n;
+    if (!n.load(N_C, em, 0, em.length)) {
+      throw new CryptoError("the message is not below the RSA modulus");
+    }
+    const one: u8[] = [1];
+    n.load(N_ONE, one, 0, 1);
+    const sp = half(this.p, em, this.dp, this.pLen);
+    const sq = half(this.q, em, this.dq, this.qLen);
+    // h = qInv (sp - sq) mod p.
+    const p = this.p;
+    p.load(X, sp, 0, sp.length);
+    p.enter(X, X);
+    reduce(p, Y, sq);
+    p.sub(X, X, Y);
+    p.load(Y, this.qinv, 0, this.qinv.length);
+    p.enter(Y, Y);
+    p.mul(X, X, Y);
+    p.load(PLAIN, one, 0, 1);
+    p.mul(X, X, PLAIN);
+    const h = p.bytes(X, this.pLen);
+    // s = sq + h q, which is below n.
+    n.load(N_A, h, 0, h.length);
+    n.enter(N_A, N_A);
+    n.load(N_B, this.qBytes, 0, this.qLen);
+    n.enter(N_B, N_B);
+    n.mul(N_A, N_A, N_B);
+    n.mul(N_A, N_A, N_ONE);
+    n.load(N_B, sq, 0, sq.length);
+    n.add(N_S, N_A, N_B);
+    // s^e must be the message again.
+    n.enter(N_A, N_S);
+    this.publicPower(N_B, N_A);
+    n.mul(N_B, N_B, N_ONE);
+    const back = n.bytes(N_B, this.size);
+    let diff: u8 = 0;
+    for (let i: usize = 0; i < em.length; i++) {
+      diff |= back[i] ^ em[i];
+    }
+    if (diff != 0) {
+      throw new CryptoError("the RSA private key's numbers do not belong together");
+    }
+    return n.bytes(N_S, this.size);
+  }
+
+  // Register `d` = register `a` (in the Montgomery domain) to the public exponent, mod n. `d`
+  // is not `a`.
+  private publicPower(d: usize, a: usize) {
+    const n = this.n;
+    const e = this.e;
+    n.copy(d, a);
+    let bit: u64 = 0;
+    while (e >> (bit + 1) != 0) {
+      bit += 1;
+    }
+    while (bit > 0) {
+      bit -= 1;
+      n.mul(d, d, d);
+      if (((e >> bit) & 1) == 1) {
+        n.mul(d, d, a);
+      }
+    }
+  }
+}
+
+// Whether `x` is a number's big-endian bytes without a leading zero.
+function magnitude(x: u8[]): bool {
+  return x.length > 0 && x[0] != 0;
+}
+
+// `x` with zeros in front, `len` bytes.
+function padded(x: u8[], len: usize): u8[] {
+  const out = Buffer.alloc(len);
+  for (let i: usize = 0; i < x.length; i++) {
+    out[len - x.length + i] = x[i];
+  }
+  return out;
+}
+
+// One half of the private operation, mod the prime of `m`: `message`^`d`, as `len` bytes.
+function half(m: Mont, message: u8[], d: u8[], len: usize): u8[] {
+  reduce(m, BASE, message);
+  power(m, d);
+  const one: u8[] = [1];
+  m.load(PLAIN, one, 0, 1);
+  m.mul(X, ACC, PLAIN);
+  return m.bytes(X, len);
+}
+
+// Register `d` = the big-endian number `bytes` mod m's modulus, in the Montgomery domain: the
+// number's words of m's width from the top, each step `d = d R + word` (as `enter(d) +
+// enter(word)`: a product takes any word below R beside R^2, which is below the modulus).
+function reduce(m: Mont, d: usize, bytes: u8[]) {
+  const width = 8 * m.k;
+  let at: usize = 0;
+  let take = bytes.length % width;
+  if (take == 0) {
+    take = width;
+  }
+  m.load(d, bytes, 0, 0);
+  while (at < bytes.length) {
+    m.enter(d, d);
+    m.load(PLAIN, bytes, at, take);
+    m.enter(PLAIN, PLAIN);
+    m.add(d, d, PLAIN);
+    at += take;
+    take = width;
+  }
+}
+
+// ACC = BASE to the exponent `e` (big-endian bytes; secret), both in the Montgomery domain:
+// two fixed 4-bit windows a byte.
+function power(m: Mont, e: u8[]) {
+  const one: u8[] = [1];
+  m.load(TABLE, one, 0, 1);
+  m.enter(TABLE, TABLE);
+  for (let i: usize = 1; i < 16; i++) {
+    m.mul(TABLE + i, TABLE + i - 1, BASE);
+  }
+  m.copy(ACC, TABLE);
+  for (let i: usize = 0; i < 2 * e.length; i++) {
+    const byte = e[i >> 1] as u64;
+    const nibble = (i & 1) == 0 ? byte >> 4 : byte & 15;
+    for (let j = 0; j < 4; j++) {
+      m.mul(ACC, ACC, ACC);
+    }
+    m.pick(SEL, TABLE, 16, nibble);
+    m.mul(ACC, ACC, SEL);
+  }
+}
+
+// The hash whose output has `len` bytes, of `data`.
+function hash(len: usize, data: u8[]): u8[] {
+  if (len == 32) {
+    return sha256(data);
+  }
+  return len == 48 ? sha384(data) : sha512(data);
+}
+
+// The DigestInfo (RFC 8017 §9.2 note 1) up to the digest, for a hash of `len` bytes. Throws
+// for a length that is no SHA-2 hash's here.
+function digestInfo(len: usize): u8[] {
+  if (len != 32 && len != 48 && len != 64) {
+    throw new CryptoError("RSA signs a SHA-256, SHA-384 or SHA-512 digest");
+  }
+  // SHA-256's; the others differ in the two lengths and the last byte of the hash's OID.
+  const info: u8[] = [
+    0x30,
+    0x31,
+    0x30,
+    0x0d,
+    0x06,
+    0x09,
+    0x60,
+    0x86,
+    0x48,
+    0x01,
+    0x65,
+    0x03,
+    0x04,
+    0x02,
+    0x01,
+    0x05,
+    0x00,
+    0x04,
+    0x20,
+  ];
+  info[1] = (0x11 + len) as u8;
+  info[14] = len == 32 ? 1 : len == 48 ? 2 : 3;
+  info[18] = len as u8;
+  return info;
+}
