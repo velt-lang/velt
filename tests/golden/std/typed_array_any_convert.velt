@@ -1,0 +1,49 @@
+// Expected output is Node's (v24): `node --experimental-strip-types` on a copy named .ts.
+// #3348: a store of an `any` into an element of a typed array is JavaScript's store: the value
+// is converted with ToNumber (ToPrimitive first for an object), then to the element as the
+// typed array converts a number (ToUint8, ToInt32, ToUint8Clamp, a float as it is).
+const log: string[] = [];
+const five: any = {
+  valueOf() {
+    log.push("valueOf");
+    return 5;
+  },
+};
+const values: any[] = [
+  "7", "", " 12 ", "0x1f", "abc", "-1", "300.7", "2.5", true, false, null, undefined, [5], [],
+  five, {}, 1.5, -1, 256, NaN,
+];
+const u8 = new Uint8Array(values.length);
+const i32 = new Int32Array(values.length);
+const f64 = new Float64Array(values.length);
+const clamped = new Uint8ClampedArray(values.length);
+const i16 = new Int16Array(values.length);
+for (let i = 0; i < values.length; i++) {
+  u8[i] = values[i];
+  i32[i] = values[i];
+  f64[i] = values[i];
+  clamped[i] = values[i];
+  i16[i] = values[i];
+}
+console.log(u8.join(","));
+console.log(i32.join(","));
+console.log(f64.join(","));
+console.log(clamped.join(","));
+console.log(i16.join(","));
+console.log(log.length);
+
+// Every form of the store converts: `+=` stores what `+` gives ("0" + "7"), `||=` stores the
+// value when the element is 0, and an assignment used as a value is the value assigned.
+const seven: any = "7";
+const sums = new Uint8Array(2);
+sums[0] += seven;
+sums[1] += 1;
+console.log(sums.join(","));
+const given = new Uint8Array(1);
+const r = (given[0] = seven);
+console.log(r, given[0]);
+const orAssigned = new Uint8Array(2);
+orAssigned[1] = 9;
+orAssigned[0] ||= seven;
+orAssigned[1] ||= seven;
+console.log(orAssigned.join(","));

@@ -18,7 +18,7 @@ import * as al from "./sched_share_alias";
 /** The node head's word with the side block. */
 const N_EXT: usize = 112;
 /** A node's flag: it has a side block (its pointer in `N_EXT`). */
-const EXT: u32 = 4096;
+export const EXT: u32 = 4096;
 
 export const X_TRANSFER: usize = 0;
 export const X_ALIAS: usize = 8;
