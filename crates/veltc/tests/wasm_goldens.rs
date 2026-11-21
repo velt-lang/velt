@@ -58,6 +58,8 @@ const UNSUPPORTED: &[&str] = &[
     // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
     // still the runtime's, which keeps it parked (#3247).
     "promise_abandoned_freed",
+    // The same for a spawned task parked on such a promise (#3126).
+    "task_parked_freed",
     // wasm's executor is still the runtime's, whose `yieldNow()` wakes at once instead of taking
     // its turn after the microtasks queued before it, as the executor in Velt does (#3307).
     "yield_now_order",
@@ -229,11 +231,12 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
 /// the std code written with them, `random` (its seed is WASI's, through wasi-libc),
 /// `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
-/// of its own there; `requires: unix` keeps it from Windows, which has no mapping yet), and two ephemeron caches, whose trials call between
+/// of its own there), and two ephemeron caches, whose trials call between
 /// std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
+    "fs_mapped_file_getters",
     "fs_mapped_file_portable",
     "half_dot",
     "half_dot_bf16_lengths",

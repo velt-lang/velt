@@ -24,6 +24,7 @@ import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
+import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
 import * as yl from "./sched_yield";
 import * as ls from "./sched_yield_list";
@@ -123,7 +124,10 @@ function runOther(e: usize, k: usize, fl: u32): void {
   if ((fl & t.TOUCHED) !== 0) {
     mod.enter();
   }
-  if ((fl & t.LOCALS) !== 0) {
+  if ((fl & t.CANCEL) !== 0) {
+    // Nothing can wake it: its root is dropped, not polled (sched_task_lost.velt).
+    lt.cancel(k);
+  } else if ((fl & t.LOCALS) !== 0) {
     runWoken(e, k, fl);
   } else if ((fl & (t.ROOT_DONE | nc.T_CATCHES)) === 0) {
     pollRunning(e, k);
@@ -191,6 +195,10 @@ function runEnd(e: usize, k: usize, mode: u32): void {
     finish(e, k);
   } else if (m.load(k + t.T_WOKEN) !== 0) {
     // Promises woken during this poll run in its next one.
+    m.store32(k + t.T_STATE, t.SCHEDULED);
+    requeue(e, k, mode);
+  } else if (lt.parks(k)) {
+    // Parked for ever: one more poll, which drops its root (sched_task_lost.velt `cancel`).
     m.store32(k + t.T_STATE, t.SCHEDULED);
     requeue(e, k, mode);
   } else if (m.cas32(k + t.T_STATE, t.RUNNING, t.IDLE) !== t.RUNNING) {

@@ -1,0 +1,7 @@
+// velt/lang/cpu (internal): the arm64 features where std has no way to ask (`#cpu-arm`'s default,
+// std/imports.velt): none, so every run-time check of an arm64 feature is false there.
+
+/** No feature word arm64 bits. */
+export function detectArm(): u64 {
+  return 0;
+}
