@@ -1,6 +1,18 @@
 borrow inner heap string long enough 0 31
 mut inner heap string long enough 0 31 1
+other field inner heap string long enough 0 31 changed t0
+inner field inner field replaced t0 1
+replace inner heap string long enough 0 2 replacement t0
+keeper tag heap string long enough 0 29
 borrow inner heap string long enough 1 31
 mut inner heap string long enough 1 31 1
+other field inner heap string long enough 1 31 changed t1
+inner field inner field replaced t1 1
+replace inner heap string long enough 1 2 replacement t1
+keeper tag heap string long enough 1 29
 borrow inner heap string long enough 2 31
 mut inner heap string long enough 2 31 1
+other field inner heap string long enough 2 31 changed t2
+inner field inner field replaced t2 1
+replace inner heap string long enough 2 2 replacement t2
+keeper tag heap string long enough 2 29
