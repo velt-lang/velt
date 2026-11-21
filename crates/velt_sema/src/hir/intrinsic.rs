@@ -721,9 +721,7 @@ pub enum Intrinsic {
     /// std only: `(x: borrow unknown) -> Promise<unknown, unknown> | undefined`: a promise that
     /// awaits the promise `x` holds, else `undefined` (`await` of an `any`, #924). Additive.
     AnyPromise,
-    /// `(x: borrow T) -> bool`: is `x` a promise (`x instanceof Promise`): for a dynamic `T`,
-    /// does its table belong to a promise; else whether `T` is a promise type (a constant, `x`
-    /// is not converted). Additive.
+    /// `(x: borrow T) -> bool`: `x instanceof Promise`, by its table if dynamic. Additive.
     AnyIsPromise,
     /// std only: `(name: string literal) -> bool`, a constant: can the program call the array
     /// method `name` through `any`, so that its generic algorithm on a proxy can run

@@ -756,7 +756,9 @@ impl FnLower<'_, '_> {
             }
             // A program running no async code holds no promise, and can't build the table of
             // one (its glue is the executor's): the `any` is no promise, the test fails.
-            None if matches!(self.cx.kind(ty), TyKind::Promise(..)) && !self.cx.executor_loaded() => {
+            None if matches!(self.cx.kind(ty), TyKind::Promise(..))
+                && !self.cx.executor_loaded() =>
+            {
                 Operand::Const(Const::Bool(false), Ty::Bool)
             }
             None => {
