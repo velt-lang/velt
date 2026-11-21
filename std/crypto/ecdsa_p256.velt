@@ -2,8 +2,8 @@
 // R = (e/s) G + (r/s) Q, and the signature holds when R's x-coordinate is r mod n. Everything
 // here is public (the key, the digest, the signature), so it runs in variable time: r/s is
 // recoded to width-5 NAF and multiplies Q in one pass of 256 doublings, from a table of Q's odd
-// multiples 1..15; e/s then takes one entry of the fixed-base table for each of its 4-bit
-// digits, with no doubling; and s is inverted by the binary extended Euclidean algorithm
+// multiples 1..15; e/s then takes one entry of the fixed-base table for each of its signed
+// 7-bit digits, with no doubling; and s is inverted by the binary extended Euclidean algorithm
 // (`ScalarP256.invertPublic`). The x-coordinate is compared without an inversion
 // (r Z^2 = X, or (r + n) Z^2 = X when r + n < p). The signature is DER (RFC 3279 §2.2.3's
 // ECDSA-Sig-Value), read strictly: anything but minimal, positive INTEGERs below n is refused.
@@ -83,12 +83,16 @@ export function p256Verify(publicKey: u8[], digest: u8[], signature: u8[]): bool
       started = true;
     }
   }
-  // R += u1 G: for each 4-bit digit of u1 its multiple of G from the fixed-base table, which
-  // needs no doubling.
-  for (let i: usize = 0; i < 64; i++) {
-    const digit = ((u1[i >> 4] >> ((4 * (i & 15)) as u64)) & 15) as usize;
+  // R += u1 G: for each signed 7-bit digit of u1 (the recoding `baseMultiply` in p256.velt uses)
+  // its multiple of G from the fixed-base table, which needs no doubling.
+  for (let i: usize = 0; i < 37; i++) {
+    // The 8 bits from 7 i - 1 (bit -1 is 0).
+    const window = i == 0 ? (u1[0] << 1) & 0xff : bits8(u1, 7 * i - 1);
+    // A window of 128 or more is the negative digit -((256 - window) / 2); 255 is the digit 0.
+    const negative = window >= 128;
+    const digit = negative ? (256 - window) >> 1 : (window + 1) >> 1;
     if (digit != 0) {
-      addBaseEntry(f, i, digit);
+      addBaseEntry(f, i, digit as usize, negative);
     }
   }
   if (f.isZero(ACC + 2) != 0) {
@@ -132,13 +136,28 @@ function addDigit(f: FeP256, table: usize, digit: i32) {
   }
 }
 
-// ACC += `digit` (1..15) times 16^w G, the affine entry of `P256_BASE` (madd-2007-bl, 7M + 4S
-// where the general addition is 11M + 5S). The data is public, so the cases the formula does not
-// cover are branches: the identity, the same point (doubled) and its inverse (the identity).
-function addBaseEntry(f: FeP256, w: usize, digit: usize) {
-  const at = 8 * (15 * w + digit - 1);
+// The 8 bits of the little-endian 256-bit `k` from bit `at` (bits from 256 up are 0).
+function bits8(k: u64[], at: usize): u64 {
+  const limb = at >> 6;
+  const shift = (at & 63) as u64;
+  let v = k[limb] >> shift;
+  if (shift > 56 && limb < 3) {
+    v |= k[limb + 1] << (64 - shift);
+  }
+  return v & 0xff;
+}
+
+// ACC += `digit` (1..64) times 2^(7 w) G, negated when `negative`: the affine entry of
+// `P256_BASE` (madd-2007-bl, 7M + 4S where the general addition is 11M + 5S). The data is public,
+// so the cases the formula does not cover are branches: the identity, the same point (doubled)
+// and its inverse (the identity).
+function addBaseEntry(f: FeP256, w: usize, digit: usize, negative: bool) {
+  const at = 8 * (64 * w + digit - 1);
   for (let k: usize = 0; k < 8; k++) {
     f.r[4 * ENTRY + k] = P256_BASE[at + k];
+  }
+  if (negative) {
+    f.sub(ENTRY + 1, ZERO, ENTRY + 1);
   }
   if (f.isZero(ACC + 2) != 0) {
     f.copy(ACC, ENTRY);
