@@ -158,8 +158,10 @@ fn a_program_with_module_state_calls_the_blocks_object() {
                 ("object", expected),
                 "{mode:?}"
             );
+            // The blocks' object, and those of other prebuilt modules the program calls (the
+            // string methods, std/lang/string/).
             assert!(
-                text(&served.stderr).contains("prebuilt hooks: 1 objects linked"),
+                text(&served.stderr).contains("objects linked"),
                 "{mode:?}\n{}",
                 text(&served.stderr)
             );

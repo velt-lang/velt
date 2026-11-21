@@ -206,5 +206,8 @@ fn a_program_loading_the_core_calls_no_object() {
     // Other prebuilt modules' objects are linked (the blocks of module state, the string
     // methods the runner calls): the core's is not.
     assert!(!err.contains("lang/hooks/weak: object found"), "{err}");
-    assert!(err.contains("lang/hooks/module_blocks: object found"), "{err}");
+    assert!(
+        err.contains("lang/hooks/module_blocks: object found"),
+        "{err}"
+    );
 }
