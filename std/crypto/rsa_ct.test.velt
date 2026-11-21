@@ -74,6 +74,11 @@ describe("the RSA signing probe", () => {
     }
     const a = key.signPkcs1(digest);
     const b = key.signPss(digest, Buffer.alloc(32));
+    // The end of what ct-counts.py counts (scripts/ct-shim.c).
+    const stop = process.env.VELT_CT_STOP;
+    if (stop != null) {
+      readFileBytesSync(stop);
+    }
     expect(a.length + b.length).toBe(512);
   });
 });
