@@ -8,7 +8,7 @@
 //!    aggregates by pointer (`Ptr`) and returns them via an explicit out-pointer param.
 //!    `Ty::Unit` params never appear; a `Unit` return means "returns nothing". The one exception
 //!    is a C extern returning a struct in registers (`ExternFn::c_abi`, `CRet::Words`), whose
-//!    `ret` is an `Agg` of one or two scalar words.
+//!    `ret` is an `Agg` of one to four scalar words.
 //! 3. Drops, drop flags, moves, bounds checks, overflow policy, async state machines are all already
 //!    expanded into ordinary statements/calls. Backends do no semantic work.
 //! 4. Block 0 is the entry block (an `Import`, invariant 11, may have none). Locals
@@ -457,9 +457,9 @@ pub enum CParam {
 pub enum CRet {
     /// As `ExternFn::ret` says.
     Value,
-    /// A struct in registers: `ExternFn::ret` is an `Agg` of one or two scalar words, at 0 and 8,
-    /// which the call's destination receives whole (LLVM a `{ a, b }` result, Cranelift one
-    /// return per word).
+    /// A struct in registers: `ExternFn::ret` is an `Agg` of one to four scalar words of one
+    /// size, packed (eightbytes, or an AAPCS64 HFA's `F32`s), which the call's destination
+    /// receives whole (LLVM a `{ a, b }` result, Cranelift one return per word).
     Words,
 }
 

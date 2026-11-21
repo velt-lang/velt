@@ -6,10 +6,14 @@
 //! field by field, in debug (Cranelift) and release (LLVM) builds. Further functions take structs
 //! after the registers run out (a struct takes all its registers or goes on the stack whole), and
 //! return one in memory with arguments around it. These tests need `VELT_ZIG` as
-//! tests/c_sources.rs's do, and run on x86-64 Linux and macOS, whose System V convention
-//! lowering has.
-
-#![cfg(all(any(target_os = "linux", target_os = "macos"), target_arch = "x86_64"))]
+//! tests/c_sources.rs's do, and run on the hosts whose convention lowering has (x86-64 Linux,
+//! macOS and Windows, arm64 Linux and macOS).
+//!
+//! **Another target's convention**: with `VELT_ABI_TARGET` set to a triple, the programs are
+//! built for it (`velt build --target`, whose runtime and linker `VELT_RT_LIB` and
+//! `VELT_LINKER` can name) and run with `VELT_ABI_RUNNER` (an emulator: `qemu-aarch64-static`,
+//! `wine`), so one Linux machine checks every convention (docs/internals/design/c-ffi.md "C
+//! structs").
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -102,6 +106,9 @@ fn shapes() -> Vec<Vec<&'static Field>> {
         vec![&U8; 17],                      // MEMORY of 17 bytes
         vec![&F32],                         // four bytes, SSE
         vec![&I32],                         // four bytes, INTEGER
+        vec![&U8, &U8, &U8],                // three bytes: by reference on Win64
+        vec![&F64, &F64, &F64, &F64],       // an HFA of four on arm64, MEMORY on System V
+        vec![&F32, &F64],                   // mixed floats: no HFA
     ]
 }
 
@@ -143,12 +150,24 @@ fn c_source(shapes: &[Vec<&Field>]) -> (String, String) {
     h.push_str("int64_t late_small_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, S19 s);\n");
     h.push_str("int64_t late_f3(double a, double b, double c, double d, double e, double f, double g, S4 s);\n");
     h.push_str("S8 big_after(int64_t a, int64_t b, int64_t c, int64_t d, S7 s);\n");
+    // AAPCS64: a struct that doesn't fit in the registers left goes on the stack, and the
+    // scalars of its class after it too (an HFA after six doubles, a pair after seven
+    // integers, three floats after seven doubles with a float after them); a struct by
+    // reference after the eight integer registers has its address on the stack.
+    h.push_str("int64_t late_hfa(double a, double b, double c, double d, double e, double f, S5 s, double g);\n");
+    h.push_str("int64_t late_pair(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, S7 s, int64_t h);\n");
+    h.push_str("int64_t late_f3_float(double a, double b, double c, double d, double e, double f, double g, S4 s, float h);\n");
+    h.push_str("int64_t late_big(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, int64_t h, S8 s, int64_t i);\n");
     h.push_str("typedef struct NP { void *p; int64_t n; } NP;\nNP null_ptr(void);\n");
     c.push_str("int64_t late_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, S7 s, int64_t f) {\n  if (a + b + c + d + e + f != 21) return -100;\n  return chk7(s, 3);\n}\n");
     c.push_str("int64_t late_sse(double a, double b, double c, double d, double e, double f, double g, S0 s, double h) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk0(s, 4);\n}\n");
     c.push_str("int64_t late_small_sse(double a, double b, double c, double d, double e, double f, double g, double h, S18 s) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk18(s, 6);\n}\n");
     c.push_str("int64_t late_small_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, S19 s) {\n  if (a + b + c + d + e + f != 21) return -100;\n  return chk19(s, 7);\n}\n");
     c.push_str("int64_t late_f3(double a, double b, double c, double d, double e, double f, double g, S4 s) {\n  if (a + b + c + d + e + f + g != 28.0) return -100;\n  return chk4(s, 8);\n}\n");
+    c.push_str("int64_t late_hfa(double a, double b, double c, double d, double e, double f, S5 s, double g) {\n  if (a + b + c + d + e + f + g != 28.0) return -100;\n  return chk5(s, 9);\n}\n");
+    c.push_str("int64_t late_pair(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, S7 s, int64_t h) {\n  if (a + b + c + d + e + f + g + h != 36) return -100;\n  return chk7(s, 10);\n}\n");
+    c.push_str("int64_t late_f3_float(double a, double b, double c, double d, double e, double f, double g, S4 s, float h) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk4(s, 11);\n}\n");
+    c.push_str("int64_t late_big(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g, int64_t h, S8 s, int64_t i) {\n  if (a + b + c + d + e + f + g + h + i != 45) return -100;\n  return chk8(s, 12);\n}\n");
     c.push_str("NP null_ptr(void) {\n  NP r = { 0, 7 };\n  return r;\n}\n");
     c.push_str("S8 big_after(int64_t a, int64_t b, int64_t c, int64_t d, S7 s) {\n  S8 r = mk8(a + b + c + d);\n  if (chk7(s, 5) != 1) r.f0 = -1;\n  return r;\n}\n");
     (h, c)
@@ -182,13 +201,17 @@ fn velt_lib(shapes: &[Vec<&Field>]) -> String {
     v.push_str(
         "declare c(\"abi\") function big_after(a: i64, b: i64, c: i64, d: i64, s: S7): S8;\n\n",
     );
+    v.push_str("declare c(\"abi\") function late_hfa(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, s: S5, g: f64): i64;\n");
+    v.push_str("declare c(\"abi\") function late_pair(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, s: S7, h: i64): i64;\n");
+    v.push_str("declare c(\"abi\") function late_f3_float(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, s: S4, h: f32): i64;\n");
+    v.push_str("declare c(\"abi\") function late_big(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, s: S8, i: i64): i64;\n");
     v.push_str("export declare c struct NP { p: Ptr<void>; n: i64; }\ndeclare c(\"abi\") function null_ptr(): NP;\n");
     v.push_str("export function nullField(): i64 {\n  // SAFETY: by value; C leaves `p` NULL.\n  return unsafe { null_ptr() }.n;\n}\n\n");
     v.push_str("export function all(): string[] {\n  const out: string[] = [];\n");
     for i in 0..shapes.len() {
         let _ = writeln!(v, "  out.push(shape{i}(1));\n  out.push(shape{i}(-2));");
     }
-    v.push_str("  // SAFETY: as above.\n  unsafe {\n    out.push(`late_int ${late_int(1, 2, 3, 4, 5, make7(3), 6)}`);\n    out.push(`late_sse ${late_sse(1, 2, 3, 4, 5, 6, 7, make0(4), 8)}`);\n    out.push(`big_after ${big_after(1, 2, 3, 4, make7(5)) === make8(10)}`);\n    out.push(`late_small_sse ${late_small_sse(1, 2, 3, 4, 5, 6, 7, 8, make18(6))}`);\n    out.push(`late_small_int ${late_small_int(1, 2, 3, 4, 5, 6, make19(7))}`);\n    out.push(`late_f3 ${late_f3(1, 2, 3, 4, 5, 6, 7, make4(8))}`);\n  }\n  ;\n  return out;\n}\n");
+    v.push_str("  // SAFETY: as above.\n  unsafe {\n    out.push(`late_int ${late_int(1, 2, 3, 4, 5, make7(3), 6)}`);\n    out.push(`late_sse ${late_sse(1, 2, 3, 4, 5, 6, 7, make0(4), 8)}`);\n    out.push(`big_after ${big_after(1, 2, 3, 4, make7(5)) === make8(10)}`);\n    out.push(`late_small_sse ${late_small_sse(1, 2, 3, 4, 5, 6, 7, 8, make18(6))}`);\n    out.push(`late_small_int ${late_small_int(1, 2, 3, 4, 5, 6, make19(7))}`);\n    out.push(`late_f3 ${late_f3(1, 2, 3, 4, 5, 6, 7, make4(8))}`);\n    out.push(`late_hfa ${late_hfa(1, 2, 3, 4, 5, 6, make5(9), 7)}`);\n    out.push(`late_pair ${late_pair(1, 2, 3, 4, 5, 6, 7, make7(10), 8)}`);\n    out.push(`late_f3_float ${late_f3_float(1, 2, 3, 4, 5, 6, 7, make4(11), 8)}`);\n    out.push(`late_big ${late_big(1, 2, 3, 4, 5, 6, 7, 8, make8(12), 9)}`);\n  }\n  ;\n  return out;\n}\n");
     v
 }
 
@@ -228,13 +251,63 @@ fn velt(dir: &Path, home: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// `velt run` with `args`, or with `VELT_ABI_TARGET` set, the same program built for that target
+/// and run with `VELT_ABI_RUNNER`.
+fn run(app: &Path, home: &Path, args: &[&str]) -> Output {
+    let Some(target) = std::env::var("VELT_ABI_TARGET")
+        .ok()
+        .filter(|t| !t.is_empty())
+    else {
+        return velt(app, home, args);
+    };
+    let exe = app.join(match target.contains("windows") {
+        true => "abi-test.exe",
+        false => "abi-test",
+    });
+    let mut build = vec!["build", "--target", &target, "-o"];
+    let out = exe.to_string_lossy().into_owned();
+    build.push(&out);
+    build.extend(args.iter().filter(|&&a| a == "--release"));
+    let o = velt(app, home, &build);
+    if !o.status.success() {
+        return o;
+    }
+    let runner = std::env::var("VELT_ABI_RUNNER").unwrap_or_default();
+    let mut words = runner.split_whitespace();
+    let mut cmd = match words.next() {
+        Some(r) => {
+            let mut c = no_window::command(r);
+            c.args(words).arg(&exe);
+            c
+        }
+        None => no_window::command(&exe),
+    };
+    cmd.current_dir(app).env("NO_COLOR", "1").output().unwrap()
+}
+
+/// Can this host run what `velt run` builds and the test compares: is its C convention for
+/// structs by value lowered, or is another target's named?
+fn runs_here() -> bool {
+    let native = cfg!(any(
+        all(target_arch = "x86_64", any(unix, windows)),
+        all(
+            target_arch = "aarch64",
+            any(target_os = "linux", target_os = "macos")
+        )
+    ));
+    native || std::env::var("VELT_ABI_TARGET").is_ok_and(|t| !t.is_empty())
+}
+
 fn home(dir: &Path) -> PathBuf {
     let home = dir.join("home");
     let shared = std::env::temp_dir().join("velt-test-c-sources-zig-cache");
     std::fs::create_dir_all(&shared).unwrap();
     let cache = home.join("cache").join("zig");
     std::fs::create_dir_all(&cache).unwrap();
+    #[cfg(unix)]
     let _ = std::os::unix::fs::symlink(&shared, cache.join("build-cache"));
+    #[cfg(not(unix))]
+    let _ = shared;
     home
 }
 
@@ -247,7 +320,7 @@ fn expected() -> String {
         }
     }
     out.push_str(
-        "late_int 1\nlate_sse 1\nbig_after true\nlate_small_sse 1\nlate_small_int 1\nlate_f3 1\n",
+        "late_int 1\nlate_sse 1\nbig_after true\nlate_small_sse 1\nlate_small_int 1\nlate_f3 1\nlate_hfa 1\nlate_pair 1\nlate_f3_float 1\nlate_big 1\n",
     );
     out
 }
@@ -257,13 +330,16 @@ fn structs_cross_to_c_and_back_by_value_in_every_build() {
     let Some(_zig) = zig_env::zig("build C sources taking structs by value") else {
         return;
     };
+    if !runs_here() {
+        return;
+    }
     reload_support::build_runtime();
     let dir = test_dir::TestDir::new();
     let main = "import { all } from \"abi\";\n\nfunction main() {\n  for (const line of all()) {\n    console.log(line);\n  }\n}\n";
     let app = project(dir.path(), main);
     let home = home(dir.path());
     for args in [&["run", "--release"][..], &["run"][..]] {
-        let o = velt(&app, &home, args);
+        let o = run(&app, &home, args);
         let out = format!(
             "{}{}",
             String::from_utf8_lossy(&o.stdout),
@@ -285,13 +361,16 @@ fn a_null_in_a_non_null_pointer_field_of_a_result_stops_the_call() {
     let Some(_zig) = zig_env::zig("build C sources returning a struct with a NULL field") else {
         return;
     };
+    if !runs_here() {
+        return;
+    }
     reload_support::build_runtime();
     let dir = test_dir::TestDir::new();
     let main = "import { nullField } from \"abi\";\n\nfunction main() {\n  console.log(\"before\");\n  console.log(nullField());\n}\n";
     let app = project(dir.path(), main);
     let home = home(dir.path());
     for args in [&["run", "--release"][..], &["run"][..]] {
-        let o = velt(&app, &home, args);
+        let o = run(&app, &home, args);
         let out = format!(
             "{}{}",
             String::from_utf8_lossy(&o.stdout),
@@ -304,4 +383,176 @@ fn a_null_in_a_non_null_pointer_field_of_a_result_stops_the_call() {
             "velt {args:?}:\n{out}"
         );
     }
+}
+
+/// The conventions this machine can't run (Win64, Apple's arm64, and arm64 Linux without an
+/// emulator): every C function's signature in the LLVM IR of a release build for the target, as
+/// clang (zig's) declares the same C function for it. A struct in registers is its words where
+/// clang has the struct's type, an array or a narrower integer, the same registers. The
+/// functions taking a struct on the arm64 stack are left out there: lowering passes zeros in the
+/// registers left and the struct's words after them, where clang has one array
+/// (c_struct_abi/aapcs64.rs), which only a run checks (`VELT_ABI_TARGET`).
+#[test]
+fn signatures_match_clangs_on_the_other_targets() {
+    let Some(zig) = zig_env::zig("compare C struct signatures with clang's") else {
+        return;
+    };
+    let dir = test_dir::TestDir::new();
+    let main = "import { all, nullField } from \"abi\";\n\nfunction main() {\n  console.log(all().length + nullField());\n}\n";
+    let app = project(dir.path(), main);
+    let home = home(dir.path());
+    let c = dir.path().join("abi/native/abi.c");
+    let on_the_arm64_stack = [
+        "late_sse",
+        "late_f3",
+        "late_f3_float",
+        "late_hfa",
+        "late_pair",
+        "late_small_sse",
+    ];
+    for (target, zig_target) in [
+        ("x86_64-pc-windows-msvc", "x86_64-windows-gnu"),
+        ("aarch64-apple-darwin", "aarch64-macos"),
+        ("aarch64-unknown-linux-gnu", "aarch64-linux-gnu"),
+    ] {
+        let o = velt(
+            &app,
+            &home,
+            &["build", "--release", "--emit", "llvm", "--target", target],
+        );
+        let ir = String::from_utf8_lossy(&o.stdout).into_owned();
+        assert!(
+            o.status.success(),
+            "{target}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let ll = dir.path().join(format!("{zig_target}.ll"));
+        let o = no_window::command(&zig)
+            .args(["cc", "-target", zig_target, "-ffreestanding", "-O1", "-S"])
+            .arg("-emit-llvm")
+            .arg("-o")
+            .arg(&ll)
+            .arg(&c)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let theirs = signatures(&std::fs::read_to_string(&ll).unwrap(), "define");
+        let ours = signatures(&ir, "declare");
+        let mut compared = 0;
+        for (name, sig) in &theirs {
+            if target.starts_with("aarch64") && on_the_arm64_stack.contains(&name.as_str()) {
+                continue;
+            }
+            let ours = ours
+                .get(name)
+                .unwrap_or_else(|| panic!("{target}: no `{name}` in Velt's IR"));
+            assert_eq!(ours, sig, "{target}: `{name}` (Velt's, clang's)");
+            compared += 1;
+        }
+        assert!(compared > 60, "{target}: only {compared} compared");
+    }
+}
+
+/// The C functions of the test's library in LLVM IR `ir` (lines starting with `kw`), each with
+/// its result's and parameters' registers: `int`, `float`, `double`, `ptr`, `sret`, or `hfa` for a
+/// result of floats only.
+fn signatures(
+    ir: &str,
+    kw: &str,
+) -> std::collections::BTreeMap<String, (Vec<String>, Vec<String>)> {
+    let mut out = std::collections::BTreeMap::new();
+    for line in ir.lines().filter(|l| l.starts_with(kw)) {
+        let Some(at) = line.find('@') else { continue };
+        let rest = &line[at + 1..];
+        let Some(open) = rest.find('(') else { continue };
+        let name = rest[..open].trim_matches('"').to_string();
+        let lib = ["mk", "chk", "echo", "late_", "big_after", "null_ptr"];
+        if !lib.iter().any(|p| name.starts_with(p)) {
+            continue;
+        }
+        let params = &rest[open + 1..rest.rfind(')').unwrap_or(rest.len())];
+        let ret = types(&line[kw.len()..at]).pop().unwrap_or_default();
+        let ret = match ret.as_slice() {
+            w if !w.is_empty() && w.iter().all(|t| t == "float" || t == "double") => {
+                vec!["hfa".to_string()]
+            }
+            [s] if s.starts_with("%struct.") => vec!["hfa".to_string()],
+            _ => ret,
+        };
+        let ps = split_top(params)
+            .into_iter()
+            .flat_map(|p| match (p.contains("sret"), p.contains("byval")) {
+                (true, _) => vec!["sret".to_string()],
+                (_, true) => vec!["byval".to_string()],
+                _ => types(&p).into_iter().next().unwrap_or_default(),
+            })
+            .collect();
+        out.insert(name, (ret, ps));
+    }
+    out
+}
+
+/// The types in `s` (attributes and names skipped), each as the registers it takes: an array or
+/// a `{ … }` of words expanded, an integer of any width `int`.
+fn types(s: &str) -> Vec<Vec<String>> {
+    let one = |t: &str| match t {
+        t if t.starts_with('i') && t[1..].parse::<u32>().is_ok() => "int".to_string(),
+        t => t.to_string(),
+    };
+    let mut out = vec![];
+    let mut rest = s.trim();
+    while !rest.is_empty() {
+        let (tok, tail) = match rest.as_bytes()[0] {
+            b'[' | b'{' | b'(' => {
+                let close = match rest.as_bytes()[0] {
+                    b'[' => ']',
+                    b'{' => '}',
+                    _ => ')',
+                };
+                let end = rest.find(close).map_or(rest.len(), |e| e + 1);
+                (&rest[..end], &rest[end..])
+            }
+            _ => {
+                let end = rest.find([' ', '(']).unwrap_or(rest.len());
+                let end = end.max(1);
+                (&rest[..end], &rest[end..])
+            }
+        };
+        rest = tail.trim_start();
+        if let Some(inner) = tok.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+            let (n, t) = inner.split_once(" x ").unwrap_or(("1", inner));
+            out.push(vec![one(t.trim()); n.trim().parse().unwrap_or(1)]);
+        } else if let Some(inner) = tok.strip_prefix('{').and_then(|t| t.strip_suffix('}')) {
+            out.push(inner.split(',').map(|t| one(t.trim())).collect());
+        } else if tok.starts_with('(') || tok.starts_with('%') && !tok.starts_with("%struct.") {
+            // An attribute's arguments, or a parameter's name.
+        } else if ["ptr", "float", "double", "void"].contains(&tok)
+            || tok.starts_with("%struct.")
+            || one(tok) == "int"
+        {
+            out.push(vec![one(tok)]);
+        }
+    }
+    out
+}
+
+/// `s` split at its top-level commas.
+fn split_top(s: &str) -> Vec<String> {
+    let (mut out, mut depth, mut cur) = (vec![], 0, String::new());
+    for ch in s.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(ch);
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
 }

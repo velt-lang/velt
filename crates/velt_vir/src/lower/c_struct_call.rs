@@ -2,9 +2,12 @@
 //! docs/internals/design/c-ffi.md "C structs"): the arguments as c_call.rs evaluates them, then
 //! expanded as the target's C calling convention classifies the signature (`c_struct_abi`):
 //!
-//! - **In registers**: the struct is copied into a slot padded to whole eightbytes, whose words
-//!   (`I64` or `F64`) are the arguments, so no byte past the struct is read.
-//! - **On the stack**: a pointer to a copy, marked `CParam::ByVal`: the callee gets its own.
+//! - **In registers**: the struct is copied into a slot of its words (`I64` or `F64` eightbytes,
+//!   or an AAPCS64 HFA's fields), zeroed first, whose words are the arguments, so no byte past
+//!   the struct is read. On the AAPCS64 stack, zeros in the registers it leaves come first.
+//! - **On the stack** (System V): a pointer to a copy, marked `CParam::ByVal`: the callee gets
+//!   its own.
+//! - **By reference** (Win64, AAPCS64 over 16 bytes): the address of a copy, a plain pointer.
 //! - **A result in registers**: an `Agg` of its one or two words is the extern's result
 //!   (`CRet::Words`), which the call writes whole and which is read back as the struct. (Writing a
 //!   word into a slot field and reading the slot as the struct would hide the write from the
@@ -59,7 +62,9 @@ impl FnLower<'_, '_> {
             })
             .collect();
         let ret_shape = ret_struct.map(|t| self.struct_shape(t));
-        let plan = c_struct_abi::sysv(&shapes, ret_shape.as_ref());
+        let conv = c_struct_abi::conv(&self.cx.target)
+            .unwrap_or_else(|| ice("a C struct by value on a target without a convention"));
+        let plan = c_struct_abi::classify(conv, &shapes, ret_shape.as_ref());
         let (mut vparams, mut cparams, mut vargs) = (vec![], vec![], vec![]);
         let sret = match plan.ret {
             Ret::Sret { size, align } => {
@@ -79,8 +84,16 @@ impl FnLower<'_, '_> {
                     cparams.push(CParam::Value);
                     vargs.push(arg);
                 }
-                Pass::Words(words) => {
+                Pass::Words(words) | Pass::Stack { words, .. } => {
                     let st = structs[k].unwrap_or_else(|| ice("words of a scalar argument"));
+                    // Zeros in the registers a struct on the stack leaves unused (aapcs64.rs).
+                    if let Pass::Stack { pad, .. } = pass {
+                        for &t in pad {
+                            vparams.push(t);
+                            cparams.push(CParam::Value);
+                            vargs.push(zero(t));
+                        }
+                    }
                     let slot = self.padded_copy(words, arg, st);
                     for (i, &w) in words.iter().enumerate() {
                         vparams.push(w);
@@ -90,6 +103,16 @@ impl FnLower<'_, '_> {
                             proj: vec![Proj::Field(i as u32)],
                         }));
                     }
+                }
+                Pass::Indirect => {
+                    // By reference: the address of a copy, which the callee may change.
+                    let st = structs[k].unwrap_or_else(|| ice("a scalar argument by reference"));
+                    let vt = self.cx.ty(st);
+                    let copy = self.temp(vt);
+                    self.assign(Place::local(copy), Rvalue::Use(arg));
+                    vparams.push(Ty::Ptr);
+                    cparams.push(CParam::Value);
+                    vargs.push(self.addr(Place::local(copy)));
                 }
                 &Pass::ByVal { size, align } => {
                     // A copy padded to whole eightbytes: Cranelift copies a stack argument in
@@ -178,7 +201,7 @@ impl FnLower<'_, '_> {
         let why = match (c_struct_abi::supported(&self.cx.target), c.variadic) {
             (true, false) => return true,
             (false, _) => format!(
-                "is not supported on {} yet: x86-64 Linux and macOS pass them now, the other targets' conventions come in later layers of #2187",
+                "is not supported on {} yet: x86-64 (Linux, macOS, Windows) and arm64 (Linux, macOS) pass them now, the other targets' conventions come in later layers of #2187",
                 self.cx.target
             ),
             (true, true) => "is not supported in a variadic C function yet".to_string(),
@@ -206,12 +229,7 @@ impl FnLower<'_, '_> {
             ice("a C struct that isn't an aggregate")
         };
         let slot = self.words_slot(words);
-        let zeros = (words.iter())
-            .map(|&w| match w {
-                Ty::F64 => Operand::Const(vir::Const::Float(0.0), Ty::F64),
-                t => Operand::Const(vir::Const::Int(0), t),
-            })
-            .collect();
+        let zeros = words.iter().map(|&w| zero(w)).collect();
         let wagg = self.words_agg(words);
         self.assign(Place::local(slot), Rvalue::Aggregate(wagg, zeros));
         let view = Place {
@@ -237,7 +255,8 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// The aggregate of `words` at 0 and 8: what a struct crosses in, padded to whole eightbytes.
+    /// The aggregate of `words`, laid out in order: what a struct crosses in (eightbytes, or an
+    /// AAPCS64 HFA's fields), covering it whole.
     fn words_agg(&mut self, words: &[Ty]) -> AggId {
         if let Some(&a) = self.cx.lay.c_words.get(words) {
             return a;
@@ -251,6 +270,14 @@ impl FnLower<'_, '_> {
     fn words_slot(&mut self, words: &[Ty]) -> vir::Local {
         let a = self.words_agg(words);
         self.temp(Ty::Agg(a))
+    }
+}
+
+/// A zero of scalar type `t`.
+fn zero(t: Ty) -> Operand {
+    match t.is_float() {
+        true => Operand::Const(vir::Const::Float(0.0), t),
+        false => Operand::Const(vir::Const::Int(0), t),
     }
 }
 
