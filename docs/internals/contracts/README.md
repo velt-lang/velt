@@ -200,7 +200,8 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `_errno()`, and `GetLastError()` for another library).
 - std's own host functions (#1785): the import modules `velt:fetch`
   (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, and
-  `velt:random` (std/lang/random/seed_js.velt), `Math.random()`'s seed, and `velt:clock`
+  `velt:random` (std/lang/random/os_js.velt), the random bytes of `Math.random()`'s seed,
+  velt/crypto and UUIDs, and `velt:clock`
   (std/lang/hooks/clock_js.velt), `Date.now()`'s and `performance.now()`'s clocks, which the glue
   provides itself (rt_abi.md "Host values").
 

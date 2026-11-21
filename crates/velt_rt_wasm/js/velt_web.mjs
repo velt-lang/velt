@@ -495,12 +495,16 @@ const fromByteString = (bytes) =>
 
 /**
  * The `velt:random` host module: the random numbers of `Math.random()`'s seed, velt/crypto and
- * UUIDs (std/lang/random/os_js.velt). `buf` is a view of the program's memory.
+ * UUIDs (std/lang/random/os_js.velt). `buf` is a view of the program's memory, of any length:
+ * `crypto.getRandomValues` takes at most 65,536 bytes a call (a `QuotaExceededError` past that).
  */
 export function randomHost() {
+  const MAX_CALL = 65536;
   return {
     fill(buf) {
-      globalThis.crypto.getRandomValues(buf);
+      for (let at = 0; at < buf.length; at += MAX_CALL) {
+        globalThis.crypto.getRandomValues(buf.subarray(at, at + MAX_CALL));
+      }
     },
   };
 }

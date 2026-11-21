@@ -116,18 +116,21 @@ declarations.
   and `memcpy`, `std/ffi/read.velt`) on `wasm32-wasip1` with `size_t` as `u32` and on
   `aarch64-apple-darwin` as `u64`, and checks the refusals and their notes.
   `crates/veltc/tests/c_functions.rs` checks that a package's C call is refused on both
-  WebAssembly targets. `crates/veltc/tests/wasm_goldens.rs` runs the `std/random` golden under
-  WASI; `math_random_seeds_each_run_on_webassembly` runs a program twice under wasmtime and twice
+  WebAssembly targets. `crates/veltc/tests/wasm_goldens.rs` runs the `std/random`, `std/crypto`,
+  `std/crypto_random_int` and `std/uuid` goldens under WASI;
+  `crypto_random_bytes_fill_large_draws_on_webassembly` draws up to 200,000 bytes on both targets,
+  past the JS host's 65,536 bytes a call; `math_random_seeds_each_run_on_webassembly` runs a program twice under wasmtime and twice
   in the browser glue under Node and expects different numbers; `a_failed_wasi_seed_panics` runs
   it under `node:wasi` with a `random_get` that returns `EIO` and expects a panic (exit 101).
 
 ## Runtime cost
 
-- **Run time:** one `getentropy` call (one `random_get` import call) per thread, at its first
-  random number. Native targets are unaffected.
+- **Run time:** `Math.random()` makes one `getentropy` call (one `random_get` import call) per
+  thread, at its first number. velt/crypto's `randomBytes` and `randomInt` and the UUIDs make
+  one per draw (a 256-byte chunk each), as they make one OS call per draw on native targets.
 - **Build time:** none measurable: one more condition variant, parsed only when `#os-random`
   resolves to it.
-- **Runtime size:** the runtime has no seed function on any target.
+- **Runtime size:** the runtime has no random function on any target.
 
 ## Diagnostics
 

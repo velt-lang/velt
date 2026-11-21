@@ -440,7 +440,7 @@ fn conditional_imports_pick_the_target_variant() {
 /// `Math.random()`'s seed on WebAssembly: WASI's `random_get` through wasi-libc, and the JS
 /// host's `crypto.getRandomValues` (`velt:random`). Two runs of tests/wasm_random/main.velt print
 /// different numbers on each target, which a constant seed (a `fill` that does nothing, a
-/// `fillRandom` in os_wasi.velt doing nothing) fails.
+/// `fillRandomAt` in os_wasi.velt doing nothing) fails.
 #[test]
 fn math_random_seeds_each_run_on_webassembly() {
     let root = root();
@@ -474,6 +474,45 @@ fn math_random_seeds_each_run_on_webassembly() {
         let (one, two) = (run(), run());
         let _ = std::fs::remove_dir_all(&work);
         assert_ne!(one, two, "{target}: two runs printed the same numbers");
+    }
+}
+
+/// velt/crypto's `randomBytes` on WebAssembly, past the JS host's limit of 65,536 bytes a
+/// `crypto.getRandomValues` call (velt_web.mjs `randomHost`, which chunks) and WASI's 256 bytes a
+/// `getentropy` call (std/lang/random/os_wasi.velt): tests/wasm_random/large.velt draws 16 to
+/// 200,000 bytes and checks the length and every 64 KiB part's zero count, on both targets.
+#[test]
+fn crypto_random_bytes_fill_large_draws_on_webassembly() {
+    let root = root();
+    let main = root.join("crates/veltc/tests/wasm_random/large.velt");
+    for (target, runner) in [
+        ("wasm32-wasip1", "wasmtime"),
+        ("wasm32-unknown-unknown", "node"),
+    ] {
+        if let Some(missing) = missing_tools(target, runner) {
+            eprintln!("note: {missing} not available; skipping large random draws on {target}");
+            continue;
+        }
+        build_runtime(&root, target);
+        let work = own_build_dir(&root, "golden-work-random-large", target);
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["run", "--target", target])
+            .arg(&main)
+            .current_dir(&work)
+            .output()
+            .expect("run velt");
+        let _ = std::fs::remove_dir_all(&work);
+        assert!(
+            o.status.success(),
+            "{target}: exit {:?}\n{}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+            "16: ok\n256: ok\n257: ok\n65536: ok\n65537: ok\n200000: ok\n",
+            "{target}"
+        );
     }
 }
 

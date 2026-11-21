@@ -7,6 +7,7 @@
 import { fillRandomAt } from "#os-random";
 import { addressLoad } from "velt/lang/intrinsics/address";
 import { arrayDataAddress, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics/array";
+import { noInline } from "velt/lang/intrinsics/decorators";
 import { rawAlloc, rawFree } from "velt/lang/intrinsics/slot";
 
 /** `n` bytes from the OS generator. */
@@ -23,7 +24,11 @@ export function osRandomBytes(n: usize): u8[] {
   return b;
 }
 
-/** A uniformly random `u64` from the OS generator. */
+/**
+ * A uniformly random `u64` from the OS generator. Out of line: inlined into wyrand's `nextU64`,
+ * the seed's call made every `Math.random()` one instruction longer.
+ */
+@noInline
 export function osRandomU64(): u64 {
   const p = rawAlloc(8);
   // SAFETY: the 8 bytes at `p` are this call's own; any 8 bytes are a `u64`; freed once.

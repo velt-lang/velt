@@ -948,9 +948,10 @@ velt_web.mjs, which a host such as the Workers glue can call with a `fetch` of i
 is a JS object (a `HostRef`) holding the request's `AbortController`, then its `Response`, the
 body's reader and the piece last read; its async functions fulfill with nothing and reject with
 an error whose `name` is the `IoError` code native `fetch` gives the failure (`AbortError` once
-the call was aborted). `velt:random` (std/lang/random/seed_js.velt): `fill(buf: u8[])`, the seed
-of `Math.random()`'s generator, which the glue fills with `crypto.getRandomValues` (`randomHost` in
-velt_web.mjs); `buf` crosses as a view of the program's memory. `velt:clock`
+the call was aborted). `velt:random` (std/lang/random/os_js.velt): `fill(buf: u8[])`, random
+bytes for `Math.random()`'s seed, velt/crypto and UUIDs, which the glue fills with
+`crypto.getRandomValues` 65,536 bytes a call, its limit (`randomHost` in velt_web.mjs); `buf`
+crosses as a view of the program's memory, of any length. `velt:clock`
 (std/lang/hooks/clock_js.velt): `now(): f64` and `date(): f64`, the host's `performance.now()`
 and `Date.now()` in milliseconds, which `Date.now()` and `performance.now()` read (`clockHost`
 in velt_web.mjs).

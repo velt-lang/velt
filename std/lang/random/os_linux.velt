@@ -36,8 +36,9 @@ export unsafe function fillRandomAt(base: usize, n: usize): void {
 }
 
 /**
- * After a `getrandom` that wrote nothing (`got`, -1 or 0): back to the loop on `EINTR`, else the
- * program stops, with no safe source to fall back on.
+ * After a `getrandom` that wrote nothing: back to the loop when it failed (`got` -1) with
+ * `EINTR`; on any other error, or a return of 0, the program stops, with no safe source to fall
+ * back on.
  */
 @noInline
 function retryOrStop(got: isize): void {
