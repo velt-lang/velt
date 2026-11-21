@@ -59,7 +59,7 @@ function unitAt(s: string, p: u64): u32 {
 }
 
 /** The position after the code unit at `p` of `s`. */
-function nextUnit(s: string, p: u64): u64 {
+export function nextUnit(s: string, p: u64): u64 {
   const i = p >> 1;
   const b = strByteAt(s, i);
   if (b < 0x80) {
@@ -75,7 +75,7 @@ function nextUnit(s: string, p: u64): u64 {
 }
 
 /** Do the code units of `needle` (`m` bytes) appear in `s` (`n` bytes) from position `p`? */
-function unitsMatch(s: string, n: usize, needle: string, m: usize, p: u64): bool {
+export function unitsMatch(s: string, n: usize, needle: string, m: usize, p: u64): bool {
   let h = p;
   let q: u64 = 0;
   while ((q >> 1) < (m as u64)) {
@@ -163,4 +163,28 @@ export function halfStart(s: string, p: usize, len: usize, half: u64): u64 {
     }
   }
   return start;
+}
+
+/** Does `needle` (`m` bytes) start with a lone low surrogate (`ED B0..BF ..`)? */
+function lowFirst(needle: string, m: usize): bool {
+  return m >= 3 && strByteAt(needle, 0) == 0xed && (strByteAt(needle, 1) & 0xf0) == 0xb0;
+}
+
+/** Does `needle` (`m` bytes) end with a lone high surrogate (`ED A0..AF ..`)? */
+function highLast(needle: string, m: usize): bool {
+  return m >= 3 &&
+    strByteAt(needle, (m - 3) as u64) == 0xed &&
+    (strByteAt(needle, (m - 2) as u64) & 0xf0) == 0xa0;
+}
+
+/** `halfStart`'s condition for `needle` (`m` bytes): its first low half, its last high half. */
+export function halfCondition(needle: string, m: usize): u64 {
+  let half: u64 = 0;
+  if (lowFirst(needle, m)) {
+    half = half | ((1 as u64) << 63) | (codePoint3(needle, 0) as u64);
+  }
+  if (highLast(needle, m)) {
+    half = half | ((1 as u64) << 62) | ((codePoint3(needle, m - 3) as u64) << 16);
+  }
+  return half;
 }

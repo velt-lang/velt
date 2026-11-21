@@ -199,7 +199,8 @@ it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`):
   modules.
 - **State of its own.** A module may keep thread-local values and static atomics in its *private*
   modules (`prebuilt::private`: modules nothing else imports, such as the weak core's
-  `weak*.velt`). The object keeps the static atomics; the manifest lists the thread-local values'
+  `weak*.velt`, and module_blocks.velt, whose blocks of module state are refused in every other
+  module's object). The object keeps the static atomics; the manifest lists the thread-local values'
   externs, and a build linking the object adds them to its program, whose unit defining
   `velt_main` defines their storage (vir.rs invariant 5: code compiled to link into a program
   declares them). Sema calls no object for a program that loads a private module itself, which

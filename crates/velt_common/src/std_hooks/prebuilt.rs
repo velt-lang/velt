@@ -53,20 +53,28 @@ pub fn of_symbol(symbol: &str) -> Option<usize> {
 /// Per prebuilt module (its table entry): the std modules whose state its object keeps as its own
 /// (module docs, "State"), the module itself among them. Each is imported only by the others of
 /// its list and by tests (`veltc`'s `prebuilt_private_modules` test).
-const PRIVATE: &[(&str, &[&str])] = &[(
-    "lang_hooks_weak",
-    &[
-        "std/lang/hooks/weak",
-        "std/lang/hooks/weak_graph",
-        "std/lang/hooks/weak_maps",
-        "std/lang/hooks/weak_mem",
-        "std/lang/hooks/weak_os_posix",
-        "std/lang/hooks/weak_os_win32",
-        "std/lang/hooks/weak_records",
-        "std/lang/hooks/weak_refs",
-        "std/lang/hooks/weak_trial",
-    ],
-)];
+const PRIVATE: &[(&str, &[&str])] = &[
+    (
+        "lang_hooks_weak",
+        &[
+            "std/lang/hooks/weak",
+            "std/lang/hooks/weak_graph",
+            "std/lang/hooks/weak_maps",
+            "std/lang/hooks/weak_mem",
+            "std/lang/hooks/weak_os_posix",
+            "std/lang/hooks/weak_os_win32",
+            "std/lang/hooks/weak_records",
+            "std/lang/hooks/weak_refs",
+            "std/lang/hooks/weak_trial",
+        ],
+    ),
+    // The blocks of module state and their table (#2196 9c): the executor's module lock
+    // (sched_module.velt) and lowering reach them through the hooks alone.
+    (
+        "lang_hooks_module_blocks",
+        &["std/lang/hooks/module_blocks"],
+    ),
+];
 
 /// The private modules of prebuilt module `module_entry` (module docs, "State"): none for a module
 /// without state of its own.

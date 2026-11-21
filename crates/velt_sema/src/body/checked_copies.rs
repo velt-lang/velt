@@ -110,7 +110,8 @@ impl FnCx<'_, '_> {
     }
 
     /// Is argument `e`, of parameter type `pty`, of a type parameter this call infers from it
-    /// (no type argument, receiver or context fixed it)? It is passed as it is when the call's
+    /// (no type argument, receiver or context fixed it, and no bound constrains it: a narrowed
+    /// `D | null` passed for `T extends Node` is its payload, as TypeScript infers `T`)? It is passed as it is when the call's
     /// result `ret` does not mention the parameter (`JSON.stringify(x)`), or when it is a
     /// module variable or a field path of one, whose type main infers as it is too (`id(x)` is a
     /// `Box | null`); a field path of a local stays its payload (`Promise.reject(this.err)`).

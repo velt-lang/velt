@@ -14,7 +14,8 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// package.velt to list them in), per target: `velt native headers --std` reads them. Windows
 /// targets load none of std's POSIX declarations (the `#fd-system` variant there declares
 /// nothing), only the C library's memory and string functions and `errno`'s location
-/// (velt/ffi's `#errno-location`); `<unwind.h>` has the Itanium unwinder's
+/// (velt/ffi's `#errno-location`), and after `<windows.h>` kernel32's process counters
+/// (`<psapi.h>`, std/process/memory_win32.velt); `<unwind.h>` has the Itanium unwinder's
 /// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
 /// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt).
@@ -28,6 +29,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
             "<string.h>",
             "<windows.h>",
             "<winternl.h>",
+            "<psapi.h>",
         ];
     }
     let mut headers = vec![
@@ -138,6 +140,9 @@ const CHECKED: &[&str] = &[
     "process/env_linux.velt",
     "process/env_posix.velt",
     "process/env_win32.velt",
+    "process/memory_darwin.velt",
+    "process/memory_linux.velt",
+    "process/memory_win32.velt",
     "process/stdin_buffer.velt",
     "process/stdin_posix.velt",
     "process/stdin_win32.velt",
