@@ -152,6 +152,55 @@ fn hand_overs_racing_their_tasks_polls_leave_nothing() {
     check("mixed", MIXED, "266 ended, 400 handed on, 100 awaited\n", 3);
 }
 
+/// A task whose promise yielded (it has a yield block) ends while that promise, handed on, is
+/// still held; the drop of the finished promise on worker 2 gives back the task's last reference
+/// there (sched_task_lost.velt `releaseAway`), and that frees the task's yield block with it.
+/// Without that, one yield block leaked a round, 20 a run.
+#[test]
+fn a_task_with_yields_freed_by_a_hand_over_frees_its_yield_block() {
+    check("ended_yields", ENDED_YIELDS, "dropped 20 on worker 2\n", 3);
+}
+
+/// The program of [`a_task_with_yields_freed_by_a_hand_over_frees_its_yield_block`].
+const ENDED_YIELDS: &str = r#"// #3323 with #3241's yield lists: the task on worker 1 starts a promise that yields a few turns
+// and hands it on unawaited (its yields make the task's yield block); the task ends, and worker
+// 2 drops the promise, finished, after that: the drop frees the task.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function turns(): Promise<number> {
+  await yieldNow();
+  await yieldNow();
+  return 1;
+}
+
+async function maker(): Promise<Holder> {
+  const p = turns();
+  for (let i = 0; i < 4; i++) {
+    await yieldNow();
+  }
+  return new Holder(p);
+}
+
+async function dropper(h: Holder): Promise<number> {
+  return 1;
+}
+
+async function main() {
+  let n = 0;
+  for (let i = 0; i < 20; i++) {
+    const h = await spawn(maker(), { worker: 1 });
+    n += await spawn(dropper(h), { worker: 2 });
+  }
+  console.log(`dropped ${n} on worker 2`);
+}
+"#;
+
 /// The program of [`a_suspended_promise_dropped_on_another_worker_frees_its_task`].
 const HANDED_DROP: &str = r#"// #3323: a suspended promise handed to a task on another worker and dropped there, while the
 // task that started it has ended its root.

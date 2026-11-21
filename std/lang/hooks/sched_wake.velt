@@ -136,20 +136,21 @@ export function releaseHere(t: usize): void {
       // `releaseAway`): it touches the task until it gives the lock back.
       awaitUnlocked(t);
     }
-    if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
-      freePanicked(t);
-    }
-    if (yl.hasBlock(t)) {
-      yl.freeBlock(t);
-    }
-    m.release(t, m.ld(t + tk.T_BYTES));
+    freed(t);
   }
 }
 
-/** Frees task `t`, whose last reference the caller gave back by its own count (`release`'s end). */
+/**
+ * Frees task `t`, whose last reference the caller gave back by its own count (`release`'s end,
+ * and sched_task_lost.velt `releaseAway`'s): its root's exception, its yield block, the task.
+ */
+@inline("always")
 export function freed(t: usize): void {
   if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
     freePanicked(t);
+  }
+  if (yl.hasBlock(t)) {
+    yl.freeBlock(t);
   }
   m.release(t, m.ld(t + tk.T_BYTES));
 }
