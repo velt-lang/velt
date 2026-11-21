@@ -1261,10 +1261,12 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 
 ### 14.1 Randomness and local time
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
-| `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
+**[non-additive, #2196]** The operating system's random numbers are std code (`#os-random`:
+std/lang/random/os.velt over `getrandom` on Linux, `getentropy` on macOS and under WASI,
+`BCryptGenRandom` with the system's preferred generator on Windows, the JS host's
+`crypto.getRandomValues`). velt/crypto's `randomBytes` and `randomInt`, UUIDs and the seed of
+`Math.random()` draw through it; a failing generator stops the program (a panic).
+`velt_rt_random_bytes` and `velt_rt_random_u64` no longer exist.
 
 **[non-additive, #2196]** The local time zone's offset is std code (`#localtime`:
 std/time/localtime_posix.velt over the C library's `localtime_r` and `tm_gmtoff`,
@@ -1394,7 +1396,7 @@ and client are Velt code (§7).
 
 ### 14.11 Fast random numbers
 
-`Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`), seeded with
-`velt_rt_random_u64` (§14.1) natively. Under WASI, std calls wasi-libc's `getentropy`
-([wasi-libc.md](../design/wasi-libc.md)); under a JS host, the glue's `velt:random`.`fill`
-(`crypto.getRandomValues`). No runtime function is involved on WebAssembly. Not for secrets.
+`Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`), seeded from the
+operating system's random numbers (§14.1): under WASI wasi-libc's `getentropy`
+([wasi-libc.md](../design/wasi-libc.md)), under a JS host the glue's `velt:random`.`fill`
+(`crypto.getRandomValues`). No runtime function is involved on any target. Not for secrets.

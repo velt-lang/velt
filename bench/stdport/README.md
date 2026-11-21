@@ -73,6 +73,12 @@ Velt against the runtime's Rust, the same compiler and runtime with only the std
 - `prng` (`Math.random()`'s wyrand generator, Velt code): 820M instructions against the Rust
   port's 1,300M built with `rustc -C opt-level=3`, 0.63 (release, Linux, cachegrind, 2026-11-08,
   commit 74125fdf6).
+- `os_random` (the operating system's random numbers: 300K each of `randomBytes(16)`, crypto's
+  `randomInt` and `uuidv4()`, one OS call per draw; std/lang/random/os.velt over `getrandom`, against
+  the `getrandom` crate the runtime used): 418M instructions against the Rust port's 517M, 0.81. The
+  same program on the runtime's Rust took 520M, with the same compiler and only std swapped
+  (Linux x86_64, cachegrind, 2026-11-21). Wall time is the system calls' on both (243 ms against
+  246 ms, best of 7): the instructions saved are the zero fill and the `Vec` per draw.
 
 ## SHA-2 and SHA-1
 
