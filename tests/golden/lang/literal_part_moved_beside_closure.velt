@@ -59,10 +59,31 @@ function partReplace(b: Box | null): void {
   }
 }
 
+class Keeper {
+  f: () => number;
+  constructor(f: () => number) {
+    this.f = f;
+  }
+}
+
+function consume(k: Keeper): number {
+  return k.f();
+}
+
+// A string part beside a closure a constructor argument holds (#3385): the literal's share is
+// the literal's, not a temporary the statement drops too.
+function partKeeper(b: Box | null): void {
+  if (b) {
+    const r = { a: b.tag, c: consume(new Keeper(() => b.tag.length)) };
+    console.log("keeper", r.a, r.c);
+  }
+}
+
 for (let i = 0; i < 3; i++) {
   partBorrow({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
   partMut({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
   partOtherField({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
   partInnerField({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
   partReplace({ inner: new Inner(`inner heap string long enough ${i}`), tag: `t${i}` });
+  partKeeper({ inner: new Inner(`i${i}`), tag: `tag heap string long enough ${i}` });
 }
