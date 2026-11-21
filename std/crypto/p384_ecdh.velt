@@ -1,0 +1,278 @@
+// velt/crypto (internal): ECDH on NIST P-384 (SEC 1 §3.3.1, as TLS's secp384r1 group, RFC 8446
+// §4.2.8.2), on p384.velt's curve.
+//
+// Constant time, as p256.velt's: the scalar goes through fixed 4-bit windows (384 doublings and
+// 96 additions whatever its value); each window's multiple is picked from a table of 0P..15P by
+// a masked scan of all sixteen entries; an addition with the identity is a masked select; and
+// nothing branches on or indexes by a byte of the scalar. The inversion's exponent, p - 2, is
+// public. The addition has one exceptional case, P = Q, which the windows never reach: with
+// 0 < k < n the accumulator before an addition is 16 v P for the prefix v of k, and 16 v = j
+// (mod n) for a digit j < 16 only when both are zero, which is the identity case.
+
+import { CryptoError } from "velt/crypto/errors";
+import { Mod384 } from "velt/crypto/mod384";
+import { basePoint, decodePoint, double, FIRST, ONE, p384Field, T, TMP } from "velt/crypto/p384";
+import { randomBytes } from "velt/crypto/random";
+import { noInline } from "velt/lang/intrinsics";
+
+// The group order n, big-endian bytes, and p - 2 in little-endian limbs (the field inversion's
+// exponent).
+const N: u8[] = [
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xc7,
+  0x63,
+  0x4d,
+  0x81,
+  0xf4,
+  0x37,
+  0x2d,
+  0xdf,
+  0x58,
+  0x1a,
+  0x0d,
+  0xb2,
+  0x48,
+  0xb0,
+  0xa7,
+  0x7a,
+  0xec,
+  0xec,
+  0x19,
+  0x6a,
+  0xcc,
+  0xc5,
+  0x29,
+  0x73,
+];
+const P_MINUS_2: u64[] = [
+  0x00000000fffffffd,
+  0xffffffff00000000,
+  0xfffffffffffffffe,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+];
+
+// Registers after the curve's own. A point is three (X, Y, Z); the table holds 0P..15P.
+const ACC: usize = FIRST; // the accumulator point
+const SEL: usize = ACC + 3; // the selected table entry
+const INV: usize = SEL + 3; // the inversion's result and its scratch
+const TABLE: usize = INV + 2; // 16 points
+const EXTRA: usize = TABLE + 48 - FIRST;
+
+/**
+ * Whether `k` is a valid scalar, 48 big-endian bytes with 0 < k < n. Callers pass private keys, so
+ * only its length and the answer are public: nothing branches on or indexes by a byte's value.
+ */
+export function p384ScalarOk(k: u8[]): bool {
+  if (k.length != 48) {
+    return false;
+  }
+  // k - n from the low byte up: the last borrow says k < n. `any` is non-zero unless k is 0.
+  let any: u64 = 0;
+  let borrow: u64 = 0;
+  for (let i: usize = 0; i < 48; i++) {
+    const d = (k[47 - i] as u64) - (N[47 - i] as u64) - borrow;
+    borrow = d >> 63;
+    any |= k[47 - i] as u64;
+  }
+  return (((any + 0xff) >> 8) & borrow) == 1;
+}
+
+/** A new random P-384 private key: 48 big-endian bytes in [1, n - 1]. */
+export function p384PrivateKey(): u8[] {
+  while (true) {
+    const k = randomBytes(48);
+    if (p384ScalarOk(k)) {
+      return k;
+    }
+  }
+}
+
+/** The uncompressed public key (0x04, x, y: 97 bytes) of the private key `scalar`. */
+export function p384PublicKey(scalar: u8[]): u8[] {
+  if (!p384ScalarOk(scalar)) {
+    throw new CryptoError("P-384 needs a 48-byte private key between 1 and n - 1");
+  }
+  const f = p384Field(EXTRA);
+  basePoint(f, TABLE + 3);
+  const out = Buffer.alloc(97);
+  out[0] = 4;
+  multiply(f, scalar, out, true);
+  return out;
+}
+
+/**
+ * The ECDH shared secret (the x-coordinate, 48 bytes) of the private key `scalar` and the
+ * peer's uncompressed public key `point`. Throws `CryptoError` for a point that is not on the
+ * curve (RFC 8446 §4.2.8.2 requires the check) or a bad scalar.
+ */
+export function p384Ecdh(scalar: u8[], point: u8[]): u8[] {
+  if (!p384ScalarOk(scalar)) {
+    throw new CryptoError("P-384 needs a 48-byte private key between 1 and n - 1");
+  }
+  const f = p384Field(EXTRA);
+  if (!decodePoint(f, point, TABLE + 3)) {
+    throw new CryptoError("the P-384 public key is not an uncompressed point on the curve");
+  }
+  const out = Buffer.alloc(48);
+  multiply(f, scalar, out, false);
+  return out;
+}
+
+// `scalar` times the point in `TABLE + 3..TABLE + 5`, written affine to `out` (x at 1 and y at
+// 49 when `both`, else x at 0). Out of line, as p256.velt's.
+@noInline
+function multiply(f: Mod384, scalar: u8[], out: u8[], both: bool) {
+  // TABLE: the identity (1 : 1 : 0), P, then 2P..15P.
+  f.copy(TABLE, ONE);
+  f.copy(TABLE + 1, ONE);
+  f.zero(TABLE + 2);
+  double(f, TABLE + 6, TABLE + 3);
+  for (let i: usize = 3; i < 16; i++) {
+    add(f, TABLE + 3 * i, TABLE + 3 * (i - 1), TABLE + 3);
+  }
+  for (let w: usize = 0; w < 96; w++) {
+    const byte = scalar[w >> 1] as u64;
+    const nibble = (w & 1) == 0 ? byte >> 4 : byte & 15;
+    if (w > 0) {
+      for (let j = 0; j < 4; j++) {
+        double(f, ACC, ACC);
+      }
+    }
+    select(f, nibble);
+    if (w == 0) {
+      f.copy(ACC, SEL);
+      f.copy(ACC + 1, SEL + 1);
+      f.copy(ACC + 2, SEL + 2);
+    } else {
+      add(f, ACC, ACC, SEL);
+    }
+  }
+  // Affine: x = X / Z^2, y = Y / Z^3. A valid scalar times a point of prime order is never the
+  // identity, so Z is not zero.
+  invert(f, INV, ACC + 2);
+  f.mul(INV + 1, INV, INV);
+  f.mul(ACC, ACC, INV + 1);
+  encode(f, ACC, out, both ? 1 : 0);
+  if (both) {
+    f.mul(INV + 1, INV + 1, INV);
+    f.mul(ACC + 1, ACC + 1, INV + 1);
+    encode(f, ACC + 1, out, 49);
+  }
+}
+
+// SEL = TABLE[nibble], reading every entry.
+function select(f: Mod384, nibble: u64) {
+  f.zero(SEL);
+  f.zero(SEL + 1);
+  f.zero(SEL + 2);
+  for (let i: usize = 0; i < 16; i++) {
+    const x = (i as u64) ^ nibble;
+    // All ones when x == 0 (x is below 16, so x - 1 wraps only for 0).
+    const mask = 0 - ((x - 1) >> 63);
+    f.orMasked(SEL, TABLE + 3 * i, mask);
+    f.orMasked(SEL + 1, TABLE + 3 * i + 1, mask);
+    f.orMasked(SEL + 2, TABLE + 3 * i + 2, mask);
+  }
+}
+
+// `d = p + q` (points at registers `d`, `p`, `q`; `d` may be either), add-2007-bl, with the
+// identity on either side selected by masks. Wrong for p = q (neither the identity), which the
+// windows rule out.
+function add(f: Mod384, d: usize, p: usize, q: usize) {
+  const z1z1 = T;
+  const z2z2 = T + 1;
+  const u1 = T + 2;
+  const h = T + 3;
+  const s1 = T + 4;
+  const r = T + 5;
+  const i = T + 6;
+  const j = T + 7;
+  f.mul(z1z1, p + 2, p + 2);
+  f.mul(z2z2, q + 2, q + 2);
+  f.mul(u1, p, z2z2);
+  f.mul(h, q, z1z1);
+  f.mul(s1, p + 1, q + 2);
+  f.mul(s1, s1, z2z2);
+  f.mul(r, q + 1, p + 2);
+  f.mul(r, r, z1z1);
+  f.sub(h, h, u1); // H = U2 - U1
+  f.sub(r, r, s1);
+  f.add(r, r, r); // r = 2 (S2 - S1)
+  f.add(i, h, h);
+  f.mul(i, i, i); // I = (2H)^2
+  f.mul(j, h, i); // J = H I
+  f.mul(i, u1, i); // V = U1 I
+  // Z3 = ((Z1 + Z2)^2 - Z1Z1 - Z2Z2) H, in u1.
+  f.add(u1, p + 2, q + 2);
+  f.mul(u1, u1, u1);
+  f.sub(u1, u1, z1z1);
+  f.sub(u1, u1, z2z2);
+  f.mul(u1, u1, h);
+  // X3 = r^2 - J - 2V, in z1z1.
+  f.mul(z1z1, r, r);
+  f.sub(z1z1, z1z1, j);
+  f.add(z2z2, i, i);
+  f.sub(z1z1, z1z1, z2z2);
+  // Y3 = r (V - X3) - 2 S1 J, in z2z2.
+  f.sub(i, i, z1z1);
+  f.mul(i, r, i);
+  f.mul(s1, s1, j);
+  f.add(s1, s1, s1);
+  f.sub(z2z2, i, s1);
+  // p is the identity: q; q is: p.
+  const pZero = f.zeroMask(p + 2);
+  const qZero = f.zeroMask(q + 2);
+  f.blend(z1z1, p, z1z1, qZero);
+  f.blend(z2z2, p + 1, z2z2, qZero);
+  f.blend(u1, p + 2, u1, qZero);
+  f.blend(d, q, z1z1, pZero);
+  f.blend(d + 1, q + 1, z2z2, pZero);
+  f.blend(d + 2, q + 2, u1, pZero);
+}
+
+// `d = 1 / a` as a^(p - 2) (`d` not `a`; `d + 1` is scratch). The exponent is public: squarings
+// and products follow its bits, the same for every `a`.
+function invert(f: Mod384, d: usize, a: usize) {
+  f.copy(d, a);
+  for (let i: usize = 383; i > 0; i--) {
+    const bit = i - 1;
+    f.mul(d, d, d);
+    if (((P_MINUS_2[bit >> 6] >> ((bit & 63) as u64)) & 1) == 1) {
+      f.mul(d, d, a);
+    }
+  }
+}
+
+// Field register `a` (in the Montgomery domain) as 48 big-endian bytes at `out[at]`.
+function encode(f: Mod384, a: usize, out: u8[], at: usize) {
+  f.leave(TMP, a);
+  for (let i: usize = 0; i < 48; i++) {
+    const limb = f.r[6 * TMP + 5 - (i >> 3)];
+    out[at + i] = ((limb >> ((56 - 8 * (i & 7)) as u64)) & 0xff) as u8;
+  }
+}
