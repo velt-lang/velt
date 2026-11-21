@@ -78,10 +78,15 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         // The arguments of a call through the value start at its declared parameters: after any
         // captures and a method's `this`, which the call doesn't pass.
         let skip = f.captures.len() + usize::from(f.self_ty.is_some());
-        let declared: Vec<_> = f.params.iter().skip(skip).map(|p| p.local).collect();
-        for (k, local) in declared.into_iter().enumerate() {
+        let declared: Vec<_> = f
+            .params
+            .iter()
+            .skip(skip)
+            .map(|p| (p.local, p.ty))
+            .collect();
+        for (k, (local, pty)) in declared.into_iter().enumerate() {
             if let Some(&i) = g.ids.get(&Node::Local(d, local)) {
-                if p.flags[i] & CROSSES != 0 {
+                if p.flags[i] & CROSSES != 0 && carries_fn(cx, pty) {
                     found.push((ty, k, p.why[i], d, None, false));
                 }
             }
@@ -96,13 +101,13 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
             .params
             .iter()
             .skip(f.captures.len())
-            .map(|p| p.local)
+            .map(|p| (p.local, p.ty))
             .collect();
-        for (k, local) in declared.into_iter().enumerate() {
+        for (k, (local, pty)) in declared.into_iter().enumerate() {
             let Some(&i) = g.ids.get(&Node::Local(c, local)) else {
                 continue;
             };
-            if p.flags[i] & CROSSES != 0 {
+            if p.flags[i] & CROSSES != 0 && carries_fn(cx, pty) {
                 let reached = held_in_locals(g, fwd.get_or_insert_with(|| forward(cx, g)), n);
                 for ty in instances(cx, g, c, g.tys[n]) {
                     found.push((ty, k, p.why[i], c, reached.clone(), false));
@@ -133,10 +138,13 @@ pub(super) fn crossing_params(cx: &mut Ctx, g: &Graph, p: &mut Propagation) -> b
         let Some(k) = declared.iter().position(|p| p.local == local) else {
             continue;
         };
+        let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
+        if !carries_fn(cx, params[k]) {
+            continue;
+        }
         let ty = match p.unseen_types.get(&c) {
             Some(&t) => t,
             None => {
-                let params: Vec<_> = declared.iter().map(|p| p.ty).collect();
                 let t = fn_value_type(cx, c, params);
                 p.unseen_types.insert(c, t);
                 t
@@ -545,4 +553,13 @@ fn fn_value_type(cx: &mut Ctx, d: DefId, params: Vec<TyId>) -> TyId {
         throws,
         rest: false,
     })
+}
+
+/// May a value of parameter type `t` carry a closure: a function type or a part of one, a type
+/// parameter, an interface or a dynamic value, whose contents aren't known? A parameter of another
+/// type that crosses carries no closure across (std's `Symbol(description)` puts its string in the
+/// symbol's record with `slotPut`, a channel's boundary), so it makes no argument of a call through
+/// a function value cross: through `unknown` that value's calls are every call (#154).
+fn carries_fn(cx: &mut Ctx, t: TyId) -> bool {
+    types::may_hold_fn(cx, t)
 }

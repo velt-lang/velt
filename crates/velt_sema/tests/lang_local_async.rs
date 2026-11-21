@@ -221,3 +221,35 @@ fn generic_parameters_keep_the_callers_types() {
         "{r}"
     );
 }
+
+/// A crossing parameter that can't hold a function value carries no closure across (#154).
+/// std's `Symbol(description)` puts its string in the symbol's record with `slotPut`, a channel's
+/// boundary for this check. sigx uses `Symbol` as a generic function value through `unknown`
+/// (`createToken`), whose type then matches the calls through every generic function type: their
+/// arguments crossed, and with them the closures their instantiations hold (`n`'s here, in a
+/// `(() => void)[]` kept and run on this task). Node prints `1 x`.
+#[test]
+fn a_crossing_string_parameter_lets_no_closure_cross() {
+    ok_src(
+        "export const createToken = Symbol as unknown as <T>(description: string) => symbol;
+         type Test<T> = { test: (x: T) => boolean };
+         function keep<T>(xs: T[], t: Test<T>): T[] {
+           const out: T[] = [];
+           for (const x of xs) {
+             if (t.test(x)) {
+               out.push(x);
+             }
+           }
+           return out;
+         }
+         function main() {
+           let n = 0;
+           const jobs: (() => void)[] = [() => { n++; }];
+           const all: Test<() => void> = { test: (j: () => void): boolean => true };
+           for (const j of keep(jobs, all)) {
+             j();
+           }
+           console.log(n, createToken<number>(\"x\").description);
+         }",
+    );
+}
