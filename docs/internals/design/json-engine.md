@@ -149,13 +149,15 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | Per-type decoders and writers | generators in `std/encoding/json/generate/` (`read*.velt`, `write.velt`, `check.velt`), declared in `std/encoding/json/generated.velt` |
 | Scanner, pull reader, writer | `std/encoding/json/scan*.velt`, `reader*.velt`, `writer*.velt` |
 | Tape | `std/encoding/json/tape*.velt` |
+| Node's syntax-error messages (computed only after a failure) | `std/encoding/json/node_syntax.velt` |
+| `JSON.stringify(value, keys, space)` | `std/encoding/json/relayout.velt` |
 | Numbers | `std/lang/number/`, `std/lang/hooks/number_parse.velt` |
 
 Some JSON code remains in the runtime (`crates/velt_rt/src/json/`, ABI in
-[rt_abi_async.md §12](../contracts/rt_abi_async.md)): the reader of a database driver's rows, the
-tree behind edited `JsonValue`s, Node's exact syntax-error messages (computed only after a
-failure), and the shortest-digits printer for doubles. Each goes when its Velt replacement
-exists.
+[rt_abi_async.md §12](../contracts/rt_abi_async.md)): the reader of a database driver's rows
+(with the Rust copy of Node's messages its reader of nested JSON cells gives), which goes with
+the native-package ABI (#2563); the tree behind edited `JsonValue`s; and the shortest-digits
+printer for doubles. Each goes when its Velt replacement exists.
 
 ## Compatibility
 
