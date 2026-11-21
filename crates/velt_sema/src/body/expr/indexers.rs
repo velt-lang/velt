@@ -36,6 +36,9 @@ const GET: &str = velt_common::std_key!(array_get);
 const INDEX_TEMP: &str = "<index>";
 const OLD: &str = "<old>";
 const NEW: &str = "<new>";
+/// The value a typed array's index setter is given when the assigned value is an `any`
+/// (element_store.rs); `<new>` keeps the assignment's own value.
+const CONV: &str = "<conv>";
 
 fn ident(name: &str, span: Span) -> ast::Ident {
     ast::Ident {
@@ -380,9 +383,10 @@ impl FnCx<'_, '_> {
             None => self.expr(&value, Some(old_ty), Want::Move),
         };
         let new_ty = new_val.ty;
+        let typed = self.typed_array_receiver(recv.ty);
         let new = self.bind_temp(NEW, new_val, &mut set);
         let mut args = idx;
-        args.push(name_ref(NEW, span));
+        args.push(self.setter_value(typed, new, new_ty, &mut set, span));
         let call = self.method_call_on(recv, &set_prop, &[], &args, None, span);
         set.push(stmt(hir::StmtKind::Expr(call), span));
         match cond {
@@ -424,15 +428,37 @@ impl FnCx<'_, '_> {
         self.push_scope();
         let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
         let mut args = self.keys_once(recv.ty, SET_INDEX, keys, &mut stmts);
+        let typed = self.typed_array_receiver(recv.ty);
         let v = self.expr(value, None, Want::Move);
         let ty = v.ty;
         let new = self.bind_temp(NEW, v, &mut stmts);
-        args.push(name_ref(NEW, span));
+        args.push(self.setter_value(typed, new, ty, &mut stmts, span));
         let call = self.method_call_on(recv, &ident(SET_INDEX, span), &[], &args, None, span);
         stmts.push(stmt(hir::StmtKind::Expr(call), span));
         let value = self.read_temp(new, ty, span);
         self.pop_scope();
         self.mk(H::Block(block(stmts, Some(value), span)), ty, span)
+    }
+
+    /// The argument `[SET_INDEX]` is given for the value bound to `new` (of type `ty`): that
+    /// value, or on a typed array (`typed`) an `any` converted as JavaScript's store converts it
+    /// (element_store.rs), bound to a temporary of its own so that `new` keeps the assignment's
+    /// value (`(u[0] = v)` is `v`).
+    fn setter_value(
+        &mut self,
+        typed: bool,
+        new: hir::LocalId,
+        ty: TyId,
+        stmts: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) -> ast::Expr {
+        if !typed || self.cx.dynamic(ty) != Some(crate::any::Dynamic::Any) {
+            return name_ref(NEW, span);
+        }
+        let read = self.mk(H::Local(new, hir::UseMode::Borrow), ty, span);
+        let converted = self.typed_array_value(read);
+        self.bind_temp(CONV, converted, stmts);
+        name_ref(CONV, span)
     }
 
     /// `index` to evaluate once: a literal itself, else a temporary holding it. For an indexer

@@ -31,3 +31,19 @@ console.log(f64.join(","));
 console.log(clamped.join(","));
 console.log(i16.join(","));
 console.log(log.length);
+
+// Every form of the store converts: `+=` stores what `+` gives ("0" + "7"), `||=` stores the
+// value when the element is 0, and an assignment used as a value is the value assigned.
+const seven: any = "7";
+const sums = new Uint8Array(2);
+sums[0] += seven;
+sums[1] += 1;
+console.log(sums.join(","));
+const given = new Uint8Array(1);
+const r = (given[0] = seven);
+console.log(r, given[0]);
+const orAssigned = new Uint8Array(2);
+orAssigned[1] = 9;
+orAssigned[0] ||= seven;
+orAssigned[1] ||= seven;
+console.log(orAssigned.join(","));

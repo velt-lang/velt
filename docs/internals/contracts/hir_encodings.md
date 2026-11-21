@@ -1424,8 +1424,11 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   (`buf[i] = v` on a `Buffer`, a `u8[]`, an `i32[]`). Sema writes its value as a test of the
   tag: a number held is `AnyTo` the element type as it is, and anything else is first
   converted with `ToNumber` (`ToPrimitive` before, for an object) and that number, as an
-  `any`, is `AnyTo` the element type (`body/expr/element_store.rs`). A `number[]` element
-  is not such a store (JavaScript keeps the value itself there). Its operand is
+  `any`, is `AnyTo` the element type (`body/expr/element_store.rs`). A typed array's index
+  setter is given `ToNumber` of the `any` the same way, and converts the number itself. Every
+  form of the store converts (`=`, `+=` and the other compound forms, `||=` / `&&=` / `??=`,
+  an assignment used as a value). A `number[]` element is not such a store (JavaScript keeps
+  the value itself there). `AnyTo`'s operand is
   owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
   the place keeps (and later drops) its value. An optional second operand, a string literal
   (`ExprKind::Lit(Lit::Str(text))`), says where the value comes from: a mismatch stops with

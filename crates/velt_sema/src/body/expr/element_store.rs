@@ -18,6 +18,7 @@ use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::ctx::Item;
 use crate::hir::{self, BinOp, ExprKind as H, TyId};
+use velt_syntax::ast;
 
 use super::dynamic_arith::{Side, TAG_NUMBER};
 
@@ -31,6 +32,21 @@ impl FnCx<'_, '_> {
         self.cx.ty.array_elem(base.ty) == Some(place.ty)
             && self.cx.ty.is_int(place.ty)
             && self.cx.dynamic(value.ty) == Some(Dynamic::Any)
+    }
+
+    /// Is `b[i] ||= v` (`&&=`, `??=`) a store JavaScript converts: `place` an element of an
+    /// integer array and `v` (`value`) an `any`? `b[i] || v` would claim `v` as the element type
+    /// inside the `||`, so the assignment is written as `if (!b[i]) b[i] = v` instead
+    /// (`logical_assign`), whose store converts.
+    pub(crate) fn logical_any_store(&mut self, place: &hir::Expr, value: &ast::Expr) -> bool {
+        let H::Index { base, .. } = &place.kind else {
+            return false;
+        };
+        if self.cx.ty.array_elem(base.ty) != Some(place.ty) || !self.cx.ty.is_int(place.ty) {
+            return false;
+        }
+        let ty = self.peek_ty(value);
+        ty.is_some_and(|t| self.cx.dynamic(t) == Some(Dynamic::Any))
     }
 
     /// Is `t` one of std's typed arrays (a class that extends `TypedArray`)?

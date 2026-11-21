@@ -44,3 +44,10 @@ const seven: any = "7";
 sum[0] += seven;
 sum[1] += 1;
 console.log(sum.join(","));
+
+// `||=` stores the value when the element is 0, and converts it as `=` does.
+const orAssigned = Buffer.alloc(2);
+orAssigned[1] = 9;
+orAssigned[0] ||= seven;
+orAssigned[1] ||= seven;
+console.log(orAssigned.join(","));
