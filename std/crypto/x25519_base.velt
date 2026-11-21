@@ -140,22 +140,33 @@ function pick(f: Fe25519, t: usize, d: i64) {
   }
   // The identity for a zero digit: y + x = y - x = 1 (2 d x y stays 0).
   f.set(A, 1);
-  const none = maskOf((abs - 1) >> 63);
+  const none = identityMask(abs);
   f.select(YPX, A, YPX, none);
   f.select(YMX, A, YMX, none);
   f.swap(YPX, YMX, neg);
   f.sub(A, ZERO, XY2D);
-  f.select(XY2D, A, XY2D, maskOf(neg));
+  f.select(XY2D, A, XY2D, signMask(neg));
 }
 
-// All ones for `bit` 1, 0 for 0. Out of line, as field_p256.velt's `isZero`: inlined, LLVM sees
-// that the mask is one comparison and makes the selects branches on the digit (it did in a
-// program that also signs with Ed25519, whose second caller changed how this file is compiled).
-// scripts/ct-counts.py's ed25519 probe checks the machine code: the instructions executed must
-// not vary with the scalar.
+// The masks of the selects after the table scan, each in a function of its own and out of
+// line, as field_p256.velt's `isZero`: inlined, LLVM can see that a mask is one comparison of
+// the secret digit and make the select a branch on it. Whether it does depends on the build: on a
+// review's builder the identity's mask, inlined, compiled to `test; js` (21 instruction counts
+// over 70 scalars, memcheck flagging `select`), where another build did not branch.
+// crates/veltc/tests/x25519_masks.rs checks that both stay functions of their own and are called.
+// The scan's own masks stay inline (512 calls would cost a tenth of the operation); no build has
+// been seen to branch on them, and memcheck would show it.
+
+// All ones when the digit's magnitude `abs` is 0 (the identity is selected), else 0.
 @noInline
-function maskOf(bit: u64): u64 {
-  return 0 - bit;
+function identityMask(abs: u64): u64 {
+  return 0 - ((abs - 1) >> 63);
+}
+
+// All ones for a negative digit (`neg` 1), else 0.
+@noInline
+function signMask(neg: u64): u64 {
+  return 0 - neg;
 }
 
 // The accumulator += the selected entry (ref10's `ge_madd`, then `ge_p1p1_to_p3`).
