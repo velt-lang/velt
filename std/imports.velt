@@ -161,6 +161,9 @@ export const imports: Imports = {
     default: "./fs/fd/read_at_inline.velt",
   },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
+  // A thread lock on an 8-byte word (standard input's buffer): std's inline one on native
+  // targets, the runtime's elsewhere (wasm's runtime keeps its own `Mutex` lock).
+  "#thread-lock": { native: "./lang/hooks/mutex.velt", default: "./process/thread_lock_rt.velt" },
   // Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
   // Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
   // host.

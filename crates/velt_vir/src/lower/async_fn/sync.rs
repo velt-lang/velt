@@ -18,6 +18,7 @@
 use velt_sema::hir::{self, IntTy, Intrinsic, TyId, TyKind};
 
 use crate::atomic::{AtomicCall, Order, Rmw};
+use crate::lower::hook_calls::{self as hooks, ty, Construct, HookTy};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, FnLower};
@@ -428,7 +429,7 @@ impl FnLower<'_, '_> {
                 Some(Operand::Copy(Place::local(h)))
             }
             false => {
-                self.call_rt(lock_fn, vec![lock.clone()], None);
+                self.mutex_lock_call(lock_fn, lock.clone());
                 None
             }
         };
@@ -479,11 +480,41 @@ impl FnLower<'_, '_> {
         self.many_walk(false, value, vty);
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
-        self.call_rt(unlock_fn, unlock_args, None);
+        match unlock_fn {
+            Rt::MutexUnlock if self.inline_mutex() => {
+                let [lock] = <[Operand; 1]>::try_from(unlock_args)
+                    .unwrap_or_else(|_| ice("a Mutex's unlock takes its lock word alone"));
+                let p = ty::USize::arg(self.as_usize(lock));
+                hooks::mutex_unlock(self, Construct::Mutex, p).emit(self);
+            }
+            _ => self.call_rt(unlock_fn, unlock_args, None),
+        }
         if let Some(took) = module_took {
             self.call_rt(Rt::ModuleWithEnd, vec![Operand::Copy(took)], None);
         }
         r
+    }
+
+    /// A `Mutex`'s lock of the word at `lock` (`lock_fn`: plain, or checked in code that may run
+    /// in a `read` callback). On a native target the plain one is std's compare-and-swap
+    /// (std/lang/hooks/mutex.velt), which calls the runtime only when the lock is held; the
+    /// checked one stays the runtime's, which refuses it in read mode first. A wasm build keeps
+    /// the runtime's lock and executor (velt_rt_wasm).
+    fn mutex_lock_call(&mut self, lock_fn: Rt, lock: Operand) {
+        match lock_fn {
+            Rt::MutexLock if self.inline_mutex() => {
+                let p = ty::USize::arg(self.as_usize(lock));
+                hooks::mutex_lock(self, Construct::Mutex, p).emit(self);
+            }
+            _ => self.call_rt(lock_fn, vec![lock], None),
+        }
+    }
+
+    /// Does a `Mutex` lock inline with std's hooks? On a native target, when sema demanded them
+    /// (`Construct::Mutex`): a program sema did not walk (a hand-built one) calls the runtime.
+    fn inline_mutex(&self) -> bool {
+        let lock = velt_common::std_hooks::hook_index::mutex_lock;
+        self.std_sched() && self.cx.hir.hooks_demanded.contains(lock)
     }
 
     /// This thread's `RwLock` reader state for `velt_rt_rwlock_read` (0: it looks it up), kept

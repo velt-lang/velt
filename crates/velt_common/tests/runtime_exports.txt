@@ -169,9 +169,9 @@ velt_rt velt_rt_microtask
 velt_rt velt_rt_module_with
 velt_rt velt_rt_module_with_end
 velt_rt velt_rt_mutex_init
-velt_rt velt_rt_mutex_lock
 velt_rt velt_rt_mutex_lock_checked
-velt_rt velt_rt_mutex_unlock
+velt_rt velt_rt_mutex_lock_slow
+velt_rt velt_rt_mutex_unlock_slow
 velt_rt velt_rt_native_api
 velt_rt velt_rt_native_check
 velt_rt velt_rt_panic
