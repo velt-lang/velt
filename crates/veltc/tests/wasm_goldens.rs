@@ -61,6 +61,7 @@ const UNSUPPORTED: &[&str] = &[
     "promise_all_settled_resolver_ticks",
     "promise_combinator_ticks_pending",
     "promise_combinator_ticks_settled",
+    "promise_combinator_ticks_stored",
     "promise_shared_resolve_ticks",
     // wasm's race is still the runtime's (#3077).
     "promise_race_inline_children_order",

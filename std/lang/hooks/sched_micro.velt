@@ -14,10 +14,11 @@
 // step, so `await` goes straight on.
 //
 // The queue: its entries' buffer (16 bytes each: waker, ticket), their capacity, the index of the
-// first one, how many there are, and the ticket of the entry popped last while nothing took its
-// place (`enqueueNext`; 0: none; only used while that entry's credit is unused, so in its job).
+// first one, how many there are, the ticket of the entry popped last (`ranAfter`), and that
+// ticket again once something took that entry's place or its waiter will check it
+// (`enqueueNext`, used only while that entry's credit is unused, so in its job).
 
-import { fnAddress } from "velt/lang/intrinsics";
+import { fnAddress, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -26,8 +27,9 @@ const Q_BUF: usize = 0;
 const Q_CAP: usize = 8;
 const Q_HEAD: usize = 16;
 const Q_LEN: usize = 24;
-const Q_LAST: usize = 32;
-const Q_BYTES: usize = 40;
+const Q_POPPED: usize = 32;
+const Q_TAKEN: usize = 40;
+const Q_BYTES: usize = 48;
 
 /** Task `task`'s queue, made on first use. */
 function queue(task: usize): usize {
@@ -96,11 +98,11 @@ export function enqueue(task: usize, w: usize, credit: bool): u64 {
  */
 export function enqueueNext(task: usize, w: usize): u64 {
   const q = m.ld(task + t.T_MICRO);
-  const last = q === 0 ? 0 : m.ld(q + Q_LAST);
-  if (last === 0) {
+  const last = q === 0 ? 0 : m.ld(q + Q_POPPED);
+  if (last === 0 || m.ld(q + Q_TAKEN) === last) {
     return enqueue(task, w, true);
   }
-  m.st(q + Q_LAST, 0);
+  m.st(q + Q_TAKEN, last);
   let cap = m.ld(q + Q_CAP);
   const len = m.ld(q + Q_LEN);
   if (len === cap) {
@@ -124,12 +126,25 @@ export function enqueueNext(task: usize, w: usize): u64 {
  * without a step of its own (a promise `resolve` settled, which Node settled when `resolve` queued
  * that entry), the awaiter takes the entry's place (`enqueueNext`).
  */
+@noInline
 export function enqueueReaction(task: usize, w: usize): void {
   if (takeCredit(task)) {
     enqueueNext(task, w);
   } else {
     enqueue(task, w, true);
   }
+}
+
+/** The ticket of the entry task `task` popped last (0: none yet). */
+export function lastPopped(task: usize): usize {
+  const q = m.ld(task + t.T_MICRO);
+  return q === 0 ? 0 : m.ld(q + Q_POPPED);
+}
+
+/** Has task `task` run an entry queued after the executor's ticket was `mark`? */
+export function ranAfter(task: usize, mark: usize): bool {
+  const q = m.ld(task + t.T_MICRO);
+  return q !== 0 && m.ld(q + Q_POPPED) > mark;
 }
 
 /**
@@ -139,7 +154,7 @@ export function enqueueReaction(task: usize, w: usize): void {
 export function forgetLast(task: usize): void {
   const q = m.ld(task + t.T_MICRO);
   if (q !== 0) {
-    m.st(q + Q_LAST, 0);
+    m.st(q + Q_TAKEN, m.ld(q + Q_POPPED));
   }
 }
 
@@ -196,8 +211,9 @@ export function pop(task: usize): usize {
   const head = m.ld(q + Q_HEAD);
   const at = m.ld(q + Q_BUF) + 16 * head;
   const w = m.ld(at);
-  const credit = ((m.ld(at + 8) as u64) & CREDIT) !== 0;
-  m.st(q + Q_LAST, m.ld(at + 8) & ~(CREDIT as usize));
+  const raw = m.ld(at + 8);
+  const credit = ((raw as u64) & CREDIT) !== 0;
+  m.st(q + Q_POPPED, raw & ~(CREDIT as usize));
   m.st(q + Q_HEAD, (head + 1) % m.ld(q + Q_CAP));
   m.st(q + Q_LEN, len - 1);
   const word = m.ld32(task + t.T_WORD) - 1;
