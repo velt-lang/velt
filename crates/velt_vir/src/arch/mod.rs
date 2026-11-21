@@ -123,7 +123,14 @@ impl ArchOp {
     /// The instruction `symbol` (`velt_arch_sse42_crc32_u64`) names, if it is one.
     pub fn of_symbol(symbol: &str) -> Option<ArchOp> {
         symbol.strip_prefix("velt_arch_")?;
-        (ROWS.iter().position(|r| symbol_of(r) == symbol)).map(|i| ArchOp(i as u16))
+        // Every row's symbol, made once: the verifier and both backends ask for each extern.
+        static BY_SYMBOL: std::sync::LazyLock<std::collections::HashMap<String, ArchOp>> =
+            std::sync::LazyLock::new(|| {
+                (ROWS.iter().enumerate())
+                    .map(|(i, r)| (symbol_of(r), ArchOp(i as u16)))
+                    .collect()
+            });
+        BY_SYMBOL.get(symbol).copied()
     }
 
     /// Its row.
