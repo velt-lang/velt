@@ -302,7 +302,14 @@ export const E_LIVE_F: usize = 984;
  * atomically: the program's end after `main` waits for them (sched.velt `schedFinish`).
  */
 export const E_BLOCKING: usize = 992;
-export const E_SIZE: usize = 1000;
+/**
+ * What other workers ask of this one's sleeps (a stack any thread pushes on, taken whole by the
+ * worker: sched_sleep_move.velt).
+ */
+export const E_SLEEP_ASKS: usize = 1000;
+/** The newest task of its own offer at its last I/O tick (sched_spread.velt `reclaim`). */
+export const E_OFFER_SEEN: usize = 1008;
+export const E_SIZE: usize = 1016;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
