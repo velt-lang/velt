@@ -5,7 +5,8 @@
 // only when it can listen or connect with TLS: the conditional globals
 // std/prelude/global/tls_reactor.velt (its code names `cert`, which every `listenTls` option has)
 // and tls_client_reactor.velt (it names `connectTls` or `WebSocket`) load the server or
-// the client, and each loads fd_reactor.velt. A program that loads neither parses, checks and
+// the client (`fetch` loads the client itself: fetch/client/dial_sched.velt imports it), and each
+// loads fd_reactor.velt. A program that loads neither parses, checks and
 // builds none of them, and its `listenTls` and `connectTls` go to the runtime.
 
 import { IoResult } from "velt/native/result";
