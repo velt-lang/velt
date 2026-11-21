@@ -333,8 +333,10 @@ impl FnLower<'_, '_> {
                 self.own_value(v, t)
             }
             (I::NeedsTransfer, [a]) => {
+                // `transfers`, as `Transfer` decides: a promise has work to do (a holder of a
+                // shared one is handed over) though it reaches no counted object (#3389).
                 let t = self.sub(a.ty);
-                Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
+                Operand::Const(crate::vir::Const::Bool(self.cx.transfers(t)), Ty::Bool)
             }
             (I::ModuleStateUsed, []) => {
                 let used = self.cx.module_state_used();

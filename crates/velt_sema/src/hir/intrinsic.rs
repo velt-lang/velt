@@ -180,8 +180,8 @@ pub enum Intrinsic {
     /// (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
-    /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
-    /// (the value itself is not read)?
+    /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
+    /// object or a promise (whose holder is handed over)? The value itself is not read.
     NeedsTransfer,
     /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
