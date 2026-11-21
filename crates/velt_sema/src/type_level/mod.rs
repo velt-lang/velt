@@ -516,6 +516,7 @@ fn infer_names(t: &ast::TypeExpr) -> Vec<String> {
             K::Named { args, .. } => args.iter().for_each(|a| go(a, out)),
             K::Array(e)
             | K::KeyOf(e)
+            | K::Weak(e)
             | K::Construct { ty: e, .. }
             | K::TupleRest(e)
             | K::TupleOptional(e) => go(e, out),

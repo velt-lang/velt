@@ -101,6 +101,7 @@ mod unsafe_code;
 pub(crate) use unsafe_code::unsafe_fn;
 mod untyped_let;
 mod using;
+mod written_type;
 mod yield_infer;
 
 use self::expr::trial_memo::NamedLocal;
