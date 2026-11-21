@@ -219,6 +219,13 @@ impl FnLower<'_, '_> {
             let b = b.emit(self).op();
             return self.rvalue_temp(Ty::Ptr, Rvalue::Cast(b, Ty::Ptr));
         }
+        if self.module_hooks() {
+            // A native program without the executor: module_blocks.velt (#2196 9c).
+            let d = self.desc_arg(desc);
+            let b = hooks::module_state(self, ty::USize::arg(d), ty::U64::arg(slot));
+            let b = b.emit(self).op();
+            return self.rvalue_temp(Ty::Ptr, Rvalue::Cast(b, Ty::Ptr));
+        }
         let f = self.cx.extern_sym(
             "velt_rt_module_state",
             vec![Ty::Ptr, Ty::U64],
@@ -364,6 +371,11 @@ impl FnLower<'_, '_> {
             let b = hooks::sched_module_block(self, ty::USize::arg(d))
                 .emit(self)
                 .op();
+            return self.rvalue_temp(Ty::Ptr, Rvalue::Cast(b, Ty::Ptr));
+        }
+        if self.module_hooks() {
+            let d = self.desc_arg(desc);
+            let b = hooks::module_block(self, ty::USize::arg(d)).emit(self).op();
             return self.rvalue_temp(Ty::Ptr, Rvalue::Cast(b, Ty::Ptr));
         }
         let f = self
@@ -528,6 +540,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if self.cx.module_sched() {
             let st = self.rvalue_temp(Ty::U64, Rvalue::Cast(state, Ty::U64));
             hooks::sched_module_ready(self, ty::USize::arg(st), ty::U64::arg(n)).emit(self);
+            return;
+        }
+        if self.module_hooks() {
+            let st = self.rvalue_temp(Ty::U64, Rvalue::Cast(state, Ty::U64));
+            hooks::module_ready(self, ty::USize::arg(st), ty::U64::arg(n)).emit(self);
             return;
         }
         let ready = self.cx.extern_sym(

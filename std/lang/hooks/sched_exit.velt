@@ -172,7 +172,7 @@ function takeExitNow(e: usize): void {
 }
 
 /** Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? */
-export function counting(): bool {
+function counting(): bool {
   return processEnv("VELT_RC_STATS") === "1";
 }
 

@@ -10,6 +10,7 @@
 import { u8x16, u64x2 } from "velt/simd";
 import { CRC_TABLE } from "velt/compress/inflate/crc_table";
 import { targetFeature } from "velt/lang/intrinsics";
+import { Pclmulqdq } from "velt/arch/x86/pclmulqdq";
 
 // The vector load without its range check: `crc32` loads only where 16 bytes are left.
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
@@ -21,7 +22,7 @@ export function crc32(crc: u32, bytes: u8[], start: i64, end: i64): u32 {
   let i = start;
   if (end - start >= 128 && u64x2.hasClmul()) {
     const blocks = (end - start) & ~15;
-    if (u64x2.hasClmulX86()) {
+    if (Pclmulqdq.isSupported()) {
       c = foldX86(c, bytes, start, start + blocks);
     } else {
       c = fold(c, bytes, start, start + blocks);

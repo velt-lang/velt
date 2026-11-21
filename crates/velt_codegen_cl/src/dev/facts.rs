@@ -180,9 +180,9 @@ fn layouts(program: &Program, canon: &Canon) -> FxHashMap<String, FxHashMap<Stri
 }
 
 /// The module state of `program`: its descriptor is the static every function reaching the
-/// block passes to `velt_rt_module_state`, or under the executor in Velt (`VELT_SCHEDULER=std`)
-/// to its std hooks instead (sched_module.velt: `schedModuleState`, `schedModuleBlock`), which
-/// take it cast to a `usize`.
+/// block passes to `velt_rt_module_state`, or on a native target to std's hooks instead (the
+/// executor in Velt's `schedModuleState` and `schedModuleBlock`, module_blocks.velt's
+/// `moduleState` and `moduleBlock` without it), which take it cast to a `usize`.
 fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
     // `velt_rt_module_state(desc, slot)` for a slot, `velt_rt_module_block(desc)` for the block.
     let reaches = |e: usize| {
@@ -193,6 +193,8 @@ fn module_state(program: &Program, canon: &Canon) -> Option<ModuleState> {
     let hooks = [
         velt_vir::mangle::mangle(velt_common::std_hook!(sched_module_state)),
         velt_vir::mangle::mangle(velt_common::std_hook!(sched_module_block)),
+        velt_vir::mangle::mangle(velt_common::std_hook!(module_state)),
+        velt_vir::mangle::mangle(velt_common::std_hook!(module_block)),
     ];
     let hook = |f: usize| (program.funcs.get(f)).is_some_and(|f| hooks.contains(&f.symbol));
     let mut desc = None;
