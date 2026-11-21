@@ -92,13 +92,14 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
   plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
 - **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
-  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`), `velt_rt_str_trim`,
-  `velt_rt_str_trim_start`, `velt_rt_str_trim_end`, and `velt_rt_str_split` when its separator is
-  not empty and cannot match half of a surrogate pair. They return a slice when the piece is too
+  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`) and `velt_rt_str_byte_slice`,
+  with which std cuts the results of `trim`, `trimStart`, `trimEnd`, and of `split` when its
+  separator is not empty and cannot match half of a surrogate pair (std/lang/string/). They return
+  a slice when the piece is too
   long to be inline, at least a quarter of the buffer's capacity, and the buffer is below 1 GiB
   (2^30 bytes); otherwise they copy (inline when short). Every other function copies the pieces it
-  returns: `split("")` and `velt_rt_str_code_points` (pieces of one character, always inline), a
-  split by a lone surrogate, and the regex functions (the pieces of `match`, `exec` and `split` are
+  returns: `split("")` and the characters of `for (const c of s)` (pieces of one character, always
+  inline), a split by a lone surrogate, and the regex functions (the pieces of `match`, `exec` and `split` are
   new strings, `VeltStr::from_vec`). In every function the whole string is shared as it is (count
   +1, same value), a piece of a static string borrows it, and a piece that ends between the halves
   of a surrogate pair is a copy (the half is re-encoded). So live slices pin at most four times
@@ -220,7 +221,6 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s`; generated code calls it for heap strings only and zeroes any other itself |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
-| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
 ## Counted objects
@@ -239,7 +239,7 @@ lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two t
 transfer glue gives a value crossing to another task cells of its own, and sema rejects the
 shapes that would share one. Debug programs built by a debug compiler (as every debug
 golden run is; `LowerOptions::cell_checks`) also report each cell to the debug runtime, which
-records its owning **task** (`velt_rt_task_id`) in a side table keyed by the cell's address. The
+records its owning **task** (its task id) in a side table keyed by the cell's address. The
 owner is a task, not an OS thread: a task (with its local promises) may resume on another worker,
 which is not a race. The first use by a task other than the owner prints ``velt debug-cells:
 captured variable `<name>` was used by two tasks: …`` (both tasks and their threads, and the fix:
@@ -337,6 +337,8 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 | `weakRefWord` | `(r: u32) -> u64` | the word given to `weakRefNewWith` (0 for `weakRefNew`), also after the target was freed |
 | `weakRefDeref` | `(r: u32) -> usize` | the target with count + 1, or 0 once freed |
 | `weakRefDrop` | `(r: u32)` | |
+| `weakSlot` | `(obj: usize) -> usize` | the slot of a `weak T` reference to `obj`, a block `[count: usize][target: usize]` shared by every weak reference to it, with its count raised by one (the caller's); does not count `obj`; the slot's target reads 0 once `obj` was freed; 0 (`null`) gives 0, without the lock |
+| `weakSlotDrop` | `(slot: usize)` | gives up a reference to `slot`; 0 is none; takes no lock |
 | `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Symbols
@@ -348,57 +350,84 @@ identity (equality, hashing):
 struct SymbolRec { desc: VeltStr /* empty without a description */, key: u64 }   // 32 bytes
 ```
 
-`key` (without bit 63) is 0 for a record `velt_rt_symbol_new` made, 1 for a record of the registry
+`key` (without bit 63) is 0 for a record `Symbol(desc)` made at run time, 1 for a record of the registry
 (`Symbol.for`, the compiler's or std's), and 2 and up for another read-only record the compiler emits
 (`Intrinsic::SymbolStatic`; its id + 2, so no two records have the same bytes); bit 63 is set when
 the symbol has a description (`Symbol("")` has one, `Symbol()` has none). The compiler emits the
 registry's records of module constants `const R = Symbol.for("r")` too (`key` 1, one per key, the
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
-never freed; one made at run time is one allocation. On wasm32 each table address takes the
+never freed. On wasm32 each table address takes the
 first half of its 8-byte slot.
 
-The registry is std's (`std/lang/symbol/registry.velt`): a process-wide map from key to symbol
-behind a lock, which starts with the table's records and makes a record for a key seen first at
-run time (32 bytes from the C library, outside the leak counts; its description words those of
-the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a
-symbol's record address) and `Intrinsic::SymbolAt` (the symbol at an address), both unsafe and
-std-only, at the offsets above (`RECORD_KEY_AT` = 24, `KEY_REGISTERED`, `DESCRIBED`), which a std
-test pins against the compiler's records. Functions (declared in `std/lang/symbol/index.velt`; `string`
-parameters by pointer, a `string` result through an out pointer):
-- `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
-  (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
-- `velt_rt_symbol_described(s) -> u8`, `velt_rt_symbol_description(s, out: *mut VeltStr)`
-  (`""` without a description).
-- `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
-  (`console.log`, `String(s)`).
+Symbols are std code (`std/lang/symbol/`); the runtime has none. `Symbol(desc)` at run time
+makes a record in `record.velt`, carved from a 4 KiB chunk of `#symbol-record`'s memory (one
+chunk at a time per thread): the C library's `calloc`, outside the leak counts, or in the browser
+the compiled code's allocator, which does not zero it, so `record.velt` writes all four words
+itself. The description moves into the record's first three words, which keep that reference
+for good. The registry
+(`registry.velt`) is a process-wide map from key to symbol behind a lock, which starts with the
+table's records and makes a record for a key seen first at run time (its description words those
+of the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a
+symbol's record address), `Intrinsic::SymbolAt` (the symbol at an address) and
+`Intrinsic::StrAt` (another reference to the string at an address: a description), all unsafe
+and std-only, at the offsets above (`RECORD_KEY_AT` = 24, `KEY_REGISTERED`, `DESCRIBED`), which a
+std test pins against the compiler's records. Generated code writes a symbol as text
+(`console.log`, `String(s)`) as `Symbol(`, the record's description, `)`, appending the string
+at the record's address (velt_vir `push_symbol`).
 
 ## CPU check
 
-`velt_rt_check_cpu(required: u32)`: x86_64 or arm64 code built for more than the baseline CPU
-(`--cpu`, https://veltlang.com/docs/tooling/platforms/ "CPU") calls it first thing in
-`velt_main`, after the runtime's start-up (baseline code) and before any code that may use the
-features (`veltc` `driver/cpu_check.rs`). `required` is a mask of features, by bit: 0 SSE3,
-1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX, 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA,
+std's start-up hook `cpuStart` (std/lang/hooks/cpu.velt, velt_common `std_hooks` `cpu_start`),
+which `velt_main` calls right after `velt_rt_statics` and before any other Velt code, does the
+check the runtime's `velt_rt_check_cpu` did until #3222 step 3 (its Rust, `velt_rt` `cpu.rs`, is
+deleted), in every build for x86-64 and arm64, Cranelift's too (`#cpu-start` picks the
+architecture's detection; on wasm it does nothing). The hook and everything it reaches run before
+anything knows what the CPU has, so they are compiled for the architecture's baseline CPU
+whatever `--cpu` says (`vir::Function::baseline`, `velt_vir::start_up`): LLVM gives them, and the
+helpers of their module, clang's `x86-64` (on arm64 the target's default CPU) as `target-cpu`
+with its features only; Cranelift compiles them with a second ISA for that CPU; the std cache
+serves none of them. It computes the CPU's **feature word** (std/lang/cpu, velt_common
+`cpu_features`): bit 0
+SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX, 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA,
 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW, 16 AVX512CD, 17 AVX512DQ, 18 AVX512VL,
-19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ (`velt_codegen_cl::X86_FEATURES`, and the
-same list in `velt_rt` `cpu.rs`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). A feature is in the
-list when generated code uses it (FEAT_FHM, FEAT_BF16 and AVX512-BF16 are not: "SIMD"): a
-feature in the mask that the CPU (or a VM) hides stops the program at start-up. On arm64 the
-mask is over `velt_codegen_cl::ARM_FEATURES` instead: bit 0 DOTPROD (`sdot`/`udot`), set by
-`--cpu native` on a CPU with it or `--cpu <name>` naming one (`neoverse-n1`), and then
-`i32x4.dotAdd` is one `sdot` (as on every Apple arm64 target, whose CPUs all have it without a
-check). Code whose features hold an extension's (SHA with SSSE3 and SSE4.1 for `sha-x86`,
-PCLMULQDQ with them for `clmul-x86`) takes its check (`velt_simd_has_<ext>`, "SIMD") as true;
-the LLVM backend folds it.
+19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ, 23 AES (`velt_codegen_cl::X86_FEATURES`; a
+feature whose registers the OS must save counts only where XCR0 says it does), from CPUID and
+XGETBV on x86-64 (`velt_simd_cpuid` and `velt_simd_xgetbv`, "SIMD": inline assembly under
+LLVM; under Cranelift, which has no instruction for either, a function of fixed SSE2 code each
+that the module defines, velt_codegen_cl `cpuid.rs`); on arm64 bit 32 DOTPROD, 33 SHA2, 34 PMULL, 35 CRC32, 36 SHA3 (with SHA512), 37
+FP16, 38 I8MM, 39 BF16, 40 AES, from `getauxval(AT_HWCAP, AT_HWCAP2)` on Linux, `hw.optional`
+sysctls on macOS and `IsProcessorFeaturePresent` on Windows (`PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE`
+to `PF_ARM_V86_BF16_INSTRUCTIONS_AVAILABLE` for SHA3 to BF16, which an older Windows reports as
+absent).
+`VELT_CPU_DISABLE` (comma-separated names of this architecture's list, any case) clears bits, to
+test the check.
 
-When the CPU lacks a feature of the mask, the runtime flushes stdout, prints to stderr
+It then compares the word with `velt_simd_cpu_required() -> u64`, the bits the program was built
+for (`--cpu`, https://veltlang.com/docs/tooling/platforms/ "CPU"; x86-64-v2 is bits 0–5, v3
+0–13, v4 0–18; on arm64 the mask over `velt_codegen_cl::ARM_FEATURES` shifted to bit 32, bit 0
+DOTPROD). The driver fills that call in with a constant right before code generation (`veltc`
+`driver/cpu_check.rs`, `--emit llvm` included; a function that reads it is never served from the
+std cache). A feature is in the mask when generated code uses it (FEAT_FHM, FEAT_BF16 and
+AVX512-BF16 are not: "SIMD"). When the CPU lacks a feature of the mask, it prints to stderr
 ``error: this program was built for <what>; this CPU lacks <missing>; rebuild it with
-`--cpu <lower>` `` and exits with code 1. `<what>` is `<level> (<features>)` when the mask is
-exactly an x86-64 level, else `an x86-64 CPU with <features>` (`an arm64 CPU with DOTPROD`);
-`<lower>` is the highest level the CPU has, or `baseline` (always on arm64).
-`VELT_CPU_DISABLE` (comma-separated feature names, any case) removes features from what the CPU
-has, to test it.
+`--cpu <lower>` `` and exits with code 1 (`velt_rt_exit`). `<what>` is `<level> (<features>)`
+when the mask is exactly an x86-64 level, else `an x86-64 CPU with <features>` (`an arm64 CPU
+with DOTPROD`); `<lower>` is the highest level the CPU has, or `baseline` (always on arm64).
+Finally `VELT_SIMD_DISABLE` (`sha`, `clmul`, `aes`) clears those instructions' bits on both
+architectures, and the word is stored once with `velt_simd_cpu_word_set(word)`, which every
+run-time check reads as invariant (`velt_simd_cpu_word`, "SIMD"). The LLVM backend keeps it in
+`velt_cpu_word`, a `linkonce_odr hidden` `i64` that every object reading or setting it defines,
+so a program has one; no runtime code is involved (a std static would be an `Atomic`, which
+brings velt/sync's reclaimer into every program). The hook's reads of the operating system and of the two variables
+are not input: a program that reaches nothing else still reaches nothing (`veltc`
+`driver/outside.rs`, for `velt test`'s results and source generators).
+
+Under Cranelift (and on wasm) `velt_simd_on_x86()` and `velt_simd_on_arm()` are `false`,
+`velt_simd_cpu_word()` is 0 and `velt_simd_cpu_word_set` does nothing, so every run-time check is
+false: no gated code runs there, though the requirement is checked. Code whose features hold a feature's mask (SHA with SSE4.1 and down
+for `sha-x86`) takes its check (`velt_simd_has_<feature>`, "SIMD") as true; the LLVM backend folds
+it.
 
 ## Math operations
 
@@ -483,6 +512,10 @@ one index (`fits_pair`). It reads both headers whatever the first length is, so 
 be null: where the second can be (an array field read during construction), `fits_pair` tests it
 in front of the call, and a null gives false, since the two tests never read it where the first
 fails.
+`velt_opt` may also decide `fits` and `fits_both` without calling them (`range_versions`): in a
+copy of a loop that writes no header, behind one test in front of it that reads each length as
+the helpers do (the header's second word, after a null test) and proves every index of the loop
+plus the lane count at most that length, with no sum wrapping.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements. `load_optimistic` is `load`
@@ -552,11 +585,10 @@ has not. Cranelift always widens and uses `fma`.
 is Arm's `bfdot` itself (`velt_vir::simd::ExtOp::Bfdot`, `llvm.aarch64.neon.bfdot`), an
 instruction of the extension `bf16-arm` (FEAT_BF16, LLVM's `+bf16`): a caller runs it only where
 the CPU has FEAT_BF16, and on another architecture, on wasm and under Cranelift it gives zeros.
-Like AES and FMA the extension has **no runtime flag**: `velt_simd_has_bf16_arm()` is `1` only in
-a function gated on it and `0` everywhere else, and std computes the run-time answer in Velt, once
-(std/simd/bf16_check.velt): behind the carry-less flag of arm64 (`velt_simd_has_clmul_arm`, so it
-is `false` off arm64, under Cranelift and with `VELT_SIMD_DISABLE=clmul`), `getauxval(AT_HWCAP2)`
-bit 14 on Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows.
+It is checked like any other feature ("Checks"; velt/arch/arm's `Bf16.isSupported()`, which
+`bf16x8.hasBf16Arm()` calls): the feature word's bit 39, from `getauxval(AT_HWCAP2)` bit 14 on
+Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows, off arm64 and
+under Cranelift.
 velt/half's `dotBf16Fast` and `dotBf16FastAt` ask once for a dot product and run a function gated
 on `bf16-arm`, whose loops are `velt_simd_f32x4_bfdot`, where the answer is yes, and
 `velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
@@ -586,50 +618,48 @@ aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1next
 `sha1msg2` on x86-64), and `velt_simd_u64x2_<op>` for the carry-less multiplications
 (`pclmulqdq_<imm>` on x86-64, `pmull_<imm>` on aarch64, `imm` 0, 1, 16 or 17 choosing the 64-bit
 lanes as PCLMULQDQ's immediate does), `velt_vir::simd::ExtOp`, are the instructions
-themselves: a caller runs one only where `velt_simd_has_sha_arm()` / `velt_simd_has_sha_x86()` /
-`velt_simd_has_clmul_x86()` / `velt_simd_has_clmul_arm()` (`-> bool`) is true. On the
-architecture with the extension that check reads the runtime's flag byte, otherwise (another
-architecture, wasm, Cranelift) it is `false` and the operation, dead behind it, gives zeros.
-The runtime exports the flags, set in `velt_rt_start` (`init`) before any Velt code runs and never
-changed after (so generated code reads them as invariant); `VELT_SIMD_DISABLE=sha` (`clmul`)
-leaves the SHA (carry-less) ones 0. Code built for a CPU whose features include the extension's
-("CPU check") reads no flag: LLVM takes the check as true there, so `VELT_SIMD_DISABLE` changes
-nothing in it:
+themselves: a caller runs one only where its check is true (velt/arch's `Sha256.isSupported()`,
+`Sha.isSupported()`, `Pclmulqdq.isSupported()`, `Pmull.isSupported()`). On another architecture,
+wasm and Cranelift the check is `false` and the operation, dead behind it, gives zeros.
 
-```c
-uint8_t velt_cpu_sha_arm;    /* 1: aarch64 with the ARMv8 SHA-1/SHA-256 instructions */
-uint8_t velt_cpu_sha_x86;    /* 1: x86-64 with SHA, SSSE3 and SSE4.1 */
-uint8_t velt_cpu_clmul_x86;  /* 1: x86-64 with PCLMULQDQ, SSSE3 and SSE4.1 */
-uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multiply) */
-```
+**Checks.** A feature's check is `velt_simd_has_<feature>() || (velt_simd_on_<arch>() &&
+(word & mask) == mask)`, one static method per feature in velt/arch/x86 and velt/arch/arm, with
+`mask` its bit and those of the features it implies (std/lang/cpu/masks.velt):
+
+- `velt_simd_has_<feature>() -> bool` (`<feature>` the `@targetFeature` name with `-` and `.` as
+  `_`: `velt_simd_has_sse4_2_x86`) is `true` only where the build guarantees the feature: in a
+  function gated on a set that covers it (and `velt_opt`'s clones for it), or in code built for a
+  CPU whose features hold its mask (`--cpu`, "CPU check"). It is `false` everywhere else; the
+  runtime keeps no flags.
+- `velt_simd_on_x86() -> bool` / `velt_simd_on_arm() -> bool` are `true` in LLVM code of that
+  architecture and `false` on the other one, on wasm and under Cranelift (lowering knows the
+  `false` ones, so a run-time check folds away there).
+- `velt_simd_cpu_word() -> u64` loads the word (`velt_cpu_word` under LLVM, written once by
+  `cpuStart` with `velt_simd_cpu_word_set(word)` before any other Velt code and never after, "CPU
+  check") as invariant, so the load leaves loops. 0 under Cranelift and on wasm, where the set
+  does nothing.
 
 **AES.** `velt_simd_u8x16_<op>` for the AES round instructions (`aesenc`,
 `aesenclast`, `aesdec`, `aesdeclast`, `aesimc`, `aeskeygenassist` (immediate 0) on x86-64;
 `aese`, `aesd`, `aesmc`, `aesimc_arm` on aarch64), `(state, key) -> state` or `(a) -> a` on the
-bytes. Their extensions `aes-x86` (AES-NI with PCLMULQDQ, SSSE3 and SSE4.1) and `aes-arm`
-(FEAT_AES with FEAT_PMULL) have **no runtime flag**: `velt_simd_has_aes_x86()` /
-`velt_simd_has_aes_arm()` is `1` only in a function gated on the extension (and `velt_opt`'s
-clones for it) and `0` everywhere else. std/simd/aes.velt computes the run-time answer in Velt,
-once: the carry-less flag of the architecture, plus CPUID leaf 1 ECX bit 25 on x86-64 (FEAT_PMULL
-implies FEAT_AES on aarch64), and not with `VELT_SIMD_DISABLE=aes`. `velt_simd_cpuid(leaf,
+bytes. Their features `aes-x86` (AES-NI with PCLMULQDQ, SSSE3 and SSE4.1) and `aes-arm`
+(FEAT_AES with FEAT_PMULL) are checked like any other ("Checks"). `velt_simd_cpuid(leaf,
 subleaf) -> u32x4` is x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to 3), emitted
 inline (no runtime function) and pure; it gives zeros on another architecture, on wasm and under
 Cranelift. A function gated on `aes-x86` (`aes-arm`) has the carry-less extension of its
 architecture too (`Ext::covers`): its `velt_simd_has_clmul_x86` (`_arm`) is `1` as well, and in
-any gated function the checks of the other architecture's extensions are `0`. `--cpu` never makes
-the AES checks constant: the CPU check's lists (below) do not have AES.
+any gated function the checks of the other architecture's features are `0`. `--cpu` makes the
+x86 check constant where the CPU it names has AES (bit 23).
 
 **FMA.** The extension `fma-x86` (FMA3 with AVX) has no instructions of its
 own: a function gated on it compiles `velt_math_fma_f64` (Math operations) to one `vfmadd`,
-where the default x86-64 level calls C's `fma`. Like AES it has **no runtime flag**:
-`velt_simd_has_fma_x86()` is `1` only in a function gated on it, and std computes the run-time
-answer once (`hasFmaX86()` of std/lang/math/fma_check.velt, the check sema keeps calls of a
-function gated on `fma-x86` behind): the carry-less flag, then CPUID leaf 1 ECX bits 12 (FMA), 27
-(OSXSAVE) and 28 (AVX), then XCR0's bits 1 and 2 (the OS saves the SSE and AVX state); not with
-`VELT_SIMD_DISABLE=clmul`. `velt_simd_xgetbv(xcr: u32) -> u64` is x86's `XGETBV`
+where the default x86-64 level calls C's `fma`. It is checked like any other feature
+("Checks"; velt/arch/x86's `Fma.isSupported()`, which std's `hasFmaX86()` calls): FMA with AVX,
+whose bits the feature word sets only where XCR0 says the OS saves the AVX state.
+`velt_simd_xgetbv(xcr: u32) -> u64` is x86's `XGETBV`
 (EDX:EAX), emitted inline (no runtime function) and pure, valid only where CPUID says OSXSAVE;
-it gives 0 on another architecture, on wasm and under Cranelift. `--cpu` does not make the check
-constant; with an FMA level (`x86-64-v3`) `velt_math_fma_f64` is one instruction everywhere.
+it gives 0 on another architecture, on wasm and under Cranelift. With an FMA level (`x86-64-v3`)
+the check is constant and `velt_math_fma_f64` is one instruction everywhere.
 
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
 `+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
@@ -712,10 +742,27 @@ struct ModuleDesc {
   const char *names;   /* each slot's name, NUL-terminated, in slot order */
   void (*rest)(void *state); /* the root file's slots, or NULL */
 };
+/* velt_rt_wasm only (#2196 9c): */
 void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
 void *velt_rt_module_block(const struct ModuleDesc *desc);
 void velt_rt_module_ready(void *state, uint64_t n);
 ```
+
+On native targets the three are std's hooks instead (#2196 9c; no runtime entry): the executor
+in Velt's `schedModuleState`, `schedModuleBlock` and `schedModuleReady` (sched_module.velt, which
+takes the lock below) for a program that runs on it, and module_blocks.velt's `moduleState`,
+`moduleBlock` and `moduleReady` for one that doesn't (no tasks, so no lock); they take the
+descriptor and the block as `usize`. Lowering calls `moduleExit(code)` after a synchronous
+`main` returns, which drops the blocks as below. Everything this section says of the entries
+holds for the hooks.
+
+module_blocks.velt's hooks are `prebuilt` (velt_common `std_hooks/prebuilt.rs`): where the build
+links the module's object, each is a call of its entry point (`velt_hook_module_state`,
+`_block`, `_ready`, `_exit`, and `_drop` for the executor's counted end), as the runtime's entry
+was, and the program loads none of the module. The blocks and their table are that module's own
+state: the executor's lock reaches them by role (`hookCall`), never by import, so a program has
+one copy, the object's or the loaded module's. velt_opt's pass (#1571) knows the entry point
+`velt_hook_module_state` as it knows the hooks.
 
 `velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
 allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current
@@ -831,6 +878,14 @@ array's byte length is below 2^52 for the same reason (its buffer is a `u8[]`).
 within the limit that the target cannot allocate is out of memory (`velt_rt_alloc` above), never a
 smaller block: on wasm32 a byte size past 2^31 - 1 stops the program there, in `velt_rt_realloc`, in
 `velt_rt_bytes_zeroed` and in `velt_rt_bytes_uninit` (which `u8[]`'s `concat` allocates with).
+
+`cap` read as an `i64` says whose the buffer is: positive, a capacity in elements of a buffer the
+array owns; 0, no buffer or memory the array does not own (a constant table, std's `addressArray`);
+negative, memory with an owner, whose block's address is `cap` without bit 63 (std's
+`addressArrayOwned`: dropping the array calls the function in the block's first word with the
+block). An array of the last two kinds is never passed to the runtime by value: the runtime's
+`cap > 0` tests (`velt_rt_bytes_drop`, `VeltBytes::take_vec`, `velt_rt_str_array_drop`) are
+unsigned and would free it.
 
 ## Array methods on a proxy
 
@@ -1031,17 +1086,40 @@ known whole number where the program has `intWrite`, else `wholeNumberWrite`).
 | `velt_rt_realloc` | `(void* p, uint64_t old_size, uint64_t align, uint64_t new_size) -> void*` |
 | `velt_rt_free` | `(void* p, uint64_t size, uint64_t align)` |
 
-In a release build for a native target, an allocation of a constant size and every free call
-mimalloc directly: the optimizer's last step (`velt_opt` `heap_calls`) turns each into a call of
-std's hook for it (std/lang/hooks/heap.velt: `heapAlloc`, `heapFree`), which calls mimalloc through
-`declare c` (`mi_malloc`, `mi_malloc_aligned`, `mi_free`, in the runtime's archive) with the same
-contract: a size of 0 gives `align` back and its free does nothing, an alignment of 8 or less takes
-the plain function, and a request mimalloc refuses stops the program with the same message and exit
-code (through `velt_rt_write_str` and `velt_rt_exit`, not a panic a `catchUnwind` could catch).
-Array buffers of a run-time length and array growth call `velt_rt_alloc` / `velt_rt_realloc`
-(`heap_calls` says why; std's `heapRealloc` is not used); array growth calls `velt_rt_realloc` for
-an empty buffer too (an old size of 0 allocates). The runtime's Rust uses mimalloc too (its global
-allocator), so blocks move both ways. Debug builds, the JIT and WebAssembly keep calling the
+In a release build for a native target, every allocation, growth and free calls mimalloc
+directly: the optimizer's last step (`velt_opt` `heap_calls`) turns each call of the three
+functions into a call of std's hook for it (std/lang/hooks/heap.velt: `heapAlloc`, `heapRealloc`,
+`heapFree`), which calls mimalloc through `declare c` (`mi_malloc`, `mi_malloc_aligned`,
+`mi_realloc`, `mi_realloc_aligned`, `mi_free`, in the runtime's archive) with the same contract: a
+size of 0 gives `align` back and its free does nothing, an alignment of 8 or less takes the plain
+function, and growth past the array length limit or a request mimalloc refuses stops the program
+with the runtime's message and exit code (through `velt_rt_write_str` and `velt_rt_exit`, not a
+panic a `catchVeltPanic` could catch or that could unwind through a `nounwind` call). Array growth
+calls `velt_rt_realloc` for an empty buffer too (an old size of 0 allocates). The runtime's Rust
+uses mimalloc too (its global allocator), so blocks move both ways.
+
+An allocation of a constant size and a free call the hook itself, inlined. An allocation of a
+run-time size (an array buffer) and growth call a wrapper of the hook instead, `velt.heap.alloc`
+and `velt.heap.realloc`: internal functions with `velt_rt_alloc`'s and `velt_rt_realloc`'s
+signatures and contracts, whose bodies are the hook. velt_codegen_llvm gives the wrappers'
+definitions and declarations the attributes it gives the runtime's two declarations, and keeps them
+out of line (`noinline`), so to the loops that fill or grow an array they are the same call (with
+the hook inlined there, LLVM compiled those loops worse: `heap_calls` says how). The attributes,
+which later passes and backends must keep:
+
+| Function | Result | Parameters | Function attributes |
+|---|---|---|---|
+| `velt_rt_alloc`, `velt.heap.alloc` | `noalias noundef` | `align`: `allocalign` | `nounwind allockind("alloc,uninitialized,aligned") allocsize(0) memory(inaccessiblemem: readwrite) "alloc-family"="velt_rt_alloc"` |
+| `velt_rt_realloc`, `velt.heap.realloc` | `noalias noundef` | `p`: `allocptr`; `align`: `allocalign` | `nounwind allockind("realloc,aligned") allocsize(3) memory(argmem: readwrite, inaccessiblemem: readwrite) "alloc-family"="velt_rt_alloc"` |
+| `velt_rt_free` | | `p`: `allocptr` | `nounwind allockind("free") memory(argmem: readwrite, inaccessiblemem: readwrite) "alloc-family"="velt_rt_alloc"` |
+| `mi_malloc`, `mi_malloc_aligned` | `noalias` | | `nounwind memory(inaccessiblemem: readwrite)` |
+| `mi_realloc`, `mi_realloc_aligned`, `mi_free` | | | `nounwind memory(argmem: readwrite, inaccessiblemem: readwrite)` |
+
+Every parameter of these functions is `noundef`. The `mi_*` declarations have no `allockind`: with
+it LLVM deletes an allocation whose block is never read together with the hook's null check after
+it, so a request larger than memory would no longer stop the program
+(tests/golden/lang/array_from_past_memory.velt). A call of the runtime's functions or of a wrapper
+keeps its check inside, where LLVM doesn't see it. Debug builds, the JIT and WebAssembly keep calling the
 runtime's functions, and so does a release build that links a debug runtime (a `velt` built by
 cargo, or `$VELT_RT_LIB` naming one): the variables that make it check and count every block
 (`VELT_RT_DEBUG_ALLOC=1`, `VELT_RC_STATS=1`) are read when the program runs. So does one whose

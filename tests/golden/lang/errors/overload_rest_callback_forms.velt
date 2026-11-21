@@ -1,0 +1,20 @@
+// Overload callbacks with a rest typed by a type parameter that the signature does not pass
+// through a cast to the implementation's type (#379): the parameters before the rest are not
+// written alike (`rq: string` against `rq: Ctx`; tsc refuses it too, TS2394), and an optional
+// callback (the implementation gets `undefined` when it is left out; tsc accepts it, and Velt
+// refuses it as before).
+interface Ctx {
+  id: string;
+}
+
+function mismatch<A extends unknown[], R>(impl: (rq: string, ...args: A) => R): number;
+function mismatch(impl: (rq: Ctx, ...args: unknown[]) => unknown): number {
+  return 1;
+}
+
+function optional<A extends unknown[], R>(impl?: (rq: Ctx, ...args: A) => R): number;
+function optional(impl?: (rq: Ctx, ...args: unknown[]) => unknown): number {
+  return impl === undefined ? 0 : 2;
+}
+
+console.log(typeof mismatch, typeof optional);

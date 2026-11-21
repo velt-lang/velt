@@ -1,0 +1,31 @@
+// An overload whose implementation returns a function of `unknown` values, or nothing, where
+// the signature promises a typed function or `undefined` (#379): the function member is
+// converted with a check, as a function result is (`overload_checked_result`), and `undefined`
+// stays `undefined`. Node prints the same.
+function maybe<R>(f: () => R, on: boolean): (() => R) | undefined;
+function maybe(f: () => unknown, on: boolean): (() => unknown) | undefined {
+  if (!on) {
+    return undefined;
+  }
+  return (): unknown => f();
+}
+
+function later<R>(f: () => R, on: boolean): (() => Promise<R>) | undefined;
+function later(f: () => unknown, on: boolean): (() => Promise<unknown>) | undefined {
+  if (!on) {
+    return undefined;
+  }
+  return async (): Promise<unknown> => f();
+}
+
+async function main(): Promise<void> {
+  const m = maybe((): number => 4, true);
+  console.log(m === undefined ? "none" : m() + 1);
+  const off = maybe((): string => "x", false);
+  console.log(off === undefined ? "none" : off());
+  const l = later((): string => "later", true);
+  console.log(l === undefined ? "none" : (await l()) + "!");
+  const lo = later((): number => 1, false);
+  console.log(lo === undefined ? "none" : await lo());
+}
+main();

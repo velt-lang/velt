@@ -14,6 +14,7 @@ export {
   addressAtomicRmw,
   addressAtomicStore,
   addressArray,
+  addressArrayOwned,
   addressLoad,
   addressStore,
   exportedAddress,
@@ -106,6 +107,7 @@ export { errorText, inspect, inspectNested, throwLoc } from "velt/lang/intrinsic
 export { strLoadPartialU8x16, strLoadU8x16 } from "velt/lang/intrinsics/simd";
 export {
   strAsciiWords,
+  strAt,
   strByteAt,
   strByteLen,
   strbufPushAsciiWord,

@@ -1,6 +1,6 @@
 // velt/lang/symbol (tests): tests of registry.velt, run by `velt test std/`. The record layout
 // the registry reads and writes is pinned against the records the compiler emits: a change to
-// either (velt_vir's symbols.rs, velt_rt's `SymbolRec`) fails here instead of corrupting
+// either (velt_vir's symbols.rs, std's record.velt) fails here instead of corrupting
 // `Symbol.keyFor`.
 import { describe, expect, it } from "velt/test";
 import { Symbol, SymbolConstructor } from "velt/lang/symbol";

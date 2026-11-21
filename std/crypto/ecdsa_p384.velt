@@ -1,0 +1,234 @@
+// velt/crypto (internal): ECDSA signature verification on NIST P-384 (SEC 1 §4.1.4, FIPS
+// 186-5), as certificates and TLS use it: R = (e/s) G + (r/s) Q, and the signature holds when
+// R's x-coordinate is r mod n. The points are p384.velt's; the scalars are a `Mod384` with the
+// group order.
+//
+// Everything here is public (the key, the digest, the signature), so it runs in variable time:
+// the point addition branches on the identity and on equal points, both scalars are recoded to
+// width-5 NAF and added in one pass of doublings from tables of the odd multiples 1..15 of G
+// and of Q, and the x-coordinate is compared without an inversion (r Z^2 = X, or
+// (r + n) Z^2 = X when r + n < p). The signature is DER (RFC 3279 §2.2.3's ECDSA-Sig-Value),
+// read strictly: anything but minimal, positive INTEGERs below n is refused.
+
+import { Mod384 } from "velt/crypto/mod384";
+import { invertScalar, P384_N, p384Scalars } from "velt/crypto/scalar_p384";
+import { add, basePoint, decodePoint, double, FIRST, ONE, p384Field, TMP } from "velt/crypto/p384";
+
+// p - n, little-endian limbs: r + n < p when r is below it.
+const P_MINUS_N: u64[] = [
+  0x1313e696333ad68c,
+  0xa7e5f24cb74f5885,
+  0x389cb27e0bc8d21f,
+  0x0000000000000000,
+  0x0000000000000000,
+  0x0000000000000000,
+];
+
+// Field registers after the curve's own. A point is three (X, Y, Z).
+const ACC: usize = FIRST; // the accumulator point
+const NEG: usize = ACC + 3; // a negated table entry, then scratch
+const GT: usize = NEG + 3; // 8 points: G, 3G, .., 15G
+const QT: usize = GT + 24; // 8 points: Q, 3Q, .., 15Q
+const TWICE: usize = QT + 24; // twice a table's first point
+const ZERO: usize = TWICE + 3;
+const RX: usize = ZERO + 1;
+const EXTRA: usize = RX + 1 - FIRST;
+
+// Scalar registers; S_POWERS + j holds w^j for the inversion's window.
+const S_E: usize = 0;
+const S_R: usize = 1;
+const S_S: usize = 2;
+const S_W: usize = 3;
+const S_TMP: usize = 4;
+const S_POWERS: usize = 5;
+const S_REGS: usize = S_POWERS + 16;
+
+/**
+ * Whether `signature` (DER) is a valid P-384 ECDSA signature of `digest` (a hash of the
+ * message: its leftmost 384 bits are used, SEC 1 §4.1.4) by the uncompressed public key
+ * `publicKey` (97 bytes). False for a malformed key or signature, never an exception.
+ */
+export function p384Verify(publicKey: u8[], digest: u8[], signature: u8[]): bool {
+  const rs = derIntegers(signature);
+  if (rs.length != 4) {
+    return false;
+  }
+  const f = p384Field(EXTRA);
+  if (!decodePoint(f, publicKey, QT)) {
+    return false;
+  }
+  const s = p384Scalars(S_REGS);
+  const elen = digest.length < 48 ? digest.length : 48;
+  s.load(S_TMP, digest, 0, elen);
+  s.enter(S_E, S_TMP);
+  if (!s.load(S_TMP, signature, rs[0], rs[1]) || s.isZero(S_TMP)) {
+    return false;
+  }
+  s.enter(S_R, S_TMP);
+  if (!s.load(S_TMP, signature, rs[2], rs[3]) || s.isZero(S_TMP)) {
+    return false;
+  }
+  s.enter(S_S, S_TMP);
+  // u1 = e / s, u2 = r / s.
+  invertScalar(s, S_W, S_S, S_POWERS);
+  s.mul(S_E, S_E, S_W);
+  s.mul(S_R, S_R, S_W);
+  const u1 = naf(s, S_E);
+  const u2 = naf(s, S_R);
+  // The tables of odd multiples.
+  basePoint(f, GT);
+  oddMultiples(f, GT);
+  oddMultiples(f, QT);
+  // R = u1 G + u2 Q, from the top digit down; the accumulator starts as the identity.
+  f.copy(ACC, ONE);
+  f.copy(ACC + 1, ONE);
+  f.zero(ACC + 2);
+  let top = u1.length > u2.length ? u1.length : u2.length;
+  while (top > 0) {
+    top -= 1;
+    double(f, ACC, ACC);
+    const d1 = top < u1.length ? u1[top] : 0;
+    const d2 = top < u2.length ? u2[top] : 0;
+    if (d1 != 0) {
+      addDigit(f, GT, d1);
+    }
+    if (d2 != 0) {
+      addDigit(f, QT, d2);
+    }
+  }
+  if (f.isZero(ACC + 2)) {
+    return false;
+  }
+  // x = X / Z^2 is r mod n: r Z^2 = X, or (r + n) Z^2 = X (x is below p, so x = r + n can
+  // happen when r + n < p).
+  f.load(TMP, signature, rs[0], rs[1]);
+  f.enter(RX, TMP);
+  f.mul(NEG, ACC + 2, ACC + 2);
+  f.mul(NEG + 1, RX, NEG);
+  if (f.same(NEG + 1, ACC)) {
+    return true;
+  }
+  if (!belowPMinusN(f, TMP)) {
+    return false;
+  }
+  f.set(TMP, P384_N);
+  f.enter(NEG + 2, TMP);
+  f.add(RX, RX, NEG + 2);
+  f.mul(NEG + 1, RX, NEG);
+  return f.same(NEG + 1, ACC);
+}
+
+// ACC += digit times the point whose odd multiples start at `table` (digit odd, |digit| < 16).
+function addDigit(f: Mod384, table: usize, digit: i32) {
+  const k = digit > 0 ? digit : -digit;
+  const e = table + 3 * (((k - 1) >> 1) as usize);
+  if (digit > 0) {
+    add(f, ACC, ACC, e);
+    return;
+  }
+  f.copy(NEG, e);
+  f.sub(NEG + 1, ZERO, e + 1);
+  f.copy(NEG + 2, e + 2);
+  add(f, ACC, ACC, NEG);
+}
+
+// Fills table[1..8] with 3P, 5P, .., 15P from table[0] = P.
+function oddMultiples(f: Mod384, table: usize) {
+  double(f, TWICE, table);
+  for (let i: usize = 1; i < 8; i++) {
+    add(f, table + 3 * i, table + 3 * (i - 1), TWICE);
+  }
+}
+
+// Whether field register `a` (not in the Montgomery domain) is below p - n.
+function belowPMinusN(f: Mod384, a: usize): bool {
+  for (let i: usize = 0; i < 6; i++) {
+    const x = f.r[6 * a + 5 - i];
+    if (x != P_MINUS_N[5 - i]) {
+      return x < P_MINUS_N[5 - i];
+    }
+  }
+  return false;
+}
+
+// The width-5 NAF of scalar register `a` (in the Montgomery domain): digits 0 or odd in
+// -15..15, least significant first, with at least 4 zeros after each non-zero digit.
+function naf(s: Mod384, a: usize): i32[] {
+  s.leave(S_TMP, a);
+  const w: u64[] = [0, 0, 0, 0, 0, 0, 0];
+  for (let i: usize = 0; i < 6; i++) {
+    w[i] = s.r[6 * S_TMP + i];
+  }
+  const out: i32[] = [];
+  while ((w[0] | w[1] | w[2] | w[3] | w[4] | w[5] | w[6]) != 0) {
+    let d: i32 = 0;
+    if ((w[0] & 1) == 1) {
+      d = (w[0] & 31) as i32;
+      if (d > 16) {
+        d -= 32;
+      }
+      // w -= d.
+      if (d > 0) {
+        let borrow = d as u64;
+        for (let i: usize = 0; i < 7 && borrow != 0; i++) {
+          const x = w[i];
+          w[i] = x - borrow;
+          borrow = (x < borrow) as u64;
+        }
+      } else {
+        let carry = (-d) as u64;
+        for (let i: usize = 0; i < 7 && carry != 0; i++) {
+          const x = w[i] + carry;
+          carry = (x < carry) as u64;
+          w[i] = x;
+        }
+      }
+    }
+    out.push(d);
+    // w >>= 1.
+    for (let i: usize = 0; i < 6; i++) {
+      w[i] = (w[i] >> 1) | (w[i + 1] << 63);
+    }
+    w[6] = w[6] >> 1;
+  }
+  return out;
+}
+
+// The INTEGERs r and s of the DER SEQUENCE `b`, as [rStart, rLen, sStart, sLen] without a sign
+// byte, each at most 48 bytes; [] when `b` is not exactly that in strict DER. Two such INTEGERs
+// take at most 102 bytes, so the SEQUENCE's length is always a single byte.
+function derIntegers(b: u8[]): usize[] {
+  if (b.length < 8 || b[0] != 0x30 || b[1] >= 0x80 || (b[1] as usize) + 2 != b.length) {
+    return [];
+  }
+  let p: usize = 2;
+  const out: usize[] = [];
+  for (let k = 0; k < 2; k++) {
+    if (p + 2 > b.length || b[p] != 0x02) {
+      return [];
+    }
+    const n = b[p + 1] as usize;
+    p += 2;
+    if (n == 0 || n > 49 || p + n > b.length || (b[p] & 0x80) != 0) {
+      return [];
+    }
+    let start = p;
+    if (b[p] == 0) {
+      // A leading zero only in front of a set top bit.
+      if (n == 1 || (b[p + 1] & 0x80) == 0) {
+        return [];
+      }
+      start += 1;
+    }
+    if (p + n - start > 48) {
+      return [];
+    }
+    out.push(start);
+    out.push(p + n - start);
+    p += n;
+  }
+  if (p != b.length) {
+    return [];
+  }
+  return out;
+}

@@ -1,6 +1,0 @@
-// velt/simd (internal): whether the CPU has Arm's bf16 instructions, where std has no way to ask
-// (`#simd-bf16`'s default variant, std/imports.velt: Windows, WebAssembly): no.
-
-export function cpuHasBf16(): bool {
-  return false;
-}

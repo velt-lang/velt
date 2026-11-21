@@ -3,7 +3,6 @@
 
 import { utf8Encode } from "velt/encoding/utf8";
 import { hexEncode } from "velt/encoding/hex";
-import { u32x4 } from "velt/simd";
 import {
   BLOCK,
   finalBlocks,
@@ -14,6 +13,8 @@ import {
 } from "velt/crypto/blocks";
 import { sha256Arm, sha256X86 } from "velt/crypto/sha256_simd";
 import { H256, K256 } from "velt/crypto/tables";
+import { Sha256 } from "velt/arch/arm/sha256";
+import { Sha } from "velt/arch/x86/sha";
 
 /** SHA-256 digest (32 bytes) of `data`. */
 export function sha256(data: u8[]): u8[] {
@@ -25,10 +26,10 @@ export function sha256(data: u8[]): u8[] {
  * XORed with `pad`, as HMAC's K ^ ipad / K ^ opad, so nothing is joined.
  */
 export function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
-  if (u32x4.hasShaArm()) {
+  if (Sha256.isSupported()) {
     return sha256Arm(key, pad, keyed, data);
   }
-  if (u32x4.hasShaX86()) {
+  if (Sha.isSupported()) {
     return sha256X86(key, pad, keyed, data);
   }
   const h = H256.slice();

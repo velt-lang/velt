@@ -108,9 +108,13 @@ impl FnLower<'_, '_> {
         let ready = self.rvalue_temp(Ty::U32, Rvalue::Cast(all_done, Ty::U32));
         let (cs, ds) = (children.clone(), done.clone());
         self.after_poll(k, ready, move |lw| lw.cancel_children(&cs, &ds, elem, slot));
-        // Settled: the code after the `await` takes its step (suspend.rs `await_step`).
-        let (cs, ds) = (children.clone(), done.clone());
-        self.await_step(move |lw| lw.cancel_children(&cs, &ds, elem, slot));
+        // Settled: Node settles the joined promise in the reaction it queued on the deciding
+        // input, a microtask of its own, and the code after the `await` takes its step after
+        // that one (suspend.rs `await_step`), so two steps.
+        for _ in 0..2 {
+            let (cs, ds) = (children.clone(), done.clone());
+            self.await_step(move |lw| lw.cancel_children(&cs, &ds, elem, slot));
+        }
         self.collect_results(&children, arr_ty, elem, err)
     }
 
@@ -143,8 +147,11 @@ impl FnLower<'_, '_> {
                 self.release_sibling(other, od, elem, rty);
             }
         }
-        // Rejected: the handler takes its step after the losers' (suspend.rs `await_step`).
-        self.await_step(|lw| lw.drop_glue(Place::local(own), rty));
+        // Rejected: the joined promise rejects in the reaction Node queued on the input, and
+        // the handler takes its step after that one and the losers' (suspend.rs `await_step`).
+        for _ in 0..2 {
+            self.await_step(|lw| lw.drop_glue(Place::local(own), rty));
+        }
         let ev = self.cx.view(rty, 1);
         let e = Operand::Copy(proj(
             &proj(&Place::local(own), Proj::Cast(ev)),

@@ -17,6 +17,7 @@ import { recordMemory } from "#symbol-record";
 import {
   addressLoad,
   addressStore,
+  strAt,
   strWord0,
   strWord1,
   strWord2,
@@ -25,13 +26,11 @@ import {
   symbolRegistry,
 } from "velt/lang/intrinsics";
 
-declare function velt_rt_symbol_description(s: symbol): string;
-
 /** A symbol record's size: the description's three words, then the key word. */
 export const RECORD_SIZE: usize = 32;
 /** The key word's offset in a record. */
 export const RECORD_KEY_AT: usize = 24;
-/** The key word of a record `Symbol.for` made (velt_rt `KEY_REGISTERED`, velt_vir `symbols.rs`). */
+/** The key word of a record `Symbol.for` made (velt_vir `symbols.rs`). */
 export const KEY_REGISTERED: u64 = 1;
 /** The key word's bit set when the symbol has a description. */
 export const DESCRIBED: u64 = 1 << 63;
@@ -72,9 +71,9 @@ function compiled(): Map<string, symbol> {
     if (rec == 0) {
       break;
     }
-    // SAFETY: a table slot holds the address of a record the compiler emitted, read-only data.
-    const s = unsafe { symbolAt(rec) };
-    m.set(velt_rt_symbol_description(s), s);
+    // SAFETY: a table slot holds the address of a record the compiler emitted, read-only data,
+    // whose description (the key) is its first three words.
+    m.set(unsafe { strAt(rec) }, unsafe { symbolAt(rec) });
     at += 8;
   }
   return m;

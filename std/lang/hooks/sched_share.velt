@@ -333,7 +333,7 @@ function pollHolder(h: usize, f: usize, cx: usize): u32 {
         wt.wait(h, f, cx);
         return 0;
       }
-      tr.finished(n);
+      tr.finished(n, m.ld(n + nd.N_TASK));
       nd.setFlags(n, nd.FINISHED);
     }
     // It finished before the hub heard (shared after it finished, or driven here): this holder

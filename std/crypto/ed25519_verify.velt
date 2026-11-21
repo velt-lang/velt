@@ -1,0 +1,202 @@
+// velt/crypto (internal): Ed25519 signature verification (RFC 8032 §5.1.7), as certificates and
+// TLS use it, with ring's rules (which rustls applies today): the signature's S must be below
+// the group order L; the public key A is decompressed as ref10 does (its y is read without its
+// top bit and may be p or more; the sign bit is applied to whatever x comes out); and
+// R' = [S]B - [h]A, h = SHA-512(R, A, message) mod L, is encoded and compared with the
+// signature's R bytes. So the equation is the one without the cofactor, an R that is not
+// canonical never matches, and a key of small order is not refused.
+//
+// Everything here is public, so it runs in variable time: S and h are recoded to width-5 NAF
+// and added in one pass of doublings, from a table of the odd multiples of B (constants) and one
+// of -A. The points are edwards25519.velt's.
+
+import {
+  addPoint,
+  copyPoint,
+  decompress,
+  doublePoint,
+  edwardsField,
+  encodePoint,
+  FIRST,
+  loadBaseOdd,
+  negatePoint,
+  premultiply,
+} from "velt/crypto/edwards25519";
+import { Fe25519 } from "velt/crypto/field25519";
+import { Sha512 } from "velt/crypto/sha512";
+
+// The group order L, little-endian 64-bit words.
+const L: u64[] = [0x5812631a5cf5d3ed, 0x14def9dea2f79cd6, 0x0000000000000000, 0x1000000000000000];
+
+// Registers after the curve's own. A point is four (X, Y, Z, T).
+const ACC: usize = FIRST; // the accumulator
+const A_ODD: usize = ACC + 4; // 8 points: -A, -3A, .., -15A, in the end with 2 d T for T
+const B_ODD: usize = A_ODD + 32; // 8 points: B, 3B, .., 15B, with 2 d T for T and Z = 1
+const TWICE: usize = B_ODD + 32; // -2A
+const NEG: usize = TWICE + 4; // a negated table entry
+const EXTRA: usize = NEG + 4 - FIRST;
+
+/**
+ * Whether `signature` (64 bytes: R, then S) is a valid Ed25519 signature of `message` by the
+ * public key `publicKey` (32 bytes). False for a key or a signature of another length, a key
+ * that is not a point, or an S that is not below the group order; never an exception.
+ */
+export function ed25519Verify(publicKey: u8[], message: u8[], signature: u8[]): bool {
+  if (publicKey.length != 32 || signature.length != 64) {
+    return false;
+  }
+  const s = words(signature, 32);
+  if (!below(s, L)) {
+    return false;
+  }
+  const f = edwardsField(EXTRA);
+  if (!decompress(f, A_ODD, publicKey)) {
+    return false;
+  }
+  // The odd multiples of -A.
+  negatePoint(f, A_ODD, A_ODD);
+  copyPoint(f, TWICE, A_ODD);
+  doublePoint(f, TWICE);
+  premultiply(f, TWICE);
+  for (let i: usize = 1; i < 8; i++) {
+    copyPoint(f, A_ODD + 4 * i, A_ODD + 4 * (i - 1));
+    addPoint(f, A_ODD + 4 * i, TWICE, false);
+  }
+  for (let i: usize = 0; i < 8; i++) {
+    premultiply(f, A_ODD + 4 * i);
+  }
+  loadBaseOdd(f, B_ODD);
+  // h = SHA-512(R, A, message) mod L.
+  const hasher = new Sha512();
+  hasher.update(signature.slice(0, 32));
+  hasher.update(publicKey);
+  hasher.update(message);
+  const sDigits = naf(s);
+  const hDigits = naf(reduce(hasher.digest()));
+  // R' = [S]B + [h](-A), from the top digit down; the accumulator starts as the identity
+  // (0 : 1 : 1 : 0).
+  f.set(ACC, 0);
+  f.set(ACC + 1, 1);
+  f.set(ACC + 2, 1);
+  f.set(ACC + 3, 0);
+  let top = sDigits.length > hDigits.length ? sDigits.length : hDigits.length;
+  let started = false;
+  while (top > 0) {
+    top -= 1;
+    if (started) {
+      doublePoint(f, ACC);
+    }
+    const ds = top < sDigits.length ? sDigits[top] : 0;
+    const dh = top < hDigits.length ? hDigits[top] : 0;
+    if (ds != 0) {
+      addDigit(f, B_ODD, ds, true);
+      started = true;
+    }
+    if (dh != 0) {
+      addDigit(f, A_ODD, dh, false);
+      started = true;
+    }
+  }
+  const encoded = encodePoint(f, ACC);
+  for (let i: usize = 0; i < 32; i++) {
+    if (encoded[i] != signature[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The 32 little-endian bytes `b[at..at + 32]` as four words.
+function words(b: u8[], at: usize): u64[] {
+  const w: u64[] = [0, 0, 0, 0];
+  for (let i: usize = 0; i < 32; i++) {
+    w[i >> 3] |= (b[at + i] as u64) << ((8 * (i & 7)) as u64);
+  }
+  return w;
+}
+
+// Whether the four-word number `a` is below `b`.
+function below(a: u64[], b: u64[]): bool {
+  for (let i: usize = 4; i > 0; i--) {
+    if (a[i - 1] != b[i - 1]) {
+      return a[i - 1] < b[i - 1];
+    }
+  }
+  return false;
+}
+
+// The 64 little-endian bytes `digest` as a number mod L, four words: bit by bit from the top,
+// doubling and subtracting L when the value reaches it (it stays below 2^254).
+function reduce(digest: u8[]): u64[] {
+  const r: u64[] = [0, 0, 0, 0];
+  for (let i: usize = 512; i > 0; i--) {
+    const bit = ((digest[(i - 1) >> 3] >> (((i - 1) & 7) as u8)) & 1) as u64;
+    r[3] = (r[3] << 1) | (r[2] >> 63);
+    r[2] = (r[2] << 1) | (r[1] >> 63);
+    r[1] = (r[1] << 1) | (r[0] >> 63);
+    r[0] = (r[0] << 1) | bit;
+    if (!below(r, L)) {
+      let borrow: u64 = 0;
+      for (let k: usize = 0; k < 4; k++) {
+        const a = r[k];
+        const b = L[k];
+        const x = a - b;
+        r[k] = x - borrow;
+        borrow = ((a < b) as u64) | ((x < borrow) as u64);
+      }
+    }
+  }
+  return r;
+}
+
+// ACC += digit times the point whose odd multiples start at `table` (digit odd, |digit| < 16);
+// `affine` says the table's points have Z = 1.
+function addDigit(f: Fe25519, table: usize, digit: i32, affine: bool) {
+  const k = digit > 0 ? digit : -digit;
+  const e = table + 4 * (((k - 1) >> 1) as usize);
+  if (digit > 0) {
+    addPoint(f, ACC, e, affine);
+    return;
+  }
+  negatePoint(f, NEG, e);
+  addPoint(f, ACC, NEG, affine);
+}
+
+// The width-5 NAF of the four-word number `k`: digits 0 or odd in -15..15, least significant
+// first, with at least 4 zeros after each non-zero digit.
+function naf(k: u64[]): i32[] {
+  const w: u64[] = [k[0], k[1], k[2], k[3], 0];
+  const out: i32[] = [];
+  while ((w[0] | w[1] | w[2] | w[3] | w[4]) != 0) {
+    let d: i32 = 0;
+    if ((w[0] & 1) == 1) {
+      d = (w[0] & 31) as i32;
+      if (d > 16) {
+        d -= 32;
+      }
+      // w -= d.
+      if (d > 0) {
+        let borrow = d as u64;
+        for (let i: usize = 0; i < 5 && borrow != 0; i++) {
+          const x = w[i];
+          w[i] = x - borrow;
+          borrow = (x < borrow) as u64;
+        }
+      } else {
+        let carry = (-d) as u64;
+        for (let i: usize = 0; i < 5 && carry != 0; i++) {
+          const x = w[i] + carry;
+          carry = (x < carry) as u64;
+          w[i] = x;
+        }
+      }
+    }
+    out.push(d);
+    // w >>= 1.
+    for (let i: usize = 0; i < 4; i++) {
+      w[i] = (w[i] >> 1) | (w[i + 1] << 63);
+    }
+    w[4] = w[4] >> 1;
+  }
+  return out;
+}

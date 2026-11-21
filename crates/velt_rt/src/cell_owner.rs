@@ -10,7 +10,7 @@
 //!
 //! Debug programs built by a debug compiler call these functions (velt_vir
 //! `LowerOptions::cell_checks`); a side table keyed by the cell's address records the owning
-//! *task* (`velt_rt_task_id`), not the OS thread: a task (with its local promises) resumes on
+//! *task* (`task::local::task_key`), not the OS thread: a task (with its local promises) resumes on
 //! whichever worker is free, and that is not a race, since only one thread polls a task at a
 //! time. The rules:
 //! - `cell_new` records the current task as the owner (none outside a task: unowned);
@@ -67,7 +67,7 @@ mod table {
     }
 
     pub(super) fn task() -> u64 {
-        crate::task::local::velt_rt_task_id()
+        crate::task::local::task_key()
     }
 }
 
