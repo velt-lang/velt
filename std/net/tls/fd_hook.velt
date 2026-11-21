@@ -4,7 +4,7 @@
 // std/net/tls/fd_reactor.velt, are a more specific `extend` of `TlsServer`, which a program loads
 // only when it can listen or connect with TLS: the conditional globals
 // std/prelude/global/tls_reactor.velt (its code names `cert`, which every `listenTls` option has)
-// and tls_client_reactor.velt (it names `connectTls`, `fetch` or `WebSocket`) load the server or
+// and tls_client_reactor.velt (it names `connectTls` or `WebSocket`) load the server or
 // the client, and each loads fd_reactor.velt. A program that loads neither parses, checks and
 // builds none of them, and its `listenTls` and `connectTls` go to the runtime.
 
