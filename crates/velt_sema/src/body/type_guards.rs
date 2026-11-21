@@ -11,11 +11,11 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::{FnCx, Want};
-use crate::hir::{self, CpuTarget, DefId, ExprKind as H, TyId};
+use crate::hir::{self, CpuTargets, DefId, ExprKind as H, TyId};
 
 /// The guards an `if`'s `then` branch entered (`enter_guards`), for `exit_guards`.
 pub(super) struct Guards {
-    cpu: Option<CpuTarget>,
+    cpu: Option<CpuTargets>,
     ty: bool,
 }
 
