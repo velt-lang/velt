@@ -613,6 +613,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::StrWord1
         | I::StrWord2
         | I::StrDataAddress
+        | I::StrAt
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrAsciiWords

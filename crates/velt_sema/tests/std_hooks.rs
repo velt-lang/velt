@@ -429,6 +429,8 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
             "weak_ref_word",
             "weak_ref_deref",
             "weak_ref_drop",
+            "weak_slot",
+            "weak_slot_drop",
         ]
     );
 }
