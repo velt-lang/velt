@@ -1,0 +1,26 @@
+// A `Record<symbol, unknown>` cast of an `object` is the record it holds: a record given to
+// `mark` gets the hidden symbol property, as in Node. An object that is not a record would
+// convert to a new record, whose keys the object never sees: that stops with a `TypeError`
+// where Node goes on, never with the write lost.
+const D = Symbol("d");
+
+function mark(locals: object): void {
+  Object.defineProperty(locals as Record<symbol, unknown>, D, {
+    value: "set",
+    enumerable: false,
+    writable: false,
+    configurable: true,
+  });
+}
+
+function seen(locals: object): unknown {
+  const bag = locals as Record<symbol, unknown>;
+  return bag[D];
+}
+
+const rec: Record<string, unknown> = { p: 1 };
+mark(rec);
+console.log(seen(rec));
+const target = { p: 1 };
+mark(target);
+console.log(seen(target));

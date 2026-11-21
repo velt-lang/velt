@@ -1,0 +1,1 @@
+TypeError: a `Record<symbol, ...>` cast of a value that is not a record is not supported yet (#923)

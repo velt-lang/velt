@@ -11,6 +11,7 @@ import {
   RECORD_ACCESSOR,
   RECORD_DEFINE_ACCESSOR,
   RECORD_DEFINE_DATA,
+  RECORD_DEFINE_ENTRY,
   RECORD_DEFINE_GETTER,
   RECORD_DEFINE_SETTER,
   RECORD_DELETE,
@@ -29,6 +30,7 @@ import {
   RECORD_SET,
   RECORD_SET_KEYED,
   RECORD_SET_SYM,
+  RECORD_SYMBOL_BAG,
 } from "velt/lang/hooks/keys";
 
 /**
@@ -86,6 +88,41 @@ extend<K, V> Record<K, V> {
    * value and, if it is writable, a setter replacing it; a write to one that isn't is Node's
    * `TypeError`.
    */
+  /**
+   * `Object.defineProperty(r, key, { value, enumerable: true, writable: true, configurable: true
+   * })`: the entry `key`, as a write makes it. A property defined before with other attributes
+   * (an accessor, a hidden data property) is replaced, as in Node; one that is not configurable
+   * is Node's `TypeError`.
+   */
+  [RECORD_DEFINE_ENTRY](key: K | symbol, value: V) {
+    if (this.accessors != null) {
+      const old = this[RECORD_ACCESSOR](key);
+      if (old != null) {
+        if (!old[2]) {
+          panic(`TypeError: Cannot redefine property: ${keyText(key)}`);
+        }
+        this[RECORD_DELETE_KEYED](key);
+      }
+    }
+    this[RECORD_SET_KEYED](key, value);
+  }
+
+  /**
+   * `source as Record<symbol, V>` of a dynamic value (sema `symbol_record_cast`): the record,
+   * converted from `source`. It is `source` itself when `source` holds a record of this type;
+   * another object converts to a new record, whose symbol keys that object would never see:
+   * not supported yet.
+   */
+  [RECORD_SYMBOL_BAG](source: unknown): Record<K, V> {
+    const self: unknown = this;
+    if (self !== source) {
+      panic(
+        "TypeError: a `Record<symbol, ...>` cast of a value that is not a record is not supported yet (#923): Velt keeps symbol keys in a record's own table",
+      );
+    }
+    return this;
+  }
+
   [RECORD_DEFINE_DATA](key: K | symbol, value: V, writable: bool, configurable: bool) {
     let held = value;
     const get = (): V => held;

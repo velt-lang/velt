@@ -13,6 +13,14 @@ use super::callback::synth;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, TyKind};
 
+/// How a `Record<symbol, V>` cast is made (`FnCx::symbol_record_cast`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SymbolCast {
+    Plain,
+    Checked,
+    Refused,
+}
+
 impl FnCx<'_, '_> {
     /// `(v as Record<symbol, V>)[index]` read (`object` is the parenthesized cast), `V` being
     /// `unknown` or `any`: `None` when `object` is not such a cast.
@@ -101,47 +109,48 @@ impl FnCx<'_, '_> {
         Some(self.coerce(h, v))
     }
 
-    /// `v as Record<symbol, V>` (`target`, resolved) with `V` neither `unknown` nor `any`, of a
-    /// value that is not a record of `V` already: an error, reported here. Such a cast would
-    /// convert each of the record's string-keyed entries to `V`, where Node looks only at its
-    /// symbol keys.
-    pub(super) fn typed_symbol_record(
+    /// How `v as Record<symbol, V>` (`target`, resolved; `None` for any other cast) is made. Such
+    /// a cast is the record's own symbol table, which only a record of `V` has:
+    /// - of a record of `V`: the record itself;
+    /// - of a dynamic value (`object`, `unknown`, `any`) with `V` `unknown` or `any`: the record
+    ///   it holds, checked where it is made (`SymbolCast::Checked`): another object would
+    ///   convert to a new record, a view whose symbol keys the object never sees;
+    /// - of anything else (an object or class value, an interface, a record of another type):
+    ///   an error, reported here. It would be such a copy.
+    pub(super) fn symbol_record_cast(
         &mut self,
         expr: &ast::Expr,
         ty: &ast::TypeExpr,
         target: hir::TyId,
         span: Span,
-    ) -> bool {
+    ) -> Option<SymbolCast> {
         let ast::TypeExprKind::Named { path, args } = &ty.kind else {
-            return false;
+            return None;
         };
         let symbol_key = matches!(&args[..], [ast::TypeExpr { kind: ast::TypeExprKind::Named { path: k, args: ka }, .. }, _]
             if ka.is_empty() && k.len() == 1 && k[0].name == "symbol");
         if path.len() != 1 || path[0].name != "Record" || !symbol_key {
-            return false;
+            return None;
         }
-        if symbol_record_value(ty).is_some() {
-            return false;
+        let (_, v) = self.record_args(target)?;
+        let from = self.trial_type(expr)?;
+        if self.record_args(from).is_some_and(|(_, fv)| fv == v) {
+            return Some(SymbolCast::Plain);
         }
-        let Some((_, v)) = self.record_args(target) else {
-            return false;
-        };
-        let from = self.trial_type(expr);
-        if from
-            .and_then(|t| self.record_args(t))
-            .is_some_and(|(_, fv)| fv == v)
-        {
-            return false;
+        let dynamic_value = symbol_record_value(ty).is_some();
+        if dynamic_value && self.cx.dynamic(from).is_some() {
+            return Some(SymbolCast::Checked);
         }
-        let shown = self.cx.display(v);
-        self.cx.error(
-            Diagnostic::error(
-                format!("a `Record<symbol, {shown}>` cast of a value that is not a record of `{shown}` is not supported yet"),
-                span,
-            )
-            .with_note("Velt would convert each of its string-keyed entries too: cast to `Record<symbol, unknown>` and the member you read (`(r[KEY] as T)`)"),
+        let (shown, found) = (self.cx.display(v), self.cx.display(from));
+        let d = Diagnostic::error(
+            format!("a `Record<symbol, {shown}>` cast of a `{found}` is not supported yet"),
+            span,
         );
-        true
+        self.cx.error(match dynamic_value {
+            true => d.with_note("Velt keeps symbol keys in a record's own table: the cast would make a new record, whose keys the value never sees. Read a member right away (`(v as Record<symbol, unknown>)[KEY]`), or keep the symbol keys on a `Record<string, unknown>`"),
+            false => d.with_note("Velt would convert each of its string-keyed entries too: cast to `Record<symbol, unknown>` and the member you read (`(r[KEY] as T)`)"),
+        });
+        Some(SymbolCast::Refused)
     }
 
     /// Is `t` a symbol, or a union of symbols (`typeof S | typeof T`)?

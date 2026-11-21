@@ -112,6 +112,7 @@ impl FnCx<'_, '_> {
             velt_common::std_key!(record_define_getter),
             velt_common::std_key!(record_define_setter),
             velt_common::std_key!(record_define_data),
+            velt_common::std_key!(record_define_entry),
         ];
         if writes.contains(&method) {
             self.note_record_write(obj.ty, span);

@@ -157,6 +157,10 @@ export const RECORD_DEFINE_GETTER = Symbol("recordDefineGetter");
 export const RECORD_DEFINE_SETTER = Symbol("recordDefineSetter");
 /** `Record`: what `defineData` does for the compiler. */
 export const RECORD_DEFINE_DATA = Symbol("recordDefineData");
+/** `Record`: what `symbolBag` does for the compiler. */
+export const RECORD_SYMBOL_BAG = Symbol("recordSymbolBag");
+/** `Record`: what `defineEntry` does for the compiler. */
+export const RECORD_DEFINE_ENTRY = Symbol("recordDefineEntry");
 /** `Record`: what `deleteKeyed` does for the compiler. */
 export const RECORD_DELETE_KEYED = Symbol("recordDeleteKeyed");
 /** `Record`: what `deleteSym` does for the compiler. */

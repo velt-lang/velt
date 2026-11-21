@@ -88,10 +88,18 @@ fn hidden_data_call(e: &ast::Expr) -> bool {
     let E::Object(props) = &desc.kind else {
         return false;
     };
-    props.iter().any(|p| {
+    // The form `record_props` defines: no accessor, `enumerable: false`, and `writable` and
+    // `configurable` written.
+    let named = |p: &ast::ObjectProp, name: &str| matches!(p, ast::ObjectProp::KeyValue(n, _) | ast::ObjectProp::Shorthand(n) if n.name == name);
+    let hidden = props.iter().any(|p| {
         matches!(p, ast::ObjectProp::KeyValue(n, v) if n.name == "enumerable"
             && matches!(v.kind, E::Lit(ast::Lit::Bool(false))))
-    })
+    });
+    hidden
+        && !props.iter().any(|p| named(p, "get") || named(p, "set"))
+        && ["writable", "configurable"]
+            .iter()
+            .all(|a| props.iter().any(|p| named(p, a)))
 }
 
 /// Does `module` define an accessor with `Object.defineProperty`, or a data property that is

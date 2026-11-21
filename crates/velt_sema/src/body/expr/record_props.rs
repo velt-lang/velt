@@ -162,9 +162,10 @@ impl FnCx<'_, '_> {
                     span,
                 )
             } else {
+                // Replaces a property defined before with other attributes.
                 self.record_call(
                     obj,
-                    velt_common::std_key!(record_set_keyed),
+                    velt_common::std_key!(record_define_entry),
                     &[key.clone(), v],
                     span,
                 )
