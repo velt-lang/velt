@@ -22,7 +22,13 @@ static int is_secret(int fd) {
 
 ssize_t read(int fd, void *buf, size_t count) {
     static ssize_t (*real)(int, void *, size_t);
-    if (!real) real = dlsym(RTLD_NEXT, "read");
+    if (!real) {
+        real = dlsym(RTLD_NEXT, "read");
+        if (!real) {
+            fputs("ct-shim: dlsym(RTLD_NEXT, \"read\") found no read\n", stderr);
+            abort();
+        }
+    }
     ssize_t n = real(fd, buf, count);
     if (n > 0 && is_secret(fd)) VALGRIND_MAKE_MEM_UNDEFINED(buf, n);
     return n;
