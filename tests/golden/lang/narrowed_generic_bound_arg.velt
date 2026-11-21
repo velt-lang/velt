@@ -1,0 +1,74 @@
+// A variable narrowed from `T | null` passed where a bounded type parameter is inferred
+// (`removeChild<T extends Node>(child: T)`) gives its narrowed type, as TypeScript infers it:
+// a module `let`, a variable a closure assigns (sigx's `Portal` cleanup,
+// `if (portalContainer && portalContainer.parentNode) portalContainer.parentNode.removeChild(portalContainer)`),
+// and a local. An unbounded parameter still gets the value as it is (`JSON.stringify` of one).
+class N {
+  name: string;
+  parent: N | null = null;
+  kids: N[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+  append<T extends N>(c: T): T {
+    this.kids.push(c);
+    c.parent = this;
+    return c;
+  }
+  removeChild<T extends N>(c: T): T {
+    this.kids = this.kids.filter((k) => k.name !== c.name);
+    c.parent = null;
+    return c;
+  }
+}
+
+class Div extends N {
+  tag = "div";
+}
+
+let current: Div | null = new Div("module");
+const root = new N("root");
+
+function moveModule(): string {
+  if (current) {
+    return root.append(current).tag;
+  }
+  return "none";
+}
+
+function setup(): () => number {
+  let box: Div | null = null;
+  const mount = () => {
+    box = new Div("box");
+    root.append(box);
+  };
+  const unmount = () => {
+    if (box && box.parent) {
+      box.parent.removeChild(box);
+    }
+    box = null;
+  };
+  mount();
+  return () => {
+    const before = root.kids.length;
+    unmount();
+    return before - root.kids.length;
+  };
+}
+
+function local(): string {
+  let d: Div | null = Math.random() < 2 ? new Div("local") : null;
+  if (d) {
+    return root.append(d).name;
+  }
+  return "none";
+}
+
+console.log(moveModule(), root.kids.length);
+const done = setup();
+console.log(root.kids.length, done(), root.kids.length);
+console.log(local(), root.kids.map((k) => k.name).join(","));
+let maybe: number | null = 3;
+if (maybe) {
+  console.log(JSON.stringify(maybe));
+}

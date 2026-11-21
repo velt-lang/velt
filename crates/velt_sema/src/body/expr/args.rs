@@ -452,6 +452,14 @@ impl FnCx<'_, '_> {
         let order = self.arg_order(c, args);
         // Slots fixed before any argument (explicit type arguments, the receiver's).
         let given: Vec<bool> = slots.iter().map(Option::is_some).collect();
+        // A type argument fixed already, or one with a bound, which an argument narrowed from
+        // `T | null` must meet as its payload (`checked_copies::inferred_from_arg`).
+        let fixed: Vec<bool> = (given.iter().enumerate())
+            .map(|(k, &g)| {
+                g || c.constraints.get(k).copied().flatten().is_some()
+                    || c.bounds.get(k).is_some_and(|b| !b.is_empty())
+            })
+            .collect();
         self.annotations_before_literals(c, args, slots);
         let mut out: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
         for i in order {
@@ -550,7 +558,7 @@ impl FnCx<'_, '_> {
                     }
                     // A value of a type parameter may be passed as it is (`checked_copies`).
                     _ => {
-                        self.param_arg(&args[i], (p.ty, c.ret), (&given, context), (expected, want))
+                        self.param_arg(&args[i], (p.ty, c.ret), (&fixed, context), (expected, want))
                     }
                 },
             };
