@@ -13,12 +13,13 @@ import { u64x2 } from "velt/simd";
  * x = 0: the generator checks). Constant time in `digit`.
  */
 export function selectBase(f: FeP256, sel: usize, masks: u64[], w: usize, digit: u64) {
-  entryMasks(masks, digit);
   const base = 512 * w;
-  // Said once, so that the loads below need no check of their own.
+  // Said once, before anything is written, so that the stores and loads below need no check of
+  // their own.
   if (base + 512 > P256_BASE.length || masks.length < 64) {
     tableFault();
   }
+  entryMasks(masks, digit);
   // x and y, two limbs a vector.
   let x0 = u64x2.splat(0);
   let x1 = u64x2.splat(0);
@@ -58,5 +59,5 @@ function entryMasks(masks: u64[], digit: u64) {
 // the guard was false.
 @noInline
 function tableFault(): never {
-  panic("ICE: a P-256 base table window outside the table");
+  panic("ICE: a P-256 base table window outside the table, or a mask array too short");
 }
