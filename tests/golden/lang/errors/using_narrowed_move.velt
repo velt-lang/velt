@@ -1,0 +1,27 @@
+// A `using` variable that may be null, narrowed or asserted non-null, is still the variable
+// itself: moving it out of its declaration is an error, as for one that is never null (#3433).
+class Res {
+  [Symbol.dispose]() {}
+}
+
+function maybe(n: i64): Res | null {
+  return n > 0 ? new Res() : null;
+}
+
+function narrowed(): Res | null {
+  using r = maybe(1);
+  if (r) {
+    return r;
+  }
+  return null;
+}
+
+function asserted(): Res {
+  using r = maybe(1);
+  return r!;
+}
+
+function main() {
+  narrowed();
+  asserted();
+}

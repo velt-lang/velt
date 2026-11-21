@@ -1,0 +1,71 @@
+// check: no leaks
+// A part of a `using` variable read out of its block: a field's value returned through a
+// `const` or directly, a nested object, a string, and the same array kept twice in an array
+// (#3433). The variable itself is not moved, so it is disposed at the end of its block once, as
+// usual, and the value read out lives on (it was refused as moving the variable).
+class Mapped {
+  name: string;
+  bytes: number[];
+  meta: { size: number };
+  constructor(name: string, bytes: number[]) {
+    this.name = name;
+    this.bytes = bytes;
+    this.meta = { size: bytes.length };
+  }
+  [Symbol.dispose]() {
+    console.log(`dispose ${this.name} (${this.bytes.length} bytes)`);
+  }
+}
+
+function open(name: string, n: number): Mapped {
+  const bytes: number[] = [];
+  for (let i = 0; i < n; i++) {
+    bytes.push(i * 2);
+  }
+  return new Mapped(name, bytes);
+}
+
+function throughConst(): number[] {
+  using m = open("a", 3);
+  const b = m.bytes;
+  return b;
+}
+
+function direct(): number[] {
+  using m = open("b", 4);
+  return m.bytes;
+}
+
+function nested(): { size: number } {
+  using m = open("c", 5);
+  const meta = m.meta;
+  return meta;
+}
+
+function name(): string {
+  using m = open("d", 1);
+  const n = m.name;
+  return n;
+}
+
+function kept(): number[][] {
+  const all: number[][] = [];
+  using m = open("e", 2);
+  all.push(m.bytes);
+  const again = m.bytes;
+  all.push(again);
+  return all;
+}
+
+function main() {
+  const a = throughConst();
+  console.log(a.join(","));
+  const b = direct();
+  console.log(b.join(","));
+  console.log(nested().size);
+  console.log(name());
+  const k = kept();
+  console.log(k.length, k[0] === k[1], k[1].join(","));
+  a.push(99);
+  console.log(a.join(","));
+}
