@@ -117,6 +117,17 @@ export function handledElsewhere(n: usize): bool {
 }
 
 /**
+ * Node `n` rejected (sched_node.velt `run`): its owner may claim the result on another worker, so
+ * it keeps where it threw (the state's poll is not needed any more), published before FINISHED.
+ * Out of line: `run` is inlined at every start.
+ */
+@noInline
+export function keepWhereThrown(n: usize): void {
+  loc.keep(n + nd.N_FLAGS, n + nd.N_HEAD + 16, n + nd.N_POLL);
+  keepLoc(n);
+}
+
+/**
  * Converted node `n` finished with an error but no location of its own (the conversion's glue
  * raised it again, which records none): it keeps the location the promise it stands for threw at
  * (sched_node_loc.velt), so its report points at the `throw`. That promise's node is alive: the

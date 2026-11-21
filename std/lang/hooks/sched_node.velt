@@ -398,7 +398,7 @@ export function run(task: usize, n: usize, taken: bool): void {
     }
   }
   if ((m.load32(n + N_FLAGS) & REJECTING) !== 0) {
-    keepWhereThrown(n);
+    al.keepWhereThrown(n);
   }
   // A handed-over node's transfer runs before FINISHED shows (sched_node_transfer.velt).
   tr.finished(n, task);
@@ -429,16 +429,6 @@ export function run(task: usize, n: usize, taken: bool): void {
 // `run`'s rarer steps, out of line: `run` is inlined at every start (each async call kept as a
 // promise), and with these in it a program with many such calls doubled in size, which split it
 // into more codegen units and made it slower.
-
-/**
- * Node `n` rejected: its owner may claim the result on another worker, so it keeps where it threw
- * (the state's poll is not needed any more), published before FINISHED.
- */
-@noInline
-function keepWhereThrown(n: usize): void {
-  loc.keep(n + N_FLAGS, n + N_HEAD + 16, n + N_POLL);
-  al.keepLoc(n);
-}
 
 /** Node `n` finished after its owner dropped it (sched_node_report.velt `dropResult`). */
 @noInline
