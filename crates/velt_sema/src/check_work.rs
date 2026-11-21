@@ -3,7 +3,8 @@
 //! (`body::expr::closure`, #859), of expressions (`FnCx::expr`, spread operands checked again
 //! per operator), the resolution of exports (`collect::exports`, barrels walked again per
 //! imported name), the check of stores by key (`ownership::local_async::keyed`) and the walk of a
-//! module's scopes for its decorators (`decorators::scope`). The scaling tests compare these counts
+//! module's scopes for its decorators (`decorators::scope`) and the walks of a function's body for
+//! the closures it holds in a `const` (`ownership::local_closures`). The scaling tests compare these counts
 //! between program sizes, which unlike CPU time doesn't depend on the load of the machine (#1502).
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,6 +19,7 @@ static EXPORTS: AtomicU64 = AtomicU64::new(0);
 static KEYED: AtomicU64 = AtomicU64::new(0);
 static MEMO_TRIALS: AtomicU64 = AtomicU64::new(0);
 static DECORATOR_SCOPE_STEPS: AtomicU64 = AtomicU64::new(0);
+static LOCAL_CLOSURE_STEPS: AtomicU64 = AtomicU64::new(0);
 
 /// Adds `n` to `counter`.
 fn add(counter: &AtomicU64, n: u64) {
@@ -61,6 +63,12 @@ pub(crate) fn add_decorator_scope_steps(n: u64) {
     add(&DECORATOR_SCOPE_STEPS, n);
 }
 
+/// Adds `n` expressions the walks of a function's body for its `const`-held closures looked at
+/// (`ownership::local_closures`).
+pub(crate) fn add_local_closure_steps(n: u64) {
+    add(&LOCAL_CLOSURE_STEPS, n);
+}
+
 /// The work of these kinds done in this process so far (checks run at the same time may lose
 /// counts). A deterministic cost measure, like [`crate::InstantiationWork`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -83,6 +91,9 @@ pub struct CheckWork {
     /// Nodes the walk of a module's scopes for its decorators looked at, and regions its lookups
     /// looked at.
     pub decorator_scope_steps: u64,
+    /// Expressions the walks of a function's body for the closures it holds in a `const` looked
+    /// at (`ownership::local_closures`).
+    pub local_closure_steps: u64,
 }
 
 /// See [`CheckWork`].
@@ -95,5 +106,6 @@ pub fn check_work() -> CheckWork {
         keyed: KEYED.load(Ordering::Relaxed),
         memo_trials: MEMO_TRIALS.load(Ordering::Relaxed),
         decorator_scope_steps: DECORATOR_SCOPE_STEPS.load(Ordering::Relaxed),
+        local_closure_steps: LOCAL_CLOSURE_STEPS.load(Ordering::Relaxed),
     }
 }
