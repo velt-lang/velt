@@ -1,0 +1,77 @@
+// velt/lang/symbol (internal): `Symbol(description)`'s records and what a symbol's record says
+// (rt_abi.md "Symbols"). A symbol is the address of a 32-byte record: its description (a
+// string's three words, `""` without one), then a key word. `Symbol()` at run time makes a
+// record here: it lives as long as the process and holds a reference to its description for
+// good. Records are carved from chunks of `#symbol-record`'s memory (the C library's, outside
+// the leak counts, as the registry's records are; the compiled code's allocator in the
+// browser), one chunk at a time per thread: a `calloc` per record cost a few hundred
+// instructions each. The compiler's records (well-known symbols, module constants) are
+// read-only data of the same layout.
+
+import { recordMemory } from "#symbol-record";
+import {
+  addressLoad,
+  addressStore,
+  slotPut,
+  strAt,
+  symbolAddress,
+  symbolAt,
+} from "velt/lang/intrinsics";
+import { DESCRIBED, RECORD_KEY_AT, RECORD_SIZE } from "./registry";
+
+/** The key word of a record `Symbol(description)` made at run time (velt_vir `symbols.rs`). */
+const KEY_FRESH: u64 = 0;
+
+/** The bytes of a chunk records are carved from: 128 records. */
+const CHUNK: usize = 4096;
+
+/** This thread's next free record in its chunk, and its chunk's end (0 before the first). */
+const NEXT = new ThreadLocal<u64>(0);
+const END = new ThreadLocal<u64>(0);
+
+/**
+ * A record's memory, aligned to 8, never freed: not zeroed in the browser, whose
+ * `#symbol-record` memory is the allocator's (record_mem_js.velt).
+ */
+function carve(): usize {
+  let at = NEXT.get() as usize;
+  if (at === 0 || at + RECORD_SIZE > (END.get() as usize)) {
+    at = recordMemory(CHUNK);
+    END.set((at + CHUNK) as u64);
+  }
+  NEXT.set((at + RECORD_SIZE) as u64);
+  return at;
+}
+
+/** `Symbol(description)` (`described` false: `Symbol()`, `description` unused): a new symbol. */
+export function newSymbol(description: string, described: bool): symbol {
+  const p = carve();
+  // SAFETY: `p` holds `RECORD_SIZE` bytes nothing else uses, aligned to 8, never freed: the
+  // description moves into its first three words (without one they are set to 0, the empty
+  // string, as the memory may not be zeroed), and the key word follows (rt_abi.md "Symbols").
+  unsafe {
+    if (described) {
+      slotPut<string>(p, description);
+      addressStore<u64>(p + RECORD_KEY_AT, KEY_FRESH | DESCRIBED);
+    } else {
+      addressStore<u64>(p, 0);
+      addressStore<u64>(p + 8, 0);
+      addressStore<u64>(p + 16, 0);
+      addressStore<u64>(p + RECORD_KEY_AT, KEY_FRESH);
+    }
+    return symbolAt(p);
+  }
+}
+
+/** Was `s` given a description (`Symbol("")` was, `Symbol()` was not)? */
+export function symbolDescribed(s: symbol): bool {
+  // SAFETY: every symbol is the address of a 32-byte record, its key word at `RECORD_KEY_AT`.
+  const key = unsafe { addressLoad<u64>(symbolAddress(s) + RECORD_KEY_AT) };
+  return (key & DESCRIBED) != 0;
+}
+
+/** The description of `s` (`""` when it has none). */
+export function symbolDescription(s: symbol): string {
+  // SAFETY: every symbol's record starts with its description, which lives as long as it.
+  return unsafe { strAt(symbolAddress(s)) };
+}

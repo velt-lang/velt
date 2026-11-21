@@ -1,0 +1,10 @@
+// velt/lang/cpu (internal): the start-up check of a build for x86-64 (`#cpu-start`'s `x64`
+// variant, std/imports.velt).
+
+import { detectX86 } from "./detect_x86";
+import { startWith } from "./start";
+
+/** Detects the CPU's features and checks them (std/lang/hooks/cpu.velt `cpuStart`). */
+export function checkCpu(): void {
+  startWith(detectX86(), false);
+}

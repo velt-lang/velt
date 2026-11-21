@@ -690,28 +690,6 @@ impl FnCx<'_, '_> {
         (!self.cx.ty.has_error(t)).then_some(t)
     }
 
-    /// The value `e` written for slot `slot` of `iface` (expected type `exp`).
-    pub(super) fn slot_value(
-        &mut self,
-        e: &ast::Expr,
-        exp: TyId,
-        (iface, slot): (DefId, usize),
-    ) -> hir::Expr {
-        let at = Some((iface, slot as u32, e.span));
-        let saved = std::mem::replace(&mut self.literal_slot, at);
-        let h = self.expr(e, Some(exp), Want::Move);
-        self.literal_slot = saved;
-        self.bind_slot_result(Some(e), h, (iface, slot))
-    }
-
-    /// A closure written at `span` throws what `srcs` throw: for the interface slot it fills, if
-    /// it is a value of an object literal implementing an interface ([`Self::slot_value`]).
-    pub(super) fn provisional_slot(&mut self, span: Span, srcs: &[crate::defs::ThrowSrc]) {
-        if let Some((iface, slot, _)) = self.literal_slot.filter(|l| l.2 == span) {
-            self.cx.provisional_slots.push((iface, slot, srcs.to_vec()));
-        }
-    }
-
     /// `(params) => ret throws err` (`err` unknown: `error`, so a closure's comes from its body).
     fn fn_type(&mut self, params: Vec<TyId>, ret: TyId, throws: Option<TyId>) -> TyId {
         let throws = throws.unwrap_or(self.cx.ty.error);

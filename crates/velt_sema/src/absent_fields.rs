@@ -193,7 +193,15 @@ impl<'a, 'm> Walk<'a, 'm> {
             E::Assign { place, value } => {
                 if let Some(name) = self.place_field(place) {
                     self.judged.insert(&**place as *const Expr);
-                    if self.may_be_null(value, name, false) {
+                    // `delete o.f` leaves the field absent (`body::expr::delete_optional`).
+                    let deleted = matches!(
+                        value.kind,
+                        E::Call {
+                            callee: Callee::Intrinsic(Intrinsic::FieldAbsent),
+                            ..
+                        }
+                    );
+                    if !deleted && self.may_be_null(value, name, false) {
                         self.stores.push((name.to_string(), e.span));
                     }
                 }

@@ -83,25 +83,41 @@ pub(crate) fn install<'m>(
         return;
     };
     let mut input = gen.input.clone();
-    for m in gen.sources {
-        let declaring = (input.modules.iter())
-            .find(|gm| gm.path == m.path)
-            .and_then(|gm| cx.modules.iter().position(|d| d.path == gm.declaring));
-        if let Some(d) = declaring {
-            cx.add_module(m, d);
-        }
+    // std's unit in a check by units holds no generated module, not even one generated for a
+    // std module's declarations: what it holds would then depend on what was built before
+    // (`units::Order`). The app's copies get them ([`add_sources`]).
+    let std_unit = cx.units_stage == crate::units::Stage::Std;
+    if !std_unit {
+        add_sources(cx, Some(gen));
     }
     if let Some(generator) = generator {
         let state = generator.state.borrow();
         input.extend(state.input.clone());
         let declaring = state.filled.clone();
         drop(state);
-        for (m, d) in generator.kept().zip(declaring) {
+        for (m, d) in generator.kept().zip(declaring).filter(|_| !std_unit) {
             cx.add_module(m, d);
         }
     }
     cx.gen.input = Some(std::rc::Rc::new(input));
     cx.gen.generate = generator;
+}
+
+/// Add the generated modules given apart from the program's (`GenArgs::sources`) to `cx`, each
+/// after the module it was generated for: in a fresh context ([`install`]), and in the app's
+/// copies of std's unit in a check by units, which holds none.
+pub(crate) fn add_sources<'m>(cx: &mut crate::ctx::Ctx<'m>, gen: Option<generated::GenArgs<'m>>) {
+    let Some(gen) = gen else {
+        return;
+    };
+    for m in gen.sources {
+        let declaring = (gen.input.modules.iter())
+            .find(|gm| gm.path == m.path)
+            .and_then(|gm| cx.modules.iter().position(|d| d.path == gm.declaring));
+        if let Some(d) = declaring {
+            cx.add_module(m, d);
+        }
+    }
 }
 
 impl<'m> crate::ctx::Ctx<'m> {

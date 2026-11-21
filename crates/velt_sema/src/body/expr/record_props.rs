@@ -7,7 +7,9 @@
 //!   `console.log` skip it). Every record operation of a program that defines accessors goes
 //!   through the `Keyed` methods, which look at them (`Ctx::objects.record_accessors`).
 //! - `Object.defineProperty(r, key, { value })` with every attribute `true`: a write of the
-//!   entry, the attributes every entry has.
+//!   entry, the attributes every entry has. With `enumerable: false` (and `writable` and
+//!   `configurable` written): `r[RECORD_DEFINE_DATA](...)`, a data property held with the
+//!   accessors, which a write throws Node's `TypeError` for unless it is writable.
 //! - `Object.getOwnPropertySymbols(r)`: the symbol keys in insertion order.
 //! - `Reflect.ownKeys(r)`: the string keys in `Object.keys` order, then the symbol keys.
 
@@ -105,9 +107,17 @@ impl FnCx<'_, '_> {
             true if enumerable == Some(true) => {
                 Some("an enumerable accessor on a record is not supported yet")
             }
-            false if [enumerable, writable, configurable] != [Some(true); 3] => Some(
-                "`Object.defineProperty` of a data property on a record needs `enumerable`, `writable` and `configurable` all `true` (a record's entries have them); other attributes are not supported yet",
-            ),
+            // Every attribute `true` is an entry; `enumerable: false` is a data property held
+            // with the accessors. Node takes an attribute left out as `false`, or as the
+            // property's own when it redefines one, which this doesn't follow yet.
+            false
+                if [enumerable, writable, configurable] != [Some(true); 3]
+                    && (enumerable != Some(false) || writable.is_none() || configurable.is_none()) =>
+            {
+                Some(
+                    "`Object.defineProperty` of a data property on a record needs `enumerable`, `writable` and `configurable` written: all `true` (an entry), or `enumerable: false`; other attributes are not supported yet",
+                )
+            }
             _ => None,
         };
         if let Some(msg) = unsupported {
@@ -141,12 +151,25 @@ impl FnCx<'_, '_> {
             self.record_call(obj, method, &call_args, span)
         } else {
             let v = value.unwrap_or_else(|| synth(ast::ExprKind::Ident(undefined(span)), span));
-            self.record_call(
-                obj,
-                velt_common::std_key!(record_set_keyed),
-                &[key.clone(), v],
-                span,
-            )
+            if enumerable == Some(false) {
+                let flag = |b: Option<bool>| {
+                    synth(ast::ExprKind::Lit(ast::Lit::Bool(b == Some(true))), span)
+                };
+                self.record_call(
+                    obj,
+                    velt_common::std_key!(record_define_data),
+                    &[key.clone(), v, flag(writable), flag(configurable)],
+                    span,
+                )
+            } else {
+                // Replaces a property defined before with other attributes.
+                self.record_call(
+                    obj,
+                    velt_common::std_key!(record_define_entry),
+                    &[key.clone(), v],
+                    span,
+                )
+            }
         };
         Some(call)
     }

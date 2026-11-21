@@ -3,13 +3,10 @@
 
 use super::js_table as js;
 use crate::str::{velt_rt_str_drop, VeltStr};
-use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
 use crate::str_ops::case::*;
 use crate::str_ops::number::*;
-use crate::str_ops::replace::*;
 use crate::str_ops::search::*;
 use crate::str_ops::slice::*;
-use crate::str_ops::split::*;
 use std::mem::MaybeUninit;
 
 /// A static (borrowed) input string.
@@ -88,45 +85,8 @@ fn slice_matches_js() {
     }
 }
 
-fn split_to_vec(s: &VeltStr, sep: &str) -> Vec<String> {
-    let mut out = MaybeUninit::<VeltStrArray>::uninit();
-    unsafe { velt_rt_str_split(s, &*heap(sep), out.as_mut_ptr()) };
-    let mut arr = unsafe { out.assume_init() };
-    let items = (0..arr.len as usize)
-        .map(|i| {
-            let piece = unsafe { &*arr.ptr.add(i) };
-            String::from_utf8(unsafe { piece.as_bytes() }.to_vec()).unwrap()
-        })
-        .collect();
-    unsafe { velt_rt_str_array_drop(&mut arr) };
-    items
-}
-
 #[test]
-fn split_matches_js() {
-    for &(s, sep, want) in js::SPLIT {
-        let got = both(s, |v| split_to_vec(v, sep).join("\u{0}"));
-        assert_eq!(got, want.join("\u{0}"), "{s:?}.split({sep:?})");
-        assert_eq!(split_to_vec(&lit(s), sep).len(), want.len());
-    }
-}
-
-#[test]
-fn trim_and_case_match_js() {
-    for &(s, trim, start, end) in js::TRIM {
-        assert_eq!(
-            both(s, |v| take(|o| unsafe { velt_rt_str_trim(v, o) })),
-            trim
-        );
-        assert_eq!(
-            both(s, |v| take(|o| unsafe { velt_rt_str_trim_start(v, o) })),
-            start
-        );
-        assert_eq!(
-            both(s, |v| take(|o| unsafe { velt_rt_str_trim_end(v, o) })),
-            end
-        );
-    }
+fn case_matches_js() {
     for &(s, upper, lower) in js::CASE {
         assert_eq!(
             both(s, |v| take(|o| unsafe { velt_rt_str_to_upper(v, o) })),
@@ -142,41 +102,7 @@ fn trim_and_case_match_js() {
 }
 
 #[test]
-fn replace_matches_js() {
-    for &(s, from, to, first, all) in js::REPLACE {
-        let (f, t) = (lit(from), lit(to));
-        let got = both(s, |v| {
-            take(|o| unsafe { velt_rt_str_replace(v, &f, &t, o) })
-        });
-        assert_eq!(got, first, "{s:?}.replace({from:?}, {to:?})");
-        let got = both(s, |v| {
-            take(|o| unsafe { velt_rt_str_replace_all(v, &f, &t, o) })
-        });
-        assert_eq!(got, all, "{s:?}.replaceAll({from:?}, {to:?})");
-    }
-}
-
-#[test]
-fn repeat_pad_char_codes_match_js() {
-    for &(s, n, want) in js::REPEAT {
-        let got = both(s, |v| {
-            take(|o| assert_eq!(unsafe { velt_rt_str_repeat(v, n, o) }, 1))
-        });
-        assert_eq!(got, want);
-    }
-    for &(s, n, fill, start, end) in js::PAD {
-        let f = lit(fill);
-        assert_eq!(
-            both(s, |v| take(|o| unsafe {
-                velt_rt_str_pad_start(v, n, &f, o)
-            })),
-            start
-        );
-        assert_eq!(
-            both(s, |v| take(|o| unsafe { velt_rt_str_pad_end(v, n, &f, o) })),
-            end
-        );
-    }
+fn char_codes_match_js() {
     for &(s, i, want) in js::CHAR_CODE_AT {
         assert_eq!(unsafe { velt_rt_str_char_code_at(&lit(s), i) }, want);
     }
@@ -187,22 +113,6 @@ fn repeat_pad_char_codes_match_js() {
             "{code}"
         );
     }
-}
-
-#[test]
-fn repeat_range_errors() {
-    let s = lit("ab");
-    for n in [-1, i64::MIN, i64::MAX] {
-        assert_eq!(
-            take(|o| assert_eq!(unsafe { velt_rt_str_repeat(&s, n, o) }, 0)),
-            ""
-        );
-    }
-    // Empty string: any non-negative count is fine.
-    assert_eq!(
-        take(|o| assert_eq!(unsafe { velt_rt_str_repeat(&lit(""), i64::MAX, o) }, 1)),
-        ""
-    );
 }
 
 /// Run an out-param ABI function, return the code units of the result and free it.
@@ -246,26 +156,6 @@ fn code_unit_positions() {
     unsafe {
         assert_eq!(velt_rt_str_char_code_at(&s, 1), 233);
     }
-    // Pad lengths are code units; a fill cut between the halves of a pair keeps the high half.
-    let pad = |s: &'static str, n, fill: &'static str, start: bool| {
-        take_units(|o| unsafe {
-            if start {
-                velt_rt_str_pad_start(&lit(s), n, &lit(fill), o)
-            } else {
-                velt_rt_str_pad_end(&lit(s), n, &lit(fill), o)
-            }
-        })
-    };
-    assert_eq!(pad("a", 4, "é", true), u("éééa", &[]));
-    assert_eq!(pad("a", 5, "😀", false), u("a😀😀", &[]));
-    assert_eq!(pad("a", 4, "😀", false), u("a😀~", &[0xD83D]));
-    assert_eq!(pad("a", 3, "😀", true), u("😀a", &[]));
-    // split("") and replaceAll("") work per code unit: a pair splits into its halves.
-    let pieces = split_units(&lit("a😀"), &lit(""));
-    assert_eq!(pieces, [u("a", &[]), vec![0xD83D], vec![0xDE00]]);
-    let all =
-        take_units(|o| unsafe { velt_rt_str_replace_all(&lit("a😀"), &lit(""), &lit("|"), o) });
-    assert_eq!(all, u("|a|~|~|", &[0xD83D, 0xDE00]));
 }
 
 #[test]
@@ -278,14 +168,6 @@ fn half_pair_paths_match_js() {
         assert_eq!(velt_rt_str_char_code_at(&emoji, 1), 0xDE00);
         assert_eq!(velt_rt_str_char_code_at(&emoji, 2), -1);
     }
-    assert_eq!(
-        split_units(&lit("a😀b"), &lo),
-        [u("a~", &[0xD83D]), u("b", &[])]
-    );
-    let r = take_units(|o| unsafe { velt_rt_str_replace(&emoji, &lo, &lit("X"), o) });
-    assert_eq!(r, u("~X", &[0xD83D]));
-    let r = take_units(|o| unsafe { velt_rt_str_replace_all(&emoji, &lit(""), &lit("-"), o) });
-    assert_eq!(r, u("-~-~-", &[0xD83D, 0xDE00]));
     let slice = |s: &VeltStr, a, b| take_units(|o| unsafe { velt_rt_str_slice(s, a, b, o) });
     assert_eq!(slice(&emoji, 0, 1), vec![0xD83D]);
     assert_eq!(slice(&lit("x😀y"), 2, i64::MAX), u("~y", &[0xDE00]));
@@ -298,29 +180,18 @@ fn half_pair_paths_match_js() {
     unsafe { velt_rt_str_drop(&mut glued) };
 }
 
-/// `s.split(sep)` as code units.
-fn split_units(s: &VeltStr, sep: &VeltStr) -> Vec<Vec<u16>> {
-    let mut out = MaybeUninit::<VeltStrArray>::uninit();
-    unsafe { velt_rt_str_split(s, sep, out.as_mut_ptr()) };
-    let mut arr = unsafe { out.assume_init() };
-    let items = (0..arr.len as usize)
-        .map(|i| super::utf16_model::wtf8_decode(unsafe { (*arr.ptr.add(i)).as_bytes() }))
-        .collect();
-    unsafe { velt_rt_str_array_drop(&mut arr) };
-    items
-}
-
 #[test]
 fn static_inputs_give_borrowed_results() {
     let s = lit("  hello world  ");
     let mut t = MaybeUninit::<VeltStr>::uninit();
-    unsafe { velt_rt_str_trim(&s, t.as_mut_ptr()) };
+    // The piece std's `trim` cuts (std/lang/string/trim.velt): bytes 2..13.
+    unsafe { velt_rt_str_byte_slice(&s, 2, 13, t.as_mut_ptr()) };
     let t = unsafe { t.assume_init() };
     let at = |x: &VeltStr| unsafe { x.as_bytes() }.as_ptr();
     assert!(t.is_static() && at(&t) == unsafe { at(&s).add(2) });
     let h = heap("  hello  ");
     let mut t = MaybeUninit::<VeltStr>::uninit();
-    unsafe { velt_rt_str_trim(&*h, t.as_mut_ptr()) };
+    unsafe { velt_rt_str_byte_slice(&*h, 2, 7, t.as_mut_ptr()) };
     let mut t = unsafe { t.assume_init() };
     assert!(!t.is_static() && at(&t) != unsafe { at(&h).add(2) });
     drop(h);

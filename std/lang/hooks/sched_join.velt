@@ -11,6 +11,7 @@ import * as m from "./sched_mem";
 import * as mk from "./sched_make";
 import * as nc from "./sched_node_catch";
 import * as t from "./sched_task";
+import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
 
 declare function velt_rt_flush(): void;
@@ -307,6 +308,10 @@ function joinDropAs(f: usize, kind: u32): void {
   const s = mk.lockJoin(k, kind);
   const joiner = m.ld(k + t.T_JOINER);
   m.st(k + t.T_JOINER, 0);
+  if ((s & (t.J_PARKED | t.J_DONE)) === t.J_PARKED) {
+    // Parked with only this handle keeping it: woken to find that out (sched_task_lost.velt).
+    return lt.handleDropped(k, s, kind, joiner);
+  }
   mk.unlockJoin(k, s & ~t.J_HANDLE, kind);
   if (joiner !== 0) {
     m.wakerDrop(joiner);

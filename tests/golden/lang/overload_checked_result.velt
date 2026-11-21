@@ -1,0 +1,49 @@
+// An overload whose implementation returns a function, or a callable object, of `unknown`
+// values where the signature promises typed ones (#379): the result is converted through a
+// wrapper, as an interface adapter converts, and what the function returns is checked when it
+// comes. The last call's implementation returns a string where the signature promises a
+// number: a TypeError when the promise settles, where Node goes on with the string and prints
+// `a string1` (a documented difference).
+interface Ctx {
+  id: string;
+}
+
+interface Options<S, R> {
+  handler(rq: Ctx, input: S): R | Promise<R>;
+}
+
+function make<S, R>(o: Options<S, R>): (input: S) => Promise<R>;
+function make(o: Options<unknown, unknown>): (input: unknown) => Promise<unknown> {
+  return async (input: unknown): Promise<unknown> => await o.handler({ id: "rq" }, input);
+}
+
+interface Callable<A extends unknown[], R> {
+  (...args: A): Promise<R>;
+  key: string;
+}
+
+function callable<S, R>(o: Options<S, R>): Callable<[S], R>;
+function callable(o: Options<unknown, unknown>): Callable<unknown[], unknown> {
+  const call = (async (...args: unknown[]): Promise<unknown> =>
+    await o.handler({ id: "rq" }, args[0])) as Callable<unknown[], unknown>;
+  call.key = "k";
+  return call;
+}
+
+function lying<R>(f: () => R): () => Promise<R>;
+function lying(f: () => unknown): () => Promise<unknown> {
+  return async (): Promise<unknown> => "a string";
+}
+
+async function main(): Promise<void> {
+  const double = make({ handler: (rq: Ctx, n: number): number => n * 2 });
+  console.log(await double(21));
+  const greet = make({ handler: async (rq: Ctx, who: string): Promise<string> => rq.id + " " + who });
+  console.log(await greet("ann"));
+  const triple = callable({ handler: (rq: Ctx, n: number): number => n * 3 });
+  console.log(await triple(5), triple.key);
+  const one = lying((): number => 1);
+  const n: number = await one();
+  console.log(n + 1);
+}
+main();
