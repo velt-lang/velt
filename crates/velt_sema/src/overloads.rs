@@ -134,6 +134,30 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Rewritten> {
     Some(out)
 }
 
+/// Can the program's own modules change what [`rewrite`] makes of std's (`units::disk`)? The
+/// overloaded method names are one set for the program, and a class's signatures are found by
+/// its name alone ([`class_overloads`]): so when a module outside std has overloads, or
+/// declares a class named as one of std's.
+pub(crate) fn reaches_std(modules: &[SourceModule]) -> bool {
+    fn class(i: &ast::Item) -> Option<&str> {
+        match &i.kind {
+            ast::ItemKind::Class(d) => Some(d.name.name.as_str()),
+            _ => None,
+        }
+    }
+    let own = || modules.iter().filter(|m| !m.is_std);
+    if own().any(|m| m.ast.items.iter().any(has_overloads)) {
+        return true;
+    }
+    let named: FxHashSet<&str> = own()
+        .flat_map(|m| m.ast.items.iter().filter_map(class))
+        .collect();
+    !named.is_empty()
+        && (modules.iter().filter(|m| m.is_std))
+            .flat_map(|m| m.ast.items.iter().filter_map(class))
+            .any(|n| named.contains(n))
+}
+
 fn has_overloads(item: &ast::Item) -> bool {
     match &item.kind {
         ast::ItemKind::Function(f) => !f.overloads.is_empty(),
