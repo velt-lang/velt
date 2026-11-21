@@ -56,7 +56,8 @@ export function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
 export function sha256Blocks(h: u32[], data: u8[], off: usize, count: usize) {
   // The caller keeps to its data; said once so that nothing below reads past it, and loudly,
   // as in `sha256Block`.
-  if (off + count * BLOCK > data.length || h.length != 8) {
+  // In this form, `off + count * BLOCK` cannot wrap.
+  if (off > data.length || count > (data.length - off) / BLOCK || h.length != 8) {
     blockFault();
   }
   if (Sha256.isSupported()) {
