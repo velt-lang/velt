@@ -58,9 +58,19 @@ function main() {
       held = { o: own };
     });
   }
+  // Chosen by a condition, inline and through a variable of the callback's.
+  const spare = fresh();
+  for (let r = 0; r < 4; r++) {
+    a.read((x) => {
+      holder.push(r % 2 === 0 ? own : spare);
+      const pick = r > 1 ? own : spare;
+      holder.push(pick);
+    });
+  }
   own[0][0].push(99);
   n += holder.length + held!.o.length;
   console.log("stored", n, JSON.stringify(holder[0]), holder[2] === own, held!.o === own);
+  console.log("chosen", holder.length, holder[9] === own, holder[10] === spare, holder[16] === own);
 
   // With an element the reader made in it, and the caller's elements stored again after.
   const mixed = fresh();

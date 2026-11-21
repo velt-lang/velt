@@ -68,7 +68,8 @@ impl FnLower<'_, '_> {
     }
 
     /// Before the store of `e` (`held_by_caller`): each variable in it naming one of the caller's
-    /// objects outside the lock set that reaches it (`out` in `holder.push(out)` or `{ o: out }`)
+    /// objects outside the lock set that reaches it (`out` in `holder.push(out)`, `{ o: out }` or
+    /// `c ? out : other`)
     /// is recorded as kept as itself in these reads (velt_rt `velt_rt_lk_kept_again`). The
     /// transfer then gives the store its reference and leaves the object's parts alone, as the
     /// caller holds them counted already; it would count them once more otherwise, taking the
@@ -83,6 +84,13 @@ impl FnLower<'_, '_> {
             | K::New { args: xs, .. }
             | K::Variant { args: xs, .. } => xs.iter().for_each(|x| self.note_callers_own(x)),
             K::WrapSome(b) | K::Upcast(b) => self.note_callers_own(b),
+            // Each branch's (`c ? own : other`): one recorded and not stored is harmless, as
+            // the record only keeps its parts from being counted again.
+            K::If { then, els, .. } => {
+                self.note_callers_own(then);
+                self.note_callers_own(els);
+            }
+            K::Match { arms, .. } => arms.iter().for_each(|a| self.note_callers_own(&a.body)),
             K::Call {
                 callee: hir::Callee::Intrinsic(Intrinsic::Share),
                 args,
