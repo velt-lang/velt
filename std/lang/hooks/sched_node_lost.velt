@@ -5,12 +5,20 @@
 // collects a promise nobody can settle together with the functions waiting for it; here such a
 // node is given up, its state dropped. A node gets there in two places: its owner drops it while
 // it is suspended (`dropPending`), or a poll leaves it suspended with its owner gone (`parked`).
+// A node that only its owner's poll can run (`ownerOnly`, `nested`) is listed for its task, which
+// is given up the same way once all its promises are like that (sched_task_lost.velt).
 
 import { inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as aw from "./sched_node_await";
+import * as nc from "./sched_node_catch";
 import * as t from "./sched_task";
+import * as lt from "./sched_task_lost";
+import * as wk from "./sched_wake";
+
+/** sched_task_lost.velt's flag, for sched_node.velt: the node is counted owner-only (`list`). */
+export const LISTED: u32 = lt.LISTED;
 
 /**
  * The end of sched_node.velt `nodeDrop` for started node `n` that has not finished, its owner on
@@ -34,15 +42,63 @@ export function dropPending(n: usize): void {
  * An adoption poll left started node `n` suspended (sched_node.velt `pollNode`), its owner's and
  * its task's its only references: no leaf holds its own waker, so it runs again only when its
  * owner polls it, and its leaves wake the owner. The owner's waker is not kept in it then: an
- * owner that nothing else can wake is `unreachable`. Pending, always.
+ * owner that nothing else can wake is `unreachable`. Its task `task` lists it (its flags `was`
+ * say whether it is listed already), so a task whose promises are all like that can be found
+ * parked for ever (sched_task_lost.velt). Pending, always.
  */
 @inline("always")
-export function ownerOnly(n: usize): u32 {
+export function ownerOnly(task: usize, n: usize, was: u32): u32 {
   const w = aw.takePlain(n);
   if (w !== 0) {
     m.wakerDrop(w);
   }
+  // Not for `main`'s root, whose park is never looked at (sched_task_lost.velt `parks`).
+  if ((was & lt.LISTED) === 0 && !t.has(task, t.ROOT)) {
+    lt.list(task, n);
+  }
   return 0;
+}
+
+/**
+ * The owner of started node `n` (flags `fl`) polls it with `cx` on worker `e`, and sched_node.velt
+ * `pollNode` did not adopt it: is that only because an adoption is under way already (the
+ * owner's own state is being polled by its owner), with `n` owner-only all the same? Then it is
+ * left as `ownerOnly` leaves it, with no awaiter (true). No waker of `n` exists, so only an
+ * adoption can finish it, and the adopter gets the result from that poll, never through the
+ * awaiter's word. Stored there, the waker of the outermost adopter would count as a reference
+ * that can wake it: a chain of functions each awaiting the next, the last on a promise nobody
+ * can settle, would look alive for ever. Not under a catch, whose adoptions keep the awaiter
+ * (sched_node_catch.velt `adoptCaught`).
+ */
+@inline("always")
+export function nested(e: usize, task: usize, n: usize, cx: usize, fl: u32): bool {
+  if (
+    (fl & (nd.RUNNING | nd.QUEUED | nd.CATCHES | nd.ADOPTED)) !== 0 ||
+    m.ld(e + t.E_ADOPTING) === 0 ||
+    m.ld(e + nc.E_CATCHING) >= 2 ||
+    wk.taskOf(m.ld(cx + 8)) !== task ||
+    m.load(n + nd.N_REFS) !== 2
+  ) {
+    return false;
+  }
+  leftNested(e, task, n, fl);
+  return true;
+}
+
+/** `nested`'s exit for node `n` of task `task`, out of line; checked with the counters on. */
+@noInline
+function leftNested(e: usize, task: usize, n: usize, fl: u32): void {
+  if (wk.counting()) {
+    const now = m.load32(n + nd.N_FLAGS);
+    const busy = nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED;
+    if (m.ld(e + t.E_CURRENT) !== task || (now & (nd.STARTED | busy)) !== nd.STARTED) {
+      panic("ICE: a promise left without an awaiter under an adoption can still run");
+    }
+  }
+  if ((fl & lt.LISTED) === 0 && !t.has(task, t.ROOT)) {
+    nd.setFlags(n, lt.LISTED);
+  }
+  ownerOnly(task, n, fl);
 }
 
 /**
@@ -99,7 +155,11 @@ export function handedOff(n: usize): void {
  */
 @noInline
 function giveUp(task: usize, n: usize): void {
-  nd.setFlags(n, nd.FINISHED);
+  const was = m.or32(n + nd.N_FLAGS, nd.FINISHED);
+  if ((was & lt.LISTED) !== 0) {
+    // Finished: off its task's list of promises only their owner can run.
+    lt.unlist(task, n, was);
+  }
   // SAFETY: the state's own drop glue (a non-catching node keeps it, `N_DROP`) on a state that
   // is suspended, not being polled, and never polled again.
   unsafe {
