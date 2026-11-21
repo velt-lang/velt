@@ -566,6 +566,24 @@ fn decorated_classes_grow_linearly() {
     assert_linear_counted(&[100, 800], statements, names, steps, 1.5);
 }
 
+/// A function holding `n` closures in `const`s, each capturing a number and called once.
+fn held_closures(n: usize) -> String {
+    let mut out = String::from("function f(x: number): number {\n  let s = 0;\n");
+    for i in 0..n {
+        out += &format!("  const c{i} = (y: number) => y + x + {i};\n  s += c{i}(1);\n");
+    }
+    out + "  return s;\n}\nfunction main() {\n  console.log(f(1));\n}\n"
+}
+
+/// Deciding which `const`-held closures capture by reference walks their function's body once
+/// for all of them, not once per closure (and per capture).
+#[test]
+fn held_closures_grow_linearly() {
+    let steps = || [check_work().local_closure_steps];
+    let load = |n| load_src(&held_closures(n));
+    assert_linear_counted(&[100, 800], load, ["local_closure_steps"], steps, 1.5);
+}
+
 /// Choosing the member of a union of function types for nested arrows that each use the
 /// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
 /// Each try of an arrow checks the arrows nested in it, so the arrows checked are quadratic in

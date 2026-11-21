@@ -33,6 +33,8 @@ pub(super) struct Sites<'a, 'm> {
     kinds: &'a [LocalKind],
     /// No call found so far runs while a reference is held.
     pub ok: bool,
+    /// Expressions looked at (`crate::check_work`).
+    pub steps: u64,
 }
 
 impl<'a, 'm> Sites<'a, 'm> {
@@ -50,6 +52,7 @@ impl<'a, 'm> Sites<'a, 'm> {
             aliases,
             kinds,
             ok: true,
+            steps: 0,
         }
     }
 
@@ -167,6 +170,7 @@ impl<'a, 'm> Sites<'a, 'm> {
     }
 
     fn expr(&mut self, e: &Expr, held: bool) {
+        self.steps += 1;
         match &e.kind {
             E::Call { callee, args } => {
                 if let Callee::Indirect(c) = callee {
