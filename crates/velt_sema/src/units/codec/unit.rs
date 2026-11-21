@@ -24,19 +24,28 @@ use crate::SourceModule;
 pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x05";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
-/// caller's, memos, what every check installs again) and `empty` (state of one pass, or the
-/// app's alone: at a unit's end as `Ctx::over` makes it, which a test checks,
-/// [`empty_fields_differing`]). Generates the field walk of the encoder and decoder.
+/// caller's, what every check installs again), `memo` (built again on demand: one built over a
+/// unit's definitions alone is stale once a later unit's are added, [`clear_memos`]) and
+/// `empty` (state of one pass, or the app's alone: at a unit's end as `Ctx::over` makes it,
+/// which a test checks, [`empty_fields_differing`]). Generates the field walk of the encoder and
+/// decoder.
 macro_rules! unit_fields {
     (
         save: [$($p:ident),* $(,)?],
         special: [$($sp:ident),* $(,)?],
         skip: [$($s:ident),* $(,)?],
+        memo: [$($m:ident),* $(,)?],
         empty: [$($e:ident),* $(,)?] $(,)?
     ) => {
+        /// Drop the memos of `cx` (a finished unit's): a later unit's stage builds them again
+        /// over its own definitions too, as it does from a unit kept from an earlier check.
+        pub(crate) fn clear_memos(cx: &mut Ctx) {
+            $(cx.$m = Default::default();)*
+        }
+
         /// Encode the saved fields of `cx`, with the bytes each took.
         fn enc_fields(cx: &Ctx, w: &mut Writer, sizes: &mut Vec<(&'static str, usize)>) {
-            let Ctx { $($p,)* $($sp,)* $($s: _,)* $($e: _,)* } = cx;
+            let Ctx { $($p,)* $($sp,)* $($s: _,)* $($m: _,)* $($e: _,)* } = cx;
             $(
                 let at = w.out.len();
                 Codec::enc($p, w);
@@ -100,11 +109,6 @@ unit_fields! {
         loads_added, unit_base, units_stage,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
-        // Memos, built again on demand.
-        marked_aliases, extension_names, impl_index, ext_memo, ext_exists_memo, ext_memo_impls,
-        canon_memo, canon_errors, canon_keys, primitive_statics, classes_below, groups,
-        shared_memo, pure_fns, subclasses, native_libraries,
-        decorator_scopes, export_memo,
         // What the source rewrites found, installed again by every check.
         promoted_consts, asserted_rmw, global_props, generic_arrow_fns, generic_arrow_all,
         unsafe_arrow_fns, alias_blocked, kept_nested, closure_groups, group_names,
@@ -115,6 +119,12 @@ unit_fields! {
         // bodies, never by a later unit's (whose passes look at their unit's functions,
         // `Ctx::unit_fns`). A unit is saved once std is a check of its own, after those passes.
         thread_local_uses, throw_checks, loop_roots, closure_defs, rec,
+    ],
+    memo: [
+        marked_aliases, extension_names, impl_index, ext_memo, ext_exists_memo, ext_memo_impls,
+        canon_memo, canon_errors, canon_keys, primitive_statics, classes_below, groups,
+        shared_memo, pure_fns, subclasses, native_libraries,
+        decorator_scopes, export_memo,
     ],
     empty: [
         // State within one pass or one body's check, empty when a unit is finished.
