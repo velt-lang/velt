@@ -15,6 +15,7 @@
 
 import { Fe25519 } from "velt/crypto/field25519";
 import { X25519_BASE } from "velt/crypto/x25519_base_table";
+import { noInline } from "velt/lang/intrinsics";
 
 // Registers: the accumulator (X : Y : Z : T), the completed point of ref10's `ge_p1p1`
 // ((X : Z), (Y : T)), the selected entry (y + x, y - x, 2 d x y), temporaries, and the
@@ -115,12 +116,23 @@ function pick(f: Fe25519, t: usize, d: i64) {
   }
   // The identity for a zero digit: y + x = y - x = 1 (2 d x y stays 0).
   f.set(A, 1);
-  const none = 0 - ((abs - 1) >> 63);
+  const none = maskOf((abs - 1) >> 63);
   f.select(YPX, A, YPX, none);
   f.select(YMX, A, YMX, none);
   f.swap(YPX, YMX, neg);
   f.sub(A, ZERO, XY2D);
-  f.select(XY2D, A, XY2D, 0 - neg);
+  f.select(XY2D, A, XY2D, maskOf(neg));
+}
+
+// All ones for `bit` 1, 0 for 0. Out of line, as field_p256.velt's `isZero`: inlined, LLVM can
+// see that a mask is one comparison and make the selects after the table scan branches on the
+// digit, which is secret. Whether it does depends on the build: a review's builder compiled the
+// `none` mask to `test; js` where another build did not, so the masks of those selects come
+// from here. The scan's own masks stay inline (512 calls would cost a tenth of the operation);
+// no build has been seen to branch on them, and memcheck would show it.
+@noInline
+function maskOf(bit: u64): u64 {
+  return 0 - bit;
 }
 
 // The accumulator += the selected entry (ref10's `ge_madd`, then `ge_p1p1_to_p3`).
