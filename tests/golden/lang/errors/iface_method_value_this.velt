@@ -37,3 +37,137 @@ function detach(c: Counter) {
 }
 
 detach(literalCounter()).inc();
+
+// Through an adapter: a literal of its own interface, of another interface of the same shape,
+// a class implementing another interface, a generic interface.
+interface Hello {
+  name: string;
+  hello(): string;
+}
+function wrapHello(g: Hello) {
+  return { name: "wrapper", hello: g.hello };
+}
+const own = {
+  name: "o",
+  hello() {
+    return "hi " + this.name;
+  },
+};
+console.log(wrapHello(own).hello());
+
+interface Named {
+  name: string;
+  named(): string;
+}
+interface Naming {
+  name: string;
+  named(): string;
+}
+function wrapNamed(g: Naming) {
+  return { name: "wrapper", named: g.named };
+}
+const named: Named = {
+  name: "o",
+  named() {
+    return "hi " + this.name;
+  },
+};
+console.log(wrapNamed(named).named());
+
+interface Titled {
+  name: string;
+  title(): string;
+}
+interface Titling {
+  name: string;
+  title(): string;
+}
+class Book implements Titled {
+  name = "b";
+  title(): string {
+    return "hi " + this.name;
+  }
+}
+function wrapTitle(g: Titling) {
+  return { name: "wrapper", title: g.title };
+}
+const book: Titled = new Book();
+console.log(wrapTitle(book).title());
+
+interface Cell<T> {
+  v: T;
+  value(): T;
+}
+const cell = {
+  v: 1,
+  value() {
+    return this.v;
+  },
+};
+function wrapCell<T>(c: Cell<T>, v: T) {
+  return { v, value: c.value };
+}
+console.log(wrapCell(cell, 2).value());
+
+// sigx's shape, with one `this`.
+interface Handle {
+  key: string;
+  setKey(k: string): void;
+  show(): string;
+}
+function make(): Handle {
+  const h = {
+    key: "a",
+    setKey(k: string) {
+      this.key = k;
+    },
+    show() {
+      return this.key;
+    },
+  };
+  return h;
+}
+const handle = make();
+const api = { key: "lit", setKey: handle.setKey, show: handle.show };
+api.setKey("b");
+console.log(handle.show(), api.show());
+
+// A subclass's method: of an abstract implementer, an override.
+interface Shape {
+  name: string;
+  area(): string;
+}
+abstract class Base implements Shape {
+  name = "a";
+  abstract area(): string;
+}
+class Square extends Base {
+  area(): string {
+    return "hi " + this.name;
+  }
+}
+function wrapShape(g: Shape) {
+  return { name: "wrapper", area: g.area };
+}
+console.log(wrapShape(new Square()).area());
+
+interface Labeled {
+  name: string;
+  label(): string;
+}
+class Plain implements Labeled {
+  name = "p";
+  label(): string {
+    return "plain";
+  }
+}
+class Fancy extends Plain {
+  override label(): string {
+    return "hi " + this.name;
+  }
+}
+function wrapLabel(g: Labeled) {
+  return { name: "wrapper", label: g.label };
+}
+const fancy: Labeled = new Fancy();
+console.log(wrapLabel(fancy).label());

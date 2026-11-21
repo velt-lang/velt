@@ -62,8 +62,8 @@ pub(crate) fn copy_statics(cx: &mut Ctx, from: u32) {
     }
 }
 
-/// Does method `m`'s body mention `this` or `super` (also in nested functions, which only
-/// costs an unneeded copy of a static method)?
+/// Does method `m`'s body, or an interface's default body, mention `this` or `super` (also in
+/// nested functions, which only costs an unneeded copy of a static method)?
 pub(crate) fn uses_this(cx: &Ctx, m: DefId) -> bool {
     struct Finder(bool);
     impl<'a> Visit<'a> for Finder {
@@ -71,11 +71,12 @@ pub(crate) fn uses_this(cx: &Ctx, m: DefId) -> bool {
             self.0 |= matches!(e.kind, ast::ExprKind::This | ast::ExprKind::Super);
         }
     }
-    let Some(FnSource::Decl(decl)) = cx.fn_info(m).source else {
-        return false;
-    };
     let mut f = Finder(false);
-    walk_fn(decl, &mut f);
+    match cx.fn_info(m).source {
+        Some(FnSource::Decl(decl)) => walk_fn(decl, &mut f),
+        Some(FnSource::Default(_, body)) => velt_syntax::visit::walk_block(body, &mut f),
+        None => {}
+    }
     f.0
 }
 
