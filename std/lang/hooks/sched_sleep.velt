@@ -46,8 +46,10 @@ export const TM_ORDER: usize = 32;
 export const TM_DUE: usize = 288;
 export const TM_SIZE: usize = 296;
 
-// A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
-// list), state, and the task whose due list holds it.
+/**
+ * A sleep: its deadline (nanoseconds), number, waker, links (the pending list, or its task's due
+ * list), state, and the task whose due list holds it.
+ */
 export const S_DEADLINE: usize = 16;
 export const S_SEQ: usize = 24;
 export const S_WAKER: usize = 32;

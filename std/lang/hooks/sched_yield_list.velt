@@ -9,18 +9,22 @@ import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as t from "./sched_task";
 
-// A yield: a heap future's header (0, 0 for an awaited yield's record), the next on its task's
-// list (the list is circular: the block's `B_LAST` is the last), the waker to wake at its turn
-// (0: none yet), its state, its task (a stored one's), and its stamp (`stamp`).
+/**
+ * A yield: a heap future's header (0, 0 for an awaited yield's record), the next on its task's
+ * list (the list is circular: the block's `B_LAST` is the last), the waker to wake at its turn
+ * (0: none yet), its state, its task (a stored one's), and its stamp (`stamp`).
+ */
 export const Y_NEXT: usize = 16;
 export const Y_WAKER: usize = 24;
 export const Y_STATE: usize = 32;
 export const Y_TASK: usize = 40;
 export const Y_STAMP: usize = 48;
 export const Y_SIZE: usize = 56;
-// A yield's states: made (a stored one, on no list); waiting on the list; its turn came; dropped
-// while waiting (the list frees it at its turn); its turn is taking its waker (`fire`: whoever
-// holds it waits for `FIRED` before it frees it, which `fire` touches until then).
+/**
+ * A yield's states: made (a stored one, on no list); waiting on the list; its turn came; dropped
+ * while waiting (the list frees it at its turn); its turn is taking its waker (`fire`: whoever
+ * holds it waits for `FIRED` before it frees it, which `fire` touches until then).
+ */
 export const NEW: usize = 0;
 export const QUEUED: usize = 1;
 export const FIRED: usize = 2;
