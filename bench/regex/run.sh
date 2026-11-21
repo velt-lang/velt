@@ -4,7 +4,8 @@
 # regex-redux on the output of `fasta 100000`, bench/regex/literal.velt (a loop of
 # literal-pattern replace/test/split calls through the RegExp API), bench/regex/units.velt, and
 # each row of bench/regex/long.velt (patterns that are no literal over a subject of 100,000
-# characters, failing and succeeding). Run compare_refs.sh first:
+# characters, failing and succeeding) and of bench/regex/lines.velt (such patterns searched line
+# by line). Run compare_refs.sh first:
 #
 #   bench/compare_refs.sh BASE_REF HEAD_REF WORK_DIR
 #   bench/regex/run.sh WORK_DIR
@@ -19,12 +20,12 @@ WORK=$(cd "$1" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$WORK/regex
 mkdir -p "$OUT"
-cp "$HERE/literal.velt" "$HERE/units.velt" "$HERE/long.velt" "$OUT/"
+cp "$HERE/literal.velt" "$HERE/units.velt" "$HERE/long.velt" "$HERE/lines.velt" "$OUT/"
 for side in base head; do
   velt="$WORK/target-$side/release/velt"
   (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/fasta/main.velt -o "$OUT/fasta-$side" >/dev/null)
   (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/regex-redux/main.velt -o "$OUT/redux-$side" >/dev/null)
-  for prog in literal units long; do
+  for prog in literal units long lines; do
     (cd "$WORK/$side" && "$velt" build --release "$OUT/$prog.velt" -o "$OUT/$prog-$side" >/dev/null)
   done
 done
@@ -41,8 +42,10 @@ for prog in redux literal units; do
   h=$(VELT_THREADS=1 count "$OUT/$prog-head" < "$OUT/fasta.txt")
   row "$prog" "$b" "$h"
 done
-for r in 0 1 2 3 4 5 6 7; do
-  b=$(VELT_THREADS=1 count "$OUT/long-base" "$r")
-  h=$(VELT_THREADS=1 count "$OUT/long-head" "$r")
-  row "long-$r" "$b" "$h"
+for prog in long lines; do
+  for r in 0 1 2 3 4 5 6 7; do
+    b=$(VELT_THREADS=1 count "$OUT/$prog-base" "$r")
+    h=$(VELT_THREADS=1 count "$OUT/$prog-head" "$r")
+    row "$prog-$r" "$b" "$h"
+  done
 done
