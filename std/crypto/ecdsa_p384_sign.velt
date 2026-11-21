@@ -3,8 +3,9 @@
 // (#2392 step 4). Constant time in the private key and the nonce, as ecdsa_p256_sign.velt: the
 // nonce comes from HMAC, R = kG is `p384PublicKey`'s fixed-window multiplication, and the
 // arithmetic mod n is `Mod384`'s masked products and additions with an inversion over the public
-// exponent n - 2. Only the digest and the signature are public, and the loop that retries a
-// nonce out of range (with odds of about 2^-194) branches on public facts.
+// exponent n - 2. Only the digest and the signature are public. The loop that retries a nonce
+// out of range, or an r or s of zero, does branch on secret-derived values, as every RFC 6979
+// signer does; it takes a second turn with odds of about 2^-194, so no key reaches it in practice.
 
 import { CryptoError } from "velt/crypto/errors";
 import { hmacSha384 } from "velt/crypto/hmac";
