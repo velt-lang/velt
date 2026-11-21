@@ -6,10 +6,10 @@ use velt_syntax::ast;
 
 use super::accessor_rmw::Rmw;
 use super::any_text::Hint;
+use super::assign_checks::assigned_literal;
 use super::dynamic_arith::DynRmw;
 use super::element_value::ElementWrite;
 use super::ops::hir_binop;
-use crate::body::narrow::nothing_word;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, TyId, UseMode};
@@ -792,19 +792,5 @@ impl FnCx<'_, '_> {
             span,
         };
         self.mk(H::Block(block), lty, span)
-    }
-}
-
-/// The literal a plain assignment's value `value` is (`b = null`, `b = c = 0`, through
-/// parentheses), which the assignment's own value then is.
-fn assigned_literal(op: Option<ast::BinaryOp>, value: &ast::Expr) -> Option<&ast::Expr> {
-    if op.is_some() {
-        return None;
-    }
-    match &value.kind {
-        ast::ExprKind::Paren(inner) => assigned_literal(None, inner),
-        ast::ExprKind::Assign { op, value, .. } => assigned_literal(*op, value),
-        ast::ExprKind::Lit(_) => Some(value),
-        _ => nothing_word(value).map(|_| value),
     }
 }
