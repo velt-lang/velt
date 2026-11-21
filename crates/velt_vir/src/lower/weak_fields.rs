@@ -38,6 +38,20 @@ impl Cx<'_> {
         self.adt_field_tys(ty).get(index as usize).copied()
     }
 
+    /// The name of class `t` when it has a `weak` field (own or inherited): its slots belong to
+    /// the weak core of the task that has their targets, so it cannot go to another task.
+    pub(super) fn weak_holder(&self, t: TyId) -> Option<String> {
+        let TyKind::Adt(d, _) = self.raw_kind(t) else {
+            return None;
+        };
+        if !matches!(self.hir.def(*d), hir::Def::Adt(_)) {
+            return None;
+        }
+        let a = self.adt_def(*d);
+        let name = a.name.rsplit("::").next().unwrap_or(&a.name);
+        a.fields.iter().any(|f| f.weak).then(|| name.to_string())
+    }
+
     /// The types of class `ty`'s fields that are edges of the ownership graph: all but its
     /// `weak` ones (trace glue, the cycle and weak-capable analyses).
     pub(super) fn adt_edge_tys(&mut self, ty: TyId) -> Vec<TyId> {
@@ -45,10 +59,10 @@ impl Cx<'_> {
         let TyKind::Adt(d, _) = self.kind(ty) else {
             return tys;
         };
-        let weak: Vec<bool> = self.adt_def(d).fields.iter().map(|f| f.weak).collect();
-        (tys.into_iter().enumerate())
-            .filter(|(i, _)| !weak.get(*i).copied().unwrap_or(false))
-            .map(|(_, t)| t)
+        let fields = &self.adt_def(d).fields;
+        (tys.into_iter().zip(fields))
+            .filter(|(_, f)| !f.weak)
+            .map(|(t, _)| t)
             .collect()
     }
 
@@ -68,7 +82,9 @@ impl Cx<'_> {
                 for f in a.fields.iter().filter(|f| f.weak) {
                     if let TyKind::Option(t, _) = self.raw_kind(f.ty) {
                         if let TyKind::Adt(td, _) = self.raw_kind(*t) {
-                            out.insert(self.class_root(*td));
+                            if matches!(self.hir.def(*td), hir::Def::Adt(_)) {
+                                out.insert(self.class_root(*td));
+                            }
                         }
                     }
                 }

@@ -390,8 +390,12 @@ button.onClick(() => self?.refresh());
   parents do not change. A closure captures a `weak`
   variable as its slot. A transfer to another task, and `clone()`, map a weak field to the copy
   of its target when the target is part of the copied graph, and to `null` when it is not: the
-  copy never refers to an object of another task. A store into a weak field of a value locked by
-  `Mutex.with` of a target from outside the lock is an error, as weak collections are there.
+  copy never refers to an object of another task. Until that is built, a value holding a class
+  with a weak field stays on its task as a weak collection does: sema refuses the crossings it
+  sees (`velt_sema` `weak_threads`, through interface and base-class values, `unknown` and a
+  promise spawned from a variable too), and the transfer glue panics on the rest (a function
+  value that captured one). A store into a weak field of a value locked by `Mutex.with` of a
+  target from outside the lock is an error, as weak collections are there.
 - **TypeScript.** `velt check --ts-compat` reports `weak`; `velt doc`'s TypeScript output writes
   the read type, `T | null`.
 

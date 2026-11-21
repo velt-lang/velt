@@ -318,6 +318,11 @@ impl FnCx<'_, '_> {
                     }
                 }
             }
+            if let Some(AssignTarget::Place(p)) = &checked {
+                if self.weak_field_place(p) && super::assign_paths::is_pure_place(target) {
+                    return (self.weak_logical_assign(op, target, value, span), true);
+                }
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)

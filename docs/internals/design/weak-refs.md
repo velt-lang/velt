@@ -207,7 +207,9 @@ reaches it, and the trial uses the record's trace for such keys.
   of decrementing it.
 - **Weak handles belong to one task.** A `WeakMap`, `WeakSet` or `WeakRef` (a class instance with
   a plain count) stays with the task that made it (see "Threads and `shared`"). The task itself
-  may run on several threads in turn, which the process-wide table allows. A weakly held object
+  may run on several threads in turn, which the process-wide table allows. So does an object of
+  a class with a `weak` field, whose slots are this task's ([cycles.md](cycles.md) "`weak T`"):
+  its transfer glue panics as a `WeakRef`'s does. A weakly held object
   is never transferred in place either (its count word is never 1, so the transfer deep-copies
   it, and the copy is not weakly held). An object with `RC_WEAK` set and no record is an `ICE:`
   that `weakRelease` reports before it touches the count word.

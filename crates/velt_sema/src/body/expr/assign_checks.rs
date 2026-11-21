@@ -127,6 +127,38 @@ impl FnCx<'_, '_> {
             });
     }
 
+    /// `a ??= b` (likewise `&&=`, `||=`) on a `weak` field, as JavaScript defines it:
+    /// `a ?? (a = b)`. The inner assignment checks `b` as a borrow (`weak_field_place`), so a
+    /// local at its last use keeps its object, which `a = a ?? b` would move into the field and
+    /// free at once. Its value is the field's.
+    pub(super) fn weak_logical_assign(
+        &mut self,
+        op: ast::BinaryOp,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let write = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Assign {
+                op: None,
+                target: Box::new(target.clone()),
+                value: Box::new(value.clone()),
+            },
+            span,
+        };
+        let e = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Binary {
+                op,
+                lhs: Box::new(target.clone()),
+                rhs: Box::new(write),
+            },
+            span,
+        };
+        self.expr(&e, None, Want::Move)
+    }
+
     /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
     pub(super) fn logical_assign(
         &mut self,
