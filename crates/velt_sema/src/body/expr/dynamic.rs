@@ -30,6 +30,13 @@ fn dynamic_converts(from: Dynamic, to: Dynamic, checked: bool) -> bool {
 }
 
 impl FnCx<'_, '_> {
+    /// Is `t` a `Record<string, any>`?
+    fn any_record(&mut self, t: TyId) -> bool {
+        let str_ = self.cx.ty.str_;
+        self.record_args(t)
+            .is_some_and(|(k, v)| k == str_ && self.cx.dynamic(v) == Some(Dynamic::Any))
+    }
+
     /// `h` converted to `exp`, one of them `any` or `unknown`. `checked_from_unknown`: an
     /// `unknown` may convert to a typed value (`as T`).
     pub(crate) fn coerce_dynamic(
@@ -75,6 +82,9 @@ impl FnCx<'_, '_> {
             (Some(_), None) if self.takes_dynamic_whole(exp, h.ty) => {
                 Ok(self.unbox_dynamic(h, exp))
             }
+            // An `object` where a `Record<string, any>` is expected, which TypeScript accepts
+            // (an `any` index signature takes every object): the record view `as` makes.
+            (Some(Dynamic::Object), None) if self.any_record(exp) => Ok(self.unbox_dynamic(h, exp)),
             (Some(_), None) if self.dynamic_option(exp) => self.dynamic_to_dynamic_option(h, exp),
             (Some(_), None) if !checked_from_unknown => Err(h),
             (Some(_), None) => Ok(self.unbox_dynamic(h, exp)),

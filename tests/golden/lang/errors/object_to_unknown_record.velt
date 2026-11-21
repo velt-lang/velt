@@ -1,0 +1,7 @@
+// An `object` is not a `Record<string, unknown>` (TypeScript's TS2322: an index signature is
+// missing): only an `any` index signature takes it.
+function read(state: object): unknown {
+  const r: Record<string, unknown> = state;
+  return r;
+}
+console.log(read({}));
