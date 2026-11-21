@@ -6,7 +6,7 @@
 //! (`console.log(ss[0], grow(ss))`, #580) leaves the earlier value as it was.
 
 use velt_sema::effects::may_change_memory;
-use velt_sema::hir::{self, TyId};
+use velt_sema::hir::{self, DefId, PassMode, TyId};
 
 use super::FnLower;
 use crate::vir::{Operand, Place, Rvalue, Ty};
@@ -24,14 +24,20 @@ pub(super) struct Later {
 }
 
 impl Later {
-    /// What evaluating `e` may do.
+    /// What evaluating `e` may do, taking every closure it creates to write locals.
     pub(super) fn of(e: &hir::Expr) -> Later {
-        let only = match written_local(e) {
+        Later::of_in(e, &|_| Written::Unknown)
+    }
+
+    /// What evaluating `e` may do, where `writes(d)` tells which locals of the enclosing function
+    /// the closure `d` may assign when it runs ([`closure_writes`]).
+    fn of_in(e: &hir::Expr, writes: &dyn Fn(DefId) -> Written) -> Later {
+        let only = match written_local(e, writes) {
             Written::One(l) => Some(l),
             _ => None,
         };
         Later {
-            locals: writes_local(e),
+            locals: writes_local(e, writes),
             only,
             memory: may_change_memory(e),
         }
@@ -63,14 +69,15 @@ impl Later {
     }
 }
 
-/// For each of `es`, what the ones after it may do: one pass from the end, so a long literal
-/// (a table of 50k entries) costs one look at each entry.
-pub(super) fn later_each(es: &[hir::Expr]) -> Vec<Later> {
+/// For each of `es`, what the ones after it may do, where `writes` tells what each closure may
+/// write ([`Later::of_in`]): one pass from the end, so a long literal (a table of 50k entries)
+/// costs one look at each entry.
+fn later_each_in(es: &[hir::Expr], writes: &dyn Fn(DefId) -> Written) -> Vec<Later> {
     let mut out = vec![Later::default(); es.len()];
     let mut acc = Later::default();
     for (i, e) in es.iter().enumerate().rev() {
         out[i] = acc;
-        acc = acc.or(Later::of(e));
+        acc = acc.or(Later::of_in(e, writes));
     }
     out
 }
@@ -165,48 +172,65 @@ impl Written {
 
 /// The local evaluating `e` writes, when it writes just one and the shape says which: an
 /// assignment or update of a variable (`q++`, which is `{ let t = q; q += 1; t }`: the block's
-/// own temporaries are not visible to anything evaluated before it), whose parts write nothing
-/// else. `Unknown` for anything else that may write.
-fn written_local(e: &hir::Expr) -> Written {
+/// own temporaries are not visible to anything evaluated before it), or a closure that assigns
+/// one variable it captures, passed to a direct call or put in a literal (`run(() => k++)`),
+/// whose other parts write nothing else. `Unknown` for anything else that may write.
+fn written_local(e: &hir::Expr, writes: &dyn Fn(DefId) -> Written) -> Written {
     use hir::ExprKind as K;
+    let w = |x: &hir::Expr| written_local(x, writes);
+    let all = |xs: &[hir::Expr]| xs.iter().fold(Written::Nothing, |a, x| a.and(w(x)));
     match &e.kind {
         K::Assign { place, value } | K::CompoundAssign { place, value, .. } => match &place.kind {
-            K::Local(l, _) => Written::One(*l).and(written_local(value)),
+            K::Local(l, _) => Written::One(*l).and(w(value)),
             _ => Written::Unknown,
         },
         K::Block(b) => {
-            let mut w = Written::Nothing;
+            let mut acc = Written::Nothing;
             let mut own = vec![];
             for st in &b.stmts {
                 let x = match &st.kind {
                     hir::StmtKind::Let { local, init } => {
                         own.push(*local);
-                        init.as_ref().map_or(Written::Nothing, written_local)
+                        init.as_ref().map_or(Written::Nothing, w)
                     }
-                    hir::StmtKind::Expr(x) => written_local(x),
+                    hir::StmtKind::Expr(x) => w(x),
                     _ => Written::Unknown,
                 };
-                w = w.and(match x {
+                acc = acc.and(match x {
                     Written::One(l) if own.contains(&l) => Written::Nothing,
                     x => x,
                 });
             }
-            let v = b.value.as_deref().map_or(Written::Nothing, written_local);
-            w.and(match v {
+            let v = b.value.as_deref().map_or(Written::Nothing, w);
+            acc.and(match v {
                 Written::One(l) if own.contains(&l) => Written::Nothing,
                 x => x,
             })
         }
-        _ if !writes_local(e) => Written::Nothing,
+        K::Call {
+            callee: hir::Callee::Intrinsic(_) | hir::Callee::Def(..),
+            args,
+        }
+        | K::New { args, .. }
+        | K::AdtLit { fields: args, .. }
+        | K::Variant { args, .. }
+        | K::Tuple(args)
+        | K::ArrayLit(args) => all(args),
+        K::Closure(d) => writes(*d),
+        _ if !writes_local(e, writes) => Written::Nothing,
         _ => Written::Unknown,
     }
 }
 
-/// Can evaluating `e` write to a local of the enclosing function?
-fn writes_local(e: &hir::Expr) -> bool {
+/// Can evaluating `e` write to a local of the enclosing function? A direct call, a `new` and a
+/// literal write only what their parts write: no callee assigns a variable of the caller that is
+/// not in a shared cell, except through a closure it is passed. Creating a closure writes nothing,
+/// but a callee may run it: `writes(d)` tells which variables the closure `d` assigns.
+fn writes_local(e: &hir::Expr, writes: &dyn Fn(DefId) -> Written) -> bool {
     use hir::ExprKind as K;
+    let w = |x: &hir::Expr| writes_local(x, writes);
     if let Some(wrap) = velt_sema::effects::routed_wrap(e) {
-        return writes_local(wrap);
+        return w(wrap);
     }
     match &e.kind {
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => false,
@@ -216,28 +240,37 @@ fn writes_local(e: &hir::Expr) -> bool {
         | K::Downcast(expr)
         | K::WrapSome(expr)
         | K::UnwrapSome(expr, _)
-        | K::UnwrapVariant { expr, .. } => writes_local(expr),
-        K::Field { base, .. } => writes_local(base),
-        K::Index { base, index, .. } => writes_local(base) || writes_local(index),
-        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => {
-            writes_local(lhs) || writes_local(rhs)
-        }
+        | K::UnwrapVariant { expr, .. } => w(expr),
+        K::Field { base, .. } => w(base),
+        K::Index { base, index, .. } => w(base) || w(index),
+        K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => w(lhs) || w(rhs),
         K::Call { callee, args } => {
             !matches!(callee, hir::Callee::Intrinsic(_) | hir::Callee::Def(..))
-                || args.iter().any(writes_local)
+                || args.iter().any(w)
         }
-        K::If { cond, then, els } => writes_local(cond) || writes_local(then) || writes_local(els),
+        K::New { args, .. }
+        | K::AdtLit { fields: args, .. }
+        | K::Variant { args, .. }
+        | K::Tuple(args)
+        | K::ArrayLit(args) => args.iter().any(w),
+        K::Closure(d) => writes(*d) != Written::Nothing,
+        K::If { cond, then, els } => w(cond) || w(then) || w(els),
         // What an arm binds is the arm's own (a literal union read as a `string`, #3334).
         K::Match { scrutinee, arms } => {
-            writes_local(scrutinee)
-                || arms
-                    .iter()
-                    .any(|a| a.guard.as_ref().is_some_and(writes_local) || writes_local(&a.body))
+            w(scrutinee) || (arms.iter()).any(|a| a.guard.as_ref().is_some_and(w) || w(&a.body))
         }
-        K::ArrayLit(es) => es.iter().any(writes_local),
-        K::ConstArray(c) => c.elem_exprs(e.span.file).any(|x| writes_local(&x)),
+        K::ConstArray(c) => c.elem_exprs(e.span.file).any(|x| w(&x)),
         _ => true,
     }
+}
+
+/// The variables of the function that created the closure `f` it may assign outside a cell when it
+/// runs: those it captures by mutable borrow. A variable in a cell is read through the cell, a
+/// place a later operand that may change memory always holds the value of (`hold`).
+fn closure_writes(f: &hir::FnDef) -> Written {
+    (f.captures.iter())
+        .filter(|c| c.mode == PassMode::BorrowMut)
+        .fold(Written::Nothing, |w, c| w.and(Written::One(c.outer)))
 }
 
 impl FnLower<'_, '_> {
@@ -301,16 +334,18 @@ impl FnLower<'_, '_> {
     /// view's mirror, which moves the mirror's buffer and so the elements read before it
     /// (#1942).
     pub(super) fn later_of(&mut self, e: &hir::Expr) -> Later {
-        let mut l = Later::of(e);
+        let cx = &self.cx;
+        let mut l = Later::of_in(e, &|d| closure_writes(cx.fn_def(d)));
         if !l.memory && self.read_runs_code(e) {
             l.memory = true;
         }
         l
     }
 
-    /// [`later_each`] with [`later_of`](Self::later_of).
+    /// What the operands after each of `es` may do, with [`later_of`](Self::later_of).
     pub(super) fn later_each(&mut self, es: &[hir::Expr]) -> Vec<Later> {
-        let mut out = later_each(es);
+        let cx = &self.cx;
+        let mut out = later_each_in(es, &|d| closure_writes(cx.fn_def(d)));
         if self.reads_may_run_code() {
             let mut acc = false;
             for (i, e) in es.iter().enumerate().rev() {
@@ -631,9 +666,9 @@ impl FnLower<'_, '_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{later_each, writes_local, Later};
+    use super::{later_each_in, writes_local, written_local, Later, Written};
     use velt_common::Span;
-    use velt_sema::hir::{Callee, Expr, ExprKind as H, Lit, LocalId, TyId, UseMode};
+    use velt_sema::hir::{Callee, DefId, Expr, ExprKind as H, Lit, LocalId, TyId, UseMode};
 
     fn mk(kind: H) -> Expr {
         Expr {
@@ -659,13 +694,13 @@ mod tests {
     #[test]
     fn reads_write_no_local() {
         // `cmp(xs[b], xs[a])`: the second element read does not make the first one held.
-        assert!(!writes_local(&element()));
-        assert!(!writes_local(&mk(H::UnwrapSome(
-            Box::new(element()),
-            UseMode::Borrow
-        ))));
+        assert!(!writes_local(&element(), &|_| Written::Unknown));
+        assert!(!writes_local(
+            &mk(H::UnwrapSome(Box::new(element()), UseMode::Borrow)),
+            &|_| Written::Unknown
+        ));
         assert_eq!(
-            later_each(&[element(), element()]),
+            later_each_in(&[element(), element()], &|_| Written::Unknown),
             vec![Later::default(); 2]
         );
     }
@@ -676,7 +711,38 @@ mod tests {
             callee: Callee::Indirect(Box::new(local())),
             args: vec![],
         });
-        assert!(writes_local(&call));
+        assert!(writes_local(&call, &|_| Written::Unknown));
         assert!(Later::of(&call).any());
+    }
+
+    #[test]
+    fn a_new_writes_what_its_closures_may() {
+        // `new Handler(() => other.n)`: the constructor may run the closure, which writes a
+        // local only if it assigns one it captures.
+        let new = mk(H::New {
+            def: DefId(0),
+            type_args: vec![],
+            args: vec![mk(H::Closure(DefId(1)))],
+        });
+        assert!(!writes_local(&new, &|_| Written::Nothing));
+        assert!(writes_local(&new, &|_| Written::Unknown));
+        assert!(Later::of(&new).locals);
+    }
+
+    #[test]
+    fn a_closure_writes_the_variable_it_assigns() {
+        // `run(() => { k++; ... })`: only `k`, so a part read before it from another variable
+        // needs no hold (literal_moves.rs).
+        let k = LocalId(7);
+        let call = mk(H::Call {
+            callee: Callee::Def(DefId(0), vec![]),
+            args: vec![mk(H::Closure(DefId(1)))],
+        });
+        let one = |_: DefId| Written::One(k);
+        let later = Later::of_in(&call, &one);
+        assert!(later.locals && later.may_write(k) && !later.may_write(LocalId(0)));
+        let two = mk(H::Tuple(vec![call.clone(), mk(H::Closure(DefId(2)))]));
+        let each = |d: DefId| Written::One(LocalId(d.0));
+        assert_eq!(written_local(&two, &each), Written::Unknown);
     }
 }
