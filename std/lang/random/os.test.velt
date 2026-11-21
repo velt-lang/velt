@@ -1,0 +1,78 @@
+// velt/lang/random (internal): tests of os.velt and this OS's `#os-random` file, run by
+// `velt test std/`. Each draw must fill every byte it hands out with the generator's: a byte left
+// as the allocator gave it, or a chunk of a long draw skipped (macOS gives at most 256 bytes a
+// call), shows up as values that repeat or never appear.
+import { describe, expect, it } from "velt/test";
+import { osRandomBytes, osRandomU64 } from "velt/lang/random/os";
+
+/** How many of the 256 byte values occur in `b[from..to)`. */
+function distinct(b: u8[], from: usize, to: usize): i64 {
+  const seen: bool[] = new Array(256).fill(false);
+  let n: i64 = 0;
+  for (let i = from; i < to; i++) {
+    if (!seen[b[i] as usize]) {
+      seen[b[i] as usize] = true;
+      n++;
+    }
+  }
+  return n;
+}
+
+describe("osRandomBytes", () => {
+  it("gives the length asked for, also at the chunk edges", () => {
+    const sizes: usize[] = [0, 1, 8, 255, 256, 257, 511, 512, 513, 4096];
+    for (const n of sizes) {
+      expect(osRandomBytes(n).length as usize).toBe(n);
+    }
+  });
+
+  it("fills every chunk of a long draw", () => {
+    // 64 KiB: every byte value occurs in each 4 KiB part with near certainty (the chance one is
+    // missing from a random part is below 2^-20), and none occurs in a part never written.
+    const b = osRandomBytes(65536);
+    for (let part: usize = 0; part < 16; part++) {
+      expect(distinct(b, part * 4096, (part + 1) * 4096)).toBe(256);
+    }
+  });
+
+  it("fills the last bytes of a draw that ends inside a chunk", () => {
+    // The 1,500 bytes after the first 256 of a 1,756-byte draw (a second call on macOS, which
+    // ends 220 bytes into its last chunk) hold nearly every value (expected about 255.9; fewer
+    // than 200 has a chance below 2^-60).
+    const b = osRandomBytes(1756);
+    expect(distinct(b, 256, 1756) >= 200).toBe(true);
+  });
+
+  it("gives different bytes each time", () => {
+    const a = osRandomBytes(32);
+    const b = osRandomBytes(32);
+    let same = true;
+    for (let i = 0; i < 32; i++) {
+      if (a[i] != b[i]) {
+        same = false;
+      }
+    }
+    expect(same).toBe(false);
+  });
+});
+
+describe("osRandomU64", () => {
+  it("gives different words, with every bit set somewhere", () => {
+    let or: u64 = 0;
+    let and: u64 = 0xffffffffffffffff;
+    let last: u64 = 0;
+    let repeats = 0;
+    for (let i = 0; i < 64; i++) {
+      const w = osRandomU64();
+      if (w == last) {
+        repeats++;
+      }
+      last = w;
+      or = or | w;
+      and = and & w;
+    }
+    expect(repeats).toBe(0);
+    expect(or).toBe(0xffffffffffffffff);
+    expect(and).toBe(0);
+  });
+});

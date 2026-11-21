@@ -237,12 +237,15 @@ const SHARDS: usize = 8;
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
 /// the std code written with them, `random` (its seed is WASI's, through wasi-libc),
-/// `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
+/// `crypto`, `crypto_random_int` and `uuid` (the OS's random bytes are WASI's too,
+/// std/lang/random/os_wasi.velt), `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
 /// of its own there), and two ephemeron caches, whose trials call between
 /// std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
+    "crypto",
+    "crypto_random_int",
     "fs_mapped_file_getters",
     "fs_mapped_file_portable",
     "half_dot",
@@ -282,6 +285,7 @@ const WASI_STD: &[&str] = &[
     "typed_arrays_basic",
     "typed_arrays_edges",
     "utf8_valid",
+    "uuid",
     // The weak core in std calls trace glue, which calls the core's `visit` back: an indirect
     // call whose signature must match on wasm32 (#3145).
     "weakmap_ephemeron",
@@ -436,7 +440,7 @@ fn conditional_imports_pick_the_target_variant() {
 /// `Math.random()`'s seed on WebAssembly: WASI's `random_get` through wasi-libc, and the JS
 /// host's `crypto.getRandomValues` (`velt:random`). Two runs of tests/wasm_random/main.velt print
 /// different numbers on each target, which a constant seed (a `fill` that does nothing, a
-/// `seed_wasi` returning a constant) fails.
+/// `fillRandom` in os_wasi.velt doing nothing) fails.
 #[test]
 fn math_random_seeds_each_run_on_webassembly() {
     let root = root();

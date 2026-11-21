@@ -1,0 +1,36 @@
+// velt/lang/random (internal): the operating system's random numbers, unpredictable enough for
+// keys (velt/crypto's `randomBytes` and `randomInt`, UUIDs) and the seed of `Math.random()`'s
+// generator (wyrand.velt). Each OS's own call (`#os-random`) fills the bytes straight into the
+// caller's memory. `osRandomU64` makes no array, so a program whose only use is `Math.random()`
+// compiles no array code for it.
+
+import { fillRandomAt } from "#os-random";
+import { addressLoad } from "velt/lang/intrinsics/address";
+import { arrayDataAddress, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics/array";
+import { rawAlloc, rawFree } from "velt/lang/intrinsics/slot";
+
+/** `n` bytes from the OS generator. */
+export function osRandomBytes(n: usize): u8[] {
+  const b = arrayWithCapacity<u8>(n);
+  // Every byte is written below before anyone reads it.
+  arraySetLen(b, n);
+  if (n != 0) {
+    // SAFETY: `b`'s `n` bytes, which it holds from here on, and nothing else uses yet.
+    unsafe {
+      fillRandomAt(arrayDataAddress(b), n);
+    }
+  }
+  return b;
+}
+
+/** A uniformly random `u64` from the OS generator. */
+export function osRandomU64(): u64 {
+  const p = rawAlloc(8);
+  // SAFETY: the 8 bytes at `p` are this call's own; any 8 bytes are a `u64`; freed once.
+  unsafe {
+    fillRandomAt(p, 8);
+    const w = addressLoad<u64>(p);
+    rawFree(p, 8);
+    return w;
+  }
+}

@@ -20,7 +20,9 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
 /// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt).
 /// On Windows `<winternl.h>` has ntdll's `NtCreateFile` and `RtlNtStatusToDosError`
-/// (std/fs/tree/win_remove.velt).
+/// (std/fs/tree/win_remove.velt). `<sys/random.h>` has the OS generator's calls (`getrandom` on
+/// Linux, `getentropy` on macOS: std/lang/random/os_linux.velt, os_darwin.velt), `<bcrypt.h>`
+/// Windows' `BCryptGenRandom` (os_win32.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
         return vec![
@@ -30,6 +32,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
             "<windows.h>",
             "<winternl.h>",
             "<psapi.h>",
+            "<bcrypt.h>",
         ];
     }
     let mut headers = vec![
@@ -46,6 +49,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<string.h>",
         "<strings.h>",
         "<sys/mman.h>",
+        "<sys/random.h>",
         "<sys/socket.h>",
         "<sys/stat.h>",
         "<sys/wait.h>",
@@ -120,6 +124,9 @@ const CHECKED: &[&str] = &[
     "lang/hooks/sched_workers.velt",
     "lang/hooks/thread_posix.velt",
     "lang/hooks/unwind_itanium.velt",
+    "lang/random/os_darwin.velt",
+    "lang/random/os_linux.velt",
+    "lang/random/os_win32.velt",
     "net/calls_posix.velt",
     "net/fd_io.velt",
     "net/fd_until.velt",

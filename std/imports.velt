@@ -13,12 +13,16 @@ export const imports: Imports = {
     js: "./net/http/fetch/client/transport/js.velt",
     default: "./net/http/fetch/client/transport/native.velt",
   },
-  // The seed of `Math.random()`'s generator: WASI's random_get through wasi-libc, the JS host's
-  // crypto.getRandomValues, or elsewhere the operating system's random numbers.
-  "#random-seed": {
-    wasi: "./lang/random/seed_wasi.velt",
-    js: "./lang/random/seed_js.velt",
-    default: "./lang/random/seed_native.velt",
+  // The operating system's random numbers (std/lang/random/os.velt: velt/crypto's, UUIDs' and the
+  // seed of `Math.random()`'s generator): `getrandom` on Linux, `getentropy` on macOS,
+  // `BCryptGenRandom` on Windows, WASI's random_get through wasi-libc, the JS host's
+  // crypto.getRandomValues. No default: a target without one fails here, at compile time.
+  "#os-random": {
+    darwin: "./lang/random/os_darwin.velt",
+    linux: "./lang/random/os_linux.velt",
+    win32: "./lang/random/os_win32.velt",
+    wasi: "./lang/random/os_wasi.velt",
+    js: "./lang/random/os_js.velt",
   },
   // Where the calling thread's C `errno` is (velt/ffi's `errno` and `setErrno`): each C library
   // gives its address through a function of its own; a target without one has none.

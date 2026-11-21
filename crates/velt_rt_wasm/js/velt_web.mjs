@@ -494,8 +494,8 @@ const fromByteString = (bytes) =>
   utf8.decoder.decode(Uint8Array.from(bytes, (c) => c.charCodeAt(0)));
 
 /**
- * The `velt:random` host module: the seed of `Math.random()`'s generator
- * (std/lang/random/seed_js.velt). `buf` is a view of the program's memory.
+ * The `velt:random` host module: the random numbers of `Math.random()`'s seed, velt/crypto and
+ * UUIDs (std/lang/random/os_js.velt). `buf` is a view of the program's memory.
  */
 export function randomHost() {
   return {
