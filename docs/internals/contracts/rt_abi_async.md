@@ -688,8 +688,13 @@ joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop`
 | `velt_rt_process_args` | `(VeltStrArray* out)` | UTF-8 (wide APIs on Windows), argv[0] included |
 | `velt_rt_process_node_argv` | `(VeltStrArray* out)` | Node's `process.argv`: `[current executable, script, ...args]`; the script is `$VELT_SCRIPT` (read and removed at start-up; `velt run` sets it) or the JIT host's `set_script`, else the executable. wasm: `[program, program, ...args]` (WASI: the module path; the browser passes none, so `["", ""]`) |
 | `velt_rt_exit` | see rt_abi.md | |
-| `velt_rt_memory_rss` | `() -> i64` | `process.memoryUsage().rss`: resident set size in bytes from the OS (`/proc/self/statm`, `task_info`, `GetProcessMemoryInfo`); 0 if unknown. wasm: the linear memory size |
-| `velt_rt_memory_heap` | `() -> i64` | `heapUsed`: mimalloc's committed heap bytes (Windows: the process's private committed bytes); without mimalloc, the RSS. wasm: the linear memory size |
+
+`process.memoryUsage()` is std code on native targets (`#memory-sys`: std/process/
+memory_linux.velt reads `/proc/self/statm`, its resident pages and, for `heapUsed`, those no file
+backs; memory_darwin.velt `task_info(TASK_VM_INFO)`'s `resident_size` and `phys_footprint`;
+memory_win32.velt kernel32's `K32GetProcessMemoryInfo`, `WorkingSetSize` and `PagefileUsage`).
+`velt_rt_memory_rss() -> i64` and `velt_rt_memory_heap() -> i64` are the WebAssembly runtime's
+only: both the linear memory's size (std/process/memory_wasm.velt).
 
 Whether a file descriptor is a terminal (Node's `tty.isatty`) is std code on native targets
 (`#tty`: std/process/tty_posix.velt over `isatty`, tty_win32.velt over `GetConsoleMode`, each
