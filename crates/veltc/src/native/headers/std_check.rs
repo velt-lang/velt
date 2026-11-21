@@ -19,6 +19,8 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
 /// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt).
+/// On Windows `<winternl.h>` has ntdll's `NtCreateFile` and `RtlNtStatusToDosError`
+/// (std/fs/tree/win_remove.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
         return vec![
@@ -26,6 +28,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
             "<stdlib.h>",
             "<string.h>",
             "<windows.h>",
+            "<winternl.h>",
             "<psapi.h>",
         ];
     }
@@ -92,6 +95,8 @@ const CHECKED: &[&str] = &[
     "fs/fd/posix.velt",
     "fs/tree/order.velt",
     "fs/tree/win32.velt",
+    "fs/tree/win_handle.velt",
+    "fs/tree/win_remove.velt",
     "fs/whole/read_all.velt",
     "fs/whole/win32.velt",
     "fs/whole/win_path.velt",

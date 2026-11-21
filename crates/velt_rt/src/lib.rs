@@ -17,7 +17,6 @@ pub mod bytes;
 pub mod bytes_ops;
 pub mod cell_owner;
 pub mod child;
-pub mod cpu;
 pub mod db_handles;
 pub mod db_json;
 pub mod db_params;

@@ -1,0 +1,73 @@
+// velt/lang/cpu (internal): the x86-64 features of this CPU, as the feature word's x86 bits (the
+// order of the start-up check's list, rt_abi.md "CPU check": SSE3 is bit 0, AES bit 23), from
+// CPUID and XGETBV as Intel's manual says to read them. A feature whose registers the operating
+// system must save (AVX and up, AVX-512) counts only where XCR0 says it does.
+
+import { addressLoad, strDataAddress } from "velt/lang/intrinsics";
+
+// x86's CPUID (EAX, EBX, ECX, EDX in lanes 0 to 3) and XGETBV; under Cranelift, which has no
+// instruction for either, functions of fixed code the module defines (velt_codegen_cl cpuid.rs).
+declare function velt_simd_cpuid(leaf: u32, subleaf: u32): u32x4;
+declare function velt_simd_xgetbv(xcr: u32): u64;
+// A lane without the index check.
+declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
+
+// Where each word bit's feature is, in word bit order (SSE3 first, AES last), three characters
+// each: the register (`0` leaf 1 ECX, `1` leaf 7 EBX, `2` leaf 7 ECX, `3` leaf 0x80000001 ECX), the
+// bit in it (`A` is bit 0), and the register state the OS must save (`0` none, `1` AVX's, `2`
+// AVX-512's too). Data rather than 24 tests: every program runs this (std/lang/cpu/check.velt).
+const X86_BITS: string = "0A00J00T00U00X00N00]11F11D01I00M13F00W00^11Q21_21]21R21`22B22M21^00B00Z0";
+
+/**
+ * The feature word's x86 bits of a CPU whose CPUID leaf 1 gives `ecx1` in ECX, leaf 7 (sub-leaf
+ * 0) `ebx7` and `ecx7`, leaf 0x80000001 `ecxExt` in ECX, and whose XCR0 is `xcr0` (0 where
+ * CPUID's OSXSAVE is clear).
+ */
+export function x86Bits(ecx1: u32, ebx7: u32, ecx7: u32, ecxExt: u32, xcr0: u64): u64 {
+  // The states the OS saves, as bits by the table's digit: none always, the SSE and AVX state
+  // (XCR0 bits 1 and 2) where OSXSAVE is set, then the opmask and ZMM state (bits 5 to 7) too.
+  const osxsave = ((ecx1 >> 27) & 1) as u64;
+  const avx = osxsave & (xcr0 >> 1) & (xcr0 >> 2) & 1;
+  const avx512 = avx & (xcr0 >> 5) & (xcr0 >> 6) & (xcr0 >> 7);
+  const saved: u64 = 1 | (avx << 1) | (avx512 << 2);
+  // The four registers in two words: leaf 1 ECX and leaf 7 EBX, then leaf 7 ECX and the extended
+  // leaf's ECX.
+  const low: u64 = (ecx1 as u64) | ((ebx7 as u64) << 32);
+  const high: u64 = (ecx7 as u64) | ((ecxExt as u64) << 32);
+  const bits = X86_BITS;
+  const table = strDataAddress(bits);
+  let word: u64 = 0;
+  for (let i: u64 = 0; i < 24; i++) {
+    const off = (3 * i) as usize;
+    const at = table + off;
+    // SAFETY: `at` + 0..2 is within the literal's 72 bytes (i < 24).
+    const reg = (unsafe { addressLoad<u8>(at) } - 48) as u64;
+    // SAFETY: as above.
+    const n = (unsafe { addressLoad<u8>(at + 1) } - 65) as u64;
+    // SAFETY: as above.
+    const state = (unsafe { addressLoad<u8>(at + 2) } - 48) as u64;
+    // `low` for the first two registers, `high` for the others, without a branch.
+    const which = reg >> 1;
+    const regs = (low & (which - 1)) | (high & (0 - which));
+    const has = (regs >> (32 * (reg & 1) + n)) & (saved >> state) & 1;
+    word |= has << i;
+  }
+  return word;
+}
+
+/** This CPU's feature word x86 bits (called on x86-64 only: `#cpu-start`'s `x64` variant). */
+export function detectX86(): u64 {
+  const max = velt_simd_u32x4_lane(velt_simd_cpuid(0, 0), 0);
+  const ecx1 = velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2);
+  let ebx7: u32 = 0;
+  let ecx7: u32 = 0;
+  if (max >= 7) {
+    ebx7 = velt_simd_u32x4_lane(velt_simd_cpuid(7, 0), 1);
+    ecx7 = velt_simd_u32x4_lane(velt_simd_cpuid(7, 0), 2);
+  }
+  const maxExt = velt_simd_u32x4_lane(velt_simd_cpuid(0x80000000, 0), 0);
+  const ecxExt = maxExt >= 0x80000001 ? velt_simd_u32x4_lane(velt_simd_cpuid(0x80000001, 0), 2) : 0;
+  // XGETBV exists only where OSXSAVE is set.
+  const xcr0 = ((ecx1 >> 27) & 1) != 0 ? velt_simd_xgetbv(0) : 0;
+  return x86Bits(ecx1, ebx7, ecx7, ecxExt, xcr0);
+}

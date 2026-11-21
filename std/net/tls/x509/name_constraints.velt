@@ -1,0 +1,193 @@
+// velt/net (internal): the nameConstraints extension (RFC 5280 §4.2.1.10) as rustls's webpki
+// enforces it (`check_name_constraints`, ported rule for rule): a CA's permitted and excluded
+// subtrees against the names of every certificate under it in a path.
+//
+// For each certificate, each name of its subjectAltName is checked, and then its subject as a
+// directoryName. Against the subtrees of the name's own kind:
+// - a dNSName and an iPAddress are matched (velt/net/tls/x509/names);
+// - a directoryName and a URI are not compared: any excluded subtree of the kind excludes
+//   them, and no permitted subtree of the kind permits them;
+// - another kind of name is refused as soon as a subtree of that kind exists.
+// A name must be inside no excluded subtree, and inside a permitted one when the permitted
+// subtrees have any of its kind. A subtree with a `minimum` or a `maximum` is malformed.
+
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { DerReader, SEQUENCE } from "velt/net/tls/x509/der";
+import {
+  BAD_NAME_ENCODING,
+  DIRECTORY_NAME,
+  DNS_NAME,
+  dnsNameMatches,
+  EXCLUDED_SUBTREE,
+  IP_ADDRESS,
+  ipInConstraint,
+  MATCH,
+  NO_MATCH,
+  PERMITTED_SUBTREE,
+  URI,
+} from "velt/net/tls/x509/names";
+import { Tlv } from "velt/net/tls/x509/tlv";
+
+/** The names conform. */
+export const CONFORMS: i32 = 0;
+/** A name is excluded, or not permitted. */
+export const NAME_CONSTRAINT_VIOLATION: i32 = -5;
+/** More comparisons than the budget allows. */
+export const TOO_MANY_COMPARISONS: i32 = -6;
+
+// Whether `tag` is one of GeneralName's nine.
+function generalNameTag(tag: u8): bool {
+  return (
+    tag == 0xa0 ||
+    tag == 0x81 ||
+    tag == DNS_NAME ||
+    tag == 0xa3 ||
+    tag == DIRECTORY_NAME ||
+    tag == 0xa5 ||
+    tag == URI ||
+    tag == IP_ADDRESS ||
+    tag == 0x88
+  );
+}
+
+// The name of kind `tag` at `name[ns..ne]` (nothing for a directoryName) against the subtrees
+// `subtrees` of `cons` in `role`: `CONFORMS`, or why not. `budget[0]` comparisons are left.
+function conformsTo(
+  tag: u8,
+  name: u8[],
+  ns: usize,
+  ne: usize,
+  r: DerReader,
+  subtrees: Tlv,
+  role: i32,
+  budget: usize[],
+): i32 {
+  let matched = false;
+  let mismatched = false;
+  r.pos = subtrees.start;
+  while (r.pos < subtrees.end) {
+    if (budget[0] == 0) {
+      return TOO_MANY_COMPARISONS;
+    }
+    budget[0] -= 1;
+    // GeneralSubtree: a SEQUENCE of the base alone.
+    const subtree = r.enter(SEQUENCE, subtrees.end);
+    const base = r.any(subtree.end);
+    r.done(subtree.end);
+    if (!generalNameTag(base.tag)) {
+      r.fail(`bad GeneralName tag ${base.tag} in nameConstraints`);
+    }
+    if (base.tag != tag) {
+      continue;
+    }
+    let result = NO_MATCH;
+    if (tag == DNS_NAME) {
+      result = dnsNameMatches(name, ns, ne, role, r.b, base.start, base.end);
+    } else if (tag == IP_ADDRESS) {
+      result = ipInConstraint(name, ns, ne, r.b, base.start, base.end);
+    } else if (tag == DIRECTORY_NAME || tag == URI) {
+      result = role == EXCLUDED_SUBTREE ? MATCH : NO_MATCH;
+    } else {
+      return NAME_CONSTRAINT_VIOLATION;
+    }
+    if (result < 0) {
+      if (result == BAD_NAME_ENCODING) {
+        r.fail("bad iPAddress");
+      }
+      return result;
+    }
+    if (role == EXCLUDED_SUBTREE) {
+      if (result == MATCH) {
+        return NAME_CONSTRAINT_VIOLATION;
+      }
+    } else if (result == MATCH) {
+      matched = true;
+    } else {
+      mismatched = true;
+    }
+  }
+  return mismatched && !matched ? NAME_CONSTRAINT_VIOLATION : CONFORMS;
+}
+
+// One name against the permitted subtrees, then the excluded ones (`tag` 0: there are none).
+function nameConforms(
+  tag: u8,
+  name: u8[],
+  ns: usize,
+  ne: usize,
+  r: DerReader,
+  permitted: Tlv,
+  excluded: Tlv,
+  budget: usize[],
+): i32 {
+  if (permitted.tag != 0) {
+    const result = conformsTo(tag, name, ns, ne, r, permitted, PERMITTED_SUBTREE, budget);
+    if (result != CONFORMS) {
+      return result;
+    }
+  }
+  if (excluded.tag != 0) {
+    return conformsTo(tag, name, ns, ne, r, excluded, EXCLUDED_SUBTREE, budget);
+  }
+  return CONFORMS;
+}
+
+/**
+ * Whether the names of `certs` (the certificates under a CA in a path) conform to that CA's
+ * nameConstraints, whose contents are `constraints` in `der`: `CONFORMS`,
+ * `NAME_CONSTRAINT_VIOLATION`, `TOO_MANY_COMPARISONS` once `budget[0]` comparisons are used up
+ * (it counts down across calls), or `MALFORMED_DNS_NAME`, `MALFORMED_CONSTRAINT` or
+ * `BAD_NETWORK_MASK` of velt/net/tls/x509/names. Malformed DER throws a `bad_certificate`
+ * `TlsFailure`.
+ */
+export function checkNameConstraints(
+  der: u8[],
+  constraints: Tlv,
+  certs: Certificate[],
+  budget: usize[],
+): i32 {
+  const r = new DerReader(der);
+  r.pos = constraints.start;
+  // NameConstraints: permittedSubtrees [0] and excludedSubtrees [1], each optional.
+  let permitted: Tlv = { tag: 0, head: 0, start: 0, end: 0 };
+  let excluded: Tlv = { tag: 0, head: 0, start: 0, end: 0 };
+  if (r.peek(constraints.end) == 0xa0) {
+    permitted = r.next(0xa0, constraints.end);
+  }
+  if (r.peek(constraints.end) == 0xa1) {
+    excluded = r.next(0xa1, constraints.end);
+  }
+  const after = r.pos;
+  for (const cert of certs) {
+    const san = cert.subjectAltName;
+    if (san.tag != 0) {
+      const names = new DerReader(cert.der);
+      names.pos = san.start;
+      while (names.pos < san.end) {
+        const t = names.any(san.end);
+        const result = nameConforms(
+          t.tag,
+          cert.der,
+          t.start,
+          t.end,
+          r,
+          permitted,
+          excluded,
+          budget,
+        );
+        if (result != CONFORMS) {
+          return result;
+        }
+      }
+    }
+    const result = nameConforms(DIRECTORY_NAME, cert.der, 0, 0, r, permitted, excluded, budget);
+    if (result != CONFORMS) {
+      return result;
+    }
+  }
+  // Nothing else: a second list, another field or stray bytes are malformed. After the names, as
+  // webpki orders it (its `read_all_optional` around the check): a violation is reported first.
+  r.pos = after;
+  r.done(constraints.end);
+  return CONFORMS;
+}

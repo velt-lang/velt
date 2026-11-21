@@ -162,11 +162,12 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   code is for `x86-64-v2` (`velt_codegen_cl::DEFAULT_X86_CPU`), other targets for their
   default; `velt run`/`velt test`/`velt dev --exe` without `--release` use `native`. LLVM gets
   `-march=<name>` (x86_64) or `-mcpu=<name>`; Cranelift the level's ISA flags, its preset of
-  that name, or the baseline. x86_64 code above the baseline calls `velt_rt_check_cpu` first
-  in `velt_main` (rt_abi.md "CPU check"; added to the VIR by the driver, `--emit llvm`
-  included) with the features that backend's code uses: for a CPU name, Cranelift's preset or
-  what clang defines for `-march=<name>` (`velt_codegen_llvm::required_features`). `velt dev`'s
-  JIT always uses the host's features.
+  that name, or the baseline. LLVM code above the baseline checks at start-up that the CPU has
+  the features it uses (rt_abi.md "CPU check": std's `cpuStart`, `velt_main`'s first step,
+  compares the CPU's with `velt_simd_cpu_required()`, which the driver fills in, `--emit llvm`
+  included): for a CPU name, what clang defines for `-march=<name>`
+  (`velt_codegen_llvm::required_features`). Cranelift code can't read CPUID and is not checked.
+  `velt dev`'s JIT always uses the host's features.
 - **WebAssembly**: `--target wasm32-wasip1` (alias `wasm32-wasi`)
   and `--target wasm32-unknown-unknown` build `./target/velt/<stem>.wasm` (object `<stem>.o`) with
   the LLVM backend (always; `--backend cranelift` is an error) using LLVM's `opt`/`llc`
@@ -838,9 +839,7 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   when the manifest is whole (it ends with `end`), its version line is this `velt`'s, the target
   is the build's, the object hashes as recorded and every listed file hashes as recorded; with
   the cache on it stores that object under its own key. The statistics then say `velt: prebuilt
-  hooks: <module>: object found (shipped)`. A debug build (and `velt check`) for arm64 Linux
-  takes no prebuilt object, shipped or cached: the objects' atomics call the outline-atomics
-  helpers (`__aarch64_*`), which its link need not have.
+  hooks: <module>: object found (shipped)`.
 - `completions <shell>`: prints a completion script for bash, zsh, fish or PowerShell
   (`pwsh` accepted) covering commands, options, `--template`/`--editor`/`--backend`/`--emit`
   values, the actions of `registry` and `owner`, and files. The scripts are generated from the

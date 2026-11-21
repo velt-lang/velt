@@ -1,0 +1,5 @@
+rest_tuple_infer_forms.velt:15:32: error: parameter `n` takes an argument of the function type's rest parameter, which is not supported yet
+  = note: take the rest arguments as a rest parameter (`(...args) => …`) and read them from the array
+
+rest_tuple_infer_forms.velt:16:46: error: the rest parameter `...more` must stand where the function type it is used as has its rest parameter
+  = note: Velt passes the rest arguments as one array; take the parameters the function type lists one by one

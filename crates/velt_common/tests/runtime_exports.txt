@@ -1,9 +1,5 @@
 velt_rt VELT_RT_DEBUG_BUILD
 velt_rt main
-velt_rt velt_cpu_clmul_arm
-velt_rt velt_cpu_clmul_x86
-velt_rt velt_cpu_sha_arm
-velt_rt velt_cpu_sha_x86
 velt_rt velt_rt_alloc
 velt_rt velt_rt_array_view_cold
 velt_rt velt_rt_array_view_get
@@ -36,7 +32,6 @@ velt_rt velt_rt_cell_free
 velt_rt velt_rt_cell_give
 velt_rt velt_rt_cell_new
 velt_rt velt_rt_cell_use
-velt_rt velt_rt_check_cpu
 velt_rt velt_rt_child_output_sync
 velt_rt velt_rt_clear_throw_loc
 velt_rt velt_rt_current_worker
@@ -71,7 +66,6 @@ velt_rt velt_rt_fs_reader_read_line
 velt_rt velt_rt_fs_reader_read_string
 velt_rt velt_rt_fs_readlink_sync
 velt_rt velt_rt_fs_realpath_sync
-velt_rt velt_rt_fs_remove_sync
 velt_rt velt_rt_fs_rename_sync
 velt_rt velt_rt_fs_symlink_sync
 velt_rt velt_rt_fs_writer_close
