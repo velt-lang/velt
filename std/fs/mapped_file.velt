@@ -366,8 +366,11 @@ export class MappedFile extends MappedBytes {
 
   /**
    * The `count` little-endian `f64` from byte `byteOffset`, as an array over the mapping (no
-   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
-   * byte is not at a multiple of 8 in the file (`byteOffset` plus the part's `offset`).
+   * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes,
+   * or its first byte is not at a multiple of 8 in the file (`byteOffset` plus the part's
+   * `offset`).
+   *
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   f64s(byteOffset: number, count: number): shared<f64[]> {
     const at = this.range("f64s", "floats", byteOffset, count, 8);
