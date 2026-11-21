@@ -96,6 +96,12 @@ pub(super) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
     if !casts_keep(init, &s) {
         return None;
     }
+    // A string spelled as a symbol's key would name the symbol's property: kept as a key no
+    // property has, refused where it is used (`walk::key`).
+    let s = match reserved_key(&s) {
+        true => format!("{RESERVED}{s}"),
+        false => s,
+    };
     let typed_as_itself = |t: &ast::TypeExpr| matches!(&t.kind, ast::TypeExprKind::Literal(ast::SignedLit { lit: ast::Lit::Str(l), .. }) if *l == s);
     match &v.ty {
         Some(t) if !typed_as_itself(t) => None,
@@ -158,6 +164,14 @@ fn registry_symbol(e: &ast::Expr) -> Option<String> {
 /// mistaken for one in practice, and the registry makes it one symbol for the process.
 pub(super) fn symbol_key(k: &str) -> String {
     format!("[Symbol.for({k:?})]")
+}
+
+/// The mark of a string constant spelled as a symbol's key (`const_key`), which no key has.
+pub(super) const RESERVED: char = '\u{1}';
+
+/// Is string `s` spelled as the key of a symbol's property (`[Symbol.…`)?
+pub(super) fn reserved_key(s: &str) -> bool {
+    s.starts_with("[Symbol.")
 }
 
 /// Is `key` the key of a symbol ([`symbol_key`])?

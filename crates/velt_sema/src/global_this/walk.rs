@@ -150,6 +150,26 @@ impl<'a> Walk<'a> {
     /// The property key `e` names: a string literal or constant (the innermost declaration of
     /// the name decides).
     fn key(&self, e: &ast::Expr) -> Option<String> {
+        let k = self.key_as_written(e)?;
+        // A string spelled as a symbol's key (`"[Symbol.for(\"k\")]"`, or a constant holding one)
+        // would name that symbol's property: refused.
+        let shown = k.strip_prefix(super::keys::RESERVED);
+        let literal = !matches!(e.kind, E::Ident(_)) && super::keys::reserved_key(&k);
+        if shown.is_some() || literal {
+            self.early.borrow_mut().push(Diagnostic::error(
+                format!(
+                    "the property name `{}` of `globalThis` is not supported: Velt uses names starting with `[Symbol.` for symbol keys",
+                    shown.unwrap_or(&k)
+                ),
+                e.span,
+            ));
+            return None;
+        }
+        Some(k)
+    }
+
+    /// [`Self::key`] before the check of names spelled as symbol keys.
+    fn key_as_written(&self, e: &ast::Expr) -> Option<String> {
         if let E::Ident(id) = &e.kind {
             for (names, consts) in self.scopes.iter().zip(&self.const_scopes).rev() {
                 if let Some(c) = consts.get(&id.name) {
