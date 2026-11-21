@@ -50,12 +50,15 @@ pub(crate) fn demote_local_closures(cx: &mut Ctx) {
         if !f.is_async && !f.is_generator {
             let candidates = candidates(cx, d, &f);
             // Demoting a closure changes how it captures, not what: the facts stay true.
-            let facts = (!candidates.is_empty()).then(|| facts::Facts::of(cx, &f.body.block));
+            let facts = (!candidates.is_empty()).then(|| {
+                let held: FxHashSet<LocalId> = candidates.iter().map(|&(l, _)| l).collect();
+                facts::Facts::of(cx, d, &f.body.block, held)
+            });
             for (local, c) in candidates {
                 let facts = facts
                     .as_ref()
                     .expect("ICE: facts of a function with candidates");
-                if qualifies(cx, d, &f, facts, local, c) {
+                if qualifies(cx, &f, facts, local, c) {
                     demote(cx, c, facts);
                 }
             }
@@ -127,16 +130,9 @@ fn candidates(cx: &Ctx, d: DefId, f: &FnDef) -> Vec<(LocalId, DefId)> {
         .collect()
 }
 
-/// May closure `c`, held in `local` of `d`'s body `f` (whose `facts` these are), capture by
+/// May closure `c`, held in `local` of function `f` (whose body's `facts` these are), capture by
 /// reference (module docs)?
-fn qualifies(
-    cx: &mut Ctx,
-    d: DefId,
-    f: &FnDef,
-    facts: &facts::Facts,
-    local: LocalId,
-    c: DefId,
-) -> bool {
+fn qualifies(cx: &mut Ctx, f: &FnDef, facts: &facts::Facts, local: LocalId, c: DefId) -> bool {
     let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] else {
         return false;
     };
@@ -167,7 +163,7 @@ fn qualifies(
     if !reassigned.is_empty() && recaptures(cx, &cf.body.block, &reassigned) {
         return false;
     }
-    let kinds = cx.fn_info(d).local_kinds.clone();
+    let kinds = &facts.kinds;
     let mut borrowed = FxHashSet::default();
     for &(outer, ty) in &caps {
         if outer == local || kinds.get(outer.0 as usize) == Some(&LocalKind::Using) {
@@ -183,20 +179,17 @@ fn qualifies(
     if !facts.only_called(local) {
         return false;
     }
-    let aliases: FxHashSet<LocalId> = (0..kinds.len())
-        .filter(|&i| matches!(kinds[i], LocalKind::Bind | LocalKind::Elem))
-        .map(|i| LocalId(i as u32))
-        .collect();
-    // A call can only be refused while a reference into a watched variable (`borrowed` or an
-    // alias) is held or mentioned: with none, every call site is fine, and the walk over the
-    // whole body (once per closure) can be left out.
-    if borrowed.is_empty() && aliases.is_empty() {
+    // A call is refused while a reference into a watched variable (one it borrows, or a
+    // borrowing pattern binding, which may point into one) is held, or when its arguments
+    // mention one. With none watched, every call is fine and the body needn't be walked.
+    if borrowed.is_empty() && facts.aliases.is_empty() {
         return true;
     }
-    let mut s = sites::Sites::new(cx, local, &borrowed, &aliases, &kinds);
-    s.block(&f.body.block, false);
-    crate::check_work::add_local_closure_steps(s.steps);
-    s.ok
+    let watched = |l: &LocalId| borrowed.contains(l) || facts.aliases.contains(l);
+    !facts
+        .at_calls(cx, &f.body.block)
+        .get(&local)
+        .is_some_and(|seen| seen.iter().any(watched))
 }
 
 /// Does a closure created in `b` capture one of `locals`?

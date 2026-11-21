@@ -575,12 +575,25 @@ fn held_closures(n: usize) -> String {
     out + "  return s;\n}\nfunction main() {\n  console.log(f(1));\n}\n"
 }
 
+/// A function holding `n` closures in `const`s, each borrowing an object and called once.
+fn borrowing_closures(n: usize) -> String {
+    let mut out = String::from(
+        "class Box {\n  v: number = 1;\n}\nfunction f(b: Box): number {\n  let s = 0;\n",
+    );
+    for i in 0..n {
+        out += &format!("  const c{i} = (y: number) => y + b.v + {i};\n  s += c{i}(1);\n");
+    }
+    out + "  return s;\n}\nfunction main() {\n  console.log(f(new Box()));\n}\n"
+}
+
 /// Deciding which `const`-held closures capture by reference walks their function's body once
-/// for all of them, not once per closure (and per capture).
+/// for all of them, not once per closure (and per capture), whether they borrow or copy.
 #[test]
 fn held_closures_grow_linearly() {
     let steps = || [check_work().local_closure_steps];
     let load = |n| load_src(&held_closures(n));
+    assert_linear_counted(&[100, 800], load, ["local_closure_steps"], steps, 1.5);
+    let load = |n| load_src(&borrowing_closures(n));
     assert_linear_counted(&[100, 800], load, ["local_closure_steps"], steps, 1.5);
 }
 
