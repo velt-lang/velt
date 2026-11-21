@@ -31,6 +31,7 @@ use velt_vir::vir::{self, SrcLoc};
 #[cfg(unix)]
 pub(crate) mod jit;
 pub(crate) mod object;
+mod stretches;
 mod types;
 
 /// The line information of one compiled function.
@@ -401,6 +402,8 @@ struct ScopeCode {
     /// line) never goes back, so the pieces of a range of lines are found by bisection.
     /// Statements in a row are one stretch; a loop's header after its body starts another.
     stretches: Vec<usize>,
+    /// The stretches by the lines they cover.
+    index: stretches::StretchIndex,
     /// The function's size.
     size: u32,
 }
@@ -431,7 +434,11 @@ impl ScopeCode {
             pieces.push(Piece { start, at, col });
         }
         stretches.push(pieces.len());
+        let bounds: Vec<_> = (stretches.windows(2))
+            .map(|w| (w[0] < w[1]).then(|| (pieces[w[0]].at, pieces[w[1] - 1].at)))
+            .collect();
         ScopeCode {
+            index: stretches::StretchIndex::new(&bounds),
             pieces,
             stretches,
             size: f.size,
@@ -467,8 +474,13 @@ fn scope_ranges(code: &ScopeCode, var: &vir::LocalDebug) -> Option<Vec<(u32, u32
             _ => ranges.push((start, end)),
         }
     };
-    for stretch in code.stretches.windows(2) {
-        let (first, pieces) = (stretch[0], &code.pieces[stretch[0]..stretch[1]]);
+    // Only code at the lines from the declaration to the block's end can be in scope.
+    let last = var.end.map_or((file, u32::MAX), |end| (file, end.line));
+    for s in code.index.overlapping((file, var.decl.line), last) {
+        let (first, pieces) = (
+            code.stretches[s],
+            &code.pieces[code.stretches[s]..code.stretches[s + 1]],
+        );
         let before = |at: (u32, u32)| first + pieces.partition_point(|p| p.at < at);
         let from = before((file, var.decl.line));
         match var.end {
