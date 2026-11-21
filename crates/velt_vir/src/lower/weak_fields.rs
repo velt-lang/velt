@@ -15,6 +15,7 @@
 //! map key's is. A typed proxy's word carries bit 0 (proxy_typed.rs): the field keeps that bit in
 //! its slot pointer's bit 0 (a slot is 16-byte aligned), and the slot is the `Proxy` object's.
 
+use rustc_hash::FxHashSet;
 use velt_sema::hir::{self, TyId, TyKind};
 
 use super::async_fn::BoxHold;
@@ -49,6 +50,32 @@ impl Cx<'_> {
             .filter(|(i, _)| !weak.get(*i).copied().unwrap_or(false))
             .map(|(_, t)| t)
             .collect()
+    }
+
+    /// May an object of class `t` be weakly held by `weak` fields alone, without a release gate:
+    /// is it in the hierarchy of a `weak` field's target? Its release then decrements it inline
+    /// while its count stays above 0 (rc.rs `release_weak`); any other weak-capable type's goes
+    /// to `weakRelease` at once, which is right for every object.
+    pub(super) fn slot_target(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.raw_kind(t) else {
+            return false;
+        };
+        let d = *d;
+        let targets = self.weak_targets.get_or_init(|| {
+            let mut out = FxHashSet::default();
+            for def in &self.hir.defs {
+                let hir::Def::Adt(a) = def else { continue };
+                for f in a.fields.iter().filter(|f| f.weak) {
+                    if let TyKind::Option(t, _) = self.raw_kind(f.ty) {
+                        if let TyKind::Adt(td, _) = self.raw_kind(*t) {
+                            out.insert(self.class_root(*td));
+                        }
+                    }
+                }
+            }
+            out
+        });
+        targets.contains(&self.class_root(d))
     }
 
     /// The target type `T` of a weak field of read type `read` (`T | null`), made counted and

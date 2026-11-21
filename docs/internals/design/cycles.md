@@ -380,7 +380,7 @@ button.onClick(() => self?.refresh());
   `weakSlotDrop(s)` (`std/lang/hooks/weak_slots.velt`, rt_abi.md "Weak references"). The target
   is weakly held, but a release of it that leaves its count above 0 stays inline: a slot alone
   gives its record no release gate (`RC_GATED`, rt_abi.md), so a walk up `weak` parents costs a
-  slot load per step more than one up strong parents (`bench/weak_parent_walk.velt`: 1.27 times
+  slot load per step more than one up strong parents (`bench/weak_parent_walk.velt`: 1.16 times
   the instructions of `bench/weak_parent_walk_strong.velt`).
 - **The rest of the language.** A `weak` field is not an edge of the ownership graph and is
   skipped by trace glue, so a cycle that only a back reference closes (a connection holding its

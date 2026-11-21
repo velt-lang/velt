@@ -109,7 +109,8 @@ describe("weak slots", () => {
     const o = retain(plain());
     const s = weakSlot(o);
     expect(isGated(o)).toBe(false);
-    // `weakRelease` itself decrements it without the lock, as the inline sequence does.
+    // The inline sequence decrements it without calling the core; `weakRelease` makes the same
+    // decrement when called.
     expect(weakRelease(o)).toBe(false);
     expect(count(o)).toBe(1);
     expect(isMarked(o)).toBe(true);

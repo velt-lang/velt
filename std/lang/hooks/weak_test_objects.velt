@@ -89,7 +89,7 @@ export function isGated(o: usize): bool {
 /** The release sequence of a weak-capable type. */
 export function release(o: usize): void {
   const c = ld64(o - 8);
-  if ((c as i64) > 1 || ((c & (RC_GATED | RC_COUNT)) - 2) < RC_GATED - 2) {
+  if ((c as i64) > 1 || ((c << 1) as i64) > 2) {
     st64(o - 8, c - 1);
   } else if (c === 1 || weakRelease(o)) {
     destroy(o);

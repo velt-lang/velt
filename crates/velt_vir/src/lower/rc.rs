@@ -141,6 +141,9 @@ impl FnLower<'_, '_> {
         last: impl FnOnce(&mut Self),
     ) {
         if !self.cx.lock_counted(ty) {
+            if weak && self.cx.is_class(ty) && self.cx.slot_target(ty) {
+                return self.release_weak(p, true, last);
+            }
             return self.release_as(p, weak, last);
         }
         let deferred = self.mode == LkMode::Deferred && !weak;
@@ -365,7 +368,7 @@ impl FnLower<'_, '_> {
     /// `WeakRef` when this was its last reference (then `last` runs, as on the unique path).
     pub(super) fn release_as(&mut self, p: Operand, weak: bool, last: impl FnOnce(&mut Self)) {
         if weak {
-            return self.release_weak(p, last);
+            return self.release_weak(p, false, last);
         }
         let c = self.count_place(p);
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
@@ -385,9 +388,9 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
-    fn release_weak(&mut self, p: Operand, last: impl FnOnce(&mut Self)) {
-        const RC_GATED: i128 = 1 << 62;
-        const RC_COUNT: i128 = RC_GATED - 1;
+    /// The weak-capable release; `slot`: the object may be weakly held by `weak` fields alone
+    /// (weak_fields.rs `slot_target`), so a weakly held one without a gate is decremented inline.
+    fn release_weak(&mut self, p: Operand, slot: bool, last: impl FnOnce(&mut Self)) {
         let c = self.count_place(p.clone());
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
         let s = self.rvalue_temp(Ty::I64, Rvalue::Cast(n.clone(), Ty::I64));
@@ -406,21 +409,24 @@ impl FnLower<'_, '_> {
             Ty::Bool,
             Rvalue::Binary(BinOp::Eq, n.clone(), cint(1, Ty::U64)),
         );
-        let (last_bb, gated, cold) = (self.new_block(), self.new_block(), self.new_block());
-        self.branch(one, last_bb, gated);
-        // Weakly held without a release gate (`RC_GATED` clear) and not the last reference: a
-        // plain decrement, as `weakRelease` would make it (`(c & !RC_WEAK) - 2 < RC_GATED - 2`).
-        self.switch_to(gated);
-        let x = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::BitAnd, n.clone(), cint(RC_GATED | RC_COUNT, Ty::U64)),
-        );
-        let y = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, x, cint(2, Ty::U64)));
-        let plain = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Lt, y, cint(RC_GATED - 2, Ty::U64)),
-        );
-        self.branch(plain, dec_bb, cold);
+        let (last_bb, cold) = (self.new_block(), self.new_block());
+        match slot {
+            false => self.branch(one, last_bb, cold),
+            true => {
+                // Weakly held without a release gate (`RC_GATED` clear) and not the last
+                // reference: a plain decrement, as `weakRelease` would make it. `c << 1` drops
+                // `RC_WEAK` and puts `RC_GATED` in the sign bit: `(c << 1) as i64 > 2` is both.
+                let gated = self.new_block();
+                self.branch(one, last_bb, gated);
+                self.switch_to(gated);
+                let x = Rvalue::Binary(BinOp::Shl, n, cint(1, Ty::U64));
+                let x = self.rvalue_temp(Ty::U64, x);
+                let x = self.rvalue_temp(Ty::I64, Rvalue::Cast(x, Ty::I64));
+                let plain = Rvalue::Binary(BinOp::Gt, x, cint(2, Ty::I64));
+                let plain = self.rvalue_temp(Ty::Bool, plain);
+                self.branch(plain, dec_bb, cold);
+            }
+        }
         self.switch_to(cold);
         let obj = ty::USize::arg(self.as_usize(p));
         let gone = hooks::weak_release(self, Construct::Weak, obj)

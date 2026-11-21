@@ -256,6 +256,9 @@ struct Cx<'h> {
     /// The first function or class of each name, built on the first `prelude_def` lookup
     /// (array_view.rs): one map, not a scan of every def per call (7% of a build's lowering).
     prelude_defs: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
+    /// The class roots of the targets of `weak` fields, built on first use (weak_fields.rs
+    /// `slot_target`).
+    weak_targets: std::cell::OnceCell<FxHashSet<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function but `velt_main` is lowered, hence built last.
     uses_placement: bool,
