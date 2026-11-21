@@ -2,8 +2,9 @@
 // full handshake without PSK): the transcript, the key schedule's secrets, the server's flight
 // checked in order (EncryptedExtensions, CertificateRequest, Certificate, CertificateVerify,
 // Finished) and the client's last flight. It does no I/O: `TlsEngine` feeds it messages and
-// sends what it says. With `verify: false` the certificate and its signature are kept unchecked
-// (#2392 step 3 adds verification); the server's Finished is always checked. When the server
+// sends what it says. With a `verifier` the server's chain, its name and its CertificateVerify
+// are checked when the CertificateVerify arrives; without one (`verify: false`) they are kept
+// unchecked. The server's Finished is always checked. When the server
 // chooses TLS 1.2, `ClientHandshake12` takes the handshake over after the ServerHello.
 
 import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
@@ -20,13 +21,21 @@ import {
   TlsFailure,
   UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
-import { clientHello, EXT_ALPN, HelloInput, SECP256R1, X25519 } from "velt/net/tls/client_hello";
+import {
+  clientHello,
+  EXT_ALPN,
+  HelloInput,
+  SCHEMES,
+  SECP256R1,
+  X25519,
+} from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
 import { ClientHandshake12, DONE12 } from "velt/net/tls/client_handshake12";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { parseServerHello } from "velt/net/tls/server_hello";
+import { CertificateVerifier } from "velt/net/tls/verifier";
 
 // Handshake message types.
 
@@ -96,6 +105,8 @@ export class ClientHandshake {
   lastFlight: u8[];
   /** The rest of the handshake when the server chose TLS 1.2, else null. */
   tls12: ClientHandshake12 | null;
+  // What verifies the server's certificates; null to keep them unchecked.
+  private verifier: CertificateVerifier | null;
 
   /** A handshake for `input`, with the X25519 private key `privateKey`. */
   constructor(input: HelloInput, privateKey: u8[]) {
@@ -118,6 +129,7 @@ export class ClientHandshake {
     this.retryHello = [];
     this.lastFlight = [];
     this.tls12 = null;
+    this.verifier = input.verifier ?? null;
   }
 
   /** The first ClientHello message. */
@@ -198,6 +210,23 @@ export class ClientHandshake {
       return KEEP_READING;
     }
     if (this.state == WAIT_CERTIFICATE_VERIFY && type == CERTIFICATE_VERIFY) {
+      const v = this.verifier;
+      if (v != null) {
+        // The chain and the name first, then the signature over the transcript up to here.
+        v.verifyChain(this.certificates);
+        const r = new ByteReader(body, 0, body.length, "CertificateVerify");
+        const scheme = r.u16();
+        const s = r.vector(2);
+        const signature = s.bytes(s.left());
+        r.finish();
+        if (!SCHEMES.includes(scheme)) {
+          throw new TlsFailure(
+            ILLEGAL_PARAMETER,
+            `a CertificateVerify signed with scheme 0x${scheme.toString(16)}, which was not offered`,
+          );
+        }
+        v.verifyHandshake13(scheme, this.hash(), signature);
+      }
       this.certificateVerify = body;
       this.add(m);
       this.state = WAIT_FINISHED;
@@ -265,6 +294,7 @@ export class ClientHandshake {
         this.input.publicKey,
         this.input.retryKey,
       );
+      this.tls12!.verifier = this.verifier;
       return KEEP_READING;
     }
     if (this.retried && sh.suite != this.suite) {

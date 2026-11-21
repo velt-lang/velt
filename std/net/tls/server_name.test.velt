@@ -1,0 +1,69 @@
+// velt/net (tests): `dnsServerNameOk` against the names rustls's `DnsName` takes and refuses.
+// Run by `velt test std/`.
+import { dnsServerNameOk } from "velt/net/tls/server_name";
+import { describe, expect, it } from "velt/test";
+
+describe("dnsServerNameOk", () => {
+  it("takes host names, with underscores, any case, and one dot at the end", () => {
+    const names = [
+      "localhost",
+      "example.com",
+      "EXAMPLE.com",
+      "example.com.",
+      "a",
+      "a.b.c.d.e",
+      "xn--bcher-kva.example",
+      "_dmarc.example.com",
+      "a_b.example",
+      "a-b.example",
+      "a--b.example",
+      "1a.example",
+      "a1.example",
+      "123.example",
+      "1.2.3.example",
+      "1.2.3.4a",
+      "example.a1",
+      "example.1a2",
+      "a".repeat(63) + ".example",
+      // 253 bytes.
+      ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(61)].join("."),
+    ];
+    for (const name of names) {
+      expect(`${name} ${dnsServerNameOk(name)}`).toBe(`${name} true`);
+    }
+  });
+
+  it("refuses what is not a host name", () => {
+    const names = [
+      "",
+      ".",
+      ".example.com",
+      "example..com",
+      "example.com..",
+      "-a.example",
+      "a-.example",
+      "a.example-",
+      "a.-b.example",
+      "*.example.com",
+      "a b.example",
+      "a/b.example",
+      "example.com:443",
+      "[::1]",
+      "::1",
+      "bücher.example",
+      "a\u0000.example",
+      // A last label of digits: an IP address or nothing.
+      "1.2.3.4",
+      "1.2.3.400",
+      "example.123",
+      "example.123.",
+      "123",
+      "a".repeat(64) + ".example",
+      // 254 bytes.
+      ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(62)].join("."),
+    ];
+    for (const name of names) {
+      expect(`${name} ${dnsServerNameOk(name)}`).toBe(`${name} false`);
+    }
+  });
+});

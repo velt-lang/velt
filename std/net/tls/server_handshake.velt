@@ -114,6 +114,11 @@ export class ServerHandshake {
   /** TLS 1.2: the server random and the ECDHE private key to use instead of new ones (tests). */
   fixedRandom: u8[] | null = null;
   fixedKey: u8[] | null = null;
+  /**
+   * Answer as a server that has no TLS 1.3 (tests): TLS 1.2 also for a client that offers
+   * TLS 1.3, and no downgrade mark in the server random.
+   */
+  only12: bool = false;
 
   /** A handshake that presents `key` and chooses among `protocols` with ALPN (none: no ALPN). */
   constructor(key: ServerKey, protocols: string[]) {
@@ -186,7 +191,7 @@ export class ServerHandshake {
         );
       }
       this.alpn = this.chooseAlpn(offer.alpn);
-      if (!offer.tls13) {
+      if (!offer.tls13 || this.only12) {
         // A TLS 1.2 client (parseClientHello refuses older ones).
         const t = new ServerHandshake12(
           this.key,
@@ -196,6 +201,7 @@ export class ServerHandshake {
           u8x16.hasAes(),
           this.fixedRandom,
           this.fixedKey,
+          !this.only12,
         );
         this.tls12 = t;
         this.suite = t.suite;
