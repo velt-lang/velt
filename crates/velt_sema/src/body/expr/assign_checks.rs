@@ -166,10 +166,10 @@ impl FnCx<'_, '_> {
                 | AssignTarget::Keyed(..),
             ) => {}
         }
-        // `b[i] ||= v` with an `any` `v` on an integer array: `if (!b[i]) b[i] = v`, a store
-        // that converts `v` (element_store.rs).
+        // `b[i] ||= v` on an integer array: `if (!b[i]) b[i] = v`, whose store converts an `any`
+        // `v` (element_store.rs).
         if let Some(AssignTarget::Place(p)) = &checked {
-            if self.logical_any_store(p, value) {
+            if self.logical_element_store(p) {
                 let cond = self.decides(op, target.clone(), span);
                 let write = self.assign(None, target, value, span);
                 let unit = self.cx.ty.unit;
