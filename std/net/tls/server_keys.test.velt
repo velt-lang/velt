@@ -21,7 +21,7 @@ import { parseClientHello } from "velt/net/tls/client_hello_parse";
 import { S_DONE, S_SEND_FLIGHT, ServerHandshake } from "velt/net/tls/server_handshake";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey, serverKey } from "velt/net/tls/server_key";
-import { chooseScheme } from "velt/net/tls/server_signer";
+import { chooseScheme, schemeNames } from "velt/net/tls/server_signer";
 import { chooseSuite12, ecdsaSuite12 } from "velt/net/tls/suites12";
 import { KEY_ED25519, KEY_P256, KEY_P384, KEY_RSA } from "velt/net/tls/x509/algorithms";
 import { Certificate } from "velt/net/tls/x509/certificate";
@@ -331,5 +331,16 @@ describe("a handshake with each kind of server key", () => {
     expect(() => s.onMessage(hexDecode(changed))).toThrow(
       "the client accepts no signature scheme of the certificate's key (ecdsa_secp384r1_sha384)",
     );
+  });
+
+  it("names each scheme of an RSA key in a failure, as the client would see them offered", () => {
+    const key = serverKey(v.RSA_CERT, v.RSA_PKCS8, true)!;
+    expect(schemeNames(key, true)).toBe(
+      "rsa_pss_rsae_sha512, rsa_pss_rsae_sha384 or rsa_pss_rsae_sha256",
+    );
+    expect(schemeNames(key, false)).toBe(
+      "rsa_pss_rsae_sha512, rsa_pss_rsae_sha384, rsa_pss_rsae_sha256, rsa_pkcs1_sha512, rsa_pkcs1_sha384 or rsa_pkcs1_sha256",
+    );
+    expect(schemeNames(serverKey(v.ED_CERT, v.ED_PKCS8, true)!, true)).toBe("ed25519");
   });
 });
