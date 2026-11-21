@@ -4,9 +4,9 @@
 //! Inlined, such a mask is one comparison to LLVM, and a review's builder compiled the identity's
 //! select to `test; js`: a branch on the digit, which no test run sees.
 //!
-//! So `pick` takes those masks from `maskOf`, kept out of line, and this reads the IR after
-//! clang's optimizer, on x86-64 and arm64: `maskOf` is still a function of its own and the base
-//! multiplication (or the function it is inlined into) calls it, and no select in the X25519 code chooses between addresses or has a
+//! So `pick` takes each of those masks from a function of its own, kept out of line
+//! (`identityMask`, `signMask`), and this reads the IR after clang's optimizer, on x86-64 and
+//! arm64: both are still functions of their own and something calls each, and no select in the X25519 code chooses between addresses or has a
 //! value loaded from memory as an arm (as `p256_masks.rs` checks for P-256). What the backend
 //! makes of the IR is not seen here; on x86-64 that is memcheck's to check, with the scalar marked
 //! undefined.
@@ -61,31 +61,29 @@ fn x25519_key_generation_masks_stay_masks() {
             .collect();
         // Mangled names: if these are gone, the code moved and this test looks at nothing.
         let header = |f: &&str| f.lines().next().unwrap_or("").to_string();
-        let mask = x25519
-            .iter()
-            .find(|f| header(f).contains("x25519__base") && header(f).contains("maskOf"));
-        assert!(
-            mask.is_some(),
-            "{target}: `maskOf` of x25519_base.velt is not a function of its own, so the \
-             caller sees that its masks are comparisons"
-        );
-        // The base multiplication may be inlined into its callers, up to the program's own code;
-        // whichever function holds `pick`'s selects must take their masks from `maskOf`.
-        let callers: Vec<String> = functions
-            .iter()
-            .filter(|f| !header(f).contains("maskOf"))
-            .filter(|f| {
-                f.lines()
-                    .any(|l| l.contains("call ") && l.contains("maskOf"))
-            })
-            .map(header)
-            .collect();
-        assert!(
-            !callers.is_empty(),
-            "{target}: no function calls `maskOf`, so `pick`'s masks are computed where \
-             LLVM can see through them; the X25519 functions are:\n{}",
-            x25519.iter().map(header).collect::<Vec<_>>().join("\n")
-        );
+        // Each mask of `pick`'s selects has a function of its own, so a regression of either
+        // one (computed inline again) is seen, not only of both.
+        for mask in ["identityMask", "signMask"] {
+            assert!(
+                x25519
+                    .iter()
+                    .any(|f| header(f).contains("x25519__base") && header(f).contains(mask)),
+                "{target}: `{mask}` of x25519_base.velt is not a function of its own, so the \
+                 caller sees that its mask is a comparison"
+            );
+            // The base multiplication may be inlined into its callers, up to the program's own
+            // code; whichever function holds `pick`'s selects must take the mask from the call.
+            let called = functions
+                .iter()
+                .filter(|f| !header(f).contains(mask))
+                .any(|f| f.lines().any(|l| l.contains("call ") && l.contains(mask)));
+            assert!(
+                called,
+                "{target}: no function calls `{mask}`, so `pick` computes that mask where LLVM \
+                 can see through it; the X25519 functions are:\n{}",
+                x25519.iter().map(header).collect::<Vec<_>>().join("\n")
+            );
+        }
         let found: Vec<String> = x25519.iter().flat_map(|f| selects_of_memory(f)).collect();
         assert!(
             found.is_empty(),
