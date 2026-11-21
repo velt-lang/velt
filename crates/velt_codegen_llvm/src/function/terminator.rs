@@ -321,7 +321,7 @@ impl Emitter<'_> {
     /// step still asks nothing in ordinary code.
     fn gated_symbol<'s>(&self, symbol: &'s str) -> &'s str {
         use velt_vir::simd::Ext;
-        let gated = self.function.target.is_some_and(|t| t.covers(Ext::Bf16Arm))
+        let gated = self.function.target.covers(Ext::Bf16Arm)
             && crate::simd::has_ext(self.simd, Ext::Bf16Arm);
         match symbol {
             "velt_simd_f32x4_dot_add_fast_bf16x8" if gated => "velt_simd_f32x4_bfdot",
