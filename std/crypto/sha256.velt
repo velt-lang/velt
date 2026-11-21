@@ -59,11 +59,11 @@ export function sha256Blocks(h: u32[], data: u8[], off: usize, count: usize) {
   if (off + count * BLOCK > data.length || h.length != 8) {
     blockFault();
   }
-  if (u32x4.hasShaArm()) {
+  if (Sha256.isSupported()) {
     blocks256Arm(h, data, off, count);
     return;
   }
-  if (u32x4.hasShaX86()) {
+  if (Sha.isSupported()) {
     blocks256X86(h, data, off, count);
     return;
   }
