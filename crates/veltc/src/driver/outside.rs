@@ -470,7 +470,7 @@ mod tests {
         let program = Program {
             aggs: vec![],
             funcs: vec![r0, r2, main],
-            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_rename_sync")],
+            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_open_read")],
             statics: vec![],
             files: vec![],
             debug_types: vec![],
@@ -595,7 +595,7 @@ mod tests {
     #[test]
     fn only_what_is_known_to_be_pure_is_inside() {
         let outside = |s: &str| reason(s).unwrap_or_else(|| panic!("{s} counted as inside"));
-        assert_eq!(outside("velt_rt_fs_rename_sync"), "the file system");
+        assert_eq!(outside("velt_rt_fs_open_read"), "the file system");
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("clock_gettime"), "the clock");
         assert_eq!(outside("QueryPerformanceCounter"), "the clock");

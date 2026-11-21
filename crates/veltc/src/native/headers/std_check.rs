@@ -18,7 +18,8 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// (`<psapi.h>`, std/process/memory_win32.velt); `<unwind.h>` has the Itanium unwinder's
 /// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
-/// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt).
+/// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt),
+/// and `<stdio.h>` its `rename` (std/fs/paths/posix.velt).
 /// On Windows `<winternl.h>` has ntdll's `NtCreateFile` and `RtlNtStatusToDosError`
 /// (std/fs/tree/win_remove.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
@@ -42,6 +43,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<sched.h>",
         "<signal.h>",
         "<spawn.h>",
+        "<stdio.h>",
         "<stdlib.h>",
         "<string.h>",
         "<strings.h>",
@@ -93,6 +95,10 @@ const CHECKED: &[&str] = &[
     "fs/fd/dirs.velt",
     "fs/fd/linux.velt",
     "fs/fd/posix.velt",
+    "fs/paths/darwin.velt",
+    "fs/paths/linux.velt",
+    "fs/paths/posix.velt",
+    "fs/paths/win32.velt",
     "fs/tree/order.velt",
     "fs/tree/win32.velt",
     "fs/tree/win_handle.velt",

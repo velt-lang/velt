@@ -68,9 +68,9 @@ export function syncData(fd: i32): i32 {
  */
 export function fstatFd(fd: i32): Stat | null {
   if (arch() == "x64") {
-    return posixFstatAt(fd, 8, true, 72, 40);
+    return posixFstatAt(fd, 8, true, 72, 40, true);
   }
-  return posixFstatAt(fd, 4, true, 96, 48);
+  return posixFstatAt(fd, 4, true, 96, 48, false);
 }
 
 /**
@@ -79,9 +79,9 @@ export function fstatFd(fd: i32): Stat | null {
  */
 export function statPath(path: readonly u8[], follow: bool): Stat | null {
   if (arch() == "x64") {
-    return posixStatAt(path, follow, 8, true, 72, 40);
+    return posixStatAt(path, follow, 8, true, 72, 40, true);
   }
-  return posixStatAt(path, follow, 4, true, 96, 48);
+  return posixStatAt(path, follow, 4, true, 96, 48, false);
 }
 
 // The functions both POSIX variants share, from posix.velt (a variant defines what it exports:

@@ -231,6 +231,14 @@ export const imports: Imports = {
   // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
   // library's directory functions (`#fd-system`), or Win32's on Windows.
   "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },
+  // Renaming, linking and copying (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`) in a
+  // native build: the C library's on macOS and Linux (each with its own data copy), Win32's on
+  // Windows.
+  "#fs-paths": {
+    win32: "./fs/paths/win32.velt",
+    darwin: "./fs/paths/darwin.velt",
+    default: "./fs/paths/linux.velt",
+  },
   // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
   // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
   // of the builtin `process`, which every program loads, imports the variant.
