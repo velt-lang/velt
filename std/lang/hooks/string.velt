@@ -1,11 +1,89 @@
 // velt/lang/hooks (internal): the compiler's hooks for strings (std-layout.md §10b).
 
-declare function velt_rt_str_code_points(s: string): string[];
+import {
+  arrayWithCapacity,
+  strAsciiWords,
+  strByteAt,
+  strByteLen,
+  strLen,
+} from "velt/lang/intrinsics";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 
 /**
- * The characters of `s` (code points, a surrogate pair as one string), as JS's string iterator:
- * what `for (const c of s)` iterates (velt_sema `loops.rs`).
+ * The characters of `s` (code points, a surrogate pair as one string, a lone surrogate as one),
+ * as JS's string iterator: what `for (const c of s)` iterates (velt_sema `loops.rs`). Each is a
+ * range of the string's WTF-8 bytes from one lead byte to the next; an ASCII character is its
+ * inline string, with no call.
  */
 export function stringCodePoints(s: string): string[] {
-  return velt_rt_str_code_points(s);
+  const n = strByteLen(s);
+  const out: string[] = arrayWithCapacity(strLen(s));
+  let i: usize = 0;
+  while (i < n) {
+    const b = strByteAt(s, i as u64);
+    if (b < 0x80) {
+      out.push(strAsciiWords(b as u64, 0, 0, 1));
+      i++;
+      continue;
+    }
+    const len: usize = b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
+    out.push(velt_rt_str_byte_slice(s, i as u64, (i + len) as u64));
+    i += len;
+  }
+  return out;
+}
+
+// `replace` and `replaceAll` of a string pattern with a function (`s.replace("x", (match, offset,
+// string) => …)`), which the compiler calls for a replacement that is a function (velt_sema
+// `regex_args.rs`, #2198). As in JavaScript, the function gets the match (the pattern's own
+// text), the match's offset in UTF-16 code units and the whole string, and its result is used as
+// it is: `$&` and the other patterns of a replacement string mean nothing in it. The offset is a
+// count, so the matches are found with `indexOf`, which counts code units (a pattern may match
+// half of a surrogate pair), and the text between them is cut with `slice`; appending joins two
+// halves that meet.
+
+/** `s.replace(from, f)` (`all`: `s.replaceAll(from, f)`). */
+function calling<E>(
+  s: string,
+  from: string,
+  f: (match: string, offset: number, subject: string) => string throws E,
+  all: bool,
+): string throws E {
+  const len = from.length as i64;
+  const end = s.length as i64;
+  // An empty pattern matches at every position; the next search starts one unit on.
+  const step = len > 0 ? len : 1;
+  let at = s.indexOf(from, 0);
+  let out = "";
+  let copied: i64 = 0;
+  while (at >= 0) {
+    out += s.slice(copied, at);
+    out += f(from, at as number, s);
+    copied = at + len;
+    if (!all || at + step > end) {
+      break;
+    }
+    at = s.indexOf(from, at + step);
+  }
+  out += s.slice(copied);
+  return out;
+}
+
+/** `s.replace(from, f)`: the first match only. */
+export function replaceCalling<E>(
+  s: string,
+  from: string,
+  f: (match: string, offset: number, subject: string) => string throws E,
+): string throws E {
+  return calling(s, from, f, false);
+}
+
+/** `s.replaceAll(from, f)`: every match that does not overlap an earlier one. */
+export function replaceAllCalling<E>(
+  s: string,
+  from: string,
+  f: (match: string, offset: number, subject: string) => string throws E,
+): string throws E {
+  return calling(s, from, f, true);
 }

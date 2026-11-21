@@ -108,4 +108,16 @@ pub const DELETED: &[&str] = &[
     "velt_rt_parse_int",
     // #2196: the decimals of `parseFloat` past 64 bits (std/lang/hooks/number_parse).
     "velt_rt_parse_float",
+    // #2198: the string methods in Velt (std/lang/string/trim, fill, split, replace) and the code
+    // points of `for (const c of s)` (std/lang/hooks/string).
+    "velt_rt_str_trim",
+    "velt_rt_str_trim_start",
+    "velt_rt_str_trim_end",
+    "velt_rt_str_repeat",
+    "velt_rt_str_pad_start",
+    "velt_rt_str_pad_end",
+    "velt_rt_str_split",
+    "velt_rt_str_replace",
+    "velt_rt_str_replace_all",
+    "velt_rt_str_code_points",
 ];
