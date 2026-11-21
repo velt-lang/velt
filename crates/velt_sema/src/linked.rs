@@ -32,11 +32,20 @@ pub(crate) fn linked(cx: &Ctx) -> Vec<bool> {
         (false, _) | (true, Stage::Std) => all,
         (true, Stage::Both) => reach(cx, &named(cx, 0)),
         (true, Stage::App) => {
-            let mut edges = cx.unit_sums.module_edges.0.clone();
-            edges.extend(named(cx, cx.unit_base as usize).0);
-            reach(cx, &ModuleEdges(edges))
+            let edges = merged(&cx.unit_sums.module_edges, named(cx, cx.unit_base as usize));
+            reach(cx, &edges)
         }
     }
+}
+
+/// std's edges and the app's: a module's edges from both stages, as the app's stage can make
+/// definitions in a std module (a forwarder takes its target's module).
+fn merged(std: &ModuleEdges, app: ModuleEdges) -> ModuleEdges {
+    let mut edges = std.0.clone();
+    for (m, to) in app.0 {
+        edges.entry(m).or_default().extend(to);
+    }
+    ModuleEdges(edges)
 }
 
 /// std's stage: its modules' edges, for the app's [`linked`].
@@ -188,4 +197,28 @@ impl crate::visit_ref::Visit for Names<'_, '_> {
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::tuples! {
     ModuleEdges(f0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edges(pairs: &[(usize, &[usize])]) -> ModuleEdges {
+        ModuleEdges(
+            (pairs.iter())
+                .map(|(m, to)| (*m, to.iter().copied().collect()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_std_module_keeps_its_edges_when_the_app_names_more_from_it() {
+        let std = edges(&[(1, &[2, 3]), (4, &[5])]);
+        let app = edges(&[(1, &[6]), (7, &[1])]);
+        let got = merged(&std, app).0;
+        let set = |to: &[usize]| to.iter().copied().collect::<FxHashSet<usize>>();
+        assert_eq!(got.get(&1), Some(&set(&[2, 3, 6])));
+        assert_eq!(got.get(&4), Some(&set(&[5])));
+        assert_eq!(got.get(&7), Some(&set(&[1])));
+    }
 }
