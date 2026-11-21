@@ -14,3 +14,18 @@ dispose f (3 bytes)
 0,2,4
 dispose g (6 bytes)
 6
+dispose h (2 bytes)
+0,2
+dispose i (3 bytes)
+0,2,4
+k 4
+dispose k (4 bytes)
+4
+dispose l (2 bytes)
+0,2
+dispose m (3 bytes)
+6
+dispose n (5 bytes)
+5
+dispose o (4 bytes)
+4

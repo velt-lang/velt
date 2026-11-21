@@ -1,16 +1,19 @@
 // check: no leaks
 // A part of a `using` variable read out of its block: a field's value returned through a
 // `const` or directly, a nested object, a string, the same array kept twice in an array, and
-// fields destructured out of it (#3433). The variable itself is not moved, so it is disposed at the end of its block once, as
+// fields destructured out of it: flat, nested, narrowed, with a rest or a default
+// (#3433). The variable itself is not moved, so it is disposed at the end of its block once, as
 // usual, and the value read out lives on (it was refused as moving the variable).
 class Mapped {
   name: string;
   bytes: number[];
   meta: { size: number };
+  count: number;
   constructor(name: string, bytes: number[]) {
     this.name = name;
     this.bytes = bytes;
     this.meta = { size: bytes.length };
+    this.count = bytes.length;
   }
   [Symbol.dispose]() {
     console.log(`dispose ${this.name} (${this.bytes.length} bytes)`);
@@ -72,6 +75,59 @@ function destructuredNested(): number {
   return size;
 }
 
+function maybe(name: string, n: number): Mapped | null {
+  return n > 0 ? open(name, n) : null;
+}
+
+function narrowedTruthy(): number[] {
+  using m = maybe("h", 2);
+  if (m) {
+    const { bytes } = m;
+    return bytes;
+  }
+  return [];
+}
+
+function narrowedNotNull(): number[] {
+  using m = maybe("i", 3);
+  if (m !== null) {
+    const { bytes } = m;
+    return bytes;
+  }
+  return [];
+}
+
+function rest(): number {
+  using m = open("k", 4);
+  const { name, ...others } = m;
+  console.log(name, others.bytes.length);
+  return others.meta.size;
+}
+
+function withDefault(): number[] {
+  using m = open("l", 2);
+  const { bytes = [7] } = m;
+  return bytes;
+}
+
+function restOfNumbers(): number {
+  using m = open("m", 3);
+  const { count, ...others } = m;
+  return count + others.bytes.length;
+}
+
+function restAll(): number {
+  using m = open("n", 5);
+  const { ...all } = m;
+  return all.count;
+}
+
+function numberDefault(): number {
+  using m = open("o", 4);
+  const { count = 1 } = m;
+  return count;
+}
+
 function main() {
   const a = throughConst();
   console.log(a.join(","));
@@ -85,4 +141,11 @@ function main() {
   console.log(a.join(","));
   console.log(destructured().join(","));
   console.log(destructuredNested());
+  console.log(narrowedTruthy().join(","));
+  console.log(narrowedNotNull().join(","));
+  console.log(rest());
+  console.log(withDefault().join(","));
+  console.log(restOfNumbers());
+  console.log(restAll());
+  console.log(numberDefault());
 }
