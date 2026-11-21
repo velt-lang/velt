@@ -415,12 +415,14 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `Clock`, and
+/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `PowInt`, its
+/// integer `powI64`, `Clock`, and
 /// `Weak`: it demands the weak core, which only a program with weak collections needs, and which
 /// prints nothing.
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
     let own = Construct::CatchUnwind.bit()
         | Construct::PowFloat.bit()
+        | Construct::PowInt.bit()
         | Construct::Clock.bit()
         | Construct::Weak.bit();
     let integer = match present & !own {
@@ -430,8 +432,8 @@ pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
     integer | (present & own)
 }
 
-/// [`Construct::PowFloat`] if `e` is `**` (or `**=`) on floats, else nothing: `**` on integers
-/// is the runtime's.
+/// [`Construct::PowFloat`] if `e` is `**` (or `**=`) on floats, [`Construct::PowInt`] if it is
+/// on integers, else nothing.
 pub(super) fn pow_bit(ty: &crate::types::Types, e: &hir::ExprKind) -> ConstructSet {
     use hir::{BinOp::Pow, ExprKind as E};
     let (E::Binary {
@@ -445,6 +447,7 @@ pub(super) fn pow_bit(ty: &crate::types::Types, e: &hir::ExprKind) -> ConstructS
     };
     match ty.kind(x.ty) {
         TyKind::Float(_) => Construct::PowFloat.bit(),
+        _ if ty.is_int(x.ty) => Construct::PowInt.bit(),
         _ => 0,
     }
 }

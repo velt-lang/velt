@@ -338,7 +338,8 @@ impl Emitter<'_> {
 
     /// What to call for math operation `op` instead of its runtime function: an LLVM
     /// intrinsic (declaring it) or the module's inline helper (`rounding::helper`,
-    /// `runtime::inline_helper`, defining it); `None` for `pow`, which calls the runtime.
+    /// `runtime::inline_helper`, defining it); `None` for an operation that calls its runtime
+    /// function (none today: `runtime.rs`'s `classification` test checks every one is inline).
     pub(super) fn math_target(&mut self, op: MathOp) -> Option<String> {
         let helper = match op.rounding() {
             Some(how) => rounding::helper(how, self.rounds_by_conversion),

@@ -29,7 +29,6 @@ pub(super) enum Rt {
     /// Source location bookkeeping for uncaught-error reports (`lower_with` only).
     SetThrowLoc,
     ThrowLoc,
-    PowI64,
     Alloc,
     Realloc,
     Free,
@@ -198,7 +197,6 @@ impl Rt {
             Rt::UncaughtReport => ("velt_rt_uncaught_report", vec![], Unit, false),
             Rt::SetThrowLoc => ("velt_rt_set_throw_loc", vec![Ptr], Unit, false),
             Rt::ThrowLoc => ("velt_rt_throw_loc", vec![], Ptr, false),
-            Rt::PowI64 => math(MathOp::PowI64),
             Rt::Alloc => ("velt_rt_alloc", vec![U64, U64], Ptr, false),
             Rt::Realloc => ("velt_rt_realloc", vec![Ptr, U64, U64, U64], Ptr, false),
             Rt::Free => ("velt_rt_free", vec![Ptr, U64, U64], Unit, false),
