@@ -121,9 +121,13 @@ function resolver<T, E>(
 ): (value: T) => void {
   return (value: T) => {
     const here = velt_rt_task_id();
-    if (here == home || here == 0 || !needsTransfer(value)) {
+    if (here == home || !needsTransfer(value)) {
       const v = here == home ? value : transfer(value);
       openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v }))));
+    } else if (here == 0) {
+      // A thread that runs no task (a C library's, calling an export): settled at once, and the
+      // latch opened only after `fulfillFrom` has let go of the transferred value (#3390).
+      openLatch(fulfillFrom<T, E>(slot, guard, value));
     } else {
       const later = fulfillLater<T, E>(slot.clone(), guard.clone(), value);
     }
@@ -138,9 +142,12 @@ function rejecter<T, E>(
 ): (reason: E) => void {
   return (reason: E) => {
     const here = velt_rt_task_id();
-    if (here == home || here == 0 || !needsTransfer(reason)) {
+    if (here == home || !needsTransfer(reason)) {
       const r = here == home ? reason : transfer(reason);
       openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r }))));
+    } else if (here == 0) {
+      // As `resolver`'s: settled at once, the latch opened after `rejectFrom` let go (#3390).
+      openLatch(rejectFrom<T, E>(slot, guard, reason));
     } else {
       const later = rejectLater<T, E>(slot.clone(), guard.clone(), reason);
     }
