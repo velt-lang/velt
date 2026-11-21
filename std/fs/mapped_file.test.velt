@@ -1,6 +1,15 @@
 // velt/fs (tests): `MappedFile`: the mapping reads as the file's bytes, alone and from other
 // tasks, and its float ranges are checked.
-import { closeSync, MappedFile, openSync, readFileSync, unlinkSync, writeSync } from "velt/fs";
+import {
+  closeSync,
+  MappedFile,
+  openSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "velt/fs";
 import { platform, tmpdir } from "velt/os";
 import { u8x16 } from "velt/simd";
 import { describe, expect, it } from "velt/test";
@@ -294,10 +303,68 @@ describe("MappedFile", () => {
     expect(MappedFile.open("/proc/self/status").length).toBe(0);
   });
 
-  it("is ENOSYS where files cannot be mapped", () => {
-    if (POSIX) {
-      return;
+  // The tests above write their files through the fd API, which Windows does not have: these
+  // write text, so they run there too.
+  it("maps a text file, whole and in part, on every system", () => {
+    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-text`;
+    writeFileSync(path, "0123456789abcdef");
+    const m = MappedFile.open(path);
+    expect(m.length).toBe(16);
+    expect(m.bytes[10]).toBe(97);
+    expect(m.u32s(4, 1)[0]).toBe(0x37363534);
+    expect(m.u16s(14, 1)[0]).toBe(0x6665);
+    m.advise("willneed");
+    m.advise("dontneed", 0, 16);
+    expect(m.bytes[15]).toBe(102);
+    const part = MappedFile.open(path, { offset: 8, length: 6 });
+    expect(part.length).toBe(6);
+    expect(part.bytes[0]).toBe(56);
+    expect(part.u32s(0, 1)[0]).toBe(0x62613938);
+    expect(() => part.u32s(2, 1)).toThrow("not a multiple of 4");
+    expect(() => MappedFile.open(path, { offset: 10, length: 7 })).toThrow(
+      "is not inside the 16 bytes",
+    );
+    expect(MappedFile.open(path, { offset: 16 }).length).toBe(0);
+    try {
+      rmSync(path);
+    } catch (e) {
+      // Windows may refuse to remove a file that is mapped.
     }
-    expect(() => MappedFile.open("anything")).toThrow("ENOSYS");
+  });
+
+  // Windows starts a view at a multiple of 64 KiB in the file, the other systems at a page.
+  it("maps parts that start around and past 64 KiB on every system", () => {
+    const path = `${tmpdir()}/velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-long`;
+    let text = "";
+    for (let i = 0; i < 200000; i++) {
+      text += String.fromCharCode(32 + (i % 95));
+    }
+    writeFileSync(path, text);
+    for (const offset of [65535, 65536, 65537, 70001, 131071, 131072, 199000]) {
+      const part = MappedFile.open(path, { offset, length: 1000 });
+      expect(part.length).toBe(1000);
+      for (let i = 0; i < 1000; i++) {
+        if (part.bytes[i] != 32 + ((offset + i) % 95)) {
+          throw new Error(`byte ${i} of the part at ${offset} is ${part.bytes[i]}`);
+        }
+      }
+    }
+    // A typed view inside a part that starts at an odd byte: 70004 is a multiple of 4.
+    const odd = MappedFile.open(path, { offset: 70001, length: 1000 });
+    const at = (k: number): number => 32 + ((70004 + k) % 95);
+    expect(odd.u32s(3, 1)[0] as number).toBe(
+      at(0) + at(1) * 256 + at(2) * 65536 + at(3) * 16777216,
+    );
+    expect(() => odd.u32s(0, 1)).toThrow("not a multiple of 4");
+    try {
+      rmSync(path);
+    } catch (e) {
+      // Windows may refuse to remove a file that is mapped.
+    }
+  });
+
+  it("reports a missing file and a directory by Node's codes on every system", () => {
+    expect(() => MappedFile.open(`${tmpdir()}/velt-mapped-no-such-file`)).toThrow("ENOENT");
+    expect(() => MappedFile.open(tmpdir())).toThrow("EISDIR");
   });
 });

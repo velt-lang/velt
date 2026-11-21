@@ -291,6 +291,13 @@ export function or32(a: usize, v: u32): u32 {
   return unsafe { addressAtomicRmw<u32>(a, "or", v, "seqcst") };
 }
 
+/** Flips the bits `v` in the `u32` at `a`; the word before. */
+@inline("always")
+export function xor32(a: usize, v: u32): u32 {
+  // SAFETY: as `load`.
+  return unsafe { addressAtomicRmw<u32>(a, "xor", v, "seqcst") };
+}
+
 /** Clears the bits not in `v` in the `u32` at `a`; the word before. */
 @inline("always")
 export function and32(a: usize, v: u32): u32 {

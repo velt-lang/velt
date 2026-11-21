@@ -1,0 +1,6 @@
+// velt/lang/cpu (internal): the start-up check of a build for WebAssembly (`#cpu-start`'s `wasm`
+// variant, std/imports.velt): nothing, as no CPU feature is asked for there. The feature word
+// stays 0, so every run-time check is false.
+
+/** Nothing to check (std/lang/hooks/cpu.velt `cpuStart`). */
+export function checkCpu(): void {}
