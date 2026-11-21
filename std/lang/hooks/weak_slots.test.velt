@@ -1,0 +1,103 @@
+// velt/lang/hooks (tests): the slots of `weak T` references (weak_slots.velt): one per object,
+// shared, reading 0 once the object is freed, freed with the last reference; on hand-built
+// objects (weak_test_objects.velt), run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import {
+  weakMapDelete,
+  weakMapHas,
+  weakSlot,
+  weakSlotDrop,
+  weakTracked,
+} from "velt/lang/hooks/weak";
+import { S_COUNT, S_TARGET } from "velt/lang/hooks/weak_slots";
+import { ld } from "velt/lang/hooks/weak_mem";
+import {
+  count,
+  finish,
+  isMarked,
+  live,
+  objMap,
+  plain,
+  release,
+  set,
+} from "velt/lang/hooks/weak_test_objects";
+
+describe("weak slots", () => {
+  it("read the target while it lives and 0 once it is freed", () => {
+    const before = live();
+    const records = weakTracked();
+    const o = plain();
+    const s = weakSlot(o);
+    expect(ld(s + S_TARGET)).toBe(o);
+    // The record's reference and the caller's; the target is not counted.
+    expect(ld(s + S_COUNT)).toBe(2);
+    expect(count(o)).toBe(1);
+    expect(isMarked(o)).toBe(true);
+    expect(weakTracked()).toBe(records + 1);
+    release(o);
+    expect(live()).toBe(before);
+    expect(ld(s + S_TARGET)).toBe(0);
+    expect(ld(s + S_COUNT)).toBe(1);
+    expect(weakTracked()).toBe(records);
+    weakSlotDrop(s);
+  });
+
+  it("are shared by every weak reference to one object", () => {
+    const o = plain();
+    const a = weakSlot(o);
+    const b = weakSlot(o);
+    expect(a).toBe(b);
+    expect(ld(a + S_COUNT)).toBe(3);
+    weakSlotDrop(b);
+    expect(ld(a + S_COUNT)).toBe(2);
+    release(o);
+    expect(ld(a + S_TARGET)).toBe(0);
+    weakSlotDrop(a);
+  });
+
+  it("stay with their object after its weak references go, until it is freed", () => {
+    const before = live();
+    const records = weakTracked();
+    const o = plain();
+    const s = weakSlot(o);
+    weakSlotDrop(s);
+    // The record keeps the slot: a weak reference made again gets the same one.
+    expect(ld(s + S_COUNT)).toBe(1);
+    expect(isMarked(o)).toBe(true);
+    expect(weakSlot(o)).toBe(s);
+    weakSlotDrop(s);
+    release(o);
+    expect(live()).toBe(before);
+    expect(weakTracked()).toBe(records);
+  });
+
+  it("are cleared with the object's map entries when it is a weak map key too", () => {
+    const before = live();
+    const m = objMap();
+    const k = plain();
+    const s = weakSlot(k);
+    set(m, k, plain());
+    expect(weakMapHas(m, k)).toBe(true);
+    release(k);
+    expect(ld(s + S_TARGET)).toBe(0);
+    weakSlotDrop(s);
+    expect(finish([m])).toBe(true);
+    expect(live()).toBe(before);
+  });
+
+  it("keep their record when the object leaves its last map", () => {
+    const before = live();
+    const m = objMap();
+    const k = plain();
+    set(m, k, plain());
+    const s = weakSlot(k);
+    expect(weakMapDelete(m, k)).toBe(true);
+    // The record stays for the slot: freeing the object still clears it.
+    expect(isMarked(k)).toBe(true);
+    release(k);
+    expect(ld(s + S_TARGET)).toBe(0);
+    weakSlotDrop(s);
+    expect(finish([m])).toBe(true);
+    expect(live()).toBe(before);
+  });
+});

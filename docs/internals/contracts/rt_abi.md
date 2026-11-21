@@ -337,6 +337,8 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 | `weakRefWord` | `(r: u32) -> u64` | the word given to `weakRefNewWith` (0 for `weakRefNew`), also after the target was freed |
 | `weakRefDeref` | `(r: u32) -> usize` | the target with count + 1, or 0 once freed |
 | `weakRefDrop` | `(r: u32)` | |
+| `weakSlot` | `(obj: usize) -> usize` | the slot of a `weak T` reference to `obj`, a block `[count: usize][target: usize]` shared by every weak reference to it, with its count raised by one (the caller's); does not count `obj`; the slot's target reads 0 once `obj` was freed |
+| `weakSlotDrop` | `(slot: usize)` | gives up a reference to `slot`; takes no lock |
 | `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Symbols
