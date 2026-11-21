@@ -10,6 +10,7 @@
 
 import { fnAddress, inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as mod from "./sched_module";
 import * as nd from "./sched_node";
 import * as hand from "./sched_share_hand";
 import * as aw from "./sched_node_await";
@@ -120,13 +121,18 @@ export function droppedAway(n: usize): void {
     nd.release(n);
     return;
   }
-  if ((fl & lt.NLINKED) !== 0) {
-    // On its task's list of owner-only promises (a counted run links them through the woken
-    // stack's links, which the hand-over below is about to use). It cannot get here: a promise
-    // is listed by an adoption poll, which is its owner's own await in its task, so its handle
-    // sits in that awaiting frame, and the frame is dropped on the task's thread (its task's
-    // last poll, or the frame's own promise given up there): the own side of `nodeDrop`.
-    panic("ICE: a promise on its task's list of owner-only promises is dropped off its task");
+  // Linked on its task's list of owner-only promises (a counted run links them through the woken
+  // stack's links, which the hand-over below is about to use; a finished one keeps its flags but
+  // is off the list). A promise is listed by an adoption poll, which is its owner's own await in
+  // its task, so its handle sits in that awaiting frame, dropped on the task's thread (the own
+  // side of `nodeDrop`). A shared one (sched_share_listed.velt) whose last holder was in module
+  // state is the exception: this task and its own both use module state, so it leaves the list
+  // here (`unlistAway`). Without the counters it is not linked, and its task's poll gives it up.
+  if ((fl & (lt.NLINKED | nd.FINISHED)) === lt.NLINKED) {
+    if (!heldApart(task)) {
+      panic("ICE: a promise on its task's list of owner-only promises is dropped off its task");
+    }
+    unlistAway(task, n, fl);
   }
   handBack(task, n);
 }
@@ -141,6 +147,28 @@ function handBack(task: usize, n: usize): void {
   m.inc(task + t.T_REFS);
   nw.give(n);
   lt.releaseAway(task);
+}
+
+/**
+ * Is task `task` kept from polling while this thread runs? `task` uses module state (`TOUCHED`),
+ * and a touched task holds the module lock through every poll and its park (sched_module.velt,
+ * sched_task_lost.velt `parksHeld`), so while this thread holds the lock, `task` does not run:
+ * its list may be touched here.
+ */
+@inline("always")
+export function heldApart(task: usize): bool {
+  return t.has(task, t.TOUCHED) && mod.held();
+}
+
+/**
+ * Listed, linked node `n` of task `task` (its flags `fl`) leaves the list on another thread, with
+ * the block counters on only: `heldApart` holds, and the task's park reads its list under the
+ * module lock too (sched_task_lost.velt `parksHeld`), so the two never overlap.
+ */
+@noInline
+export function unlistAway(task: usize, n: usize, fl: u32): void {
+  m.and32(n + nd.N_FLAGS, ~(lt.LISTED | lt.NLINKED));
+  lt.unlist(task, n, fl);
 }
 
 /**
@@ -255,7 +283,8 @@ function unreachable(n: usize, refs: usize): bool {
  * A run of node `n` of task `task` left it suspended with its owner gone (sched_node.velt
  * `run`): given up when nothing can wake it. The run's caller still holds the reference it ran
  * it with (the woken stack's, a sleep's, a microtask's: sched_run.velt), which frees the node
- * when it goes.
+ * when it goes. A node shared here is listed by its holders instead, which wait in its hub
+ * (sched_share_listed.velt `list`).
  */
 @noInline
 export function parked(task: usize, n: usize): void {

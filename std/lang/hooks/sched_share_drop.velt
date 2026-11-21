@@ -11,6 +11,7 @@ import * as nd from "./sched_node";
 import * as sh from "./sched_share";
 import * as t from "./sched_task";
 import * as away from "./sched_share_away";
+import * as ls from "./sched_share_listed";
 import * as wt from "./sched_share_wait";
 
 /** Holder `f` of the promise of hub `h` gives up its role (dropped, or handed over). */
@@ -73,7 +74,7 @@ export function free(h: usize): void {
   m.st(f + 8, fnAddress(nd.nodeDrop));
   const len = m.ld(h + sh.H_WLEN);
   for (let i: usize = 0; i < len; i++) {
-    m.wakerDrop(m.ld(wt.entry(h, i) + 8));
+    ls.dropWaker(wt.entry(h, i));
   }
   const cap = m.ld(h + sh.H_WCAP);
   if (cap !== 0) {
