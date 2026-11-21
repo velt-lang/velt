@@ -181,6 +181,18 @@ export function loadRelaxed(a: usize): usize {
   return unsafe { addressAtomicLoad<usize>(a, "relaxed") };
 }
 
+/**
+ * Stores `v` at `a` atomically but unordered: the same instruction as `st`, for a word another
+ * thread reads with an atomic load while this one may write it (no data race).
+ */
+@inline("always")
+export function storeRelaxed(a: usize, v: usize): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressAtomicStore<usize>(a, v, "relaxed");
+  }
+}
+
 @inline("always")
 export function load32Relaxed(a: usize): u32 {
   // SAFETY: as `load`.
@@ -267,6 +279,13 @@ export function incOrdered(a: usize): usize {
 export function inc(a: usize): usize {
   // SAFETY: as `load`.
   return unsafe { addressAtomicRmw<usize>(a, "add", 1, "relaxed") };
+}
+
+/** Adds `v` to the word at `a` (wrapping), ordered as `dec`; the word before. */
+@inline("always")
+export function addOrdered(a: usize, v: usize): usize {
+  // SAFETY: as `load`.
+  return unsafe { addressAtomicRmw<usize>(a, "add", v, "acqrel") };
 }
 
 /** Takes 1 from the count at `a`; the count before. */

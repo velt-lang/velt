@@ -1,0 +1,138 @@
+// velt/lang/hooks (tests): the flag words of the executor in Velt, run by `velt test std/`. A
+// task's flags (`T_FLAGS`) and a started promise's (a node's `N_FLAGS`) are each one word whose
+// bits several modules define; two flags on one bit break both silently, and a merge does not
+// show it (#3289 met two such). Each word's flags are distinct powers of two. A new flag goes in
+// its word's list here.
+import { describe, expect, it } from "velt/test";
+import * as t from "velt/lang/hooks/sched_task";
+import * as nd from "velt/lang/hooks/sched_node";
+import * as nc from "velt/lang/hooks/sched_node_catch";
+import * as loc from "velt/lang/hooks/sched_node_loc";
+import * as tr from "velt/lang/hooks/sched_node_transfer";
+import * as ext from "velt/lang/hooks/sched_node_ext";
+import * as rp from "velt/lang/hooks/sched_node_report";
+import * as al from "velt/lang/hooks/sched_share_alias";
+import * as sh from "velt/lang/hooks/sched_share";
+import * as lost from "velt/lang/hooks/sched_task_lost";
+
+/** The names of flags in `flags` that are not one bit, or that share a bit with an earlier one. */
+function clashes(names: string[], flags: u32[]): string[] {
+  const out: string[] = [];
+  let seen: u32 = 0;
+  for (let i = 0; i < flags.length; i++) {
+    const f = flags[i];
+    if (f === 0 || (f & (f - 1)) !== 0) {
+      out.push(`${names[i]} (${f}) is not one bit`);
+    } else if ((seen & f) !== 0) {
+      out.push(`${names[i]} (${f}) shares its bit`);
+    }
+    seen = seen | f;
+  }
+  return out;
+}
+
+describe("flag words", () => {
+  it("gives every task flag a bit of its own", () => {
+    const names = [
+      "YIELDS",
+      "FRESH",
+      "ROOT",
+      "LOCALS",
+      "ROOT_DONE",
+      "TIMED",
+      "COUNTED",
+      "CREDIT",
+      "HOLDS",
+      "POLLED",
+      "PINNED",
+      "TOUCHED",
+      "ANCHORED",
+      "STARTED",
+      "T_CATCHES",
+      "T_PANICKED",
+      "BATCHED",
+      "JOIN_DUE",
+      "FIXED",
+      "CARRIED",
+      "LOST",
+      "CANCEL",
+      "LINKED",
+      "ROOT_ALONE",
+    ];
+    const flags: u32[] = [
+      t.YIELDS,
+      t.FRESH,
+      t.ROOT,
+      t.LOCALS,
+      t.ROOT_DONE,
+      t.TIMED,
+      t.COUNTED,
+      t.CREDIT,
+      t.HOLDS,
+      t.POLLED,
+      t.PINNED,
+      t.TOUCHED,
+      t.ANCHORED,
+      t.STARTED,
+      nc.T_CATCHES,
+      nc.T_PANICKED,
+      t.BATCHED,
+      t.JOIN_DUE,
+      t.FIXED,
+      t.CARRIED,
+      t.LOST,
+      t.CANCEL,
+      t.LINKED,
+      t.ROOT_ALONE,
+    ];
+    expect(clashes(names, flags).join(", ")).toBe("");
+  });
+
+  it("gives every node flag a bit of its own", () => {
+    const names = [
+      "STARTED",
+      "FINISHED",
+      "DETACHED",
+      "QUEUED",
+      "REJECTING",
+      "DELIVERED",
+      "RUNNING",
+      "CATCHES",
+      "PANICKED",
+      "ADOPTED",
+      "LOC",
+      "HANDED_OVER",
+      "EXT",
+      "ALIASED",
+      "HANDLED",
+      "WATCHED",
+      "HUB_HERE",
+      "LISTED",
+      "NLINKED",
+      "YIELDING",
+    ];
+    const flags: u32[] = [
+      nd.STARTED,
+      nd.FINISHED,
+      nd.DETACHED,
+      nd.QUEUED,
+      nd.REJECTING,
+      nd.DELIVERED,
+      nd.RUNNING,
+      nd.CATCHES,
+      nd.PANICKED,
+      nd.ADOPTED,
+      loc.LOC,
+      tr.HANDED_OVER,
+      ext.EXT,
+      al.ALIASED,
+      rp.HANDLED,
+      rp.WATCHED,
+      sh.HUB_HERE,
+      lost.LISTED,
+      lost.NLINKED,
+      nd.YIELDING,
+    ];
+    expect(clashes(names, flags).join(", ")).toBe("");
+  });
+});

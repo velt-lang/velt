@@ -114,6 +114,7 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(t, Rvalue::Cast(v, t))
             }
             (I::SpreadObject, parts) => self.spread_object(parts, ty),
+            (I::SpreadParam, [x]) => self.spread_param(x, ty),
             (I::KeyRead, [object, key]) => self.key_read(object, key, ty),
             (I::KeyWrite, [object, key, value]) => self.key_write(object, key, value),
             (I::FieldAbsent, []) => {
