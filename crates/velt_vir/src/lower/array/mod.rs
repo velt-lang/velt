@@ -51,6 +51,7 @@ use velt_sema::hir::{self, TyId, TyKind};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, ice, unit, FnLower, Work};
+use crate::atomic::{AtomicCall, Order, Rmw};
 use crate::vir::{self, BinOp, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// The most elements a buffer of `stride`-byte elements holds: as many as fit in
@@ -266,11 +267,30 @@ impl FnLower<'_, '_> {
         let release_bb = self.new_block();
         self.branch(owned, release_bb, join);
         self.switch_to(release_bb);
-        // The block's first word is the function to call with it.
+        // The block's second word counts the arrays holding it: this drop gives up one, and
+        // the last calls the function in its first word.
         let block = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(BinOp::BitXor, cap.clone(), cint(OWNER as i128, Ty::U64)),
         );
+        let count = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Add, block.clone(), cint(8, Ty::U64)),
+        );
+        let count = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(count, Ty::Ptr));
+        let call = AtomicCall::Rmw {
+            op: Rmw::Sub,
+            bits: 64,
+            order: Order::AcqRel,
+        };
+        let before = self.atomic_call(call, vec![count, cint(1, Ty::U64)]);
+        let last = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, before, cint(1, Ty::U64)),
+        );
+        let last_bb = self.new_block();
+        self.branch(last, last_bb, join);
+        self.switch_to(last_bb);
         let block = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(block, Ty::Ptr));
         let f = self.cx.func(Work::ArrayOwnerDrop);
         self.call(vir::Callee::Func(f), vec![block], None, false);
