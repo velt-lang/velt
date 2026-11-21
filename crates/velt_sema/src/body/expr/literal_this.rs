@@ -154,6 +154,13 @@ impl FnCx<'_, '_> {
         if !takes_this(e) {
             return (self.stored_value(e, |s| s.slot_value(e, exp, slot)), false);
         }
+        // A method reading `this` implements the slot: reading the method as a value elsewhere
+        // would detach it (`crate::iface_method_values`).
+        self.cx
+            .object_impls
+            .method_values
+            .this_slots
+            .insert((slot.0, slot.1 as u32));
         let exp = self.with_this_param(exp, this);
         let saved = self.method_this.replace((e.span, this));
         let h = self.slot_value(e, exp, slot);
@@ -228,23 +235,44 @@ impl FnCx<'_, '_> {
             Some(text) => format!("`{text}`"),
             None => format!("`{}` of `{}`", prop.name, self.cx.display(t)),
         };
+        // An interface's method: whether one of its implementations reads `this` is known once
+        // every body is checked (`crate::iface_method_values`).
+        if let TyKind::Dyn(d, _) = *self.cx.ty.kind(t) {
+            if self.cx.dynamic(t).is_none() {
+                self.cx.object_impls.method_values.reads.push(
+                    crate::iface_method_values::StoredRead {
+                        iface: d,
+                        name: prop.name.clone(),
+                        what,
+                        read: text,
+                        span,
+                    },
+                );
+                return false;
+            }
+        }
         self.report_stored_method(what, text, span);
         true
     }
 
     /// The method `what` (as written in the message), read as `read` when that is a path.
     fn report_stored_method(&mut self, what: String, read: Option<String>, span: Span) {
-        let fix = match read {
-            Some(read) => format!("call it from a method or an arrow function: `(...) => {read}(...)`, or write the method in the literal"),
-            None => "call it on its object from a method or an arrow function, or write the method in the literal".into(),
-        };
-        self.cx.error(
-            Diagnostic::error(
-                format!("the method {what} may use `this`, so it cannot be the value of an object-literal property"),
-                span,
-            )
-            .with_note("TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from")
-            .with_note(fix),
-        );
+        self.cx
+            .error(stored_method_error(&what, read.as_deref(), span));
     }
+}
+
+/// The error for method `what` (as written in the message), read as `read` when that is a path,
+/// stored as an object-literal property while it may use `this`.
+pub(crate) fn stored_method_error(what: &str, read: Option<&str>, span: Span) -> Diagnostic {
+    let fix = match read {
+        Some(read) => format!("call it from a method or an arrow function: `(...) => {read}(...)`, or write the method in the literal"),
+        None => "call it on its object from a method or an arrow function, or write the method in the literal".into(),
+    };
+    Diagnostic::error(
+        format!("the method {what} may use `this`, so it cannot be the value of an object-literal property"),
+        span,
+    )
+    .with_note("TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from")
+    .with_note(fix)
 }
