@@ -241,7 +241,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 continue;
             }
             let slot = proj(&base, Proj::Field(field));
-            match callers.contains(&field) && lw.callers_own(ty) {
+            match callers.contains(&field) && lw.callers_own_type(ty) {
                 true => lw.unless_kept(|lw| lw.transfer_in_place(slot, ty)),
                 false => lw.transfer_in_place(slot, ty),
             }
@@ -312,16 +312,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Rvalue::Binary(BinOp::Sub, Operand::Copy(c.clone()), cint(1, Ty::U64)),
         );
         self.assign(c, Rvalue::Use(n));
-    }
-
-    /// Is a captured value of type `ty`, the code outside every read's (`callers_captures`), one
-    /// such code counts as any object, holding its parts counted: an object outside the lock set
-    /// that reaches it? (One of the lock set the reader holds uncounted: the transfer counts it.)
-    fn callers_own(&mut self, ty: TyId) -> bool {
-        self.cx.ty(ty) == Ty::Ptr
-            && self.cx.boxed(ty)
-            && !self.cx.lock_counted(ty)
-            && self.cx.reaches_lock_set(ty)
     }
 
     /// `f` (making a captured variable's cell, or a captured object of the code outside every
@@ -396,12 +386,20 @@ fn callers_captures(cx: &Cx<'_>, def: DefId) -> Vec<u32> {
     out
 }
 
-/// Is `var`, a variable of the function `def` is written in, captured by that function, a `read`
-/// callback, through each `read` callback around it from code outside them?
+/// Is `var`, a variable of the function `def` is written in, captured by that function (or by
+/// the closures around `def` up to one), a `read` callback, through each `read` callback around
+/// it from code outside them?
 fn from_outside_reads(cx: &Cx<'_>, def: DefId, mut var: LocalId) -> bool {
     let Some(&(Some(mut p), false)) = cx.closure_parents.get(&def) else {
         return false;
     };
+    // Through closures `def` is written in, inside the callback (`const mk = () => () => …`).
+    while let Some(&(Some(pp), false)) = cx.closure_parents.get(&p) {
+        let Some(c) = cx.fn_def(p).captures.iter().find(|c| c.inner == var) else {
+            return false;
+        };
+        (var, p) = (c.outer, pp);
+    }
     let mut through = false;
     while let Some(&(parent, true)) = cx.closure_parents.get(&p) {
         let Some(c) = cx.fn_def(p).captures.iter().find(|c| c.inner == var) else {

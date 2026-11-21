@@ -9,6 +9,10 @@ class Box {
   items: number[][] = [[1, 2], [3]];
 }
 
+class Bag {
+  rows: number[][][] = [[[1]], [[2]]];
+}
+
 function fresh(): number[][][] {
   return [[[1]], [[2]], [[3]]];
 }
@@ -71,6 +75,39 @@ function main() {
   n += holder.length + held!.o.length;
   console.log("stored", n, JSON.stringify(holder[0]), holder[2] === own, held!.o === own);
   console.log("chosen", holder.length, holder[9] === own, holder[10] === spare, holder[16] === own);
+
+  // A class instance, a `Map` and a closure of the caller's, stored as they are.
+  const bag = new Bag();
+  const bags: Bag[] = [];
+  const m = new Map<string, number[][]>();
+  m.set("k", [[1], [2]]);
+  const ms: Map<string, number[][]>[] = [];
+  let calls = 0;
+  const g = () => {
+    calls++;
+    return queue.pop()!.length;
+  };
+  const gs: (() => number)[] = [];
+  for (let r = 0; r < 3; r++) {
+    a.read((x) => {
+      bags.push(bag);
+      ms.push(m);
+      gs.push(g);
+    });
+  }
+  bag.rows[0][0].push(5);
+  for (const f of gs) {
+    n += f();
+  }
+  console.log(
+    "own",
+    bags.length,
+    bags[2] === bag,
+    JSON.stringify(bags[0].rows),
+    ms[1] === m,
+    calls,
+    queue.length,
+  );
 
   // With an element the reader made in it, and the caller's elements stored again after.
   const mixed = fresh();
