@@ -158,6 +158,9 @@ extend TlsServer implements ReactorTls {
       return fs.failed(status(e), "");
     }
   }
+  idleOpen(s: u64): bool {
+    return ops.idleOpen(s);
+  }
   close(s: u64) {
     ops.close(s);
   }

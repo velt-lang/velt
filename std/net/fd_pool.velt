@@ -37,7 +37,7 @@ struct Idle {
 }
 
 /** What `unpark` took under the lock: the stream to hand out (0: none), and those to close. */
-struct Taken {
+export struct Taken {
   h: u64;
   stale: u64[];
 }
@@ -65,10 +65,13 @@ function parked(): shared<Parked> {
   return made;
 }
 
-/** Keeps idle stream `h` under `key` (closed instead when the key is full); the pool's from now. */
-export function park(h: u64, key: string): void {
+/**
+ * Keeps idle stream `h` under `key`, the pool's from now: false when the key is full, and the
+ * caller closes it instead.
+ */
+export function park(h: u64, key: string): bool {
   const since = wt.now();
-  const kept = parked().with((map) => {
+  return parked().with((map) => {
     const list = map.get(key);
     if (list == undefined) {
       map.set(key, [{ h: h, since: since }]);
@@ -80,32 +83,18 @@ export function park(h: u64, key: string): void {
     list.push({ h: h, since: since });
     return true;
   });
-  if (!kept) {
-    fio.close(h);
-  }
 }
 
 /**
- * The most recently parked stream under `key` that is still usable (with `settled`, the most
- * recent one idle for at least `SETTLED_NS`), or 0. Streams found closed or idle too long are
- * closed on the way.
+ * The most recently parked stream under `key` (with `settled`, the most recent one idle for at
+ * least `SETTLED_NS`; 0 for none), taken out of the pool, and the streams found idle too long,
+ * also taken out, for the caller to close. The caller looks at the stream before using it
+ * (`idleOpen` for a socket of ours) and asks again when it can't carry a request: std/net/
+ * tcp_sched.velt, which knows a TLS stream from a socket.
  */
-export function unpark(key: string, settled: bool): u64 {
-  while (true) {
-    const now = wt.now();
-    const taken = parked().with((map) => take(map, key, settled, now));
-    // Closed with the lock let go: closing hands this thread's output off.
-    for (const s of taken.stale) {
-      fio.close(s);
-    }
-    if (taken.h === 0) {
-      return 0;
-    }
-    if (idleOpen(taken.h)) {
-      return taken.h;
-    }
-    fio.close(taken.h);
-  }
+export function unpark(key: string, settled: bool): Taken {
+  const now = wt.now();
+  return parked().with((map) => take(map, key, settled, now));
 }
 
 /** `unpark`'s step under the lock. */
@@ -145,7 +134,7 @@ function take(map: Map<string, Idle[]>, key: string, settled: bool, now: u64): T
  * Whether idle stream `h` can carry another request: a look at its socket finds nothing yet (not
  * the end of the stream, nor bytes nobody asked for, nor an error).
  */
-function idleOpen(h: u64): bool {
+export function idleOpen(h: u64): bool {
   const s = tb.enter(h);
   if (s === 0) {
     return false;

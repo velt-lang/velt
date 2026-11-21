@@ -51,6 +51,8 @@ export interface ReactorTls {
   writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus>;
   shutdown(s: u64): IoStatus;
   alpn(s: u64): Promise<IoResult<string>>;
+  /** Whether idle stream `s` (parked by `fetch`) can carry another request. */
+  idleOpen(s: u64): bool;
   close(s: u64): void;
 }
 
@@ -126,6 +128,9 @@ extend<T extends TlsStubbed> T implements ReactorTls {
   }
   async alpn(s: u64): Promise<IoResult<string>> {
     return { code: 16, message: "handle is closed", value: "" };
+  }
+  idleOpen(s: u64): bool {
+    return false;
   }
   close(s: u64) {}
 }

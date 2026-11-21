@@ -7,6 +7,7 @@
 // this file, so a program that can't connect with TLS loads none of the client.
 
 import { IoError } from "velt/io/error";
+import { noteStdUse } from "velt/lang/intrinsics";
 import { IoResult } from "velt/native/result";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
@@ -17,6 +18,8 @@ import "velt/net/tls/fd_reactor";
 import { TlsSession } from "velt/net/tls/fd_session";
 import { addConn, Conn } from "velt/net/tls/fd_table";
 import { clientHandshake } from "velt/net/tls/start_tls";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+import { AbortError, AbortSignal } from "velt/task";
 
 /** The host of "host:port" ("[v6]:port" gives the address without its brackets). */
 export function hostOf(addr: string): string {
@@ -59,6 +62,69 @@ export async function connectTls(
     // A failure of the crypto (a point off the curve, say) is the handshake's, as TLS reports it.
     throw e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
   }
+}
+
+// A handshake running in its own task: its engine or its failure once it is done.
+class Attempt {
+  engine: TlsEngine | null = null;
+  failure: IoError | null = null;
+  done: bool = false;
+}
+
+// Runs the client handshake over socket `fd` into `a`.
+async function attempt(fd: u64, serverName: string, ca: string, alpn: string, a: Attempt) {
+  try {
+    a.engine = await clientHandshake(
+      TcpStream.ofHandle(fd),
+      { serverName: serverName, ca: ca, alpn: alpn == "" ? [] : alpn.split(",") },
+      "fetch",
+    );
+  } catch (e) {
+    a.failure = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
+  }
+  a.done = true;
+}
+
+/**
+ * The TLS stream of connected socket `fd` (on the reactor) once the client handshake is done,
+ * as `connectTls`'s, within `limitMs` milliseconds and before `signal` aborts (`fetch`'s
+ * `https:`). Losing to either closes the socket, which ends the handshake; so does a failure.
+ * Throws `ETIMEDOUT` for the time limit, the signal's reason for an abort, else the handshake's
+ * `IoError`.
+ */
+export async function handshakeOn(
+  fd: u64,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  limitMs: i64,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
+  // The program reads and writes TLS streams of the reactor's: tcp_sched checks for them.
+  noteStdUse("reactorTls");
+  const a = new Attempt();
+  const running = attempt(fd, serverName, ca, alpn, a);
+  const racers: Promise<void>[] = [running, AbortSignal.timeout(limitMs).whenAborted()];
+  if (signal != null) {
+    racers.push(signal.whenAborted());
+  }
+  await Promise.race(racers);
+  if (!a.done) {
+    // Closing the socket fails the handshake's wait, so its task ends.
+    fio.close(fd);
+    await running;
+    if (signal != null) {
+      signal.throwIfAborted();
+    }
+    throw new IoError("ETIMEDOUT", "TLS: the handshake timed out");
+  }
+  const failure = a.failure;
+  if (failure != null) {
+    fio.close(fd);
+    throw failure;
+  }
+  const c: Conn = shared(new Mutex<TlsSession>(new FdTlsConn(fd, a.engine!, null, 0)));
+  return addConn(c);
 }
 
 /** The client's `connect` for std/net/tls/fd_reactor.velt. */
