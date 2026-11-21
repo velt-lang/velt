@@ -1,0 +1,25 @@
+// velt/arch/x86 (internal): `Avx512VL`, the check of `avx512vl-x86` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { AVX512VL_X86 } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("avx512vl-x86")`) and what such code calls.
+declare function velt_simd_has_avx512vl_x86(): bool;
+// Whether this build runs x86-64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_x86(): bool;
+
+/** AVX-512 vector length extensions (the 128- and 256-bit forms). The check of `@targetFeature("avx512vl-x86")`. */
+export class Avx512VL {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=AVX512VL`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_avx512vl_x86() || (velt_simd_on_x86() && cpuHas(AVX512VL_X86));
+  }
+}
