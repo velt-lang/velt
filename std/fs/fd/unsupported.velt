@@ -77,6 +77,11 @@ export function mapRead(fd: i32, len: usize, offset: i64): usize {
   return 0;
 }
 
+/** Fails, touching nothing. Unsafe: only so that it has the variants' signature. */
+export unsafe function unmapRead(address: usize, len: usize): i32 {
+  return -1;
+}
+
 export function adviseMap(address: usize, len: usize, advice: i32): i32 {
   return -1;
 }

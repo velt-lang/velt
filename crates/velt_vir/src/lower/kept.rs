@@ -304,6 +304,7 @@ impl Cx<'_> {
             self.atomic_copy_diagnostics(),
             self.unavailable_diagnostics(),
             self.unreduced_diagnostics(),
+            self.spread_errors.clone(),
         ];
         if let Some(d) = diags.iter().flatten().next() {
             return Err(format!("lowering reports: {}", d.message));

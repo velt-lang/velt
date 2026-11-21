@@ -59,11 +59,14 @@ async function main() {
   const a = new Obj();
   const all = Promise.all([give(a, g), give(a, g)]);
   const v = spawn(incAll(all));
+  // A combinator settles a microtask after its inputs, as in Node: the copy is made then.
+  await null;
   console.log("main", await count(a), "task", await v);
 
   const b = new Obj();
   const race = Promise.race([give(b, g), give(b, g)]);
   const w = spawn(inc(race));
+  await null;
   console.log("main", await count(b), "task", await w);
 
   const c = new Obj();

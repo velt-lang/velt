@@ -1,0 +1,78 @@
+// Yields and sleeps take their turns as Node's immediates and timers do (#3241): stored yields in
+// the order they were made, and before the next turn the microtasks the last one queued run, with
+// what they settle (a race's continuation). The expected output is Node's for this program with
+// `yieldNow` a promise `setImmediate` resolves and `sleep(ms)` one `setTimeout` resolves.
+
+async function tick(name: string, n: i64): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(name, i);
+    await Promise.resolve();
+  }
+}
+
+async function y(name: string): Promise<void> {
+  await yieldNow();
+  console.log(name, "yielded");
+}
+
+async function main() {
+  // Stored yields settle in the order they were made, not the order they are awaited.
+  const y1 = yieldNow();
+  const y2 = yieldNow();
+  const a = y2.then(() => console.log("y2"));
+  const b = y1.then(() => console.log("y1"));
+  await Promise.all([a, b]);
+
+  // Two yields race: the continuation and its microtasks run before the second yield's turn.
+  const r = await Promise.race([
+    yieldNow().then(() => {
+      console.log("then 1");
+      return 1;
+    }),
+    yieldNow().then(() => {
+      console.log("then 2");
+      return 2;
+    }),
+  ]);
+  console.log("race", r);
+  await Promise.resolve();
+  console.log("after race microtask");
+  await yieldNow();
+
+  // A yield racing a chain: the chain wins, the yield finishes at its turn.
+  const r2 = Promise.race([y("race").then(() => "yield"), tick("e", 2).then(() => "chain")]);
+  console.log("race", await r2);
+  const s = y("started");
+  await tick("f", 3);
+  await s;
+
+  // Two sleeps race: the same, between two timers.
+  const r3 = await Promise.race([
+    sleep(0).then(() => {
+      console.log("sleep 1");
+      return 1;
+    }),
+    sleep(0).then(() => {
+      console.log("sleep 2");
+      return 2;
+    }),
+  ]);
+  console.log("sleep race", r3);
+  await Promise.resolve();
+  console.log("after sleep race microtask");
+  await sleep(5);
+
+  // Each sleep's microtasks run before the next sleep's turn.
+  const t1 = sleep(0).then(() => {
+    console.log("timer 1");
+    Promise.resolve().then(() => console.log("timer 1 microtask"));
+  });
+  const t2 = sleep(0).then(() => {
+    console.log("timer 2");
+    Promise.resolve().then(() => console.log("timer 2 microtask"));
+  });
+  await Promise.all([t1, t2]);
+  console.log("done");
+}
+
+main();

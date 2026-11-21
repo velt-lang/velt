@@ -1,0 +1,25 @@
+// velt/arch/arm (internal): `Dp`, the check of `dotprod-arm` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { DOTPROD_ARM } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("dotprod-arm")`) and what such code calls.
+declare function velt_simd_has_dotprod_arm(): bool;
+// Whether this build runs arm64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_arm(): bool;
+
+/** The Armv8.2 dot products (FEAT_DotProd). The check of `@targetFeature("dotprod-arm")`. */
+export class Dp {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=DOTPROD`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_dotprod_arm() || (velt_simd_on_arm() && cpuHas(DOTPROD_ARM));
+  }
+}

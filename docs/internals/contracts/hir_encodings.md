@@ -999,12 +999,12 @@ doesn't hold, so a std global is the same definition in every program (#2943).
   modified in place. A use that takes the value (`Want::Move`) is wrapped in
   `Intrinsic::Share` by sema; moving a part out of it (`Field { base: Global(d) }` with mode
   `Move`) is a share too (lowering).
-- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` for each access to slot `i` (rt_abi.md
-  "Module state") and projects slot `i` of the tuple behind it; `DESC` is
-  `{ size, align, init, drop, names, rest }`, `init` the function evaluating every slot's `init`
-  in order into the zeroed block (calling `velt_rt_module_ready` after each), `drop` the tuple's
-  drop glue, `names` the slots' names, `rest` below (null when `init` writes every slot). A
-  slot is never read from its initializer's stored data (a module constant table's
+- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` (on a native target std's hook for
+  it) for each access to slot `i` (rt_abi.md "Module state") and projects slot `i` of the tuple
+  behind it; `DESC` is `{ size, align, init, drop, names, rest }`, `init` the function evaluating
+  every slot's `init` in order into the zeroed block (calling `velt_rt_module_ready` after each),
+  `drop` the tuple's drop glue, `names` the slots' names, `rest` below (null when `init` writes
+  every slot). A slot is never read from its initializer's stored data (a module constant table's
   `table_read`). `velt_main` touches the state before calling `main` (sync or async), so every
   initializer runs first, as in Node.
 - The root file's slots when its top-level statements are the entry `main` (#1438): slots
@@ -1205,6 +1205,18 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   the field in its member's variant, and a write evaluates the value once and stores the
   value's member into the field when it is the field's type, else stops the program with a
   `TypeError` (docs/internals/design/deferred-types.md).
+- `g(...args)` with `args` of a type known only per instantiation, a type parameter bounded by
+  an array or tuple type (`A extends unknown[]`) or a deferred type (`[S] extends [void] ? [] :
+  [S]`), spread into a call's rest parameter of `U[]` with `U` dynamic (`unknown`, `any`)
+  (#943, additive): in the array of the call's rest arguments, the spread's source is a `Call`
+  of `Intrinsic::SpreadParam(args)` of type `U[]`, `args` borrowed, spread like any array.
+  Only there: a spread of such a value in an array literal, or into fixed parameters, is
+  refused, as its length is known only per instantiation. Lowering (velt_vir
+  `lower/array/spread_param.rs`) builds the array at each instantiation from the value's own
+  type: a tuple gives its elements in order, an array its elements, each shared and converted
+  to `U` (boxed); `[]` gives an empty array. The value is evaluated once, where it is written
+  among the arguments. An instantiation whose value is neither, or whose element type holds a
+  lock (a dynamic value is read without the lock), is a diagnostic at the spread.
 
 ## Interface intersections and upcasts (#350)
 

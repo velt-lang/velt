@@ -449,6 +449,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// converts to a typed value checked at run time, and a function value to another function
     /// type through an adapting arrow.
     pub adapting: bool,
+    /// The spans of the arrays `pack_rest` builds of a call's rest arguments (`expr/spread_param.rs`).
+    pub rest_packs: rustc_hash::FxHashSet<Span>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -533,6 +535,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_calls: Default::default(),
             pending_member: None,
             adapting: false,
+            rest_packs: Default::default(),
         }
     }
 
