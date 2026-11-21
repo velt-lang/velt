@@ -6,13 +6,10 @@
 // sends what it says. No client certificates are asked for, no tickets are issued, and early data
 // is never accepted (a client only sends it when resuming with a ticket).
 
-import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
-import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { randomBytes } from "velt/crypto/random";
 import { sha256 } from "velt/crypto/sha256";
 import { sha384 } from "velt/crypto/sha512";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
-import { x25519, x25519PublicKey } from "velt/crypto/x25519";
 import { utf8Encode } from "velt/encoding/utf8";
 import {
   DECRYPT_ERROR,
@@ -36,19 +33,26 @@ import {
   EXT_KEY_SHARE,
   EXT_SUPPORTED_VERSIONS,
   SECP256R1,
+  SECP384R1,
   X25519,
 } from "velt/net/tls/client_hello";
 import { ClientOffer, parseClientHello } from "velt/net/tls/client_hello_parse";
+import {
+  exchangeKey,
+  exchangePublic,
+  exchangeSecret,
+  groupSupported,
+} from "velt/net/tls/key_exchange";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey } from "velt/net/tls/server_key";
+import { chooseScheme, schemeNames, signWith } from "velt/net/tls/server_signer";
 import { u8x16 } from "velt/simd";
 
 /** ecdsa_secp256r1_sha256, the signature scheme of the server's CertificateVerify. */
-const ECDSA_P256_SHA256: usize = 0x0403;
 
 // Where the handshake is.
 const WAIT_HELLO = 0;
@@ -79,6 +83,7 @@ export const S_DONE12 = 5;
 /** The server's side of one handshake. */
 export class ServerHandshake {
   private key: ServerKey;
+  private scheme: usize = 0;
   private protocols: string[];
   private state: i32 = WAIT_HELLO;
   private transcript: u8[] = [];
@@ -179,10 +184,11 @@ export class ServerHandshake {
     if (!retried) {
       this.compat = offer.sessionId.length > 0;
       this.serverName = offer.serverName;
-      if (!offer.schemes.includes(ECDSA_P256_SHA256)) {
+      this.scheme = chooseScheme(this.key, offer.schemes, offer.tls13);
+      if (this.scheme == 0) {
         throw new TlsFailure(
           HANDSHAKE_FAILURE,
-          "the client accepts no signature scheme of the certificate's key (ecdsa_secp256r1_sha256)",
+          `the client accepts no signature scheme of the certificate's key (${schemeNames(this.key, offer.tls13)})`,
         );
       }
       this.alpn = this.chooseAlpn(offer.alpn);
@@ -219,6 +225,9 @@ export class ServerHandshake {
     } else if (offer.p256Share.length > 0 && (!retried || this.group == SECP256R1)) {
       group = SECP256R1;
       share = offer.p256Share;
+    } else if (offer.p384Share.length > 0 && (!retried || this.group == SECP384R1)) {
+      group = SECP384R1;
+      share = offer.p384Share;
     }
     if (group == 0) {
       if (retried) {
@@ -234,15 +243,9 @@ export class ServerHandshake {
     let secret: u8[];
     let ours: u8[];
     try {
-      if (group == X25519) {
-        const k = randomBytes(32);
-        ours = x25519PublicKey(k);
-        secret = x25519(k, share);
-      } else {
-        const k = p256PrivateKey();
-        ours = p256PublicKey(k);
-        secret = p256Ecdh(k, share);
-      }
+      const k = exchangeKey(group);
+      ours = exchangePublic(group, k);
+      secret = exchangeSecret(group, k, share);
     } catch (e) {
       throw new TlsFailure(ILLEGAL_PARAMETER, "the client's key share is not a valid point");
     }
@@ -306,11 +309,11 @@ export class ServerHandshake {
     for (let i: usize = 0; i < th.length; i++) {
       signed.push(th[i]);
     }
-    const sig = p256Sign(this.key.key, sha256(signed));
+    const sig = signWith(this.key, this.scheme, signed);
     const cv = new ByteWriter();
     cv.u8(CERTIFICATE_VERIFY);
     const vb = cv.begin(3);
-    cv.u16(ECDSA_P256_SHA256);
+    cv.u16(this.scheme);
     const s = cv.begin(2);
     cv.put(sig);
     cv.end(s, 2);
@@ -339,7 +342,7 @@ export class ServerHandshake {
   private helloRetry(m: u8[], offer: ClientOffer): i32 {
     let group: usize = 0;
     for (const g of offer.groups) {
-      if (g == X25519 || g == SECP256R1) {
+      if (groupSupported(g)) {
         group = g;
         break;
       }
@@ -347,7 +350,7 @@ export class ServerHandshake {
     if (group == 0) {
       throw new TlsFailure(
         HANDSHAKE_FAILURE,
-        "no key exchange group in common (the server has X25519 and secp256r1)",
+        "no key exchange group in common (the server has X25519, secp256r1 and secp384r1)",
       );
     }
     this.group = group;

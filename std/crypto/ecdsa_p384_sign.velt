@@ -1,0 +1,142 @@
+// velt/crypto (internal): ECDSA signing on P-384 (SEC 1 §4.1.3, FIPS 186-5) with the nonce of
+// RFC 6979 (deterministic, HMAC-SHA384), for a TLS server's CertificateVerify with a P-384 key
+// (#2392 step 4). Constant time in the private key and the nonce, as ecdsa_p256_sign.velt: the
+// nonce comes from HMAC, R = kG is `p384PublicKey`'s fixed-window multiplication, and the
+// arithmetic mod n is `Mod384`'s masked products and additions with an inversion over the public
+// exponent n - 2. Only the digest and the signature are public. The loop that retries a nonce
+// out of range, or an r or s of zero, does branch on secret-derived values, as every RFC 6979
+// signer does; it takes a second turn with odds of about 2^-194, so no key reaches it in practice.
+
+import { CryptoError } from "velt/crypto/errors";
+import { hmacSha384 } from "velt/crypto/hmac";
+import { Mod384 } from "velt/crypto/mod384";
+import { p384PublicKey, p384ScalarOk } from "velt/crypto/p384_ecdh";
+import { invertScalar, p384Scalars } from "velt/crypto/scalar_p384";
+
+// Scalar registers.
+const S_E: usize = 0; // the digest, in the Montgomery domain
+const S_D: usize = 1; // the private key, in the Montgomery domain
+const S_R: usize = 2; // r as a number
+const S_S: usize = 3; // s as a number
+const S_K: usize = 4;
+const S_W: usize = 5;
+const S_TMP: usize = 6;
+const S_POWERS: usize = 7;
+const S_REGS: usize = S_POWERS + 16;
+
+/**
+ * The P-384 ECDSA signature (DER, RFC 3279's ECDSA-Sig-Value) of `digest` (a hash of the
+ * message: its leftmost 384 bits are used) by the private key `privateKey` (48 big-endian bytes
+ * in [1, n - 1]). The nonce is RFC 6979's with HMAC-SHA384 whatever hash made the digest, so the
+ * same key and digest give the same signature, and only a SHA-384 digest gives the RFC's (and
+ * other libraries' deterministic) signature. Throws `CryptoError` for a bad key.
+ */
+export function p384Sign(privateKey: u8[], digest: u8[]): u8[] {
+  if (!p384ScalarOk(privateKey)) {
+    throw new CryptoError("P-384 needs a 48-byte private key between 1 and n - 1");
+  }
+  const s = p384Scalars(S_REGS);
+  // bits2octets(digest) (RFC 6979 §2.3.4): its leftmost 384 bits as a number mod n. The digest
+  // is public.
+  const len = digest.length < 48 ? digest.length : 48;
+  s.load(S_TMP, digest, 0, len);
+  const h = octets(s, S_TMP);
+  s.enter(S_E, S_TMP);
+  s.load(S_TMP, privateKey, 0, 48);
+  s.enter(S_D, S_TMP);
+  // RFC 6979 §3.2 b..g.
+  let v = Buffer.alloc(48);
+  for (let i: usize = 0; i < 48; i++) {
+    v[i] = 1;
+  }
+  let k = Buffer.alloc(48);
+  k = hmacSha384(k, joined(v, 0, privateKey, h));
+  v = hmacSha384(k, v);
+  k = hmacSha384(k, joined(v, 1, privateKey, h));
+  v = hmacSha384(k, v);
+  while (true) {
+    // §3.2 h: qlen = hlen = 384, so one HMAC gives a candidate.
+    v = hmacSha384(k, v);
+    if (p384ScalarOk(v)) {
+      const sig = signWith(s, v);
+      if (sig.length > 0) {
+        return sig;
+      }
+    }
+    const next: u8[] = v.slice();
+    next.push(0);
+    k = hmacSha384(k, next);
+    v = hmacSha384(k, v);
+  }
+}
+
+// The signature with the nonce `nonce` (valid: 0 < nonce < n), or [] when r or s is zero.
+function signWith(s: Mod384, nonce: u8[]): u8[] {
+  const point = p384PublicKey(nonce);
+  // r = x(kG) mod n (x is below p < 2n, and load reduces once).
+  s.load(S_R, point, 1, 48);
+  if (s.isZero(S_R)) {
+    return [];
+  }
+  // s = (e + r d) / k.
+  s.load(S_TMP, nonce, 0, 48);
+  s.enter(S_K, S_TMP);
+  invertScalar(s, S_W, S_K, S_POWERS);
+  s.enter(S_K, S_R);
+  s.mul(S_K, S_K, S_D);
+  s.add(S_K, S_K, S_E);
+  s.mul(S_K, S_K, S_W);
+  s.leave(S_S, S_K);
+  if (s.isZero(S_S)) {
+    return [];
+  }
+  const ri = derInteger(octets(s, S_R));
+  const si = derInteger(octets(s, S_S));
+  const out: u8[] = [0x30, (ri.length + si.length) as u8];
+  for (const b of ri) {
+    out.push(b);
+  }
+  for (const b of si) {
+    out.push(b);
+  }
+  return out;
+}
+
+// Register `a` (a number, not in the Montgomery domain) as 48 big-endian bytes.
+function octets(s: Mod384, a: usize): u8[] {
+  const out = Buffer.alloc(48);
+  for (let i: usize = 0; i < 48; i++) {
+    const limb = s.r[6 * a + 5 - (i >> 3)];
+    out[i] = ((limb >> ((56 - 8 * (i & 7)) as u64)) & 0xff) as u8;
+  }
+  return out;
+}
+
+// V || sep || x || h, the input of RFC 6979's K updates.
+function joined(v: u8[], sep: u8, x: u8[], h: u8[]): u8[] {
+  const out = Buffer.alloc(145);
+  for (let i: usize = 0; i < 48; i++) {
+    out[i] = v[i];
+    out[49 + i] = x[i];
+    out[97 + i] = h[i];
+  }
+  out[48] = sep;
+  return out;
+}
+
+// A minimal positive DER INTEGER of the 48 big-endian bytes `be` (not zero; r and s are public).
+function derInteger(be: u8[]): u8[] {
+  let start: usize = 0;
+  while (start < 47 && be[start] == 0) {
+    start++;
+  }
+  const out: u8[] = [0x02, 0];
+  if ((be[start] & 0x80) != 0) {
+    out.push(0);
+  }
+  for (let i = start; i < 48; i++) {
+    out.push(be[i]);
+  }
+  out[1] = (out.length - 2) as u8;
+  return out;
+}
