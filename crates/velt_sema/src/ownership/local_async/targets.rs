@@ -109,6 +109,10 @@ impl Literals {
         let mut out = Literals::default();
         for (i, d) in cx.defs.iter().enumerate() {
             let def = DefId(i as u32);
+            // In a check by units, std's code the program has (`lazy_std::walks`).
+            if !crate::body::lazy_std::walks(cx, def) {
+                continue;
+            }
             // Function values std makes reach the program only through std's API; they come
             // with its declared effects (step 2), not with this join.
             let std = match cx.try_fn(def) {
