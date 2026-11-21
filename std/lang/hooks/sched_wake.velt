@@ -131,13 +131,35 @@ export function release(t: usize): void {
 @inline("always")
 export function releaseHere(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
-    if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
-      freePanicked(t);
+    if ((m.load32(t + tk.T_JOIN_STATE) & tk.J_LOCK) !== 0) {
+      // Another thread gives a reference back with a wake (sched_task_lost.velt
+      // `releaseAway`): it touches the task until it gives the lock back.
+      awaitUnlocked(t);
     }
-    if (yl.hasBlock(t)) {
-      yl.freeBlock(t);
-    }
-    m.release(t, m.ld(t + tk.T_BYTES));
+    freed(t);
+  }
+}
+
+/**
+ * Frees task `t`, whose last reference the caller gave back by its own count (`release`'s end,
+ * and sched_task_lost.velt `releaseAway`'s): its root's exception, its yield block, the task.
+ */
+@inline("always")
+export function freed(t: usize): void {
+  if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
+    freePanicked(t);
+  }
+  if (yl.hasBlock(t)) {
+    yl.freeBlock(t);
+  }
+  m.release(t, m.ld(t + tk.T_BYTES));
+}
+
+/** Waits until the join slot's lock of task `t`, about to be freed, is given back. */
+@noInline
+function awaitUnlocked(t: usize): void {
+  while ((m.load32(t + tk.T_JOIN_STATE) & tk.J_LOCK) !== 0) {
+    m.yieldCore();
   }
 }
 
