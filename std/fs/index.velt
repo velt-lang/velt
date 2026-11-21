@@ -58,6 +58,7 @@ export { FileWriter } from "velt/fs/file_writer";
 export { OpenReadOptions } from "velt/fs/open_read_options";
 export { openRead, openWrite, OpenWriteOptions } from "velt/fs/stream";
 export { closeSync, openSync, unlinkSync } from "velt/fs/fd/open";
+export { lock, LockOptions, lockSync, unlockSync } from "velt/fs/fd/lock";
 export { readSync } from "velt/fs/fd/read";
 export { readAt } from "velt/fs/fd/read_at";
 export { writeSync } from "velt/fs/fd/write";

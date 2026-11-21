@@ -80,7 +80,13 @@ impl<'a> Printer<'a> {
                 None => cat![self.ty_operand(ty), "?"],
             },
             TypeExprKind::Union(members) => {
-                let docs = members.iter().map(|m| self.ty_operand(m)).collect();
+                // `weak Node | null` as written: `weak` binds tighter than `|`.
+                let docs = (members.iter())
+                    .map(|m| match m.kind {
+                        TypeExprKind::Weak(_) => self.ty(m),
+                        _ => self.ty_operand(m),
+                    })
+                    .collect();
                 join(&text(" | "), docs)
             }
             TypeExprKind::Intersection(members) => {
@@ -113,6 +119,7 @@ impl<'a> Printer<'a> {
                 text(format!("typeof {}", path.join(".")))
             }
             TypeExprKind::KeyOf(inner) => cat!["keyof ", self.ty_operand(inner)],
+            TypeExprKind::Weak(inner) => cat!["weak ", self.ty_operand(inner)],
             TypeExprKind::Conditional(c) => {
                 let check = self.ty_cond_operand(&c.check);
                 let extends = self.ty_cond_operand(&c.extends);
@@ -347,6 +354,7 @@ impl<'a> Printer<'a> {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
             | TypeExprKind::KeyOf(_)
+            | TypeExprKind::Weak(_)
             | TypeExprKind::Conditional(_)
             | TypeExprKind::Infer(_)
             | TypeExprKind::Function { .. }
