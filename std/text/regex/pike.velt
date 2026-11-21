@@ -23,7 +23,8 @@ import {
   SCAN_NONE,
 } from "velt/text/regex/program";
 import { candidate } from "velt/text/regex/prefilter";
-import { Search } from "velt/text/regex/search";
+import { Lists } from "velt/text/regex/lists";
+import { listsOf, Search } from "velt/text/regex/search";
 
 /** Set in a job of the stack that restores a capture slot. */
 const RESTORE: u64 = (1 as u64) << 63;
@@ -32,21 +33,21 @@ const FINISHED: u64 = (1 as u64) << 62;
 const SHIFT: u64 = 40;
 const LOW: u64 = ((1 as u64) << 40) - 1;
 
-/** Sizes the lists of `m` for `prog`. */
-export function pikeReset(prog: Program, m: Search): void {
+/** Sizes the lists `w` for `prog`, with `slots` capture slots per thread. */
+export function pikeReset(prog: Program, w: Lists, slots: usize): void {
   const n = prog.length + (prog.marks as usize);
-  if (m.dense.length == 2 * n) {
+  if (w.dense.length == 2 * n) {
     return;
   }
   for (let i: usize = 0; i < 2 * n; i++) {
-    m.dense.push(0);
-    m.sparse.push(0);
+    w.dense.push(0);
+    w.sparse.push(0);
   }
-  for (let i: usize = 0; i < 2 * n * m.slots.length; i++) {
-    m.caps.push(-1);
+  for (let i: usize = 0; i < 2 * n * slots; i++) {
+    w.caps.push(-1);
   }
-  for (let i: usize = 0; i < m.slots.length; i++) {
-    m.work.push(-1);
+  for (let i: usize = 0; i < slots; i++) {
+    w.work.push(-1);
   }
 }
 
@@ -54,7 +55,7 @@ export function pikeReset(prog: Program, m: Search): void {
  * reading a character, in the program's order of preference, with the slots of `m.work`. */
 export function add(
   prog: Program,
-  m: Search,
+  m: Lists,
   s: string,
   len: usize,
   list: usize,
@@ -171,6 +172,7 @@ export function pike(
   start: usize,
   anchored: bool,
 ): bool {
+  const w = listsOf(m);
   const base = strDataAddress(s);
   const code = prog.code;
   const n = prog.length + (prog.marks as usize);
@@ -179,12 +181,12 @@ export function pike(
   let cur: usize = 0;
   let pos = start;
   let matched = false;
-  m.count[0] = 0;
-  m.count[1] = 0;
-  arrayTruncate(m.stack, 0);
+  w.count[0] = 0;
+  w.count[1] = 0;
+  arrayTruncate(w.stack, 0);
   while (true) {
     if (!matched && (pos == start || !anchored)) {
-      if (m.count[cur] == 0 && !anchored) {
+      if (w.count[cur] == 0 && !anchored) {
         const next = candidate(prog, m, s, pos, len);
         if (next < 0) {
           break;
@@ -192,11 +194,11 @@ export function pike(
         pos = next as usize;
       }
       for (let k: usize = 0; k < ns; k++) {
-        m.work[k] = -1;
+        w.work[k] = -1;
       }
-      add(prog, m, s, len, cur, 0, pos);
+      add(prog, w, s, len, cur, 0, pos);
     }
-    const live = m.count[cur];
+    const live = w.count[cur];
     if (live == 0) {
       break;
     }
@@ -208,9 +210,9 @@ export function pike(
       step = (packed >> 24) as usize;
     }
     const next = 1 - cur;
-    m.count[next] = 0;
+    w.count[next] = 0;
     for (let i: usize = 0; i < live; i++) {
-      const pc = m.dense[cur * n + i] as usize;
+      const pc = w.dense[cur * n + i] as usize;
       if (pc >= prog.length) {
         continue;
       }
@@ -221,7 +223,7 @@ export function pike(
         }
         const row = (cur * n + pc) * ns;
         for (let k: usize = 0; k < ns; k++) {
-          m.slots[k] = m.caps[row + k];
+          m.slots[k] = w.caps[row + k];
         }
         matched = true;
         break;
@@ -234,9 +236,9 @@ export function pike(
       if (hit) {
         const row = (cur * n + pc) * ns;
         for (let k: usize = 0; k < ns; k++) {
-          m.work[k] = m.caps[row + k];
+          w.work[k] = w.caps[row + k];
         }
-        add(prog, m, s, len, next, op == OP_SPAN ? pc : pc + 1, pos + step);
+        add(prog, w, s, len, next, op == OP_SPAN ? pc : pc + 1, pos + step);
       }
     }
     cur = next;

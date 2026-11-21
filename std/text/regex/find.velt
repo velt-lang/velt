@@ -3,10 +3,12 @@
 // backtracker on a short subject and the Pike machine on a long one.
 
 import { findByte } from "velt/lang/string/byte_scan";
-import { arrayTruncate, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { arrayTruncate, inline, strByteLen, strDataAddress } from "velt/lang/intrinsics";
 import { backtrack, backtrackReset, FAILED, MATCHED, SPENT } from "velt/text/regex/backtrack";
 import { charAt } from "velt/text/regex/decode";
+import { backward } from "velt/text/regex/dfa_backward";
 import { Dfa, GAVE_UP } from "velt/text/regex/dfa";
+import { thaw } from "velt/text/regex/dfa_tables";
 import { pike, pikeReset } from "velt/text/regex/pike";
 import {
   candidate,
@@ -16,7 +18,7 @@ import {
   literalStart,
 } from "velt/text/regex/prefilter";
 import { Program } from "velt/text/regex/program";
-import { Search } from "velt/text/regex/search";
+import { listsOf, Search } from "velt/text/regex/search";
 import { straight } from "velt/text/regex/straight";
 
 /** The most bits of visited states the backtracker is given: past it, the Pike machine. */
@@ -68,6 +70,7 @@ export function findAll(prog: Program, m: Search, s: string): void {
 
 /** Is there a match of `prog` in `s` that starts at or after position `from` (at `from` when
  * `sticky`)? The leftmost one's slots are then in `m.slots`, as byte offsets. */
+@inline("always")
 export function find(prog: Program, m: Search, s: string, from: usize, sticky: bool): bool {
   const len = strByteLen(s);
   const slots = m.slots;
@@ -93,7 +96,7 @@ export function find(prog: Program, m: Search, s: string, from: usize, sticky: b
   // backtracker gets a few steps first, enough for a match that is near and short. Once the
   // regex has searched before (it keeps its automaton), the automaton goes first, from a
   // shorter subject on.
-  const built = m.ends != null;
+  const built = m.ends != null || m.endsKept != null;
   const reused = (built || m.uses > 1) && len - from >= WARM;
   const long = prog.automaton && (len - from >= LONG || reused);
   if (prog.plain && !(long && reused)) {
@@ -129,7 +132,7 @@ function hasRequired(prog: Program, m: Search, s: string, from: usize, len: usiz
  * memory when its table is small, else the Pike machine. */
 function bounded(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool): bool {
   if (((prog.joins + prog.marks) as usize) * (len - from + 1) > MAX_VISITED) {
-    pikeReset(prog, m);
+    pikeReset(prog, listsOf(m), m.slots.length);
     return pike(prog, m, s, len, from, fixed);
   }
   backtrackReset(prog, m, from, len);
@@ -141,13 +144,16 @@ function bounded(prog: Program, m: Search, s: string, len: usize, from: usize, f
  * matchers' work between the two. `MATCHED`, `FAILED`, or `GAVE_UP`. */
 function automaton(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool): i64 {
   const slots = m.slots;
-  const ends = m.ends ?? new Dfa(prog, false);
+  const kept = m.endsKept;
+  const ends = m.ends ?? (kept != null ? thaw(prog, false, kept) : new Dfa(prog, false));
   m.ends = ends;
   const end = ends.forward(m, s, len, from, fixed, slots.length == 0);
   if (end < 0 || slots.length == 0) {
     if (end == GAVE_UP) {
       // Full: not kept for the next search.
       m.ends = null;
+      m.endsKept = null;
+      m.endsFull = true;
       return GAVE_UP;
     }
     return end < 0 ? FAILED : MATCHED;
@@ -160,11 +166,16 @@ function automaton(prog: Program, m: Search, s: string, len: usize, from: usize,
     return MATCHED;
   }
   if (!fixed) {
-    const starts = m.starts ?? new Dfa(prog.backward ?? prog, true);
+    const back = prog.backward ?? prog;
+    const keptStarts = m.startsKept;
+    const starts =
+      m.starts ?? (keptStarts != null ? thaw(back, true, keptStarts) : new Dfa(back, true));
     m.starts = starts;
-    start = starts.backward(s, end as usize, from);
+    start = backward(starts, s, end as usize, from);
     if (start == GAVE_UP) {
       m.starts = null;
+      m.startsKept = null;
+      m.startsFull = true;
       return GAVE_UP;
     }
   }

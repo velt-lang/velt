@@ -3,11 +3,12 @@
 import { describe, expect, it } from "velt/test";
 import { strByteLen } from "velt/lang/intrinsics";
 import { assemble } from "velt/text/regex/assemble";
+import { backward } from "velt/text/regex/dfa_backward";
 import { Dfa, GAVE_UP } from "velt/text/regex/dfa";
 import { find } from "velt/text/regex/find";
 import { pike, pikeReset } from "velt/text/regex/pike";
 import { Program } from "velt/text/regex/program";
-import { Search } from "velt/text/regex/search";
+import { listsOf, Search } from "velt/text/regex/search";
 import { straight } from "velt/text/regex/straight";
 
 function program(source: string, flags: string = ""): Program {
@@ -18,7 +19,7 @@ function program(source: string, flags: string = ""): Program {
 /** The slots of the first match of `prog` in `s` by the Pike machine. */
 function pk(prog: Program, s: string): i64[] {
   const m = new Search(2 * (prog.groups as usize) + 2);
-  pikeReset(prog, m);
+  pikeReset(prog, listsOf(m), m.slots.length);
   return pike(prog, m, s, strByteLen(s), 0, false) ? m.slots : [];
 }
 
@@ -56,7 +57,7 @@ describe("Automaton", () => {
     const ends = new Dfa(prog, false);
     expect(ends.forward(m, s, strByteLen(s), 0, false, false)).toBe(306);
     const starts = new Dfa(prog.backward ?? prog, true);
-    expect(starts.backward(s, 306, 0)).toBe(300);
+    expect(backward(starts, s, 306, 0)).toBe(300);
     // The leftmost match, not the first to end: `bbc` ends first.
     expect(ends.forward(m, "abbcd", 5, 0, false, false)).toBe(5);
     expect(ends.forward(m, "abbcd", 5, 0, false, true)).toBe(4);
@@ -214,7 +215,7 @@ describe("The reader of groups", () => {
       for (const s of ["c", "abc", "aabbc", "axbxc", "bbac", "ac"]) {
         const got = read(prog, s);
         const m = new Search(2 * (prog.groups as usize) + 2);
-        pikeReset(prog, m);
+        pikeReset(prog, listsOf(m), m.slots.length);
         const want = pike(prog, m, s, strByteLen(s), 0, true) && m.slots[1] == strByteLen(s) as i64;
         if (got.length > 0) {
           expect(want).toBe(true);

@@ -27,9 +27,10 @@ import { Program } from "velt/text/regex/program";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
 import { escapePattern, replaceMatches, splitMatches } from "velt/text/regex/replace";
 import { Search } from "velt/text/regex/search";
+import { DfaTables, grew } from "velt/text/regex/dfa_tables";
 // The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
-import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** The program of `pattern` with `flags`, and the names of its groups in `names`. */
 function compile(pattern: string, flags: string, names: string[]): Program {
@@ -42,23 +43,16 @@ function compile(pattern: string, flags: string, names: string[]): Program {
   return assemble(pattern, flags, names);
 }
 
-/** A `RegExp`'s `lastIndex`, and the matchers' memory kept from one call to the next: in an
- * object of its own, which the methods reach through a receiver they may not change. */
+/** A `RegExp`'s `lastIndex`, and what its calls keep for the next ones: in an object of its
+ * own, which the methods reach through a receiver they may not change. */
 class Cursor {
   at: Atomic<f64> = new Atomic<f64>(0);
-  /** Whether a call holds the regex's kept search memory (`RegExp.#memory`). */
-  busy: Atomic<bool> = new Atomic<bool>(false);
-}
-
-/** `m` made ready for a new subject, with `n` slots (all unset). */
-function sized(m: Search, n: usize): void {
-  m.forget();
-  if (m.slots.length > n) {
-    arrayTruncate(m.slots, n);
-  }
-  while (m.slots.length < n) {
-    m.slots.push(-1);
-  }
+  /** How many calls searched with the regex. */
+  calls: Atomic<u32> = new Atomic<u32>(0);
+  /** The tables of its automatons (dfa_tables.velt), so that they are worked out once per
+   * regex, not once per call: the one that finds where a match ends, and the backward one. */
+  ends: Atomic<shared<DfaTables> | null> = new Atomic<shared<DfaTables> | null>(null);
+  starts: Atomic<shared<DfaTables> | null> = new Atomic<shared<DfaTables> | null>(null);
 }
 
 /** A compiled regular expression: `new RegExp("(\\d+)-(\\d+)", "g")`. */
@@ -74,11 +68,6 @@ export class RegExp implements Pattern {
   #prog: Program;
   #names: string[] = [];
   #cursor: shared<Cursor> = shared(new Cursor());
-  /** The search memory kept from one call to the next, with the automatons it built
-   * (dfa.velt), so building them is paid once per regex, not once per call. A call claims it
-   * with the cursor's `busy`, so its lock is never waited for; a call that finds it claimed (by
-   * another thread) makes its own. */
-  #memory: shared<Mutex<Search>> = shared(new Mutex<Search>(new Search(0)));
 
   /** Throws `RegExpError` for an invalid pattern or flags. */
   constructor(pattern: string, flags: string = "") {
@@ -104,16 +93,9 @@ export class RegExp implements Pattern {
     const prog = this.#prog;
     const at = positionOf(s, start, prog.units);
     const sticky = this.sticky;
-    const cursor = this.#cursor;
-    // The previous value: true when another call holds it.
-    if (cursor.busy.compareExchange(false, true, "acquire")) {
-      return find(prog, new Search(0), s, at, sticky);
-    }
-    const found = this.#memory.with((m) => {
-      sized(m, 0);
-      return find(prog, m, s, at, sticky);
-    });
-    cursor.busy.store(false, "release");
+    const m = this.memory(0);
+    const found = find(prog, m, s, at, sticky);
+    this.keep(m);
     return found;
   }
 
@@ -136,8 +118,9 @@ export class RegExp implements Pattern {
   matchAll(s: string): RegExpMatch[] {
     const prog = this.#prog;
     const stride = 2 * (prog.groups as usize) + 2;
-    const m = new Search(stride);
+    const m = this.memory(stride);
     findAll(prog, m, s);
+    this.keep(m);
     const out: RegExpMatch[] = arrayWithCapacity(m.found.length / stride);
     for (let at: usize = 0; at < m.found.length; at += stride) {
       out.push(this.matchOf(s, m.found, at));
@@ -148,8 +131,9 @@ export class RegExp implements Pattern {
   /** The text of every match (JS `s.match(re)` with the `g` flag); empty if none. */
   matches(s: string): string[] {
     const prog = this.#prog;
-    const m = new Search(2);
+    const m = this.memory(2);
     findAll(prog, m, s);
+    this.keep(m);
     const out: string[] = arrayWithCapacity(m.found.length / 2);
     for (let at: usize = 0; at < m.found.length; at += 2) {
       out.push(textOf(s, m.found[at] as usize, m.found[at + 1] as usize));
@@ -323,6 +307,34 @@ export class RegExp implements Pattern {
     }
   }
 
+  /** A search with `slots` capture slots, as the next call of this regex, with the tables of
+   * its automatons that earlier calls kept. */
+  private memory(slots: usize): Search {
+    const m = new Search(slots);
+    const cursor = this.#cursor;
+    m.uses = cursor.calls.add(1, "relaxed") + 1;
+    m.endsKept = cursor.ends.load("acquire");
+    m.startsKept = cursor.starts.load("acquire");
+    return m;
+  }
+
+  /** Keeps the tables of `m`'s automatons for the next calls, when they worked out more. */
+  private keep(m: Search): void {
+    const cursor = this.#cursor;
+    const ends = m.ends;
+    if (m.endsFull) {
+      cursor.ends.store(null, "release");
+    } else if (ends != null && grew(ends, cursor.ends.load("acquire"))) {
+      cursor.ends.store(shared(new DfaTables(ends)), "release");
+    }
+    const starts = m.starts;
+    if (m.startsFull) {
+      cursor.starts.store(null, "release");
+    } else if (starts != null && grew(starts, cursor.starts.load("acquire"))) {
+      cursor.starts.store(shared(new DfaTables(starts)), "release");
+    }
+  }
+
   private execAt(s: string, from: usize): RegExpMatch | null {
     const prog = this.#prog;
     if (from > s.length) {
@@ -331,18 +343,10 @@ export class RegExp implements Pattern {
     const stride = 2 * (prog.groups as usize) + 2;
     const at = positionOf(s, from, prog.units);
     const sticky = this.sticky;
-    const cursor = this.#cursor;
-    // The previous value: true when another call holds it.
-    if (cursor.busy.compareExchange(false, true, "acquire")) {
-      const own = new Search(stride);
-      return find(prog, own, s, at, sticky) ? this.matchOf(s, own.slots, 0) : null;
-    }
-    const slots = this.#memory.with((m) => {
-      sized(m, stride);
-      return find(prog, m, s, at, sticky) ? m.slots.clone() : null;
-    });
-    cursor.busy.store(false, "release");
-    return slots == null ? null : this.matchOf(s, slots, 0);
+    const m = this.memory(stride);
+    const found = find(prog, m, s, at, sticky);
+    this.keep(m);
+    return found ? this.matchOf(s, m.slots, 0) : null;
   }
 
   // Where the search goes on after an empty match at `end`: JavaScript's AdvanceStringIndex,

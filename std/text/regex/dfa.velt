@@ -31,6 +31,8 @@ import {
   Program,
   SCAN_NONE,
 } from "velt/text/regex/program";
+import { DfaTables } from "velt/text/regex/dfa_tables";
+import { Lists } from "velt/text/regex/lists";
 import { Search } from "velt/text/regex/search";
 
 /** The most states an automaton holds. */
@@ -40,21 +42,21 @@ const MAX_STATES: usize = 512;
 export const GAVE_UP: i64 = -2;
 
 /** A state holds a match. */
-const MATCH: u8 = 1;
+export const MATCH: u8 = 1;
 /** No new match starts from a state: one was found, or the search is at a fixed start. */
 const NO_START: u8 = 2;
 /** A state without threads, from which nothing matches. */
-const DEAD: u8 = 4;
+export const DEAD: u8 = 4;
 /** The state a search anywhere starts in, while the scan skips from it. */
 const SKIPS: u8 = 8;
 /** A state holds a match where the subject ends: a thread waits at `$` and leads to one. */
 const ENDS: u8 = 16;
 /** A transition that is not worked out; in one that is, where the row of its state starts
  * (`ROW`), that a run has to look at that state (`SLOW`), and that it holds a match (`HIT`). */
-const UNKNOWN: u32 = 0xffffffff;
-const ROW: u32 = 0x3fffffff;
-const SLOW: u32 = 0x80000000;
-const HIT: u32 = 0x40000000;
+export const UNKNOWN: u32 = 0xffffffff;
+export const ROW: u32 = 0x3fffffff;
+export const SLOW: u32 = 0x80000000;
+export const HIT: u32 = 0x40000000;
 /** The scan from the start state is left alone, for good, when after `SKIP_TRIES` scans it
  * skipped fewer than `SKIP_GAIN` bytes a scan: it costs more than reading those bytes. */
 const SKIP_TRIES: usize = 4;
@@ -74,12 +76,17 @@ export class Dfa {
   readonly longest: bool;
   readonly classes: usize;
   /** The lists the program's threads are followed in (pike.velt `add`), and those a thread
-   * waiting at `$` is followed in where the subject ends. */
-  scratch: Search = new Search(0);
-  ending: Search = new Search(0);
+   * waiting at `$` is followed in where the subject ends: made when a state is first worked
+   * out (an automaton loaded from tables, dfa_tables.velt, may need none). */
+  scratch: Lists | null = null;
+  ending: Lists | null = null;
+  /** The tables this automaton started from, read in place until it changes them, when they
+   * are copied into its own (`own`): an automaton that finds every state it needs there copies
+   * nothing (dfa_tables.velt). */
+  kept: shared<DfaTables> | null = null;
   /** The threads of every state, one state after another, and where each state's start. */
   threads: u32[] = [];
-  bounds: usize[] = [0];
+  bounds: usize[] = [];
   /** `MATCH`, `NO_START` and `DEAD` of each state. */
   flags: u8[] = [];
   /** Per state, a row of `classes + 1` transitions (the last one, of a byte past ASCII, is
@@ -107,16 +114,62 @@ export class Dfa {
     this.prog = prog;
     this.longest = longest;
     this.classes = prog.classStarts.length;
-    pikeReset(prog, this.scratch);
-    pikeReset(prog, this.ending);
+  }
+
+  /** Copies the kept tables into this automaton's own, before it changes them. */
+  private own(): void {
+    const k = this.kept;
+    if (k != null) {
+      this.threads = k.threads.clone();
+      this.bounds = k.bounds.clone();
+      this.flags = k.flags.clone();
+      this.next = k.next.clone();
+      this.kept = null;
+    }
+  }
+
+  /** The flags of state `st`, the transition at `i`, and where the transitions are. */
+  flagOf(st: usize): u8 {
+    const k = this.kept;
+    return k != null ? k.flags[st] : this.flags[st];
+  }
+
+  edge(i: usize): u32 {
+    const k = this.kept;
+    return k != null ? k.next[i] : this.next[i];
+  }
+
+  edges(): usize {
+    const k = this.kept;
+    return k != null ? unsafe { arrayReadAddress(k.next) } : unsafe { arrayReadAddress(this.next) };
+  }
+
+  /** The scratch lists (`ending`: those for `$`), made the first time. */
+  private lists(ending: bool): Lists {
+    const made = ending ? this.ending : this.scratch;
+    const m = made ?? new Lists();
+    if (made == null) {
+      pikeReset(this.prog, m, 0);
+      if (ending) {
+        this.ending = m;
+      } else {
+        this.scratch = m;
+      }
+    }
+    return m;
   }
 
   /** The state of the threads in the scratch list, made if it is new; -1 when the automaton
    * is full. */
   private intern(noStart: bool): i64 {
     const prog = this.prog;
-    const m = this.scratch;
+    const m = this.lists(false);
     const width = prog.length + (prog.marks as usize);
+    if (this.bounds.length == 0) {
+      // The first state's threads start at 0 (made here, not when the automaton is: one that
+      // reads kept tables needs none).
+      this.bounds.push(0);
+    }
     const from = this.threads.length;
     let flags: u8 = noStart ? NO_START : 0;
     for (let i: usize = 0; i < m.count[1]; i++) {
@@ -167,7 +220,7 @@ export class Dfa {
   /** Does the thread waiting at `$` at `pc` lead to a match where the subject ends? */
   private ends(pc: usize): bool {
     const prog = this.prog;
-    const m = this.ending;
+    const m = this.lists(true);
     m.count[1] = 0;
     // A subject of no bytes, at its end: `$` holds.
     add(prog, m, "", 0, 1, pc + 1, 0);
@@ -183,15 +236,17 @@ export class Dfa {
 
   /** The state a search starts in (`fixed`: at one position only; `atEnd`: where the subject
    * ends, so that `$` holds); -1 when full. */
-  private start(fixed: bool, atEnd: bool = false): i64 {
+  start(fixed: bool, atEnd: bool = false): i64 {
     const known = atEnd ? this.fixedAtEnd : fixed ? this.fixed : this.anywhere;
     if (known != 0) {
       return (known as i64) - 1;
     }
-    this.scratch.count[1] = 0;
+    this.own();
+    const m = this.lists(false);
+    m.count[1] = 0;
     // The threads are followed as in a subject of one byte, at its start: `$` does not hold
     // (the thread waits there), unless the search starts where the subject ends.
-    add(this.prog, this.scratch, "", atEnd ? 0 : 1, 1, 0, 0);
+    add(this.prog, m, "", atEnd ? 0 : 1, 1, 0, 0);
     const st = this.intern(fixed || atEnd);
     if (atEnd) {
       this.fixedAtEnd = (st + 1) as u32;
@@ -204,11 +259,12 @@ export class Dfa {
   }
 
   /** The state that state `st` leads to by a character of class `c`; -1 when full. */
-  private step(st: usize, c: usize): i64 {
+  step(st: usize, c: usize): i64 {
+    this.own();
     const prog = this.prog;
     const code = prog.code;
     const char = prog.classStarts[c];
-    const m = this.scratch;
+    const m = this.lists(false);
     m.count[1] = 0;
     for (let i = this.bounds[st]; i < this.bounds[st + 1]; i++) {
       const pc = this.threads[i] as usize;
@@ -241,6 +297,7 @@ export class Dfa {
 
   /** Sets or clears `SKIPS` of state `st`, and makes the transitions to it say so. */
   private arm(st: usize, on: bool): void {
+    this.own();
     this.armed = on;
     this.flags[st] = on ? this.flags[st] | SKIPS : this.flags[st] & ~SKIPS;
     const row = (st * (this.classes + 1)) as u32;
@@ -252,7 +309,7 @@ export class Dfa {
   }
 
   /** The class of the character `c`. */
-  private classOf(c: u32): usize {
+  classOf(c: u32): usize {
     const starts = this.prog.classStarts;
     let lo: usize = 0;
     let hi = starts.length;
@@ -290,7 +347,7 @@ export class Dfa {
     let pos = from;
     let end: i64 = -1;
     while (st >= 0) {
-      const flags = this.flags[st as usize];
+      const flags = this.flagOf(st as usize);
       if ((flags & MATCH) != 0 || (pos >= len && (flags & ENDS) != 0)) {
         end = pos as i64;
         if (any) {
@@ -323,18 +380,18 @@ export class Dfa {
         c = this.classOf(packed & 0xffffff);
         size = (packed >> 24) as usize;
       }
-      const to = this.next[(st as usize) * width + c];
+      const to = this.edge((st as usize) * width + c);
       st = to != UNKNOWN ? ((to & ROW) as i64) / (width as i64) : this.step(st as usize, c);
       pos += size;
-      if (st < 0 || (this.flags[st as usize] & (DEAD | SKIPS)) != 0) {
+      if (st < 0 || (this.flagOf(st as usize) & (DEAD | SKIPS)) != 0) {
         continue;
       }
       // Then through transitions that are known, to states where nothing has to be looked
       // at: the tables are read where they are, and nothing is called.
-      const next = unsafe { arrayReadAddress(this.next) };
+      const next = this.edges();
       const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
       let row = (st as usize) * width;
-      end = (this.flags[st as usize] & MATCH) != 0 ? pos as i64 : end;
+      end = (this.flagOf(st as usize) & MATCH) != 0 ? pos as i64 : end;
       // Until a match is seen, four characters a step: a transition that is unknown, slow or
       // to a match ends the steps, and the slow way takes it.
       while (end < 0 && pos + 4 <= len) {
@@ -378,52 +435,5 @@ export class Dfa {
       st = (row / width) as i64;
     }
     return st < 0 ? GAVE_UP : end;
-  }
-
-  /** Where the longest match of the (backward) program that ends at byte `end` of `s` starts,
-   * not before `floor`: a match is known to be there. `GAVE_UP` when the automaton is full. */
-  backward(s: string, end: usize, floor: usize): i64 {
-    const base = strDataAddress(s);
-    const prog = this.prog;
-    const width = this.classes + 1;
-    let st = this.start(true, end == strByteLen(s));
-    let pos = end;
-    let found = end as i64;
-    while (st >= 0) {
-      const flags = this.flags[st as usize];
-      if ((flags & MATCH) != 0) {
-        found = pos as i64;
-      }
-      if ((flags & DEAD) != 0 || pos <= floor) {
-        return found;
-      }
-      pos = before(base, pos, prog.units);
-      const packed = charAt(base, pos, prog.units);
-      const ch = packed & 0xffffff;
-      const c = ch < 128 ? prog.asciiClass[ch] as usize : this.classOf(ch);
-      const to = this.next[(st as usize) * width + c];
-      st = to != UNKNOWN ? ((to & ROW) as i64) / (width as i64) : this.step(st as usize, c);
-      if (st < 0 || (this.flags[st as usize] & DEAD) != 0) {
-        continue;
-      }
-      // As `forward`, towards the start.
-      const next = unsafe { arrayReadAddress(this.next) };
-      const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
-      let row = (st as usize) * width;
-      found = (this.flags[st as usize] & MATCH) != 0 ? pos as i64 : found;
-      while (pos > floor) {
-        const kind =
-          unsafe { addressLoad<u8>(kinds + (unsafe { addressLoad<u8>(base + pos - 1) } as usize)) };
-        const known = unsafe { addressLoad<u32>(next + 4 * (row + (kind as usize))) };
-        if ((known & SLOW) != 0) {
-          break;
-        }
-        pos--;
-        row = (known & ROW) as usize;
-        found = (known & HIT) != 0 ? pos as i64 : found;
-      }
-      st = (row / width) as i64;
-    }
-    return GAVE_UP;
   }
 }

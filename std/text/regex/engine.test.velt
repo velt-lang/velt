@@ -8,7 +8,7 @@ import { parsePattern } from "velt/text/regex/parse_pattern";
 import { Parser } from "velt/text/regex/parser";
 import { pike, pikeReset } from "velt/text/regex/pike";
 import { OP_SPAN, Program, SCAN_FIRST, SCAN_GRAMS, SCAN_NONE } from "velt/text/regex/program";
-import { Search } from "velt/text/regex/search";
+import { listsOf, Search } from "velt/text/regex/search";
 
 /** The slots of the first match of `source` in `s` by the backtracker, trying every start. */
 function bt(source: string, flags: string, s: string): i64[] {
@@ -34,7 +34,7 @@ function pk(source: string, flags: string, s: string, from: usize = 0): i64[] {
   const c = new Compiler(p);
   c.compile(tree);
   const m = new Search(2 * (c.prog.groups as usize) + 2);
-  pikeReset(c.prog, m);
+  pikeReset(c.prog, listsOf(m), m.slots.length);
   return pike(c.prog, m, s, strByteLen(s), from, false) ? m.slots : [];
 }
 
