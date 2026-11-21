@@ -13,7 +13,14 @@ import {
 } from "velt/crypto/rt";
 import { H256, K256 } from "velt/crypto/tables";
 import { blockWords, keyWords, newBytes, Pair, tailBlock, tailBlocks } from "velt/crypto/vectors";
-import { targetFeature } from "velt/lang/intrinsics";
+import { noInline, targetFeature } from "velt/lang/intrinsics";
+
+// Out of line and loud: `blocks256Arm`'s and `blocks256X86`'s caller checked the range, so a
+// block past the data is an internal error; `never`, so the loads after the check need no other.
+@noInline
+function rangeFault(): never {
+  panic("ICE: a SHA-256 block past its data");
+}
 
 // One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2, in four batches of four
 // with the next sixteen message words made after each batch (but the last). The schedule
@@ -87,7 +94,7 @@ export function blocks256Arm(h: u32[], data: u8[], off: usize, count: usize) {
   for (let i: usize = 0; i < count; i++) {
     const at = off + i * BLOCK;
     if (!u8x16.fits(data, at + 48)) {
-      break;
+      rangeFault();
     }
     s = rounds256Arm(
       s,
@@ -230,7 +237,7 @@ export function blocks256X86(h: u32[], data: u8[], off: usize, count: usize) {
   for (let i: usize = 0; i < count; i++) {
     const at = off + i * BLOCK;
     if (!u8x16.fits(data, at + 48)) {
-      break;
+      rangeFault();
     }
     s = rounds256X86(
       s,
