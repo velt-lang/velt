@@ -9,3 +9,8 @@ d
 dispose e (2 bytes)
 2 true 0,2
 0,2,4,99
+f
+dispose f (3 bytes)
+0,2,4
+dispose g (6 bytes)
+6

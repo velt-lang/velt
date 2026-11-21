@@ -1,5 +1,6 @@
 // A `using` variable that may be null, narrowed or asserted non-null, is still the variable
-// itself: moving it out of its declaration is an error, as for one that is never null (#3433).
+// itself: moving it out of its declaration is an error, as for one that is never null. So is
+// binding the whole variable to another one, unlike destructuring its fields (#3433).
 class Res {
   [Symbol.dispose]() {}
 }
@@ -21,7 +22,14 @@ function asserted(): Res {
   return r!;
 }
 
+function bound(): Res {
+  using r = new Res();
+  const other = r;
+  return other;
+}
+
 function main() {
   narrowed();
   asserted();
+  bound();
 }

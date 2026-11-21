@@ -1,7 +1,7 @@
 // check: no leaks
 // A part of a `using` variable read out of its block: a field's value returned through a
-// `const` or directly, a nested object, a string, and the same array kept twice in an array
-// (#3433). The variable itself is not moved, so it is disposed at the end of its block once, as
+// `const` or directly, a nested object, a string, the same array kept twice in an array, and
+// fields destructured out of it (#3433). The variable itself is not moved, so it is disposed at the end of its block once, as
 // usual, and the value read out lives on (it was refused as moving the variable).
 class Mapped {
   name: string;
@@ -57,6 +57,21 @@ function kept(): number[][] {
   return all;
 }
 
+function destructured(): number[] {
+  using m = open("f", 3);
+  const { bytes, name } = m;
+  console.log(name);
+  return bytes;
+}
+
+function destructuredNested(): number {
+  using m = open("g", 6);
+  const {
+    meta: { size },
+  } = m;
+  return size;
+}
+
 function main() {
   const a = throughConst();
   console.log(a.join(","));
@@ -68,4 +83,6 @@ function main() {
   console.log(k.length, k[0] === k[1], k[1].join(","));
   a.push(99);
   console.log(a.join(","));
+  console.log(destructured().join(","));
+  console.log(destructuredNested());
 }
