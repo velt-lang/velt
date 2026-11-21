@@ -1,0 +1,2 @@
+iface_method_value_this.velt:16:36: error: the method `g.greet` may use `this`, so it cannot be the value of an object-literal property
+iface_method_value_this.velt:36:17: error: the method `c.inc` may use `this`, so it cannot be the value of an object-literal property

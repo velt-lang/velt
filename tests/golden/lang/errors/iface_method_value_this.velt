@@ -1,0 +1,39 @@
+// An interface's method read as an object-literal property's value stays refused when one of
+// its implementations reads `this`: a class's method, or an object literal's.
+interface Greeter {
+  name: string;
+  greet(): string;
+}
+
+class Person implements Greeter {
+  name = "p";
+  greet(): string {
+    return "hi " + this.name;
+  }
+}
+
+function wrap(g: Greeter) {
+  return { name: "wrapper", greet: g.greet };
+}
+
+console.log(wrap(new Person()).greet());
+
+interface Counter {
+  n: number;
+  inc(): void;
+}
+
+function literalCounter(): Counter {
+  return {
+    n: 0,
+    inc() {
+      this.n++;
+    },
+  };
+}
+
+function detach(c: Counter) {
+  return { inc: c.inc };
+}
+
+detach(literalCounter()).inc();

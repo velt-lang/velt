@@ -144,6 +144,7 @@ mod lit;
 mod literal_iface;
 mod literal_keys;
 mod literal_this;
+pub(crate) use literal_this::stored_method_error;
 mod literal_types;
 mod literal_union_cast;
 mod literal_union_compare;

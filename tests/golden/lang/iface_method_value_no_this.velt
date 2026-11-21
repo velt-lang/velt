@@ -1,0 +1,33 @@
+// An interface's method read as the value of an object-literal property (`{ setKey:
+// handle.setKey }`, sigx's async engine) is accepted when no implementation of the method reads
+// `this`: Node calls the function with the literal as `this` and Velt keeps the object it was
+// read from, which only an implementation reading `this` could tell apart. Here every
+// implementation is a closure over its own state.
+interface Handle {
+  value: number;
+  setKey(k: string): void;
+  dispose(): void;
+}
+
+function createHandle(start: string): Handle {
+  let key = start;
+  function setKey(k: string): void {
+    key = k;
+    console.log("key", key);
+  }
+  function dispose(): void {
+    console.log("disposed", key);
+  }
+  return { value: 1, setKey, dispose };
+}
+
+function read(start: string) {
+  const handle = createHandle(start);
+  return { state: handle.value, setKey: handle.setKey, dispose: handle.dispose };
+}
+
+const r = read("start");
+r.dispose();
+r.setKey("a");
+r.dispose();
+console.log(r.state);
