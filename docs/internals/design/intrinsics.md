@@ -92,10 +92,10 @@ The line that matters is portable against CPU-specific, as in .NET (`Vector128` 
   lowering expands.
 
 `--cpu` gives a compile-time mask over `velt_codegen_cl::X86_FEATURES` on x86-64 and
-`ARM_FEATURES` on arm64, checked at start-up by `velt_rt_check_cpu`
+`ARM_FEATURES` on arm64, checked at start-up by std's `cpuStart` hook
 ([rt_abi.md](../contracts/rt_abi.md) "CPU check"). The run-time answers of the extension checks
-come from the flags in `crates/velt_rt/src/cpu.rs` (SHA and carry-less multiply) or from std code
-reading `cpuid` (`std/lang/math/fma_check.velt`, `std/simd/aes.velt`), computed once.
+(velt/arch's `isSupported()`, package-machine-code.md §2 "As built in step 3") come from the
+feature word that hook computes once.
 
 ### Memory at an address
 

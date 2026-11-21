@@ -14,13 +14,13 @@
 // async function.
 //
 // `@targetFeature("clmul-x86")` compiles a function for a CPU extension. Every call of it must sit
-// behind velt/simd's check of that extension (an `if`, not `?:`), or in a function gated on the
-// same one:
+// behind velt/arch's check of that extension (an `if`, not `?:`), or in a function gated on
+// features that cover it:
 //
 //   @targetFeature("clmul-x86")
 //   function mulX86(a: u64x2, b: u64x2): u64x2 { return a.clmulLow(b); }
 //
-//   if (u64x2.hasClmulX86()) {
+//   if (Pclmulqdq.isSupported()) {
 //     c = mulX86(a, b);
 //   } else {
 //     c = mulPortable(a, b);
@@ -31,7 +31,7 @@ export { inline } from "velt/lang/intrinsics/decorators";
 /** Calls of a function stay calls. */
 export { noInline } from "velt/lang/intrinsics/decorators";
 /**
- * The function is compiled for a CPU extension; every call sits behind velt/simd's check of it
- * (`if (u32x4.hasShaX86()) { … }`) or in a function gated on the same one.
+ * The function is compiled for CPU features; every call sits behind velt/arch's checks of them
+ * (`if (Sha.isSupported()) { … }`) or in a function gated on features that cover them.
  */
 export { targetFeature } from "velt/lang/intrinsics/decorators";

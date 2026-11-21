@@ -16,6 +16,8 @@ import { clamp, gcd } from "velt/math";
 import { connect } from "velt/net";
 import { join } from "velt/path";
 import { argv } from "velt/process";
+import * as std_arch_arm from "velt/arch/arm";
+import * as std_arch_x86 from "velt/arch/x86";
 import * as std_cli from "velt/cli";
 import * as std_collections from "velt/collections";
 import * as std_compiler from "velt/compiler";
