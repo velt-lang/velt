@@ -608,14 +608,14 @@ velt_rt_wasm has, for WebAssembly builds, with their async twins:
 `velt_rt_fs_lstat_sync(path, out)` (`IoResult<VeltStat>`) and `velt_rt_fs_exists_sync(path) ->
 u8`. Text is read as bytes and decoded in std: neither runtime reads a file as text.
 
-Listing a directory (plain and with each entry's type) and making one are std code in a native
-build too, and on macOS and Linux so is removing a file, a link or a tree (`#fs-tree`:
-std/fs/tree/posix.velt over the C library's `opendir`, `readdir`, `mkdir`, `rmdir` and, for a
-tree, `openat`, `fdopendir` and `unlinkat`, so that nothing is reached through a link;
-tree/win32.velt over `FindFirstFileExW` and `CreateDirectoryW`), with Node's messages and the
-names sorted by code point. velt_rt has `velt_rt_fs_remove_sync` alone, which std calls on
-Windows (a tree is removed there with every directory opened relative to its parent's handle,
-which std does not do); on macOS and Linux nothing calls it and it reports "unsupported".
+Listing a directory (plain and with each entry's type), making one and removing a file, a link
+or a tree are std code in a native build too (`#fs-tree`: std/fs/tree/posix.velt over the C
+library's `opendir`, `readdir`, `mkdir`, `rmdir` and, for a tree, `openat`, `fdopendir` and
+`unlinkat`; tree/win32.velt over `FindFirstFileExW` and `CreateDirectoryW`, and
+tree/win_remove.velt, which lists a directory from its handle, opens each entry relative to it
+with ntdll's `NtCreateFile` and deletes it on its handle), with Node's messages and the names
+sorted by code point. On every system a tree is removed without reaching anything through a
+link, also one that takes a directory's place during the removal. velt_rt has none of these.
 velt_rt_wasm has, for WebAssembly builds, with their async twins:
 `velt_rt_fs_read_dir_sync(path, out)` (`IoResult<VeltStrArray>`, the names sorted),
 `velt_rt_fs_read_dir_typed_sync(path, out)` (`IoResult<VeltDirents>`),
@@ -627,7 +627,6 @@ velt_rt_wasm has, for WebAssembly builds, with their async twins:
 | `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink |
 | `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it |
 | `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) |
-| `velt_rt_fs_remove_sync(path, recursive, out)` | Windows only. `IoResult<()>`; file, symlink (the link only, a Windows directory link too), empty dir, or tree if recursive |
 | `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
 | `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
 
@@ -744,8 +743,6 @@ Neither runtime has clock functions.
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) |
 | `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
-| `velt_rt_bytes_hash` | `(const VeltBytes* b) -> u64` | `velt_rt_str_hash` of the string whose bytes are `b` (`Map.getUtf8`: a key looked up by its UTF-8 bytes) |
-| `velt_rt_str_eq_bytes` | `(const VeltStr* s, const VeltBytes* b) -> u8` | whether `s`'s bytes are `b` |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline |

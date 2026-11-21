@@ -20,7 +20,7 @@ const KEY_REGISTERED: u64 = 1;
 /// `DESCRIBED`).
 const DESCRIBED: u64 = 1 << 63;
 
-/// The record's `key` of the compiler's symbol `id`: 2 and up (the runtime uses 0 and 1), so no
+/// The record's `key` of the compiler's symbol `id`: 2 and up (std's records use 0 and 1), so no
 /// two records have the same bytes and none can be merged with another; a registry record's is
 /// [`KEY_REGISTERED`] (its description, a distinct key, tells it apart). [`DESCRIBED`] is added
 /// when it has a description.

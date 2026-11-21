@@ -1,0 +1,25 @@
+// velt/arch/x86 (internal): `Sse3`, the check of `sse3-x86` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { SSE3_X86 } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("sse3-x86")`) and what such code calls.
+declare function velt_simd_has_sse3_x86(): bool;
+// Whether this build runs x86-64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_x86(): bool;
+
+/** SSE3. The check of `@targetFeature("sse3-x86")`. */
+export class Sse3 {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=SSE3`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_sse3_x86() || (velt_simd_on_x86() && cpuHas(SSE3_X86));
+  }
+}

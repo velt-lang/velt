@@ -405,6 +405,22 @@ A `pread` from Velt costs what it costs from Rust (about 38 instructions per ran
 loop); Node's argument checks add about 22 instructions per call, under 1% of a cached 4 KiB
 read. No wall-clock table yet: `bench/fs/pread/run.sh 10` on an idle machine gives one.
 
+## Page-header reads from a mapped file (`bench/fs/mapped_header.velt`)
+
+2,000,000 big-endian 32-bit reads at computed offsets of a 64 KiB `MappedFile`, three ways.
+User-space instructions (cachegrind, Linux x86-64, release, one thread; a debug-built compiler
+with a release runtime), less the 23.49 M the program costs with no reads. 2026-11-20.
+
+| program | instructions | per read |
+|---|---:|---:|
+| `m.getUint32(at)`: DataView's getter on the mapping | 98.00 M | 49 |
+| four `bytes[i]` reads and shifts | 198.01 M | 99 |
+| `m.u32s(at, 1)[0]`: a typed array per read (aligned, the machine's byte order) | 237.41 M | 119 |
+
+The getter is one range check and one load; the byte reads check four times, and the array
+is allocated, counted and freed for each read. The loop's own arithmetic (a remainder on a
+`number`) is in all three.
+
 ## `f16x8` arithmetic (`bench/simd/half_arith.sh`)
 
 Instructions retired per element, 2^20 elements, 100 passes (each run with 0 and with 100 passes

@@ -1,0 +1,84 @@
+// check: no leaks
+// A closure or a function a `read` callback declares and only calls itself runs as part of that
+// callback: a container it captured through the callback from the code around the `read` is
+// that code's, so what it takes out goes to the reader and what it puts in is kept there, as
+// when the callback does it directly (#1992). A variable of the callback's own that it
+// captures stays the reader's.
+
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function fresh(): number[][][] {
+  return [[[1]], [[2]], [[3]]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const groups = new Map<string, number[][][]>();
+  groups.set("z", [[[0]]]);
+
+  // Takes out of the caller's array: an arrow, a declared function, one with parameters.
+  const out = fresh();
+  let n = 0;
+  for (let r = 0; r < 4; r++) {
+    a.read((x) => {
+      const pop = () => out.pop()!.length;
+      function cut(): number {
+        return out.splice(0, 1).length;
+      }
+      const put = (k: number) => {
+        out.push([[k, x.items.length]]);
+        return out.length;
+      };
+      n += pop() + cut();
+      n += put(r) + put(r + 10);
+    });
+  }
+  console.log("takes", n, out.length, JSON.stringify(out));
+
+  // Stores the reader's own copy, twice, and reads it after.
+  const kept = fresh();
+  for (let r = 0; r < 4; r++) {
+    a.read((x) => {
+      const c = structuredClone(x.items.slice());
+      const swap = () => kept.splice(0, 1, c).length;
+      n += swap() + swap() + c.length;
+      c[0].push(r);
+    });
+  }
+  kept[0][1].push(99);
+  console.log("stores", n, kept.length, JSON.stringify(kept), kept[0] === kept[1]);
+
+  // A container of the callback's own, captured: the reader's, with the caller's beside it.
+  const both = fresh();
+  for (let r = 0; r < 4; r++) {
+    a.read((x) => {
+      const mine: number[][][] = [];
+      const move = () => {
+        const gone = both.shift()!;
+        mine.push(gone);
+        both.push([[gone[0][0] + 1]]);
+        return mine.length;
+      };
+      n += move() + move();
+      n += mine[1][0][0];
+    });
+  }
+  console.log("moves", n, both.length, JSON.stringify(both));
+
+  // Called on each turn of a loop, its result kept by the reader.
+  const loop = fresh();
+  for (let r = 0; r < 4; r++) {
+    a.read((x) => {
+      const take = () => loop.pop()!;
+      for (let i = 0; i < 2; i++) {
+        loop.unshift([[i]], [[r]]);
+        const got = take();
+        n += got.length + got[0][0];
+      }
+    });
+  }
+  console.log("loops", n, loop.length, JSON.stringify(loop));
+  console.log(a.read((x) => JSON.stringify(x.items)), groups.size);
+}
