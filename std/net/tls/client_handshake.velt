@@ -8,8 +8,6 @@
 
 import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { x25519 } from "velt/crypto/x25519";
-import { sha256 } from "velt/crypto/sha256";
-import { sha384 } from "velt/crypto/sha512";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
@@ -27,6 +25,7 @@ import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/ne
 import { ClientHandshake12, DONE12 } from "velt/net/tls/client_handshake12";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { parseServerHello } from "velt/net/tls/server_hello";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 
 // Handshake message types.
 
@@ -74,6 +73,8 @@ export class ClientHandshake {
   /** The group of the key share sent last. */
   private group: usize;
   private transcript: u8[];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   private state: i32;
   private retried: bool;
   private certRequestContext: u8[] | null;
@@ -143,10 +144,7 @@ export class ClientHandshake {
 
   // The transcript's hash with the suite's hash (SHA-256 until the server chose).
   private hash(): u8[] {
-    if (this.suite == AES_256_GCM_SHA384) {
-      return sha384(this.transcript);
-    }
-    return sha256(this.transcript);
+    return this.th.of(this.transcript, this.suite == AES_256_GCM_SHA384);
   }
 
   /**
@@ -230,6 +228,7 @@ export class ClientHandshake {
       // hash of the suite the HelloRetryRequest chose.
       const first = this.hash();
       this.transcript = [254, 0, 0, first.length as u8];
+      this.th.reset();
       this.add(first);
       this.add(m);
       let publicKey = this.input.publicKey;
