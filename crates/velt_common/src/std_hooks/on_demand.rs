@@ -55,6 +55,9 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/weak",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
+    // The CPU's features (#3222 step 3): every program with an entry demands it (`velt_main`
+    // calls `cpuStart` first thing; velt_sema `lazy_std` `cpu_hook`).
+    "std/lang/hooks/cpu",
 ];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).

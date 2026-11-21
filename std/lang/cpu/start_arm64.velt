@@ -1,0 +1,10 @@
+// velt/lang/cpu (internal): the start-up check of a build for arm64 (`#cpu-start`'s `arm64`
+// variant, std/imports.velt), with the operating system's way to ask (`#cpu-arm`).
+
+import { detectArm } from "#cpu-arm";
+import { startWith } from "./start";
+
+/** Detects the CPU's features and checks them (std/lang/hooks/cpu.velt `cpuStart`). */
+export function checkCpu(): void {
+  startWith(detectArm(), true);
+}

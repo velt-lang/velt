@@ -3,11 +3,14 @@
 // What the directory goldens can't hold, because it is Windows' alone or depends on where the
 // test runs: a relative path that is short itself and long once it is made absolute (Windows
 // takes it only with the `\\?\` prefix, which std/fs/whole/win_path.velt gives by the absolute
-// path's length), and the name Windows gives a directory name it refuses.
+// path's length), the name Windows gives a directory name it refuses, and what Windows' removal
+// (std/fs/tree/win_remove.velt) must leave alone and must take: a junction's target, a
+// read-only file.
 import * as fs from "velt/fs";
 import { IoError } from "velt/io";
 import { platform } from "velt/os";
 import { cwd } from "velt/process";
+import { execShellSync } from "velt/process/child";
 import { describe, expect, it } from "velt/test";
 
 /** The code of the `IoError` `f` throws, or "" when it throws none. */
@@ -76,6 +79,73 @@ describe("velt/fs's directories", () => {
     fs.mkdirSync(`${top}/d`);
     fs.removeSync(`${top}/d/`);
     expect(fs.existsSync(`${top}/d`)).toBe(false);
+    fs.removeSync(top, { recursive: true });
+  });
+
+  it("removes a tree on Windows with a junction in it, and keeps what the junction names", () => {
+    if (platform() != "win32") {
+      return;
+    }
+    const top = `velt-tree-rm-${process.pid}`;
+    if (fs.existsSync(top)) {
+      fs.removeSync(top, { recursive: true });
+    }
+    fs.mkdirSync(`${top}/tree/sub/deep`, { recursive: true });
+    fs.mkdirSync(`${top}/outside/inner`, { recursive: true });
+    fs.writeFileSync(`${top}/outside/keep`, "kept");
+    fs.writeFileSync(`${top}/outside/inner/keep`, "kept");
+    fs.writeFileSync(`${top}/tree/sub/deep/f`, "x");
+    // More entries than one listing holds (16 KB a call), before and after a directory.
+    fs.mkdirSync(`${top}/tree/wide/m`, { recursive: true });
+    for (let i = 0; i < 400; i++) {
+      fs.writeFileSync(`${top}/tree/wide/${i < 200 ? "a" : "z"}-file-with-a-long-name-${i}`, "x");
+    }
+    expect(execShellSync(`mklink /J ${top}\\tree\\sub\\link ${top}\\outside`).code).toBe(0);
+    expect(fs.readDirSync(`${top}/tree/sub/link`).join(",")).toBe("inner,keep");
+    // A directory with something in it stays without `recursive`.
+    expect(codeOf(() => fs.removeSync(`${top}/tree`))).toBe("ENOTEMPTY");
+    expect(fs.readDirSync(`${top}/tree`).join(",")).toBe("sub,wide");
+    fs.removeSync(`${top}/tree`, { recursive: true });
+    expect(fs.existsSync(`${top}/tree`)).toBe(false);
+    expect(fs.readDirSync(`${top}/outside`).join(",")).toBe("inner,keep");
+    expect(fs.existsSync(`${top}/outside/inner/keep`)).toBe(true);
+    // A junction named itself is removed as the link, with `recursive` too, and by `rm`.
+    for (let round = 0; round < 3; round++) {
+      expect(execShellSync(`mklink /J ${top}\\j ${top}\\outside`).code).toBe(0);
+      if (round == 0) {
+        fs.removeSync(`${top}/j`);
+      } else if (round == 1) {
+        fs.removeSync(`${top}/j`, { recursive: true });
+      } else {
+        fs.rmSync(`${top}/j`, { recursive: true });
+      }
+      expect(fs.existsSync(`${top}/j`)).toBe(false);
+      expect(fs.readDirSync(`${top}/outside`).join(",")).toBe("inner,keep");
+    }
+    fs.removeSync(top, { recursive: true });
+    expect(fs.existsSync(top)).toBe(false);
+  });
+
+  it("removes a read-only file on Windows, alone and in a tree, as Node", () => {
+    if (platform() != "win32") {
+      return;
+    }
+    const top = `velt-tree-ro-${process.pid}`;
+    if (fs.existsSync(top)) {
+      fs.removeSync(top, { recursive: true });
+    }
+    fs.mkdirSync(`${top}/d`, { recursive: true });
+    fs.writeFileSync(`${top}/alone`, "x");
+    fs.writeFileSync(`${top}/d/inside`, "x");
+    expect(execShellSync(`attrib +R ${top}\\alone`).code).toBe(0);
+    expect(execShellSync(`attrib +R ${top}\\d\\inside`).code).toBe(0);
+    fs.removeSync(`${top}/alone`);
+    expect(fs.existsSync(`${top}/alone`)).toBe(false);
+    fs.removeSync(`${top}/d`, { recursive: true });
+    expect(fs.existsSync(`${top}/d`)).toBe(false);
+    // What is not there: `lstat`'s error, as before.
+    expect(codeOf(() => fs.removeSync(`${top}/missing`))).toBe("ENOENT");
+    expect(codeOf(() => fs.removeSync(`${top}/missing/x`, { recursive: true }))).toBe("ENOENT");
     fs.removeSync(top, { recursive: true });
   });
 });

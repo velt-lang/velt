@@ -127,6 +127,7 @@ mod noalias;
 mod null_exits;
 mod numrep;
 mod parallel;
+mod range_versions;
 mod scc;
 mod simplify_cfg;
 mod srclocs;
@@ -499,6 +500,24 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
                 }
                 false
             });
+            let externs = range_versions::Externs::of(&program.externs);
+            if externs.any() {
+                let signatures = t.time("signatures", || callgraph::signatures(program));
+                let fold = constfold::Program::of(&signatures);
+                let aggs = &program.aggs;
+                each_function(served.bodies(&mut program.funcs), t, |t, func| {
+                    if t.time("range_versions", || {
+                        range_versions::run(aggs, &externs, func)
+                    }) {
+                        // The copies' decided tests are `true`: their branches and panic paths go.
+                        t.time("constfold", || constfold::run(&fold, func));
+                        t.time("copyprop", || copyprop::run(func));
+                        t.time("dce", || dce::run(aggs, func));
+                        t.time("simplify_cfg", || simplify_cfg::run(func));
+                    }
+                    false
+                });
+            }
             let no_return = cold_calls::NoReturn::find(program);
             let funcs = program.funcs.iter_mut().filter(|f| served.optimizes(f));
             each_function(funcs, t, |t, func| {

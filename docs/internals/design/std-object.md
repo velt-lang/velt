@@ -35,7 +35,6 @@ replaces.
 | Debug (either backend, with or without `-g`) | Every function the cache holds (`serve.rs`); a miss stays in the program |
 | `--emit obj`, `--emit vir`, `--emit llvm`, `--report numbers`, `--host` | Off: the output must be self-contained, or reads std's code |
 | WebAssembly | Off (no objects to link); a release build with `VELT_STD_OBJECT=1` uses it |
-| Debug builds for arm64 Linux | No prebuilt hook objects: LLVM's atomics there call the outline-atomics helpers (`__aarch64_*`), which a debug link need not have (the shared runtime does not export them; the bundled linker has no libgcc archive) |
 | `velt check`, `velt fmt`, `velt lsp`, `velt doc` | Never build or read objects (they stop before code generation); `velt check` looks up prebuilt hook objects as a debug build would |
 
 `VELT_STD_OBJECT=0` compiles all of std in the program everywhere, for debugging std itself and

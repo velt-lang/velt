@@ -1,0 +1,373 @@
+// velt/net (tests): DNS name and IP address matching (names.velt) against the tables of
+// rustls-webpki 0.103.15's own tests (src/subject_name/dns_name.rs and ip_address.rs), which
+// this code ports: each row is the presented name, the reference or constraint, and webpki's
+// answer (t a match, f none, d a malformed DNS name, c a malformed constraint, m a bad network
+// mask), the names in hex and "-" for an empty one.
+import { hexDecode } from "velt/encoding/hex";
+import { utf8Encode } from "velt/encoding/utf8";
+import { describe, expect, it } from "velt/test";
+import {
+  BAD_NAME_ENCODING,
+  BAD_NETWORK_MASK,
+  dnsNameMatches,
+  EXCLUDED_SUBTREE,
+  ipInConstraint,
+  MALFORMED_CONSTRAINT,
+  MALFORMED_DNS_NAME,
+  MATCH,
+  NO_MATCH,
+  PERMITTED_SUBTREE,
+  REFERENCE,
+} from "velt/net/tls/x509/names";
+
+// PRESENTED_MATCHES_REFERENCE: a presented name against a reference name.
+function referenceRows(): string[] {
+  return [
+    "- 61 d",
+    "61 61 t",
+    "62 61 f",
+    "2a2e622e61 632e622e61 t",
+    "2a2e622e61 622e61 f",
+    "2a2e622e61 622e612e f",
+    "642e632e622e61 642e632e622e61 t",
+    "642e2a2e622e61 642e632e622e61 d",
+    "642e632a2e622e61 642e632e622e61 d",
+    "642e632a2e622e61 642e63632e622e61 d",
+    "6162636465666768696a6b6c6d6e6f707172737475767778797a 4142434445464748494a4b4c4d4e4f505152535455565758595a t",
+    "4142434445464748494a4b4c4d4e4f505152535455565758595a 6162636465666768696a6b6c6d6e6f707172737475767778797a t",
+    "614263 416263 t",
+    "6131 6131 t",
+    "6578616d706c65 6578616d706c65 t",
+    "6578616d706c652e 6578616d706c652e d",
+    "6578616d706c65 6578616d706c652e t",
+    "6578616d706c652e 6578616d706c65 d",
+    "6578616d706c652e636f6d 6578616d706c652e636f6d t",
+    "6578616d706c652e636f6d2e 6578616d706c652e636f6d2e d",
+    "6578616d706c652e636f6d 6578616d706c652e636f6d2e t",
+    "6578616d706c652e636f6d2e 6578616d706c652e636f6d d",
+    "6578616d706c652e636f6d2e2e 6578616d706c652e636f6d2e d",
+    "6578616d706c652e636f6d2e2e 6578616d706c652e636f6d d",
+    "6578616d706c652e636f6d2e2e2e 6578616d706c652e636f6d2e d",
+    "782a2e622e61 78612e622e61 d",
+    "782a2e622e61 786e612e622e61 d",
+    "782a2e622e61 786e2d612e622e61 d",
+    "782a2e622e61 786e2d2d612e622e61 d",
+    "786e2a2e622e61 786e2d2d612e622e61 d",
+    "786e2d2a2e622e61 786e2d2d612e622e61 d",
+    "786e2d2d2a2e622e61 786e2d2d612e622e61 d",
+    "786e2a2e622e61 786e2d2d612e622e61 d",
+    "786e2d2a2e622e61 786e2d2d612e622e61 d",
+    "786e2d2d2a2e622e61 786e2d2d612e622e61 d",
+    "786e2d2d2d2a2e622e61 786e2d2d612e622e61 d",
+    "632a2e622e61 632e622e61 d",
+    "666f6f2e636f6d 666f6f2e636f6d t",
+    "66 66 t",
+    "69 68 f",
+    "2a2e666f6f2e636f6d 6261722e666f6f2e636f6d t",
+    "2a2e746573742e6672 7777772e746573742e6672 t",
+    "2a2e746573742e4652 7777572e744553742e6672 t",
+    "2e756b 662e756b d",
+    "3f2e6261722e666f6f2e636f6d 772e6261722e666f6f2e636f6d d",
+    "287777777c667470292e666f6f2e636f6d 7777772e666f6f2e636f6d d",
+    "7777772e666f6f2e636f6d00 7777772e666f6f2e636f6d d",
+    "7777772e666f6f2e636f6d002a2e666f6f2e636f6d 7777772e666f6f2e636f6d d",
+    "77772e686f7573652e6578616d706c65 7777772e686f7573652e6578616d706c65 f",
+    "7777772e746573742e6f7267 746573742e6f7267 f",
+    "2a2e746573742e6f7267 746573742e6f7267 f",
+    "2a2e6f7267 746573742e6f7267 d",
+    "772a2e6261722e666f6f2e636f6d 772e6261722e666f6f2e636f6d d",
+    "77772a77772e6261722e666f6f2e636f6d 7777772e6261722e666f6f2e636f6d d",
+    "77772a77772e6261722e666f6f2e636f6d 777777772e6261722e666f6f2e636f6d d",
+    "772a772e6261722e666f6f2e636f6d 777777772e6261722e666f6f2e636f6d d",
+    "772a772e6261722e666f6f2e63306d 777777772e6261722e666f6f2e636f6d d",
+    "77612a2e6261722e666f6f2e636f6d 57414c4c592e6261722e666f6f2e636f6d d",
+    "2a4c792e6261722e666f6f2e636f6d 77616c6c792e6261722e666f6f2e636f6d d",
+    "2a2e746573742e6465 7777772e746573742e636f2e6a70 f",
+    "2a2e6a70 7777772e746573742e636f2e6a70 d",
+    "7777772e746573742e636f2e756b 7777772e746573742e636f2e6a70 f",
+    "7777772e2a2e636f2e6a70 7777772e746573742e636f2e6a70 d",
+    "7777772e6261722e666f6f2e636f6d 7777772e6261722e666f6f2e636f6d t",
+    "2a2e666f6f2e636f6d 7777772e6261722e666f6f2e636f6d f",
+    "2a2e2a2e666f6f2e636f6d 7777772e6261722e666f6f2e636f6d d",
+    "7777772e626174682e6f7267 7777772e626174682e6f7267 t",
+    "786e2d2d706f656d612d3971616535612e636f6d2e6272 786e2d2d706f656d612d3971616535612e636f6d2e6272 t",
+    "2a2e786e2d2d706f656d612d3971616535612e636f6d2e6272 7777772e786e2d2d706f656d612d3971616535612e636f6d2e6272 t",
+    "2a2e786e2d2d706f656d612d3971616535612e636f6d2e6272 786e2d2d706f656d612d3971616535612e636f6d2e6272 f",
+    "786e2d2d706f656d612d2a2e636f6d2e6272 786e2d2d706f656d612d3971616535612e636f6d2e6272 d",
+    "786e2d2d2a2d3971616535612e636f6d2e6272 786e2d2d706f656d612d3971616535612e636f6d2e6272 d",
+    "2a2d2d706f656d612d3971616535612e636f6d2e6272 786e2d2d706f656d612d3971616535612e636f6d2e6272 d",
+    "2a2e6578616d706c652e636f6d 666f6f2e6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 6261722e666f6f2e6578616d706c652e636f6d f",
+    "2a2e6578616d706c652e636f6d 6578616d706c652e636f6d f",
+    "62617a2a2e6578616d706c652e6e6574 62617a312e6578616d706c652e6e6574 d",
+    "2a62617a2e6578616d706c652e6e6574 666f6f62617a2e6578616d706c652e6e6574 d",
+    "622a7a2e6578616d706c652e6e6574 62757a7a2e6578616d706c652e6e6574 d",
+    "2a2e746573742e6578616d706c65 7777772e746573742e6578616d706c65 t",
+    "2a2e6578616d706c652e636f2e756b 746573742e6578616d706c652e636f2e756b t",
+    "2a2e6578616d706c65 746573742e6578616d706c65 d",
+    "2a2e636f2e756b 6578616d706c652e636f2e756b t",
+    "2a2e636f6d 666f6f2e636f6d d",
+    "2a2e7573 666f6f2e7573 d",
+    "2a 666f6f d",
+    "2a2e786e2d2d706f656d612d3971616535612e636f6d2e6272 7777772e786e2d2d706f656d612d3971616535612e636f6d2e6272 t",
+    "2a2e6578616d706c652e786e2d2d6d676261616d37613868 746573742e6578616d706c652e786e2d2d6d676261616d37613868 t",
+    "2a2e636f6d2e6272 786e2d2d706f656d612d3971616535612e636f6d2e6272 t",
+    "2a2e786e2d2d6d676261616d37613868 6578616d706c652e786e2d2d6d676261616d37613868 d",
+    "2a2e61707073706f742e636f6d 7777772e61707073706f742e636f6d t",
+    "2a2e73332e616d617a6f6e6177732e636f6d 666f6f2e73332e616d617a6f6e6177732e636f6d t",
+    "2a2e2a2e636f6d 666f6f2e6578616d706c652e636f6d d",
+    "2a2e6261722e2a2e636f6d 666f6f2e6261722e6578616d706c652e636f6d d",
+    "666f6f2e636f6d2e 666f6f2e636f6d d",
+    "666f6f2e636f6d 666f6f2e636f6d2e t",
+    "666f6f2e636f6d2e 666f6f2e636f6d2e d",
+    "662e 66 d",
+    "66 662e t",
+    "662e 662e d",
+    "2a2e6261722e666f6f2e636f6d2e 7777772d332e6261722e666f6f2e636f6d d",
+    "2a2e6261722e666f6f2e636f6d 7777772d332e6261722e666f6f2e636f6d2e t",
+    "2a2e6261722e666f6f2e636f6d2e 7777772d332e6261722e666f6f2e636f6d2e d",
+    "2a2e636f6d2e 6578616d706c652e636f6d d",
+    "2a2e636f6d 6578616d706c652e636f6d2e d",
+    "2a2e636f6d2e 6578616d706c652e636f6d2e d",
+    "2a2e 666f6f2e d",
+    "2a2e 666f6f d",
+    "2a2e636f2e756b2e 666f6f2e636f2e756b d",
+    "2a2e636f2e756b2e 666f6f2e636f2e756b2e d",
+  ];
+}
+
+// PRESENTED_MATCHES_CONSTRAINT and WILDCARD_CONSTRAINT_CONTAINMENT: against a permitted subtree.
+function permittedRows(): string[] {
+  return [
+    "2e - d",
+    "7777772e6578616d706c652e636f6d2e - d",
+    "7777772e6578616d706c652e636f6d2e 7777772e6578616d706c652e636f6d2e d",
+    "7777772e6578616d706c652e636f6d 2e c",
+    "7777772e6578616d706c652e636f6d 7777772e6578616d706c652e636f6d2e c",
+    "7777772e6578616d706c652e636f6d 2a2e6578616d706c652e636f6d c",
+    "- - d",
+    "6578616d706c652e636f6d - t",
+    "2a2e6578616d706c652e636f6d - t",
+    "7777772e6578616d706c652e636f6d 2e6578616d706c652e636f6d t",
+    "7777772e6578616d706c652e636f6d 2e4558414d504c452e434f4d t",
+    "7777772e6578616d706c652e636f6d 2e6178616d706c652e636f6d f",
+    "7777772e6578616d706c652e636f6d 2e78616d706c652e636f6d f",
+    "7777772e6578616d706c652e636f6d 2e6578616d706c2e636f6d f",
+    "6261646578616d706c652e636f6d 2e6578616d706c652e636f6d f",
+    "7777772e6578616d706c652e636f6d 6578616d706c652e636f6d t",
+    "7777772e6578616d706c652e636f6d 4558414d504c452e434f4d t",
+    "7777772e6578616d706c652e636f6d 6178616d706c652e636f6d f",
+    "7777772e6578616d706c652e636f6d 78616d706c652e636f6d f",
+    "7777772e6578616d706c652e636f6d 6578616d706c2e636f6d f",
+    "6261646578616d706c652e636f6d 6578616d706c652e636f6d f",
+    "2a2e6578616d706c652e636f6d 2e6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 7777772e6578616d706c652e636f6d f",
+    "2a2e6578616d706c652e636f6d 7777772e4558414d504c452e434f4d f",
+    "2a2e6578616d706c652e636f6d 7777772e6178616d706c652e636f6d f",
+    "2a2e6578616d706c652e636f6d 2e78616d706c652e636f6d f",
+    "2a2e6578616d706c652e636f6d 78616d706c652e636f6d f",
+    "2a2e6578616d706c652e636f6d 2e6578616d706c2e636f6d f",
+    "2a2e6578616d706c652e636f6d 6578616d706c2e636f6d f",
+    "7777772e6578616d706c652e636f6d 7777772e6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 7777772e6578616d706c652e636f6d f",
+    "2a2e7777772e6578616d706c652e636f6d 7777772e6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 612e622e6578616d706c652e636f6d f",
+    "2a2e622e6578616d706c652e636f6d 612e622e6578616d706c652e636f6d f",
+  ];
+}
+
+// WILDCARD_EXCLUDED_INTERSECTION: against an excluded subtree.
+function excludedRows(): string[] {
+  return [
+    "2a2e6578616d706c652e636f6d 6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 2e6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 7777772e6578616d706c652e636f6d t",
+    "2a2e6578616d706c652e636f6d 7777772e4558414d504c452e434f4d t",
+    "2a2e6578616d706c652e636f6d 612e622e6578616d706c652e636f6d f",
+    "2a2e6578616d706c652e636f6d 7777772e6f746865722e636f6d f",
+  ];
+}
+
+// ip_address.rs's PRESENTED_MATCHES_CONSTRAINT: an address against an address and a mask.
+function ipRows(): string[] {
+  return [
+    "20010db8000000000000000000000000 08080808ffffffff f",
+    "08080808 20010db8000000000000000000000000ffff0000000000000000000000000000 f",
+    "08080808 08080808ffffff01 m",
+    "08080808 08080808ffff00ff m",
+    "08080808 08080808ff00ffff m",
+    "08080808 0808080800ffffff m",
+    "08080808 0808080801ffffff m",
+    "08080808 0808080880808080 m",
+    "08080808 08080808ffffffff t",
+    "08080809 08080808ffffffff f",
+    "08080809 08080808fffffffe t",
+    "0808080a 08080808fffffffe f",
+    "0808080a 08080808ffffff00 t",
+    "08080f0a 08080808fffff800 t",
+    "0808100a 08080808fffff800 f",
+    "0808100a 08080808ffff0000 t",
+    "081f100a 08080808ffe00000 t",
+    "0820100a 08080808ffe00000 f",
+    "0820100a 08080808ff000000 t",
+    "3f20100a 08080808c0000000 t",
+    "4020100a 08080808c0000000 f",
+    "4020100a 0808080800000000 t",
+    "20010db8000000000000000000000000 20010db8000000000000000000000000fffeffff000000000000000000000000 m",
+    "20010db8000000000000000000000000 20010db8000000000000000000000000fffffdff000000000000000000000000 m",
+    "20010db8000000000000000000000000 20010db8000000000000000000000000fffffeff000000000000000000000000 m",
+    "20010db8000000000000000000000000 20010db8000000000000000000000000fffffcff000000000000000000000000 m",
+    "20010db8000000000000000000000000 20010db80000000000000000000000007fffffff000000000000000000000000 m",
+    "20010db8000000000000000000000000 20010db8000000000000000000000000ffffffff000000000000000000000000 t",
+    "20010db9000000000000000000000000 20010db8000000000000000000000000ffffffff000000000000000000000000 f",
+    "20010db9000000000000000000000000 20010db8000000000000000000000000fffffffe000000000000000000000000 t",
+    "20010dba000000000000000000000000 20010db8000000000000000000000000fffffffe000000000000000000000000 f",
+    "20010dba000000000000000000000000 20010db8000000000000000000000000ffffff00000000000000000000000000 t",
+    "20010dca000000000000000000000000 20010db8000000000000000000000000fffffe00000000000000000000000000 t",
+    "20010fca000000000000000000000000 20010db8000000000000000000000000fffffe00000000000000000000000000 f",
+    "20010fca000000000000000000000000 20010db8000000000000000000000000ffff0000000000000000000000000000 t",
+    "20000fca000000000000000000000000 20010db8000000000000000000000000fffe0000000000000000000000000000 t",
+    "20030fca000000000000000000000000 20010db8000000000000000000000000fffe0000000000000000000000000000 f",
+    "20030fca000000000000000000000000 20010db8000000000000000000000000ff000000000000000000000000000000 t",
+    "10030fca000000000000000000000000 20010db8000000000000000000000000e0000000000000000000000000000000 f",
+    "10030fca000000000000000000000000 20010db800000000000000000000000000000000000000000000000000000000 t",
+  ];
+}
+
+function bytes(s: string): u8[] {
+  return s == "-" ? [] : hexDecode(s);
+}
+
+function letter(result: i32): string {
+  if (result == MATCH) {
+    return "t";
+  }
+  if (result == NO_MATCH) {
+    return "f";
+  }
+  if (result == MALFORMED_DNS_NAME) {
+    return "d";
+  }
+  if (result == MALFORMED_CONSTRAINT) {
+    return "c";
+  }
+  return result == BAD_NETWORK_MASK ? "m" : "e";
+}
+
+// Runs `rows` in `role` and returns how many there were.
+function run(rows: string[], role: i32): number {
+  let n = 0;
+  for (const row of rows) {
+    const f = row.split(" ");
+    const p = bytes(f[0]);
+    const r = bytes(f[1]);
+    const got = letter(dnsNameMatches(p, 0, p.length, role, r, 0, r.length));
+    expect(`${row}: ${got}`).toBe(`${row}: ${f[2]}`);
+    n++;
+  }
+  return n;
+}
+
+describe("dnsNameMatches", () => {
+  it("answers webpki's reference-name table as webpki does", () => {
+    expect(run(referenceRows(), REFERENCE)).toBe(110);
+  });
+
+  it("answers webpki's permitted-subtree tables as webpki does", () => {
+    expect(run(permittedRows(), PERMITTED_SUBTREE)).toBe(35);
+  });
+
+  it("answers webpki's excluded-subtree table as webpki does", () => {
+    expect(run(excludedRows(), EXCLUDED_SUBTREE)).toBe(6);
+  });
+
+  it("reads the names where they are in their arrays", () => {
+    const p = hexDecode("ff2a2e622e61ff"); // "*.b.a" inside other bytes
+    const r = hexDecode("0000632e622e6100"); // "c.b.a"
+    expect(dnsNameMatches(p, 1, 6, REFERENCE, r, 2, 7)).toBe(MATCH);
+    expect(dnsNameMatches(p, 1, 6, REFERENCE, r, 2, 8)).toBe(MALFORMED_DNS_NAME);
+    expect(dnsNameMatches(p, 0, 6, REFERENCE, r, 2, 7)).toBe(MALFORMED_DNS_NAME);
+  });
+
+  it("takes labels of 63 bytes and names of 253, and no more", () => {
+    const label: u8[] = [];
+    for (let i = 0; i < 63; i++) {
+      label.push(0x61);
+    }
+    expect(dnsNameMatches(label, 0, 63, REFERENCE, label, 0, 63)).toBe(MATCH);
+    label.push(0x61);
+    expect(dnsNameMatches(label, 0, 64, REFERENCE, label, 0, 64)).toBe(MALFORMED_DNS_NAME);
+    // Labels of one letter: "a.a. .. .a" is 253 bytes with 127 of them, 255 with 128.
+    const name: u8[] = [0x61];
+    for (let i = 0; i < 126; i++) {
+      name.push(0x2e);
+      name.push(0x61);
+    }
+    expect(name.length).toBe(253);
+    expect(dnsNameMatches(name, 0, 253, REFERENCE, name, 0, 253)).toBe(MATCH);
+    name.push(0x2e);
+    name.push(0x61);
+    expect(dnsNameMatches(name, 0, 255, REFERENCE, name, 0, 255)).toBe(MALFORMED_DNS_NAME);
+  });
+
+  it("refuses a name of 254 bytes", () => {
+    // "aa", then 126 times ".a".
+    const name: u8[] = [0x61, 0x61];
+    for (let i = 0; i < 126; i++) {
+      name.push(0x2e);
+      name.push(0x61);
+    }
+    expect(name.length).toBe(254);
+    expect(dnsNameMatches(name, 0, 254, REFERENCE, name, 0, 254)).toBe(MALFORMED_DNS_NAME);
+    expect(dnsNameMatches(name, 1, 254, REFERENCE, name, 1, 254)).toBe(MATCH);
+  });
+
+  it(
+    "takes underscores, and refuses a last label of digits and a label ending with a hyphen",
+    () => {
+      const same = (name: string): i32 => {
+        const b = utf8Encode(name);
+        return dnsNameMatches(b, 0, b.length, REFERENCE, b, 0, b.length);
+      };
+      expect(same("a_b.test")).toBe(MATCH);
+      expect(same("_a.test")).toBe(MATCH);
+      expect(same("a.123")).toBe(MALFORMED_DNS_NAME);
+      expect(same("192.0.2.1")).toBe(MALFORMED_DNS_NAME);
+      expect(same("123.a")).toBe(MATCH);
+      expect(same("a.1b")).toBe(MATCH);
+      expect(same("a-")).toBe(MALFORMED_DNS_NAME);
+      expect(same("a-.test")).toBe(MALFORMED_DNS_NAME);
+      expect(same("-a.test")).toBe(MALFORMED_DNS_NAME);
+      expect(same("a-b.test")).toBe(MATCH);
+    },
+  );
+});
+
+describe("ipInConstraint", () => {
+  it("answers webpki's table as webpki does", () => {
+    let n = 0;
+    for (const row of ipRows()) {
+      const f = row.split(" ");
+      const name = hexDecode(f[0]);
+      const c = hexDecode(f[1]);
+      const got = letter(ipInConstraint(name, 0, name.length, c, 0, c.length));
+      expect(`${row}: ${got}`).toBe(`${row}: ${f[2]}`);
+      n++;
+    }
+    expect(n).toBe(40);
+  });
+
+  it("refuses names and constraints of other lengths", () => {
+    const v4 = hexDecode("c0000201");
+    const v6 = hexDecode("20010db8000000000000000000000001");
+    const mask4 = hexDecode("c0000200ffffff00");
+    expect(ipInConstraint(v4, 0, 4, mask4, 0, 8)).toBe(MATCH);
+    expect(ipInConstraint(v4, 0, 3, mask4, 0, 8)).toBe(BAD_NAME_ENCODING);
+    expect(ipInConstraint(v4, 0, 0, mask4, 0, 8)).toBe(BAD_NAME_ENCODING);
+    expect(ipInConstraint(v4, 0, 4, mask4, 0, 7)).toBe(BAD_NETWORK_MASK);
+    expect(ipInConstraint(v4, 0, 4, mask4, 0, 0)).toBe(BAD_NETWORK_MASK);
+    expect(ipInConstraint(v6, 0, 16, mask4, 0, 8)).toBe(NO_MATCH);
+    expect(ipInConstraint(v6, 0, 16, mask4, 0, 4)).toBe(BAD_NETWORK_MASK);
+  });
+});

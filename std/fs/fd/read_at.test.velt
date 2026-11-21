@@ -1,44 +1,48 @@
 // velt/fs (tests): `readAt`'s result is as large as what was read, not as what was asked for.
-import { closeSync, openSync, readAt, readFileSync, unlinkSync, writeFileSync } from "velt/fs";
+import { closeSync, openSync, readAt, removeSync, writeFileSync } from "velt/fs";
+import { arrayDataAddress, arrayReserve, arrayWithCapacity } from "velt/lang/intrinsics";
 import { platform, tmpdir } from "velt/os";
 import { describe, expect, it } from "velt/test";
 
-// The address space of this process in pages (/proc/self/statm): an array's buffer of several
-// megabytes is a mapping of its own, so it shows here whether or not it was ever written.
-function addressSpace(): number {
-  return Number(readFileSync("/proc/self/statm").split(" ")[0]);
+/**
+ * Whether `xs` already has room for `extra` more elements: reserving them then leaves its
+ * buffer where it is. An array without that room gets a new buffer, at another address when
+ * `extra` is megabytes and the array a few bytes (no allocator grows such a block in place).
+ * It asks the array itself, so nothing else in the process changes the answer.
+ */
+function hasRoom<T extends Numeric>(xs: T[], extra: usize): bool {
+  // SAFETY: the addresses are compared, never read through.
+  const before = unsafe { arrayDataAddress(xs) };
+  arrayReserve(xs, extra);
+  // SAFETY: as above.
+  const after = unsafe { arrayDataAddress(xs) };
+  return before == after;
 }
 
 describe("readAt", () => {
   it("keeps no more than it read when the file ends first", async () => {
-    if (platform() != "linux") {
+    if (platform() == "win32") {
+      // No descriptors there (`openSync`).
       return;
     }
     const path = `${tmpdir()}/velt-read-at-short-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     writeFileSync(path, "0123456789");
     const fd = openSync(path, "r");
-    const asked = 8 * 1024 * 1024;
-    const bytes: u8[][] = [];
-    const words: u16[][] = [];
-    // The same reads asking for little first: what the threads that run them cost is there
-    // before the measurement.
-    for (let i = 0; i < 50; i++) {
-      bytes.push(await readAt(fd, 64, 0));
-      words.push(await readAt<u16>(fd, 64, 1));
-    }
-    const before = addressSpace();
-    for (let i = 0; i < 50; i++) {
-      bytes.push(await readAt(fd, asked, 0));
-      words.push(await readAt<u16>(fd, asked, 1));
-    }
-    const grown = (addressSpace() - before) * 4096;
+    const asked: usize = 8 * 1024 * 1024;
+    let bytes = await readAt(fd, asked as number, 0);
+    let words = await readAt<u16>(fd, asked as number, 1);
     closeSync(fd);
-    unlinkSync(path);
-    expect(bytes[99].length).toBe(10);
-    expect(words[99].length).toBe(4);
-    // A hundred results of a few bytes each. Keeping each request's room would be a hundred
-    // times `asked`; half of that leaves room for what the other tests of this run map and
-    // allocate meanwhile (they share the process).
-    expect(grown < 50 * asked).toBe(true);
+    removeSync(path);
+    expect(bytes.length).toBe(10);
+    expect(words.length).toBe(4);
+    // Ten bytes and four words: neither holds half the room its read asked for.
+    expect(hasRoom(bytes, asked / 2)).toBe(false);
+    expect(hasRoom(words, asked / 4)).toBe(false);
+    // And an array that does keep such room says so: the question can be answered "yes".
+    let kept: u8[] = arrayWithCapacity<u8>(asked);
+    for (let i = 0; i < 10; i++) {
+      kept.push(i as u8);
+    }
+    expect(hasRoom(kept, asked / 2)).toBe(true);
   });
 });

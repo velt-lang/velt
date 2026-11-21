@@ -76,6 +76,14 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// std's `cpuStart` (std/lang/hooks/cpu.velt): the CPU's feature word and the start-up check
+    /// of the build's requirement, `velt_main`'s step before any other Velt code.
+    pub(super) fn cpu_start(&mut self) {
+        if self.sched_hook_live(velt_common::std_hook!(cpu_start)) {
+            hooks::cpu_start(self).emit(self);
+        }
+    }
+
     fn sched_hook_live(&self, name: &str) -> bool {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
     }

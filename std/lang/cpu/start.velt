@@ -1,0 +1,45 @@
+// velt/lang/cpu (internal): the start-up check itself, once a `#cpu-start` variant has detected
+// the CPU's features (#3222 step 3, rt_abi.md "CPU check"): takes away what `VELT_CPU_DISABLE`
+// names, exits with a message where the CPU lacks what the program was built for (`--cpu`), then
+// stores the feature word, without what `VELT_SIMD_DISABLE` names, for every run-time check. The
+// normal path tests the word and whether each variable is set; the rest is out of line
+// (std/lang/cpu/check.velt).
+
+import { noInline } from "velt/lang/intrinsics";
+import { cpuDisabledBits, envAddress, missingMessage, simdDisabledBits } from "./check";
+
+// The feature word bits the program was built for (the driver fills it in).
+declare function velt_simd_cpu_required(): u64;
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_write_str(stream: u32, s: string): void;
+// Stores the feature word every run-time check reads (std/lang/cpu/word.velt).
+declare function velt_simd_cpu_word_set(word: u64): void;
+
+// Where the CPU lacks what the program needs: the message on stderr, and exit with 1.
+@noInline
+function refuse(required: u64, have: u64, arm: bool): never {
+  const message = missingMessage(required, have, arm);
+  velt_rt_write_str(2, "error: ");
+  velt_rt_write_str(2, message);
+  velt_rt_write_str(2, "\n");
+  velt_rt_exit(1);
+}
+
+/** The check on a CPU whose feature word bits are `found`: arm64's where `arm`, else x86-64's. */
+export function startWith(found: u64, arm: bool): void {
+  let have = found;
+  const cpuOff = envAddress("VELT_CPU_DISABLE\0");
+  if (cpuOff != 0) {
+    have &= ~cpuDisabledBits(cpuOff, arm);
+  }
+  const required = velt_simd_cpu_required();
+  // The architecture's half of the word: arm64's from bit 32 (the other half is 0 anyway).
+  if ((required & ~have) != 0) {
+    refuse(required, have, arm);
+  }
+  const simdOff = envAddress("VELT_SIMD_DISABLE\0");
+  if (simdOff != 0) {
+    have &= ~simdDisabledBits(simdOff);
+  }
+  velt_simd_cpu_word_set(have);
+}
