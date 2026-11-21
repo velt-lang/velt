@@ -469,5 +469,12 @@ crate::units::codec::enums! {
         0 => NoLock,
         1 => Json(how),
         2 => Seen(how),
+        3 => NoPtr(how),
+    }
+    PtrUse {
+        0 => ToDyn,
+        1 => ToText,
+        2 => FromDyn,
+        3 => Pointee,
     }
 }
