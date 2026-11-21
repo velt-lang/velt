@@ -21,8 +21,22 @@ pub(super) fn ty(t: &ast::TypeExpr, cx: &mut Cx) {
             throws: Some(throws),
             ..
         } => decls::throws(throws, false, cx),
+        T::Weak(_) => weak_type(t, cx),
         _ => {}
     }
+}
+
+/// `weak T`: Velt's weak reference (docs/internals/design/cycles.md "`weak T`"). No fix: without
+/// `weak` the reference keeps its target alive.
+fn weak_type(t: &ast::TypeExpr, cx: &mut Cx) {
+    cx.error(
+        "weak-type",
+        t.span,
+        "`weak` is not TypeScript syntax: it makes a Velt field or variable a weak reference".into(),
+        &[
+            "TypeScript keeps every reference strong; `WeakRef<T>` refers to an object without keeping it alive in both",
+        ],
+    );
 }
 
 fn named(t: &ast::TypeExpr, path: &[ast::Ident], args: &[ast::TypeExpr], cx: &mut Cx) {

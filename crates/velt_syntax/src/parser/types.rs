@@ -250,12 +250,29 @@ impl<'a> Parser<'a> {
                     span: self.span_from(lo),
                 })
             }
+            _ if self.at_weak() => {
+                self.bump(); // weak
+                let inner = self.parse_type_no_union()?;
+                Ok(TypeExpr {
+                    kind: TypeExprKind::Weak(Box::new(inner)),
+                    span: self.span_from(lo),
+                })
+            }
             t if Self::is_ident_like(t) => self.parse_named_type(),
             _ => {
                 self.error_expected("type");
                 Err(Fail)
             }
         }
+    }
+
+    /// `weak` as a type operator (`weak Node | null`), not a type named `weak`: the word followed
+    /// by a type name or `(`. Not `{`, which may open a body after a type named `weak`
+    /// (`f(): weak { … }`, `implements weak { … }`; an object type is named to be referred to
+    /// weakly), nor `[`: `weak[]` is an array of a type named `weak`. Like `keyof`, it binds
+    /// tighter than `|` and `&`.
+    pub(super) fn at_weak(&mut self) -> bool {
+        self.at_word("weak") && (Self::is_ident_like(self.nth(1)) || self.nth(1) == Tok::LParen)
     }
 
     /// `keyof` as a type operator (not a type named `keyof`).

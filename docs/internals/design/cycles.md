@@ -231,8 +231,11 @@ to programs that have no cycles.
 
 ## Not yet implemented
 
-The cycle-capability analysis and the trace glue above are built. The collector, `weak T`, the lint
-and `clone()` of cyclic graphs are accepted design, described here.
+The cycle-capability analysis and the trace glue above are built, and so are `weak T`'s syntax and
+checks (`velt_sema` `weak_types`: where it may go, its target, its `null`), its formatting, its
+`velt doc` TypeScript output and its `--ts-compat` rule (`weak-type`). A well-formed `weak` is
+reported as not implemented yet. Its representation and lowering, the collector, the lint and
+`clone()` of cyclic graphs are accepted design, described here.
 
 ### The collector
 
@@ -419,7 +422,9 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
   address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,
   and the leak check on `tests/golden/lang/const_used_by_its_closures.velt`;
-- `weak T`, with its parser, formatter, LSP and `--ts-compat` support;
+- `weak T`'s slots in the weak core, and its lowering: field and variable reads and writes, drop
+  glue, trace glue and the cycle analysis skipping weak fields, closure captures, transfers and
+  `clone()`, and the narrowing note;
 - `clone()` of cyclic graphs, which recurses until the stack overflows on a cycle
   ([#508](https://github.com/velt-lang/velt/issues/508));
 - the `perf/cycle-capable` lint.

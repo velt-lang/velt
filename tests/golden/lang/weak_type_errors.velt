@@ -1,0 +1,39 @@
+// `weak T` (docs/internals/design/cycles.md "`weak T`") is checked where it is written: at the
+// top of the type of a class field, an object type or interface member, or a `let` or `const`,
+// as `weak T | null` with `T` an object type. Its lowering is not implemented yet (#3119), so a
+// well-formed one is reported too.
+
+class Node {
+  parent: weak Node | null = null;
+  // Without `null`: it would read `null` once its target is gone.
+  owner: weak Node = new Node();
+  // A number has no identity to refer to weakly.
+  count: weak number | null = null;
+  // Only beside `null` and `undefined`.
+  either: weak Node | string | null = null;
+}
+
+interface Linked {
+  next: weak Node | null;
+}
+
+type Pair = { left: weak Node | null };
+
+// Not a parameter, a result, an element or a type argument.
+function take(n: weak Node | null): void {}
+function give(): weak Node | null {
+  return null;
+}
+const nodes: (weak Node)[] = [];
+const held: Array<weak Node> = [];
+
+function locals(): void {
+  const p: weak Node | null = new Node();
+  let q: weak Node[] | null = null;
+  // A type named `weak` is still a type.
+  type weak = number;
+  const w: weak = 1;
+  console.log(p, q, w);
+}
+
+locals();
