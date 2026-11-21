@@ -35,6 +35,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower::bare(cx, vec![]);
         // Before any string can be freed: the runtime's position cache reads std's epoch.
         lw.register_statics();
+        // Before any other Velt code: every run-time CPU check reads the word this computes.
+        lw.cpu_start();
         // Before any C code (natives' setup, initializers) can start a thread that calls back.
         lw.mark_program_thread();
         // `performance.now()`'s time origin, in a program that reads a clock: as near the start

@@ -1,0 +1,35 @@
+// velt/lang/cpu (internal): how Windows' answers become the feature word's arm64 bits
+// (std/lang/cpu/arm_win32.velt asks `IsProcessorFeaturePresent`; std/lang/cpu/detect.test.velt
+// tests this).
+
+// The word bit `b` where `on`.
+function flag(on: bool, b: u64): u64 {
+  return on ? (1 as u64) << b : 0;
+}
+
+/**
+ * The feature word's arm64 bits of what Windows reports: the dot products (`PF_ARM_V82_DP`), the
+ * crypto instructions (`PF_ARM_V8_CRYPTO`: SHA2, PMULL and AES), CRC32, SHA3 with SHA512, I8MM,
+ * FP16 and BF16 (the last five from `PF_ARM_SHA3_INSTRUCTIONS_AVAILABLE` on, which an older Windows
+ * reports as absent).
+ */
+export function win32ArmBits(
+  dp: bool,
+  crypto: bool,
+  crc: bool,
+  sha3: bool,
+  sha512: bool,
+  i8mm: bool,
+  fp16: bool,
+  bf16: bool,
+): u64 {
+  return flag(dp, 32) |
+    flag(crypto, 33) |
+    flag(crypto, 34) |
+    flag(crc, 35) |
+    flag(sha3 && sha512, 36) |
+    flag(fp16, 37) |
+    flag(i8mm, 38) |
+    flag(bf16, 39) |
+    flag(crypto, 40);
+}

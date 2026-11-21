@@ -16,25 +16,16 @@ import { parseIntOf } from "velt/lang/number/parse_int";
 import {
   hookCall,
   inline,
+  noInline,
   strAsciiWords,
   strByteAt,
+  strByteLen,
   strCharCodeAt,
   strWord1,
   strWord2,
 } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
-declare function velt_rt_str_split(s: string, sep: string): string[];
-declare function velt_rt_str_trim(s: string): string;
-declare function velt_rt_str_trim_start(s: string): string;
-declare function velt_rt_str_trim_end(s: string): string;
-declare function velt_rt_str_to_upper(s: string): string;
-declare function velt_rt_str_to_lower(s: string): string;
-declare function velt_rt_str_replace(s: string, from: string, to: string): string;
-declare function velt_rt_str_replace_all(s: string, from: string, to: string): string;
-declare function velt_rt_str_repeat(s: string, n: i64, out: string): bool;
-declare function velt_rt_str_pad_start(s: string, target: i64, fill: string): string;
-declare function velt_rt_str_pad_end(s: string, target: i64, fill: string): string;
 declare function velt_rt_str_from_char_code(code: i64): string;
 
 /**
@@ -71,8 +62,56 @@ function sliceOf(s: string, start: i64, end: i64): string {
   return velt_rt_str_slice(s, start, end);
 }
 
+/**
+ * The one-unit string of the UTF-16 code unit `code & 0xffff`: an ASCII one is its inline
+ * string, with no call; another (a lone surrogate among them) is the runtime's.
+ */
+@inline("always")
+function unitText(code: i64): string {
+  const unit = code & 0xffff;
+  return unit < 0x80 ? strAsciiWords(unit as u64, 0, 0, 1) : velt_rt_str_from_char_code(unit);
+}
+
+// `split` without a limit: the largest `ToUint32`.
+const NO_LIMIT: number = 4294967295;
+
+/** JS's `ToUint32` of `split`'s limit: nothing to do when none was given. */
+@inline("always")
+function splitLimit(limit: number): u32 {
+  return limit == NO_LIMIT ? 0xffffffff : splitLimitOf(limit);
+}
+
+/** `ToUint32(limit)`: NaN and the infinities are 0, another number its integer part modulo 2^32. */
+function splitLimitOf(limit: number): u32 {
+  if (limit != limit || limit == Infinity || limit == -Infinity) {
+    return 0;
+  }
+  const r = Math.trunc(limit) % 4294967296;
+  return (r < 0 ? r + 4294967296 : r) as u32;
+}
+
+/**
+ * `repeat`'s RangeError for the count `n`. A `number` count converts to the nearest `i64`, so
+ * the infinities arrive as the largest and the smallest one.
+ */
+@noInline
+function repeatError(n: i64): never {
+  if (n == END) {
+    panic("RangeError: Invalid count value: Infinity");
+  }
+  if (n == -END - 1) {
+    panic("RangeError: Invalid count value: -Infinity");
+  }
+  if (n < 0) {
+    panic(`RangeError: Invalid count value: ${n}`);
+  }
+  panic("RangeError: Invalid string length");
+}
+
 // "Omitted" end / from positions, as the runtime expects them.
 const END: i64 = 9223372036854775807;
+// The most bytes a string holds (velt_rt `str/heap.rs` `MAX_CAP`): a longer `repeat` is a RangeError.
+const MAX_BYTES: i64 = 2147483647;
 
 extend string {
   /** [start, end); negative positions count from the end; clamped; "" if start >= end. */
@@ -135,30 +174,32 @@ extend string {
 
   /**
    * JS semantics: "a,b,".split(",") is ["a", "b", ""]; split("") gives the code units (a
-   * surrogate pair splits into its two halves).
+   * surrogate pair splits into its two halves). With a `limit`, at most that many pieces, the
+   * first ones: `"a,b,c".split(",", 2)` is `["a", "b"]`. The limit is converted as JS's
+   * `ToUint32`: 0 and NaN give `[]`, -1 is no limit.
    */
-  split(sep: string): string[] {
-    return velt_rt_str_split(this, sep);
+  split(sep: string, limit: number = NO_LIMIT): string[] {
+    return hookCall("string_split", this, sep, splitLimit(limit));
   }
 
   /** Strips JS whitespace and line terminators. */
   trim(): string {
-    return velt_rt_str_trim(this);
+    return hookCall("string_trim", this);
   }
 
   /** Removes the leading white space and line terminator characters from a string. */
   trimStart(): string {
-    return velt_rt_str_trim_start(this);
+    return hookCall("string_trim_start", this);
   }
 
   /** Removes the trailing white space and line terminator characters from a string. */
   trimEnd(): string {
-    return velt_rt_str_trim_end(this);
+    return hookCall("string_trim_end", this);
   }
 
   /** Full Unicode case mapping, like JS ("ß".toUpperCase() is "SS"). */
   toUpperCase(): string {
-    return velt_rt_str_to_upper(this);
+    return hookCall("string_to_upper", this);
   }
 
   /**
@@ -166,12 +207,12 @@ extend string {
    * like JS (a final `Σ` becomes `ς`).
    */
   toLowerCase(): string {
-    return velt_rt_str_to_lower(this);
+    return hookCall("string_to_lower", this);
   }
 
   /** First occurrence; `to` expands `$$`, `$&`, `` $` `` and `$'` like JS. */
   replace(from: string, to: string): string {
-    return velt_rt_str_replace(this, from, to);
+    return hookCall("string_replace", this, from, to);
   }
 
   /**
@@ -183,16 +224,20 @@ extend string {
    * this string; `$$`, `$&`, `` $` `` and `$'` are expanded like JS.
    */
   replaceAll(from: string, to: string): string {
-    return velt_rt_str_replace_all(this, from, to);
+    return hookCall("string_replace_all", this, from, to);
   }
 
-  /** Panics like JS's RangeError if `n` is negative or the result would be too large. */
+  /**
+   * `n` copies of this string. A RangeError panic, with JS's messages, for a negative or
+   * infinite count ("Invalid count value") and for a result longer than a string can be
+   * ("Invalid string length").
+   */
   repeat(n: i64): string {
-    let out = "";
-    if (!velt_rt_str_repeat(this, n, out)) {
-      panic(`RangeError: Invalid count value: ${n}`);
+    const bytes = strByteLen(this) as i64;
+    if (n < 0 || n == END || (bytes != 0 && n > MAX_BYTES / bytes)) {
+      repeatError(n);
     }
-    return out;
+    return hookCall("string_repeat", this, n);
   }
 
   /**
@@ -200,7 +245,7 @@ extend string {
    * between the halves of a pair if need be, as in JS).
    */
   padStart(target: i64, fill: string = " "): string {
-    return velt_rt_str_pad_start(this, target, fill);
+    return hookCall("string_pad_start", this, target, fill);
   }
 
   /**
@@ -216,7 +261,7 @@ extend string {
    * parameter is " " (U+0020).
    */
   padEnd(target: i64, fill: string = " "): string {
-    return velt_rt_str_pad_end(this, target, fill);
+    return hookCall("string_pad_end", this, target, fill);
   }
 
   /**
@@ -289,11 +334,11 @@ export class String {
    */
   static fromCharCode(...codes: f64[]): string {
     if (codes.length == 1) {
-      return velt_rt_str_from_char_code((codes[0] % 65536) as i64);
+      return unitText((codes[0] % 65536) as i64);
     }
     let s = "";
     for (const code of codes) {
-      s += velt_rt_str_from_char_code((code % 65536) as i64);
+      s += unitText((code % 65536) as i64);
     }
     return s;
   }
@@ -311,7 +356,7 @@ export class String {
       }
       const c = cp as i64;
       if (c < 0x10000) {
-        s += velt_rt_str_from_char_code(c);
+        s += unitText(c);
       } else {
         // The pair's halves join into one character.
         s += velt_rt_str_from_char_code(0xd800 + ((c - 0x10000) >> 10));

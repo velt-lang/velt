@@ -49,9 +49,12 @@ mod hook;
 pub use hook::Hook;
 #[macro_use]
 mod weak_hooks;
+#[macro_use]
+mod string_hooks;
 
-// The table: these rows, then the weak core's (`weak_hooks.rs`), given to `hooks!` together.
-with_weak_hooks! {
+// The table: these rows, then the string methods' (`string_hooks.rs`) and the weak core's
+// (`weak_hooks.rs`), given to `hooks!` together.
+with_string_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -169,19 +172,6 @@ with_weak_hooks! {
     prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
         sig((&string, usize, usize) -> f64), prebuilt;
 
-    // velt/lang/string/search: the string searches (#2198), which the prelude's methods call by
-    // role (`hookCall`), so a program loads them only when live code calls one.
-    /// `s.indexOf(needle, from)`.
-    string_index_of => lang_string_search, "indexOf", sig((&string, &string, i64) -> i64);
-    /// `s.lastIndexOf(needle, from)`.
-    string_last_index_of => lang_string_search, "lastIndexOf", sig((&string, &string, i64) -> i64);
-    /// `s.includes(needle, position)`.
-    string_includes => lang_string_search, "includes", sig((&string, &string, i64) -> bool);
-    /// `s.startsWith(prefix)`.
-    string_starts_with => lang_string_search, "startsWith", sig((&string, &string) -> bool);
-    /// `s.endsWith(suffix)`.
-    string_ends_with => lang_string_search, "endsWith", sig((&string, &string) -> bool);
-
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
     /// The epoch of the runtime's cache of the last position translation (`velt_rt`
@@ -252,15 +242,13 @@ with_weak_hooks! {
     /// `Date.now()` (and `new Date()`'s time): milliseconds since the Unix epoch.
     date_now => lang_hooks_clock, "dateNow", sig(() -> i64), lowered,
         replaces("velt_rt_date_now"), bench("clock_now"), constructs(Clock);
-    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir
-    /// `entry.rs`).
+    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir `entry.rs`).
     clock_start => lang_hooks_clock, "clockStart", sig(() -> void), lowered, constructs(Clock);
 
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.
     /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's
-    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
-    /// otherwise.
+    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic` otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
@@ -271,6 +259,8 @@ with_weak_hooks! {
     heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
     /// `velt_rt_free`'s: `(p, size, align)`.
     heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
+    /// cpu.velt, after the statics (`entry.rs`, #3222): the CPU word, the `--cpu` check.
+    cpu_start => lang_hooks_cpu, "cpuStart", sig(() -> void), lowered, replaces("velt_rt_check_cpu");
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).
@@ -596,7 +586,8 @@ with_weak_hooks! {
 
     // string.velt: the characters a `for...of` over a string iterates.
     /// The code points `for (const c of s)` iterates (`velt_sema` `loops.rs`).
-    string_code_points => lang_hooks_string, "stringCodePoints", sig((&string) -> [string]);
+    string_code_points => lang_hooks_string, "stringCodePoints", sig((&string) -> [string]),
+        replaces("velt_rt_str_code_points");
 
     // iter.velt, async_iter.velt: iterable object literals.
     /// `{ async *[Symbol.asyncIterator]() { … } }` (`velt_sema` `object_method.rs`).

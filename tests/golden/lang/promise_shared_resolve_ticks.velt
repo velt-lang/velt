@@ -1,0 +1,54 @@
+// A promise read from two places (kept by a closure, or read twice) and settled by `resolve`:
+// the one waiter resumes in the microtask Node queues at the `resolve`, ahead of the microtasks
+// queued after it.
+async function ticks(label: string): Promise<void> {
+  for (let i = 1; i <= 3; i++) {
+    console.log(`${label} ${i}`);
+    await null;
+  }
+}
+
+async function captured(): Promise<void> {
+  const a = Promise.withResolvers<number>();
+  const w = (async () => {
+    console.log("captured", await a.promise);
+  })();
+  const t = ticks("c");
+  a.resolve(1);
+  await t;
+  await w;
+}
+
+async function readTwice(): Promise<void> {
+  const a = Promise.withResolvers<number>();
+  const p = a.promise;
+  const q = a.promise;
+  const w = p.then((v) => console.log("then", v));
+  const t = ticks("r");
+  a.resolve(2);
+  await t;
+  await w;
+  console.log("q", await q);
+}
+
+async function fromAnotherStep(): Promise<void> {
+  const a = Promise.withResolvers<number>();
+  const w = (async () => {
+    console.log("waiting");
+    console.log("woken", await a.promise);
+  })();
+  const r = (async () => {
+    await null;
+    a.resolve(3);
+    console.log("resolved");
+  })();
+  await ticks("s");
+  await w;
+  await r;
+}
+
+async function main() {
+  await captured();
+  await readTwice();
+  await fromAnotherStep();
+}

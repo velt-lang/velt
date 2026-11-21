@@ -88,30 +88,6 @@ pub const SLICE: &[(&str, i64, i64, &str)] = &[
     ("hello world", 0, i64::MAX, "hello world"),
     ("hello world", 100, i64::MAX, ""),
 ];
-pub const SPLIT: &[(&str, &str, &[&str])] = &[
-    ("a,b,,c,", ",", &["a", "b", "", "c", ""]),
-    ("", ",", &[""]),
-    ("", "", &[]),
-    ("abc", "", &["a", "b", "c"]),
-    ("h\u{e9}llo", "", &["h", "\u{e9}", "l", "l", "o"]),
-    ("a--b--c", "--", &["a", "b", "c"]),
-    ("abc", "abc", &["", ""]),
-    ("abc", "x", &["abc"]),
-    ("aaa", "aa", &["", "a"]),
-    (",", ",", &["", ""]),
-    ("a b  c", " ", &["a", "b", "", "c"]),
-    ("x\u{e9}y\u{e9}z", "\u{e9}", &["x", "y", "z"]),
-];
-pub const TRIM: &[(&str, &str, &str, &str)] = &[
-    ("  x  ", "x", "x  ", "  x"),
-    ("\u{9}\u{a}\u{b}\u{c}\u{d} \u{a0}\u{1680}\u{2000}\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}x y\u{feff}", "x y", "x y\u{feff}", "\u{9}\u{a}\u{b}\u{c}\u{d} \u{a0}\u{1680}\u{2000}\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}x y"),
-    ("\u{85}x\u{85}", "\u{85}x\u{85}", "\u{85}x\u{85}", "\u{85}x\u{85}"),
-    ("", "", "", ""),
-    ("   ", "", "", ""),
-    ("\u{180e}x", "\u{180e}x", "\u{180e}x", "\u{180e}x"),
-    ("x", "x", "x", "x"),
-    (" \u{e9} ", "\u{e9}", "\u{e9} ", " \u{e9}"),
-];
 pub const CASE: &[(&str, &str, &str)] = &[
     ("hello", "HELLO", "hello"),
     ("Stra\u{df}e", "STRASSE", "stra\u{df}e"),
@@ -143,42 +119,6 @@ pub const CASE: &[(&str, &str, &str)] = &[
     ("\u{1f0}", "J\u{30c}", "\u{1f0}"),
     ("\u{3a9}mega", "\u{3a9}MEGA", "\u{3c9}mega"),
     ("\u{df}", "SS", "\u{df}"),
-];
-pub const REPLACE: &[(&str, &str, &str, &str, &str)] = &[
-    ("aXbXc", "X", "-", "a-bXc", "a-b-c"),
-    ("abc", "", "-", "-abc", "-a-b-c-"),
-    ("abc", "b", "[$&]", "a[b]c", "a[b]c"),
-    ("abc", "b", "$`", "aac", "aac"),
-    ("abc", "b", "$'", "acc", "acc"),
-    ("abc", "b", "$$", "a$c", "a$c"),
-    ("abc", "b", "$1", "a$1c", "a$1c"),
-    ("abc", "b", "$<n>", "a$<n>c", "a$<n>c"),
-    ("abc", "x", "y", "abc", "abc"),
-    ("aaa", "aa", "b", "ba", "ba"),
-    ("", "", "x", "x", "x"),
-    ("abc", "b", "$", "a$c", "a$c"),
-    ("h\u{e9}\u{e9}", "\u{e9}", "e", "he\u{e9}", "hee"),
-    ("a.b.c", ".", "$'$`", "ab.cab.c", "ab.cabca.bc"),
-    ("xx", "x", "$&$&", "xxx", "xxxx"),
-    ("h\u{e9}llo", "", "_", "_h\u{e9}llo", "_h_\u{e9}_l_l_o_"),
-];
-pub const REPEAT: &[(&str, i64, &str)] = &[
-    ("ab", 0, ""),
-    ("ab", 3, "ababab"),
-    ("", 5, ""),
-    ("x", 1, "x"),
-    ("\u{e9}", 2, "\u{e9}\u{e9}"),
-];
-pub const PAD: &[(&str, i64, &str, &str, &str)] = &[
-    ("5", 3, "0", "005", "500"),
-    ("abc", 2, "x", "abc", "abc"),
-    ("abc", 10, "12345", "1234512abc", "abc1234512"),
-    ("abc", 6, "", "abc", "abc"),
-    ("abc", 8, "xy", "xyxyxabc", "abcxyxyx"),
-    ("", 3, "ab", "aba", "aba"),
-    ("abc", -1, "x", "abc", "abc"),
-    ("abc", 4, " ", " abc", "abc "),
-    ("42", 5, "0", "00042", "42000"),
 ];
 pub const CHAR_CODE_AT: &[(&str, i64, i64)] = &[
     ("Az~", -1, -1),

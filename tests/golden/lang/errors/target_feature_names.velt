@@ -1,0 +1,17 @@
+// `@targetFeature` names at least one feature, and features of one architecture: with none it
+// would gate nothing, and no CPU has features of both x86-64 and arm64.
+import { targetFeature } from "velt/compiler";
+
+@targetFeature()
+function none(): i64 {
+  return 1;
+}
+
+@targetFeature("avx2-x86", "crc-arm")
+function both(): i64 {
+  return 2;
+}
+
+function main() {
+  console.log(none());
+}

@@ -15,6 +15,8 @@ import { gcmHashKeyX86, gcmOpenX86, gcmSealX86 } from "velt/crypto/aes_gcm_x86";
 import { CryptoError } from "velt/crypto/errors";
 import { Ghash } from "velt/crypto/ghash";
 import { arrayTruncate } from "velt/lang/intrinsics";
+import { Aes as AesArm } from "velt/arch/arm/aes";
+import { Aes as AesX86 } from "velt/arch/x86/aes";
 
 /**
  * AES-GCM (NIST SP 800-38D) under a 16-byte (AES-128) or 32-byte (AES-256) key, with 12-byte
@@ -49,9 +51,9 @@ export class AesGcm implements Aead {
       // H = E(K, 0^128) on the instructions: the bitsliced key schedule is never made.
       this.keys = aesRoundKeys(key);
       let h: u8[] = [];
-      if (u8x16.hasAesArm()) {
+      if (AesArm.isSupported()) {
         h = gcmHashKeyArm(this.keys);
-      } else if (u8x16.hasAesX86()) {
+      } else if (AesX86.isSupported()) {
         h = gcmHashKeyX86(this.keys);
       }
       this.hp = hashPowers(h);
@@ -138,10 +140,10 @@ export class AesGcm implements Aead {
   // `sealInPlace` on the instructions (only with `keys`, which the constructor makes where the CPU
   // has them).
   private sealOnInstructions(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize) {
-    if (u8x16.hasAesArm()) {
+    if (AesArm.isSupported()) {
       const tag = gcmSealArm(this.keys, this.hp, nonce, aad, buf, start, end);
       tag.store(buf, end);
-    } else if (u8x16.hasAesX86()) {
+    } else if (AesX86.isSupported()) {
       const tag = gcmSealX86(this.keys, this.hp, nonce, aad, buf, start, end);
       tag.store(buf, end);
     } else {
@@ -151,10 +153,10 @@ export class AesGcm implements Aead {
 
   // `openInPlace` on the instructions, the ciphertext `buf[start..end]` with its tag after it.
   private openOnInstructions(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): bool {
-    if (u8x16.hasAesArm()) {
+    if (AesArm.isSupported()) {
       return gcmOpenArm(this.keys, this.hp, nonce, aad, buf, start, end, this.block);
     }
-    if (u8x16.hasAesX86()) {
+    if (AesX86.isSupported()) {
       return gcmOpenX86(this.keys, this.hp, nonce, aad, buf, start, end, this.block);
     }
     panic("ICE: AesGcm has round keys without the AES instructions");
