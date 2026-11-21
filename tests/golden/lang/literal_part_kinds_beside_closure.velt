@@ -3,8 +3,8 @@
 // A literal that moves a part of a narrowed parameter while a later operand's closure writes the
 // parameter (#3402, after #3399): the literal and the parameter share the part whatever its kind
 // (an array, a Map, an object type assigned in place, an optional class, a tuple, a plain object
-// type, a closure, a union of classes), in object, array, tuple and nested literals and for a
-// narrowed union member. Without the share the closure read an empty or freed part.
+// type, a closure, a union of classes, an interface value), in object, array, tuple and nested
+// literals and for a narrowed union member. Without the share the closure read an empty or freed part.
 class Inner {
   v: string;
   constructor(v: string) {
@@ -138,6 +138,36 @@ function twoParts(b: BStrNum | null): string {
   return "none";
 }
 
+interface Named {
+  name(): string;
+}
+class NamedA implements Named {
+  s: string;
+  constructor(s: string) {
+    this.s = s;
+  }
+  name(): string {
+    return this.s;
+  }
+}
+
+type BDyn = { n: Named; tag: string };
+function dyn(b: BDyn | null): string {
+  if (b) {
+    const r = { a: b.n, c: run(() => { b.tag = "c"; return b.n.name().length; }) };
+    return `${r.a.name()}|${r.c}|${b.tag}`;
+  }
+  return "none";
+}
+
+function dynReplace(b: BDyn | null, i: number): string {
+  if (b) {
+    const r = { a: b.n, c: run(() => { b.n = new NamedA(`replacement ${i}`); return 2; }) };
+    return `${r.a.name()}|${r.c}|${b.n.name()}`;
+  }
+  return "none";
+}
+
 function inner(i: number): Inner {
   return new Inner(`inner heap string long enough ${i}`);
 }
@@ -157,4 +187,6 @@ for (let i = 0; i < 2; i++) {
   console.log("nestedLit", nestedLit({ inner: inner(i), tag: "t" }));
   console.log("member", member({ kind: "a", inner: inner(i), tag: "t" }));
   console.log("twoParts", twoParts({ inner: inner(i), tag: `tag heap string long enough ${i}` }));
+  console.log("dyn", dyn({ n: new NamedA(`named heap string long enough ${i}`), tag: "t" }));
+  console.log("dynReplace", dynReplace({ n: new NamedA(`named heap string long enough ${i}`), tag: "t" }, i));
 }

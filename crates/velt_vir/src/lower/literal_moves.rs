@@ -121,9 +121,10 @@ impl FnLower<'_, '_> {
 
     /// Can the part `e` moves be shared when a later operand may write its local? A value with
     /// parts of its own (an optional object, a plain object type, a tuple, a union), a function,
-    /// an interface value or a `shared<T>` through its share; a reference to an object as a reference of its
-    /// own, which the next pass counts (`note_share`) when its type is not counted yet (until
-    /// then the part is moved where it is). A plain value is copied as it is moved.
+    /// an interface value or a `shared<T>` through its share; a reference to an object as a
+    /// reference of its own, which the next pass counts (`note_share`) when its type is not
+    /// counted yet (until then the part is moved where it is). A plain value is copied as it is
+    /// moved.
     fn shared_part(&mut self, e: &hir::Expr) -> bool {
         let ty = self.sub(e.ty);
         match self.cx.share_kind(ty) {

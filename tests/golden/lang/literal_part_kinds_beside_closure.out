@@ -11,6 +11,8 @@ tupleLit inner heap string long enough 0|31
 nestedLit inner heap string long enough 0|31
 member inner heap string long enough 0|31|c
 twoParts inner heap string long enough 0|tag heap string long enough 0|33|c2
+dyn named heap string long enough 0|31|c
+dynReplace named heap string long enough 0|2|replacement 0
 arr arr heap string long enough 1|29
 map map heap string long enough 1|29
 assignedObj pt heap string long enough 1|5|28
@@ -24,3 +26,5 @@ tupleLit inner heap string long enough 1|31
 nestedLit inner heap string long enough 1|31
 member inner heap string long enough 1|31|c
 twoParts inner heap string long enough 1|tag heap string long enough 1|33|c2
+dyn named heap string long enough 1|31|c
+dynReplace named heap string long enough 1|2|replacement 1
