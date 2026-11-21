@@ -46,10 +46,7 @@ keep.log
 $ seek nothing-here
 [exit 1]
 $ seek (
-seek: Invalid regular expression: /(/m: regex parse error:
-    (
-    ^
-error: unclosed group
+seek: Invalid regular expression: /(/m: Unterminated group
 [exit 2]
 $ seek --bogus
 seek: Unknown option '--bogus'

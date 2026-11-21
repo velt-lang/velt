@@ -542,7 +542,7 @@ declarations (std/fs/fd/posix.velt), with the guards a C call needs in Velt besi
 ### 3.2 Object handles
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
-`VeltResp`, `VeltRegex`, `VeltChild`, `VeltFileReader`,
+`VeltResp`, `VeltChild`, `VeltFileReader`,
 `VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
@@ -554,7 +554,7 @@ and returns the same `u64`, in argument lists, results and result slots alike.
   exit code -1, empty address), and releasing again is a no-op; a stale handle never reaches a newer
   object. In-flight operations hold their own `Arc`, so the object lives until they finish.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
-  `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
+  `Arc` (JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
   keeps every handle in a `private` field (the standard library may use the private members of
   its own types), so user code can neither build nor read one.
 
@@ -1274,26 +1274,11 @@ localtime_win32.velt over `TZ` when it names UTC or a fixed offset, else Win32's
 
 ### 14.2 Regular expressions (`velt/text`)
 
-`VeltRegex` is an `Arc` of a compiled Rust `regex::bytes::Regex`; a JS pattern is rewritten
-first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Matching runs
-on the subject's WTF-8 bytes; the offsets taken (`from`) and returned are UTF-16 code units, like
-every string position: a `from` between the halves of a pair starts after the
-pair, and the offsets of a match are translated once per match.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_regex_new` | `(const VeltStr* pattern, const VeltStr* flags, IoResult<VeltRegex>* out)` | flags from `dgimsuvy`, each once (`g y d u v` don't change matching); bad pattern/flags ⇒ `EINVAL` with a JS-style message (`Invalid regular expression: /p/f: …`) |
-| `velt_rt_regex_free` | `(VeltRegex re)` | |
-| `velt_rt_regex_last_index` | `(VeltRegex re) -> f64` | JS `lastIndex`, kept with the handle (0 when compiled) |
-| `velt_rt_regex_set_last_index` | `(VeltRegex re, f64 value)` | sets it (atomic: a handle may be shared between tasks) |
-| `velt_rt_regex_group_count` | `(VeltRegex re) -> u64` | groups including group 0 |
-| `velt_rt_regex_group_names` | `(VeltRegex re, VeltStrArray* out)` | names of groups 1.. (`""` = unnamed) |
-| `velt_rt_regex_test` | `(VeltRegex re, const VeltStr* s, u64 from) -> u8` | a match at or after `from` |
-| `velt_rt_regex_exec` | `(VeltRegex re, const VeltStr* s, u64 from, VeltArray<i64>* out) -> u8` | 1 ⇒ `out` = start/end per group (`-1` = did not take part); 0 ⇒ no match, `out` untouched |
-| `velt_rt_regex_exec_all` | `(VeltRegex re, const VeltStr* s, VeltArray<i64>* out)` | all non-overlapping matches, `2 * group_count` offsets each |
-| `velt_rt_regex_replace` | `(VeltRegex re, const VeltStr* s, const VeltStr* replacement, u8 all, VeltStr* out)` | JS `GetSubstitution` patterns `$$ $& $\` $' $n $nn $<name>` |
-| `velt_rt_regex_split` | `(VeltRegex re, const VeltStr* s, u64 limit, VeltStrArray* out)` | JS `split` (captures spliced in, `""` for unmatched ones); `limit` 0 = none |
-| `velt_rt_regex_escape` | `(const VeltStr* s, VeltStr* out)` | metacharacters backslash-escaped |
+**[non-additive, #2196]** Regular expressions are std code
+([the regular expression engine](../design/regex-engine.md), `std/text/regex/`): a pattern is
+parsed, compiled and matched in Velt, on the subject's own bytes. The twelve `velt_rt_regex_*`
+functions and the `VeltRegex` handle no longer exist in either runtime. std's `replace` builds its
+result with the string builder (§12.1) and `velt_rt_str_byte_slice`.
 
 ### 14.3 Child processes (`velt/process/child`)
 

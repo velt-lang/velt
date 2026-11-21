@@ -1,0 +1,292 @@
+// velt/text (internal): the backtracking matcher: it tries the program's alternatives in the
+// order the program prefers them. It runs in one of two ways.
+//
+// With a memory (a short subject): it remembers every state (instruction, position) it has
+// been in, and never tries one twice, so its time is linear in the subject. Only instructions
+// that a jump or a split leads to are remembered (a "join"): every loop passes through one, and
+// the instructions between two are a straight line. In a program with a loop whose body can
+// match nothing, a state is remembered once everything after it has been tried, not when it is
+// entered: such a loop comes back to a state it is still in (the same position, an iteration
+// later), and what that state can still do is JavaScript's next choice, not a dead end. The
+// loop itself ends by its marks (`OP_NONEMPTY`).
+//
+// Without one (a `plain` program, any subject): nothing is remembered, which is faster while
+// the pattern does not make it try the same text again and again. It counts its steps against
+// the fuel the search gives it, and gives up when that is spent: the search then starts again
+// with a matcher whose time is bounded (find.velt).
+
+import { addressLoad, arrayReadAddress, arrayTruncate, strDataAddress } from "velt/lang/intrinsics";
+import { before, byteAt, charAt, holds } from "velt/text/regex/decode";
+import {
+  JOIN,
+  OP_ASSERT,
+  OP_CHAR,
+  OP_CLASS,
+  OP_CLEAR,
+  OP_ENTER,
+  OP_JUMP,
+  OP_MASK,
+  OP_MATCH,
+  OP_NONEMPTY,
+  OP_SAVE,
+  OP_SPAN,
+  OP_SPLIT,
+  Program,
+} from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
+
+/** What `backtrack` returns: a match, none, or that its fuel is spent. */
+export const MATCHED: i64 = 1;
+export const FAILED: i64 = 0;
+export const SPENT: i64 = -1;
+
+/** Set in a pending job that restores a capture slot. */
+const RESTORE: u64 = (1 as u64) << 63;
+/** Set in a pending job that gives back a character of a span: the instruction to go on at
+ * and the end of the span so far; the job under it is where the span started. */
+const GIVE_BACK: u64 = (1 as u64) << 62;
+/** A pending job that says a state led to no match: everything it could go on to was tried.
+ * Its low bits are the state's bit in the memory. */
+const FINISHED: u64 = (3 as u64) << 62;
+/** Where a job keeps its instruction or slot. */
+const SHIFT: u64 = 40;
+const LOW: u64 = ((1 as u64) << 40) - 1;
+const HIGH: u64 = ((1 as u64) << 22) - 1;
+
+/** Makes `m` ready for matches of `prog` with a memory, whose positions are bytes
+ * `origin..=end`. */
+export function backtrackReset(prog: Program, m: Search, origin: usize, end: usize): void {
+  m.origin = origin;
+  m.span = end - origin + 1;
+  const words = (((prog.joins + prog.marks) as usize) * m.span + 63) / 64;
+  arrayTruncate(m.visited, 0);
+  for (let i: usize = 0; i < words; i++) {
+    m.visited.push(0);
+  }
+}
+
+/** Is there a match of `prog` in the `len` bytes of `s` that starts at byte `start`? Its slots
+ * are then in `m.slots`. With `memory`, states an earlier call since `backtrackReset` has been
+ * in lead to no match, and are not entered again; without, the steps are taken from `m.fuel`. */
+export function backtrack(
+  prog: Program,
+  m: Search,
+  s: string,
+  len: usize,
+  start: usize,
+  memory: bool,
+): i64 {
+  const base = strDataAddress(s);
+  const code = prog.code;
+  // The program is read where it is: this loop runs once per instruction.
+  const codeAt = unsafe { arrayReadAddress(code) };
+  const slots = m.slots;
+  const stack = m.stack;
+  const visited = m.visited;
+  const origin = m.origin;
+  const span = m.span;
+  const units = prog.units;
+  const reenter = prog.marks > 0;
+  const hinted = prog.hintAt.length > 0;
+  // How many other ways (of a split, of a span that can give back) are pending.
+  let alts: usize = 0;
+  let fuel = memory ? 0x7fffffffffffffff : m.fuel;
+  let pc: usize = 0;
+  let pos = start;
+  while (true) {
+    while (true) {
+      const w = unsafe { addressLoad<u32>(codeAt + 12 * pc) };
+      if (memory && (w & JOIN) != 0) {
+        const bit = ((w >> 9) as usize) * span + (pos - origin);
+        const mask = (1 as u64) << ((bit & 63) as u64);
+        if ((visited[bit >> 6] & mask) != 0) {
+          break;
+        }
+        if (reenter) {
+          stack.push(FINISHED | (bit as u64));
+        } else {
+          visited[bit >> 6] |= mask;
+        }
+      }
+      fuel--;
+      if (fuel < 0) {
+        arrayTruncate(stack, 0);
+        m.fuel = -1;
+        return SPENT;
+      }
+      const op = w & OP_MASK;
+      const a = unsafe { addressLoad<u32>(codeAt + 12 * pc + 4) };
+      if (op == OP_CHAR) {
+        if (pos >= len) {
+          break;
+        }
+        if (a < 0x80) {
+          if (byteAt(base, pos) != a) {
+            break;
+          }
+          pos++;
+        } else {
+          const c = charAt(base, pos, units);
+          if ((c & 0xffffff) != a) {
+            break;
+          }
+          pos += (c >> 24) as usize;
+        }
+        pc++;
+      } else if (op == OP_SPLIT) {
+        const b = code[3 * pc + 2] as usize;
+        const hint = hinted ? prog.hintAt[pc] as usize : 0;
+        const next = pos < len ? byteAt(base, pos) : 0x80;
+        if (hint != 0 && next < 0x80) {
+          // A way that cannot start with the next character is not taken, nor kept for later.
+          const ways = prog.hints[128 * (hint - 1) + (next as usize)];
+          if (ways == 0) {
+            break;
+          }
+          if (ways == 3) {
+            stack.push(((b as u64) << SHIFT) | (pos as u64));
+            alts++;
+          }
+          pc = (ways & 1) != 0 ? a as usize : b;
+        } else {
+          stack.push(((b as u64) << SHIFT) | (pos as u64));
+          alts++;
+          pc = a as usize;
+        }
+      } else if (op == OP_SAVE) {
+        if ((a as usize) < slots.length) {
+          // With no other way pending, nothing comes back to before this.
+          if (alts > 0) {
+            stack.push(RESTORE | ((a as u64) << SHIFT) | ((slots[a] + 1) as u64));
+          }
+          slots[a] = pos as i64;
+        }
+        pc++;
+      } else if (op == OP_JUMP) {
+        pc = a as usize;
+      } else if (op == OP_CLASS) {
+        if (pos >= len) {
+          break;
+        }
+        const b = byteAt(base, pos);
+        if (b < 0x80) {
+          if (!prog.hasAscii(a, b)) {
+            break;
+          }
+          pos++;
+        } else {
+          const c = charAt(base, pos, units);
+          if (!prog.sets[a].contains(c & 0xffffff)) {
+            break;
+          }
+          pos += (c >> 24) as usize;
+        }
+        pc++;
+      } else if (op == OP_SPAN) {
+        const from = pos;
+        const low = prog.ascii[2 * a];
+        const high = prog.ascii[2 * a + 1];
+        // No further than the fuel reaches: a span is as many steps as it has characters.
+        const reach = (len - pos) as i64 <= fuel ? len : pos + (fuel as usize) + 1;
+        while (pos < reach) {
+          const b = byteAt(base, pos);
+          let step: usize = 1;
+          if (b < 0x80) {
+            if ((((b < 64 ? low : high) >> ((b & 63) as u64)) & 1) == 0) {
+              break;
+            }
+          } else {
+            const c = charAt(base, pos, units);
+            if (!prog.sets[a].contains(c & 0xffffff)) {
+              break;
+            }
+            step = (c >> 24) as usize;
+          }
+          if (memory && !reenter) {
+            // The span from the next position on is a state too: one it has been in led to
+            // no match, whatever the span gave back from there on. (Not where a loop can come
+            // back to a state it is still in: there only the span's start is a state.)
+            const bit = ((w >> 9) as usize) * span + (pos + step - origin);
+            const mask = (1 as u64) << ((bit & 63) as u64);
+            if ((visited[bit >> 6] & mask) != 0) {
+              break;
+            }
+            visited[bit >> 6] |= mask;
+          }
+          pos += step;
+        }
+        fuel -= (pos - from) as i64;
+        pc++;
+        if (pos > from && code[3 * pc - 1] == 0) {
+          stack.push(from as u64);
+          stack.push(GIVE_BACK | ((pc as u64) << SHIFT) | (pos as u64));
+          alts++;
+        }
+      } else if (op == OP_CLEAR) {
+        const end = code[3 * pc + 2] as usize;
+        for (let k = a as usize; k < end && k < slots.length; k++) {
+          if (slots[k] >= 0) {
+            if (alts > 0) {
+              stack.push(RESTORE | ((k as u64) << SHIFT) | ((slots[k] + 1) as u64));
+            }
+            slots[k] = -1;
+          }
+        }
+        pc++;
+      } else if (op == OP_ASSERT) {
+        if (!holds(a, base, pos, len)) {
+          break;
+        }
+        pc++;
+      } else if (op == OP_ENTER || op == OP_NONEMPTY) {
+        const bit = ((prog.joins + a) as usize) * span + (pos - origin);
+        const mask = (1 as u64) << ((bit & 63) as u64);
+        if (op == OP_ENTER) {
+          visited[bit >> 6] |= mask;
+        } else if ((visited[bit >> 6] & mask) != 0) {
+          break;
+        }
+        pc++;
+      } else if (op == OP_MATCH) {
+        arrayTruncate(stack, 0);
+        m.fuel = memory ? m.fuel : fuel;
+        return MATCHED;
+      } else {
+        break;
+      }
+    }
+    while (true) {
+      if (stack.length == 0) {
+        m.fuel = memory ? m.fuel : fuel;
+        // What was captured with no other way pending was never to be restored.
+        for (let k: usize = 0; k < slots.length; k++) {
+          slots[k] = -1;
+        }
+        return FAILED;
+      }
+      const job = stack.pop() ?? 0;
+      if ((job & FINISHED) == FINISHED) {
+        const bit = (job ^ FINISHED) as usize;
+        visited[bit >> 6] |= (1 as u64) << ((bit & 63) as u64);
+        continue;
+      }
+      if ((job & RESTORE) != 0) {
+        slots[((job ^ RESTORE) >> SHIFT) as usize] = ((job & LOW) as i64) - 1;
+        continue;
+      }
+      pc = ((job >> SHIFT) & HIGH) as usize;
+      pos = (job & LOW) as usize;
+      alts--;
+      if ((job & GIVE_BACK) != 0) {
+        const from = (stack.pop() ?? 0) as usize;
+        pos = before(base, pos, units);
+        if (pos > from) {
+          stack.push(from as u64);
+          stack.push(GIVE_BACK | ((pc as u64) << SHIFT) | (pos as u64));
+          alts++;
+        }
+      }
+      break;
+    }
+  }
+}

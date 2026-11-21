@@ -1,0 +1,195 @@
+// velt/text (internal): one search of a subject for a compiled pattern: by its literals alone
+// when they are the pattern, else from each place a match may start (prefilter.velt), with the
+// backtracker on a short subject and the Pike machine on a long one.
+
+import { arrayTruncate, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { backtrack, backtrackReset, FAILED, MATCHED, SPENT } from "velt/text/regex/backtrack";
+import { charAt } from "velt/text/regex/decode";
+import { Dfa, GAVE_UP } from "velt/text/regex/dfa";
+import { pike, pikeReset } from "velt/text/regex/pike";
+import {
+  candidate,
+  literalAll,
+  literalEnd,
+  literalFind,
+  literalStart,
+} from "velt/text/regex/prefilter";
+import { Program } from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
+import { straight } from "velt/text/regex/straight";
+
+/** The most bits of visited states the backtracker is given: past it, the Pike machine. */
+const MAX_VISITED: usize = 1 << 15;
+/** The steps the backtracker may take without a memory: so many per byte of the subject left,
+ * and so many more. A search that needs more is one the pattern makes costly, and goes to a
+ * matcher whose time is bounded. */
+const FUEL_PER_BYTE: i64 = 32;
+const FUEL: i64 = 256;
+/** From how many bytes on a subject is long: the automaton's, when the program has one. */
+const LONG: usize = 256;
+
+/** The position after `pos` (before `len`) in the text at `base`: one character on. */
+export function after(s: string, pos: usize, units: bool): usize {
+  const base = strDataAddress(s);
+  return pos + ((charAt(base, pos, units) >> 24) as usize);
+}
+
+/** Where the search after the match `start..end` of a subject of `len` bytes goes on: at its
+ * end, or one character further after an empty match; past `len` when the subject is done. */
+export function following(prog: Program, s: string, len: usize, start: usize, end: usize): usize {
+  if (end > start) {
+    return end;
+  }
+  return end >= len ? len + 1 : after(s, end, prog.units);
+}
+
+/** Every match of `prog` in `s`, each searched for after the one before (`following`): their
+ * slots, as many per match as `m.slots` holds, are then in `m.found`. */
+export function findAll(prog: Program, m: Search, s: string): void {
+  const len = strByteLen(s);
+  arrayTruncate(m.found, 0);
+  if (prog.exact && m.slots.length == 2) {
+    literalAll(prog, m, s, len);
+    return;
+  }
+  let pos: usize = 0;
+  while (pos <= len && find(prog, m, s, pos, false)) {
+    for (let k: usize = 0; k < m.slots.length; k++) {
+      m.found.push(m.slots[k]);
+    }
+    pos = following(prog, s, len, m.slots[0] as usize, m.slots[1] as usize);
+  }
+}
+
+/** Is there a match of `prog` in `s` that starts at or after position `from` (at `from` when
+ * `sticky`)? The leftmost one's slots are then in `m.slots`, as byte offsets. */
+export function find(prog: Program, m: Search, s: string, from: usize, sticky: bool): bool {
+  const len = strByteLen(s);
+  const slots = m.slots;
+  if (prog.anchored && from > 0) {
+    return false;
+  }
+  if (prog.exact && !sticky) {
+    const found = literalFind(prog, m, s, from, len);
+    if (found >= 0 && slots.length >= 2) {
+      slots[0] = literalStart(found) as i64;
+      slots[1] = literalEnd(prog, found) as i64;
+    }
+    return found >= 0;
+  }
+  for (let k: usize = 0; k < slots.length; k++) {
+    slots[k] = -1;
+  }
+  const fixed = sticky || prog.anchored;
+  // A long subject is the automaton's when the program has one: the backtracker gets a few
+  // steps first, enough for a match that is near and short.
+  const long = prog.automaton && len - from >= LONG;
+  if (prog.plain) {
+    m.fuel = long ? FUEL : FUEL_PER_BYTE * ((len - from) as i64) + FUEL;
+    const found = scan(prog, m, s, len, from, fixed, false);
+    if (found != SPENT) {
+      return found == MATCHED;
+    }
+    for (let k: usize = 0; k < slots.length; k++) {
+      slots[k] = -1;
+    }
+  }
+  if (prog.automaton) {
+    const found = automaton(prog, m, s, len, from, fixed);
+    if (found != GAVE_UP) {
+      return found == MATCHED;
+    }
+  }
+  return bounded(prog, m, s, len, from, fixed);
+}
+
+/** `find` by the matchers whose time is bounded whatever the pattern: the backtracker with a
+ * memory when its table is small, else the Pike machine. */
+function bounded(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool): bool {
+  if (((prog.joins + prog.marks) as usize) * (len - from + 1) > MAX_VISITED) {
+    pikeReset(prog, m);
+    return pike(prog, m, s, len, from, fixed);
+  }
+  backtrackReset(prog, m, from, len);
+  return scan(prog, m, s, len, from, fixed, true) == MATCHED;
+}
+
+/** `find` by the program's automatons: one finds where the match ends, the other, reading
+ * backwards from there, where it starts; its groups, when the search keeps any, are then the
+ * matchers' work between the two. `MATCHED`, `FAILED`, or `GAVE_UP`. */
+function automaton(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool): i64 {
+  const slots = m.slots;
+  const ends = m.ends ?? new Dfa(prog, false);
+  m.ends = ends;
+  const end = ends.forward(m, s, len, from, fixed, slots.length == 0);
+  if (end < 0 || slots.length == 0) {
+    return end == GAVE_UP ? GAVE_UP : end < 0 ? FAILED : MATCHED;
+  }
+  let start = from as i64;
+  // The first place the match could start is where the search began to look. When the groups
+  // are wanted and the program reads them off from there to the match's end without a choice,
+  // that is the match: none starts further left.
+  if (slots.length > 2 && straight(prog, s, ends.began, end as usize, slots)) {
+    return MATCHED;
+  }
+  if (!fixed) {
+    const starts = m.starts ?? new Dfa(prog.backward ?? prog, true);
+    m.starts = starts;
+    start = starts.backward(s, end as usize, from);
+    if (start == GAVE_UP) {
+      return GAVE_UP;
+    }
+  }
+  if (slots.length == 2) {
+    slots[0] = start;
+    slots[1] = end;
+    return MATCHED;
+  }
+  // The groups: the match is the one that starts at `start`, and nothing after its end is
+  // part of it (the program has no assertion that could look there).
+  if (start as usize != ends.began && straight(prog, s, start as usize, end as usize, slots)) {
+    return MATCHED;
+  }
+  for (let k: usize = 0; k < slots.length; k++) {
+    slots[k] = -1;
+  }
+  if (prog.plain) {
+    m.fuel = FUEL_PER_BYTE * (end - start) + FUEL;
+    if (backtrack(prog, m, s, end as usize, start as usize, false) == MATCHED) {
+      return MATCHED;
+    }
+    for (let k: usize = 0; k < slots.length; k++) {
+      slots[k] = -1;
+    }
+  }
+  return bounded(prog, m, s, end as usize, start as usize, true) ? MATCHED : FAILED;
+}
+
+/** The backtracker from each place at or after `from` where a match may start (only `from`
+ * when `fixed`), until it finds one: what it returned last. */
+function scan(
+  prog: Program,
+  m: Search,
+  s: string,
+  len: usize,
+  from: usize,
+  fixed: bool,
+  memory: bool,
+): i64 {
+  let pos = from;
+  while (true) {
+    if (!fixed) {
+      const next = candidate(prog, m, s, pos, len);
+      if (next < 0) {
+        return FAILED;
+      }
+      pos = next as usize;
+    }
+    const found = backtrack(prog, m, s, len, pos, memory);
+    if (found != FAILED || fixed || pos >= len) {
+      return found;
+    }
+    // Every code unit is tried, also the low half of a pair (decode.velt).
+    pos = after(s, pos, true);
+  }
+}

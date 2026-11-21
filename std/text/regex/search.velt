@@ -1,0 +1,45 @@
+// velt/text (internal): `Search`, the working memory of the matchers for one call of a `RegExp`
+// method: made once, used for every match the call finds.
+
+import { Dfa } from "velt/text/regex/dfa";
+
+/** What a search over one subject keeps between matches. */
+export class Search {
+  /** The capture slots of the last match, as byte offsets: `start, end` per group, -1 for a
+   * group that did not take part. */
+  slots: i64[] = [];
+  /** The slots of every match `findAll` found, one match after another. */
+  found: i64[] = [];
+  /** Where the scan for literals looks from (prefilter.velt). */
+  floor: usize = 0;
+  /** The backtracker's visited states, a bit per join instruction and position; the first
+   * position, and how many there are. */
+  visited: u64[] = [];
+  origin: usize = 0;
+  span: usize = 0;
+  /** The steps the backtracker may still take without a memory. */
+  fuel: i64 = 0;
+  /** The backtracker's pending alternatives, and the Pike machine's while it follows splits. */
+  stack: u64[] = [];
+  /** The Pike machine's two thread lists: per list, the instructions in priority order,
+   * where each instruction is in that order, and each thread's capture slots. */
+  dense: u32[] = [];
+  sparse: u32[] = [];
+  caps: i64[] = [];
+  /** The capture slots of the thread whose splits are being followed. */
+  work: i64[] = [];
+  /** How many threads each list holds. */
+  count: usize[] = [0, 0];
+
+  /** The automatons of the program searched for, once a search needed them: the one that
+   * finds where a match ends, and the one that finds where it starts. */
+  ends: Dfa | null = null;
+  starts: Dfa | null = null;
+
+  /** A search that keeps `slots` capture slots (0: none, 2: the match's ends). */
+  constructor(slots: usize) {
+    for (let i: usize = 0; i < slots; i++) {
+      this.slots.push(-1);
+    }
+  }
+}
