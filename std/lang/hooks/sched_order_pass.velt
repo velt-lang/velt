@@ -94,7 +94,7 @@ function busyTask(b: usize, k: usize): bool {
     }
   }
   const s = m.load32(k + t.T_STATE);
-  if (s !== t.RUNNING && s !== t.NOTIFIED) {
+  if (s !== t.RUNNING && s !== t.NOTIFIED && s !== t.YIELDED) {
     return false;
   }
   if ((m.cas32(k + t.T_SKIPPED, 0, t.SK_SKIPPED) & t.SK_ENDING) !== 0) {

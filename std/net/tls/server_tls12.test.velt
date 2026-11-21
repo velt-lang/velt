@@ -256,7 +256,7 @@ describe("the TLS 1.2 server", () => {
       // No ecdsa_secp256r1_sha256.
       ["000a0008040305", "000a0008060305", "the client accepts no signature scheme", "28"],
       // No group of the server's.
-      ["0006001d00170018", "0006001e00190018", "no key exchange group in common", "28"],
+      ["0006001d00170018", "0006001e0019001a", "no key exchange group in common", "28"],
       // A server name that is not UTF-8.
       ["096c6f63616c686f7374", "09ff6f63616c686f7374", "a server name that is not UTF-8", "32"],
       // An ALPN name that is not UTF-8 ("\xfftp/1.1"): bytes, which match no protocol.

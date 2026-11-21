@@ -1,0 +1,120 @@
+// velt/lang/string (internal): `trim`, `trimStart` and `trimEnd` (std/prelude/string.velt), in
+// Velt (#2198). They strip JavaScript's WhiteSpace and LineTerminator characters: TAB, LF, VT,
+// FF, CR, space, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and
+// U+FEFF (not U+0085, which Rust's `char::is_whitespace` has).
+//
+// The work is on the string's WTF-8 bytes: the white space that is not ASCII is one two-byte and
+// a few three-byte sequences, matched as bytes, so no character is decoded and no position is
+// translated. A lone surrogate is `ED A0..BF ..`, which is none of them. The result is a range of
+// the string's bytes: shared with a long string, a copy when short, the string itself when
+// nothing was stripped (the runtime's byte slice decides, as for `slice`).
+
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/** Is `b` an ASCII white space character: TAB to CR, or a space? */
+function asciiSpace(b: u8): bool {
+  return b == 0x20 || (b >= 9 && b <= 13);
+}
+
+/**
+ * The length of the white space character that is not ASCII whose bytes start at `i` of `s`
+ * (`end` bytes are read at most), or 0 when there is none.
+ */
+function wideSpace(s: string, i: usize, end: usize): usize {
+  const b = strByteAt(s, i as u64);
+  if (b == 0xc2) {
+    // U+00A0.
+    return i + 1 < end && strByteAt(s, (i + 1) as u64) == 0xa0 ? 2 : 0;
+  }
+  if (i + 2 >= end) {
+    return 0;
+  }
+  const c = strByteAt(s, (i + 1) as u64);
+  const d = strByteAt(s, (i + 2) as u64);
+  if (b == 0xe2) {
+    if (c == 0x80) {
+      // U+2000 to U+200A, U+2028, U+2029, U+202F.
+      return (d >= 0x80 && d <= 0x8a) || d == 0xa8 || d == 0xa9 || d == 0xaf ? 3 : 0;
+    }
+    // U+205F.
+    return c == 0x81 && d == 0x9f ? 3 : 0;
+  }
+  if (b == 0xe1) {
+    // U+1680.
+    return c == 0x9a && d == 0x80 ? 3 : 0;
+  }
+  if (b == 0xe3) {
+    // U+3000.
+    return c == 0x80 && d == 0x80 ? 3 : 0;
+  }
+  // U+FEFF.
+  return b == 0xef && c == 0xbb && d == 0xbf ? 3 : 0;
+}
+
+/** The number of bytes of white space `s` (`n` bytes) starts with. */
+function leading(s: string, n: usize): usize {
+  let i: usize = 0;
+  while (i < n) {
+    const b = strByteAt(s, i as u64);
+    if (asciiSpace(b)) {
+      i++;
+      continue;
+    }
+    if (b < 0x80) {
+      break;
+    }
+    const w = wideSpace(s, i, n);
+    if (w == 0) {
+      break;
+    }
+    i += w;
+  }
+  return i;
+}
+
+/** Where the white space that ends `s` (`n` bytes) starts, `start` at the least. */
+function trailing(s: string, start: usize, n: usize): usize {
+  let end = n;
+  while (end > start) {
+    const b = strByteAt(s, (end - 1) as u64);
+    if (asciiSpace(b)) {
+      end--;
+      continue;
+    }
+    if (b < 0x80) {
+      break;
+    }
+    // The last byte of a character that is not ASCII: white space only as the two bytes of
+    // U+00A0 or one of the three-byte sequences, each of which starts with a lead byte.
+    if (end - start >= 2 && b == 0xa0 && strByteAt(s, (end - 2) as u64) == 0xc2) {
+      end -= 2;
+      continue;
+    }
+    if (end - start >= 3 && wideSpace(s, end - 3, end) == 3) {
+      end -= 3;
+      continue;
+    }
+    break;
+  }
+  return end;
+}
+
+/** `s.trim()`. */
+export function trim(s: string): string {
+  const n = strByteLen(s);
+  const start = leading(s, n);
+  return velt_rt_str_byte_slice(s, start as u64, trailing(s, start, n) as u64);
+}
+
+/** `s.trimStart()`. */
+export function trimStart(s: string): string {
+  const n = strByteLen(s);
+  return velt_rt_str_byte_slice(s, leading(s, n) as u64, n as u64);
+}
+
+/** `s.trimEnd()`. */
+export function trimEnd(s: string): string {
+  return velt_rt_str_byte_slice(s, 0, trailing(s, 0, strByteLen(s)) as u64);
+}

@@ -28,7 +28,9 @@ pub(super) fn uses_of(
                     Intrinsic::Print
                     | Intrinsic::PrintErr
                     | Intrinsic::ToString
-                    | Intrinsic::TemplateToString,
+                    | Intrinsic::TemplateToString
+                    // A generic value spread into `unknown` arguments (`body::expr::spread_param`).
+                    | Intrinsic::SpreadParam,
                 ),
             args,
         } => args.first(),

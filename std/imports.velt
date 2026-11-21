@@ -51,8 +51,9 @@ export const imports: Imports = {
   // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
   // `SwitchToThread` and the performance counter.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
-  // The memory of a symbol record `Symbol.for` makes at run time (std/lang/symbol/registry.velt):
-  // the C library's where there is one, the compiled code's allocator in the browser.
+  // The memory of the symbol records made at run time: `Symbol.for`'s one at a time
+  // (std/lang/symbol/registry.velt) and `Symbol()`'s in 4 KiB chunks (record.velt). The C
+  // library's where there is one, the compiled code's allocator (not zeroed) in the browser.
   "#symbol-record": {
     js: "./lang/symbol/record_mem_js.velt",
     default: "./lang/symbol/record_mem.velt",
@@ -95,6 +96,13 @@ export const imports: Imports = {
   "#spawn-open": {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
+  },
+  // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
+  // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
+  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.
+  "#promise-race-step": {
+    "std-scheduler": "./lang/promise/race_step_sched.velt",
+    default: "./lang/promise/race_step_rt.velt",
   },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
@@ -198,6 +206,9 @@ export const imports: Imports = {
   // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
   // which the C library's `memset` gives; JS hosts have none, and index the arrays.
   "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },
+  // The limb loops of `Mont` (std/crypto/mont.velt, RSA's arithmetic): on the limbs' addresses
+  // as `#nat-rows`, or on JS hosts on the arrays.
+  "#mont-rows": { js: "./crypto/mont_rows_checked.velt", default: "./crypto/mont_rows_raw.velt" },
   // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
   // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
   // stat`; elsewhere each fails with ENOSYS.
@@ -285,6 +296,15 @@ export const imports: Imports = {
   },
   // Winsock for velt/os' `hostname()` on Windows, started once per process; nothing elsewhere.
   "#os-winsock": { win32: "./os/winsock_win32.velt", default: "./os/winsock_none.velt" },
+  // `process.memoryUsage()`'s two figures (std/prelude/process.velt): `/proc/self/statm` on
+  // Linux, `task_info` on macOS, kernel32's process counters on Windows, the WebAssembly
+  // runtime's answer there.
+  "#memory-sys": {
+    darwin: "./process/memory_darwin.velt",
+    linux: "./process/memory_linux.velt",
+    win32: "./process/memory_win32.velt",
+    default: "./process/memory_wasm.velt",
+  },
   // Whether a file descriptor is a terminal: the C library's `isatty` on macOS and Linux, a
   // console handle on Windows, the WebAssembly runtime's answer there.
   "#tty": {

@@ -1,0 +1,37 @@
+// A sleep that came due while its task ran fires before the task's yields, whichever was made
+// first, as Node's timers phase comes before its check phase (#3241). The task is busy past the
+// sleep's deadline, so the sleep is due on no list yet when the next poll fires the yields. Also
+// for a started promise's sleep against another promise's yield. The expected output is Node's
+// for this program with `yieldNow` a promise `setImmediate` resolves, `sleep(ms)` one
+// `setTimeout` resolves, and a call of `main()` added at the end.
+
+function spin(ms: number): void {
+  const s = Date.now();
+  while (Date.now() - s < ms) {}
+}
+
+async function sleeper(): Promise<void> {
+  await sleep(1);
+  console.log("sleeper");
+}
+
+async function yielder(): Promise<void> {
+  await yieldNow();
+  console.log("yielder");
+}
+
+async function main() {
+  const t = sleep(1).then(() => console.log("timer"));
+  const y = yieldNow().then(() => console.log("immediate"));
+  spin(20);
+  await Promise.all([t, y]);
+  const y2 = yieldNow().then(() => console.log("immediate 2"));
+  const t2 = sleep(1).then(() => console.log("timer 2"));
+  spin(20);
+  await Promise.all([t2, y2]);
+  const a = sleeper();
+  const b = yielder();
+  spin(20);
+  await Promise.all([a, b]);
+  console.log("done");
+}

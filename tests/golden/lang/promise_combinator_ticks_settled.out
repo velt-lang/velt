@@ -1,0 +1,17 @@
+t 1
+then
+t 2
+all
+race
+allSettled
+any
+all rejected
+t 3
+a 1
+a 2
+a 3
+race 1
+all 2
+all bad
+allSettled 2
+any 2

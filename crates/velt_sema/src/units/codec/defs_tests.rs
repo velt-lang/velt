@@ -20,6 +20,7 @@ pub(super) fn check_by_units(src: &str, hook: Hook) -> (Option<Program>, Diagnos
     let loaded = programs::load_src(src);
     let opts = CheckOptions {
         units: true,
+        std_key: None,
         eager_std: true,
         ..Default::default()
     };
