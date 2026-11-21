@@ -128,6 +128,12 @@ impl FnLower<'_, '_> {
             // second transfer would take an object the first moved out (no longer `LOCAL`,
             // counted once) for one of the store's: it would copy it and never release it.
             Held::Copied => return v,
+            // A function value sema did not transfer (a call's result, `l = mk()`): sema found
+            // none of the lock's objects in it (ownership/locked/stores.rs transfers a stored
+            // value that may reach the lock's), so it is kept as what the caller holds is, and
+            // a closure the reader made keeps sharing the caller's variables it captured
+            // (glue/transfer_env.rs `unless_kept`). A copy would change only its own.
+            Held::Other if self.fn_value_type(ty) => {}
             // Already evaluated (`caller_or_own_op`): as anything else.
             Held::Other | Held::Elems => return self.reader_copy(v, ty),
             Held::Caller => {}
@@ -180,7 +186,7 @@ impl FnLower<'_, '_> {
     /// moves what the reader made and alone holds, counts the objects it did not make (the
     /// caller's, which it held uncounted) once more and keeps them, and copies only what the
     /// reader made and still shares (velt_rt `velt_rt_xfer_keep_begin`).
-    fn reader_keep(&mut self, v: Operand, ty: TyId) -> Operand {
+    pub(in crate::lower) fn reader_keep(&mut self, v: Operand, ty: TyId) -> Operand {
         if self.dead() || !self.cx.transfers(ty) || !self.cx.holds_counted(ty) {
             return v;
         }

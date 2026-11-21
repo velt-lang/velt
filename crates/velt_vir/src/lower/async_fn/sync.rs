@@ -533,6 +533,15 @@ impl FnLower<'_, '_> {
         if !owned {
             return r;
         }
+        // A function value a shared read returns holds none of the lock's objects (sema refuses
+        // one that does: ownership/locked), and it stays on this thread: kept as what the
+        // caller holds is, so a closure the reader made keeps sharing the caller's variables it
+        // captured (glue/transfer_env.rs `unless_kept`), as in JavaScript. A copy would change
+        // only its own.
+        if self.mode == crate::lower::LkMode::Read && self.fn_value_type(ret) {
+            let v = self.reader_keep(r, ret);
+            return self.own_value(v, ret);
+        }
         let v = self.transfer_value(r, ret);
         self.own_value(v, ret)
     }
