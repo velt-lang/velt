@@ -302,6 +302,27 @@ fn std_s_unit_keeps_what_its_bodies_do_with_module_state() {
     }
 }
 
+/// With std checked as a unit of its own, std's unit holds all of std, of which only what lazy std
+/// would have checked is the program's (`lazy_std::units_live_set`): the async closures' analysis
+/// reads only that code of std's (`lazy_std::walks`), so a closure changing a value it reached
+/// through std's http server is reported with the field it changes, a closure sent on a channel
+/// (std's `Channel.send`, whose body the analysis follows) is refused, and a program whose async
+/// closures stay local is accepted, each as by a whole-program check.
+#[test]
+fn the_async_closures_analysis_reads_the_std_code_the_program_has() {
+    for path in [
+        "lang/errors/async_closure_crosses.velt",
+        "lang/errors/http_server/http_handler_store_any_read_fn.velt",
+        "lang/errors/http_server/http_handler_store_any_read_method.velt",
+        "lang/async_closure_generic_unknown_targ_others.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        assert_eq!(whole.status.code(), two.status.code(), "{path}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+    }
+}
+
 /// With std checked as a unit of its own, the functions that hand a parameter to a channel
 /// (`Channel.send`, `trySend`) come from std's unit, not from reading std's bodies again
 /// (`ownership::boundary`): a value owning a resource that is sent while the program still

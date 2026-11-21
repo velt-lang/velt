@@ -38,7 +38,7 @@ use velt_common::std_hooks::{hook_index, Construct, ConstructSet, HookSet, HOOKS
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{self, Callee, DefId, ExprKind as E, Intrinsic as I, TyId, TyKind};
+use crate::hir::{DefId, TyId, TyKind};
 
 /// The live set of one check.
 #[derive(Clone, Default)]
@@ -97,6 +97,14 @@ pub(crate) struct Live {
     /// The program has module state (a live stored global): on a native target lowering calls
     /// module_blocks.velt's hooks for it ([`super::module_hooks`], #2196 9c).
     pub(super) module_state: bool,
+    /// A check by units walked this set
+    /// ([`walk_units_program`]): the hooks are those its constructs demand.
+    pub(super) units: bool,
+    /// With [`Live::units`], the modules lazy std would have loaded so far
+    /// ([`walk_units_program`]; empty: every module). A std unit has every module's extensions
+    /// and implementations, lazy std only those of the modules it loaded: the others' methods
+    /// aren't live ([`loaded_for`]).
+    units_loaded: Vec<bool>,
 }
 
 impl Live {
@@ -177,7 +185,7 @@ impl Walk {
 pub(crate) fn demanded(cx: &Ctx) -> HookSet {
     #[cfg(test)]
     tests::note_demanded(cx);
-    match cx.lazy.modules.is_empty() {
+    match cx.lazy.modules.is_empty() && !cx.lazy.live.units {
         true => {
             let mut all = HookSet::default();
             let catch_only = |h: &velt_common::std_hooks::Hook| {
@@ -458,188 +466,6 @@ pub(super) fn mark(cx: &mut Ctx, d: DefId) -> bool {
     new
 }
 
-/// Walk the checked code of live definition `d` into `w`; false if it is not checked yet.
-fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
-    let i = d.0 as usize;
-    let ty = &cx.ty;
-    let stubs = &cx.lazy.stubs;
-    if let DefInfo::Fn(f) = &mut cx.info[i] {
-        w.async_host |= f.host.is_some() && f.is_async;
-        if stubs.any() {
-            stubs.rebind_throws(&mut f.throw_srcs);
-        }
-    }
-    let mut stub_calls = std::mem::take(&mut w.stub_calls);
-    let mut visit = |e: &mut hir::Expr, w: &mut Walk| {
-        if stubs.any() {
-            stubs.note(d, e, &mut stub_calls);
-        }
-        walk_expr(ty, e, w);
-    };
-    let walked = match (&mut cx.defs[i], &mut cx.info[i]) {
-        (Some(hir::Def::Fn(f)), info) => {
-            if let DefInfo::Fn(fi) = info {
-                for e in fi.params.iter_mut().filter_map(|p| p.default.as_mut()) {
-                    crate::visit::exprs_in(e, &mut |e| visit(e, w));
-                }
-                // Thrown and not caught, it is reported as `console.log` prints it: lowering
-                // builds that from the signature, whatever the body throws. (`hir::FnDef::throws`
-                // is filled in later, by `finalize::build_defs`.)
-                w.formats
-                    .extend(fi.declared_throws.as_ref().and_then(|d| d.ty));
-            }
-            for t in f.body.locals.iter().map(|l| l.ty).chain([f.ret]) {
-                note_ty(ty, t, w);
-            }
-            if f.is_generator {
-                w.generators[f.is_async as usize] = true;
-            }
-            w.tasks |= f.is_async;
-            crate::visit::exprs_mut(&mut f.body.block, &mut |e| visit(e, w));
-            true
-        }
-        (None, DefInfo::Fn(_)) => false,
-        (_, DefInfo::Global(g)) => {
-            if g.state != crate::defs::BodyState::Done {
-                return false;
-            }
-            note_ty(ty, g.ty, w);
-            // A stored global, or a constant of the program's, kept later (kept_consts.rs).
-            w.module_state |= g.stored || !cx.modules[g.module].is_std;
-            if let Some(e) = &mut g.init {
-                crate::visit::exprs_in(e, &mut |e| visit(e, w));
-            }
-            true
-        }
-        (Some(hir::Def::ExternFn(x)), _) => {
-            // The runtime's declaration, not the executor's own `declare c` of the symbol.
-            let sched = velt_common::std_hooks::SCHED_EXTERNS.contains(&x.symbol.as_str());
-            w.tasks |= sched && x.c.is_none();
-            true
-        }
-        _ => true,
-    };
-    w.stub_calls = stub_calls;
-    walked
-}
-
-/// Record type `t` of live code: a scalar by its kind only (it opens implementations and has
-/// no parts), anything else to [`live_types`].
-#[inline]
-fn note_ty(ty: &crate::types::Types, t: TyId, w: &mut Walk) {
-    match ty.kind(t) {
-        k @ (TyKind::Int(_)
-        | TyKind::Float(_)
-        | TyKind::Bool
-        | TyKind::Str
-        | TyKind::Symbol
-        | TyKind::Simd(_)
-        | TyKind::Literal(_)) => w.kinds |= kind_bit(k),
-        TyKind::Unit | TyKind::Never | TyKind::Error => {}
-        _ => {
-            if w.last_type != Some(t) {
-                w.last_type = Some(t);
-                w.types.push(t);
-            }
-        }
-    }
-}
-
-fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
-    note_ty(ty, e.ty, w);
-    match &e.kind {
-        E::Call {
-            callee: Callee::Def(d, targs),
-            ..
-        }
-        | E::FnRef(d, targs) => {
-            w.refs.push(*d);
-            w.types.extend(targs);
-        }
-        E::Global(d) | E::Closure(d) => w.refs.push(*d),
-        E::AdtLit { type_args, .. } | E::Variant { type_args, .. } | E::New { type_args, .. } => {
-            w.types.extend(type_args)
-        }
-        E::ToDyn { expr, .. } => {
-            w.formats.push(expr.ty);
-            w.into_any.push((expr.ty, e.ty));
-        }
-        E::Throw(v) => w.formats.push(v.ty),
-        E::Call {
-            callee: Callee::Intrinsic(I::ToString | I::TemplateToString),
-            args,
-        } => w.texts.extend(args.iter().map(|a| a.ty)),
-        E::Call {
-            callee: Callee::Intrinsic(I::Print | I::PrintErr),
-            args,
-        } => {
-            // A float is written by `numberWrite`, which waits for this (`number_text.rs`); a
-            // type parameter's instance may be one.
-            let float =
-                |k: &TyKind| matches!(k, TyKind::Float(_) | TyKind::Param(_) | TyKind::Op(..));
-            w.prints_float |= (args.iter()).any(|a| float(ty.kind(a.ty)));
-            w.formats.extend(args.iter().map(|a| a.ty));
-        }
-        E::Call {
-            callee: Callee::Intrinsic(I::Inspect | I::InspectNested | I::ErrorText),
-            args,
-        } => w.formats.extend(args.iter().map(|a| a.ty)),
-        E::Call {
-            callee: Callee::Intrinsic(I::AnyTo | I::AnyToExact),
-            ..
-        } => w.conversions.push(e.ty),
-        E::Call {
-            callee:
-                Callee::Intrinsic(i @ (I::CatchUnwind | I::CatchUnwindAt | I::PerfNow | I::DateNow)),
-            ..
-        } => {
-            let clock = matches!(i, I::PerfNow | I::DateNow);
-            w.constructs |= [Construct::CatchUnwind, Construct::Clock][usize::from(clock)].bit();
-        }
-        E::Call {
-            callee:
-                Callee::Intrinsic(
-                    I::WeakMapSet
-                    | I::WeakMapGet
-                    | I::WeakMapHas
-                    | I::WeakMapDelete
-                    | I::WeakMapValue
-                    | I::WeakRefNew
-                    | I::WeakRefDeref
-                    | I::WeakMapDrop
-                    | I::WeakRefDrop,
-                ),
-            ..
-        } => w.constructs |= Construct::Weak.bit(),
-        // A yield or a sleep is a leaf of the executor (velt_vir `sched_rt`: `schedYieldFut`,
-        // `schedSleep`), even kept as a promise in code that is not async.
-        E::Call {
-            callee: Callee::Intrinsic(I::YieldNow | I::Sleep),
-            ..
-        } => w.tasks = true,
-        E::Call {
-            callee: Callee::Dyn {
-                method_type_args, ..
-            },
-            ..
-        } => w.types.extend(method_type_args),
-        E::Call {
-            callee:
-                Callee::ParamMethod {
-                    iface,
-                    method_type_args,
-                    iface_args,
-                    ..
-                },
-            ..
-        } => {
-            w.ifaces.push(*iface);
-            w.types.extend(method_type_args.iter().chain(iface_args));
-        }
-        kind => w.constructs |= constructs::pow_bit(ty, kind),
-    }
-}
-
 /// Record the types `todo` and their parts as live: their constructs, and the methods of each
 /// class or struct among them (with its base classes, subclasses and fields' types), and of the
 /// implementations for them.
@@ -689,23 +515,47 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
         adts.extend(cx.lazy.subclasses.get(&d).into_iter().flatten().copied());
         let ms = methods(cx).get(&d).cloned().unwrap_or_default();
         for m in ms {
-            mark(cx, m);
+            if loaded_for(cx, m, Some(d)) {
+                mark(cx, m);
+            }
         }
         defaults(cx, d);
     }
 }
 
+/// The module of function `f`.
+fn fn_module(cx: &Ctx, f: DefId) -> Option<usize> {
+    match cx.info.get(f.0 as usize) {
+        Some(DefInfo::Fn(i)) => Some(i.module),
+        _ => None,
+    }
+}
+
+/// May method `m` of `owner` (a class or struct, if any) be live in a walk
+/// of std's unit ([`Live::units_loaded`])? Lazy std has an extension's or implementation's
+/// methods only once it loaded their module: `std/test/suite`'s `extend<T> T` gives every type a
+/// `[SETTLE]` method, which a program that never imports `velt/test` hasn't. A class's own
+/// methods are in its module, which is there with it.
+pub(super) fn loaded_for(cx: &Ctx, m: DefId, owner: Option<DefId>) -> bool {
+    let loaded = &cx.lazy.live.units_loaded;
+    if loaded.is_empty() {
+        return true;
+    }
+    let Some(module) = fn_module(cx, m) else {
+        return true;
+    };
+    let owner_module = owner.and_then(|o| match cx.info.get(o.0 as usize) {
+        Some(DefInfo::Adt(a)) => Some(a.module),
+        _ => None,
+    });
+    owner_module == Some(module) || loaded.get(module).copied().unwrap_or(true)
+}
+
 /// The methods and constructors of every class and struct, by owner.
 fn methods<'a>(cx: &'a mut Ctx) -> &'a FxHashMap<DefId, Vec<DefId>> {
     if cx.lazy.live.methods.is_none() {
-        let mut by: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
-        for (i, info) in cx.info.iter().enumerate() {
-            if let DefInfo::Fn(f) = info {
-                if let Some(o) = f.owner {
-                    by.entry(o).or_default().push(DefId(i as u32));
-                }
-            }
-        }
+        let mut by = FxHashMap::default();
+        add_methods(cx, &mut by, 0);
         cx.lazy.live.methods = Some(by);
     }
     cx.lazy
@@ -713,6 +563,18 @@ fn methods<'a>(cx: &'a mut Ctx) -> &'a FxHashMap<DefId, Vec<DefId>> {
         .methods
         .as_ref()
         .expect("ICE: methods by owner")
+}
+
+/// Add the methods and constructors of the definitions from `from` on to `by`, by owner, in
+/// definition order.
+fn add_methods(cx: &Ctx, by: &mut FxHashMap<DefId, Vec<DefId>>, from: usize) {
+    for i in from..cx.info.len() {
+        if let DefInfo::Fn(f) = &cx.info[i] {
+            if let Some(o) = f.owner {
+                by.entry(o).or_default().push(DefId(i as u32));
+            }
+        }
+    }
 }
 
 /// The field defaults and redefined initializers of live class or struct `d` (its constructor
@@ -747,14 +609,16 @@ fn live_impls(cx: &mut Ctx) {
         {
             continue;
         }
-        let for_live_type = match cx.ty.kind(imp.ty) {
-            TyKind::Adt(d, _) => live.adts.contains(d),
+        let (for_live_type, owner) = match cx.ty.kind(imp.ty) {
+            TyKind::Adt(d, _) => (live.adts.contains(d), Some(*d)),
             k => match kind_bit(k) {
-                0 => true,
-                bit => live.kinds & bit != 0,
+                0 => (true, None),
+                bit => (live.kinds & bit != 0, None),
             },
         };
-        if for_live_type {
+        // Not marked: considered again when its module is loaded (`units_loaded_more`).
+        let loaded = (imp.methods.first()).is_none_or(|&m| loaded_for(cx, m, owner));
+        if for_live_type && loaded {
             marked.push((k, imp.methods.clone()));
         }
     }
@@ -778,6 +642,12 @@ use constructs::{demanded_for, evaluate, format_bit, hook_class};
 pub(crate) use constructs::{too_late, Assumed};
 use roots::seed;
 use roots::{kind_bit, DYNAMIC};
+#[path = "live_units.rs"]
+mod units_walk;
+#[path = "live_walk.rs"]
+mod walk;
+pub(crate) use units_walk::{prepare_walk, walks};
+use walk::{walk_def, walk_expr};
 
 #[cfg(test)]
 #[path = "live_tests.rs"]
