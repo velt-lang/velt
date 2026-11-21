@@ -136,7 +136,8 @@ export class PathBuilder {
     for (let k: usize = 0; k < this.candidates.length; k++) {
       const candidate = this.candidates[k];
       if (candidate == null) {
-        // As webpki, which parses each candidate where it meets it and keeps the parser's error.
+        // Parsed in the constructor; its parser's error counts here, where webpki, which parses
+        // each candidate as it meets it, would see it.
         error = mostSpecific(error, this.refusals[k]);
         continue;
       }
