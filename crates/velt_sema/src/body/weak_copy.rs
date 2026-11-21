@@ -67,6 +67,14 @@ impl Held {
         }
     }
 
+    /// [`named`](Self::named) in the middle of a sentence (`… {} cannot be passed …`).
+    fn named_mid(&self, name: &str) -> String {
+        match self.fields {
+            true => format!("`{name}`, which holds a `weak` field,"),
+            false => format!("the weak collection `{name}`"),
+        }
+    }
+
     /// How to keep it on its task.
     fn inside(&self, place: &str) -> String {
         match self.fields {
@@ -138,7 +146,7 @@ pub(crate) fn weak_copy_error_as(
             format!("{owner}, and values passed to a spawned task (or sent on a channel) are copied for it: {}", held.inside("the task")),
         ),
         GenCopy::TaskFn(name) => (
-            format!("a function that uses {} cannot be passed to another task", held.named(name)),
+            format!("a function that uses {} cannot be passed to another task", held.named_mid(name)),
             format!("{owner}, and a function passed to a spawned task (or sent on a channel) takes what it captures to that task's thread: {}", held.inside("the task")),
         ),
         GenCopy::Shared => (

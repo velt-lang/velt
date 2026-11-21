@@ -394,7 +394,8 @@ button.onClick(() => self?.refresh());
   with a weak field stays on its task as a weak collection does: sema refuses the crossings it
   sees (`velt_sema` `weak_threads`, through interface and base-class values, `unknown` and a
   promise spawned from a variable too), and the transfer glue panics on the rest (a function
-  value that captured one). A store into a weak field of a value locked by `Mutex.with` of a
+  value that captured one). Nor is it copied: sema refuses a `clone()` that reaches one (through
+  those types as well), and the clone glue panics on what sema cannot see. A store into a weak field of a value locked by `Mutex.with` of a
   target from outside the lock is an error, as weak collections are there.
 - **TypeScript.** `velt check --ts-compat` reports `weak`; `velt doc`'s TypeScript output writes
   the read type, `T | null`.

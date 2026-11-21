@@ -127,6 +127,20 @@ impl crate::visit_ref::Visit for Found<'_, '_> {
                     self.lock_fns.push(*n);
                 }
             }
+            // `x.clone()`: a weak collection or `weak` field its written type hides (through an
+            // interface value, a base class or `unknown`) cannot be copied either. A generic
+            // receiver is left to the clone glue's panic (velt_vir glue/clone.rs): following std's
+            // generic clones would instantiate every body of every program that clones.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Clone),
+                args,
+            } => {
+                if let [x] = args.as_slice() {
+                    if !is_generic(self.cx, x.ty) {
+                        self.needs.push((x.ty, Need::Cross(GenCopy::Clone, e.span)));
+                    }
+                }
+            }
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::SharedNew),
                 args,
