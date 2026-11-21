@@ -185,10 +185,15 @@ match ends with the subject, and the groups of a program with `$` are read with 
 subject after the match, so that `$` does not hold where the match ends before the subject
 does.
 
-**The search memory** (`search.velt`) holds the matchers' lists, stacks and automatons. A
-`RegExp` keeps one from call to call, so its automatons are built once, not once per `test` or
-`exec`: a call claims it with an atomic flag (`Cursor.busy`), and one that finds it claimed, on
-another thread, makes its own. The memory counts the calls it served.
+**The search memory** (`search.velt`) holds what the matchers work in for one call: the
+backtracker's arrays, the Pike machine's (`lists.velt`, made when it first runs) and the
+automatons. A `RegExp` keeps what its automatons worked out from call to call, so they are
+worked out once, not once per `test` or `exec`: as `DfaTables` (`dfa_tables.velt`), a value that
+never changes, in an `Atomic` of the regex's cursor. A call's automaton reads those tables in
+place and copies them only when it works out a new state; a call that worked out more puts its
+tables there. No lock is held (a `RegExp` holds none, so it converts to `any`, prints and
+writes as JSON): calls on several threads read what is there, and the last to finish keeps its
+tables. The cursor also counts the calls.
 
 **The reader of groups** (`straight.velt`): when the automaton has found a match and the search
 wants its groups, the program is run over the match with the hints alone, no stack and no
@@ -251,25 +256,25 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 
 | Program | `regex` crate | std engine |
 |---|---|---|
-| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 192.0 M |
-| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 18.2 G |
-| `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.47 G |
-| `long.velt` 0: `/(a+)+b/` fails | 3.67 M | 3.46 M |
-| `long.velt` 1: `/(a+)+b/` matches | 18.12 M | 6.37 M |
-| `long.velt` 2: `/.*.*.*=.*/` fails | 4.03 M | 2.83 M |
-| `long.velt` 3: `/.*.*.*=.*/` matches | 13.92 M | 7.89 M |
-| `long.velt` 4: `/([^,]*,)*x/` fails | 3.88 M | 3.51 M |
-| `long.velt` 5: `/([^,]*,)*x/` matches | 26.29 M | 21.42 M |
-| `long.velt` 6: `/(a\|b)*c/` fails | 3.67 M | 3.46 M |
-| `long.velt` 7: `/(a\|b)*c/` matches | 12.79 M | 11.86 M |
-| `lines.velt` 0: `/(\w+)=(\d+);/.test`, 320 B | 27.69 M | 28.52 M |
-| `lines.velt` 1: `/(\w+), $/.exec`, 320 B | 33.39 M | 39.10 M |
-| `lines.velt` 2: `/([^,]*,)*#/.test`, 320 B | 32.88 M | 28.48 M |
-| `lines.velt` 3: `/value\d+;/i.test`, 320 B | 55.38 M | 28.45 M |
-| `lines.velt` 4: as 0, 250 B | 22.51 M | 23.07 M |
-| `lines.velt` 5: as 1, 250 B | 28.12 M | 32.64 M |
-| `lines.velt` 6: as 2, 250 B | 26.69 M | 23.03 M |
-| `lines.velt` 7: as 3, 250 B | 44.01 M | 23.01 M |
+| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 189.2 M |
+| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 17.9 G |
+| `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.65 G |
+| `long.velt` 0: `/(a+)+b/` fails | 3.67 M | 3.48 M |
+| `long.velt` 1: `/(a+)+b/` matches | 18.12 M | 6.40 M |
+| `long.velt` 2: `/.*.*.*=.*/` fails | 4.03 M | 2.85 M |
+| `long.velt` 3: `/.*.*.*=.*/` matches | 13.92 M | 7.92 M |
+| `long.velt` 4: `/([^,]*,)*x/` fails | 3.88 M | 3.54 M |
+| `long.velt` 5: `/([^,]*,)*x/` matches | 26.29 M | 20.89 M |
+| `long.velt` 6: `/(a\|b)*c/` fails | 3.67 M | 3.48 M |
+| `long.velt` 7: `/(a\|b)*c/` matches | 12.79 M | 11.89 M |
+| `lines.velt` 0: `/(\w+)=(\d+);/.test`, 320 B | 27.69 M | 29.56 M |
+| `lines.velt` 1: `/(\w+), $/.exec`, 320 B | 33.39 M | 42.66 M |
+| `lines.velt` 2: `/([^,]*,)*#/.test`, 320 B | 32.88 M | 29.52 M |
+| `lines.velt` 3: `/value\d+;/i.test`, 320 B | 55.38 M | 29.49 M |
+| `lines.velt` 4: as 0, 250 B | 22.51 M | 24.11 M |
+| `lines.velt` 5: as 1, 250 B | 28.12 M | 36.26 M |
+| `lines.velt` 6: as 2, 250 B | 26.69 M | 24.06 M |
+| `lines.velt` 7: as 3, 250 B | 44.01 M | 24.04 M |
 
 Compiling a pattern is the larger difference in the first three: it allocates a few small
 arrays, where an automaton library builds tables. A pattern that is no literal is also compiled
@@ -280,11 +285,13 @@ patterns searched line by line, 2,000 lines of 320 or 250 bytes. Each row's numb
 starting the program and building its subject: about 2.7 M for `long`, 26.6 M and 21.4 M for
 `lines`, so a `lines` row's matching is its number less that.
 
-The `lines` rows 1 and 5 (`exec` of a pattern that ends in `$`, which matches every line) are
-the ones above the old engine, by 16 to 17%: their matching costs about 6,200 instructions a
-line against its 3,400. The automaton reads every byte of the line to find where the match
-ends (about 3,200, 10 a byte), then the pass back and the groups take about 1,300, and building
-the match the rest.
+Four `lines` rows are above the old engine, which kept no state between calls either but whose
+calls cost little. Rows 0 and 4 (+7%: one byte scan finds no `;`) spend about 900 instructions
+a call more than it, making the call's search memory and reading the regex's tables. Rows 1 and 5 (+28%,
+`exec` of a pattern that ends in `$`, every line a match) spend about 4,600 instructions a line
+more than its 3,400: the automaton reads every byte of the line to find where the match ends
+(about 3,200, 10 a byte), then the pass back and the groups take about 1,300, and making two
+automatons over the kept tables and the match the rest.
 
 The Pike machine is the slow matcher, tens of instructions per byte and thread. It runs when
 the subject is too long for the backtracker's memory and the program has no automaton (it has
