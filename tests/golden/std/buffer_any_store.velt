@@ -1,0 +1,28 @@
+// Expected output is Node's (v24): `node --experimental-strip-types` on a copy named .ts.
+// #3233: an `any` stored into a byte of a Buffer, and the `any` elements Buffer.from takes.
+// An `any` stored where an integer is wanted converts as a typed array stores a number
+// (ToUint8 here): truncated, modulo 2^8; NaN and the infinities are 0.
+const values: any[] = [
+  0, 1, 255, 256, 257, -1, -255, -256, -257, 300.7, -300.7, 0.9, -0.9, 127.5, 128, -128, -129,
+  65535, 65536, 2147483647, 2147483648, 4294967295, 4294967296, 4294967297, -4294967297,
+  9007199254740991, -9007199254740991, 9223372036854775807, 9223372036854775808,
+  -9223372036854775808, 18446744073709551615, 18446744073709551616, 36893488147419103232,
+  1e21, -1e21, 1.5e300, -1.5e300, NaN, Infinity, -Infinity, -0,
+];
+const b = Buffer.alloc(values.length);
+for (let i = 0; i < values.length; i++) {
+  b[i] = values[i];
+}
+console.log(b.join(","));
+const list: any = [1, 256, -1, 300.7, -300.7, NaN, Infinity, 4294967297];
+console.log(Buffer.from(list).join(","));
+const one = Buffer.alloc(4);
+const v: any = 511;
+const half: any = 255.5;
+const down: any = -511;
+const past: any = 512;
+one[0] = v;
+one[1] = past;
+one[2] = down;
+one[3] = half;
+console.log(one.join(","));

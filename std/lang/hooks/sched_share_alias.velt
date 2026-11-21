@@ -22,7 +22,7 @@ import * as sh from "./sched_share";
 import * as t from "./sched_task";
 
 /** A node's flag: it is a converted promise standing for another (its side block's alias). */
-const ALIASED: u32 = 8192;
+export const ALIASED: u32 = 8192;
 
 /**
  * `velt_rt_fut_alias` (the hook lowering calls under `VELT_SCHEDULER=std`): converted promise `w`
@@ -114,6 +114,17 @@ export function handledElsewhere(n: usize): bool {
     return false;
   }
   return (m.load32(m.ld(x.get(n) + x.X_HUB) + sh.H_FLAGS) & sh.CLAIMED) !== 0;
+}
+
+/**
+ * Node `n` rejected (sched_node.velt `run`): its owner may claim the result on another worker, so
+ * it keeps where it threw (the state's poll is not needed any more), published before FINISHED.
+ * Out of line: `run` is inlined at every start.
+ */
+@noInline
+export function keepWhereThrown(n: usize): void {
+  loc.keep(n + nd.N_FLAGS, n + nd.N_HEAD + 16, n + nd.N_POLL);
+  keepLoc(n);
 }
 
 /**

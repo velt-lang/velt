@@ -1,0 +1,79 @@
+// A value of a type parameter bounded by an array type, spread into a call's rest parameter of
+// `unknown` (#943): `g(...args)` with `args: A`. What `A` is is known per instantiation: a
+// tuple gives its elements in order, an array its elements, the empty tuple nothing; it is
+// evaluated once, before the arguments after it. Node prints the same.
+function show(...xs: unknown[]): string {
+  return xs.length + ": " + xs.map((x: unknown): string => typeof x + " " + String(x)).join(", ");
+}
+
+function viaParam<A extends unknown[]>(args: A): string {
+  return show("first", ...args, "last");
+}
+
+let calls = 0;
+function counted(): string {
+  calls++;
+  return "call " + calls;
+}
+
+function ordered<A extends unknown[]>(args: A): string {
+  return show(...args, counted(), ...args);
+}
+
+function before<A extends unknown[]>(args: A, after: () => string): string {
+  return show(...args, after());
+}
+
+function callback<A extends unknown[], R>(f: (...xs: unknown[]) => R): (...args: A) => R {
+  return (...args) => f(...args);
+}
+
+// Interface values as elements: the array the spread builds owns a reference to each, and
+// outlives the tuple or array it was spread from.
+interface Named {
+  name(): string;
+}
+
+class Dog implements Named {
+  tag: string;
+  constructor(tag: string) {
+    this.tag = tag;
+  }
+  name(): string {
+    return "dog " + this.tag;
+  }
+}
+
+function keep(...xs: unknown[]): unknown[] {
+  return xs;
+}
+
+function hold<A extends unknown[]>(args: A): unknown[] {
+  return keep(...args);
+}
+
+function made(i: number): unknown[] {
+  const d: Named = new Dog("made" + i);
+  const both: Named[] = [d, new Dog("more" + i)];
+  return [...hold<[Named, string]>([d, "s" + i]), ...hold<Named[]>(both)];
+}
+
+console.log(viaParam<[number, string, boolean]>([1, "two", true]));
+console.log(viaParam<[number, string]>([3, "four"]));
+console.log(viaParam<number[]>([5, 6, 7]));
+console.log(viaParam<[]>([]));
+console.log(ordered<[string]>(["a"]), calls);
+const nums: number[] = [1, 2];
+console.log(before<number[]>(nums, (): string => {
+  nums.push(3);
+  return "pushed";
+}), nums.length);
+const joined = callback<[number, number], string>((...xs: unknown[]): string => show(...xs));
+console.log(joined(8, 9));
+const rows: unknown[][] = [];
+for (let i = 0; i < 3; i++) {
+  rows.push(made(i));
+}
+for (const row of rows) {
+  console.log((row[0] as Named).name(), row[1], (row[2] as Named).name(), (row[3] as Named).name());
+}
