@@ -252,15 +252,13 @@ with_weak_hooks! {
     /// `Date.now()` (and `new Date()`'s time): milliseconds since the Unix epoch.
     date_now => lang_hooks_clock, "dateNow", sig(() -> i64), lowered,
         replaces("velt_rt_date_now"), bench("clock_now"), constructs(Clock);
-    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir
-    /// `entry.rs`).
+    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir `entry.rs`).
     clock_start => lang_hooks_clock, "clockStart", sig(() -> void), lowered, constructs(Clock);
 
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.
     /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's
-    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
-    /// otherwise.
+    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic` otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
@@ -271,6 +269,8 @@ with_weak_hooks! {
     heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
     /// `velt_rt_free`'s: `(p, size, align)`.
     heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
+    /// cpu.velt, after the statics (`entry.rs`, #3222): the CPU word, the `--cpu` check.
+    cpu_start => lang_hooks_cpu, "cpuStart", sig(() -> void), lowered, replaces("velt_rt_check_cpu");
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).

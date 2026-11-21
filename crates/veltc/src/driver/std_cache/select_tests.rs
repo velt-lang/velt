@@ -627,8 +627,8 @@ fn what_a_gated_function_would_clone_stays_in_the_program() {
         never("plain", 50, &[], None),
     ];
     let ext = velt_vir::simd::Ext::ALL[0];
-    p.funcs[2].target = Some(ext);
-    p.funcs[3].target = Some(ext);
+    p.funcs[2].target = velt_vir::simd::ExtSet::of(ext);
+    p.funcs[3].target = velt_vir::simd::ExtSet::of(ext);
     assert_eq!(simd_checking(&p), [true, true, false, false, false]);
     assert_eq!(no_inline_cands(&p), [3, 4]);
     assert!(no_inline_reasons(&p).contains_key("SIMD dispatch"));

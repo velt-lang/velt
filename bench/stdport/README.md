@@ -249,3 +249,13 @@ of its twenty `fma`s would be a call of C's `fma` (a software routine on such a 
 checks. On arm64, and with `--cpu x86-64-v3`, every `fma` is one instruction. On wasm32-wasip1,
 which has no `fma` instruction (wasmtime 50), the program takes 525.9 M instructions
 (precompiled).
+
+## Map lookups by UTF-8 bytes
+
+`map_get_utf8`: 4M `Map<string, i64>.getUtf8` lookups of keys given as bytes (short, long, not
+ASCII; three in four present). The key's hash and comparison are Velt code
+(`std/lang/map/utf8_key.velt`); they were the runtime's `velt_rt_bytes_hash` and
+`velt_rt_str_eq_bytes`. x86-64 Linux, release, the same compiler and runtime with only std
+swapped, cachegrind, 2026-11-20: 1,285M instructions before, 1,283M after (−0.2%); wall clock,
+best of 7 interleaved, 103.7 → 86.5 ms. The Rust port (std's `HashMap` with the runtime's hash)
+executes 521M.
