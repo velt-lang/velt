@@ -1205,6 +1205,18 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   the field in its member's variant, and a write evaluates the value once and stores the
   value's member into the field when it is the field's type, else stops the program with a
   `TypeError` (docs/internals/design/deferred-types.md).
+- `g(...args)` with `args` of a type known only per instantiation, a type parameter bounded by
+  an array or tuple type (`A extends unknown[]`) or a deferred type (`[S] extends [void] ? [] :
+  [S]`), spread into a call's rest parameter of `U[]` with `U` dynamic (`unknown`, `any`)
+  (#943, additive): in the array of the call's rest arguments, the spread's source is a `Call`
+  of `Intrinsic::SpreadParam(args)` of type `U[]`, `args` borrowed, spread like any array.
+  Only there: a spread of such a value in an array literal, or into fixed parameters, is
+  refused, as its length is known only per instantiation. Lowering (velt_vir
+  `lower/array/spread_param.rs`) builds the array at each instantiation from the value's own
+  type: a tuple gives its elements in order, an array its elements, each shared and converted
+  to `U` (boxed); `[]` gives an empty array. The value is evaluated once, where it is written
+  among the arguments. An instantiation whose value is neither, or whose element type holds a
+  lock (a dynamic value is read without the lock), is a diagnostic at the spread.
 
 ## Interface intersections and upcasts (#350)
 

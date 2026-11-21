@@ -274,6 +274,9 @@ struct Cx<'h> {
     unreduced: Vec<TyId>,
     /// Closures whose last parameter is a rest parameter (`abi.rs` `rest_tuple_params`).
     rest_closures: FxHashSet<DefId>,
+    /// Instantiations a spread of a generic value into a call's rest can't serve
+    /// (`array/spread_param.rs`).
+    spread_errors: Vec<velt_common::Diagnostic>,
     /// C functions called with a signature their symbol already has another one of (c_call.rs).
     c_clashes: Vec<velt_common::Diagnostic>,
     /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with

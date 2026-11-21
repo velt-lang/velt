@@ -386,6 +386,13 @@ impl FnCx<'_, '_> {
         }
         let rest = &args[from..];
         let span = rest[0].span.to(rest[rest.len() - 1].span);
+        // Only a spread written among the arguments: a sole array literal has the pack's span.
+        if rest
+            .iter()
+            .any(|e| matches!(e.kind, ast::ExprKind::Spread(_)))
+        {
+            self.rest_packs.insert(span);
+        }
         let array = ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind: ast::ExprKind::Array(rest.to_vec()),
