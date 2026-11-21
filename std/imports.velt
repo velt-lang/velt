@@ -198,6 +198,9 @@ export const imports: Imports = {
   // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
   // which the C library's `memset` gives; JS hosts have none, and index the arrays.
   "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },
+  // The limb loops of `Mont` (std/crypto/mont.velt, RSA's arithmetic): on the limbs' addresses
+  // as `#nat-rows`, or on JS hosts on the arrays.
+  "#mont-rows": { js: "./crypto/mont_rows_checked.velt", default: "./crypto/mont_rows_raw.velt" },
   // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
   // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
   // stat`; elsewhere each fails with ENOSYS.
