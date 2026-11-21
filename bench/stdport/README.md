@@ -264,6 +264,11 @@ swapped, cachegrind, 2026-11-20: 1,285M instructions before, 1,283M after (−0.
 best of 7 interleaved, 103.7 → 86.5 ms. The Rust port (std's `HashMap` with the runtime's hash)
 executes 521M.
 
+The key's UTF-8 check is Velt code too (`velt/encoding`'s `utf8Valid`, and `utf8DecodeLossy` for
+a key that isn't UTF-8); it was the runtime's `velt_rt_bytes_is_utf8` and
+`velt_rt_bytes_to_str_lossy`, 36% of the row. Same setup, 2026-11-21: 1,292M instructions
+before, 1,096M after (−15.1%); wall clock, best of 7 interleaved, 82.1 → 57.0 ms.
+
 ## Symbols
 
 `symbol_new`: 400k `Symbol(description)` at run time (some without one), then each one's
