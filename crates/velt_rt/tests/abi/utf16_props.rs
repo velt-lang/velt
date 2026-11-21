@@ -17,11 +17,8 @@ use crate::hash::velt_rt_str_hash;
 use crate::str::{
     cmp_utf16, velt_rt_str_cmp, velt_rt_str_concat, velt_rt_str_drop, wtf8, BytePos, VeltStr,
 };
-use crate::str_array::{velt_rt_str_array_drop, VeltStrArray};
-use crate::str_ops::replace::*;
 use crate::str_ops::search::*;
 use crate::str_ops::slice::*;
-use crate::str_ops::split::*;
 use crate::strbuf::{velt_rt_strbuf_new, velt_rt_strbuf_push_str};
 use std::mem::MaybeUninit;
 
@@ -221,17 +218,6 @@ fn out_str(f: impl FnOnce(*mut VeltStr)) -> Vec<u16> {
     units(&r.0)
 }
 
-fn split_rt(s: &VeltStr, sep: &VeltStr) -> Vec<Vec<u16>> {
-    let mut out = MaybeUninit::<VeltStrArray>::uninit();
-    unsafe { velt_rt_str_split(s, sep, out.as_mut_ptr()) };
-    let mut arr = unsafe { out.assume_init() };
-    let items = (0..arr.len as usize)
-        .map(|i| units(unsafe { &*arr.ptr.add(i) }))
-        .collect();
-    unsafe { velt_rt_str_array_drop(&mut arr) };
-    items
-}
-
 /// One random operation on random inputs; returns a description of it and whether the runtime
 /// agreed with the model.
 fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
@@ -247,7 +233,7 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
         }
     }
     unsafe {
-        match rng.below(16) {
+        match rng.below(11) {
             0 => diff(format!("{}.length", show(&s)), rt_length(rs), s.len()),
             1 => {
                 let (a, b) = (gen_pos(rng, s.len()), gen_pos(rng, s.len()));
@@ -350,68 +336,6 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
                 );
                 diff(op, units(&buf.0), pieces.concat())
             }
-            10 => {
-                let k = rng.below(5) as i64 - 1;
-                let mut out = MaybeUninit::<VeltStr>::uninit();
-                let ok = velt_rt_str_repeat(rs, k, out.as_mut_ptr()) != 0;
-                let got = Rt(out.assume_init());
-                let got = ok.then(|| units(&got.0));
-                diff(
-                    format!("{}.repeat({k})", show(&s)),
-                    got,
-                    model::repeat(&s, k),
-                )
-            }
-            11 | 12 => {
-                let to = gen_needle(rng, &s, alphabets);
-                let rto = to_rt(rng, &to);
-                let all = rng.chance(50);
-                let got = out_str(|o| {
-                    if all {
-                        velt_rt_str_replace_all(rs, rn, &rto.0, o)
-                    } else {
-                        velt_rt_str_replace(rs, rn, &rto.0, o)
-                    }
-                });
-                let want = if all {
-                    model::replace_all(&s, &n, &to)
-                } else {
-                    model::replace(&s, &n, &to)
-                };
-                let name = if all { "replaceAll" } else { "replace" };
-                diff(
-                    format!("{}.{name}({}, {})", show(&s), show(&n), show(&to)),
-                    got,
-                    want,
-                )
-            }
-            13 => diff(
-                format!("{}.split({})", show(&s), show(&n)),
-                split_rt(rs, rn),
-                model::split(&s, &n),
-            ),
-            14 => {
-                let target = rng.below(s.len() + 8) as i64 - 2;
-                let start = rng.chance(50);
-                let got = out_str(|o| {
-                    if start {
-                        velt_rt_str_pad_start(rs, target, rn, o)
-                    } else {
-                        velt_rt_str_pad_end(rs, target, rn, o)
-                    }
-                });
-                let want = if start {
-                    model::pad_start(&s, target, &n)
-                } else {
-                    model::pad_end(&s, target, &n)
-                };
-                let name = if start { "padStart" } else { "padEnd" };
-                diff(
-                    format!("{}.{name}({target}, {})", show(&s), show(&n)),
-                    got,
-                    want,
-                )
-            }
             _ => {
                 // A code unit of the alphabets, sometimes outside 0..=0xFFFF (`ToUint16`).
                 let mut c = Vec::new();
@@ -484,7 +408,7 @@ fn text_ops_match_the_model() {
 }
 
 #[test]
-fn concatenation_and_repeat_match_the_model_on_every_alphabet() {
+fn concatenation_matches_the_model_on_every_alphabet() {
     run("exact ops", ALL_ALPHABETS, 20_000, |rng| {
         let s = gen_string(rng, ALL_ALPHABETS);
         let n = gen_needle(rng, &s, ALL_ALPHABETS);
@@ -505,13 +429,6 @@ fn concatenation_and_repeat_match_the_model_on_every_alphabet() {
             if units(&buf.0) != [s.clone(), n.clone(), s.clone()].concat() {
                 return Err(format!("builder {m}"));
             }
-            let k = rng.below(4) as i64;
-            let mut out = MaybeUninit::<VeltStr>::uninit();
-            velt_rt_str_repeat(&rs.0, k, out.as_mut_ptr());
-            let got = units(&Rt(out.assume_init()).0);
-            if Some(got) != model::repeat(&s, k) {
-                return Err(format!("{}.repeat({k})", show(&s)));
-            }
         }
         Ok(())
     });
@@ -528,7 +445,6 @@ fn check_text_ops(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
     unsafe {
         units(&Rt(out_str_rt(|o| velt_rt_str_to_upper(&rs.0, o))).0);
         units(&Rt(out_str_rt(|o| velt_rt_str_to_lower(&rs.0, o))).0);
-        units(&Rt(out_str_rt(|o| velt_rt_str_trim(&rs.0, o))).0);
         let mut buf = MaybeUninit::<VeltStr>::uninit();
         velt_rt_strbuf_new(rng.below(40) as u64, buf.as_mut_ptr());
         let mut buf = Rt(buf.assume_init());

@@ -53,6 +53,12 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/weak",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
+    // The other string methods in Velt, called by role too (#2198).
+    "std/lang/string/trim",
+    "std/lang/string/fill",
+    "std/lang/string/split",
+    "std/lang/string/replace",
+    "std/lang/string/case",
     // The CPU's features (#3222 step 3): every program with an entry demands it (`velt_main`
     // calls `cpuStart` first thing; velt_sema `lazy_std` `cpu_hook`).
     "std/lang/hooks/cpu",

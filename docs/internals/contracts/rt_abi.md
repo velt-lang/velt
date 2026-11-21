@@ -92,13 +92,14 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
   plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
 - **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
-  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`), `velt_rt_str_trim`,
-  `velt_rt_str_trim_start`, `velt_rt_str_trim_end`, and `velt_rt_str_split` when its separator is
-  not empty and cannot match half of a surrogate pair. They return a slice when the piece is too
+  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`) and `velt_rt_str_byte_slice`,
+  with which std cuts the results of `trim`, `trimStart`, `trimEnd`, and of `split` when its
+  separator is not empty and cannot match half of a surrogate pair (std/lang/string/). They return
+  a slice when the piece is too
   long to be inline, at least a quarter of the buffer's capacity, and the buffer is below 1 GiB
   (2^30 bytes); otherwise they copy (inline when short). Every other function copies the pieces it
-  returns: `split("")` and `velt_rt_str_code_points` (pieces of one character, always inline), a
-  split by a lone surrogate, and the regex functions (the pieces of `match`, `exec` and `split` are
+  returns: `split("")` and the characters of `for (const c of s)` (pieces of one character, always
+  inline), a split by a lone surrogate, and the regex functions (the pieces of `match`, `exec` and `split` are
   new strings, `VeltStr::from_vec`). In every function the whole string is shared as it is (count
   +1, same value), a piece of a static string borrows it, and a piece that ends between the halves
   of a surrogate pair is a copy (the half is re-encoded). So live slices pin at most four times
@@ -220,7 +221,6 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s`; generated code calls it for heap strings only and zeroes any other itself |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
-| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
 ## Counted objects
