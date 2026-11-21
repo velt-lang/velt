@@ -50,19 +50,32 @@ export function chooseScheme(key: ServerKey, offered: usize[], tls13: bool): usi
   return 0;
 }
 
-/** The names of the schemes of `key`, for a failure's message. */
-export function schemeNames(key: ServerKey, tls13: bool): string {
-  const kind = key.kind ?? KEY_P256;
-  if (kind == KEY_P256) {
+// The name of the signature scheme `s` (RFC 8446 §4.2.3).
+function schemeName(s: usize): string {
+  if (s == ECDSA_P256_SHA256) {
     return "ecdsa_secp256r1_sha256";
   }
-  if (kind == KEY_P384) {
+  if (s == ECDSA_P384_SHA384) {
     return "ecdsa_secp384r1_sha384";
   }
-  if (kind == KEY_ED25519) {
+  if (s == ED25519) {
     return "ed25519";
   }
-  return tls13 ? "rsa_pss_rsae_sha256, sha384 or sha512" : "RSA with PSS or PKCS#1 v1.5";
+  // RSA: rsa_pss_rsae_* is 0x08 then the hash, rsa_pkcs1_* the hash then 0x01; 4, 5, 6 for
+  // SHA-256, SHA-384, SHA-512.
+  const pss = s >> 8 == 8;
+  const n = pss ? s & 0xff : s >> 8;
+  const hash = n == 4 ? "sha256" : n == 5 ? "sha384" : "sha512";
+  return pss ? `rsa_pss_rsae_${hash}` : `rsa_pkcs1_${hash}`;
+}
+
+/** The names of the schemes of `key`, most preferred first, for a failure's message. */
+export function schemeNames(key: ServerKey, tls13: bool): string {
+  const names = schemesOf(key, tls13).map((s) => schemeName(s));
+  if (names.length == 1) {
+    return names[0];
+  }
+  return `${names.slice(0, (names.length - 1) as i64).join(", ")} or ${names[names.length - 1]}`;
 }
 
 /** `key`'s signature of `message` with `scheme`, one `chooseScheme` returned for it. */
