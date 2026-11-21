@@ -81,6 +81,7 @@ mod dynamic_rmw;
 mod dynamic_whole;
 mod dynamic_write;
 mod element_store;
+mod element_value;
 mod env_globals;
 mod generic_dynamic;
 mod identity_eq;
