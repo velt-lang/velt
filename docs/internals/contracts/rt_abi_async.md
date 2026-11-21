@@ -105,7 +105,9 @@ typedef struct VeltCx {                              // what `cx` points to (2 p
   with `velt_rt_microtask`): once the child or heap future is READY, the code after the `await`
   runs one microtask later, as in Node. `if (*cx->await_word != 0) { t = velt_rt_await_tick(cx); if
   (t != 0) { st->ticket = t; suspend; on resume: if (!velt_rt_await_ready(st->ticket, cx))
-  return 0; } }`. The result stays where it is (child state offset 0, or moved out of the heap
+  return 0; } }`. An inline `await Promise.all([…])` takes two such steps once it settles (Node
+  settles the joined promise in the reaction it queues on the deciding input, and the `await`'s
+  step follows). The result stays where it is (child state offset 0, or moved out of the heap
   future before it was freed) and is dropped by the cancel path of that suspension. The word is
   0 while no other job of the task could run first (its microtask queue is empty and no
   synchronous run is under way: a started promise's first run, a promise run from inside another
