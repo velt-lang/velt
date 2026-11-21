@@ -269,7 +269,7 @@ a one-sentence doc. xtask has no TOML parser, and velt_common's feature table se
   anywhere. Cranelift gives a zero (it never runs gated code). The verifier rejects one in a
   function whose target does not cover the row's feature; velt_opt never inlines a gated function
   into a caller with another target, so none moves out.
-- **First batch** (50 rows): SSE4.2's CRC32, POPCNT, LZCNT, BMI1 (`andn`, `tzcnt`, `blsi`,
+- **First batch** (42 rows: 27 for x86-64, 15 for arm64): SSE4.2's CRC32, POPCNT, LZCNT, BMI1 (`andn`, `tzcnt`, `blsi`,
   `blsr`, `blsmsk`, `bextr`), BMI2 (`bzhi`, `pdep`, `pext`), SSSE3's `pshufb`; arm64's CRC32 and
   CRC32C, 64-bit PMULL, the dot products (`udot`, `sdot`) and I8MM (`ummla`, `smmla`, `usdot`).
   Left for later: the baseline instructions of an architecture (`tbl`, `tbx`, `ext`,
