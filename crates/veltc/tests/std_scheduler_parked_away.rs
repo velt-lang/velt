@@ -161,6 +161,62 @@ fn a_task_with_yields_freed_by_a_hand_over_frees_its_yield_block() {
     check("ended_yields", ENDED_YIELDS, "dropped 20 on worker 2\n", 3);
 }
 
+/// A holder of a shared promise nobody settles, handed to a task on worker 2 and dropped there
+/// after the task it was shared on ended (#3439): the hand-over made a proxy, a node of that task
+/// whose waker waits on the promise (sched_share_hand.velt `newProxy`). Its owner gone, the proxy
+/// is given up with its role, and the promise and the task go. Before, the proxy waited for ever
+/// and kept them: 13 blocks a round, 130 a run.
+#[test]
+fn a_handed_holders_proxy_dropped_on_another_worker_is_given_up() {
+    check("proxy_dropped", PROXY_DROPPED, "done 10\n", 3);
+}
+
+/// The program of [`a_handed_holders_proxy_dropped_on_another_worker_is_given_up`].
+const PROXY_DROPPED: &str = r#"// #3439, a proxy's owner dropped: the task shares a promise nobody settles (a second holder
+// reads it), hands the holder to a task on worker 2 and ends without awaiting it; worker 2 drops
+// the holder after the task ended.
+
+const GO = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function dropLater(h: Holder): Promise<void> {
+  while (GO.load() === 0) {
+    await yieldNow();
+  }
+  DONE.add(1);
+}
+
+async function maker(): Promise<number> {
+  const h = new Holder(dead());
+  const q = h.p;
+  void spawn(dropLater(h), { worker: 2 });
+  return 1;
+}
+
+async function main() {
+  for (let r = 0; r < 10; r++) {
+    GO.store(0);
+    await spawn(maker(), { worker: 1 });
+    GO.store(1);
+    while (DONE.load() <= r) {
+      await yieldNow();
+    }
+  }
+  console.log(`done ${DONE.load()}`);
+}
+"#;
+
 /// The program of [`a_task_with_yields_freed_by_a_hand_over_frees_its_yield_block`].
 const ENDED_YIELDS: &str = r#"// #3323 with #3241's yield lists: the task on worker 1 starts a promise that yields a few turns
 // and hands it on unawaited (its yields make the task's yield block); the task ends, and worker
