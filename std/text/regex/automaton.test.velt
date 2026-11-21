@@ -32,7 +32,7 @@ function fd(prog: Program, s: string): i64[] {
  * search on: the automaton goes first, without the backtracker's steps before it. */
 function warm(prog: Program, s: string): i64[] {
   const m = new Search(2 * (prog.groups as usize) + 2);
-  m.uses = 1;
+  m.uses = 2;
   return find(prog, m, s, 0, false) ? m.slots : [];
 }
 
@@ -177,6 +177,10 @@ describe("The reader of groups", () => {
     expect(read(program("(?:(a)|b)*c"), "bac")).toEqual([0, 3, 1, 2]);
     expect(read(program("([^,]*),(\\d+)"), "ab,12")).toEqual([0, 5, 0, 2, 3, 5]);
     expect(read(program("(a)?(b)"), "b")).toEqual([0, 1, -1, -1, 0, 1]);
+    // `$` where the subject ends, and nowhere else.
+    expect(read(program("(a|b)*c$"), "abc")).toEqual([0, 3, 1, 2]);
+    const slots: i64[] = [-1, -1, -1, -1];
+    expect(straight(program("(a|b)*c$"), "abcc", 0, 3, slots)).toBe(false);
   });
 
   it("unsets the groups an earlier attempt set", () => {

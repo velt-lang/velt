@@ -9,10 +9,13 @@ import {
   addressStore,
   arrayDataAddress,
   arrayReadAddress,
+  strByteLen,
   strDataAddress,
 } from "velt/lang/intrinsics";
 import { byteAt, charAt } from "velt/text/regex/decode";
+import { AT_END } from "velt/text/regex/node";
 import {
+  OP_ASSERT,
   OP_CHAR,
   OP_CLASS,
   OP_CLEAR,
@@ -96,6 +99,14 @@ export function straight(prog: Program, s: string, start: usize, end: usize, slo
       }
       case OP_JUMP: {
         pc = a;
+        break;
+      }
+      case OP_ASSERT: {
+        // `$` (the one assertion of a program the automaton runs): where the subject ends.
+        if (a != (AT_END as usize) || pos != strByteLen(s)) {
+          return false;
+        }
+        pc++;
         break;
       }
       case OP_SPAN: {

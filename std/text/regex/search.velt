@@ -35,7 +35,7 @@ export class Search {
    * finds where a match ends, and the one that finds where it starts. */
   ends: Dfa | null = null;
   starts: Dfa | null = null;
-  /** How many searches this memory served: a regex searched with more than once is worth its
+  /** How many calls (subjects) this memory served: a regex used more than once is worth its
    * automatons on a short subject too (find.velt). */
   uses: u32 = 0;
   /** Where the byte every match has (`Program.required`) was looked for last in this subject,
@@ -44,9 +44,10 @@ export class Search {
   reqFrom: usize = 0xffffffffffffffff;
   reqAt: i64 = -1;
 
-  /** Forgets what this memory knew of the last subject (a new one comes). */
+  /** Forgets what this memory knew of the last subject: a new call, with a new one, comes. */
   forget(): void {
     this.reqFrom = 0xffffffffffffffff;
+    this.uses++;
   }
 
   /** A search that keeps `slots` capture slots (0: none, 2: the match's ends). */

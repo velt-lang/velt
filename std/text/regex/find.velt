@@ -93,7 +93,6 @@ export function find(prog: Program, m: Search, s: string, from: usize, sticky: b
   // backtracker gets a few steps first, enough for a match that is near and short. Once the
   // regex has searched before (it keeps its automaton), the automaton goes first, from a
   // shorter subject on.
-  m.uses++;
   const built = m.ends != null;
   const reused = (built || m.uses > 1) && len - from >= WARM;
   const long = prog.automaton && (len - from >= LONG || reused);
