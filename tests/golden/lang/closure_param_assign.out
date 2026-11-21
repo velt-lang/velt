@@ -1,0 +1,9 @@
+x into root before a
+y into root before end
+z into root before end
+b other
+"   x" 3 [ 'a', 'b' ] 6
+24
+0 10
+1 20
+2 30
