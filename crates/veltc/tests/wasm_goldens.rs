@@ -55,6 +55,16 @@ const UNSUPPORTED: &[&str] = &[
     "promise_identity_defer_twice",
     "promise_identity_rejection",
     "promise_widen_compare",
+    // The combinators of the executor in Velt settle in the microtask Node runs for their
+    // deciding input, and a promise `resolve` settled resumes its one waiter in the microtask
+    // `resolve` queued; wasm's executor is still the runtime's, which keeps the steps it had.
+    "promise_all_settled_resolver_ticks",
+    "promise_combinator_ticks_pending",
+    "promise_combinator_ticks_settled",
+    "promise_combinator_ticks_stored",
+    "promise_shared_resolve_ticks",
+    // wasm's race is still the runtime's (#3077).
+    "promise_race_inline_children_order",
     // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
     // still the runtime's, which keeps it parked (#3247).
     "promise_abandoned_freed",
