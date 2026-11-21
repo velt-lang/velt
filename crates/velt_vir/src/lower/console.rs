@@ -28,8 +28,13 @@ impl FnLower<'_, '_> {
     pub(super) fn print(&mut self, stream: i128, args: &[hir::Expr]) -> Operand {
         let mut vals = vec![];
         for (a, later) in args.iter().zip(self.later_each(args)) {
-            let v = self.expr_held(a, later);
             let t = self.sub(a.ty);
+            // What the format glue writes gets a copy if it is frozen (`formatted_input`).
+            let formatted = !self.writes_directly(t) && self.option_scalar(t).is_none();
+            let v = match formatted.then(|| self.formatted_input(a)).flatten() {
+                Some(copy) => copy,
+                None => self.expr_held(a, later),
+            };
             vals.push((v, t));
         }
         if stream == 1 {

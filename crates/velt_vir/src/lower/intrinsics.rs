@@ -573,7 +573,10 @@ impl FnLower<'_, '_> {
         push: fn(&mut Self, &Operand, &Place, TyId),
     ) -> Operand {
         let t = self.sub(a.ty);
-        let v = self.expr(a);
+        let v = match self.formatted_input(a) {
+            Some(copy) => copy,
+            None => self.expr(a),
+        };
         let p = self.place_of(v, t);
         let (_, buf) = self.new_strbuf(0);
         push(self, &buf, &p, t);
