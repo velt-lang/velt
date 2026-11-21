@@ -29,14 +29,20 @@ of vpm's conditions for `wasm32-wasip1` (`crates/vpm/src/imports.rs`):
 
 ```ts
 // std/lang/random/os_wasi.velt
-declare c("c") function getentropy(buf: u8[], len: usize): i32;
+declare c("c") function getentropy(buf: Ptr<u8>, len: usize): i32;
 
-/** Fills `buf` with the host's random bytes. Stops the program if `random_get` fails. */
-export function fillRandom(buf: u8[]): void {
-  // At most 256 bytes a call: larger arrays go through a 256-byte chunk.
-  // ...
-  // SAFETY: `buf` holds the `n` bytes getentropy writes, and nothing else uses it meanwhile.
-  check(unsafe { getentropy(buf, n) });
+/** Fills the `n` bytes at `base` with the host's random bytes. Stops the program if `random_get`
+ * fails. */
+export unsafe function fillRandomAt(base: usize, n: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    const k = n - done < 256 ? n - done : 256; // getentropy's most per call
+    // SAFETY: bytes `done..done + k` of the caller's memory, at most 256.
+    if (unsafe { getentropy(Ptr.at<u8>(base + done), k) } != 0) {
+      panic("WASI random_get failed: no random numbers");
+    }
+    done += k;
+  }
 }
 ```
 
@@ -52,7 +58,7 @@ export function fillRandom(buf: u8[]): void {
 ```
 
 std/lang/random/os.velt builds `osRandomBytes` and `osRandomU64` (the seed of `Math.random()`,
-velt/crypto, UUIDs) on the variant's `fillRandom`.
+velt/crypto, UUIDs) on the variant's `fillRandomAt`.
 
 A draw panics rather than throws when `random_get` fails: `Math.random()` throws nothing, and
 its callers must not have to handle an exception because of it.

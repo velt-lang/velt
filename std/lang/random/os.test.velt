@@ -27,11 +27,12 @@ describe("osRandomBytes", () => {
   });
 
   it("fills every chunk of a long draw", () => {
-    // 64 KiB: every byte value occurs in each 4 KiB part with near certainty (the chance one is
-    // missing from a random part is below 2^-20), and none occurs in a part never written.
+    // 64 KiB in 4 KiB parts: a random part misses about 3e-5 of the 256 byte values on average,
+    // so fewer than 240 of them has a chance far below 2^-100, while a part never written (left
+    // as the allocator gave it, zeros or one repeated value) has a handful.
     const b = osRandomBytes(65536);
     for (let part: usize = 0; part < 16; part++) {
-      expect(distinct(b, part * 4096, (part + 1) * 4096)).toBe(256);
+      expect(distinct(b, part * 4096, (part + 1) * 4096) >= 240).toBe(true);
     }
   });
 
