@@ -1,0 +1,68 @@
+// velt/lang/map (internal): tests of utf8_key.velt, run by `velt test std/`. `utf8KeyHash` must give
+// the hash string keys are stored under (`velt_rt_str_hash`) for every length and form of string:
+// a difference would make `getUtf8` miss keys that are there.
+import { describe, expect, it } from "velt/test";
+import { utf8Encode } from "velt/encoding";
+import { utf8KeyEquals, utf8KeyHash } from "velt/lang/map/utf8_key";
+
+declare function velt_rt_str_hash(s: string): u64;
+
+/** Strings of every length from 0 to 70 (inline and heap forms, every tail length), ASCII. */
+function asciiStrings(): string[] {
+  const out: string[] = [];
+  let s = "";
+  for (let i = 0; i <= 70; i++) {
+    out.push(s);
+    s += String.fromCharCode(33 + ((i * 7) % 90));
+  }
+  return out;
+}
+
+describe("utf8KeyHash", () => {
+  it("is the string key hash for every length", () => {
+    for (const s of asciiStrings()) {
+      expect(utf8KeyHash(utf8Encode(s))).toBe(velt_rt_str_hash(s));
+    }
+  });
+
+  it("is the string key hash for text that is not ASCII", () => {
+    const words = ["päron", "日本", "😀", "a\u{FFFD}b", "κόσμε мир", "\0", "a\0", "x".repeat(1000)];
+    for (const w of words) {
+      expect(utf8KeyHash(utf8Encode(w))).toBe(velt_rt_str_hash(w));
+    }
+  });
+
+  it("tells keys that differ only in length or in one byte apart", () => {
+    expect(utf8KeyHash([97]) != utf8KeyHash([97, 0])).toBe(true);
+    expect(
+      utf8KeyHash([1, 2, 3, 4, 5, 6, 7, 8, 9]) != utf8KeyHash([1, 2, 3, 4, 5, 6, 7, 8, 8]),
+    ).toBe(true);
+  });
+});
+
+describe("utf8KeyEquals", () => {
+  it("compares a string with bytes of every length", () => {
+    for (const s of asciiStrings()) {
+      const b = utf8Encode(s);
+      expect(utf8KeyEquals(s, b)).toBe(true);
+      if (b.length > 0) {
+        // Each byte changed in turn: a difference in a word and in the tail is seen.
+        for (let i: usize = 0; i < b.length; i++) {
+          const c = utf8Encode(s);
+          c[i] = c[i] ^ 1;
+          expect(utf8KeyEquals(s, c)).toBe(false);
+        }
+        expect(utf8KeyEquals(s, b.slice(0, (b.length - 1) as i64))).toBe(false);
+      }
+      const longer = utf8Encode(s);
+      longer.push(0);
+      expect(utf8KeyEquals(s, longer)).toBe(false);
+    }
+  });
+
+  it("compares text that is not ASCII by its bytes", () => {
+    expect(utf8KeyEquals("päron", utf8Encode("päron"))).toBe(true);
+    expect(utf8KeyEquals("päron", utf8Encode("paron"))).toBe(false);
+    expect(utf8KeyEquals("", [])).toBe(true);
+  });
+});

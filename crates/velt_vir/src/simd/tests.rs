@@ -367,7 +367,6 @@ fn bfdot_is_an_instruction_of_bf16_arm() {
         SimdCall::of_symbol("velt_simd_has_bf16_arm"),
         Some(SimdCall::Has(Ext::Bf16Arm))
     );
-    assert!(!Ext::Bf16Arm.has_flag() && Ext::Bf16Arm.flag_symbol().is_empty());
     assert!(Ext::Bf16Arm.on_arch("aarch64") && !Ext::Bf16Arm.on_arch("x86_64"));
     assert!(!Ext::Bf16Arm.covers(Ext::ClmulArm) && !Ext::AesArm.covers(Ext::Bf16Arm));
     assert_eq!(
@@ -380,18 +379,31 @@ fn bfdot_is_an_instruction_of_bf16_arm() {
     );
 }
 
-/// Every CPU target sema knows (the names `@targetFeature` takes) is the extension of the same
-/// name, which lowering gives a gated function (`lower/abi.rs`), and every extension is one;
+/// Sema's CPU targets and velt_vir's features are one table (velt_common `cpu_features`): every
+/// feature's check symbol names it; the new intrinsics have their signatures;
 /// `velt_simd_xgetbv` is `(u32) -> u64`.
 #[test]
 fn cpu_targets_are_extensions() {
     use velt_sema::hir::CpuTarget;
-    for t in CpuTarget::ALL {
-        let ext = Ext::named(t.name()).expect("an extension");
-        assert_eq!(ext.name(), t.name());
+    for &t in CpuTarget::ALL {
+        let ext: Ext = t;
+        let symbol = format!("velt_simd_has_{}", ext.symbol_suffix());
+        assert_eq!(
+            SimdCall::of_symbol(&symbol),
+            Some(SimdCall::Has(ext)),
+            "{symbol}"
+        );
     }
-    assert_eq!(CpuTarget::ALL.len(), Ext::ALL.len());
     assert_eq!(Ext::named("fma-x86"), Some(Ext::FmaX86));
+    assert_eq!(
+        SimdCall::of_symbol("velt_simd_has_sse4_2_x86"),
+        Some(SimdCall::Has(Ext::Sse42X86))
+    );
+    let sig = |s: &str| SimdCall::of_symbol(s).map(SimdCall::signature);
+    assert_eq!(sig("velt_simd_on_x86"), Some((vec![], Ty::Bool)));
+    assert_eq!(sig("velt_simd_on_arm"), Some((vec![], Ty::Bool)));
+    assert_eq!(sig("velt_simd_cpu_word"), Some((vec![], Ty::U64)));
+    assert_eq!(sig("velt_simd_cpu_required"), Some((vec![], Ty::U64)));
     let xgetbv = SimdCall::of_symbol("velt_simd_xgetbv").map(SimdCall::signature);
     assert_eq!(xgetbv, Some((vec![Ty::U32], Ty::U64)));
 }

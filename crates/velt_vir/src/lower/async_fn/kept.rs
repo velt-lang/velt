@@ -7,8 +7,9 @@
 //!
 //! `velt_rt_fut_start` only starts compiled heap futures. A `Promise.all` value already is one
 //! (tasks.rs); the `velt_rt_race` future is boxed in a small compiled wrapper first, whose state
-//! is `{ result: slot @0, inner: VeltFut* }`: its poll polls `inner` and, once it is ready, moves
-//! the race's result slot (+16) into its own and frees `inner`.
+//! is `{ result: slot @0, inner: VeltFut* }` (`{ inner }` for a `void` result, #3240): its poll
+//! polls `inner` and, once it is ready, moves the race's result slot (+16) into its own and frees
+//! `inner`.
 
 use velt_sema::hir::{self, Intrinsic, TyId};
 
@@ -18,15 +19,22 @@ use crate::lower::{cfunc, cint, unit, Cx, FnLower, Work};
 use crate::vir::{AggId, BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl Cx<'_> {
-    /// `{ result: slot, inner: ptr }` state of the wrapper boxing a race over `slot` results.
-    fn race_box_agg(&mut self, slot: TyId) -> AggId {
-        if let Some(&a) = self.lay.race_boxes.get(&slot) {
-            return a;
-        }
+    /// `{ result: slot, inner: ptr }` state of the wrapper boxing a race over `slot` results,
+    /// and the field of `inner`: a `void` result has no field (`{ inner: ptr }`, #3240).
+    fn race_box_agg(&mut self, slot: TyId) -> (AggId, u32) {
         let st = self.ty(slot);
-        let a = self.new_agg("promise.race box".into(), &[st, Ty::Ptr]);
+        let inner = u32::from(st != Ty::Unit);
+        if let Some(&a) = self.lay.race_boxes.get(&slot) {
+            return (a, inner);
+        }
+        let fields: &[Ty] = if inner == 0 {
+            &[Ty::Ptr]
+        } else {
+            &[st, Ty::Ptr]
+        };
+        let a = self.new_agg("promise.race box".into(), fields);
         self.lay.race_boxes.insert(slot, a);
-        a
+        (a, inner)
     }
 }
 
@@ -86,9 +94,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// The race future `inner` (taken: this owns it) boxed in the wrapper, in a new temporary.
     fn box_race_future(&mut self, inner: Operand, t: TyId) -> crate::vir::Local {
         let slot = self.cx.promise_slot(t);
-        let wa = self.cx.race_box_agg(slot);
+        let (wa, fi) = self.cx.race_box_agg(slot);
         let w = self.temp(Ty::Agg(wa));
-        self.assign(proj(&Place::local(w), Proj::Field(1)), Rvalue::Use(inner));
+        self.assign(proj(&Place::local(w), Proj::Field(fi)), Rvalue::Use(inner));
         let (size, align) = self.cx.size_align(Ty::Agg(wa));
         let poll = cfunc(self.cx.func(Work::RaceBoxPoll(slot)));
         let drop = cfunc(self.cx.func(Work::RaceBoxDrop(slot)));
@@ -107,13 +115,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// `(state, cx) -> u32` of the race wrapper (see module docs).
     pub(in crate::lower) fn build_race_box_poll(cx: &'c mut Cx<'h>, slot: TyId) -> Function {
-        let wa = cx.race_box_agg(slot);
+        let (wa, fi) = cx.race_box_agg(slot);
         let st_ty = cx.ty(slot);
         let mut lw = FnLower::bare(cx, vec![]);
         let st = lw.new_local(Ty::Ptr, Some("state".into()));
         let cxl = lw.new_local(Ty::Ptr, Some("cx".into()));
         let base = proj(&Place::local(st), Proj::Deref(Ty::Agg(wa)));
-        let inner = Operand::Copy(proj(&base, Proj::Field(1)));
+        let inner = Operand::Copy(proj(&base, Proj::Field(fi)));
         let r = lw.temp(Ty::U32);
         let args = vec![inner.clone(), Operand::Copy(Place::local(cxl))];
         lw.fut_poll_call(args, Place::local(r));
@@ -126,13 +134,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.switch_to(pend);
         lw.terminate(Terminator::Return(cint(0, Ty::U32)));
         lw.switch_to(ready);
-        let from = lw.rvalue_temp(
-            Ty::Ptr,
-            Rvalue::Binary(BinOp::PtrAdd, inner.clone(), cint(16, Ty::U64)),
-        );
-        let from = lw.operand_place(from, Ty::Ptr);
-        let result = Operand::Copy(proj(&from, Proj::Deref(st_ty)));
-        lw.assign(proj(&base, Proj::Field(0)), Rvalue::Use(result));
+        if fi != 0 {
+            let from = lw.rvalue_temp(
+                Ty::Ptr,
+                Rvalue::Binary(BinOp::PtrAdd, inner.clone(), cint(16, Ty::U64)),
+            );
+            let from = lw.operand_place(from, Ty::Ptr);
+            let result = Operand::Copy(proj(&from, Proj::Deref(st_ty)));
+            lw.assign(proj(&base, Proj::Field(0)), Rvalue::Use(result));
+        }
         lw.fut_drop_call(vec![inner]);
         lw.terminate(Terminator::Return(cint(1, Ty::U32)));
         let sym = format!("_Grace_box_poll_{}", lw.cx.type_symbol(slot));
@@ -141,11 +151,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// `(state)` of the race wrapper, unfinished: drop the race (started losers run on).
     pub(in crate::lower) fn build_race_box_drop(cx: &'c mut Cx<'h>, slot: TyId) -> Function {
-        let wa = cx.race_box_agg(slot);
+        let (wa, fi) = cx.race_box_agg(slot);
         let mut lw = FnLower::bare(cx, vec![]);
         let st = lw.new_local(Ty::Ptr, Some("state".into()));
         let base = proj(&Place::local(st), Proj::Deref(Ty::Agg(wa)));
-        let inner = Operand::Copy(proj(&base, Proj::Field(1)));
+        let inner = Operand::Copy(proj(&base, Proj::Field(fi)));
         lw.fut_drop_call(vec![inner]);
         lw.terminate(Terminator::Return(unit()));
         let sym = format!("_Grace_box_drop_{}", lw.cx.type_symbol(slot));
