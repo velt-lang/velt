@@ -457,7 +457,7 @@ export async function promiseFinallyAsyncThrows<T, E, R>(
  */
 function notAdopted<U>(v: U): U {
   if (holdsDynamic(v)) {
-    if (anyIsPromise(v as unknown)) {
+    if (anyIsPromise(v)) {
       panic("TypeError: adopting a promise held in unknown is not supported yet (#3425)");
     }
   }

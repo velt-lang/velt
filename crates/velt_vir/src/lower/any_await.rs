@@ -84,9 +84,16 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(cint(ST_OK, Ty::U8)));
     }
 
-    /// `Intrinsic::AnyIsPromise(x)`: does `x` hold a promise (its table's class id word)?
+    /// `Intrinsic::AnyIsPromise(x)`: is `x` a promise? A dynamic `x` by its table's class id
+    /// word; a typed one by its type, a constant.
     pub(super) fn any_is_promise(&mut self, x: &hir::Expr) -> Operand {
         let t = self.sub(x.ty);
+        if !self.cx.is_dynamic(t) {
+            // Read for its effects only: the argument is borrowed.
+            let _ = self.expr(x);
+            let promise = matches!(self.cx.kind(t), TyKind::Promise(..));
+            return Operand::Const(Const::Bool(promise), Ty::Bool);
+        }
         let v = self.expr(x);
         if self.dead() {
             return Operand::Const(Const::Bool(false), Ty::Bool);

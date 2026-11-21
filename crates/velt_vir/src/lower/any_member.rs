@@ -282,6 +282,15 @@ impl FnLower<'_, '_> {
     }
 
     fn any_box_raw(&mut self, v: Operand, t: TyId, out: &Place) {
+        // A program running no async code holds no promise, and can't build the table of one
+        // (its glue is the executor's): an option's promise payload never comes.
+        if matches!(self.cx.kind(t), TyKind::Promise(..)) && !self.cx.executor_loaded() {
+            self.panic_msg("TypeError: a promise held as `any` without async code");
+            self.terminate(Terminator::Unreachable);
+            let next = self.new_block();
+            self.switch_to(next);
+            return;
+        }
         // An object type is one counted object when the program writes through `any`
         // (`any_set`), so the box holds the object itself, not a copy.
         let any = self.cx.any_ty();

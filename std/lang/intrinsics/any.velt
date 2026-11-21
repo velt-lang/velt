@@ -19,9 +19,13 @@ export declare function anyDelete(value: any, key: string): bool;
 @intrinsic
 export declare function anyPromise(value: unknown): Promise<unknown, unknown> | undefined;
 
-/** Does `value` hold a promise (`value instanceof Promise`): its table is a promise's. */
+/**
+ * Is `value` a promise (`value instanceof Promise`)? For an `any` or `unknown`, does its table
+ * belong to a promise; for a typed value, is `T` a promise type. It only reads `value`, which
+ * is not converted: no conversion to a dynamic type where `T` is not one.
+ */
 @intrinsic
-export declare function anyIsPromise(value: unknown): bool;
+export declare function anyIsPromise<T>(value: T): bool;
 
 /**
  * A constant: is `T` instantiated with `any`, `unknown` or `object`? `probe` is not evaluated,
