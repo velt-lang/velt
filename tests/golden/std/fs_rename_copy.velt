@@ -28,6 +28,9 @@ async function main() {
     await remove(d, { recursive: true }); // left by an interrupted run
   }
   await mkdir(`${d}/dir`, { recursive: true });
+  // Not empty: btrfs gives an empty directory the size 0, which libuv (and Node) copies as an
+  // empty file.
+  await writeFile(`${d}/dir/inner.txt`, "inner");
   await writeFile(`${d}/a.txt`, "alpha");
 
   // Copies: a new file, over a longer one (truncated first), onto itself (nothing happens).

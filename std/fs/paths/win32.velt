@@ -1,13 +1,15 @@
 // velt/fs (internal): renaming, linking and copying on Windows (`#fs-paths`'s win32 variant,
 // std/imports.velt), the way libuv does each for Node, through Win32's wide-path functions, with
 // Node's messages and libuv's names for Win32's errors (std/os/win_error.velt). A long path gets
-// the `\\?\` prefix (velt/fs/whole/win_path); errors name the paths as they were given.
+// the `\\?\` prefix, and separators after a path are taken as Node takes them (velt/fs/whole/
+// win_path: a path read names the file, a path made is made without them). Errors name the paths
+// as they were given.
 
 import { Ptr } from "velt/ffi/ptr";
 import { wideOf, wideText } from "velt/ffi/wide";
 import { osError } from "velt/fs/errors";
 import { Done } from "velt/fs/whole/done";
-import { winPath } from "velt/fs/whole/win_path";
+import { asFile, winPath, withoutSeparators } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 declare c type _SECURITY_ATTRIBUTES;
@@ -115,8 +117,8 @@ export function renameAt(
   ct: readonly u8[],
   to: string,
 ): Done<bool> {
-  const wf = winPath(from);
-  const wt = winPath(to);
+  const wf = winPath(asFile(from));
+  const wt = winPath(withoutSeparators(to));
   if (wf === null || wt === null) {
     return failed(ERROR_FILE_NOT_FOUND, "rename", from, to);
   }
@@ -145,8 +147,8 @@ function idOf(w: readonly u16[]): u32[] | null {
  * file itself fails with a sharing violation, which libuv then finds is one file: done.
  */
 export function copyAt(cf: readonly u8[], from: string, ct: readonly u8[], to: string): Done<bool> {
-  const wf = winPath(from);
-  const wt = winPath(to);
+  const wf = winPath(asFile(from));
+  const wt = winPath(withoutSeparators(to));
   if (wf === null || wt === null) {
     return failed(ERROR_FILE_NOT_FOUND, "copyfile", from, to);
   }
@@ -197,9 +199,10 @@ export function symlinkAt(
 ): Done<bool> {
   // A relative target is stored as it is, not resolved: from the link's directory is how
   // Windows follows it.
-  const wl = winPath(path);
+  const link = withoutSeparators(path);
+  const wl = winPath(link);
   const wt = absolute(target) ? winPath(target) : wideOf(target.replaceAll("/", "\\"));
-  const wr = winPath(fromLink(target, path));
+  const wr = winPath(fromLink(target, link));
   if (wl === null || wt === null || wr === null) {
     return failed(ERROR_FILE_NOT_FOUND, "symlink", target, path);
   }
@@ -248,7 +251,7 @@ function ntDrive(w: readonly u16[], at: usize, n: usize): bool {
  * a junction's when it names a drive's path. Something that is not a link is `EINVAL`.
  */
 export function readlinkAt(c: readonly u8[], path: string): Done<string> {
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return failed(ERROR_FILE_NOT_FOUND, "readlink", path);
   }
@@ -312,7 +315,7 @@ export function readlinkAt(c: readonly u8[], path: string): Done<string> {
  * `\\s\x`). A path that doesn't exist is `ENOENT`.
  */
 export function realpathAt(c: readonly u8[], path: string): Done<string> {
-  const w = winPath(path);
+  const w = winPath(asFile(path));
   if (w === null) {
     return failed(ERROR_FILE_NOT_FOUND, "realpath", path);
   }
