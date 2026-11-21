@@ -291,7 +291,7 @@ impl FileDocs {
                 }
                 self.type_fields(members);
             }
-            ast::TypeExprKind::KeyOf(t) => self.type_fields(t),
+            ast::TypeExprKind::KeyOf(t) | ast::TypeExprKind::Weak(t) => self.type_fields(t),
             ast::TypeExprKind::Conditional(c) => {
                 [&c.check, &c.extends, &c.then, &c.else_]
                     .into_iter()

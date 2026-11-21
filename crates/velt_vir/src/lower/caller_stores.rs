@@ -60,6 +60,13 @@ impl FnLower<'_, '_> {
             }
             return v;
         }
+        if held == Held::Caller {
+            // One of the caller's own objects as a whole: the store's reference is all it needs.
+            if self.callers_object(value) && self.callers_own_type(ty) {
+                return self.consume(value);
+            }
+            self.note_callers_own(value);
+        }
         let v = self.consume(value);
         self.keep_value(v, held, ty)
     }

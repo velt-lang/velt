@@ -1,0 +1,66 @@
+// A `Record<symbol, unknown>` cast of a record is that record's symbol keys, as sigx's request
+// bags use them (`@sigx/server` per-request.ts): kept in a variable, read, given a property
+// that is neither enumerable nor writable, and written. `Object.keys`, `JSON.stringify` and
+// spreads skip the hidden property, as in Node; `Object.getOwnPropertySymbols` lists it.
+const DISPOSAL = Symbol("disposal");
+const VALUES = Symbol("values");
+
+interface DisposalState {
+  disposers: string[];
+  disposed: boolean;
+}
+
+function disposalOf(locals: object, create: boolean): DisposalState | undefined {
+  const bag = locals as Record<symbol, unknown>;
+  let state = bag[DISPOSAL] as (DisposalState | undefined);
+  if (!state && create) {
+    state = { disposers: [], disposed: false };
+    Object.defineProperty(bag, DISPOSAL, {
+      value: state,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+  }
+  return state;
+}
+
+function storeOf(locals: Record<string, unknown>): Map<string, number> {
+  const bag = locals as Record<symbol, unknown>;
+  let store = bag[VALUES] as (Map<string, number> | undefined);
+  if (!store) {
+    store = new Map();
+    Object.defineProperty(bag, VALUES, {
+      value: store,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+  }
+  return store;
+}
+
+const locals: Record<string, unknown> = { user: "ada" };
+console.log(disposalOf(locals, false) === undefined);
+disposalOf(locals, true)!.disposers.push("db");
+disposalOf(locals, true)!.disposers.push("cache");
+const state = disposalOf(locals, false)!;
+console.log(state.disposers, state.disposed);
+storeOf(locals).set("a", 1);
+storeOf(locals).set("b", 2);
+console.log(storeOf(locals).size, storeOf(locals).get("b"));
+console.log(Object.keys(locals), JSON.stringify(locals), { ...locals });
+console.log(Object.getOwnPropertySymbols(locals).length);
+
+// Another record has no such keys; a plain symbol key written through the cast is an
+// ordinary entry, which a spread copies.
+const other: Record<string, unknown> = {};
+console.log(disposalOf(other, false) === undefined);
+const TAG = Symbol("tag");
+const tags = other as Record<symbol, unknown>;
+tags[TAG] = "t";
+console.log(
+  tags[TAG],
+  (other as Record<symbol, unknown>)[TAG],
+  Object.getOwnPropertySymbols({ ...other }).length,
+);
