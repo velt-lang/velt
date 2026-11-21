@@ -1,0 +1,115 @@
+// velt/net (internal): `TrustAnchor`, what path validation trusts of a root certificate, as
+// rustls's webpki keeps it: the subject's name, the public key and the name constraints.
+// Nothing else of a root counts: not its validity, its extended key usage, its basic
+// constraints or an extension nobody knows, and a v1 root is taken too.
+
+import { keyAlgorithm } from "velt/net/tls/x509/algorithms";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { BIT_STRING, DerReader, INTEGER, SEQUENCE } from "velt/net/tls/x509/der";
+import { CertificateRefused, REFUSED_VERSION } from "velt/net/tls/x509/refused";
+
+/** A trusted name and key. */
+export class TrustAnchor {
+  /** The subject Name's contents (DER, without the SEQUENCE's header). */
+  subject: u8[];
+  /** The SubjectPublicKeyInfo's contents (the algorithm, then the key's BIT STRING). */
+  spki: u8[];
+  /** The nameConstraints extension's contents, or empty for none. */
+  nameConstraints: u8[];
+  // The key's algorithm (`KEY_*`) and bytes, read from `spki` when first asked for.
+  private algorithm: i32;
+  private keyBytes: u8[];
+  private parsed: bool;
+
+  /** An anchor from the three DER values (`nameConstraints` empty for none). */
+  constructor(subject: u8[], spki: u8[], nameConstraints: u8[]) {
+    this.subject = subject;
+    this.spki = spki;
+    this.nameConstraints = nameConstraints;
+    this.algorithm = 0;
+    this.keyBytes = [];
+    this.parsed = false;
+  }
+
+  /**
+   * The anchor of the certificate `der` (a root, or any certificate to trust as one), read as
+   * webpki's `anchor_from_trusted_cert` reads it: a critical extension that is not known does
+   * not count, and a v1 certificate (no version, no extensions, as old private roots are) gives
+   * its subject and key. Throws a `bad_certificate` `TlsFailure` when it does not parse.
+   */
+  static fromCertificate(der: u8[]): TrustAnchor {
+    try {
+      const c = new Certificate(der, true);
+      const constraints = c.nameConstraints;
+      return new TrustAnchor(
+        der.slice(c.subject.start as i64, c.subject.end as i64),
+        der.slice(c.spki.start as i64, c.spki.end as i64),
+        constraints.tag == 0 ? [] : der.slice(constraints.start as i64, constraints.end as i64),
+      );
+    } catch (e) {
+      if (e instanceof CertificateRefused && e.reason == REFUSED_VERSION) {
+        return fromV1(der);
+      }
+      throw e;
+    }
+  }
+
+  // Reads the SubjectPublicKeyInfo once. Malformed: the algorithm stays unknown.
+  private parse() {
+    if (this.parsed) {
+      return;
+    }
+    this.parsed = true;
+    try {
+      const r = new DerReader(this.spki);
+      const end = this.spki.length;
+      const alg = r.next(SEQUENCE, end);
+      const bits = r.next(BIT_STRING, end);
+      const key = r.bitBytes(bits);
+      r.done(end);
+      this.keyBytes = this.spki.slice(key.start as i64, key.end as i64);
+      this.algorithm = keyAlgorithm(r, alg);
+    } catch (e) {
+      this.algorithm = 0;
+    }
+  }
+
+  /** The key's algorithm (`KEY_*` of velt/net/tls/x509/algorithms; unknown when malformed). */
+  keyAlgorithm(): i32 {
+    this.parse();
+    return this.algorithm;
+  }
+
+  /** The key's bytes: an RSAPublicKey, an uncompressed EC point or 32 Ed25519 bytes. */
+  key(): u8[] {
+    this.parse();
+    return this.keyBytes;
+  }
+}
+
+// The anchor of a v1 certificate: no version field and no extensions (RFC 5280 §4.1), so the
+// signed part is the serial number, the signature algorithm, the issuer, the validity, the
+// subject and the key, and nothing after them.
+function fromV1(der: u8[]): TrustAnchor {
+  const r = new DerReader(der);
+  const cert = r.enter(SEQUENCE, der.length);
+  if (cert.end != der.length) {
+    r.fail("stray bytes after the certificate");
+  }
+  const tbs = r.enter(SEQUENCE, cert.end);
+  r.next(INTEGER, tbs.end);
+  r.next(SEQUENCE, tbs.end);
+  r.next(SEQUENCE, tbs.end);
+  r.next(SEQUENCE, tbs.end);
+  const subject = r.next(SEQUENCE, tbs.end);
+  const spki = r.next(SEQUENCE, tbs.end);
+  r.done(tbs.end);
+  r.next(SEQUENCE, cert.end);
+  r.next(BIT_STRING, cert.end);
+  r.done(cert.end);
+  return new TrustAnchor(
+    der.slice(subject.start as i64, subject.end as i64),
+    der.slice(spki.start as i64, spki.end as i64),
+    [],
+  );
+}
