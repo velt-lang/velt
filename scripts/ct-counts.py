@@ -7,7 +7,10 @@ under test on it. This builds
 the probe in release mode and runs it under valgrind's cachegrind once per secret: edge values
 and random ones. Constant-time code executes one count; a second count means some branch or loop
 depends on the secret, in the machine code if not in the source (LLVM turns a mask it can see
-through into a branch).
+through into a branch). With scripts/ct-shim.c (a C compiler and valgrind's headers), what is
+counted starts at the probe's read of its secret and ends at its read of $VELT_CT_STOP's file
+(or at the end): the code under test, without the process's start and end, where a test
+harness's threads do more or less from run to run whatever the secret.
 
 What the counts cannot see: a branch whose two sides cost the same, a memory address that
 depends on the secret, and a difference that is rarer than the secrets tried. `--memcheck` sees
@@ -199,16 +202,47 @@ def build(source, kind, out):
 ONE_THREAD = {"VELT_THREADS": "1", "VELT_RESCUE": "0"}
 
 
-def count(exe, env, secret_file):
+def count(exe, env, secret_file, shim=None):
+    """The instructions the probe executes for the secret in `secret_file`. With the shim, only
+    from its read of the secret to its read of the stop file (or to the end): the code under
+    test, without the process's start and end."""
+    region = ["--instr-at-start=no"] if shim else []
+    extra = {"LD_PRELOAD": shim, "VELT_CT_STOP": stop_file(secret_file)} if shim else {}
     run = subprocess.run(
         ["valgrind", "--tool=cachegrind", "--cache-sim=no", "--cachegrind-out-file=/dev/null",
-         exe, secret_file],
+         *region, exe, secret_file],
         capture_output=True, text=True,
-        env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file})
+        env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file, **extra})
     found = re.search(r"I\s+refs:\s+([\d,]+)", run.stderr)
     if run.returncode != 0 or not found:
         sys.exit(f"the probe failed under valgrind:\n{run.stdout}{run.stderr}")
     return int(found.group(1).replace(",", ""))
+
+
+def stop_file(secret_file):
+    """The file whose first read ends what is counted (an empty file next to the secret's)."""
+    return secret_file + ".stop"
+
+
+def build_shim(out):
+    """scripts/ct-shim.c built into `out`, or None (with a note) without a C compiler or
+    valgrind's headers: counts then take the whole process."""
+    shim = os.path.join(out, "ct-shim.so")
+    made = subprocess.run(["cc", "-shared", "-fPIC", "-O1", "-o", shim,
+                           os.path.join(ROOT, "scripts", "ct-shim.c"), "-ldl"],
+                          capture_output=True, text=True)
+    if made.returncode != 0:
+        print("note: scripts/ct-shim.c does not build here (a C compiler and valgrind's headers);"
+              " counting whole processes", file=sys.stderr)
+        return None
+    return shim
+
+
+def counts_regions():
+    """Whether cachegrind can start and stop counting on request (valgrind 3.22 and later)."""
+    found = re.search(r"(\d+)\.(\d+)", subprocess.run(["valgrind", "--version"],
+                                                    capture_output=True, text=True).stdout)
+    return found is not None and (int(found.group(1)), int(found.group(2))) >= (3, 22)
 
 
 def put(secret_file, secret):
@@ -291,9 +325,9 @@ def main():
             # One path for every run: its length is part of what the process does.
             secret_file = os.path.join(out, "secret.bin")
             if opts.memcheck:
-                shim = os.path.join(out, "ct-shim.so")
-                subprocess.run(["cc", "-shared", "-fPIC", "-O1", "-o", shim,
-                                os.path.join(ROOT, "scripts", "ct-shim.c"), "-ldl"], check=True)
+                shim = build_shim(out)
+                if shim is None:
+                    sys.exit("--memcheck needs scripts/ct-shim.c built")
                 worst = 0
                 for secret in secrets(random.Random(opts.seed), min(opts.runs, 3))[:3]:
                     put(secret_file, secret)
@@ -305,11 +339,13 @@ def main():
                 else:
                     print(f"{name}: memcheck reports {worst} (by design: {allowed})")
                 continue
+            open(stop_file(secret_file), "wb").close()
+            shim = build_shim(out) if counts_regions() else None
             counts = {}
             target = None
             for secret in secrets(random.Random(opts.seed), opts.runs):
                 secret = put(secret_file, secret)
-                c, target = settle(lambda: count(exe, env, secret_file), target)
+                c, target = settle(lambda: count(exe, env, secret_file, shim), target)
                 counts.setdefault(c, []).append(secret)
         runs = sum(len(v) for v in counts.values())
         if len(counts) == 1:
