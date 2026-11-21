@@ -196,6 +196,9 @@ impl FnLower<'_, '_> {
         let f = self
             .cx
             .func_direct(Work::Glue(Glue::TransferRoot, ty), LkMode::Read);
+        // As in `transfer_value`: while the glue runs only this temporary owns `v`, so a
+        // transfer that panics leaves it to the call's cleanup pad; taken back after.
+        self.own_temp(t.local, ty);
         self.lk_split(
             |_| {},
             |lw| {
@@ -206,6 +209,7 @@ impl FnLower<'_, '_> {
                 })
             },
         );
+        self.take_temp(&t);
         Operand::Copy(t)
     }
 
