@@ -1,5 +1,5 @@
 //! P-256's masks stay masks in optimized code (`isZero` and `blend`, `std/crypto/field_p256.velt`;
-//! `entryMasks`, the masks of the base table's scan in `std/crypto/p256.velt`).
+//! `entryMasks`, the masks of the base table's scan in `std/crypto/p256_base_select.velt`).
 //! Inlined, `isZero` is one comparison to LLVM, so `blend`'s `(a & m) | (b & ~m)` becomes a select
 //! of two loads, and the backend makes that one load through a selected pointer: a memory address
 //! that depends on whether a window of the secret scalar is zero. No test run sees the difference.
