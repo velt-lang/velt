@@ -392,3 +392,53 @@ fn ts_compat_findings_are_fixed() {
         "export function f(x: number): boolean {\n  return x > 1;\n}\n"
     );
 }
+
+#[test]
+fn a_cpu_check_in_a_loop_is_reported() {
+    // velt/arch's checks and velt/simd's older ones, recognised by their definitions: in a loop's
+    // body or condition, reported; before the loop, and a method of the program's own that is
+    // only named `isSupported`, not.
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    package(dir, ", lint: { perf: \"warn\" }");
+    let program = r#"import { Avx2 } from "velt/arch/x86";
+import { u64x2 } from "velt/simd";
+
+class Mine {
+  static isSupported(): bool {
+    return true;
+  }
+}
+
+function main() {
+  let n = 0;
+  const once = Avx2.isSupported();
+  for (let i = 0; i < 10; i++) {
+    if (Avx2.isSupported()) {
+      n += 1;
+    }
+    if (Mine.isSupported()) {
+      n += 2;
+    }
+  }
+  while (n < 100 && u64x2.hasClmulX86()) {
+    n += 1;
+  }
+  console.log(n, once);
+}
+"#;
+    write(dir, "src/main.velt", program);
+    let o = velt(dir, &["check"]);
+    let err = stderr(&o);
+    assert!(o.status.success(), "{err}");
+    assert!(
+        err.contains("warning: `Avx2.isSupported()` is checked in a loop"),
+        "{err}"
+    );
+    assert!(
+        err.contains("warning: `u64x2.hasClmulX86()` is checked in a loop"),
+        "{err}"
+    );
+    assert_eq!(err.matches("is checked in a loop").count(), 2, "{err}");
+    assert!(err.contains("= note: perf(cpu-check-in-loop)"), "{err}");
+}
