@@ -2,11 +2,11 @@
 // page from the disk when it is first touched and may drop it again when memory is short, so
 // a program works on files larger than memory without reading or copying them.
 
-import { addressArrayOwned } from "velt/lang/intrinsics";
+import { addressArray } from "velt/lang/intrinsics";
 import { adviseMapping, COPIES, mapFile } from "#mapped-source";
 import { osError } from "velt/fs/errors";
 import { MappedBytes } from "velt/fs/mapped_bytes";
-import { copyOf, heldAgain, MapOptions, Mapping } from "velt/fs/mapped_part";
+import { copyOf, MapOptions, Mapping, pinOwner } from "velt/fs/mapped_part";
 
 /** How a range of a `MappedFile` will be read (`advise`). */
 export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
@@ -21,10 +21,13 @@ export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontn
  * file is opened; a page comes from the disk when it is first touched (WebAssembly differs:
  * below).
  *
- * The arrays keep the mapping: it is given back to the system when the `MappedFile` is dropped
- * (at the end of its block, of a `using` block, or at `m[Symbol.dispose]()`) and every array it
- * handed out is gone, never earlier, so an array stays valid however long it is kept. A mapping
- * costs address space, not memory, and a system allows a limited number at a time (Linux's
+ * The mapping is given back to the system when the `MappedFile` is dropped (at the end of its
+ * block, of a `using` block, or at `m[Symbol.dispose]()`) and every `bytes` array it handed out
+ * is gone, never earlier, so an array stays valid however long it is kept. The first typed
+ * array (`u32s`, `f64s`, …) pins the mapping for the rest of the program instead, which keeps
+ * typed arrays free: a program that needs the mapping back reads through `bytes` and the
+ * getters, or maps only the part it views (`{ offset, length }`), so only that stays. A mapping costs
+ * address space, not memory, and a system allows a limited number at a time (Linux's
  * `vm.max_map_count`: 65,530 on older systems, 1,048,576 on current ones; then `ENOMEM`): a
  * program that opens many files lets each go before the next.
  *
@@ -63,6 +66,12 @@ export class MappedFile extends MappedBytes {
    */
   [Symbol.dispose]() {}
 
+  // Keeps the mapping for the rest of the program: the typed methods' arrays do not count on
+  // it, which costs nothing per array where counting each would cost a tenth more (#3162).
+  private pin() {
+    pinOwner(this.owner);
+  }
+
   // How many bytes of the mapping lie before `bytes`.
   private lead(): usize {
     return this.from % 65536;
@@ -81,6 +90,7 @@ export class MappedFile extends MappedBytes {
    *
    * A file of /proc or /sys is a regular file that reports a size of 0 whatever it holds, so it
    * maps as no bytes, without an error: read those with `readFileSync`.
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   static open(path: string, options?: MapOptions): MappedFile {
     return new MappedFile(mapFile(path, options));
@@ -127,6 +137,7 @@ export class MappedFile extends MappedBytes {
   /**
    * The `count` `i8` from byte `byteOffset`, as an array over the mapping (no copy; a copy on WebAssembly).
    * `RangeError` when the range is not inside the file.
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   i8s(byteOffset: number, count: number): shared<i8[]> {
     const at = this.range("i8s", "integers", byteOffset, count, 1);
@@ -137,10 +148,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<i8>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i8`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: i8[] = unsafe { addressArrayOwned<i8>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: i8[] = unsafe { addressArray<i8>(at, count as usize) };
     return shared(xs);
   }
 
@@ -148,6 +160,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `u16` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   u16s(byteOffset: number, count: number): shared<u16[]> {
     const at = this.range("u16s", "integers", byteOffset, count, 2);
@@ -158,10 +171,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<u16>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u16`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: u16[] = unsafe { addressArrayOwned<u16>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: u16[] = unsafe { addressArray<u16>(at, count as usize) };
     return shared(xs);
   }
 
@@ -169,6 +183,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `i16` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   i16s(byteOffset: number, count: number): shared<i16[]> {
     const at = this.range("i16s", "integers", byteOffset, count, 2);
@@ -179,10 +194,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<i16>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i16`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: i16[] = unsafe { addressArrayOwned<i16>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: i16[] = unsafe { addressArray<i16>(at, count as usize) };
     return shared(xs);
   }
 
@@ -190,6 +206,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `u32` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 4 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   u32s(byteOffset: number, count: number): shared<u32[]> {
     const at = this.range("u32s", "integers", byteOffset, count, 4);
@@ -200,10 +217,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<u32>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u32`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: u32[] = unsafe { addressArrayOwned<u32>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: u32[] = unsafe { addressArray<u32>(at, count as usize) };
     return shared(xs);
   }
 
@@ -211,6 +229,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `i32` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 4 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   i32s(byteOffset: number, count: number): shared<i32[]> {
     const at = this.range("i32s", "integers", byteOffset, count, 4);
@@ -221,10 +240,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<i32>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i32`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: i32[] = unsafe { addressArrayOwned<i32>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: i32[] = unsafe { addressArray<i32>(at, count as usize) };
     return shared(xs);
   }
 
@@ -232,6 +252,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `u64` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 8 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   u64s(byteOffset: number, count: number): shared<u64[]> {
     const at = this.range("u64s", "integers", byteOffset, count, 8);
@@ -242,10 +263,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<u64>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `u64`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: u64[] = unsafe { addressArrayOwned<u64>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: u64[] = unsafe { addressArray<u64>(at, count as usize) };
     return shared(xs);
   }
 
@@ -253,6 +275,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `i64` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 8 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   i64s(byteOffset: number, count: number): shared<i64[]> {
     const at = this.range("i64s", "integers", byteOffset, count, 8);
@@ -263,10 +286,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<i64>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `i64`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: i64[] = unsafe { addressArrayOwned<i64>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: i64[] = unsafe { addressArray<i64>(at, count as usize) };
     return shared(xs);
   }
 
@@ -274,6 +298,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `f16` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   f16s(byteOffset: number, count: number): shared<f16[]> {
     const at = this.range("f16s", "floats", byteOffset, count, 2);
@@ -284,10 +309,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<f16>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f16`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: f16[] = unsafe { addressArrayOwned<f16>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: f16[] = unsafe { addressArray<f16>(at, count as usize) };
     return shared(xs);
   }
 
@@ -295,6 +321,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `bf16` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 2 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   bf16s(byteOffset: number, count: number): shared<bf16[]> {
     const at = this.range("bf16s", "floats", byteOffset, count, 2);
@@ -305,11 +332,12 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<bf16>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     const n = count as usize;
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `bf16`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: bf16[] = unsafe { addressArrayOwned<bf16>(at, n, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: bf16[] = unsafe { addressArray<bf16>(at, n) };
     return shared(xs);
   }
 
@@ -317,6 +345,7 @@ export class MappedFile extends MappedBytes {
    * The `count` little-endian `f32` from byte `byteOffset`, as an array over the mapping (no
    * copy; a copy on WebAssembly). `RangeError` when the range is not inside the mapped bytes, or its first
    * byte is not at a multiple of 4 in the file (`byteOffset` plus the part's `offset`).
+   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   f32s(byteOffset: number, count: number): shared<f32[]> {
     const at = this.range("f32s", "floats", byteOffset, count, 4);
@@ -327,10 +356,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<f32>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f32`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: f32[] = unsafe { addressArrayOwned<f32>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: f32[] = unsafe { addressArray<f32>(at, count as usize) };
     return shared(xs);
   }
 
@@ -348,10 +378,11 @@ export class MappedFile extends MappedBytes {
       // No mapping: no address is read, the values are copied.
       return shared(copyOf<f64>(this.bytes, byteOffset as usize, count as usize));
     }
+    this.pin();
     // SAFETY: `range` checked that the values are inside the mapping and aligned for `f64`
-    // (the mapping is page-aligned); the array holds the mapping's owner, so it stays while the
-    // array does, and the array leaves as `shared`.
-    const xs: f64[] = unsafe { addressArrayOwned<f64>(at, count as usize, heldAgain(this.owner)) };
+    // (the mapping is page-aligned); `pin` keeps the mapping for the rest of the program, and
+    // the array leaves as `shared`.
+    const xs: f64[] = unsafe { addressArray<f64>(at, count as usize) };
     return shared(xs);
   }
 

@@ -68,17 +68,18 @@ export function copyOf<T extends Numeric>(bytes: shared<u8[]>, at: usize, count:
 // A mapping's owner: a block every array over the mapping holds (`addressArrayOwned`), so the
 // memory is given back when the last of them is dropped, on whichever thread that is. Its
 // words: the function an array's drop calls (the variant's, which unmaps), how many arrays
-// hold it, and the mapping's address and length.
+// hold it, the mapping's address and length, and whether a typed array pinned it (`pinOwner`).
 
 /** A new owner of the `len` mapped bytes at `base`, held once; `release` is its function. */
 export function newOwner(release: usize, base: usize, len: usize): usize {
-  const owner = rawAlloc(32);
+  const owner = rawAlloc(40);
   // SAFETY: the block has the four words written here.
   unsafe {
     addressStore<usize>(owner, release);
     addressStore<u64>(owner + 8, 1);
     addressStore<usize>(owner + 16, base);
     addressStore<usize>(owner + 24, len);
+    addressStore<u64>(owner + 32, 0);
   }
   return owner;
 }
@@ -108,7 +109,23 @@ export unsafe function letGo(owner: usize): Region | null {
     }
     const base = addressLoad<usize>(owner + 16);
     const len = addressLoad<usize>(owner + 24);
-    rawFree(owner, 32);
+    rawFree(owner, 40);
     return { base, len };
+  }
+}
+
+/**
+ * Holds `owner` once more for good, the first time only: the mapping then stays for the rest of
+ * the program. The flag is in the block rather than in the `MappedFile`, whose fields then stay
+ * as unchanging as before, which a loop over its getters is faster for.
+ */
+export function pinOwner(owner: usize) {
+  // SAFETY: the caller holds `owner`, so the block is there; only its `MappedFile` reads or
+  // writes the flag, from one thread at a time.
+  unsafe {
+    if (addressLoad<u64>(owner + 32) == 0) {
+      addressStore<u64>(owner + 32, 1);
+      addressAtomicRmw<u64>(owner + 8, "add", 1, "relaxed");
+    }
   }
 }

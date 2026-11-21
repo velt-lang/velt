@@ -331,15 +331,32 @@ describe("MappedFile", () => {
     }
     expect(mapped()).toBe(false);
     const m = MappedFile.open(path);
-    let kept: shared<u16[]> | null = m.u16s(2, 2);
+    let kept: shared<u8[]> | null = m.bytes;
+    expect(m.getUint16(2, true)).toBe(0x3332);
     m[Symbol.dispose]();
     expect(mapped()).toBe(true);
-    expect(kept![0]).toBe(0x3332);
+    expect(kept![2]).toBe(50);
     kept = null;
     expect(mapped()).toBe(false);
     // Dropped at the end of the function that opened it.
     openAndDrop(path);
     expect(mapped()).toBe(false);
+  });
+
+  it("keeps the mapping for good once a typed array is made", () => {
+    if (platform() != "linux") {
+      return;
+    }
+    const name = `velt-mapped-${Date.now()}-${Math.floor(Math.random() * 1e9)}-pinned`;
+    const path = `${tmpdir()}/${name}`;
+    writeFileSync(path, "0123456789abcdef");
+    const mapped = () => readFileSync("/proc/self/maps").includes(name);
+    const m = MappedFile.open(path);
+    let words: shared<u32[]> | null = m.u32s(4, 2);
+    m[Symbol.dispose]();
+    expect(words![1]).toBe(0x62613938);
+    words = null;
+    expect(mapped()).toBe(true);
   });
 
   it("opens a file more often than the system has mappings, when each is let go", () => {
