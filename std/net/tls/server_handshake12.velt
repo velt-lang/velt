@@ -10,7 +10,6 @@ import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
 import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { randomBytes } from "velt/crypto/random";
 import { sha256 } from "velt/crypto/sha256";
-import { sha384 } from "velt/crypto/sha512";
 import { x25519, x25519PublicKey } from "velt/crypto/x25519";
 import { utf8Encode } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
@@ -36,6 +35,7 @@ import { ClientOffer } from "velt/net/tls/client_hello_parse";
 import { KeyBlock12, keyBlock12, masterSecret12, verifyData12 } from "velt/net/tls/key_schedule12";
 import { hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { ServerKey } from "velt/net/tls/server_key";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 import {
   chooseSuite12,
   DOWNGRADE_TLS12,
@@ -64,6 +64,8 @@ const DONE = 3;
 /** The server's side of a TLS 1.2 handshake, from the ClientHello on. */
 export class ServerHandshake12 {
   private transcript: u8[] = [];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   private state: i32 = WAIT_KEY_EXCHANGE;
   private hashLen: usize;
   private clientRandom: u8[];
@@ -198,7 +200,7 @@ export class ServerHandshake12 {
   }
 
   private hash(): u8[] {
-    return this.hashLen == 48 ? sha384(this.transcript) : sha256(this.transcript);
+    return this.th.of(this.transcript, this.hashLen == 48);
   }
 
   /**
@@ -227,6 +229,7 @@ export class ServerHandshake12 {
       const k = this.keys!;
       this.writeCipher = new RecordCipher(this.suite, k.serverKey, k.serverIv);
       this.transcript = [];
+      this.th.reset();
       this.state = DONE;
       return true;
     }
