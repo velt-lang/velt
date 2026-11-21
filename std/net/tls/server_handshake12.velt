@@ -95,6 +95,7 @@ export class ServerHandshake12 {
     hasAes: bool,
     random: u8[] | null = null,
     ecdhKey: u8[] | null = null,
+    hasTls13: bool = true,
   ) {
     if (offer.suites.includes(FALLBACK_SCSV)) {
       // The client retried with a lower version after a failure, and this server has a higher.
@@ -130,8 +131,8 @@ export class ServerHandshake12 {
     this.clientRandom = offer.random;
     const sr = random != null ? random.slice() : randomBytes(32);
     // A server that has TLS 1.3 says so in the last 8 bytes, which its clients check (RFC 8446
-    // §4.1.3).
-    for (let i: usize = 0; i < 8; i++) {
+    // §4.1.3). (`hasTls13` is false only in tests of clients against a TLS 1.2 server.)
+    for (let i: usize = 0; hasTls13 && i < 8; i++) {
       sr[24 + i] = DOWNGRADE_TLS12[i];
     }
     this.serverRandom = sr;

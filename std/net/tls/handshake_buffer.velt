@@ -3,8 +3,9 @@
 
 import { DECODE_ERROR, TlsFailure, UNEXPECTED_MESSAGE } from "velt/net/tls/alert";
 
-// The largest handshake message accepted (a certificate chain with room to spare).
-const MAX_MESSAGE: usize = 1 << 17;
+// The largest handshake message accepted: rustls's limit. It also bounds the certificates a
+// server can make a client look through (path validation's work grows with their number).
+const MAX_MESSAGE: usize = 0xffff;
 
 /** Handshake bytes read but not yet taken as whole messages. */
 export class HandshakeBuffer {

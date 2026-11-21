@@ -4,6 +4,7 @@
 // when given, the cookie of a HelloRetryRequest, and a legacy session id so middleboxes see what
 // looks like a resumed TLS 1.2 session (§D.4).
 
+import { CertificateVerifier } from "velt/net/tls/verifier";
 import { utf8Encode } from "velt/encoding/utf8";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import {
@@ -33,7 +34,7 @@ export const EXT_RENEGOTIATION_INFO: usize = 0xff01;
 
 /**
  * Signature schemes the server may sign with: ECDSA P-256/P-384, RSA-PSS, Ed25519, and RSA
- * PKCS#1 v1.5 for certificates. With `verify: false` none is checked yet (#2392 step 3).
+ * PKCS#1 v1.5 for certificates and for TLS 1.2's handshake signature.
  */
 export const SCHEMES: usize[] = [
   0x0403,
@@ -66,6 +67,8 @@ export struct HelloInput {
   /** The second ClientHello and its P-256 private key to use instead (RFC 8448 §5), or null. */
   fixedRetry: u8[] | null;
   retryKey: u8[] | null;
+  /** What checks the server's certificates; without one they are kept unchecked. */
+  verifier?: CertificateVerifier;
 }
 
 /** Whether `name` is an IP address (no SNI for those, RFC 6066 §3). */
