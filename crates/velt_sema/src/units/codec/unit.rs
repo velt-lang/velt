@@ -21,7 +21,7 @@ use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit, before the checksum of
 /// the rest ([`checksum`]).
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x05";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x06";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
 /// caller's, what every check installs again), `memo` (built again on demand: one built over a
@@ -83,7 +83,7 @@ macro_rules! unit_fields {
 
 unit_fields! {
     save: [
-        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys, json_needs,
+        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys, unit_sums,
         aliases, extensions, impls, iface_writes, part_ifaces, synth_ifaces, generic_fns,
         generic_called, union_views, any, ext_impls, ext_by_iface, anon, readonly_twins,
         array_twins,

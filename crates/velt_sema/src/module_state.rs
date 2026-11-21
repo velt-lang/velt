@@ -24,11 +24,16 @@ mod locked_props;
 mod reach;
 
 use facts::Facts;
+pub(crate) use facts::StateFacts;
 use reach::{propagate, vars_reached, Reach};
 
 /// The module-level `let`s in initialization order (empty when there are none); reports reads
 /// of a `let` before its initializer runs.
 pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
+    crate::linked::keep_edges(cx);
+    // In a check by units, std is held whole: a std module the program does not link has no
+    // state when it runs (`crate::linked`).
+    let linked = crate::linked::linked(cx);
     let lets: Vec<(usize, u32, DefId)> = cx
         .info
         .iter()
@@ -44,6 +49,7 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
             }
             _ => None,
         })
+        .filter(|(m, ..)| linked[*m] || !cx.modules[*m].is_std)
         .collect();
     if lets.is_empty() {
         return Vec::new();
@@ -392,7 +398,10 @@ impl crate::body::FnCx<'_, '_> {
 pub(crate) fn check_locked_access(cx: &mut Ctx) {
     // Without `any`, no function has properties (locked_props.rs).
     let props = cx.any.is_some_and(|a| a.imp.is_some());
-    if cx.module_slots.is_empty() && !props {
+    // std's stage reads its bodies' facts for the app's check, whatever its own needs
+    // (`facts::scan`).
+    let for_later = cx.units_stage == crate::units::Stage::Std;
+    if cx.module_slots.is_empty() && !props && !for_later {
         return;
     }
     locked_props::reset();
@@ -403,6 +412,9 @@ pub(crate) fn check_locked_access(cx: &mut Ctx) {
         callbacks,
         proxies,
     } = facts::scan(cx, &dispatch);
+    if cx.module_slots.is_empty() && !props {
+        return;
+    }
     if withs.is_empty() && callbacks.is_empty() && cx.c_exports.is_empty() {
         return;
     }
