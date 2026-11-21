@@ -177,7 +177,7 @@ function release(owner: usize): void {
   unsafe {
     const gone = letGo(owner);
     if (gone != null) {
-      UnmapViewOfFile(Ptr.at<void>(gone.offset as usize));
+      UnmapViewOfFile(Ptr.at<void>(gone.base));
     }
   }
 }

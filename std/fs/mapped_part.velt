@@ -92,12 +92,15 @@ export function heldAgain(owner: usize): usize {
   return owner;
 }
 
+/** A mapping in memory: `len` bytes from `base`, as the system gave them. */
+export type Region = { base: usize; len: usize };
+
 /**
- * Gives up one hold of `owner`. When it was the last, returns the mapping's address and
- * length for the caller to unmap, and frees the block; otherwise `null`. Unsafe: the caller is
- * the drop of an array that held `owner`.
+ * Gives up one hold of `owner`. When it was the last, returns the mapping for the caller to
+ * unmap, and frees the block; otherwise `null`. Unsafe: the caller is the drop of an array
+ * that held `owner`.
  */
-export unsafe function letGo(owner: usize): Part | null {
+export unsafe function letGo(owner: usize): Region | null {
   // SAFETY: the block is there until its last hold is given up, which is at the earliest now.
   unsafe {
     if (addressAtomicRmw<u64>(owner + 8, "sub", 1, "acqrel") != 1) {
@@ -106,6 +109,6 @@ export unsafe function letGo(owner: usize): Part | null {
     const base = addressLoad<usize>(owner + 16);
     const len = addressLoad<usize>(owner + 24);
     rawFree(owner, 32);
-    return { offset: base as number, length: len as number };
+    return { base, len };
   }
 }
