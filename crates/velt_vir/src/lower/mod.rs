@@ -343,8 +343,10 @@ struct Cx<'h> {
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
     sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
     sched_used: bool,  // a task or timer hook of the executor in Velt is called (module_state.rs)
+    /// Did sema declare module_blocks.velt's hooks in its object (sched.rs `module_hook_live`)?
+    module_hooks_declared: std::cell::OnceCell<bool>,
     held: Option<Vec<(FuncId, Work)>>, // module state's accesses, until main is built (drain)
-    statics_table: Option<StaticId>, // the process statics' table, its release to fill in
+    statics_table: Option<StaticId>,   // the process statics' table, its release to fill in
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,

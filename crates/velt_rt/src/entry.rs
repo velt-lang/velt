@@ -68,10 +68,10 @@ fn finish(code: i32) -> i32 {
     if code == 0 {
         crate::task::runtime::wait_for_the_end();
         crate::str::stats::settle(crate::task::runtime::tasks_may_run);
-        // The leak counters see what module state holds as freed. Otherwise it is kept to the
-        // end, as in Node, where nothing runs at exit.
+        // The leak counters see what the runtime keeps per process as freed (std dropped module
+        // state already: module_blocks.velt). Otherwise it is kept to the end, as in Node, where
+        // nothing runs at exit.
         if crate::str::stats::counting() {
-            crate::task::local::module_drop_at_exit();
             crate::fn_props::drop_at_exit();
             statics_drop_at_exit();
         }

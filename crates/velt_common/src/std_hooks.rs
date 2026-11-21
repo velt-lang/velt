@@ -51,10 +51,13 @@ pub use hook::Hook;
 mod weak_hooks;
 #[macro_use]
 mod string_hooks;
+#[macro_use]
+mod module_hooks;
+pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then the string methods' (`string_hooks.rs`) and the weak core's
-// (`weak_hooks.rs`), given to `hooks!` together.
-with_string_hooks! {
+// The table: these rows, then module state's (`module_hooks.rs`), the string methods'
+// (`string_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
+with_module_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -380,10 +383,6 @@ with_string_hooks! {
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;
     sched_module_ready => lang_hooks_sched, "schedModuleReady", sig((usize, u64) -> void), lowered;
-    /// The end of `velt_main` with exit code `(code)` in a program whose synchronous `main`
-    /// reaches no task (no `sched_finish`): the blocks go at a normal end with the debug counters
-    /// on, as the runtime's did.
-    sched_module_exit => lang_hooks_sched, "schedModuleExit", sig((i32) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
