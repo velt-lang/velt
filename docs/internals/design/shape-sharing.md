@@ -56,6 +56,7 @@ type classes but the answers to a closed list of **shape questions**
 | union | truthiness and narrowing of the value |
 | copied across, transfers | what a hand-over to another task writes |
 | mutex (`holds_mutex`) | `frozen` |
+| atomic (`holds_atomic`), shares as counted (`shares_as_counted`) | whether, and how, an operand is copied before a later one is evaluated |
 | array view | the view sync at every access |
 
 and membership in each of the counted-types sets of `Boxing`. A new inline dependency is one more
@@ -112,6 +113,10 @@ Facts keyed by function (`fn_tuple_writes`, `fn_read_params`) cannot be replayed
 (`Cx::shape_callees`) rather than giving up at the indirect calls. Glue made for a shared std body
 (`ToAny`, `FromAny`) records what the std body would have recorded at the site.
 
+A comparison through glue records which function values the compared type holds
+(`fn_compared_keys`), which a placeholder cannot say: the body records the type
+(`Facts::glue_compared`), and `Cx::replay` records the keys for each dictionary's type.
+
 ### Dictionaries
 
 A dictionary is a read-only static, one per shared instance and list of concrete type arguments
@@ -163,7 +168,7 @@ code, in the same order, as in a per-type instance:
 | `console.log`, `String()`, templates | the type's format glue, so class names, quoting and nesting are the type's |
 | `TypeError` from `x as T` | the type's `FromAny` glue, with the type's name |
 | other errors and panics | source locations of the body, the same in every instance; caller-tracking passes its location on |
-| `===`, `Object.is`, `Map`/`Set` keys | the type's equality and hash glue; hash values, and so iteration order, are the same |
+| `===`, `Object.is`, `Map`/`Set` keys | the type's equality and hash glue; hash values, and so iteration order, are the same. The equality glue of a type that is otherwise compared in line (a number, a string, an object by identity) is that comparison (`same_body`) |
 | drop order, `dispose`, weak references | the same drop glue, called at the same points |
 | `e.stack` | unchanged: Velt keeps no call frames |
 

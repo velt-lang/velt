@@ -362,9 +362,10 @@ button.onClick(() => self?.refresh());
 - **Representation.** A weak field holds a pointer to its target's **slot**, a counted block
   `[count][target]` shared by every weak reference to that target (Swift's side table). The
   target's weak-core record holds one reference to its slot and each weak field or variable one
-  more; freeing the target sets `slot.target = 0`. A read is inline and takes no lock:
-  `s = field; p = s ? s.target : 0; if p { retain p }`. A write gets the new target's slot
-  through the `weakSlot(obj)` std hook.
+  more, and keeps it until the target is freed, which sets `slot.target = 0`. A read is inline
+  and takes no lock: `s = field; p = s ? s.target : 0; if p { retain p }`. A write gets the new
+  target's slot through the `weakSlot(obj)` std hook and gives up the old one with
+  `weakSlotDrop(s)` (`std/lang/hooks/weak_slots.velt`, rt_abi.md "Weak references").
 - **The rest of the language.** A `weak` field is not an edge of the ownership graph and is
   skipped by trace glue, so `TreeNode` above is not cycle-capable. A closure captures a `weak`
   variable as its slot. A transfer to another task, and `clone()`, map a weak field to the copy

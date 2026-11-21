@@ -1,0 +1,14 @@
+// A program on the executor whose initializer reads module state twice: `first` (slot 0, which
+// the executor's module lock then keeps as the block last looked up) and `late` (slot 2) before
+// its initializer ran. The second read is still a `ReferenceError`, as in Node: the lock keeps
+// how many slots are known to be initialized, and `late`'s is not among them.
+const first: string[] = ["a"];
+function early(): number {
+  return first.length + late.length;
+}
+const n = early();
+const late: string[] = ["b"];
+async function main() {
+  await yieldNow();
+  console.log("not reached", n);
+}

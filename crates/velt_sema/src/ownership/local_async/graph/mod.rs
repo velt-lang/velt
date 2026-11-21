@@ -589,11 +589,13 @@ impl Walk<'_, '_> {
     fn intrinsic(&mut self, e: &Expr, i: Intrinsic, args: &[Expr], to: To) {
         // A generic function value going into `any` (or copied by a spread) may be called where
         // the walk doesn't see it (`super::generic_closures`).
-        if matches!(i, Intrinsic::ToAny | Intrinsic::SpreadObject) {
+        if matches!(
+            i,
+            Intrinsic::ToAny | Intrinsic::SpreadObject | Intrinsic::SpreadParam
+        ) {
             for a in args {
-                self.g
-                    .dyn_calls
-                    .escape(self.cx, a.ty, i == Intrinsic::ToAny);
+                let dynamic = matches!(i, Intrinsic::ToAny | Intrinsic::SpreadParam);
+                self.g.dyn_calls.escape(self.cx, a.ty, dynamic);
             }
         }
         // What only inspects a borrowed `any` (`typeof x`, `x === y`, `Array.isArray(x)`) keeps
@@ -608,7 +610,9 @@ impl Walk<'_, '_> {
             return self.unknown(e, to);
         }
         // A share of the value as an `any` (kept, as other intrinsics' arguments are).
-        if let (Intrinsic::ToAny, [x]) = (i, args) {
+        // A spread of a generic value into `unknown` arguments shares its elements as `any`s
+        // (`body::expr::spread_param`).
+        if let (Intrinsic::ToAny | Intrinsic::SpreadParam, [x]) = (i, args) {
             self.made_dynamic(x, e.span, Some(e.ty), STORE);
             return self.unknown(e, to);
         }
