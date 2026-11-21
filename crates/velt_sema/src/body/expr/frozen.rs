@@ -62,10 +62,11 @@ impl FnCx<'_, '_> {
             // std's unit notes where, for the app's stage (`units::app_reads_shared`).
             if self.cx.units_stage == crate::units::Stage::Std {
                 let s = &mut self.cx.unit_sums;
-                match self.body_def {
-                    Some(d) => s.shared_readers.insert(d),
-                    None => std::mem::replace(&mut s.shared_read_outside, true),
-                };
+                if let Some(d) = self.body_def {
+                    s.shared_readers.insert(d);
+                } else {
+                    s.shared_read_outside = true;
+                }
             }
         }
         let span = h.span;

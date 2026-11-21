@@ -422,3 +422,75 @@ crate::units::codec::enums! {
 fn an_edge_ends_on_damaged_input() {
     assert!(crate::units::codec::ends_from_zeros::<Edge>());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::defs::AdtInfo;
+    use crate::hir::{AdtKind, ImplDef};
+
+    fn class(name: &str, base: Option<TyId>, vtable: Vec<DefId>) -> DefInfo<'static> {
+        DefInfo::Adt(Box::new(AdtInfo {
+            name: name.into(),
+            qual_name: name.into(),
+            kind: AdtKind::Class,
+            module: 0,
+            span: velt_common::Span::new(velt_common::FileId(0), 0, 0),
+            generics: Default::default(),
+            fields: vec![],
+            own_fields_start: 0,
+            redefined: vec![],
+            base,
+            methods: Default::default(),
+            ctor: None,
+            own_ctor: None,
+            vtable,
+            vslots: Default::default(),
+            implements: vec![],
+            has_dispose: false,
+            statics: Default::default(),
+            decl: None,
+        }))
+    }
+
+    /// A finished unit's body keeps a call through a slot as written; a later check resolves it
+    /// against the whole program's classes: a class `B` that overrides `A`'s slot and an
+    /// implementation of the interface, both unknown when the body was read, are its edges, in
+    /// the order written. An interface's implementations count only when module state is
+    /// checked (`Facts::slots`).
+    #[test]
+    fn a_kept_call_through_a_slot_reaches_a_later_units_override_and_implementation() {
+        let (a, b, iface) = (DefId(0), DefId(1), DefId(2));
+        let (callee, a_m, b_m, impl_m, state) =
+            (DefId(10), DefId(11), DefId(12), DefId(13), DefId(14));
+        let mut cx = Ctx::new(&[], 0);
+        let a_ty = cx.ty.intern(TyKind::Adt(a, vec![]));
+        cx.info.push(class("A", None, vec![a_m]));
+        cx.info.push(class("B", Some(a_ty), vec![b_m]));
+        cx.impls.push(ImplDef {
+            ty: a_ty,
+            generics: 0,
+            iface,
+            iface_args: vec![],
+            methods: vec![impl_m],
+        });
+        let written = vec![
+            Edge::Def(callee),
+            Edge::Virtual(a, 0),
+            Edge::Iface(iface, 0),
+        ];
+        let mut f = FactsOf::new(&cx, true).facts;
+        f.written = written.clone();
+        let dispatch = locked_props::Dispatch::new(&cx);
+        assert_eq!(dispatch.virtual_methods(b, 0), vec![b_m]);
+        expand(&cx, &dispatch, &mut f);
+        assert_eq!(f.edges, vec![callee, a_m, b_m]);
+        assert!(f.written.is_empty());
+
+        cx.module_slots.push(state);
+        let mut f = FactsOf::new(&cx, true).facts;
+        f.written = written;
+        expand(&cx, &dispatch, &mut f);
+        assert_eq!(f.edges, vec![callee, a_m, b_m, impl_m]);
+    }
+}
