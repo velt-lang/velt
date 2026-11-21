@@ -9,3 +9,4 @@ true false [ 'c' ]
 true false [ 'c' ]
 app
 true undefined undefined
+false false false h { h: 0 }

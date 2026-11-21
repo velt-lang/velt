@@ -53,3 +53,11 @@ console.log(
   seam.__APP__,
   (globalThis as { __APP__?: { name: string } }).__APP__,
 );
+
+// A dynamic optional field (`a?: any`, `b?: unknown`) is left absent too.
+type W = { a?: any; b?: unknown; c?: number | string; h: number };
+const w: W = { a: 1, b: "u", c: 2, h: 0 };
+delete w.a;
+delete w.b;
+delete w.c;
+console.log("a" in w, "b" in w, "c" in w, Object.keys(w).join(","), w);
