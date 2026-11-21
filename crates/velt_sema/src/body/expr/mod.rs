@@ -80,6 +80,7 @@ mod dynamic_relational;
 mod dynamic_rmw;
 mod dynamic_whole;
 mod dynamic_write;
+mod element_store;
 mod env_globals;
 mod generic_dynamic;
 mod identity_eq;

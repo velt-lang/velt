@@ -244,9 +244,12 @@ impl FnCx<'_, '_> {
             [index] => self.number_index(index, param),
             _ => false,
         };
+        // A typed array converts an `any` it is given (element_store.rs): its value is bound
+        // first, below.
+        let typed = self.typed_array_receiver(obj.ty);
         match op {
             // `xs[i] = v` as a statement: one call, its arguments evaluated in JS's order.
-            None if !as_value && one && is_pure_value(value) => {
+            None if !as_value && one && !typed && is_pure_value(value) => {
                 let prop = ident(SET_INDEX, span);
                 let args = [ast::Expr::clone(keys[0]), value.clone()];
                 self.method_call_on(obj, &prop, &[], &args, None, span)
@@ -259,6 +262,7 @@ impl FnCx<'_, '_> {
                 let recv = self.receiver_once(obj, object, Some(value), &mut stmts);
                 let mut args = self.keys_once(recv.ty, SET_INDEX, &keys, &mut stmts);
                 let v = self.expr(value, None, Want::Move);
+                let v = if typed { self.typed_array_value(v) } else { v };
                 self.bind_temp(NEW, v, &mut stmts);
                 args.push(name_ref(NEW, span));
                 let call =

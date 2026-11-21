@@ -1417,7 +1417,15 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   without type arguments: the class id is `T` or a subclass; a generic class: that
   instantiation's table; `U | null`: `null` and `undefined` give `null`; a union or literal
   `U` with `| null`: a loose `=== null` test first, then per member as below). A mismatch
-  stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
+  stops the program with `TypeError: the value is not a <T> (it is <found>)`. To a number type
+  a number of another numeric type converts, to an integer type as JavaScript's ToIntN does
+  (truncated, modulo 2^N, `NaN` and the infinities 0). One assignment is no type claim but
+  JavaScript's own converting store: an `any` assigned to an element of an integer array
+  (`buf[i] = v` on a `Buffer`, a `u8[]`, an `i32[]`). Sema writes its value as a test of the
+  tag: a number held is `AnyTo` the element type as it is, and anything else is first
+  converted with `ToNumber` (`ToPrimitive` before, for an object) and that number, as an
+  `any`, is `AnyTo` the element type (`body/expr/element_store.rs`). A `number[]` element
+  is not such a store (JavaScript keeps the value itself there). Its operand is
   owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
   the place keeps (and later drops) its value. An optional second operand, a string literal
   (`ExprKind::Lit(Lit::Str(text))`), says where the value comes from: a mismatch stops with
