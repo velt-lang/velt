@@ -225,6 +225,7 @@ mod special {
                 erase_generics: _,
                 in_field: _,
                 field_erased: _,
+                param_props: _,
             } = self;
             readonly_params.enc(w);
         }

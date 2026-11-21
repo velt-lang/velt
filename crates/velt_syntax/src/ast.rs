@@ -370,6 +370,10 @@ pub enum TypeExprKind {
         ty: Option<Box<TypeExpr>>,
         asserts: bool,
     },
+    /// `weak T`: a weak reference to an object of type `T`, in the type of a field or a variable
+    /// (`parent: weak Node | null`; docs/internals/design/cycles.md "`weak T`"). Sema checks
+    /// where it may be written and what it may refer to.
+    Weak(Box<TypeExpr>),
 }
 
 // ─────────────────────────── Statements ───────────────────────────

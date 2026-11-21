@@ -492,7 +492,7 @@ fn any_name(t: &ast::TypeExpr, f: &mut dyn FnMut(&str) -> bool) -> bool {
         K::Callable { sigs, members } => {
             any_name(&crate::call_sigs::lower(sigs, members, t.span), f)
         }
-        K::KeyOf(t) => any_name(t, f),
+        K::KeyOf(t) | K::Weak(t) => any_name(t, f),
         K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
             .iter()
             .any(|x| any_name(x, f)),
