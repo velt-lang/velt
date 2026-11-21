@@ -39,3 +39,19 @@ f 3
 all
 f 4
 f 5
+g 1
+b done
+g 2
+a done
+g 3
+g 4
+any 2
+g 5
+h 1
+d done
+h 2
+c done
+h 3
+h 4
+any void
+h 5

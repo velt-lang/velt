@@ -419,10 +419,16 @@ export function allWakeByRef(c: usize): void {
     // entry ran (a promise settled by `resolve`, which Node queued then) took the reaction's step
     // already: the credit passes on to the awaiter's entry.
     const ticket = micro.enqueue(cur, m.wakerClone(w), micro.takeCredit(cur));
-    // The entry the awaiter waits for: a race's first since its last poll (the winner's
-    // reaction), a join's newest (the reaction of the input settled last).
-    if (m.ld(j + J_TICKET) === 0 || m.ld(j) === fnAddress(joinPoll)) {
+    // The entry the awaiter waits for: a join's newest (the reaction of the input settled
+    // last); a race's first since its last poll, and each child's own (sched_race.velt
+    // `childReached`: a rejection `Promise.any` drops does not settle it).
+    if (m.ld(j) === fnAddress(joinPoll)) {
       m.st(j + J_TICKET, ticket as usize);
+    } else {
+      if (m.ld(j + J_TICKET) === 0) {
+        m.st(j + J_TICKET, ticket as usize);
+      }
+      m.st(c + C_DONE, ticket as usize);
     }
   } else {
     // (Woken directly with nothing queued, the awaiter's poll comes first: no mark.)

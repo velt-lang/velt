@@ -105,9 +105,45 @@ async function resolvedAwaitedLater(): Promise<void> {
   await t;
 }
 
+async function settleLater(name: string, n: number, fail: boolean): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  console.log(name, "done");
+  if (fail) {
+    throw new Error(name);
+  }
+  return n;
+}
+
+async function settleLaterVoid(name: string, n: number, fail: boolean): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  console.log(name, "done");
+  if (fail) {
+    throw new Error(name);
+  }
+}
+
+// `Promise.any` whose deciding input fulfils after another rejected: it settles in the reaction
+// on the one that fulfils, not on the rejection before it.
+async function anyAfterRejection(): Promise<void> {
+  const p = Promise.any([settleLater("a", 2, false), settleLater("b", 1, true)]);
+  const t = ticker("g");
+  console.log("any", await p);
+  await t;
+  const q = Promise.any([settleLaterVoid("c", 2, false), settleLaterVoid("d", 1, true)]);
+  const u = ticker("h");
+  await q;
+  console.log("any void");
+  await u;
+}
+
 async function main() {
   await settledAwaitedLater();
   await settledThenLater();
   await pendingAwaited();
   await resolvedAwaitedLater();
+  await anyAfterRejection();
 }

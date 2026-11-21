@@ -23,7 +23,9 @@ import { addressLoad, fnAddress, futDrop, futPoll, stateDrop } from "velt/lang/i
 import * as al from "./sched_all";
 import * as st from "./sched_all_step";
 import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 // The race's own field, in a join header word it does not use: whether a rejection loses while
 // others run (`Promise.any`).
@@ -102,10 +104,15 @@ function racePoll(f: usize, cx: usize): u32 {
     }
     return 0;
   }
-  // One batch a poll, as the join's (sched_all.velt).
+  // One batch a poll, as the join's (sched_all.velt). A child whose wake queued the awaiter waits
+  // for that entry's turn (Node's reaction on it), with the children after it: in `Promise.any`
+  // a rejection before it does not settle the race.
   let c = al.reverse(m.takeStack(j + al.J_READY));
   while (c !== 0) {
     const next = m.ld(c + al.C_NEXT);
+    if (!childReached(j, c, cx)) {
+      return 0;
+    }
     m.swap(c + al.C_QUEUED, 0);
     if (m.ld(c + al.C_FUT) !== 0 && pollKid(j, c)) {
       return st.settled(j, cx, via);
@@ -113,6 +120,33 @@ function racePoll(f: usize, cx: usize): u32 {
     c = next;
   }
   return 0;
+}
+
+/**
+ * Has the turn of the entry child `c`'s wake queued (its ticket in the record's `C_DONE`, which a
+ * race does not otherwise use) come for the awaiter polling race `j` with `cx`? If not, `c` and
+ * the children after it go back on the ready stack in order, and that entry is the one the next
+ * poll waits for (`J_TICKET`).
+ */
+function childReached(j: usize, c: usize, cx: usize): bool {
+  const ticket = m.ld(c + al.C_DONE);
+  if (ticket === 0) {
+    return true;
+  }
+  const w = m.ld(cx + 8);
+  const k = t.exec() === 0 ? 0 : wk.taskOf(w);
+  if (k === 0 || micro.reached(k, ticket as u64, w)) {
+    m.st(c + al.C_DONE, 0);
+    return true;
+  }
+  m.st(j + al.J_TICKET, ticket);
+  let r = c;
+  while (r !== 0) {
+    const next = m.ld(r + al.C_NEXT);
+    m.pushStack(j + al.J_READY, r, al.C_NEXT);
+    r = next;
+  }
+  return false;
 }
 
 /**
