@@ -34,7 +34,7 @@ fn weak_type(t: &ast::TypeExpr, cx: &mut Cx) {
         t.span,
         "`weak` is not TypeScript syntax: it makes a Velt field or variable a weak reference".into(),
         &[
-            "TypeScript keeps every reference strong; to refer to an object without keeping it alive, use `WeakRef<T>`, which both have",
+            "TypeScript keeps every reference strong; to refer to an object without keeping it alive, use `WeakRef<T>`, which TypeScript and Velt both have",
         ],
     );
 }
