@@ -1,0 +1,7 @@
+[ 'ok 1', 'bad b' ]
+[ 'a', 'b' ]
+[
+  { status: 'fulfilled', value: 'a' },
+  { status: 'fulfilled', value: 'b' }
+]
+caught a

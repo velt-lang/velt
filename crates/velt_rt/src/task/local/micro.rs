@@ -139,12 +139,6 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         let Some(w) = e.waker else {
             continue;
         };
-        // A root that yielded during this poll waits for the task's next poll (an entry queued
-        // for it before it handed the promise on cannot resume it early).
-        if t.root_yielded.get() && w.will_wake(d.task) {
-            w.wake();
-            continue;
-        }
         // The credit is for the step the waiter's `await` takes on resuming, which it takes
         // only while the word is not 0; with the queue empty it goes on without one, and the
         // credit must not pass to a later `await` of the same run.

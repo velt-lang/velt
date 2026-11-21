@@ -7,6 +7,9 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #3222 step 3: the CPU check and the flags of crates/velt_rt/src/cpu.rs, now std's
+    // (std/lang/hooks/cpu.velt, std/lang/cpu).
+    "velt_rt_check_cpu",
     // #2196: standard input (std/process/stdin_buffer.velt over `#stdin-sys`), which only std
     // called.
     "velt_rt_stdin_read_line_sync",
@@ -105,4 +108,16 @@ pub const DELETED: &[&str] = &[
     "velt_rt_parse_int",
     // #2196: the decimals of `parseFloat` past 64 bits (std/lang/hooks/number_parse).
     "velt_rt_parse_float",
+    // #2198: the string methods in Velt (std/lang/string/trim, fill, split, replace) and the code
+    // points of `for (const c of s)` (std/lang/hooks/string).
+    "velt_rt_str_trim",
+    "velt_rt_str_trim_start",
+    "velt_rt_str_trim_end",
+    "velt_rt_str_repeat",
+    "velt_rt_str_pad_start",
+    "velt_rt_str_pad_end",
+    "velt_rt_str_split",
+    "velt_rt_str_replace",
+    "velt_rt_str_replace_all",
+    "velt_rt_str_code_points",
 ];

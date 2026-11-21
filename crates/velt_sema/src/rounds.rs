@@ -33,7 +33,6 @@ pub(crate) fn run<'m>(
     doubt: &dyn Fn(&Ctx) -> bool,
     assumed: &RefCell<Assumed>,
     recovered: bool,
-    root: usize,
     generator: Option<&generated::Generator>,
 ) -> Result<(Ctx<'m>, Option<DefId>, generated::bind::Bound), Box<script_locals::Checked>> {
     // Function types written without `throws` throw what the closures stored into them throw
@@ -93,22 +92,26 @@ pub(crate) fn run<'m>(
             continue 'check;
         }
         if recovered || cx.diags.iter().any(|d| d.is_error()) {
-            let refused = script_locals::refused(&cx, root);
+            let refused = script_locals::refused(&cx, cx.root);
             return Err(Box::new(((None, cx.diags), refused)));
         }
         if let Some(out) = generating::stopped(generator) {
             return Err(Box::new(((out, cx.diags), Default::default())));
         }
-        let generated =
-            match timings::pass("generated::instances", || generated::instances(&mut cx)) {
-                Ok(bound) => bound,
-                Err(demand) => {
-                    return Err(Box::new((
-                        (Some(Checked::Demand(demand)), cx.diags),
-                        Default::default(),
-                    )))
-                }
-            };
+        // std's unit binds no instance: the app's stage does (`crate::units`).
+        let generated = match cx.units_stage == crate::units::Stage::Std {
+            true => Ok(Default::default()),
+            false => timings::pass("generated::instances", || generated::instances(&mut cx)),
+        };
+        let generated = match generated {
+            Ok(bound) => bound,
+            Err(demand) => {
+                return Err(Box::new((
+                    (Some(Checked::Demand(demand)), cx.diags),
+                    Default::default(),
+                )))
+            }
+        };
         if let Some(s) = cx.checked_again(doubt(&cx) && !kept_first) {
             seeds = s;
             (cx, entry) = new_cx(doubted, held, &seeds, rounds == FN_SITE_ROUNDS, &views);

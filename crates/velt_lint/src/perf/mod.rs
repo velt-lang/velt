@@ -3,6 +3,7 @@
 //! mechanical, offers it, saying whether the rewrite is still TypeScript.
 
 mod class_data;
+mod cpu_check;
 mod foreach;
 mod record;
 
@@ -108,6 +109,9 @@ pub fn lint(
         }
         if on(class_data::CODE) {
             found.extend(class_data::find(&cx));
+        }
+        if on(cpu_check::CODE) {
+            found.extend(cpu_check::find(&cx));
         }
         found.sort_by_key(|f| (f.span.lo, f.span.hi));
         out.extend(

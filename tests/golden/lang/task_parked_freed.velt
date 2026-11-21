@@ -1,0 +1,229 @@
+// check: no leaks
+// A spawned task whose root waits on a promise nobody can settle, and that nobody can wake or
+// join any more, is freed with what its root holds (#3126). Such a task used to stay parked
+// until the program ended, 7 blocks a task.
+//
+// Where Velt differs from Node on purpose: the `[Symbol.dispose]` hooks of what a collected
+// function held run (the "freed ..." lines, and "tidied ..." which such a hook starts). Node
+// collects the same functions and runs nothing, so it prints every other line, in this order.
+// Each case waits for its hook through `gone`, whose timer is what Node falls back to.
+
+class Held {
+  name: string;
+  done: (v: number) => void;
+
+  constructor(name: string, done: (v: number) => void) {
+    this.name = name;
+    this.done = done;
+  }
+
+  [Symbol.dispose]() {
+    console.log("freed " + this.name);
+    const done = this.done;
+    done(1);
+  }
+}
+
+// Holds a disposable and an array, as a class instance in a root's frame.
+class Box {
+  h: Held;
+  sizes: number[];
+
+  constructor(h: Held, sizes: number[]) {
+    this.h = h;
+    this.sizes = sizes;
+  }
+}
+
+// Its dispose hook starts a promise: the freed task lives on until that promise ends.
+class Tidies {
+  name: string;
+  done: (v: number) => void;
+
+  constructor(name: string, done: (v: number) => void) {
+    this.name = name;
+    this.done = done;
+  }
+
+  [Symbol.dispose]() {
+    console.log("freed " + this.name);
+    void tidy(this.name, this.done);
+  }
+}
+
+async function tidy(name: string, done: (v: number) => void): Promise<void> {
+  await sleep(1);
+  console.log("tidied " + name);
+  done(1);
+}
+
+// Waits for `p`, which the dispose hook of what a freed task held settles. The timer settles it
+// where no such hook runs (Node), and makes a task that was not freed show as a missing line
+// instead of a program that never ends.
+async function gone(p: Promise<number>, resolve: (v: number) => void): Promise<void> {
+  const timer = setTimeout(() => resolve(-1), 3000);
+  await p;
+  clearTimeout(timer);
+}
+
+// The root's frame holds `h` across an await of a promise that never settles.
+async function parked(h: Held): Promise<void> {
+  await new Promise<number>((resolve) => {});
+  console.log("never " + h.name);
+}
+
+// Counted values of several kinds in the root's frame, which is suspended a second time when it
+// is dropped: a long string, a map, arrays, and an object holding a disposable.
+async function counted(h: Held): Promise<void> {
+  const text = "a string too long to be stored in line: " + h.name + ", " + h.name;
+  const byName = new Map<string, number[]>();
+  byName.set(h.name, [1, 2, 3]);
+  const list = [text, h.name];
+  const box = new Box(h, [4, 5]);
+  await sleep(1);
+  await new Promise<number>((resolve) => {});
+  console.log(text.length, byName.size, list.length, box.sizes.length, box.h.name);
+}
+
+async function parkedTidies(h: Tidies): Promise<void> {
+  await new Promise<number>((resolve) => {});
+  console.log("never " + h.name);
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+// A chain of two: the root awaits a function that awaits the dead promise.
+async function two(h: Held): Promise<number> {
+  const v = await dead();
+  return v + h.name.length;
+}
+
+// A chain of three.
+async function three(h: Held): Promise<number> {
+  return (await two(h)) + 1;
+}
+
+// The dead promise started before it is awaited: it runs first on its own, and its owner's
+// await finds it suspended.
+async function startedFirst(h: Held): Promise<number> {
+  const p = dead();
+  await yieldNow();
+  return (await p) + h.name.length;
+}
+
+async function middle(): Promise<number> {
+  const p = dead();
+  await yieldNow();
+  return (await p) + 1;
+}
+
+// A chain whose middle link was started before it was awaited.
+async function startedMiddle(h: Held): Promise<number> {
+  const p = middle();
+  await yieldNow();
+  return (await p) + h.name.length;
+}
+
+// Three links, the middle one started first, awaited directly.
+async function startedDeep(h: Held): Promise<number> {
+  return (await middle()) + h.name.length;
+}
+
+// Says it is about to park, then parks for ever.
+async function signals(h: Held, ready: (v: number) => void): Promise<void> {
+  ready(1);
+  await new Promise<number>((resolve) => {});
+  console.log("never " + h.name);
+}
+
+// Waits on a promise of its own that a timer settles: it can be woken, and runs to its end.
+async function control(h: Held): Promise<number> {
+  const v = await new Promise<number>((resolve) => {
+    setTimeout(() => resolve(7), 5);
+  });
+  console.log("settled " + v + " " + h.name);
+  return v;
+}
+
+async function main() {
+  // The program of #3126: 100 tasks, nothing printed, every block freed.
+  for (let i = 0; i < 100; i++) {
+    void spawn(async () => {
+      console.log(await new Promise<number>((resolve) => {}));
+    });
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(parked(new Held("held", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(counted(new Held("counted", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(parkedTidies(new Tidies("tidies", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(two(new Held("two", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(three(new Held("three", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(startedFirst(new Held("started first", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(startedMiddle(new Held("started middle", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  {
+    const w = Promise.withResolvers<number>();
+    void spawn(startedDeep(new Held("started deep", w.resolve)));
+    await gone(w.promise, w.resolve);
+  }
+
+  // The handle is dropped after the task parked: the drop wakes the task, which is freed then.
+  {
+    const w = Promise.withResolvers<number>();
+    const ready = Promise.withResolvers<number>();
+    {
+      const handle = spawn(signals(new Held("late handle", w.resolve), ready.resolve));
+      await ready.promise;
+      // timing: the task said it is about to park; the sleep lets its poll end on another
+      // worker. A drop that comes first frees the task at its park, with the same output.
+      await sleep(5);
+      console.log("dropping the handle");
+    }
+    await gone(w.promise, w.resolve);
+  }
+
+  // A task that can still be woken is left alone, and runs to its end.
+  {
+    const w = Promise.withResolvers<number>();
+    const t = spawn(control(new Held("control", w.resolve)));
+    console.log("control returned " + (await t));
+    await gone(w.promise, w.resolve);
+  }
+  console.log("done");
+}

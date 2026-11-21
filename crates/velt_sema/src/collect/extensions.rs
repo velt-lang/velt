@@ -107,7 +107,7 @@ pub(super) fn extension<'m>(
 }
 
 fn module_prefix(cx: &Ctx, m: usize) -> String {
-    if m == cx.root {
+    if cx.names_unqualified(m) {
         String::new()
     } else {
         format!("{}::", cx.modules[m].path)

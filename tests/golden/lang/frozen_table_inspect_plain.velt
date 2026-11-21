@@ -1,0 +1,34 @@
+// check: also with VELT_RT_DEBUG_ALLOC=1
+// #3414's repro as it was reported: `toEqual` against a module constant table in a frozen
+// instance freed a stack address in a release build (lang/frozen_table_format covers the other
+// format paths).
+import { expect } from "velt/test";
+
+// A module constant table: read-only data, no count word in front of its header.
+const T: u64[] = [1, 2, 3, 4];
+
+// Two objects hold one array: `u64[]` is a counted type in this program.
+class Holder {
+  a: u64[];
+  constructor(a: u64[]) {
+    this.a = a;
+  }
+}
+
+function pick(a: u64[]): u64[] {
+  const r: u64[] = [];
+  for (const x of a) {
+    r.push(x);
+  }
+  return r;
+}
+
+function main() {
+  const shared: u64[] = [9, 9];
+  const h1 = new Holder(shared);
+  const h2 = new Holder(shared);
+  for (let i = 0; i < 8; i++) {
+    expect(pick([1, 2, 3, 4])).toEqual(T);
+  }
+  console.log(h1.a.length + h2.a.length);
+}

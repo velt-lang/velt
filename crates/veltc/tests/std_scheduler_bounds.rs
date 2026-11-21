@@ -511,7 +511,7 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
         return;
     }
     let dir = test_dir::TestDir::new();
-    let counted = "    wk.release(k);\n    if (mk.liveDown(g, e) === 1 && e !== g) {\n      // The last live task: worker 0 may wait for that in `schedFinish`.\n      wk.unpark(g);\n    }\n";
+    let counted = "    wk.releaseHere(k);\n    if (mk.liveDown(g, e) === 1 && e !== g) {\n      // The last live task: worker 0 may wait for that in `schedFinish`.\n      wk.unpark(g);\n    }\n";
     let pause = "    if (e !== g) {\n      pause(300);\n    }\n";
     for released_first in [true, false] {
         let std_dir = dir.path().join(format!("std_{released_first}"));
@@ -522,8 +522,8 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
             format!("{counted}{pause}")
         } else {
             format!(
-                "{}{pause}    wk.release(k);\n",
-                counted.replacen("    wk.release(k);\n", "", 1)
+                "{}{pause}    wk.releaseHere(k);\n",
+                counted.replacen("    wk.releaseHere(k);\n", "", 1)
             )
         };
         patch(&mut run, counted, &to);

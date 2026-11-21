@@ -1,0 +1,24 @@
+// `Map<string, V>.getUtf8`: 4M lookups of keys given as UTF-8 bytes (as a server reads header
+// names and route segments from the network), short and long, ASCII and not, three in four
+// present. The Rust port hashes and compares the bytes as the runtime did (hash.rs's hash and a
+// byte comparison over a table of the same strings).
+import { utf8Encode } from "velt/encoding";
+
+function main() {
+  const m = new Map<string, i64>();
+  const keys: u8[][] = [];
+  for (let i = 0; i < 1024; i++) {
+    const k =
+      i % 4 == 0 ? `x-header-name-${i}-with-a-longer-tail` : i % 4 == 1 ? `k${i}` : `päron/${i}`;
+    if (i % 4 != 3) {
+      m.set(k, i as i64);
+    }
+    keys.push(utf8Encode(k));
+  }
+  let total: i64 = 0;
+  for (let i = 0; i < 4000000; i++) {
+    const v = m.getUtf8(keys[i % 1024]);
+    total += v == undefined ? 1 : v;
+  }
+  console.log(total);
+}
