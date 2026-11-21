@@ -66,7 +66,7 @@ function release(owner: usize): void {
   unsafe {
     const gone = letGo(owner);
     if (gone != null) {
-      unmapRead(gone.offset as usize, gone.length as usize);
+      unmapRead(gone.base, gone.len);
     }
   }
 }
