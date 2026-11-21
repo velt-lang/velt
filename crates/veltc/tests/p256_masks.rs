@@ -1,4 +1,5 @@
-//! P-256's masks stay masks in optimized code (`isZero` and `blend`, `std/crypto/field_p256.velt`).
+//! P-256's masks stay masks in optimized code (`isZero` and `blend`, `std/crypto/field_p256.velt`;
+//! `entryMasks`, the masks of the base table's scan in `std/crypto/p256_base_select.velt`).
 //! Inlined, `isZero` is one comparison to LLVM, so `blend`'s `(a & m) | (b & ~m)` becomes a select
 //! of two loads, and the backend makes that one load through a selected pointer: a memory address
 //! that depends on whether a window of the secret scalar is zero. No test run sees the difference.
@@ -99,6 +100,16 @@ fn p256_masks_stay_masks() {
         assert!(
             named("M6isZero"),
             "{target}: `isZero` was inlined, so the caller sees its mask is a comparison"
+        );
+        // `baseMultiply`'s scan of the base table: inlined, the masks were a comparison of the
+        // secret digit, and LLVM made the scan a branch that loaded only the selected entry.
+        assert!(
+            named("N10entryMasks"),
+            "{target}: `entryMasks` was inlined, so the scan of the base table sees its masks are a comparison"
+        );
+        assert!(
+            p256.iter().any(|f| f.contains("N10entryMasks(")),
+            "{target}: nothing calls `entryMasks`"
         );
         checked += 1;
     }
