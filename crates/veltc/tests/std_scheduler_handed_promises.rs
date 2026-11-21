@@ -336,8 +336,9 @@ fn a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too() {
 /// Promises already settled when they are passed, for
 /// [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`] (the review of #3426): the
 /// hand-over's proxy then finished at once, before the callee's copy, which shared it on this task
-/// again. Node prints the same sum. The rejected promise gets a handler before it is passed, as Node
-/// needs too: otherwise its rejection is reported as unhandled when it settles.
+/// again. Node prints the same sum. The rejected promise gets a handler before it is passed: it
+/// is handed over only after the task awaits twice, and Node reports a rejection still without a
+/// handler once its microtask queue drains ([`REJECTED_BEFORE`] hands one over at once).
 const SETTLED_BEFORE: &str = r#"// A promise that has settled before it is passed to an async closure that is called and spawned at
 // once: resolved, awaited before, settled without being awaited, rejected before (the callee
 // catches), and resolved by another task before.
@@ -389,6 +390,128 @@ async function main(): Promise<void> {
     await spawn(settle(got.resolve, r));
     const e = got.promise;
     sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(e));
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;
+
+/// A promise that has rejected already, handed to another task that catches its rejection, is
+/// not reported as unhandled: the hand-over handles it. The hand-over's proxy runs first in its
+/// task's next poll (so a copy of the holder made right after finds it waiting, [`SETTLED_BEFORE`]),
+/// which comes after the task's check of rejections nobody handled; a promise that finished
+/// already settles into its hub as it is handed over, as the proxy's first run would settle it.
+/// Each program was reported as an unhandled rejection, every run, when the hand-over left that
+/// settle to the proxy's first run (the re-review of #3426). Node prints the same.
+#[test]
+fn a_rejected_promise_handed_to_another_task_is_handled_by_the_hand_over() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let mut bad = Vec::new();
+    for (name, src, want) in [
+        ("shared_rejected", SHARED_REJECTED, "got 1\n"),
+        (
+            "shared_rejected_awaited",
+            SHARED_REJECTED_AWAITED,
+            "got 1 2\n",
+        ),
+        ("rejected_before", REJECTED_BEFORE, "done 20\n"),
+    ] {
+        let exe = build_std(dir.path(), name, src);
+        for threads in ["1", "4", "8"] {
+            for i in 0..COPY_RUNS {
+                let (code, out, err) = run(&exe, threads);
+                if code != 0 || out != want || !all_freed(&err) {
+                    bad.push(format!(
+                        "{name}, {threads} workers, run {i}: exit {code}, stdout {out:?}, stderr {err}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// A rejected promise with a second holder (so it is shared), the second handed to a named async
+/// function's spawned call (its argument is transferred), for
+/// [`a_rejected_promise_handed_to_another_task_is_handled_by_the_hand_over`].
+const SHARED_REJECTED: &str = r#"async function failsNow(): Promise<number> {
+  throw new Error("f");
+}
+
+async function catcher(held: Promise<number>): Promise<number> {
+  try {
+    return await held;
+  } catch (e) {
+    return 1;
+  }
+}
+
+async function main(): Promise<void> {
+  const q = failsNow();
+  const q2 = q;
+  const v = await spawn(catcher(q2));
+  console.log(`got ${v}`);
+  q.catch((e: Error): number => 0);
+}
+main();
+"#;
+
+/// [`SHARED_REJECTED`] with the caller awaiting the promise too.
+const SHARED_REJECTED_AWAITED: &str = r#"async function failsNow(): Promise<number> {
+  throw new Error("f");
+}
+
+async function catcher(held: Promise<number>): Promise<number> {
+  try {
+    return await held;
+  } catch (e) {
+    return 1;
+  }
+}
+
+async function main(): Promise<void> {
+  const q = failsNow();
+  const q2 = q;
+  const v = await spawn(catcher(q2));
+  let w = 0;
+  try {
+    w = await q;
+  } catch (e) {
+    w = 2;
+  }
+  console.log(`got ${v} ${w}`);
+}
+main();
+"#;
+
+/// A promise rejected before it is passed to an async closure that is called and spawned at once
+/// (the form of #3424), with no tick in between.
+const REJECTED_BEFORE: &str = r#"async function failsNow(n: number): Promise<number> {
+  throw new Error(`no ${n}`);
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 10; r++) {
+    const d = failsNow(r);
+    sum += await spawn(
+      (async (held: Promise<number>): Promise<number> => {
+        try {
+          return await held;
+        } catch (e) {
+          return 2;
+        }
+      })(d),
+    );
   }
   console.log(`done ${sum}`);
 }

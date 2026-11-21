@@ -16,6 +16,7 @@ import * as nd from "./sched_node";
 import * as nw from "./sched_node_wake";
 import * as sh from "./sched_share";
 import * as sd from "./sched_share_drop";
+import * as ss from "./sched_share_settle";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as x from "./sched_node_ext";
@@ -129,9 +130,30 @@ function newProxy(h: usize, glue: usize): usize {
     }
     nd.bind(task, n, m.ld(h + sh.H_RDROP), false);
     nw.nodeWakeByRef(n);
+    // A promise that finished already settles now, as the proxy's first run would settle it: its
+    // result is the hub's, so a rejection is handled by the hand-over, before the task's check
+    // of rejections nobody handled runs (sched_node_report.velt `report`).
+    settleFinished(h, task);
   }
   tr.transfer(p, glue, poll);
   return p;
+}
+
+/**
+ * Hub `h`'s promise, a node of this task (`task`) that finished before the hub heard, settles
+ * (as sched_share.velt `peek` settles it). A hub whose node is another task's settles there.
+ */
+function settleFinished(h: usize, task: usize): void {
+  if ((m.load32(h + sh.H_FLAGS) & (sh.DONE | sh.AWAY)) !== 0) {
+    return;
+  }
+  const n = m.ld(h + sh.H_NODE);
+  const fl = m.load32(n + nd.N_FLAGS);
+  if (
+    (fl & (nd.STARTED | nd.FINISHED)) === (nd.STARTED | nd.FINISHED) && m.ld(n + nd.N_TASK) === task
+  ) {
+    ss.settle(h, task, 0);
+  }
 }
 
 /** A proxy's state poll: awaits its role, then moves the result into its state. */
