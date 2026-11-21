@@ -336,8 +336,8 @@ fn a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too() {
 /// Promises already settled when they are passed, for
 /// [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`] (the review of #3426): the
 /// hand-over's proxy then finished at once, before the callee's copy, which shared it on this task
-/// again. Node prints the same sum (with a handler on the rejected promise before it is passed,
-/// which Node needs to keep it from being reported).
+/// again. Node prints the same sum. The rejected promise gets a handler before it is passed, as Node
+/// needs too: otherwise its rejection is reported as unhandled when it settles.
 const SETTLED_BEFORE: &str = r#"// A promise that has settled before it is passed to an async closure that is called and spawned at
 // once: resolved, awaited before, settled without being awaited, rejected before (the callee
 // catches), and resolved by another task before.
@@ -372,6 +372,7 @@ async function main(): Promise<void> {
     sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(c));
     // Rejected before; the callee catches.
     const d = fails(r);
+    d.catch((e: Error): number => 0);
     await yieldNow();
     await yieldNow();
     sum += await spawn(
