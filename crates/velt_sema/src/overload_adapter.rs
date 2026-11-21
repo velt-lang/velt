@@ -187,6 +187,133 @@ pub(crate) fn rest_adapter(
     }))
 }
 
+/// Signature parameter `p`, a callback whose rest parameter is typed by one of the signature's
+/// type parameters (`impl: (rq: Ctx, ...args: A) => R` with `A extends unknown[]`), where the
+/// implementation's `ip` takes one with a rest of an array, alone or as a member of a union
+/// (`((rq: Ctx, ...args: unknown[]) => unknown) | Options`): `p as unknown as <that type>`.
+/// What `A` is is known per instance only, so no adapter can name its elements; the
+/// instance's value is the callback's own function (its type has the tuple's elements as its
+/// parameters), and called through the wider type its arguments are converted, a TypeError
+/// when one isn't what the callback takes (#379). `None` for any other parameter.
+///
+/// The parameters before the rest must be written alike in both, and so must a `throws`
+/// clause: the cast checks only what the rest takes. Not for an optional callback (the
+/// implementation gets `undefined`), nor when the implementation's type names its own type
+/// parameters (the signature's body can't name them).
+pub(crate) fn rest_param_cast(
+    p: &ast::Param,
+    ip: &ast::Param,
+    sig: &ast::FnSig,
+    imp: &ast::FnSig,
+    span: Span,
+) -> Option<ast::Expr> {
+    use ast::TypeExprKind as T;
+    let T::Function {
+        params: want,
+        rest: true,
+        throws: want_throws,
+        ..
+    } = &p.ty.kind
+    else {
+        return None;
+    };
+    let rest_param = |t: &ast::TypeExpr| {
+        matches!(&t.kind, T::Named { path, args }
+            if args.is_empty() && path.len() == 1
+                && sig.generics.iter().any(|g| g.name.name == path[0].name))
+    };
+    if p.rest || ip.rest || p.optional || ip.optional || !want.last().is_some_and(rest_param) {
+        return None;
+    }
+    let takes_array = |t: &ast::TypeExpr| {
+        matches!(&t.kind, T::Function { params, rest: true, .. }
+            if params.last().is_some_and(|l| matches!(l.kind, T::Array(_))))
+    };
+    let target = match &ip.ty.kind {
+        T::Union(members) => {
+            let mut fns = members.iter().filter(|m| takes_array(m));
+            let one = fns.next()?;
+            if fns.next().is_some() {
+                return None;
+            }
+            one
+        }
+        _ if takes_array(&ip.ty) => &ip.ty,
+        _ => return None,
+    };
+    let T::Function {
+        params: have,
+        throws: have_throws,
+        ..
+    } = &target.kind
+    else {
+        return None;
+    };
+    let (_, want_fixed) = want.split_last()?;
+    let (_, have_fixed) = have.split_last()?;
+    let alike = |a: &[ast::TypeExpr], b: &[ast::TypeExpr]| {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(x, y)| crate::overloads::same_type(x, y))
+    };
+    let same_throws = match (want_throws, have_throws) {
+        (None, None) => true,
+        (Some(a), Some(b)) => crate::overloads::same_type(a, b),
+        _ => false,
+    };
+    if !alike(want_fixed, have_fixed) || !same_throws || names_any(target, &imp.generics) {
+        return None;
+    }
+    let expr = |kind| ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind,
+        span,
+    };
+    let unknown = ast::TypeExpr {
+        kind: T::Named {
+            path: vec![ast::Ident {
+                name: "unknown".into(),
+                span,
+            }],
+            args: vec![],
+        },
+        span,
+    };
+    let read = expr(ast::ExprKind::Ident(p.name.clone()));
+    let as_unknown = expr(ast::ExprKind::Cast {
+        expr: Box::new(read),
+        ty: unknown,
+    });
+    Some(expr(ast::ExprKind::Cast {
+        expr: Box::new(as_unknown),
+        ty: target.clone(),
+    }))
+}
+
+/// Does type `t` name one of `generics` (a type parameter of the implementation)?
+fn names_any(t: &ast::TypeExpr, generics: &[ast::GenericParam]) -> bool {
+    struct Names<'g> {
+        generics: &'g [ast::GenericParam],
+        found: bool,
+    }
+    impl<'a> velt_syntax::visit::Visit<'a> for Names<'_> {
+        fn ty(&mut self, t: &'a ast::TypeExpr) {
+            if let ast::TypeExprKind::Named { path, .. } = &t.kind {
+                let named =
+                    |g: &ast::GenericParam| path.first().is_some_and(|h| h.name == g.name.name);
+                self.found |= path.len() == 1 && self.generics.iter().any(named);
+            }
+        }
+    }
+    let mut v = Names {
+        generics,
+        found: false,
+    };
+    velt_syntax::visit::walk_type_expr(t, &mut v);
+    v.found
+}
+
 /// The arguments of a call of an overloaded function with each arrow parameter that has a
 /// default and a written type (`(c: Ctx, p1: number = 5) => …`) taking `T | undefined` and
 /// applying the default to `undefined`, as TypeScript types it (`p1?: number`): `(c: Ctx,

@@ -11,6 +11,7 @@ import * as m from "./sched_mem";
 import * as nc from "./sched_node_catch";
 import * as q from "./sched_queue";
 import * as tk from "./sched_task";
+import * as yl from "./sched_yield_list";
 
 declare function velt_rt_flush(): void;
 declare c("c") function velt_rt_latch_open$rt(l: u64): void;
@@ -123,9 +124,18 @@ export function wake(t: usize): void {
  * panicked under a catch with it (sched_join.velt `rootPanicked`).
  */
 export function release(t: usize): void {
+  releaseHere(t);
+}
+
+/** `release`, in line where it is called: a task's end (sched_run.velt `finish`), once per task. */
+@inline("always")
+export function releaseHere(t: usize): void {
   if (m.dec(t + tk.T_REFS) === 1) {
     if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
       freePanicked(t);
+    }
+    if (yl.hasBlock(t)) {
+      yl.freeBlock(t);
     }
     m.release(t, m.ld(t + tk.T_BYTES));
   }

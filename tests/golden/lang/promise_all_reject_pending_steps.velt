@@ -1,0 +1,28 @@
+// `Promise.all` over an array rejects while another input still steps through microtasks: the
+// awaiter's `catch` runs before the pending input's later steps, as in Node (#3064).
+async function fail(): Promise<string> {
+  await null;
+  console.log("fail rejects");
+  throw new Error("x");
+}
+
+async function finish(n: number): Promise<string> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  console.log("pending finishes");
+  return "y";
+}
+
+async function main() {
+  const ps: Promise<string>[] = [fail(), finish(200)];
+  try {
+    await Promise.all(ps);
+  } catch (e) {
+    console.log("caught");
+  }
+  for (let i = 0; i < 300; i++) {
+    await null;
+  }
+  console.log("end");
+}

@@ -1,0 +1,118 @@
+// velt/lang/string (internal): the rare code-unit paths of `split` and `replace` (#2198): a
+// separator or pattern that can match half of a surrogate pair (a half needle, code_units.velt),
+// and the empty one, which cuts between the halves of every pair.
+//
+// A string keeps a pair as one four-byte sequence, so a place between its halves is no byte
+// offset. Here a place is a *position*, `byte << 1`, plus 1 for the low half of the pair at
+// `byte` (as code_units.velt walks strings). Matches are found and text is cut by position, so
+// nothing is translated to UTF-16 indices and nothing is allocated but the results. A piece that
+// starts or ends inside a pair gets that half as a lone surrogate; pieces are joined by the
+// string builder, which makes a pair of two halves that meet.
+
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import {
+  codePoint4,
+  halfCondition,
+  halfStart,
+  nextUnit,
+  NO_START,
+  unitsMatch,
+} from "velt/lang/string/code_units";
+import { findTwoWay } from "velt/lang/string/two_way";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_from_char_code(code: i64): string;
+
+/**
+ * The first match of the half needle `needle` in `s` that starts at position `from` or later:
+ * its position, or `NO_START`. Linear: the needle's whole-code-point middle is found with
+ * Two-Way, which checks the halves beside it; a middle under two bytes (a needle of seven bytes
+ * at most) is compared unit by unit at every position.
+ */
+export function halfFindPos(s: string, needle: string, from: u64): u64 {
+  const n = strByteLen(s);
+  const m = strByteLen(needle);
+  const half = halfCondition(needle, m);
+  const start: usize = ((half >> 63) & 1) != 0 ? 3 : 0;
+  const end = ((half >> 62) & 1) != 0 ? m - 3 : m;
+  if (end < start + 2) {
+    let p = from;
+    while ((p >> 1) < (n as u64)) {
+      if (unitsMatch(s, n, needle, m, p)) {
+        return p;
+      }
+      p = nextUnit(s, p);
+    }
+    return NO_START;
+  }
+  const len = end - start;
+  // A match from `from` on has its middle at that position's code point or after it.
+  let at = (from >> 1) as usize;
+  while (at + len <= n) {
+    const k = findTwoWay(s, needle, start, len, at, n, half);
+    if (k < 0) {
+      return NO_START;
+    }
+    const p = halfStart(s, k as usize, len, half);
+    if (p != NO_START && p >= from) {
+      return p;
+    }
+    at = (k as usize) + 1;
+  }
+  return NO_START;
+}
+
+/** The position after the code units of `needle` (`m` bytes), which match at `p` of `s`. */
+export function unitsAfter(s: string, p: u64, needle: string, m: usize): u64 {
+  let h = p;
+  let q: u64 = 0;
+  while ((q >> 1) < (m as u64)) {
+    h = nextUnit(s, h);
+    q = nextUnit(needle, q);
+  }
+  return h;
+}
+
+/** The lone surrogate that is the high (`!low`) or low half of the pair at byte `i` of `s`. */
+function halfOf(s: string, i: usize, low: bool): string {
+  const c = codePoint4(s, i) - 0x10000;
+  return velt_rt_str_from_char_code((low ? 0xdc00 + (c & 0x3ff) : 0xd800 + (c >> 10)) as i64);
+}
+
+/**
+ * The text of `s` from position `a` to position `b` (`a <= b`): a range of its bytes, with the
+ * low half of the pair `a` is inside first and the high half of the pair `b` is inside last.
+ */
+export function unitsText(s: string, a: u64, b: u64): string {
+  const ba = (a >> 1) as usize;
+  const bb = (b >> 1) as usize;
+  if (((a | b) & 1) == 0) {
+    return velt_rt_str_byte_slice(s, ba as u64, bb as u64);
+  }
+  if (a == b) {
+    return "";
+  }
+  if ((a & 1) == 0) {
+    // Ends inside the pair at `bb`.
+    const head = velt_rt_str_byte_slice(s, ba as u64, bb as u64);
+    return head + halfOf(s, bb, false);
+  }
+  // Starts inside the pair at `ba`, whose low half comes first.
+  const low = halfOf(s, ba, true);
+  const middle = velt_rt_str_byte_slice(s, (ba + 4) as u64, bb as u64);
+  if ((b & 1) == 0) {
+    return low + middle;
+  }
+  return low + middle + halfOf(s, bb, false);
+}
+
+/** The text of the code unit at position `p` of `s`: a character, or one half of a pair. */
+export function unitText(s: string, p: u64): string {
+  const i = (p >> 1) as usize;
+  const b = strByteAt(s, i as u64);
+  if (b >= 0xf0) {
+    return halfOf(s, i, (p & 1) != 0);
+  }
+  const len: usize = b < 0x80 ? 1 : b < 0xe0 ? 2 : 3;
+  return velt_rt_str_byte_slice(s, i as u64, (i + len) as u64);
+}

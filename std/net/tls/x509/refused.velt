@@ -1,0 +1,26 @@
+// velt/net (internal): `CertificateRefused`, the failure of the certificate parser, with why:
+// path validation reports some reasons as rustls's webpki does, under their own names and with
+// their own weight among several candidates' errors (verify_error.velt).
+
+import { BAD_CERTIFICATE, TlsFailure } from "velt/net/tls/alert";
+
+/** Malformed DER, or anything without a reason of its own below. */
+export const REFUSED_MALFORMED: i32 = 0;
+/** Not a v3 certificate. */
+export const REFUSED_VERSION: i32 = 1;
+/** A critical extension this parser does not know. */
+export const REFUSED_CRITICAL_EXTENSION: i32 = 2;
+/** The signature algorithm outside the signed part differs from the one inside. */
+export const REFUSED_ALGORITHM_MISMATCH: i32 = 3;
+/** Bytes after the certificate, or after the fields of its signed part or of an extension. */
+export const REFUSED_TRAILING_DATA: i32 = 4;
+
+/** A `bad_certificate` `TlsFailure` for a certificate that does not parse; `reason` is why. */
+export class CertificateRefused extends TlsFailure {
+  reason: i32;
+
+  constructor(reason: i32, what: string) {
+    super(BAD_CERTIFICATE, `malformed certificate: ${what}`);
+    this.reason = reason;
+  }
+}

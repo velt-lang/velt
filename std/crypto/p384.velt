@@ -1,0 +1,217 @@
+// velt/crypto (internal): the NIST P-384 curve for signature verification: y^2 = x^3 - 3x + b
+// over `Mod384` with the field prime, in Jacobian coordinates (x = X/Z^2, y = Y/Z^3; Z = 0 is
+// the identity) with the formulas p256.velt uses (dbl-2001-b, add-2007-bl). Variable time, for
+// public points only: the addition branches on the identity and on equal points. A secret
+// scalar (ECDH, signing) needs the masked forms of p256.velt instead.
+
+import { Mod384 } from "velt/crypto/mod384";
+
+// The field prime p = 2^384 - 2^128 - 2^96 + 2^32 - 1, little-endian limbs, with -p^-1 mod 2^64
+// and 2^768 mod p.
+const P: u64[] = [
+  0x00000000ffffffff,
+  0xffffffff00000000,
+  0xfffffffffffffffe,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+  0xffffffffffffffff,
+];
+const P_INV: u64 = 0x0000000100000001;
+const P_R2: u64[] = [
+  0xfffffffe00000001,
+  0x0000000200000000,
+  0xfffffffe00000000,
+  0x0000000200000000,
+  0x0000000000000001,
+  0x0000000000000000,
+];
+
+// Little-endian limbs: the curve's b and the base point G.
+const B: u64[] = [
+  0x2a85c8edd3ec2aef,
+  0xc656398d8a2ed19d,
+  0x0314088f5013875a,
+  0x181d9c6efe814112,
+  0x988e056be3f82d19,
+  0xb3312fa7e23ee7e4,
+];
+const GX: u64[] = [
+  0x3a545e3872760ab7,
+  0x5502f25dbf55296c,
+  0x59f741e082542a38,
+  0x6e1d3b628ba79b98,
+  0x8eb1c71ef320ad74,
+  0xaa87ca22be8b0537,
+];
+const GY: u64[] = [
+  0x7a431d7c90ea0e5f,
+  0x0a60b1ce1d7e819d,
+  0xe9da3113b5f0b8c0,
+  0xf8f41dbd289a147c,
+  0x5d9e98bf9292dc29,
+  0x3617de4a96262c6f,
+];
+const ONE_LIMBS: u64[] = [1, 0, 0, 0, 0, 0];
+
+// Registers. A point is three (X, Y, Z).
+const T: usize = 0; // eight temporaries, T..T + 7
+/** The register that holds 1. */
+export const ONE: usize = 8;
+const CURVE_B: usize = 9;
+/** A scratch register for loading values. */
+export const TMP: usize = 10;
+/** The first register that is the caller's. */
+export const FIRST: usize = 11;
+
+/** The field with `extra` registers from `FIRST` on, `ONE` set. */
+export function p384Field(extra: usize): Mod384 {
+  const f = new Mod384(P, P_INV, P_R2, FIRST + extra);
+  f.set(TMP, ONE_LIMBS);
+  f.enter(ONE, TMP);
+  f.set(TMP, B);
+  f.enter(CURVE_B, TMP);
+  return f;
+}
+
+/** Registers `p..p + 2` = the base point G, with Z = 1. */
+export function basePoint(f: Mod384, p: usize) {
+  f.set(TMP, GX);
+  f.enter(p, TMP);
+  f.set(TMP, GY);
+  f.enter(p + 1, TMP);
+  f.copy(p + 2, ONE);
+}
+
+/**
+ * Registers `p..p + 2` = the uncompressed point `b` (0x04, x, y), with Z = 1; false unless it
+ * is on the curve with coordinates below p.
+ */
+export function decodePoint(f: Mod384, b: u8[], p: usize): bool {
+  if (b.length != 97 || b[0] != 4) {
+    return false;
+  }
+  if (!f.load(TMP, b, 1, 48)) {
+    return false;
+  }
+  f.enter(p, TMP);
+  if (!f.load(TMP, b, 49, 48)) {
+    return false;
+  }
+  f.enter(p + 1, TMP);
+  f.copy(p + 2, ONE);
+  // y^2 == x^3 - 3x + b.
+  f.mul(T, p + 1, p + 1);
+  f.mul(T + 1, p, p);
+  f.mul(T + 1, T + 1, p);
+  f.add(T + 2, p, p);
+  f.add(T + 2, T + 2, p);
+  f.sub(T + 1, T + 1, T + 2);
+  f.add(T + 1, T + 1, CURVE_B);
+  return f.same(T, T + 1);
+}
+
+/**
+ * `d = p + q` (points at registers `d`, `p`, `q`; `d` may be `p`), add-2007-bl, with the
+ * identity on either side and equal points answered by branches.
+ */
+export function add(f: Mod384, d: usize, p: usize, q: usize) {
+  if (f.isZero(p + 2)) {
+    f.copy(d, q);
+    f.copy(d + 1, q + 1);
+    f.copy(d + 2, q + 2);
+    return;
+  }
+  if (f.isZero(q + 2)) {
+    f.copy(d, p);
+    f.copy(d + 1, p + 1);
+    f.copy(d + 2, p + 2);
+    return;
+  }
+  const z1z1 = T;
+  const z2z2 = T + 1;
+  const u1 = T + 2;
+  const h = T + 3;
+  const s1 = T + 4;
+  const r = T + 5;
+  const i = T + 6;
+  const j = T + 7;
+  f.mul(z1z1, p + 2, p + 2);
+  f.mul(z2z2, q + 2, q + 2);
+  f.mul(u1, p, z2z2);
+  f.mul(h, q, z1z1);
+  f.mul(s1, p + 1, q + 2);
+  f.mul(s1, s1, z2z2);
+  f.mul(r, q + 1, p + 2);
+  f.mul(r, r, z1z1);
+  f.sub(h, h, u1); // H = U2 - U1
+  f.sub(r, r, s1);
+  if (f.isZero(h) && f.isZero(r)) {
+    // The same point: the formulas below would give Z = 0.
+    double(f, d, p);
+    return;
+  }
+  f.add(r, r, r); // r = 2 (S2 - S1)
+  f.add(i, h, h);
+  f.mul(i, i, i); // I = (2H)^2
+  f.mul(j, h, i); // J = H I
+  f.mul(i, u1, i); // V = U1 I
+  // Z3 = ((Z1 + Z2)^2 - Z1Z1 - Z2Z2) H, in u1: zero for opposite points (H = 0), the identity.
+  f.add(u1, p + 2, q + 2);
+  f.mul(u1, u1, u1);
+  f.sub(u1, u1, z1z1);
+  f.sub(u1, u1, z2z2);
+  f.mul(u1, u1, h);
+  // X3 = r^2 - J - 2V, in z1z1.
+  f.mul(z1z1, r, r);
+  f.sub(z1z1, z1z1, j);
+  f.add(z2z2, i, i);
+  f.sub(z1z1, z1z1, z2z2);
+  // Y3 = r (V - X3) - 2 S1 J, in z2z2.
+  f.sub(i, i, z1z1);
+  f.mul(i, r, i);
+  f.mul(s1, s1, j);
+  f.add(s1, s1, s1);
+  f.sub(z2z2, i, s1);
+  f.copy(d, z1z1);
+  f.copy(d + 1, z2z2);
+  f.copy(d + 2, u1);
+}
+
+/** `d = 2p` (`d` may be `p`), dbl-2001-b for a = -3; the identity stays the identity. */
+export function double(f: Mod384, d: usize, p: usize) {
+  const delta = T;
+  const gamma = T + 1;
+  const beta = T + 2;
+  const alpha = T + 3;
+  const t = T + 4;
+  const x3 = T + 5;
+  f.mul(delta, p + 2, p + 2);
+  f.mul(gamma, p + 1, p + 1);
+  f.mul(beta, p, gamma);
+  // alpha = 3 (X - delta) (X + delta).
+  f.sub(alpha, p, delta);
+  f.add(t, p, delta);
+  f.mul(alpha, alpha, t);
+  f.add(t, alpha, alpha);
+  f.add(alpha, t, alpha);
+  // Z3 = (Y + Z)^2 - gamma - delta.
+  f.add(t, p + 1, p + 2);
+  f.mul(t, t, t);
+  f.sub(t, t, gamma);
+  f.sub(d + 2, t, delta);
+  // X3 = alpha^2 - 8 beta.
+  f.mul(x3, alpha, alpha);
+  f.add(beta, beta, beta);
+  f.add(beta, beta, beta);
+  f.add(t, beta, beta);
+  f.sub(x3, x3, t);
+  // Y3 = alpha (4 beta - X3) - 8 gamma^2.
+  f.sub(beta, beta, x3);
+  f.mul(beta, alpha, beta);
+  f.mul(gamma, gamma, gamma);
+  f.add(gamma, gamma, gamma);
+  f.add(gamma, gamma, gamma);
+  f.add(gamma, gamma, gamma);
+  f.sub(d + 1, beta, gamma);
+  f.copy(d, x3);
+}

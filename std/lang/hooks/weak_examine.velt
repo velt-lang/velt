@@ -1,0 +1,60 @@
+// velt/lang/hooks (internal): the examination of a weak map key's entries (weak.velt
+// `weakRelease`; docs/internals/design/weak-refs.md "The ephemeron rule"), with the lock held:
+// the values' paths back to the key, recorded as the objects' `hint`s.
+
+import { mapOf } from "./weak_maps";
+import * as wm from "./weak_maps";
+import * as rec from "./weak_records";
+import { members, PAST_LIMIT } from "./weak_trial";
+import { ld, ld64, st, vat, vlen } from "./weak_mem";
+
+/**
+ * Traces the values of the entries keyed by `k` (record `r`) that are not examined yet (a nonzero
+ * value of a map with trace glue: a live counted object the map owns), and records the objects on
+ * their paths back to `k` with the references the entry holds to each (their `hint`). An entry
+ * whose value has no path back to `k` gets one more look, at the key's next decrement: the
+ * decrement that triggered this examination may be the one that removed a path, which comes back
+ * before the next. After that, or past the limit, the entry counts as examined, so a key's
+ * decrements trace each entry at most twice. Returns `k`'s record, which moves when the
+ * examination adds records.
+ */
+export function examine(h: usize, k: usize, r0: usize): usize {
+  let r = r0;
+  let left: usize = 0;
+  let i: usize = 0;
+  while (i < rec.listLen(r, rec.R_KEYED)) {
+    const map = rec.listAt(r, rec.R_KEYED, i) as u32;
+    i += 1;
+    const b = mapOf(h, map);
+    const e = wm.entryOf(b, k);
+    if (e === 0) {
+      continue;
+    }
+    const state = ld(e + wm.E_EXAMINED);
+    if (state === wm.EXAMINED) {
+      continue;
+    }
+    const ms = members(h, k, ld64(e + wm.E_VALUE) as usize, ld(b + wm.M_VALUE_TRACE));
+    if (ms === 0 && state === wm.UNEXAMINED) {
+      st(e + wm.E_EXAMINED, wm.LOOKED);
+      left += 1;
+      continue;
+    }
+    st(e + wm.E_EXAMINED, wm.EXAMINED);
+    if (ms === 0 || ms === PAST_LIMIT) {
+      continue;
+    }
+    // `node` adds records, not entries: the entry stays where it is.
+    st(e + wm.E_MEMBERS, ms);
+    const n = vlen(ms);
+    for (let j: usize = 0; j < n; j += 3) {
+      const m = rec.node(h, vat(ms, j), vat(ms, j + 2));
+      rec.memberPush(m, map as usize, k);
+      rec.setHint(m, rec.hint(m) + (vat(ms, j + 1) as u32));
+    }
+    // The records may have moved.
+    r = rec.find(h, k);
+  }
+  rec.setUnexamined(r, left);
+  return r;
+}

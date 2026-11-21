@@ -34,6 +34,7 @@ import * as mon from "./sched_monitor";
 import * as ow from "./sched_order_wait";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
+import * as mv from "./sched_sleep_move";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -197,6 +198,11 @@ export function retiredLook(e: usize): void {
     if ((s & t.R_AWAY) === 0) {
       return;
     }
+    if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+      // A sleep another worker asked this one for or dropped (sched_sleep_move.velt): served
+      // here too, or its asker would wait for ever and the program's end for the request.
+      mv.serve(e);
+    }
     if (s === t.R_ASKED) {
       if (keeps(e)) {
         m.cas32(e + t.E_RETIRED, t.R_ASKED, t.R_DECLINED);
@@ -210,7 +216,12 @@ export function retiredLook(e: usize): void {
     // Asleep as any parked worker, for the wakes and the end's scan: a task pushed to the inbox
     // after the look below wakes it (the push comes before its wake's look at the park word).
     m.store32(e + t.E_PARK, 1);
-    if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || m.load32(e + t.E_RETIRED) !== t.R_RETIRED) {
+    if (
+      m.load(e + t.E_INBOX) !== 0 ||
+      m.load(e + t.E_SLEEP_ASKS) !== 0 ||
+      q.any(e) ||
+      m.load32(e + t.E_RETIRED) !== t.R_RETIRED
+    ) {
       wk.awake(e);
       continue;
     }
@@ -240,6 +251,10 @@ export function retiredLook(e: usize): void {
  * leaf to see it (that task's poll reads them from this worker's block)?
  */
 function keeps(e: usize): bool {
+  if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+    // A request that waits for a carried sleep's task (sched_sleep_move.velt).
+    return true;
+  }
   const b = m.ld(e + t.E_TIMERS);
   if (m.ld(e + t.E_UNREF) !== 0) {
     return true;
