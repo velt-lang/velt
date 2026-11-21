@@ -27,11 +27,13 @@ pub(crate) fn soften_moves(cx: &mut Ctx) {
         let disposed = disposed_places(&mut f);
         let spawned = spawned_promises(cx, &mut f);
         // A `using` variable is disposed at the end of its block: moving it out stays an
-        // error (`crate::moves`) instead of sharing a value about to be disposed.
+        // error (`crate::moves`) instead of sharing a value about to be disposed. A part of it
+        // (`m.bytes`) is shared as any other place's: the variable stays whole for its cleanup,
+        // and the part's value gets another reference (#3433).
         let kinds = cx.fn_info(d).local_kinds.clone();
         let using = |e: &Expr| {
-            crate::body::places::place_root(e)
-                .is_some_and(|l| kinds.get(l.0 as usize) == Some(&crate::body::LocalKind::Using))
+            matches!(e.kind, E::Local(l, _)
+                if kinds.get(l.0 as usize) == Some(&crate::body::LocalKind::Using))
         };
         let mut spans = vec![];
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
