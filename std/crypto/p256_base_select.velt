@@ -1,0 +1,62 @@
+// velt/crypto (internal): the masked scan of the P-256 base point's table (p256_base_table.velt)
+// for `baseMultiply` in p256.velt, whose scalar is secret: every entry of a window is read, and
+// the masks that keep one come from a function LLVM cannot see into.
+
+import { FeP256 } from "velt/crypto/field_p256";
+import { P256_BASE } from "velt/crypto/p256_base_table";
+import { noInline } from "velt/lang/intrinsics";
+import { u64x2 } from "velt/simd";
+
+/**
+ * Registers `sel`, `sel + 1` = the affine entry `digit` (0..15) of window `w` of `P256_BASE`,
+ * reading all 15 with masks (`masks`: 15 words of scratch); both zero for the digit 0 (no entry has
+ * x = 0: the generator checks). Constant time in `digit`.
+ */
+export function selectBase(f: FeP256, sel: usize, masks: u64[], w: usize, digit: u64) {
+  entryMasks(masks, digit);
+  const base = 120 * w;
+  // Said once, so that the loads below need no check of their own.
+  if (base + 120 > P256_BASE.length || masks.length < 15) {
+    tableFault();
+  }
+  // x and y, two limbs a vector.
+  let x0 = u64x2.splat(0);
+  let x1 = u64x2.splat(0);
+  let y0 = u64x2.splat(0);
+  let y1 = u64x2.splat(0);
+  for (let j: usize = 0; j < 15; j++) {
+    const mask = u64x2.splat(masks[j]);
+    const at = base + 8 * j;
+    x0 = x0 | (u64x2.load(P256_BASE, at) & mask);
+    x1 = x1 | (u64x2.load(P256_BASE, at + 2) & mask);
+    y0 = y0 | (u64x2.load(P256_BASE, at + 4) & mask);
+    y1 = y1 | (u64x2.load(P256_BASE, at + 6) & mask);
+  }
+  const d = 4 * sel;
+  x0.store(f.r, d);
+  x1.store(f.r, d + 2);
+  y0.store(f.r, d + 4);
+  y1.store(f.r, d + 6);
+}
+
+// masks[j] = all ones for j + 1 == digit, else 0 (j = 0..14). Out of line, and the scan reads the
+// masks from memory: with the comparison in sight, LLVM made `selectBase`'s masked scan of the
+// table (a constant it can see) a branch that loaded only the selected entry, so that the
+// instructions executed and the addresses read depended on the secret digit (17 instructions
+// more for each non-zero digit under cachegrind). crates/veltc/tests/p256_masks.rs checks that
+// this stays a function of its own and is called.
+@noInline
+function entryMasks(masks: u64[], digit: u64) {
+  for (let j: usize = 0; j < 15; j++) {
+    const x = ((j + 1) as u64) ^ digit;
+    // All ones when x == 0 (x is below 16, so x - 1 wraps only for 0).
+    masks[j] = 0 - ((x - 1) >> 63);
+  }
+}
+
+// Out of line: an internal error, never reached. `never`, so that the code after the guard knows
+// the guard was false.
+@noInline
+function tableFault(): never {
+  panic("ICE: a P-256 base table window outside the table");
+}
