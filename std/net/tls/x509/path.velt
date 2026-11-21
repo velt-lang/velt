@@ -1,0 +1,325 @@
+// velt/net (internal): `PathBuilder`, certificate path validation for a TLS server's chain, as
+// rustls's webpki does it (`verify_cert.rs`, ported rule for rule).
+//
+// A path is searched depth-first from the server's certificate. The server's order is not
+// trusted: at every step each trust anchor is tried, then each certificate the server sent,
+// as the issuer; an issuer is one whose subject is the issuer field, byte for byte. A
+// certificate already on the path (same subject and key) is not taken again.
+//
+// Before a certificate's issuer is looked for: it is within its validity; the server's is not
+// a CA, an issuer is one, and a CA's pathLenConstraint covers the CAs under it; and an
+// extKeyUsage, when there, has serverAuth (on every certificate of the path). keyUsage is not
+// checked, as webpki does not.
+//
+// When a path reaches an anchor, its signatures are checked from the anchor down, then the
+// name constraints of the anchor and of each CA over the certificates under it. An anchor is a
+// name and a key: its own validity and extensions do not count.
+//
+// At most six intermediate certificates; 100 signature checks, 200,000 steps and 250,000
+// name-constraint comparisons for one validation, after which the search ends. When no path
+// works the most specific reason met is reported (verify_error.velt's order).
+
+import { TlsFailure } from "velt/net/tls/alert";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { DerReader, OID } from "velt/net/tls/x509/der";
+import { checkNameConstraints } from "velt/net/tls/x509/name_constraints";
+import { OID_KP_SERVER_AUTH } from "velt/net/tls/x509/oids";
+import { CertificateRefused } from "velt/net/tls/x509/refused";
+import { verifySignature } from "velt/net/tls/x509/signed";
+import { Tlv } from "velt/net/tls/x509/tlv";
+import { TrustAnchor } from "velt/net/tls/x509/trust_anchor";
+import {
+  BAD_ENCODING,
+  CA_USED_AS_END_ENTITY,
+  CERT_EXPIRED,
+  CERT_NOT_VALID_YET,
+  EKU_NOT_FOUND,
+  EMPTY_EKU,
+  END_ENTITY_USED_AS_CA,
+  INVALID_NETWORK_MASK,
+  INVALID_VALIDITY,
+  isFatal,
+  MALFORMED_NAME,
+  MALFORMED_NAME_CONSTRAINT,
+  mostSpecific,
+  NAME_CONSTRAINT_VIOLATED,
+  PATH_LEN_VIOLATED,
+  PATH_TOO_DEEP,
+  refusedError,
+  TOO_MANY_NAME_COMPARISONS,
+  TOO_MANY_PATHS,
+  TOO_MANY_SIGNATURES,
+  UNKNOWN_ISSUER,
+  VALID,
+} from "velt/net/tls/x509/verify_error";
+
+const MAX_INTERMEDIATES: usize = 6;
+
+// Whether `a[as..ae]` and `b[bs..be]` are the same bytes.
+function sameBytes(a: u8[], as_: usize, ae: usize, b: u8[], bs: usize, be: usize): bool {
+  if (ae - as_ != be - bs) {
+    return false;
+  }
+  for (let i: usize = 0; i < ae - as_; i++) {
+    if (a[as_ + i] != b[bs + i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** One validation: the anchors, the certificates the server sent, the time and the budgets. */
+export class PathBuilder {
+  private anchors: TrustAnchor[];
+  // The server's certificates after its own, parsed; null for one that does not parse, with
+  // why in `refusals` at the same index (an error of verify_error.velt).
+  private candidates: (Certificate | null)[];
+  private refusals: i32[];
+  private now: i64;
+  private signatures: usize;
+  private steps: usize;
+  // The name-constraint comparisons left, in an array so that the check can count it down.
+  private comparisons: usize[];
+  /** The path found: the server's certificate first, then each issuer up to the anchor's. */
+  path: Certificate[];
+
+  /**
+   * A validation against `anchors` at the time `now` (seconds since the Unix epoch), with
+   * `intermediates` (DER) as what the server sent after its own certificate, in any order.
+   */
+  constructor(anchors: TrustAnchor[], intermediates: u8[][], now: i64) {
+    this.anchors = anchors;
+    this.candidates = [];
+    this.refusals = [];
+    for (const der of intermediates) {
+      this.candidates.push(parse(der, this.refusals));
+    }
+    this.now = now;
+    this.signatures = 100;
+    this.steps = 200000;
+    this.comparisons = [250000];
+    this.path = [];
+  }
+
+  /**
+   * Looks for a path from `leaf` (the server's certificate) to an anchor: `VALID`, with the
+   * path in `path`, or the reason there is none (verify_error.velt).
+   */
+  verify(leaf: Certificate): i32 {
+    this.path = [leaf];
+    return this.build(0);
+  }
+
+  // Extends `path` from its last certificate, which has `subCas` CA certificates under it.
+  private build(subCas: usize): i32 {
+    const cert = this.path[this.path.length - 1];
+    const endEntity = this.path.length == 1;
+    const own = this.checkCertificate(cert, endEntity, subCas);
+    if (own != VALID) {
+      return own;
+    }
+    let error = UNKNOWN_ISSUER;
+    for (let a: usize = 0; a < this.anchors.length; a++) {
+      const s = this.anchors[a].subject;
+      if (!sameBytes(cert.der, cert.issuer.start, cert.issuer.end, s, 0, s.length)) {
+        continue;
+      }
+      let result = this.checkSignatures(a);
+      if (result == VALID) {
+        result = this.checkConstraints(a);
+      }
+      if (result == VALID || isFatal(result)) {
+        return result;
+      }
+      error = mostSpecific(error, result);
+    }
+    for (let k: usize = 0; k < this.candidates.length; k++) {
+      const candidate = this.candidates[k];
+      if (candidate == null) {
+        // As webpki, which parses each candidate where it meets it and keeps the parser's error.
+        error = mostSpecific(error, this.refusals[k]);
+        continue;
+      }
+      const c = candidate;
+      if (
+        !sameBytes(
+          cert.der,
+          cert.issuer.start,
+          cert.issuer.end,
+          c.der,
+          c.subject.start,
+          c.subject.end,
+        )
+      ) {
+        continue;
+      }
+      if (this.onPath(c)) {
+        continue;
+      }
+      if (this.steps == 0) {
+        return TOO_MANY_PATHS;
+      }
+      this.steps -= 1;
+      if (this.path.length > MAX_INTERMEDIATES) {
+        error = mostSpecific(error, PATH_TOO_DEEP);
+        continue;
+      }
+      this.path.push(c);
+      const result = this.build(endEntity ? subCas : subCas + 1);
+      if (result == VALID || isFatal(result)) {
+        return result;
+      }
+      this.path.pop();
+      error = mostSpecific(error, result);
+    }
+    return error;
+  }
+
+  // Whether a certificate with `c`'s subject and key is on the path already (RFC 4158 §5.2).
+  private onPath(c: Certificate): bool {
+    for (const p of this.path) {
+      if (
+        sameBytes(c.der, c.spki.start, c.spki.end, p.der, p.spki.start, p.spki.end) &&
+        sameBytes(c.der, c.subject.start, c.subject.end, p.der, p.subject.start, p.subject.end)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // What does not depend on the issuer: the validity, the basic constraints, the key purposes.
+  private checkCertificate(cert: Certificate, endEntity: bool, subCas: usize): i32 {
+    if (cert.notBefore > cert.notAfter) {
+      return INVALID_VALIDITY;
+    }
+    if (this.now < cert.notBefore) {
+      return CERT_NOT_VALID_YET;
+    }
+    if (this.now > cert.notAfter) {
+      return CERT_EXPIRED;
+    }
+    if (endEntity) {
+      if (cert.isCa) {
+        return CA_USED_AS_END_ENTITY;
+      }
+    } else {
+      if (!cert.isCa) {
+        return END_ENTITY_USED_AS_CA;
+      }
+      if (cert.pathLen >= 0 && (subCas as i64) > cert.pathLen) {
+        return PATH_LEN_VIOLATED;
+      }
+    }
+    const eku = cert.extKeyUsage;
+    if (eku.tag != 0) {
+      if (eku.start == eku.end) {
+        return EMPTY_EKU;
+      }
+      const r = new DerReader(cert.der);
+      r.pos = eku.start;
+      let found = false;
+      while (r.pos < eku.end) {
+        const id: Tlv = r.next(OID, eku.end);
+        if (r.equals(id, OID_KP_SERVER_AUTH)) {
+          found = true;
+        }
+      }
+      if (!found) {
+        return EKU_NOT_FOUND;
+      }
+    }
+    return VALID;
+  }
+
+  // The path's signatures, from anchor `a`'s over the last certificate down to the first's.
+  private checkSignatures(a: usize): i32 {
+    const anchor = this.anchors[a];
+    let keyAlgorithm = anchor.keyAlgorithm();
+    let key = anchor.key();
+    for (let i = this.path.length; i > 0; i--) {
+      const cert = this.path[i - 1];
+      if (this.signatures == 0) {
+        return TOO_MANY_SIGNATURES;
+      }
+      this.signatures -= 1;
+      const result = verifySignature(
+        cert.signatureAlgorithm,
+        keyAlgorithm,
+        key,
+        cert.der.slice(cert.tbs.head as i64, cert.tbs.end as i64),
+        cert.der.slice(cert.signature.start as i64, cert.signature.end as i64),
+      );
+      if (result != VALID) {
+        return result;
+      }
+      keyAlgorithm = cert.keyAlgorithm;
+      key = cert.der.slice(cert.publicKey.start as i64, cert.publicKey.end as i64);
+    }
+    return VALID;
+  }
+
+  // The name constraints of anchor `a` and of each CA on the path, each over all under it.
+  private checkConstraints(a: usize): i32 {
+    try {
+      let der = this.anchors[a].nameConstraints;
+      let constraints: Tlv = {
+        tag: der.length == 0 ? 0 : 0x30,
+        head: 0,
+        start: 0,
+        end: der.length,
+      };
+      for (let i = this.path.length; i > 0; i--) {
+        if (constraints.tag != 0) {
+          const under = this.path.slice(0 as i64, i as i64);
+          const result = checkNameConstraints(der, constraints, under, this.comparisons);
+          if (result != 0) {
+            return constraintError(result);
+          }
+        }
+        const cert = this.path[i - 1];
+        der = cert.der;
+        constraints = cert.nameConstraints;
+      }
+      return VALID;
+    } catch (e) {
+      if (e instanceof TlsFailure) {
+        return BAD_ENCODING;
+      }
+      throw e;
+    }
+  }
+}
+
+// The certificate `der`, or null when it does not parse; why not (`VALID` when it does) is
+// pushed to `refusals`.
+function parse(der: u8[], refusals: i32[]): Certificate | null {
+  try {
+    const c = new Certificate(der);
+    refusals.push(VALID);
+    return c;
+  } catch (e) {
+    if (e instanceof CertificateRefused) {
+      refusals.push(refusedError(e.reason));
+      return null;
+    }
+    throw e;
+  }
+}
+
+// name_constraints.velt's and names.velt's answers as verify_error.velt's.
+function constraintError(result: i32): i32 {
+  if (result == -5) {
+    return NAME_CONSTRAINT_VIOLATED;
+  }
+  if (result == -6) {
+    return TOO_MANY_NAME_COMPARISONS;
+  }
+  if (result == -1) {
+    return MALFORMED_NAME;
+  }
+  if (result == -2) {
+    return MALFORMED_NAME_CONSTRAINT;
+  }
+  return result == -3 ? INVALID_NETWORK_MASK : BAD_ENCODING;
+}
