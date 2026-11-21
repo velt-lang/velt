@@ -39,7 +39,13 @@ import {
   X25519,
 } from "velt/net/tls/client_hello";
 import { ClientOffer, parseClientHello } from "velt/net/tls/client_hello_parse";
-import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import {
+  expandLabelWith,
+  finishedMac,
+  handshakeSecret,
+  masterSecretWith,
+  prepareSecret,
+} from "velt/net/tls/key_schedule";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
@@ -254,8 +260,9 @@ export class ServerHandshake {
     this.hello = hello;
     const hs = handshakeSecret(secret, hashLength(this.suite));
     const h1 = this.transcriptHash();
-    this.clientHandshake = expandLabel(hs, "c hs traffic", h1, h1.length);
-    this.serverHandshake = expandLabel(hs, "s hs traffic", h1, h1.length);
+    const prepared = prepareSecret(hs);
+    this.clientHandshake = expandLabelWith(prepared, "c hs traffic", h1, h1.length);
+    this.serverHandshake = expandLabelWith(prepared, "s hs traffic", h1, h1.length);
     const w = new ByteWriter();
     // EncryptedExtensions: ALPN's choice, if any.
     const ee = new ByteWriter();
@@ -329,11 +336,11 @@ export class ServerHandshake {
     this.add(fin.bytes);
     w.put(fin.bytes);
     this.flight = w.bytes;
-    const master = masterSecret(hs);
+    const master = prepareSecret(masterSecretWith(prepared));
     const h2 = this.transcriptHash();
     this.flightHash = h2;
-    this.clientApplication = expandLabel(master, "c ap traffic", h2, h2.length);
-    this.serverApplication = expandLabel(master, "s ap traffic", h2, h2.length);
+    this.clientApplication = expandLabelWith(master, "c ap traffic", h2, h2.length);
+    this.serverApplication = expandLabelWith(master, "s ap traffic", h2, h2.length);
     this.state = WAIT_FINISHED;
     return S_SEND_FLIGHT;
   }

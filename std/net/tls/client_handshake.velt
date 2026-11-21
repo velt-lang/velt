@@ -21,7 +21,13 @@ import {
 import { clientHello, EXT_ALPN, HelloInput, SECP256R1, X25519 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
-import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import {
+  expandLabelWith,
+  finishedMac,
+  handshakeSecret,
+  masterSecretWith,
+  prepareSecret,
+} from "velt/net/tls/key_schedule";
 import { ClientHandshake12, DONE12 } from "velt/net/tls/client_handshake12";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { parseServerHello } from "velt/net/tls/server_hello";
@@ -290,9 +296,11 @@ export class ClientHandshake {
     }
     const hs = handshakeSecret(shared, hashLength(this.suite));
     const h = this.hash();
-    this.clientHandshake = expandLabel(hs, "c hs traffic", h, h.length);
-    this.serverHandshake = expandLabel(hs, "s hs traffic", h, h.length);
-    this.master = masterSecret(hs);
+    // One prepared handshake secret for both traffic secrets and the master secret's salt.
+    const prepared = prepareSecret(hs);
+    this.clientHandshake = expandLabelWith(prepared, "c hs traffic", h, h.length);
+    this.serverHandshake = expandLabelWith(prepared, "s hs traffic", h, h.length);
+    this.master = masterSecretWith(prepared);
     this.state = WAIT_ENCRYPTED_EXTENSIONS;
     return HANDSHAKE_KEYS;
   }
@@ -348,8 +356,9 @@ export class ClientHandshake {
     }
     this.add(m);
     const h = this.hash();
-    this.clientApplication = expandLabel(this.master, "c ap traffic", h, h.length);
-    this.serverApplication = expandLabel(this.master, "s ap traffic", h, h.length);
+    const master = prepareSecret(this.master);
+    this.clientApplication = expandLabelWith(master, "c ap traffic", h, h.length);
+    this.serverApplication = expandLabelWith(master, "s ap traffic", h, h.length);
     const w = new ByteWriter();
     const context = this.certRequestContext;
     if (context != null) {
