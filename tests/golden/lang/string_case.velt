@@ -1,0 +1,55 @@
+// `toUpperCase` and `toLowerCase` of ASCII text at every length around the 16-byte blocks and
+// the 23 bytes of an inline string (std/lang/string/case.velt, #2198), text that is not ASCII
+// (the runtime's Unicode mapping), and `String.fromCharCode` around 0x80.
+// The expected output is Node's (this file runs there unchanged, with `main()` called). Lone
+// surrogates come from `String.fromCharCode`.
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+/** The UTF-16 code units of `s`, in hex. */
+function hex(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16) + ".";
+  }
+  return out;
+}
+
+function main() {
+  const base = "aZ09@[`{ mixedCASE-_~\x7f\x00!";
+  let s = "";
+  for (let n = 0; n < 70; n++) {
+    console.log(
+      n,
+      s.toUpperCase(),
+      s.toLowerCase(),
+      s.toUpperCase().length,
+      s.toLowerCase().length,
+    );
+    s += base.charAt(n % base.length);
+  }
+  console.log(
+    "ALREADY UPPER 123".toUpperCase(),
+    "already lower, longer than twenty-three bytes".toLowerCase(),
+  );
+  console.log("straße ǆ ﬁ İ".toUpperCase(), "ΌΣΟΣ İ ÀÉ".toLowerCase(), "日本語abc".toUpperCase());
+  console.log(
+    hex(String.fromCharCode(0x7f)),
+    hex(String.fromCharCode(0x80)),
+    hex(String.fromCharCode(0xd83d)),
+    hex(String.fromCharCode(0)),
+  );
+  console.log(
+    hex(String.fromCharCode(65, 0xd83d, 0xde00, 66, -1, 65536 + 67, NaN)),
+    hex(String.fromCodePoint(0x41, 0x1f600, 0xe9)),
+  );
+  console.log(String.fromCharCode(0x68, 0x69).length, String.fromCharCode().length);
+  // The first code unit that is not ASCII is two bytes of text, not one.
+  const pad = String.fromCharCode(0x80);
+  console.log(
+    pad == "\u0080",
+    ("é" + pad).indexOf(pad),
+    encodeURIComponent(pad + String.fromCharCode(0x7f)),
+  );
+}

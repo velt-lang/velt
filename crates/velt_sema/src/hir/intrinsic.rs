@@ -105,8 +105,7 @@ pub enum Intrinsic {
     /// permutation: every element stays owned once, so it moves elements of any type, where a
     /// loop of moves would count or check each one. Additive.
     ArrayRotateRight,
-    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
-    /// Additive.
+    /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`. Additive.
     ArrayRotateLeft,
     /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize,
     /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
@@ -308,9 +307,11 @@ pub enum Intrinsic {
     /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of the program's
     /// null-ended table of registry records (`SymbolStatic`, ids from 2^40) std's registry reads.
     SymbolRegistry,
-    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, and `symbolAt(address)` back): `usize`.
+    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, `symbolAt(address)` back; `strAt(address)`
+    /// another reference to the string there, a symbol's description, rt_abi.md "Symbols").
     SymbolAddress,
     SymbolAt,
+    StrAt,
     /// Compiler-internal (no source syntax): `ToString` of a template literal part whose type
     /// mentions a type parameter (`${x}` with `x: T`). It is `ToString`, except that where the
     /// value is a symbol once substituted (`symbol`, or the active member of a union or `T | null`
@@ -397,12 +398,12 @@ pub enum Intrinsic {
     /// Additive.
     AddressStore,
     /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
-    /// `bool` (sema checks it): an array of the `length` elements at `address` that does not own
-    /// them (`cap == 0`, velt_vir `lower/array`): dropping it frees nothing, and a copy of it is
-    /// an ordinary array. Nothing checks that the memory is there, stays there or is aligned
-    /// for `T`, and the array must never be written or grown: std hands it out only as
-    /// `shared<T[]>` (`MappedFile`, std/fs/mapped_file.velt). Additive.
+    /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
+    /// `lower/array`): dropping it frees nothing, a copy is an ordinary array. Unchecked, never
+    /// written or grown: std hands it out only as `shared<T[]>` (`MappedFile`). Additive.
     AddressArray,
+    /// std only: `addressArray` with an owner block, whose first word is called at the drop.
+    AddressArrayOwned,
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the
@@ -534,8 +535,7 @@ pub enum Intrinsic {
     /// is set, else static (0), heap or slice).
     StrWord2,
     /// std only: `(s: borrow string) -> usize`, the address of `s`'s UTF-8 bytes: inside the value
-    /// for an inline string, the buffer otherwise (#2778). Valid while `s` is alive and unchanged;
-    /// read with `addressLoad`.
+    /// for an inline string, the buffer otherwise (#2778), while `s` lives unchanged.
     StrDataAddress,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
     /// value, of type `T | E` (or `E | null` when `T` is `void`); hir_encodings.md "Errors".

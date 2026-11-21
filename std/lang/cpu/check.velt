@@ -1,0 +1,200 @@
+// velt/lang/cpu (internal): the start-up check's message and the variables that turn features off
+// (rt_abi.md "CPU check"), as the runtime had them before #3222 step 3 moved them into std.
+//
+// Every program runs the check (`cpuStart`), so its code stays small: the normal path only tests
+// the word and whether a variable is set. The names are data, one string literal per
+// architecture walked byte by byte; the message is appended to a builder, never concatenated;
+// and everything that only runs when a variable is set or a feature is missing is out of line
+// (`@noInline`). No arrays (an indexed array in code every program runs makes the array helpers
+// and number printing live in every program), and no string conversion of the variables.
+
+import { addressLoad, noInline, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_byte(buf: string, byte: u8);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+// Addresses as `usize`, not velt/process's array and pointer (the same C types): no option to
+// unwrap, in code every program runs.
+declare c("c") function getenv(name: usize): usize;
+
+/**
+ * The names of the feature word's x86 bits, in bit order from bit 0 (`velt_codegen_cl`'s
+ * `X86_FEATURES`; velt_common's `cpu_features` checks them).
+ */
+export const X86_NAMES: string =
+  "SSE3,SSSE3,SSE4.1,SSE4.2,POPCNT,CMPXCHG16B,AVX,AVX2,BMI1,BMI2,FMA,LZCNT,MOVBE,F16C,AVX512F,AVX512BW,AVX512CD,AVX512DQ,AVX512VL,AVX512VBMI,AVX512BITALG,SHA,PCLMULQDQ,AES";
+
+/** The names of the feature word's arm64 bits, in bit order from bit 32. */
+export const ARM_NAMES: string = "DOTPROD,SHA2,PMULL,CRC32,SHA3,FP16,I8MM,BF16,AES";
+
+// The architecture's half of `word`.
+function half(word: u64, arm: bool): u32 {
+  return arm ? (word >> 32) as u32 : (word & 0xffffffff) as u32;
+}
+
+// The byte at address `p` (of a C string, or of a string literal's data).
+function at(p: usize): u8 {
+  // SAFETY: callers read a C string up to its NUL, or a literal within its length.
+  return unsafe { addressLoad<u8>(p) };
+}
+
+// Appends to the builder `buf` the names of `mask`'s bits, in order, joined by ", ".
+function pushNames(buf: string, mask: u32, arm: bool): void {
+  const list = arm ? ARM_NAMES : X86_NAMES;
+  const base = strDataAddress(list);
+  const len = strByteLen(list);
+  let i: usize = 0;
+  let b: u32 = 0;
+  let first = true;
+  while (i < len) {
+    const on = ((mask >> b) & 1) != 0;
+    if (on && !first) {
+      velt_rt_strbuf_push_str(buf, ", ");
+    }
+    while (i < len && at(base + i) != 44) {
+      if (on) {
+        const c = at(base + i);
+        velt_rt_strbuf_push_byte(buf, c);
+      }
+      i++;
+    }
+    first = first && !on;
+    i++;
+    b++;
+  }
+}
+
+/**
+ * The error for a CPU with feature word bits `have` running code that needs `required`, naming
+ * the highest x86-64 level the CPU has to rebuild for; "" when it has everything.
+ */
+@noInline
+export function missingMessage(required: u64, have: u64, arm: bool): string {
+  const need = half(required, arm);
+  const got = half(have, arm);
+  const missing = need & ~got;
+  if (missing == 0) {
+    return "";
+  }
+  let buf = "";
+  velt_rt_strbuf_new(192, buf);
+  velt_rt_strbuf_push_str(buf, "this program was built for ");
+  // The x86-64 level the program was built for, exactly, and the highest one this CPU has.
+  const level: u32 = arm ? 0 : need == 0x3f ? 2 : need == 0x3fff ? 3 : need == 0x7ffff ? 4 : 0;
+  const fits: u32 =
+    arm ? 0 : (0x7ffff & ~got) == 0 ? 4 : (0x3fff & ~got) == 0 ? 3 : (0x3f & ~got) == 0 ? 2 : 0;
+  if (level != 0) {
+    const digit = (48 + level) as u8;
+    velt_rt_strbuf_push_str(buf, "x86-64-v");
+    velt_rt_strbuf_push_byte(buf, digit);
+    velt_rt_strbuf_push_str(buf, " (");
+    pushNames(buf, need, arm);
+    velt_rt_strbuf_push_str(buf, ")");
+  } else {
+    if (arm) {
+      velt_rt_strbuf_push_str(buf, "an arm64 CPU with ");
+    } else {
+      velt_rt_strbuf_push_str(buf, "an x86-64 CPU with ");
+    }
+    pushNames(buf, need, arm);
+  }
+  velt_rt_strbuf_push_str(buf, "; this CPU lacks ");
+  pushNames(buf, missing, arm);
+  velt_rt_strbuf_push_str(buf, "; rebuild it with `--cpu ");
+  if (fits != 0) {
+    const digit = (48 + fits) as u8;
+    velt_rt_strbuf_push_str(buf, "x86-64-v");
+    velt_rt_strbuf_push_byte(buf, digit);
+  } else {
+    velt_rt_strbuf_push_str(buf, "baseline");
+  }
+  velt_rt_strbuf_push_str(buf, "`");
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** The address of environment variable `name`'s value (`name` ends in `\0`), or 0 where unset. */
+@noInline
+export function envAddress(name: string): usize {
+  // SAFETY: a NUL-terminated name; the result is the process's own string, or null.
+  return unsafe { getenv(strDataAddress(name)) };
+}
+
+// `b` in upper case (ASCII).
+function upper(b: u8): u8 {
+  return b >= 97 && b <= 122 ? b - 32 : b;
+}
+
+/**
+ * Which of the comma-separated `names` the comma-separated list in the C string at `list` names,
+ * as bits (bit 0 the first name), case aside and spaces around an item aside.
+ */
+@noInline
+export function listed(list: usize, names: string): u64 {
+  const base = strDataAddress(names);
+  const len = strByteLen(names);
+  let found: u64 = 0;
+  let i: usize = 0;
+  while (true) {
+    // The item: from `i` to `end` (a comma or the NUL), spaces around it aside.
+    while (at(list + i) == 32) {
+      i++;
+    }
+    let end = i;
+    while (at(list + end) != 44 && at(list + end) != 0) {
+      end++;
+    }
+    let last = end;
+    while (last > i && at(list + last - 1) == 32) {
+      last--;
+    }
+    // Against each name.
+    let from: usize = 0;
+    let n: u64 = 0;
+    while (from < len) {
+      let to = from;
+      while (to < len && at(base + to) != 44) {
+        to++;
+      }
+      let k: usize = 0;
+      while (
+        k < last - i && k < to - from && upper(at(list + i + k)) == upper(at(base + from + k))
+      ) {
+        k++;
+      }
+      if (k == last - i && k == to - from) {
+        found |= (1 as u64) << n;
+      }
+      from = to + 1;
+      n++;
+    }
+    if (at(list + end) == 0) {
+      return found;
+    }
+    i = end + 1;
+  }
+}
+
+/**
+ * The feature word bits `VELT_CPU_DISABLE`'s list, the C string at `list`, names (`popcnt,avx2`):
+ * the check's names.
+ */
+export function cpuDisabledBits(list: usize, arm: bool): u64 {
+  return arm ? listed(list, ARM_NAMES) << 32 : listed(list, X86_NAMES);
+}
+
+/**
+ * The feature word bits `VELT_SIMD_DISABLE`'s list, the C string at `list`, names: `sha` (SHA,
+ * SHA2), `clmul` (PCLMULQDQ, PMULL), `aes` (AES on both architectures), so velt/simd and std run
+ * their portable code on a CPU that has the instructions.
+ */
+export function simdDisabledBits(list: usize): u64 {
+  const found = listed(list, "sha,clmul,aes");
+  // Each name's bits on both architectures: SHA and SHA2, PCLMULQDQ and PMULL, AES and AES.
+  const sha = (found & 1) * (((1 as u64) << 21) | ((1 as u64) << 33));
+  const clmul = ((found >> 1) & 1) * (((1 as u64) << 22) | ((1 as u64) << 34));
+  const aes = ((found >> 2) & 1) * (((1 as u64) << 23) | ((1 as u64) << 40));
+  return sha | clmul | aes;
+}

@@ -211,7 +211,7 @@ impl FnLower<'_, '_> {
             ice("not an extern")
         };
         // Only the runtime's declarations: the executor's own `declare c` of one of these symbols
-        // (sched_end.velt's probe, sched.velt's `velt_rt_uncaught_now$rt`) calls the runtime.
+        // (sched_end.velt's probe) calls the runtime.
         if super::sched::EXTERNS.contains(&x.symbol.as_str()) && x.c.is_none() && self.std_sched() {
             let (symbol, ret) = (x.symbol.clone(), x.ret);
             return self.sched_extern(&symbol, args, ret);

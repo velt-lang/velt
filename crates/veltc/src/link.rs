@@ -49,12 +49,15 @@ pub fn link_executable(
         write_if_changed(&entry, &bytes)?;
         objects.push(entry);
     }
+    let helpers = helpers_lib(target, &runtime_lib, || {
+        velt_link::find_runtime_lib(target).ok()
+    });
     let stamp_path = stamp_path(exe);
     let linker = velt_link::linker_identity(target);
     let key = link_key(
         target,
         &objects,
-        &runtime_lib,
+        (&runtime_lib, helpers.as_deref()),
         strip_debug,
         (native, c_libs),
         &linker,
@@ -73,6 +76,7 @@ pub fn link_executable(
         release: strip_debug,
         native,
         c_libs,
+        helpers_lib: helpers.as_deref(),
     })
     .and_then(|()| {
         replace(&tmp, exe).map_err(|e| format!("cannot write `{}`: {e}", exe.display()))
@@ -84,6 +88,26 @@ pub fn link_executable(
     // Best effort: without a stamp the next build just links again.
     let _ = std::fs::write(&stamp_path, stamp(&key, exe));
     Ok(Linked::Linked)
+}
+
+/// The archive a link of `runtime_lib` for `target` takes the outline-atomics helpers from
+/// (`velt_link::LinkRequest::helpers_lib`): the static runtime (`static_runtime` finds it), for a
+/// link against the shared runtime where LLVM's code calls the helpers (arm64 Linux). The shared
+/// runtime does not export them and the bundled linker's kit has no libgcc archive, so without
+/// it a debug build that links LLVM-compiled objects (prebuilt hook modules, the std cache's)
+/// fails with undefined `__aarch64_*` symbols (#3315). `None` elsewhere, and where no static
+/// runtime is installed.
+fn helpers_lib(
+    target: &str,
+    runtime_lib: &Path,
+    static_runtime: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let shared = velt_link::is_shared_runtime_lib(runtime_lib, target);
+    if shared && velt_codegen_llvm::calls_outline_atomics(target) {
+        static_runtime()
+    } else {
+        None
+    }
 }
 
 /// `<dir>/<stem>.link-<pid>-<n>` beside `<dir>/<stem>.<ext>`: where the linker writes `exe`
@@ -166,12 +190,13 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Hash of everything the link reads or is configured by: target, settings, object contents, the
-/// runtime library and native libraries (path, size, modification time) and the linker
-/// ([`velt_link::linker_identity`]: the bundled lld and kit, or `$VELT_LINKER`).
+/// runtime library, its helpers archive ([`helpers_lib`]) and native libraries (path, size,
+/// modification time) and the linker ([`velt_link::linker_identity`]: the bundled lld and kit,
+/// or `$VELT_LINKER`).
 fn link_key(
     target: &str,
     objects: &[PathBuf],
-    runtime_lib: &Path,
+    (runtime_lib, helpers): (&Path, Option<&Path>),
     strip_debug: bool,
     (native, c_libs): (&[velt_link::NativeLink], &[String]),
     linker: &str,
@@ -183,6 +208,8 @@ fn link_key(
     }
     runtime_lib.hash(&mut h);
     file_stamp(runtime_lib).hash(&mut h);
+    helpers.hash(&mut h);
+    helpers.and_then(file_stamp).hash(&mut h);
     for n in native {
         for file in [
             Some(&n.shared),
@@ -251,24 +278,59 @@ mod tests {
         std::fs::write(&rt, b"runtime").unwrap();
         let objs = [obj.clone()];
         const NONE: (&[velt_link::NativeLink], &[String]) = (&[], &[]);
-        let key = link_key("t", &objs, &rt, false, NONE, "L");
-        assert_eq!(key, link_key("t", &objs, &rt, false, NONE, "L"));
-        assert_ne!(key, link_key("t", &objs, &rt, true, NONE, "L"));
-        assert_ne!(key, link_key("u", &objs, &rt, false, NONE, "L"));
+        let key = link_key("t", &objs, (&rt, None), false, NONE, "L");
+        assert_eq!(key, link_key("t", &objs, (&rt, None), false, NONE, "L"));
+        assert_ne!(key, link_key("t", &objs, (&rt, None), true, NONE, "L"));
+        assert_ne!(key, link_key("u", &objs, (&rt, None), false, NONE, "L"));
         let native = [velt_link::NativeLink {
             shared: rt.clone(),
             import_lib: None,
             static_obj: None,
             system_libs: vec![],
         }];
-        assert_ne!(key, link_key("t", &objs, &rt, false, (&native, &[]), "L"));
+        assert_ne!(
+            key,
+            link_key("t", &objs, (&rt, None), false, (&native, &[]), "L")
+        );
         // Another C library (`native.c`) links again.
         let sqlite = ["-lsqlite3".to_string()];
-        assert_ne!(key, link_key("t", &objs, &rt, false, (&[], &sqlite), "L"));
+        assert_ne!(
+            key,
+            link_key("t", &objs, (&rt, None), false, (&[], &sqlite), "L")
+        );
         // Another linker (bundled ↔ system, another kit) links again.
-        assert_ne!(key, link_key("t", &objs, &rt, false, NONE, "M"));
+        assert_ne!(key, link_key("t", &objs, (&rt, None), false, NONE, "M"));
+        // The helpers archive is an input too.
+        assert_ne!(
+            key,
+            link_key("t", &objs, (&rt, Some(&rt)), false, NONE, "L")
+        );
         std::fs::write(&obj, b"two").unwrap();
-        assert_ne!(key, link_key("t", &objs, &rt, false, NONE, "L"));
+        assert_ne!(key, link_key("t", &objs, (&rt, None), false, NONE, "L"));
+    }
+
+    /// A link against the shared runtime gets the static runtime as its helpers archive where
+    /// LLVM's code calls the outline-atomics helpers (arm64 Linux, #3315: such a debug link of a
+    /// prebuilt hook object failed with undefined `__aarch64_cas4_acq`), and nowhere else.
+    #[test]
+    fn arm64_linux_links_against_the_shared_runtime_get_the_helpers() {
+        let archive = || Some(PathBuf::from("/t/libvelt_rt.a"));
+        let arm = "aarch64-unknown-linux-gnu";
+        let shared = Path::new("/t/libvelt_rt_shared.so");
+        assert_eq!(helpers_lib(arm, shared, archive), archive());
+        // No static runtime installed: the link is as before.
+        assert_eq!(helpers_lib(arm, shared, || None), None);
+        // The static runtime has the helpers itself.
+        let never = || -> Option<PathBuf> { panic!("no archive is looked up") };
+        assert_eq!(helpers_lib(arm, Path::new("/t/libvelt_rt.a"), never), None);
+        // Targets whose code calls no helpers.
+        for (target, rt) in [
+            ("x86_64-unknown-linux-gnu", "/t/libvelt_rt_shared.so"),
+            ("aarch64-apple-darwin", "/t/libvelt_rt_shared.dylib"),
+            ("x86_64-pc-windows-msvc", "C:/t/velt_rt_shared.dll.lib"),
+        ] {
+            assert_eq!(helpers_lib(target, Path::new(rt), never), None, "{target}");
+        }
     }
 
     #[test]

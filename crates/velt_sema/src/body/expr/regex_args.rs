@@ -85,6 +85,64 @@ impl FnCx<'_, '_> {
         Some((hook, out))
     }
 
+    /// `s.replace(from, f)` or `s.replaceAll(from, f)` with a string pattern and a replacement
+    /// that is a function (`is_function_valued`): the hook to call
+    /// instead, with `s` first. JavaScript calls the function with the match, its offset in
+    /// UTF-16 code units and the string; a function taking fewer converts as any function value
+    /// does. `None` for any other call (a string replacement, or a regex, which
+    /// `regex_string_call` takes first).
+    pub(super) fn string_replacer_call(
+        &mut self,
+        prop: &ast::Ident,
+        args: &[ast::Expr],
+    ) -> Option<&'static str> {
+        use velt_common::std_hook as h;
+        let hook = match prop.name.as_str() {
+            "replace" => h!(replace_string_calling),
+            "replaceAll" => h!(replace_all_string_calling),
+            _ => return None,
+        };
+        let [_, f] = args else {
+            return None;
+        };
+        self.is_function_valued(f).then_some(hook)
+    }
+
+    /// Is `e` a function, as far as its type can be told without checking it (it is checked
+    /// once, as the hook's argument or the method's): an arrow; a variable or a path of fields
+    /// holding a function; a call of such a variable or path whose result is a function
+    /// (`mk()`); or a conditional of two of these (`c ? f : g`).
+    fn is_function_valued(&mut self, e: &ast::Expr) -> bool {
+        match &strip_parens(e).kind {
+            E::Arrow { .. } => true,
+            E::Cond { then, els, .. } => {
+                self.is_function_valued(then) && self.is_function_valued(els)
+            }
+            E::Call {
+                callee,
+                optional: false,
+                ..
+            } if is_path(callee) => {
+                let ret = self.peek_ty(callee).and_then(|t| match self.cx.ty.kind(t) {
+                    TyKind::FnPtr { ret, .. } => Some(*ret),
+                    TyKind::Closure(d) => Some(self.cx.fn_info(*d).ret),
+                    _ => None,
+                });
+                ret.is_some_and(|t| self.is_function_type(t))
+            }
+            _ if is_path(e) => self.peek_ty(e).is_some_and(|t| self.is_function_type(t)),
+            _ => false,
+        }
+    }
+
+    /// Is `t` the type of a function value?
+    fn is_function_type(&self, t: TyId) -> bool {
+        matches!(
+            self.cx.ty.kind(t),
+            TyKind::FnPtr { .. } | TyKind::Closure(_)
+        )
+    }
+
     /// Is `e` a `RegExp`: `new RegExp(…)` (a regex literal is one) or a variable or field path
     /// of that type? Other expressions take the string method (and its type errors).
     fn is_regexp_arg(&mut self, e: &ast::Expr) -> bool {

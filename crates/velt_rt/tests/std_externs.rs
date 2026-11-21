@@ -315,14 +315,21 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 /// The std files whose declarations velt_rt may lack, bindings WebAssembly builds use:
 /// std/fs/rt.velt (`#fs-rt`), whose async leaves are velt_rt_wasm's alone (a native build
 /// imports only the file's `*_sync` twins and runs them on the executor's blocking pool), and
-/// std/process/tty_wasm.velt, env_wasm.velt and cwd_wasm.velt (`#tty`'s, `#env-sys`' and
-/// `#cwd-sys`' default variants: native builds ask the OS from std) (#2196).
+/// std/process/tty_wasm.velt, env_wasm.velt, cwd_wasm.velt and memory_wasm.velt (`#tty`'s,
+/// `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
+/// from std) (#2196).
 const WASM_ONLY_BINDINGS: &[&str] = &[
     "std/fs/rt.velt",
     "std/process/tty_wasm.velt",
     "std/process/env_wasm.velt",
     "std/process/cwd_wasm.velt",
+    "std/process/memory_wasm.velt",
 ];
+
+/// The externs std declares that only the executor in Velt serves on native targets (velt_common
+/// `std_hooks::SCHED_EXTERNS`: lowering calls its hook in their place) and velt_rt no longer
+/// defines; velt_rt_wasm still does (#2196 9d).
+const EXECUTOR_ONLY: &[&str] = &["velt_rt_task_id", "velt_rt_uncaught_now"];
 
 /// Whether `name`, declared in `paths` and not defined by velt_rt, is a WebAssembly-only leaf:
 /// declared in one file of `WASM_ONLY_BINDINGS` and nowhere else, and defined by velt_rt_wasm (whose check
@@ -358,7 +365,9 @@ fn std_declarations_match_velt_rt() {
         .filter(|m| {
             let name = m.split_once(':').map_or("", |(n, _)| n);
             let paths = declared_in.get(name).map_or(&[][..], Vec::as_slice);
-            !(m.ends_with(", not defined") && wasm_only_leaf(name, paths, &wasm))
+            let wasm_only = wasm_only_leaf(name, paths, &wasm)
+                || (EXECUTOR_ONLY.contains(&name) && wasm.contains_key(name));
+            !(m.ends_with(", not defined") && wasm_only)
         })
         .collect();
     assert!(

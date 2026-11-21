@@ -11,6 +11,12 @@ use velt_sema::hir;
 
 /// `src` (the root module, `main`) loaded with std and checked; panics with the diagnostics.
 pub fn check_src(src: &str) -> hir::Program {
+    check_src_for(src, None)
+}
+
+/// [`check_src`] for the target triple `target` (`None`: this machine's), whose `#name` imports
+/// pick std's variants.
+pub fn check_src_for(src: &str, target: Option<&str>) -> hir::Program {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let std = manifest.join("../../std");
     let mut sm = velt_common::SourceMap::new();
@@ -18,6 +24,7 @@ pub fn check_src(src: &str) -> hir::Program {
     let opts = velt_loader::LoadOptions {
         std_root: Some(std),
         root_source: Some(src.to_string()),
+        target: target.map(str::to_string),
         ..Default::default()
     };
     let root = manifest.join("src/tests/main.velt");

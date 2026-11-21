@@ -1,0 +1,334 @@
+// velt/lang/hooks (internal): spawned tasks nothing can wake any more (sched_run.velt, #3126).
+//
+// A task whose root waits on a promise nobody can settle is parked for ever. JavaScript collects
+// such a function with what it holds; sched_node_lost.velt does so for a started promise whose
+// owner is gone, but not for a task: each promise the task started holds a reference to it, and
+// the task's root holds those promises, so neither side is ever the last one.
+//
+// A task can never be polled again when no waker of it exists and no waker of a promise it drives
+// exists: every waker clone is a reference, and a task is queued only by a wake. That is read off
+// the counts at the end of a poll (`parks`):
+// - its references are the executor's and one for each promise it drives (`T_LOCALS`): no join
+//   handle, no waker clone (a leaf, a sleep, a wait, a microtask entry each hold one), and no
+//   finished promise still held, which keeps its reference until it is freed;
+// - every promise it drives is counted owner-only (`T_LISTED`, flag `LISTED` on the promise): an
+//   adoption poll left it with its owner's and its task's references only (sched_node_lost.velt
+//   `ownerOnly`). A listed promise stays as it is until its owner's poll finishes it or its owner
+//   drops it: only a run with its own `cx` hands out its waker, and that run needs a waker to
+//   begin with. So the count is all the park reads. With the block counters on, the promises are
+//   also linked (through the two links of the woken stack, which such a promise cannot be on)
+//   and the park walks them: a promise that gained a waker is an `ICE:`.
+// Such a task is given a last poll (flag `CANCEL`) that drops its root instead of polling it
+// (`cancel`): what the root holds goes, its promises are given up as their handles are dropped
+// (sched_node_lost.velt `dropPending`), and the task ends as one whose root finished. Promises
+// that the drop code starts keep the task until they end.
+//
+// A task that parks that way with its join handle still held is marked (`J_PARKED`): the
+// handle's drop wakes it (`handleDropped`), and the park after that poll finds it.
+//
+// The count (and the links) are touched only by the thread polling the task. A listed promise
+// leaves them as it finishes (sched_node_transfer.velt `finished`, sched_node_lost.velt
+// `giveUp`), which is always in a poll of its task, and a promise is freed only after it
+// finished, so the links never hold a freed one, whichever thread drops the owner's handle.
+//
+// Not covered, each left as it was:
+// - A promise handed to another task and dropped there, on another worker, while it is
+//   suspended: that drop cannot reach this count or give the promise up (both are the task's
+//   thread's), and nothing polls the task afterwards. The promise stays, and its task with it.
+// - A root waiting in a combinator (`Promise.all`, a race with children), which keeps the
+//   awaiter's waker, or holding a promise that finished: the counts say a reference is left.
+// - A waker dropped without a wake after the task parked (a cleared timer): no poll follows.
+// - Two tasks that each wait for the other's join handle.
+
+import { fnAddress, futDrop, inline, noInline, stateDrop } from "velt/lang/intrinsics";
+import * as fr from "./sched_fut_root";
+import * as lk from "./sched_lock";
+import * as mk from "./sched_make";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as nc from "./sched_node_catch";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** A node's flag: it is counted owner-only on its task (`list`), from then on. */
+export const LISTED: u32 = 131072;
+
+/** A node's flag: it is linked as well (`list`, with the block counters on). */
+export const NLINKED: u32 = 262144;
+
+/**
+ * Counts started node `n` among the owner-only promises of its task `task`, in a poll of that
+ * task: an adoption poll left it suspended with its owner's and its task's references only (its
+ * flag `LISTED` set with the step that ended that poll, sched_node.velt `pollNode`). The park
+ * needs only the count: a listed promise stays owner-only until it finishes or is dropped, since
+ * only a run with its own `cx` hands out its waker, and that run needs a waker to begin with.
+ * With the block counters on, the promises are also linked, and the park walks them to check it.
+ */
+@inline("always")
+export function list(task: usize, n: usize): void {
+  // One test for both: the first one, or a task whose promises are linked as well.
+  if ((m.ld32(task + t.T_FLAGS) & (t.LOST | t.LINKED)) !== t.LOST) {
+    listRare(task, n);
+  }
+  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) + 1);
+}
+
+/**
+ * Listed node `n` of task `task` (its flags `fl` from before) finished or was given up, in a
+ * poll of that task.
+ */
+@inline("always")
+export function unlist(task: usize, n: usize, fl: u32): void {
+  if ((fl & NLINKED) !== 0) {
+    unlinkCounted(task, n);
+  }
+  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
+}
+
+/**
+ * `list` for the first promise of task `task` (the count starts at 0, read only with `LOST` set:
+ * sched_task.velt `T_LISTED`; with the block counters on, linked as well from then on: `LINKED`)
+ * or for one whose promises are linked: `n` goes on the links.
+ */
+@noInline
+function listRare(task: usize, n: usize): void {
+  if (!t.has(task, t.LOST)) {
+    m.st(task + t.T_LISTED, 0);
+    m.st(task + t.T_LOST, 0);
+    t.flags(task, wk.counting() ? t.LOST | t.LINKED : t.LOST, 0);
+  }
+  if (t.has(task, t.LINKED)) {
+    linkCounted(task, n);
+  }
+}
+
+/** `list`'s link, with the block counters on (`checkListDead` walks it). */
+function linkCounted(task: usize, n: usize): void {
+  checkLink(task, n);
+  nd.setFlags(n, NLINKED);
+  const head = m.ld(task + t.T_LOST);
+  m.st(n + nd.N_NEXT, head);
+  m.st(n + nd.N_TAKEN_NEXT, 0);
+  if (head !== 0) {
+    m.st(head + nd.N_TAKEN_NEXT, n);
+  }
+  m.st(task + t.T_LOST, n);
+}
+
+/** `unlist`'s unlink, with the block counters on. */
+@noInline
+function unlinkCounted(task: usize, n: usize): void {
+  const next = m.ld(n + nd.N_NEXT);
+  const prev = m.ld(n + nd.N_TAKEN_NEXT);
+  checkUnlink(task, n, next, prev);
+  if (prev === 0) {
+    m.st(task + t.T_LOST, next);
+  } else {
+    m.st(prev + nd.N_NEXT, next);
+  }
+  if (next !== 0) {
+    m.st(next + nd.N_TAKEN_NEXT, prev);
+  }
+}
+
+/**
+ * The end of a poll of task `k`, still running and about to go idle (sched_run.velt `runEnd`):
+ * can nothing wake it any more? Then its next poll drops its root (flag `CANCEL`), and the
+ * caller queues it. A task that never listed a promise pays the test of its flags; one that
+ * waits on a leaf has a reference more than its promises account for, and pays two loads more.
+ * Not the root of `main` (the program's end is its own: sched_end.velt), not a root that is done
+ * or catches panics.
+ */
+@inline("always")
+export function parks(k: usize): bool {
+  const gate = t.LOST | t.ROOT | t.ROOT_DONE | t.CANCEL | nc.T_CATCHES;
+  if ((m.ld32(k + t.T_FLAGS) & gate) !== t.LOST) {
+    return false;
+  }
+  const l = m.ld(k + t.T_LISTED);
+  if (l === 0 || l !== m.ld(k + t.T_LOCALS)) {
+    return false;
+  }
+  const refs = m.load(k + t.T_REFS);
+  if (refs === l + 1) {
+    return dead(k, l);
+  }
+  // One more, the handle's: its drop is asked to wake the task, once (`J_PARKED`).
+  const held = t.J_HANDLE | t.J_PARKED;
+  return refs === l + 2 && (m.load32(k + t.T_JOIN_STATE) & held) === t.J_HANDLE && dead(k, l);
+}
+
+/**
+ * `parks` once the counts of task `k` (`l` promises, all listed) say that at most its handle is
+ * left: whether it gets its last poll. The join slot's lock orders this against the handle's
+ * drop on another thread (`handleDropped`), which touches the task until it gives the lock back:
+ * the task is not marked, and so not freed, before that. The state is read last: a wake by value
+ * changes it before it gives its reference back, so a count that no longer has that reference
+ * comes with a state that shows the wake.
+ */
+@noInline
+function dead(k: usize, l: usize): bool {
+  if ((m.load32(k + t.T_JOIN_STATE) & t.J_FOREIGN) !== 0 || !droppable(k)) {
+    return false;
+  }
+  const kind = lk.kind();
+  const s = mk.lockJoin(k, kind);
+  const refs = m.load(k + t.T_REFS);
+  if ((s & t.J_HANDLE) !== 0) {
+    // Only the handle keeps it: whoever drops the handle wakes it for another look.
+    mk.unlockJoin(k, refs === l + 2 ? s | t.J_PARKED : s, kind);
+    return false;
+  }
+  mk.unlockJoin(k, s, kind);
+  if (refs !== l + 1 || m.load32(k + t.T_STATE) !== t.RUNNING) {
+    return false;
+  }
+  if (t.has(k, t.LINKED)) {
+    checkListDead(k, l);
+  }
+  t.flags(k, t.CANCEL, 0);
+  return true;
+}
+
+/** Can task `k`'s root be dropped: a heap future (sched_fut_root.velt), or a state with glue? */
+function droppable(k: usize): bool {
+  return m.ld(k + t.T_DROP) !== 0 || m.ld(k + t.T_POLL) === fnAddress(fr.futRootPoll);
+}
+
+/**
+ * The `l` listed promises of task `k` at its park, with the block counters on (the only runs
+ * that link them): none can be woken, as `list` says. Each has its owner's reference and its
+ * task's and nothing else, or, its owner having dropped it on another thread, its task's only.
+ * The count is read before the flags: an owner's drop sets `DETACHED` before it gives its
+ * reference back, so two references and no `DETACHED` after them are the owner's and the task's,
+ * not the task's and a waker's. A promise that breaks it is an `ICE:`, so a counted run decides
+ * as any other.
+ */
+@noInline
+function checkListDead(k: usize, l: usize): void {
+  const quiet = nd.STARTED | LISTED;
+  const busy = nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.CATCHES | nd.PANICKED | nd.ADOPTED;
+  let seen: usize = 0;
+  let n = m.ld(k + t.T_LOST);
+  while (n !== 0) {
+    const refs = m.load(n + nd.N_REFS);
+    const fl = m.load32(n + nd.N_FLAGS);
+    checkListed(k, n, refs, fl);
+    const state = fl & (quiet | busy | nd.DETACHED);
+    if (!(state === quiet && refs === 2) && !(state === (quiet | nd.DETACHED) && refs === 1)) {
+      panic("ICE: an owner-only promise can be woken at its task's park");
+    }
+    seen++;
+    n = m.ld(n + nd.N_NEXT);
+  }
+  if (seen !== l) {
+    panic("ICE: a task's list of owner-only promises does not match its count");
+  }
+}
+
+/**
+ * The last poll of task `k` (flag `CANCEL`; sched_run.velt `runOther`, in place of its root's
+ * poll): nothing can wake it, so its root is dropped, as JavaScript collects a function suspended
+ * for ever. The task is current, so the promises the root owned are dropped on their task's
+ * side and given up (sched_node_lost.velt `dropPending`), and what the drop code starts or
+ * queues is this task's. The root is done from then on, with no result (the handle is gone:
+ * nobody reads the slot, and the join slot is never ended); the rest of the poll and its end
+ * are any poll's: the microtasks, the results kept for after them (sched_join.velt `keepDrop`),
+ * and the task's end once no promise is left (sched_run.velt `finish`).
+ */
+@noInline
+export function cancel(k: usize): void {
+  if (wk.counting()) {
+    checkCancel(k);
+  }
+  t.flags(k, t.ROOT_DONE, t.CANCEL);
+  const root = m.ld(k + t.T_ROOT);
+  if (m.ld(k + t.T_POLL) === fnAddress(fr.futRootPoll)) {
+    // SAFETY: the task owns the heap future its root polls (sched_fut_root.velt), which has not
+    // finished and is never polled again.
+    unsafe {
+      futDrop(m.ld(root - 16));
+    }
+    return;
+  }
+  // SAFETY: the root's own drop glue (`droppable` saw it) on its state, which is suspended, not
+  // being polled, and never polled again.
+  unsafe {
+    stateDrop(m.ld(k + t.T_DROP), root);
+  }
+}
+
+/**
+ * The join handle of task `k` is dropped while the task is parked with nothing else to keep it
+ * (`J_PARKED` in the slot's word `s`, the slot's lock held, an operation of kind `kind`;
+ * sched_join.velt `joinDropAs`, which took `joiner` out of the slot): the handle's reference
+ * goes, the task is woken, and the park after that poll finds it dead. All of it with the lock
+ * held: the task takes the lock before it marks itself (`dead`), so it is not freed while this
+ * thread still touches it; the executor's reference keeps it until then.
+ */
+@noInline
+export function handleDropped(k: usize, s: u32, kind: u32, joiner: usize): void {
+  m.dec(k + t.T_REFS);
+  wk.wake(k);
+  mk.unlockJoin(k, s & ~(t.J_HANDLE | t.J_PARKED), kind);
+  if (joiner !== 0) {
+    m.wakerDrop(joiner);
+  }
+}
+
+// The rule as assertions, with the block counters on (`VELT_RC_STATS=1`): a task dropped while
+// something could still wake it would lose work silently, and a count out of step with its
+// promises would free a task too early or never.
+
+/** Node `n` is about to be listed on task `task`: suspended, owner-only, in a poll of `task`. */
+function checkLink(task: usize, n: usize): void {
+  const e = t.here();
+  if (e === 0 || m.ld(e + t.E_CURRENT) !== task || m.ld(n + nd.N_TASK) !== task) {
+    panic("ICE: a promise is listed as owner-only outside a poll of its task");
+  }
+  const fl = m.load32(n + nd.N_FLAGS);
+  const not = nd.FINISHED | nd.RUNNING | nd.QUEUED;
+  const is = nd.STARTED | LISTED;
+  if ((fl & (is | not)) !== is || m.load(n + nd.N_REFS) !== 2) {
+    panic("ICE: a promise listed as owner-only is not suspended with two references");
+  }
+}
+
+/** Node `n` leaves the list of task `task`: its neighbours `next` and `prev` point at it. */
+function checkUnlink(task: usize, n: usize, next: usize, prev: usize): void {
+  const before = prev === 0 ? m.ld(task + t.T_LOST) : m.ld(prev + nd.N_NEXT);
+  if (
+    !t.has(task, t.LOST) ||
+    m.ld(task + t.T_LISTED) === 0 ||
+    before !== n ||
+    (next !== 0 && m.ld(next + nd.N_TAKEN_NEXT) !== n)
+  ) {
+    panic("ICE: an owner-only promise is not on its task's list where it says it is");
+  }
+}
+
+/** Listed node `n` of task `k` at a park (`refs`, `fl`): nothing gave it a waker meanwhile. */
+function checkListed(k: usize, n: usize, refs: usize, fl: u32): void {
+  if (m.ld(n + nd.N_TASK) !== k || (fl & LISTED) === 0) {
+    panic("ICE: a task's list of owner-only promises holds a promise that is not on it");
+  }
+  if ((fl & (nd.FINISHED | nd.RUNNING | nd.QUEUED)) !== 0 || refs > 2) {
+    panic("ICE: an owner-only promise gained a waker");
+  }
+}
+
+/** Task `k` at its last poll: still nothing that could have woken it (`parks`'s rule). */
+function checkCancel(k: usize): void {
+  const l = m.ld(k + t.T_LISTED);
+  if (l !== m.ld(k + t.T_LOCALS) || m.load(k + t.T_REFS) !== l + 1) {
+    panic("ICE: a task is dropped as parked for ever while a reference to it is left");
+  }
+  if (
+    t.has(k, t.ROOT | t.ROOT_DONE) ||
+    (m.load32(k + t.T_JOIN_STATE) & t.J_HANDLE) !== 0 ||
+    m.load(k + t.T_WOKEN) !== 0 ||
+    m.ld32(k + t.T_WORD) !== 0
+  ) {
+    panic("ICE: a task is dropped as parked for ever while it can still run");
+  }
+}

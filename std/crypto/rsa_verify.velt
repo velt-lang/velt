@@ -1,0 +1,296 @@
+// velt/crypto (internal): RSA signature verification (RFC 8017): RSASSA-PKCS1-v1_5 (§8.2.2) and
+// RSASSA-PSS (§8.1.2) with SHA-256, SHA-384 or SHA-512, as certificates and TLS use them. The
+// rules are ring's, which rustls applies today: a modulus of at least 256 bytes (2041 bits) and
+// at most 8192 bits, an odd public exponent from 3 to 2^33 - 1, a signature exactly as long as
+// the modulus and below it, and for PSS MGF1 with the message's hash and a salt as long as the
+// hash.
+//
+// Everything here is public (the key, the digest, the signature), so the exponentiation
+// branches on the exponent's bits; the products themselves (`Mont`) take the same time for any
+// operands. The key is an RSAPublicKey (RFC 8017 §A.1.1: the contents of a certificate's
+// subjectPublicKey) in strict DER.
+
+import { timingSafeEqual } from "velt/crypto/compare";
+import { Mont } from "velt/crypto/mont";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384, sha512 } from "velt/crypto/sha512";
+
+const MIN_BITS: usize = 2048;
+const MAX_BITS: usize = 8192;
+
+// SHA-256's DigestInfo (RFC 8017 §9.2 note 1) up to the digest. Those of SHA-384 and SHA-512
+// differ in three bytes: the lengths at 1 and 18, and the last byte of the hash's OID at 14.
+const INFO: u8[] = [
+  0x30,
+  0x31,
+  0x30,
+  0x0d,
+  0x06,
+  0x09,
+  0x60,
+  0x86,
+  0x48,
+  0x01,
+  0x65,
+  0x03,
+  0x04,
+  0x02,
+  0x01,
+  0x05,
+  0x00,
+  0x04,
+  0x20,
+];
+
+// Registers.
+const BASE: usize = 0;
+const ACC: usize = 1;
+const PLAIN: usize = 2;
+
+// The hash whose output has `len` bytes, of `data`; `len` is 32, 48 or 64.
+function hash(len: usize, data: u8[]): u8[] {
+  if (len == 32) {
+    return sha256(data);
+  }
+  return len == 48 ? sha384(data) : sha512(data);
+}
+
+// The DER element with `tag` at `p` in `b`, below `end`: [the start of its contents, their
+// length], or [] when it is not there in strict DER (a definite length in the fewest bytes).
+function element(b: u8[], p: usize, end: usize, tag: u8): usize[] {
+  if (p + 2 > end || b[p] != tag) {
+    return [];
+  }
+  let len = b[p + 1] as usize;
+  let at = p + 2;
+  if (len >= 0x80) {
+    const count = len - 0x80;
+    if (count == 0 || count > 2 || at + count > end) {
+      return [];
+    }
+    len = 0;
+    for (let i: usize = 0; i < count; i++) {
+      len = (len << 8) | (b[at + i] as usize);
+    }
+    at += count;
+    if (len < 0x80 || (count == 2 && len < 0x100)) {
+      return [];
+    }
+  }
+  if (len > end - at) {
+    return [];
+  }
+  return [at, len];
+}
+
+// The positive INTEGER at `p` in `b`, below `end`: [the start of its magnitude (no sign byte),
+// the magnitude's length, the element's end], or [] for anything but a minimal positive one.
+function positiveInteger(b: u8[], p: usize, end: usize): usize[] {
+  const e = element(b, p, end, 0x02);
+  if (e.length == 0 || e[1] == 0) {
+    return [];
+  }
+  let at = e[0];
+  let len = e[1];
+  if ((b[at] & 0x80) != 0) {
+    return [];
+  }
+  if (b[at] == 0) {
+    // A leading zero only in front of a set top bit; zero itself is not positive.
+    if (len == 1 || (b[at + 1] & 0x80) == 0) {
+      return [];
+    }
+    at += 1;
+    len -= 1;
+  }
+  return [at, len, e[0] + e[1]];
+}
+
+// The RSAPublicKey `key`: [the modulus's start, its length, the exponent's start, its length],
+// or [] when it is malformed or outside ring's limits.
+function keyParts(key: u8[]): usize[] {
+  const seq = element(key, 0, key.length, 0x30);
+  if (seq.length == 0 || seq[0] + seq[1] != key.length) {
+    return [];
+  }
+  const n = positiveInteger(key, seq[0], key.length);
+  if (n.length == 0) {
+    return [];
+  }
+  const e = positiveInteger(key, n[2], key.length);
+  if (e.length == 0 || e[2] != key.length) {
+    return [];
+  }
+  let top = key[n[0]];
+  let bits = 8 * (n[1] - 1);
+  while (top != 0) {
+    bits += 1;
+    top = top >> 1;
+  }
+  // As ring: the least is counted in whole bytes (256 of them, so 2041 bits pass), the most
+  // in bits.
+  if (8 * n[1] < MIN_BITS || bits > MAX_BITS || (key[n[0] + n[1] - 1] & 1) == 0) {
+    return [];
+  }
+  // The exponent: at most 33 bits, at least 3, odd.
+  if (e[1] > 5 || (e[1] == 5 && key[e[0]] > 1)) {
+    return [];
+  }
+  const low = key[e[0] + e[1] - 1];
+  if ((low & 1) == 0 || (e[1] == 1 && low < 3)) {
+    return [];
+  }
+  return [n[0], n[1], e[0], e[1]];
+}
+
+// `signature` to the power of the key's exponent mod its modulus, as bytes as long as the
+// modulus (RFC 8017 §5.2.2 RSAVP1, then I2OSP), and the modulus's bits in `bits[0]`; null for a
+// key or a signature that is refused.
+function encodedMessage(key: u8[], signature: u8[], bits: usize[]): u8[] | null {
+  const pk = keyParts(key);
+  if (pk.length == 0 || signature.length != pk[1]) {
+    return null;
+  }
+  const m = new Mont(key, pk[0], pk[1], 3);
+  bits[0] = m.bits;
+  if (!m.load(PLAIN, signature, 0, signature.length)) {
+    return null;
+  }
+  m.enter(BASE, PLAIN);
+  m.copy(ACC, BASE);
+  let e: u64 = 0;
+  for (let i: usize = 0; i < pk[3]; i++) {
+    e = (e << 8) | (key[pk[2] + i] as u64);
+  }
+  let bit: u64 = 0;
+  while (e >> (bit + 1) != 0) {
+    bit += 1;
+  }
+  // From the bit under the top one down to bit 1.
+  while (bit > 1) {
+    bit -= 1;
+    m.mul(ACC, ACC, ACC);
+    if (((e >> bit) & 1) == 1) {
+      m.mul(ACC, ACC, BASE);
+    }
+  }
+  // Bit 0 is set (e is odd): its product with the signature as it is, not in the Montgomery
+  // domain, leaves the domain too.
+  m.mul(ACC, ACC, ACC);
+  m.mul(ACC, ACC, PLAIN);
+  return m.bytes(ACC, pk[1]);
+}
+
+/**
+ * Whether `signature` is a valid RSASSA-PKCS1-v1_5 signature by the RSAPublicKey `publicKey`
+ * (DER) of the message whose hash is `digest`: 32 bytes for SHA-256, 48 for SHA-384, 64 for
+ * SHA-512. False for another length, a malformed key, a modulus shorter than 256 bytes (2041
+ * bits) or longer than 8192 bits, or a malformed signature; never an exception.
+ */
+export function rsaPkcs1Verify(publicKey: u8[], digest: u8[], signature: u8[]): bool {
+  const hLen = digest.length;
+  if (hLen != 32 && hLen != 48 && hLen != 64) {
+    return false;
+  }
+  const em = encodedMessage(publicKey, signature, [0]);
+  if (em == null) {
+    return false;
+  }
+  // The one encoding there is (RFC 8017 §9.2): 00 01 FF.. 00 DigestInfo, compared whole, so
+  // nothing is parsed out of the signature.
+  const expected = Buffer.alloc(em.length);
+  const tAt = em.length - hLen - INFO.length;
+  expected[1] = 1;
+  for (let i: usize = 2; i < tAt - 1; i++) {
+    expected[i] = 0xff;
+  }
+  for (let i: usize = 0; i < INFO.length; i++) {
+    expected[tAt + i] = INFO[i];
+  }
+  // 0, 1 or 2 for SHA-256, SHA-384 or SHA-512.
+  const which = ((hLen - 32) >> 4) as u8;
+  expected[tAt + 1] += 16 * which;
+  expected[tAt + 14] += which;
+  expected[tAt + 18] += 16 * which;
+  for (let i: usize = 0; i < hLen; i++) {
+    expected[tAt + INFO.length + i] = digest[i];
+  }
+  return timingSafeEqual(em, expected);
+}
+
+/**
+ * Whether `signature` is a valid RSASSA-PSS signature by the RSAPublicKey `publicKey` (DER) of
+ * the message whose hash is `digest` (32 bytes for SHA-256, 48 for SHA-384, 64 for SHA-512),
+ * with MGF1 over the same hash and a salt as long as the hash (what TLS 1.3 and certificates
+ * use, RFC 8446 §4.2.3). False for anything else, never an exception.
+ */
+export function rsaPssVerify(publicKey: u8[], digest: u8[], signature: u8[]): bool {
+  const hLen = digest.length;
+  if (hLen != 32 && hLen != 48 && hLen != 64) {
+    return false;
+  }
+  const bits: usize[] = [0];
+  const m = encodedMessage(publicKey, signature, bits);
+  if (m == null) {
+    return false;
+  }
+  // EMSA-PSS-VERIFY (RFC 8017 §9.1.2) with emBits = modBits - 1: when that is a multiple of 8
+  // the encoded message is a byte shorter than the modulus, and that byte is zero.
+  const emBits = bits[0] - 1;
+  const emLen = (emBits + 7) >> 3;
+  const skip = m.length - emLen;
+  if (skip == 1 && m[0] != 0) {
+    return false;
+  }
+  if (emLen < 2 * hLen + 2 || m[m.length - 1] != 0xbc) {
+    return false;
+  }
+  const dbLen = emLen - hLen - 1;
+  const hAt = skip + dbLen;
+  const topMask = (0xff >> (8 * emLen - emBits)) as u8;
+  if ((m[skip] & ~topMask) != 0) {
+    return false;
+  }
+  // DB = maskedDB xor MGF1(H): zeros, a 01, the salt.
+  const seed = Buffer.alloc(hLen + 4);
+  for (let i: usize = 0; i < hLen; i++) {
+    seed[i] = m[hAt + i];
+  }
+  const db = Buffer.alloc(dbLen);
+  let done: usize = 0;
+  let counter: usize = 0;
+  while (done < dbLen) {
+    seed[hLen] = ((counter >> 24) & 0xff) as u8;
+    seed[hLen + 1] = ((counter >> 16) & 0xff) as u8;
+    seed[hLen + 2] = ((counter >> 8) & 0xff) as u8;
+    seed[hLen + 3] = (counter & 0xff) as u8;
+    const mask = hash(hLen, seed);
+    for (let i: usize = 0; i < hLen && done < dbLen; i++) {
+      db[done] = m[skip + done] ^ mask[i];
+      done += 1;
+    }
+    counter += 1;
+  }
+  db[0] &= topMask;
+  const saltAt = dbLen - hLen;
+  for (let i: usize = 0; i + 1 < saltAt; i++) {
+    if (db[i] != 0) {
+      return false;
+    }
+  }
+  if (db[saltAt - 1] != 1) {
+    return false;
+  }
+  // H = Hash(eight zeros, the message's hash, the salt).
+  const input = Buffer.alloc(8 + 2 * hLen);
+  for (let i: usize = 0; i < hLen; i++) {
+    input[8 + i] = digest[i];
+    input[8 + hLen + i] = db[saltAt + i];
+  }
+  const h = hash(hLen, input);
+  let diff: u8 = 0;
+  for (let i: usize = 0; i < hLen; i++) {
+    diff |= h[i] ^ m[hAt + i];
+  }
+  return diff == 0;
+}

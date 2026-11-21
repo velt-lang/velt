@@ -1,0 +1,36 @@
+// velt/crypto (tests): `FeP256`'s last subtraction of p (field_p256.velt `store`), through `add`:
+// sums just below p, p itself, just above it, with the lowest limb all ones (the carry of the
+// + 1 in t + 2^256 - p runs up from limb 0), and past 2^256.
+import { describe, expect, it } from "velt/test";
+import { FeP256 } from "velt/crypto/field_p256";
+
+// p - 1, little-endian limbs.
+const PM1: u64[] = [0xfffffffffffffffe, 0x00000000ffffffff, 0, 0xffffffff00000001];
+
+function sum(a: u64[], b: u64[]): u64[] {
+  const f = new FeP256(3);
+  f.load(0, a);
+  f.load(1, b);
+  f.add(2, 0, 1);
+  return [f.r[8], f.r[9], f.r[10], f.r[11]];
+}
+
+describe("FeP256.add", () => {
+  it("keeps a sum below p", () => {
+    expect(sum([1, 0, 0, 0], [1, 0, 0, 0])).toEqual([2, 0, 0, 0]);
+    expect(sum([0xffffffffffffffff, 0, 0, 0], [1, 0, 0, 0])).toEqual([0, 1, 0, 0]);
+    // p - 2 and 1: p - 1.
+    expect(
+      sum([0xfffffffffffffffd, 0x00000000ffffffff, 0, 0xffffffff00000001], [1, 0, 0, 0]),
+    ).toEqual(PM1);
+  });
+
+  it("takes p from a sum that reaches it", () => {
+    // p, p + 1, and p + 3 * 2^64 (limb 0 of the sum is all ones).
+    expect(sum(PM1, [1, 0, 0, 0])).toEqual([0, 0, 0, 0]);
+    expect(sum(PM1, [2, 0, 0, 0])).toEqual([1, 0, 0, 0]);
+    expect(sum(PM1, [1, 3, 0, 0])).toEqual([0, 3, 0, 0]);
+    // 2p - 2, past 2^256.
+    expect(sum(PM1, PM1)).toEqual([0xfffffffffffffffd, 0x00000000ffffffff, 0, 0xffffffff00000001]);
+  });
+});
