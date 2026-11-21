@@ -264,7 +264,7 @@ export function nodeDrop(f: usize): void {
     if (w !== 0) {
       m.wakerDrop(w);
     }
-    release(n);
+    lost.droppedAway(n);
     return;
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
@@ -452,14 +452,17 @@ export function ownNode(task: usize, w: usize): bool {
   return m.ld(w) === t.main() + t.E_NODE_VT && m.ld(w + N_TASK) === task;
 }
 
-/** Gives back one reference to node `n`: the last frees it. */
+/**
+ * Gives back one reference to node `n`: the last frees it, and gives back its reference to its
+ * task (sched_node_lost.velt `taskRef`: with a wake when that is not on the task's thread).
+ */
 export function release(n: usize): void {
   if (m.dec(n + N_REFS) === 1) {
     const task = m.ld(n + N_TASK);
     x.free(n);
     m.release(n, m.ld32(n + N_BYTES) as usize);
     if (task !== 0) {
-      wk.release(task);
+      lost.taskRef(task);
     }
   }
 }
