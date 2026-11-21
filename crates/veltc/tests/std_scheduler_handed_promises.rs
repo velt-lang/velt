@@ -311,6 +311,7 @@ fn a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too() {
     for (name, src, want) in [
         ("arg_to_spawned_call", ARG_TO_SPAWNED_CALL, "done 190\n"),
         ("copies_handed_over", COPIES_HANDED_OVER, "done 1140\n"),
+        ("settled_before", SETTLED_BEFORE, "done 235\n"),
     ] {
         let exe = build_std(dir.path(), name, src);
         for threads in ["1", "4", "8"] {
@@ -331,6 +332,67 @@ fn a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too() {
         bad.join("\n")
     );
 }
+
+/// Promises already settled when they are passed, for
+/// [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`] (the review of #3426): the
+/// hand-over's proxy then finished at once, before the callee's copy, which shared it on this task
+/// again. Node prints the same sum (with a handler on the rejected promise before it is passed,
+/// which Node needs to keep it from being reported).
+const SETTLED_BEFORE: &str = r#"// A promise that has settled before it is passed to an async closure that is called and spawned at
+// once: resolved, awaited before, settled without being awaited, rejected before (the callee
+// catches), and resolved by another task before.
+async function soon(n: number): Promise<number> {
+  await yieldNow();
+  return n;
+}
+
+async function fails(n: number): Promise<number> {
+  await yieldNow();
+  throw new Error(`no ${n}`);
+}
+
+async function settle(give: (v: number) => void, n: number): Promise<void> {
+  give(n);
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 10; r++) {
+    // Resolved.
+    const a = Promise.resolve(r);
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(a));
+    // Awaited before.
+    const b = soon(r);
+    sum += await b;
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(b));
+    // Settled, not awaited.
+    const c = soon(r);
+    await yieldNow();
+    await yieldNow();
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(c));
+    // Rejected before; the callee catches.
+    const d = fails(r);
+    await yieldNow();
+    await yieldNow();
+    sum += await spawn(
+      (async (held: Promise<number>): Promise<number> => {
+        try {
+          return await held;
+        } catch (e) {
+          return 1;
+        }
+      })(d),
+    );
+    // Resolved by another task before.
+    const got = Promise.withResolvers<number>();
+    await spawn(settle(got.resolve, r));
+    const e = got.promise;
+    sum += await spawn((async (held: Promise<number>): Promise<number> => await held)(e));
+  }
+  console.log(`done ${sum}`);
+}
+main();
+"#;
 
 /// The program of #3424 for [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`].
 const ARG_TO_SPAWNED_CALL: &str = r#"async function soon(n: number): Promise<number> {

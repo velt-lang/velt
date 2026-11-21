@@ -13,6 +13,7 @@ import { fnAddress, futDrop, futPoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nc from "./sched_node_catch";
 import * as nd from "./sched_node";
+import * as nw from "./sched_node_wake";
 import * as sh from "./sched_share";
 import * as sd from "./sched_share_drop";
 import * as t from "./sched_task";
@@ -115,7 +116,20 @@ function newProxy(h: usize, glue: usize): usize {
   );
   m.release(st, ss);
   const e = t.exec();
-  nd.start(m.ld(e + t.E_CURRENT), p, m.ld(h + sh.H_RDROP), false, poll, m.ld(e + nc.E_CATCHING));
+  const task = m.ld(e + t.E_CURRENT);
+  if (task !== 0) {
+    // Started, its first run left to its task's next poll (the woken nodes): run now, a settled
+    // promise's proxy would finish at once, and a copy made right after the hand-over (a spawned
+    // call's callee keeps one of its argument) would find no hub to take a role of
+    // (`copyHandedOver`, #3424).
+    const n = nd.nodeOf(p);
+    const catching = m.ld(e + nc.E_CATCHING);
+    if (catching !== 0) {
+      nc.catchesFrom(n, catching);
+    }
+    nd.bind(task, n, m.ld(h + sh.H_RDROP), false);
+    nw.nodeWakeByRef(n);
+  }
   tr.transfer(p, glue, poll);
   return p;
 }
