@@ -272,12 +272,17 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 [weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
-  held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
+  held. Bit 62 (`RC_GATED`) is set besides once its record has a release gate (a weak map key, or
+  an object on an entry's path back to its key): a release of an object without one needs the
+  core only when it frees the object. The count proper is bits 0..61. Retain is unchanged
+  (`count += 1`).
 - **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
   targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c
-  > 1 { count = c - 1 } else if c == 1 { drop; free } else if weakRelease(obj) { drop; free }`
-  (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release with the
-  plain sequence.
+  > 1 { count = c - 1 } else if c == 1 { drop; free } else if (int64_t)(c << 1) > 2 { count = c -
+  1 } else if weakRelease(obj) { drop; free }` (`RC_WEAK` is the sign bit, so the shared path keeps
+  one compare; the third test, with `RC_GATED` shifted into the sign bit, is a weakly held object
+  without it whose count stays above 0, emitted for the classes `weak` fields refer to; other
+  types leave it out and `weakRelease` makes that decrement). Other types release with the plain sequence.
 - **Trace glue** per counted type that can be a weak key or value, or be reached from one:
   `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
   for each counted reference `obj` owns (`child_trace` may be null: opaque), each argument a
@@ -316,7 +321,8 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
   a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps `WeakMap`,
   `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer glue
   panics): a handle is used by one task at a time. Weak-capable types are never atomic. An object
-  with `RC_WEAK` set and no record is an ICE (`weakRelease` panics before it changes the count).
+  with `RC_WEAK` set and no record is an ICE (`weakRelease` panics before it changes the count;
+  without `RC_GATED`, at its last release, the first that calls it).
   Trace glue runs with the table locked and must only call `visit`.
 - **Compiler rules** for weak-capable types: a uniqueness test compares the whole count word with
   1 (a weakly held object is never unique), and every site that decrements a count directly
@@ -339,7 +345,7 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 | `weakRefDrop` | `(r: u32)` | |
 | `weakSlot` | `(obj: usize) -> usize` | the slot of a `weak T` reference to `obj`, a block `[count: usize][target: usize]` shared by every weak reference to it, with its count raised by one (the caller's); does not count `obj`; the slot's target reads 0 once `obj` was freed; 0 (`null`) gives 0, without the lock |
 | `weakSlotDrop` | `(slot: usize)` | gives up a reference to `slot`; 0 is none; takes no lock |
-| `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
+| `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed; the release sequence makes a decrement of an object without `RC_GATED` itself); panics (ICE) when the object has no record |
 
 ## Symbols
 

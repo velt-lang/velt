@@ -120,7 +120,10 @@ fn params(cx: &mut Ctx, ps: &[ast::Param], env: &TyEnv) -> Vec<ParamSig> {
         if let Some(f) = cx.sigq.filling_sigs.last_mut() {
             f.1.clone_from(&p.name.name);
         }
-        let mut ty = cx.resolve_type(&p.ty, env);
+        let mut ty = match cx.sigq.param_props.contains(&p.span) {
+            true => cx.resolve_type(&crate::weak_types::without_weak(&p.ty), env),
+            false => cx.resolve_type(&p.ty, env),
+        };
         if p.rest && !rest_param_type(cx, p.ty.span, ty) {
             ty = cx.ty.error;
         }
@@ -455,7 +458,10 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
         };
         methods.insert(key, r);
     }
+    // A parameter property's field has the parameter's span (velt_syntax `param_props`).
+    cx.sigq.param_props = decl.fields.iter().map(|f| f.span).collect();
     let ctor = decl.constructor.as_ref().map(|c| ctor_def(cx, &owner, c));
+    cx.sigq.param_props.clear();
     let a = cx.adt_mut(d);
     a.methods = methods;
     a.own_ctor = ctor;

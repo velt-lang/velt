@@ -194,8 +194,9 @@ impl<'p> Hashing<'p> {
                     presence,
                     hidden,
                     cell,
+                    weak,
                 } = f;
-                let flags = (optional, private, presence, hidden, cell);
+                let flags = (optional, private, presence, hidden, cell, weak);
                 finish((name, self.ty(*ty), default.is_some(), flags))
             })
             .collect()

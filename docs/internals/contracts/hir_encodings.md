@@ -778,6 +778,13 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   presence flag, below) and shows a class's optional field holding `undefined`, as Node does. A
   `null` (a present one of `a?: T | null`, or a `T | null` field that is not optional) is
   written as `null`.
+- `FieldDef::weak` (additive, #3119): a class's field declared `weak T | null` with `T` a class
+  (docs/internals/design/cycles.md "`weak T`"). `ty` is the read type, `T | null`; the field holds
+  its target's slot in the weak core (rt_abi.md "Weak references"), not a counted reference.
+  Lowering reads it as the target, retained, or `null` once the target is freed, writes it by
+  taking the value's slot (the value is borrowed: sema checks it as a borrow), and leaves it out of
+  the ownership graph (trace glue, the cycle and weak-capable analyses, drop chains). Sema narrows
+  nothing through it and rejects destructuring it and transferring or cloning a value with one.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type: decoding does not run the constructor (the decoder's
   generator reports it, std/encoding/json/generate/parse_check.velt).

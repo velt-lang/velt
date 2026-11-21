@@ -587,6 +587,7 @@ fn field(key: &ast::Ident, ty: TyId) -> FieldInfo {
         default: None,
         default_throws: vec![],
         private_to: None,
+        weak: false,
     }
 }
 

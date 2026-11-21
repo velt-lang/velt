@@ -194,7 +194,13 @@ impl Printer<'_> {
             TypeExprKind::TupleRest(ty) => format!("...{}", self.ty(ty)),
             TypeExprKind::TupleOptional(ty) => format!("{}?", self.ty(ty)),
             TypeExprKind::Union(members) => {
-                let members: Vec<String> = members.iter().map(|m| self.ty_operand(m)).collect();
+                // `weak Node | null` as written: `weak` binds tighter than `|`.
+                let members: Vec<String> = (members.iter())
+                    .map(|m| match m.kind {
+                        TypeExprKind::Weak(_) => self.ty(m),
+                        _ => self.ty_operand(m),
+                    })
+                    .collect();
                 members.join(" | ")
             }
             TypeExprKind::Intersection(members) => {
@@ -258,6 +264,7 @@ impl Printer<'_> {
                 format!("typeof {}", path.join("."))
             }
             TypeExprKind::KeyOf(inner) => format!("keyof {}", self.ty_operand(inner)),
+            TypeExprKind::Weak(inner) => format!("weak {}", self.ty_operand(inner)),
             TypeExprKind::Null => "null".into(),
             TypeExprKind::Undefined => "undefined".into(),
             TypeExprKind::Void => "void".into(),
@@ -298,6 +305,7 @@ impl Printer<'_> {
             TypeExprKind::Union(_)
             | TypeExprKind::Intersection(_)
             | TypeExprKind::KeyOf(_)
+            | TypeExprKind::Weak(_)
             | TypeExprKind::Function { .. } => format!("({})", self.ty(t)),
             _ => self.ty(t),
         }

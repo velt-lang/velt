@@ -30,7 +30,7 @@ structs! {
     MethodRef { def, is_static }
     FieldInfo {
         name, ty, declared, span, readonly, optional, has_default, default, default_throws,
-        private_to,
+        private_to, weak,
     }
     Redefined { field, at, name, init, throws }
     AdtInfo<'_> {

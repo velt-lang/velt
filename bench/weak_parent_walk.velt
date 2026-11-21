@@ -1,0 +1,50 @@
+// `weak T` parent pointers (docs/internals/design/cycles.md "`weak T`"): a tree whose nodes refer
+// to their parent weakly, walked from every leaf up to the root many times. Each step reads a
+// weak field (the slot's target, retained) and releases what it read: the cost of a weak read
+// against bench/weak_parent_walk_strong.velt, the same walk over strong parents.
+class TreeNode {
+  depth: i64;
+  parent: weak TreeNode | null = null;
+  children: TreeNode[] = [];
+  constructor(depth: i64) {
+    this.depth = depth;
+  }
+}
+
+function build(parent: TreeNode, depth: i64, fanout: i64, leaves: TreeNode[]): void {
+  if (depth === 0) {
+    leaves.push(parent);
+    return;
+  }
+  for (let i: i64 = 0; i < fanout; i++) {
+    const c = new TreeNode(parent.depth + 1);
+    c.parent = parent;
+    parent.children.push(c);
+    build(c, depth - 1, fanout, leaves);
+  }
+}
+
+function walk(leaf: TreeNode): i64 {
+  let sum: i64 = 0;
+  let cur: TreeNode | null = leaf;
+  while (cur !== null) {
+    sum += cur.depth;
+    cur = cur.parent;
+  }
+  return sum;
+}
+
+function main() {
+  const root = new TreeNode(0);
+  const leaves: TreeNode[] = [];
+  build(root, 8, 4, leaves);
+  let total: i64 = 0;
+  for (let round: i64 = 0; round < 20; round++) {
+    for (const leaf of leaves) {
+      total += walk(leaf);
+    }
+  }
+  // `root` is used last here: given to `build` at its last use, it would go with that call, and
+  // the inner nodes with it (a weak parent does not keep them).
+  console.log(leaves.length, total, root.children.length);
+}

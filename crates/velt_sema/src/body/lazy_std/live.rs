@@ -685,6 +685,11 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
         if let Some(a) = cx.adt(d) {
             todo.extend(a.fields.iter().map(|f| f.ty));
             todo.extend(a.base);
+            // A `weak` field's reads, writes and drop call the weak core's slot hooks (velt_vir
+            // `weak_fields`).
+            if a.fields.iter().any(|f| f.weak) {
+                cx.lazy.live.present |= Construct::Weak.bit();
+            }
         }
         adts.extend(cx.lazy.subclasses.get(&d).into_iter().flatten().copied());
         let ms = methods(cx).get(&d).cloned().unwrap_or_default();

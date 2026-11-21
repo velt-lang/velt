@@ -13,6 +13,7 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{Nothing, TyId, TyKind};
 use crate::type_defaults::DefaultsOf;
+use crate::weak_types::WeakPlace;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
 #[derive(Clone, Default)]
@@ -133,6 +134,7 @@ impl Ctx<'_> {
             }
             ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
+            ast::TypeExprKind::Weak(inner) => self.weak_misplaced(t, inner, env),
             ast::TypeExprKind::Conditional(c) => self.resolve_conditional(t, c, env),
             ast::TypeExprKind::Mapped(m) => self.resolve_mapped(t, m, env),
             ast::TypeExprKind::TemplateLiteral { quasis, types } => {
@@ -170,7 +172,11 @@ impl Ctx<'_> {
             } else {
                 f.ty.clone()
             };
-            let t = self.resolve_type(&written, env);
+            let t = self
+                .resolve_weak_annotation(&written, env, WeakPlace::Other, &mut |cx, t, env| {
+                    cx.resolve_type(t, env)
+                })
+                .0;
             let name = self.member_key(env.module, &f.name);
             if out.iter().any(|o| o.name == name) {
                 self.err(

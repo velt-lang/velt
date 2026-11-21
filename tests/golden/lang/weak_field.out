@@ -1,0 +1,25 @@
+root/docs/a.txt
+null root docs
+docs undefined
+while the parent lives: parent 1
+after it went: null
+pointed again: docs
+cleared: null
+a temporary: null
+root docs
+<ref *1> Leaf {
+  name: 'a.txt',
+  parent: Node {
+    name: 'docs',
+    parent: Node { name: 'root', parent: null, children: [Array] },
+    children: [ [Circular *1] ]
+  },
+  children: [],
+  size: 0
+}
+docs
+root
+{"name":"below","parent":{"name":"top","parent":null,"children":[]},"children":[]} {"name":"child 2","parent":null,"children":[]}
+docs root
+top
+root

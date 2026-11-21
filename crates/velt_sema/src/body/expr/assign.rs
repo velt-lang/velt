@@ -410,7 +410,13 @@ impl FnCx<'_, '_> {
                 Some(v) => v,
                 // Stored into the place's site (`throws::fn_flows`).
                 None => self.stored_into(self.site_of_value(&place), |s| {
-                    let v = s.expr(value, Some(lty), Want::Move);
+                    // A `weak` field keeps no reference: the value stays its owner's (a variable
+                    // assigned to it keeps its object alive, as in JavaScript).
+                    let want = match s.weak_field_place(&place) {
+                        true => Want::Borrow,
+                        false => Want::Move,
+                    };
+                    let v = s.expr(value, Some(lty), want);
                     // A local declared from a literal takes the type of what it is assigned
                     // (`literal_locals`); other places are a typed position.
                     if s.literal_assign(&place, &v) {

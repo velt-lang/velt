@@ -135,6 +135,12 @@ pub(crate) fn written(t: &TypeExpr) -> String {
             }
             _ => format!("keyof {}", written(t)),
         },
+        T::Weak(t) => match t.kind {
+            T::Union(_) | T::Intersection(_) | T::Function { .. } => {
+                format!("weak ({})", written(t))
+            }
+            _ => format!("weak {}", written(t)),
+        },
         T::Null => "null".into(),
         T::Undefined => "undefined".into(),
         T::Void => "void".into(),

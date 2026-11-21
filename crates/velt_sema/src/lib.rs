@@ -111,6 +111,7 @@ mod kept_consts;
 mod kept_reload;
 mod key_groups;
 mod known;
+mod known_weak;
 mod layout_merge;
 mod literals;
 mod main_fn;
@@ -173,6 +174,7 @@ mod visit;
 mod visit_ref;
 mod void_fields;
 mod weak_threads;
+mod weak_types;
 mod written_types;
 
 use velt_common::{Diagnostic, Diagnostics, Span};

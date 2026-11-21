@@ -1,0 +1,80 @@
+// velt/lang/hooks (tests): the slots of `weak T` fields, compiled as a program has them
+// (velt_vir `weak_fields`): every slot a field takes is given back by its write or its drop
+// glue, which the leak counters cannot see (the weak core's blocks are the C library's); run by
+// `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { weakSlotsLive, weakTracked } from "velt/lang/hooks/weak";
+
+class Node {
+  name: string;
+  parent: weak Node | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Pair {
+  a: weak Node | null = null;
+  b: weak Node | null = null;
+}
+
+function parentName(n: Node): string {
+  const p = n.parent;
+  return p === null ? "null" : p.name;
+}
+
+describe("weak fields", () => {
+  it("give back their slot when their object goes", () => {
+    const before = weakSlotsLive();
+    const records = weakTracked();
+    {
+      const root = new Node("root");
+      const kid = new Node("kid");
+      kid.parent = root;
+      expect(parentName(kid)).toBe("root");
+      expect(weakSlotsLive()).toBe(before + 1);
+    }
+    expect(weakSlotsLive()).toBe(before);
+    expect(weakTracked()).toBe(records);
+  });
+
+  it("give back the old slot when written", () => {
+    const before = weakSlotsLive();
+    const a = new Node("a");
+    const b = new Node("b");
+    const kid = new Node("kid");
+    kid.parent = a;
+    kid.parent = b;
+    expect(parentName(kid)).toBe("b");
+    // `a` keeps its slot in its record until it goes; `kid` holds `b`'s.
+    expect(weakSlotsLive()).toBe(before + 2);
+    kid.parent = null;
+    expect(parentName(kid)).toBe("null");
+    expect(weakSlotsLive()).toBe(before + 2);
+  });
+
+  it("share one slot per target, kept until the target goes", () => {
+    const before = weakSlotsLive();
+    const target = new Node("t");
+    {
+      const p = new Pair();
+      p.a = target;
+      p.b = target;
+      expect(weakSlotsLive()).toBe(before + 1);
+    }
+    expect(weakSlotsLive()).toBe(before + 1);
+  });
+
+  it("read null once the target went, and free the slot with the last holder", () => {
+    const before = weakSlotsLive();
+    const kid = new Node("kid");
+    {
+      const p = new Node("p");
+      kid.parent = p;
+    }
+    expect(parentName(kid)).toBe("null");
+    expect(weakSlotsLive()).toBe(before + 1);
+    kid.parent = null;
+    expect(weakSlotsLive()).toBe(before);
+  });
+});
