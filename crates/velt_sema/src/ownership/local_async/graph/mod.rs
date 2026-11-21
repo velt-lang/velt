@@ -635,11 +635,12 @@ impl Walk<'_, '_> {
             }
             Intrinsic::SharedNew => Some(Boundary::Shared),
             Intrinsic::MutexNew | Intrinsic::RwLockNew => Some(Boundary::Mutex),
-            // A string stored in a slot holds no function and nothing a task could change, so it
-            // makes nothing cross. std's symbol records keep their description so
-            // (std/lang/symbol/record.velt): as a channel send, it made whatever flowed into
-            // `Symbol(...)` cross, and with it every value of the types it came through.
-            // The value is the last argument (`slotPut(at, value)`, `slotTransfer(value)`).
+            // A string stored in a slot holds no function and nothing a task could change, so
+            // storing it makes nothing cross. std's symbol records store their description in a
+            // slot (std/lang/symbol/record.velt). Taken as a channel send, that store made
+            // whatever flowed into `Symbol(...)` cross tasks, and with it every value of the
+            // types it came through. The stored value is the last argument (`slotPut(at, value)`,
+            // `slotTransfer(value)`).
             Intrinsic::SlotPut | Intrinsic::SlotTransfer
                 if args
                     .last()
