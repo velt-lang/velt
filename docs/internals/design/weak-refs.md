@@ -132,10 +132,12 @@ the key's last outside reference goes by a decrement, never by the release that 
 the trace of an entry whose key goes by its only release, and the trials that releases of a value
 not examined yet would run (the value is not marked until then), and it sees a path the value gains
 between the insert and that decrement. It costs a second lookup of the entry at the decrement:
-against an examination at insert, `bench/weakmap_handlers.velt` (handlers over other objects) runs
-5.4% more instructions, `bench/weakmap_handlers_cycle.velt` 37.5% fewer, and
-`bench/weakmap_key_decrements.velt` (keys decremented a thousand times each while their entries
-live) 2.9% fewer.
+against an examination at insert, `bench/weakmap_handlers_cycle.velt` runs 37.5% fewer instructions
+and `bench/weakmap_key_decrements.velt` (keys decremented a thousand times each while their entries
+live) 2.9% fewer. In `bench/weakmap_handlers.velt` (handlers over other objects) a key's one
+release is its last, so no entry is traced: a call gets an argument where it is when the arguments
+after it assign no variable it reads (`new Handler(() => other.n)` creates a closure that assigns
+none; sequence.rs `writes_local`).
 
 **On a release** that leaves a recorded object's count at or below `max(hint, observed)`, every
 remaining reference may come from the cycle, so the cold path runs a **trial deletion** (Bacon

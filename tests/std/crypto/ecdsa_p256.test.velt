@@ -1,6 +1,7 @@
 // ECDSA verification on P-256 (velt/crypto `p256Verify`): every Project Wycheproof
-// ecdsa_secp256r1_sha256 case, and a signature made by OpenSSL 4.0.3.
-import { p256Verify, sha256 } from "velt/crypto";
+// ecdsa_secp256r1_sha256 case, a signature made by OpenSSL 4.0.3, and OpenSSL's signatures over
+// SHA-384 digests.
+import { p256Verify, sha256, sha384 } from "velt/crypto";
 import { hexDecode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
 import { ECDSA_P256_SHA256_CASES } from "./wycheproof_ecdsa_p256_sha256";
@@ -45,6 +46,33 @@ function bytes(s: string): u8[] {
   return s == "-" ? [] : hexDecode(s);
 }
 
+// A P-256 key from `openssl ecparam -name prime256v1 -genkey` (OpenSSL 3.0.13) and its
+// `openssl dgst -sha384 -sign` of three messages (hex, "-" for the empty one): webpki's
+// ECDSA_P256_SHA384, which certificates use and Project Wycheproof has no file for. The last is
+// its SHA-256 signature of the third message.
+const SHA384_KEY =
+  "04e76b1d5c0551aa0121cac4dbcc189ec00148fb4fc6b17f73d76a63ed42a4bb8fc4d33d4563062c3cfcc0e60f867c7d4095d299bbba1892e54cecf0be30797986";
+
+function sha384Signatures(): string[][] {
+  return [
+    [
+      "68656c6c6f2076656c74",
+      "3046022100b9504ed7d4eb2bd42c2ffb51a121f58f33dbb35d785b255e5944288ca8dd6ace022100a62020aed23d5e68aafe29f7e25ec01c8a29396b712946ede4addbef7c919b77",
+    ],
+    [
+      "-",
+      "30450220572d16a98d95c927fe008b12788dba6c753f5f866f22f17fe5cb712c3c7af39a022100f2ffad4c5b6f42e0954888f815c836a7c17eb3233d5d9f57df8585671dc93547",
+    ],
+    [
+      "6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161",
+      "304402200a1421678c20daca7751fa8dd1949baada41a1ff8047111335e5874a3698838902206e2a22c8bdf63d07fd82fe5f886c9b8dd69567641b263efb554c0448f6951038",
+    ],
+  ];
+}
+
+const SHA256_SIG_OF_THIRD =
+  "304502210093f56d4821f9b446ae0a1135aff7c92e57e7c1607cf40f536548cadbb3c406500220078d9259a1b6476eb02a3cab9990ac6ab5b2bd7019886da1bad2fa31d809ddb7";
+
 describe("p256Verify", () => {
   it("matches every Wycheproof ecdsa_secp256r1_sha256 case", () => {
     let key: u8[] = [];
@@ -82,6 +110,30 @@ describe("p256Verify", () => {
     msg[0] = 104;
     key[64] ^= 1;
     expect(p256Verify(key, sha256(msg), sig)).toBe(false);
+  });
+
+  it("verifies OpenSSL's signatures over SHA-384 digests, by their leftmost 32 bytes", () => {
+    const key = hexDecode(SHA384_KEY);
+    for (const [m, sig] of sha384Signatures()) {
+      const message = bytes(m);
+      const digest = sha384(message);
+      expect(p256Verify(key, digest, hexDecode(sig))).toBe(true);
+      // The digest's first 32 bytes are what counts: the rest may change, they may not.
+      digest[47] ^= 1;
+      expect(p256Verify(key, digest, hexDecode(sig))).toBe(true);
+      digest[31] ^= 1;
+      expect(p256Verify(key, digest, hexDecode(sig))).toBe(false);
+      // Not a signature of the message's SHA-256, nor of the SHA-384 cut to 32 bytes by hand
+      // being anything else: the cut digest verifies, as the same number.
+      expect(p256Verify(key, sha256(message), hexDecode(sig))).toBe(false);
+      expect(p256Verify(key, sha384(message).slice(0, 32), hexDecode(sig))).toBe(true);
+      const flipped = hexDecode(sig);
+      flipped[flipped.length - 1] ^= 1;
+      expect(p256Verify(key, sha384(message), flipped)).toBe(false);
+    }
+    const third = bytes(sha384Signatures()[2][0]);
+    expect(p256Verify(key, sha256(third), hexDecode(SHA256_SIG_OF_THIRD))).toBe(true);
+    expect(p256Verify(key, sha384(third), hexDecode(SHA256_SIG_OF_THIRD))).toBe(false);
   });
 
   it("doubles when an addition meets the same point", () => {

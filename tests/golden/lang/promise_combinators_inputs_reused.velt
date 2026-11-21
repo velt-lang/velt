@@ -1,0 +1,43 @@
+// An array of promises passed to a combinator keeps its promises for later use (#1600), the
+// same array goes to `Promise.all` and then to `Promise.allSettled` (#1651), and a second
+// rejection inside `Promise.all` is handled by it, not reported as uncaught (#1590).
+class E1 extends Error {}
+
+async function a(): Promise<number> {
+  return 1;
+}
+
+async function b(): Promise<number> {
+  throw new Error("b");
+}
+
+async function f(x: string): Promise<string> {
+  return x;
+}
+
+async function failA(): Promise<number> {
+  throw new E1("a");
+}
+
+async function failB(): Promise<number> {
+  throw new E1("b");
+}
+
+async function main() {
+  const ps = [a(), b()];
+  await Promise.allSettled(ps);
+  const out = await Promise.all(
+    ps.map((x) => x.then((v) => "ok " + v).catch((e) => "bad " + (e as Error).message)),
+  );
+  console.log(out);
+
+  const qs: Promise<string>[] = [f("a"), f("b")];
+  console.log(await Promise.all(qs));
+  console.log(await Promise.allSettled(qs));
+
+  try {
+    await Promise.all([failA(), failB()]);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
