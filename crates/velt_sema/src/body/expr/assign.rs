@@ -316,6 +316,12 @@ impl FnCx<'_, '_> {
                     if self.cx.ty.is_storage_float(p.ty) {
                         return (self.storage_logical_value(op, target, value, span), true);
                     }
+                    // `(b[i] ||= v)` on an integer array is `v` when it stores (#3435).
+                    if self.logical_element_store(p) {
+                        let elem = p.ty;
+                        let e = self.logical_element_value(op, elem, target, value, span);
+                        return (e, true);
+                    }
                 }
             }
             (self.logical_assign(op, checked, target, value, span), false)
