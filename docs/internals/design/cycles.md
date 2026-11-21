@@ -351,17 +351,23 @@ const self: weak View | null = this;            // a closure capturing `self` ho
 button.onClick(() => self?.refresh());
 ```
 
-- **Syntax.** `weak` is a type operator, a contextual word parsed like `keyof` (`weak` stays a
-  valid name), binding tighter than `|`: `weak Node | null` is a weak reference to a `Node`, or
-  `null`. It is allowed in the type of a class field, an object type or interface member, and a
-  `let` or `const`; anywhere else (parameters, results, elements, type arguments) it is an
-  error naming the places it may go.
-- **Typing.** The target is a type whose values are objects (a class, an object type, an array,
-  a map or set). The written type must include `null`: `parent: weak Node` is an error with a
-  fix-it to `weak Node | null`. A read has the type `T | null` and yields a counted reference; a
-  write takes `T | null`. Sema narrows nothing through a weak field, since the target may be
-  gone between two reads: the "possibly null" error after `if (n.parent) n.parent.x` gets a note
-  showing `const p = n.parent; if (p) p.x`. `n.parent?.x` works as written.
+- **Syntax.** `weak` is a type operator, a contextual word parsed like `keyof`, binding tighter
+  than `|`: `weak Node | null` is a weak reference to a `Node`, or `null`. It is the operator
+  only before a type name or `(` on the same line, so TypeScript that names a type `weak` keeps
+  parsing, written without semicolons too (`a: weak` then `b: number` on the next line,
+  `x as weak as T`). It is allowed in the type of a class field (a constructor's parameter
+  property included: its parameter takes the type without `weak`), an object type or interface
+  member, and a `let`, `const` or `var` (which Velt reads as `let`); anywhere else (parameters,
+  results, elements, type arguments) it is an error naming the places it may go.
+- **Typing.** The target is a type whose values are objects with an identity: a class, an object
+  type, an interface value (an interface with methods: a reference to an object and its table,
+  which the weak field keeps beside the slot), an array, a map or set. A struct, an interface of
+  fields only (stored by value) and a type parameter are not. The written type must include
+  `null`: `parent: weak Node` is an error with a fix-it to `weak Node | null`. A read has the
+  type `T | null` and yields a counted reference; a write takes `T | null`. Sema narrows nothing
+  through a weak field, since the target may be gone between two reads: the "possibly null" error
+  after `if (n.parent) n.parent.x` gets a note showing `const p = n.parent; if (p) p.x`.
+  `n.parent?.x` works as written.
 - **Representation.** A weak field holds a pointer to its target's **slot**, a counted block
   `[count][target]` shared by every weak reference to that target (Swift's side table). The
   target's weak-core record holds one reference to its slot and each weak field or variable one

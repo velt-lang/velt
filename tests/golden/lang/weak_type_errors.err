@@ -1,5 +1,6 @@
 `weak` references are not implemented yet (#3119)
 a `weak` reference reads `null` once its target is gone: its type must include `null`
-`weak` refers to an object: `f64` is not a class, an object type, an array or a map
+`weak` refers to an object with an identity: `f64` is not a class, an object type, an interface, an array or a map
 `weak` may only be united with `null` (and `undefined`): write `weak T | null`
-`weak` is allowed only at the top of the type of a field or a `let` or `const` variable (`parent: weak Node | null`)
+`weak` is allowed only at the top of the type of a field or a variable (`let`, `const` or `var`: `parent: weak Node | null`)
+`weak` refers to an object with an identity: `Pt` is stored by value (a struct, or an interface of fields only)

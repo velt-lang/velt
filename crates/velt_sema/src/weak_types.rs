@@ -4,7 +4,9 @@
 //!
 //! The places it may go resolve their written type through [`Ctx::resolve_weak_annotation`]:
 //! `weak` at the top of the type, beside `null` (and `undefined`), refers to a class instance,
-//! an object type, an array or a map, and the type is the read type, `T | null`. Anywhere else
+//! an object type, an interface value, an array or a map, and the type is the read type,
+//! `T | null`. A constructor's parameter property is a field: its parameter takes the type
+//! without `weak` (`without_weak`). Anywhere else
 //! (parameters, results, elements, type arguments, aliases, inside another type) it is an error
 //! naming those places (`Ctx::weak_misplaced`). Its lowering is not implemented yet (#3119),
 //! so a well-formed `weak` is reported as such after these checks.
@@ -25,8 +27,12 @@ pub(crate) enum WeakShape<'a> {
         target: &'a ast::TypeExpr,
         undefined: bool,
     },
-    /// `weak T` without `null`: `at` is where `| null` goes.
-    NoNull { target: &'a ast::TypeExpr, at: Span },
+    /// `weak T` without `null` (with `| undefined` when `undefined`): `at` is where `| null` goes.
+    NoNull {
+        target: &'a ast::TypeExpr,
+        undefined: bool,
+        at: Span,
+    },
     /// `weak` beside another type than `null` and `undefined`, or twice.
     Mixed(Span),
 }
@@ -36,6 +42,7 @@ pub(crate) fn weak_shape(t: &ast::TypeExpr) -> WeakShape<'_> {
     match &t.kind {
         K::Weak(target) => WeakShape::NoNull {
             target,
+            undefined: false,
             at: Span {
                 lo: t.span.hi,
                 ..t.span
@@ -60,6 +67,7 @@ pub(crate) fn weak_shape(t: &ast::TypeExpr) -> WeakShape<'_> {
                         true => WeakShape::Weak { target, undefined },
                         false => WeakShape::NoNull {
                             target,
+                            undefined,
                             at: Span {
                                 lo: t.span.hi,
                                 ..t.span
@@ -71,6 +79,34 @@ pub(crate) fn weak_shape(t: &ast::TypeExpr) -> WeakShape<'_> {
             }
         }
         _ => WeakShape::None,
+    }
+}
+
+/// The written type `t` without a `weak` at its top: `weak T | null` is `T | null`. A parameter
+/// property's parameter takes this type; its field, the written one.
+pub(crate) fn without_weak(t: &ast::TypeExpr) -> ast::TypeExpr {
+    match &t.kind {
+        K::Weak(target) => (**target).clone(),
+        K::Union(ms) => ast::TypeExpr {
+            kind: K::Union(
+                (ms.iter())
+                    .map(|m| match &m.kind {
+                        K::Weak(target) => (**target).clone(),
+                        _ => m.clone(),
+                    })
+                    .collect(),
+            ),
+            span: t.span,
+        },
+        _ => t.clone(),
+    }
+}
+
+/// `T | null`, or `T | null | undefined` when `undefined` was written too.
+fn both_if(undefined: bool) -> Nothing {
+    match undefined {
+        true => Nothing::Both,
+        false => Nothing::Null,
     }
 }
 
@@ -92,7 +128,11 @@ impl Ctx<'_> {
                 );
                 return self.ty.error;
             }
-            WeakShape::NoNull { target, at } => {
+            WeakShape::NoNull {
+                target,
+                undefined,
+                at,
+            } => {
                 self.error(
                     Diagnostic::error(
                         "a `weak` reference reads `null` once its target is gone: its type must include `null`",
@@ -105,26 +145,17 @@ impl Ctx<'_> {
                         Applicability::Safe,
                     )),
                 );
-                (target, Nothing::Null)
+                (target, both_if(undefined))
             }
-            WeakShape::Weak { target, undefined } => {
-                let nothing = match undefined {
-                    true => Nothing::Both,
-                    false => Nothing::Null,
-                };
-                (target, nothing)
-            }
+            WeakShape::Weak { target, undefined } => (target, both_if(undefined)),
         };
         let to = resolve(self, target, env);
         if to == self.ty.error {
             return to;
         }
-        if !self.weak_target(to) {
-            let shown = self.display(to);
+        if let Err(what) = self.weak_target(to) {
             self.err(
-                format!(
-                    "`weak` refers to an object: `{shown}` is not a class, an object type, an array or a map"
-                ),
+                format!("`weak` refers to an object with an identity: {what}"),
                 target.span,
             );
             return self.ty.error;
@@ -141,19 +172,31 @@ impl Ctx<'_> {
         env: &TyEnv,
     ) -> TyId {
         self.err(
-            "`weak` is allowed only at the top of the type of a field or a `let` or `const` variable (`parent: weak Node | null`)",
+            "`weak` is allowed only at the top of the type of a field or a variable (`let`, `const` or `var`: `parent: weak Node | null`)",
             t.span,
         );
         self.resolve_type(inner, env)
     }
 
-    /// Can a `weak` reference refer to a value of type `t`: an object with an identity?
-    fn weak_target(&mut self, t: TyId) -> bool {
+    /// Can a `weak` reference refer to a value of type `t`, an object with an identity: an
+    /// instance of a class or of an object type, an array, a map or set, or an interface value
+    /// (a reference to an object and its table)? Else what `t` is instead.
+    fn weak_target(&mut self, t: TyId) -> Result<(), String> {
+        let shown = self.display(t);
         match self.ty.kind(t).clone() {
-            TyKind::Array(_) | TyKind::Map(..) => true,
-            // A struct (and a field-only interface) is a value stored inline, without an identity.
-            TyKind::Adt(d, _) => self.adt(d).is_some_and(|a| a.kind != AdtKind::Struct),
-            _ => false,
+            TyKind::Array(_) | TyKind::Map(..) | TyKind::Dyn(..) => Ok(()),
+            TyKind::Adt(d, _) => match self.adt(d).map(|a| a.kind) {
+                Some(AdtKind::Struct) => Err(format!(
+                    "`{shown}` is stored by value (a struct, or an interface of fields only)"
+                )),
+                _ => Ok(()),
+            },
+            TyKind::Param(_) => Err(
+                "the target is a type parameter, which may stand for a value without one".into(),
+            ),
+            _ => Err(format!(
+                "`{shown}` is not a class, an object type, an interface, an array or a map"
+            )),
         }
     }
 }

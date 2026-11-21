@@ -132,6 +132,15 @@ fn weak_types() {
         "interface I { weak: weak; }",
         "class N { parent: weak N | null = null; }",
         "let p: weak N | null = null;",
+        // Without semicolons: a line break ends a type named `weak` (TypeScript's style too).
+        "class C {\n  a: weak\n  b: number\n}",
+        "interface I {\n  x: weak\n  y: weak\n}",
+        "let x: weak\nshow(1)",
+        "let v: weak\nv = 3",
+        // A word that may follow a whole type.
+        "const a = x as weak as { n: number };",
+        "const b = x as weak satisfies T;",
+        "function g(x: unknown): x is weak { return true; }",
     ] {
         parse_ok(src);
     }

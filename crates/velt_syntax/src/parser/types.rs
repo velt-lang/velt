@@ -266,13 +266,23 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `weak` as a type operator (`weak Node | null`), not a type named `weak`: the word followed
-    /// by a type name or `(`. Not `{`, which may open a body after a type named `weak`
-    /// (`f(): weak { … }`, `implements weak { … }`; an object type is named to be referred to
-    /// weakly), nor `[`: `weak[]` is an array of a type named `weak`. Like `keyof`, it binds
-    /// tighter than `|` and `&`.
+    /// `weak` as a type operator (`weak Node | null`), not a type named `weak`: the word followed,
+    /// on the same line, by a type name or `(`. A line break ends a type named `weak` in a member
+    /// or declaration written without semicolons (`a: weak` then `b: number`); so does a word that
+    /// may follow a whole type (`x as weak as T`, `satisfies`, `is`, `extends`, `implements`, `in`,
+    /// `of`), `{`, which may open a body (`f(): weak { … }`), and `[` (`weak[]`). Like `keyof`, it
+    /// binds tighter than `|` and `&`.
     pub(super) fn at_weak(&mut self) -> bool {
-        self.at_word("weak") && (Self::is_ident_like(self.nth(1)) || self.nth(1) == Tok::LParen)
+        const AFTER_A_TYPE: [&str; 7] =
+            ["as", "satisfies", "is", "extends", "implements", "in", "of"];
+        if !self.at_word("weak") || self.line_break_after(0) {
+            return false;
+        }
+        match self.nth(1) {
+            Tok::LParen => true,
+            Tok::Ident => !AFTER_A_TYPE.iter().any(|w| self.nth_word(1, w)),
+            _ => false,
+        }
     }
 
     /// `keyof` as a type operator (not a type named `keyof`).

@@ -1,6 +1,6 @@
 // `weak T` (docs/internals/design/cycles.md "`weak T`") is checked where it is written: at the
-// top of the type of a class field, an object type or interface member, or a `let` or `const`,
-// as `weak T | null` with `T` an object type. Its lowering is not implemented yet (#3119), so a
+// top of the type of a class field, an object type or interface member, or a variable, as
+// `weak T | null` with `T` an object with an identity. Its lowering is not implemented yet (#3119), so a
 // well-formed one is reported too.
 
 class Node {
@@ -15,6 +15,18 @@ class Node {
 
 interface Linked {
   next: weak Node | null;
+}
+
+// An interface value refers to an object; an interface of fields only is stored by value.
+interface View {
+  refresh(): void;
+}
+interface Pt {
+  x: number;
+}
+class Button {
+  view: weak View | null = null;
+  at: weak Pt | null = null;
 }
 
 type Pair = { left: weak Node | null };
