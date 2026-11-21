@@ -337,6 +337,12 @@ export const T_ROOT: usize = 48;
 export const T_RESULT_DROP: usize = 56;
 export const T_RESULT_SIZE: usize = 64;
 export const T_JOINER: usize = 72;
+/**
+ * The cx its root is polled with (its await word's address, then the task as the waker). A cx at
+ * its waker's address plus `T_CX` is a task's own, and no other is (sched_yield.velt tests that
+ * instead of the waker's table): a started promise's is at `N_CX`, a join's below its children's
+ * records, the probe's above its waker by less, the runtime's below its header.
+ */
 export const T_CX: usize = 80;
 export const T_WORD: usize = 96;
 export const T_WOKEN: usize = 104;
@@ -367,9 +373,14 @@ export const T_ID: usize = 176;
  */
 export const T_LOST: usize = 184;
 export const T_LISTED: usize = 192;
+/**
+ * The task's yield block (sched_yield_list.velt: its list of yields waiting for their turn, its
+ * yield generation and numbers), made when it first needs one (0: none), freed with the task.
+ */
+export const T_YIELDS: usize = 200;
 /** The join handle (a heap future: its header, then its result slot at `T_SLOT`). */
-export const T_JOIN: usize = 200;
-export const T_SLOT: usize = 216;
+export const T_JOIN: usize = 208;
+export const T_SLOT: usize = 224;
 
 /** A task's states. */
 export const IDLE: u32 = 0;
@@ -377,6 +388,13 @@ export const SCHEDULED: u32 = 1;
 export const RUNNING: u32 = 2;
 export const NOTIFIED: u32 = 3;
 export const DONE: u32 = 4;
+/**
+ * Running, and its root (or a child state polled with the root's cx: an inline `Promise.all`'s)
+ * yielded in this poll (sched_yield.velt): queued again at the poll's end as `NOTIFIED` is, and
+ * what yielded goes on only in a later poll (whose `RUNNING` ends this state), though this one
+ * may poll the root again to run its microtasks.
+ */
+export const YIELDED: u32 = 5;
 
 /**
  * A task's flags (changed by the thread polling it): the root of `main`; it
@@ -387,12 +405,18 @@ export const DONE: u32 = 4;
  * root was polled as a microtask's job or by a due sleep (sched_run.velt `runWoken` reads it).
  */
 export const ROOT: u32 = 4;
+/** Yields of it wait for their turn (`T_YIELDS`): its next poll fires them (sched_yield.velt). */
+export const YIELDS: u32 = 1;
 /**
- * Its root (or a child state polled with the root's cx: an inline `Promise.all`'s) yielded in this
- * poll (sched_yield.velt): what yielded resumes only in a later poll, though this one may poll the
- * root again to run its microtasks. Cleared as the next poll begins (sched_yield.velt `begin`).
+ * It made stored yields in this poll: its next poll begins a yield generation (`T_YIELDS`). A low
+ * bit: sched_run.velt `run` tests it with the flags that leave the straight path, in one constant.
  */
-export const ROOT_YIELDED: u32 = 2;
+export const FRESH: u32 = 2;
+/**
+ * Its root yielded with no record, its list empty, with a yield block (sched_yield.velt
+ * `rootYield`): while it is `YIELDED`, a yield joining the list gets the root's record first.
+ */
+export const ROOT_ALONE: u32 = 8388608;
 export const LOCALS: u32 = 8;
 export const ROOT_DONE: u32 = 16;
 export const TIMED: u32 = 32;
