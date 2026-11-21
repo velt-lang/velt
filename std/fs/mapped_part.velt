@@ -118,7 +118,8 @@ export unsafe function letGo(owner: usize): Region | null {
     }
     const base = addressLoad<usize>(owner + 16);
     const len = addressLoad<usize>(owner + 24);
-    free$mapped(Ptr.at<u8>(owner));
+    // `Ptr.orNull`, as `free` takes NULL: an array's drop reports no caller's location (#3094).
+    free$mapped(Ptr.orNull<u8>(owner));
     return { base, len };
   }
 }
