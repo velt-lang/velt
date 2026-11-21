@@ -78,10 +78,10 @@ export function or(a: Text, b: Text): Text {
 }
 
 /**
- * `t` with byte `b` inserted at `at`: the bytes from `at` on move one place. Inlined (`@inline`)
- * for the reason `intWords` is (velt/lang/number/integer).
+ * `t` with byte `b` inserted at `at`: the bytes from `at` on move one place. Inlined
+ * (`@inline("always")`) for the reason `intWords` is (velt/lang/number/integer).
  */
-@inline
+@inline("always")
 export function insert(t: Text, at: i64, b: u64): Text {
   // The bytes before `at`, and the others (`t` without them), moved one place.
   const head = between(t, 0, at, 0);

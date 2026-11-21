@@ -100,11 +100,11 @@ function leadingZeroBits(d: u64, stop: u64): u64 {
 }
 
 /**
- * The decimal digits of `v`, after a `-` when `neg`. Inlined (`@inline`) into its callers, the
- * float and `toFixed` layouts (velt/lang/number/format, fixed): a program that has both would
- * otherwise get it out of line, its three-word result through memory.
+ * The decimal digits of `v`, after a `-` when `neg`. Inlined (`@inline("always")`) into its
+ * callers, the float and `toFixed` layouts (velt/lang/number/format, fixed): a program that has
+ * both would otherwise get it out of line, its three-word result through memory.
  */
-@inline
+@inline("always")
 export function intWords(v: u64, neg: bool): Words {
   if (v < 100000000) {
     return neg ? eightWords(v, true) : shortWords(v);
