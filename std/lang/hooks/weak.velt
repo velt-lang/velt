@@ -392,20 +392,25 @@ export function weakRefDrop(r: u32): void {
 /**
  * The slot of a `weak T` reference to `obj` (an object's address), with one more reference: a
  * weak field or variable holds it (weak_slots.velt). It marks `obj` weakly held, so freeing it
- * clears the slot.
+ * clears the slot. `null` (0) has no slot: 0, without the lock, so a write needs no branch.
  */
 @noInline
 export function weakSlot(obj: usize): usize {
+  if (obj === 0) {
+    return 0;
+  }
   const h = enter();
   const s = slotFor(h, obj);
   leave(h);
   return s;
 }
 
-/** Gives up a weak field's or variable's reference to slot `s` (no lock: weak_slots.velt). */
+/** Gives up a weak field's or variable's reference to slot `s` (no lock: weak_slots.velt); 0, a `null` one's, is none. */
 @noInline
 export function weakSlotDrop(s: usize): void {
-  slotDrop(s);
+  if (s !== 0) {
+    slotDrop(s);
+  }
 }
 
 /** The records of weakly held objects (tests and leak checks). */

@@ -100,4 +100,11 @@ describe("weak slots", () => {
     expect(finish([m])).toBe(true);
     expect(live()).toBe(before);
   });
+
+  it("are none for null", () => {
+    const records = weakTracked();
+    expect(weakSlot(0)).toBe(0);
+    weakSlotDrop(0);
+    expect(weakTracked()).toBe(records);
+  });
 });
