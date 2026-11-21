@@ -136,19 +136,19 @@ features! {
     /// F16C (half-precision conversions).
     F16cX86 = "f16c-x86", X86_64, 13, [AvxX86], "+f16c", "+f16c", "F16c", "F16C";
     /// AVX-512 Foundation, with its register state saved by the operating system.
-    Avx512fX86 = "avx512f-x86", X86_64, 14, [Avx2X86, FmaX86, F16cX86], "+avx512f", "+avx512f", "Avx512F", "AVX512F";
+    Avx512fX86 = "avx512f-x86", X86_64, 14, [Avx2X86, FmaX86, F16cX86], "+avx512f,+evex512", "+avx512f,+evex512", "Avx512F", "AVX512F";
     /// AVX-512 byte and word instructions.
-    Avx512bwX86 = "avx512bw-x86", X86_64, 15, [Avx512fX86], "+avx512bw", "+avx512bw", "Avx512BW", "AVX512BW";
+    Avx512bwX86 = "avx512bw-x86", X86_64, 15, [Avx512fX86], "+avx512bw,+evex512", "+avx512bw,+evex512", "Avx512BW", "AVX512BW";
     /// AVX-512 conflict detection.
-    Avx512cdX86 = "avx512cd-x86", X86_64, 16, [Avx512fX86], "+avx512cd", "+avx512cd", "Avx512CD", "AVX512CD";
+    Avx512cdX86 = "avx512cd-x86", X86_64, 16, [Avx512fX86], "+avx512cd,+evex512", "+avx512cd,+evex512", "Avx512CD", "AVX512CD";
     /// AVX-512 doubleword and quadword instructions.
-    Avx512dqX86 = "avx512dq-x86", X86_64, 17, [Avx512fX86], "+avx512dq", "+avx512dq", "Avx512DQ", "AVX512DQ";
+    Avx512dqX86 = "avx512dq-x86", X86_64, 17, [Avx512fX86], "+avx512dq,+evex512", "+avx512dq,+evex512", "Avx512DQ", "AVX512DQ";
     /// AVX-512 vector length extensions (the 128- and 256-bit forms).
-    Avx512vlX86 = "avx512vl-x86", X86_64, 18, [Avx512fX86], "+avx512vl", "+avx512vl", "Avx512VL", "AVX512VL";
+    Avx512vlX86 = "avx512vl-x86", X86_64, 18, [Avx512fX86], "+avx512vl,+evex512", "+avx512vl,+evex512", "Avx512VL", "AVX512VL";
     /// AVX-512 vector byte manipulation.
-    Avx512vbmiX86 = "avx512vbmi-x86", X86_64, 19, [Avx512bwX86], "+avx512vbmi", "+avx512vbmi", "Avx512Vbmi", "AVX512VBMI";
+    Avx512vbmiX86 = "avx512vbmi-x86", X86_64, 19, [Avx512bwX86], "+avx512vbmi,+evex512", "+avx512vbmi,+evex512", "Avx512Vbmi", "AVX512VBMI";
     /// AVX-512 bit algorithms.
-    Avx512bitalgX86 = "avx512bitalg-x86", X86_64, 20, [Avx512bwX86], "+avx512bitalg", "+avx512bitalg", "Avx512Bitalg", "AVX512BITALG";
+    Avx512bitalgX86 = "avx512bitalg-x86", X86_64, 20, [Avx512bwX86], "+avx512bitalg,+evex512", "+avx512bitalg,+evex512", "Avx512Bitalg", "AVX512BITALG";
     /// The Armv8.2 dot products (FEAT_DotProd).
     DotprodArm = "dotprod-arm", Aarch64, 32, [], "+dotprod", "+dotprod", "Dp", "DOTPROD";
     /// The CRC32 instructions (FEAT_CRC32).

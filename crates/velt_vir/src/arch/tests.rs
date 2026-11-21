@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::{c_index, class_tail, ArchOp, Llvm, CLASS_MARKER, ROWS};
+use super::{c_index, class_tail, vector_file, ArchOp, Llvm, CLASS_MARKER, ROWS};
 use crate::simd::{CpuArch, Ext};
 
 fn repo() -> PathBuf {
@@ -41,7 +41,9 @@ fn every_row_names_its_extern_once() {
         );
         assert_ne!(r.method, "isSupported");
         assert_eq!(ArchOp::of_symbol(&op.symbol()), Some(op));
-        assert_eq!(op.signature().0.len(), r.params.len());
+        // A wide result is written through one more parameter.
+        let out = usize::from(r.ret.wide().is_some());
+        assert_eq!(op.signature().0.len(), r.params.len() + out);
     }
     assert_eq!(ArchOp::of_symbol("velt_arch_sse42_nothing"), None);
     assert_eq!(ArchOp::of_symbol("velt_simd_sse42_crc32_u64"), None);
@@ -129,5 +131,18 @@ fn the_c_index_is_the_table() {
     if have != want {
         assert!(bless(), "{path:?} is stale: run `cargo xtask gen-arch`");
         std::fs::write(&path, want).unwrap();
+    }
+}
+
+#[test]
+fn the_wide_vector_types_are_generated() {
+    for width in [256, 512] {
+        let path = repo().join(format!("std/arch/x86/vector{width}.velt"));
+        let want = vector_file(width);
+        let have = std::fs::read_to_string(&path).unwrap_or_default();
+        if have != want {
+            assert!(bless(), "{path:?} is stale: run `cargo xtask gen-arch`");
+            std::fs::write(&path, want).unwrap();
+        }
     }
 }

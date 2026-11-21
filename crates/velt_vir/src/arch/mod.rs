@@ -15,13 +15,14 @@
 mod render;
 mod table;
 
-pub use render::{c_index, class_tail, CLASS_MARKER};
+pub use render::{c_index, class_tail, vector_file, CLASS_MARKER};
 pub use table::ROWS;
 
 use crate::simd::Ext;
 use crate::vir::Ty;
 
-/// A value of an instruction's signature: a scalar or one of velt/simd's 128-bit lane types.
+/// A value of an instruction's signature: a scalar, one of velt/simd's 128-bit lane types, or
+/// velt/arch/x86's `Vector256<T>` / `Vector512<T>` (#3222 step 5) of lanes `T`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Val {
     U8,
@@ -33,51 +34,149 @@ pub enum Val {
     U32x4,
     I32x4,
     U64x2,
+    /// `Vector256<T>`: two 128-bit halves, taken by address.
+    V256(Lane),
+    /// `Vector512<T>`: four 128-bit quarters, taken by address.
+    V512(Lane),
+}
+
+/// The lane type of a `Vector256` or `Vector512`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+    F32,
+    F64,
+}
+
+impl Lane {
+    /// Every lane type, in the order of the generated API.
+    pub const ALL: [Lane; 10] = [
+        Lane::U8,
+        Lane::I8,
+        Lane::U16,
+        Lane::I16,
+        Lane::U32,
+        Lane::I32,
+        Lane::U64,
+        Lane::I64,
+        Lane::F32,
+        Lane::F64,
+    ];
+
+    /// The Velt scalar type (`u32`).
+    pub fn scalar(self) -> &'static str {
+        match self {
+            Lane::U8 => "u8",
+            Lane::I8 => "i8",
+            Lane::U16 => "u16",
+            Lane::I16 => "i16",
+            Lane::U32 => "u32",
+            Lane::I32 => "i32",
+            Lane::U64 => "u64",
+            Lane::I64 => "i64",
+            Lane::F32 => "f32",
+            Lane::F64 => "f64",
+        }
+    }
+
+    /// Its size in bytes.
+    pub fn bytes(self) -> u32 {
+        match self {
+            Lane::U8 | Lane::I8 => 1,
+            Lane::U16 | Lane::I16 => 2,
+            Lane::U32 | Lane::I32 | Lane::F32 => 4,
+            Lane::U64 | Lane::I64 | Lane::F64 => 8,
+        }
+    }
+
+    /// The velt/simd type of 128 bits of these lanes (`u32x4`).
+    pub fn narrow(self) -> String {
+        format!("{}x{}", self.scalar(), 16 / self.bytes())
+    }
+
+    /// The LLVM type of one lane.
+    pub fn llvm(self) -> &'static str {
+        match self {
+            Lane::U8 | Lane::I8 => "i8",
+            Lane::U16 | Lane::I16 => "i16",
+            Lane::U32 | Lane::I32 => "i32",
+            Lane::U64 | Lane::I64 => "i64",
+            Lane::F32 => "float",
+            Lane::F64 => "double",
+        }
+    }
+
+    /// The suffix of a name of the generated API (`U32`).
+    pub fn suffix(self) -> String {
+        self.scalar().to_uppercase()
+    }
 }
 
 impl Val {
     /// The Velt type.
-    pub fn velt(self) -> &'static str {
+    pub fn velt(self) -> String {
         match self {
-            Val::U8 => "u8",
-            Val::U16 => "u16",
-            Val::U32 => "u32",
-            Val::U64 => "u64",
-            Val::U8x16 => "u8x16",
-            Val::I8x16 => "i8x16",
-            Val::U32x4 => "u32x4",
-            Val::I32x4 => "i32x4",
-            Val::U64x2 => "u64x2",
+            Val::U8 => "u8".into(),
+            Val::U16 => "u16".into(),
+            Val::U32 => "u32".into(),
+            Val::U64 => "u64".into(),
+            Val::U8x16 => "u8x16".into(),
+            Val::I8x16 => "i8x16".into(),
+            Val::U32x4 => "u32x4".into(),
+            Val::I32x4 => "i32x4".into(),
+            Val::U64x2 => "u64x2".into(),
+            Val::V256(l) => format!("Vector256<{}>", l.scalar()),
+            Val::V512(l) => format!("Vector512<{}>", l.scalar()),
         }
     }
 
-    /// The VIR type it is passed as.
+    /// The VIR type it is passed as: a wide vector by address (a result through a last `Ptr`
+    /// parameter, [`ArchOp::signature`]).
     pub fn ty(self) -> Ty {
         match self {
             Val::U8 => Ty::U8,
             Val::U16 => Ty::U16,
             Val::U32 => Ty::U32,
             Val::U64 => Ty::U64,
+            Val::V256(_) | Val::V512(_) => Ty::Ptr,
             _ => Ty::V128,
         }
     }
 
     /// Its LLVM type: a vector's lanes as the row's operation sees them.
-    pub fn llvm(self) -> &'static str {
+    pub fn llvm(self) -> String {
         match self {
-            Val::U8 => "i8",
-            Val::U16 => "i16",
-            Val::U32 => "i32",
-            Val::U64 => "i64",
-            Val::U8x16 | Val::I8x16 => "<16 x i8>",
-            Val::U32x4 | Val::I32x4 => "<4 x i32>",
-            Val::U64x2 => "<2 x i64>",
+            Val::U8 => "i8".into(),
+            Val::U16 => "i16".into(),
+            Val::U32 => "i32".into(),
+            Val::U64 => "i64".into(),
+            Val::U8x16 | Val::I8x16 => "<16 x i8>".into(),
+            Val::U32x4 | Val::I32x4 => "<4 x i32>".into(),
+            Val::U64x2 => "<2 x i64>".into(),
+            Val::V256(l) => format!("<{} x {}>", 32 / l.bytes(), l.llvm()),
+            Val::V512(l) => format!("<{} x {}>", 64 / l.bytes(), l.llvm()),
         }
     }
 
-    /// Whether it is a vector.
+    /// Whether it is a 128-bit vector (a `V128`).
     pub fn is_vector(self) -> bool {
         self.ty() == Ty::V128
+    }
+
+    /// Its width in bits where it is a 256- or 512-bit vector.
+    pub fn wide(self) -> Option<u32> {
+        match self {
+            Val::V256(_) => Some(256),
+            Val::V512(_) => Some(512),
+            _ => None,
+        }
     }
 }
 
@@ -148,10 +247,25 @@ impl ArchOp {
         symbol_of(self.row())
     }
 
-    /// Its extern's VIR signature.
+    /// Its extern's VIR signature: a wide result is written through one more `Ptr`, the last
+    /// parameter, as a std function's struct result is.
     pub fn signature(self) -> (Vec<Ty>, Ty) {
         let r = self.row();
-        (r.params.iter().map(|(_, v)| v.ty()).collect(), r.ret.ty())
+        let mut params: Vec<Ty> = r.params.iter().map(|(_, v)| v.ty()).collect();
+        if r.ret.wide().is_some() {
+            params.push(Ty::Ptr);
+            return (params, Ty::Unit);
+        }
+        (params, r.ret.ty())
+    }
+
+    /// The widest vector of its signature, in bits (128 for one without a wide vector).
+    pub fn width(self) -> u32 {
+        let r = self.row();
+        (r.params.iter().map(|(_, v)| *v).chain([r.ret]))
+            .filter_map(Val::wide)
+            .max()
+            .unwrap_or(128)
     }
 }
 
