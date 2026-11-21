@@ -58,6 +58,8 @@ const UNSUPPORTED: &[&str] = &[
     // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
     // still the runtime's, which keeps it parked (#3247).
     "promise_abandoned_freed",
+    // The same for a spawned task parked on such a promise (#3126).
+    "task_parked_freed",
     // wasm's executor is still the runtime's, whose `yieldNow()` wakes at once instead of taking
     // its turn after the microtasks queued before it, as the executor in Velt does (#3307).
     "yield_now_order",

@@ -87,11 +87,12 @@ fn debug_builds_never_pass_the_checks() {
     assert_eq!(run(&exe, Some("aes")), NONE);
 }
 
-/// `--cpu native` makes the carry-less check constant where the CPU has it, so `clmul` no longer
-/// reaches the AES checks; `aes` still does, because they are read at run time.
+/// `--cpu native` on a CPU with AES-NI makes both checks constant (`--cpu` folding reaches every
+/// feature, #3222 step 3), so `VELT_SIMD_DISABLE` reaches neither: it turns off only what is read
+/// at run time.
 #[test]
 #[cfg(target_arch = "x86_64")]
-fn native_builds_ignore_only_clmul() {
+fn native_builds_ignore_the_variable() {
     let (x86, _) = cpu();
     if !x86 {
         return;
@@ -101,7 +102,7 @@ fn native_builds_ignore_only_clmul() {
     let detected = printed(true, false);
     assert_eq!(run(&exe, None), detected);
     assert_eq!(run(&exe, Some("clmul")), detected);
-    assert_eq!(run(&exe, Some("aes")), NONE);
+    assert_eq!(run(&exe, Some("aes")), detected);
 }
 
 /// The CPUs a machine with AES-NI can only show under an emulator: without the instructions the

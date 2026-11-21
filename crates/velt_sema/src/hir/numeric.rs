@@ -84,93 +84,49 @@ pub enum SimdTy {
     Mask64x2,
 }
 
-/// A CPU extension a gated function is compiled for (#1330): it is decorated
-/// `@targetFeature("sha-arm")` (any module), and every call of it sits behind the check of
-/// that extension (`u32x4.hasShaArm()`, `u64x2.hasClmulX86()`), so backends may use the
-/// extension anywhere in it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CpuTarget {
-    /// The ARMv8 SHA instructions.
-    ShaArm,
-    /// The x86 SHA extensions (with SSSE3 and SSE4.1).
-    ShaX86,
-    /// The x86 carry-less multiplication, PCLMULQDQ (with SSSE3 and SSE4.1).
-    ClmulX86,
-    /// The ARMv8 64-bit polynomial multiplication, PMULL.
-    ClmulArm,
-    /// The x86 AES round instructions with PCLMULQDQ (and SSSE3, SSE4.1).
-    AesX86,
-    /// The ARMv8 AES instructions with PMULL.
-    AesArm,
-    /// x86's FMA3 (with AVX): `MathOp::FmaF64` as one instruction (std's `pow`).
-    FmaX86,
-    /// Arm's bf16 instructions (FEAT_BF16): `bfdot`.
-    Bf16Arm,
+/// A CPU feature a gated function is compiled for and a check tests (#1330; velt_common's table,
+/// #3222 step 3): a function decorated `@targetFeature("avx2-x86", "bmi2-x86")` (any module) is
+/// gated on that set ([`CpuTargets`]), and every call of it sits behind checks of those features
+/// (velt/arch's `Avx2.isSupported()`, or velt/simd's older methods such as `u32x4.hasShaArm()`)
+/// or in a function gated on a set that covers them, so backends may use the features anywhere in
+/// it.
+pub use velt_common::cpu_features::{CpuFeature as CpuTarget, CpuFeatures as CpuTargets};
+
+/// The method of velt/simd (or std, for FMA) that checked `t` before velt/arch, by its
+/// definition's full name; `None` for a feature only velt/arch checks.
+pub fn cpu_check(t: CpuTarget) -> Option<&'static str> {
+    Some(match t {
+        CpuTarget::ShaArm => velt_common::std_item!(simd_sha, "u32x4.hasShaArm"),
+        CpuTarget::ShaX86 => velt_common::std_item!(simd_sha, "u32x4.hasShaX86"),
+        CpuTarget::ClmulX86 => velt_common::std_item!(simd_clmul, "u64x2.hasClmulX86"),
+        CpuTarget::ClmulArm => velt_common::std_item!(simd_clmul, "u64x2.hasClmulArm"),
+        CpuTarget::AesX86 => velt_common::std_item!(simd_aes, "u8x16.hasAesX86"),
+        CpuTarget::AesArm => velt_common::std_item!(simd_aes, "u8x16.hasAesArm"),
+        CpuTarget::FmaX86 => velt_common::std_item!(lang_math_fma_check, "hasFmaX86"),
+        CpuTarget::Bf16Arm => velt_common::std_item!(simd_bf16x8, "bf16x8.hasBf16Arm"),
+        _ => return None,
+    })
 }
 
-impl CpuTarget {
-    /// Every target.
-    pub const ALL: [CpuTarget; 8] = [
-        CpuTarget::ShaArm,
-        CpuTarget::ShaX86,
-        CpuTarget::ClmulX86,
-        CpuTarget::ClmulArm,
-        CpuTarget::AesX86,
-        CpuTarget::AesArm,
-        CpuTarget::FmaX86,
-        CpuTarget::Bf16Arm,
-    ];
+/// The check of `t` as code writes it, for messages: velt/arch's `Avx2.isSupported()` (imported
+/// from `velt/arch/x86` or `velt/arch/arm`).
+pub fn cpu_check_call(t: CpuTarget) -> String {
+    format!("{}.isSupported()", t.arch_class())
+}
 
-    /// The name `@targetFeature` takes.
-    pub fn name(self) -> &'static str {
-        match self {
-            CpuTarget::ShaArm => "sha-arm",
-            CpuTarget::ShaX86 => "sha-x86",
-            CpuTarget::ClmulX86 => "clmul-x86",
-            CpuTarget::ClmulArm => "clmul-arm",
-            CpuTarget::AesX86 => "aes-x86",
-            CpuTarget::AesArm => "aes-arm",
-            CpuTarget::FmaX86 => "fma-x86",
-            CpuTarget::Bf16Arm => "bf16-arm",
-        }
-    }
-
-    /// The target named `name`.
-    pub fn named(name: &str) -> Option<CpuTarget> {
-        CpuTarget::ALL.into_iter().find(|t| t.name() == name)
-    }
-
-    /// Whether code gated on (or behind the check of) `self` has `other` too: `other` is
-    /// `self`, or the carry-less multiplication every CPU with the AES target has (as
-    /// `velt_vir::simd::Ext::covers`).
-    pub fn covers(self, other: CpuTarget) -> bool {
-        self == other
-            || matches!(
-                (self, other),
-                (CpuTarget::AesX86, CpuTarget::ClmulX86) | (CpuTarget::AesArm, CpuTarget::ClmulArm)
-            )
-    }
-
-    /// The static method of velt/simd that checks for it (for FMA, std's `hasFmaX86`), by its
-    /// definition's full name.
-    pub fn check(self) -> &'static str {
-        match self {
-            CpuTarget::ShaArm => velt_common::std_item!(simd_sha, "u32x4.hasShaArm"),
-            CpuTarget::ShaX86 => velt_common::std_item!(simd_sha, "u32x4.hasShaX86"),
-            CpuTarget::ClmulX86 => velt_common::std_item!(simd_clmul, "u64x2.hasClmulX86"),
-            CpuTarget::ClmulArm => velt_common::std_item!(simd_clmul, "u64x2.hasClmulArm"),
-            CpuTarget::AesX86 => velt_common::std_item!(simd_aes, "u8x16.hasAesX86"),
-            CpuTarget::AesArm => velt_common::std_item!(simd_aes, "u8x16.hasAesArm"),
-            CpuTarget::FmaX86 => velt_common::std_item!(lang_math_fma_check, "hasFmaX86"),
-            CpuTarget::Bf16Arm => velt_common::std_item!(simd_bf16x8, "bf16x8.hasBf16Arm"),
-        }
-    }
-
-    /// The check as code calls it: `u32x4.hasShaArm`.
-    pub fn check_call(self) -> &'static str {
-        let full = self.check();
-        full.rsplit("::").next().unwrap_or(full)
-    }
+/// The velt/arch class definition `full` (a std function's full name) checks, if it is one:
+/// `std/arch/x86/<file>::<Class>.isSupported` for a feature of x86 whose class is `<Class>`.
+pub fn arch_check(full: &str) -> Option<CpuTarget> {
+    let (module, item) = full.rsplit_once("::")?;
+    let class = item.strip_suffix(".isSupported")?;
+    let arch = if module.starts_with(velt_common::std_dir!(arch_x86)) {
+        velt_common::cpu_features::CpuArch::X86_64
+    } else if module.starts_with(velt_common::std_dir!(arch_arm)) {
+        velt_common::cpu_features::CpuArch::Aarch64
+    } else {
+        return None;
+    };
+    (CpuTarget::ALL.iter().copied()).find(|t| t.arch() == arch && t.arch_class() == class)
 }
 
 impl SimdTy {

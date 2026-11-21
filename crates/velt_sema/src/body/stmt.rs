@@ -277,7 +277,7 @@ impl FnCx<'_, '_> {
         // Each branch starts from the state before the `if` with the condition's facts assumed,
         // and ends with what still holds there: a branch's own assignments win over the facts it
         // started from (#1226). Those end states are joined below.
-        // `if (u32x4.hasShaX86())`, `if (typeIs<A, B>())`: what the `then` branch may call.
+        // `if (Sha.isSupported())`, `if (typeIs<A, B>())`: what the `then` branch may call.
         let guards = self.enter_guards(&c);
         let unmarked = self.instanceof_unmark(cond);
         let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
