@@ -312,6 +312,8 @@ fn std_s_unit_keeps_what_its_bodies_do_with_module_state() {
 fn the_async_closures_analysis_reads_the_std_code_the_program_has() {
     for path in [
         "lang/errors/async_closure_crosses.velt",
+        // A call through a function read from an `any` names the program's method, not std's.
+        "lang/errors/http_server/http_handler_code_on_write.velt",
         "lang/errors/http_server/http_handler_store_any_read_fn.velt",
         "lang/errors/http_server/http_handler_store_any_read_method.velt",
         "lang/async_closure_generic_unknown_targ_others.velt",
