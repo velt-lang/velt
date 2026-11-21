@@ -242,15 +242,13 @@ with_string_hooks! {
     /// `Date.now()` (and `new Date()`'s time): milliseconds since the Unix epoch.
     date_now => lang_hooks_clock, "dateNow", sig(() -> i64), lowered,
         replaces("velt_rt_date_now"), bench("clock_now"), constructs(Clock);
-    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir
-    /// `entry.rs`).
+    /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir `entry.rs`).
     clock_start => lang_hooks_clock, "clockStart", sig(() -> void), lowered, constructs(Clock);
 
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.
     /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's
-    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic`
-    /// otherwise.
+    /// exception when a `catchUnwind` is active on the thread, and calls `velt_rt_panic` otherwise.
     panic_raise => lang_hooks_unwind, "panicRaise", sig((&string) -> never), lowered, constructs(CatchUnwind);
     // heap.velt: a release build's allocator, mimalloc through `declare c` (#2196). velt_opt's
     // last step (`heap_calls`) turns the runtime allocator calls lowering emits into these.
@@ -261,6 +259,8 @@ with_string_hooks! {
     heap_realloc => lang_hooks_heap, "heapRealloc", sig((u64, u64, u64, u64) -> u64), lowered;
     /// `velt_rt_free`'s: `(p, size, align)`.
     heap_free => lang_hooks_heap, "heapFree", sig((u64, u64, u64) -> void), lowered;
+    /// cpu.velt, after the statics (`entry.rs`, #3222): the CPU word, the `--cpu` check.
+    cpu_start => lang_hooks_cpu, "cpuStart", sig(() -> void), lowered, replaces("velt_rt_check_cpu");
     // sched.velt: the executor in Velt (#2649), with `VELT_SCHEDULER=std` ([`std_scheduler`]).
     /// The program's thread, marked by `velt_main` first thing (#3085): the executor's worker 0
     /// starts only there (program_thread.velt).
@@ -274,9 +274,12 @@ with_string_hooks! {
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
     sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
-    /// `velt_rt_yield_now`'s: `(cx)`; then the end of `velt_main` with its exit code (0: the
-    /// tasks left run).
-    sched_yield => lang_hooks_sched, "schedYield", sig((usize) -> void), lowered;
+    /// `await yieldNow()`'s: `(cx)`; a stored `yieldNow()`'s heap future (#2196 9d); then the end
+    /// of `velt_main` with its exit code (0: the tasks left run).
+    sched_yield => lang_hooks_sched_yield, "schedYield", sig((usize) -> void), lowered;
+    sched_yield_fut => lang_hooks_sched_yield, "schedYieldFut", sig(() -> usize), lowered;
+    /// `await yieldNow()`'s resume: `(cx)`, 1 to go on, 0 to stay suspended (#3241).
+    sched_yield_ready => lang_hooks_sched_yield, "schedYieldReady", sig((usize) -> u32), lowered;
     sched_finish => lang_hooks_sched, "schedFinish", sig((i32) -> void), lowered;
     /// `velt_rt_fut_box`'s: `(poll, drop, state, size, align)`, the lazy boxed promise.
     sched_box => lang_hooks_sched, "schedBox", sig((usize, usize, usize, u64, u64) -> usize), lowered;

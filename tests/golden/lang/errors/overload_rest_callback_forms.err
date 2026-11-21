@@ -1,0 +1,7 @@
+overload_rest_callback_forms.velt:10:10: error: this overload signature is not compatible with its implementation signature
+  = note: mismatched types
+  = note: expected (Ctx, ...unknown[]) => unknown, found (string, ...A) => R
+
+overload_rest_callback_forms.velt:15:10: error: this overload signature is not compatible with its implementation signature
+  = note: mismatched types
+  = note: expected ((Ctx, ...unknown[]) => unknown) | undefined, found (Ctx, ...A) => R

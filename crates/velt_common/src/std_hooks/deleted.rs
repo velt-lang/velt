@@ -7,6 +7,9 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #3222 step 3: the CPU check and the flags of crates/velt_rt/src/cpu.rs, now std's
+    // (std/lang/hooks/cpu.velt, std/lang/cpu).
+    "velt_rt_check_cpu",
     // #2196: standard input (std/process/stdin_buffer.velt over `#stdin-sys`), which only std
     // called.
     "velt_rt_stdin_read_line_sync",

@@ -1,0 +1,39 @@
+// `Promise.race` and `Promise.any` over `Promise<void>`, kept as promises rather than awaited at
+// once: stored, returned, put in an array, in sync code and in an async function (#3240).
+
+async function v(name: string): Promise<void> {
+  console.log("start", name);
+}
+
+async function late(): Promise<void> {
+  await Promise.resolve();
+  console.log("late ran");
+}
+
+function kept(): Promise<void> {
+  return Promise.race([late(), v("returned")]);
+}
+
+// Sync code: settled by the microtasks that run after it.
+function sync(): Promise<void[]> {
+  const r0 = Promise.race([v("sync race")]);
+  const a0 = Promise.any([v("sync any")]);
+  return Promise.all([
+    r0.then(() => console.log("sync race settled")),
+    a0.then(() => console.log("sync any settled")),
+  ]);
+}
+
+async function main() {
+  await sync();
+  const r = Promise.race([v("race")]);
+  await r;
+  console.log("race ok");
+  const a = Promise.any([late(), v("any")]);
+  await a;
+  console.log("any ok");
+  const ps: Promise<void>[] = [Promise.race([v("in array")]), kept()];
+  await Promise.all(ps);
+  console.log("all ok");
+}
+

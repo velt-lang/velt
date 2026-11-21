@@ -1,0 +1,4 @@
+target_feature_names.velt:5:1
+error: `@targetFeature` names no feature
+target_feature_names.velt:10:1
+error: `@targetFeature` names features of both x86-64 and arm64

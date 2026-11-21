@@ -14,7 +14,8 @@
 //!
 //! - a direct call of a compiled async function embeds the child state (a VIR local that the
 //!   spill pass moves into this state) — no allocation;
-//! - `yieldNow()` calls `velt_rt_yield_now(cx)` and suspends once;
+//! - `yieldNow()` calls the executor's `schedYield(cx)` (`velt_rt_yield_now` on WebAssembly) and
+//!   suspends once;
 //! - an async generator's resume and close poll its state (generator.rs);
 //! - anything else is a promise value (`VeltFut*`: rt leaf futures, join handles, boxed
 //!   promises), polled through its header (raw_memory.rs `fut_poll_call`), result at `+16`.
@@ -316,10 +317,14 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `await yieldNow()`: let other ready tasks run, resume on the next poll.
+    /// `await yieldNow()`: let other ready tasks run, resume on the next poll. Under the
+    /// executor in Velt the resume asks first whether this is a later poll than the one it
+    /// yielded in (`schedYieldReady`): the same poll may poll it again for the task's microtasks
+    /// (#3241), and it stays suspended then.
     fn await_yield(&mut self) -> Operand {
         let cx = self.poll_cx();
-        if self.std_sched() {
+        let std = self.std_sched();
+        if std {
             self.sched_yield(cx);
         } else {
             self.call_rt(Rt::YieldNow, vec![cx], None);
@@ -330,6 +335,17 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(cint(0, Ty::U32)));
         self.cancel_block(k, |_| {});
         self.switch_to(resume);
+        if std {
+            let cx = self.poll_cx();
+            let ready = self.sched_yield_ready(cx);
+            let go = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, ready, cint(0, Ty::U32)));
+            let (go_bb, wait_bb) = (self.new_block(), self.new_block());
+            self.branch(go, go_bb, wait_bb);
+            self.switch_to(wait_bb);
+            // Still suspended at `k` (its tag is unchanged): the next poll asks again.
+            self.terminate(Terminator::Return(cint(0, Ty::U32)));
+            self.switch_to(go_bb);
+        }
         unit()
     }
 

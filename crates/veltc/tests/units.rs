@@ -189,6 +189,41 @@ fn check_golden(path: &str, units: bool) -> std::process::Output {
     cmd.output().unwrap()
 }
 
+/// The error lines of a check's output.
+fn error_lines(o: &std::process::Output) -> Vec<String> {
+    (String::from_utf8_lossy(&o.stderr).lines())
+        .filter(|l| l.contains("error"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// With std checked as a unit of its own (`VELT_UNITS=2`), what std's generic functions need of
+/// the types the app gives them comes from std's summary (`JsonNeeds`), not from walking std's
+/// bodies again: a value holding a lock that std's `join` prints through its type parameter is
+/// refused, as by a whole-program check.
+#[test]
+fn std_s_summary_gives_the_app_what_std_s_generic_code_needs() {
+    let src = r#"
+class Guarded {
+  m: Mutex<i64[]> = new Mutex<i64[]>([]);
+}
+
+function main() {
+  const gs = [new Guarded(), new Guarded()];
+  console.log(gs.join(", "));
+}
+"#;
+    let whole = check_in(None, src);
+    let units = check_in(Some("2"), src);
+    assert!(!whole.status.success());
+    let errors = error_lines(&whole);
+    assert!(
+        errors.iter().any(|l| l.contains("without its lock")),
+        "{errors:?}"
+    );
+    assert_eq!(errors, error_lines(&units));
+}
+
 /// An app subclass redefining what a std `extend` block gives its base class is refused by units
 /// as by a whole-program check: the app's classes meet std's `extend` blocks.
 #[test]

@@ -128,6 +128,11 @@ impl Ctx<'_> {
             (TyKind::Op(TyOp::Intersect, parts), _) => {
                 self.match_intersection(&parts, actual, slots)
             }
+            (TyKind::FnPtr { rest: true, .. }, TyKind::FnPtr { rest: false, .. })
+                if self.rest_tuple_matches(pat, actual) =>
+            {
+                self.match_rest_tuple(pat, actual, slots)
+            }
             (
                 TyKind::FnPtr {
                     params: pp,
@@ -363,7 +368,12 @@ impl Ctx<'_> {
 
     /// An error type (`throws` of a function type, rejection of a promise): unlike other
     /// positions, `never` binds a parameter (the function does not throw).
-    fn match_error(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) -> bool {
+    pub(crate) fn match_error(
+        &mut self,
+        pat: TyId,
+        actual: TyId,
+        slots: &mut [Option<TyId>],
+    ) -> bool {
         match self.error_param(pat) {
             Some(i) if actual == self.ty.never && (i as usize) < slots.len() => {
                 match slots[i as usize] {
@@ -479,7 +489,12 @@ impl Ctx<'_> {
         ok
     }
 
-    fn match_all(&mut self, ps: &[TyId], as_: &[TyId], slots: &mut [Option<TyId>]) -> bool {
+    pub(crate) fn match_all(
+        &mut self,
+        ps: &[TyId],
+        as_: &[TyId],
+        slots: &mut [Option<TyId>],
+    ) -> bool {
         if ps.len() != as_.len() {
             return false;
         }
