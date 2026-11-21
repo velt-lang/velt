@@ -3,17 +3,17 @@
 //! program without the executor, reached by role from the executor's module lock
 //! (sched_module.velt), and prebuilt, the module's state its own (`prebuilt::private`). Kept apart
 //! from the rest of the table ([`super`]), which [`with_module_hooks`] gives on, with these rows
-//! after it, to [`with_weak_hooks`].
+//! after it, to `with_string_hooks!`.
 
 /// The std module table's entry of the module that keeps the blocks of module state: its lowered
 /// hooks are live once a program has module state (`velt_sema` `lazy_std` `module_hooks`), not in
 /// every program.
 pub const BLOCKS_MODULE_ENTRY: &str = "lang_hooks_module_blocks";
 
-/// `with_weak_hooks!` over the rows given, then these.
+/// `with_string_hooks!` over the rows given, then these.
 macro_rules! with_module_hooks {
     ($($rows:tt)*) => {
-        with_weak_hooks! {
+        with_string_hooks! {
             $($rows)*
             // module_blocks.velt: the blocks of module state, prebuilt: a native program with
             // module state calls its module's object.

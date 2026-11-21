@@ -161,9 +161,11 @@ fn a_weak_program_calls_the_core_s_object() {
             ("object", OUT),
             "{mode:?}"
         );
-        // The core's, and that of the blocks of module state (module_blocks.velt), which a
-        // program on the executor reaches.
-        assert!(text(&served.stderr).contains("prebuilt hooks: 2 objects linked"));
+        // The core's object, and those of the other prebuilt modules the program calls: the
+        // blocks of module state (module_blocks.velt), which a program on the executor reaches,
+        // and the string methods the test's output goes through.
+        assert!(text(&served.stderr).contains("objects linked"));
+        assert!(text(&served.stderr).contains("lang/hooks/module_blocks: object found"));
         // The core is about 2,000 lines of std, and the program loads none of them.
         assert!(
             std_lines(&served) + 1500 < std_lines(&off),
@@ -201,7 +203,8 @@ fn a_program_loading_the_core_calls_no_object() {
         .unwrap();
     let err = text(&out.stderr);
     assert!(out.status.success(), "{}{err}", text(&out.stdout));
-    // It still links the object of the blocks of module state (module_blocks.velt).
+    // Other prebuilt modules' objects are linked (the blocks of module state, the string
+    // methods the runner calls): the core's is not.
     assert!(!err.contains("lang/hooks/weak: object found"), "{err}");
-    assert!(err.contains("prebuilt hooks: 1 objects linked"), "{err}");
+    assert!(err.contains("lang/hooks/module_blocks: object found"), "{err}");
 }

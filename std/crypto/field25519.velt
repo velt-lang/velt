@@ -62,17 +62,40 @@ export class Fe25519 {
 
   /** `d = a + b`, limb by limb (no carry). */
   add(d: usize, a: usize, b: usize) {
-    for (let i: usize = 0; i < 5; i++) {
-      this.r[5 * d + i] = this.r[5 * a + i] + this.r[5 * b + i];
-    }
+    const r = this.r;
+    const oa = 5 * a;
+    const ob = 5 * b;
+    const od = 5 * d;
+    // The highest indexes first, whose bounds checks cover the others; all loads before the
+    // stores, since `d` may be `a` or `b`.
+    const t4 = r[oa + 4] + r[ob + 4];
+    const t0 = r[oa] + r[ob];
+    const t1 = r[oa + 1] + r[ob + 1];
+    const t2 = r[oa + 2] + r[ob + 2];
+    const t3 = r[oa + 3] + r[ob + 3];
+    r[od + 4] = t4;
+    r[od] = t0;
+    r[od + 1] = t1;
+    r[od + 2] = t2;
+    r[od + 3] = t3;
   }
 
   /** `d = a - b` as `a + 2p - b`, limb by limb, so no limb goes negative (`b` reduced). */
   sub(d: usize, a: usize, b: usize) {
-    this.r[5 * d] = this.r[5 * a] + 0xfffffffffffda - this.r[5 * b];
-    for (let i: usize = 1; i < 5; i++) {
-      this.r[5 * d + i] = this.r[5 * a + i] + 0xffffffffffffe - this.r[5 * b + i];
-    }
+    const r = this.r;
+    const oa = 5 * a;
+    const ob = 5 * b;
+    const od = 5 * d;
+    const t4 = r[oa + 4] + 0xffffffffffffe - r[ob + 4];
+    const t0 = r[oa] + 0xfffffffffffda - r[ob];
+    const t1 = r[oa + 1] + 0xffffffffffffe - r[ob + 1];
+    const t2 = r[oa + 2] + 0xffffffffffffe - r[ob + 2];
+    const t3 = r[oa + 3] + 0xffffffffffffe - r[ob + 3];
+    r[od + 4] = t4;
+    r[od] = t0;
+    r[od + 1] = t1;
+    r[od + 2] = t2;
+    r[od + 3] = t3;
   }
 
   /** `d = a * b` mod p (`d` may be `a` or `b`); products past limb 4 wrap around times 19. */
@@ -81,16 +104,17 @@ export class Fe25519 {
     const r = this.r;
     const oa = 5 * a;
     const ob = 5 * b;
+    // The highest index first: its bounds check covers the others.
+    const a4 = r[oa + 4];
     const a0 = r[oa + 0];
     const a1 = r[oa + 1];
     const a2 = r[oa + 2];
     const a3 = r[oa + 3];
-    const a4 = r[oa + 4];
+    const b4 = r[ob + 4];
     const b0 = r[ob + 0];
     const b1 = r[ob + 1];
     const b2 = r[ob + 2];
     const b3 = r[ob + 3];
-    const b4 = r[ob + 4];
     const b1x19 = b1 * 19;
     const b2x19 = b2 * 19;
     const b3x19 = b3 * 19;
@@ -133,11 +157,11 @@ export class Fe25519 {
   square(d: usize, a: usize) {
     const r = this.r;
     const oa = 5 * a;
+    const a4 = r[oa + 4];
     const a0 = r[oa + 0];
     const a1 = r[oa + 1];
     const a2 = r[oa + 2];
     const a3 = r[oa + 3];
-    const a4 = r[oa + 4];
     const a1x2 = a1 * 2;
     const a2x2 = a2 * 2;
     const a3x2 = a3 * 2;
@@ -173,11 +197,11 @@ export class Fe25519 {
   mulSmall(d: usize, a: usize, k: u64) {
     const r = this.r;
     const oa = 5 * a;
+    const a4 = r[oa + 4];
     const a0 = r[oa + 0];
     const a1 = r[oa + 1];
     const a2 = r[oa + 2];
     const a3 = r[oa + 3];
-    const a4 = r[oa + 4];
     this.reduce(
       d,
       a0 * k,
@@ -226,11 +250,11 @@ export class Fe25519 {
     [x0, y0] = mulAdd(x0, y0, c4, 19);
     const c0 = (x0 >> 51) | (y0 << 13);
     const o = 5 * d;
+    this.r[o + 4] = x4 & M;
     this.r[o] = x0 & M;
     this.r[o + 1] = (x1 & M) + c0;
     this.r[o + 2] = x2 & M;
     this.r[o + 3] = x3 & M;
-    this.r[o + 4] = x4 & M;
   }
 
   /** `d = a^(2^n)` (n squarings, n >= 1). */
@@ -277,10 +301,17 @@ export class Fe25519 {
   /** Swaps registers `a` and `b` when `swap` is 1, leaves them when it is 0, without a branch. */
   swap(a: usize, b: usize, swap: u64) {
     const mask = 0 - swap;
-    for (let i: usize = 0; i < 5; i++) {
-      const x = (this.r[5 * a + i] ^ this.r[5 * b + i]) & mask;
-      this.r[5 * a + i] ^= x;
-      this.r[5 * b + i] ^= x;
+    const r = this.r;
+    const oa = 5 * a;
+    const ob = 5 * b;
+    // The highest indexes first: their bounds checks cover the others.
+    const x4 = (r[oa + 4] ^ r[ob + 4]) & mask;
+    r[oa + 4] ^= x4;
+    r[ob + 4] ^= x4;
+    for (let i: usize = 0; i < 4; i++) {
+      const x = (r[oa + i] ^ r[ob + i]) & mask;
+      r[oa + i] ^= x;
+      r[ob + i] ^= x;
     }
   }
 

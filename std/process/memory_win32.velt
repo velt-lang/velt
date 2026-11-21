@@ -1,0 +1,66 @@
+// velt/process (internal): `process.memoryUsage()` on Windows (`#memory-sys`' win32 variant,
+// std/imports.velt): kernel32's `K32GetProcessMemoryInfo` (in kernel32 itself, so no library is
+// loaded: psapi's `GetProcessMemoryInfo` would load one, and loading a library while worker
+// threads start can hang on the loader lock). `WorkingSetSize` is the resident set size,
+// `PagefileUsage` (the process' private committed bytes) is `heapUsed`.
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+/** Win32's `PROCESS_MEMORY_COUNTERS`. */
+declare c type PROCESS_MEMORY_COUNTERS;
+
+declare c("c") function GetCurrentProcess$memory(): Ptr<void>;
+declare c("c") function K32GetProcessMemoryInfo(
+  process: Ptr<void>,
+  counters: Ptr<PROCESS_MEMORY_COUNTERS>,
+  cb: u32,
+): i32;
+declare c("c") function calloc$memory(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$memory(p: Ptr<u8> | null): void;
+
+/**
+ * `PROCESS_MEMORY_COUNTERS`' size on 64-bit Windows: `cb` and `PageFaultCount` (two `DWORD`s),
+ * then eight `SIZE_T`s.
+ */
+const SIZE: usize = 72;
+/** `WorkingSetSize`'s offset. */
+const WORKING_SET_AT: usize = 16;
+/** `PagefileUsage`'s offset. */
+const PAGEFILE_AT: usize = 56;
+
+/** The `SIZE_T` at offset `at` of this process' `PROCESS_MEMORY_COUNTERS`, or 0 when unread. */
+function counter(at: usize): i64 {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$memory(1, SIZE) };
+  if (block === null) {
+    return 0;
+  }
+  const p = Ptr.addressOf(block);
+  let value: i64 = 0;
+  // SAFETY: `p` holds `SIZE` bytes: `cb` goes in its first `DWORD`, the call fills the rest; the
+  // pseudo-handle of this process needs no closing; the block is freed once, after the reads.
+  unsafe {
+    addressStore<u32>(p, SIZE as u32);
+    const ok = K32GetProcessMemoryInfo(
+      GetCurrentProcess$memory(),
+      Ptr.at<PROCESS_MEMORY_COUNTERS>(p),
+      SIZE as u32,
+    );
+    if (ok !== 0) {
+      value = addressLoad<u64>(p + at) as i64;
+    }
+    free$memory(block);
+  }
+  return value;
+}
+
+/** The working set in bytes (0 if the OS does not say). */
+export function residentBytes(): i64 {
+  return counter(WORKING_SET_AT);
+}
+
+/** The process' private committed bytes (0 if the OS does not say). */
+export function heapBytes(): i64 {
+  return counter(PAGEFILE_AT);
+}

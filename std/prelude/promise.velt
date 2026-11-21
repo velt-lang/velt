@@ -2,7 +2,13 @@
 // `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
 
 import { firstFulfilled } from "velt/lang/intrinsics";
-import { PromiseSlot, runExecutor, settlement, settlers } from "velt/lang/promise/settle";
+import {
+  PromiseSlot,
+  raceTakesStep,
+  runExecutor,
+  settlement,
+  settlers,
+} from "velt/lang/promise/settle";
 
 /** How `Promise.allSettled` reports one promise (`E`: what the promise rejects with). */
 export type PromiseSettledResult<T, E> =
@@ -53,13 +59,19 @@ export async function promiseAny<T, E>(ps: Promise<T, E>[]): Promise<T> throws A
   if (ps.length == 0) {
     throw new AggregateError("All promises were rejected");
   }
-  // Node settles in the callback it runs for the deciding promise: one microtask later.
+  // Node settles in the callback it runs for the deciding promise, a microtask later: the race
+  // takes that step under the executor in Velt (std/lang/hooks/sched_race.velt), else it is
+  // taken here.
   try {
     const v = await firstFulfilled(ps);
-    await velt_rt_microtask();
+    if (!raceTakesStep()) {
+      await velt_rt_microtask();
+    }
     return v;
   } catch (e) {
-    await velt_rt_microtask();
+    if (!raceTakesStep()) {
+      await velt_rt_microtask();
+    }
     throw new AggregateError("All promises were rejected");
   }
 }

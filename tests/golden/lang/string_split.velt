@@ -1,0 +1,82 @@
+// `split` with a string separator and with a limit, and the characters of `for (const c of s)`
+// (std/lang/string/split.velt, std/lang/hooks/string.velt, #2198): empty pieces, the empty
+// separator on a surrogate pair, separators that match half of a pair, and JavaScript's
+// `ToUint32` of the limit.
+// The expected output is Node's (this file runs there unchanged, with `main()` called). Lone
+// surrogates come from `String.fromCharCode`.
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+/** The UTF-16 code units of `s`, in hex. */
+function hex(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16) + ".";
+  }
+  return out;
+}
+
+function show(parts: string[]) {
+  let out = "" + parts.length + ":";
+  for (const p of parts) {
+    out += " [" + hex(p) + "]";
+  }
+  console.log(out);
+}
+
+function main() {
+  show("a,b,".split(","));
+  show("".split(","));
+  show("".split(""));
+  show(",".split(","));
+  show(",,a,,".split(","));
+  show("abc".split(""));
+  show("a😀é".split(""));
+  show("no separator here".split(";"));
+  show("one, two, three, four".split(", "));
+  show("the quick brown fox jumps over the lazy dog, again and again and again".split(" "));
+  show("the quick brown fox jumps over the lazy dog, again and again and again".split("again"));
+  show("aXbXXc".split("XX"));
+  show("aaaa".split("aa"));
+  show("日本語、テキスト、です".split("、"));
+  show("é,ü,😀,x".split(","));
+  show("x😀y😀z".split("😀"));
+  show("x😀y😀z".split(HI));
+  show("x😀y😀z".split(LO));
+  show(("x" + HI + "y😀z" + LO).split(HI));
+  show(("x" + HI + "y😀z" + LO).split(LO));
+  show("a😀😀b".split(LO + HI));
+  show("a😀😀😀b".split(LO + HI));
+  show("a😀b😀c".split(LO + "b" + HI));
+  show("ab😀cdab😀cd".split("b" + HI));
+  show("ab😀cdab😀cd".split(LO + "cd"));
+  show("ab😀cdab😀cd".split(LO + "cdab" + HI));
+  show("abcd".split(LO + "x"));
+  show([..."x😀" + LO]);
+  show("a,b,c".split(",", 2));
+  show("a,b,c".split(",", 0));
+  show("a,b,c".split(",", -1));
+  show("a,b,c".split(",", NaN));
+  show("a,b,c".split(",", 2.9));
+  show("a,b,c".split(",", 4294967297));
+  show("a,b,c".split(",", Infinity));
+  show("a,b,c".split(",", 3));
+  show("a,b,c".split(",", 10));
+  show("a,b,c".split(",", undefined));
+  show("a😀b".split("", 2));
+  show("a😀b".split("", 3));
+  show("abc".split("", 2));
+  show("a, b, c, d".split(", ", 3));
+  show("x😀y😀z".split(LO, 2));
+  show("the quick brown fox jumps over the lazy dog".split(" ", 4));
+  show("the quick brown fox jumps over the lazy dog".split("o", 1));
+  show("".split(",", 1));
+  show("".split("", 1));
+  let n = 0;
+  for (const c of "a😀é" + HI + "z") {
+    n++;
+    console.log(n, hex(c));
+  }
+  show([..."x😀" + LO]);
+}
