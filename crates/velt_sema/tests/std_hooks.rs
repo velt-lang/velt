@@ -394,8 +394,8 @@ fn every_hook_resolves_with_its_signature() {
 
 /// Lazy std checks the lowered hooks of the values a program has: lowering calls them
 /// (`velt_common` `hook_sig.rs`). This program holds an `any`, arrays and functions, and has no
-/// class object, no reference to a host value, no float printed, no `catchUnwind` and no weak
-/// collection, which the unchecked hooks wait for (a printed float for both of its writers).
+/// class object, no reference to a host value, no float printed, no `**`, no `catchUnwind` and no
+/// weak collection, which the unchecked hooks wait for (a printed float for both of its writers).
 #[test]
 fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
     let p = ok_src(LOADS_ALL);
@@ -411,6 +411,7 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
         unchecked,
         [
             "pow_f64",
+            "pow_i64",
             "number_write",
             "whole_number_write",
             "panic_raise",

@@ -69,11 +69,14 @@ pub enum Construct {
     /// lowering calls std's weak core (std/lang/hooks/weak.velt) for it, and for the release of
     /// the types it makes weak-capable.
     Weak,
+    /// `**` on integers (`a ** b`, `a **= b` on a declared integer type): std's `powI64`
+    /// (std/lang/hooks/pow_int.velt), which only a program that has one loads.
+    PowInt,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 9] = [
+    pub const ALL: [Construct; 10] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -83,6 +86,7 @@ impl Construct {
         Construct::PowFloat,
         Construct::Clock,
         Construct::Weak,
+        Construct::PowInt,
     ];
 
     /// The construct as the ICE names it.
@@ -97,6 +101,7 @@ impl Construct {
             Construct::PowFloat => "PowFloat (`**` on floats)",
             Construct::Clock => "Clock (a read of Date.now or performance.now)",
             Construct::Weak => "Weak (a weak collection's intrinsic)",
+            Construct::PowInt => "PowInt (`**` on integers)",
         }
     }
 

@@ -60,14 +60,6 @@ fn math(sym: &str, x: f64) -> f64 {
     }
 }
 
-/// `velt_rt_pow_i64`: wrapping; negative exponent → 0 (1 if the base is 1).
-fn pow_i64(b: i64, e: i64) -> i64 {
-    match e {
-        e if e < 0 => (b == 1) as i64,
-        e => b.wrapping_pow(e.min(u32::MAX as i64) as u32),
-    }
-}
-
 impl Interp<'_> {
     pub(super) fn str_header(&mut self, a: u64) -> (u64, u64, u64) {
         (
@@ -190,7 +182,6 @@ impl Interp<'_> {
             "velt_rt_uncaught_report" => {}
             "velt_rt_set_throw_loc" => self.throw_loc = a[0],
             "velt_rt_throw_loc" => return Ok(self.throw_loc),
-            "velt_rt_pow_i64" => return Ok(pow_i64(a[0] as i64, a[1] as i64) as u64),
             "velt_rt_alloc" => {
                 assert!(
                     a[1].is_power_of_two() && a[1] <= 8,
