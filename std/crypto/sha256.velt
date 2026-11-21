@@ -76,9 +76,10 @@ export function sha256Hex(s: string): string {
   return hexEncode(sha256(utf8Encode(s)));
 }
 
-// Out of line: an internal error, never reached.
+// Out of line: an internal error, never reached. `never`, so that the code after the guard
+// knows the guard was false and its bounds checks go.
 @noInline
-function blockFault() {
+function blockFault(): never {
   panic("ICE: a SHA-256 block outside its data, or a state not of eight words");
 }
 
