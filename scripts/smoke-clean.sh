@@ -3,7 +3,9 @@
 # with the bundled linker forced ($VELT_LINKER=bundled), `velt doctor` reports it, a debug build of
 # scripts/smoke-prebuilt.velt links the toolchain's prebuilt hook objects (lib/hooks/), and hello and
 # examples/http_hello.velt build in debug and release mode, run and answer a request; hello also
-# builds for wasm32-unknown-unknown. Extra arguments are more targets to build and run the same
+# builds for wasm32-unknown-unknown; tests/golden/std/fs_dirents.velt lists a directory with its
+# entries' types, which std reads at offsets of each target's own `struct dirent` (the only run
+# of them on x86-64 macOS). Extra arguments are more targets to build and run the same
 # way (e.g. x86_64-unknown-linux-musl).
 # release.yml runs it in debian:bookworm-slim and on macOS; scripts/smoke-clean.ps1 is the
 # Windows counterpart. Needs bash (for /dev/tcp: slim images have no curl).
@@ -72,6 +74,14 @@ done
 out=$("$work/prebuilt")
 [ "$out" = "1234.57 356 7" ] || { echo "smoke-prebuilt printed '$out'" >&2; exit 1; }
 echo "ok: shipped objects linked"
+# A wrong offset of `d_type` or `d_name` (std/fs/fd/darwin.velt, linux.velt) gives other names
+# or types than the golden's.
+step "directory entries (struct dirent's offsets)"
+"$velt" build "$repo/tests/golden/std/fs_dirents.velt" -o "$work/dirents"
+(cd "$work" && ./dirents) >"$work/dirents.out"
+diff "$repo/tests/golden/std/fs_dirents.out" "$work/dirents.out" ||
+    { echo "fs_dirents printed something else than tests/golden/std/fs_dirents.out" >&2; exit 1; }
+echo "ok: directory entries"
 step "debug build (shared runtime)"
 run_both debug
 step "release build"

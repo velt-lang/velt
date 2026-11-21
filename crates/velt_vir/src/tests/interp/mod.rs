@@ -31,6 +31,8 @@ pub(super) struct Outcome {
     pub live_allocs: usize,
     /// Number of heap blocks freed by `velt_rt_str_drop`.
     pub frees: usize,
+    /// Heap blocks allocated, freed or not.
+    pub allocations: usize,
     /// Calls of `velt_rt_drop_state`: the drops bracketed for the depth limit.
     pub drop_states: usize,
 }
@@ -72,6 +74,7 @@ struct Interp<'p> {
     stderr: String,
     steps: u64,
     frees: usize,
+    allocations: usize,
     /// `velt_rt_set_throw_loc`'s slot (address of a static string, 0 = none).
     throw_loc: u64,
     /// Emulated async runtime (async_rt.rs, net.rs).
@@ -112,6 +115,7 @@ fn run_in(mut it: Interp) -> Outcome {
         code,
         live_allocs: if normal { it.allocs.len() } else { 0 },
         frees: it.frees,
+        allocations: it.allocations,
         drop_states: it.drops.calls,
     }
 }
@@ -130,6 +134,7 @@ impl<'p> Interp<'p> {
             stderr: String::new(),
             steps: 0,
             frees: 0,
+            allocations: 0,
             throw_loc: 0,
             exec: async_rt::Exec::default(),
             drops: drops::Drops::default(),
@@ -163,6 +168,7 @@ impl Interp<'_> {
     fn heap_alloc(&mut self, size: u64) -> u64 {
         let a = self.raw_alloc(size.max(1));
         self.allocs.insert(a, size.max(1));
+        self.allocations += 1;
         a
     }
 
@@ -338,10 +344,22 @@ impl Interp<'_> {
                 let argv: Vec<V> = args.iter().map(|a| self.operand(f, slots, a).0).collect();
                 let r = match callee {
                     Callee::Func(id) => self.call_fn(id.0 as usize, argv)?,
-                    Callee::Extern(id) => {
-                        let raw: Vec<u64> = argv.iter().map(V::s).collect();
-                        V::S(self.rt(&self.p.externs[id.0 as usize].symbol, &raw)?)
-                    }
+                    Callee::Extern(id) => match self.p.externs[id.0 as usize].symbol.as_str() {
+                        // std's detection (std/lang/cpu/detect_x86.velt): a CPU with nothing past
+                        // x86-64, whose answers it reads lane by lane.
+                        "velt_simd_cpuid" => V::A(vec![0; 16]),
+                        "velt_simd_u32x4_lane" => match (&argv[0], argv[1].s()) {
+                            (V::A(b), i) if i < 4 => {
+                                let at = i as usize * 4;
+                                V::S(u32::from_le_bytes(b[at..at + 4].try_into().unwrap()).into())
+                            }
+                            _ => panic!("interp: a lane of no vector"),
+                        },
+                        symbol => {
+                            let raw: Vec<u64> = argv.iter().map(V::s).collect();
+                            V::S(self.rt(symbol, &raw)?)
+                        }
+                    },
                     Callee::Ptr {
                         target,
                         params,
