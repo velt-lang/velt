@@ -1,0 +1,174 @@
+// velt/lang/string (internal): `split` with a string separator (std/prelude/string.velt), in Velt
+// (#2198).
+//
+// JavaScript's rules: `"a,b,".split(",")` is `["a", "b", ""]`, `"".split(",")` is `[""]`,
+// `"".split("")` is `[]`, and `split("")` gives the UTF-16 code units, a surrogate pair as its
+// two halves.
+//
+// The separator is searched in the string's WTF-8 bytes, which is exact: a match of a separator
+// that starts with a lead byte starts on a character. A one-byte separator is counted first,
+// sixteen bytes at a time, so the array is allocated once; a longer one is found with the
+// searches of `indexOf` (needle_scan.velt). Only a separator that can match half of a pair, in a
+// string that is not ASCII, is matched by code unit (half_pos.velt).
+//
+// A piece is a range of the string's bytes: shared with a long string, a copy when short,
+// borrowed from a static one (the runtime's byte slice decides, as for `slice`). A piece of one
+// ASCII byte is that inline string, with no call.
+
+import {
+  arrayWithCapacity,
+  strAsciiWords,
+  strByteAt,
+  strByteLen,
+  strLen,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
+import { isHalfNeedle, nextUnit, NO_START } from "velt/lang/string/code_units";
+import { halfFindPos, unitsAfter, unitsText, unitText } from "velt/lang/string/half_pos";
+import { findBytes } from "velt/lang/string/needle_scan";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
+
+/** Bytes `a..b` of `s` (whole characters) as a string. */
+function piece(s: string, a: usize, b: usize): string {
+  if (b - a == 1) {
+    const c = strByteAt(s, a as u64);
+    if (c < 0x80) {
+      return strAsciiWords(c as u64, 0, 0, 1);
+    }
+  }
+  return velt_rt_str_byte_slice(s, a as u64, b as u64);
+}
+
+/** The lanes of the 16 bytes of `s` at `at` that hold `v`'s byte, as bits. */
+function hits(s: string, at: usize, v: u8x16): u64 {
+  return velt_simd_mask8x16_bitmask(velt_simd_u8x16_eq(strLoadU8x16(s, at as u64), v));
+}
+
+/** `s.split(sep)` of the one-byte separator `b`. */
+function splitByte(s: string, b: u8, n: usize, limit: usize): string[] {
+  const v = velt_simd_u8x16_splat(b);
+  let count: usize = 1;
+  let i: usize = 0;
+  while (i + 16 <= n) {
+    count += hits(s, i, v).countOnes();
+    i += 16;
+  }
+  while (i < n) {
+    if (strByteAt(s, i as u64) == b) {
+      count++;
+    }
+    i++;
+  }
+  const out: string[] = arrayWithCapacity(count < limit ? count : limit);
+  let start: usize = 0;
+  i = 0;
+  while (i + 16 <= n) {
+    let bits = hits(s, i, v);
+    while (bits != 0) {
+      const at = i + bits.trailingZeros();
+      out.push(piece(s, start, at));
+      if (out.length >= limit) {
+        return out;
+      }
+      start = at + 1;
+      bits = bits & (bits - 1);
+    }
+    i += 16;
+  }
+  while (i < n) {
+    if (strByteAt(s, i as u64) == b) {
+      out.push(piece(s, start, i));
+      if (out.length >= limit) {
+        return out;
+      }
+      start = i + 1;
+    }
+    i++;
+  }
+  out.push(piece(s, start, n));
+  return out;
+}
+
+/** `s.split(sep)` of a separator of `m` bytes, two or more, that matches whole characters. */
+function splitBytes(s: string, sep: string, n: usize, m: usize, limit: usize): string[] {
+  const out: string[] = [];
+  let start: usize = 0;
+  while (m <= n - start) {
+    const k = findBytes(s, sep, m, start, n);
+    if (k < 0) {
+      break;
+    }
+    out.push(piece(s, start, k as usize));
+    if (out.length >= limit) {
+      return out;
+    }
+    start = (k as usize) + m;
+  }
+  out.push(piece(s, start, n));
+  return out;
+}
+
+/** `s.split("")`: one string per code unit. */
+function splitUnits(s: string, n: usize, limit: usize): string[] {
+  const units = strLen(s);
+  const count = units < limit ? units : limit;
+  const out: string[] = arrayWithCapacity(count);
+  if (units == n) {
+    for (let i: usize = 0; i < count; i++) {
+      out.push(strAsciiWords(strByteAt(s, i as u64) as u64, 0, 0, 1));
+    }
+    return out;
+  }
+  let p: u64 = 0;
+  while (out.length < count) {
+    out.push(unitText(s, p));
+    p = nextUnit(s, p);
+  }
+  return out;
+}
+
+/** `s.split(sep)` of a half needle in a string that is not ASCII, by code unit. */
+function splitHalf(s: string, sep: string, n: usize, m: usize, limit: usize): string[] {
+  const out: string[] = [];
+  let start: u64 = 0;
+  while (true) {
+    const p = halfFindPos(s, sep, start);
+    if (p == NO_START) {
+      break;
+    }
+    out.push(unitsText(s, start, p));
+    if (out.length >= limit) {
+      return out;
+    }
+    start = unitsAfter(s, p, sep, m);
+  }
+  out.push(unitsText(s, start, (n as u64) << 1));
+  return out;
+}
+
+/**
+ * `s.split(sep, limit)`: at most `limit` pieces, the first ones (JavaScript's limit after its
+ * `ToUint32`; 4294967295 when none was given).
+ */
+export function split(s: string, sep: string, limit: u32): string[] {
+  const n = strByteLen(s);
+  const m = strByteLen(sep);
+  const max = limit as usize;
+  if (max == 0) {
+    return [];
+  }
+  if (m == 1) {
+    return splitByte(s, strByteAt(sep, 0), n, max);
+  }
+  if (m == 0) {
+    return splitUnits(s, n, max);
+  }
+  if (strLen(s) != n && isHalfNeedle(sep, m)) {
+    return splitHalf(s, sep, n, m, max);
+  }
+  return splitBytes(s, sep, n, m, max);
+}

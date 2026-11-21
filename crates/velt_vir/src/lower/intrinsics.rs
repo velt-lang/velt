@@ -43,6 +43,23 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(ty);
                 self.array_value(ty, data, len, super::cint(0, Ty::U64))
             }
+            (I::AddressArrayOwned, [a, n, o]) => {
+                // `{ data: address, len, cap: owner | OWNER }`: a buffer the array does not own,
+                // whose owner's function is called when the array is dropped (lower/array).
+                let addr = self.expr(a);
+                let data = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let (len, lt) = (self.expr(n), self.vty(n.ty));
+                let len = self.cast_to(len, lt, Ty::U64);
+                let (owner, ot) = (self.expr(o), self.vty(o.ty));
+                let owner = self.cast_to(owner, ot, Ty::U64);
+                let tag = super::cint(super::array::OWNER as i128, Ty::U64);
+                let cap = self.rvalue_temp(
+                    Ty::U64,
+                    Rvalue::Binary(crate::vir::BinOp::BitOr, owner, tag),
+                );
+                let ty = self.sub(ty);
+                self.array_value(ty, data, len, cap)
+            }
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),
@@ -172,6 +189,23 @@ impl FnLower<'_, '_> {
                 let p = self.operand_place(v, Ty::Agg(STR_AGG));
                 let data = self.str_data(&p);
                 self.cast_to(data, Ty::Ptr, Ty::U64)
+            }
+            (I::StrAt, [a]) => {
+                // Another reference to the string at the address: its three words read in place
+                // and shared (a count increment for a heap string), owned by the caller.
+                let addr = self.expr(a);
+                let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let Operand::Copy(at) = at else {
+                    ice("rvalue_temp returns a place")
+                };
+                let src = Place {
+                    local: at.local,
+                    proj: vec![Proj::Deref(Ty::Agg(STR_AGG))],
+                };
+                let out = self.temp(Ty::Agg(STR_AGG));
+                self.str_share(src, Place::local(out));
+                let t = self.sub(ty);
+                self.own_value(Operand::Copy(Place::local(out)), t)
             }
             (I::ExportedAddress, [a]) => {
                 // `a` is the index of the `hir::CExport` (sema's `exported_address`).
@@ -556,7 +590,10 @@ impl FnLower<'_, '_> {
         push: fn(&mut Self, &Operand, &Place, TyId),
     ) -> Operand {
         let t = self.sub(a.ty);
-        let v = self.expr(a);
+        let v = match self.formatted_input(a) {
+            Some(copy) => copy,
+            None => self.expr(a),
+        };
         let p = self.place_of(v, t);
         let (_, buf) = self.new_strbuf(0);
         push(self, &buf, &p, t);

@@ -23,12 +23,16 @@ import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
+import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
+import * as yl from "./sched_yield";
 
 /**
  * Polls task `k` once: its woken started promises, its due sleeps, its root, its microtasks. A
  * task with no started promise, no due sleep, no queued microtask and a root still running takes
- * the straight path: its flags read once, the root polled, two words checked.
+ * the straight path: its flags read once, the root polled, two words checked. A first poll in
+ * shared mode marks the task started on its flags as they are then: `begin` may have changed them
+ * since they were read (#3241).
  */
 @inline("always")
 export function run(e: usize, k: usize, mode: u32): void {
@@ -46,9 +50,10 @@ export function run(e: usize, k: usize, mode: u32): void {
     m.storeRelease(e + t.E_CURRENT, k);
   }
   const fl = m.ld32(k + t.T_FLAGS);
+  yl.begin(k, fl);
   // Fresh tasks matter to other workers only (sched_monitor.velt).
   if (mode !== 0 && mode !== t.M_LAZY && (fl & t.STARTED) === 0) {
-    m.st32(k + t.T_FLAGS, fl | t.STARTED);
+    t.flags(k, t.STARTED, 0);
   }
   // One test on the straight path: the root polled, nothing else (a task whose root catches
   // panics, sched_node_catch.velt `T_CATCHES`, polls it in `runOther`).
@@ -114,7 +119,10 @@ function runOther(e: usize, k: usize, fl: u32): void {
   if ((fl & t.TOUCHED) !== 0) {
     mod.enter();
   }
-  if ((fl & t.LOCALS) !== 0) {
+  if ((fl & t.CANCEL) !== 0) {
+    // Nothing can wake it: its root is dropped, not polled (sched_task_lost.velt).
+    lt.cancel(k);
+  } else if ((fl & t.LOCALS) !== 0) {
     runWoken(e, k, fl);
   } else if ((fl & (t.ROOT_DONE | nc.T_CATCHES)) === 0) {
     pollRunning(e, k);
@@ -225,6 +233,10 @@ function runEnd(e: usize, k: usize, mode: u32): void {
     // Promises woken during this poll run in its next one.
     m.store32(k + t.T_STATE, t.SCHEDULED);
     requeue(e, k, mode);
+  } else if (lt.parks(k)) {
+    // Parked for ever: one more poll, which drops its root (sched_task_lost.velt `cancel`).
+    m.store32(k + t.T_STATE, t.SCHEDULED);
+    requeue(e, k, mode);
   } else if (m.cas32(k + t.T_STATE, t.RUNNING, t.IDLE) !== t.RUNNING) {
     // Woken during its poll.
     m.store32(k + t.T_STATE, t.SCHEDULED);
@@ -321,6 +333,7 @@ function drain(e: usize, k: usize): void {
       node.run(k, w, false);
       node.release(w);
     } else {
+      micro.forgetLast(k);
       m.wakeOwned(w);
     }
     m.st(e + t.E_JOB, m.ld(e + t.E_JOB) - 1);

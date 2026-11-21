@@ -1,0 +1,30 @@
+a 0
+a 1
+a 2
+a 3
+inline yielded
+b 0
+b 1
+b 2
+array yielded
+c 0
+c 1
+c 2
+stored yielded
+d 0
+d 1
+d 2
+then yielded
+f 0
+f 1
+f 2
+started yielded
+g 0
+g 1
+first yielded
+second yielded
+then 1
+then 2
+then 3
+task root yielded
+done

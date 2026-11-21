@@ -105,8 +105,11 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
 
 /// C library functions std calls that touch only the program's memory or this thread's error
 /// slot: allocation, the memory and string helpers, and `errno` (macOS's `__error`, glibc's
-/// `__errno_location`, the CRT's `_errno`; Win32's `GetLastError` and `SetLastError`, Winsock's).
+/// `__errno_location`, the CRT's `_errno`; Win32's `GetLastError` and `SetLastError`, Winsock's),
+/// ntdll's translation of a status to a Win32 error, and giving up the thread's turn.
 const PURE_C: &[&str] = &[
+    "RtlNtStatusToDosError",
+    "SwitchToThread",
     "malloc",
     "calloc",
     "realloc",
@@ -173,6 +176,11 @@ const DESCRIPTOR_C: &[&str] = &[
     "FindClose",
     "GetFileInformationByHandle",
     "GetFileInformationByHandleEx",
+    // Deleting on a handle, and opening a name relative to a directory's handle (a tree's
+    // removal, std/fs/tree/win_remove.velt, whose first open is `CreateFileW`; the reactor's
+    // device, std/lang/hooks/reactor_afd.velt).
+    "SetFileInformationByHandle",
+    "NtCreateFile",
 ];
 
 /// What the runtime's support for native packages (`velt_rt_native_*`) reaches.
@@ -181,13 +189,7 @@ const NATIVE_SUPPORT: &str = "native code";
 /// Velt's own functions besides the runtime's that touch nothing outside: SIMD, atomics,
 /// thread-local storage, CPU feature checks and catching a Velt panic (with the underscore, and no `__`: a package's
 /// exports are `velt_<package>__…`, and a package may be called `simdjson` or `atomic_ops`).
-const PURE_OWN: &[&str] = &[
-    "velt_simd_",
-    "velt_atomic_",
-    "velt_tls_",
-    "velt_cpu_",
-    "velt_eh_",
-];
+const PURE_OWN: &[&str] = &["velt_simd_", "velt_atomic_", "velt_tls_", "velt_eh_"];
 
 /// What a record entry stands for when the build can't attribute code to a test file (its
 /// registering function was inlined) or has no entry for it.
@@ -201,7 +203,9 @@ pub(crate) const UNKNOWN: &str = "more than the build can tell (its registration
 pub(crate) fn reaches(program: &Program) -> String {
     let files = harness_files(program);
     if files == 0 {
-        return describe(program, &|symbol| is_test_runner(symbol));
+        return describe(program, &|symbol| {
+            is_test_runner(symbol) || is_cpu_start(symbol)
+        });
     }
     let each: Vec<String> = (0..files)
         .map(|i| {
@@ -213,7 +217,9 @@ pub(crate) fn reaches(program: &Program) -> String {
                 // Inlined into `main`: what it reaches is mixed with the others'.
                 false => "?".to_string(),
                 true => describe(program, &|symbol: &str| {
-                    is_test_runner(symbol) || harness_file(symbol).is_some_and(|j| j != i)
+                    is_test_runner(symbol)
+                        || is_cpu_start(symbol)
+                        || harness_file(symbol).is_some_and(|j| j != i)
                 }),
             }
         })
@@ -305,11 +311,21 @@ pub(crate) fn generator_reaches(program: &Program) -> String {
         symbol.starts_with("_V3stdP8generateN")
             || symbol.starts_with("_V3stdP8generateP")
             || symbol.starts_with("std_sched_")
+            || is_cpu_start(symbol)
     })
 }
 
 fn is_test_runner(symbol: &str) -> bool {
     symbol.contains("V3stdP4testP3runN13runRegistered")
+}
+
+/// std's start-up check of the CPU (std/lang/hooks/cpu.velt `cpuStart`), which every program for
+/// x86-64 and arm64 calls first: it asks the CPU and the operating system which features the
+/// machine has, and reads `VELT_CPU_DISABLE` and `VELT_SIMD_DISABLE`, which choose among code paths
+/// that compute the same results. That is a fact of the machine, not input the program's output
+/// depends on, so it doesn't count.
+fn is_cpu_start(symbol: &str) -> bool {
+    symbol.starts_with("_V3stdP4langP5hooksP3cpuN8cpuStart")
 }
 
 /// The C functions std reads the clocks through (`Date.now()`, `performance.now()`:
@@ -414,7 +430,8 @@ mod tests {
             locs: vec![],
             param_attrs: vec![],
             is_poll: false,
-            target: None,
+            target: velt_vir::simd::ExtSet::NONE,
+            baseline: false,
             cold: false,
             inline: velt_vir::vir::Inline::Default,
             stops_unwind: false,
@@ -465,6 +482,31 @@ mod tests {
         assert_eq!(of_file(&record, 3).as_deref(), Some(UNKNOWN));
     }
 
+    /// Every program for x86-64 and arm64 calls std's start-up check first, which asks the
+    /// operating system for the CPU's features and reads two variables (`getenv`, and on arm64
+    /// `getauxval` or `sysctlbyname`): that is no input, so hello world still reaches nothing,
+    /// for `velt test`'s results and for a source generator.
+    #[test]
+    fn the_start_up_check_of_the_cpu_is_no_input() {
+        for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] {
+            let opts = crate::driver::BuildOptions {
+                input: "main.velt".into(),
+                root_source: Some("function main() {\n  console.log(\"hi\");\n}\n".into()),
+                target: Some(target.into()),
+                ..Default::default()
+            };
+            let mut sess = crate::driver::Session::new();
+            let program = crate::driver::compile(&mut sess, &opts)
+                .unwrap_or_else(|_| panic!("{}", sess.render_diagnostics()));
+            assert!(
+                (program.externs.iter()).any(|e| e.symbol == "getenv"),
+                "{target}: the check reads its variables"
+            );
+            assert_eq!(reaches(&program), "-", "{target}");
+            assert_eq!(super::generator_reaches(&program), "-", "{target}");
+        }
+    }
+
     /// What a program whose `main` calls the C functions `symbols` reaches.
     fn reaching(symbols: &[&str]) -> String {
         let ext = |symbol: &str| ExternFn {
@@ -507,6 +549,23 @@ mod tests {
         assert_eq!(windows, "a C function `CreatePipe`");
         let file = reaching(&["open", "fstat", "read", "close", "malloc", "__error"]);
         assert_eq!(file, "the file system");
+        // Windows' removal of a tree: its opens relative to a handle and its deletes on one are
+        // named by the `CreateFileW` that opened the root.
+        let tree = reaching(&[
+            "CreateFileW",
+            "NtCreateFile",
+            "GetFileInformationByHandleEx",
+            "SetFileInformationByHandle",
+            "RtlNtStatusToDosError",
+            "SwitchToThread",
+            "CloseHandle",
+            "GetLastError",
+        ]);
+        assert_eq!(tree, "the file system");
+        assert_eq!(
+            reaching(&["NtCreateFile", "CloseHandle"]),
+            "a C function `CloseHandle`, a C function `NtCreateFile`"
+        );
         assert_eq!(reaching(&["close", "__error"]), "a C function `close`");
         assert_eq!(reaching(&["malloc", "memcpy", "free"]), "-");
     }
