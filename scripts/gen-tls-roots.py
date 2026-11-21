@@ -51,6 +51,8 @@ ANCHOR = re.compile(
 
 
 def main():
+    if len(sys.argv) != 2:
+        sys.exit(f"usage: {sys.argv[0]} <webpki-roots {VERSION}'s src/lib.rs>")
     data = open(sys.argv[1], "rb").read()
     digest = hashlib.sha256(data).hexdigest()
     if digest != SHA256:
