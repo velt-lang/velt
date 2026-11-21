@@ -104,10 +104,12 @@ fn a_suspended_promise_dropped_on_another_worker_frees_its_task() {
     check("handed_drop", HANDED_DROP, "dropped on worker 2: 1\n", 3);
 }
 
-/// A promise handed on finishes on the task it was handed to and is freed there, while the task
-/// that started it is parked for ever: the free gave the promise's reference to its task back on
-/// worker 2, and nothing polled the task to see that it was now parked for ever (9 blocks a
-/// round, 180 in all).
+/// A promise handed on finishes and is awaited and freed on the task it was handed to, while
+/// the task that started it is parked for ever. Its last reference may go there (the owner's
+/// drop) or on the worker that woke it (the waker's own reference, released after the wake):
+/// either way the promise's reference to its task went on a thread that is not the task's, and
+/// nothing polled the task to see that it was now parked for ever (9 blocks a round, 180 in
+/// all).
 #[test]
 fn a_finished_promise_freed_on_another_worker_lets_its_parked_task_go() {
     check(
@@ -130,6 +132,16 @@ fn two_promises_dropped_at_once_on_two_workers_free_their_task_once() {
         "done 300 rounds, 600 drops\n",
         3,
     );
+}
+
+/// A promise that finishes after one turn, dropped on worker 2 at about the moment it finishes,
+/// its task then parked for ever: the drop may read the promise's flags before the finish and
+/// its count after it (once the task gave its reference back), and must not take a count of 1
+/// for a promise its task still holds. Before, 1,500 blocks or more were left every run; with
+/// the hand-over decided at the owner's drop only, 1 run in 8 still leaked under load.
+#[test]
+fn a_promise_dropped_as_it_finishes_lets_its_parked_task_go() {
+    check("race_finish", RACE_FINISH, "done 200\n", 3);
 }
 
 /// Hand-overs racing the starting task's own polls: 400 tasks each hand a promise (one that never
@@ -226,10 +238,12 @@ async function main() {
 /// The program of [`two_promises_dropped_at_once_on_two_workers_free_their_task_once`].
 const TWO_DROPPERS: &str = r#"// #3323 under contention: a task on worker 1 starts two promises nobody settles, hands one to a
 // task on worker 2 and one to a task on worker 3, and ends its root. The two drop theirs at the
-// same moment (they spin on one flag), so one hands its promise to the task while the other is
-// still giving back its own reference: the task may give both up and end in between.
+// same moment (both spin on one flag, released once both are spinning), so one hands its promise
+// to the task while the other is still giving back its own reference: the task may give both up
+// and end in between.
 
 const GO = new Atomic<i64>(0);
+const READY = new Atomic<i64>(0);
 const DONE = new Atomic<i64>(0);
 
 class Holder {
@@ -245,6 +259,7 @@ async function dead(): Promise<number> {
 
 // Drops what it was given once round `r` is released.
 async function dropper(h: Holder, r: i64): Promise<void> {
+  READY.add(1);
   while (GO.load() <= r) {}
   DONE.add(1);
 }
@@ -259,13 +274,63 @@ async function main() {
   let sum = 0;
   for (let r: i64 = 0; r < 300; r++) {
     sum += await spawn(maker(r), { worker: 1 });
-    await sleep(1);
+    // Both droppers spin before they are released, so they drop at the same moment.
+    while (READY.load() < 2 * (r + 1)) {
+      await yieldNow();
+    }
     GO.store(r + 1);
     while (DONE.load() < 2 * (r + 1)) {
       await yieldNow();
     }
   }
   console.log(`done ${sum} rounds, ${DONE.load()} drops`);
+}
+"#;
+
+/// The program of [`a_promise_dropped_as_it_finishes_lets_its_parked_task_go`].
+const RACE_FINISH: &str = r#"// #3323, a finish racing the drop: a task on worker 1 starts a promise that finishes after one
+// turn, hands it to a task on worker 2 that drops it at about the moment it finishes, and parks
+// for ever on a promise nobody settles.
+
+const DONE = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 1;
+}
+
+// Drops what it was given after `wait` turns, unawaited.
+async function dropper(h: Holder, wait: i64): Promise<void> {
+  for (let y: i64 = 0; y < wait; y++) {
+    await yieldNow();
+  }
+  DONE.add(1);
+}
+
+async function maker(r: i64): Promise<number> {
+  void spawn(dropper(new Holder(soon()), r % 3), { worker: 2 });
+  return await dead();
+}
+
+async function main() {
+  for (let r: i64 = 0; r < 200; r++) {
+    void spawn(maker(r), { worker: 1 });
+    while (DONE.load() <= r) {
+      await yieldNow();
+    }
+  }
+  console.log(`done ${DONE.load()}`);
 }
 "#;
 

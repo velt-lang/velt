@@ -61,7 +61,10 @@ export function droppedAway(n: usize): void {
   const task = m.ld(n + nd.N_TASK);
   const fl = m.load32(n + nd.N_FLAGS);
   const refs = m.load(n + nd.N_REFS);
-  const lone = (fl & nd.FINISHED) !== 0 ? refs === 1 : refs === 2;
+  // The flags first, then the count. A count of 1 is ours alone, whatever the flags said: the
+  // node may have finished on its task between the two loads, and the task given its
+  // reference back. A count of 2 with the node unfinished is ours and the task's.
+  const lone = refs === 1 || (refs === 2 && (fl & nd.FINISHED) === 0);
   if (!lone || task === 0 || lk.mode() !== lk.LK_ON) {
     nd.release(n);
     return;
@@ -76,6 +79,33 @@ export function droppedAway(n: usize): void {
   }
   m.inc(task + t.T_REFS);
   nw.give(n);
+  lt.releaseAway(task);
+}
+
+/**
+ * A freed node's reference to its task `task` goes (sched_node.velt `release`). On the task's own
+ * thread as it always did. Anywhere else (a waker of the node dropped on another worker, the
+ * owner's drop there, a holder's) the task is woken with it (`releaseAway`): the reference may
+ * be the one that kept the task from being found parked for ever (sched_task_lost.velt
+ * `parks`), and no poll of the task would follow to look again.
+ */
+@inline("always")
+export function taskRef(task: usize): void {
+  const e = t.here();
+  if (e !== 0 && m.ld(e + t.E_CURRENT) === task) {
+    wk.release(task);
+    return;
+  }
+  taskRefAway(task);
+}
+
+/** `taskRef` off the task's thread: with one thread at the executor, as on it. */
+@noInline
+function taskRefAway(task: usize): void {
+  if (lk.mode() !== lk.LK_ON) {
+    wk.release(task);
+    return;
+  }
   lt.releaseAway(task);
 }
 
