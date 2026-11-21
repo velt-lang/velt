@@ -108,9 +108,8 @@ impl FnCx<'_, '_> {
         // The promise is awaited after the enclosing `try` statements are left: what it
         // rejects with is thrown from the function, not into their `catch` blocks.
         let tries = std::mem::take(&mut self.f.tries);
-        let dynamic = |s: &Self, t: TyId| {
-            matches!(s.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown))
-        };
+        let dynamic =
+            |s: &Self, t: TyId| matches!(s.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown));
         let h = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(..) => {
                 self.await_throws(&h);
