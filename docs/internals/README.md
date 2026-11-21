@@ -301,3 +301,9 @@ whether it is implemented, partly implemented, accepted or proposed.
   and **fuzzing** (`fuzz/`).
 - **Benchmarks** in `bench/`, with results in [bench/RESULTS.md](../../bench/RESULTS.md) and
   [bench/web/RESULTS.md](../../bench/web/RESULTS.md).
+- **Measuring compile time.** Count instructions retired (cachegrind in a Linux VM, or
+  `/usr/bin/time -l` on macOS), not wall-clock time on a busy machine. Rebuild to the same
+  output path, as an edit-and-build loop does: the stamp beside the executable keeps the hashes
+  of the files the last build read, which the next one reuses, so a build to a new path reads
+  and hashes all of them again (on a small program, a tenth of a warm build). An unchanged
+  program rebuilt to the same path skips the link entirely: edit a comment between builds.

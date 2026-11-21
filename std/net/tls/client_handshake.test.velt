@@ -1,8 +1,8 @@
 // velt/net (tests): `ClientHandshake`, `clientHello` and `parseServerHello` as pure logic, run by
 // `velt test std/`: the order of the server's messages, what a retry does to the transcript,
 // Finished, and what a ServerHello and a generated ClientHello must say. The RETRY_ trace is a
-// handshake with a cookie HelloRetryRequest over X25519, generated from the server's side with
-// Node's crypto, independently of this code.
+// handshake with a cookie HelloRetryRequest over X25519, generated from the server's side
+// (Python's hmac, hashlib and X25519), independently of this code.
 import { sha256 } from "velt/crypto/sha256";
 import { x25519PublicKey } from "velt/crypto/x25519";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
@@ -72,12 +72,12 @@ const RETRY_CERT =
 const RETRY_CV =
   "0f00004a0403004655555555555555555555555555555555555555555555555555555555555555555555555555" +
   "555555555555555555555555555555555555555555555555555555555555555555";
-const RETRY_SF = "140000201b638597a3946d47198edb1bc2b92225afdf26a9d62e5aaaf214bc8803806e16";
-const RETRY_CF = "1400002011fda5f8896d2ce692fd8d3f7a8394175b1b55f0fdbbb4aa4c01712bfc5e7ce9";
-const RETRY_CHS = "813a6ba81f995ebc6206e8d56b107c16037ecbe485e86ca87356de88d1966a12";
-const RETRY_SHS = "2ddcf4b38d30f6e8399055eb7739ad55aa16c5954059c308f1c381e8aba273f4";
-const RETRY_CAP = "1e66959a3627749e9ae5e0de1994a16693c677623e95397a92eaad0432869984";
-const RETRY_SAP = "18e580be62b122ada1556a4d8026e093c3d38762d299a44b55bab176b1f3c114";
+const RETRY_SF = "14000020597f5d950077c674fc8f65d35ec21e2445ab1296b3638b6480a41aabb2f6739c";
+const RETRY_CF = "140000207a119b0c784e91da411ca87b2338503cddf72f822745a6fb0e2552c57bf3f133";
+const RETRY_CHS = "596c8333c89bf23e49fa97c806bfff545c1fe021e531510a7ebbae2819485695";
+const RETRY_SHS = "2f17fc661bb2d15d6161df35bdd642a488ad75ba537d73c3c15bda983510fee3";
+const RETRY_CAP = "c233c6989920f6c0244c59df6913ea1e371652d0fe22f85433e476f214576e45";
+const RETRY_SAP = "7d1879005b664f5a2e9777c1be0b474389a681fd826f8f309c2e0a28fe7b4a3b";
 
 const HRR_RANDOM = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
 const SHARE = "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f";
@@ -350,10 +350,10 @@ describe("what a ServerHello must say", () => {
   });
 
   it("asks a retry only for a group it can have: anything else is illegal_parameter", () => {
-    const group = "003300020018";
+    const group = "003300020019";
     const m = serverHello(HRR_RANDOM, "1301", VERSION + group);
     expect(refusal(m)).toBe(
-      "47 TLS: the HelloRetryRequest asks for key exchange group 0x18, which was not offered",
+      "47 TLS: the HelloRetryRequest asks for key exchange group 0x19, which was not offered",
     );
   });
 });

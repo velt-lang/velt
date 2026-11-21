@@ -184,9 +184,9 @@ pub(crate) fn build_module_cached<M: Module>(
             unreachable!("ICE: a function still needs a C library function");
         };
         let start = Instant::now();
-        define_compiled(module, id, &compiled.ctx, &func.symbol)?;
+        define_code(module, id, &compiled.code, &compiled.ctx.func, &func.symbol)?;
         // Its cleanup pads: an LSDA (and the personality, once).
-        if let Some(code) = compiled.ctx.compiled_code().filter(|_| decls.unwinds) {
+        if let Some(code) = decls.unwinds.then_some(&compiled.code) {
             let sites = crate::eh::sites(code, false);
             if !sites.is_empty() {
                 crate::eh::add_lsda(module, decls.call_conv, &mut eh, id, &sites, &mut unwind)?;
@@ -254,6 +254,8 @@ fn baseline_isa(
 /// A function translated and compiled by a worker, ready to define.
 struct Compiled {
     ctx: Context,
+    /// Its machine code (`cache::compile_cached` gives it rather than leaving it in `ctx`).
+    code: cranelift_codegen::CompiledCode,
     /// Its code came from the cache.
     hit: bool,
     unwind: Option<FunctionUnwind>,
@@ -285,7 +287,15 @@ fn compile_function(
         Translation::Done(srclocs) => srclocs,
         Translation::NeedsLib(lib) => return Ok(Outcome::NeedsLib(lib)),
     };
-    let hit = compile_one(target.isa(), &mut ctx, &func.symbol, cache)?;
+    let (code, hit) = match cache {
+        Some(cache) => crate::cache::compile_cached(target.isa(), &mut ctx, &func.symbol, cache)?,
+        None => {
+            compile_one(target.isa(), &mut ctx, &func.symbol)?;
+            let code = (ctx.take_compiled_code())
+                .ok_or_else(|| format!("ICE: function `{}` was not compiled", func.symbol))?;
+            (code, false)
+        }
+    };
     // A function C calls has none, so an unwind can't pass it (`Function::stops_unwind`); on
     // Windows it keeps it, as the unwinder takes a function without one for a leaf and would
     // misread the stack past it; on x64 a language handler stops a Velt panic there instead
@@ -294,14 +304,15 @@ fn compile_function(
         target.isa().triple().operating_system == target_lexicon::OperatingSystem::Windows;
     let unwind = match func.stops_unwind && !windows {
         true => None,
-        false => unwind_info(target.isa(), id, &ctx, &func.symbol)?,
+        false => unwind_of(target.isa(), id, &code, &func.symbol)?,
     };
     let lines = match program.files.is_empty() {
         true => None,
-        false => FunctionLines::new(id, func, &ctx, &srclocs),
+        false => FunctionLines::new(id, func, &code, &srclocs),
     };
     Ok(Outcome::Compiled(Box::new(Compiled {
         ctx,
+        code,
         hit,
         unwind,
         lines,
@@ -692,7 +703,7 @@ pub(crate) fn define<M: Module>(
     ctx: &mut Context,
     symbol: &str,
 ) -> CodegenResult<()> {
-    compile_one(module.isa(), ctx, symbol, None)?;
+    compile_one(module.isa(), ctx, symbol)?;
     define_compiled(module, id, ctx, symbol)
 }
 
@@ -706,11 +717,22 @@ fn define_compiled<M: Module>(
     let code = ctx
         .compiled_code()
         .ok_or_else(|| format!("ICE: function `{symbol}` was not compiled"))?;
+    define_code(module, id, code, &ctx.func, symbol)
+}
+
+/// Define `id` in `module` with `code`, compiled from `func`.
+fn define_code<M: Module>(
+    module: &mut M,
+    id: FuncId,
+    code: &cranelift_codegen::CompiledCode,
+    func: &cranelift_codegen::ir::Function,
+    symbol: &str,
+) -> CodegenResult<()> {
     let relocs: Vec<ModuleReloc> = code
         .buffer
         .relocs()
         .iter()
-        .map(|reloc| ModuleReloc::from_mach_reloc(reloc, &ctx.func, id))
+        .map(|reloc| ModuleReloc::from_mach_reloc(reloc, func, id))
         .collect();
     let alignment = u64::from(code.buffer.alignment);
     module
@@ -727,6 +749,16 @@ pub(crate) fn unwind_info(
     let Some(code) = ctx.compiled_code() else {
         return Ok(None);
     };
+    unwind_of(isa, id, code, symbol)
+}
+
+/// [`unwind_info`] of `code`.
+fn unwind_of(
+    isa: &dyn TargetIsa,
+    id: FuncId,
+    code: &cranelift_codegen::CompiledCode,
+    symbol: &str,
+) -> CodegenResult<Option<FunctionUnwind>> {
     let info = crate::unwind::function_unwind(code, isa)
         .map_err(|e| format!("codegen: unwind info for `{symbol}`: {e}"))?;
     Ok(info.map(|info| (id, code.code_info().total_size, info)))

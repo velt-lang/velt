@@ -1,8 +1,10 @@
-// velt/crypto (internal): the NIST P-384 curve for signature verification: y^2 = x^3 - 3x + b
-// over `Mod384` with the field prime, in Jacobian coordinates (x = X/Z^2, y = Y/Z^3; Z = 0 is
-// the identity) with the formulas p256.velt uses (dbl-2001-b, add-2007-bl). Variable time, for
-// public points only: the addition branches on the identity and on equal points. A secret
-// scalar (ECDH, signing) needs the masked forms of p256.velt instead.
+// velt/crypto (internal): the NIST P-384 curve: y^2 = x^3 - 3x + b over `Mod384` with the field
+// prime, in Jacobian coordinates (x = X/Z^2, y = Y/Z^3; Z = 0 is the identity) with the
+// formulas p256.velt uses (dbl-2001-b, add-2007-bl). `add` here is variable time, for public
+// points only (signature verification): it branches on the identity and on equal points.
+// `double` does not branch on values, and p384_ecdh.velt, whose scalar is secret, uses it with a
+// masked addition of its own. `decodePoint` is for the peer's public point: it branches on its
+// format, its range and whether it is on the curve.
 
 import { Mod384 } from "velt/crypto/mod384";
 
@@ -54,7 +56,8 @@ const GY: u64[] = [
 const ONE_LIMBS: u64[] = [1, 0, 0, 0, 0, 0];
 
 // Registers. A point is three (X, Y, Z).
-const T: usize = 0; // eight temporaries, T..T + 7
+/** Eight temporaries, T..T + 7, that `add` and `double` use. */
+export const T: usize = 0;
 /** The register that holds 1. */
 export const ONE: usize = 8;
 const CURVE_B: usize = 9;

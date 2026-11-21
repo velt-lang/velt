@@ -6,8 +6,6 @@
 // (#2392 step 3 adds verification); the server's Finished is always checked. When the server
 // chooses TLS 1.2, `ClientHandshake12` takes the handshake over after the ServerHello.
 
-import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
-import { x25519 } from "velt/crypto/x25519";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
@@ -18,9 +16,10 @@ import {
   TlsFailure,
   UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
-import { clientHello, EXT_ALPN, HelloInput, SECP256R1, X25519 } from "velt/net/tls/client_hello";
+import { clientHello, EXT_ALPN, HelloInput, X25519 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
+import { exchangeKey, exchangePublic, exchangeSecret } from "velt/net/tls/key_exchange";
 import {
   expandLabelWith,
   finishedMac,
@@ -30,7 +29,7 @@ import {
 } from "velt/net/tls/key_schedule";
 import { ClientHandshake12, DONE12 } from "velt/net/tls/client_handshake12";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
-import { parseServerHello } from "velt/net/tls/server_hello";
+import { groupName, parseServerHello } from "velt/net/tls/server_hello";
 import { TranscriptHash } from "velt/net/tls/transcript_hash";
 
 // Handshake message types.
@@ -238,11 +237,12 @@ export class ClientHandshake {
       this.add(first);
       this.add(m);
       let publicKey = this.input.publicKey;
-      if (sh.group == SECP256R1) {
-        // A P-256 share instead (parseServerHello allows no other group).
-        this.privateKey = this.input.retryKey ?? p256PrivateKey();
-        this.group = SECP256R1;
-        publicKey = p256PublicKey(this.privateKey);
+      if (sh.group != 0) {
+        // A share of the curve asked for instead (parseServerHello allows only the groups
+        // offered, and not the one already sent).
+        this.privateKey = this.input.retryKey ?? exchangeKey(sh.group);
+        this.group = sh.group;
+        publicKey = exchangePublic(sh.group, this.privateKey);
       }
       const again = clientHello(this.input, true, sh.cookie, this.group, publicKey);
       this.add(again);
@@ -282,16 +282,13 @@ export class ClientHandshake {
     this.add(m);
     let shared: u8[];
     try {
-      shared =
-        this.group == X25519
-          ? x25519(this.privateKey, sh.keyShare)
-          : p256Ecdh(this.privateKey, sh.keyShare);
+      shared = exchangeSecret(this.group, this.privateKey, sh.keyShare);
     } catch (e) {
       throw new TlsFailure(
         ILLEGAL_PARAMETER,
         this.group == X25519
           ? "the server's X25519 share is a small-order point"
-          : "the server's secp256r1 share is not a point on the curve",
+          : `the server's ${groupName(this.group)} share is not a point on the curve`,
       );
     }
     const hs = handshakeSecret(shared, hashLength(this.suite));

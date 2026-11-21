@@ -7,6 +7,7 @@ use velt_syntax::ast;
 use super::accessor_rmw::Rmw;
 use super::any_text::Hint;
 use super::dynamic_arith::DynRmw;
+use super::element_value::ElementWrite;
 use super::ops::hir_binop;
 use crate::body::narrow::nothing_word;
 use crate::body::places::set_place_mode;
@@ -35,7 +36,7 @@ use super::assign_paths::is_plain_path;
 
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
-    fn assign_target(&mut self, target: &ast::Expr, span: Span) -> Option<AssignTarget> {
+    pub(super) fn assign_target(&mut self, target: &ast::Expr, span: Span) -> Option<AssignTarget> {
         if self.reject_env_assign(target)
             || self.reject_argv_assign(target)
             || self.per_use_const_write(target)
@@ -293,6 +294,7 @@ impl FnCx<'_, '_> {
             return r;
         }
         if let Some(op @ (ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)) = op {
+            let reported = self.cx.diags.len();
             let checked = self.assign_target(target, span);
             if let Some(AssignTarget::Setter(obj)) = checked {
                 let e = self.setter_assign(obj, Some(op), target, value, as_value, span);
@@ -316,6 +318,12 @@ impl FnCx<'_, '_> {
                     if self.cx.ty.is_storage_float(p.ty) {
                         return (self.storage_logical_value(op, target, value, span), true);
                     }
+                    // `(b[i] ||= v)` on an integer array is `v` when it stores (#3435).
+                    if self.logical_element_store(p) && self.cx.diags.len() == reported {
+                        let (w, elem) = (ElementWrite::Logical(op), p.ty);
+                        let e = self.element_write_value(w, elem, target, value, span);
+                        return (e, true);
+                    }
                 }
             }
             (self.logical_assign(op, checked, target, value, span), false)
@@ -333,6 +341,7 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> (hir::Expr, bool) {
+        let reported = self.cx.diags.len();
         let e = match self.assign_target(target, span) {
             // `e! op= v` on a target that may be nullish reads it as `e!` (`asserted_rmw.rs`).
             Some(AssignTarget::Place(place)) if op.is_some() && self.take_asserted(place.ty) => {
@@ -351,6 +360,22 @@ impl FnCx<'_, '_> {
                         self.record_assign(obj, object, key, op, target, value, span)
                     }
                 }
+            }
+            // Used as a value, an integer array's element gives the value assigned, not the
+            // element its store converts it to (#3453). It checks the target again, so a target
+            // in error (`ro[0] = v` on a `readonly u8[]`) takes the usual path, reported once.
+            Some(AssignTarget::Place(place))
+                if as_value
+                    && super::assign_paths::is_pure_place(target)
+                    && self.logical_element_store(&place)
+                    && self.cx.diags.len() == reported =>
+            {
+                let w = match op {
+                    None => ElementWrite::Plain,
+                    Some(op) => ElementWrite::Compound(op),
+                };
+                let e = self.element_write_value(w, place.ty, target, value, span);
+                return (e, true);
             }
             // Used as a value, an `f16`/`bf16` place's assignment gives the unrounded number.
             Some(AssignTarget::Place(place))
@@ -418,6 +443,8 @@ impl FnCx<'_, '_> {
                             s.report_mismatch(lty, &v);
                             v
                         })
+                    } else if s.converting_store(&place, &v) {
+                        s.any_element_value(v, lty)
                     } else {
                         s.coerce(v, lty)
                     }
@@ -509,6 +536,20 @@ impl FnCx<'_, '_> {
             false => Some(lty),
         };
         let v = self.expr(value, hint, Want::Borrow);
+        self.place_compound_checked(place, op, v, span)
+    }
+
+    /// `place op= v` with `v` checked (at the place's type, or `number` on an `f16`/`bf16`
+    /// place): the numeric compound assignments of [`Self::place_assign`].
+    pub(super) fn place_compound_checked(
+        &mut self,
+        place: hir::Expr,
+        op: ast::BinaryOp,
+        v: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let (lty, unit) = (place.ty, self.cx.ty.unit);
+        let storage = self.cx.ty.is_storage_float(lty);
         let v = self.unbrand(v);
         // An `any` on the right needs `as`, as for `=`.
         if storage && self.cx.dynamic(v.ty).is_some() {

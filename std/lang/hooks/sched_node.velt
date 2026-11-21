@@ -95,6 +95,13 @@ export const PANICKED: u32 = 256;
  * (`runCaught`) clears it.
  */
 export const ADOPTED: u32 = 512;
+/**
+ * It yielded, and its wake waits for its turn on its task's yield list (sched_yield.velt): until
+ * then its owner does not adopt it, and its yield does not go on. (The bits 1024 to 65536 are
+ * other modules': sched_node_loc, _transfer, _ext, _catch, _report, sched_share_alias,
+ * sched_share; 131072 and 262144 are sched_task_lost's.)
+ */
+export const YIELDING: u32 = 524288;
 
 /** `velt_rt_fut_box`: a lazy node of the `size`-byte initial state at `state`. */
 export function boxed(
@@ -183,7 +190,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
   const task = m.ld(n + N_TASK);
   const e = t.exec();
   if (
-    (fl & (RUNNING | QUEUED)) === 0 &&
+    (fl & (RUNNING | QUEUED | YIELDING)) === 0 &&
     m.ld(e + t.E_ADOPTING) === 0 &&
     wk.taskOf(m.ld(cx + 8)) === task
   ) {
@@ -257,7 +264,7 @@ export function nodeDrop(f: usize): void {
     if (w !== 0) {
       m.wakerDrop(w);
     }
-    release(n);
+    lost.droppedAway(n);
     return;
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
@@ -391,7 +398,7 @@ export function run(task: usize, n: usize, taken: bool): void {
     }
   }
   if ((m.load32(n + N_FLAGS) & REJECTING) !== 0) {
-    keepWhereThrown(n);
+    al.keepWhereThrown(n);
   }
   // A handed-over node's transfer runs before FINISHED shows (sched_node_transfer.velt).
   tr.finished(n, task);
@@ -423,16 +430,6 @@ export function run(task: usize, n: usize, taken: bool): void {
 // promise), and with these in it a program with many such calls doubled in size, which split it
 // into more codegen units and made it slower.
 
-/**
- * Node `n` rejected: its owner may claim the result on another worker, so it keeps where it threw
- * (the state's poll is not needed any more), published before FINISHED.
- */
-@noInline
-function keepWhereThrown(n: usize): void {
-  loc.keep(n + N_FLAGS, n + N_HEAD + 16, n + N_POLL);
-  al.keepLoc(n);
-}
-
 /** Node `n` finished after its owner dropped it (sched_node_report.velt `dropResult`). */
 @noInline
 function dropDetached(n: usize): void {
@@ -455,14 +452,17 @@ export function ownNode(task: usize, w: usize): bool {
   return m.ld(w) === t.main() + t.E_NODE_VT && m.ld(w + N_TASK) === task;
 }
 
-/** Gives back one reference to node `n`: the last frees it. */
+/**
+ * Gives back one reference to node `n`: the last frees it, and gives back its reference to its
+ * task (sched_node_lost.velt `taskRef`: with a wake when that is not on the task's thread).
+ */
 export function release(n: usize): void {
   if (m.dec(n + N_REFS) === 1) {
     const task = m.ld(n + N_TASK);
     x.free(n);
     m.release(n, m.ld32(n + N_BYTES) as usize);
     if (task !== 0) {
-      wk.release(task);
+      lost.taskRef(task);
     }
   }
 }

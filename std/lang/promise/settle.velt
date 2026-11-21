@@ -159,8 +159,32 @@ async function fulfillLater<T, E>(
   value: T,
 ): Promise<void> {
   await yieldNow();
+  openLatch(fulfillFrom<T, E>(slot, guard, value));
+}
+
+// Settles `slot` with `value`, transferred, from a task other than the promise's own: the latch
+// to open (`settle`). The latch is opened by the caller, after this has returned and let go of
+// `value`: opening it wakes the awaiter on its own worker, which takes the settlement at once,
+// and a value this side still referenced then would be copied by that take and shared on the
+// awaiter's task, with this side's reference dropped here afterwards, on the wrong task for a
+// promise the value holds (#3360).
+function fulfillFrom<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  value: T,
+): u64 {
   const v = transfer(value);
-  openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v }))));
+  return guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v })));
+}
+
+// `fulfillFrom` for a rejection.
+function rejectFrom<T, E>(
+  slot: shared<Mutex<PromiseSlot<T, E>>>,
+  guard: shared<Mutex<AbandonGuard<T, E>>>,
+  reason: E,
+): u64 {
+  const r = transfer(reason);
+  return guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r })));
 }
 
 // `fulfillLater` for a rejection.
@@ -170,8 +194,7 @@ async function rejectLater<T, E>(
   reason: E,
 ): Promise<void> {
   await yieldNow();
-  const r = transfer(reason);
-  openLatch(guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r }))));
+  openLatch(rejectFrom<T, E>(slot, guard, reason));
 }
 
 /**

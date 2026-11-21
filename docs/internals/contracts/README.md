@@ -145,6 +145,14 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   the `Intrinsic` in `velt_sema::intrinsic_decls`, whose test fails on a declaration without a table
   entry or an entry without a declaration (docs/internals/design/std-layout.md §10).
 
+## Weak references (additive AST extension, #3119)
+- `TypeExprKind::Weak(Box<TypeExpr>)`: `weak T` in a written type (docs/internals/design/cycles.md
+  "`weak T`"), the operator before a type name or `(` on the same line, binding tighter than `|`
+  (`weak Node | null` is a union of `Weak(Node)` and `null`); `weak` stays a name everywhere else.
+  Its meaning is sema's (`velt_sema` `weak_types`): only at the top of the type of a field or a
+  variable, as the read type `T | null`. The AST encoding's version (`AST_FORMAT`) is `0x11` with
+  it (variant 25).
+
 ## Host functions (additive AST, HIR and VIR extension, #1735)
 - Decorators (`ast.rs`, https://github.com/velt-lang/velt/issues/2203): `Decorator { expr, span }`
   on `FnSig`, `Param`, `Field`, `TypeDecl` and `EnumDecl` (`decorators`, empty without any), and

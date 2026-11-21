@@ -22,6 +22,11 @@ import {
   SEQUENCE,
   UTC_TIME,
 } from "velt/net/tls/x509/der";
+import {
+  REFUSED_ALGORITHM_MISMATCH,
+  REFUSED_TRAILING_DATA,
+  REFUSED_VERSION,
+} from "velt/net/tls/x509/refused";
 import { Tlv } from "velt/net/tls/x509/tlv";
 import { readExtension } from "velt/net/tls/x509/extensions";
 
@@ -75,8 +80,12 @@ export class Certificate {
   subjectKeyId: Tlv;
   authorityKeyId: Tlv;
 
-  /** Parses the DER certificate `der` (all of it). */
-  constructor(der: u8[]) {
+  /**
+   * Parses the DER certificate `der` (all of it). Throws `CertificateRefused` when it does not
+   * parse. With `anchor`, a critical extension this parser does not know is passed over, as
+   * webpki does for a certificate that is trusted as a root.
+   */
+  constructor(der: u8[], anchor: bool = false) {
     this.der = der;
     this.tbs = none();
     this.signatureAlgorithm = 0;
@@ -100,35 +109,38 @@ export class Certificate {
     const r = new DerReader(der);
     const cert = r.enter(SEQUENCE, der.length);
     if (cert.end != der.length) {
-      r.fail("stray bytes after the certificate");
+      r.fail("stray bytes after the certificate", REFUSED_TRAILING_DATA);
     }
     this.tbs = r.next(SEQUENCE, cert.end);
     const outerAlg = r.next(SEQUENCE, cert.end);
     const sigBits = r.next(BIT_STRING, cert.end);
     this.signature = r.bitBytes(sigBits);
-    r.done(cert.end);
-    this.readTbs(r, outerAlg);
+    r.done(cert.end, REFUSED_TRAILING_DATA);
+    this.readTbs(r, outerAlg, anchor);
     this.signatureAlgorithm = signatureAlgorithm(r, outerAlg);
   }
 
-  private readTbs(r: DerReader, outerAlg: Tlv) {
+  private readTbs(r: DerReader, outerAlg: Tlv, anchor: bool) {
     const end = this.tbs.end;
     r.pos = this.tbs.start;
     // version [0] EXPLICIT, v3 (2): v1 and v2 certificates have no extensions to check.
     if (r.peek(end) != 0xa0) {
-      r.fail("not a v3 certificate");
+      r.fail("not a v3 certificate", REFUSED_VERSION);
     }
     const v = r.enter(0xa0, end);
     const version = r.next(INTEGER, v.end);
     if (r.smallInt(version) != 2) {
-      r.fail("not a v3 certificate");
+      r.fail("not a v3 certificate", REFUSED_VERSION);
     }
-    r.done(v.end);
+    r.done(v.end, REFUSED_VERSION);
     this.serial = r.next(INTEGER, end);
     r.integer(this.serial);
     const alg = r.next(SEQUENCE, end);
     if (!this.sameBytes(alg, outerAlg)) {
-      r.fail("the signature algorithm differs inside and outside the signed part");
+      r.fail(
+        "the signature algorithm differs inside and outside the signed part",
+        REFUSED_ALGORITHM_MISMATCH,
+      );
     }
     this.issuer = r.next(SEQUENCE, end);
     const validity = r.enter(SEQUENCE, end);
@@ -162,13 +174,13 @@ export class Certificate {
           critical = r.boolean(flag);
         }
         const value = r.next(OCTET_STRING, ext.end);
-        r.done(ext.end);
-        seen = readExtension(this, r, id, critical, value, seen);
+        r.done(ext.end, REFUSED_TRAILING_DATA);
+        seen = readExtension(this, r, id, critical && !anchor, value, seen);
         r.pos = ext.end;
       }
-      r.done(x.end);
+      r.done(x.end, REFUSED_TRAILING_DATA);
     }
-    r.done(end);
+    r.done(end, REFUSED_TRAILING_DATA);
   }
 
   private sameBytes(a: Tlv, b: Tlv): bool {
