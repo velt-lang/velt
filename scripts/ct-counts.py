@@ -43,7 +43,7 @@ def seeds32(rng, runs):
     """Ed25519 seeds: any 32 bytes."""
     edge = [bytes(32), b"\xff" * 32, b"\x01" + bytes(31), bytes(31) + b"\x80",
             bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")]
-    return edge + [rng.randbytes(32) for _ in range(max(0, runs - len(edge)))]
+    return edge + [rng.getrandbits(256).to_bytes(32, "little") for _ in range(max(0, runs - len(edge)))]
 
 
 P384 = 2**384 - 2**128 - 2**96 + 2**32 - 1
