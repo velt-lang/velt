@@ -518,6 +518,99 @@ async function main(): Promise<void> {
 main();
 "#;
 
+/// A rejected promise handed to another task that never awaits it is reported there, as Node
+/// reports it: exit 1 and `Uncaught Error`. The hand-over counts as a taker on the promise's own
+/// task; on the other task, the holders it made (the one handed over and the callee's copy of it)
+/// report the rejection when the last of them is dropped and none of them took the result. Each
+/// program also passes the promise's other holder or none, and [`NEVER_AWAITED_LATER`] rejects
+/// after the hand-over. [`NEVER_AWAITED`] exited 0 with no report, every run, when the hand-over
+/// settled the promise for its proxies without passing the report on (round 3 of #3426); a
+/// callee's copy in a group of its own reports [`REJECTED_BEFORE`] falsely. The block counts are
+/// not checked: an uncaught error's exit leaves blocks counted on `main` too.
+#[test]
+fn a_rejected_promise_handed_to_another_task_and_never_awaited_is_reported() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let mut bad = Vec::new();
+    for (name, src) in [
+        ("never_awaited", NEVER_AWAITED),
+        ("never_awaited_named", NEVER_AWAITED_NAMED),
+        ("never_awaited_later", NEVER_AWAITED_LATER),
+    ] {
+        let exe = build_std(dir.path(), name, src);
+        for threads in ["1", "4", "8"] {
+            for i in 0..COPY_RUNS {
+                let (code, out, err) = run(&exe, threads);
+                if code != 1 || !err.contains("Uncaught Error: lost") {
+                    bad.push(format!(
+                        "{name}, {threads} workers, run {i}: exit {code}, stdout {out:?}, stderr {err}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// A rejected promise passed to an async closure that is called and spawned at once and never
+/// awaits it, for [`a_rejected_promise_handed_to_another_task_and_never_awaited_is_reported`].
+const NEVER_AWAITED: &str = r#"async function failsNow(): Promise<number> {
+  throw new Error("lost");
+}
+
+async function main(): Promise<void> {
+  const q = failsNow();
+  const v = await spawn((async (held: Promise<number>): Promise<number> => 1)(q));
+  console.log(`got ${v}`);
+}
+main();
+"#;
+
+/// A rejected promise with a second holder, the second passed to a named async function's spawned
+/// call that never awaits it.
+const NEVER_AWAITED_NAMED: &str = r#"async function failsNow(): Promise<number> {
+  throw new Error("lost");
+}
+
+async function ignore(held: Promise<number>): Promise<number> {
+  return 1;
+}
+
+async function main(): Promise<void> {
+  const q = failsNow();
+  const q2 = q;
+  const v = await spawn(ignore(q2));
+  console.log(`got ${v}`);
+}
+main();
+"#;
+
+/// [`NEVER_AWAITED`] with a promise that rejects after the hand-over.
+const NEVER_AWAITED_LATER: &str = r#"async function failsLater(): Promise<number> {
+  await yieldNow();
+  await yieldNow();
+  throw new Error("lost");
+}
+
+async function main(): Promise<void> {
+  const q = failsLater();
+  const v = await spawn((async (held: Promise<number>): Promise<number> => 1)(q));
+  console.log(`got ${v}`);
+  await yieldNow();
+  await yieldNow();
+  await yieldNow();
+}
+main();
+"#;
+
 /// The program of #3424 for [`a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too`].
 const ARG_TO_SPAWNED_CALL: &str = r#"async function soon(n: number): Promise<number> {
   for (let i = 0; i < 3; i++) {

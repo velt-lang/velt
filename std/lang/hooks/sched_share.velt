@@ -268,7 +268,9 @@ export function holderPoll(f: usize, cx: usize): u32 {
     if (unsafe { futPoll(fwd, cx) } !== 1) {
       return 0;
     }
-    m.copy(f + 16, fwd + 16, sizeOf(f));
+    const size = sizeOf(f);
+    m.copy(f + 16, fwd + 16, size);
+    hand.taken(fwd, size);
     return 1;
   }
   return pollHolder(m.ld(f - 8), f, cx);
@@ -280,9 +282,11 @@ export function holderDrop(f: usize): void {
   if (h === 0) {
     // A handle handed to this task: its role went to the proxy on the promise's task.
     const size = m.ld(f - FRONT + 16);
+    const fwd = m.ld(f - FRONT + 8);
+    hand.dropping(fwd, size);
     // SAFETY: the proxy, a heap future this holder owns.
     unsafe {
-      futDrop(m.ld(f - FRONT + 8));
+      futDrop(fwd);
     }
     m.release(f - FRONT, FRONT + 16 + size);
     return;
@@ -299,9 +303,11 @@ export function holderDrop(f: usize): void {
   }
   // The original, handed to this task: its proxy goes, and whichever of this and the last role
   // comes second frees the node and the hub.
+  const fwd = m.ld(h + H_ORIG_FWD);
+  hand.dropping(fwd, m.ld(h + H_SIZE));
   // SAFETY: the proxy, a heap future this holder owns.
   unsafe {
-    futDrop(m.ld(h + H_ORIG_FWD));
+    futDrop(fwd);
   }
   if ((m.or32(h + H_FLAGS, ORIG_GONE) & ROLES_GONE) === 0) {
     return;
