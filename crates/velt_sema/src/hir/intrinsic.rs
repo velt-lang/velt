@@ -166,8 +166,8 @@ pub enum Intrinsic {
     /// `(object: borrow mut T, key: borrow K, value: T[K]) -> void`: `object[key] = value` in a
     /// generic body, as for `KeyRead`; lowering writes that field.
     KeyWrite,
-    /// `() -> T | null`, only as the value of a `presence` field in an `AdtLit`
-    /// (`FieldDef::presence`): the field is absent (its value `null`, its presence flag clear)
+    /// `() -> T | null`, only as a `presence` field's value in an `AdtLit` (`FieldDef::presence`)
+    /// or assigned to one (`delete o.a`): the field is absent (`null`, its presence flag clear)
     FieldAbsent,
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
@@ -179,8 +179,8 @@ pub enum Intrinsic {
     /// (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
-    /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
-    /// (the value itself is not read)?
+    /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
+    /// object or a promise (whose holder is handed over)? The value itself is not read.
     NeedsTransfer,
     /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,

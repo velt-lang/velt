@@ -88,4 +88,15 @@ impl FnCx<'_, '_> {
         let value = self.op_choose(is_number, as_it_is, converted, elem, span);
         self.op_block(stmts, value, span)
     }
+
+    /// The `number` `v` (what `-`, `*`, `|`… give on an `any`) as the integer type `elem` of an
+    /// integer array's element, as JavaScript's store converts it: as a number held in an `any`
+    /// converts (truncated, modulo 2^N, NaN as 0; `b[0] -= "1"` on 0 stores 255).
+    pub(crate) fn number_element_value(&mut self, v: hir::Expr, elem: TyId) -> hir::Expr {
+        let Some(any) = self.any_ty() else {
+            return self.error_expr(v.span);
+        };
+        let boxed = self.coerce(v, any);
+        self.coerce(boxed, elem)
+    }
 }

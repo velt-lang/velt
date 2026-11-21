@@ -10,6 +10,7 @@ import {
   statAt as posixStatAt,
   fsyncFd as posixFsyncFd,
   adviseMap as posixAdviseMap,
+  fcntlLock as posixFcntlLock,
   lastError as posixLastError,
   mapRead as posixMapRead,
   openPath as posixOpenPath,
@@ -42,6 +43,30 @@ export function syncAll(fd: i32): i32 {
 export function syncData(fd: i32): i32 {
   // SAFETY: an integer argument only.
   return unsafe { fdatasync(fd) };
+}
+
+/**
+ * Takes (`mode` 1 shared, 2 exclusive) or gives back (0) a lock on the `len` bytes from `start`
+ * of the file `fd` is open on, held by the open file (`F_OFD_SETLK`, 37), never waiting: 0, 1
+ * when another holder has a conflicting lock, or -1 with the error for `lastError()`.
+ * `struct flock` on x86-64 and arm64: `l_type` at 0 (`F_RDLCK` 0, `F_WRLCK` 1, `F_UNLCK` 2),
+ * `l_whence` at 2, `l_start` at 8, `l_len` at 16, `l_pid` at 24.
+ */
+export function lockRange(fd: i32, mode: i32, start: i64, len: i64): i32 {
+  const kind: i16 = mode == 1 ? 0 : mode == 2 ? 1 : 2;
+  const rc = posixFcntlLock(fd, 37, kind, start, len, {
+    kind: 0,
+    whence: 2,
+    start: 8,
+    len: 16,
+    size: 32,
+  });
+  if (rc == 0) {
+    return 0;
+  }
+  // EAGAIN (11) or EACCES (13): the range is taken.
+  const e = posixLastError();
+  return e == 11 || e == 13 ? 1 : -1;
 }
 
 /**

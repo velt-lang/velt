@@ -194,6 +194,10 @@ pub(super) fn build(cx: &Ctx) -> Graph {
         let Some(Def::Fn(f)) = &cx.defs[i] else {
             continue;
         };
+        // In a check by units, std's code the program has (`lazy_std::walks`).
+        if !crate::body::lazy_std::walks(cx, d) {
+            continue;
+        }
         let Some(info) = cx.try_fn(d) else {
             continue;
         };

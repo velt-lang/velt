@@ -44,6 +44,10 @@ pub(crate) struct SigQueries<'m> {
     /// Velt cannot give a field.
     pub in_field: bool,
     pub field_erased: bool,
+    /// The spans of the constructor parameters being resolved that are parameter properties
+    /// (`constructor(public owner: weak Node | null)`): their field reads the written type, so
+    /// the parameter takes it without `weak` (`crate::weak_types::without_weak`).
+    pub param_props: Vec<velt_common::Span>,
 }
 
 impl Ctx<'_> {

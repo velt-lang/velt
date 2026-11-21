@@ -1,0 +1,3 @@
+symbol_record_cast_copies.velt:19:10: error: a `Record<symbol, unknown>` cast of a `Named` is not supported yet
+symbol_record_cast_copies.velt:14:12: error: a `Record<symbol, unknown>` cast of a `{ a: f64 }` is not supported yet
+symbol_record_cast_copies.velt:16:12: error: a `Record<symbol, unknown>` cast of a `Record<string, f64>` is not supported yet
