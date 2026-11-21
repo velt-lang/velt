@@ -16,13 +16,16 @@ export function groupSupported(group: usize): bool {
 /**
  * Whether `point` has the form of a public value of `group`: 32 bytes for X25519, an
  * uncompressed point (0x04, x, y) for the curves. Whether it is on the curve is `exchangeSecret`'s
- * to find.
+ * to find. False for a group this stack does not have.
  */
 export function pointFormOk(group: usize, point: u8[]): bool {
   if (group == X25519) {
     return point.length == 32;
   }
-  return point.length == (group == SECP256R1 ? 65 : 97) && point[0] == 4;
+  if (group == SECP256R1) {
+    return point.length == 65 && point[0] == 4;
+  }
+  return group == SECP384R1 && point.length == 97 && point[0] == 4;
 }
 
 /** A new private key for `group`. */
