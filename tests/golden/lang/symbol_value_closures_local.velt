@@ -1,0 +1,33 @@
+// `Symbol` read as a value (sigx's `createToken = Symbol as unknown as <T>(d: string) =>
+// Token<T>`) next to closures that change what they capture and run on the task that made them:
+// no closure is reported as crossing to another task. `Symbol(description)` keeps the
+// description in its record with a slot store (std/lang/symbol/record.velt), which the
+// local-async analysis takes for a channel send unless the stored value is a string, which
+// carries nothing a task could change.
+type Token<T> = symbol & { readonly __type?: T };
+
+const createToken = Symbol as unknown as <T>(description: string) => Token<T>;
+const TOKEN = createToken<(() => void)[]>("cleanups");
+
+let count = 0;
+
+function effect(cleanups: (() => void)[]): void {
+  let active = true;
+  cleanups.push(() => {
+    active = false;
+    count++;
+  });
+}
+
+async function main(): Promise<void> {
+  const cleanups: (() => void)[] = [];
+  effect(cleanups);
+  effect(cleanups);
+  await Promise.resolve();
+  for (const c of cleanups) {
+    c();
+  }
+  console.log(count, TOKEN.description, String(createToken<number>("n")));
+}
+
+main();
