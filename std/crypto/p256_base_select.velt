@@ -13,13 +13,13 @@ import { u64x2 } from "velt/simd";
  * x = 0: the generator checks). Constant time in `digit`.
  */
 export function selectBase(f: FeP256, sel: usize, masks: u64[], w: usize, digit: u64) {
+  entryMasks(masks, digit);
   const base = 120 * w;
-  // Said once, before anything is written, so that the stores and loads below need no check of
-  // their own.
+  // Said once, so that the loads below need no check of their own (after the call: LLVM cannot
+  // know that `entryMasks` left the array's length alone).
   if (base + 120 > P256_BASE.length || masks.length < 15) {
     tableFault();
   }
-  entryMasks(masks, digit);
   // x and y, two limbs a vector.
   let x0 = u64x2.splat(0);
   let x1 = u64x2.splat(0);
@@ -48,6 +48,9 @@ export function selectBase(f: FeP256, sel: usize, masks: u64[], w: usize, digit:
 // this stays a function of its own and is called.
 @noInline
 function entryMasks(masks: u64[], digit: u64) {
+  if (masks.length < 15) {
+    tableFault();
+  }
   for (let j: usize = 0; j < 15; j++) {
     const x = ((j + 1) as u64) ^ digit;
     // All ones when x == 0 (x is below 16, so x - 1 wraps only for 0).
