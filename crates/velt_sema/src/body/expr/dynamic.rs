@@ -57,8 +57,8 @@ impl FnCx<'_, '_> {
             (None, None) => Err(h),
             (None, Some(d)) if !self.takes_static(d, h.ty) => Err(h),
             // A lock's value is read only under its lock, and what `any` holds is read (printed,
-            // compared, written as JSON) without it.
-            (None, Some(d)) if self.cx.holds_lock(h.ty) => {
+            // compared, written as JSON) without it. A typed proxy holds none of its fields.
+            (None, Some(d)) if !self.typed_proxy_branch && self.cx.holds_lock(h.ty) => {
                 let (tn, to) = (self.cx.display(h.ty), d.name());
                 self.cx.error(
                     velt_common::Diagnostic::error(
