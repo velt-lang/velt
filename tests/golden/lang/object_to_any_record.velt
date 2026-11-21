@@ -1,0 +1,15 @@
+// An `object` where a `Record<string, any>` is expected converts to it, as TypeScript accepts (an
+// `any` index signature takes every object): the record reads the same object's members, as
+// `x as Record<string, any>` does.
+function read(state: object, key: string): unknown {
+  const r: Record<string, any> = state;
+  return r[key];
+}
+
+function keys(bag: Record<string, any>): string[] {
+  return Object.keys(bag);
+}
+
+const counter = { count: 3, label: "c" };
+const o: object = counter;
+console.log(read(o, "count"), read(o, "label"), keys(o));
