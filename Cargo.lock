@@ -1804,7 +1804,6 @@ dependencies = [
 name = "velt_rt_wasm"
 version = "0.6.0"
 dependencies = [
- "memchr",
  "velt_text",
 ]
 
