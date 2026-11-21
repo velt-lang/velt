@@ -325,6 +325,28 @@ fn the_async_closures_analysis_reads_the_std_code_the_program_has() {
     }
 }
 
+/// Questions about the whole program are answered from the std code it has
+/// (`lazy_std::units_live_set`), not from all of std's unit: whether it reads a `shared` value
+/// (`units::app_reads_shared`; a `read` callback passing the store's object to a function value
+/// is accepted) and which weak-holding values it makes (`weak_threads`; std's signal code, which
+/// a program that never uses it doesn't run, is not reported). Each checks with `VELT_UNITS=2`
+/// as by a whole-program check.
+#[test]
+fn program_wide_answers_come_from_the_std_code_the_program_has() {
+    for path in [
+        "lang/rwlock_read_closures.velt",
+        "lang/rwlock_read_call_result_readers_stop.velt",
+        "lang/any_in_builtins.velt",
+        "lang/class_objects.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        let said = String::from_utf8_lossy(&two.stderr).to_string();
+        assert!(whole.status.success(), "{path}");
+        assert!(two.status.success(), "{path}:\n{said}");
+    }
+}
+
 /// With std checked as a unit of its own, the functions that hand a parameter to a channel
 /// (`Channel.send`, `trySend`) come from std's unit, not from reading std's bodies again
 /// (`ownership::boundary`): a value owning a resource that is sent while the program still
