@@ -8,9 +8,14 @@ import {
   arrayCopyBytes,
   arraySetLen,
   arrayWithCapacity,
-  rawAlloc,
-  rawFree,
 } from "velt/lang/intrinsics";
+import { Ptr } from "velt/ffi/ptr";
+
+// The owner block is the C library's, as the mapping is the system's: a pinned mapping keeps its
+// block for the rest of the program, which the debug runtime's count of its own blocks must not
+// read as a leak (std/process/stdin_buffer.velt keeps its block the same way).
+declare c("c") function calloc$mapped(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$mapped(p: Ptr<u8> | null): void;
 
 /** Which part of a file `MappedFile.open` maps: `length` bytes from byte `offset`. */
 export type MapOptions = { offset?: number; length?: number };
@@ -72,14 +77,18 @@ export function copyOf<T extends Numeric>(bytes: shared<u8[]>, at: usize, count:
 
 /** A new owner of the `len` mapped bytes at `base`, held once; `release` is its function. */
 export function newOwner(release: usize, base: usize, len: usize): usize {
-  const owner = rawAlloc(40);
-  // SAFETY: the block has the four words written here.
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$mapped(1, 40) };
+  if (block === null) {
+    panic("velt/fs: no memory for a mapping's owner block");
+  }
+  const owner = Ptr.addressOf(block);
+  // SAFETY: the block has the five words written here (the pin flag is zeroed by calloc).
   unsafe {
     addressStore<usize>(owner, release);
     addressStore<u64>(owner + 8, 1);
     addressStore<usize>(owner + 16, base);
     addressStore<usize>(owner + 24, len);
-    addressStore<u64>(owner + 32, 0);
   }
   return owner;
 }
@@ -109,7 +118,7 @@ export unsafe function letGo(owner: usize): Region | null {
     }
     const base = addressLoad<usize>(owner + 16);
     const len = addressLoad<usize>(owner + 24);
-    rawFree(owner, 40);
+    free$mapped(Ptr.at<u8>(owner));
     return { base, len };
   }
 }
@@ -120,8 +129,9 @@ export unsafe function letGo(owner: usize): Region | null {
  * as unchanging as before, which a loop over its getters is faster for.
  */
 export function pinOwner(owner: usize) {
-  // SAFETY: the caller holds `owner`, so the block is there; only its `MappedFile` reads or
-  // writes the flag, from one thread at a time.
+  // SAFETY: the caller holds `owner`, so the block is there. Two tasks reading typed arrays of
+  // one shared `MappedFile` at once may both take the hold: a second hold never given back,
+  // which pinned means anyway.
   unsafe {
     if (addressLoad<u64>(owner + 32) == 0) {
       addressStore<u64>(owner + 32, 1);

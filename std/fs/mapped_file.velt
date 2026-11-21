@@ -90,7 +90,6 @@ export class MappedFile extends MappedBytes {
    *
    * A file of /proc or /sys is a regular file that reports a size of 0 whatever it holds, so it
    * maps as no bytes, without an error: read those with `readFileSync`.
-   * The first typed array pins the mapping for the rest of the program (see the class).
    */
   static open(path: string, options?: MapOptions): MappedFile {
     return new MappedFile(mapFile(path, options));
