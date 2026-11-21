@@ -22,8 +22,11 @@ export {
 export {
   anyDelete,
   anyIsList,
+  anyIsPromise,
   anyMethodCalled,
+  anyPromise,
   anyToPrimitive,
+  holdsDynamic,
   noteStdUse,
   proxyArrayCall,
   proxyArrayHole,

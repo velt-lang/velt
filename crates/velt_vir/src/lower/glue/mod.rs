@@ -138,6 +138,8 @@ pub(crate) enum Glue {
     AnySetIndex,
     AnyHas,
     AnyDelete,
+    /// A promise held as `any`: the promise that awaits it (any_await.rs).
+    AnyAwait,
     AnyKeys,
     /// `(data, op, index, text, value) -> u64`: reflection (any_reflect.rs).
     AnyReflect,
@@ -231,6 +233,7 @@ impl Glue {
             Glue::AnySetIndex => "anysetindex",
             Glue::AnyHas => "anyhas",
             Glue::AnyDelete => "anydelete",
+            Glue::AnyAwait => "anyawait",
             Glue::AnyKeys => "anykeys",
             Glue::AnyReflect => "anyreflect",
             Glue::ProxyGet => "proxyget",
@@ -294,7 +297,7 @@ impl Glue {
             Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
-            Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys => (vec![Ptr, Ptr], U8),
+            Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyAwait => (vec![Ptr, Ptr], U8),
             Glue::AnyReflect => (vec![Ptr, U64, U64, Ptr, Ptr], U64),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
@@ -364,6 +367,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
             Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
             Glue::AnyDelete => lw.any_delete_glue(args[0], args[1], ty),
+            Glue::AnyAwait => lw.any_await_glue(args[0], args[1], ty),
             Glue::AnyKeys => lw.any_keys_glue(args[0], args[1], ty),
             Glue::AnyReflect => lw.any_reflect_glue(&args, ty),
             Glue::ProxyGet => lw.proxy_get_glue(args[0], args[1], args[2], ty),

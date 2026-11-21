@@ -12,6 +12,25 @@ import { intrinsic } from "./decorators";
 export declare function anyDelete(value: any, key: string): bool;
 
 /**
+ * A promise that waits for the promise `value` holds and settles with its value or reason as
+ * `unknown`, polling it itself (no turn more than awaiting it takes); `undefined` when `value`
+ * holds no promise. What an `await` of an `any` waits for (std/lang/hooks/any_ops.velt).
+ */
+@intrinsic
+export declare function anyPromise(value: unknown): Promise<unknown, unknown> | undefined;
+
+/** Does `value` hold a promise (`value instanceof Promise`): its table is a promise's. */
+@intrinsic
+export declare function anyIsPromise(value: unknown): bool;
+
+/**
+ * A constant: is `T` instantiated with `any`, `unknown` or `object`? `probe` is not evaluated,
+ * and the branch of an `if` on it that can't run is not compiled.
+ */
+@intrinsic
+export declare function holdsDynamic<T>(probe: T): bool;
+
+/**
  * `ToPrimitive(value, hint)` of a class instance (the prelude's `anyPrimitive`, whose
  * parameters must be named `hint` and `at`): its `[Symbol.toPrimitive]`, or its `valueOf()` and
  * `toString()` in the hint's order, chosen per class by the compiler; any other value goes to

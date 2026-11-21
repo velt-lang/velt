@@ -580,6 +580,8 @@ enums! {
         212 => SymbolAt,
         213 => AddressArrayOwned,
         214 => StrAt,
+        216 => AnyPromise,
+        217 => AnyIsPromise,
     }
 }
 

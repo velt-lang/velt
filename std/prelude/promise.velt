@@ -1,7 +1,7 @@
 // Prelude: `Promise.allSettled` and `Promise.any` (https://veltlang.com/docs/reference/async/). The compiler compiles
 // `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
 
-import { firstFulfilled } from "velt/lang/intrinsics";
+import { anyIsPromise, firstFulfilled, holdsDynamic } from "velt/lang/intrinsics";
 import {
   PromiseSlot,
   raceTakesStep,
@@ -128,7 +128,7 @@ export function promiseWithResolvers<T, E>(): PromiseWithResolvers<T, E> {
  * `promiseResolveVoid` (a `Promise<void>`).
  */
 export async function promiseResolve<T>(value: T): Promise<T> {
-  return value;
+  return notAdopted(value);
 }
 
 /** `Promise.resolve()`: a fulfilled `Promise<void>`. */
@@ -227,7 +227,7 @@ export async function promiseThen<T, E, U>(
   if (r.status == "rejected") {
     throw r.reason;
   }
-  return f(r.value);
+  return notAdopted(f(r.value));
 }
 
 /** `p.then(f)`: `f` returns a value and throws what `p` rejects with. */
@@ -240,7 +240,7 @@ export async function promiseThenThrows<T, E, U>(
   if (r.status == "rejected") {
     throw r.reason;
   }
-  return f(r.value);
+  return notAdopted(f(r.value));
 }
 
 /** `p.then(f)`: `f` returns a promise that does not reject. */
@@ -278,9 +278,9 @@ export async function promiseThenElse<T, E, U, F>(
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   if (r.status == "rejected") {
-    return g(r.reason);
+    return notAdopted(g(r.reason));
   }
-  return f(r.value);
+  return notAdopted(f(r.value));
 }
 
 /** `p.then(f, g)` where `f` and `g` return promises. */
@@ -305,7 +305,7 @@ export async function promiseCatch<T, E, G>(
   const r = await settledOf<T, E>(p);
   await velt_rt_microtask();
   if (r.status == "rejected") {
-    return g(r.reason);
+    return notAdopted(g(r.reason));
   }
   return r.value;
 }
@@ -321,7 +321,7 @@ export async function promiseCatchNever<E, U, G>(
   const r = await settledOf<never, E>(p);
   await velt_rt_microtask();
   if (r.status == "rejected") {
-    return g(r.reason);
+    return notAdopted(g(r.reason));
   }
   panic("ICE: a promise of `never` fulfilled");
 }
@@ -447,4 +447,19 @@ export async function promiseFinallyAsyncThrows<T, E, R>(
     throw r.reason;
   }
   return r.value;
+}
+
+/**
+ * `v`, what `Promise.resolve` or a `then` / `catch` callback settles a promise with. JavaScript
+ * adopts a promise there, which Velt does with a typed one (the `…Async` forms); one held in an
+ * `any` or `unknown` is not adopted yet (#3425), so it stops here rather than settling the new
+ * promise with the promise itself. The test is compiled only where `U` is dynamic.
+ */
+function notAdopted<U>(v: U): U {
+  if (holdsDynamic(v)) {
+    if (anyIsPromise(v as unknown)) {
+      panic("TypeError: adopting a promise held in unknown is not supported yet (#3425)");
+    }
+  }
+  return v;
 }

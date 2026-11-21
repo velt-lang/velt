@@ -392,21 +392,10 @@ impl FnCx<'_, '_> {
         if self.cx.ty.is_bottom(s.ty) {
             return self.error_expr(span);
         }
-        // An `any`, `unknown` or `object` never holds a promise here (a promise doesn't convert
-        // to one), so the answer is `false`, as JavaScript's for any other value it holds.
+        // An `any`, `unknown` or `object` holds a promise when its table is a promise's (#924).
         if self.cx.dynamic(s.ty).is_some() {
             let b = self.cx.ty.bool_;
-            let no = self.mk(H::Lit(hir::Lit::Bool(false)), b, span);
-            let stmts = vec![hir::Stmt {
-                kind: hir::StmtKind::Expr(s),
-                span,
-            }];
-            let block = hir::Block {
-                stmts,
-                value: Some(Box::new(no)),
-                span,
-            };
-            return self.mk(H::Block(block), b, span);
+            return self.intrinsic(hir::Intrinsic::AnyIsPromise, vec![s], b, span);
         }
         let pred = |cx: &Ctx, t: TyId| cx.ty.promise_payload(t).is_some();
         let inner = self.cx.ty.core(s.ty).unwrap_or(s.ty);

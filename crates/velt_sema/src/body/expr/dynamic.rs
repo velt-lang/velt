@@ -271,7 +271,7 @@ impl FnCx<'_, '_> {
             // literal type (issue #1241).
             TyKind::Param(_) => {}
             TyKind::Never | TyKind::Error => return Err(h),
-            TyKind::Promise(..) => return Err(h),
+            // A promise is boxed as it is; an `await` of the `any` awaits it (#924).
             _ => {}
         }
         let Some(imp) = self.cx.any_impl() else {

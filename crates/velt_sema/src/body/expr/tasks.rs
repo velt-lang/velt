@@ -6,6 +6,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::args::as_arrow;
+use crate::any::Dynamic;
 use crate::body::places::is_place;
 use crate::body::switch::cases::source_text;
 use crate::body::{FnCx, LocalKind, Want};
@@ -46,6 +47,9 @@ impl FnCx<'_, '_> {
             Err(h) => h,
         };
         self.await_throws(&h);
+        if let Some(d @ (Dynamic::Any | Dynamic::Unknown)) = self.cx.dynamic(h.ty) {
+            return self.await_dynamic(h, d, span);
+        }
         let plain = self.awaits_as_value(h.ty);
         let ty = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(t, _) => *t,
@@ -68,6 +72,12 @@ impl FnCx<'_, '_> {
     /// generators").
     pub(crate) fn yielded_awaiting(&mut self, a: &ast::Expr, t: TyId) -> hir::Expr {
         let h = self.expr(a, Some(t), Want::Move);
+        // An `any` or `unknown` may hold a promise, which JavaScript awaits too (#924).
+        if let Some(d @ (Dynamic::Any | Dynamic::Unknown)) = self.cx.dynamic(h.ty) {
+            let span = h.span;
+            let v = self.await_dynamic(h, d, span);
+            return self.coerce(v, t);
+        }
         let h = match self.cx.ty.kind(h.ty).clone() {
             TyKind::Promise(v, _) if !matches!(self.cx.ty.kind(t), TyKind::Promise(..)) => {
                 self.awaited_using_shares(&h);
@@ -98,12 +108,18 @@ impl FnCx<'_, '_> {
         // The promise is awaited after the enclosing `try` statements are left: what it
         // rejects with is thrown from the function, not into their `catch` blocks.
         let tries = std::mem::take(&mut self.f.tries);
+        let dynamic = |s: &Self, t: TyId| {
+            matches!(s.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown))
+        };
         let h = match self.cx.ty.kind(h.ty) {
             TyKind::Promise(..) => {
                 self.await_throws(&h);
                 self.f.adopt_stmt = true;
                 Ok(self.adopt(h, ret, span))
             }
+            // An `any` or `unknown` may hold a promise (#924). Into a typed result, the
+            // conversion of one that does stops with a TypeError.
+            _ if dynamic(self, h.ty) && dynamic(self, ret) => Ok(self.adopt_dynamic(h, ret, span)),
             _ => self.await_union_with(h, span, &mut |s, read, _| s.adopt(read, ret, span)),
         };
         self.f.tries = tries;
