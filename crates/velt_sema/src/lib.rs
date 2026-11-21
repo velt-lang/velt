@@ -168,6 +168,7 @@ mod union_views;
 mod unions;
 mod unique_symbols;
 mod units;
+mod utility_partial;
 mod utility_types;
 mod visit;
 mod visit_ref;
