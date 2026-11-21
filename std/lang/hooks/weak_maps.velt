@@ -342,8 +342,8 @@ export function mapDrop(h: usize, id: u32): void {
 
 /**
  * `obj` is about to be freed: it leaves every map, entry record and `WeakRef`, its slot reads 0,
- * and its entries' values are queued. Its record goes first, so the removals find none (and leave its count word
- * alone).
+ * and its entries' values are queued. Its record goes first, so the removals find none (and leave
+ * its count word alone).
  */
 export function forget(h: usize, rec: usize, obj: usize): void {
   // The record's lists, before the record goes.

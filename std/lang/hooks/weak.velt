@@ -399,13 +399,17 @@ export function weakSlot(obj: usize): usize {
   if (obj === 0) {
     return 0;
   }
+  untagged(obj);
   const h = enter();
   const s = slotFor(h, obj);
   leave(h);
   return s;
 }
 
-/** Gives up a weak field's or variable's reference to slot `s` (no lock: weak_slots.velt); 0, a `null` one's, is none. */
+/**
+ * Gives up a weak field's or variable's reference to slot `s` (no lock: weak_slots.velt); 0, a
+ * `null` one's, is none.
+ */
 @noInline
 export function weakSlotDrop(s: usize): void {
   if (s !== 0) {
