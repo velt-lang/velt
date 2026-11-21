@@ -39,6 +39,7 @@ import {
   settle,
   unexamined,
 } from "./weak_records";
+import { slotForget } from "./weak_slots";
 import {
   W,
   alloc,
@@ -340,9 +341,9 @@ export function mapDrop(h: usize, id: u32): void {
 }
 
 /**
- * `obj` is about to be freed: it leaves every map, entry record and `WeakRef`, its entries'
- * values queued. Its record goes first, so the removals find none (and leave its count word
- * alone).
+ * `obj` is about to be freed: it leaves every map, entry record and `WeakRef`, its slot reads 0,
+ * and its entries' values are queued. Its record goes first, so the removals find none (and leave
+ * its count word alone).
  */
 export function forget(h: usize, rec: usize, obj: usize): void {
   // The record's lists, before the record goes.
@@ -357,6 +358,7 @@ export function forget(h: usize, rec: usize, obj: usize): void {
   for (let i: usize = 0; i < nr; i++) {
     st(ld(h + H_REFS) + listAt(rec, R_REF, i) * 2 * W, 0);
   }
+  slotForget(rec);
   st(rec + R_KEYED, 0);
   st(rec + R_MEMBER_MAP, 0);
   st(rec + R_REF, 0);

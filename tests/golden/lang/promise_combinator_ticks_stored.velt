@@ -1,0 +1,149 @@
+// A combinator kept in a `const` and awaited, or given a `then`, later: Node settles it in the
+// reaction it queued on the deciding input when that input settled (at the call for inputs that
+// had settled), not when it is first awaited, so it is ready on the same tick whenever it is
+// looked at. Over settled inputs, async calls still running, and `resolve`d promises; for
+// `Promise<number>` and `Promise<void>`.
+async function v(x: number): Promise<number> {
+  return x;
+}
+
+async function later(x: number, n: number): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  return x;
+}
+
+async function vv(): Promise<void> {}
+
+async function laterVoid(n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+}
+
+async function ticker(label: string): Promise<void> {
+  for (let i = 1; i <= 5; i++) {
+    console.log(`${label} ${i}`);
+    await null;
+  }
+}
+
+function resolved(): { p: Promise<number>; resolve: (v: number) => void } {
+  const r = Promise.withResolvers<number>();
+  return { p: r.promise, resolve: r.resolve };
+}
+
+// Settled inputs, awaited one and two microtasks after the call.
+async function settledAwaitedLater(): Promise<void> {
+  const t = ticker("a");
+  const all = Promise.all([v(1), v(2)]);
+  const race = Promise.race([v(1), v(2)]);
+  const any = Promise.any([v(1), v(2)]);
+  const settled = Promise.allSettled([v(1), v(2)]);
+  const allVoid = Promise.all([vv(), vv()]);
+  await null;
+  await all;
+  console.log("all");
+  await race;
+  console.log("race");
+  await null;
+  await any;
+  console.log("any");
+  await settled;
+  console.log("allSettled");
+  await allVoid;
+  console.log("all void");
+  await t;
+}
+
+// A `then` attached two microtasks after the call.
+async function settledThenLater(): Promise<void> {
+  const t = ticker("b");
+  const all = Promise.all([v(1), v(2)]);
+  await null;
+  await null;
+  const d = all.then(() => console.log("then"));
+  await d;
+  await t;
+}
+
+// Async calls still running, awaited at once and after a microtask.
+async function pendingAwaited(): Promise<void> {
+  const t = ticker("c");
+  const all = Promise.all([later(1, 2), later(2, 1)]);
+  await all;
+  console.log("all");
+  await t;
+  const u = ticker("d");
+  const race = Promise.race([later(1, 2), later(2, 1)]);
+  const any = Promise.any([later(1, 2), later(2, 1)]);
+  await null;
+  await race;
+  console.log("race");
+  await any;
+  console.log("any");
+  await u;
+  const w = ticker("e");
+  const allVoid = Promise.all([laterVoid(2), laterVoid(1)]);
+  const d = allVoid.then(() => console.log("all void"));
+  await d;
+  await w;
+}
+
+// `resolve`d inputs, awaited a microtask after they settled.
+async function resolvedAwaitedLater(): Promise<void> {
+  const t = ticker("f");
+  const a = resolved();
+  const b = resolved();
+  const all = Promise.all([a.p, b.p]);
+  b.resolve(2);
+  a.resolve(1);
+  await null;
+  await all;
+  console.log("all");
+  await t;
+}
+
+async function settleLater(name: string, n: number, fail: boolean): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  console.log(name, "done");
+  if (fail) {
+    throw new Error(name);
+  }
+  return n;
+}
+
+async function settleLaterVoid(name: string, n: number, fail: boolean): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await null;
+  }
+  console.log(name, "done");
+  if (fail) {
+    throw new Error(name);
+  }
+}
+
+// `Promise.any` whose deciding input fulfils after another rejected: it settles in the reaction
+// on the one that fulfils, not on the rejection before it.
+async function anyAfterRejection(): Promise<void> {
+  const p = Promise.any([settleLater("a", 2, false), settleLater("b", 1, true)]);
+  const t = ticker("g");
+  console.log("any", await p);
+  await t;
+  const q = Promise.any([settleLaterVoid("c", 2, false), settleLaterVoid("d", 1, true)]);
+  const u = ticker("h");
+  await q;
+  console.log("any void");
+  await u;
+}
+
+async function main() {
+  await settledAwaitedLater();
+  await settledThenLater();
+  await pendingAwaited();
+  await resolvedAwaitedLater();
+  await anyAfterRejection();
+}

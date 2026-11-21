@@ -73,7 +73,7 @@ function offWorker(n: usize): void {
 /** A node's flag: a combinator took it (`velt_rt_futs_handled`): its rejection is handled. */
 export const HANDLED: u32 = 16384;
 /** A node's flag: on its task's list since it finished with an error nobody awaited (`watch`). */
-const WATCHED: u32 = 32768;
+export const WATCHED: u32 = 32768;
 
 /**
  * Node `n` of task `task` finished and nobody awaits it, its owner still holding it: a rejection

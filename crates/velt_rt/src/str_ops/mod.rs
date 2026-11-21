@@ -22,10 +22,8 @@
 
 pub mod case;
 pub mod number;
-pub mod replace;
 pub mod search;
 pub mod slice;
-pub mod split;
 mod units;
 
 use crate::str::{VeltStr, Wtf8};
@@ -47,15 +45,6 @@ unsafe fn text<'a>(s: *const VeltStr) -> Result<&'a str, Wtf8<'a>> {
 /// `s` must be a valid `VeltStr`.
 unsafe fn text_lossy<'a>(s: *const VeltStr) -> Cow<'a, str> {
     (*s).text_lossy()
-}
-
-/// The WTF-8 bytes of a `VeltStr`.
-///
-/// # Safety
-/// `s` must be a valid `VeltStr`.
-#[inline]
-unsafe fn bytes<'a>(s: *const VeltStr) -> &'a [u8] {
-    (*s).as_bytes()
 }
 
 /// `s[start..end]` as a result string: borrowed if `s` is static, the same string (count +1) if
@@ -84,11 +73,6 @@ pub fn is_js_whitespace(c: char) -> bool {
                 | '\u{3000}'
                 | '\u{feff}'
         )
-}
-
-/// Is the code point `cp` (a surrogate code point is not) JS whitespace?
-fn is_js_whitespace_cp(cp: u32) -> bool {
-    char::from_u32(cp).is_some_and(is_js_whitespace)
 }
 
 /// JS relative index (`slice`): negative counts from the end; result clamped to `0..=len` (a

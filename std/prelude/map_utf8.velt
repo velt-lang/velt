@@ -3,10 +3,9 @@
 
 import { sharedValue } from "velt/lang/map/slots";
 import { FIB, POS_MASK } from "velt/lang/map/layout";
+import { utf8KeyEquals, utf8KeyHash } from "velt/lang/map/utf8_key";
 
-declare function velt_rt_bytes_hash(b: u8[]): u64;
 declare function velt_rt_bytes_is_utf8(b: u8[]): bool;
-declare function velt_rt_str_eq_bytes(s: string, b: u8[]): bool;
 declare function velt_rt_bytes_to_str_lossy(b: u8[]): string;
 
 /**
@@ -22,7 +21,7 @@ extend<V> Map<string, V> {
     if (!velt_rt_bytes_is_utf8(key)) {
       return this.get(velt_rt_bytes_to_str_lossy(key));
     }
-    const e = lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB);
+    const e = lookupUtf8(this, key, utf8KeyHash(key) * FIB);
     if (e < 0) {
       return undefined;
     }
@@ -34,13 +33,13 @@ extend<V> Map<string, V> {
     if (!velt_rt_bytes_is_utf8(key)) {
       return this.has(velt_rt_bytes_to_str_lossy(key));
     }
-    return lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB) >= 0;
+    return lookupUtf8(this, key, utf8KeyHash(key) * FIB) >= 0;
   }
 
   /** `set` of the key whose UTF-8 bytes are `key`: the string is made only for a new entry. */
   setUtf8(key: u8[], value: V) {
     if (velt_rt_bytes_is_utf8(key)) {
-      const e = lookupUtf8(this, key, velt_rt_bytes_hash(key) * FIB);
+      const e = lookupUtf8(this, key, utf8KeyHash(key) * FIB);
       if (e >= 0) {
         this.entryValues[e as usize] = value;
         return;
@@ -51,7 +50,7 @@ extend<V> Map<string, V> {
 }
 
 // `Map.lookup` of valid UTF-8 bytes against the string keys of `m` (hashed alike:
-// `velt_rt_bytes_hash`): the entry position, or -1.
+// `utf8KeyHash`): the entry position, or -1.
 function lookupUtf8<V>(m: Map<string, V>, key: u8[], p: u64): i64 {
   if (m.slots.length == 0) {
     return -1;
@@ -66,7 +65,7 @@ function lookupUtf8<V>(m: Map<string, V>, key: u8[], p: u64): i64 {
     }
     if (((w ^ p) >> 32) == 0) {
       const e = ((w & POS_MASK) - 1) as usize;
-      if (velt_rt_str_eq_bytes(m.entryKeys[e], key)) {
+      if (utf8KeyEquals(m.entryKeys[e], key)) {
         return e as i64;
       }
     }

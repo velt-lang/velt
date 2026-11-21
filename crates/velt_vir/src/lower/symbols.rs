@@ -13,13 +13,14 @@ use crate::vir::{self, Const, Operand, StaticData, StaticId, Ty};
 /// The first id of the registry's symbols (velt_sema's `symbols::REGISTERED_IDS`).
 const REGISTERED_IDS: u128 = 1 << 40;
 
-/// The runtime's `key` of a record `Symbol.for` made (velt_rt's `KEY_REGISTERED`).
+/// The `key` of a registry record (`Symbol.for`; std/lang/symbol/registry.velt `KEY_REGISTERED`).
 const KEY_REGISTERED: u64 = 1;
 
-/// The bit of `key` set when the symbol has a description (velt_rt's `DESCRIBED`).
+/// The bit of `key` set when the symbol has a description (std/lang/symbol/registry.velt
+/// `DESCRIBED`).
 const DESCRIBED: u64 = 1 << 63;
 
-/// The record's `key` of the compiler's symbol `id`: 2 and up (the runtime uses 0 and 1), so no
+/// The record's `key` of the compiler's symbol `id`: 2 and up (std's records use 0 and 1), so no
 /// two records have the same bytes and none can be merged with another; a registry record's is
 /// [`KEY_REGISTERED`] (its description, a distinct key, tells it apart). [`DESCRIBED`] is added
 /// when it has a description.
