@@ -202,7 +202,11 @@ impl FnLower<'_, '_> {
                     self.drop_arguments(&before, &v);
                     Some(v)
                 }
-                Part::Str(e) | Part::Format(e, _) => Some(self.expr_held(e, later[i])),
+                Part::Format(e, _) => match self.formatted_input(e) {
+                    Some(copy) => Some(copy),
+                    None => Some(self.expr_held(e, later[i])),
+                },
+                Part::Str(e) => Some(self.expr_held(e, later[i])),
             });
         }
         let mut fixed = 0u64;
@@ -586,7 +590,10 @@ impl FnLower<'_, '_> {
     /// Evaluate `e` and append its `console.log` text to the builder at `buf` (`implicit`: a
     /// `TemplateToString`, where a symbol throws).
     pub(super) fn push_formatted(&mut self, buf: &Operand, e: &hir::Expr, implicit: bool) {
-        let v = self.expr(e);
+        let v = match self.formatted_input(e) {
+            Some(copy) => copy,
+            None => self.expr(e),
+        };
         let t = self.sub(e.ty);
         if let Some((p, n)) = self.option_scalar(t) {
             return self.push_option(buf, v, t, p, n);

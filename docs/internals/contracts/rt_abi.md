@@ -337,6 +337,8 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 | `weakRefWord` | `(r: u32) -> u64` | the word given to `weakRefNewWith` (0 for `weakRefNew`), also after the target was freed |
 | `weakRefDeref` | `(r: u32) -> usize` | the target with count + 1, or 0 once freed |
 | `weakRefDrop` | `(r: u32)` | |
+| `weakSlot` | `(obj: usize) -> usize` | the slot of a `weak T` reference to `obj`, a block `[count: usize][target: usize]` shared by every weak reference to it, with its count raised by one (the caller's); does not count `obj`; the slot's target reads 0 once `obj` was freed; 0 (`null`) gives 0, without the lock |
+| `weakSlotDrop` | `(slot: usize)` | gives up a reference to `slot`; 0 is none; takes no lock |
 | `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Symbols
@@ -348,30 +350,31 @@ identity (equality, hashing):
 struct SymbolRec { desc: VeltStr /* empty without a description */, key: u64 }   // 32 bytes
 ```
 
-`key` (without bit 63) is 0 for a record `velt_rt_symbol_new` made, 1 for a record of the registry
+`key` (without bit 63) is 0 for a record `Symbol(desc)` made at run time, 1 for a record of the registry
 (`Symbol.for`, the compiler's or std's), and 2 and up for another read-only record the compiler emits
 (`Intrinsic::SymbolStatic`; its id + 2, so no two records have the same bytes); bit 63 is set when
 the symbol has a description (`Symbol("")` has one, `Symbol()` has none). The compiler emits the
 registry's records of module constants `const R = Symbol.for("r")` too (`key` 1, one per key, the
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
-never freed; one made at run time is one allocation. On wasm32 each table address takes the
+never freed. On wasm32 each table address takes the
 first half of its 8-byte slot.
 
-The registry is std's (`std/lang/symbol/registry.velt`): a process-wide map from key to symbol
-behind a lock, which starts with the table's records and makes a record for a key seen first at
-run time (32 bytes from the C library, outside the leak counts; its description words those of
-the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a
-symbol's record address) and `Intrinsic::SymbolAt` (the symbol at an address), both unsafe and
-std-only, at the offsets above (`RECORD_KEY_AT` = 24, `KEY_REGISTERED`, `DESCRIBED`), which a std
-test pins against the compiler's records. Functions (declared in `std/lang/symbol/index.velt`; `string`
-parameters by pointer, a `string` result through an out pointer):
-- `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
-  (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
-- `velt_rt_symbol_described(s) -> u8`, `velt_rt_symbol_description(s, out: *mut VeltStr)`
-  (`""` without a description).
-- `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
-  (`console.log`, `String(s)`).
+Symbols are std code (`std/lang/symbol/`); the runtime has none. `Symbol(desc)` at run time
+makes a record in `record.velt`, carved from a 4 KiB chunk of `#symbol-record`'s memory (one
+chunk at a time per thread): the C library's `calloc`, outside the leak counts, or in the browser
+the compiled code's allocator, which does not zero it, so `record.velt` writes all four words
+itself. The description moves into the record's first three words, which keep that reference
+for good. The registry
+(`registry.velt`) is a process-wide map from key to symbol behind a lock, which starts with the
+table's records and makes a record for a key seen first at run time (its description words those
+of the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a
+symbol's record address), `Intrinsic::SymbolAt` (the symbol at an address) and
+`Intrinsic::StrAt` (another reference to the string at an address: a description), all unsafe
+and std-only, at the offsets above (`RECORD_KEY_AT` = 24, `KEY_REGISTERED`, `DESCRIBED`), which a
+std test pins against the compiler's records. Generated code writes a symbol as text
+(`console.log`, `String(s)`) as `Symbol(`, the record's description, `)`, appending the string
+at the record's address (velt_vir `push_symbol`).
 
 ## CPU check
 
