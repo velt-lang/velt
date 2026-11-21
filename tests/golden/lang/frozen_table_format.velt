@@ -1,0 +1,52 @@
+// check: also with VELT_RT_DEBUG_ALLOC=1
+// A module constant table (#1334) of a counted array type, passed to a function that only reads
+// it, is read in place there by a frozen instance (#3024): its read-only header has no count word
+// in front of it. Formatting it there (`inspect` through `expect(...).toEqual`, `console.log`, a
+// template, `String`) gives the format glue a copy, which std's format code may count. It used
+// to get the header itself, and counting it freed a stack address in a release build (#3414).
+import { expect } from "velt/test";
+
+const T: u64[] = [1, 2, 3, 4];
+
+// Two objects hold one array: `u64[]` is a counted type in this program.
+class Holder {
+  a: u64[];
+  constructor(a: u64[]) {
+    this.a = a;
+  }
+}
+
+function pick(a: u64[]): u64[] {
+  const r: u64[] = [];
+  for (const x of a) {
+    r.push(x);
+  }
+  return r;
+}
+
+function logged(a: u64[]) {
+  console.log(a);
+}
+
+function templated(a: u64[]): string {
+  return `table ${a}`;
+}
+
+function stringed(a: u64[]): string {
+  return String(a);
+}
+
+function main() {
+  const shared: u64[] = [9, 9];
+  const h1 = new Holder(shared);
+  const h2 = new Holder(shared);
+  for (let i = 0; i < 8; i++) {
+    expect(pick([1, 2, 3, 4])).toEqual(T);
+  }
+  for (let i = 0; i < 3; i++) {
+    logged(T);
+    console.log(templated(T));
+    console.log(stringed(T));
+  }
+  console.log(h1.a.length + h2.a.length, T.length);
+}

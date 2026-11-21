@@ -418,6 +418,8 @@ impl FnCx<'_, '_> {
                             s.report_mismatch(lty, &v);
                             v
                         })
+                    } else if s.converting_store(&place, &v) {
+                        s.any_element_value(v, lty)
                     } else {
                         s.coerce(v, lty)
                     }

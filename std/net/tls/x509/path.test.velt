@@ -1,0 +1,187 @@
+// velt/net (tests): certificate path validation (path.velt) on real chains, each with the
+// answer of rustls's webpki for the same certificates at the same time (path_cases.test.velt).
+import { describe, expect, it } from "velt/test";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { PathBuilder } from "velt/net/tls/x509/path";
+import {
+  CertificateRefused,
+  REFUSED_ALGORITHM_MISMATCH,
+  REFUSED_CRITICAL_EXTENSION,
+  REFUSED_MALFORMED,
+  REFUSED_TRAILING_DATA,
+  REFUSED_VERSION,
+} from "velt/net/tls/x509/refused";
+import { TrustAnchor } from "velt/net/tls/x509/trust_anchor";
+import * as e from "velt/net/tls/x509/verify_error";
+import { chainCases, chainCertificates } from "./path_cases.test";
+
+function certificates(): Map<string, u8[]> {
+  const out = new Map<string, u8[]>();
+  for (const line of chainCertificates()) {
+    const f = line.split(" ");
+    out.set(f[0], hexDecode(f[1]));
+  }
+  return out;
+}
+
+function named(all: Map<string, u8[]>, names: string): u8[][] {
+  const out: u8[][] = [];
+  if (names != "-") {
+    for (const n of names.split(",")) {
+      out.push(all.get(n)!);
+    }
+  }
+  return out;
+}
+
+function word(code: i32): string {
+  const names: [i32, string][] = [
+    [e.UNKNOWN_ISSUER, "UNKNOWN_ISSUER"],
+    [e.CERT_EXPIRED, "CERT_EXPIRED"],
+    [e.CERT_NOT_VALID_YET, "CERT_NOT_VALID_YET"],
+    [e.INVALID_VALIDITY, "INVALID_VALIDITY"],
+    [e.CA_USED_AS_END_ENTITY, "CA_USED_AS_END_ENTITY"],
+    [e.END_ENTITY_USED_AS_CA, "END_ENTITY_USED_AS_CA"],
+    [e.PATH_LEN_VIOLATED, "PATH_LEN_VIOLATED"],
+    [e.EKU_NOT_FOUND, "EKU_NOT_FOUND"],
+    [e.INVALID_SIGNATURE, "INVALID_SIGNATURE"],
+    [e.UNSUPPORTED_SIGNATURE_ALGORITHM, "UNSUPPORTED_SIGNATURE_ALGORITHM"],
+    [e.UNSUPPORTED_SIGNATURE_FOR_KEY, "UNSUPPORTED_SIGNATURE_FOR_KEY"],
+    [e.NAME_CONSTRAINT_VIOLATED, "NAME_CONSTRAINT_VIOLATED"],
+    [e.PATH_TOO_DEEP, "PATH_TOO_DEEP"],
+    [e.BAD_ENCODING, "BAD_ENCODING"],
+    [e.UNSUPPORTED_VERSION, "UNSUPPORTED_VERSION"],
+    [e.UNSUPPORTED_CRITICAL_EXTENSION, "UNSUPPORTED_CRITICAL_EXTENSION"],
+    [e.SIGNATURE_ALGORITHM_MISMATCH, "SIGNATURE_ALGORITHM_MISMATCH"],
+    [e.EMPTY_EKU, "EMPTY_EKU"],
+    [e.TRAILING_DATA, "TRAILING_DATA"],
+    [e.TOO_MANY_SIGNATURES, "TOO_MANY_SIGNATURES"],
+    [e.TOO_MANY_PATHS, "TOO_MANY_PATHS"],
+  ];
+  for (const [c, name] of names) {
+    if (c == code) {
+      return name;
+    }
+  }
+  return `code ${code}`;
+}
+
+// What `PathBuilder` answers for one case line, in the line's own words.
+function answer(all: Map<string, u8[]>, f: string[]): string {
+  const anchors: TrustAnchor[] = [];
+  for (const der of named(all, f[4])) {
+    anchors.push(TrustAnchor.fromCertificate(der));
+  }
+  let leaf: Certificate;
+  try {
+    leaf = new Certificate(all.get(f[2])!);
+  } catch (err) {
+    return err instanceof TlsFailure ? "LEAF_DOES_NOT_PARSE" : "another error";
+  }
+  const builder = new PathBuilder(anchors, named(all, f[3]), parseInt(f[1]) as i64);
+  const result = builder.verify(leaf);
+  return result == e.VALID ? `VALID:${builder.path.length - 1}` : word(result);
+}
+
+describe("PathBuilder", () => {
+  it("answers every chain as webpki does", () => {
+    const all = certificates();
+    let n = 0;
+    for (const line of chainCases()) {
+      const f = line.split(" ");
+      expect(`${f[0]}: ${answer(all, f)}`).toBe(`${f[0]}: ${f[5]}`);
+      n++;
+    }
+    expect(n).toBe(177);
+  });
+});
+
+// Why the parser refuses `der` (`REFUSED_*`), -1 when it parses.
+function refusal(der: u8[], anchor: bool = false): i32 {
+  try {
+    new Certificate(der, anchor);
+    return -1;
+  } catch (err) {
+    return err instanceof CertificateRefused ? err.reason : -2;
+  }
+}
+
+// Whether `der` can be a trust anchor.
+function anchors(der: u8[]): bool {
+  try {
+    TrustAnchor.fromCertificate(der);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+describe("why a certificate does not parse", () => {
+  it("is kept: the version, a critical extension, the two algorithms, trailing data", () => {
+    const all = certificates();
+    expect(refusal(all.get("int")!)).toBe(-1);
+    expect(refusal(all.get("int_v1")!)).toBe(REFUSED_VERSION);
+    expect(refusal(all.get("int_crit2")!)).toBe(REFUSED_CRITICAL_EXTENSION);
+    expect(refusal(all.get("int_mismatch")!)).toBe(REFUSED_ALGORITHM_MISMATCH);
+    expect(refusal(all.get("int_trailing")!)).toBe(REFUSED_TRAILING_DATA);
+    expect(refusal(all.get("garbage")!)).toBe(REFUSED_MALFORMED);
+    // A v2 certificate: the version is there and is not 2.
+    const v2 = all.get("int")!.slice();
+    const at = hexEncode(v2).indexOf("a003020102") / 2;
+    v2[at + 4] = 1;
+    expect(refusal(v2)).toBe(REFUSED_VERSION);
+    // Cut short, it is malformed whatever else it is.
+    expect(refusal(all.get("int_crit2")!.slice(0, 100))).toBe(REFUSED_MALFORMED);
+  });
+
+  it("passes over an unknown critical extension only for an anchor", () => {
+    const all = certificates();
+    expect(refusal(all.get("root_crit")!)).toBe(REFUSED_CRITICAL_EXTENSION);
+    expect(refusal(all.get("root_crit")!, true)).toBe(-1);
+    // The rest still counts for an anchor.
+    expect(refusal(all.get("int_mismatch")!, true)).toBe(REFUSED_ALGORITHM_MISMATCH);
+    expect(refusal(all.get("int_trailing")!, true)).toBe(REFUSED_TRAILING_DATA);
+  });
+});
+
+describe("TrustAnchor.fromCertificate", () => {
+  it("takes a v1 root, with its subject and key and no constraints", () => {
+    const all = certificates();
+    const der = all.get("root_v1")!;
+    const a = TrustAnchor.fromCertificate(der);
+    const text = hexEncode(der);
+    // CN=root_v1 as the subject's contents, and the P-256 key's algorithm.
+    expect(hexEncode(a.subject)).toBe("3110300e06035504030c07726f6f745f7631");
+    expect(text.includes(hexEncode(a.spki))).toBe(true);
+    expect(hexEncode(a.spki).startsWith("301306072a8648ce3d020106082a8648ce3d030107034200")).toBe(
+      true,
+    );
+    expect(a.key().length).toBe(65);
+    expect(a.nameConstraints.length).toBe(0);
+  });
+
+  it("refuses a v1 certificate that is malformed, and a v2 one", () => {
+    const all = certificates();
+    const der = all.get("root_v1")!;
+    expect(anchors(der)).toBe(true);
+    expect(anchors(der.concat([0]))).toBe(false);
+    expect(anchors(der.slice(0, (der.length - 1) as i64))).toBe(false);
+    expect(anchors(all.get("garbage")!)).toBe(false);
+    // An element after the key in the signed part, and one after the signature.
+    expect(anchors(all.get("root_v1_field")!)).toBe(false);
+    expect(anchors(all.get("root_v1_tail")!)).toBe(false);
+    const v2 = all.get("root")!.slice();
+    const at = hexEncode(v2).indexOf("a003020102") / 2;
+    v2[at + 4] = 1;
+    expect(anchors(v2)).toBe(false);
+  });
+
+  it("takes roots the parser refuses as certificates of a path", () => {
+    const all = certificates();
+    expect(anchors(all.get("root_crit")!)).toBe(true);
+    expect(anchors(all.get("root_emptyeku")!)).toBe(true);
+    expect(anchors(all.get("int_mismatch")!)).toBe(false);
+  });
+});

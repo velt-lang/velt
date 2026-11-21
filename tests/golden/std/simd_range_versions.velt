@@ -1,0 +1,588 @@
+// Vector loops over a range of an array, `i + 2n <= dim` with no `fits` and `fits` in the
+// condition, for every vector type: the release build runs them in a copy without their range
+// tests where one check in front proves every test true (velt_opt `range_versions`), and the
+// original loop elsewhere. Rows inside the array, ranges at its end, offsets that wrap.
+
+import { bf16x8, f16x8, f32x4, f32x8, f64x2, i16x8, i32x4, i64x2, i8x16, u16x8, u32x4, u64x2, u8x16 } from "velt/simd";
+
+function rowsI8x16(a: i8[], at: usize, b: i8[], dim: usize): string {
+  let s = i8x16.splat(0);
+  let i: usize = 0;
+  while (i + 32 <= dim) {
+    s = s.add(i8x16.load(a, at + i)).add(i8x16.load(a, at + i + 16)).add(i8x16.load(b, i + 16));
+    i += 32;
+  }
+  while (i + 16 <= dim && i8x16.fits(a, at + i) && i8x16.fits(b, i)) {
+    s = s.add(i8x16.load(a, at + i)).add(i8x16.load(b, i));
+    i += 16;
+  }
+  return `${s.lane(0)} ${s.lane(15)} ${s.lane(8)} ${i}`;
+}
+
+function runI8x16(top: usize) {
+  const a: i8[] = [];
+  const b: i8[] = [];
+  for (let k: usize = 0; k < 597; k++) {
+    a.push((((k * 37) % 251) as i32 - 125) as i8);
+  }
+  for (let k: usize = 0; k < 99; k++) {
+    b.push((((k * 11 + 3) % 251) as i32 - 125) as i8);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 15, 16, 32, 33, 64, 96, 99];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 15, 35, len - dim];
+    for (const at of ats) {
+      out.push(rowsI8x16(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [16, 31];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsI8x16(a, at, b, dim));
+    }
+  }
+  console.log(`i8x16: ${out.join(" | ")}`);
+}
+
+function rowsU8x16(a: u8[], at: usize, b: u8[], dim: usize): string {
+  let s = u8x16.splat(0);
+  let i: usize = 0;
+  while (i + 32 <= dim) {
+    s = s.add(u8x16.load(a, at + i)).add(u8x16.load(a, at + i + 16)).add(u8x16.load(b, i + 16));
+    i += 32;
+  }
+  while (i + 16 <= dim && u8x16.fits(a, at + i) && u8x16.fits(b, i)) {
+    s = s.add(u8x16.load(a, at + i)).add(u8x16.load(b, i));
+    i += 16;
+  }
+  return `${s.lane(0)} ${s.lane(15)} ${s.lane(8)} ${i}`;
+}
+
+function runU8x16(top: usize) {
+  const a: u8[] = [];
+  const b: u8[] = [];
+  for (let k: usize = 0; k < 597; k++) {
+    a.push(((k * 37) % 251) as u8);
+  }
+  for (let k: usize = 0; k < 99; k++) {
+    b.push(((k * 11 + 3) % 251) as u8);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 15, 16, 32, 33, 64, 96, 99];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 15, 35, len - dim];
+    for (const at of ats) {
+      out.push(rowsU8x16(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [16, 31];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsU8x16(a, at, b, dim));
+    }
+  }
+  console.log(`u8x16: ${out.join(" | ")}`);
+}
+
+function rowsI16x8(a: i16[], at: usize, b: i16[], dim: usize): string {
+  let s = i16x8.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim) {
+    s = s.add(i16x8.load(a, at + i)).add(i16x8.load(a, at + i + 8)).add(i16x8.load(b, i + 8));
+    i += 16;
+  }
+  while (i + 8 <= dim && i16x8.fits(a, at + i) && i16x8.fits(b, i)) {
+    s = s.add(i16x8.load(a, at + i)).add(i16x8.load(b, i));
+    i += 8;
+  }
+  return `${s.lane(0)} ${s.lane(7)} ${s.lane(4)} ${i}`;
+}
+
+function runI16x8(top: usize) {
+  const a: i16[] = [];
+  const b: i16[] = [];
+  for (let k: usize = 0; k < 301; k++) {
+    a.push((((k * 37) % 2003) as i32 - 1000) as i16);
+  }
+  for (let k: usize = 0; k < 51; k++) {
+    b.push((((k * 11 + 3) % 2003) as i32 - 1000) as i16);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 7, 8, 16, 17, 32, 48, 51];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 7, 19, len - dim];
+    for (const at of ats) {
+      out.push(rowsI16x8(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [8, 15];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsI16x8(a, at, b, dim));
+    }
+  }
+  console.log(`i16x8: ${out.join(" | ")}`);
+}
+
+function rowsU16x8(a: u16[], at: usize, b: u16[], dim: usize): string {
+  let s = u16x8.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim) {
+    s = s.add(u16x8.load(a, at + i)).add(u16x8.load(a, at + i + 8)).add(u16x8.load(b, i + 8));
+    i += 16;
+  }
+  while (i + 8 <= dim && u16x8.fits(a, at + i) && u16x8.fits(b, i)) {
+    s = s.add(u16x8.load(a, at + i)).add(u16x8.load(b, i));
+    i += 8;
+  }
+  return `${s.lane(0)} ${s.lane(7)} ${s.lane(4)} ${i}`;
+}
+
+function runU16x8(top: usize) {
+  const a: u16[] = [];
+  const b: u16[] = [];
+  for (let k: usize = 0; k < 301; k++) {
+    a.push(((k * 37) % 2003) as u16);
+  }
+  for (let k: usize = 0; k < 51; k++) {
+    b.push(((k * 11 + 3) % 2003) as u16);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 7, 8, 16, 17, 32, 48, 51];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 7, 19, len - dim];
+    for (const at of ats) {
+      out.push(rowsU16x8(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [8, 15];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsU16x8(a, at, b, dim));
+    }
+  }
+  console.log(`u16x8: ${out.join(" | ")}`);
+}
+
+function rowsI32x4(a: i32[], at: usize, b: i32[], dim: usize): string {
+  let s = i32x4.splat(0);
+  let i: usize = 0;
+  while (i + 8 <= dim) {
+    s = s.add(i32x4.load(a, at + i)).add(i32x4.load(a, at + i + 4)).add(i32x4.load(b, i + 4));
+    i += 8;
+  }
+  while (i + 4 <= dim && i32x4.fits(a, at + i) && i32x4.fits(b, i)) {
+    s = s.add(i32x4.load(a, at + i)).add(i32x4.load(b, i));
+    i += 4;
+  }
+  return `${s.lane(0)} ${s.lane(3)} ${s.lane(2)} ${i}`;
+}
+
+function runI32x4(top: usize) {
+  const a: i32[] = [];
+  const b: i32[] = [];
+  for (let k: usize = 0; k < 153; k++) {
+    a.push((((k * 37) % 20011) as i32 - 10000));
+  }
+  for (let k: usize = 0; k < 27; k++) {
+    b.push((((k * 11 + 3) % 20011) as i32 - 10000));
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 3, 4, 8, 9, 16, 24, 27];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 3, 11, len - dim];
+    for (const at of ats) {
+      out.push(rowsI32x4(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [4, 7];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsI32x4(a, at, b, dim));
+    }
+  }
+  console.log(`i32x4: ${out.join(" | ")}`);
+}
+
+function rowsU32x4(a: u32[], at: usize, b: u32[], dim: usize): string {
+  let s = u32x4.splat(0);
+  let i: usize = 0;
+  while (i + 8 <= dim) {
+    s = s.add(u32x4.load(a, at + i)).add(u32x4.load(a, at + i + 4)).add(u32x4.load(b, i + 4));
+    i += 8;
+  }
+  while (i + 4 <= dim && u32x4.fits(a, at + i) && u32x4.fits(b, i)) {
+    s = s.add(u32x4.load(a, at + i)).add(u32x4.load(b, i));
+    i += 4;
+  }
+  return `${s.lane(0)} ${s.lane(3)} ${s.lane(2)} ${i}`;
+}
+
+function runU32x4(top: usize) {
+  const a: u32[] = [];
+  const b: u32[] = [];
+  for (let k: usize = 0; k < 153; k++) {
+    a.push(((k * 37) % 20011) as u32);
+  }
+  for (let k: usize = 0; k < 27; k++) {
+    b.push(((k * 11 + 3) % 20011) as u32);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 3, 4, 8, 9, 16, 24, 27];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 3, 11, len - dim];
+    for (const at of ats) {
+      out.push(rowsU32x4(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [4, 7];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsU32x4(a, at, b, dim));
+    }
+  }
+  console.log(`u32x4: ${out.join(" | ")}`);
+}
+
+function rowsI64x2(a: i64[], at: usize, b: i64[], dim: usize): string {
+  let s = i64x2.splat(0);
+  let i: usize = 0;
+  while (i + 4 <= dim) {
+    s = s.add(i64x2.load(a, at + i)).add(i64x2.load(a, at + i + 2)).add(i64x2.load(b, i + 2));
+    i += 4;
+  }
+  while (i + 2 <= dim && i64x2.fits(a, at + i) && i64x2.fits(b, i)) {
+    s = s.add(i64x2.load(a, at + i)).add(i64x2.load(b, i));
+    i += 2;
+  }
+  return `${s.lane(0)} ${s.lane(1)} ${s.lane(1)} ${i}`;
+}
+
+function runI64x2(top: usize) {
+  const a: i64[] = [];
+  const b: i64[] = [];
+  for (let k: usize = 0; k < 79; k++) {
+    a.push((((k * 37) % 20011) as i64 - 10000));
+  }
+  for (let k: usize = 0; k < 15; k++) {
+    b.push((((k * 11 + 3) % 20011) as i64 - 10000));
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 1, 2, 4, 5, 8, 12, 15];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 1, 7, len - dim];
+    for (const at of ats) {
+      out.push(rowsI64x2(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [2, 3];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsI64x2(a, at, b, dim));
+    }
+  }
+  console.log(`i64x2: ${out.join(" | ")}`);
+}
+
+function rowsU64x2(a: u64[], at: usize, b: u64[], dim: usize): string {
+  let s = u64x2.splat(0);
+  let i: usize = 0;
+  while (i + 4 <= dim) {
+    s = s.add(u64x2.load(a, at + i)).add(u64x2.load(a, at + i + 2)).add(u64x2.load(b, i + 2));
+    i += 4;
+  }
+  while (i + 2 <= dim && u64x2.fits(a, at + i) && u64x2.fits(b, i)) {
+    s = s.add(u64x2.load(a, at + i)).add(u64x2.load(b, i));
+    i += 2;
+  }
+  return `${s.lane(0)} ${s.lane(1)} ${s.lane(1)} ${i}`;
+}
+
+function runU64x2(top: usize) {
+  const a: u64[] = [];
+  const b: u64[] = [];
+  for (let k: usize = 0; k < 79; k++) {
+    a.push(((k * 37) % 20011) as u64);
+  }
+  for (let k: usize = 0; k < 15; k++) {
+    b.push(((k * 11 + 3) % 20011) as u64);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 1, 2, 4, 5, 8, 12, 15];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 1, 7, len - dim];
+    for (const at of ats) {
+      out.push(rowsU64x2(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [2, 3];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsU64x2(a, at, b, dim));
+    }
+  }
+  console.log(`u64x2: ${out.join(" | ")}`);
+}
+
+function rowsF32x4(a: f32[], at: usize, b: f32[], dim: usize): string {
+  let s = f32x4.splat(0);
+  let i: usize = 0;
+  while (i + 8 <= dim) {
+    s = s.add(f32x4.load(a, at + i)).add(f32x4.load(a, at + i + 4)).add(f32x4.load(b, i + 4));
+    i += 8;
+  }
+  while (i + 4 <= dim && f32x4.fits(a, at + i) && f32x4.fits(b, i)) {
+    s = s.add(f32x4.load(a, at + i)).add(f32x4.load(b, i));
+    i += 4;
+  }
+  return `${s.lane(0)} ${s.lane(3)} ${s.lane(2)} ${i}`;
+}
+
+function runF32x4(top: usize) {
+  const a: f32[] = [];
+  const b: f32[] = [];
+  for (let k: usize = 0; k < 153; k++) {
+    a.push((((k * 37) % 201) as f32 - 100));
+  }
+  for (let k: usize = 0; k < 27; k++) {
+    b.push((((k * 11 + 3) % 201) as f32 - 100));
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 3, 4, 8, 9, 16, 24, 27];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 3, 11, len - dim];
+    for (const at of ats) {
+      out.push(rowsF32x4(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [4, 7];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsF32x4(a, at, b, dim));
+    }
+  }
+  console.log(`f32x4: ${out.join(" | ")}`);
+}
+
+function rowsF64x2(a: f64[], at: usize, b: f64[], dim: usize): string {
+  let s = f64x2.splat(0);
+  let i: usize = 0;
+  while (i + 4 <= dim) {
+    s = s.add(f64x2.load(a, at + i)).add(f64x2.load(a, at + i + 2)).add(f64x2.load(b, i + 2));
+    i += 4;
+  }
+  while (i + 2 <= dim && f64x2.fits(a, at + i) && f64x2.fits(b, i)) {
+    s = s.add(f64x2.load(a, at + i)).add(f64x2.load(b, i));
+    i += 2;
+  }
+  return `${s.lane(0)} ${s.lane(1)} ${s.lane(1)} ${i}`;
+}
+
+function runF64x2(top: usize) {
+  const a: f64[] = [];
+  const b: f64[] = [];
+  for (let k: usize = 0; k < 79; k++) {
+    a.push((((k * 37) % 201) as f64 - 100));
+  }
+  for (let k: usize = 0; k < 15; k++) {
+    b.push((((k * 11 + 3) % 201) as f64 - 100));
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 1, 2, 4, 5, 8, 12, 15];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 1, 7, len - dim];
+    for (const at of ats) {
+      out.push(rowsF64x2(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [2, 3];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsF64x2(a, at, b, dim));
+    }
+  }
+  console.log(`f64x2: ${out.join(" | ")}`);
+}
+
+function rowsF16x8(a: f16[], at: usize, b: f16[], dim: usize): string {
+  let s = f16x8.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim) {
+    s = s.add(f16x8.load(a, at + i)).add(f16x8.load(a, at + i + 8)).add(f16x8.load(b, i + 8));
+    i += 16;
+  }
+  while (i + 8 <= dim && f16x8.fits(a, at + i) && f16x8.fits(b, i)) {
+    s = s.add(f16x8.load(a, at + i)).add(f16x8.load(b, i));
+    i += 8;
+  }
+  return `${s.lane(0)} ${s.lane(7)} ${s.lane(4)} ${i}`;
+}
+
+function runF16x8(top: usize) {
+  const a: f16[] = [];
+  const b: f16[] = [];
+  for (let k: usize = 0; k < 301; k++) {
+    a.push((((k * 37) % 61) as f32 - 30) as f16);
+  }
+  for (let k: usize = 0; k < 51; k++) {
+    b.push((((k * 11 + 3) % 61) as f32 - 30) as f16);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 7, 8, 16, 17, 32, 48, 51];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 7, 19, len - dim];
+    for (const at of ats) {
+      out.push(rowsF16x8(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [8, 15];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsF16x8(a, at, b, dim));
+    }
+  }
+  console.log(`f16x8: ${out.join(" | ")}`);
+}
+
+function rowsF32x8(a: f32[], at: usize, b: f32[], dim: usize): string {
+  let s = f32x8.splat(0);
+  let i: usize = 0;
+  while (i + 16 <= dim) {
+    s = s.add(f32x8.load(a, at + i)).add(f32x8.load(a, at + i + 8)).add(f32x8.load(b, i + 8));
+    i += 16;
+  }
+  while (i + 8 <= dim && f32x8.fits(a, at + i) && f32x8.fits(b, i)) {
+    s = s.add(f32x8.load(a, at + i)).add(f32x8.load(b, i));
+    i += 8;
+  }
+  return `${s.lane(0)} ${s.lane(7)} ${s.lane(4)} ${i}`;
+}
+
+function runF32x8(top: usize) {
+  const a: f32[] = [];
+  const b: f32[] = [];
+  for (let k: usize = 0; k < 301; k++) {
+    a.push((((k * 37) % 201) as f32 - 100));
+  }
+  for (let k: usize = 0; k < 51; k++) {
+    b.push((((k * 11 + 3) % 201) as f32 - 100));
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 7, 8, 16, 17, 32, 48, 51];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 7, 19, len - dim];
+    for (const at of ats) {
+      out.push(rowsF32x8(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [8, 15];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsF32x8(a, at, b, dim));
+    }
+  }
+  console.log(`f32x8: ${out.join(" | ")}`);
+}
+
+function rowsBf16x8(a: bf16[], at: usize, b: bf16[], dim: usize): string {
+  let s: f32 = 0;
+  let i: usize = 0;
+  while (i + 16 <= dim) {
+    const x = bf16x8.load(a, at + i);
+    const y = bf16x8.load(a, at + i + 8);
+    const z = bf16x8.load(b, i + 8);
+    s += (x.lane(0) as f32) + (y.lane(7) as f32) + (z.lane(3) as f32);
+    i += 16;
+  }
+  while (i + 8 <= dim && bf16x8.fits(a, at + i) && bf16x8.fits(b, i)) {
+    const x = bf16x8.load(a, at + i);
+    const z = bf16x8.load(b, i);
+    s += (x.lane(5) as f32) - (z.lane(1) as f32);
+    i += 8;
+  }
+  return `${s} ${i}`;
+}
+
+function runBf16x8(top: usize) {
+  const a: bf16[] = [];
+  const b: bf16[] = [];
+  for (let k: usize = 0; k < 301; k++) {
+    a.push((((k * 37) % 61) as f32 - 30) as bf16);
+  }
+  for (let k: usize = 0; k < 51; k++) {
+    b.push((((k * 11 + 3) % 61) as f32 - 30) as bf16);
+  }
+  const len = a.length as usize;
+  const out: string[] = [];
+  const dims: usize[] = [0, 7, 8, 16, 17, 32, 48, 51];
+  for (const dim of dims) {
+    const ats: usize[] = [0, 1, 7, 19, len - dim];
+    for (const at of ats) {
+      out.push(rowsBf16x8(a, at, b, dim));
+    }
+  }
+  // Rows the first loop does not reach: the second stops at the end, or at an offset that wraps.
+  const short: usize[] = [8, 15];
+  for (const dim of short) {
+    const ats: usize[] = [len - 1, len, len + 5, top - 3, top];
+    for (const at of ats) {
+      out.push(rowsBf16x8(a, at, b, dim));
+    }
+  }
+  console.log(`bf16x8: ${out.join(" | ")}`);
+}
+
+function main() {
+  let top: usize = 0;
+  top = top - 1;
+  runI8x16(top);
+  runU8x16(top);
+  runI16x8(top);
+  runU16x8(top);
+  runI32x4(top);
+  runU32x4(top);
+  runI64x2(top);
+  runU64x2(top);
+  runF32x4(top);
+  runF64x2(top);
+  runF16x8(top);
+  runF32x8(top);
+  runBf16x8(top);
+}

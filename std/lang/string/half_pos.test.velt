@@ -1,0 +1,116 @@
+// velt/lang/string (internal): white-box tests of half_pos.velt, run by `velt test std/`.
+//
+// `split` and `replace` reach these only with a separator that can match half of a surrogate
+// pair, so they are tested here directly: every range of positions of a text against the same
+// range of its UTF-16 code units, and the search against a plain comparison at every position.
+import { describe, expect, it } from "velt/test";
+import { strByteLen } from "velt/lang/intrinsics";
+import { nextUnit, NO_START } from "velt/lang/string/code_units";
+import { halfFindPos, unitsAfter, unitsText, unitText } from "velt/lang/string/half_pos";
+
+/** Texts with pairs and lone halves, and half needles to find in them. */
+function samples(needles: bool): string[] {
+  const HI = String.fromCharCode(0xd83d);
+  const LO = String.fromCharCode(0xde00);
+  if (needles) {
+    return [
+      HI,
+      LO,
+      LO + HI,
+      LO + "b",
+      "a" + HI,
+      LO + "cd",
+      "b" + HI,
+      LO + "cdab" + HI,
+      LO + "😀" + HI,
+      HI + HI,
+      LO + "x",
+    ];
+  }
+  return [
+    "a😀b",
+    "😀😀",
+    "é😀日" + HI + "x" + LO + "😀",
+    LO + "😀" + HI,
+    "ab😀cdab😀cd😀",
+    "x" + HI + HI + "😀" + LO + LO + "y",
+  ];
+}
+
+/** The position of every code unit of `s`, and the one after the last. */
+function positions(s: string): u64[] {
+  const out: u64[] = [];
+  let p: u64 = 0;
+  while ((p >> 1) < (strByteLen(s) as u64)) {
+    out.push(p);
+    p = nextUnit(s, p);
+  }
+  out.push(p);
+  return out;
+}
+
+/** The first unit at or after `from` where `needle`'s units are in `s`, or -1. */
+function plainFind(s: string, needle: string, from: usize): i64 {
+  for (let i = from; i + needle.length <= s.length; i++) {
+    let same = true;
+    for (let k: usize = 0; k < needle.length; k++) {
+      if (s.charCodeAt((i + k) as i64) != needle.charCodeAt(k as i64)) {
+        same = false;
+        break;
+      }
+    }
+    if (same) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+describe("positions", () => {
+  it("has one position per UTF-16 code unit", () => {
+    for (const s of samples(false)) {
+      expect(positions(s).length).toBe(s.length + 1);
+    }
+  });
+
+  it("cuts the text of any range of positions as slice cuts its units", () => {
+    for (const s of samples(false)) {
+      const ps = positions(s);
+      for (let a: usize = 0; a < ps.length; a++) {
+        for (let b = a; b < ps.length; b++) {
+          expect(unitsText(s, ps[a], ps[b])).toBe(s.slice(a as i64, b as i64));
+        }
+      }
+    }
+  });
+
+  it("gives each code unit as its own string", () => {
+    for (const s of samples(false)) {
+      const ps = positions(s);
+      for (let a: usize = 0; a + 1 < ps.length; a++) {
+        expect(unitText(s, ps[a])).toBe(s.charAt(a as i64));
+      }
+    }
+  });
+});
+
+describe("halfFindPos", () => {
+  it("finds what a comparison of code units finds, from every position", () => {
+    for (const s of samples(false)) {
+      const ps = positions(s);
+      for (const needle of samples(true)) {
+        for (let from: usize = 0; from < ps.length; from++) {
+          const want = plainFind(s, needle, from);
+          const got = halfFindPos(s, needle, ps[from]);
+          if (want < 0) {
+            expect(got == NO_START).toBe(true);
+          } else {
+            expect(got == ps[want as usize]).toBe(true);
+            const after = unitsAfter(s, got, needle, strByteLen(needle));
+            expect(after == ps[(want as usize) + needle.length]).toBe(true);
+          }
+        }
+      }
+    }
+  });
+});

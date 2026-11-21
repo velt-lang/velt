@@ -1,0 +1,93 @@
+// `repeat`, `padStart` and `padEnd` (std/lang/string/fill.velt, #2198): lengths in UTF-16 code
+// units, a fill cut between the halves of a pair, and seams where two halves meet and join.
+// The expected output is Node's (this file runs there unchanged, with `main()` called). Lone
+// surrogates come from `String.fromCharCode`.
+
+const HI = String.fromCharCode(0xd83d);
+const LO = String.fromCharCode(0xde00);
+
+/** The UTF-16 code units of `s`, in hex. */
+function hex(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    out += s.charCodeAt(i).toString(16) + ".";
+  }
+  return out;
+}
+
+function one(s: string) {
+  console.log(s.length, hex(s));
+}
+
+function main() {
+  one("ab".repeat(0));
+  one("ab".repeat(1));
+  one("ab".repeat(7));
+  one("-".repeat(50));
+  one("é😀".repeat(5));
+  one(("" + LO + "" + HI + "").repeat(3));
+  one(("" + LO + "x" + HI + "").repeat(4));
+  one("x".padStart(5, "ab"));
+  one("x".padEnd(5, "ab"));
+  one("x".padEnd(4));
+  one("x".padStart(30, "."));
+  one("x".padStart(60, "."));
+  one("abc".padStart(2, "."));
+  one("abc".padStart(6, ""));
+  one("".padStart(5, "😀"));
+  one("".padEnd(5, "😀"));
+  one(("" + LO + "").padStart(4, "a" + HI + ""));
+  one(("" + LO + "").padStart(3, "😀"));
+  one("é".padEnd(6, "日本"));
+  one("x".padStart(-3, "."));
+  // Every way a result is laid out: in words (results at 23, 24 and 25 bytes, a last chunk cut
+  // short), block by block (strings of 25 to 64 bytes), from a byte array (long results), and
+  // fractional counts.
+  for (const n of [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    16,
+    17,
+    23,
+    24,
+    25,
+    31,
+    32,
+    33,
+    48,
+    64,
+    65,
+  ]) {
+    const s = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.".slice(0, n);
+    for (const k of [2, 3, 5, 24, 25]) {
+      const r = s.repeat(k);
+      console.log(
+        n,
+        k,
+        r.length,
+        r.slice(0, 3),
+        r.slice(-n - 2),
+        r == s.repeat(k - 1) + s,
+        r.split(s).length,
+      );
+    }
+  }
+  console.log(
+    "ab".repeat(2.9),
+    "ab".repeat(-0.5).length,
+    "ab".repeat(NaN).length,
+    "".repeat(1e9).length,
+  );
+  console.log("abc ".repeat(499).length, "é".repeat(40).length, "😀x".repeat(33).charCodeAt(98));
+}

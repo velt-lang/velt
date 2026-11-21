@@ -9,7 +9,7 @@
 // (a leading 0x80 or a truncated arc is accepted, as in webpki). An explicit BOOLEAN FALSE, which
 // DER forbids, is accepted, as in webpki.
 
-import { BAD_CERTIFICATE, TlsFailure } from "velt/net/tls/alert";
+import { CertificateRefused, REFUSED_MALFORMED } from "velt/net/tls/x509/refused";
 import { Tlv } from "velt/net/tls/x509/tlv";
 
 /** Universal tags (X.690 §8), with the constructed bit where DER requires it. */
@@ -38,9 +38,9 @@ export class DerReader {
     this.pos = 0;
   }
 
-  /** Throws the `bad_certificate` failure for `what`. */
-  fail(what: string): never {
-    throw new TlsFailure(BAD_CERTIFICATE, `malformed certificate: ${what}`);
+  /** Throws the `bad_certificate` failure for `what`, with the reason `reason` (`REFUSED_*`). */
+  fail(what: string, reason: i32 = REFUSED_MALFORMED): never {
+    throw new CertificateRefused(reason, what);
   }
 
   /** The tag of the next element below `end`, or -1 at `end`. */
@@ -78,10 +78,13 @@ export class DerReader {
     return t;
   }
 
-  /** Throws unless `pos` is at `end` (the element's contents were all read). */
-  done(end: usize) {
+  /**
+   * Throws unless `pos` is at `end` (the element's contents were all read), with the reason
+   * `reason` (`REFUSED_*`).
+   */
+  done(end: usize, reason: i32 = REFUSED_MALFORMED) {
     if (this.pos != end) {
-      this.fail("stray bytes inside an element");
+      this.fail("stray bytes inside an element", reason);
     }
   }
 
