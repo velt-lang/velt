@@ -523,7 +523,11 @@ mod tests {
             let others = (types.iter())
                 .filter(|t| index.contains(&format!("export {{ {t} }}")))
                 .count();
-            assert_eq!(index.matches("export {").count(), features.len() + others, "{dir}");
+            assert_eq!(
+                index.matches("export {").count(),
+                features.len() + others,
+                "{dir}"
+            );
         }
     }
 

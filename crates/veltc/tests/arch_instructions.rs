@@ -119,7 +119,7 @@ fn mask_lane(lane: Lane, x: u64) -> u64 {
 /// every third lane of the second argument the first's (so comparisons find equal lanes), and
 /// shift counts from 0 to 39.
 fn wide_lane(lane: Lane, name: &str, i: usize, k: usize) -> u64 {
-    if i == 1 && k % 3 == 0 && name != "count" && name != "indices" && name != "mask" {
+    if i == 1 && k.is_multiple_of(3) && name != "count" && name != "indices" && name != "mask" {
         return wide_lane(lane, "", 0, k);
     }
     match lane {
