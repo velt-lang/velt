@@ -53,9 +53,10 @@ export function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
  * keeps its state between pieces (`Sha256`).
  */
 export function sha256Blocks(h: u32[], data: u8[], off: usize, count: usize) {
-  // The caller keeps to its data; said once so that nothing below reads past it.
+  // The caller keeps to its data; said once so that nothing below reads past it, and loudly,
+  // as in `sha256Block`.
   if (off + count * BLOCK > data.length || h.length != 8) {
-    return;
+    blockFault();
   }
   if (u32x4.hasShaArm()) {
     blocks256Arm(h, data, off, count);
