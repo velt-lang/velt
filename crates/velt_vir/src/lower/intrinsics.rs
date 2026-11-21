@@ -190,6 +190,23 @@ impl FnLower<'_, '_> {
                 let data = self.str_data(&p);
                 self.cast_to(data, Ty::Ptr, Ty::U64)
             }
+            (I::StrAt, [a]) => {
+                // Another reference to the string at the address: its three words read in place
+                // and shared (a count increment for a heap string), owned by the caller.
+                let addr = self.expr(a);
+                let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let Operand::Copy(at) = at else {
+                    ice("rvalue_temp returns a place")
+                };
+                let src = Place {
+                    local: at.local,
+                    proj: vec![Proj::Deref(Ty::Agg(STR_AGG))],
+                };
+                let out = self.temp(Ty::Agg(STR_AGG));
+                self.str_share(src, Place::local(out));
+                let t = self.sub(ty);
+                self.own_value(Operand::Copy(Place::local(out)), t)
+            }
             (I::ExportedAddress, [a]) => {
                 // `a` is the index of the `hir::CExport` (sema's `exported_address`).
                 let hir::ExprKind::Lit(hir::Lit::Int(index)) = a.kind else {

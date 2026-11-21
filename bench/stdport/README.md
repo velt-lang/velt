@@ -263,3 +263,13 @@ ASCII; three in four present). The key's hash and comparison are Velt code
 swapped, cachegrind, 2026-11-20: 1,285M instructions before, 1,283M after (−0.2%); wall clock,
 best of 7 interleaved, 103.7 → 86.5 ms. The Rust port (std's `HashMap` with the runtime's hash)
 executes 521M.
+
+## Symbols
+
+`symbol_new`: 400k `Symbol(description)` at run time (some without one), then each one's
+`description` and `toString()` twice. Symbols are Velt code (`std/lang/symbol/record.velt`,
+records carved from per-thread chunks); they were the runtime's `velt_rt_symbol_new`,
+`velt_rt_symbol_described` and `velt_rt_symbol_description`. x86-64 Linux, release, the same
+compiler and runtime with only std swapped, cachegrind, 2026-11-20: 278M instructions before,
+254M after (−8.7%); wall clock, best of 7 interleaved, 28.1 → 24.6 ms. The Rust port (a leaked
+record sharing an `Rc<str>`, `format!` for the text) executes 984M.

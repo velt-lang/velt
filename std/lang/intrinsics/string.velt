@@ -44,6 +44,14 @@ export declare function strWord2(s: string): u64;
 @intrinsic
 export declare function strDataAddress(s: string): usize;
 
+/**
+ * Another reference to the string whose three words are at `address` (rt_abi.md "Strings"),
+ * which stays there (a count increment for a heap string, no call): a symbol record's
+ * description (velt/lang/symbol). Unsafe: a string must be there, alive while it is read.
+ */
+@intrinsic
+export declare unsafe function strAt(address: usize): string;
+
 /** The byte at `i`, or -1 when `i` is out of range; inline code, no call. */
 @intrinsic
 export declare function strCharCodeAt(s: string, i: i64): i64;

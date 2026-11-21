@@ -179,8 +179,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::StrbufPushInspectStr, vec![buf.clone(), a], None);
             }
             TyKind::Symbol => {
-                let s = Operand::Copy(place.clone());
-                self.call_rt(Rt::StrbufPushSymbol, vec![buf.clone(), s], None);
+                self.push_symbol(buf, Operand::Copy(place.clone()));
             }
             TyKind::Unit => self.push_text(buf, "undefined"),
             TyKind::Simd(s) => self.push_text(buf, &Self::simd_text(s)),
