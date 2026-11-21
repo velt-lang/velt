@@ -581,6 +581,8 @@ enums! {
         213 => AddressArrayOwned,
         214 => StrAt,
         215 => SpreadParam,
+        216 => AnyPromise,
+        217 => AnyIsPromise,
     }
 }
 

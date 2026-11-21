@@ -3,7 +3,7 @@
 // goes through JavaScript's `ToPrimitive` here first (`anyToPrimitive`), and the operator then
 // runs on the primitive it gives.
 
-import { anyIsList, anyToPrimitive } from "velt/lang/intrinsics";
+import { anyIsList, anyPromise, anyToPrimitive } from "velt/lang/intrinsics";
 import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
 
 // Past this many arguments Node's stack is out, and past `ANY_LIST_MAX` its array is.
@@ -208,4 +208,18 @@ export function anyLooseEq(a: any, b: any, at: string): boolean {
 export function anyHoldsObject(v: any): boolean {
   const t = typeof v;
   return (t === "object" && v !== null) || t === "function";
+}
+
+/**
+ * What `await value` waits for when `value` is an `any` or `unknown` (#924): the promise it
+ * holds, settling with that promise's value or reason as `unknown` and taking no turn more than
+ * awaiting it would, or else `value` itself after one turn, as JavaScript awaits a value that is
+ * not a promise. An object with a `then` method is not adopted (#3412).
+ */
+export function awaitAny(value: unknown): Promise<unknown, unknown> {
+  const held = anyPromise(value);
+  if (held !== undefined) {
+    return held;
+  }
+  return Promise.resolve(value);
 }
