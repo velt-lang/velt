@@ -4,8 +4,22 @@
 //! code: its check is false there) a zero.
 
 use velt_vir::arch::{ArchOp, Llvm, Val};
+use velt_vir::simd::SimdCall;
 
-use super::{has_ext, Arch, Body};
+use super::{has_ext, Arch, Body, WASM_SIMD};
+
+/// The feature attribute of `call`'s helper: a CPU extension's own feature on the architecture
+/// that has it (a velt/arch row's with what it implies: `pshufb` needs SSSE3's encoding), and
+/// WebAssembly's SIMD for every helper there.
+pub(super) fn attributes(arch: Arch, call: SimdCall) -> String {
+    let features = match call {
+        _ if arch == Arch::Wasm => return WASM_SIMD.to_string(),
+        SimdCall::Inst(op) if has_ext(arch, op.ext()) => op.ext().op_features(),
+        SimdCall::Arch(op) if has_ext(arch, op.ext()) => op.ext().gated_features(),
+        _ => return String::new(),
+    };
+    format!(" \"target-features\"=\"{features}\"")
+}
 
 /// The row `op` on the helper's arguments (`%a0`, …), as the helper returns it (a vector as
 /// `<16 x i8>`).

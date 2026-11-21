@@ -413,3 +413,66 @@ fn every_row_has_a_reference() {
         reference(r);
     }
 }
+
+/// `velt check` of `main` in `dir`.
+fn check(dir: &test_dir::TestDir, main: &str) -> std::process::Output {
+    let file = dir.path().join("main.velt");
+    std::fs::write(&file, main).unwrap();
+    no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", file.to_str().unwrap()])
+        .current_dir(dir.path())
+        .output()
+        .unwrap()
+}
+
+/// velt/arch's instructions (#3222 step 4) are gated on their class's feature: a call sits behind
+/// that check (or one whose feature implies it) or in a gated function; one anywhere else, the
+/// method taken as a value and the extern declared outside std are errors.
+#[test]
+fn a_velt_arch_instruction_runs_only_behind_its_check() {
+    let dir = test_dir::TestDir::new();
+    let good = r#"
+import { targetFeature } from "velt/compiler";
+import { Avx2, Sse42 } from "velt/arch/x86";
+
+@targetFeature("avx2-x86")
+function viaAvx2(c: u64): u64 {
+  return Sse42.crc32U64(c, 1);
+}
+
+function main() {
+  if (Sse42.isSupported()) {
+    console.log(Sse42.crc32U64(0, 1));
+  }
+  if (Avx2.isSupported()) {
+    console.log(viaAvx2(0) + Sse42.crc32U64(0, 2));
+  }
+}
+"#;
+    let out = check(&dir, good);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bad = r#"
+import { Bmi2, Sse42 } from "velt/arch/x86";
+
+declare function velt_arch_sse42_crc32_u64(crc: u64, data: u64): u64;
+
+function main() {
+  console.log(Sse42.crc32U64(0, 1));
+  const f = Bmi2.parallelBitDepositU64;
+}
+"#;
+    let out = check(&dir, bad);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    for want in [
+        "`velt_arch_sse42_crc32_u64` is an instruction of velt/arch: only the standard library may declare it",
+        "`Sse42.crc32U64` runs only where the CPU has `sse4.2-x86`, so it must be called behind that check",
+        "`Bmi2.parallelBitDepositU64` is compiled for `bmi2-x86` and can only be called directly",
+    ] {
+        assert!(err.contains(want), "no `{want}` in:\n{err}");
+    }
+}
