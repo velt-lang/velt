@@ -2,8 +2,9 @@
 // prime, in Jacobian coordinates (x = X/Z^2, y = Y/Z^3; Z = 0 is the identity) with the
 // formulas p256.velt uses (dbl-2001-b, add-2007-bl). `add` here is variable time, for public
 // points only (signature verification): it branches on the identity and on equal points.
-// `double` and `decodePoint`'s arithmetic do not branch on values, and p384_ecdh.velt, whose
-// scalar is secret, uses them with a masked addition of its own.
+// `double` does not branch on values, and p384_ecdh.velt, whose scalar is secret, uses it with a
+// masked addition of its own. `decodePoint` is for the peer's public point: it branches on its
+// format, its range and whether it is on the curve.
 
 import { Mod384 } from "velt/crypto/mod384";
 
