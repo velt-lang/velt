@@ -3,8 +3,6 @@
 
 use super::fake::{arg, block_on_fut, err, ok, take_string};
 use crate::bytes::{velt_rt_bytes_drop, VeltBytes};
-#[cfg(windows)]
-use crate::fs::remove::*;
 use crate::fs::sync::*;
 use crate::result::{code, IoResult};
 use std::mem::MaybeUninit;
@@ -24,34 +22,6 @@ fn sync<T>(f: impl FnOnce(*mut IoResult<T>)) -> IoResult<T> {
     let mut out = MaybeUninit::<IoResult<T>>::uninit();
     f(out.as_mut_ptr());
     unsafe { out.assume_init() }
-}
-
-/// `rm` on Windows (the one directory function the runtime keeps there, std/fs/tree/win32.velt)
-/// refuses a directory with something in it unless `recursive`, which removes the whole tree.
-/// (Listing, making and, on macOS and Linux, removing directories are std code now,
-/// std/fs/tree/; the goldens cover them.)
-#[cfg(windows)]
-#[test]
-fn remove_trees() {
-    let dir = temp_dir("fs_tree");
-    let (d, a, x) = (path(&dir, "x/y"), path(&dir, "x/y/a.txt"), path(&dir, "x"));
-    std::fs::create_dir_all(&d).unwrap();
-    std::fs::write(&a, "héllo").unwrap();
-    unsafe {
-        err(
-            sync(|o| velt_rt_fs_remove_sync(&arg(&x), 0, o)),
-            code::DIRECTORY_NOT_EMPTY,
-        );
-        ok(sync(|o| velt_rt_fs_remove_sync(&arg(&a), 0, o)));
-        assert!(!std::path::Path::new(&a).exists());
-        err(
-            sync(|o| velt_rt_fs_remove_sync(&arg(&a), 0, o)),
-            code::NOT_FOUND,
-        );
-        ok(sync(|o| velt_rt_fs_remove_sync(&arg(&x), 1, o)));
-        assert!(!std::path::Path::new(&x).exists());
-    }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

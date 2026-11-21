@@ -123,7 +123,7 @@ fn a_promise_handed_to_a_task_delivers_a_copy_there() {
 
 /// A race spawned as it is built (`spawn(Promise.race(ps))`, `Promise.any`, a race that can
 /// reject): under std the race is boxed and started on the spawning task, which copies the
-/// winner's result there.
+/// winner's result there as the race settles, a microtask after its winner (as Node's).
 #[test]
 fn a_spawned_race_delivers_a_copy_to_its_task() {
     prints_counted(
@@ -286,16 +286,19 @@ async function count(o: Obj): Promise<i64> {
 async function main() {
   const a = new Obj();
   const w = spawn(Promise.race([give(a), give(a)]));
+  await null;
   const c = await count(a);
   const got = await w;
   console.log("race: main", c, "task", got.n, "same", got === a);
   const b = new Obj();
   const x = spawn(Promise.any([giveOrFail(b, true), giveOrFail(b, false)]));
+  await null;
   const d = await count(b);
   const got2 = await x;
   console.log("any: main", d, "task", got2.n, "same", got2 === b);
   const e = new Obj();
   const y = spawn(Promise.race([giveOrFail(e, false), giveOrFail(e, true)]));
+  await null;
   const f = await count(e);
   try {
     const got3 = await y;

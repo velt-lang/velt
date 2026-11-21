@@ -180,8 +180,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::StrbufPushInspectStr, vec![buf.clone(), a], None);
             }
             TyKind::Symbol => {
-                let s = Operand::Copy(place.clone());
-                self.call_rt(Rt::StrbufPushSymbol, vec![buf.clone(), s], None);
+                self.push_symbol(buf, Operand::Copy(place.clone()));
             }
             // `Ptr(0x7ffd5e8c1a30)` (#3094): std's text of the address.
             TyKind::Ptr(_) => {

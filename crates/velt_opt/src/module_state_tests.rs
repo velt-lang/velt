@@ -22,7 +22,8 @@ struct Host {
 impl crate::interp::Host for Host {
     fn call(&mut self, ext: &ExternFn, args: &[u64], mem: &mut Memory) -> Result<u64, Trap> {
         match ext.symbol.as_str() {
-            "velt_rt_module_state" => {
+            // The runtime's entry, or module_blocks.velt's in its prebuilt object.
+            "velt_rt_module_state" | "velt_hook_module_state" => {
                 self.lookups += 1;
                 if args[1] >= self.ready {
                     return Err(Trap::NoReturn("ReferenceError".into()));
@@ -228,4 +229,99 @@ fn a_function_that_hands_the_lock_to_the_tasks_is_left_alone() {
     );
     fb.ret(b, copy_local(r));
     optimized(&env.program(fb), false);
+}
+
+/// `for (i = 0; i < n; i++) s[slot] += i; return s[slot]` on a native target: each access calls
+/// std's hook (module_blocks.velt `moduleState`, #2196 9c) with the descriptor cast to an integer,
+/// as lowering's `desc_arg` passes it, and casts the block it returns back. The hook asks the
+/// host's `velt_rt_module_state` (counted), so fewer hook calls show as fewer lookups. `main` is
+/// the program's first function, as `optimized` expects.
+fn hooked_loop_program(slot: i128) -> Program {
+    looked_up_loop_program(slot, None)
+}
+
+/// The same with the lookup a call of `entry` when given: the hook as an entry point of its
+/// module's prebuilt object (`velt_hook_module_state`), an extern with the hook's signature.
+fn looked_up_loop_program(slot: i128, entry: Option<&str>) -> Program {
+    let mut env = env();
+    let lookup = match entry {
+        Some(symbol) => Callee::Extern(env.pb.ext(symbol, &[U64, U64], U64, false)),
+        None => Callee::Func(velt_vir::vir::FuncId(1)),
+    };
+    let hook = velt_vir::mangle::mangle(velt_common::std_hook!(module_state));
+    let main_id = velt_vir::vir::FuncId(0);
+    let hook_id = velt_vir::vir::FuncId(1);
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let n = fb.param(0);
+    let (i, c, v, r) = (fb.local(I64), fb.local(Bool), fb.local(I64), fb.local(I64));
+    let entry = fb.block();
+    let (head, body, exit) = (fb.block(), fb.block(), fb.block());
+    fb.assign(entry, i, Rvalue::Use(int(0, I64)));
+    fb.goto(entry, head);
+    fb.assign(head, c, bin(BinOp::Lt, copy_local(i), copy_local(n)));
+    fb.branch(head, c, body, exit);
+    let desc = env.desc;
+    let access = |fb: &mut FuncBuilder, b: BlockId| -> (BlockId, Local) {
+        let (t, u, p) = (fb.local(U64), fb.local(U64), fb.local(Ptr));
+        let s = Operand::Const(Const::Static(desc), Ptr);
+        fb.assign(b, t, Rvalue::Cast(s, U64));
+        let args = vec![copy_local(t), int(slot, U64)];
+        let b = fb.call(b, lookup.clone(), args, Some(u));
+        fb.assign(b, p, Rvalue::Cast(copy_local(u), Ptr));
+        (b, p)
+    };
+    let (b, p) = access(&mut fb, body);
+    let s = Env::slot(&mut fb, b, p, slot);
+    fb.assign(b, v, bin(BinOp::Add, copy_place(s.clone()), copy_local(i)));
+    fb.push(b, Stmt::Assign(s, Rvalue::Use(copy_local(v))));
+    fb.assign(b, i, bin(BinOp::Add, copy_local(i), int(1, I64)));
+    fb.goto(b, head);
+    let (b, q) = access(&mut fb, exit);
+    let s = Env::slot(&mut fb, b, q, slot);
+    fb.push(b, Stmt::Assign(Place::local(r), Rvalue::Use(copy_place(s))));
+    fb.ret(b, copy_local(r));
+    assert_eq!(env.pb.add(fb.finish()), main_id);
+    // The hook: `(desc: u64, slot: u64) -> u64`, the runtime's lookup through casts.
+    let mut hf = FuncBuilder::internal(&hook, &[U64, U64], U64);
+    let (q, rp, rr) = (hf.local(Ptr), hf.local(Ptr), hf.local(U64));
+    let b = hf.block();
+    hf.assign(b, q, Rvalue::Cast(copy_local(hf.param(0)), Ptr));
+    let args = vec![copy_local(q), copy_local(hf.param(1))];
+    let b = hf.call(b, Callee::Extern(env.state), args, Some(rp));
+    hf.assign(b, rr, Rvalue::Cast(copy_local(rp), U64));
+    hf.ret(b, copy_local(rr));
+    assert_eq!(env.pb.add(hf.finish()), hook_id);
+    env.pb.finish()
+}
+
+/// A program that calls module_blocks.velt's prebuilt object asks its entry point once too: the
+/// extern `velt_hook_module_state`, with the descriptor cast to an integer as the hook takes it.
+#[test]
+fn a_loop_calls_the_prebuilt_entry_point_once() {
+    let symbol = velt_common::std_hooks::prebuilt::symbol(
+        &velt_common::std_hooks::HOOKS[velt_common::std_hooks::hook_index::module_state],
+    );
+    assert_eq!(symbol, "velt_hook_module_state");
+    let original = looked_up_loop_program(1, Some(&symbol));
+    let p = optimized(&original, true);
+    for n in [0, 1, 7] {
+        let (before, asked_before) = run_main(&original, n, u64::MAX).expect("runs");
+        let (after, asked_after) = run_main(&p, n, u64::MAX).expect("runs");
+        assert_eq!(before, after, "n = {n}");
+        assert_eq!(asked_before, n as usize + 1, "n = {n}");
+        assert_eq!(asked_after, 1, "n = {n}\n{p}");
+    }
+}
+
+#[test]
+fn a_loop_calls_std_s_hook_once() {
+    let original = hooked_loop_program(1);
+    let p = optimized(&original, true);
+    for n in [0, 1, 7] {
+        let (before, asked_before) = run_main(&original, n, u64::MAX).expect("runs");
+        let (after, asked_after) = run_main(&p, n, u64::MAX).expect("runs");
+        assert_eq!(before, after, "n = {n}");
+        assert_eq!(asked_before, n as usize + 1, "n = {n}");
+        assert_eq!(asked_after, 1, "n = {n}\n{p}");
+    }
 }

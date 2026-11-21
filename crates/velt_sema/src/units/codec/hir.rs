@@ -309,6 +309,31 @@ enums! {
         5 => AesArm,
         6 => FmaX86,
         7 => Bf16Arm,
+        8 => Sse3X86,
+        9 => Ssse3X86,
+        10 => Sse41X86,
+        11 => Sse42X86,
+        12 => PopcntX86,
+        13 => Cmpxchg16bX86,
+        14 => AvxX86,
+        15 => Avx2X86,
+        16 => Bmi1X86,
+        17 => Bmi2X86,
+        18 => LzcntX86,
+        19 => MovbeX86,
+        20 => F16cX86,
+        21 => Avx512fX86,
+        22 => Avx512bwX86,
+        23 => Avx512cdX86,
+        24 => Avx512dqX86,
+        25 => Avx512vlX86,
+        26 => Avx512vbmiX86,
+        27 => Avx512bitalgX86,
+        28 => DotprodArm,
+        29 => CrcArm,
+        30 => Sha3Arm,
+        31 => Fp16Arm,
+        32 => I8mmArm,
     }
     DynMemberKind {
         0 => Method,
@@ -554,7 +579,22 @@ enums! {
         210 => ArrayByteLength,
         211 => SymbolAddress,
         212 => SymbolAt,
-        213 => PtrFromAddress,
-        214 => PtrToAddress,
+        213 => AddressArrayOwned,
+        214 => StrAt,
+        215 => SpreadParam,
+        218 => PtrFromAddress,
+        219 => PtrToAddress,
+    }
+}
+
+/// A set of CPU features (velt_common's, whose bits are private) as its features, each by its
+/// `CpuTarget` tag: the encoding does not depend on the order of the bits.
+impl super::Codec for CpuTargets {
+    fn enc(&self, w: &mut super::Writer) {
+        super::Codec::enc(&self.iter().collect::<Vec<CpuTarget>>(), w);
+    }
+    fn dec(r: &mut super::Reader) -> Self {
+        let features: Vec<CpuTarget> = super::Codec::dec(r);
+        (features.into_iter()).fold(CpuTargets::NONE, CpuTargets::with)
     }
 }

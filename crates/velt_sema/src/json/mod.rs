@@ -106,6 +106,11 @@ impl Uses {
 /// their guard bits (`inst_sites::carry_guard`).
 type Needs = FxHashMap<DefId, Vec<(TyId, Need, u64)>>;
 
+/// A finished unit's needs (`Ctx::json_needs`, `crate::units`), which a later unit's check
+/// starts from.
+#[derive(Clone, Default)]
+pub(crate) struct JsonNeeds(Needs);
+
 pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut uses = collect(cx);
     let mut dispatch = Dispatch::default();
@@ -127,7 +132,8 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         .collect();
     let mut rounds = Rounds::new(uses.len(), reads);
     let mut work = dispatch.work + uses.iter().map(|(_, u)| u.types.len() as u64).sum::<u64>();
-    let mut needs: Needs = FxHashMap::default();
+    // What a finished unit's functions need (its summary), then the unit's own.
+    let mut needs: Needs = cx.json_needs.0.clone();
     let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
     // The types and spans a C pointer rule was reported at (`no_ptr`).
     let mut ptr_reported: FxHashSet<(TyId, Span)> = FxHashSet::default();
@@ -184,6 +190,9 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         }
     }
     add_work(Pass::Json, work);
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.json_needs = JsonNeeds(needs);
+    }
 }
 
 /// The types a function needs: those it gives the JSON intrinsics, those of the generic
@@ -270,7 +279,9 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         record,
     };
     let mut bodies: Vec<(DefId, Uses, News)> = vec![];
-    for (i, d) in cx.defs.iter().enumerate() {
+    // The unit's definitions (`crate::units`): a finished unit's come with its summary.
+    let base = cx.unit_base as usize;
+    for (i, d) in cx.defs.iter().enumerate().skip(base) {
         let Some(Def::Fn(f)) = d else { continue };
         let mut u = Uses::default();
         let mut news = vec![];
@@ -296,6 +307,9 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
     let mut inits: FxHashMap<DefId, (Uses, News, FxHashSet<TyId>)> = FxHashMap::default();
     let tys = walk.ids.tys;
     for_each_init(tys, &cx.info, true, &mut |_, d, e| {
+        if (d.0 as usize) < base {
+            return;
+        }
         let (u, news, seen) = inits.entry(d).or_default();
         walk.expr(u, news, seen, e, 0);
     });
@@ -442,5 +456,18 @@ impl Ctx<'_> {
     /// Is type definition `d` declared in a std module?
     pub(crate) fn declared_in_std(&self, d: DefId) -> bool {
         self.adt(d).is_some_and(|a| self.scopes[a.module].is_std)
+    }
+}
+
+// The encoding of a finished unit (`units::codec`): every field and variant, so a new one fails to
+// build.
+crate::units::codec::tuples! {
+    JsonNeeds(needs)
+}
+crate::units::codec::enums! {
+    Need {
+        0 => NoLock,
+        1 => Json(how),
+        2 => Seen(how),
     }
 }

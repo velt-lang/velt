@@ -38,14 +38,18 @@ pub(super) fn seed(cx: &mut Ctx) {
 
 /// The free functions lowering looks up by name, of the definitions from `from` on: the helpers
 /// of the prelude, those of the modules it looks into ([`super::super::BY_NAME`]), and the hooks no
-/// construct lists, of which some wait for what the program does (`Live::waiting`). Such a
+/// construct lists, of which some wait for what the program does (`Live::waiting`, and the hooks
+/// of module state, live with a stored global). Such a
 /// function that takes a value only live code can give (an array, a class instance, an `any`) is
 /// live once live code has a value of that type ([`gate`]).
 fn seed_std(cx: &mut Ctx, from: usize) {
     let mut hooks = FxHashSet::default();
+    // Not module_blocks.velt's (`super::super::module_hooks`): they are live once the program has
+    // module state, also where std is loaded up front and holds their module in every program.
+    let blocks = velt_common::std_hooks::BLOCKS_MODULE_ENTRY;
     for h in HOOKS
         .iter()
-        .filter(|h| h.lowered && h.constructs.is_empty())
+        .filter(|h| h.lowered && h.constructs.is_empty() && h.module_entry != blocks)
     {
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             // A process static (#2779): `velt_main` hands the runtime its address in every

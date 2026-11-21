@@ -227,6 +227,8 @@ impl Cx<'_> {
             self.holds_mutex(t, 0, true),
             self.holds_mutex(t, 0, false),
             self.array_view(t),
+            self.holds_atomic(t, &mut FxHashSet::default()),
+            self.shares_as_counted(t),
             // A C pointer answers every other question as `symbol` does (a non-null word, no
             // drop), but prints and compares as itself (#3094). No shared instance sees one yet:
             // only the array-view helpers are shared (`SHARED`), and sema refuses the view of a
