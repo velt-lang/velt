@@ -39,6 +39,8 @@ import {
   stateDrop,
 } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
+import * as st from "./sched_all_step";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 import * as workers from "./sched_workers";
@@ -49,7 +51,11 @@ import * as workers from "./sched_workers";
  * settles it, the children left, whether the first pass ran, the ready stack, the awaiter's
  * waker, the reference count, the state, the wakes reading the awaiter's waker, the `cx` the
  * children are polled with (the awaiter's await word, the child's record), the allocation's size
- * in bytes (a race's holds its own future after the records), then the children's records.
+ * in bytes (a race's holds its own future after the records), the ticket of its reaction step
+ * (0: none; while it runs, the entry a child's wake queued for the awaiter: `allWakeByRef`; once
+ * it settled, `settleStep`'s), the executor's last ticket where Node queued that reaction (when
+ * the join was made, or a child woke it with no awaiter to queue; its top bit `PEND` while a join
+ * that settled when made has not decided its step), then the children's records.
  */
 export const J_N: usize = 16;
 export const J_SIZE: usize = 24;
@@ -65,7 +71,9 @@ export const J_STATE: usize = 96;
 export const J_WAKING: usize = 104;
 export const J_CX: usize = 112;
 export const J_BYTES: usize = 128;
-export const J_KIDS: usize = 136;
+export const J_TICKET: usize = 136;
+export const J_MADE: usize = 144;
+export const J_KIDS: usize = 152;
 
 /**
  * A child's record (its waker): the table, the join, the child's future (0 once it finished or was
@@ -103,22 +111,34 @@ export function schedAll(
 ): usize {
   const n = count as usize;
   const size = bytes as usize;
-  const j = core(futs, n, J_KIDS + n * C_SIZE);
+  const e = t.here();
+  const j = core(futs, n, J_KIDS + n * C_SIZE, e);
   m.st(j, fnAddress(joinPoll));
   m.st(j + 8, fnAddress(joinDrop));
   m.st(j + J_SIZE, size);
   m.st(j + J_RESULTS, results);
   m.st(j + J_RDROP, rdrop);
   m.st(j + J_REJECT, reject ? 1 : 0);
+  if (n === 0) {
+    // `Promise.all([])` is fulfilled when made: no reaction, no step.
+    m.st(j + J_STATE, COMPLETE);
+  } else if (st.subscribes(j, e)) {
+    for (let i: usize = 0; i < n; i++) {
+      if (pollKid(j, kid(j, i))) {
+        m.st(j + J_MADE, m.ld(j + J_MADE) | st.PEND);
+        break;
+      }
+    }
+  }
   return j;
 }
 
 /**
  * A join's fields and its `n` children's records (the futures at `futs`), in an allocation of
- * `bytes` (at least `J_KIDS + n * C_SIZE`): running, nothing ready, one reference (sched_race.velt
- * builds its race on it too).
+ * `bytes` (at least `J_KIDS + n * C_SIZE`), made on worker `e` (`t.here()`, 0 off the workers):
+ * running, nothing ready, one reference (sched_race.velt builds its race on it too).
  */
-export function core(futs: usize, n: usize, bytes: usize): usize {
+export function core(futs: usize, n: usize, bytes: usize, e: usize): usize {
   const j = m.alloc(bytes);
   m.st(j + J_N, n);
   m.st(j + J_BYTES, bytes);
@@ -135,6 +155,8 @@ export function core(futs: usize, n: usize, bytes: usize): usize {
   m.st(j + J_WAKING, 0);
   m.st(j + J_CX, 0);
   m.st(j + J_CX + 8, 0);
+  m.st(j + J_TICKET, 0);
+  m.st(j + J_MADE, e === 0 ? 0 : m.ld(e + t.E_TICKET));
   // Worker 0's waker table (before the start, on a C library's thread: the pending block's).
   let g = t.main();
   if (g === 0) {
@@ -162,16 +184,22 @@ export function kid(j: usize, i: usize): usize {
 /** The poll of join `j`: 1 once it settled. */
 function joinPoll(j: usize, cx: usize): u32 {
   if (m.ld(j + J_STATE) !== RUNNING) {
-    return 1;
+    return st.settledPoll(j, cx);
   }
   register(j, m.ld(cx + 8));
   m.st(j + J_CX, m.ld(cx));
+  // A poll before the turn of the entry a child's wake queued (an owner adopting the awaiter)
+  // waits for it: that entry is Node's reaction.
+  const via = m.ld(j + J_TICKET) !== 0;
+  if (via && !st.stepReached(j, cx)) {
+    return 0;
+  }
   if (m.ld(j + J_STARTED) === 0) {
     m.st(j + J_STARTED, 1);
     const n = m.ld(j + J_N);
     for (let i: usize = 0; i < n; i++) {
       if (pollKid(j, kid(j, i))) {
-        return 1;
+        return st.settled(j, cx, via);
       }
     }
   }
@@ -183,13 +211,13 @@ function joinPoll(j: usize, cx: usize): u32 {
     // Off the stack before its poll: a wake during the poll queues it again.
     m.swap(c + C_QUEUED, 0);
     if (m.ld(c + C_FUT) !== 0 && pollKid(j, c)) {
-      return 1;
+      return st.settled(j, cx, via);
     }
     c = next;
   }
   if (m.ld(j + J_LEFT) === 0) {
     m.st(j + J_STATE, COMPLETE);
-    return 1;
+    return st.settled(j, cx, via);
   }
   return 0;
 }
@@ -366,7 +394,14 @@ export function allWake(c: usize): void {
   allDrop(c);
 }
 
-/** A child woke: on its join's ready stack once, and the join's awaiter woken. */
+/**
+ * A child woke: on its join's ready stack once, and the join's awaiter woken. Woken by the task
+ * that awaits the join, in its poll (an input settled by its code, or a promise it drives), the
+ * awaiter is queued in that task's microtask queue instead: Node settles a combinator in the
+ * reaction it queues on each input, a microtask, and the awaiter's own step follows (no credit,
+ * unless the entry running now has a credit left). With the task's await word 0 nothing could run
+ * in between, and the plain wake costs less.
+ */
 @cExport("std_sched_all_wake_by_ref")
 export function allWakeByRef(c: usize): void {
   if (m.cas(c + C_QUEUED, 0, 1) !== 0) {
@@ -377,8 +412,36 @@ export function allWakeByRef(c: usize): void {
   // Counted while it reads and wakes the awaiter's waker (`dropAwaiter`).
   m.incOrdered(j + J_WAKING);
   const w = m.load(j + J_WAKER);
-  if (w !== 0) {
-    m.wakeByRef(w);
+  const e = t.here();
+  const cur = e === 0 ? 0 : m.ld(e + t.E_CURRENT);
+  if (cur !== 0 && w !== 0 && m.ld32(cur + t.T_WORD) !== 0 && wk.taskOf(w) === cur) {
+    // That entry is Node's reaction (sched_all_step.velt `settled`). A child that a credited
+    // entry ran (a promise settled by `resolve`, which Node queued then) took the reaction's step
+    // already: the credit passes on to the awaiter's entry.
+    const ticket = micro.enqueue(cur, m.wakerClone(w), micro.takeCredit(cur));
+    // The entry the awaiter waits for: a join's newest (the reaction of the input settled
+    // last); a race's first since its last poll, and each child's own (sched_race.velt
+    // `childReached`: a rejection `Promise.any` drops does not settle it).
+    if (m.ld(j) === fnAddress(joinPoll)) {
+      m.st(j + J_TICKET, ticket as usize);
+    } else {
+      if (m.ld(j + J_TICKET) === 0) {
+        m.st(j + J_TICKET, ticket as usize);
+      }
+      m.st(c + C_DONE, ticket as usize);
+    }
+  } else {
+    // (Woken directly with nothing queued, the awaiter's poll comes first: no mark.)
+    if (cur !== 0 && w === 0) {
+      // Node queued the reaction now (`settleStep` decides on it when the awaiter polls): in a
+      // credited entry, that entry was the reaction (a promise `resolve` settled), else it
+      // comes after every entry queued so far.
+      const at = micro.takeCredit(cur) ? micro.lastPopped(cur) - 1 : m.ld(e + t.E_TICKET);
+      m.storeRelease(j + J_MADE, at);
+    }
+    if (w !== 0) {
+      m.wakeByRef(w);
+    }
   }
   m.dec(j + J_WAKING);
 }

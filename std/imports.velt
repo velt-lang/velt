@@ -96,6 +96,13 @@ export const imports: Imports = {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
   },
+  // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
+  // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
+  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.
+  "#promise-race-step": {
+    "std-scheduler": "./lang/promise/race_step_sched.velt",
+    default: "./lang/promise/race_step_rt.velt",
+  },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
   // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and
@@ -209,10 +216,10 @@ export const imports: Imports = {
   // Whole files (`readFile`, `writeFile`, `appendFile`, `stat`, `lstat`, `exists`) in a native
   // build: the C library's file descriptors (`#fd-system`), or Win32's on Windows.
   "#fs-whole": { win32: "./fs/whole/win32.velt", default: "./fs/whole/posix.velt" },
-  // What a `MappedFile` is made of (velt/fs): a mapping of the file where there is `mmap`
-  // (through `#fd-system`, which fails with ENOSYS on Windows), the file read into memory on
-  // WebAssembly.
+  // What a `MappedFile` is made of (velt/fs): a mapping of the file (`mmap` through
+  // `#fd-system`, Win32's file mappings on Windows), the file read into memory on WebAssembly.
   "#mapped-source": {
+    win32: "./fs/mapped_win32.velt",
     wasi: "./fs/mapped_buffer.velt",
     js: "./fs/mapped_buffer.velt",
     default: "./fs/mapped_posix.velt",
@@ -252,13 +259,21 @@ export const imports: Imports = {
     arm64: "./lang/math/fma_arm64.velt",
     default: "./lang/math/fma_check_needed.velt",
   },
-  // Whether the CPU has Arm's bf16 instructions (`bf16x8.dotAddFast`'s `bfdot`,
-  // std/simd/bf16_check.velt): the kernel's capability word on Linux, a sysctl on macOS; no
+  // The arm64 features of this CPU (std/lang/cpu, read by `cpuStart` at start-up): the kernel's
+  // capability words on Linux, sysctls on macOS, `IsProcessorFeaturePresent` on Windows; none
   // elsewhere, where std has no way to ask.
-  "#simd-bf16": {
-    darwin: "./simd/bf16_cpu_darwin.velt",
-    linux: "./simd/bf16_cpu_linux.velt",
-    default: "./simd/bf16_cpu_none.velt",
+  // The start-up check of the CPU's features (std/lang/hooks/cpu.velt): CPUID on x86-64, the
+  // operating system's answer on arm64 (`#cpu-arm`), nothing on WebAssembly.
+  "#cpu-start": {
+    x64: "./lang/cpu/start_x64.velt",
+    arm64: "./lang/cpu/start_arm64.velt",
+    wasm: "./lang/cpu/start_none.velt",
+  },
+  "#cpu-arm": {
+    darwin: "./lang/cpu/arm_darwin.velt",
+    linux: "./lang/cpu/arm_linux.velt",
+    win32: "./lang/cpu/arm_win32.velt",
+    default: "./lang/cpu/arm_none.velt",
   },
   // The environment's variables: the C library's on macOS and Linux (each with its own way to
   // `environ`), Win32's on Windows, the WebAssembly runtime's there. Nothing in them throws: the
@@ -277,6 +292,15 @@ export const imports: Imports = {
   },
   // Winsock for velt/os' `hostname()` on Windows, started once per process; nothing elsewhere.
   "#os-winsock": { win32: "./os/winsock_win32.velt", default: "./os/winsock_none.velt" },
+  // `process.memoryUsage()`'s two figures (std/prelude/process.velt): `/proc/self/statm` on
+  // Linux, `task_info` on macOS, kernel32's process counters on Windows, the WebAssembly
+  // runtime's answer there.
+  "#memory-sys": {
+    darwin: "./process/memory_darwin.velt",
+    linux: "./process/memory_linux.velt",
+    win32: "./process/memory_win32.velt",
+    default: "./process/memory_wasm.velt",
+  },
   // Whether a file descriptor is a terminal: the C library's `isatty` on macOS and Linux, a
   // console handle on Windows, the WebAssembly runtime's answer there.
   "#tty": {

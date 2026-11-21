@@ -1,0 +1,9 @@
+// `repeat` with a negative count is JavaScript's RangeError (std/prelude/string.velt, #2198):
+// the counts before it give their text, as in Node.
+
+function main() {
+  const counts = [2, 0, 1, -1];
+  for (const n of counts) {
+    console.log(JSON.stringify("ab".repeat(n)));
+  }
+}

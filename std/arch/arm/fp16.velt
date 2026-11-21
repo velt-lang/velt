@@ -1,0 +1,25 @@
+// velt/arch/arm (internal): `Fp16`, the check of `fp16-arm` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { FP16_ARM } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("fp16-arm")`) and what such code calls.
+declare function velt_simd_has_fp16_arm(): bool;
+// Whether this build runs arm64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_arm(): bool;
+
+/** Half-precision arithmetic (FEAT_FP16). The check of `@targetFeature("fp16-arm")`. */
+export class Fp16 {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=FP16`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_fp16_arm() || (velt_simd_on_arm() && cpuHas(FP16_ARM));
+  }
+}

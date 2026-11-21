@@ -1,0 +1,66 @@
+// velt/process (internal): `process.memoryUsage()` on macOS (`#memory-sys`' darwin variant,
+// std/imports.velt): `task_info(TASK_VM_INFO)` for this task, whose `resident_size` is the
+// resident set size and whose `phys_footprint` is `heapUsed`: the memory the process itself
+// has committed, compressed or not (what Activity Monitor shows as "Memory"). Read into one
+// block from `calloc` (no arrays: passing one to C costs every program that calls this a
+// noticeably longer compile).
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+declare c("c") function task_info(task: u32, flavor: u32, info: Ptr<i32>, count: Ptr<u32>): i32;
+
+/** This task's port (`mach_task_self()` reads it). */
+declare c("c") let mach_task_self_: u32;
+
+declare c("c") function calloc$memory(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$memory(p: Ptr<u8> | null): void;
+
+/** `TASK_VM_INFO`. */
+const TASK_VM_INFO: u32 = 22;
+
+/**
+ * `TASK_VM_INFO_REV1_COUNT`: the `integer_t`s of `struct task_vm_info` up to and including
+ * `phys_footprint`, which every macOS Velt supports fills.
+ */
+const REV1_COUNT: u32 = 38;
+
+/** Where the structure goes in the block, after the count (`mach_msg_type_number_t`). */
+const INFO_AT: usize = 8;
+/** `resident_size`'s offset in `struct task_vm_info`. */
+const RESIDENT_AT: usize = 16;
+/** `phys_footprint`'s offset in `struct task_vm_info`. */
+const FOOTPRINT_AT: usize = 144;
+
+/** The 64-bit field at offset `at` of this task's `struct task_vm_info`, or 0 when unread. */
+function field(at: usize): i64 {
+  const size = INFO_AT + (REV1_COUNT as usize) * 4;
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$memory(1, size) };
+  if (block === null) {
+    return 0;
+  }
+  const p = Ptr.addressOf(block);
+  let value: i64 = 0;
+  // SAFETY: the block holds the count, which says the room after it, and `REV1_COUNT`
+  // `integer_t`s; this task's own port; the block is freed once, after the reads.
+  unsafe {
+    addressStore<u32>(p, REV1_COUNT);
+    const r = task_info(mach_task_self_, TASK_VM_INFO, Ptr.at<i32>(p + INFO_AT), Ptr.at<u32>(p));
+    if (r === 0 && (addressLoad<u32>(p) as usize) * 4 >= at + 8) {
+      value = addressLoad<i64>(p + INFO_AT + at);
+    }
+    free$memory(block);
+  }
+  return value;
+}
+
+/** The resident set size in bytes (0 if the OS does not say). */
+export function residentBytes(): i64 {
+  return field(RESIDENT_AT);
+}
+
+/** The process' physical footprint in bytes (0 if the OS does not say). */
+export function heapBytes(): i64 {
+  return field(FOOTPRINT_AT);
+}
