@@ -5,7 +5,8 @@
 //!
 //! Two kinds of modules:
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
-//!   methods and builders, number formatting, byte buffers
+//!   methods and builders, number formatting, velt/db's rows functions (std's JSON reader names
+//!   them; a wasm program has no row cursor to read), byte buffers
 //!   and their bulk operations, BigInts, results, object handles, hashing (also `velt/hash`'s
 //!   FNV-1a), HTML escaping, math, memory, the fs operations and the
 //!   `*_sync` fs calls. Their
@@ -30,6 +31,8 @@ pub mod bytes;
 #[path = "../../velt_rt/src/bytes_ops.rs"]
 pub mod bytes_ops;
 pub mod cell_owner;
+#[path = "../../velt_rt/src/db_rows.rs"]
+pub mod db_rows;
 #[path = "../../velt_rt/src/deep_eq.rs"]
 pub mod deep_eq;
 #[path = "../../velt_rt/src/drop_depth.rs"]
