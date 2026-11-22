@@ -13,10 +13,10 @@ import { IoError } from "velt/io/error";
 import { IoResult, unwrapIo } from "velt/native/result";
 import { TcpStream } from "velt/net";
 import { AbortController, AbortError, AbortSignal } from "velt/task";
-import { Target } from "velt/net/http/fetch/client/target";
+import { Target, TlsOn } from "velt/net/http/fetch/client/target";
 import { setBytes } from "velt/lang/bytes/copy";
 import { stdUsed } from "velt/lang/intrinsics";
-import { dialPlain, dialTls, reactorUp, tlsOn } from "#fetch-dial";
+import { dialPlain, dialTls, reactorUp } from "#fetch-dial";
 
 declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
 
@@ -233,12 +233,14 @@ export async function dial(
   alpn: string = "http/1.1",
 ): Promise<TcpStream, IoError | AbortError> {
   const addr = `${t.hostname}:${t.port}`;
+  // `https:` needs the request's TLS client, checked before a socket is made.
+  const tls = t.https ? tlsOf(t, addr) : null;
   // Where the executor in Velt's pool keeps streams of its reactor (std/net/tcp_sched.velt notes
   // it): a socket on the reactor, with the TLS client in Velt over it for `https:`
   // (dial_sched.velt). A constant: a build without it lowers only the runtime's connect below.
   if (stdUsed("fetch-pool-reactor") && reactorUp()) {
-    return t.https
-      ? await dialTls(addr, bare(t.hostname), ca, alpn, signal)
+    return tls != null
+      ? await dialTls(addr, bare(t.hostname), ca, alpn, tls, signal)
       : await dialPlain(addr, signal);
   }
   const stop = new AbortController();
@@ -265,11 +267,23 @@ export async function dial(
   } catch (e) {
     throw failed(e);
   }
-  if (!t.https) {
+  if (tls == null) {
     return TcpStream.ofHandle(fd);
   }
   const left = CONNECT_MS - ((Date.now() as i64) - start);
-  return await tlsOn(fd, addr, bare(t.hostname), ca, alpn, left, signal);
+  return await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal);
+}
+
+/**
+ * The TLS client of `t`'s request (`Target.tls`). Only `fetchPlain` (fetch.velt) has none, for
+ * an `http:` URL that follows no redirect, so never reaches `https:`: an internal error.
+ */
+function tlsOf(t: Target, addr: string): TlsOn throws IoError {
+  const tls = t.tls;
+  if (tls == null) {
+    throw new IoError("ENOTSUP", `ICE: fetch reached https: (${addr}) without a TLS client`);
+  }
+  return tls;
 }
 
 /** What `expire` and `aborted` give when they win the race. */
