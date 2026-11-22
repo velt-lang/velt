@@ -134,8 +134,8 @@ the module (`Ctx::demand_std`, `crates/velt_sema/src/std_load.rs`):
 
 A module that breaks the rule is not added in the middle of the check. With the driver's
 `LoadOptions::refuse_out_of_rule` the loader refuses it (`StdBatch::refused`) instead of
-reporting an internal error; the check goes on without it, every later demand is refused too,
-and the driver then throws that check away and loads the program again with the refused modules
+reporting an internal error; the check stops there (`StdLoads::refused`: the bodies' walk and
+the rounds end, every later demand is refused too), and the driver then throws that check away and loads the program again with the refused modules
 up front (`LoadOptions::preload`, veltc's `sema_stage`; `velt check`'s recovering check and the
 language server do the same). That second check is an ordinary one: a module loaded up front
 may extend what it likes. The TLS client and server (`std/net/tls/fd_client.velt`,
@@ -268,9 +268,13 @@ and requires no diagnostics, and the nightly benchmark `compile/check_all_std` m
 
 ## Not yet implemented
 
-- **A cheaper second check.** A module that can't be served in place costs a whole check again
-  (the first stops at nothing: it runs to its end with the module missing). The build cache could
-  remember which modules a program's last build loaded up front.
+- **No second check for TLS.** A module that can't be served in place costs a check again: the
+  first stops at the refusal, but the collection and the bodies checked up to it are lost (about
+  20% of a TLS program's build). Serving the TLS client and server in place needs the rule lifted
+  for what they add: the error classes under `Error` and `IoError` (`CryptoError`, `TlsFailure`,
+  `CertificateRefused`), velt/simd's `extend`s of the built-in vector types, `bytes_view`'s of
+  `Array` and `fd_reactor`'s of `TlsServer`. Meanwhile the build cache could remember which
+  modules a program's last build loaded up front.
 
 - **Global modules loaded on demand.** The global modules with a `load for:` predicate, such as
   `std/prelude/global/host_async.velt`, move from the loader's syntactic trigger to a demand made
