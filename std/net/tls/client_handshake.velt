@@ -342,7 +342,8 @@ export class ClientHandshake {
   }
 
   private finished(m: u8[], body: u8[]): i32 {
-    const expected = finishedMac(this.serverHandshake, this.hash());
+    const transcript = this.hash();
+    const expected = finishedMac(this.serverHandshake, transcript);
     const n = expected.length;
     let diff: u8 = body.length == n ? 0 : 1;
     for (let i: usize = 0; i < n && i < body.length; i++) {
@@ -375,7 +376,8 @@ export class ClientHandshake {
     fin.u8(FINISHED);
     const f = fin.begin(3);
     // The transcript only grew when a Certificate was sent; otherwise `h` is still its hash.
-    fin.put(finishedMac(this.clientHandshake, context != null ? this.hash() : h));
+    const sent = context != null ? this.hash() : h;
+    fin.put(finishedMac(this.clientHandshake, sent));
     fin.end(f, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);
