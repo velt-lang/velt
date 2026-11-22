@@ -170,8 +170,8 @@ function reported(model: Model, id: i64, out: Output): bool {
 /**
  * The generator of `parseJsonCursor<T>(cursor: u64, flags: i64, maxDepth: i64): T throws
  * JsonError`: a native driver's rows (velt/db's `decodeRows`), read by column when `T` is a row
- * of plain fields or an array of them (velt/db/generate/columns), else by the reader over the
- * runtime's row reader, as `parseJsonTop` reads text.
+ * of plain fields or an array of them (velt/db/generate/columns), else by a reader over the
+ * rows (rows_reader.velt), as `parseJsonTop` reads text.
  */
 export function parseJsonCursor(req: InstanceRequest, out: Output): void {
   const model = req.model;
@@ -208,10 +208,8 @@ export function parseJsonCursor(req: InstanceRequest, out: Output): void {
     }
     return;
   }
-  // The runtime's reader reads the cursor's rows as a document.
-  out.line(
-    `const r = Reader.overRows(velt_rt_json_reader_over_cursor(${cursor}, ${flags} as u32, ${depth} as u32));`,
-  );
+  // The rows reader reads the cursor's rows as a document.
+  out.line(`const r = Reader.overCursor(${cursor}, ${flags} as u32, ${depth} as u32);`);
   out.line(`try {`);
   readInto(out, model, id, "v");
   out.line(`if (!readerFinish(r)) { throw jsonFailed("end of input"); }`);

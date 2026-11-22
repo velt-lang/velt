@@ -5,7 +5,7 @@
 //!
 //! Two kinds of modules:
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
-//!   methods and builders, number formatting, the JSON reader, byte buffers
+//!   methods and builders, number formatting, byte buffers
 //!   and their bulk operations, BigInts, results, object handles, hashing (also `velt/hash`'s
 //!   FNV-1a), HTML escaping, math, memory, the fs operations and the
 //!   `*_sync` fs calls. Their
@@ -58,7 +58,6 @@ mod inspect_cycles;
 #[path = "../../velt_rt/src/inspect_layout/mod.rs"]
 mod inspect_layout;
 pub mod io;
-pub mod json;
 #[path = "../../velt_rt/src/math.rs"]
 pub mod math;
 #[path = "../../velt_rt/src/mem.rs"]

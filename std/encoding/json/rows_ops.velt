@@ -1,0 +1,138 @@
+// velt/encoding/json (internal): what a `Reader` (reader.velt) reading a native driver's rows does
+// on its failure branch (such a reader stays failed with `ROWS`): each forwards to its
+// `RowsReader` (rows_reader.velt), out of line, so the text reader's methods carry one call for
+// rows (as they carried one runtime call before #3318) and stay small for the text they read.
+
+import { Reader, STEP_MORE } from "velt/encoding/json/reader";
+import { noInline, strByteLen } from "velt/lang/intrinsics";
+import {
+  rowsReadBool,
+  rowsReadF64,
+  rowsReadI64,
+  rowsReadNull,
+  rowsReadString,
+  rowsSkipUnknownValue,
+  rowsSkipValue,
+} from "velt/encoding/json/rows_reads";
+
+@noInline
+export function rowsPeek(r: Reader): u32 {
+  return r.rows!.peek();
+}
+
+/** Consumes `{` (123) or `[` (91). */
+@noInline
+export function rowsOpen(r: Reader, bracket: u8): bool {
+  return r.rows!.open(bracket);
+}
+
+@noInline
+export function rowsArrayNext(r: Reader): u8 {
+  return r.rows!.arrayNext();
+}
+
+/**
+ * The next key: a column's name, or a nested value's key as the nested reader has it, compared
+ * in place in its text, which `r` takes as its own source (unused otherwise while reading rows).
+ * A column's name counts as escaped (`keyDecoded`).
+ */
+@noInline
+export function rowsNextKey(r: Reader): u8 {
+  const rows = r.rows!;
+  const step = rows.nextKey();
+  const n = rows.nested;
+  if (rows.nestedKey && n != null) {
+    r.src = n.src;
+    r.keyStart = n.keyStart;
+    r.keyEnd = n.keyEnd;
+    r.keyEscaped = n.keyEscaped;
+    r.keyDecoded = n.keyDecoded;
+    r.keyLen = n.keyLen;
+    return step;
+  }
+  const key = step == STEP_MORE ? rows.text : "";
+  r.keyLen = strByteLen(key);
+  r.keyEscaped = true;
+  r.keyDecoded = key;
+  return step;
+}
+
+/** A string value: `r.decoded` after true (counted as escaped). */
+@noInline
+export function rowsString(r: Reader): bool {
+  const rows = r.rows!;
+  const ok = rowsReadString(rows);
+  r.escaped = true;
+  r.decoded = ok ? rows.text : "";
+  return ok;
+}
+
+/** A number value: `r.num` after true. */
+@noInline
+export function rowsF64(r: Reader): bool {
+  const rows = r.rows!;
+  const ok = rowsReadF64(rows);
+  r.num = rows.num;
+  return ok;
+}
+
+/** An integer (one at least 0 when `unsigned`): `r.int` after true. */
+@noInline
+export function rowsI64(r: Reader, unsigned: bool): bool {
+  const rows = r.rows!;
+  const ok = rowsReadI64(rows) && (!unsigned || rows.int >= 0);
+  r.int = rows.int;
+  return ok;
+}
+
+/** `true` or `false`: `r.int` is 1 or 0 after true. */
+@noInline
+export function rowsBool(r: Reader): bool {
+  const rows = r.rows!;
+  const ok = rowsReadBool(rows);
+  r.int = rows.flag ? 1 : 0;
+  return ok;
+}
+
+@noInline
+export function rowsNull(r: Reader): bool {
+  return rowsReadNull(r.rows!);
+}
+
+@noInline
+export function rowsSkip(r: Reader): bool {
+  return rowsSkipValue(r.rows!);
+}
+
+@noInline
+export function rowsSkipUnknown(r: Reader): bool {
+  return rowsSkipUnknownValue(r.rows!);
+}
+
+@noInline
+export function rowsMark(r: Reader): u64 {
+  return r.rows!.mark();
+}
+
+@noInline
+export function rowsReset(r: Reader, mark: u64): void {
+  r.rows!.reset(mark);
+}
+
+@noInline
+export function rowsEnd(r: Reader): bool {
+  return r.rows!.end();
+}
+
+/** One value read whole: its JSON text in `r.rowsText` (`r.rowsValue`: it read). */
+@noInline
+export function rowsValue(r: Reader): void {
+  const rows = r.rows!;
+  r.rowsValue = rows.value();
+  r.rowsText = r.rowsValue ? rows.text : "";
+}
+
+@noInline
+export function rowsMessage(r: Reader, expected: string, path: string): string {
+  return r.rows!.message(expected, path);
+}

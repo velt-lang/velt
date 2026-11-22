@@ -1,0 +1,152 @@
+// velt/encoding/json (internal): the JSON text of what a `RowsReader` (rows_reader.velt) reads
+// whole (`value`, for a `JsonValue`): the rows, a row or a cell as the JSON they stand for, into a
+// string builder (as `JSON.stringify` writes: generated code can't be used here, which the
+// generators themselves build on). Also the text reader a nested value (a JSON column) is read
+// with.
+
+import { AT_BYTE, AT_ROW, AT_TOP, AT_VAL, RowsReader } from "velt/encoding/json/rows_reader";
+import {
+  CELL_BLOB,
+  CELL_BOOL,
+  CELL_FLOAT,
+  CELL_INT,
+  CELL_JSON,
+  CELL_NONE,
+  CELL_TEXT,
+  RowCells,
+} from "velt/encoding/json/rows_cells";
+import { NONE, Reader, readerSkipValue } from "velt/encoding/json/reader";
+import { OK } from "velt/encoding/json/scan";
+import { writeString } from "velt/encoding/json/writer";
+import { writeF64 } from "velt/encoding/json/writer_number";
+import { pushI64 } from "velt/lang/number/integer";
+import { strByteLen } from "velt/lang/intrinsics";
+import { utf8Substring } from "velt/encoding";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+
+/**
+ * Appends to the builder `buf` the JSON text of the value `rr` is at (the rows, a row, a cell or a
+ * blob's byte), leaving `rr` there (a live cursor's rows are read, though: `rr` skips them next):
+ * false when it is at none.
+ */
+export function rowsJsonText(rr: RowsReader, buf: string): bool {
+  let ok = false;
+  const at = rr.at;
+  const cells = rr.cells;
+  if (at == AT_TOP) {
+    if (cells.single) {
+      ok = cells.rowAhead();
+      if (ok) {
+        pushRow(cells, buf);
+      }
+    } else {
+      // Every row from here, without moving a copy's current row.
+      const from = cells.row;
+      velt_rt_strbuf_push_str(buf, "[");
+      let first = true;
+      while (cells.rowAhead()) {
+        if (!first) {
+          velt_rt_strbuf_push_str(buf, ",");
+        }
+        first = false;
+        pushRow(cells, buf);
+        cells.rowDone();
+      }
+      cells.row = from;
+      velt_rt_strbuf_push_str(buf, "]");
+      ok = true;
+    }
+  } else if (at == AT_ROW) {
+    pushRow(cells, buf);
+    ok = true;
+  } else if (at == AT_VAL) {
+    ok = rr.kind != CELL_NONE;
+    if (ok) {
+      pushCell(cells, buf, rr.col);
+    }
+  } else if (at == AT_BYTE && rr.blobAt < rr.blob.length) {
+    const b = rr.blob[rr.blobAt] as i64;
+    pushI64(buf, b);
+    ok = true;
+  }
+  return ok;
+}
+
+// Appends the current row of `cells` as a JSON object to the builder `buf`.
+function pushRow(cells: RowCells, buf: string): void {
+  const names = cells.names;
+  velt_rt_strbuf_push_str(buf, "{");
+  for (let col: usize = 0; col < names.length; col++) {
+    if (col > 0) {
+      velt_rt_strbuf_push_str(buf, ",");
+    }
+    const name = names[col];
+    writeString(buf, name);
+    velt_rt_strbuf_push_str(buf, ":");
+    pushCell(cells, buf, col);
+  }
+  velt_rt_strbuf_push_str(buf, "}");
+}
+
+// Appends cell `col` of the current row of `cells` as JSON text to the builder `buf`.
+function pushCell(cells: RowCells, buf: string, col: usize): void {
+  const k = cells.kind(col);
+  if (k == CELL_BOOL) {
+    const t = cells.bool(col) ? "true" : "false";
+    velt_rt_strbuf_push_str(buf, t);
+  } else if (k == CELL_INT) {
+    cells.i64(col);
+    const v = cells.int;
+    pushI64(buf, v);
+  } else if (k == CELL_FLOAT) {
+    cells.f64(col);
+    const x = cells.num;
+    writeF64(buf, x);
+  } else if (k == CELL_TEXT) {
+    cells.textAt(col);
+    const t = cells.text;
+    writeString(buf, t);
+  } else if (k == CELL_JSON) {
+    cells.jsonAt(col);
+    const t = cells.text;
+    velt_rt_strbuf_push_str(buf, t);
+  } else if (k == CELL_BLOB) {
+    const bytes = cells.blob(col);
+    velt_rt_strbuf_push_str(buf, "[");
+    for (let i: usize = 0; i < bytes.length; i++) {
+      if (i > 0) {
+        velt_rt_strbuf_push_str(buf, ",");
+      }
+      const b = bytes[i] as i64;
+      pushI64(buf, b);
+    }
+    velt_rt_strbuf_push_str(buf, "]");
+  } else {
+    velt_rt_strbuf_push_str(buf, "null");
+  }
+}
+
+/** Text reader `r` over new text `src`, its options kept: as `new Reader(src, ...)` would start. */
+export function restartReader(r: Reader, src: string): void {
+  r.src = src;
+  r.len = strByteLen(src);
+  r.pos = 0;
+  r.code = OK;
+  r.at = 0;
+  r.failed = NONE;
+  r.depth = 0;
+  r.afterOpen = false;
+  r.ends = null;
+}
+
+/** The text of the next value of text reader `r`, skipped (into `r.decoded`): true when it read. */
+export function nestedText(r: Reader): bool {
+  r.peekNonWs();
+  const start = r.pos;
+  if (!readerSkipValue(r)) {
+    return false;
+  }
+  r.decoded = utf8Substring(r.src, start, r.pos);
+  return true;
+}

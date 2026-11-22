@@ -1,0 +1,183 @@
+// velt/encoding/json (internal): a `RowsReader`'s (rows_reader.velt) reads of one value: the
+// typed reads, and skipping a value (or rejecting it, for an unknown key). A nested value (a JSON
+// column) goes to its text reader, through the text reader's own side of each `Reader` method.
+
+import {
+  CELL_BOOL,
+  CELL_FLOAT,
+  CELL_INT,
+  CELL_NONE,
+  CELL_NULL,
+  CELL_TEXT,
+} from "velt/encoding/json/rows_cells";
+import {
+  AT_BYTE,
+  AT_BYTES,
+  AT_DONE,
+  AT_ROW,
+  AT_ROWS,
+  AT_TOP,
+  AT_VAL,
+  RowsReader,
+} from "velt/encoding/json/rows_reader";
+import {
+  NONE,
+  UNKNOWN,
+  readerReadF64,
+  readerReadNull,
+  readerReadString,
+  readerSkipValue,
+} from "velt/encoding/json/reader";
+import { readerTextBool, readerTextI64 } from "velt/encoding/json/reader_ops";
+
+/** A string value: `text` after true. */
+export function rowsReadString(rr: RowsReader): bool {
+  const r = rr.nest();
+  if (r != null) {
+    const ok = readerReadString(r);
+    if (ok) {
+      rr.text = r.value();
+    }
+    rr.nestedDone();
+    return ok;
+  }
+  if (rr.val() != CELL_TEXT) {
+    return rr.mismatch();
+  }
+  rr.cells.textAt(rr.col);
+  rr.text = rr.cells.text;
+  rr.advance();
+  return true;
+}
+
+/** A number value: `num` after true. */
+export function rowsReadF64(rr: RowsReader): bool {
+  const r = rr.nest();
+  if (r != null) {
+    const ok = readerReadF64(r);
+    rr.num = r.lastF64();
+    rr.nestedDone();
+    return ok;
+  }
+  if (rr.at == AT_BYTE && rr.error == NONE) {
+    if (!rowsByte(rr)) {
+      return false;
+    }
+    rr.num = rr.int as f64;
+    return true;
+  }
+  const k = rr.val();
+  if (k != CELL_INT && k != CELL_FLOAT) {
+    return rr.mismatch();
+  }
+  rr.cells.f64(rr.col);
+  rr.num = rr.cells.num;
+  rr.advance();
+  return true;
+}
+
+/** An integer, or a float that is one exactly (the text reader takes `3.0` too): `int`. */
+export function rowsReadI64(rr: RowsReader): bool {
+  const r = rr.nest();
+  if (r != null) {
+    const ok = readerTextI64(r);
+    rr.int = r.int;
+    rr.nestedDone();
+    return ok;
+  }
+  if (rr.at == AT_BYTE && rr.error == NONE) {
+    return rowsByte(rr);
+  }
+  const k = rr.val();
+  if ((k != CELL_INT && k != CELL_FLOAT) || !rr.cells.i64(rr.col)) {
+    return rr.mismatch();
+  }
+  rr.int = rr.cells.int;
+  rr.advance();
+  return true;
+}
+
+// The pending blob byte, consumed: `int` after true.
+function rowsByte(rr: RowsReader): bool {
+  if (rr.blobAt >= rr.blob.length) {
+    return false;
+  }
+  rr.int = rr.blob[rr.blobAt] as i64;
+  rr.blobAt++;
+  rr.at = AT_BYTES;
+  return true;
+}
+
+/** `true` or `false`: `flag` after true. */
+export function rowsReadBool(rr: RowsReader): bool {
+  const r = rr.nest();
+  if (r != null) {
+    const ok = readerTextBool(r);
+    rr.flag = r.int != 0;
+    rr.nestedDone();
+    return ok;
+  }
+  if (rr.val() != CELL_BOOL) {
+    return rr.mismatch();
+  }
+  rr.flag = rr.cells.bool(rr.col);
+  rr.advance();
+  return true;
+}
+
+/** `null`. */
+export function rowsReadNull(rr: RowsReader): bool {
+  const r = rr.nest();
+  if (r != null) {
+    const ok = readerReadNull(r);
+    rr.nestedDone();
+    return ok;
+  }
+  if (rr.val() != CELL_NULL) {
+    return rr.mismatch();
+  }
+  rr.advance();
+  return true;
+}
+
+/** Skips one complete value of any kind. */
+export function rowsSkipValue(rr: RowsReader): bool {
+  const r = rr.nest();
+  if (r != null) {
+    const ok = readerSkipValue(r);
+    rr.nestedDone();
+    return ok;
+  }
+  if (rr.error != NONE) {
+    return false;
+  }
+  const at = rr.at;
+  if (at == AT_TOP) {
+    rr.at = AT_DONE;
+  } else if (at == AT_ROW) {
+    rr.cells.rowDone();
+    rr.at = AT_ROWS;
+  } else if (at == AT_VAL) {
+    if (rr.kind == CELL_NONE) {
+      return rr.mismatch();
+    }
+    rr.advance();
+  } else if (at == AT_BYTE) {
+    rr.blobAt++;
+    rr.at = AT_BYTES;
+  } else {
+    return rr.mismatch();
+  }
+  return true;
+}
+
+/** Skips the value of a key the target type does not have (fails if unknown keys are rejected). */
+export function rowsSkipUnknownValue(rr: RowsReader): bool {
+  if (rr.rejectUnknown) {
+    if (rr.error == NONE) {
+      rr.error = UNKNOWN;
+    }
+    return false;
+  }
+  return rowsSkipValue(rr);
+}

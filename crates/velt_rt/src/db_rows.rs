@@ -249,6 +249,37 @@ pub unsafe extern "C" fn velt_rt_rows_str(st: u64, col: u64, out: *mut VeltStr) 
     OK
 }
 
+/// A nested value's JSON text (`Cell::Json`) as a string: what std's rows reader
+/// (std/encoding/json/rows_reader.velt) reads with a text reader. Text that is not UTF-8 gets
+/// U+FFFD (a driver's JSON is UTF-8).
+///
+/// # Safety
+/// As the module says; `out` is writable.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_json(st: u64, col: u64, out: *mut VeltStr) -> u8 {
+    let t = match cell(st, col) {
+        Cell::Json(t) => t,
+        Cell::Null => return NULL,
+        _ => return MISMATCH,
+    };
+    out.write(match std::str::from_utf8(t) {
+        Ok(text) => VeltStr::from_text(text),
+        Err(_) => VeltStr::from_text(&String::from_utf8_lossy(t)),
+    });
+    OK
+}
+
+/// The rows' header as a `u8[]` (`velt_text::rows`' layout: `single: u8`, `columns: u16`, then
+/// each name with its length in front): std's rows reader takes `single` and the column names
+/// from it.
+///
+/// # Safety
+/// As the module says; `out` is writable.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_header(st: u64, out: *mut VeltBytes) {
+    out.write(VeltBytes::from_vec(state(st).cursor.header().to_vec()));
+}
+
 /// What column `col` of the current row holds, numbered as std/db's `CellKind`: 0 NULL, 1 a
 /// boolean, 2 an integer, 3 a float, 4 text, 5 a blob, 6 a nested value (JSON).
 #[no_mangle]
@@ -298,8 +329,33 @@ pub unsafe extern "C" fn velt_rt_rows_fail(
         path.push('.');
         path.push_str(&field);
     }
-    let msg = crate::json::error::mismatch_message(&(*expected).text_lossy(), &path);
+    let msg = format!(
+        "expected {} at {}",
+        (*expected).text_lossy(),
+        short_path(&path)
+    );
     out.write(VeltStr::from_vec(msg.into_bytes()));
+}
+
+/// Path segments kept at each end of a shortened path (as std's `shortPath`, reader_ops.velt).
+const PATH_KEEP: usize = 10;
+
+/// `path` with at most `2 * PATH_KEEP` segments (each starts at a `.` or a `[`): a longer one
+/// keeps its first and last `PATH_KEEP` with `…` between.
+fn short_path(path: &str) -> std::borrow::Cow<'_, str> {
+    let starts: Vec<usize> = path
+        .bytes()
+        .enumerate()
+        .filter(|&(_, b)| b == b'.' || b == b'[')
+        .map(|(i, _)| i)
+        .collect();
+    if starts.len() <= 2 * PATH_KEEP {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    // `.` and `[` are ASCII, so both cuts are on character boundaries.
+    let head = &path[..starts[PATH_KEEP]];
+    let tail = &path[starts[starts.len() - PATH_KEEP]..];
+    std::borrow::Cow::Owned(format!("{head}…{tail}"))
 }
 
 #[cfg(test)]
@@ -313,6 +369,14 @@ mod tests {
         assert_eq!([at(0), at(1), at(2), at(3), at(4)], [2, -1, 0, 14, -1]);
         let wide: Vec<i32> = (0..20).map(|c| c % 3).collect();
         assert_eq!((field_map(&wide) >> 60) & 15, 1);
+    }
+
+    #[test]
+    fn long_paths_keep_both_ends() {
+        assert_eq!(short_path("$.a[1].b"), "$.a[1].b");
+        let deep = "$".to_string() + &"[0]".repeat(30) + ".name";
+        let want = "$".to_string() + &"[0]".repeat(10) + "…" + &"[0]".repeat(9) + ".name";
+        assert_eq!(short_path(&deep), want);
     }
 
     #[test]

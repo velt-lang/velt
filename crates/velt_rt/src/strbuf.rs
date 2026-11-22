@@ -9,8 +9,8 @@
 //! immutable values: other copies never see the append).
 
 use crate::fmt;
-use crate::json::escape::{push_json_string, push_json_string_counted};
 use crate::str::{Summary, VeltStr};
+use velt_text::json_escape::{push_json_string, push_json_string_counted};
 
 /// Identical to `VeltStr` (size 24, align 8).
 pub type VeltStrBuf = VeltStr;

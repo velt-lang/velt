@@ -1,0 +1,24 @@
+// velt/encoding/json (internal): a position a `RowsReader` (rows_reader.velt) saved with `mark`,
+// to come back to with `reset`.
+
+/** A position `RowsReader.mark` saved. */
+export class RowsMark {
+  at: u8;
+  col: usize;
+  kind: u8;
+  blob: u8[];
+  blobAt: usize;
+  row: usize;
+  /** A nested reader was reading, at its own mark `inner`. */
+  nested: bool = false;
+  inner: u64 = 0;
+
+  constructor(at: u8, col: usize, kind: u8, blob: u8[], blobAt: usize, row: usize) {
+    this.at = at;
+    this.col = col;
+    this.kind = kind;
+    this.blob = blob;
+    this.blobAt = blobAt;
+    this.row = row;
+  }
+}
