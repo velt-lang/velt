@@ -37,7 +37,7 @@ import * as wm from "./weak_maps";
 import * as wr from "./weak_refs";
 import * as rec from "./weak_records";
 import { examine } from "./weak_examine";
-import { slotDrop, slotFor, slotsLive } from "./weak_slots";
+import { slotDrop, slotFor } from "./weak_slots";
 import { trial } from "./weak_trial";
 import {
   count,
@@ -424,7 +424,7 @@ export function weakSlotDrop(s: usize): void {
 /** The slot blocks alive (tests and leak checks). */
 @noInline
 export function weakSlotsLive(): u64 {
-  return slotsLive();
+  return rec.slotsLive();
 }
 
 /** The records of weakly held objects (tests and leak checks). */

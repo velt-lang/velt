@@ -13,7 +13,7 @@
 // item in the record and the rest in a vector, so a record of an object in one map with one
 // `WeakRef` allocates nothing of its own.
 
-import { inline, noInline } from "velt/lang/intrinsics";
+import { addressAtomicLoad, addressAtomicRmw, inline, noInline } from "velt/lang/intrinsics";
 import {
   RC_COUNT,
   RC_GATED,
@@ -65,7 +65,12 @@ export const H_GRAPH: usize = 104;
 export const H_REL_FN: usize = 112;
 export const H_REL_VALUE: usize = 120;
 export const H_REL_MORE: usize = 128;
-const HEADER: usize = 136;
+/**
+ * The slot blocks alive (weak_slots.velt), for tests: the core's blocks are outside the leak
+ * counters. Changed atomically, as a slot is freed without the lock.
+ */
+const H_SLOTS: usize = 136;
+const HEADER: usize = 144;
 
 /** The process's header, made on first use. */
 export function state(): usize {
@@ -88,6 +93,25 @@ function makeState(): usize {
   free(ld(n + H_RECS));
   free(n);
   return was;
+}
+
+/** Counts a slot block made (`n` = 1) or freed (-1); a slot exists only once the header does. */
+export function slotCounted(n: i64): void {
+  const at = state() + H_SLOTS;
+  // SAFETY: a word of the core's header, which lives as long as the process.
+  unsafe {
+    addressAtomicRmw<i64>(at, "add", n, "relaxed");
+  }
+}
+
+/** The slot blocks alive; 0 before the first weak operation. */
+export function slotsLive(): u64 {
+  const h = STATE.load("acquire") as usize;
+  if (h === 0) {
+    return 0;
+  }
+  // SAFETY: as in `slotCounted`.
+  return unsafe { addressAtomicLoad<i64>(h + H_SLOTS, "relaxed") } as u64;
 }
 
 /** A record: its object (0 empty, 1 removed), then the object's trace glue. */

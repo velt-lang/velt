@@ -14,11 +14,8 @@
 // task that owns its target, one thread at a time, as the target is: its count changes without
 // the lock (`slotDrop`).
 
-import { R_SLOT, node } from "./weak_records";
+import { R_SLOT, node, slotCounted } from "./weak_records";
 import { alloc, free, ld, st } from "./weak_mem";
-
-/** The slot blocks alive (tests: the weak core's blocks are outside the leak counters). */
-const LIVE = new Atomic<u64>(0);
 
 /** A slot: its references, then its target's address (0 once the target was freed). */
 export const S_COUNT: usize = 0;
@@ -31,7 +28,7 @@ export function slotFor(h: usize, obj: usize): usize {
   let s = ld(rec + R_SLOT);
   if (s === 0) {
     s = alloc(SLOT);
-    LIVE.add(1);
+    slotCounted(1);
     // The record's reference.
     st(s + S_COUNT, 1);
     st(s + S_TARGET, obj);
@@ -46,7 +43,7 @@ export function slotDrop(s: usize): void {
   const c = ld(s + S_COUNT) - 1;
   if (c === 0) {
     free(s);
-    LIVE.sub(1);
+    slotCounted(-1);
     return;
   }
   st(s + S_COUNT, c);
@@ -61,9 +58,4 @@ export function slotForget(rec: usize): void {
   st(rec + R_SLOT, 0);
   st(s + S_TARGET, 0);
   slotDrop(s);
-}
-
-/** The slot blocks alive. */
-export function slotsLive(): u64 {
-  return LIVE.load("relaxed");
 }
