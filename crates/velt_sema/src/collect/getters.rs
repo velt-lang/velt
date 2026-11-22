@@ -532,6 +532,7 @@ fn local(name: &str, ty: TyId, span: Span) -> LocalDef {
         ty,
         mutable: false,
         boxed: false,
+        weak: false,
         span,
     }
 }

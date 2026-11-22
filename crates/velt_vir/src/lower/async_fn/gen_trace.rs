@@ -125,6 +125,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 if info.cell {
                     return self.trace_cell(*id, tv);
                 }
+                // A `weak` variable holds its target's slot: no edge (cycles.md).
+                if info.weak.is_some() {
+                    return;
+                }
                 let whole = info.moved_fields.is_empty() && info.gen.is_none();
                 let (ty, flag, state) = (info.ty, info.flag, info.state);
                 if !whole {

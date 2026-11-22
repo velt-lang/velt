@@ -200,6 +200,8 @@ pub enum Intrinsic {
     MayAlias,
     /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
     IsUnique,
+    /// Every read of a `weak` local (hir_encodings.md `LocalDef::weak`; additive, #3119).
+    WeakRead,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
@@ -394,9 +396,8 @@ pub enum Intrinsic {
     /// at `address` in memory, unchecked (velt/ffi's raw reads of C memory, which are unsafe
     /// functions). Additive.
     AddressLoad,
-    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema
-    /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
-    /// Additive.
+    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema checks
+    /// it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address"). Additive.
     AddressStore,
     /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
     /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
@@ -625,9 +626,8 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
-    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
-    /// to std's weak core (`Construct::Weak`), which a program without weak collections
-    /// doesn't load.
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered to
+    /// std's weak core (`Construct::Weak`), which a program without weak collections doesn't load.
     WeakMapDrop,
     /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
     WeakRefDrop,

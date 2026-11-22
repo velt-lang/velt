@@ -18,7 +18,7 @@ structs! {
     Param { local, ty, mode }
     Capture { outer, inner, mode, share }
     Body { locals, block }
-    LocalDef { name, ty, mutable, boxed, span }
+    LocalDef { name, ty, mutable, boxed, weak, span }
     ExternFnDef { name, symbol, params, ret, is_async, host, c, is_decorator, span }
     CImport { library, errno, params, ret, variadic }
     HostImport { module, params, ret }
@@ -585,6 +585,7 @@ enums! {
         218 => PtrFromAddress,
         219 => PtrToAddress,
         220 => IsUnique,
+        221 => WeakRead,
     }
 }
 

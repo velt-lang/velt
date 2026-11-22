@@ -276,6 +276,7 @@ fn adapter(
         ty,
         mutable: false,
         boxed: false,
+        weak: false,
         span,
     };
     let mut locals = vec![local("this", self_ty)];

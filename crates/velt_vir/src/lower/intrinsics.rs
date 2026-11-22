@@ -494,6 +494,7 @@ impl FnLower<'_, '_> {
             (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
+            (I::WeakRead, [a]) => self.weak_local_read(a, ty),
             // A weak field's read is a reference of its own already (weak_fields.rs).
             (I::Share, [a]) if self.weak_read_expr(a) => self.expr(a),
             (I::Share, [a]) => {

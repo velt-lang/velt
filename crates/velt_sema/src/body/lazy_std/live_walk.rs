@@ -35,6 +35,11 @@ pub(super) fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             for t in f.body.locals.iter().map(|l| l.ty).chain([f.ret]) {
                 note_ty(ty, t, w);
             }
+            // A `weak` local's `let`, reads and drop call the weak core's slot hooks (velt_vir
+            // `weak_fields`).
+            if f.body.locals.iter().any(|l| l.weak) {
+                w.constructs |= Construct::Weak.bit();
+            }
             if f.is_generator {
                 w.generators[f.is_async as usize] = true;
             }
