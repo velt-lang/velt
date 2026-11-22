@@ -295,9 +295,8 @@ hi)` convert to and from `velt/simd`'s 128-bit types. LLVM lowers them as `<8 x 
 unaligned loads and stores; the wide types are the same: **8-byte aligned in fields and arrays,
 and every arch load and store is the unaligned form** (`vmovups`, `vmovdqu`, `vmovdqu8`/`16`/
 `32`/`64`), which costs nothing on aligned data on every CPU since Haswell and Zen. The aligned
-forms (`vmovaps`, `vmovdqa64`, whose AVX-512 forms fault on a misaligned address) are not in the
-table until `@align(32/64)` (step 6) exists, and then only on a `Ptr<T>` to a type declared with
-that alignment, so sema can prove the address aligned; never on an arbitrary address.
+forms (`vmovaps`, `vmovdqa64`, whose AVX-512 forms fault on a misaligned address) were planned
+for after `@align(32/64)` (step 6); step 6 dropped them (§5 "As built in step 6").
 
 After this, `velt/simd`'s `f32x8` can lower to one `ymm` register inside gated code; that is a
 separate step on `velt/simd`.
@@ -378,8 +377,30 @@ changes).
   alignment, and LLVM aligns stack slots; Cranelift aligns a stack slot to at most 16 bytes from
   the frame's start, which no Velt code can see (nothing takes a local's address), so debug
   builds keep every guarantee a program can observe.
-- **Left for a later change:** the aligned forms of step 5's loads and stores (on a `Ptr<T>` to
-  an `@align(32/64)` type) and `@cold`.
+- **No aligned loads and stores.** The aligned forms of step 5's loads and stores were planned
+  for here and are dropped:
+  - **Unsound across builds:** a debug build's stack slot is aligned to at most 16 bytes, and a
+    debug build may link std functions compiled once by LLVM (the std cache). Giving
+    `Vector256` / `Vector512` `@align(32/64)` and their rows aligned loads would let such a
+    function receive a debug build's 16-byte-aligned value and fault. A program's own `@align`
+    struct can't reach that path, because std's cached code never holds a program's types;
+    std's vector types can.
+  - **No gain:** on every CPU since Haswell and Zen an unaligned form costs the same as the
+    aligned one on aligned data.
+
+  What does pay is aligning the data itself, and `@align` does that for any program: wrap the
+  vector in a struct, and arrays of it start each element on a cache line.
+
+  ```ts
+  @align(64)
+  struct Block {
+    readonly v: Vector512<u8>;
+  }
+  ```
+
+  The same debug-build limit applies to C code that does aligned loads on the address of an
+  `@align(32/64)` local: #3539.
+- **Left for a later change:** `@cold` (its own VIR flag: #3509).
 
 ## 6. What a numeric package writes
 
@@ -479,8 +500,9 @@ generated from the table and checked against it.
    LLVM lowering, the verifier rule, the first batch, the reverse index, `velt test`'s release run
    and `VELT_CPU_DISABLE` (D).
 5. **`Vector256` / `Vector512`, unaligned loads and stores (E), the AVX2 / AVX-512 batches.**
-6. **`@repr("transparent")` (checked against clang) and `@align(n)`**, then the aligned forms of
-   step 5's loads and stores; `@cold` with its own VIR flag.
+6. **`@repr("transparent")` (checked against clang) and `@align(n)`**, and `@cold` with its own
+   VIR flag. The aligned forms of step 5's loads and stores were dropped (§5 "As built in step
+   6").
 
 ## Cost
 
