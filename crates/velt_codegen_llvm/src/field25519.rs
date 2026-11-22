@@ -11,6 +11,9 @@
 //! conditional swaps are plain IR with masks (no branch or index depends on a bit). Elsewhere the
 //! helper returns false and std runs its own ladder.
 
+// The generators name limb `k` of each operand and register `k` of the product by index.
+#![allow(clippy::needless_range_loop)]
+
 use crate::field::{adx_product, adx_square_product, asm_text, Ops, CPU_BYTE, HAS_ADX, T};
 
 /// The scratch area's slots (32 bytes each).

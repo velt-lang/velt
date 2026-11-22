@@ -14,7 +14,8 @@ import { ClientOffer } from "velt/net/tls/client_hello_parse";
 import { finishedMac } from "velt/net/tls/key_schedule";
 import { binderKey, earlySecret, ticketPsk } from "velt/net/tls/key_schedule_psk";
 import { hashLength } from "velt/net/tls/record_cipher";
-import { Ticket, TicketStore } from "velt/net/tls/ticket_store";
+import { Ticket } from "velt/net/tls/ticket";
+import { TicketStore } from "velt/net/tls/ticket_store";
 
 /** How long a ticket resumes, in seconds (the client is told; RFC 8446 allows up to 7 days). */
 export const TICKET_LIFETIME_S: usize = 7200;
@@ -73,7 +74,8 @@ export function newTicket(
   const psk = ticketPsk(resumption, nonce);
   const ticket = randomBytes(32);
   const a = randomBytes(4);
-  const ageAdd = ((a[0] as u32) << 24) | ((a[1] as u32) << 16) | ((a[2] as u32) << 8) | (a[3] as u32);
+  const ageAdd =
+    ((a[0] as u32) << 24) | ((a[1] as u32) << 16) | ((a[2] as u32) << 8) | (a[3] as u32);
   const kept = new Ticket(psk, suite, serverName, Date.now() as number, ageAdd);
   const key = ticket.slice();
   store.with((s) => s.put(key, kept));

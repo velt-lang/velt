@@ -9,7 +9,8 @@
 // ECDSA-Sig-Value), read strictly: anything but minimal, positive INTEGERs below n is refused.
 
 import { FeP256 } from "velt/crypto/field_p256";
-import { add, decodePoint, double, ONE_M } from "velt/crypto/p256";
+import { add, decodePoint, ONE_M } from "velt/crypto/p256";
+import { double } from "velt/crypto/p256_double";
 import { P256_BASE } from "velt/crypto/p256_base_table";
 import { ScalarP256 } from "velt/crypto/scalar_p256";
 

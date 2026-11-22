@@ -11,7 +11,8 @@ import { expandLabel, finishedMac } from "velt/net/tls/key_schedule";
 import { binderKey, earlySecret, resumptionMaster, ticketPsk } from "velt/net/tls/key_schedule_psk";
 import { S_SEND_FLIGHT, ServerHandshake } from "velt/net/tls/server_handshake";
 import { serverKey } from "velt/net/tls/server_key";
-import { Ticket, TicketStore } from "velt/net/tls/ticket_store";
+import { Ticket } from "velt/net/tls/ticket";
+import { TicketStore } from "velt/net/tls/ticket_store";
 import { describe, expect, it } from "velt/test";
 import * as v from "./server_keys_vectors.test";
 
@@ -55,7 +56,10 @@ function server(tickets: string[][]): ServerHandshake {
   }
   const store = new TicketStore();
   for (const t of tickets) {
-    store.put(hexDecode(t[0]), new Ticket(hexDecode(t[1]), 0x1301, "server", Date.now() as number, 0));
+    store.put(
+      hexDecode(t[0]),
+      new Ticket(hexDecode(t[1]), 0x1301, "server", Date.now() as number, 0),
+    );
   }
   const h = new ServerHandshake(key, []);
   h.tickets = shared(new Mutex<TicketStore>(store));
@@ -68,7 +72,10 @@ function types(flight: u8[]): u8[] {
   let at: usize = 0;
   while (at + 4 <= flight.length) {
     out.push(flight[at]);
-    const n = ((flight[at + 1] as usize) << 16) | ((flight[at + 2] as usize) << 8) | (flight[at + 3] as usize);
+    const n =
+      ((flight[at + 1] as usize) << 16) |
+      ((flight[at + 2] as usize) << 8) |
+      (flight[at + 3] as usize);
     at += 4 + n;
   }
   return out;
@@ -134,7 +141,10 @@ describe("the TLS 1.3 server with tickets", () => {
     // EncryptedExtensions, Certificate, CertificateVerify, Finished.
     expect(types(unknown.flight!)).toEqual([8, 11, 15, 20]);
     const store = new TicketStore();
-    store.put(hexDecode(IDENTITY), new Ticket(hexDecode(PSK), 0x1301, "server", Date.now() as number, 0));
+    store.put(
+      hexDecode(IDENTITY),
+      new Ticket(hexDecode(PSK), 0x1301, "server", Date.now() as number, 0),
+    );
     expect(store.take(hexDecode(IDENTITY)) != null).toBe(true);
     expect(store.take(hexDecode(IDENTITY)) == null).toBe(true);
   });

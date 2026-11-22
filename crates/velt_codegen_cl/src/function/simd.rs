@@ -673,7 +673,7 @@ impl Translator<'_, '_> {
             }
             return;
         }
-        let mut t = vec![zero; 9];
+        let mut t = [zero; 9];
         for i in 0..4 {
             let mut carry = zero;
             for j in 0..4 {
@@ -695,9 +695,9 @@ impl Translator<'_, '_> {
                 t[i + j] = mask(self, s);
                 carry = self.builder.ins().ushr_imm(s, 64);
             }
-            for k in i + 4..9 {
-                let s = self.builder.ins().iadd(t[k], carry);
-                t[k] = mask(self, s);
+            for tk in t.iter_mut().skip(i + 4) {
+                let s = self.builder.ins().iadd(*tk, carry);
+                *tk = mask(self, s);
                 carry = self.builder.ins().ushr_imm(s, 64);
             }
         }

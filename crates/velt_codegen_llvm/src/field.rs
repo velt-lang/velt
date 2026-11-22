@@ -18,6 +18,9 @@
 //! subtraction of `p`, kept or not without a branch, reduces it fully. The registers of the
 //! accumulator rotate from one limb to the next instead of moving.
 
+// The generators name limb `k` of each operand and register `k` of the product by index.
+#![allow(clippy::needless_range_loop)]
+
 use velt_vir::field::FieldOp;
 use velt_vir::vir::Ty;
 
@@ -31,7 +34,12 @@ pub(crate) fn helper(symbol: &str, x86: bool) -> Option<(String, Vec<String>, Ve
         return Some((name.clone(), double_helper(&name, x86), params, ret));
     }
     if op == FieldOp::X25519Ladder {
-        return Some((name.clone(), crate::field25519::ladder_helper(&name, x86), params, ret));
+        return Some((
+            name.clone(),
+            crate::field25519::ladder_helper(&name, x86),
+            params,
+            ret,
+        ));
     }
     let b_param = match op {
         FieldOp::P256Sqr => "",

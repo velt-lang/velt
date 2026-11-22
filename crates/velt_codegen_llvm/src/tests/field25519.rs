@@ -107,8 +107,8 @@ fn the_x25519_ladder_matches_the_reference() {
     let _cleanup = Cleanup(&dir);
     let x86 = cfg!(target_arch = "x86_64");
     #[cfg(target_arch = "x86_64")]
-    let adx = std::arch::is_x86_feature_detected!("bmi2")
-        && std::arch::is_x86_feature_detected!("adx");
+    let adx =
+        std::arch::is_x86_feature_detected!("bmi2") && std::arch::is_x86_feature_detected!("adx");
     #[cfg(not(target_arch = "x86_64"))]
     let adx = false;
     // Form 2: the CPU has BMI2 and ADX (asserted only where it does); form 1: it has not.

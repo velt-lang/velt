@@ -6,31 +6,10 @@
 // (std/net/tls/fd_server.velt).
 
 import { hexEncode } from "velt/encoding/hex";
+import { Ticket } from "velt/net/tls/ticket";
 
 /** How many tickets a listener keeps. */
 const CAPACITY: usize = 1024;
-
-/** What a ticket resumes: its PSK and the session it came from. */
-export class Ticket {
-  /** The PSK (as long as the suite's hash). */
-  psk: u8[];
-  /** The suite of the session (a resumption must use one with the same hash). */
-  suite: usize;
-  /** The SNI host name the session had ("" for none): a resumption must name the same. */
-  serverName: string;
-  /** When it was issued (milliseconds since the epoch). */
-  issued: number;
-  /** The ticket_age_add sent with it (the client adds it to the age it reports). */
-  ageAdd: u32;
-
-  constructor(psk: u8[], suite: usize, serverName: string, issued: number, ageAdd: u32) {
-    this.psk = psk;
-    this.suite = suite;
-    this.serverName = serverName;
-    this.issued = issued;
-    this.ageAdd = ageAdd;
-  }
-}
 
 /** The tickets of one listener (module docs). */
 export class TicketStore {

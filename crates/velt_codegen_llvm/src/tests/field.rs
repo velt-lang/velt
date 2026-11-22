@@ -235,7 +235,7 @@ fn run(clang: &Path, dir: &Path, x86: bool, forms: &[&str]) {
         }
         // The fused doubling: done only by the ADX form, then as the reference computes it.
         let fused = x86 && *form == "2";
-        for chunk in es.chunks_exact(3) {
+        for chunk in es.as_chunks::<3>().0 {
             for in_place in [false, true] {
                 let done = next() & 0xff;
                 let have: Vec<[u64; 4]> = (0..3).map(|_| std::array::from_fn(|_| next())).collect();

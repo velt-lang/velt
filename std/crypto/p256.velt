@@ -14,6 +14,7 @@
 import { CryptoError } from "velt/crypto/errors";
 import { FeP256 } from "velt/crypto/field_p256";
 import { selectBase } from "velt/crypto/p256_base_select";
+import { double } from "velt/crypto/p256_double";
 import { randomBytes } from "velt/crypto/random";
 import { noInline } from "velt/lang/intrinsics";
 
@@ -400,46 +401,4 @@ export function add(f: FeP256, d: usize, p: usize, q: usize): u64 {
   f.blend(d + 1, q + 1, z2z2, pZero);
   f.blend(d + 2, q + 2, u1, pZero);
   return same;
-}
-
-/** `d = 2p` (`d` may be `p`), dbl-2001-b for a = -3; the identity stays the identity. */
-export function double(f: FeP256, d: usize, p: usize) {
-  if (f.doubleFused(d, p)) {
-    return;
-  }
-  const delta = T;
-  const gamma = T + 1;
-  const beta = T + 2;
-  const alpha = T + 3;
-  const t = T + 4;
-  const x3 = T + 5;
-  f.square(delta, p + 2);
-  f.square(gamma, p + 1);
-  f.mul(beta, p, gamma);
-  // alpha = 3 (X - delta) (X + delta).
-  f.sub(alpha, p, delta);
-  f.add(t, p, delta);
-  f.mul(alpha, alpha, t);
-  f.add(t, alpha, alpha);
-  f.add(alpha, t, alpha);
-  // Z3 = (Y + Z)^2 - gamma - delta.
-  f.add(t, p + 1, p + 2);
-  f.square(t, t);
-  f.sub(t, t, gamma);
-  f.sub(d + 2, t, delta);
-  // X3 = alpha^2 - 8 beta.
-  f.square(x3, alpha);
-  f.add(beta, beta, beta);
-  f.add(beta, beta, beta);
-  f.add(t, beta, beta);
-  f.sub(x3, x3, t);
-  // Y3 = alpha (4 beta - X3) - 8 gamma^2.
-  f.sub(beta, beta, x3);
-  f.mul(beta, alpha, beta);
-  f.square(gamma, gamma);
-  f.add(gamma, gamma, gamma);
-  f.add(gamma, gamma, gamma);
-  f.add(gamma, gamma, gamma);
-  f.sub(d + 1, beta, gamma);
-  f.copy(d, x3);
 }
