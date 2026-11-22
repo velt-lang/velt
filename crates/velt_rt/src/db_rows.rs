@@ -308,56 +308,6 @@ pub unsafe extern "C" fn velt_rt_rows_blob(st: u64, col: u64, out: *mut VeltByte
     out.write(VeltBytes::from_vec(bytes));
 }
 
-/// The JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field`
-/// (`row` -1: the single row, `$`; `field` empty: the row itself).
-///
-/// # Safety
-/// The strings are valid; `out` is writable.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_rows_fail(
-    expected: *const VeltStr,
-    row: i64,
-    field: *const VeltStr,
-    out: *mut VeltStr,
-) {
-    let mut path = String::from("$");
-    if row >= 0 {
-        path.push_str(&format!("[{row}]"));
-    }
-    let field = (*field).text_lossy();
-    if !field.is_empty() {
-        path.push('.');
-        path.push_str(&field);
-    }
-    let msg = format!(
-        "expected {} at {}",
-        (*expected).text_lossy(),
-        short_path(&path)
-    );
-    out.write(VeltStr::from_vec(msg.into_bytes()));
-}
-
-/// Path segments kept at each end of a shortened path (as std's `shortPath`, reader_ops.velt).
-const PATH_KEEP: usize = 10;
-
-/// `path` with at most `2 * PATH_KEEP` segments (each starts at a `.` or a `[`): a longer one
-/// keeps its first and last `PATH_KEEP` with `…` between.
-fn short_path(path: &str) -> std::borrow::Cow<'_, str> {
-    let starts: Vec<usize> = path
-        .bytes()
-        .enumerate()
-        .filter(|&(_, b)| b == b'.' || b == b'[')
-        .map(|(i, _)| i)
-        .collect();
-    if starts.len() <= 2 * PATH_KEEP {
-        return std::borrow::Cow::Borrowed(path);
-    }
-    // `.` and `[` are ASCII, so both cuts are on character boundaries.
-    let head = &path[..starts[PATH_KEEP]];
-    let tail = &path[starts[starts.len() - PATH_KEEP]..];
-    std::borrow::Cow::Owned(format!("{head}…{tail}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,14 +319,6 @@ mod tests {
         assert_eq!([at(0), at(1), at(2), at(3), at(4)], [2, -1, 0, 14, -1]);
         let wide: Vec<i32> = (0..20).map(|c| c % 3).collect();
         assert_eq!((field_map(&wide) >> 60) & 15, 1);
-    }
-
-    #[test]
-    fn long_paths_keep_both_ends() {
-        assert_eq!(short_path("$.a[1].b"), "$.a[1].b");
-        let deep = "$".to_string() + &"[0]".repeat(30) + ".name";
-        let want = "$".to_string() + &"[0]".repeat(10) + "…" + &"[0]".repeat(9) + ".name";
-        assert_eq!(short_path(&deep), want);
     }
 
     #[test]
