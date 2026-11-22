@@ -7,21 +7,19 @@
 //
 // The state is C memory, one block for the process, whose address an `Atomic` holds: the lock
 // word, then the buffer's address and capacity, where unread bytes start and end, and whether the
-// OS reported the end of input. The lock is the runtime's thread lock (`velt_rt_mutex_lock`), held
-// across the OS read, so a second reader parks rather than spins (#2196 leaves it to switch to a
-// lock of std's).
+// OS reported the end of input. The lock is a `Mutex`'s thread lock (`#thread-lock`: std's on a
+// native target, std/lang/hooks/mutex.velt), held across the OS read, so a second reader parks
+// rather than spins.
 
 import { IoError } from "velt/io/error";
 import { Ptr } from "velt/ffi/ptr";
 import { readBytes } from "velt/ffi/read";
 import { addressArray, addressLoad, addressStore, ptrFromAddress } from "velt/lang/intrinsics";
 import { readChunk } from "#stdin-sys";
+import { mutexLock, mutexUnlock } from "#thread-lock";
 
-// C declarations, so that the `Ptr` is passed as the pointer it is: a Velt-ABI declaration passes
-// it as the address of a copy, which the runtime would lock instead (and an integer address is
-// 64 bits where a wasm32 pointer is 32).
-declare c("c") function velt_rt_mutex_lock(lock: Ptr<u64> | null): void;
-declare c("c") function velt_rt_mutex_unlock(lock: Ptr<u64> | null): void;
+// C declarations, so that a `Ptr` is passed as the pointer it is (an integer address is 64 bits
+// where a wasm32 pointer is 32).
 declare function velt_rt_flush(): void;
 declare c("c") function calloc$stdin(n: usize, size: usize): Ptr<u8> | null;
 declare c("c") function realloc$stdin(p: Ptr<u8> | null, size: usize): Ptr<u8> | null;
@@ -85,18 +83,14 @@ function state(): usize {
   return won === 0 ? mine : (won as usize);
 }
 
+/** Locks the buffer: its lock word is the block's first 8 bytes, zeroed when made. */
 function lock(s: usize): void {
-  // SAFETY: the lock word is the block's first 8 bytes, zeroed when made.
-  unsafe {
-    velt_rt_mutex_lock(Ptr.orNull<u64>(s + LOCK));
-  }
+  mutexLock(s + LOCK);
 }
 
+/** Unlocks the buffer, which this thread locked. */
 function unlock(s: usize): void {
-  // SAFETY: as `lock`, held by this thread.
-  unsafe {
-    velt_rt_mutex_unlock(Ptr.orNull<u64>(s + LOCK));
-  }
+  mutexUnlock(s + LOCK);
 }
 
 /**

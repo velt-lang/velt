@@ -135,7 +135,8 @@ pub(crate) fn release_outside() {
     }
 }
 
-/// This thread locked a `Mutex` (`velt_rt_mutex_lock`).
+/// This thread took an `RwLock` (`velt_rt_rwlock_read`, `velt_rt_rwlock_write`). A `Mutex`'s
+/// lock is std's on a native target, which counts nothing (std/lang/hooks/mutex.velt).
 #[inline]
 pub(crate) fn mutex_locked() {
     if used() {
@@ -143,7 +144,7 @@ pub(crate) fn mutex_locked() {
     }
 }
 
-/// This thread unlocked a `Mutex` (`velt_rt_mutex_unlock`).
+/// This thread gave an `RwLock` back.
 #[inline]
 pub(crate) fn mutex_unlocked() {
     if used() {
@@ -168,7 +169,7 @@ pub(crate) fn holds() -> Holds {
 }
 
 /// A panic was caught in a poll that started with `saved`: the code it abandoned never ran its
-/// unlocks (`velt_rt_mutex_unlock`, [`velt_rt_module_with_end`]), so the `Mutex` count goes back,
+/// unlocks (an `RwLock`'s, [`velt_rt_module_with_end`]), so the lock count goes back,
 /// and the module lock taken for its `with` is released. The program's `Mutex` itself stays
 /// locked (documented with `catchPanic`); the runtime's bookkeeping must not stay wrong, or a
 /// later module-state access would end in an ICE and other threads would wait for good.

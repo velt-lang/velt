@@ -581,7 +581,8 @@ invalid operation, where the NaN depends on the CPU and the path (`fmlal` lets a
 win over a NaN accumulator, widening first does not), or a signalling NaN, which may or may not
 come out quiet (LLVM folds `llvm.fma(1, -0, x)` to `x`, as in `f32x4.mulAdd`).
 `velt_simd_f32x4_dot_add_fast_bf16x8` is
-`llvm.aarch64.neon.bfdot` where clang defines `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` for `--cpu`,
+`llvm.aarch64.neon.bfdot` where clang defines `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` for `--cpu`
+or in a function gated on `bf16-arm` (the LLVM backend calls `velt_simd_f32x4_bfdot`'s helper there),
 `llvm.x86.avx512bf16.dpbf16ps.128` where it defines `__AVX512BF16__` and `__AVX512VL__`, and
 otherwise `_dot_add_bf16x8`. The start-up check ("CPU check") does not know FEAT_FHM, FEAT_BF16 or
 AVX512-BF16: code built for a `--cpu` that has them stops with an illegal instruction on a CPU that
@@ -596,10 +597,10 @@ It is checked like any other feature ("Checks"; velt/arch/arm's `Bf16.isSupporte
 Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows, off arm64 and
 under Cranelift.
 velt/half's `dotBf16Fast` and `dotBf16FastAt` ask once for a dot product and run a function gated
-on `bf16-arm`, whose loops are `velt_simd_f32x4_bfdot`, where the answer is yes, and
+on `bf16-arm`, whose loops are `bf16x8.dotAddFast` and so `bfdot`, where the answer is yes, and
 `velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
-the CPU has it. `bf16x8.dotAddFast`, a step of a caller's loop, asks nothing and is the latter
-alone. In code built for a `--cpu` for which clang defines
+the CPU has it. `bf16x8.dotAddFast`, a step of a caller's loop, asks nothing: it is `bfdot` in a
+function gated on `bf16-arm` and the latter elsewhere. In code built for a `--cpu` for which clang defines
 `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC`, `velt_simd_has_bf16_arm()` is `1` everywhere and nothing
 is asked.
 
@@ -788,9 +789,10 @@ The call takes the process-wide *module lock* unless the thread holds it: inside
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
 synchronous `main`) until `main`'s root starts (std's `schedBlockOn`, `velt_rt_block_on` on
 WebAssembly) or until `main` returns. A program that never
-calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
-keeps the module lock while it blocks; waiting for the module lock while the thread holds a
-`Mutex` stops with an `ICE:` panic (sema rejects module state in a `with` callback). On
+calls it pays nothing per task (a process-wide flag the first call sets). A `Mutex`'s lock
+keeps the module lock while it blocks; sema rejects module state in a `with` callback. Waiting
+for the module lock while the thread holds an `RwLock` stops with an `ICE:` panic; a held `Mutex`
+is not counted for that check on a native target (its lock is std's, which counts nothing). On
 WebAssembly (one thread) there is no lock.
 
 `uint8_t velt_rt_module_with(void)` and `void velt_rt_module_with_end(uint8_t took)`: the first
