@@ -146,6 +146,7 @@ fn show(p: &Program, t: TyId, env: Option<&Env>) -> String {
         TyKind::Result(x, e) => format!("Result<{}, {}>", show(p, *x, env), show(p, *e, env)),
         TyKind::Promise(x, e) => format!("Promise({}, {})", show(p, *x, env), show(p, *e, env)),
         TyKind::Shared(x) => format!("Shared<{}>", show(p, *x, env)),
+        TyKind::Ptr(x) => format!("Ptr({})", show(p, *x, env)),
         TyKind::FnPtr {
             params,
             ret,
@@ -301,6 +302,8 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
     };
     let (f, s) = match (d, sig) {
         (Def::Adt(_), Sig::Class) => return None,
+        // A type kind's declaration (`Ptr`, #3094): a struct whose name the compiler resolves.
+        (Def::Adt(_), Sig::TypeKind) => return None,
         // A `declare decorator function`: what it takes is its own declaration's.
         (Def::ExternFn(x), Sig::Decorator) => {
             return (!x.is_decorator).then(|| "not a `declare decorator function`".to_string())

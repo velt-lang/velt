@@ -34,6 +34,48 @@ pub(crate) enum Stage {
     App,
 }
 
+/// What a finished unit's check keeps for a later unit's: each pass's summary of the unit's
+/// bodies, which the later unit's check starts from instead of reading those bodies again.
+#[derive(Clone, Default)]
+pub struct Summaries {
+    /// What each generic function of the unit needs of the types it is given, for `json`'s
+    /// check (converted, printed or read without a lock through a type parameter).
+    pub(crate) json_needs: crate::json::JsonNeeds,
+    /// What each body and initializer of the unit does with module state
+    /// (`module_state::check_locked_access`).
+    pub(crate) state_facts: crate::module_state::StateFacts,
+    /// The modules each module of the unit names in its code (`crate::linked`).
+    pub(crate) module_edges: crate::linked::ModuleEdges,
+    /// The unit's functions that hand a parameter to a channel, with those parameters
+    /// (`ownership::boundary`).
+    pub(crate) senders: rustc_hash::FxHashMap<crate::hir::DefId, Vec<usize>>,
+    /// The unit's functions whose bodies read a `shared` value (`Ctx::frozen_reads`), and
+    /// whether code outside a function does ([`app_reads_shared`]).
+    pub(crate) shared_readers: rustc_hash::FxHashSet<crate::hir::DefId>,
+    pub(crate) shared_read_outside: bool,
+}
+
+// The encoding of a finished unit (`codec`): every field, so a new one fails to build.
+codec::structs! {
+    Summaries {
+        json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
+    }
+}
+
+/// Before the app's passes after the bodies (`VELT_UNITS=2`): the program reads a `shared` value
+/// (`Ctx::frozen_reads`) when its own code does, or the std code it has
+/// (`lazy_std::units_live_set`) does. std's stage reads all of std, so its own answer is not the
+/// program's ([`finish_std`] drops it).
+pub(crate) fn app_reads_shared(cx: &mut Ctx) {
+    if cx.units_stage != Stage::App || cx.frozen_reads {
+        return;
+    }
+    crate::body::lazy_std::prepare_walk(cx);
+    let s = &cx.unit_sums;
+    cx.frozen_reads = s.shared_read_outside
+        || (s.shared_readers.iter()).any(|&d| crate::body::lazy_std::walks(cx, d));
+}
+
 /// `check_definitions` ([`crate::analysis`]) by units: std collected and checked, frozen, then
 /// the app.
 pub(crate) fn check_definitions(cx: &mut Ctx) {
@@ -87,6 +129,9 @@ pub(crate) fn finish_std(cx: &mut Ctx) {
     // std's own check sealed the extended layouts (`collect::extended_layouts`): the app's
     // conversions widen the layouts of its own types, until its check seals them again.
     cx.objects.layouts.sealed = false;
+    // Whether std's code read a `shared` is the program's question: its std code, not all of
+    // std's (`app_reads_shared`).
+    cx.frozen_reads = false;
     codec::unit::clear_memos(cx);
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;

@@ -13,7 +13,7 @@
 
 import { CryptoError } from "velt/crypto/errors";
 import { FeP256 } from "velt/crypto/field_p256";
-import { P256_BASE } from "velt/crypto/p256_base_table";
+import { selectBase } from "velt/crypto/p256_base_select";
 import { randomBytes } from "velt/crypto/random";
 import { noInline } from "velt/lang/intrinsics";
 
@@ -200,11 +200,18 @@ function multiply(f: FeP256, scalar: u8[], out: u8[], both: bool) {
 
 /**
  * `scalar` times G, written affine to `out` (x at 1, y at 33): one multiple of G from `P256_BASE`
- * per 4-bit digit of the scalar, added to the accumulator (64 mixed additions, no doubling, #2955).
- * Constant time as `multiply`: each window's entries are all read, and a zero digit and the empty
- * accumulator are masked selects. The addition's exceptional cases never come: before window i the
- * accumulator is v G with 0 <= v < 16^i, and it gets d 16^i G with 0 < d < 16, where v = d 16^i
- * (v is smaller) and v + d 16^i = n (the scalar would be n) are both impossible.
+ * per signed 7-bit digit of the scalar, added to the accumulator (37 mixed additions, no doubling,
+ * #2955). The digits are nistz256's Booth recoding: digit i, in -64..64, is read from bits
+ * 7 i - 1 to 7 i + 6, and the digits sum to the scalar with weights 2^(7 i).
+ * Constant time as `multiply`: each window's 64 entries are all read (p256_base_select.velt), a
+ * negative digit negates the entry's y by a masked select, and a zero digit and the empty
+ * accumulator are masked selects. The addition's exceptional cases never come: before window i
+ * the accumulator is v G with |v| < 2^(7 i) (the digits below i sum to at most
+ * 64 (2^(7 i) - 1) / 127 in size), and it gets d 2^(7 i) G with 0 < |d| <= 64, so v = +-d 2^(7 i)
+ * is impossible as integers. Mod n it matters only in the last window (2^252), where d 2^252 can
+ * pass n: the digits there are 0 to 16 and v + d 2^252 = k exactly, so v = d 2^252 (mod n) would
+ * need d 2^252 - v = n, that is k = n + 2 v with v > 0, above n; and v = -d 2^252 would make k
+ * a multiple of n. Neither is a valid scalar.
  */
 @noInline
 function baseMultiply(f: FeP256, scalar: u8[], out: u8[]) {
@@ -212,31 +219,41 @@ function baseMultiply(f: FeP256, scalar: u8[], out: u8[]) {
   f.zero(ACC);
   f.zero(ACC + 1);
   f.zero(ACC + 2);
-  for (let i: usize = 0; i < 64; i++) {
-    const byte = scalar[31 - (i >> 1)] as u64;
-    selectBase(f, i, (i & 1) == 0 ? byte & 15 : byte >> 4);
+  const masks: u64[] = [];
+  for (let j: usize = 0; j < 64; j++) {
+    masks.push(0);
+  }
+  for (let i: usize = 0; i < 37; i++) {
+    // The 8 bits from 7 i - 1 (bit -1 is 0, bits from 256 up are 0), little-endian byte k being
+    // scalar[31 - k].
+    let window: u64 = 0;
+    if (i == 0) {
+      window = ((scalar[31] as u64) << 1) & 0xff;
+    } else {
+      const at = (7 * i - 1) >> 3;
+      const low = scalar[31 - at] as u64;
+      const high = at < 31 ? (scalar[30 - at] as u64) : 0;
+      window = ((low | (high << 8)) >> (((7 * i - 1) & 7) as u64)) & 0xff;
+    }
+    // booth_recode_w7: a window of 128 or more is the negative digit window - 256, halved up.
+    const negative = signMask(window >> 7);
+    let d = ((255 - window) & negative) | (window & ~negative);
+    d = (d >> 1) + (d & 1);
+    selectBase(f, SEL, masks, i, d);
+    // y = -y for a negative digit (the zero entry of a zero digit stays zero).
+    f.zero(T);
+    f.sub(T + 1, T, SEL + 1);
+    f.blend(SEL + 1, T + 1, SEL + 1, negative);
     addBase(f);
   }
   toAffine(f, out, true);
 }
 
-// SEL, SEL + 1 = the affine entry `digit` of window `w` of `P256_BASE`, reading all 15; both zero
-// for the digit 0 (no entry has x = 0: the generator checks).
-function selectBase(f: FeP256, w: usize, digit: u64) {
-  const d = 4 * SEL;
-  for (let k: usize = 0; k < 8; k++) {
-    f.r[d + k] = 0;
-  }
-  let at = 120 * w;
-  for (let j: u64 = 1; j < 16; j++) {
-    const x = j ^ digit;
-    // All ones when x == 0 (x is below 16, so x - 1 wraps only for 0).
-    const mask = 0 - ((x - 1) >> 63);
-    for (let k: usize = 0; k < 8; k++) {
-      f.r[d + k] |= P256_BASE[at + k] & mask;
-    }
-    at += 8;
-  }
+// All ones for `bit` 1 (a negative digit), else 0. Out of line, as `FeP256.isZero`: inlined, LLVM
+// could see the mask is one bit of the secret window and make the negation a branch on it.
+@noInline
+function signMask(bit: u64): u64 {
+  return 0 - bit;
 }
 
 /**

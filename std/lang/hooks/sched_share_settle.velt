@@ -12,6 +12,7 @@ import * as nd from "./sched_node";
 import * as sh from "./sched_share";
 import * as al from "./sched_share_alias";
 import * as sd from "./sched_share_drop";
+import * as ls from "./sched_share_listed";
 import * as t from "./sched_task";
 import * as wt from "./sched_share_wait";
 import * as wk from "./sched_wake";
@@ -39,7 +40,8 @@ export function settle(h: usize, task: usize, me: usize): void {
   const len = m.ld(h + sh.H_WLEN);
   for (let i: usize = 0; i < len; i++) {
     const at = wt.entry(h, i);
-    const w = m.ld(at + 8);
+    // Its node finished, so it is listed no more: every entry holds a reference again.
+    const w = ls.wakerOf(at);
     let ticket: u64 = 0;
     if (m.ld(at) === me) {
       ticket = 0;

@@ -198,6 +198,9 @@ fn checked_where_written(what: &GenCopy) -> bool {
 
 /// `recorded`: the crossings `ownership::check_locked` found.
 pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
+    // In a check by units, std's code the program has: a conversion of a weak-holding class in a
+    // std module the program never loads makes nothing it runs (`lazy_std::walks`).
+    crate::body::lazy_std::prepare_walk(cx);
     // Each function's crossings and conversions.
     let sends = cx.channel_sends();
     let mut own: FxHashMap<DefId, Vec<(TyId, Need)>> = FxHashMap::default();
@@ -208,6 +211,9 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let def = DefId(i as u32);
+        if !crate::body::lazy_std::walks(cx, def) {
+            continue;
+        }
         let std = cx.try_fn(def).is_some_and(|fi| cx.scopes[fi.module].is_std);
         let mut found = Found {
             cx: &*cx,
@@ -372,7 +378,7 @@ fn reachable(
                 };
                 todo.extend(tys.into_iter().map(|f| cx.subst(f, &args)));
             }
-            k => todo.extend(crate::types::children(&k)),
+            k => todo.extend(crate::types::contents(&k)),
         }
     }
     out
@@ -403,7 +409,7 @@ fn hidden(
             };
             tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
-        k => crate::types::children(&k),
+        k => crate::types::contents(&k),
     };
     parts.into_iter().find_map(|p| hidden(cx, p, hiding, seen))
 }

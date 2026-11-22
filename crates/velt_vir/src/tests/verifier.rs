@@ -477,3 +477,52 @@ fn variadic_calls_pass_promoted_further_arguments() {
         "call passes 3 args, callee takes 2",
     );
 }
+
+/// velt/arch's instructions run only in a function gated on their feature (#3222 step 4): the
+/// same call is accepted where the function's target covers it, implications included.
+#[test]
+fn verify_rejects_a_velt_arch_instruction_outside_its_gate() {
+    let call = |target: crate::simd::ExtSet| {
+        let mut p = with_test_fn(vec![]);
+        let ext = ExternId(p.externs.len() as u32);
+        p.externs.push(ExternFn {
+            symbol: "velt_arch_sse42_crc32_u64".into(),
+            params: vec![Ty::U64, Ty::U64],
+            ret: Ty::U64,
+            noreturn: false,
+            host: None,
+            c_decl: None,
+            variadic: false,
+        });
+        let f = p.funcs.last_mut().expect("test fn");
+        f.target = target;
+        f.locals.push(LocalDecl::new(Ty::U64, None));
+        let u64_ = |v| Operand::Const(Const::Int(v), Ty::U64);
+        f.blocks = vec![
+            block(
+                vec![set_x(0)],
+                Terminator::Call {
+                    callee: Callee::Extern(ext),
+                    args: vec![u64_(0), u64_(1)],
+                    dest: Some(Place::local(Local(2))),
+                    next: BlockId(1),
+                    unwind: None,
+                },
+            ),
+            block(vec![], ret_x()),
+        ];
+        p
+    };
+    use crate::simd::{Ext, ExtSet};
+    expect_err(
+        &call(ExtSet::NONE),
+        "a call of `velt_arch_sse42_crc32_u64` in a function not gated on `sse4.2-x86`",
+    );
+    expect_err(
+        &call(ExtSet::of(Ext::PopcntX86)),
+        "not gated on `sse4.2-x86`",
+    );
+    crate::verify(&call(ExtSet::of(Ext::Sse42X86))).unwrap();
+    // AVX2 implies SSE4.2.
+    crate::verify(&call(ExtSet::of(Ext::Avx2X86))).unwrap();
+}

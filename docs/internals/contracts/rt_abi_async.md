@@ -730,8 +730,9 @@ Neither runtime has clock functions.
 | `velt_rt_rc_dec` | `(u64* rc) -> u8` | Release; returns 1 (after an Acquire fence) when it reached zero: caller drops + frees |
 | `velt_rt_thread_yield` | `()` | `velt/sync`'s `Backoff.snooze` once spinning stops: let another thread run (`sched_yield`); nothing on wasm |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
-| `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
-| `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking |
+| `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | WebAssembly only (velt_rt_wasm): `m.with(f)` = lock; call f; unlock. On a native target the lock and unlock are std's (std/lang/hooks/mutex.velt): a compare-and-swap of the word's first 32 bits (bit 0 held, bit 1 threads parked), and the two slow paths below. Blocks the thread; bodies must not await. |
+| `velt_rt_mutex_lock_slow` / `velt_rt_mutex_unlock_slow` | `(u64* lock)` | native: std's lock found the word held (spin, then park until it is free or handed over), or its unlock found threads parked (wake one, or hand the lock to it) |
+| `velt_rt_mutex_lock_checked` | `(u64* lock)` | the lock from code that may run in read mode (§9.1): there it stops the program before locking; its unlock is std's (native) or `velt_rt_mutex_unlock` |
 | `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.velt`; §9.2) |
 | `velt_rt_rwlock_read` | `(u64* lock, u64 reader) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back. `reader` is `how & ~7` of an earlier `read` or `write` in the same call of the calling function (never across an `await`: the task may continue on another thread), else 0 |
 | `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) |
@@ -773,7 +774,7 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
 - a reader writes only `LOCAL` objects: anything else calls `velt_rt_lk_write`, which stops the
   program (sema rejects the writes it can see);
 - a reader takes no lock exclusively: `velt_rt_rwlock_write` and `velt_rt_mutex_lock_checked`
-  (which code not known to run outside read mode calls instead of `velt_rt_mutex_lock`) stop the
+  (which code not known to run outside read mode calls instead of a plain lock) stop the
   program in read mode, since the inner callback could not tell the store's uncounted objects
   from what it changes (sema rejects the ones written in a `read` callback's body);
 - a reader starts no promise or task (`velt_rt_fut_start*`, `velt_rt_spawn*` stop the program in
@@ -1062,7 +1063,6 @@ parameter would not match on wasm32.
 | `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(u64 r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
-| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/encoding/json/reader.velt`) asks after a failure |
 
 Except where stated, `u8` results are 1 = ok, 0 = failed (outputs untouched). **The first failure
 is sticky**: every later call fails (`peek` returns 10), so a decoder can bail out on the first 0
@@ -1141,7 +1141,6 @@ given). Objects keep key order (first occurrence; a duplicate key replaces the v
 | `velt_rt_json_value_as_bool` | `(VeltJson v) -> u8` | 1 only for `true` (use `kind` to tell `false` from non-bools) |
 | `velt_rt_json_value_as_str` | `(VeltJson v, VeltStr* out) -> u8` | owned copy; 0 if not a string |
 | `velt_rt_json_value_stringify` | `(VeltJson v, VeltStr* out)` | `JSON.stringify`: no whitespace, key order kept, numbers JS-formatted; null handle ⇒ `null` |
-| `velt_rt_json_relayout` | `(const VeltStr* text, const VeltStr* keys, u8 flags, const VeltStr* indent, VeltStr* out)` | `JSON.stringify(value, replacer, space)` from the compact `text` of `JSON.stringify(value)`: with `flags` bit 0, objects at any depth keep only the keys listed in `keys` (the compact JSON text of an array of strings; duplicates ignored), in that order; with bit 1, line breaks, `indent` (JS's gap, possibly empty, as for a `space` in (0, 1)) per level and `": "` after keys; without it no whitespace (`indent` ignored); malformed `text` is returned unchanged |
 | `velt_rt_json_value_clone` | `(VeltJson v) -> VeltJson` | O(1) new reference to the same value (may be the same pointer); the editors copy a node shared this way before changing it, so neither handle sees the other's later edits |
 | `velt_rt_json_value_free` | `(VeltJson v)` | null ok |
 | `velt_rt_json_value_new_null` / `_new_bool(u8)` / `_new_number(f64)` / `_new_string(const VeltStr*)` / `_new_array()` / `_new_object()` | `(…) -> VeltJson` | a new value (the string is copied) |
@@ -1322,7 +1321,8 @@ pool on Windows). Exit codes: the process's code, or `128 + signal` when killed 
 
 Standard input is std code: one process-wide read-ahead buffer
 (std/process/stdin_buffer.velt) over `#stdin-sys` (`read` on fd 0 on macOS, Linux and WASI;
-`ReadConsoleW` or `ReadFile` on Windows; none under a JS host), locked with `velt_rt_mutex_lock`;
+`ReadConsoleW` or `ReadFile` on Windows; none under a JS host), locked with a `Mutex`'s lock
+(`#thread-lock`: std's on a native target, `velt_rt_mutex_lock` elsewhere);
 an async read is the sync one on the executor's blocking pool (std/process/rt_sched.velt), and
 text is decoded lossily. Neither runtime has stdin functions (the fs readers' `LineRead` is in
 §14.7).

@@ -10,7 +10,7 @@ import { addressLoad } from "velt/lang/intrinsics";
 /** C's `struct timespec` (two 64-bit words), which `clock_gettime` fills. */
 declare c type timespec;
 
-declare c("c") function clock_gettime$clock(clock: i32, ts: Ptr<timespec>): i32;
+declare c("c") function clock_gettime$clock(clock: i32, ts: Ptr<timespec> | null): i32;
 declare c("c") function calloc$clock(n: usize, size: usize): Ptr<u8> | null;
 
 /** `CLOCK_REALTIME` and `CLOCK_UPTIME_RAW`. */
@@ -34,7 +34,7 @@ function clockNs(clock: i32): i64 {
   }
   // SAFETY: this thread's buffer holds a `struct timespec`, which only this call uses.
   unsafe {
-    clock_gettime$clock(clock, Ptr.at<timespec>(p));
+    clock_gettime$clock(clock, Ptr.orNull<timespec>(p));
   }
   // SAFETY: inside the buffer, which clock_gettime filled.
   const secs = unsafe { addressLoad<i64>(p) };

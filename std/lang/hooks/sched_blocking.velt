@@ -70,6 +70,7 @@ const P_THREADS: usize = 24;
 const P_IDLE: usize = 32;
 const P_NOTIFY: usize = 40;
 const P_DONE: usize = 48;
+const P_SUBMITTED: usize = 56;
 const P_SIZE: usize = 64;
 
 /** A job's node: the next node, then the closure. */
@@ -102,6 +103,15 @@ export function finished(): usize {
   return p === 0 ? 0 : m.load(p + P_DONE);
 }
 
+/**
+ * Jobs handed to the pool since it started (tests read it): counted by the task that submits,
+ * before it waits, so a test reads it without racing a pool thread.
+ */
+export function submitted(): usize {
+  const p = POOL.load("acquire") as usize;
+  return p === 0 ? 0 : m.load(p + P_SUBMITTED);
+}
+
 /** The pool's block, made on first use. */
 function pool(): usize {
   const p = POOL.load("acquire") as usize;
@@ -132,6 +142,7 @@ function unlock(p: usize): void {
 /** Queues job `job`, waking an idle thread or starting one. */
 function submit(job: () => void): void {
   const p = pool();
+  m.inc(p + P_SUBMITTED);
   const n = m.zeroed(N_JOB + slotSize<() => void>());
   // SAFETY: `n + N_JOB` has room for the closure and holds none; taken once, by a pool thread.
   unsafe {

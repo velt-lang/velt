@@ -69,6 +69,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyUnboundMethod
         | I::Identity
         | I::ToAny
+        | I::SpreadParam
         | I::AnyReflectInfo
         | I::AnyReflectCount
         | I::AnyReflectName
@@ -87,6 +88,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AddressAtomicRmw
         | I::AddressAtomicCas
         | I::AddressAtomicCasWeak
+        | I::PtrFromAddress
+        | I::PtrToAddress
         | I::ExportedAddress
         | I::Exit
         | I::Panic

@@ -11,7 +11,7 @@ import * as node from "./sched_node";
 import * as sh from "./sched_share";
 
 // A pointer is `Ptr`, as in compiled code's declaration of this symbol.
-declare c("c") function velt_rt_fut_peek$rt(f: Ptr<u8>): u8;
+declare c("c") function velt_rt_fut_peek$rt(f: Ptr<u8> | null): u8;
 
 /**
  * 1 when promise `f` settled with its result in its slot. A node of this executor's tells by its

@@ -72,11 +72,15 @@ pub enum Construct {
     /// `**` on integers (`a ** b`, `a **= b` on a declared integer type): std's `powI64`
     /// (std/lang/hooks/pow_int.velt), which only a program that has one loads.
     PowInt,
+    /// `m.with(f)` on a `Mutex`: lowering locks and unlocks it with std's inline lock
+    /// (std/lang/hooks/mutex.velt) on a native target. An `RwLock`'s `write`, which lowers
+    /// through the same intrinsic, marks it too and calls the runtime's lock.
+    Mutex,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 10] = [
+    pub const ALL: [Construct; 11] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -87,6 +91,7 @@ impl Construct {
         Construct::Clock,
         Construct::Weak,
         Construct::PowInt,
+        Construct::Mutex,
     ];
 
     /// The construct as the ICE names it.
@@ -102,6 +107,7 @@ impl Construct {
             Construct::Clock => "Clock (a read of Date.now or performance.now)",
             Construct::Weak => "Weak (a weak collection's intrinsic)",
             Construct::PowInt => "PowInt (`**` on integers)",
+            Construct::Mutex => "Mutex (a Mutex's with)",
         }
     }
 

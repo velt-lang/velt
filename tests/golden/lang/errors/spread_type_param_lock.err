@@ -1,0 +1,2 @@
+spread_type_param_lock.velt:13:13: error: `[Mutex<f64>]` is read here without its lock (printed, formatted or converted to `any` through a type parameter)
+  = note: a value holding a lock is read only under it (`with`): pass what a callback returns instead

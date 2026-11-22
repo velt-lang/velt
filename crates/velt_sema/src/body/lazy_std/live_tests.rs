@@ -198,14 +198,15 @@ fn each_construct_is_found_where_live_code_has_it() {
 }
 
 /// One program with every construct user code can have (all but `CatchUnwind`, std's own) keeps
-/// each of them: the newest, `Clock` and `Weak`, beside the first.
+/// each of them: the newest, `Clock`, `Weak` and `Mutex`, beside the first.
 #[test]
 fn a_program_with_every_construct_keeps_them_all() {
     let src = "class K { x = 1; }\n\
                function main() { const k = new K(); const m = new WeakMap<K, number>(); \
                m.set(k, 1); const t = Date.now(); const q = performance.now(); const p = 2.5 ** q; const n: i64 = 7 ** 1; \
                const u: u32 = 7; const xs = [\"a\"]; const a: any = \"s\"; \
-               console.log(`n=${n}`, String(u), xs[n - 7], m.has(k), p, t, a == \"t\"); }";
+               const mu = new Mutex<i64>(1); const g = mu.with((v) => v + 1); \
+               console.log(`n=${n}`, String(u), xs[n - 7], m.has(k), p, t, a == \"t\", g); }";
     let (present, _) = live(src);
     for c in [
         TextInt,
@@ -217,6 +218,7 @@ fn a_program_with_every_construct_keeps_them_all() {
         Construct::PowInt,
         Construct::Clock,
         Construct::Weak,
+        Construct::Mutex,
     ] {
         assert!(
             present & c.bit() != 0,

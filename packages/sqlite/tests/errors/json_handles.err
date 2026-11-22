@@ -1,5 +1,5 @@
 json_handles.velt:11:13: error: cannot convert to or from JSON: `Database` has a private field `handle`, which decoding cannot set
 json_handles.velt:12:13: error: cannot convert to or from JSON: `Statement` has a private field `#state`, which decoding cannot set
 json_handles.velt:13:13: error: cannot convert to or from JSON: `Transaction` has a private field `db`, which decoding cannot set
-json_handles.velt:17:15: error: cannot convert to or from JSON: `Database` contains `Ptr<sqlite3>`, which has a private field `address`, so it has no JSON form
-json_handles.velt:18:15: error: cannot convert to or from JSON: `Transaction` contains `Ptr<sqlite3>`, which has a private field `address`, so it has no JSON form
+json_handles.velt:17:15: error: cannot convert to or from JSON: `Database` contains `Ptr<sqlite3>`, which has no JSON form
+json_handles.velt:18:15: error: cannot convert to or from JSON: `Transaction` contains `Ptr<sqlite3>`, which has no JSON form

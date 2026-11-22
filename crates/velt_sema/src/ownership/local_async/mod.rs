@@ -92,6 +92,7 @@ pub(crate) struct Crossing {
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
 /// non-local ones that modify a captured variable.
 pub(crate) fn infer_local_async(cx: &mut Ctx) {
+    crate::body::lazy_std::prepare_walk(cx);
     cx.crossing_callbacks.clear();
     cx.in_shared.clear();
     let g = graph::build(cx);

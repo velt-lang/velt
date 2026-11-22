@@ -1,0 +1,15 @@
+// `shared(this.data)` of a field the object keeps is an error, as in shared_takes_value; the
+// notes give both ways out: a copy, or taking the value out of the field first (no copy), which
+// lang/shared_take_field runs.
+class Index {
+  data: f32[] = [];
+  freeze(): shared<f32[]> {
+    return shared(this.data);
+  }
+}
+
+function main() {
+  const ix = new Index();
+  ix.data.push(1);
+  console.log(ix.freeze().length);
+}

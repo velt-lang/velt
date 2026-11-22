@@ -15,6 +15,7 @@ import * as nc from "./sched_node_catch";
 import * as nd from "./sched_node";
 import * as sh from "./sched_share";
 import * as sd from "./sched_share_drop";
+import * as ls from "./sched_share_listed";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 
@@ -31,6 +32,7 @@ export function handOver(f: usize, glue: usize): void {
     }
     // Shared again on this task (sched_share.velt `schedShare`): a proxy of this task takes the
     // role of `f`'s proxy here over in turn.
+    ls.handedOver(m.ld(fwd - 8));
     const next = newProxy(m.ld(fwd - 8), glue);
     setForward(f, next);
     // SAFETY: the old proxy, a holder this holder owned.
@@ -40,11 +42,20 @@ export function handOver(f: usize, glue: usize): void {
     return;
   }
   const h = m.ld(f - 8);
+  // A node only its holders could reach has one more now: off the list first (its task's own
+  // wakers in the hub take their references back).
+  ls.handedOver(h);
+  const orig = sh.isOrig(h, f);
+  if (orig) {
+    // Out before the proxy's first poll waits in the hub: a node whose original another task
+    // holds is not listed again (its node may be dropped there: sched_share_listed.velt `list`).
+    m.or32(h + sh.H_FLAGS, sh.ORIG_OUT);
+  }
   const proxy = newProxy(h, glue);
-  if (sh.isOrig(h, f)) {
+  ls.checkHanded(h);
+  if (orig) {
     // The original stays allocated for the holder there; the hub holds its forward.
     m.st(h + sh.H_ORIG_FWD, proxy);
-    m.or32(h + sh.H_FLAGS, sh.ORIG_OUT);
   } else {
     m.st(f - sh.FRONT + 8, proxy);
     m.st(f - 8, 0);

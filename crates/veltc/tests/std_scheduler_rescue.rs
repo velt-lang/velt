@@ -573,10 +573,10 @@ fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
 
 /// [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again`] with `main` waiting
 /// between rounds in a `sleep`. A rescue may move `main` to a spare (`lazyRescue` takes the whole
-/// queue), and its sleep then anchors it there: that spare declines to retire, and worker 0 is not
-/// lazy again (#3117; on Windows in most runs).
+/// queue), and its sleep then anchors it there; asked to retire, the spare carries that sleep with
+/// `main` to worker 0 (#3117: before, it declined, and worker 0 was not lazy again, on Windows in
+/// most runs).
 #[test]
-#[ignore = "#3117: a rescued main sleeping on a spare keeps the spare from retiring"]
 fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sleeps() {
     flip_rounds(&flip_output("sleep(40)"));
 }
@@ -637,14 +637,15 @@ async function main() {
     await t;
     console.log(`main ${r} done`);
     // The spares go idle and retire; worker 0 becomes lazy again. The wait: a Node timer,
-    // which anchors no task, or the `sleep` of #3117 (`flip_output`).
+    // which anchors no task, or a `sleep`, which a retiring spare carries (`flip_output`).
     await $WAIT;
   }
 }
 "#;
 
 /// [`FLIP_OUTPUT`] with `wait` as `main`'s wait between rounds: a Node timer ([`TIMER_WAIT`])
-/// leaves `main` movable, so a spare a rescue moved it to can retire; a `sleep` anchors it there.
+/// leaves `main` movable; a `sleep` anchors it to the spare a rescue moved it to, which carries
+/// the sleep to worker 0 when it retires.
 fn flip_output(wait: &str) -> String {
     FLIP_OUTPUT.replace("$WAIT", wait)
 }
@@ -658,10 +659,6 @@ const TIMER_WAIT: &str = "new Promise<void>((resolve) => setTimeout(() => resolv
 /// to retire, so worker 0 never was lazy again (on Windows the race made the worker-0 test above
 /// fail 9 runs in 10; this one wakes `main` mid-poll every round, on any OS).
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "#3117: on Windows a rescue may also move main to a spare, where its sleep keeps the spare"
-)]
 fn a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire() {
     if !has_threads() {
         return;
@@ -816,6 +813,51 @@ async function main() {
     await p;
     await t;
     await b;
+    console.log(`round ${r}`);
+  }
+}
+"#;
+
+/// A spare asked to retire while a task the rescue moved to it sleeps there carries the sleep with
+/// the task to worker 0 and retires, so worker 0 is lazy again (#3117): the next round's rescue
+/// turns the locks on a second time. Before, the spare declined while the sleep was pending
+/// (sched_relax.velt `keeps`), and worker 0 stayed shared (every run on macOS).
+#[test]
+fn a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep() {
+    if !has_threads() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "sleeper_on_spare", SLEEPER_ON_SPARE);
+    for i in 0..RUNS {
+        let r = run(&exe, "1");
+        let what = format!("run {i}");
+        check(&r, &what, "slept 0\nround 0\nslept 1\nround 1\n", 0);
+        assert!(
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+            "{what}: worker 0 was not lazy again after the first rescue: {}",
+            r.err
+        );
+    }
+}
+
+/// The program of [`a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep`].
+const SLEEPER_ON_SPARE: &str = r#"const MOVED = new Atomic<i64>(0);
+
+// Moved to a spare by the rescue of `main`'s spin, it sleeps there: the spare is asked to retire
+// while that sleep is pending.
+async function sleeper(r: i64): Promise<void> {
+  MOVED.store(r + 1);
+  await sleep(300);
+  console.log(`slept ${r}`);
+}
+
+async function main() {
+  for (let r = 0; r < 2; r++) {
+    const t = spawn(sleeper(r));
+    // Only a rescue runs the task while this poll spins.
+    while (MOVED.load() <= r) {}
+    await t;
     console.log(`round ${r}`);
   }
 }

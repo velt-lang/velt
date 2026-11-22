@@ -1,0 +1,33 @@
+// A `Mutex` nobody else waits for: each `with` locks and unlocks with one compare-and-swap each
+// (std/lang/hooks/mutex.velt on a native target), its value updated in place, its result the
+// callback's; a `Mutex<i64>` and a `shared<Mutex<T>>` too.
+class Tally {
+  n: i64 = 0;
+  names: string[] = [];
+}
+
+function main() {
+  const m = new Mutex(new Tally());
+  for (let i = 0; i < 1000; i++) {
+    m.with((t) => {
+      t.n += i;
+    });
+  }
+  m.with((t) => {
+    t.names.push("a");
+    t.names.push("b");
+  });
+  console.log(m.with((t) => t.n), m.with((t) => t.names.join(",")));
+
+  const c = new Mutex<i64>(5);
+  c.with((v) => {
+    v += 2;
+  });
+  console.log(c.with((v) => v * 10));
+
+  const s = shared(new Mutex<Tally>(new Tally()));
+  s.with((t) => {
+    t.n = 41;
+  });
+  console.log(s.with((t) => t.n + 1));
+}

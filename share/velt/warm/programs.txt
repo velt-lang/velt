@@ -19,6 +19,7 @@
 ../../../bench/stdport/html_escape.velt
 ../../../bench/stdport/html_escape_jsx.velt
 ../../../bench/stdport/clock_now.velt
+../../../bench/stdport/mutex_with.velt
 ../../../tests/golden/lang/number_to_string_radix.velt
 ../../../tests/golden/lang/number_to_exponential_precision.velt
 ../../../tests/golden/lang/number_parse_int.velt

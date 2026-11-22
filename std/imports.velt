@@ -161,6 +161,9 @@ export const imports: Imports = {
     default: "./fs/fd/read_at_inline.velt",
   },
   "#process-rt": { "std-scheduler": "./process/rt_sched.velt", default: "./process/rt.velt" },
+  // A thread lock on an 8-byte word (standard input's buffer): std's inline one on native
+  // targets, the runtime's elsewhere (wasm's runtime keeps its own `Mutex` lock).
+  "#thread-lock": { native: "./lang/hooks/mutex.velt", default: "./process/thread_lock_rt.velt" },
   // Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
   // Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
   // host.
@@ -206,6 +209,9 @@ export const imports: Imports = {
   // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
   // which the C library's `memset` gives; JS hosts have none, and index the arrays.
   "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },
+  // The limb loops of `Mont` (std/crypto/mont.velt, RSA's arithmetic): on the limbs' addresses
+  // as `#nat-rows`, or on JS hosts on the arrays.
+  "#mont-rows": { js: "./crypto/mont_rows_checked.velt", default: "./crypto/mont_rows_raw.velt" },
   // The C library's file-descriptor functions behind Node's fd API (`openSync`, `readSync`, ...):
   // `declare c("c")` on macOS and Linux, with their per-target `fcntl` commands and `struct
   // stat`; elsewhere each fails with ENOSYS.

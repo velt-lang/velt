@@ -95,16 +95,20 @@ const TOMB: usize = 0xffffffffffffffff;
 declare c("c") function NtDeviceIoControlFile(
   file: usize,
   event: usize,
-  apc: Ptr<u8>,
-  context: Ptr<u8>,
-  iosb: Ptr<u8>,
+  apc: Ptr<u8> | null,
+  context: Ptr<u8> | null,
+  iosb: Ptr<u8> | null,
   code: u32,
-  input: Ptr<u8>,
+  input: Ptr<u8> | null,
   inputLen: u32,
-  output: Ptr<u8>,
+  output: Ptr<u8> | null,
   outputLen: u32,
 ): i32;
-declare c("c") function NtCancelIoFileEx(file: usize, request: Ptr<u8>, iosb: Ptr<u8>): i32;
+declare c("c") function NtCancelIoFileEx(
+  file: usize,
+  request: Ptr<u8> | null,
+  iosb: Ptr<u8> | null,
+): i32;
 
 /** Takes reactor `r`'s lock. */
 export function lock(r: usize): void {
@@ -276,7 +280,7 @@ function update(r: usize, p: usize): i32 {
     s = NtDeviceIoControlFile(
       m.ld(r + R_AFD),
       0,
-      m.ptr(0),
+      null,
       m.ptr(p),
       m.ptr(p + P_IOSB),
       IOCTL_AFD_POLL,
