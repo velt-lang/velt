@@ -12,78 +12,25 @@
 
 import { inline, noInline } from "velt/lang/intrinsics";
 
+// The Montgomery product and square that backends emit inline (velt_vir `field.rs`): register `d`
+// of `r` = `a * b / 2^256` mod p, fully reduced, the operands read before the result is written.
+declare function velt_field_p256_mul(r: u64[], d: u64, a: u64, b: u64): void;
+declare function velt_field_p256_sqr(r: u64[], d: u64, a: u64): void;
+declare function velt_field_p256_add(r: u64[], d: u64, a: u64, b: u64): void;
+declare function velt_field_p256_sub(r: u64[], d: u64, a: u64, b: u64): void;
+
 // p, little-endian limbs.
 const P0: u64 = 0xffffffffffffffff;
 const P1: u64 = 0x00000000ffffffff;
 const P3: u64 = 0xffffffff00000001;
-// 2^256 - p is 1, N1, P0 (all ones), N3.
-const N1: u64 = 0xffffffff00000000;
-const N3: u64 = 0x00000000fffffffe;
 
 /** 2^512 mod p: multiplying by it enters the Montgomery domain. */
 const R2: u64[] = [0x0000000000000003, 0xfffffffbffffffff, 0xfffffffffffffffe, 0x00000004fffffffd];
-
-// `t + a * b + c` as 128 bits (it cannot overflow).
-function mac(t: u64, a: u64, b: u64, c: u64): [u64, u64] {
-  const lo = a * b;
-  const s = lo + t;
-  const s2 = s + c;
-  return [s2, Math.umulh(a, b) + ((s < lo) as u64) + ((s2 < c) as u64)];
-}
-
-// `a + b + c` (c is 0 or 1) and its carry.
-function adc(a: u64, b: u64, c: u64): [u64, u64] {
-  const s = a + b;
-  const s2 = s + c;
-  return [s2, ((s < a) as u64) | ((s2 < s) as u64)];
-}
 
 // `a - b - c` (c is 0 or 1) and its borrow.
 function sbb(a: u64, b: u64, c: u64): [u64, u64] {
   const d = a - b;
   return [d - c, ((a < b) as u64) | ((d < c) as u64)];
-}
-
-// One row of the interleaved Montgomery product: x + a b_i, then one round of reduction (+ m p
-// with m the low limb, p = -1 mod 2^64) and a shift down a limb; x stays below 2p. The row's
-// low halves and high halves are two separate carry chains (each an add-with-carry run), and
-// only the five limbs of x are live with the operands, so nothing spills.
-@inline("always")
-function row(x: [u64, u64, u64, u64, u64], a0: u64, a1: u64, a2: u64, a3: u64, bi: u64): [u64, u64, u64, u64, u64] {
-  const l0 = a0 * bi;
-  const l1 = a1 * bi;
-  const l2 = a2 * bi;
-  const l3 = a3 * bi;
-  const h0 = Math.umulh(a0, bi);
-  const h1 = Math.umulh(a1, bi);
-  const h2 = Math.umulh(a2, bi);
-  const h3 = Math.umulh(a3, bi);
-  // x += the low halves.
-  let [x0, c] = adc(x[0], l0, 0);
-  let x1: u64 = 0;
-  [x1, c] = adc(x[1], l1, c);
-  let x2: u64 = 0;
-  [x2, c] = adc(x[2], l2, c);
-  let x3: u64 = 0;
-  [x3, c] = adc(x[3], l3, c);
-  let [x4, x5] = adc(x[4], 0, c);
-  // x += the high halves, a limb up.
-  [x1, c] = adc(x1, h0, 0);
-  [x2, c] = adc(x2, h1, c);
-  [x3, c] = adc(x3, h2, c);
-  let k: u64 = 0;
-  [x4, k] = adc(x4, h3, c);
-  x5 += k;
-  // x += m p, m = x0: m (2^64 - 1) + x0 is m 2^64, m (2^32 - 1) + m is m << 32, limb 2 of p
-  // is zero, and only limb 3 needs a product.
-  const m = x0;
-  const ml = m * P3;
-  const mh = Math.umulh(m, P3);
-  [x1, c] = adc(x1, m << 32, 0);
-  [x2, c] = adc(x2, m >> 32, c);
-  [x3, c] = adc(x3, ml, c);
-  [x4, k] = adc(x4, mh, c);
-  return [x1, x2, x3, x4, x5 + k];
 }
 
 /** `n` registers of elements mod the P-256 prime, all zero. */
@@ -119,159 +66,37 @@ export class FeP256 {
     }
   }
 
-  // Stores `t` (with the carry `t4`, the value below 2p) minus p when that is not negative.
-  // t - p is t + (2^256 - p) less 2^256: a sum, whose carries the compiler chains where a
-  // difference's borrows cost it three instructions each, and t reaches p when that sum (with
-  // t4) reaches 2^256.
-  private store(d: usize, t0: u64, t1: u64, t2: u64, t3: u64, t4: u64) {
-    const [d0, c0] = adc(t0, 1, 0);
-    const [d1, c1] = adc(t1, N1, c0);
-    const [d2, c2] = adc(t2, P0, c1);
-    const [d3, c3] = adc(t3, N3, c2);
-    // All ones when t is below p: keep t.
-    const keep = (c3 | t4) - 1;
-    const o = 4 * d;
-    this.r[o + 3] = d3 ^ ((d3 ^ t3) & keep);
-    this.r[o] = d0 ^ ((d0 ^ t0) & keep);
-    this.r[o + 1] = d1 ^ ((d1 ^ t1) & keep);
-    this.r[o + 2] = d2 ^ ((d2 ^ t2) & keep);
-  }
-
   /** `d = a + b`. */
   add(d: usize, a: usize, b: usize) {
-    const r = this.r;
-    const oa = 4 * a;
-    const ob = 4 * b;
-    // The highest index first: its bounds check covers the others.
-    const a3 = r[oa + 3];
-    const b3 = r[ob + 3];
-    const [s0, c0] = adc(r[oa], r[ob], 0);
-    const [s1, c1] = adc(r[oa + 1], r[ob + 1], c0);
-    const [s2, c2] = adc(r[oa + 2], r[ob + 2], c1);
-    const [s3, c3] = adc(a3, b3, c2);
-    this.store(d, s0, s1, s2, s3, c3);
+    this.check(d, a, b);
+    velt_field_p256_add(this.r, d as u64, a as u64, b as u64);
   }
 
   /** `d = a - b`. */
   sub(d: usize, a: usize, b: usize) {
-    const r = this.r;
-    const oa = 4 * a;
-    const ob = 4 * b;
-    const a3 = r[oa + 3];
-    const b3 = r[ob + 3];
-    const [s0, w0] = sbb(r[oa], r[ob], 0);
-    const [s1, w1] = sbb(r[oa + 1], r[ob + 1], w0);
-    const [s2, w2] = sbb(r[oa + 2], r[ob + 2], w1);
-    const [s3, w3] = sbb(a3, b3, w2);
-    // Negative: add p back.
-    const m = 0 - w3;
-    const [t0, c0] = adc(s0, P0 & m, 0);
-    const [t1, c1] = adc(s1, P1 & m, c0);
-    const [t2, c2] = adc(s2, 0, c1);
-    const [t3, _] = adc(s3, P3 & m, c2);
-    const o = 4 * d;
-    this.r[o + 3] = t3;
-    this.r[o] = t0;
-    this.r[o + 1] = t1;
-    this.r[o + 2] = t2;
+    this.check(d, a, b);
+    velt_field_p256_sub(this.r, d as u64, a as u64, b as u64);
   }
 
   /** `d = a * b / 2^256` mod p (the Montgomery product); `d` may be `a` or `b`. */
   mul(d: usize, a: usize, b: usize) {
-    const r = this.r;
-    const oa = 4 * a;
-    const ob = 4 * b;
-    // The highest indexes first: their bounds checks cover the others.
-    const a3 = r[oa + 3];
-    const b3 = r[ob + 3];
-    const a0 = r[oa];
-    const a1 = r[oa + 1];
-    const a2 = r[oa + 2];
-    let x: [u64, u64, u64, u64, u64] = [0, 0, 0, 0, 0];
-    x = row(x, a0, a1, a2, a3, r[ob]);
-    x = row(x, a0, a1, a2, a3, r[ob + 1]);
-    x = row(x, a0, a1, a2, a3, r[ob + 2]);
-    x = row(x, a0, a1, a2, a3, b3);
-    this.store(d, x[0], x[1], x[2], x[3], x[4]);
+    this.check(d, a, b);
+    velt_field_p256_mul(this.r, d as u64, a as u64, b as u64);
   }
 
-  /** `d = a^2 / 2^256` mod p: the 10 distinct products of `mul`'s 16. */
+  /** `d = a^2 / 2^256` mod p; `d` may be `a`. */
   square(d: usize, a: usize) {
-    const r = this.r;
-    const oa = 4 * a;
-    const a3 = r[oa + 3];
-    const a0 = r[oa];
-    const a1 = r[oa + 1];
-    const a2 = r[oa + 2];
-    // The products of distinct limbs, once: each row's low halves and high halves are separate
-    // carry chains.
-    let c: u64 = 0;
-    let k: u64 = 0;
-    // a0 (a1, a2, a3) at limbs 1..4.
-    const t1 = a0 * a1;
-    let [t2, c0] = adc(a0 * a2, Math.umulh(a0, a1), 0);
-    let [t3, c1] = adc(a0 * a3, Math.umulh(a0, a2), c0);
-    let t4 = Math.umulh(a0, a3) + c1;
-    // a1 (a2, a3) at limbs 3..5.
-    [t3, c] = adc(t3, a1 * a2, 0);
-    [t4, c] = adc(t4, a1 * a3, c);
-    let t5 = c;
-    [t4, c] = adc(t4, Math.umulh(a1, a2), 0);
-    [t5, c] = adc(t5, Math.umulh(a1, a3), c);
-    let t6 = c;
-    // a2 a3 at limbs 5..6.
-    [t5, c] = adc(t5, a2 * a3, 0);
-    [t6, k] = adc(t6, Math.umulh(a2, a3), c);
-    // Twice that, plus the squares.
-    const t7 = t6 >> 63;
-    t6 = (t6 << 1) | (t5 >> 63);
-    t5 = (t5 << 1) | (t4 >> 63);
-    t4 = (t4 << 1) | (t3 >> 63);
-    t3 = (t3 << 1) | (t2 >> 63);
-    t2 = (t2 << 1) | (t1 >> 63);
-    const u1 = t1 << 1;
-    const t0 = a0 * a0;
-    let [v1, e] = adc(u1, Math.umulh(a0, a0), 0);
-    let v2: u64 = 0;
-    [v2, e] = adc(t2, a1 * a1, e);
-    let v3: u64 = 0;
-    [v3, e] = adc(t3, Math.umulh(a1, a1), e);
-    let v4: u64 = 0;
-    [v4, e] = adc(t4, a2 * a2, e);
-    let v5: u64 = 0;
-    [v5, e] = adc(t5, Math.umulh(a2, a2), e);
-    let v6: u64 = 0;
-    [v6, e] = adc(t6, a3 * a3, e);
-    const v7 = t7 + Math.umulh(a3, a3) + e;
-    this.reduce(d, t0, v1, v2, v3, v4, v5, v6, v7);
+    this.check(d, a, a);
+    velt_field_p256_sqr(this.r, d as u64, a as u64);
   }
 
-  // Stores the Montgomery reduction of the 512-bit `t` (below p^2): four rounds add m p, with m
-  // the lowest limb (p = -1 mod 2^64), and shift down a limb. Each round's m p is spelled out
-  // from p's limbs: m (2^64 - 1) + the limb below makes m 2^64, m (2^32 - 1) + m is m << 32,
-  // limb 2 of p is zero, and only limb 3 needs a product. The low half reduced is at most p;
-  // adding the high half (below p) leaves less than 2p.
+  // The field operations index the registers unchecked: each of `d`, `a`, `b` must be one.
   @inline("always")
-  private reduce(d: usize, t0: u64, t1: u64, t2: u64, t3: u64, t4: u64, t5: u64, t6: u64, t7: u64) {
-    let u0 = t0;
-    let u1 = t1;
-    let u2 = t2;
-    let u3 = t3;
-    for (let i = 0; i < 4; i++) {
-      const m = u0;
-      const [s1, c1] = adc(u1, m << 32, 0);
-      const [s2, c2] = adc(u2, m >> 32, c1);
-      const [s3, c3] = adc(u3, m * P3, c2);
-      u0 = s1;
-      u1 = s2;
-      u2 = s3;
-      u3 = Math.umulh(m, P3) + c3;
+  private check(d: usize, a: usize, b: usize) {
+    const n = this.r.length;
+    if (4 * d + 3 >= n || 4 * a + 3 >= n || 4 * b + 3 >= n) {
+      panic("ICE: a P-256 register out of range");
     }
-    const [v0, k0] = adc(u0, t4, 0);
-    const [v1, k1] = adc(u1, t5, k0);
-    const [v2, k2] = adc(u2, t6, k1);
-    const [v3, k3] = adc(u3, t7, k2);
-    this.store(d, v0, v1, v2, v3, k3);
   }
 
   /** `d = a^(2^n)` in the domain (n squarings, n >= 1). */

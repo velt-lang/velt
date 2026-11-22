@@ -75,6 +75,13 @@ impl Translator<'_, '_> {
             return None;
         };
         let symbol = self.program.externs.get(id.0 as usize)?.symbol.as_str();
+        if let Some(op) = velt_vir::field::FieldOp::of_symbol(symbol) {
+            if (params.to_vec(), ret) != op.signature() {
+                return None;
+            }
+            self.field_op(op, values);
+            return Some(Inlined::Unit);
+        }
         let call = SimdCall::of_symbol(symbol)?;
         let (want_params, want_ret) = call.signature();
         if params != want_params || ret != want_ret {
@@ -559,5 +566,155 @@ fn int_condition(op: Op, signed: bool) -> IntCC {
         (Op::Gt, false) => IntCC::UnsignedGreaterThan,
         (_, true) => IntCC::SignedGreaterThanOrEqual,
         (_, false) => IntCC::UnsignedGreaterThanOrEqual,
+    }
+}
+
+impl Translator<'_, '_> {
+    /// A field operation (velt_vir `field.rs`) on the registers of the array whose header is at
+    /// `values[0]`: the reference's algorithm in 128-bit integers, which Cranelift lowers to
+    /// multiply-high and add-with-carry. Both operands are read before the result is written.
+    fn field_op(&mut self, op: velt_vir::field::FieldOp, values: &[ir::Value]) {
+        use cranelift_codegen::ir::types::I128;
+        let flags = MemFlags::trusted();
+        let data = self.builder.ins().load(types::I64, flags, values[0], 0);
+        let reg = |s: &mut Self, n: ir::Value| {
+            let off = s.builder.ins().ishl_imm(n, 5);
+            s.builder.ins().iadd(data, off)
+        };
+        let pd = reg(self, values[1]);
+        let pa = reg(self, values[2]);
+        let pb = match op {
+            velt_vir::field::FieldOp::P256Sqr => pa,
+            _ => reg(self, values[3]),
+        };
+        let limbs = |s: &mut Self, at: ir::Value| -> Vec<ir::Value> {
+            (0..4)
+                .map(|k| {
+                    let w = s.builder.ins().load(types::I64, flags, at, 8 * k);
+                    s.builder.ins().uextend(I128, w)
+                })
+                .collect()
+        };
+        let a = limbs(self, pa);
+        let b = limbs(self, pb);
+        let mask = |s: &mut Self, v: ir::Value| {
+            let w = s.builder.ins().ireduce(types::I64, v);
+            s.builder.ins().uextend(I128, w)
+        };
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        let zero = self.builder.ins().uextend(I128, zero);
+        let p: Vec<ir::Value> = (velt_vir::field::P256.iter())
+            .map(|&w| {
+                let c = self.builder.ins().iconst(types::I64, w as i64);
+                self.builder.ins().uextend(I128, c)
+            })
+            .collect();
+        if matches!(
+            op,
+            velt_vir::field::FieldOp::P256Add | velt_vir::field::FieldOp::P256Sub
+        ) {
+            let add = op == velt_vir::field::FieldOp::P256Add;
+            // s = a +- b with its carry or borrow, then -+ p.
+            let mut c = zero;
+            let mut s1 = vec![];
+            for j in 0..4 {
+                let x = if add {
+                    let x = self.builder.ins().iadd(a[j], b[j]);
+                    self.builder.ins().iadd(x, c)
+                } else {
+                    let x = self.builder.ins().isub(a[j], b[j]);
+                    self.builder.ins().isub(x, c)
+                };
+                s1.push(mask(self, x));
+                c = self.builder.ins().ushr_imm(x, if add { 64 } else { 127 });
+            }
+            let mut c2 = zero;
+            let mut s2 = vec![];
+            for j in 0..4 {
+                let x = if add {
+                    let x = self.builder.ins().isub(s1[j], p[j]);
+                    self.builder.ins().isub(x, c2)
+                } else {
+                    let x = self.builder.ins().iadd(s1[j], p[j]);
+                    self.builder.ins().iadd(x, c2)
+                };
+                s2.push(mask(self, x));
+                c2 = self.builder.ins().ushr_imm(x, if add { 127 } else { 64 });
+            }
+            // Add: keep the sum where subtracting p borrows and there was no carry. Sub: add p
+            // back where the difference borrowed.
+            let keep_first = if add {
+                let no_carry = self
+                    .builder
+                    .ins()
+                    .icmp_imm(ir::condcodes::IntCC::Equal, c, 0);
+                let borrowed = self
+                    .builder
+                    .ins()
+                    .icmp_imm(ir::condcodes::IntCC::NotEqual, c2, 0);
+                self.builder.ins().band(no_carry, borrowed)
+            } else {
+                self.builder
+                    .ins()
+                    .icmp_imm(ir::condcodes::IntCC::Equal, c, 0)
+            };
+            for j in 0..4 {
+                let r = self.builder.ins().select(keep_first, s1[j], s2[j]);
+                let w = self.builder.ins().ireduce(types::I64, r);
+                self.builder.ins().store(flags, w, pd, 8 * j as i32);
+            }
+            return;
+        }
+        let mut t = vec![zero; 9];
+        for i in 0..4 {
+            let mut carry = zero;
+            for j in 0..4 {
+                let p = self.builder.ins().imul(a[i], b[j]);
+                let s1 = self.builder.ins().iadd(p, t[i + j]);
+                let s = self.builder.ins().iadd(s1, carry);
+                t[i + j] = mask(self, s);
+                carry = self.builder.ins().ushr_imm(s, 64);
+            }
+            t[i + 4] = carry;
+        }
+        for i in 0..4 {
+            let m = t[i];
+            let mut carry = zero;
+            for j in 0..4 {
+                let prod = self.builder.ins().imul(m, p[j]);
+                let s1 = self.builder.ins().iadd(prod, t[i + j]);
+                let s = self.builder.ins().iadd(s1, carry);
+                t[i + j] = mask(self, s);
+                carry = self.builder.ins().ushr_imm(s, 64);
+            }
+            for k in i + 4..9 {
+                let s = self.builder.ins().iadd(t[k], carry);
+                t[k] = mask(self, s);
+                carry = self.builder.ins().ushr_imm(s, 64);
+            }
+        }
+        // d = t[4..8] - p; keep t where that borrows and t[8] is 0.
+        let mut borrow = zero;
+        let mut d = vec![];
+        for j in 0..4 {
+            let s1 = self.builder.ins().isub(t[4 + j], p[j]);
+            let s = self.builder.ins().isub(s1, borrow);
+            d.push(mask(self, s));
+            borrow = self.builder.ins().ushr_imm(s, 127);
+        }
+        let under = self
+            .builder
+            .ins()
+            .icmp_imm(ir::condcodes::IntCC::NotEqual, borrow, 0);
+        let top0 = self
+            .builder
+            .ins()
+            .icmp_imm(ir::condcodes::IntCC::Equal, t[8], 0);
+        let keep = self.builder.ins().band(under, top0);
+        for j in 0..4 {
+            let r = self.builder.ins().select(keep, t[4 + j], d[j]);
+            let w = self.builder.ins().ireduce(types::I64, r);
+            self.builder.ins().store(flags, w, pd, 8 * j as i32);
+        }
     }
 }

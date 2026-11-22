@@ -333,6 +333,17 @@ impl Emitter<'_> {
             }
             return Some(name);
         }
+        if let Some((name, definitions, want_params, want_ret)) =
+            crate::field::helper(symbol, self.simd == crate::simd::Arch::Sse2)
+        {
+            if params != want_params || ret != want_ret {
+                return None;
+            }
+            for d in definitions {
+                self.intrinsics.need(d);
+            }
+            return Some(name);
+        }
         None
     }
 
