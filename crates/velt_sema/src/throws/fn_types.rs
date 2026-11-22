@@ -236,6 +236,8 @@ impl FnSites {
         self.quiet.clear();
         self.indirect.clear();
         self.indirect_sites.clear();
+        // The plain forms of std's traps' variables come from the round's seeds (`vars`).
+        self.var_sets.forget_plain();
     }
 
     /// The sets to check the program with again, when this check added to them.
@@ -356,7 +358,10 @@ impl Ctx<'_> {
         let inferred = throws.is_none();
         // A trap of std/proxy gets a variable in every check with variables, unless the previous
         // check seeded its set; the program's own sites only in a check without seeds.
+        // std's stage of a check by units has no program to seed its traps: they keep their
+        // variables, which the app's rounds solve (`units`).
         let gets_var = match self.scopes.get(env.module).is_some_and(|s| s.is_std) {
+            true if self.units_stage == crate::units::Stage::Std => true,
             true => self.fn_sites.use_vars && !self.fn_sites.seeds.sites.contains_key(&span),
             false => self.fn_sites.user_vars,
         };

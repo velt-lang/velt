@@ -76,6 +76,12 @@ pub(crate) struct VarSets {
 }
 
 impl VarSets {
+    /// Forget the plain forms found so far: another round of a check by units, where std's
+    /// traps' variables have the round's seeds as their plain forms (`Ctx::plain_type`).
+    pub(super) fn forget_plain(&mut self) {
+        self.plain.clear();
+    }
+
     /// `p` is the plain or solved form of `t`.
     fn note_first(&mut self, p: TyId, t: TyId) {
         let k = self.order_key(p).min(self.order_key(t));
@@ -179,8 +185,8 @@ impl Ctx<'_> {
         if let Some(&p) = self.fn_sites.var_sets.plain.get(&t) {
             return p;
         }
-        let p = if self.err_var(t).is_some() {
-            self.ty.never
+        let p = if let Some(v) = self.err_var(t) {
+            self.seeded_trap(v).unwrap_or(self.ty.never)
         } else if !self.mentions_err_var(t) {
             t
         } else if let Some(orig) = self.union_members(t) {
@@ -197,6 +203,27 @@ impl Ctx<'_> {
         self.fn_sites.var_sets.plain.insert(t, p);
         self.fn_sites.var_sets.note_first(p, t);
         p
+    }
+
+    /// In the app's stage of a check by units, what this round's seeds give std trap variable
+    /// `v`'s site: std's unit keeps its traps' variables (`fn_types`), so their types as written
+    /// are those of a check with the sets written in, as a whole-program check's later rounds
+    /// resolve the traps' types from the seeds.
+    fn seeded_trap(&mut self, v: u32) -> Option<TyId> {
+        if self.units_stage != crate::units::Stage::App || !self.fn_sites.trap_vars.contains(&v) {
+            return None;
+        }
+        let span = *self.fn_sites.vars.get(v as usize)?;
+        if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+            eprintln!(
+                "dbg-trap: plain of var {v} at {span:?}: seeded={} (seed sites {})",
+                self.fn_sites.seeds.sites.contains_key(&span),
+                self.fn_sites.seeds.sites.len()
+            );
+        }
+        let members = self.fn_sites.seeds.sites.get(&span)?.clone();
+        let ms: Vec<TyId> = members.iter().filter_map(|p| self.unport(p)).collect();
+        self.error_union(&ms)
     }
 
     /// `t`'s anonymous object def and type arguments, when it is an anonymous object type whose
@@ -555,8 +582,25 @@ impl Ctx<'_> {
             }
         }
         let mut ok = !self.fn_sites.var_sets.unsupported && self.fn_sites.reject_values == 0;
+        if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+            for &v in &self.fn_sites.trap_vars {
+                let r = reps[v as usize] as usize;
+                eprintln!(
+                    "dbg-trap: solve stage={:?} var {v}: {} members, reject_values={}",
+                    self.units_stage,
+                    sets[r].len(),
+                    self.fn_sites.reject_values
+                );
+            }
+        }
         self.fn_sites.sets_empty = Some(reps.iter().all(|&r| sets[r as usize].is_empty()));
+        // std's stage of a check by units leaves its traps' variables open for the app's rounds,
+        // which see what the program stores into them.
+        let std_stage = self.units_stage == crate::units::Stage::Std;
         for (v, &r) in reps.iter().enumerate() {
+            if std_stage && self.fn_sites.trap_vars.contains(&(v as u32)) {
+                continue;
+            }
             let s = self.error_union(&sets[r as usize]).unwrap_or(self.ty.never);
             let var = self.ty.intern(TyKind::Op(TyOp::ErrSite(v as u32), vec![]));
             self.fn_sites.solved.insert(var, s);

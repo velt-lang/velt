@@ -14,7 +14,10 @@ use crate::hir::{DefId, TyId};
 pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     // The error-set variables (`vars`): closures created for a site's type throw into its
     // variable; then the sets are solved, and the checks below see solved error types.
-    let vars = cx.fn_sites.use_vars && !cx.fn_sites.vars.is_empty();
+    // A check by units solves its traps' variables in every round: std's unit keeps them open
+    // (`fn_types`), and only the app's rounds see what is stored into them.
+    let open_traps = cx.units && !cx.fn_sites.trap_vars.is_empty();
+    let vars = (cx.fn_sites.use_vars || open_traps) && !cx.fn_sites.vars.is_empty();
     let mut into_vars = rustc_hash::FxHashSet::default();
     let mut solved_ok = true;
     if vars {
@@ -28,8 +31,15 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             }
         }
         solved_ok = cx.solve_err_vars();
-        // The passes after inference see the solved error types.
-        for &d in fns {
+        // The passes after inference see the solved error types: also std's functions in the
+        // app's stage of a check by units, whose error types may hold its traps' variables.
+        let std_fns: Vec<DefId> = match cx.units_stage == crate::units::Stage::App {
+            true => (cx.fn_defs.iter().copied())
+                .filter(|d| d.0 < cx.unit_base)
+                .collect(),
+            false => vec![],
+        };
+        for &d in fns.iter().chain(&std_fns) {
             let t = cx.fn_info(d).throws;
             cx.fn_info_mut(d).throws = solved(cx, t);
         }
@@ -320,9 +330,15 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     // A `catch` variable's type assumed the variables in it have the sets known then
     // (`var_known`): that is checked when the sets are solved, and the types are compared
     // solved.
-    if cx.fn_sites.use_vars {
+    if cx.fn_sites.use_vars || (cx.units && !cx.fn_sites.trap_vars.is_empty()) {
         fin = solved(cx, fin);
         obs = solved(cx, obs);
+    }
+    // std's stage of a check by units leaves its traps' variables open (`vars`): what it
+    // checked assumed them empty, as a program whose traps throw nothing does.
+    if cx.units_stage == crate::units::Stage::Std {
+        fin = cx.assume_trap_vars_empty(fin);
+        obs = cx.assume_trap_vars_empty(obs);
     }
     let ok = if c.exact {
         fin == obs
