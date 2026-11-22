@@ -61,7 +61,9 @@ mod tests {
         cx.fn_sites.found.proxy_sites.insert(other_trap);
         assert_eq!(cx.std_trap_sites(), vec![(trap, ty), (other_trap, ty)]);
 
-        cx.unit_sums.trap_sites = cx.std_trap_sites();
+        // std's stage ends as a check by units ends it, keeping its sites for the app's rounds.
+        crate::units::finish_std(&mut cx);
+        assert_eq!(cx.unit_sums.trap_sites, vec![(trap, ty), (other_trap, ty)]);
         let thrown = Portable::Leaf(TyKind::Str);
         cx.fn_sites.seeds.sites.insert(trap, vec![thrown.clone()]);
         cx.fn_sites.seeds.sites.insert(program, vec![thrown]);

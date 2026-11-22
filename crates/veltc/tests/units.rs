@@ -370,6 +370,23 @@ fn a_proxy_trap_s_errors_reach_the_program_as_in_a_whole_program_check() {
         assert!(whole.status.success(), "{src}");
         assert!(two.status.success(), "{src}:\n{said}");
     }
+    // Wrong programs, refused alike: the trap's error is the reason's type, not nothing (a
+    // number can't hold an `E1`), and a caught error that is not an `E2`.
+    let reason_as_number = throwing.replace(
+        "console.log(x.reason.message);",
+        "const n: number = x.reason;\n      console.log(n + 1);",
+    );
+    let caught_as_e2 = reason_as_number.replace(
+        "async function main() {\n",
+        "class E2 extends Error {}\n\nasync function main() {\n  try {\n    await rd(make());\n  } catch (e) {\n    const x: E2 = e;\n    console.log(x.message);\n  }\n",
+    );
+    for src in [&reason_as_number, &caught_as_e2] {
+        let whole = check_in(None, src);
+        let two = check_in(Some("2"), src);
+        assert!(!whole.status.success(), "{src}");
+        assert_eq!(whole.status.code(), two.status.code(), "{src}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{src}");
+    }
     for path in [
         "lang/proxy_throws_reason_one.velt",
         "lang/proxy_throws_reason_two.velt",

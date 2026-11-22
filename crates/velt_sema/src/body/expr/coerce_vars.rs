@@ -3,7 +3,7 @@
 //! again with the solved sets.
 
 use crate::body::FnCx;
-use crate::hir::{self, TyId};
+use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// `h` converted to `exp` as their types are written without their error-set variables.
@@ -24,7 +24,12 @@ impl FnCx<'_, '_> {
         if traps && !(self.cx.only_trap_vars(h.ty) && self.cx.only_trap_vars(exp)) {
             return Err(h);
         }
-        let (from, to) = (self.cx.plain_type(h.ty), self.cx.plain_type(exp));
+        // A check by units: std's trap variables as written are what the round's seeds give
+        // their sites (`Ctx::plain_seeded`).
+        let (from, to) = match traps && self.cx.units {
+            true => (self.cx.plain_seeded(h.ty), self.cx.plain_seeded(exp)),
+            false => (self.cx.plain_type(h.ty), self.cx.plain_type(exp)),
+        };
         let ty = h.ty;
         let mut p = h;
         p.ty = from;
@@ -71,6 +76,49 @@ impl FnCx<'_, '_> {
         }
         let plain = self.cx.plain_type(h.ty);
         self.coerce_as_written(h, plain, true).unwrap_or_else(|h| h)
+    }
+
+    /// In the app's stage of a check by units, `h` with std's trap variables in its type as this
+    /// round's seeds give their sites, when its type is built of promises, arrays, options,
+    /// tuples and unions over them (`rd(p)`'s `Promise<number>` rejecting with a trap's error):
+    /// a whole-program check's later rounds have the traps' errors there. Not a function value
+    /// or an object: std's own types (a handler's traps) keep the variables, so those would not
+    /// match them.
+    pub(crate) fn seeded_trap_value(&mut self, h: hir::Expr) -> hir::Expr {
+        if self.cx.units_stage != crate::units::Stage::App
+            || !self.cx.mentions_err_var(h.ty)
+            || !self.cx.only_trap_vars(h.ty)
+            || !self.plain_shape(h.ty, 0)
+        {
+            return h;
+        }
+        let seeded = self.cx.plain_seeded(h.ty);
+        if seeded == self.cx.plain_type(h.ty) {
+            return h;
+        }
+        self.coerce_as_written(h, seeded, true)
+            .unwrap_or_else(|h| h)
+    }
+
+    /// Is `t` built of promises, arrays, options, tuples, unions and error-set variables
+    /// ([`Self::seeded_trap_value`])?
+    fn plain_shape(&mut self, t: TyId, depth: u32) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        if self.cx.is_err_var(t) || !self.cx.mentions_err_var(t) {
+            return true;
+        }
+        let parts: Vec<TyId> = match self.cx.ty.kind(t).clone() {
+            TyKind::Promise(v, e) => vec![v, e],
+            TyKind::Array(e) | TyKind::Option(e, _) => vec![e],
+            TyKind::Tuple(es) => es,
+            _ => match self.cx.union_members(t) {
+                Some(ms) => ms,
+                None => return false,
+            },
+        };
+        parts.into_iter().all(|p| self.plain_shape(p, depth + 1))
     }
 
     /// `h` as its type is written when that type holds only the traps' error-set variables, at
