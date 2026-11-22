@@ -476,6 +476,7 @@ fn param_attributes_become_llvm_attributes() {
 }
 
 mod aes;
+mod arch;
 mod atomics;
 mod bfdot;
 mod c_export;
