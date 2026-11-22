@@ -17,6 +17,14 @@ use velt_sema::hir::TyId;
 /// Size of the count word in front of a counted object (also the block alignment).
 const COUNT: i128 = 8;
 
+/// How many bytes a counted object's block has in front of a payload aligned to `align`: the
+/// count word, or for a payload aligned beyond it (an `@align(n)` struct) that alignment, so the
+/// payload starts at a multiple of it with the count in the word just before. The block is
+/// aligned to the same.
+fn counted_header(align: u32) -> i128 {
+    COUNT.max(i128::from(align))
+}
+
 /// The `LOCAL` bit of a lock-set object's count word (velt_rt `read_mode`), and its count
 /// without it.
 pub(super) const LOCAL: i128 = 1 << 62;
@@ -496,46 +504,59 @@ impl FnLower<'_, '_> {
     }
 
     /// A new counted object holding one `layout` value (uninitialized), count 1: the payload
-    /// pointer.
+    /// pointer. The count is the word just before the payload; the block starts
+    /// [`counted_header`] bytes before it, so a payload aligned beyond 8 (an `@align(n)` struct
+    /// in it) starts at a multiple of its alignment.
     pub(super) fn counted_alloc(&mut self, layout: Ty) -> Operand {
         let (size, align) = self.cx.size_align(layout);
-        if i128::from(align) > COUNT {
-            ice("counted object aligned beyond its count word");
-        }
+        let header = counted_header(align);
         let block = self.temp(Ty::Ptr);
         self.call_rt(
             Rt::Alloc,
             vec![
-                cint(i128::from(size) + COUNT, Ty::U64),
-                cint(COUNT, Ty::U64),
+                cint(i128::from(size) + header, Ty::U64),
+                cint(header, Ty::U64),
             ],
             Some(Place::local(block)),
         );
-        let count = proj(&Place::local(block), Proj::Deref(Ty::U64));
-        self.assign(count, Rvalue::Use(cint(1, Ty::U64)));
-        self.rvalue_temp(
+        let payload = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Binary(
                 BinOp::PtrAdd,
                 Operand::Copy(Place::local(block)),
-                cint(COUNT, Ty::I64),
+                cint(header, Ty::I64),
             ),
-        )
+        );
+        // The word before the payload: the block's first, unless the header is longer.
+        let count = match header == COUNT {
+            true => Place::local(block),
+            false => {
+                let at = Rvalue::Binary(BinOp::PtrAdd, payload.clone(), cint(-COUNT, Ty::I64));
+                let Operand::Copy(at) = self.rvalue_temp(Ty::Ptr, at) else {
+                    ice("a temp is a place");
+                };
+                at
+            }
+        };
+        let count = proj(&count, Proj::Deref(Ty::U64));
+        self.assign(count, Rvalue::Use(cint(1, Ty::U64)));
+        payload
     }
 
     /// Free the counted object `p` holding one `layout` value (its contents already dropped).
     pub(super) fn counted_free(&mut self, p: Operand, layout: Ty) {
-        let (size, _) = self.cx.size_align(layout);
+        let (size, align) = self.cx.size_align(layout);
+        let header = counted_header(align);
         let block = self.rvalue_temp(
             Ty::Ptr,
-            Rvalue::Binary(BinOp::PtrAdd, p, cint(-COUNT, Ty::I64)),
+            Rvalue::Binary(BinOp::PtrAdd, p, cint(-header, Ty::I64)),
         );
         self.call_rt(
             Rt::Free,
             vec![
                 block,
-                cint(i128::from(size) + COUNT, Ty::U64),
-                cint(COUNT, Ty::U64),
+                cint(i128::from(size) + header, Ty::U64),
+                cint(header, Ty::U64),
             ],
             None,
         );

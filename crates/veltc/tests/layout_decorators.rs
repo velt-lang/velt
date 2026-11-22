@@ -329,14 +329,23 @@ function main() {
   const words: Word[] = [{ w: 5 }];
   const pairs: Pair[] = [{ a: 6, b: 7 }];
   const m: Meters = { m: 8 };
-  console.log(lines.length, lines[2].n, tagged[0].line.n, words[0].w, pairs[0].b, m.m);
+  // Captured and changed by a closure: a counted box, whose payload is aligned too.
+  let boxed: Line = { n: 8 };
+  const bump = () => {
+    boxed = { n: boxed.n + 1 };
+  };
+  // Stored, so it outlives the call and `boxed` lives in a box rather than on the stack.
+  const later: (() => void)[] = [bump];
+  later[0]();
+  console.log(lines.length, lines[2].n, tagged[0].line.n, words[0].w, pairs[0].b, m.m, boxed.n);
 }
 "#;
 
 /// `@align(n)` raises a struct's alignment to `n` and pads its size to a multiple of it; a
 /// struct holding one takes its alignment; a smaller `n` changes nothing; a transparent struct
-/// has its field's layout. An array's buffer comes from the allocator with the elements'
-/// alignment, and the program prints its fields as written in both builds.
+/// has its field's layout. An array's buffer and a counted box come from the allocator with the
+/// elements' alignment (a box's payload after a header as long as that alignment), and the
+/// program prints its fields as written in both builds.
 #[test]
 fn align_raises_a_struct_s_alignment_and_pads_its_size() {
     let dir = test_dir::TestDir::new();
@@ -360,6 +369,15 @@ fn align_raises_a_struct_s_alignment_and_pads_its_size() {
         (vir.lines()).any(|l| l.contains("velt_rt_alloc(") && l.contains(", 32_u64)")),
         "no 32-byte aligned block in:\n{vir}"
     );
+    // `boxed`'s box: a 64-byte header (the count in its last word) before the 64-byte payload,
+    // so the payload is aligned to 64 as the block is; freed with the same size and alignment.
+    for call in ["velt_rt_alloc(128_u64, 64_u64)", "velt_rt_free("] {
+        assert!(vir.contains(call), "no `{call}` in:\n{vir}");
+    }
+    assert!(
+        (vir.lines()).any(|l| l.contains("velt_rt_free(") && l.contains(", 128_u64, 64_u64)")),
+        "the box is not freed as it was allocated:\n{vir}"
+    );
     assert_eq!(layout(&vir, "Meters"), "Meters size=8 align=8 { f64@0 }");
     for release in [false, true] {
         let mut args = vec!["run", "main.velt"];
@@ -370,7 +388,7 @@ fn align_raises_a_struct_s_alignment_and_pads_its_size() {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         assert_eq!(
             String::from_utf8_lossy(&o.stdout),
-            "3 3 4 5 7 8\n",
+            "3 3 4 5 7 8 9\n",
             "release: {release}"
         );
     }
