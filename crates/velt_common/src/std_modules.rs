@@ -90,6 +90,7 @@ table! {
     lang_hooks_adapt => "lang/hooks/adapt",
     lang_hooks_any_object => "lang/hooks/any_object",
     lang_hooks_any_ops => "lang/hooks/any_ops",
+    lang_hooks_any_promise => "lang/hooks/any_promise",
     lang_hooks_any_record => "lang/hooks/any_record",
     lang_hooks_any_text => "lang/hooks/any_text",
     lang_hooks_array => "lang/hooks/array",

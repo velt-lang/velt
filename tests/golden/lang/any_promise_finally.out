@@ -1,0 +1,4 @@
+kept 7 finally ran
+still rejects first
+waited 7 slow done
+returned rejection from finally

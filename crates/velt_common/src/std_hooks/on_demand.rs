@@ -37,6 +37,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_write",
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
+    // `then`, `catch` and `finally` of a promise held as `any` (#924 step 2), demanded by sema.
+    "std/lang/hooks/any_promise",
     "std/lang/hooks/unwind",
     "std/lang/hooks/inspect",
     "std/lang/hooks/inspect_cycles",

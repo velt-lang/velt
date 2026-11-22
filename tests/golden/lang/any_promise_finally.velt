@@ -1,0 +1,45 @@
+// `finally` of a promise held as `any` (#924 step 2), as in Node: its callback runs on either
+// outcome with no argument and the value or reason passes on, its result ignored. A promise
+// the callback returns is awaited first, and if that promise rejects, the result rejects with
+// its reason instead. (A callback that throws is #2353: a throw through a call on `any` is not
+// caught yet.) The callbacks that return a promise are written returning `any`: a function
+// called through `any` that returns a typed promise is #924's step 3.
+async function later(n: number): Promise<number> {
+  return n;
+}
+
+async function fails(m: string): Promise<number> {
+  throw new Error(m);
+}
+
+async function slow(log: string[]): Promise<void> {
+  await later(0);
+  log.push("slow done");
+}
+
+async function main(): Promise<void> {
+  const log: string[] = [];
+  const p: any = later(7);
+  const kept = await p.finally(() => {
+    log.push("finally ran");
+    return 99;
+  });
+  console.log("kept", kept, log.join(", "));
+
+  const f: any = fails("first");
+  try {
+    await f.finally(() => log.push("finally on rejection"));
+  } catch (e) {
+    console.log("still rejects", e instanceof Error ? e.message : e);
+  }
+
+  const waited = await p.finally((): any => slow(log));
+  console.log("waited", waited, log[log.length - 1]);
+
+  try {
+    await p.finally((): any => fails("from finally"));
+  } catch (e) {
+    console.log("returned rejection", e instanceof Error ? e.message : e);
+  }
+}
+main();
