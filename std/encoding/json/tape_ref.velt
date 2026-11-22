@@ -98,6 +98,23 @@ export class TapeRef {
     return velt_rt_str_byte_slice(this.tape.src, p & 0xffffffff, p >> 32);
   }
 
+  /** Value `v`'s first word (its kind and flags). */
+  @inline("always")
+  head(v: u32): u64 {
+    return this.tape.words[2 * (v as usize)];
+  }
+
+  /** Value `v`'s second word. */
+  @inline("always")
+  payload(v: u32): u64 {
+    return this.tape.words[2 * (v as usize) + 1];
+  }
+
+  /** The number of values on the tape. */
+  size(): usize {
+    return this.tape.words.length / 2;
+  }
+
   @inline("always")
   units(v: u32): i64 {
     return (this.tape.words[2 * (v as usize)] >> 32) as i64;

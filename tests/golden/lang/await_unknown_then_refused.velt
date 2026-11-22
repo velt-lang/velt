@@ -1,0 +1,16 @@
+// A `then` callback that returns an `unknown` (#924): a value that is no promise settles the new
+// promise as before; a promise held in the `unknown`, which JavaScript adopts, stops with a
+// TypeError until that is supported (#3425), rather than settling it with the promise itself.
+async function later(n: number): Promise<number> {
+  await Promise.resolve();
+  return n * 2;
+}
+
+async function main(): Promise<void> {
+  const plain = await Promise.resolve(1).then((n: number): unknown => n + 1);
+  console.log(plain);
+  const held = await Promise.resolve(1).then((n: number): unknown => later(n));
+  console.log(held);
+  console.log("not reached");
+}
+main();

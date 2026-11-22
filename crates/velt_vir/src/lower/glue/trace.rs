@@ -91,7 +91,8 @@ impl FnLower<'_, '_> {
     pub(super) fn trace_class_fields(&mut self, o: &Place, ty: TyId, tv: (vir::Local, vir::Local)) {
         let tys = self.cx.adt_field_tys(ty);
         for (i, t) in tys.into_iter().enumerate() {
-            if self.refers(t) {
+            // A weak field is no edge (weak_fields.rs).
+            if self.refers(t) && self.cx.weak_field(ty, i as u32).is_none() {
                 let fp = self.field_place(o, ty, i as u32);
                 self.trace_part(fp, t, tv);
             }

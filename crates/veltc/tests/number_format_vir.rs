@@ -1,7 +1,8 @@
 //! Numbers as text in std's Velt code (#1982): `tests/golden/std/number_format.velt` checks that
-//! the output stays Node's; this checks the release build's shape: no call into the runtime's
-//! formatters, and the float path is one function marked `@noInline` (#1884) that every `${x}`
-//! calls instead of a copy at each site.
+//! the output stays Node's; this checks the release build's shape: the program's conversions take
+//! std's float printing, not the fallback hook, and the float path is one function marked
+//! `@noInline` (#1884) that every `${x}` calls instead of a copy at each site. (The runtime has
+//! no number formatter left to call, #2197, #2196.)
 
 use std::path::Path;
 
@@ -41,14 +42,14 @@ fn numbers_print_without_the_runtime_and_floats_through_one_function() {
             hot.push(line);
         }
     }
-    // Not `velt_rt_strbuf_push_f64`: `StringBuilder.appendNumber` and the JSON writer (the
-    // golden's builder and JSON section, inlined into `main`) send a float that is not a whole
-    // number to the runtime's printer by design, since std's float printer is not loaded for
-    // them. Templates and `String()` take std's: the float formatter is checked below.
-    let runtime = "velt_rt_str_from_f64";
+    // Not `numberPush`: `StringBuilder.appendNumber` and the JSON writer (the golden's builder
+    // and JSON section, inlined into `main`) reach std's float printing by role
+    // (`number_shortest`), since it isn't loaded for them. Templates and `String()` take it
+    // inline: the float formatter is checked below.
+    let fallback = "N10numberText";
     assert!(
-        !hot.iter().any(|l| l.contains(runtime)),
-        "a call of `{runtime}`\n{vir}"
+        !hot.iter().any(|l| l.contains(fallback)),
+        "a call of `numberText`\n{vir}"
     );
     let float_fns: Vec<&str> = vir
         .lines()
@@ -87,7 +88,7 @@ fn a_float_no_syntax_marks_takes_std_printer() {
     // `tests/golden/lang/float_text_miss.velt`: its floats reach `${x}` and `String(x)` in a module
     // whose syntax marks none of them as floats. Sema sees their types and demands std's float
     // printer during the check (velt/lang/hooks/number_float, #2161 step 3), so the conversions
-    // call it, and no template or `String()` of the program goes to the runtime's printer.
+    // call it, and no template or `String()` of the program goes to the fallback hook.
     let vir = release_vir("lang/float_text_miss.velt");
     let header = |l: &&str| l.starts_with("fn#");
     assert!(
@@ -98,8 +99,8 @@ fn a_float_no_syntax_marks_takes_std_printer() {
     );
     assert!(
         !vir.lines()
-            .any(|l| !l.starts_with("fn#") && l.contains("velt_rt_str_from_f64")),
-        "a call of the runtime's printer\n{vir}"
+            .any(|l| !l.starts_with("fn#") && l.contains("N10numberText")),
+        "a call of the fallback hook\n{vir}"
     );
 }
 

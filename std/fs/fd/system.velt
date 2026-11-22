@@ -8,6 +8,9 @@ import { platform } from "velt/os/machine";
 
 /** The fields of `struct stat` `fstatSync` reads (the `#fd-system` variant reads them per target). */
 export struct Stat {
+  /** The device and the inode: which file it is (`copyFile` onto itself is a no-op). */
+  st_dev: u64;
+  st_ino: u64;
   st_mode: u32;
   st_size: i64;
   st_mtime: i64;

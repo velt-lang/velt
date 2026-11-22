@@ -1,0 +1,57 @@
+// velt/lang/hooks (internal): tasks a burst spread over the workers come back to worker 0 once
+// the load is gone (#3097). Offers move tasks off a worker whose queue waits too long
+// (sched_spread.velt); nothing else brings them back. A task that may move runs in its waker's
+// slot when another worker wakes it (sched_wake.velt `schedule`), but an anchored one (it made a
+// sleep) goes to its home's inbox: left alone on an idle worker, it pays a kernel wake-up for
+// every call from another worker (an actor's shard at low load). So an idle worker hands the
+// tasks woken onto it to worker 0, when it takes its inbox:
+// - Idle: not worker 0, tasks spread (`M_SPREAD`), and its last `MIN_TAKES` takes of its inbox
+//   that found tasks each found nothing else queued on it (`E_IDLE_RUN`, sched_queue.velt
+//   `takeInbox`): its tasks reach it one at a time while it has nothing else to do, which costs
+//   a kernel wake-up or a spin nearly every time. What counts is the queue, not whether the
+//   worker had parked: a caller's next call may land before the worker gets to its park (the
+//   more so when the OS takes its thread off the core meanwhile), and is still a call to a
+//   worker with nothing to run. A busy worker takes its inbox with tasks queued, which ends the
+//   run, so a burst's spread stays (the hysteresis against offers).
+// - Worker 0 not loaded: fewer than `sp.BORROW_MIN` tasks queued (`E_QUEUED`, as borrowers read).
+// - A task that may move goes as it is; an anchored one only when it can carry its sleeps
+//   (sched_sleep_carry.velt); a pinned one, or one anchored for good, stays.
+
+import * as m from "./sched_mem";
+import * as mon from "./sched_monitor";
+import * as sc from "./sched_sleep_carry";
+import * as sp from "./sched_spread";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+const MIN_TAKES: usize = 16;
+
+/** Does worker `e` hand the tasks of its inbox to worker 0 (`g`)? */
+export function gathers(e: usize, g: usize): bool {
+  if ((m.ld32(e + t.E_MODE) & t.M_SPREAD) === 0) {
+    return false;
+  }
+  if (m.ld(e + t.E_IDLE_RUN) < MIN_TAKES) {
+    return false;
+  }
+  // Not to a lazy worker 0 (a spare's tasks are the ones a rescue took off it), nor to one in a
+  // poll the monitor finds stalled: they would wait for that poll, which may wait for them.
+  if (m.load(g + t.E_LAZY) !== 0 || mon.stalled(g, m.load(g + t.E_TICKS))) {
+    return false;
+  }
+  return m.load(g + t.E_QUEUED) < sp.BORROW_MIN;
+}
+
+/** Idle worker `e` hands task `k` (from its inbox) to worker 0 (`g`): whether it did. */
+export function give(e: usize, g: usize, k: usize): bool {
+  if (!t.movable(k)) {
+    if (!t.has(k, t.ANCHORED) || !t.carryable(k) || !sc.canCarry(e)) {
+      return false;
+    }
+    m.st(k + t.T_NEXT, 0);
+    sc.carry(e, k);
+  }
+  m.st(k + t.T_HOME, g);
+  m.pushStack(g + t.E_INBOX, k, t.T_NEXT);
+  return true;
+}

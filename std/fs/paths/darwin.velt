@@ -1,0 +1,65 @@
+// velt/fs (internal): the `#fs-paths` variant of macOS (std/imports.velt): posix.velt's renaming,
+// linking and copying, with macOS's `fchmod` (a 16-bit `mode_t`) and its data step. libuv sends
+// the data with `sendfile`, which on macOS takes only a regular file to read and only a socket to
+// write: a regular file falls back to the read and write loop, and anything else with a size (a
+// directory) is `ENOTSUP`, Node's error. So the data step is that loop, or `ENOTSUP`, without the
+// call (a device or a FIFO, of size 0, sends nothing: posix.velt).
+
+import { Done } from "velt/fs/whole/done";
+import {
+  copyLoop,
+  copyWith,
+  readlinkAt as posixReadlink,
+  realpathAt as posixRealpath,
+  renameAt as posixRename,
+  symlinkAt as posixSymlink,
+} from "velt/fs/paths/posix";
+
+declare c("c", { errno: true }) function fchmod(fd: i32, mode: u16): i32;
+
+/** `st_mode`'s type bits, a regular file's, and macOS's `ENOTSUP`. */
+const S_IFMT: u32 = 0o170000;
+const S_IFREG: u32 = 0o100000;
+const ENOTSUP: i32 = 45;
+
+/** Renames `cf` (`from`) to `ct` (`to`), replacing a file there. */
+export function renameAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+): Done<bool> {
+  return posixRename(cf, from, ct, to);
+}
+
+/** Makes a link at `cp` (`path`) to `target` (`ct`, stored as it is). */
+export function symlinkAt(
+  ct: readonly u8[],
+  target: string,
+  cp: readonly u8[],
+  path: string,
+): Done<bool> {
+  return posixSymlink(ct, target, cp, path);
+}
+
+/** The target stored in the link at `c`. */
+export function readlinkAt(c: readonly u8[], path: string): Done<string> {
+  return posixReadlink(c, path);
+}
+
+/** The absolute path of `c` with every link, `.` and `..` resolved. */
+export function realpathAt(c: readonly u8[], path: string): Done<string> {
+  return posixRealpath(c, path);
+}
+
+/** Copies the file `cf` (`from`) to `ct` (`to`), replacing a file there. */
+export function copyAt(cf: readonly u8[], from: string, ct: readonly u8[], to: string): Done<bool> {
+  return copyWith(cf, from, ct, to, {
+    chmod: (fd, mode) => {
+      // SAFETY: `fd` is the destination `copyWith` opened and still holds.
+      return unsafe { fchmod(fd, mode as u16) };
+    },
+    data: (src, dst, mode, size) =>
+      ((mode & S_IFMT) == S_IFREG ? copyLoop(src, dst, size) : ENOTSUP),
+  });
+}

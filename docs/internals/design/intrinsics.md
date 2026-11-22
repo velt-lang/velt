@@ -40,6 +40,7 @@ the checked, saturating and wrapping arithmetic of the integer types is prelude 
 |---|---|---|---|
 | math | `velt_vir::math` (`MathOp`) | sqrt, floor, ceil, JS round, trunc, abs, integer pow, f64/f32/f16/bf16 bits and conversions, umulh, ToInt32 and the int32 helpers, clz/ctz/popcount, fused multiply-add | velt_rt's `math.rs` for most; `velt_math_*` operations have none |
 | simd | `velt_vir::simd` (`SimdCall`) | lane operations, loads and stores, masks, shuffles, the 256-bit `f32x8` | none: always inline |
+| velt/arch | `velt_vir::arch` (`SimdCall::Arch`) | velt/arch's instructions, one per row of its table (CRC32, BMI, `pshufb`, the dot products, …) | none: LLVM only, in gated code |
 | arch | `velt_vir::simd` (`ExtOp`, `Ext`) | SHA, carry-less multiply, AES rounds | none: behind a CPU check |
 | atomic | `velt_vir::atomic` (`AtomicCall`) | loads, stores, read-modify-writes, CAS, fences | none: always inline |
 | tls | `velt_vir::tls` (`TlsCall`) | thread-local reads and writes | none |
@@ -166,6 +167,10 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   by nothing else, as `AtomicValue` and `Frozen` are the compiler's (velt_sema `infer.rs`
   `satisfies`). A type parameter has it only through its own `T extends Numeric`; `bool` is
   left out (not every byte is a `bool`).
+- `ptrRead<S>(p: Ptr<S>, index: usize)` and `ptrWrite<S>(p, index, s)` are velt/ffi's
+  `Ptr.read` and `Ptr.write` (c-ffi.md "C structs"): the `S` at element `index` of `p`, `S` a
+  number, `bool`, a C pointer or a C struct, checked through a type parameter too. A read stops
+  the program at a pointer in the value declared non-null that is NULL.
 - `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
   and `addressAtomicCasWeak<T>` do what `Atomic<T>`'s methods do on the integer `T` at an
   address, with the same `velt_atomic_*` operations (`crates/velt_vir/src/atomic.rs`). The

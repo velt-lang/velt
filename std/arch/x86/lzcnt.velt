@@ -22,4 +22,30 @@ export class Lzcnt {
   static isSupported(): bool {
     return velt_simd_has_lzcnt_x86() || (velt_simd_on_x86() && cpuHas(LZCNT_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The number of zero bits above the highest bit set in `value` (32 for 0).
+   *
+   * `_lzcnt_u32` (`lzcnt`). Runs only where the CPU has it: call it behind `Lzcnt.isSupported()`,
+   * or in a function gated on `lzcnt-x86`.
+   */
+  static leadingZeroCountU32(value: u32): u32 {
+    return velt_arch_lzcnt_leading_zero_count_u32(value);
+  }
+
+  /**
+   * The number of zero bits above the highest bit set in `value` (64 for 0).
+   *
+   * `_lzcnt_u64` (`lzcnt`). Runs only where the CPU has it: call it behind `Lzcnt.isSupported()`,
+   * or in a function gated on `lzcnt-x86`.
+   */
+  static leadingZeroCountU64(value: u64): u64 {
+    return velt_arch_lzcnt_leading_zero_count_u64(value);
+  }
 }
+
+declare function velt_arch_lzcnt_leading_zero_count_u32(value: u32): u32;
+declare function velt_arch_lzcnt_leading_zero_count_u64(value: u64): u64;

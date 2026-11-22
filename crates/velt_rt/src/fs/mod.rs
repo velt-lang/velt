@@ -1,12 +1,11 @@
-//! `std/fs`: blocking `*_sync` operations in `sync.rs` (a native build runs the whole-file
-//! ones on the executor's blocking pool: std/fs/rt_sched.velt), and chunked reader/writer handles
-//! in `stream.rs`. velt_rt_wasm compiles `ops.rs` and `sync.rs` with its own async variants.
+//! `std/fs`: the chunked reader/writer handles of `stream.rs`. The other file-system operations
+//! are std code in a native build (std/fs/whole, tree, paths; #2196) and velt_rt_wasm's in a
+//! WebAssembly one, which compiles `ops.rs` too.
 //!
 //! Every argument is copied at the call, so the caller keeps ownership of its strings and may drop
 //! them right away. Data arguments are strings.
 
 mod ops;
 pub mod stream;
-pub mod sync;
 
 pub use ops::VeltStat;

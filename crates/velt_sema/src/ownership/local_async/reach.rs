@@ -441,7 +441,7 @@ fn held_types(cx: &mut Ctx, t: TyId, memo: &mut Memo) -> FxHashSet<TyId> {
                     .collect();
                 work.extend(impls);
             }
-            k => work.extend(crate::types::children(&k)),
+            k => work.extend(crate::types::contents(&k)),
         }
     }
     memo.holds.insert(t, seen.clone());

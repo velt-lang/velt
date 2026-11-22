@@ -20,6 +20,7 @@
 
 pub(crate) mod codec;
 pub(crate) mod disk;
+pub(crate) mod modes;
 
 use crate::ctx::Ctx;
 
@@ -53,12 +54,16 @@ pub struct Summaries {
     /// whether code outside a function does ([`app_reads_shared`]).
     pub(crate) shared_readers: rustc_hash::FxHashSet<crate::hir::DefId>,
     pub(crate) shared_read_outside: bool,
+    /// The unit's functions whose modes its inference raised, with the raised modes: the unit
+    /// itself holds their declared modes, for the app's bodies (`modes`).
+    pub(crate) raised_modes: Vec<modes::Modes>,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
+        raised_modes,
     }
 }
 
@@ -94,6 +99,7 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         });
     }
     if cx.units_stage == Stage::Std {
+        modes::declared(cx);
         // The passes after the bodies run for std alone (`crate::analyze`); it is frozen once
         // its rounds are done (`crate::rounds`).
         return;
@@ -112,6 +118,9 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         crate::body::check_added(cx, from);
         crate::body::finish_bodies(cx, from.defs);
     });
+    if cx.units_stage == Stage::App {
+        modes::restore(cx);
+    }
     if cx.units_stage == Stage::Both {
         cx.thaw_defs();
     }
@@ -132,6 +141,8 @@ pub(crate) fn finish_std(cx: &mut Ctx) {
     // Whether std's code read a `shared` is the program's question: its std code, not all of
     // std's (`app_reads_shared`).
     cx.frozen_reads = false;
+    // The app's bodies see std's modes as declared, as in a whole-program check (`modes`).
+    modes::keep_raised(cx);
     codec::unit::clear_memos(cx);
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;

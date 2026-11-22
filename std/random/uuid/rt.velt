@@ -1,9 +1,7 @@
-// velt/random/uuid (internal): the runtime functions velt/random/uuid calls: the OS CSPRNG and the
-// copies between strings and bytes.
+// velt/random/uuid (internal): the runtime functions velt/random/uuid calls: the copies between
+// strings and bytes.
 
 import { IoResult } from "velt/native/result";
-
-export declare function velt_rt_random_bytes(n: u64): u8[];
 
 export declare function velt_rt_bytes_from_str(s: string): u8[];
 

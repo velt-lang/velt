@@ -1,0 +1,33 @@
+// velt/lang/random (internal): the operating system's random numbers on macOS (`#os-random`,
+// os.velt): `getentropy`, at most 256 bytes a call, as the `getrandom` crate the runtime used
+// drew them.
+
+import { Ptr } from "velt/ffi/ptr";
+import { noInline } from "velt/lang/intrinsics/decorators";
+
+declare c("c") function getentropy(buf: Ptr<u8> | null, n: usize): i32;
+
+/** The most `getentropy` gives in one call. */
+const MAX_CALL: usize = 256;
+
+/**
+ * Fills the `n` bytes at `base` with the OS generator's. Stops the program if the generator
+ * fails. Unsafe: the memory must be there and writable, and nothing else use it meanwhile.
+ */
+export unsafe function fillRandomAt(base: usize, n: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    const k = n - done < MAX_CALL ? n - done : MAX_CALL;
+    // SAFETY: bytes `done..done + k` of the caller's memory, at most 256.
+    if (unsafe { getentropy(Ptr.orNull<u8>(base + done), k) } != 0) {
+      stop();
+    }
+    done += k;
+  }
+}
+
+/** A failed `getentropy`: the program stops, with no safe source to fall back on. */
+@noInline
+function stop(): void {
+  panic("the OS random number generator failed (getentropy)");
+}

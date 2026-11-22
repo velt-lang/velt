@@ -22,4 +22,36 @@ export class Pmull {
   static isSupported(): bool {
     return velt_simd_has_clmul_arm() || (velt_simd_on_arm() && cpuHas(CLMUL_ARM));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The 128-bit carry-less product of lane 0 of `left` and lane 0 of `right`.
+   *
+   * `vmull_p64` (`pmull`). Runs only where the CPU has it: call it behind `Pmull.isSupported()`, or
+   * in a function gated on `clmul-arm`.
+   */
+  static polynomialMultiplyWideningLower(left: u64x2, right: u64x2): u64x2 {
+    return velt_arch_pmull_polynomial_multiply_widening_lower(left, right);
+  }
+
+  /**
+   * The 128-bit carry-less product of lane 1 of `left` and lane 1 of `right`.
+   *
+   * `vmull_high_p64` (`pmull2`). Runs only where the CPU has it: call it behind
+   * `Pmull.isSupported()`, or in a function gated on `clmul-arm`.
+   */
+  static polynomialMultiplyWideningUpper(left: u64x2, right: u64x2): u64x2 {
+    return velt_arch_pmull_polynomial_multiply_widening_upper(left, right);
+  }
 }
+
+declare function velt_arch_pmull_polynomial_multiply_widening_lower(
+  left: u64x2,
+  right: u64x2,
+): u64x2;
+declare function velt_arch_pmull_polynomial_multiply_widening_upper(
+  left: u64x2,
+  right: u64x2,
+): u64x2;

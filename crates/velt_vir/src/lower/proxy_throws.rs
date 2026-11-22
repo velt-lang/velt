@@ -27,7 +27,6 @@ use super::any_glue::Ready;
 use super::any_proxy::{ProxyKey, PRELUDE_PROXY};
 use super::glue::VtableKey;
 use super::operand::proj;
-use super::rt::Rt;
 use super::{ice, FnLower, ScopeKind};
 use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
@@ -192,7 +191,7 @@ impl FnLower<'_, '_> {
                 let s = self.temp(Ty::Agg(STR_AGG));
                 let sa = self.addr(Place::local(s));
                 let iv = Operand::Copy(Place::local(n));
-                self.call_rt(Rt::StrFromF64, vec![iv, sa.clone()], None);
+                self.float_text_into(iv, Place::local(s));
                 sa
             }
         };

@@ -1,0 +1,45 @@
+// A `clone()` of a value that holds a class with a `weak` field behind its written type
+// (docs/internals/design/cycles.md "`weak T`"): an interface value, an array of them, a base class
+// value or an `unknown` is refused, as a visible holder is; copying a `weak` field is not built.
+class T {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class H {
+  t: weak T | null = null;
+}
+
+interface Peek {
+  peek(): i64;
+}
+
+class Named implements Peek {
+  h: H = new H();
+  peek(): i64 {
+    return this.h.t?.n ?? 0;
+  }
+}
+
+class Base {
+  k: i64 = 0;
+}
+
+class Sub extends Base {
+  w: weak T | null = null;
+}
+
+function main() {
+  const t = new T(7);
+  const n = new Named();
+  n.h.t = t;
+  const p: Peek = n;
+  const ps: Peek[] = [n];
+  const b: Base = new Sub();
+  const h = new H();
+  h.t = t;
+  const us: unknown[] = [h];
+  console.log(p.clone().peek(), ps.clone().length, b.clone().k, us.clone().length, t.n);
+}

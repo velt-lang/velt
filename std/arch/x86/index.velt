@@ -66,3 +66,5 @@ export { Sse41 } from "velt/arch/x86/sse41";
 export { Sse42 } from "velt/arch/x86/sse42";
 /** SSSE3 (`ssse3-x86`). */
 export { Ssse3 } from "velt/arch/x86/ssse3";
+export { Vector256 } from "velt/arch/x86/vector256";
+export { Vector512 } from "velt/arch/x86/vector512";

@@ -76,7 +76,11 @@ function reserve(s: usize, n: usize): void {
   m.st(s + io.S_CAP, next);
 }
 
-declare c("c") function memmove$io(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+declare c("c") function memmove$io(
+  dst: Ptr<u8> | null,
+  src: Ptr<u8> | null,
+  n: usize,
+): Ptr<u8> | null;
 
 function memmove(dst: usize, src: usize, n: usize): void {
   // SAFETY: both ranges are in one buffer of the source.
