@@ -452,19 +452,13 @@ async function main() {
 /// tasks keep a holder in module state and park on it, and `main` hands each over to worker 3 as
 /// soon as its task parked, which can take the promise off the task's list in between. The cancel
 /// poll looks again and polls the task as any other (sched_task_lost.velt `stillLost`); without that
-/// second look, `lt.cancel`'s counted check stops it with an `ICE:` (59 runs of 60). Run counted
-/// for exit 0 and the output; its blocks are not checked, as a stale verdict can still leave tasks
-/// unreclaimed (#3476).
+/// second look, `lt.cancel`'s counted check stops it with an `ICE:` (59 runs of 60). The holder
+/// handed over is dropped by `main`, under the module lock: that wakes its promise's task, whose
+/// next poll lists the promise again (sched_share_listed.velt `relist`, #3476); without it, about
+/// half the runs left 1 to 18 of the 30 tasks.
 #[test]
 fn a_park_whose_verdict_went_stale_does_not_drop_its_task() {
-    check_at(
-        "kept_handed",
-        KEPT_HANDED,
-        "handed 30, used 30\n",
-        3,
-        &["4", "8"],
-        false,
-    );
+    check("kept_handed", KEPT_HANDED, "handed 30, used 30\n", 3);
 }
 
 /// The program of [`a_park_whose_verdict_went_stale_does_not_drop_its_task`].
@@ -509,6 +503,68 @@ async function main() {
   let handed: i64 = 0;
   while (handed < n) {
     while (KEPT.length > 0) {
+      void spawn(user(KEPT.pop()!), { worker: 3 });
+      handed += 1;
+    }
+    await yieldNow();
+  }
+  while (USED.load() < n) {
+    await yieldNow();
+  }
+  console.log(`handed ${handed}, used ${USED.load()}`);
+}
+"#;
+
+/// Two holders of one promise nobody settles, kept in module state: `main` drops one copy, off
+/// the promise's task and under the module lock (the drop wakes the task, sched_share_listed.velt
+/// `relist`), then hands the other to worker 3, which drops it there. Without the wake about 80
+/// runs of 100 left blocks (#3476).
+#[test]
+fn two_kept_copies_dropped_and_handed_over_leave_nothing() {
+    check("two_copies", TWO_COPIES, "handed 30, used 30\n", 3);
+}
+
+/// The program of [`two_kept_copies_dropped_and_handed_over_leave_nothing`].
+const TWO_COPIES: &str = r#"// #3476: two holders of one promise nobody settles, both kept in module state; main drops one
+// copy (off the promise's task, under the module lock: the drop wakes the task), then hands the
+// other to a task on worker 3, which drops it there. Every task is found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const COPIES: Holder[] = [];
+const USED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function maker(): Promise<number> {
+  const h = new Holder(dead());
+  COPIES.push(new Holder(h.p));
+  KEPT.push(h);
+  return await h.p;
+}
+
+async function user(h: Holder): Promise<void> {
+  await yieldNow();
+  USED.add(1);
+}
+
+async function main() {
+  const n: i64 = 30;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  let handed: i64 = 0;
+  while (handed < n) {
+    while (KEPT.length > 0 && COPIES.length > 0) {
+      COPIES.pop();
       void spawn(user(KEPT.pop()!), { worker: 3 });
       handed += 1;
     }

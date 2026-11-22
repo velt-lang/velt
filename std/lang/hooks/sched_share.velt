@@ -287,12 +287,12 @@ export function holderDrop(f: usize): void {
   }
   if (!isOrig(h, f)) {
     const size = m.ld(f - FRONT + 16);
-    sd.release(h, f);
+    sd.dropped(h, f);
     m.release(f - FRONT, FRONT + 16 + size);
     return;
   }
   if ((m.load32(h + H_FLAGS) & ORIG_OUT) === 0) {
-    sd.release(h, f);
+    sd.dropped(h, f);
     return;
   }
   // The original, handed to this task: its proxy goes, and whichever of this and the last role
