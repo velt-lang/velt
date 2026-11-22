@@ -1,0 +1,36 @@
+// `return u` of an `any` or `unknown` (#924): where the async function's result is inferred,
+// the promise `u` holds is adopted and the result is its value, as in Node. Where the result
+// is a typed `Promise<number>`, a value that is no promise converts with a check, as
+// `u as number` does (a held promise there is await_unknown_typed_refused.velt).
+async function later(n: number): Promise<number> {
+  return n * 2;
+}
+
+const inferred = async () => {
+  const a: any = later(2);
+  return a;
+};
+
+async function typed(): Promise<number> {
+  const a: any = 7;
+  return a;
+}
+
+async function asObject(): Promise<object> {
+  const u: any = { k: 1 };
+  return u;
+}
+
+async function inferredValue() {
+  const v: unknown = "plain";
+  return v;
+}
+
+async function main(): Promise<void> {
+  const r = await inferred();
+  console.log(typeof r, r);
+  console.log(await typed());
+  console.log(await asObject());
+  console.log(await inferredValue());
+}
+main();

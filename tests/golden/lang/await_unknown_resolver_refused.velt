@@ -1,0 +1,14 @@
+// `resolve(u)` in a promise's executor, `u` an `unknown` holding a promise: JavaScript adopts
+// it, and Velt doesn't yet (#3425), so it stops with a TypeError rather than settling with the
+// promise itself. A value that is no promise settles the promise, as in Node.
+async function later(n: number): Promise<number> {
+  return n;
+}
+
+async function main(): Promise<void> {
+  const plain: unknown = 5;
+  console.log(await new Promise<unknown>((resolve) => resolve(plain)));
+  const held: unknown = later(2);
+  console.log("not reached", await new Promise<unknown>((resolve) => resolve(held)));
+}
+main();

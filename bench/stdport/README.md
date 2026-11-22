@@ -260,6 +260,21 @@ checks. On arm64, and with `--cpu x86-64-v3`, every `fma` is one instruction. On
 which has no `fma` instruction (wasmtime 50), the program takes 525.9 M instructions
 (precompiled).
 
+## Integer powers
+
+`pow_int` is `**` on `i64` (20 million pairs, exponents 0 to 63), Velt code in
+`std/lang/hooks/pow_int.velt`, against the runtime's `velt_rt_pow_i64` it replaced (the Rust
+column, called through a function that is not inlined, as compiled code called it). Instructions
+executed (cachegrind, x86-64 Linux, release), 2026-11-21:
+
+| benchmark | Velt | runtime call before | Rust | Velt / Rust |
+|---|---:|---:|---:|---:|
+| pow_int | 1,164.8 M | 1,463.6 M | 1,522.9 M | 0.76 |
+
+Inlined at the call, the power squares before it multiplies, so its loop has no check of its own
+for whether another square is due. Best of 7 interleaved runs: 54 ms, against 82 ms before and
+97 ms for the Rust. A debug build (warm cache) takes 1,645.7 M against 1,843.8 M before.
+
 ## Map lookups by UTF-8 bytes
 
 `map_get_utf8`: 4M `Map<string, i64>.getUtf8` lookups of keys given as bytes (short, long, not

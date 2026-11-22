@@ -663,18 +663,18 @@ fn text_read_through_the_text_aggregate_is_a_byte_not_a_pointer() {
 }
 
 /// Every runtime function `velt_vir::math` says writes nothing is one a borrow survives: the
-/// math operations (bit casts included), `pow` and the read-only string functions, not the
+/// math operations (bit casts included), `umulh` and the read-only string functions, not the
 /// others.
 #[test]
 fn read_only_runtime_functions_come_from_the_effects_table() {
     let mut pb = ProgramBuilder::new();
     let bits = pb.ext("velt_rt_math_f64_bits", &[Ty::F64], Ty::U64, false);
     let from_bits = pb.ext("velt_rt_math_bits_f64", &[Ty::U64], Ty::F64, false);
-    let pow = pb.ext("velt_rt_pow_i64", &[Ty::I64, Ty::I64], Ty::I64, false);
+    let umulh = pb.ext("velt_rt_math_umulh", &[Ty::U64, Ty::U64], Ty::U64, false);
     let eq = pb.ext("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, false);
     let append = pb.ext("velt_rt_str_append", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let rt = Runtime::find(&pb.finish());
-    for id in [bits, from_bits, pow, eq] {
+    for id in [bits, from_bits, umulh, eq] {
         assert!(rt.read_only.contains(&id), "extern #{}", id.0);
     }
     assert!(!rt.read_only.contains(&append));

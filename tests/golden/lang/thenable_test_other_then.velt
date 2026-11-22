@@ -1,6 +1,8 @@
 // A thenable test through `any` on a union whose other member has a `then` of its own (a class
-// that declares one) stays an error (#379). tsc accepts it: the refusal is Velt's limitation,
-// recorded here. The test's other refusals are in thenable_test_unknown.velt.
+// that declares one, #379). The union with a promise is held as `any` (#924), but reading the
+// class's method `then` through `any` stops with a `TypeError`. tsc accepts it and Node prints
+// `thenable`: the error is Velt's limitation, recorded here. The test's other refusals are in
+// thenable_test_unknown.velt.
 class Later {
   then(f: () => void) {
     f();

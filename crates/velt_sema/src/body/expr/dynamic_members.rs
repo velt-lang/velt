@@ -61,8 +61,6 @@ impl FnCx<'_, '_> {
                         false => continue,
                     }
                 }
-                // A promise is never held as `any` (it has one owner): no value is one.
-                TyKind::Promise(..) => continue,
                 // `typeof K` (a `unique symbol`): a symbol that is `K`.
                 _ if self.unique_symbol_of(m).is_some() => {
                     self.unique_member_from_any(tmp, dty, m, span)
