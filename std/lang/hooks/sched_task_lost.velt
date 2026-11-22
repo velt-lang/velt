@@ -85,7 +85,7 @@ export function list(task: usize, n: usize): void {
  */
 @inline("always")
 export function unlist(task: usize, n: usize, fl: u32): void {
-  if ((fl & (NLINKED | sh.HUB_HERE)) !== 0) {
+  if ((fl & (NLINKED | sh.HUB_HERE | ls.WAITS)) !== 0) {
     unlistRare(task, n, fl);
   }
   m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
@@ -94,6 +94,7 @@ export function unlist(task: usize, n: usize, fl: u32): void {
 /** `unlist` for a linked node or a shared one (sched_share_listed.velt `unlisted`). */
 @noInline
 function unlistRare(task: usize, n: usize, fl: u32): void {
+  ls.leftList(n, fl);
   if ((fl & NLINKED) !== 0) {
     unlinkCounted(task, n);
   }
@@ -132,7 +133,7 @@ function linkCounted(task: usize, n: usize): void {
 
 /** `unlist`'s unlink, with the block counters on. */
 @noInline
-function unlinkCounted(task: usize, n: usize): void {
+export function unlinkCounted(task: usize, n: usize): void {
   const next = m.ld(n + nd.N_NEXT);
   const prev = m.ld(n + nd.N_TAKEN_NEXT);
   checkUnlink(task, n, next, prev);

@@ -1,0 +1,83 @@
+// Patterns that are no literal, searched for line by line, as a log or CSV scanner does: 2,000
+// lines of 250 or 320 bytes, one `RegExp` per row, a `test` or `exec` per line; and two rows
+// over the lines as one text (`bench/regex/run.sh` counts each row's instructions). The
+// argument names the row, 0 to 9; without one, every row runs.
+function lines(width: number, count: number, value: string): string[] {
+  // The words are made once: the lines are only joined from them, so building them costs the
+  // same whatever else the program holds (a number formatted per word did not: it was inlined
+  // differently once the regex engine was linked in).
+  const keys: string[] = [];
+  for (let i = 0; i < 97; i++) {
+    keys.push("key" + i + "=");
+  }
+  const values: string[] = [];
+  for (let i = 0; i < 13; i++) {
+    values.push(value + i + ", ");
+  }
+  const out: string[] = [];
+  for (let i = 0; i < count; i++) {
+    let line = "";
+    let k = i;
+    while (line.length < width - 24) {
+      line += keys[k % 97] + values[k % 13];
+      k = (k * 31 + 7) % 1000;
+    }
+    out.push(line.padEnd(width - 2, "x") + ", ");
+  }
+  return out;
+}
+
+function row(which: number): number {
+  let found = 0;
+  if (which == 8) {
+    // `replace` with groups over one long text: the matches and the replacement's parts.
+    const text = lines(320, 2000, "value").join("\n");
+    return text.replace(/(key)(\d)/g, "$2$1").length;
+  }
+  if (which == 9) {
+    // A case-insensitive pattern without a byte every match has, over long lines that have
+    // near misses (`valab`): what it costs a byte.
+    const re = /value\d+/i;
+    for (const line of lines(12800, 50, "valab")) {
+      found += re.test(line) ? 1 : 0;
+    }
+    return found;
+  }
+  const width = which < 4 ? 320 : 250;
+  const kind = which % 4;
+  // Rows 3 and 7: near misses of `value`, which a case-insensitive scan has to look at.
+  const all = lines(width, 2000, kind == 3 ? "valab" : "value");
+  if (kind == 0) {
+    const re = /(\w+)=(\d+);/;
+    for (const line of all) {
+      found += re.test(line) ? 1 : 0;
+    }
+  } else if (kind == 1) {
+    const re = /(\w+), $/;
+    for (const line of all) {
+      found += re.exec(line)?.index ?? 0;
+    }
+  } else if (kind == 2) {
+    const re = /([^,]*,)*#/;
+    for (const line of all) {
+      found += re.test(line) ? 1 : 0;
+    }
+  } else {
+    const re = /value\d+/i;
+    for (const line of all) {
+      found += re.test(line) ? 1 : 0;
+    }
+  }
+  return found;
+}
+
+function main() {
+  const which = process.argv.length > 2 ? parseInt(process.argv[2]) : -1;
+  let total = 0;
+  for (let r = 0; r < 10; r++) {
+    if (which < 0 || which == r) {
+      total += row(r);
+    }
+  }
+  console.log(total);
+}
