@@ -32,8 +32,9 @@ export function utf16Units(s: string, start: u64, end: u64): u64 {
  * counts them: an ASCII control character takes none, other ASCII one, and any other code point
  * its width in the table (inspect_layout_width_table.velt), read from Node's own function.
  * Node normalizes the text to NFC before it measures, and the table is per code point, so the two
- * differ only where NFC joins code points into one of another width (a Hangul syllable written as
- * its jamo).
+ * differ only where NFC joins code points into one of another width: a Hangul syllable written as
+ * its jamo, or one of the two-part Indic vowel signs (U+09C7 U+09BE is 1 column in Node, 2 here).
+ * velt_rt's layout counted them per code point too.
  */
 export function displayWidth(s: string, start: u64, end: u64): u64 {
   let n: u64 = 0;
