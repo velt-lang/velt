@@ -96,6 +96,9 @@ enum Twist {
     ShrinkBound,
     /// `Compares` with the operands swapped: `la > at + i + k` and `lb >= i + k`.
     ComparesSwapped,
+    /// Differences against the lane count, as `f32x8.fits` writes its second half:
+    /// `la - (at + i + k) >= n` for `a` and `n - 1 < lb - (i + k)` for `b`.
+    Differences,
 }
 
 impl Shape {
@@ -219,10 +222,20 @@ impl Shape {
             );
             if matches!(
                 self.twist,
-                Twist::Compares | Twist::HeadImplied | Twist::ShrinkBound | Twist::ComparesSwapped
+                Twist::Compares
+                    | Twist::HeadImplied
+                    | Twist::ShrinkBound
+                    | Twist::ComparesSwapped
+                    | Twist::Differences
             ) {
                 let r = fb.local(Ty::Bool);
+                let lanes = int(self.lanes.count().into(), Ty::U64);
                 let test = match self.twist {
+                    Twist::Differences => {
+                        let d = fb.local(Ty::U64);
+                        fb.assign(cur, d, bin(BinOp::Sub, copy_local(la), copy_local(y)));
+                        bin(BinOp::Ge, copy_local(d), lanes)
+                    }
                     Twist::Compares | Twist::ShrinkBound => {
                         bin(BinOp::Lt, copy_local(y), copy_local(la))
                     }
@@ -259,10 +272,16 @@ impl Shape {
             );
             if matches!(
                 self.twist,
-                Twist::Compares | Twist::ShrinkBound | Twist::ComparesSwapped
+                Twist::Compares | Twist::ShrinkBound | Twist::ComparesSwapped | Twist::Differences
             ) {
                 let r = fb.local(Ty::Bool);
+                let below = int((self.lanes.count() - 1).into(), Ty::U64);
                 let test = match self.twist {
+                    Twist::Differences => {
+                        let d = fb.local(Ty::U64);
+                        fb.assign(cur, d, bin(BinOp::Sub, copy_local(lb), copy_local(y)));
+                        bin(BinOp::Lt, below, copy_local(d))
+                    }
                     Twist::ComparesSwapped => bin(BinOp::Ge, copy_local(lb), copy_local(y)),
                     _ => bin(BinOp::Le, copy_local(y), copy_local(lb)),
                 };
@@ -436,7 +455,7 @@ fn copies_and_agrees(shape: &Shape) {
     let (before, after) = agree(&p, &q, &[inside]);
     if !matches!(
         shape.twist,
-        Twist::Compares | Twist::ShrinkBound | Twist::ComparesSwapped
+        Twist::Compares | Twist::ShrinkBound | Twist::ComparesSwapped | Twist::Differences
     ) {
         assert!(
             before >= 8 && after == 0,

@@ -408,6 +408,9 @@ fn compare(
     {
         return None;
     }
+    if let Some(found) = difference(cx, defs, counter, *op, x, y, at) {
+        return Some(found);
+    }
     let (x, n, strict) = match op {
         BinOp::Le => (x, y, 0),
         BinOp::Lt => (x, y, 1),
@@ -425,6 +428,53 @@ fn compare(
         return None;
     }
     Some((sum, n.clone(), strict))
+}
+
+/// `n - x >= k` (or `k <= n - x`, or either strict), with `n - x` computed once in the loop where
+/// it dominates the test: the second half of `f32x8.fits` (`at <= n && n - at >= 8`). Wherever
+/// `x + k <= n`, `x <= n`, the subtraction does not wrap and the test holds, so it is decided like
+/// `x + k <= n`. Returns `x`'s sum, `n`, and what must fit after `x`.
+fn difference(
+    cx: &Cx,
+    defs: &Defs,
+    counter: &Counter,
+    op: BinOp,
+    a: &Operand,
+    b: &Operand,
+    at: (usize, usize),
+) -> Option<(Sum, Operand, u64)> {
+    let (d, k, strict) = match op {
+        BinOp::Ge => (a, b, 0),
+        BinOp::Gt => (a, b, 1),
+        BinOp::Le => (b, a, 0),
+        BinOp::Lt => (b, a, 1),
+        _ => return None,
+    };
+    let (Operand::Copy(p), Operand::Const(Const::Int(k), Ty::U64)) = (d, k) else {
+        return None;
+    };
+    let k = u64::try_from(*k).ok().filter(|&k| k < SMALL)?;
+    if !p.proj.is_empty() || !register(cx, p.local) || !guarded(cx, counter, at) {
+        return None;
+    }
+    let [(db, ds)] = defs.get(&p.local.0)?.as_slice() else {
+        return None;
+    };
+    let (db, ds) = (*db, *ds);
+    let dominates = if db == at.0 {
+        ds < at.1
+    } else {
+        cx.doms.dominates(db, at.0)
+    };
+    let Some(Stmt::Assign(_, Rvalue::Binary(BinOp::Sub, n, x))) = cx.func.blocks[db].stmts.get(ds)
+    else {
+        return None;
+    };
+    if !dominates || !invariant(cx, defs, n) {
+        return None;
+    }
+    let sum = affine(cx, defs, counter, x, (db, ds), 0)?;
+    sum.counter.then(|| (sum, n.clone(), k + strict))
 }
 
 /// The loop changes no length and no local the check reads (module doc, "Nothing changes a
