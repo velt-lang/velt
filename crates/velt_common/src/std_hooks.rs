@@ -50,6 +50,8 @@ pub use hook::Hook;
 #[macro_use]
 mod weak_hooks;
 #[macro_use]
+mod inspect_layout_hooks;
+#[macro_use]
 mod string_hooks;
 #[macro_use]
 mod module_hooks;
@@ -58,8 +60,8 @@ pub use module_hooks::BLOCKS_MODULE_ENTRY;
 mod decorator_hooks;
 
 // The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
-// (`module_hooks.rs`), the string methods' (`string_hooks.rs`) and the weak core's
-// (`weak_hooks.rs`), given to `hooks!` together.
+// (`module_hooks.rs`), the string methods' (`string_hooks.rs`), `console.log`'s line breaking's
+// (`inspect_layout_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
 with_decorator_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
@@ -234,33 +236,6 @@ with_decorator_hooks! {
     /// An array: `[ 1, 2 ]`, its first 100 elements, `[Array]` past the depth limit.
     inspect_array => lang_hooks_inspect, "inspectArray", sig(<A>(&mut string, &[A], u32) -> void),
         lowered, fallback, constructs(Format, Dynamic);
-
-    // inspect_layout.velt, inspect_layout_text.velt: `console.log`'s line breaking, checked where
-    // live code prints a value that isn't scalar at the top level (velt_sema `live_constructs.rs`);
-    // lowering leaves a value on one line where they are unchecked (only in programs without std).
-    /// After a top-level value written on one line from byte `start`: broken across lines as
-    /// Node's `util.inspect` breaks it.
-    inspect_layout => lang_hooks_inspect_layout, "inspectLayout", sig((&mut string, u64) -> void),
-        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_layout");
-    /// The value at bytes `start..` of the builder laid out, "" when it stays as it is (called by
-    /// role from `inspectLayout`).
-    inspect_layout_text => lang_hooks_inspect_layout_text, "inspectLayoutText",
-        sig((&string, u64) -> string), prebuilt;
-    /// The text from byte `start` to the end of the builder is what a custom inspect returned:
-    /// the layout keeps it as one piece.
-    inspect_atom => lang_hooks_inspect_layout_text, "inspectAtom", sig((&string, u64) -> void),
-        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_atom"),
-        prebuilt;
-    /// The start of a top-level value: the pieces a value before it left are dropped.
-    inspect_atoms_begin => lang_hooks_inspect_layout_text, "inspectAtomsBegin", sig(() -> void),
-        lowered, fallback, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_begin"),
-        prebuilt;
-    /// Before a user's custom inspect: the pieces so far, saved for `inspect_atoms_restore`.
-    inspect_atoms_save => lang_hooks_inspect_layout_text, "inspectAtomsSave", sig(() -> u64),
-        lowered, fallback, constructs(Format, Dynamic), prebuilt;
-    /// After a user's custom inspect: the pieces `inspect_atoms_save` saved, back.
-    inspect_atoms_restore => lang_hooks_inspect_layout_text, "inspectAtomsRestore",
-        sig((u64) -> void), lowered, fallback, constructs(Format, Dynamic), prebuilt;
 
     // process.velt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.

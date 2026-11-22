@@ -494,7 +494,8 @@ impl FnLower<'_, '_> {
         let saved = hooks::inspect_save(self).map(|save| save.emit(self).op());
         let atoms = hooks::inspect_atoms_save(self).map(|save| save.emit(self).op());
         let (res, rty) = self.call_hook(m, obj, ty, None);
-        if let Some(restore) = atoms.and_then(|s| hooks::inspect_atoms_restore(self, ty::U64::arg(s)))
+        if let Some(restore) =
+            atoms.and_then(|s| hooks::inspect_atoms_restore(self, ty::U64::arg(s)))
         {
             _ = restore.emit(self);
         }
