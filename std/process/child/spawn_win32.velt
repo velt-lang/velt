@@ -16,8 +16,8 @@
 // `STARTUPINFOW`, `STARTUPINFOEXW` and `PROCESS_INFORMATION` are laid out in raw memory at the
 // Windows SDK's offsets for 64-bit Windows (winbase.h, processthreadsapi.h).
 
-import { OutPtr } from "velt/ffi/out_ptr";
-import { Ptr, ptrAddressOrZero } from "velt/ffi/ptr";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
 import { IoStatus } from "velt/native/status";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as wk from "velt/lang/hooks/sched_wake";
@@ -34,25 +34,25 @@ declare c type _PROCESS_INFORMATION;
 declare c type _SECURITY_ATTRIBUTES;
 
 declare c("c") function CreateProcessW(
-  application: Ptr<u16>,
-  commandLine: Ptr<u16>,
+  application: Ptr<u16> | null,
+  commandLine: Ptr<u16> | null,
   processAttributes: Ptr<_SECURITY_ATTRIBUTES> | null,
   threadAttributes: Ptr<_SECURITY_ATTRIBUTES> | null,
   inheritHandles: i32,
   flags: u32,
   environment: Ptr<void> | null,
   currentDirectory: Ptr<u16> | null,
-  startup: Ptr<_STARTUPINFOW>,
-  info: Ptr<_PROCESS_INFORMATION>,
+  startup: Ptr<_STARTUPINFOW> | null,
+  info: Ptr<_PROCESS_INFORMATION> | null,
 ): i32;
 declare c("c") function CreatePipe(
-  read: OutPtr<void>,
-  write: OutPtr<void>,
+  read: Out<Ptr<void> | null>,
+  write: Out<Ptr<void> | null>,
   attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
   size: u32,
 ): i32;
 declare c("c") function CreateFileW(
-  name: Ptr<u16>,
+  name: Ptr<u16> | null,
   access: u32,
   share: u32,
   attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
@@ -62,9 +62,9 @@ declare c("c") function CreateFileW(
 ): Ptr<void> | null;
 declare c("c") function DuplicateHandle(
   sourceProcess: Ptr<void>,
-  source: Ptr<void>,
+  source: Ptr<void> | null,
   targetProcess: Ptr<void>,
-  target: OutPtr<void>,
+  target: Out<Ptr<void> | null>,
   access: u32,
   inherit: i32,
   options: u32,
@@ -143,7 +143,7 @@ function inheritable(h: usize, close: bool): usize {
   if (h === 0 || h === INVALID_HANDLE) {
     return 0;
   }
-  const out = new OutPtr<void>();
+  const out = new Out<Ptr<void> | null>(null);
   let done: i32 = 0;
   // SAFETY: `h` is a handle of this process; the copy goes to `out`.
   unsafe {
@@ -158,7 +158,7 @@ function inheritable(h: usize, close: bool): usize {
       DUPLICATE_SAME_ACCESS | (close ? DUPLICATE_CLOSE_SOURCE : 0),
     );
   }
-  return done === 0 ? INVALID_HANDLE : ptrAddressOrZero<void>(out.value);
+  return done === 0 ? INVALID_HANDLE : Ptr.addressOf<void>(out.value);
 }
 
 /**
@@ -167,14 +167,14 @@ function inheritable(h: usize, close: bool): usize {
  */
 function streamFor(i: u32, mode: u32, out: Started): usize {
   if (mode === 1) {
-    const r = new OutPtr<void>();
-    const w = new OutPtr<void>();
+    const r = new Out<Ptr<void> | null>(null);
+    const w = new Out<Ptr<void> | null>(null);
     // SAFETY: two handles are written; no security attributes (not inheritable).
     if (unsafe { CreatePipe(r, w, null, PIPE_SIZE) } === 0) {
       return INVALID_HANDLE;
     }
-    const readEnd = ptrAddressOrZero<void>(r.value);
-    const writeEnd = ptrAddressOrZero<void>(w.value);
+    const readEnd = Ptr.addressOf<void>(r.value);
+    const writeEnd = Ptr.addressOf<void>(w.value);
     const parent = i === 0 ? writeEnd : readEnd;
     const child = inheritable(i === 0 ? readEnd : writeEnd, true);
     if (child === INVALID_HANDLE) {
@@ -196,7 +196,7 @@ function streamFor(i: u32, mode: u32, out: Started): usize {
     let h: usize = 0;
     // SAFETY: a NUL-terminated name; no security attributes or template.
     unsafe {
-      h = ptrAddressOrZero<void>(
+      h = Ptr.addressOf<void>(
         CreateFileW(
           m.ptrTo<u16>(p),
           GENERIC_READ_WRITE,
@@ -215,7 +215,7 @@ function streamFor(i: u32, mode: u32, out: Started): usize {
     return inheritable(h, true);
   }
   // SAFETY: no precondition; the handle stays this program's.
-  const std = ptrAddressOrZero<void>(unsafe { GetStdHandle(STD_INPUT_HANDLE - i) });
+  const std = Ptr.addressOf<void>(unsafe { GetStdHandle(STD_INPUT_HANDLE - i) });
   return inheritable(std, false);
 }
 

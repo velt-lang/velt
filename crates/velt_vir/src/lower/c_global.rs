@@ -10,9 +10,9 @@
 
 use velt_sema::hir::{self, CTy, DefId, TyId};
 
-use super::c_call::{c_vir, narrow, wasm32, PTR_ADDRESS, PTR_ADDRESS_OR_ZERO, PTR_OF, PTR_OR_NULL};
-use super::{cint, unit, Cx, FnLower};
-use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
+use super::c_call::{c_vir, narrow, wasm32};
+use super::{unit, Cx, FnLower};
+use crate::vir::{self, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
 
 /// The link symbol of C variable `name` on `target`, and whether it holds the variable's address
 /// rather than being the variable: a program linked for Windows reaches a DLL's variable through
@@ -85,15 +85,15 @@ impl FnLower<'_, '_> {
         let wasm = wasm32(&self.cx.target);
         let raw = self.rvalue_temp(c_vir(c.ty, wasm), Rvalue::Use(Operand::Copy(at)));
         match c.ty {
+            // The pointer word is the `Ptr` (#3094).
             CTy::Ptr { nullable } => {
-                let addr = self.rvalue_temp(Ty::U64, Rvalue::Cast(raw, Ty::U64));
                 if !nullable {
-                    self.null_variable_check(&c.symbol, addr.clone());
+                    self.stop_if_null(raw.clone(), &format!(
+                        "C variable `{}` is NULL, but its declaration's type is `Ptr<T>`: declare it `Ptr<T> | null`",
+                        c.symbol
+                    ));
                 }
-                let hook = if nullable { PTR_OR_NULL } else { PTR_OF };
-                let targ = self.ptr_target(ty);
-                let h = self.ffi_hook(hook);
-                self.call_def(h, vec![targ], vec![addr], &[])
+                raw
             }
             t if narrow(t, wasm) => {
                 let wide = c_vir(t, false);
@@ -111,7 +111,7 @@ impl FnLower<'_, '_> {
         value: &hir::Expr,
     ) -> Operand {
         let v = self.consume(value);
-        self.c_global_store(d, c, v, value.ty);
+        self.c_global_store(d, c, v);
         unit()
     }
 
@@ -126,37 +126,16 @@ impl FnLower<'_, '_> {
         let l = self.c_global_read(d, c, ty);
         let r = self.expr(value);
         let v = self.binop(op, l, r, ty, ty);
-        self.c_global_store(d, c, v, ty);
+        self.c_global_store(d, c, v);
         unit()
     }
 
-    /// Store `v` (of Velt type `ty`) into C variable `d` (`c`).
-    fn c_global_store(&mut self, d: DefId, c: &hir::CGlobal, v: Operand, ty: TyId) {
+    /// Store `v` into C variable `d` (`c`).
+    fn c_global_store(&mut self, d: DefId, c: &hir::CGlobal, v: Operand) {
         let wasm = wasm32(&self.cx.target);
         let v = match c.ty {
-            CTy::Ptr { nullable } => {
-                let hook = if nullable {
-                    PTR_ADDRESS_OR_ZERO
-                } else {
-                    PTR_ADDRESS
-                };
-                let targ = self.ptr_target(ty);
-                let h = self.ffi_hook(hook);
-                // The hook borrows its `Ptr` (or option) argument: passed by its address.
-                let vt = {
-                    let t = self.sub(ty);
-                    self.cx.ty(t)
-                };
-                let arg = match vt {
-                    Ty::Agg(_) => {
-                        let at = self.operand_place(v, vt);
-                        self.addr(at)
-                    }
-                    _ => v,
-                };
-                let addr = self.call_def(h, vec![targ], vec![arg], &[]);
-                self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr))
-            }
+            // The pointer word is the `Ptr` (#3094).
+            CTy::Ptr { .. } => v,
             t if narrow(t, wasm) => {
                 let ct = c_vir(t, wasm);
                 self.rvalue_temp(ct, Rvalue::Cast(v, ct))
@@ -201,19 +180,5 @@ impl FnLower<'_, '_> {
             local: p,
             proj: vec![Proj::Deref(ct)],
         })
-    }
-
-    /// Stops the program when `addr` (the value of C variable `symbol`, declared `Ptr<T>`) is
-    /// NULL: C has no non-null pointer type, so the header check can't see it.
-    fn null_variable_check(&mut self, symbol: &str, addr: Operand) {
-        let null = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, addr, cint(0, Ty::U64)));
-        let (bad, ok) = (self.new_block(), self.new_block());
-        self.branch(null, bad, ok);
-        self.switch_to(bad);
-        self.panic_msg(&format!(
-            "C variable `{symbol}` is NULL, but its declaration's type is `Ptr<T>`: declare it `Ptr<T> | null`"
-        ));
-        self.terminate(vir::Terminator::Unreachable);
-        self.switch_to(ok);
     }
 }

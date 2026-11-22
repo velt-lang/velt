@@ -55,6 +55,16 @@ const UNSUPPORTED: &[&str] = &[
     "promise_identity_defer_twice",
     "promise_identity_rejection",
     "promise_widen_compare",
+    // The combinators of the executor in Velt settle in the microtask Node runs for their
+    // deciding input, and a promise `resolve` settled resumes its one waiter in the microtask
+    // `resolve` queued; wasm's executor is still the runtime's, which keeps the steps it had.
+    "promise_all_settled_resolver_ticks",
+    "promise_combinator_ticks_pending",
+    "promise_combinator_ticks_settled",
+    "promise_combinator_ticks_stored",
+    "promise_shared_resolve_ticks",
+    // wasm's race is still the runtime's (#3077).
+    "promise_race_inline_children_order",
     // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
     // still the runtime's, which keeps it parked (#3247).
     "promise_abandoned_freed",
@@ -63,6 +73,9 @@ const UNSUPPORTED: &[&str] = &[
     // wasm's executor is still the runtime's, whose `yieldNow()` wakes at once instead of taking
     // its turn after the microtasks queued before it, as the executor in Velt does (#3307).
     "yield_now_order",
+    "yield_now_immediates",
+    "yield_now_due_sleep",
+    "yield_now_turn_passed",
     // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
     // WebAssembly stacks overflow.
     "deep_generator_frames",
@@ -419,6 +432,49 @@ fn conditional_imports_pick_the_target_variant() {
             format!("hello, running on {variant}\n"),
             "{target}: {}",
             String::from_utf8_lossy(&o.stderr)
+        );
+    }
+}
+
+/// A C pointer has 32 bits on wasm32 and an address 64 (`usize`): tests/golden/lang/c_pointers/
+/// wide.velt stops at an address past 32 bits there, after printing one that fits, instead of
+/// cutting it to another address or to a NULL behind a `Ptr<T>` (#3094). The package's goldens
+/// are not among [`WASI_DIRS`]' top-level files; it is copied into a work directory, whose
+/// build goes to its own `target/velt`.
+#[test]
+fn a_c_pointer_past_32_bits_stops_on_wasm32() {
+    if let Some(missing) = missing_tools("wasm32-wasip1", "wasmtime") {
+        eprintln!("note: {missing} not available; skipping C pointers on wasm32-wasip1");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-wasip1");
+    let fixture = root.join("tests/golden/lang/c_pointers");
+    for mode in [None, Some("--release")] {
+        let work = work_dir::work_dir(&root, "golden-work-wide").join(format!(
+            "{}-{}",
+            mode.is_some(),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&work);
+        copy_dir(&fixture, &work);
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["run", "--target", "wasm32-wasip1"])
+            .args(mode)
+            .arg(work.join("wide.velt"))
+            .current_dir(&work)
+            .output()
+            .expect("run velt");
+        let _ = std::fs::remove_dir_all(&work);
+        let (out, err) = (
+            String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+            String::from_utf8_lossy(&o.stderr),
+        );
+        let stopped = !o.status.success() && err.contains("does not fit a pointer");
+        assert!(
+            out == "Ptr(0xfffffff0)\n" && stopped,
+            "{mode:?}: exit {:?}\n--- stdout ---\n{out}--- stderr ---\n{err}",
+            o.status
         );
     }
 }

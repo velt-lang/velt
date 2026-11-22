@@ -1,0 +1,82 @@
+// velt/net (tests): the built-in trust anchors (roots.velt): how many there are and of which
+// kinds, a hash of the whole table, and a root everyone knows. That the table equals
+// webpki-roots' anchors one by one is crates/velt_tls/tests/roots_table.rs.
+import { describe, expect, it } from "velt/test";
+import { sha256 } from "velt/crypto/sha256";
+import { hexEncode } from "velt/encoding/hex";
+import { utf8Encode } from "velt/encoding/utf8";
+import { KEY_P256, KEY_P384, KEY_RSA } from "velt/net/tls/x509/algorithms";
+import { builtinAnchorBytes, builtinAnchors } from "velt/net/tls/x509/roots";
+
+// Whether `needle` occurs in `hay`.
+function contains(hay: u8[], needle: u8[]): bool {
+  for (let i: usize = 0; i + needle.length <= hay.length; i++) {
+    let same = true;
+    for (let j: usize = 0; j < needle.length && same; j++) {
+      same = hay[i + j] == needle[j];
+    }
+    if (same) {
+      return true;
+    }
+  }
+  return false;
+}
+
+describe("the built-in trust anchors", () => {
+  it("are webpki-roots 1.0.9's 121, byte for byte", () => {
+    const anchors = builtinAnchors();
+    expect(anchors.length).toBe(121);
+    // SHA-256 of every anchor's subject, key and name constraints, one after the other.
+    expect(hexEncode(sha256(builtinAnchorBytes()))).toBe(
+      "174cc5b93953394b1c3c1eb08deba372bdd26309456c1cda62060ce070871110",
+    );
+    let total: usize = 0;
+    for (const a of anchors) {
+      total += a.subject.length + a.spki.length + a.nameConstraints.length;
+    }
+    expect(total).toBe(builtinAnchorBytes().length);
+  });
+
+  it("have keys path validation can read, but for one", () => {
+    let rsa = 0;
+    let p256 = 0;
+    let p384 = 0;
+    let other = 0;
+    for (const a of builtinAnchors()) {
+      const k = a.keyAlgorithm();
+      if (k == KEY_RSA) {
+        rsa++;
+        // An RSAPublicKey of 2048 bits or more.
+        expect(a.key().length >= 270).toBe(true);
+      } else if (k == KEY_P256) {
+        p256++;
+        expect(a.key().length).toBe(65);
+      } else if (k == KEY_P384) {
+        p384++;
+        expect(a.key().length).toBe(97);
+      } else {
+        other++;
+      }
+    }
+    // The other is a P-521 key, which rustls's webpki does not verify with either.
+    expect([rsa, p256, p384, other]).toEqual([80, 3, 37, 1]);
+  });
+
+  it("include ISRG Root X1, and one anchor with name constraints", () => {
+    let isrg = 0;
+    let constrained = 0;
+    for (const a of builtinAnchors()) {
+      if (contains(a.subject, utf8Encode("ISRG Root X1"))) {
+        isrg++;
+        expect(hexEncode(a.subject)).toBe(
+          "310b300906035504061302555331293027060355040a1320496e7465726e657420536563757269747920" +
+            "52657365617263682047726f7570311530130603550403130c4953524720526f6f74205831",
+        );
+      }
+      if (a.nameConstraints.length > 0) {
+        constrained++;
+      }
+    }
+    expect([isrg, constrained]).toEqual([1, 1]);
+  });
+});

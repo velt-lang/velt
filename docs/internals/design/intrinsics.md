@@ -116,17 +116,20 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   dropping it frees nothing and a copy of it is an ordinary array. `T` is a number type or `bool`.
   Every read is the usual bounds-checked element read or SIMD load, at no cost over an owned
   array. Nothing may write or grow it, so std wraps it in `shared(...)` before it leaves the
-  unsafe function that makes it: `shared<T[]>` is read-only for every holder. Its user is
-  `MappedFile` (`std/fs/mapped_file.velt`), whose mappings are never unmapped.
+  unsafe function that makes it: `shared<T[]>` is read-only for every holder. Its users are
+  views that live no longer than their memory (`std/fs/fd/dirs.velt`,
+  `std/process/stdin_buffer.velt`); `MappedFile` uses the form with an owner below.
 - `addressArrayOwned<T>(address, length, owner): T[]` is that array with an owner that is told
   when the array is dropped. `owner` is the address of a block whose first word is a C function
   taking the block; the header is `{ data: address, len: length, cap: owner | 1 << 63 }`, and
   dropping the array calls the function instead of freeing a buffer (one test of `cap`'s top
   bit where a buffer is freed; a capacity is never that large). The block is the owner's own:
   it counts the arrays it gave out and gives the memory back with the last (`munmap`, a C
-  library's `free`). A copy of the array is an ordinary array with no owner. As the array
-  lives in a `shared<T[]>`, its one drop is the box's, on whichever thread drops the last
-  handle, so the owner's function must be callable from any thread.
+  library's `free`). `MappedFile`'s is in `std/fs/mapped_part.velt`: the function, the count,
+  and the mapping's address and length; `close()` drops the `MappedFile`'s own array. A copy of
+  the array is an ordinary array with no owner. As the array lives in a `shared<T[]>`, its one
+  drop is the box's, on whichever thread drops the last handle, so the owner's function must be
+  callable from any thread.
 - `arrayDataAddress<T>(xs: Mut<T[]>): usize` and `arrayReadAddress<T>(xs: readonly T[]): usize` (both
   unsafe), `arrayByteLength<T>(xs: T[]): usize` and `arrayBytesWritten`
   (std/lang/intrinsics/array.velt) are the

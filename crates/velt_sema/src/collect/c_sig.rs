@@ -13,18 +13,14 @@ use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
 /// What may cross, for the errors.
 const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
                        `Ptr<T>` and `Ptr<T> | null` (velt/ffi), and for a parameter `null`, \
-                       `StrBytes`, `CString`, `Out<T>` of a number and `OutPtr<T>` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
+                       `StrBytes`, `CString`, `Out<T>` of a number, `bool` or `Ptr<T> | null` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
 
 /// The module of std's `StrBytes` (std/ffi/str_bytes.velt).
 const STR_BYTES_MODULE: &str = velt_common::std_module!(ffi_str_bytes);
 
-/// velt/ffi's classes a C function takes by address (std/ffi/{c_string,out,out_ptr}.velt).
+/// velt/ffi's classes a C function takes by address (std/ffi/{c_string,out}.velt).
 const C_STRING: &str = velt_common::std_item!(ffi_c_string, "CString");
 const OUT: &str = velt_common::std_item!(ffi_out, "Out");
-const OUT_PTR: &str = velt_common::std_item!(ffi_out_ptr, "OutPtr");
-
-/// std's pointer into C memory (std/ffi/ptr.velt).
-const PTR: &str = velt_common::std_item!(ffi_ptr, "Ptr");
 
 /// The module of velt/ffi's `CVarArgs`, the type of C's `...` (std/ffi/c_var_args.velt).
 const C_VAR_ARGS_MODULE: &str = velt_common::std_module!(ffi_c_var_args);
@@ -199,16 +195,18 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
         struct_by_value(cx, name, &shown, p.ty.span);
         return CTy::Void;
     }
-    cx.error(
-        Diagnostic::error(
-            format!(
-                "parameter `{}` of C function `{name}` has type `{shown}`, which cannot cross to C",
-                p.name.name
-            ),
-            p.ty.span,
-        )
-        .with_note(format!("a C function takes {ALLOWED}")),
+    let d = Diagnostic::error(
+        format!(
+            "parameter `{}` of C function `{name}` has type `{shown}`, which cannot cross to C",
+            p.name.name
+        ),
+        p.ty.span,
     );
+    let d = match out_refusal(cx, ty) {
+        Some(why) => d.with_note(why),
+        None => d.with_note(format!("a C function takes {ALLOWED}")),
+    };
+    cx.error(d);
     CTy::Void
 }
 
@@ -363,14 +361,16 @@ pub(crate) fn ptr_conversion(
     expected: TyId,
     at: velt_common::Span,
 ) -> Option<Diagnostic> {
-    if !is_ptr(cx, expected) {
+    let TyKind::Ptr(target) = cx.ty.kind(expected) else {
+        return None;
+    };
+    // The same pointee: what differs is the `null` (`Ptr<T> | null` for a `Ptr<T>`), which the
+    // ordinary mismatch names.
+    if matches!(cx.ty.kind(from), TyKind::Ptr(p) if p == target) {
         return None;
     }
     let (f, e) = (cx.display(from), cx.display(expected));
-    let target = match cx.ty.kind(expected) {
-        TyKind::Adt(_, args) if args.len() == 1 => cx.display(args[0]),
-        _ => "T".into(),
-    };
+    let target = cx.display(*target);
     Some(
         Diagnostic::error(format!("a `{f}` is not a `{e}`"), at).with_note(format!(
             "pointers to different C types never convert implicitly: in `unsafe` code, `Ptr.at<{target}>(Ptr.addressOf(p))` makes one, stating that a `{target}` is at that address"
@@ -378,50 +378,70 @@ pub(crate) fn ptr_conversion(
     )
 }
 
-/// velt/ffi's `CString`, `Out<T>` (of a number or `bool`) or `OutPtr<T>`, which cross as an
-/// address.
+/// velt/ffi's `CString`, or `Out<T>` of what C may write into a word it is given the address of,
+/// which cross as an address.
 fn by_address(cx: &Ctx, ty: TyId) -> Option<CTy> {
     let TyKind::Adt(d, args) = cx.ty.kind(ty) else {
         return None;
     };
-    let scalar = |t: &TyId| is_number(cx, *t) || matches!(cx.ty.kind(*t), TyKind::Bool);
     match cx.adt(*d)?.qual_name.as_str() {
         C_STRING => Some(CTy::CString),
-        OUT if args.first().is_some_and(scalar) => Some(CTy::Out),
-        OUT_PTR if args.first().is_some_and(|t| c_pointee(cx, *t)) => Some(CTy::OutPtr),
+        OUT if args.first().is_some_and(|t| out_value(cx, *t)) => Some(CTy::Out),
         _ => None,
+    }
+}
+
+/// Why an `Out<T>` C can't write is refused, when `ty` is one: a non-null pointer (C may write
+/// `NULL`), or a value whose word C writing would forge (a class, a `symbol`, a `shared<T>`).
+fn out_refusal(cx: &Ctx, ty: TyId) -> Option<&'static str> {
+    let TyKind::Adt(d, args) = cx.ty.kind(ty) else {
+        return None;
+    };
+    if cx.adt(*d)?.qual_name != OUT {
+        return None;
+    }
+    let value = *args.first()?;
+    Some(if is_c_ptr(cx, value) {
+        "C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`"
+    } else {
+        "C writes an `Out<T>` of a number, `bool` or `Ptr<T> | null`: anything else C wrote would forge a Velt value (a reference, a symbol)"
+    })
+}
+
+/// May C write the `value` of an `Out<T>` of type `ty`? A number, a `bool`, or a pointer that may
+/// be `NULL` (`T **`: `Out<Ptr<T> | null>`, #3094). Not a non-null `Ptr<T>`, since C may write
+/// `NULL` into it; not a class reference, a `symbol` or a `shared<T>`, one word too, which C
+/// writing would forge a counted reference.
+fn out_value(cx: &Ctx, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Bool => true,
+        TyKind::Option(inner, n) => *n != Nothing::Both && is_c_ptr(cx, *inner),
+        _ => is_number(cx, ty),
     }
 }
 
 /// Is `ty` a `Ptr<T>` C can hold: one to a C type (`declare c type`, `declare c struct`), a
 /// number, `bool`, `void` or another such pointer (`Ptr<Ptr<u8>>` for `char **`)? `Ptr<string>`
 /// means nothing in C.
-pub(super) fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
+pub(crate) fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
-        TyKind::Adt(_, args) if is_ptr(cx, ty) => args.first().is_some_and(|t| c_pointee(cx, *t)),
+        // One whose pointee was refused where it was written is a pointer still, reported
+        // once, there (`Ctx::ptr_type_written`).
+        TyKind::Ptr(t) => c_pointee(cx, *t) || cx.type_level.ptr_refused_types.contains(&ty),
         _ => false,
     }
 }
 
 /// Can a C pointer point at a `ty`?
-fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
+pub(crate) fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
         TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit => true,
-        TyKind::Adt(d, _) => {
-            cx.adt(*d)
-                .is_some_and(|a| a.decl.is_some_and(|t| t.c_type || t.c_struct))
-                || is_c_ptr(cx, ty)
-        }
+        TyKind::Adt(d, _) => cx
+            .adt(*d)
+            .is_some_and(|a| a.decl.is_some_and(|t| t.c_type || t.c_struct)),
+        TyKind::Ptr(_) => is_c_ptr(cx, ty),
         // A pointer that may be NULL (`char **environ`: `Ptr<Ptr<u8> | null>`), the same word.
         TyKind::Option(inner, n) => *n != Nothing::Both && is_c_ptr(cx, *inner),
-        _ => false,
-    }
-}
-
-/// Is `ty` std's `Ptr<T>`?
-fn is_ptr(cx: &Ctx, ty: TyId) -> bool {
-    match cx.ty.kind(ty) {
-        TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|a| a.qual_name == PTR),
         _ => false,
     }
 }

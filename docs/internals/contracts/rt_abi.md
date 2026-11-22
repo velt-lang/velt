@@ -92,13 +92,14 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
   plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
 - **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
-  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`), `velt_rt_str_trim`,
-  `velt_rt_str_trim_start`, `velt_rt_str_trim_end`, and `velt_rt_str_split` when its separator is
-  not empty and cannot match half of a surrogate pair. They return a slice when the piece is too
+  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`) and `velt_rt_str_byte_slice`,
+  with which std cuts the results of `trim`, `trimStart`, `trimEnd`, and of `split` when its
+  separator is not empty and cannot match half of a surrogate pair (std/lang/string/). They return
+  a slice when the piece is too
   long to be inline, at least a quarter of the buffer's capacity, and the buffer is below 1 GiB
   (2^30 bytes); otherwise they copy (inline when short). Every other function copies the pieces it
-  returns: `split("")` and `velt_rt_str_code_points` (pieces of one character, always inline), a
-  split by a lone surrogate, and the regex functions (the pieces of `match`, `exec` and `split` are
+  returns: `split("")` and the characters of `for (const c of s)` (pieces of one character, always
+  inline), a split by a lone surrogate, and the regex functions (the pieces of `match`, `exec` and `split` are
   new strings, `VeltStr::from_vec`). In every function the whole string is shared as it is (count
   +1, same value), a piece of a static string borrows it, and a piece that ends between the halves
   of a surrogate pair is a copy (the half is re-encoded). So live slices pin at most four times
@@ -220,7 +221,6 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 | `velt_rt_str_drop` | `(VeltStr* s)` | count −1 for heap strings (frees at 0), then zeroes `*s`; generated code calls it for heap strings only and zeroes any other itself |
 | `velt_rt_str_cmp` | `(const VeltStr* a, const VeltStr* b) -> int32_t` | -1 / 0 / 1 in UTF-16 code-unit order (`<`, `sort()`): `memcmp` for two ASCII strings, else byte order corrected where it differs from code-unit order (design/strings.md "The ordering rule") |
 | `velt_rt_str_char_code_at` | `(const VeltStr* s, int64_t i) -> int64_t` | the UTF-16 code unit at `i` (a supplementary character gives its high or low surrogate), -1 out of range; generated code calls it for non-ASCII strings only |
-| `velt_rt_str_byte_length` | `(const VeltStr* s) -> uint64_t` | the UTF-8 length: the stored byte length, O(1) (generated code reads it inline, above) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> uint64_t` | hash of the bytes (`Map`/`Set` keys; fixed seed) |
 
 ## Counted objects
@@ -337,6 +337,8 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 | `weakRefWord` | `(r: u32) -> u64` | the word given to `weakRefNewWith` (0 for `weakRefNew`), also after the target was freed |
 | `weakRefDeref` | `(r: u32) -> usize` | the target with count + 1, or 0 once freed |
 | `weakRefDrop` | `(r: u32)` | |
+| `weakSlot` | `(obj: usize) -> usize` | the slot of a `weak T` reference to `obj`, a block `[count: usize][target: usize]` shared by every weak reference to it, with its count raised by one (the caller's); does not count `obj`; the slot's target reads 0 once `obj` was freed; 0 (`null`) gives 0, without the lock |
+| `weakSlotDrop` | `(slot: usize)` | gives up a reference to `slot`; 0 is none; takes no lock |
 | `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
 
 ## Symbols
@@ -348,30 +350,31 @@ identity (equality, hashing):
 struct SymbolRec { desc: VeltStr /* empty without a description */, key: u64 }   // 32 bytes
 ```
 
-`key` (without bit 63) is 0 for a record `velt_rt_symbol_new` made, 1 for a record of the registry
+`key` (without bit 63) is 0 for a record `Symbol(desc)` made at run time, 1 for a record of the registry
 (`Symbol.for`, the compiler's or std's), and 2 and up for another read-only record the compiler emits
 (`Intrinsic::SymbolStatic`; its id + 2, so no two records have the same bytes); bit 63 is set when
 the symbol has a description (`Symbol("")` has one, `Symbol()` has none). The compiler emits the
 registry's records of module constants `const R = Symbol.for("r")` too (`key` 1, one per key, the
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
-never freed; one made at run time is one allocation. On wasm32 each table address takes the
+never freed. On wasm32 each table address takes the
 first half of its 8-byte slot.
 
-The registry is std's (`std/lang/symbol/registry.velt`): a process-wide map from key to symbol
-behind a lock, which starts with the table's records and makes a record for a key seen first at
-run time (32 bytes from the C library, outside the leak counts; its description words those of
-the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a
-symbol's record address) and `Intrinsic::SymbolAt` (the symbol at an address), both unsafe and
-std-only, at the offsets above (`RECORD_KEY_AT` = 24, `KEY_REGISTERED`, `DESCRIBED`), which a std
-test pins against the compiler's records. Functions (declared in `std/lang/symbol/index.velt`; `string`
-parameters by pointer, a `string` result through an out pointer):
-- `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
-  (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
-- `velt_rt_symbol_described(s) -> u8`, `velt_rt_symbol_description(s, out: *mut VeltStr)`
-  (`""` without a description).
-- `velt_rt_strbuf_push_symbol(buf: *mut VeltStrBuf, s)`: appends `Symbol(<description>)`
-  (`console.log`, `String(s)`).
+Symbols are std code (`std/lang/symbol/`); the runtime has none. `Symbol(desc)` at run time
+makes a record in `record.velt`, carved from a 4 KiB chunk of `#symbol-record`'s memory (one
+chunk at a time per thread): the C library's `calloc`, outside the leak counts, or in the browser
+the compiled code's allocator, which does not zero it, so `record.velt` writes all four words
+itself. The description moves into the record's first three words, which keep that reference
+for good. The registry
+(`registry.velt`) is a process-wide map from key to symbol behind a lock, which starts with the
+table's records and makes a record for a key seen first at run time (its description words those
+of the key the map keeps). std reads and writes records with `Intrinsic::SymbolAddress` (a
+symbol's record address), `Intrinsic::SymbolAt` (the symbol at an address) and
+`Intrinsic::StrAt` (another reference to the string at an address: a description), all unsafe
+and std-only, at the offsets above (`RECORD_KEY_AT` = 24, `KEY_REGISTERED`, `DESCRIBED`), which a
+std test pins against the compiler's records. Generated code writes a symbol as text
+(`console.log`, `String(s)`) as `Symbol(`, the record's description, `)`, appending the string
+at the record's address (velt_vir `push_symbol`).
 
 ## CPU check
 
@@ -581,7 +584,8 @@ invalid operation, where the NaN depends on the CPU and the path (`fmlal` lets a
 win over a NaN accumulator, widening first does not), or a signalling NaN, which may or may not
 come out quiet (LLVM folds `llvm.fma(1, -0, x)` to `x`, as in `f32x4.mulAdd`).
 `velt_simd_f32x4_dot_add_fast_bf16x8` is
-`llvm.aarch64.neon.bfdot` where clang defines `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` for `--cpu`,
+`llvm.aarch64.neon.bfdot` where clang defines `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` for `--cpu`
+or in a function gated on `bf16-arm` (the LLVM backend calls `velt_simd_f32x4_bfdot`'s helper there),
 `llvm.x86.avx512bf16.dpbf16ps.128` where it defines `__AVX512BF16__` and `__AVX512VL__`, and
 otherwise `_dot_add_bf16x8`. The start-up check ("CPU check") does not know FEAT_FHM, FEAT_BF16 or
 AVX512-BF16: code built for a `--cpu` that has them stops with an illegal instruction on a CPU that
@@ -596,10 +600,10 @@ It is checked like any other feature ("Checks"; velt/arch/arm's `Bf16.isSupporte
 Linux and the `hw.optional.arm.FEAT_BF16` sysctl on macOS; `false` on Windows, off arm64 and
 under Cranelift.
 velt/half's `dotBf16Fast` and `dotBf16FastAt` ask once for a dot product and run a function gated
-on `bf16-arm`, whose loops are `velt_simd_f32x4_bfdot`, where the answer is yes, and
+on `bf16-arm`, whose loops are `bf16x8.dotAddFast` and so `bfdot`, where the answer is yes, and
 `velt_simd_f32x4_dot_add_fast_bf16x8` otherwise, so a build for any arm64 CPU runs `bfdot` where
-the CPU has it. `bf16x8.dotAddFast`, a step of a caller's loop, asks nothing and is the latter
-alone. In code built for a `--cpu` for which clang defines
+the CPU has it. `bf16x8.dotAddFast`, a step of a caller's loop, asks nothing: it is `bfdot` in a
+function gated on `bf16-arm` and the latter elsewhere. In code built for a `--cpu` for which clang defines
 `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC`, `velt_simd_has_bf16_arm()` is `1` everywhere and nothing
 is asked.
 
@@ -748,10 +752,27 @@ struct ModuleDesc {
   const char *names;   /* each slot's name, NUL-terminated, in slot order */
   void (*rest)(void *state); /* the root file's slots, or NULL */
 };
+/* velt_rt_wasm only (#2196 9c): */
 void *velt_rt_module_state(const struct ModuleDesc *desc, uint64_t slot);
 void *velt_rt_module_block(const struct ModuleDesc *desc);
 void velt_rt_module_ready(void *state, uint64_t n);
 ```
+
+On native targets the three are std's hooks instead (#2196 9c; no runtime entry): the executor
+in Velt's `schedModuleState`, `schedModuleBlock` and `schedModuleReady` (sched_module.velt, which
+takes the lock below) for a program that runs on it, and module_blocks.velt's `moduleState`,
+`moduleBlock` and `moduleReady` for one that doesn't (no tasks, so no lock); they take the
+descriptor and the block as `usize`. Lowering calls `moduleExit(code)` after a synchronous
+`main` returns, which drops the blocks as below. Everything this section says of the entries
+holds for the hooks.
+
+module_blocks.velt's hooks are `prebuilt` (velt_common `std_hooks/prebuilt.rs`): where the build
+links the module's object, each is a call of its entry point (`velt_hook_module_state`,
+`_block`, `_ready`, `_exit`, and `_drop` for the executor's counted end), as the runtime's entry
+was, and the program loads none of the module. The blocks and their table are that module's own
+state: the executor's lock reaches them by role (`hookCall`), never by import, so a program has
+one copy, the object's or the loaded module's. velt_opt's pass (#1571) knows the entry point
+`velt_hook_module_state` as it knows the hooks.
 
 `velt_rt_module_state` returns the process's module state block, for an access to slot `slot`:
 allocated zeroed with `size`/`align` and filled by `init` on the first call (the block is current

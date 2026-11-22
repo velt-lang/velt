@@ -383,7 +383,7 @@ docs/internals/design/iteration.md §4)
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
   A host or C function (`ExternFnDef::host`, `ExternFnDef::c`) writes every buffer parameter
-  not written `readonly` (and a C function its `Out`/`OutPtr` parameters): callers pass those
+  not written `readonly` (and a C function its `Out` parameters): callers pass those
   `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
   of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`:
@@ -999,12 +999,12 @@ doesn't hold, so a std global is the same definition in every program (#2943).
   modified in place. A use that takes the value (`Want::Move`) is wrapped in
   `Intrinsic::Share` by sema; moving a part out of it (`Field { base: Global(d) }` with mode
   `Move`) is a share too (lowering).
-- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` for each access to slot `i` (rt_abi.md
-  "Module state") and projects slot `i` of the tuple behind it; `DESC` is
-  `{ size, align, init, drop, names, rest }`, `init` the function evaluating every slot's `init`
-  in order into the zeroed block (calling `velt_rt_module_ready` after each), `drop` the tuple's
-  drop glue, `names` the slots' names, `rest` below (null when `init` writes every slot). A
-  slot is never read from its initializer's stored data (a module constant table's
+- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` (on a native target std's hook for
+  it) for each access to slot `i` (rt_abi.md "Module state") and projects slot `i` of the tuple
+  behind it; `DESC` is `{ size, align, init, drop, names, rest }`, `init` the function evaluating
+  every slot's `init` in order into the zeroed block (calling `velt_rt_module_ready` after each),
+  `drop` the tuple's drop glue, `names` the slots' names, `rest` below (null when `init` writes
+  every slot). A slot is never read from its initializer's stored data (a module constant table's
   `table_read`). `velt_main` touches the state before calling `main` (sync or async), so every
   initializer runs first, as in Node.
 - The root file's slots when its top-level statements are the entry `main` (#1438): slots
@@ -1205,6 +1205,18 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   the field in its member's variant, and a write evaluates the value once and stores the
   value's member into the field when it is the field's type, else stops the program with a
   `TypeError` (docs/internals/design/deferred-types.md).
+- `g(...args)` with `args` of a type known only per instantiation, a type parameter bounded by
+  an array or tuple type (`A extends unknown[]`) or a deferred type (`[S] extends [void] ? [] :
+  [S]`), spread into a call's rest parameter of `U[]` with `U` dynamic (`unknown`, `any`)
+  (#943, additive): in the array of the call's rest arguments, the spread's source is a `Call`
+  of `Intrinsic::SpreadParam(args)` of type `U[]`, `args` borrowed, spread like any array.
+  Only there: a spread of such a value in an array literal, or into fixed parameters, is
+  refused, as its length is known only per instantiation. Lowering (velt_vir
+  `lower/array/spread_param.rs`) builds the array at each instantiation from the value's own
+  type: a tuple gives its elements in order, an array its elements, each shared and converted
+  to `U` (boxed); `[]` gives an empty array. The value is evaluated once, where it is written
+  among the arguments. An instantiation whose value is neither, or whose element type holds a
+  lock (a dynamic value is read without the lock), is a diagnostic at the spread.
 
 ## Interface intersections and upcasts (#350)
 
@@ -1324,7 +1336,8 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   stores a `bool` flag after the aggregate's fields (in field order, one per presence field).
   An absent field holds the option's nothing (`undefined`). An `AdtLit` sets the flag, unless the
   field's value is `Intrinsic::FieldAbsent` (`() -> T | undefined`; outside a literal it is
-  `undefined`); any write to the field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the
+  `undefined`); any write to the field sets it, but an `Assign` of `Intrinsic::FieldAbsent` to
+  it, which clears it (`delete o.a`, sema `delete_optional`); `Intrinsic::FieldPresent` (`(field) -> bool`, the
   argument a `Field` place of a presence field) reads it. `console.log` leaves out an absent
   field and prints a present `undefined` or `null`; `JSON.stringify` leaves out an absent field
   and one holding `undefined`, and writes a present `null`; `JSON.parse` sets the flag when the
@@ -1417,7 +1430,18 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   without type arguments: the class id is `T` or a subclass; a generic class: that
   instantiation's table; `U | null`: `null` and `undefined` give `null`; a union or literal
   `U` with `| null`: a loose `=== null` test first, then per member as below). A mismatch
-  stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
+  stops the program with `TypeError: the value is not a <T> (it is <found>)`. To a number type
+  a number of another numeric type converts, to an integer type as JavaScript's ToIntN does
+  (truncated, modulo 2^N, `NaN` and the infinities 0). One assignment is no type claim but
+  JavaScript's own converting store: an `any` assigned to an element of an integer array
+  (`buf[i] = v` on a `Buffer`, a `u8[]`, an `i32[]`). Sema writes its value as a test of the
+  tag: a number held is `AnyTo` the element type as it is, and anything else is first
+  converted with `ToNumber` (`ToPrimitive` before, for an object) and that number, as an
+  `any`, is `AnyTo` the element type (`body/expr/element_store.rs`). A typed array's index
+  setter is given `ToNumber` of the `any` the same way, and converts the number itself. Every
+  form of the store converts (`=`, `+=` and the other compound forms, `||=` / `&&=` / `??=`,
+  an assignment used as a value). A `number[]` element is not such a store (JavaScript keeps
+  the value itself there). `AnyTo`'s operand is
   owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
   the place keeps (and later drops) its value. An optional second operand, a string literal
   (`ExprKind::Lit(Lit::Str(text))`), says where the value comes from: a mismatch stops with

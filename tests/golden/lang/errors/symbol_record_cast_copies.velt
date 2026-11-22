@@ -1,0 +1,22 @@
+// A `Record<symbol, ...>` cast kept or written makes the record's own symbol table: of a value
+// that is not a record of the same value type (an object, an interface value, a record of
+// numbers) it would be a new record, whose symbol keys the value never sees, where Node writes
+// them on the object itself. Not supported yet. Reading a member right away still works
+// (`lang/symbol_record_cast`).
+const K = Symbol("k");
+
+interface Named {
+  name: string;
+  rename(n: string): void;
+}
+
+const o = { a: 1 };
+const c1 = o as Record<symbol, unknown>;
+const r2: Record<string, number> = { n: 1 };
+const c2 = r2 as Record<symbol, unknown>;
+
+function bag(n: Named): Record<symbol, unknown> {
+  return n as Record<symbol, unknown>;
+}
+
+console.log(c1[K], c2[K], typeof bag);

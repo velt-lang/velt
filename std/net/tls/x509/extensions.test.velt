@@ -248,8 +248,10 @@ describe("extKeyUsage", () => {
     expect(hexOf(c, c.extKeyUsage)).toBe("06022a0306022a04");
   });
 
-  it("refuses an empty list and anything but OIDs", () => {
-    expect(one(EKU, "3000").failure()).toContain("empty extKeyUsage");
+  it("keeps an empty list for path validation to refuse, and refuses anything but OIDs", () => {
+    const empty = one(EKU, "3000").parsed();
+    expect(empty.extKeyUsage.tag).toBe(0x30);
+    expect(empty.extKeyUsage.end - empty.extKeyUsage.start).toBe(0);
     expect(one(EKU, el("30", "020101")).failure()).toContain("expected tag 6, found 2");
     expect(one(EKU, el("30", "06022a03" + "0500")).failure()).toContain("expected tag 6, found 5");
   });

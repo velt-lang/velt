@@ -69,12 +69,46 @@ fn accessor_call(e: &ast::Expr) -> Option<(&ast::Expr, &ast::Expr, &[ast::Object
     accessor.then_some((o, key, props.as_slice()))
 }
 
-/// Does `module` define an accessor with `Object.defineProperty`?
+/// Does `e` call `Object.defineProperty` with a data descriptor literal whose `enumerable` is
+/// `false`? On a record, such a property is held with the accessors
+/// (`body::expr::record_props`).
+fn hidden_data_call(e: &ast::Expr) -> bool {
+    let E::Call { callee, args, .. } = &e.kind else {
+        return false;
+    };
+    let E::Member { object, prop, .. } = &callee.kind else {
+        return false;
+    };
+    if !matches!(&object.kind, E::Ident(o) if o.name == "Object") || prop.name != "defineProperty" {
+        return false;
+    }
+    let [_, _, desc] = args.as_slice() else {
+        return false;
+    };
+    let E::Object(props) = &desc.kind else {
+        return false;
+    };
+    // The form `record_props` defines: no accessor, `enumerable: false`, and `writable` and
+    // `configurable` written.
+    let named = |p: &ast::ObjectProp, name: &str| matches!(p, ast::ObjectProp::KeyValue(n, _) | ast::ObjectProp::Shorthand(n) if n.name == name);
+    let hidden = props.iter().any(|p| {
+        matches!(p, ast::ObjectProp::KeyValue(n, v) if n.name == "enumerable"
+            && matches!(v.kind, E::Lit(ast::Lit::Bool(false))))
+    });
+    hidden
+        && !props.iter().any(|p| named(p, "get") || named(p, "set"))
+        && ["writable", "configurable"]
+            .iter()
+            .all(|a| props.iter().any(|p| named(p, a)))
+}
+
+/// Does `module` define an accessor with `Object.defineProperty`, or a data property that is
+/// not enumerable (held with a record's accessors)?
 pub(crate) fn defines_accessors(module: &ast::Module) -> bool {
     struct Finds(bool);
     impl Visit<'_> for Finds {
         fn expr(&mut self, e: &ast::Expr) {
-            self.0 |= accessor_call(e).is_some();
+            self.0 |= accessor_call(e).is_some() || hidden_data_call(e);
         }
     }
     let mut f = Finds(false);

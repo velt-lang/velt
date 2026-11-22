@@ -1,0 +1,301 @@
+// velt/crypto (internal): `Mod384`, arithmetic mod an odd 384-bit number in six 64-bit limbs,
+// little-endian, in the Montgomery domain (x stands for x * 2^384 mod m), for P-384: its field
+// prime and its group order are two instances. A product interleaves the multiplication and
+// the reduction (CIOS, the multiplier from -m^-1 mod 2^64); each limb product is a 128-bit
+// value from `*` and `Math.umulh`, carries and borrows are `(s < a) as u64`, and the last
+// subtraction of m is a masked select, so the arithmetic does not branch on a value.
+//
+// The masked operations (`orMasked`, `blend`, `zeroMask`) are for secret values (ECDH's scalar
+// multiplication); `isZero`, `same` and `load`'s answer branch and are for public ones.
+//
+// Values live in registers (six limbs each) of one array, named by number, like `FeP256`:
+// operations load their operands into locals and store the result once, so `mul(a, a, b)`
+// works in place (#2403). Every result is fully reduced (below m).
+
+import { noInline } from "velt/lang/intrinsics";
+
+// `t + a * b + c` as 128 bits (it cannot overflow).
+function mac(t: u64, a: u64, b: u64, c: u64): [u64, u64] {
+  const lo = a * b;
+  const s = lo + t;
+  const s2 = s + c;
+  return [s2, Math.umulh(a, b) + ((s < lo) as u64) + ((s2 < c) as u64)];
+}
+
+// `a + b + c` (c is 0 or 1) and its carry.
+function adc(a: u64, b: u64, c: u64): [u64, u64] {
+  const s = a + b;
+  const s2 = s + c;
+  return [s2, ((s < a) as u64) | ((s2 < c) as u64)];
+}
+
+// `a - b - c` (c is 0 or 1) and its borrow.
+function sbb(a: u64, b: u64, c: u64): [u64, u64] {
+  const d = a - b;
+  return [d - c, ((a < b) as u64) | ((d < c) as u64)];
+}
+
+/** Registers of numbers mod an odd 384-bit m. */
+export class Mod384 {
+  r: u64[];
+  private m0: u64;
+  private m1: u64;
+  private m2: u64;
+  private m3: u64;
+  private m4: u64;
+  private m5: u64;
+  private inv: u64;
+  // 2^768 mod m: a product with it enters the Montgomery domain.
+  private r2: u64[];
+
+  /**
+   * `regs` registers, each zero, mod `m` (six little-endian limbs, the top bit set), with
+   * `inv` = -m^-1 mod 2^64 and `r2` = 2^768 mod m.
+   */
+  constructor(m: u64[], inv: u64, r2: u64[], regs: usize) {
+    this.m0 = m[0];
+    this.m1 = m[1];
+    this.m2 = m[2];
+    this.m3 = m[3];
+    this.m4 = m[4];
+    this.m5 = m[5];
+    this.inv = inv;
+    this.r2 = [];
+    for (let i: usize = 0; i < 6; i++) {
+      this.r2.push(r2[i]);
+    }
+    this.r = [];
+    for (let i: usize = 0; i < 6 * regs; i++) {
+      this.r.push(0);
+    }
+  }
+
+  /** Register `d` = the six limbs `x`, as they are. */
+  set(d: usize, x: u64[]) {
+    for (let i: usize = 0; i < 6; i++) {
+      this.r[6 * d + i] = x[i];
+    }
+  }
+
+  /** Register `d` = register `a`. */
+  copy(d: usize, a: usize) {
+    for (let i: usize = 0; i < 6; i++) {
+      this.r[6 * d + i] = this.r[6 * a + i];
+    }
+  }
+
+  /** Register `d` = 0. */
+  zero(d: usize) {
+    for (let i: usize = 0; i < 6; i++) {
+      this.r[6 * d + i] = 0;
+    }
+  }
+
+  // Stores `t` (with the carry `t6`, the value below 2m) minus m when that is not negative.
+  private store(d: usize, t0: u64, t1: u64, t2: u64, t3: u64, t4: u64, t5: u64, t6: u64) {
+    const [d0, b0] = sbb(t0, this.m0, 0);
+    const [d1, b1] = sbb(t1, this.m1, b0);
+    const [d2, b2] = sbb(t2, this.m2, b1);
+    const [d3, b3] = sbb(t3, this.m3, b2);
+    const [d4, b4] = sbb(t4, this.m4, b3);
+    const [d5, b5] = sbb(t5, this.m5, b4);
+    const [_, b6] = sbb(t6, 0, b5);
+    // b6 is 1 when t < m: keep t.
+    const keep = 0 - b6;
+    const o = 6 * d;
+    this.r[o + 5] = (t5 & keep) | (d5 & ~keep);
+    this.r[o] = (t0 & keep) | (d0 & ~keep);
+    this.r[o + 1] = (t1 & keep) | (d1 & ~keep);
+    this.r[o + 2] = (t2 & keep) | (d2 & ~keep);
+    this.r[o + 3] = (t3 & keep) | (d3 & ~keep);
+    this.r[o + 4] = (t4 & keep) | (d4 & ~keep);
+  }
+
+  /** `d = a + b` mod m; `d` may be `a` or `b`. */
+  add(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 6 * a;
+    const ob = 6 * b;
+    // The highest indexes first: their bounds checks cover the others.
+    const a5 = r[oa + 5];
+    const b5 = r[ob + 5];
+    const [s0, c0] = adc(r[oa], r[ob], 0);
+    const [s1, c1] = adc(r[oa + 1], r[ob + 1], c0);
+    const [s2, c2] = adc(r[oa + 2], r[ob + 2], c1);
+    const [s3, c3] = adc(r[oa + 3], r[ob + 3], c2);
+    const [s4, c4] = adc(r[oa + 4], r[ob + 4], c3);
+    const [s5, c5] = adc(a5, b5, c4);
+    this.store(d, s0, s1, s2, s3, s4, s5, c5);
+  }
+
+  /** `d = a - b` mod m; `d` may be `a` or `b`. */
+  @noInline
+  sub(d: usize, a: usize, b: usize) {
+    // Out of line, as `zeroMask`: inlined into the doubling, LLVM (seen with the release
+    // compilers of November 2026) sees that the mask that adds m back is all ones or zero and
+    // makes it a branch on the borrow, which depends on the secret scalar. On its own the function
+    // is compiled with conditional moves. scripts/ct-counts.py checks the machine code: the
+    // instructions executed must not vary with the scalar.
+    const r = this.r;
+    const oa = 6 * a;
+    const ob = 6 * b;
+    const a5 = r[oa + 5];
+    const b5 = r[ob + 5];
+    const [s0, w0] = sbb(r[oa], r[ob], 0);
+    const [s1, w1] = sbb(r[oa + 1], r[ob + 1], w0);
+    const [s2, w2] = sbb(r[oa + 2], r[ob + 2], w1);
+    const [s3, w3] = sbb(r[oa + 3], r[ob + 3], w2);
+    const [s4, w4] = sbb(r[oa + 4], r[ob + 4], w3);
+    const [s5, w5] = sbb(a5, b5, w4);
+    // Negative: add m back.
+    const k = 0 - w5;
+    const [t0, c0] = adc(s0, this.m0 & k, 0);
+    const [t1, c1] = adc(s1, this.m1 & k, c0);
+    const [t2, c2] = adc(s2, this.m2 & k, c1);
+    const [t3, c3] = adc(s3, this.m3 & k, c2);
+    const [t4, c4] = adc(s4, this.m4 & k, c3);
+    const [t5, _] = adc(s5, this.m5 & k, c4);
+    const o = 6 * d;
+    this.r[o + 5] = t5;
+    this.r[o] = t0;
+    this.r[o + 1] = t1;
+    this.r[o + 2] = t2;
+    this.r[o + 3] = t3;
+    this.r[o + 4] = t4;
+  }
+
+  /** `d = a * b / 2^384` mod m (the Montgomery product); `d` may be `a` or `b`. */
+  mul(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 6 * a;
+    const ob = 6 * b;
+    // The highest indexes first: their bounds checks cover the others.
+    const b5 = r[ob + 5];
+    const a5 = r[oa + 5];
+    const b0 = r[ob];
+    const b1 = r[ob + 1];
+    const b2 = r[ob + 2];
+    const b3 = r[ob + 3];
+    const b4 = r[ob + 4];
+    const m0 = this.m0;
+    const m1 = this.m1;
+    const m2 = this.m2;
+    const m3 = this.m3;
+    const m4 = this.m4;
+    const m5 = this.m5;
+    const inv = this.inv;
+    let t0: u64 = 0;
+    let t1: u64 = 0;
+    let t2: u64 = 0;
+    let t3: u64 = 0;
+    let t4: u64 = 0;
+    let t5: u64 = 0;
+    let t6: u64 = 0;
+    let t7: u64 = 0;
+    let c: u64 = 0;
+    for (let i: usize = 0; i < 6; i++) {
+      const ai = i == 5 ? a5 : r[oa + i];
+      [t0, c] = mac(t0, ai, b0, 0);
+      [t1, c] = mac(t1, ai, b1, c);
+      [t2, c] = mac(t2, ai, b2, c);
+      [t3, c] = mac(t3, ai, b3, c);
+      [t4, c] = mac(t4, ai, b4, c);
+      [t5, c] = mac(t5, ai, b5, c);
+      const s = t6 + c;
+      t7 = (s < c) as u64;
+      t6 = s;
+      // t = (t + k m) / 2^64, with k making the low limb zero.
+      const k = t0 * inv;
+      [t0, c] = mac(t0, k, m0, 0);
+      [t0, c] = mac(t1, k, m1, c);
+      [t1, c] = mac(t2, k, m2, c);
+      [t2, c] = mac(t3, k, m3, c);
+      [t3, c] = mac(t4, k, m4, c);
+      [t4, c] = mac(t5, k, m5, c);
+      const s2 = t6 + c;
+      t5 = s2;
+      t6 = t7 + ((s2 < c) as u64);
+    }
+    this.store(d, t0, t1, t2, t3, t4, t5, t6);
+  }
+
+  /** `d = a * 2^384` mod m: `a` into the Montgomery domain; `d` not `a`. */
+  enter(d: usize, a: usize) {
+    for (let i: usize = 0; i < 6; i++) {
+      this.r[6 * d + i] = this.r2[i];
+    }
+    this.mul(d, a, d);
+  }
+
+  /** `d = a / 2^384` mod m: `a` out of the Montgomery domain; `d` not `a`. */
+  leave(d: usize, a: usize) {
+    this.zero(d);
+    this.r[6 * d] = 1;
+    this.mul(d, a, d);
+  }
+
+  /**
+   * Register `d` = the big-endian bytes `b[at..at + len]` (at most 48) as a number, as it is
+   * (not in the Montgomery domain), minus m when it is not below m. Returns whether it was below.
+   */
+  load(d: usize, b: u8[], at: usize, len: usize): bool {
+    const w: u64[] = [0, 0, 0, 0, 0, 0];
+    for (let i: usize = 0; i < len; i++) {
+      const k = len - 1 - i;
+      w[k >> 3] |= (b[at + i] as u64) << ((8 * (k & 7)) as u64);
+    }
+    const [_0, b0] = sbb(w[0], this.m0, 0);
+    const [_1, b1] = sbb(w[1], this.m1, b0);
+    const [_2, b2] = sbb(w[2], this.m2, b1);
+    const [_3, b3] = sbb(w[3], this.m3, b2);
+    const [_4, b4] = sbb(w[4], this.m4, b3);
+    const [_5, b5] = sbb(w[5], this.m5, b4);
+    // Below 2^384 < 2m: one conditional subtraction reduces (store does it).
+    this.store(d, w[0], w[1], w[2], w[3], w[4], w[5], 0);
+    return b5 == 1;
+  }
+
+  /** `d |= a & mask` limb by limb (`mask` all ones or zero): a constant-time table select. */
+  orMasked(d: usize, a: usize, mask: u64) {
+    for (let i: usize = 0; i < 6; i++) {
+      this.r[6 * d + i] |= this.r[6 * a + i] & mask;
+    }
+  }
+
+  /** `d = a` where `mask` is all ones, `d = b` where it is zero, without a branch. */
+  blend(d: usize, a: usize, b: usize, mask: u64) {
+    for (let i: usize = 0; i < 6; i++) {
+      this.r[6 * d + i] = (this.r[6 * a + i] & mask) | (this.r[6 * b + i] & ~mask);
+    }
+  }
+
+  /** All ones when register `a` is zero, else 0, without a branch. */
+  @noInline
+  zeroMask(a: usize): u64 {
+    // Out of line, as `FeP256.isZero` and for its reason: a caller that sees the mask is one
+    // comparison lets LLVM turn `blend` into a select of loads, whose address then depends on a
+    // secret.
+    const o = 6 * a;
+    const r = this.r;
+    const x = r[o + 5] | r[o] | r[o + 1] | r[o + 2] | r[o + 3] | r[o + 4];
+    // (x | -x) has its top bit set unless x is 0.
+    return ((x | (0 - x)) >> 63) - 1;
+  }
+
+  /** Whether register `a` is zero (public data: variable time). */
+  isZero(a: usize): bool {
+    const o = 6 * a;
+    const r = this.r;
+    return (r[o + 5] | r[o] | r[o + 1] | r[o + 2] | r[o + 3] | r[o + 4]) == 0;
+  }
+
+  /** Whether registers `a` and `b` hold the same number (public data: variable time). */
+  same(a: usize, b: usize): bool {
+    for (let i: usize = 0; i < 6; i++) {
+      if (this.r[6 * a + i] != this.r[6 * b + i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+}

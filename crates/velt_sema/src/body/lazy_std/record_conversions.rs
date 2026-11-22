@@ -72,5 +72,5 @@ pub(super) fn holds_string_record(cx: &Ctx, t: TyId, seen: &mut FxHashSet<TyId>)
             return true;
         }
     }
-    (crate::types::children(&kind).into_iter()).any(|c| holds_string_record(cx, c, seen))
+    (crate::types::contents(&kind).into_iter()).any(|c| holds_string_record(cx, c, seen))
 }

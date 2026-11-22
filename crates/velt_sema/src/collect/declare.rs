@@ -289,6 +289,7 @@ pub(super) fn new_def<'m>(
                 decl: a,
                 expanding: false,
                 used: false,
+                pointees_checked: false,
                 outer: vec![],
             });
             return Some((&a.name, Item::Alias(id)));

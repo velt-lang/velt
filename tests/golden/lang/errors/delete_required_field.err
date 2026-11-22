@@ -1,0 +1,5 @@
+delete_required_field.velt:13:1: error: the operand of a `delete` operator must be optional (TypeScript's TS2790)
+delete_required_field.velt:15:1: error: cannot `delete` a field of class `K`
+delete_required_field.velt:16:1: error: the operand of a `delete` operator must be optional (TypeScript's TS2790)
+delete_required_field.velt:17:1: error: the operand of a `delete` operator must be optional (TypeScript's TS2790)
+delete_required_field.velt:18:1: error: the operand of a `delete` operator cannot be a read-only property (TypeScript's TS2704)

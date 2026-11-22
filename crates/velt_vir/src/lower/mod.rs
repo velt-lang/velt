@@ -67,6 +67,7 @@ mod attempt;
 mod bits;
 mod boxes;
 mod boxing;
+mod field_absent;
 mod kept;
 mod passes;
 pub use boxing::CountedSeed;
@@ -80,6 +81,7 @@ mod call;
 mod callee;
 mod caller_aliases;
 mod caller_stores;
+mod callers_own;
 mod cell_fields;
 mod cells;
 mod cfg;
@@ -182,6 +184,7 @@ mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
+mod type_kinds;
 mod type_tests;
 mod types;
 mod upcast;
@@ -274,6 +277,9 @@ struct Cx<'h> {
     unreduced: Vec<TyId>,
     /// Closures whose last parameter is a rest parameter (`abi.rs` `rest_tuple_params`).
     rest_closures: FxHashSet<DefId>,
+    /// Instantiations a spread of a generic value into a call's rest can't serve
+    /// (`array/spread_param.rs`).
+    spread_errors: Vec<velt_common::Diagnostic>,
     /// C functions called with a signature their symbol already has another one of (c_call.rs).
     c_clashes: Vec<velt_common::Diagnostic>,
     /// The symbols C functions declared (c_call.rs): a later extern of the same symbol with
@@ -343,8 +349,10 @@ struct Cx<'h> {
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
     sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
     sched_used: bool,  // a task or timer hook of the executor in Velt is called (module_state.rs)
+    /// Did sema declare module_blocks.velt's hooks in its object (sched.rs `module_hook_live`)?
+    module_hooks_declared: std::cell::OnceCell<bool>,
     held: Option<Vec<(FuncId, Work)>>, // module state's accesses, until main is built (drain)
-    statics_table: Option<StaticId>, // the process statics' table, its release to fill in
+    statics_table: Option<StaticId>,   // the process statics' table, its release to fill in
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,

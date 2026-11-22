@@ -114,6 +114,7 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(t, Rvalue::Cast(v, t))
             }
             (I::SpreadObject, parts) => self.spread_object(parts, ty),
+            (I::SpreadParam, [x]) => self.spread_param(x, ty),
             (I::KeyRead, [object, key]) => self.key_read(object, key, ty),
             (I::KeyWrite, [object, key, value]) => self.key_write(object, key, value),
             (I::FieldAbsent, []) => {
@@ -190,6 +191,23 @@ impl FnLower<'_, '_> {
                 let data = self.str_data(&p);
                 self.cast_to(data, Ty::Ptr, Ty::U64)
             }
+            (I::StrAt, [a]) => {
+                // Another reference to the string at the address: its three words read in place
+                // and shared (a count increment for a heap string), owned by the caller.
+                let addr = self.expr(a);
+                let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let Operand::Copy(at) = at else {
+                    ice("rvalue_temp returns a place")
+                };
+                let src = Place {
+                    local: at.local,
+                    proj: vec![Proj::Deref(Ty::Agg(STR_AGG))],
+                };
+                let out = self.temp(Ty::Agg(STR_AGG));
+                self.str_share(src, Place::local(out));
+                let t = self.sub(ty);
+                self.own_value(Operand::Copy(Place::local(out)), t)
+            }
             (I::ExportedAddress, [a]) => {
                 // `a` is the index of the `hir::CExport` (sema's `exported_address`).
                 let hir::ExprKind::Lit(hir::Lit::Int(index)) = a.kind else {
@@ -197,6 +215,18 @@ impl FnLower<'_, '_> {
                 };
                 let f = self.cx.c_export_address(index as u32);
                 self.rvalue_temp(Ty::U64, Rvalue::Cast(f, Ty::U64))
+            }
+            // A C pointer and its address are the same word (#3094).
+            (I::PtrFromAddress, [a]) => {
+                let a = self.expr(a);
+                if super::c_call::wasm32(&self.cx.target) {
+                    self.stop_if_past_32_bits(a.clone());
+                }
+                self.rvalue_temp(Ty::Ptr, Rvalue::Cast(a, Ty::Ptr))
+            }
+            (I::PtrToAddress, [p]) => {
+                let p = self.expr(p);
+                self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64))
             }
             (I::AddressLoad, [a]) => {
                 let addr = self.expr(a);
@@ -333,8 +363,10 @@ impl FnLower<'_, '_> {
                 self.own_value(v, t)
             }
             (I::NeedsTransfer, [a]) => {
+                // `transfers`, as `Transfer` decides: a promise has work to do (a holder of a
+                // shared one is handed over) though it reaches no counted object (#3389).
                 let t = self.sub(a.ty);
-                Operand::Const(crate::vir::Const::Bool(self.cx.holds_counted(t)), Ty::Bool)
+                Operand::Const(crate::vir::Const::Bool(self.cx.transfers(t)), Ty::Bool)
             }
             (I::ModuleStateUsed, []) => {
                 let used = self.cx.module_state_used();
@@ -573,7 +605,10 @@ impl FnLower<'_, '_> {
         push: fn(&mut Self, &Operand, &Place, TyId),
     ) -> Operand {
         let t = self.sub(a.ty);
-        let v = self.expr(a);
+        let v = match self.formatted_input(a) {
+            Some(copy) => copy,
+            None => self.expr(a),
+        };
         let p = self.place_of(v, t);
         let (_, buf) = self.new_strbuf(0);
         push(self, &buf, &p, t);
