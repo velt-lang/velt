@@ -96,18 +96,37 @@ describe("the accept-encoding of each redirect hop", () => {
   // query. (Was the golden std/fetch_redirect_codings.)
   let https = "";
   let http = "";
+  let plainPort = 0;
   let close = () => {};
   beforeAll(async () => {
     const secure = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, answer);
     const plain = await serve({ port: 0 }, answer);
     https = `https://localhost:${secure.port}/echo`;
     http = `http://127.0.0.1:${plain.port}/echo`;
+    plainPort = plain.port as number;
     close = () => {
       plain.close();
       secure.close();
     };
   });
   afterAll(() => close());
+
+  it("follows a redirect from an http: literal up to HTTPS, as Node does", async () => {
+    // `fetch` of a literal that starts with `http:` keeps the TLS client because it can be
+    // redirected (#2392): only `redirect: "manual"` or `"error"` takes the plain variant. First in
+    // this block, so the HTTPS hop dials (a later one reuses the pooled HTTP/2 connection).
+    const up = await fetch(`http://127.0.0.1:${plainPort}/echo?to=${encodeURIComponent(https)}`, {
+      ca: TEST_CA,
+    });
+    expect(up.redirected).toBe(true);
+    expect(up.status).toBe(200);
+    expect(await up.text()).toBe("https: br, gzip, deflate");
+    const manual = await fetch(
+      `http://127.0.0.1:${plainPort}/echo?to=${encodeURIComponent(https)}`,
+      { redirect: "manual" },
+    );
+    expect(manual.status).toBe(302);
+  });
 
   it("is br, gzip, deflate after a redirect up to HTTPS", async () => {
     const up = await fetch(`${http}?to=${encodeURIComponent(https)}`, { ca: TEST_CA });

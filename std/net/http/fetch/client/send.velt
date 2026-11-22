@@ -40,6 +40,7 @@ function unknown(message: string): IoError {
 /** Sends `o`, following redirects as `o.redirect` says, and resolves with the response. */
 export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortError> {
   let t = target(o.url);
+  t.tls = o.tls;
   let redirected = false;
   for (let hop: i64 = 0; hop <= MAX_REDIRECTS; hop++) {
     // Recomputed for each hop, as undici does: `br` is offered over HTTPS only (#606).
@@ -102,6 +103,7 @@ function next(o: ClientRequest, t: Target, location: string, status: i64): Targe
     throw unknown("redirect to a URL that is not http: or https:");
   }
   const n = ofUrl(u);
+  n.tls = o.tls;
   follow(o, t, n, status);
   return n;
 }

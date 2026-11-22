@@ -288,6 +288,7 @@ fn std_scope(
         extra_roots.retain(|f| !unused.contains(&file_key(f)));
     }
     let scope = CheckScope {
+        preload: vec![],
         require_main: false,
         extra_roots,
         eager_std: true,
@@ -434,6 +435,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
     let same_path = same_path_groups(&extra_roots);
     extra_roots.retain(|f| *f != input);
     let scope = CheckScope {
+        preload: vec![],
         require_main,
         extra_roots,
         eager_std: false,
