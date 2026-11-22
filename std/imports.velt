@@ -13,12 +13,16 @@ export const imports: Imports = {
     js: "./net/http/fetch/client/transport/js.velt",
     default: "./net/http/fetch/client/transport/native.velt",
   },
-  // The seed of `Math.random()`'s generator: WASI's random_get through wasi-libc, the JS host's
-  // crypto.getRandomValues, or elsewhere the operating system's random numbers.
-  "#random-seed": {
-    wasi: "./lang/random/seed_wasi.velt",
-    js: "./lang/random/seed_js.velt",
-    default: "./lang/random/seed_native.velt",
+  // The operating system's random numbers (std/lang/random/os.velt: velt/crypto's, UUIDs' and the
+  // seed of `Math.random()`'s generator): `getrandom` on Linux, `getentropy` on macOS,
+  // `BCryptGenRandom` on Windows, WASI's random_get through wasi-libc, the JS host's
+  // crypto.getRandomValues. No default: a target without one fails here, at compile time.
+  "#os-random": {
+    darwin: "./lang/random/os_darwin.velt",
+    linux: "./lang/random/os_linux.velt",
+    win32: "./lang/random/os_win32.velt",
+    wasi: "./lang/random/os_wasi.velt",
+    js: "./lang/random/os_js.velt",
   },
   // Where the calling thread's C `errno` is (velt/ffi's `errno` and `setErrno`): each C library
   // gives its address through a function of its own; a target without one has none.
@@ -234,6 +238,14 @@ export const imports: Imports = {
   // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
   // library's directory functions (`#fd-system`), or Win32's on Windows.
   "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },
+  // Renaming, linking and copying (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`) in a
+  // native build: the C library's on macOS and Linux (each with its own data copy), Win32's on
+  // Windows.
+  "#fs-paths": {
+    win32: "./fs/paths/win32.velt",
+    darwin: "./fs/paths/darwin.velt",
+    default: "./fs/paths/linux.velt",
+  },
   // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
   // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
   // of the builtin `process`, which every program loads, imports the variant.
