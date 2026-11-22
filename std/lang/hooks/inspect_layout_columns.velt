@@ -1,0 +1,67 @@
+// velt/lang/hooks (internal): Node's `groupArrayElements` (lib/internal/util/inspect.js): an
+// array of more than six short entries prints them in aligned columns, numbers right-aligned and
+// everything else left-aligned. This file decides whether an array groups and how: the number of
+// columns and each column's width, from its entries' display widths
+// (inspect_layout_width.velt). The layout writes the rows.
+
+/** Node's `breakLength`. */
+export const BREAK_LENGTH: u64 = 80;
+
+/** Node's `ctx.compact` (3): at most `COMPACT * 4` columns. */
+const COMPACT: u64 = 3;
+
+/** Room for `, ` after an entry. */
+const SEPARATOR_SPACE: u64 = 2;
+
+/**
+ * How the entries of an array at indentation `indent` are grouped: their display widths are
+ * `widths` (the entries shown, without a `... n more items`), and `entries` counts every entry,
+ * one more when `... n more items` follows them, which Node counts only in its average. Returns
+ * the number of columns and fills `widest` with each column's width (its widest entry), or
+ * returns 0 when grouping does not pay off (an entry too wide, or too few rows to gain from it).
+ */
+export function planColumns(widths: u64[], entries: u64, indent: u64, widest: u64[]): u64 {
+  const n = widths.length as u64;
+  let totalLength: u64 = 0;
+  let maxLength: u64 = 0;
+  for (const w of widths) {
+    totalLength += w + SEPARATOR_SPACE;
+    if (w > maxLength) {
+      maxLength = w;
+    }
+  }
+  const actualMax = maxLength + SEPARATOR_SPACE;
+  if (
+    actualMax * 3 + indent >= BREAK_LENGTH ||
+    ((totalLength as f64) / (actualMax as f64) <= 5.0 && maxLength > 6)
+  ) {
+    return 0;
+  }
+  const averageBias = Math.sqrt((actualMax as f64) - (totalLength as f64) / (entries as f64));
+  const biasedMax = Math.max((actualMax as f64) - 3.0 - averageBias, 1.0);
+  let columns = jsRound(Math.sqrt(2.5 * biasedMax * (n as f64)) / biasedMax);
+  const room = BREAK_LENGTH > indent ? (BREAK_LENGTH - indent) / actualMax : 0;
+  columns = Math.min(columns, room as f64);
+  columns = Math.min(columns, (COMPACT * 4) as f64);
+  columns = Math.min(columns, 15.0);
+  const count = columns as u64;
+  if (count <= 1) {
+    return 0;
+  }
+  widest.truncate(0);
+  for (let c: u64 = 0; c < count; c++) {
+    let w: u64 = 0;
+    for (let j = c; j < n; j += count) {
+      if (widths[j] > w) {
+        w = widths[j];
+      }
+    }
+    widest.push(w);
+  }
+  return count;
+}
+
+/** JavaScript's `Math.round` for the non-negative values here: halves round up. */
+function jsRound(x: f64): f64 {
+  return Math.floor(x + 0.5);
+}
