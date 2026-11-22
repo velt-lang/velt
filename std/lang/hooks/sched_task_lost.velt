@@ -44,6 +44,7 @@
 // - Two tasks that each wait for the other's join handle.
 
 import { fnAddress, futDrop, inline, noInline, stateDrop } from "velt/lang/intrinsics";
+import * as dbg from "./sched_debug";
 import * as fr from "./sched_fut_root";
 import * as lk from "./sched_lock";
 import * as mk from "./sched_make";
@@ -187,13 +188,23 @@ function counts(k: usize): bool {
   if (l === 0 || l !== m.ld(k + t.T_LOCALS)) {
     return false;
   }
+  // The slot's word before the count: the handle's drop gives its reference back before it
+  // clears `J_HANDLE` (sched_join.velt `dropRunning`), so a word without the handle comes with a
+  // count without its reference. Read the other way round, a count with the handle's reference
+  // and a word without the handle (the drop in between) looked like a reference more that
+  // nothing would ever give back with a wake, and the task stayed parked for ever (#3438).
+  const js = m.load32(k + t.T_JOIN_STATE);
+  // Held open in tests (sched_debug.velt `HANDLE_PAUSE`).
+  if ((js & t.J_HANDLE) !== 0) {
+    dbg.handlePause(2);
+  }
   const refs = m.load(k + t.T_REFS);
   if (refs === l + 1) {
     return dead(k, l);
   }
   // One more, the handle's: its drop is asked to wake the task, once (`J_PARKED`).
   const held = t.J_HANDLE | t.J_PARKED;
-  return refs === l + 2 && (m.load32(k + t.T_JOIN_STATE) & held) === t.J_HANDLE && dead(k, l);
+  return refs === l + 2 && (js & held) === t.J_HANDLE && dead(k, l);
 }
 
 /**
