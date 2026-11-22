@@ -9,9 +9,6 @@ export class RowsMark {
   blob: u8[];
   blobAt: usize;
   row: usize;
-  /** A nested reader was reading, at its own mark `inner`. */
-  nested: bool = false;
-  inner: u64 = 0;
 
   constructor(at: u8, col: usize, kind: u8, blob: u8[], blobAt: usize, row: usize) {
     this.at = at;

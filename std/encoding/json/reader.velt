@@ -38,6 +38,7 @@ import {
   rowsArrayNext,
   rowsF64,
   rowsMark,
+  rowsNestedKey,
   rowsNextKey,
   rowsNull,
   rowsOpen,
@@ -102,6 +103,8 @@ export class Reader extends Scanner {
   ends: Map<usize, usize> | null = null;
   /** The rows reader, when reading a driver's rows. */
   rows: RowsReader | null = null;
+  /** Reading a driver's rows, whether this reads a nested value's JSON text now (rows_ops.velt). */
+  rowsNested: bool = false;
   /** The last number read. */
   num: f64 = 0;
   int: i64 = 0;
@@ -271,8 +274,8 @@ export class Reader extends Scanner {
 }
 
 // The text reader's side of each `Reader` method that a rows reader forwards (rows_ops.velt): what
-// a rows reader's nested text reader calls, so that no call path leads from a `Reader` method back
-// to itself (a method that can reach itself is not inlined).
+// a nested value of the rows is read with there, so that no call path leads from a `Reader` method
+// back to itself (a method that can reach itself is not inlined).
 
 /** `Reader.peek` of a text reader. */
 @inline("always")
@@ -319,7 +322,8 @@ export function readerNextKey(r: Reader): u8 {
   }
   const step = readerStep(r, 125, EXPECTED_COMMA_BRACE);
   if (step != STEP_MORE) {
-    return step;
+    // Past a nested value of a driver's rows (its text ends here): the row's next column.
+    return step == STEP_ERROR && r.rowsNested && r.depth == 0 ? rowsNestedKey(r) : step;
   }
   if (r.peekNonWs() != 34) {
     r.fail(EXPECTED_KEY);

@@ -1,6 +1,6 @@
 // velt/encoding/json (internal): a `RowsReader`'s (rows_reader.velt) reads of one value: the
 // typed reads, and skipping a value (or rejecting it, for an unknown key). A nested value (a JSON
-// column) goes to its text reader, through the text reader's own side of each `Reader` method.
+// column) is read by the `Reader` itself (rows_ops.velt); skipped or read whole, it is one cell.
 
 import {
   CELL_BOOL,
@@ -20,27 +20,10 @@ import {
   AT_VAL,
   RowsReader,
 } from "velt/encoding/json/rows_reader";
-import {
-  NONE,
-  UNKNOWN,
-  readerReadF64,
-  readerReadNull,
-  readerReadString,
-  readerSkipValue,
-} from "velt/encoding/json/reader";
-import { readerTextBool, readerTextI64 } from "velt/encoding/json/reader_ops";
+import { NONE, UNKNOWN } from "velt/encoding/json/reader";
 
 /** A string value: `text` after true. */
 export function rowsReadString(rr: RowsReader): bool {
-  const r = rr.nest();
-  if (r != null) {
-    const ok = readerReadString(r);
-    if (ok) {
-      rr.text = r.value();
-    }
-    rr.nestedDone();
-    return ok;
-  }
   if (rr.val() != CELL_TEXT) {
     return rr.mismatch();
   }
@@ -52,13 +35,6 @@ export function rowsReadString(rr: RowsReader): bool {
 
 /** A number value: `num` after true. */
 export function rowsReadF64(rr: RowsReader): bool {
-  const r = rr.nest();
-  if (r != null) {
-    const ok = readerReadF64(r);
-    rr.num = r.lastF64();
-    rr.nestedDone();
-    return ok;
-  }
   if (rr.at == AT_BYTE && rr.error == NONE) {
     if (!rowsByte(rr)) {
       return false;
@@ -78,13 +54,6 @@ export function rowsReadF64(rr: RowsReader): bool {
 
 /** An integer, or a float that is one exactly (the text reader takes `3.0` too): `int`. */
 export function rowsReadI64(rr: RowsReader): bool {
-  const r = rr.nest();
-  if (r != null) {
-    const ok = readerTextI64(r);
-    rr.int = r.int;
-    rr.nestedDone();
-    return ok;
-  }
   if (rr.at == AT_BYTE && rr.error == NONE) {
     return rowsByte(rr);
   }
@@ -110,13 +79,6 @@ function rowsByte(rr: RowsReader): bool {
 
 /** `true` or `false`: `flag` after true. */
 export function rowsReadBool(rr: RowsReader): bool {
-  const r = rr.nest();
-  if (r != null) {
-    const ok = readerTextBool(r);
-    rr.flag = r.int != 0;
-    rr.nestedDone();
-    return ok;
-  }
   if (rr.val() != CELL_BOOL) {
     return rr.mismatch();
   }
@@ -127,12 +89,6 @@ export function rowsReadBool(rr: RowsReader): bool {
 
 /** `null`. */
 export function rowsReadNull(rr: RowsReader): bool {
-  const r = rr.nest();
-  if (r != null) {
-    const ok = readerReadNull(r);
-    rr.nestedDone();
-    return ok;
-  }
   if (rr.val() != CELL_NULL) {
     return rr.mismatch();
   }
@@ -142,12 +98,6 @@ export function rowsReadNull(rr: RowsReader): bool {
 
 /** Skips one complete value of any kind. */
 export function rowsSkipValue(rr: RowsReader): bool {
-  const r = rr.nest();
-  if (r != null) {
-    const ok = readerSkipValue(r);
-    rr.nestedDone();
-    return ok;
-  }
   if (rr.error != NONE) {
     return false;
   }

@@ -1,8 +1,7 @@
 // velt/encoding/json (internal): the JSON text of what a `RowsReader` (rows_reader.velt) reads
 // whole (`value`, for a `JsonValue`): the rows, a row or a cell as the JSON they stand for, into a
 // string builder (as `JSON.stringify` writes: generated code can't be used here, which the
-// generators themselves build on). Also the text reader a nested value (a JSON column) is read
-// with.
+// generators themselves build on).
 
 import { AT_BYTE, AT_ROW, AT_TOP, AT_VAL, RowsReader } from "velt/encoding/json/rows_reader";
 import {
@@ -15,13 +14,10 @@ import {
   CELL_TEXT,
   RowCells,
 } from "velt/encoding/json/rows_cells";
-import { NONE, Reader, readerSkipValue } from "velt/encoding/json/reader";
-import { OK } from "velt/encoding/json/scan";
-import { writeString } from "velt/encoding/json/writer";
-import { writeF64 } from "velt/encoding/json/writer_number";
+import { TreeWriter } from "velt/encoding/json/tree_text";
+import { OUT_CAP, putLiteral, putNumber } from "velt/encoding/json/tape_write";
+import { T_FALSE, T_NULL, T_TRUE } from "velt/encoding/json/tape";
 import { pushI64 } from "velt/lang/number/integer";
-import { strByteLen } from "velt/lang/intrinsics";
-import { utf8Substring } from "velt/encoding";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
@@ -31,6 +27,13 @@ declare function velt_rt_strbuf_push_str(buf: string, s: string);
  * false when it is at none.
  */
 export function rowsJsonText(rr: RowsReader, buf: string): bool {
+  // Bytes gathered in a buffer handed to the builder in chunks, as a tree is written
+  // (tree_text.velt): punctuation, numbers and short strings cost stores, not a call each.
+  let w = rr.writer;
+  if (w == null) {
+    w = new TreeWriter();
+    rr.writer = w;
+  }
   let ok = false;
   const at = rr.at;
   const cells = rr.cells;
@@ -38,115 +41,107 @@ export function rowsJsonText(rr: RowsReader, buf: string): bool {
     if (cells.single) {
       ok = cells.rowAhead();
       if (ok) {
-        pushRow(cells, buf);
+        putRow(cells, w, buf);
       }
     } else {
       // Every row from here, without moving a copy's current row.
       const from = cells.row;
-      velt_rt_strbuf_push_str(buf, "[");
+      w.byte(91);
       let first = true;
       while (cells.rowAhead()) {
         if (!first) {
-          velt_rt_strbuf_push_str(buf, ",");
+          w.byte(44);
         }
         first = false;
-        pushRow(cells, buf);
+        putRow(cells, w, buf);
         cells.rowDone();
       }
       cells.row = from;
-      velt_rt_strbuf_push_str(buf, "]");
+      w.byte(93);
       ok = true;
     }
   } else if (at == AT_ROW) {
-    pushRow(cells, buf);
+    putRow(cells, w, buf);
     ok = true;
   } else if (at == AT_VAL) {
     ok = rr.kind != CELL_NONE;
     if (ok) {
-      pushCell(cells, buf, rr.col);
+      putCell(cells, w, buf, rr.col);
     }
   } else if (at == AT_BYTE && rr.blobAt < rr.blob.length) {
-    const b = rr.blob[rr.blobAt] as i64;
-    pushI64(buf, b);
+    w.n = putNumber(w.buf, w.n, rr.blob[rr.blobAt] as f64);
     ok = true;
   }
+  w.flush(buf);
   return ok;
 }
 
-// Appends the current row of `cells` as a JSON object to the builder `buf`.
-function pushRow(cells: RowCells, buf: string): void {
+// Puts the current row of `cells` as a JSON object into `w` (the builder `buf` takes what overflows).
+function putRow(cells: RowCells, w: TreeWriter, buf: string): void {
   const names = cells.names;
-  velt_rt_strbuf_push_str(buf, "{");
+  if (w.n > OUT_CAP) {
+    w.flush(buf);
+  }
+  w.byte(123);
   for (let col: usize = 0; col < names.length; col++) {
     if (col > 0) {
-      velt_rt_strbuf_push_str(buf, ",");
+      w.byte(44);
     }
     const name = names[col];
-    writeString(buf, name);
-    velt_rt_strbuf_push_str(buf, ":");
-    pushCell(cells, buf, col);
+    w.text(buf, name);
+    w.byte(58);
+    putCell(cells, w, buf, col);
+    if (w.n > OUT_CAP) {
+      w.flush(buf);
+    }
   }
-  velt_rt_strbuf_push_str(buf, "}");
+  w.byte(125);
 }
 
-// Appends cell `col` of the current row of `cells` as JSON text to the builder `buf`.
-function pushCell(cells: RowCells, buf: string, col: usize): void {
+/** 2^53: integers below it in size print as their double does. */
+const EXACT: i64 = 9007199254740992;
+
+// Puts cell `col` of the current row of `cells` as JSON text into `w` (or the builder `buf`).
+function putCell(cells: RowCells, w: TreeWriter, buf: string, col: usize): void {
   const k = cells.kind(col);
   if (k == CELL_BOOL) {
-    const t = cells.bool(col) ? "true" : "false";
-    velt_rt_strbuf_push_str(buf, t);
+    w.n = putLiteral(w.buf, w.n, cells.bool(col) ? T_TRUE : T_FALSE);
   } else if (k == CELL_INT) {
     cells.i64(col);
     const v = cells.int;
-    pushI64(buf, v);
+    if (v > -EXACT && v < EXACT) {
+      w.n = putNumber(w.buf, w.n, v as f64);
+    } else {
+      w.flush(buf);
+      pushI64(buf, v);
+    }
   } else if (k == CELL_FLOAT) {
     cells.f64(col);
-    const x = cells.num;
-    writeF64(buf, x);
+    w.n = putNumber(w.buf, w.n, cells.num);
   } else if (k == CELL_TEXT) {
     cells.textAt(col);
     const t = cells.text;
-    writeString(buf, t);
+    w.text(buf, t);
   } else if (k == CELL_JSON) {
     cells.jsonAt(col);
     const t = cells.text;
+    w.flush(buf);
     velt_rt_strbuf_push_str(buf, t);
+    w.last = 0;
   } else if (k == CELL_BLOB) {
     const bytes = cells.blob(col);
-    velt_rt_strbuf_push_str(buf, "[");
+    w.byte(91);
     for (let i: usize = 0; i < bytes.length; i++) {
-      if (i > 0) {
-        velt_rt_strbuf_push_str(buf, ",");
+      if (w.n > OUT_CAP) {
+        w.flush(buf);
       }
-      const b = bytes[i] as i64;
-      pushI64(buf, b);
+      if (i > 0) {
+        w.byte(44);
+      }
+      w.n = putNumber(w.buf, w.n, bytes[i] as f64);
     }
-    velt_rt_strbuf_push_str(buf, "]");
+    w.byte(93);
   } else {
-    velt_rt_strbuf_push_str(buf, "null");
+    w.n = putLiteral(w.buf, w.n, T_NULL);
   }
-}
-
-/** Text reader `r` over new text `src`, its options kept: as `new Reader(src, ...)` would start. */
-export function restartReader(r: Reader, src: string): void {
-  r.src = src;
-  r.len = strByteLen(src);
-  r.pos = 0;
-  r.code = OK;
-  r.at = 0;
-  r.failed = NONE;
-  r.depth = 0;
-  r.afterOpen = false;
-  r.ends = null;
-}
-
-/** The text of the next value of text reader `r`, skipped (into `r.decoded`): true when it read. */
-export function nestedText(r: Reader): bool {
-  r.peekNonWs();
-  const start = r.pos;
-  if (!readerSkipValue(r)) {
-    return false;
-  }
-  r.decoded = utf8Substring(r.src, start, r.pos);
-  return true;
 }

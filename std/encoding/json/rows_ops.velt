@@ -2,8 +2,36 @@
 // on its failure branch (such a reader stays failed with `ROWS`): each forwards to its
 // `RowsReader` (rows_reader.velt), out of line, so the text reader's methods carry one call for
 // rows (as they carried one runtime call before #3318) and stay small for the text they read.
+//
+// A nested value (a JSON column) is read by the `Reader` itself: the first read of one turns it
+// into a text reader over the column's JSON text (`rowsNested`), so the value is decoded at the
+// text reader's speed, and the next key at depth 0 (the row's next column, the only call that can
+// follow the value), which fails on the value's ended text, turns it back (`rowsNestedKey`). A failure while it reads the value is
+// reported as the rows reader reports one (`rowsNestedMessage`), and a reset to a mark of the
+// rows (tagged `ROWS_MARK`) goes back to the rows.
 
-import { Reader, STEP_MORE } from "velt/encoding/json/reader";
+import {
+  NONE,
+  ROWS,
+  Reader,
+  STEP_MORE,
+  UNKNOWN,
+  readerOpenArray,
+  readerOpenObject,
+  readerPeek,
+  readerReadF64,
+  readerReadNull,
+  readerReadString,
+} from "velt/encoding/json/reader";
+import {
+  readerTextBool,
+  readerTextI64,
+  readerTextU64,
+  shortPath,
+} from "velt/encoding/json/reader_ops";
+import { AT_VAL } from "velt/encoding/json/rows_reader";
+import { CELL_JSON } from "velt/encoding/json/rows_cells";
+import { OK } from "velt/encoding/json/scan";
 import { noInline, strByteLen } from "velt/lang/intrinsics";
 import {
   rowsReadBool,
@@ -15,14 +43,49 @@ import {
   rowsSkipValue,
 } from "velt/encoding/json/rows_reads";
 
+/** A mark of the rows (not of a nested value's text): its bit 63, which no text mark sets. */
+export const ROWS_MARK: u64 = 0x8000000000000000;
+
+// Whether the rows reader of `r` is at a nested value (a JSON column), which it then starts
+// reading as text: `r` becomes a text reader over the column's JSON text.
+function enteredNested(r: Reader): bool {
+  const rows = r.rows!;
+  if (rows.at != AT_VAL || rows.kind != CELL_JSON || rows.error != NONE) {
+    return false;
+  }
+  rows.cells.jsonAt(rows.col);
+  const src = rows.cells.text;
+  r.src = src;
+  r.len = strByteLen(src);
+  r.pos = 0;
+  r.code = OK;
+  r.at = 0;
+  r.depth = 0;
+  r.afterOpen = false;
+  r.ends = null;
+  r.failed = NONE;
+  r.rowsNested = true;
+  return true;
+}
+
+// `r` back to reading the rows, past the nested value it read.
+function leftNested(r: Reader): void {
+  r.failed = ROWS;
+  r.rowsNested = false;
+  r.rows!.advance();
+}
+
 @noInline
 export function rowsPeek(r: Reader): u32 {
-  return r.rows!.peek();
+  return enteredNested(r) ? readerPeek(r) : r.rows!.peek();
 }
 
 /** Consumes `{` (123) or `[` (91). */
 @noInline
 export function rowsOpen(r: Reader, bracket: u8): bool {
+  if (enteredNested(r)) {
+    return bracket == 123 ? readerOpenObject(r) : readerOpenArray(r);
+  }
   return r.rows!.open(bracket);
 }
 
@@ -31,25 +94,11 @@ export function rowsArrayNext(r: Reader): u8 {
   return r.rows!.arrayNext();
 }
 
-/**
- * The next key: a column's name, or a nested value's key as the nested reader has it, compared
- * in place in its text, which `r` takes as its own source (unused otherwise while reading rows).
- * A column's name counts as escaped (`keyDecoded`).
- */
+/** The next key: a column's name, which counts as escaped (`keyDecoded`). */
 @noInline
 export function rowsNextKey(r: Reader): u8 {
   const rows = r.rows!;
   const step = rows.nextKey();
-  const n = rows.nested;
-  if (rows.nestedKey && n != null) {
-    r.src = n.src;
-    r.keyStart = n.keyStart;
-    r.keyEnd = n.keyEnd;
-    r.keyEscaped = n.keyEscaped;
-    r.keyDecoded = n.keyDecoded;
-    r.keyLen = n.keyLen;
-    return step;
-  }
   const key = step == STEP_MORE ? rows.text : "";
   r.keyLen = strByteLen(key);
   r.keyEscaped = true;
@@ -57,9 +106,23 @@ export function rowsNextKey(r: Reader): u8 {
   return step;
 }
 
+/**
+ * The row's next column, back on the rows, after `r` read a nested value: `readerNextKey` calls
+ * this when it finds the value's text ended at depth 0, on its failure branch (so it costs a text
+ * reader nothing).
+ */
+@noInline
+export function rowsNestedKey(r: Reader): u8 {
+  leftNested(r);
+  return rowsNextKey(r);
+}
+
 /** A string value: `r.decoded` after true (counted as escaped). */
 @noInline
 export function rowsString(r: Reader): bool {
+  if (enteredNested(r)) {
+    return readerReadString(r);
+  }
   const rows = r.rows!;
   const ok = rowsReadString(rows);
   r.escaped = true;
@@ -70,15 +133,24 @@ export function rowsString(r: Reader): bool {
 /** A number value: `r.num` after true. */
 @noInline
 export function rowsF64(r: Reader): bool {
+  if (enteredNested(r)) {
+    return readerReadF64(r);
+  }
   const rows = r.rows!;
   const ok = rowsReadF64(rows);
   r.num = rows.num;
   return ok;
 }
 
-/** An integer (one at least 0 when `unsigned`): `r.int` after true. */
+/**
+ * An integer: `r.int` after true. `unsigned`: one in `u64`'s range (a driver's rows give `i64`s,
+ * so there one at least 0).
+ */
 @noInline
 export function rowsI64(r: Reader, unsigned: bool): bool {
+  if (enteredNested(r)) {
+    return unsigned ? readerTextU64(r) : readerTextI64(r);
+  }
   const rows = r.rows!;
   const ok = rowsReadI64(rows) && (!unsigned || rows.int >= 0);
   r.int = rows.int;
@@ -88,6 +160,9 @@ export function rowsI64(r: Reader, unsigned: bool): bool {
 /** `true` or `false`: `r.int` is 1 or 0 after true. */
 @noInline
 export function rowsBool(r: Reader): bool {
+  if (enteredNested(r)) {
+    return readerTextBool(r);
+  }
   const rows = r.rows!;
   const ok = rowsReadBool(rows);
   r.int = rows.flag ? 1 : 0;
@@ -96,7 +171,7 @@ export function rowsBool(r: Reader): bool {
 
 @noInline
 export function rowsNull(r: Reader): bool {
-  return rowsReadNull(r.rows!);
+  return enteredNested(r) ? readerReadNull(r) : rowsReadNull(r.rows!);
 }
 
 @noInline
@@ -111,12 +186,15 @@ export function rowsSkipUnknown(r: Reader): bool {
 
 @noInline
 export function rowsMark(r: Reader): u64 {
-  return r.rows!.mark();
+  return r.rows!.mark() | ROWS_MARK;
 }
 
+/** Goes back to a mark of the rows, also from inside a nested value. */
 @noInline
 export function rowsReset(r: Reader, mark: u64): void {
-  r.rows!.reset(mark);
+  r.failed = ROWS;
+  r.rowsNested = false;
+  r.rows!.reset(mark & ~ROWS_MARK);
 }
 
 @noInline
@@ -135,4 +213,16 @@ export function rowsValue(r: Reader): void {
 @noInline
 export function rowsMessage(r: Reader, expected: string, path: string): string {
   return r.rows!.message(expected, path);
+}
+
+/**
+ * The message of a failure while `r` read a nested value, as the rows reader gives one: a
+ * rejected unknown key, or else a value of another kind (also for text that does not read).
+ */
+@noInline
+export function rowsNestedMessage(r: Reader, expected: string, path: string): string {
+  if (r.failed == UNKNOWN) {
+    return `unknown field at ${shortPath(path)}`;
+  }
+  return `expected ${expected} at ${shortPath(path)}`;
 }

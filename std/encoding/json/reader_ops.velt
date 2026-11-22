@@ -21,10 +21,12 @@ import {
   rowsEnd,
   rowsI64,
   rowsMessage,
+  rowsNestedMessage,
   rowsReset,
   rowsSkip,
   rowsSkipUnknown,
   rowsValue,
+  ROWS_MARK,
 } from "velt/encoding/json/rows_ops";
 import {
   readerDepthLeft,
@@ -40,6 +42,9 @@ import {
 export function readerMessage(r: Reader, expected: string, path: string): string {
   if (r.failed == ROWS) {
     return rowsMessage(r, expected, path);
+  }
+  if (r.rowsNested) {
+    return rowsNestedMessage(r, expected, path);
   }
   // Text that is not JSON fails as in Node, wherever the decoder stopped (not JSONC, which
   // Node does not read).
@@ -132,14 +137,14 @@ export function readerSkipUnknown(r: Reader): bool {
 
 /** Goes back to `mark` and forgets any failure since. */
 export function readerReset(r: Reader, mark: u64) {
-  if (r.failed == ROWS) {
+  if (r.failed == ROWS || (mark & ROWS_MARK) != 0) {
     rowsReset(r, mark);
     return;
   }
   readerTextReset(r, mark);
 }
 
-/** `readerReset` of a text reader (what a rows reader's nested text reader calls). */
+/** `readerReset` of a text reader (what a nested value of a driver's rows is read with). */
 @inline("always")
 export function readerTextReset(r: Reader, mark: u64) {
   r.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
@@ -153,8 +158,14 @@ export function readerTextReset(r: Reader, mark: u64) {
  * true (the glue reinterprets them). A driver's rows give `i64`s, so there it is `[0, 2^63)`.
  */
 export function readerReadU64(r: Reader): bool {
+  return r.failed == ROWS ? rowsI64(r, true) : readerTextU64(r);
+}
+
+/** `readerReadU64` of a text reader (what a nested value of a driver's rows is read with). */
+@inline("always")
+export function readerTextU64(r: Reader): bool {
   if (!readerNumberStart(r)) {
-    return r.failed == ROWS && rowsI64(r, true);
+    return false;
   }
   const v = numberU64(r.src, r.start, r.end, r.integer);
   if (v == null) {
@@ -170,7 +181,7 @@ export function readerReadI64(r: Reader): bool {
   return r.failed == ROWS ? rowsI64(r, false) : readerTextI64(r);
 }
 
-/** `readerReadI64` of a text reader (what a rows reader's nested text reader calls). */
+/** `readerReadI64` of a text reader (what a nested value of a driver's rows is read with). */
 @inline("always")
 export function readerTextI64(r: Reader): bool {
   if (!readerNumberStart(r)) {
@@ -231,7 +242,7 @@ export function readerReadBool(r: Reader): bool {
   return r.failed == ROWS ? rowsBool(r) : readerTextBool(r);
 }
 
-/** `readerReadBool` of a text reader (what a rows reader's nested text reader calls). */
+/** `readerReadBool` of a text reader (what a nested value of a driver's rows is read with). */
 @inline("always")
 export function readerTextBool(r: Reader): bool {
   if (!readerValueStart(r, 116, 102)) {
