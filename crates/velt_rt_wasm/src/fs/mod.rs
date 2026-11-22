@@ -1,22 +1,40 @@
 //! `std/fs` (rt_abi_async.md §5) over WASI files: velt_rt's operations compiled from its
 //! sources, async variants that run the operation on their first poll (there is no blocking
-//! pool on one thread), and velt_rt's `*_sync` functions (`sync`). In the browser every operation
-//! fails with the error `std` reports there.
+//! pool on one thread), and the `*_sync` functions of whole.rs, tree.rs and paths.rs. In the
+//! browser every operation fails with the error `std` reports there.
 
 #[path = "../../../velt_rt/src/fs/ops.rs"]
 mod ops;
-#[path = "../../../velt_rt/src/fs/sync.rs"]
-pub mod sync;
+mod paths;
 mod tree;
 mod whole;
 
 pub use ops::VeltStat;
 pub use tree::{kind, VeltDirents};
 
+use crate::result::{fs_error, IoResult};
 use crate::str::VeltStr;
 use crate::task::leaf::ready_leaf;
 use crate::task::VeltFut;
 use ops::{data_arg, path_arg};
+use std::ffi::OsString;
+use std::io;
+use std::path::Path;
+
+fn unit(r: io::Result<()>) -> IoResult<()> {
+    IoResult::from_io(r, |()| ())
+}
+
+/// Node's error message for a failed `syscall` on `path` (`ENOENT: …, open 'x'`).
+fn at<'a>(syscall: &'static str, path: &'a Path) -> impl FnOnce(io::Error) -> io::Error + 'a {
+    move |e| fs_error(e, syscall, path, None)
+}
+
+/// An entry name as text: no copy when it is UTF-8 (one U+FFFD per invalid sequence otherwise).
+fn name_text(name: OsString) -> String {
+    name.into_string()
+        .unwrap_or_else(|n| n.to_string_lossy().into_owned())
+}
 
 /// `readFileBytes(path)` → `IoResult<VeltBytes>`.
 #[no_mangle]
@@ -77,14 +95,14 @@ pub unsafe extern "C" fn velt_rt_fs_lstat(path: *const VeltStr) -> *mut VeltFut 
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_readlink(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::readlink(p))
+    ready_leaf(move || paths::readlink(p))
 }
 
 /// `realpath(path)` → `IoResult<VeltStr>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_realpath(path: *const VeltStr) -> *mut VeltFut {
     let p = path_arg(path);
-    ready_leaf(move || ops::realpath(p))
+    ready_leaf(move || paths::realpath(p))
 }
 
 /// `symlink(target, path)` → `IoResult<()>`.
@@ -94,7 +112,7 @@ pub unsafe extern "C" fn velt_rt_fs_symlink(
     path: *const VeltStr,
 ) -> *mut VeltFut {
     let (t, p) = (path_arg(target), path_arg(path));
-    ready_leaf(move || ops::symlink(t, p))
+    ready_leaf(move || paths::symlink(t, p))
 }
 
 /// `mkdir(path, { recursive })` → `IoResult<()>`.
@@ -118,7 +136,7 @@ pub unsafe extern "C" fn velt_rt_fs_rename(
     to: *const VeltStr,
 ) -> *mut VeltFut {
     let (f, t) = (path_arg(from), path_arg(to));
-    ready_leaf(move || ops::rename(f, t))
+    ready_leaf(move || paths::rename(f, t))
 }
 
 /// `copyFile(from, to)` → `IoResult<()>`.
@@ -128,7 +146,7 @@ pub unsafe extern "C" fn velt_rt_fs_copy_file(
     to: *const VeltStr,
 ) -> *mut VeltFut {
     let (f, t) = (path_arg(from), path_arg(to));
-    ready_leaf(move || ops::copy(f, t))
+    ready_leaf(move || paths::copy(f, t))
 }
 
 /// `exists(path)` → `u8`.

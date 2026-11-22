@@ -1,0 +1,304 @@
+// velt/arch/x86 (internal): `Vector256<T>`, 256 bits of lanes `T` (#3222 step 5,
+// docs/internals/design/package-machine-code.md §4), generated from velt_vir's table
+// (crates/velt_vir/src/arch/render.rs) by `cargo xtask gen-arch`: edit the generator.
+//
+// Building one, taking it apart, loading and storing it is plain code that runs on any
+// CPU; velt/arch/x86's AVX2 and AVX-512 methods take it as one register, behind their
+// class's check.
+
+import "velt/simd/bytes";
+import "velt/simd/floats";
+import "velt/simd/words";
+
+/**
+ * 256 bits of lanes `T`: the bytes of its 128-bit parts (`lo`, `hi`), low lanes first.
+ */
+export struct Vector256<T> {
+  readonly lo: u8x16;
+  readonly hi: u8x16;
+
+  /** The same 256 bits as lanes of type `U`. */
+  reinterpret<U>(): Vector256<U> {
+    return { lo: this.lo, hi: this.hi };
+  }
+
+  /** The vector of `lo`'s lanes (0 to 15) and `hi`'s (16 to 31). */
+  static fromU8x16(lo: u8x16, hi: u8x16): Vector256<u8> {
+    return { lo: lo, hi: hi };
+  }
+
+  /** The 32 lanes of `from` from `at` on. */
+  static loadU8(from: u8[], at: usize = 0): Vector256<u8> {
+    return Vector256.fromU8x16(u8x16.load(from, at), u8x16.load(from, at + 16));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 15) and `hi`'s (16 to 31). */
+  static fromI8x16(lo: i8x16, hi: i8x16): Vector256<i8> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 32 lanes of `from` from `at` on. */
+  static loadI8(from: i8[], at: usize = 0): Vector256<i8> {
+    return Vector256.fromI8x16(i8x16.load(from, at), i8x16.load(from, at + 16));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 7) and `hi`'s (8 to 15). */
+  static fromU16x8(lo: u16x8, hi: u16x8): Vector256<u16> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 16 lanes of `from` from `at` on. */
+  static loadU16(from: u16[], at: usize = 0): Vector256<u16> {
+    return Vector256.fromU16x8(u16x8.load(from, at), u16x8.load(from, at + 8));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 7) and `hi`'s (8 to 15). */
+  static fromI16x8(lo: i16x8, hi: i16x8): Vector256<i16> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 16 lanes of `from` from `at` on. */
+  static loadI16(from: i16[], at: usize = 0): Vector256<i16> {
+    return Vector256.fromI16x8(i16x8.load(from, at), i16x8.load(from, at + 8));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 3) and `hi`'s (4 to 7). */
+  static fromU32x4(lo: u32x4, hi: u32x4): Vector256<u32> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 8 lanes of `from` from `at` on. */
+  static loadU32(from: u32[], at: usize = 0): Vector256<u32> {
+    return Vector256.fromU32x4(u32x4.load(from, at), u32x4.load(from, at + 4));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 3) and `hi`'s (4 to 7). */
+  static fromI32x4(lo: i32x4, hi: i32x4): Vector256<i32> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 8 lanes of `from` from `at` on. */
+  static loadI32(from: i32[], at: usize = 0): Vector256<i32> {
+    return Vector256.fromI32x4(i32x4.load(from, at), i32x4.load(from, at + 4));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 1) and `hi`'s (2 to 3). */
+  static fromU64x2(lo: u64x2, hi: u64x2): Vector256<u64> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 4 lanes of `from` from `at` on. */
+  static loadU64(from: u64[], at: usize = 0): Vector256<u64> {
+    return Vector256.fromU64x2(u64x2.load(from, at), u64x2.load(from, at + 2));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 1) and `hi`'s (2 to 3). */
+  static fromI64x2(lo: i64x2, hi: i64x2): Vector256<i64> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 4 lanes of `from` from `at` on. */
+  static loadI64(from: i64[], at: usize = 0): Vector256<i64> {
+    return Vector256.fromI64x2(i64x2.load(from, at), i64x2.load(from, at + 2));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 3) and `hi`'s (4 to 7). */
+  static fromF32x4(lo: f32x4, hi: f32x4): Vector256<f32> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 8 lanes of `from` from `at` on. */
+  static loadF32(from: f32[], at: usize = 0): Vector256<f32> {
+    return Vector256.fromF32x4(f32x4.load(from, at), f32x4.load(from, at + 4));
+  }
+
+  /** The vector of `lo`'s lanes (0 to 1) and `hi`'s (2 to 3). */
+  static fromF64x2(lo: f64x2, hi: f64x2): Vector256<f64> {
+    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+  }
+
+  /** The 4 lanes of `from` from `at` on. */
+  static loadF64(from: f64[], at: usize = 0): Vector256<f64> {
+    return Vector256.fromF64x2(f64x2.load(from, at), f64x2.load(from, at + 2));
+  }
+}
+
+extend Vector256<u8> {
+  /** Lanes 0 to 15. */
+  lower(): u8x16 {
+    return this.lo;
+  }
+
+  /** Lanes 16 to 31. */
+  upper(): u8x16 {
+    return this.hi;
+  }
+
+  /** Stores its 32 lanes in `to` from `at` on. */
+  store(to: u8[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 16);
+  }
+}
+
+extend Vector256<i8> {
+  /** Lanes 0 to 15. */
+  lower(): i8x16 {
+    return this.lo.asI8x16();
+  }
+
+  /** Lanes 16 to 31. */
+  upper(): i8x16 {
+    return this.hi.asI8x16();
+  }
+
+  /** Stores its 32 lanes in `to` from `at` on. */
+  store(to: i8[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 16);
+  }
+}
+
+extend Vector256<u16> {
+  /** Lanes 0 to 7. */
+  lower(): u16x8 {
+    return this.lo.asU16x8();
+  }
+
+  /** Lanes 8 to 15. */
+  upper(): u16x8 {
+    return this.hi.asU16x8();
+  }
+
+  /** Stores its 16 lanes in `to` from `at` on. */
+  store(to: u16[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 8);
+  }
+}
+
+extend Vector256<i16> {
+  /** Lanes 0 to 7. */
+  lower(): i16x8 {
+    return this.lo.asI16x8();
+  }
+
+  /** Lanes 8 to 15. */
+  upper(): i16x8 {
+    return this.hi.asI16x8();
+  }
+
+  /** Stores its 16 lanes in `to` from `at` on. */
+  store(to: i16[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 8);
+  }
+}
+
+extend Vector256<u32> {
+  /** Lanes 0 to 3. */
+  lower(): u32x4 {
+    return this.lo.asU32x4();
+  }
+
+  /** Lanes 4 to 7. */
+  upper(): u32x4 {
+    return this.hi.asU32x4();
+  }
+
+  /** Stores its 8 lanes in `to` from `at` on. */
+  store(to: u32[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 4);
+  }
+}
+
+extend Vector256<i32> {
+  /** Lanes 0 to 3. */
+  lower(): i32x4 {
+    return this.lo.asI32x4();
+  }
+
+  /** Lanes 4 to 7. */
+  upper(): i32x4 {
+    return this.hi.asI32x4();
+  }
+
+  /** Stores its 8 lanes in `to` from `at` on. */
+  store(to: i32[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 4);
+  }
+}
+
+extend Vector256<u64> {
+  /** Lanes 0 to 1. */
+  lower(): u64x2 {
+    return this.lo.asU64x2();
+  }
+
+  /** Lanes 2 to 3. */
+  upper(): u64x2 {
+    return this.hi.asU64x2();
+  }
+
+  /** Stores its 4 lanes in `to` from `at` on. */
+  store(to: u64[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 2);
+  }
+}
+
+extend Vector256<i64> {
+  /** Lanes 0 to 1. */
+  lower(): i64x2 {
+    return this.lo.asI64x2();
+  }
+
+  /** Lanes 2 to 3. */
+  upper(): i64x2 {
+    return this.hi.asI64x2();
+  }
+
+  /** Stores its 4 lanes in `to` from `at` on. */
+  store(to: i64[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 2);
+  }
+}
+
+extend Vector256<f32> {
+  /** Lanes 0 to 3. */
+  lower(): f32x4 {
+    return this.lo.asF32x4();
+  }
+
+  /** Lanes 4 to 7. */
+  upper(): f32x4 {
+    return this.hi.asF32x4();
+  }
+
+  /** Stores its 8 lanes in `to` from `at` on. */
+  store(to: f32[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 4);
+  }
+}
+
+extend Vector256<f64> {
+  /** Lanes 0 to 1. */
+  lower(): f64x2 {
+    return this.lo.asF64x2();
+  }
+
+  /** Lanes 2 to 3. */
+  upper(): f64x2 {
+    return this.hi.asF64x2();
+  }
+
+  /** Stores its 4 lanes in `to` from `at` on. */
+  store(to: f64[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 2);
+  }
+}

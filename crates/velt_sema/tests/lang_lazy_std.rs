@@ -5,7 +5,7 @@
 mod common;
 
 use common::hir_walk::def_id;
-use common::programs::{err_src, ok_src};
+use common::programs::{err_src, ok_src, ok_src_prebuilt};
 use velt_sema::hir::{Def, Program};
 
 /// The names of the unchecked definitions of `p`.
@@ -657,11 +657,13 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
         "std/lang/hooks/inspect_cycles::inspectSave",
     ];
     let checked = |p: &Program, f: &str| !unchecked(p).contains(&f.to_string());
+    // Checked as a build that links std's float printing prebuilt ([`ok_src_prebuilt`]); for a
+    // build that doesn't, see `a_printed_float_without_the_prebuilt_printer_checks_it`.
     for src in [
         "function main() {\n  console.log(\"hi\");\n}\n",
         "function main() {\n  const n: number = 1.5;\n  console.log(n);\n}\n",
     ] {
-        let p = ok_src(src);
+        let p = ok_src_prebuilt(src);
         for f in [plain, array].iter().chain(&tracked) {
             assert!(!checked(&p, f), "{f} is checked: {src}");
         }
@@ -746,7 +748,7 @@ class S<T> extends B {
         (gmade, Some(false), true),
         (gnum, Some(false), false),
     ] {
-        let p = ok_src(src);
+        let p = ok_src_prebuilt(src);
         assert!(checked(&p, plain), "{plain} is unchecked: {src}");
         if let Some(arrays) = arrays {
             assert_eq!(checked(&p, array), arrays, "{array}: {src}");
@@ -755,4 +757,22 @@ class S<T> extends B {
             assert_eq!(checked(&p, f), cycles, "{f}: {src}");
         }
     }
+}
+
+#[test]
+fn a_printed_float_without_the_prebuilt_printer_checks_it() {
+    // A build with no prebuilt object of std's float printing (no clang, or a cold cache; as
+    // `ok_src` checks) checks that printing where live code may print a float. Its table of
+    // powers of ten is a `u64[]`, so an array type is live and the array's printing shape is
+    // checked too. With the object linked, neither is.
+    let shortest = "std/lang/hooks/number_shortest::shortestText".to_string();
+    let array = "std/lang/hooks/inspect::inspectArray".to_string();
+    let src = "function main() {\n  console.log({ a: 1 });\n}\n";
+    let cold = unchecked(&ok_src(src));
+    assert!(
+        !cold.contains(&shortest) && !cold.contains(&array),
+        "{cold:?}"
+    );
+    let warm = unchecked(&ok_src_prebuilt(src));
+    assert!(warm.contains(&array), "{array} is checked");
 }

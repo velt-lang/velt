@@ -141,7 +141,7 @@ impl FnCx<'_, '_> {
             .map(|f| self.cx.subst(f, &args))
             .collect(),
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => vec![],
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts
             .into_iter()
@@ -587,6 +587,7 @@ fn field(key: &ast::Ident, ty: TyId) -> FieldInfo {
         default: None,
         default_throws: vec![],
         private_to: None,
+        weak: false,
     }
 }
 

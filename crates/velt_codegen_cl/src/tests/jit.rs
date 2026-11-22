@@ -77,12 +77,6 @@ extern "C" fn rt_str_cmp(a: *const VeltStr, b: *const VeltStr) -> i32 {
     let (a, b) = unsafe { (str_bytes(a), str_bytes(b)) };
     a.cmp(b) as i32
 }
-extern "C" fn rt_pow_i64(a: i64, b: i64) -> i64 {
-    if b < 0 {
-        return i64::from(a == 1);
-    }
-    a.wrapping_pow(b as u32)
-}
 /// JS ToInt32: the whole part modulo 2^32 (`%` on doubles is exact).
 extern "C" fn rt_to_int32(x: f64) -> i32 {
     if !x.is_finite() {
@@ -156,12 +150,12 @@ pub(super) fn call_capturing(main: extern "C" fn() -> i32) -> (i32, String) {
 }
 
 /// The stub runtime: rt functions plus the libc/libm symbols Cranelift may call.
-pub(super) fn stub_symbols() -> [(&'static str, *const u8); 26] {
+pub(super) fn stub_symbols() -> [(&'static str, *const u8); 25] {
     [
         ("velt_rt_write_str", rt_write_str as *const u8),
         ("velt_test_write_i64", rt_write_i64 as *const u8),
         ("velt_test_write_u64", rt_write_u64 as *const u8),
-        ("velt_rt_write_f64", rt_write_f64 as *const u8),
+        ("velt_test_write_f64", rt_write_f64 as *const u8),
         ("velt_rt_write_bool", rt_write_bool as *const u8),
         ("velt_rt_write_byte", rt_write_byte as *const u8),
         ("velt_rt_flush", rt_flush as *const u8),
@@ -173,7 +167,6 @@ pub(super) fn stub_symbols() -> [(&'static str, *const u8); 26] {
         ("velt_rt_str_concat", rt_str_concat as *const u8),
         ("velt_rt_str_drop", rt_str_drop as *const u8),
         ("velt_rt_str_cmp", rt_str_cmp as *const u8),
-        ("velt_rt_pow_i64", rt_pow_i64 as *const u8),
         ("velt_rt_math_to_int32", rt_to_int32 as *const u8),
         ("velt_rt_math_add_int32", rt_add_int32 as *const u8),
         ("memcpy", c_memcpy as *const u8),

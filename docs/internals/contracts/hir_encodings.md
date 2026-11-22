@@ -383,7 +383,7 @@ docs/internals/design/iteration.md §4)
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
   A host or C function (`ExternFnDef::host`, `ExternFnDef::c`) writes every buffer parameter
-  not written `readonly` (and a C function its `Out`/`OutPtr` parameters): callers pass those
+  not written `readonly` (and a C function its `Out` parameters): callers pass those
   `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
   of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`:
@@ -733,6 +733,19 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   the call runs (lowering counts the type or borrows values of it inside counted objects, so
   params of it are never `noalias`). The array callback methods re-check the length after a
   callback only then.
+  `Intrinsic::IsUnique(value)` (std only, std/lang/intrinsics/ownership.velt, additive: units
+  codec tag 220; value borrowed and evaluated): a `bool`, whether `value` is reached by no other
+  reference, so a change in place shows nowhere else (copy-on-write: velt/encoding/json's tree).
+  By kind: a counted object, array or box compares its whole count word with 1, so any flag in
+  it (an immortal count, a lock-set object's `LOCAL`/`STORED`, the cycle collector's
+  `BUFFERED` on a value it may trace) makes it `false`; a reference type the program never counts
+  is `true` (each value has one owner); a lock-set type (readers of an `RwLock` share its counts)
+  is `false` without reading a count; any other kind (`shared<T>`, strings, functions,
+  interface values, plain values) is `false`. A borrow (a parameter, a captured variable) is the
+  reference it borrows: `true` there means a change in place shows in the lender's variable, as
+  in JavaScript; a function that must leave its caller's value unchanged takes it owned, or
+  copies it. A wrong `true` would be a lost write or a race, so every doubtful case answers
+  `false`, which only costs a copy.
   `Intrinsic::Truthy(x)` (compiler-internal, `x` a place of a type parameter's type,
   borrowed): a `bool`, JS truthiness of `x` (`!x`, `if (x)` in generic code), lowered per
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,
@@ -778,6 +791,13 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   presence flag, below) and shows a class's optional field holding `undefined`, as Node does. A
   `null` (a present one of `a?: T | null`, or a `T | null` field that is not optional) is
   written as `null`.
+- `FieldDef::weak` (additive, #3119): a class's field declared `weak T | null` with `T` a class
+  (docs/internals/design/cycles.md "`weak T`"). `ty` is the read type, `T | null`; the field holds
+  its target's slot in the weak core (rt_abi.md "Weak references"), not a counted reference.
+  Lowering reads it as the target, retained, or `null` once the target is freed, writes it by
+  taking the value's slot (the value is borrowed: sema checks it as a borrow), and leaves it out of
+  the ownership graph (trace glue, the cycle and weak-capable analyses, drop chains). Sema narrows
+  nothing through it and rejects destructuring it and transferring or cloning a value with one.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type: decoding does not run the constructor (the decoder's
   generator reports it, std/encoding/json/generate/parse_check.velt).
@@ -1409,6 +1429,17 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   becomes its base, a union each member (`union_to_common`), a `T | null` its payload, and its
   nothing, like the literals `null` and `undefined` written where `any` is expected, the nothing
   of `boolean | null` / `boolean | undefined` (the dynamic `null` / `undefined`).
+- A promise is boxed as it is, in the table of its own `Promise<T, E>` (velt_vir
+  `lower/any_await.rs`): its class id word is `PROMISE_ID`, and only such a table has the await
+  slot. `await x` of an `any` or `unknown` is a call of std's `awaitAny(x)` (a hook,
+  std/lang/hooks/any_ops.velt), awaited: the value is an `unknown` (an `any` again for an `any`
+  `x`), a rejection thrown as an `unknown`. `awaitAny` is `Intrinsic::AnyPromise(x)` — a
+  `Promise<unknown, unknown>` that polls the boxed promise and boxes its value or reason as it
+  settles (a widening wrapper, `async_fn/widen.rs`), or `undefined` when `x` holds no promise —
+  else `Promise.resolve(x)`, the one step JavaScript takes for a value that is no promise. A
+  thenable is not adopted (#3412). `Intrinsic::AnyIsPromise(x)` (`x instanceof Promise`, and
+  the promise member test of a union) borrows `x` of any type `T`: the table test for a dynamic
+  `T`, else a constant (`true` for a promise type), with no conversion to a dynamic type.
 - The table of `any_impl` for a concrete type is its type descriptor (velt_vir `lower/any.rs`).
   Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
   integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7

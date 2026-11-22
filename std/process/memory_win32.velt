@@ -13,7 +13,7 @@ declare c type PROCESS_MEMORY_COUNTERS;
 declare c("c") function GetCurrentProcess$memory(): Ptr<void>;
 declare c("c") function K32GetProcessMemoryInfo(
   process: Ptr<void>,
-  counters: Ptr<PROCESS_MEMORY_COUNTERS>,
+  counters: Ptr<PROCESS_MEMORY_COUNTERS> | null,
   cb: u32,
 ): i32;
 declare c("c") function calloc$memory(n: usize, size: usize): Ptr<u8> | null;
@@ -29,38 +29,33 @@ const WORKING_SET_AT: usize = 16;
 /** `PagefileUsage`'s offset. */
 const PAGEFILE_AT: usize = 56;
 
-/** The `SIZE_T` at offset `at` of this process' `PROCESS_MEMORY_COUNTERS`, or 0 when unread. */
-function counter(at: usize): i64 {
+/**
+ * `[rss, heapUsed]` in bytes from one `K32GetProcessMemoryInfo` call: `WorkingSetSize` and
+ * `PagefileUsage` (`[0, 0]` when the call fails).
+ */
+export function memoryFigures(): [i64, i64] {
   // SAFETY: calloc has no precondition; its result is checked.
   const block = unsafe { calloc$memory(1, SIZE) };
   if (block === null) {
-    return 0;
+    return [0, 0];
   }
   const p = Ptr.addressOf(block);
-  let value: i64 = 0;
+  let resident: i64 = 0;
+  let committed: i64 = 0;
   // SAFETY: `p` holds `SIZE` bytes: `cb` goes in its first `DWORD`, the call fills the rest; the
   // pseudo-handle of this process needs no closing; the block is freed once, after the reads.
   unsafe {
     addressStore<u32>(p, SIZE as u32);
     const ok = K32GetProcessMemoryInfo(
       GetCurrentProcess$memory(),
-      Ptr.at<PROCESS_MEMORY_COUNTERS>(p),
+      Ptr.orNull<PROCESS_MEMORY_COUNTERS>(p),
       SIZE as u32,
     );
     if (ok !== 0) {
-      value = addressLoad<u64>(p + at) as i64;
+      resident = addressLoad<u64>(p + WORKING_SET_AT) as i64;
+      committed = addressLoad<u64>(p + PAGEFILE_AT) as i64;
     }
     free$memory(block);
   }
-  return value;
-}
-
-/** The working set in bytes (0 if the OS does not say). */
-export function residentBytes(): i64 {
-  return counter(WORKING_SET_AT);
-}
-
-/** The process' private committed bytes (0 if the OS does not say). */
-export function heapBytes(): i64 {
-  return counter(PAGEFILE_AT);
+  return [resident, committed];
 }

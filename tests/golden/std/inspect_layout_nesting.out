@@ -1,0 +1,173 @@
+{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }
+{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }
+{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }
+{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }
+{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }
+{
+  key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv'
+}
+{
+  key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv'
+}
+{
+  key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv'
+}
+{
+  key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv'
+}
+{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }
+{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }
+{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }
+{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }
+{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }
+{
+  a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  b: 1
+}
+{
+  a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  b: 1
+}
+{
+  a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  b: 1
+}
+{
+  a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  b: 1
+}
+{
+  k0: 0,
+  k1: 1,
+  k2: 2,
+  k3: 3,
+  k4: 4,
+  k5: 5,
+  k6: 6,
+  k7: 7,
+  k8: 8,
+  k9: 9,
+  k10: 10,
+  k11: 11,
+  k12: 12,
+  k13: 13
+}
+{
+  name: 'config',
+  server: {
+    host: 'localhost',
+    port: 8080,
+    tls: { enabled: true, cert: '/etc/cert.pem' }
+  },
+  users: [ 'alice', 'bob' ]
+}
+[
+  { id: 1, name: 'first item' },
+  { id: 2, name: 'second item' },
+  { id: 3, name: 'x' }
+]
+[ [ 1, 2, 3 ], [ 'a', 'b' ], [], {}, [ [] ] ]
+{ empty: {}, list: [], nested: { empty: [] } }
+Segment {
+  from: Point { x: 0, y: 0 },
+  to: Point { x: 100, y: 200 },
+  label: 'diagonal'
+}
+Segment {
+  from: Point { x: 12345.678, y: -9876.54 },
+  to: Point { x: 10000000000, y: -1e-10 },
+  label: 'far apart'
+}
+[
+  Segment {
+    from: Point { x: 0, y: 0 },
+    to: Point { x: 0, y: 0 },
+    label: 's0'
+  },
+  Segment {
+    from: Point { x: 1, y: 1 },
+    to: Point { x: 10, y: 20 },
+    label: 's1'
+  },
+  Segment {
+    from: Point { x: 2, y: 2 },
+    to: Point { x: 20, y: 40 },
+    label: 's2'
+  }
+]
+Box {
+  inner: Box { inner: Box { inner: [Box], size: 3 }, size: 2 },
+  size: 1
+}
+{ a: { b: { c: [Object] } }, list: [ [ [Array] ] ] }
+{
+  level1: { level2: { level3: 'deep enough', other: [Array] }, sibling: true }
+}
+Map(5) {
+  'entry number 0' => [ 0, 0, 0 ],
+  'entry number 1' => [ 1, 2, 3 ],
+  'entry number 2' => [ 2, 4, 6 ],
+  'entry number 3' => [ 3, 6, 9 ],
+  'entry number 4' => [ 4, 8, 12 ]
+}
+Map(2) { 'a' => 1, 'b' => 2 }
+Set(12) {
+  'member-0',
+  'member-1',
+  'member-2',
+  'member-3',
+  'member-4',
+  'member-5',
+  'member-6',
+  'member-7',
+  'member-8',
+  'member-9',
+  'member-10',
+  'member-11'
+}
+Set(30) {
+  0,
+  7,
+  14,
+  21,
+  28,
+  35,
+  42,
+  49,
+  56,
+  63,
+  70,
+  77,
+  84,
+  91,
+  98,
+  105,
+  112,
+  119,
+  126,
+  133,
+  140,
+  147,
+  154,
+  161,
+  168,
+  175,
+  182,
+  189,
+  196,
+  203
+}
+{
+  points: Map(2) {
+    'origin' => Point { x: 0, y: 0 },
+    'unit' => Point { x: 1, y: 1 }
+  },
+  count: 2
+}
+first: {
+  a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  b: 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'
+} last
+[ 1, 2 ] {
+  long: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
+} 3

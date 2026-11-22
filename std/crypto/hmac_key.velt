@@ -1,0 +1,57 @@
+// velt/crypto (internal): `HmacKey`, an HMAC key whose padded blocks are hashed once (RFC 2104:
+// H((K ^ opad) || H((K ^ ipad) || data))). The two first blocks depend only on the key, so their
+// SHA-256 states are kept and each MAC starts from them: two blocks of SHA-256 for a short
+// message where `hmacSha256` hashes four. TLS 1.3's key schedule expands each secret two or
+// three times (a record key and IV, both handshake traffic secrets and the next extract's salt).
+// SHA-384 keys are kept as given and each MAC is `hmacSha384`'s.
+
+import { BLOCK, finalBlocks, keyBlock, wordsToBytes } from "velt/crypto/blocks";
+import { hmacSha384 } from "velt/crypto/hmac";
+import { sha256, sha256Blocks } from "velt/crypto/sha256";
+import { H256 } from "velt/crypto/tables";
+
+/** An HMAC-SHA256 or HMAC-SHA384 key, prepared for several MACs. */
+export class HmacKey {
+  /** The MACs' length: 32 for SHA-256, 48 for SHA-384. */
+  readonly length: usize;
+  // SHA-256's state after K ^ ipad and after K ^ opad.
+  private inner: u32[];
+  private outer: u32[];
+  // A SHA-384 key, used as it is.
+  private key384: u8[];
+
+  /** `key` for HMAC-SHA384 when `sha384`, else for HMAC-SHA256. */
+  constructor(key: u8[], sha384: bool) {
+    this.length = sha384 ? 48 : 32;
+    this.inner = [];
+    this.outer = [];
+    this.key384 = [];
+    if (sha384) {
+      this.key384 = key;
+      return;
+    }
+    const k = key.length > BLOCK ? sha256(key) : key;
+    this.inner = H256.slice();
+    sha256Blocks(this.inner, keyBlock(k, 0x36), 0, 1);
+    this.outer = H256.slice();
+    sha256Blocks(this.outer, keyBlock(k, 0x5c), 0, 1);
+  }
+
+  /** The HMAC of `data` under this key. */
+  mac(data: u8[]): u8[] {
+    if (this.length == 48) {
+      return hmacSha384(this.key384, data);
+    }
+    const h = this.inner.slice();
+    const full = data.length / BLOCK;
+    sha256Blocks(h, data, 0, full);
+    // The block of K ^ ipad came first: the padding counts it.
+    const tail = finalBlocks(data, full * BLOCK, BLOCK);
+    sha256Blocks(h, tail, 0, tail.length / BLOCK);
+    const inner = wordsToBytes(h);
+    const o = this.outer.slice();
+    const last = finalBlocks(inner, 0, BLOCK);
+    sha256Blocks(o, last, 0, last.length / BLOCK);
+    return wordsToBytes(o);
+  }
+}

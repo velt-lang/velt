@@ -14,8 +14,8 @@
 // not the tape's: the hash index of a wide object lives in the `TapeRef` (tape_ref.velt), which
 // a task's values share and a crossing to another task copies. A `TapeRef` reached from several
 // cores at once is NOT safe: see tape_ref.velt on frozen constants (#1487) and unlocked module
-// state (#2726). Editing a value (`set`, `push`, …) turns that value into the runtime's tree
-// (prelude `JsonValue`), so it never shows through the tape.
+// state (#2726). Editing a value (`set`, `push`, …) turns that value into a tree of its own
+// (tree.velt), so it never shows through the tape.
 //
 // The readers are functions, not methods of the struct: a struct method is handed its own copy of
 // the struct where it can't be read in place (a method call that isn't inlined, or a result that
@@ -39,6 +39,12 @@ export const T_NUMBER: u64 = 4;
 export const T_STRING: u64 = 5;
 export const T_ARRAY: u64 = 6;
 export const T_OBJECT: u64 = 7;
+/**
+ * Only on a tape frozen from a tree (tree_freeze.velt): a value kept as a node of that tree
+ * (another frozen tape's value, `TREE_TAPE`), its second word its index in the node's `links`.
+ * Every reader of such a tape goes through the tree's readers (tree_read.velt), which resolve it.
+ */
+export const T_LINK: u64 = 8;
 
 /**
  * A string's first word: bit 8 is set when it had escapes, and bits 32 and up hold its UTF-16
@@ -53,6 +59,8 @@ export const ESCAPED: u64 = 0x100;
 export const REPEATED: u64 = 0x200;
 export const ORDERED: u64 = 0x400;
 export const ESCAPED_KEY: u64 = 0x800;
+/** A container's first word: bit 12 is set when a `T_LINK` is below it (tree_freeze.velt). */
+export const LINKED: u64 = 0x1000;
 
 /**
  * A parsed document. Value `v`'s words are `words[2v]` (kind, and a container's member count

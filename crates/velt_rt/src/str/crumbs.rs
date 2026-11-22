@@ -29,7 +29,7 @@
 //! (chained from the new one, freed with the buffer) because another thread may still read it.
 //! Capacities double, so the chain holds at most as many entries as the last table.
 //!
-//! The string methods (`str_ops`), `charCodeAt` on non-ASCII strings and the regex offsets
+//! The string methods (`str_ops`) and `charCodeAt` on non-ASCII strings
 //! translate their code-unit positions through this API (#377 phase 2b), checked against the
 //! reference model in tests/abi/utf16_model.rs.
 

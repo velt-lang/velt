@@ -82,7 +82,8 @@ fn every_name_lowering_looks_up_is_a_helper() {
         helper_literals(&crates.join(c).join("src"), &mut names);
     }
     assert!(names.iter().any(|n| n == "__error"), "{names:?}");
-    // C preprocessor macros (`__AVX2__`, `__GCC_…`, `__ARM_FEATURE_…`), DWARF names and the C library's own
+    // Arm's CRC32 C intrinsics (`__crc32b`, velt_vir's arch table names each row's C intrinsic)
+    // are documentation. C preprocessor macros (`__AVX2__`, `__GCC_…`, `__ARM_FEATURE_…`), DWARF names and the C library's own
     // symbols (`errno`'s location, velt_vir `c_abi.rs`) and Mach-O segment and section
     // names (velt_codegen_cl `eh.rs`) are no definitions, nor is the import library's prefix of a
     // Windows DLL's variable (velt_vir `lower/c_global.rs`), nor the C runtime's handler of
@@ -101,6 +102,7 @@ fn every_name_lowering_looks_up_is_a_helper() {
                 && !n.starts_with("__DWARF")
                 && !n.starts_with("__GCC")
                 && !n.starts_with("__ARM_")
+                && !n.starts_with("__crc32")
         })
         .filter(|n| !C_SYMBOLS.contains(&n.as_str()))
         .filter(|n| !is_helper(n))

@@ -38,14 +38,14 @@ copying them:
 
 ```ts
 // packages/sqlite/src/sqlite3.velt (excerpt)
-import { CString, OutPtr, Ptr, StrBytes } from "velt/ffi";
+import { CString, Out, Ptr, StrBytes } from "velt/ffi";
 
 export declare c type sqlite3;
 export declare c type sqlite3_stmt;
 
 export declare c("sqlite3") function sqlite3_open_v2(
   name: CString,
-  db: OutPtr<sqlite3>,
+  db: Out<Ptr<sqlite3> | null>,
   flags: i32,
   vfs: null,
 ): i32;
@@ -62,7 +62,7 @@ export declare c const SQLITE_TRANSIENT: Ptr<void>;   // the value comes from sq
 
 ```ts
 // packages/sqlite/src/connection.velt (excerpt)
-const out = new OutPtr<sqlite3>();
+const out = new Out<Ptr<sqlite3> | null>(null);
 // SAFETY: the name is NUL-terminated, and `out` is written before the call returns.
 const rc = unsafe { sqlite3_open_v2(name, out, flags, null) };
 const db = out.value;
@@ -126,7 +126,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   and calling an unsafe function, which includes velt/ffi's raw operations (`Ptr.at`,
   `readBytes`, `readUtf8`, `readCString`, `errno`, `setErrno`) and std's `addressLoad`
   intrinsic.
-- **What stays safe**: making a `CString`, `Out` or `OutPtr`, passing a `string` as `StrBytes`,
+- **What stays safe**: making a `CString` or an `Out`, passing a `string` as `StrBytes`,
   reading a `declare c const`, and everything type-checked.
 - **`// SAFETY:` comments.** In packages, each unsafe block and expression needs a comment
   containing `SAFETY:` in the comment lines directly above it, and each unsafe function such a
@@ -144,8 +144,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `readonly T[]`, `T[]` (`T` a number type), views of bytes | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
-| `Out<T>` | `T *` | a number C writes through the pointer |
-| `OutPtr<T>` | `T **` | a pointer C writes through the pointer; `.value` reads it |
+| `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, or `Ptr<U> \| null` for a `U **` |
 | `void` | `void` | as a result |
 
 - **No hidden conversions.** A `string` crosses only as a `StrBytes` parameter (the declaration
@@ -165,9 +164,20 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   the C function, since C has no non-null pointer type a header could state.
 - **Strings from C** are read explicitly, in unsafe code: `readUtf8(p, len)`, `readCString(p)`
   and `readBytes(p, len)` copy; invalid UTF-8 becomes U+FFFD. C keeps ownership of `p`.
-- `Ptr<T>` and `OutPtr<T>` point at a `declare c type`, a number, `bool`, `void`, a C struct or
-  another pointer. `Ptr<T>` is a std struct over the address (`std/ffi/ptr.velt`) and the
-  conversions are std hooks that LLVM inlines.
+- `Ptr<T>` points at a `declare c type`, a number, `bool`, `void`, a C struct or another
+  pointer; a pointee that is a type parameter is checked where it is instantiated. It is a type
+  of its own (`hir::TyKind::Ptr`, declared in `std/ffi/ptr.velt`), one machine word, and
+  `Ptr<T> | null` is the same word with 0 as `null`, so nothing converts at a C call. Nothing
+  puts 0 in a `Ptr<T>`: `Ptr.at(0)` stops the program (`Ptr.orNull` gives `null` for 0), and on
+  wasm32 so does an address past 32 bits.
+- **`Out<T>`** takes a number, `bool` or `Ptr<U> | null` only: C may write NULL into a non-null
+  pointer, and writing a class reference, a `symbol` or a `shared<T>` would forge one.
+- **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
+  address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
+  element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
+  conversion to or from `any`, `unknown`, `object` or an interface are compile errors, through
+  a type parameter too; `Ptr.addressOf(p)` gives the address. A class or array holding one
+  still converts to `any`, as one holding a SIMD vector does.
 
 ### Errors: `errno` and `GetLastError`
 
@@ -316,12 +326,25 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
 
 - A C struct has fields only: no methods, constructor, type parameters, defaults, optional,
   private or static fields, `implements`, and at least one field. Fields are integers, `f32`,
-  `f64`, `bool` and other C structs; a struct cannot hold itself by value. A Velt enum and a
-  `declare c type` by value are refused with what to declare instead.
+  `f64`, `bool`, C pointers (`Ptr<T>`, `Ptr<T> | null`: one word each, NULL as `null`; `Ptr<T> |
+  undefined` is the same word, NULL as `undefined`, as in signatures) and other C structs; a struct cannot hold itself by value (a `Ptr<S> | null` field points at one). A
+  Velt enum, a `declare c type` by value and `Ptr<T> | null | undefined` (two words) are refused
+  with what to declare instead.
 - In Velt it is a value: Copy, built from a literal of its type, with read-only fields (a
   changed copy is `{ ...v, x: … }`). Lowering never counts or boxes it, so it stays inline, in
   declaration order at natural alignment, which is C's layout for these fields on 64-bit
-  targets.
+  targets. Lowering checks this for every C struct, from the fields' C types apart from the
+  aggregate (`lower/c_layout.rs`, an `ICE:` otherwise).
+- **`Ptr.read<S>(p, index)` and `Ptr.write<S>(p, index, s)`** (unsafe) move the `S` at element
+  `index` of `p` to and from C memory, `index` times `S`'s size past its address. `S` is a
+  number, `bool`, a pointer or a C struct; `void` and a `declare c type` have no bytes Velt
+  knows and are refused, at the call or where a type parameter is instantiated. A read checks
+  every pointer in the value declared non-null, in nested structs too: one C left NULL stops the
+  program, naming the field (`inner.data`). A struct without such a field pays nothing. A `bool`
+  read is its byte's truth to C, 0 or not, so a byte holding 2 is `true` (and `=== true`).
+- On wasm32 C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's 8, so `Ptr.read` and
+  `Ptr.write` of a type holding one are compile errors naming the target; a struct of other
+  fields is C's layout there too.
 - It has no identity, so every comparison compares its content, with the numbers in it compared
   as the operation compares numbers: `===`, `==` and `indexOf` by IEEE, `Object.is` by
   SameValue, `Map` and `Set` keys and `includes` by SameValueZero.
@@ -376,8 +399,9 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   capital), be `main`, a C keyword or one of the C library's common functions and objects, or
   collide with a `declare c` function of the program.
 - **It compiles to** a function with the unmangled symbol and the target's C calling convention,
-  which converts what crosses and calls the Velt function, which stays an ordinary function for
-  Velt callers. It is built whether or not Velt code reaches it. In LLVM its `i8`, `i16` and
+  which calls the Velt function, which stays an ordinary function for Velt callers. A pointer is
+  the same word on both sides, so nothing converts; a `Ptr<T>` parameter C passes NULL for stops
+  the program, naming the export, as it would read as `null`. It is built whether or not Velt code reaches it. In LLVM its `i8`, `i16` and
   `bool` parameters carry no `signext`/`zeroext`, since AAPCS64 outside Darwin leaves their upper
   bits unspecified; the export extends them itself.
 - **Panics never unwind into C**: one that reaches the export ends the process. The function is
@@ -436,7 +460,7 @@ native: {
   | `i8`…`u64`, `f32`, `f64` | the C type of that width and signedness; a C enum by its underlying type |
   | `bool` | `_Bool` / `bool` only |
   | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them, so a declaration right on one target is right on all |
-  | `Ptr<T>`, `Out<T>`, `OutPtr<T>` | `T *` (`T **` for `OutPtr`), `T` the C type of that name |
+  | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`) |
   | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
   | written arrays, `Out<T>` | non-const `T *` only |
   | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
@@ -485,7 +509,7 @@ stated reasons.
   for each unsafe call, so confining the contexts confines the calls. A file under
   `node_modules`, or under a directory with its own `package.json` or `package.velt`, has no
   package's trust.
-- **The raw API stays among native packages.** `Ptr`, `OutPtr`, the `export` decorator,
+- **The raw API stays among native packages.** `Ptr`, the `export` decorator,
   `declare c type`s and unsafe functions can be imported only there: by name, re-exported, or as
   a namespace member. A safe function of an allowed package can still return a `Ptr`; the code
   receiving it cannot read through it without `unsafe`.
@@ -585,7 +609,8 @@ classes, templates) is a non-goal.
 ## Runtime cost
 
 - A `declare c` call is a direct C call. `StrBytes`, borrowed arrays and `subarray` arguments
-  cost nothing beyond passing an address; `Out<T>` and `OutPtr<T>` are a slot the call writes.
+  cost nothing beyond passing an address; an `Out<T>` is a slot the call writes. A pointer is
+  one word in a register, with no conversion.
 - `errno: true` adds a call to the C library's `errno` accessor and a store after each call.
 - A `declare c const` is a constant compiled in; a C variable is a load or store per use.
 - At compile time, the header check runs clang once per library and target when its inputs
@@ -646,8 +671,9 @@ must not depend on code elsewhere.
 ## Limitations
 
 - `declare c` calls are synchronous.
-- A C struct crosses only behind `Ptr<S>`: not by value, not as `Out<S>`; struct declarations
-  are not compared with headers. C arrays and pointer fields in structs are not supported.
+- A C struct crosses only behind `Ptr<S>` (read and written with `Ptr.read` and `Ptr.write`):
+  not by value, not as `Out<S>`; struct declarations are not compared with headers. C arrays in
+  structs are not supported.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.

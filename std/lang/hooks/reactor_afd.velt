@@ -102,22 +102,22 @@ const AFD_NAME: readonly u16[] = [
   0x74,
 ];
 
-declare c("c") function WSAStartup(version: u16, data: Ptr<u8>): i32;
+declare c("c") function WSAStartup(version: u16, data: Ptr<u8> | null): i32;
 declare c("c") function WSAGetLastError(): i32;
 declare c("c") function WSASetLastError(e: i32): void;
 declare c("c") function WSAIoctl(
   s: usize,
   code: u32,
-  input: Ptr<u8>,
+  input: Ptr<u8> | null,
   inputLen: u32,
-  output: Ptr<u8>,
+  output: Ptr<u8> | null,
   outputLen: u32,
-  returned: Ptr<u8>,
-  overlapped: Ptr<u8>,
-  routine: Ptr<u8>,
+  returned: Ptr<u8> | null,
+  overlapped: Ptr<u8> | null,
+  routine: Ptr<u8> | null,
 ): i32;
-declare c("c") function ioctlsocket(s: usize, cmd: u32, arg: Ptr<u8>): i32;
-declare c("c") function accept$afd(s: usize, addr: Ptr<u8>, len: Ptr<u8>): usize;
+declare c("c") function ioctlsocket(s: usize, cmd: u32, arg: Ptr<u8> | null): i32;
+declare c("c") function accept$afd(s: usize, addr: Ptr<u8> | null, len: Ptr<u8> | null): usize;
 declare c("c") function closesocket$afd(s: usize): i32;
 declare c("c") function SetHandleInformation(file: usize, mask: u32, flags: u32): i32;
 declare c("c") function CreateIoCompletionPort(
@@ -128,9 +128,9 @@ declare c("c") function CreateIoCompletionPort(
 ): usize;
 declare c("c") function GetQueuedCompletionStatusEx(
   port: usize,
-  entries: Ptr<u8>,
+  entries: Ptr<u8> | null,
   count: u32,
-  removed: Ptr<u8>,
+  removed: Ptr<u8> | null,
   ms: u32,
   alertable: i32,
 ): i32;
@@ -138,20 +138,20 @@ declare c("c") function PostQueuedCompletionStatus(
   port: usize,
   bytes: u32,
   key: usize,
-  overlapped: Ptr<u8>,
+  overlapped: Ptr<u8> | null,
 ): i32;
 declare c("c") function SetFileCompletionNotificationModes(file: usize, flags: u8): i32;
 declare c("c") function NtCreateFile(
-  file: Ptr<u8>,
+  file: Ptr<u8> | null,
   access: u32,
-  attributes: Ptr<u8>,
-  iosb: Ptr<u8>,
-  size: Ptr<u8>,
+  attributes: Ptr<u8> | null,
+  iosb: Ptr<u8> | null,
+  size: Ptr<u8> | null,
   fileAttributes: u32,
   share: u32,
   disposition: u32,
   options: u32,
-  ea: Ptr<u8>,
+  ea: Ptr<u8> | null,
   eaLen: u32,
 ): i32;
 
@@ -220,12 +220,12 @@ function openAfd(): usize {
       SYNCHRONIZE,
       m.ptr(b),
       m.ptr(b + 104),
-      m.ptr(0),
+      null,
       0,
       SHARE_READ_WRITE,
       FILE_OPEN,
       0,
-      m.ptr(0),
+      null,
       0,
     );
   }
@@ -247,7 +247,7 @@ function baseOf(fd: usize): usize {
     let rc: i32 = 0;
     // SAFETY: a socket handle out at `w`, the count of bytes at `w + 8`.
     unsafe {
-      rc = WSAIoctl(fd, code, m.ptr(0), 0, m.ptr(w), 8, m.ptr(w + 8), m.ptr(0), m.ptr(0));
+      rc = WSAIoctl(fd, code, null, 0, m.ptr(w), 8, m.ptr(w + 8), null, null);
     }
     if (rc === 0 && m.ld(w) !== 0 && m.ld(w) !== INVALID) {
       // A provider that only answers the others: a base socket that is another one.
@@ -369,14 +369,16 @@ export function wake(r: usize): void {
   }
   // SAFETY: a completion with no overlapped structure, which `wait` reads as the wake.
   unsafe {
-    PostQueuedCompletionStatus(m.ld(r + p.R_PORT), 0, 0, m.ptr(0));
+    PostQueuedCompletionStatus(m.ld(r + p.R_PORT), 0, 0, null);
   }
 }
 
 /** Accepts a connection of listener `fd`, non-blocking and not inherited: its socket, or -1. */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
+  const a = m.ptrTo<u8>(addr);
+  const l = m.ptrTo<u8>(len);
   // SAFETY: `addr` holds the `int` length at `len` (both may be NULL).
-  const s = unsafe { accept$afd(fd as usize, m.ptr(addr), m.ptr(len)) };
+  const s = unsafe { accept$afd(fd as usize, a, l) };
   if (s > 0x7fffffff) {
     if (s !== INVALID) {
       // SAFETY: the socket accept returned, too large for an `i32` descriptor, not used after.

@@ -1,0 +1,46 @@
+// console.log's layout of strings inside containers: node splits a string longer than 16 units
+// that doesn't fit the line at its line breaks, each piece quoted and joined by ` +`; a long
+// string without a line break stays whole. Lengths count UTF-16 units for the line limit and
+// display columns for the column grouping: CJK takes two, combining marks none. Output from
+// node 22.
+
+function main() {
+  // A string past 76 columns, with and without line breaks.
+  console.log(["short", "a".repeat(80)]);
+  console.log({ text: "line one\nline two" });
+  console.log({ text: "first line\nsecond line that makes the whole string longer than the line" });
+  console.log(["x\n".repeat(30)]);
+  console.log({
+    deeper: { text: "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven" },
+  });
+  // The limit depends on the indentation: the same string at depths 0, 1 and 2.
+  const s = "alpha beta gamma delta\nepsilon zeta eta theta iota kappa lambda mu";
+  console.log([s]);
+  console.log([[s]]);
+  console.log({ a: { b: s } });
+  // Exactly 16 units with a line break: never split.
+  console.log(["abcdefghijklmn\no", "abcdefghijklmno\np", "y".repeat(70)]);
+  // Quotes and escapes keep their form in each piece.
+  console.log(["it's here\nand \"there\" too, with a line long enough to split the string"]);
+  console.log(["tab\there\nand a backslash \\ in a string long enough to be split at its break"]);
+  console.log(["it's \"both\"\nquotes in a string that is long enough to be split at the break"]);
+  // Trailing line break.
+  console.log(["a line that ends with a line break and is long enough to split it\n"]);
+  // Wide characters: CJK counts two columns, combining marks none.
+  console.log(["日本語", "中文", "한국어", "abc", "défini", "x", "y", "z", "かな"]);
+  console.log(["é", "é́", "a", "bb", "ccc", "dddd", "eeeee", "ffffff"]);
+  const cjk: string[] = [];
+  for (let i = 0; i < 12; i++) {
+    cjk.push("漢".repeat((i % 4) + 1));
+  }
+  console.log(cjk);
+  const smileys: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    smileys.push("😀".repeat((i % 3) + 1));
+  }
+  console.log(smileys);
+  // Surrogate pairs count two units toward the line limit.
+  console.log({ emoji: "😀".repeat(30), more: "😀".repeat(5) });
+  console.log({ wide: "漢字".repeat(18), next: 1 });
+  console.log(["ü".repeat(70), "ö"]);
+}
