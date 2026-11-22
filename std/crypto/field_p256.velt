@@ -18,6 +18,7 @@ declare function velt_field_p256_mul(r: u64[], d: u64, a: u64, b: u64): void;
 declare function velt_field_p256_sqr(r: u64[], d: u64, a: u64): void;
 declare function velt_field_p256_add(r: u64[], d: u64, a: u64, b: u64): void;
 declare function velt_field_p256_sub(r: u64[], d: u64, a: u64, b: u64): void;
+declare function velt_field_p256_double(r: u64[], d: u64, p: u64): bool;
 
 // p, little-endian limbs.
 const P0: u64 = 0xffffffffffffffff;
@@ -88,6 +89,16 @@ export class FeP256 {
   square(d: usize, a: usize) {
     this.check(d, a, a);
     velt_field_p256_sqr(this.r, d as u64, a as u64);
+  }
+
+  /**
+   * The Jacobian point at registers `d..d + 3` = twice the one at `p..p + 3` (std/crypto/p256.velt
+   * `double`'s formula) in one fused operation, where the target has one: false (nothing
+   * written) where it does not.
+   */
+  doubleFused(d: usize, p: usize): bool {
+    this.check(d + 2, p + 2, p);
+    return velt_field_p256_double(this.r, d as u64, p as u64);
   }
 
   // The field operations index the registers unchecked: each of `d`, `a`, `b` must be one.

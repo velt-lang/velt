@@ -79,6 +79,10 @@ impl Translator<'_, '_> {
             if (params.to_vec(), ret) != op.signature() {
                 return None;
             }
+            // No fused point doubling here: false, and std doubles with the other operations.
+            if op == velt_vir::field::FieldOp::P256Double {
+                return Some(Inlined::Value(self.builder.ins().iconst(types::I8, 0)));
+            }
             self.field_op(op, values);
             return Some(Inlined::Unit);
         }

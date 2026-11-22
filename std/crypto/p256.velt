@@ -404,6 +404,9 @@ export function add(f: FeP256, d: usize, p: usize, q: usize): u64 {
 
 /** `d = 2p` (`d` may be `p`), dbl-2001-b for a = -3; the identity stays the identity. */
 export function double(f: FeP256, d: usize, p: usize) {
+  if (f.doubleFused(d, p)) {
+    return;
+  }
   const delta = T;
   const gamma = T + 1;
   const beta = T + 2;

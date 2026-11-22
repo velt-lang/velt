@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use velt_vir::field::{FieldOp, P256};
+use velt_vir::field::{double_p256, FieldOp, P256};
 
 /// Edge values and pseudo-random elements below p.
 fn elements() -> Vec<[u64; 4]> {
@@ -53,6 +53,13 @@ fn module(x86: bool) -> String {
                 m.push('\n');
             }
         }
+        if op == FieldOp::P256Double {
+            m.push_str(&format!(
+                "define i8 @{}(ptr %r, i64 %d, i64 %p) {{\n  %v = call i1 {name}(ptr %r, i64 %d, i64 %p)\n  %w = zext i1 %v to i8\n  ret i8 %w\n}}\n",
+                op.symbol()
+            ));
+            continue;
+        }
         let (params, args) = match op.operands() {
             1 => ("ptr %r, i64 %d, i64 %a", "ptr %r, i64 %d, i64 %a"),
             _ => (
@@ -87,11 +94,12 @@ void velt_field_p256_mul(arr *, uint64_t, uint64_t, uint64_t);
 void velt_field_p256_sqr(arr *, uint64_t, uint64_t);
 void velt_field_p256_add(arr *, uint64_t, uint64_t, uint64_t);
 void velt_field_p256_sub(arr *, uint64_t, uint64_t, uint64_t);
+uint8_t velt_field_p256_double(arr *, uint64_t, uint64_t);
 int main(int argc, char **argv) {
   FILE *in = fopen(argv[1], "rb"), *out = fopen(argv[2], "wb");
   uint64_t n; fread(&n, 8, 1, in);
   uint64_t *e = malloc(32 * n); fread(e, 32, n, in);
-  uint64_t regs[12]; arr r = { regs, 12, 12 };
+  uint64_t regs[24]; arr r = { regs, 24, 24 };
   for (int f = 3; f < argc; f++) {
     set_cpu((uint8_t)atoi(argv[f]));
     for (int op = 0; op < 4; op++) {
@@ -116,6 +124,14 @@ int main(int argc, char **argv) {
         }
         fwrite(regs, 8, 4, out);
       }
+    }
+    // Doublings of element triples: into registers 3..5, then in place; the flag first.
+    for (uint64_t i = 0; i + 2 < n; i += 3) {
+      memcpy(regs, e + 4 * i, 96);
+      uint64_t done = velt_field_p256_double(&r, 3, 0);
+      fwrite(&done, 8, 1, out); fwrite(regs + 12, 8, 12, out);
+      done = velt_field_p256_double(&r, 0, 0);
+      fwrite(&done, 8, 1, out); fwrite(regs, 8, 12, out);
     }
   }
   fclose(out);
@@ -198,22 +214,43 @@ fn run(clang: &Path, dir: &Path, x86: bool, forms: &[&str]) {
         .0
         .iter()
         .map(|c| u64::from_le_bytes(*c));
-    let mut take = || -> [u64; 4] { std::array::from_fn(|_| got.next().expect("a result")) };
+    let mut next = || got.next().expect("a result");
     let mut bad = vec![];
     for form in forms {
         for op in OPS {
             for a in &es {
                 for b in es.iter().step_by(7) {
-                    let (want, have) = (op.eval(*a, *b), take());
+                    let (want, have) = (op.eval(*a, *b), std::array::from_fn(|_| next()));
                     if want != have && bad.len() < 20 {
                         bad.push(format!("x86 {x86} form {form} {op:?}({a:x?}, {b:x?}): {have:x?}, want {want:x?}"));
                     }
                 }
-                let (want, have) = (op.eval(*a, *a), take());
+                let (want, have) = (op.eval(*a, *a), std::array::from_fn(|_| next()));
                 if want != have && bad.len() < 20 {
                     bad.push(format!(
                         "form {form} {op:?} in place ({a:x?}): {have:x?}, want {want:x?}"
                     ));
+                }
+            }
+        }
+        // The fused doubling: done only by the ADX form, then as the reference computes it.
+        let fused = x86 && *form == "2";
+        for chunk in es.chunks_exact(3) {
+            for in_place in [false, true] {
+                let done = next() & 0xff;
+                let have: Vec<[u64; 4]> = (0..3).map(|_| std::array::from_fn(|_| next())).collect();
+                if (done != 0) != fused && bad.len() < 20 {
+                    bad.push(format!(
+                        "x86 {x86} form {form} double: done {done}, want {fused}"
+                    ));
+                }
+                if fused {
+                    let want = double_p256(chunk[0], chunk[1], chunk[2]);
+                    if have != want && bad.len() < 20 {
+                        bad.push(format!(
+                            "form {form} double (in place {in_place}) {chunk:x?}: {have:x?}, want {want:x?}"
+                        ));
+                    }
                 }
             }
         }

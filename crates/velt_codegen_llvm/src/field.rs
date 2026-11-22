@@ -27,6 +27,9 @@ pub(crate) fn helper(symbol: &str, x86: bool) -> Option<(String, Vec<String>, Ve
     let op = FieldOp::of_symbol(symbol)?;
     let (params, ret) = op.signature();
     let name = format!("@velt.field.{}", op.symbol().strip_prefix("velt_field_")?);
+    if op == FieldOp::P256Double {
+        return Some((name.clone(), double_helper(&name, x86), params, ret));
+    }
     let b_param = match op {
         FieldOp::P256Sqr => "",
         _ => ", i64 %b",
@@ -46,7 +49,10 @@ pub(crate) fn helper(symbol: &str, x86: bool) -> Option<(String, Vec<String>, Ve
     let mut defs = vec![];
     if matches!(op, FieldOp::P256Add | FieldOp::P256Sub) {
         if x86 {
-            let text = format!("\"{}\"", asm_text(&add_sub(op == FieldOp::P256Add)));
+            let text = format!(
+                "\"{}\"",
+                asm_text(&add_sub(op == FieldOp::P256Add, Ops::STANDALONE))
+            );
             out.push_str(&format!(
                 "  %slot = alloca ptr, align 8\n  store ptr %pd, ptr %slot, align 8\n  \
                  %rs = call {{ ptr, ptr }} asm sideeffect {text}, \"{ADX_CONSTRAINTS}\"(ptr %pa, ptr %pb, ptr elementtype(ptr) %slot)\n  ret void\n}}"
@@ -60,8 +66,8 @@ pub(crate) fn helper(symbol: &str, x86: bool) -> Option<(String, Vec<String>, Ve
     }
     if x86 {
         let adx_lines = match op {
-            FieldOp::P256Sqr => adx_sqr(),
-            _ => adx_mul(),
+            FieldOp::P256Sqr => adx_sqr(Ops::STANDALONE),
+            _ => adx_mul(Ops::STANDALONE),
         };
         let adx = format!("\"{}\"", asm_text(&adx_lines));
         let plain = format!("\"{}\"", asm_text(&mul_rows()));
@@ -95,60 +101,112 @@ const ADX_CONSTRAINTS: &str = "={rsi},={rdi},0,1,*m,~{rax},~{rdx},~{rcx},~{r8},~
 /// The full product's limbs `t0..t7`.
 const T: [&str; 8] = ["%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15"];
 
+/// Where a BMI2/ADX sequence finds its operands and puts its result: the standalone operations
+/// read `a` at RSI and `b` at RDI and store at the address in `$4`; the fused point doubling
+/// ([`adx_double`]) keeps every value in a scratch area at RSI, at constant offsets.
+#[derive(Clone, Copy)]
+struct Ops {
+    a: usize,
+    b: usize,
+    /// `None`: at `$4`; `Some(off)`: at `off(%rsi)`.
+    dst: Option<usize>,
+}
+
+impl Ops {
+    /// The standalone operation's operands.
+    const STANDALONE: Ops = Ops {
+        a: 0,
+        b: 0,
+        dst: None,
+    };
+
+    fn fused(&self) -> bool {
+        self.dst.is_some()
+    }
+    /// Limb `k` of `a`.
+    fn a(&self, k: usize) -> String {
+        format!("{}(%rsi)", self.a + 8 * k)
+    }
+    /// Limb `k` of `b`.
+    fn b(&self, k: usize) -> String {
+        match self.fused() {
+            true => format!("{}(%rsi)", self.b + 8 * k),
+            false => format!("{}(%rdi)", 8 * k),
+        }
+    }
+    /// Stores `limbs` as the result.
+    fn store(&self, out: &mut Vec<String>, limbs: [&str; 4]) {
+        let at = match self.dst {
+            Some(off) => off,
+            None => {
+                out.push("movq $4, %rsi".into());
+                0
+            }
+        };
+        for (k, r) in limbs.iter().enumerate() {
+            out.push(format!("movq {r}, {}(%rsi)", at + 8 * k));
+        }
+    }
+}
+
+/// The scratch area of the fused doubling: the offset of p's top limb, kept there by the helper
+/// for `mulx` (a register would be one too many).
+const P3_SLOT: usize = 32 * SLOTS;
+
 /// The BMI2/ADX product: `t = a * b` in full (each row's low halves on CF, high halves on OF;
 /// no row waits on a reduction), then [`reduce_low`] and [`add_high`].
-fn adx_mul() -> Vec<String> {
+fn adx_mul(o: Ops) -> Vec<String> {
     let mut out = vec![];
-    out.push("movq (%rdi), %rdx".into());
-    out.push(format!("mulxq (%rsi), {}, {}", T[0], T[1]));
-    out.push(format!("mulxq 8(%rsi), %rax, {}", T[2]));
+    out.push(format!("movq {}, %rdx", o.b(0)));
+    out.push(format!("mulxq {}, {}, {}", o.a(0), T[0], T[1]));
+    out.push(format!("mulxq {}, %rax, {}", o.a(1), T[2]));
     out.push(format!("addq %rax, {}", T[1]));
-    out.push(format!("mulxq 16(%rsi), %rax, {}", T[3]));
+    out.push(format!("mulxq {}, %rax, {}", o.a(2), T[3]));
     out.push(format!("adcq %rax, {}", T[2]));
-    out.push(format!("mulxq 24(%rsi), %rax, {}", T[4]));
+    out.push(format!("mulxq {}, %rax, {}", o.a(3), T[4]));
     out.push(format!("adcq %rax, {}", T[3]));
     out.push(format!("adcq $$0, {}", T[4]));
     for i in 1..4 {
-        out.push(format!("movq {}(%rdi), %rdx", 8 * i));
+        out.push(format!("movq {}, %rdx", o.b(i)));
         // Zero the row's new top limb, and both flags.
         out.push(format!("xorl {}, {}", low32(T[i + 4]), low32(T[i + 4])));
         for j in 0..4 {
-            out.push(format!("mulxq {}(%rsi), %rax, %rcx", 8 * j));
+            out.push(format!("mulxq {}, %rax, %rcx", o.a(j)));
             out.push(format!("adcxq %rax, {}", T[i + j]));
             out.push(format!("adoxq %rcx, {}", T[i + j + 1]));
         }
         // OF ended in the top limb, which cannot overflow; CF goes there too.
         out.push(format!("adcq $$0, {}", T[i + 4]));
     }
-    reduce_low(&mut out);
-    add_high(&mut out);
+    reduce_low(&mut out, o);
+    add_high(&mut out, o);
     out
 }
 
 /// The BMI2/ADX square: the six products of distinct limbs once, doubled, plus the four squares.
-fn adx_sqr() -> Vec<String> {
+fn adx_sqr(o: Ops) -> Vec<String> {
     let mut out = vec![];
     // a0 (a1, a2, a3) at limbs 1..4.
-    out.push("movq (%rsi), %rdx".into());
-    out.push(format!("mulxq 8(%rsi), {}, {}", T[1], T[2]));
-    out.push(format!("mulxq 16(%rsi), %rax, {}", T[3]));
+    out.push(format!("movq {}, %rdx", o.a(0)));
+    out.push(format!("mulxq {}, {}, {}", o.a(1), T[1], T[2]));
+    out.push(format!("mulxq {}, %rax, {}", o.a(2), T[3]));
     out.push(format!("addq %rax, {}", T[2]));
-    out.push(format!("mulxq 24(%rsi), %rax, {}", T[4]));
+    out.push(format!("mulxq {}, %rax, {}", o.a(3), T[4]));
     out.push(format!("adcq %rax, {}", T[3]));
     out.push(format!("adcq $$0, {}", T[4]));
     // a1 (a2, a3) at limbs 3..5.
-    out.push("movq 8(%rsi), %rdx".into());
+    out.push(format!("movq {}, %rdx", o.a(1)));
     out.push(format!("xorl {}, {}", low32(T[5]), low32(T[5])));
-    out.push("mulxq 16(%rsi), %rax, %rcx".into());
+    out.push(format!("mulxq {}, %rax, %rcx", o.a(2)));
     out.push(format!("adcxq %rax, {}", T[3]));
     out.push(format!("adoxq %rcx, {}", T[4]));
-    out.push("mulxq 24(%rsi), %rax, %rcx".into());
+    out.push(format!("mulxq {}, %rax, %rcx", o.a(3)));
     out.push(format!("adcxq %rax, {}", T[4]));
     out.push(format!("adoxq %rcx, {}", T[5]));
     out.push(format!("adcq $$0, {}", T[5]));
     // a2 a3 at limbs 5..6.
-    out.push("movq 16(%rsi), %rdx".into());
-    out.push(format!("mulxq 24(%rsi), %rax, {}", T[6]));
+    out.push(format!("movq {}, %rdx", o.a(2)));
+    out.push(format!("mulxq {}, %rax, {}", o.a(3), T[6]));
     out.push(format!("addq %rax, {}", T[5]));
     out.push(format!("adcq $$0, {}", T[6]));
     // Twice that (limb 7 the carry), then the squares on one chain.
@@ -158,35 +216,41 @@ fn adx_sqr() -> Vec<String> {
         out.push(format!("adcq {0}, {0}", T[k]));
     }
     out.push(format!("adcq $$0, {}", T[7]));
-    out.push("movq (%rsi), %rdx".into());
+    out.push(format!("movq {}, %rdx", o.a(0)));
     out.push(format!("mulxq %rdx, {}, %rax", T[0]));
-    out.push("movq 8(%rsi), %rdx".into());
+    out.push(format!("movq {}, %rdx", o.a(1)));
     out.push("mulxq %rdx, %rcx, %rdx".into());
     out.push(format!("addq %rax, {}", T[1]));
     out.push(format!("adcq %rcx, {}", T[2]));
     out.push(format!("adcq %rdx, {}", T[3]));
-    out.push("movq 16(%rsi), %rdx".into());
+    out.push(format!("movq {}, %rdx", o.a(2)));
     out.push("mulxq %rdx, %rcx, %rdx".into());
     out.push(format!("adcq %rcx, {}", T[4]));
     out.push(format!("adcq %rdx, {}", T[5]));
-    out.push("movq 24(%rsi), %rdx".into());
+    out.push(format!("movq {}, %rdx", o.a(3)));
     out.push("mulxq %rdx, %rcx, %rdx".into());
     out.push(format!("adcq %rcx, {}", T[6]));
     out.push(format!("adcq %rdx, {}", T[7]));
-    reduce_low(&mut out);
-    add_high(&mut out);
+    reduce_low(&mut out, o);
+    add_high(&mut out, o);
     out
 }
 
 /// Four rounds on the low half `t0..t3` alone (module docs): round `k` adds `m p / 2^64` for
 /// `m` its lowest limb, so the low half stays four limbs; each round's next `m` is ready after
-/// one addition. Afterwards the low half is in `t0..t3` rotated: limb `k` in `T[(4 + k) % 4]`'s
-/// slot as [`low`] names it.
-fn reduce_low(out: &mut Vec<String>) {
-    // BMI2 (which the ADX forms have too): RDI the shift count and RSI p's top limb, so a
-    // round is three-operand shifts and one `mulx` for `m p3`; the operand pointers are done.
+/// one addition. Afterwards limb `k` of the low half is in `T[k]` again.
+fn reduce_low(out: &mut Vec<String>, o: Ops) {
+    // BMI2 (which the ADX forms have too): RDI the shift count, so a round is three-operand
+    // shifts and one `mulx` for `m p3`, with p3 in RSI (the operand pointers are done) or, in the
+    // fused doubling whose base RSI stays, in its slot.
     out.push("movl $$32, %edi".into());
-    out.push("movabsq $$0xffffffff00000001, %rsi".into());
+    let p3 = match o.fused() {
+        true => format!("{P3_SLOT}(%rsi)"),
+        false => {
+            out.push("movabsq $$0xffffffff00000001, %rsi".into());
+            "%rsi".to_string()
+        }
+    };
     for r in 0..4 {
         let u = |k: usize| T[(r + k) % 4];
         let (u0, u1, u2, u3) = (u(0), u(1), u(2), u(3));
@@ -195,7 +259,7 @@ fn reduce_low(out: &mut Vec<String>) {
         out.push(format!("shrxq %rdi, {u0}, %rcx"));
         out.push(format!("addq %rax, {u1}"));
         out.push(format!("adcq %rcx, {u2}"));
-        out.push("mulxq %rsi, %rax, %rcx".into());
+        out.push(format!("mulxq {p3}, %rax, %rcx"));
         out.push(format!("adcq %rax, {u3}"));
         // The round's top limb: the high half of m p3, plus the carry.
         out.push("adcq $$0, %rcx".into());
@@ -203,20 +267,23 @@ fn reduce_low(out: &mut Vec<String>) {
     }
 }
 
-/// The reduced low half (`t0..t3`, rotated back to their order) plus the high half `t4..t7`, a
-/// carry in RAX: below `2p`; `p` subtracted when that does not borrow; stored at `$4`.
-fn add_high(out: &mut Vec<String>) {
-    let u: Vec<&str> = (0..4).map(|k| T[k % 4]).collect();
+/// The reduced low half `t0..t3` plus the high half `t4..t7`, a carry in RAX: below `2p`; `p`
+/// subtracted when that does not borrow; stored as `o` says.
+fn add_high(out: &mut Vec<String>, o: Ops) {
     out.push("movl $$0, %eax".into());
-    out.push(format!("addq {}, {}", T[4], u[0]));
-    out.push(format!("adcq {}, {}", T[5], u[1]));
-    out.push(format!("adcq {}, {}", T[6], u[2]));
-    out.push(format!("adcq {}, {}", T[7], u[3]));
+    out.push(format!("addq {}, {}", T[4], T[0]));
+    out.push(format!("adcq {}, {}", T[5], T[1]));
+    out.push(format!("adcq {}, {}", T[6], T[2]));
+    out.push(format!("adcq {}, {}", T[7], T[3]));
     out.push("adcq $$0, %rax".into());
-    out.push(format!("movq {}, {}", u[0], T[4]));
-    out.push(format!("movq {}, {}", u[1], T[5]));
-    out.push(format!("movq {}, {}", u[2], T[6]));
-    out.push(format!("movq {}, {}", u[3], T[7]));
+    minus_p(out, o);
+}
+
+/// `T[0..4]` with a carry limb in RAX, below `2p`: less `p` unless that borrows, stored.
+fn minus_p(out: &mut Vec<String>, o: Ops) {
+    for k in 0..4 {
+        out.push(format!("movq {}, {}", T[k], T[4 + k]));
+    }
     out.push("movl $$0xffffffff, %ecx".into());
     out.push("movabsq $$0xffffffff00000001, %rdx".into());
     out.push(format!("subq $$-1, {}", T[4]));
@@ -225,20 +292,17 @@ fn add_high(out: &mut Vec<String>) {
     out.push(format!("sbbq %rdx, {}", T[7]));
     out.push("sbbq $$0, %rax".into());
     for k in 0..4 {
-        out.push(format!("cmovcq {}, {}", u[k], T[4 + k]));
+        out.push(format!("cmovcq {}, {}", T[k], T[4 + k]));
     }
-    out.push("movq $4, %rsi".into());
-    for k in 0..4 {
-        out.push(format!("movq {}, {}(%rsi)", T[4 + k], 8 * k));
-    }
+    o.store(out, [T[4], T[5], T[6], T[7]]);
 }
 
 /// `a + b` or `a - b` mod p, constant time: the sum less `p` unless that borrows (and the sum
-/// did not carry), or the difference plus `p` masked by its borrow. Stored at `$4`.
-fn add_sub(add: bool) -> Vec<String> {
+/// did not carry), or the difference plus `p` masked by its borrow. Stored as `o` says.
+fn add_sub(add: bool, o: Ops) -> Vec<String> {
     let mut out = vec![];
     for k in 0..4 {
-        out.push(format!("movq {}(%rsi), {}", 8 * k, T[k]));
+        out.push(format!("movq {}, {}", o.a(k), T[k]));
     }
     out.push("xorl %eax, %eax".into());
     let (first, rest) = if add {
@@ -248,27 +312,11 @@ fn add_sub(add: bool) -> Vec<String> {
     };
     for k in 0..4 {
         let ins = if k == 0 { first } else { rest };
-        out.push(format!("{ins} {}(%rdi), {}", 8 * k, T[k]));
+        out.push(format!("{ins} {}, {}", o.b(k), T[k]));
     }
     if add {
         out.push("adcq $$0, %rax".into());
-        for k in 0..4 {
-            out.push(format!("movq {}, {}", T[k], T[4 + k]));
-        }
-        out.push("movl $$0xffffffff, %ecx".into());
-        out.push("movabsq $$0xffffffff00000001, %rdx".into());
-        out.push(format!("subq $$-1, {}", T[4]));
-        out.push(format!("sbbq %rcx, {}", T[5]));
-        out.push(format!("sbbq $$0, {}", T[6]));
-        out.push(format!("sbbq %rdx, {}", T[7]));
-        out.push("sbbq $$0, %rax".into());
-        for k in 0..4 {
-            out.push(format!("cmovcq {}, {}", T[k], T[4 + k]));
-        }
-        out.push("movq $4, %rsi".into());
-        for k in 0..4 {
-            out.push(format!("movq {}, {}(%rsi)", T[4 + k], 8 * k));
-        }
+        minus_p(&mut out, o);
     } else {
         // RAX = all ones on a borrow: p masked by it is RAX, RCX, 0, RDX.
         out.push("sbbq %rax, %rax".into());
@@ -280,11 +328,175 @@ fn add_sub(add: bool) -> Vec<String> {
         out.push(format!("adcq %rcx, {}", T[1]));
         out.push(format!("adcq $$0, {}", T[2]));
         out.push(format!("adcq %rdx, {}", T[3]));
-        out.push("movq $4, %rsi".into());
+        o.store(&mut out, [T[0], T[1], T[2], T[3]]);
+    }
+    out
+}
+
+/// The fused doubling's helper: on x86-64 with BMI2 and ADX, the point copied into a scratch
+/// area, [`adx_double`], the result copied out, and true; false elsewhere. Out of line: it is
+/// two thousand instructions, and its callers double in a loop.
+fn double_helper(name: &str, x86: bool) -> Vec<String> {
+    if !x86 {
+        return vec![format!(
+            "define internal i1 {name}(ptr %r, i64 %d, i64 %p) alwaysinline nounwind {{\n  ret i1 false\n}}"
+        )];
+    }
+    let mut ir = format!(
+        "define internal i1 {name}(ptr %r, i64 %d, i64 %p) noinline nounwind {{\n\
+         entry:\n  %fast = call i1 @velt.field.has_adx()\n  br i1 %fast, label %go, label %no\n\
+         no:\n  ret i1 false\n\
+         go:\n  %data = load ptr, ptr %r, align 8\n  \
+         %op = shl i64 %p, 5\n  %pp = getelementptr i8, ptr %data, i64 %op\n  \
+         %od = shl i64 %d, 5\n  %pd = getelementptr i8, ptr %data, i64 %od\n  \
+         %s = alloca [{} x i64], align 16\n",
+        4 * SLOTS + 1
+    );
+    // X, Y, Z into slots 0..2 (12 limbs), p's top limb after the slots.
+    for k in 0..12 {
+        ir.push_str(&format!(
+            "  %ip{k} = getelementptr i8, ptr %pp, i64 {o}\n  %iv{k} = load i64, ptr %ip{k}, align 8\n  %is{k} = getelementptr i8, ptr %s, i64 {o}\n  store i64 %iv{k}, ptr %is{k}, align 8\n",
+            o = 8 * k
+        ));
+    }
+    ir.push_str(&format!(
+        "  %p3 = getelementptr i8, ptr %s, i64 {P3_SLOT}\n  store i64 {}, ptr %p3, align 8\n",
+        velt_vir::field::P256[3] as i64
+    ));
+    ir.push_str(&format!(
+        "  %rs = call {{ ptr, ptr }} asm sideeffect \"{}\", \"={{rsi}},={{rdi}},0,1,~{{rax}},~{{rdx}},~{{rcx}},~{{r8}},~{{r9}},~{{r10}},~{{r11}},~{{r12}},~{{r13}},~{{r14}},~{{r15}},~{{memory}},~{{dirflag}},~{{fpsr}},~{{flags}}\"(ptr %s, ptr %s)\n",
+        asm_text(&adx_double())
+    ));
+    // X3, Y3, Z3 from slots 9, 10, 8.
+    for (c, slot) in [(0usize, 9usize), (1, 10), (2, 8)] {
         for k in 0..4 {
-            out.push(format!("movq {}, {}(%rsi)", T[k], 8 * k));
+            ir.push_str(&format!(
+                "  %os{c}{k} = getelementptr i8, ptr %s, i64 {}\n  %ov{c}{k} = load i64, ptr %os{c}{k}, align 8\n  %op{c}{k} = getelementptr i8, ptr %pd, i64 {}\n  store i64 %ov{c}{k}, ptr %op{c}{k}, align 8\n",
+                32 * slot + 8 * k,
+                32 * c + 8 * k
+            ));
         }
     }
+    ir.push_str("  ret i1 true\n}");
+    vec![HAS_ADX.to_string(), CPU_BYTE.to_string(), ir]
+}
+
+/// `2^k a` (k >= 1), or `3 a` (`triple`), at `d`: the value stays in `T[0..4]` from one doubling
+/// to the next, each a carry chain and a subtraction of `p` kept or not, with one load and one
+/// store in all (offsets in the scratch area at RSI).
+fn small_multiple(out: &mut Vec<String>, d: usize, a: usize, k: usize, triple: bool) {
+    let o = Ops {
+        a,
+        b: a,
+        dst: Some(d),
+    };
+    for j in 0..4 {
+        out.push(format!("movq {}, {}", o.a(j), T[j]));
+    }
+    let steps = if triple { 2 } else { k };
+    for step in 0..steps {
+        out.push("xorl %eax, %eax".into());
+        if triple && step == 1 {
+            // 2a + a.
+            out.push(format!("addq {}, {}", o.a(0), T[0]));
+            for j in 1..4 {
+                out.push(format!("adcq {}, {}", o.a(j), T[j]));
+            }
+        } else {
+            out.push(format!("addq {0}, {0}", T[0]));
+            for j in 1..4 {
+                out.push(format!("adcq {0}, {0}", T[j]));
+            }
+        }
+        out.push("adcq $$0, %rax".into());
+        // Less p unless that borrows, back into T[0..4] (the last step stores instead).
+        for j in 0..4 {
+            out.push(format!("movq {}, {}", T[j], T[4 + j]));
+        }
+        out.push("movl $$0xffffffff, %ecx".into());
+        out.push("movabsq $$0xffffffff00000001, %rdx".into());
+        out.push(format!("subq $$-1, {}", T[4]));
+        out.push(format!("sbbq %rcx, {}", T[5]));
+        out.push(format!("sbbq $$0, {}", T[6]));
+        out.push(format!("sbbq %rdx, {}", T[7]));
+        out.push("sbbq $$0, %rax".into());
+        for j in 0..4 {
+            out.push(format!("cmovncq {}, {}", T[4 + j], T[j]));
+        }
+    }
+    o.store(out, [T[0], T[1], T[2], T[3]]);
+}
+
+/// The scratch slots of the fused doubling (32 bytes each), after the input point's three.
+const SLOTS: usize = 11;
+
+/// The fused point doubling (dbl-2001-b, a = -3), all in the scratch area at RSI: slots 0..2 the
+/// input X, Y, Z (the helper copies them in), the result X3, Y3, Z3 in slots 9, 10, 8 (copied
+/// out); every step one of the sequences above at constant offsets, with no call, check or
+/// address arithmetic between them.
+fn adx_double() -> Vec<String> {
+    let s = |k: usize| 32 * k;
+    let mut out = vec![];
+    let mul = |out: &mut Vec<String>, d: usize, a: usize, b: usize| {
+        out.extend(adx_mul(Ops {
+            a: s(a),
+            b: s(b),
+            dst: Some(s(d)),
+        }))
+    };
+    let sqr = |out: &mut Vec<String>, d: usize, a: usize| {
+        out.extend(adx_sqr(Ops {
+            a: s(a),
+            b: 0,
+            dst: Some(s(d)),
+        }))
+    };
+    let add = |out: &mut Vec<String>, d: usize, a: usize, b: usize| {
+        out.extend(add_sub(
+            true,
+            Ops {
+                a: s(a),
+                b: s(b),
+                dst: Some(s(d)),
+            },
+        ))
+    };
+    let sub = |out: &mut Vec<String>, d: usize, a: usize, b: usize| {
+        out.extend(add_sub(
+            false,
+            Ops {
+                a: s(a),
+                b: s(b),
+                dst: Some(s(d)),
+            },
+        ))
+    };
+    let (x, y, z) = (0, 1, 2);
+    let (delta, gamma, beta, alpha, t, z3, x3, y3) = (3, 4, 5, 6, 7, 8, 9, 10);
+    sqr(&mut out, delta, z);
+    sqr(&mut out, gamma, y);
+    mul(&mut out, beta, x, gamma);
+    // alpha = 3 (X - delta) (X + delta).
+    sub(&mut out, alpha, x, delta);
+    add(&mut out, t, x, delta);
+    mul(&mut out, alpha, alpha, t);
+    small_multiple(&mut out, s(alpha), s(alpha), 1, true);
+    // Z3 = (Y + Z)^2 - gamma - delta.
+    add(&mut out, t, y, z);
+    sqr(&mut out, t, t);
+    sub(&mut out, t, t, gamma);
+    sub(&mut out, z3, t, delta);
+    // X3 = alpha^2 - 8 beta.
+    sqr(&mut out, x3, alpha);
+    small_multiple(&mut out, s(beta), s(beta), 2, false);
+    small_multiple(&mut out, s(t), s(beta), 1, false);
+    sub(&mut out, x3, x3, t);
+    // Y3 = alpha (4 beta - X3) - 8 gamma^2.
+    sub(&mut out, beta, beta, x3);
+    mul(&mut out, beta, alpha, beta);
+    sqr(&mut out, gamma, gamma);
+    small_multiple(&mut out, s(gamma), s(gamma), 3, false);
+    sub(&mut out, y3, beta, gamma);
     out
 }
 

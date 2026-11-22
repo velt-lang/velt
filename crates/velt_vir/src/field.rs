@@ -23,6 +23,10 @@ pub enum FieldOp {
     P256Add,
     /// `(r, d, a, b)`: register `d` = `a - b` mod p256 (both below p).
     P256Sub,
+    /// `(r, d, p) -> bool`: the Jacobian point at registers `d..d+3` = twice the one at `p..p+3`
+    /// on y^2 = x^3 - 3x + b ([`double_p256`]), `d` may be `p`; true when done, false where the
+    /// target has no fused form (the caller doubles with the other operations then).
+    P256Double,
 }
 
 /// The P-256 prime, little-endian limbs.
@@ -34,11 +38,12 @@ pub const P256: [u64; 4] = [
 ];
 
 impl FieldOp {
-    pub const ALL: [FieldOp; 4] = [
+    pub const ALL: [FieldOp; 5] = [
         FieldOp::P256Mul,
         FieldOp::P256Sqr,
         FieldOp::P256Add,
         FieldOp::P256Sub,
+        FieldOp::P256Double,
     ];
 
     /// The extern's symbol.
@@ -48,6 +53,7 @@ impl FieldOp {
             FieldOp::P256Sqr => "velt_field_p256_sqr",
             FieldOp::P256Add => "velt_field_p256_add",
             FieldOp::P256Sub => "velt_field_p256_sub",
+            FieldOp::P256Double => "velt_field_p256_double",
         }
     }
 
@@ -59,7 +65,7 @@ impl FieldOp {
     /// How many registers it reads (`a`, or `a` and `b`).
     pub const fn operands(self) -> usize {
         match self {
-            FieldOp::P256Sqr => 1,
+            FieldOp::P256Sqr | FieldOp::P256Double => 1,
             FieldOp::P256Mul | FieldOp::P256Add | FieldOp::P256Sub => 2,
         }
     }
@@ -68,7 +74,11 @@ impl FieldOp {
     pub fn signature(self) -> (Vec<Ty>, Ty) {
         let mut params = vec![Ty::Ptr, Ty::U64];
         params.extend(std::iter::repeat_n(Ty::U64, self.operands()));
-        (params, Ty::Unit)
+        let ret = match self {
+            FieldOp::P256Double => Ty::Bool,
+            _ => Ty::Unit,
+        };
+        (params, ret)
     }
 
     /// The result for operand registers `a` and `b` (`b` ignored for a square), each fully
@@ -79,8 +89,32 @@ impl FieldOp {
             FieldOp::P256Sqr => mont_mul(a, a, P256),
             FieldOp::P256Add => add_mod(a, b, P256),
             FieldOp::P256Sub => sub_mod(a, b, P256),
+            FieldOp::P256Double => panic!("ICE: a point doubling is `double_p256`"),
         }
     }
+}
+
+/// Twice the Jacobian point `(x, y, z)` (Montgomery form) on P-256: dbl-2001-b for a = -3, as
+/// std/crypto/p256.velt `double` computes it.
+pub fn double_p256(x: [u64; 4], y: [u64; 4], z: [u64; 4]) -> [[u64; 4]; 3] {
+    let (mul, add, sub) = (
+        |a, b| mont_mul(a, b, P256),
+        |a, b| add_mod(a, b, P256),
+        |a, b| sub_mod(a, b, P256),
+    );
+    let delta = mul(z, z);
+    let gamma = mul(y, y);
+    let beta = mul(x, gamma);
+    let alpha = mul(sub(x, delta), add(x, delta));
+    let alpha = add(add(alpha, alpha), alpha);
+    let yz = add(y, z);
+    let z3 = sub(sub(mul(yz, yz), gamma), delta);
+    let beta4 = add(add(beta, beta), add(beta, beta));
+    let x3 = sub(mul(alpha, alpha), add(beta4, beta4));
+    let g2 = mul(gamma, gamma);
+    let g8 = add(add(add(g2, g2), add(g2, g2)), add(add(g2, g2), add(g2, g2)));
+    let y3 = sub(mul(alpha, sub(beta4, x3)), g8);
+    [x3, y3, z3]
 }
 
 /// `a + b` mod `p` for `a`, `b` below `p`.
