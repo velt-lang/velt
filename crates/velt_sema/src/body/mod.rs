@@ -299,8 +299,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
-    /// The write being checked is `Object.defineProperty`'s (`expr/object_define.rs`): a
-    /// frozen object's throws Node's error for a definition (`expr/frozen_write.rs`).
+    /// The write being checked is `Object.defineProperty`'s (`expr/object_define.rs`): on a
+    /// frozen object it throws Node's error for a definition (`expr/frozen_write.rs`).
     pub defining: bool,
     /// The tuple places of an assignment target `p![i]` / `(p as T)[i]` that writes in place
     /// (`expr/assign_paths.rs`), outermost last: checked again, in order, after a right-hand

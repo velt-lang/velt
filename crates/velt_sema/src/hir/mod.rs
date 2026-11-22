@@ -185,8 +185,9 @@ pub struct Program {
     /// `Object.isFrozen`, and the types sharing its storage (`same_layout`). Each is a counted
     /// object (hir_encodings.md "Sharing") with a frozen mark in its count word (rt_abi.md
     /// "Counted objects", `RC_FROZEN`), set by `Intrinsic::Freeze` and read by
-    /// `Intrinsic::IsFrozen`; sema checks every write of one against the mark. Never weak-capable
-    /// or lock-set. A fact of the whole program, kept out of the definitions (#2943).
+    /// `Intrinsic::IsFrozen`; sema checks each field write `o.f = v` of one against the mark.
+    /// It may be weak-capable (its weak release masks the mark), never lock-set. A fact of the
+    /// whole program, kept out of the definitions (#2943).
     pub freezable: HashSet<DefId>,
     /// The closures that change what they captured, and the classes' `clone()`s that may change
     /// their object (all but the standard library's that don't). Made when the program puts a
