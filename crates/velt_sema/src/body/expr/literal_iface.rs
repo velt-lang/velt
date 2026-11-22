@@ -141,7 +141,7 @@ impl FnCx<'_, '_> {
             .map(|f| self.cx.subst(f, &args))
             .collect(),
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => vec![],
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts
             .into_iter()

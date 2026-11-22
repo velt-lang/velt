@@ -68,11 +68,12 @@ impl Ctx<'_> {
     /// converted where it is used (`r[1]` is `r["1"]`, `body::expr::record_call`).
     /// A `symbol` in the key (`Record<string | symbol, V>`, `Record<PropertyKey, V>`) is the
     /// same record too: every string-keyed record may hold symbol keys, in a table of their own
-    /// (std/prelude/record.velt), which `Object.keys` doesn't list, as in Node.
+    /// (std/prelude/record.velt), which `Object.keys` doesn't list, as in Node. So is a key of
+    /// symbols only (`Record<symbol, V>`, a look at that table, as sigx's request bags are).
     pub(crate) fn number_key_as_string(&mut self, k: TyId) -> TyId {
         let str_ = self.ty.str_;
         let num = self.ty.f64;
-        if k == num {
+        if k == num || matches!(self.ty.kind(k), TyKind::Symbol) {
             return str_;
         }
         match self.union_members(k) {

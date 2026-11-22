@@ -227,7 +227,8 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
 }
 
 fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
-    let mut ty = cx.resolve_field_type(&f.ty, env);
+    let mut ty =
+        cx.resolve_weak_annotation(&f.ty, env, &mut |cx, t, env| cx.resolve_field_type(t, env));
     cx.note_written_type(f.name.span, f.ty.span);
     let declared = ty;
     // `a?: T` is `T | undefined` (`a?: T | null` is `T | null | undefined`); `q?: any`: an

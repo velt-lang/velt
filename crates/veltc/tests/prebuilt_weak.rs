@@ -106,12 +106,6 @@ fn velt(dir: &Path, file: &str, src: &str, args: &[&str], env: &[(&str, &str)]) 
     out
 }
 
-/// Whether debug builds on this machine link prebuilt objects: not on arm64 Linux, whose debug
-/// link need not have the helpers the objects' atomics call (prebuilt.rs `debug_link_takes`).
-fn debug_takes_objects() -> bool {
-    !velt_codegen_llvm::calls_outline_atomics(&velt_codegen_cl::host_triple())
-}
-
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -146,10 +140,6 @@ const FILL: (&str, &str) = ("VELT_PREBUILT_HOOKS", "fill");
 fn a_weak_program_calls_the_core_s_object() {
     // Release builds for the default CPU link what debug builds do: a cache each.
     for mode in [&["run", "--release", "-v"][..], &["run", "-v"]] {
-        if mode == ["run", "-v"] && !debug_takes_objects() {
-            eprintln!("note: debug builds here link no prebuilt objects; release only");
-            continue;
-        }
         let tmp = test_dir::TestDir::new();
         let dir = tmp.path();
         let off = velt(
@@ -171,7 +161,11 @@ fn a_weak_program_calls_the_core_s_object() {
             ("object", OUT),
             "{mode:?}"
         );
-        assert!(text(&served.stderr).contains("prebuilt hooks: 1 objects linked"));
+        // The core's object, and those of the other prebuilt modules the program calls: the
+        // blocks of module state (module_blocks.velt), which a program on the executor reaches,
+        // and the string methods the test's output goes through.
+        assert!(text(&served.stderr).contains("objects linked"));
+        assert!(text(&served.stderr).contains("lang/hooks/module_blocks: object found"));
         // The core is about 2,000 lines of std, and the program loads none of them.
         assert!(
             std_lines(&served) + 1500 < std_lines(&off),
@@ -188,11 +182,7 @@ fn a_weak_program_calls_the_core_s_object() {
 fn a_program_loading_the_core_calls_no_object() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    // A debug build, or a release one where debug builds take no objects (`debug_takes_objects`).
-    let run: &[&str] = match debug_takes_objects() {
-        true => &["run"],
-        false => &["run", "--release"],
-    };
+    let run: &[&str] = &["run"];
     velt(dir, "a.velt", PROGRAM, run, &[FILL]);
     let served = velt(dir, "a.velt", PROGRAM, run, &[]);
     assert_eq!(found(&served), "object");
@@ -213,5 +203,11 @@ fn a_program_loading_the_core_calls_no_object() {
         .unwrap();
     let err = text(&out.stderr);
     assert!(out.status.success(), "{}{err}", text(&out.stdout));
-    assert!(!err.contains("objects linked"), "{err}");
+    // Other prebuilt modules' objects are linked (the blocks of module state, the string
+    // methods the runner calls): the core's is not.
+    assert!(!err.contains("lang/hooks/weak: object found"), "{err}");
+    assert!(
+        err.contains("lang/hooks/module_blocks: object found"),
+        "{err}"
+    );
 }

@@ -167,10 +167,12 @@ pub const STR_TEXT_AGG_NAME: &str = "string text";
 /// analysis (velt_codegen_llvm `tbaa.rs`).
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
+pub mod arch;
 pub mod atomic;
 pub mod c_abi;
 pub mod eh;
 pub mod fingerprint;
+pub mod heap;
 mod lower;
 
 /// The argument types of lowering's typed hook builders (`lower/hook_calls.rs`), generated from
@@ -208,6 +210,7 @@ pub mod mangle;
 pub mod math;
 pub mod parallel;
 pub mod simd;
+pub mod start_up;
 pub mod tls;
 mod verify;
 

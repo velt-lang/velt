@@ -2,8 +2,8 @@
 
 Status: **accepted direction** (#3222, maintainer review 2026-11-18), revision 2: the review's
 answers to the open questions and its changes A–E are written in below. Step 1 is built with this
-note (#3230), step 2 with #3263 (§2 "As built in step 2"); steps 3–6 follow, one pull request
-each.
+note (#3230), step 2 with #3263 (§2 "As built in step 2"), step 3 after it (§2 "As built in step
+3"); steps 4–6 follow, one pull request each.
 
 Related: #1981 (intrinsics, intrinsics.md), #2203 (compile-time decorators), #1055 (SIMD),
 #1866 (numeric workloads), #2402 (wide multiply, add-with-carry), #3094 (`Ptr<T>`), #2943 /
@@ -245,6 +245,44 @@ only tests the portable path. Step 4 adds:
 - The LLVM native tests compare each table row with clang; they test the instructions, these two
   test the packages.
 
+**As built in step 4.** The table is Rust, not TOML: `crates/velt_vir/src/arch/table.rs`, a row
+per instruction with its class's feature, Velt name, C intrinsic, mnemonic, signature (scalars
+and velt/simd's 128-bit lane types), how LLVM computes it (an intrinsic, or a few lines of IR) and
+a one-sentence doc. xtask has no TOML parser, and velt_common's feature table set the pattern.
+
+- **Generated.** Each row is a static method of its feature's class (`Sse42.crc32U64`), calling
+  its extern `velt_arch_<class>_<method>`; `velt_vir::arch::render` writes the methods and
+  externs at the end of each class file (after `isSupported`, from a marker line) and
+  `docs/internals/arch-c-names.md`, the C-name index. velt_vir's `arch::tests` fails while they
+  are stale; `cargo xtask gen-arch` runs it with `VELT_BLESS=1`, which rewrites them.
+- **Names.** Velt has no nested classes or functions in namespaces, so `Sse42.X64.crc32` is
+  `Sse42.crc32U64`: a method per operand width where the instruction has several (`U8` … `U64`),
+  .NET's names otherwise (`parallelBitDepositU64`, `shuffle`, `dotProductI8`).
+- **Gating.** A static method of a velt/arch class other than `isSupported` is gated on its
+  class's feature, as if it had its `@targetFeature` (velt_sema `body/gated.rs`): a call needs
+  the check (or one whose feature implies it, `Avx2.isSupported()` for SSE4.2) or a gated caller,
+  and the method is compiled for the feature. Taken as a value it is an error, and only std may
+  declare a `velt_arch_*` extern.
+- **Lowering.** The extern is `SimdCall::Arch(ArchOp)`. LLVM computes it in a helper carrying
+  the row's feature (`gated_features`), which inlines into the gated method; unlike SHA, AES and
+  PCLMULQDQ, the features are never added program-wide, since LLVM would then use POPCNT or BMI2
+  anywhere. Cranelift gives a zero (it never runs gated code). The verifier rejects one in a
+  function whose target does not cover the row's feature; velt_opt never inlines a gated function
+  into a caller with another target, so none moves out.
+- **First batch** (42 rows: 27 for x86-64, 15 for arm64): SSE4.2's CRC32, POPCNT, LZCNT, BMI1 (`andn`, `tzcnt`, `blsi`,
+  `blsr`, `blsmsk`, `bextr`), BMI2 (`bzhi`, `pdep`, `pext`), SSSE3's `pshufb`; arm64's CRC32 and
+  CRC32C, 64-bit PMULL, the dot products (`udot`, `sdot`) and I8MM (`ummla`, `smmla`, `usdot`).
+  Left for later: the baseline instructions of an architecture (`tbl`, `tbx`, `ext`,
+  `movemask`), which need a check of the architecture alone; those with an immediate operand
+  (`palignr`); `prefetch`, which velt/simd has (`arrayPrefetch`). SSE4.2's LLVM features now
+  include `+crc32`, which LLVM's backend keeps apart from SSE4.2.
+- **Tests.** `velt_codegen_llvm` `tests/arch.rs` compiles each row's helper in a function gated on
+  its feature and the row's C intrinsic with clang, for the row's architecture, and finds the row's
+  instruction in both. veltc's `arch_instructions.rs` runs every row of the host's architecture in
+  a release program and compares each answer with a reference written from the manual (and the
+  rows a CPU lacks print `-`, as Rust's detection says). The double `velt test` run is not part of
+  this step yet.
+
 ## 4. 256- and 512-bit register types (G5) — step 5
 
 `velt/arch/x86` adds the opaque register types `Vector256<T>` / `Vector512<T>` (.NET's names,
@@ -315,6 +353,48 @@ Once #2402 lands, `a + b` compiles to `adds`/`adc` (arm64) or `add`/`adc` (x86-6
 - **New primitive types from packages** (`i128`, `f8`): compiler decisions; packages build them as
   §6 does.
 
+**As built in step 3.** The model is velt_common's `cpu_features`: one table of 33 features (the
+24 of the start-up check's x86 list, SSE3 to AES, and nine of arm64: DOTPROD, SHA2, PMULL, CRC32,
+SHA3, FP16, I8MM, BF16, AES), each with its bit in the feature word, the features it implies
+(`sha-x86` implies SSE4.1 and down), its LLVM features and its velt/arch class. `CpuFeature` and
+the set `CpuFeatures` are `hir::CpuTarget` / `CpuTargets` and `velt_vir::simd::Ext` / `ExtSet`
+(`vir::Function::target` is a set). `@targetFeature(...targets)` takes several of the 33 names
+(`"avx2-x86"`, `"crc-arm"`; today's eight keep theirs), and a gated call needs every feature of
+its target covered by the caller's set and the checks around it. std/lang/cpu/masks.velt is
+generated from the table and checked against it.
+
+- **The checks.** `velt/arch/x86` and `velt/arch/arm` have a class per feature (`Sse42`, `Avx2`,
+  `Crc32`, `Pmull`, …) with a static `isSupported()`: a **method**, not the review's property,
+  because Velt has no static getters yet; making it a getter later changes only the classes.
+  `isSupported()` is `velt_simd_has_<feature>()` (true at compile time where `--cpu` or the
+  caller's set covers the feature) or `velt_simd_on_<arch>()` and the start-up word's bits (false
+  on the other architecture, on wasm and under Cranelift, so gated code is never lowered there).
+  velt/simd's ten old methods (`u64x2.hasClmulX86()`, …) call the new checks and say so; the
+  `perf/cpu-check-in-loop` lint finds both by definition.
+- **Detection in std.** `cpuStart` (std/lang/hooks/cpu.velt, a `std_hooks` role that replaces
+  `velt_rt_check_cpu`) runs first in `velt_main` and does the start-up check in Velt
+  (std/lang/cpu: CPUID and XGETBV on x86-64, `getauxval`, `sysctlbyname` or
+  `IsProcessorFeaturePresent` on arm64, `VELT_CPU_DISABLE` and `VELT_SIMD_DISABLE`, the message).
+  The driver fills in what the build needs (`velt_simd_cpu_required()`, `--cpu`).
+  `velt_rt/src/cpu.rs` is deleted and no runtime code replaces it (#2196): the word is the
+  compiler's (`velt_simd_cpu_word_set` / `velt_simd_cpu_word`; under LLVM one `linkonce_odr`
+  global per program), CPUID and XGETBV are the existing intrinsics, and Cranelift, which has no
+  instruction for either and builds debug programs for `--cpu`'s features too, gets a function of
+  fixed SSE2 code for each (velt_codegen_cl `cpuid.rs`), so the check runs in debug builds as
+  well. The start-up hook's reads of the operating system are not counted as input
+  (`driver/outside.rs`): a test's result stays cached.
+- **The check runs on the CPU it checks.** It and everything it reaches are compiled for the
+  architecture's baseline CPU whatever `--cpu` says (`vir::Function::baseline`, marked by
+  `velt_vir::start_up` after lowering and again after `velt_opt`): LLVM states the baseline as
+  `target-cpu` on them and on their module's helpers, Cranelift compiles them with a baseline
+  ISA, and the std cache never serves them. Otherwise an x86-64-v4 build on a CPU without AVX-512
+  died of an illegal instruction in the check's own code (review of #3293);
+  crates/veltc/tests/start_up_baseline.rs disassembles them.
+- **`@targetFeature` names one to all of an architecture's features**: `@targetFeature()` and a
+  list mixing x86-64 and arm64 features are errors.
+- **`--cpu` folding** reaches every feature: `Fma.isSupported()` or `Aes.isSupported()` is the
+  constant `true` in a build for a CPU that has it, as SHA and PCLMULQDQ already were.
+
 ## Steps
 
 1. **This note; `@inline` (hint) / `@inline("always")` / `@noInline` for every module; std on
@@ -324,7 +404,8 @@ Once #2402 lands, `a + b` compiles to `adds`/`adc` (arm64) or `add`/`adc` (x86-6
    outside std; a bare `@inline` in std is an error.
 2. **`@targetFeature` for every module, for today's eight targets; std migrated** (built: §2 "As
    built in step 2"). The rule for function values (B) was already enforced.
-3. **One CPU-feature model, detection in std (A), `isSupported`, the in-loop lint (C):**
+3. **One CPU-feature model, detection in std (A), `isSupported`, the in-loop lint (C)** (built:
+   §2 "As built in step 3"):
    `CpuFeatures`, the two lists, `cpuid` / `xgetbv` / the OS calls, the start-up static, `--cpu`
    folding; `velt_rt/src/cpu.rs` deleted. The instruction-set classes and their `isSupported`, the
    `cpu-check-in-loop` lint, and velt/simd's old checks deprecated (moved here from step 2).

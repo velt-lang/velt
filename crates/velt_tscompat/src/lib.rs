@@ -51,6 +51,7 @@ pub const RULES: &[&str] = &[
     "velt-member",
     "catch-unknown",
     "unsafe",
+    "weak-type",
 ];
 
 /// How serious a [`Finding`] is.

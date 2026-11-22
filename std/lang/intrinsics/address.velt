@@ -4,6 +4,7 @@
 // unsafe functions.
 
 import { intrinsic } from "./decorators";
+import type { Ptr } from "velt/ffi/ptr";
 import type { Copied } from "./modes";
 
 /**
@@ -20,6 +21,21 @@ export declare unsafe function addressLoad<T>(address: usize): T;
  */
 @intrinsic
 export declare unsafe function addressArray<T>(address: usize, length: usize): T[];
+
+/**
+ * As `addressArray`, with an owner that is told when the array is dropped: `owner` is the
+ * address of a block whose first word is the address of a function C can call with the block
+ * (`fnAddress`, or `exportedAddress` of an `@export` function), and dropping the array calls
+ * it, once. A copy of the array is an ordinary array without an owner. Unsafe: as
+ * `addressArray`, where the memory and the block must stay until that call; the block's
+ * address is not 0 and is below 2^63.
+ */
+@intrinsic
+export declare unsafe function addressArrayOwned<T>(
+  address: usize,
+  length: usize,
+  owner: usize,
+): T[];
 
 /**
  * Writes `value`, a `T` (a number type or `bool`), at `address`, unchecked. Unsafe: the memory
@@ -87,6 +103,18 @@ export declare unsafe function addressAtomicCasWeak<T>(
   order: "relaxed" | "acquire" | "release" | "acqrel" | "seqcst",
   failure: "relaxed" | "acquire" | "seqcst",
 ): bool;
+
+/**
+ * The pointer to `address`, unchecked: velt/ffi's `Ptr.at` and `Ptr.orNull` test for 0 first.
+ * Unsafe: `address` must not be 0 (a `Ptr<T>` is never `NULL`), and a `T` must be there for the
+ * code that reads or writes through it.
+ */
+@intrinsic
+export declare unsafe function ptrFromAddress<T>(address: usize): Ptr<T>;
+
+/** The address `p` holds, 0 for `null` (velt/ffi's `Ptr.addressOf`). */
+@intrinsic
+export declare function ptrToAddress<T>(p: Ptr<T> | null): usize;
 
 /**
  * The address of the C function of `f`, a function decorated `@export("c_name")` (velt/ffi), for
