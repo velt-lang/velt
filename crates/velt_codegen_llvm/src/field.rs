@@ -183,21 +183,23 @@ fn adx_sqr() -> Vec<String> {
 /// one addition. Afterwards the low half is in `t0..t3` rotated: limb `k` in `T[(4 + k) % 4]`'s
 /// slot as [`low`] names it.
 fn reduce_low(out: &mut Vec<String>) {
+    // BMI2 (which the ADX forms have too): RDI the shift count and RSI p's top limb, so a
+    // round is three-operand shifts and one `mulx` for `m p3`; the operand pointers are done.
+    out.push("movl $$32, %edi".into());
+    out.push("movabsq $$0xffffffff00000001, %rsi".into());
     for r in 0..4 {
         let u = |k: usize| T[(r + k) % 4];
         let (u0, u1, u2, u3) = (u(0), u(1), u(2), u(3));
-        out.push(format!("movq {u0}, %rax"));
-        out.push("shlq $$32, %rax".into());
-        out.push(format!("movq {u0}, %rcx"));
-        out.push("shrq $$32, %rcx".into());
         out.push(format!("movq {u0}, %rdx"));
-        out.push("subq %rax, %rdx".into());
-        out.push(format!("sbbq %rcx, {u0}"));
+        out.push(format!("shlxq %rdi, {u0}, %rax"));
+        out.push(format!("shrxq %rdi, {u0}, %rcx"));
         out.push(format!("addq %rax, {u1}"));
         out.push(format!("adcq %rcx, {u2}"));
-        out.push(format!("adcq %rdx, {u3}"));
-        // The round's top limb: m - (m >> 32) - borrow, plus the carry.
-        out.push(format!("adcq $$0, {u0}"));
+        out.push("mulxq %rsi, %rax, %rcx".into());
+        out.push(format!("adcq %rax, {u3}"));
+        // The round's top limb: the high half of m p3, plus the carry.
+        out.push("adcq $$0, %rcx".into());
+        out.push(format!("movq %rcx, {u0}"));
     }
 }
 
