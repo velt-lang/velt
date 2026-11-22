@@ -9,6 +9,7 @@ import { charAt } from "velt/text/regex/decode";
 import { backward } from "velt/text/regex/dfa_backward";
 import { Dfa, GAVE_UP } from "velt/text/regex/dfa";
 import { thaw } from "velt/text/regex/dfa_tables";
+import { onePass, UNSURE } from "velt/text/regex/one_pass";
 import { pike, pikeReset } from "velt/text/regex/pike";
 import {
   candidate,
@@ -59,6 +60,17 @@ export function findAll(prog: Program, m: Search, s: string): void {
     return;
   }
   m.forget();
+  // The byte every match has is looked for once: without it there is none, and with it each
+  // search finds its own place by its scan (a search memory that found it at `len` looks no
+  // more, `hasRequired`). Not for a program that reads back from where that byte is
+  // (`suffixed`), which needs where it is.
+  if (prog.required >= 0 && !prog.suffix) {
+    if (findByte(s, prog.required as u8, 0, len) < 0) {
+      return;
+    }
+    m.reqFrom = 0;
+    m.reqAt = len as i64;
+  }
   let pos: usize = 0;
   while (pos <= len && find(prog, m, s, pos, false)) {
     for (let k: usize = 0; k < m.slots.length; k++) {
@@ -311,7 +323,9 @@ function scan(
       }
       pos = next as usize;
     }
-    const found = backtrack(prog, m, s, len, pos, memory);
+    // A place the one-pass reader answers needs no backtracker (one_pass.velt).
+    const read = prog.onePass && !memory ? onePass(prog, m, s, len, pos) : UNSURE;
+    const found = read != UNSURE ? read : backtrack(prog, m, s, len, pos, memory);
     if (found != FAILED || fixed || pos >= len) {
       return found;
     }

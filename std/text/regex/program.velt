@@ -123,6 +123,9 @@ export class Program {
   /** `endsAtEnd` or `suffix`, and not anchored: a call may search by the backward
    * automaton's kept tables alone (quick.velt). */
   quick: bool = false;
+  /** Every choice is made by the next character and no span gives back: a place is matched in
+   * one pass (one_pass.velt). */
+  onePass: bool = false;
 
   /** Per instruction, which hint a split has, plus one (0: none), and the hints: 128 bytes
    * each, per ASCII character whether the split's first way can start with it (1), its second

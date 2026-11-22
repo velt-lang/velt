@@ -1,0 +1,211 @@
+// velt/text (internal): a match from one place, read in one pass: where every split's next
+// character says which way goes on (hints.velt) and no span ever has to give back (compiler.velt
+// `nothingAfter`), the program has one way to go from each position, and a character that does
+// not fit it means no match starts there. Many short matches (`<[^>]*>`, `>.*\n|\n`) are found so
+// without the backtracker's stack. Where a split's ways may both start with the next character,
+// or the next character is past ASCII, it says so, and the backtracker takes the place (the
+// steps so far are not charged then: the backtracker charges its own, so a place costs at most
+// twice what it did).
+
+import { addressLoad, arrayReadAddress, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { FAILED, MATCHED, SPENT } from "velt/text/regex/backtrack";
+import { byteAt, charAt } from "velt/text/regex/decode";
+import { AT_END } from "velt/text/regex/node";
+import {
+  OP_ASSERT,
+  OP_CHAR,
+  OP_CLASS,
+  OP_CLEAR,
+  OP_JUMP,
+  OP_MASK,
+  OP_MATCH,
+  OP_SAVE,
+  OP_SPAN,
+  OP_SPLIT,
+  Program,
+} from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
+
+/** What `onePass` says where it cannot tell: the backtracker takes the place. */
+export const UNSURE: i64 = -3;
+
+/** Can `prog` be read in one pass (`onePass`)? Every split has a hint, every span never gives
+ * back, every character is ASCII, and nothing else but classes, jumps, saves, clears, `$` and
+ * the match is in it. */
+export function readsInOnePass(prog: Program): bool {
+  const code = prog.code;
+  if (prog.hintAt.length == 0 || !prog.plain) {
+    return false;
+  }
+  for (let pc: usize = 0; 3 * pc < code.length; pc++) {
+    const op = code[3 * pc] & OP_MASK;
+    const a = code[3 * pc + 1];
+    const b = code[3 * pc + 2];
+    const fits =
+      (op == OP_CHAR && a < 0x80) ||
+      op == OP_CLASS ||
+      op == OP_JUMP ||
+      op == OP_SAVE ||
+      op == OP_CLEAR ||
+      op == OP_MATCH ||
+      (op == OP_SPLIT && prog.hintAt[pc] != 0) ||
+      (op == OP_SPAN && b != 0) ||
+      (op == OP_ASSERT && a == AT_END);
+    if (!fits) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Is there a match of `prog` (one that `readsInOnePass`) in the `len` bytes of `s` that starts
+ * at byte `start`? `MATCHED`, its slots in `m.slots` (as many as it has); `FAILED`; `UNSURE`
+ * where the next character does not decide; or `SPENT`: the steps are taken from `m.fuel`, a
+ * step per instruction and per character a span reads, as the backtracker takes them. */
+export function onePass(prog: Program, m: Search, s: string, len: usize, start: usize): i64 {
+  const slots = m.slots;
+  const count = slots.length;
+  for (let k: usize = 0; k < count; k++) {
+    slots[k] = -1;
+  }
+  const base = strDataAddress(s);
+  // SAFETY: the program never changes once compiled and this call borrows it; these addresses
+  // are only read through, below.
+  const code = unsafe { arrayReadAddress(prog.code) };
+  // SAFETY: as `code`.
+  const hintAt = unsafe { arrayReadAddress(prog.hintAt) };
+  // SAFETY: as `code`.
+  const hints = unsafe { arrayReadAddress(prog.hints) };
+  // SAFETY: as `code`.
+  const ascii = unsafe { arrayReadAddress(prog.ascii) };
+  let fuel = m.fuel;
+  let pc: usize = 0;
+  let pos = start;
+  while (true) {
+    fuel--;
+    if (fuel < 0) {
+      m.fuel = -1;
+      return SPENT;
+    }
+    // SAFETY: an instruction is three `u32`s, and `pc` is one of the program's: it starts at 0
+    // and takes only the successors and targets the compiler wrote.
+    const op = unsafe { addressLoad<u32>(code + 12 * pc) } & OP_MASK;
+    // SAFETY: the second word of instruction `pc`.
+    const a = unsafe { addressLoad<u32>(code + 12 * pc + 4) } as usize;
+    // SAFETY: the third word of instruction `pc`.
+    const b = unsafe { addressLoad<u32>(code + 12 * pc + 8) } as usize;
+    if (op == OP_SAVE) {
+      if (a < count) {
+        slots[a] = pos as i64;
+      }
+      pc = b - 1;
+      continue;
+    }
+    if (op == OP_JUMP) {
+      pc = a;
+      continue;
+    }
+    // The next byte, 0x100 where the subject ends.
+    const next = pos < len ? byteAt(base, pos) as usize : 0x100;
+    if (op == OP_CHAR) {
+      // `readsInOnePass`: `a` is ASCII.
+      if (next != a) {
+        return failed(m, fuel);
+      }
+      pos++;
+      pc = b - 1;
+    } else if (op == OP_CLASS) {
+      if (next >= 0x80) {
+        return next == 0x100 ? failed(m, fuel) : UNSURE;
+      }
+      // SAFETY: `ascii` has two `u64`s per set (compiler.velt), `a` is the class's set, and
+      // `next < 0x80` picks one of the two.
+      const word = unsafe { addressLoad<u64>(ascii + 16 * a + 8 * (next >> 6)) };
+      if (((word >> ((next & 63) as u64)) & 1) == 0) {
+        return failed(m, fuel);
+      }
+      pos++;
+      pc++;
+    } else if (op == OP_SPLIT) {
+      if (next >= 0x80) {
+        return UNSURE;
+      }
+      // SAFETY: `hintAt` has one entry per instruction (hints.velt).
+      const hint = unsafe { addressLoad<u32>(hintAt + 4 * pc) } as usize;
+      // SAFETY: `readsInOnePass`: every split has a hint, the number of one plus one; each hint
+      // is 128 bytes, and `next < 0x80`.
+      const ways = unsafe { addressLoad<u8>(hints + 128 * (hint - 1) + next) };
+      if (ways == 0) {
+        // Neither way can start with the next character.
+        return failed(m, fuel);
+      }
+      if (ways == 3) {
+        return UNSURE;
+      }
+      pc = ways == 1 ? a : b;
+    } else if (op == OP_SPAN) {
+      const from = pos;
+      pos = spanEnd(prog, base, pos, len, a, fuel);
+      fuel -= (pos - from) as i64;
+      pc++;
+    } else if (op == OP_CLEAR) {
+      for (let k = a; k < b && k < count; k++) {
+        slots[k] = -1;
+      }
+      pc++;
+    } else if (op == OP_ASSERT) {
+      // `$`, `readsInOnePass` says: where the subject ends.
+      if (pos != strByteLen(s)) {
+        return failed(m, fuel);
+      }
+      pc++;
+    } else {
+      // `OP_MATCH`.
+      m.fuel = fuel;
+      return MATCHED;
+    }
+  }
+  return UNSURE;
+}
+
+/** A place with no match: `m`'s slots cleared (as the backtracker leaves them), its fuel
+ * `fuel`. */
+function failed(m: Search, fuel: i64): i64 {
+  const slots = m.slots;
+  for (let k: usize = 0; k < slots.length; k++) {
+    slots[k] = -1;
+  }
+  m.fuel = fuel;
+  return FAILED;
+}
+
+/** Where the characters of set `set` of `prog` from byte `from` on end, at most at `len`, and
+ * at most `fuel` characters on (which runs out the caller's fuel: it then gives up). */
+function spanEnd(
+  prog: Program,
+  base: usize,
+  from: usize,
+  len: usize,
+  set: usize,
+  fuel: i64,
+): usize {
+  const low = prog.ascii[2 * set];
+  const high = prog.ascii[2 * set + 1];
+  const reach = (len - from) as i64 <= fuel ? len : from + (fuel as usize) + 1;
+  let pos = from;
+  while (pos < reach) {
+    const c = byteAt(base, pos);
+    if (c >= 0x80) {
+      const packed = charAt(base, pos, prog.units);
+      if (!prog.sets[set].contains(packed & 0xffffff)) {
+        break;
+      }
+      pos += (packed >> 24) as usize;
+    } else if ((((c < 64 ? low : high) >> ((c & 63) as u64)) & 1) == 0) {
+      break;
+    } else {
+      pos++;
+    }
+  }
+  return pos;
+}
