@@ -34,6 +34,9 @@ use Intrinsic as I;
 pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // any.velt
     ("anyDelete", Op(I::AnyDelete)),
+    ("anyPromise", Op(I::AnyPromise)),
+    ("anyIsPromise", Op(I::AnyIsPromise)),
+    ("holdsDynamic", Op(I::HoldsDynamic)),
     ("anyIsList", Op(I::AnyIsList)),
     ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),

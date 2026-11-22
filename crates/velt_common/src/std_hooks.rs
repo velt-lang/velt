@@ -85,8 +85,7 @@ with_decorator_hooks! {
     /// `n.toString(radix)` of an unsigned integer.
     u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string),
         replaces("velt_rt_u64_to_radix");
-    /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, `velt_opt`
-    /// numrep).
+    /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
     /// An array index written as a float (`xs[i]` with `i: number`): ts-compat.md.
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
@@ -112,8 +111,7 @@ with_decorator_hooks! {
     /// `toExponential()`) and the float hooks of velt/lang/hooks/number_text and number_write.
     number_shortest => lang_hooks_number_shortest, "shortestText", sig((f64) -> string),
         replaces("velt_rt_str_from_f64"), prebuilt;
-    /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
-    /// string held as `any`).
+    /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
         replaces("velt_rt_str_locale_compare"), bench("locale_compare");
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
@@ -535,6 +533,10 @@ with_decorator_hooks! {
     any_prim_keep => lang_hooks_any_ops, "anyPrimKeep", sig((move any, &string) -> any), lowered;
     /// A method's result when it is a primitive, else the next method's (`velt_sema` `any_prim.rs`).
     any_prim_then => lang_hooks_any_ops, "anyPrimThen", sig((move any, &Fn(() -> any)) -> any);
+    /// What an `await` of an `any` or `unknown` waits for (`velt_sema` `await_value.rs`, #924).
+    await_any => lang_hooks_any_ops, "awaitAny", sig((&unknown) -> Promise(unknown, unknown));
+    /// Does an `any` hold an object or a function (the thenable stop, `await_value.rs`, #3412)?
+    any_holds_object => lang_hooks_any_ops, "anyHoldsObject", sig((&any) -> bool);
     /// `ToNumber` of an object an `any` holds, for `-`, `*`, `<`, `+x` (`dynamic_arith.rs`).
     any_object_number => lang_hooks_any_ops, "anyObjectNumber", sig((&any, &string) -> f64);
     /// `a + b` of dynamic values one of which holds a string or an object (`dynamic_arith.rs`).
