@@ -157,6 +157,11 @@ export function idleDuties(g: usize): bool {
 /**
  * Nothing for a spare to do, and worker 0 (`g`) not stalled at tick `now`: every spare (`n`
  * started workers) asleep with nothing queued, no task between two workers, nothing offered.
+ * A spare asked to retire, or retired, and in no poll counts as asleep while awake: the ask's
+ * own wake (`ask`) gets it up to answer (`retiredLook`), and a retired one hands on what reaches
+ * it. Taken for busy, the request was taken back before the answer whenever the OS was slow to
+ * run the spare's thread (a tick, on a loaded machine), the ask came again `CALM_TICKS` later, and
+ * worker 0 stayed shared, its workers woken over and over (#3500).
  */
 function calm(g: usize, n: usize, now: usize): bool {
   if (mon.stalled(g, now) || m.load(g + t.E_MOVING) !== 0) {
@@ -165,7 +170,8 @@ function calm(g: usize, n: usize, now: usize): bool {
   for (let i: usize = 1; i < n; i++) {
     const s = t.worker(i);
     if (
-      m.load32(s + t.E_PARK) !== 1 ||
+      (m.load32(s + t.E_PARK) !== 1 &&
+        ((m.load32(s + t.E_RETIRED) & t.R_AWAY) === 0 || m.load(s + t.E_CURRENT) !== 0)) ||
       m.load(s + t.E_INBOX) !== 0 ||
       m.load(s + t.E_OFFER) !== 0 ||
       q.any(s)

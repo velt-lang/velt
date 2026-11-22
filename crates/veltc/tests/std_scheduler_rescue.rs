@@ -560,13 +560,9 @@ async function main() {
 /// run. Each round a task prints on lazy worker 0, is moved to a spare and prints there (the
 /// first line published after the poll that printed it); `main` prints in the poll the rescue made
 /// shared, after the hand-over (published when worker 0 takes on the shared mode), then lets the
-/// task print once more. No line may be lost or come out of order; two hand-overs at least mean
-/// worker 0 was lazy again after one, so its marks were set again (process.velt `setLazyWorker`).
+/// task print once more. No line may be lost or come out of order; hand-overs after the first
+/// mean worker 0 was lazy again, so its marks were set again (process.velt `setLazyWorker`).
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "#3148: on a loaded Windows runner worker 0 may never be lazy again within the rounds"
-)]
 fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
     flip_rounds(&flip_output(TIMER_WAIT));
 }
@@ -581,8 +577,16 @@ fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sl
     flip_rounds(&flip_output("sleep(40)"));
 }
 
+/// Of five rounds that each start with a rescue of a lazy worker 0, how many must find it lazy
+/// (`locks-on`): after the first, worker 0 is lazy again in two of the four pauses at least. Each
+/// pause gives the spares time to retire many times over; on a loaded machine one may still miss.
+/// The monitor used to take its request to retire back whenever a spare it had just woken to
+/// answer was slow to run (a tick; #3148, #3500), so on a machine with fewer cores than busy
+/// threads worker 0 was lazy again in one pause of four or none in most runs.
+const LAZY_ROUNDS_MIN: u64 = 3;
+
 /// Five rounds of `src` (a [`FLIP_OUTPUT`]): each run's lines in order, and worker 0 lazy again
-/// after a rescue at least once.
+/// after a rescue in two pauses of four at least ([`LAZY_ROUNDS_MIN`]).
 fn flip_rounds(src: &str) {
     if !has_threads() {
         return;
@@ -601,8 +605,8 @@ fn flip_rounds(src: &str) {
         let what = format!("run {i}");
         check(&r, &what, &want, 0);
         assert!(
-            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
-            "{what}: worker 0 was not lazy again after a rescue: {}",
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= LAZY_ROUNDS_MIN),
+            "{what}: worker 0 was lazy again in fewer than two pauses of four: {}",
             r.err
         );
     }
@@ -673,8 +677,8 @@ fn a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire() {
         let what = format!("run {i}");
         check(&r, &what, &want, 0);
         assert!(
-            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
-            "{what}: worker 0 was not lazy again after a rescue: {}",
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= LAZY_ROUNDS_MIN),
+            "{what}: worker 0 was lazy again in fewer than two pauses of four: {}",
             r.err
         );
     }
