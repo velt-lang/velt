@@ -3,7 +3,8 @@
 //! a row cursor and a parameter sink, and the program reads rows with `decodeRows` and
 //! `decodeRow` (plain fields, a nested-free struct read by column, a class read through the JSON
 //! decoder, a row that does not fit, every cell kind through the JSON decoder and as `JsonValue`s,
-//! a nested value's own mismatch, unions that look ahead within a row and from the top, which
+//! a blob read as numbers, a fractional float refused as an integer, a nested value's own
+//! mismatch, unions that look ahead within a row and from the top, which
 //! copies the rows out of the cursor) and binds parameters with `bindParams` (an object, an array,
 //! a lone value, types that go as JSON instead). A handle is a key the runtime checks: a made-up
 //! number, a closed cursor's handle or a sink's handle used as a cursor's throws `RowError` (binds
@@ -82,6 +83,19 @@ struct BadMeta {
   meta: { tags: f64[] };
 }
 
+// A blob read as numbers (each byte through the reader's number path).
+class BlobNumbers {
+  data: f64[] = [];
+}
+
+// A float cell that is not an integer, read into an integer field (the `JsonValue` field sends
+// the row through the JSON decoder): a mismatch at its path.
+class ScoreAsInteger {
+  id: i64 = 0;
+  score: i64 = 0;
+  note: JsonValue = JsonValue.of(null);
+}
+
 // A union told apart by a column after the first (`score`, which only one member requires):
 // the decoder looks ahead in the row.
 type Either = { id: i64; score: f64 } | { id: i64; missing: string };
@@ -124,6 +138,14 @@ function main() {
   console.log(mixedOne<JsonValue>());
   for (const v of mixed<Values>(2)) {
     console.log(JSON.stringify(v.meta), JSON.stringify(v.data), JSON.stringify(v.raw));
+  }
+  for (const b of mixed<BlobNumbers>(3)) {
+    console.log(b.data);
+  }
+  try {
+    all<ScoreAsInteger>(2);
+  } catch (e) {
+    console.log(e instanceof RowError, e.message);
   }
   try {
     mixed<BadMeta>(2);
@@ -193,6 +215,10 @@ false [ 0, 7, 255 ] [ 't3', 'x' ] 3 [ true, null ] caf� \"q\" 6 null
 }
 {\"tags\":[\"t1\",\"x\"],\"n\":1,\"deep\":{\"k\":[true,null]}} [0] \"caf� \\\"q\\\"\"
 {\"tags\":[\"t2\",\"x\"],\"n\":2,\"deep\":{\"k\":[true,null]}} [0,7] \"caf� \\\"q\\\"\"
+[ 0 ]
+[ 0, 7 ]
+[ 0, 7, 255 ]
+true expected i64 at $[0].score
 true expected number at $[0].meta.tags[0]
 {\"id\":1,\"score\":1.5}
 {\"id\":2,\"score\":3}
