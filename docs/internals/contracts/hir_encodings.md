@@ -1898,8 +1898,14 @@ or string; for `any` or `unknown`, the tree as written). An abstract property
 one and no other HIR type changes. Lowering reads only the decorators the compiler acts on, each
 found by its `def`'s qualified name from the hook table (`std_hooks`, `decorator_*`): `@inline`
 and `@noInline` on a `Def(f)` set `vir::Function::inline` (contracts README "Inlining
-decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error
-(#2204), so it never gets here.
+decorators"); `@repr("transparent")` and `@align(n)` on a struct's `Def` (velt/compiler,
+`decorator_repr`, `decorator_align`; docs/internals/design/package-machine-code.md §5) are read
+for its layout and its C crossing: `@align`'s one argument is an `Int`, a power of two from 1 to
+4096, which raises the value aggregate's alignment and pads its size; a transparent struct has
+exactly one field, neither optional nor `void`, and where it crosses to C the `CTy` is its field's
+(lowering passes the field and builds the struct around a result); sema reports both on
+anything but a struct, and the pair together. `@intrinsic` is sema's alone. A TC39 run-time
+decorator is a compile error (#2204), so it never gets here.
 
 `@export("c_name")` (velt/ffi, `std_hooks` `decorator_export`, #2203) is read through its
 own side table, `Program::c_exports: Vec<CExport>`, in the order sema checked them (empty without
@@ -1908,7 +1914,8 @@ that is neither generic, async nor a generator and throws nothing (`throws` is `
 `never`); `name` a C identifier no other export, `declare c` function, the runtime (`velt_…`) or
 C (`__…`, `_X…`, `main`, keywords, the common C library names) has; `params` and `ret` what
 crosses for each parameter and the result, as for a `declare c` function by value (integers,
-`F32`, `F64`, `Bool`, `Ptr`, and `Void` for the result). Lowering builds a C function for each
+`F32`, `F64`, `Bool`, `Ptr`, a `@repr("transparent")` struct's field's, and `Void` for the
+result). Lowering builds a C function for each
 (docs/internals/design/c-ffi.md "Exported functions"). `Intrinsic::ExportedAddress` (std only,
 `exportedAddress(f)`) has one argument, a `Lit::Int`: the index of `f`'s `CExport` there; its
 value is the C function's address as a `usize`.

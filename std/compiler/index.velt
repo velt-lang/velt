@@ -1,7 +1,7 @@
 // velt/compiler: decorators that tell the compiler how to compile a function, for std, packages
 // and programs alike (docs/internals/design/package-machine-code.md).
 //
-//   import { inline, noInline, targetFeature } from "velt/compiler";
+//   import { align, inline, noInline, repr, targetFeature } from "velt/compiler";
 //
 //   export struct Fixed {
 //     readonly raw: i64;
@@ -25,6 +25,16 @@
 //   } else {
 //     c = mulPortable(a, b);
 //   }
+//
+// `@repr("transparent")` passes a struct of one field exactly as that field, to C too, and
+// `@align(64)` aligns a struct's values (and pads its size) to 64 bytes:
+//
+//   @repr("transparent")
+//   export struct Meters { readonly m: f64; }
+//   declare c("geo") function distance(a: Meters, b: Meters): Meters; // C: double (double, double)
+//
+//   @align(64)
+//   struct Counter { n: u64; } // one cache line per element of a `Counter[]`
 
 /** How calls of a function are inlined: `@inline` (`"hint"`) or `@inline("always")`. */
 export { inline } from "velt/lang/intrinsics/decorators";
@@ -35,3 +45,7 @@ export { noInline } from "velt/lang/intrinsics/decorators";
  * (`if (Sha.isSupported()) { … }`) or in a function gated on features that cover them.
  */
 export { targetFeature } from "velt/lang/intrinsics/decorators";
+/** A struct of one field is passed exactly as that field, in registers and to C. */
+export { repr } from "velt/lang/intrinsics/decorators";
+/** A struct's values are aligned to `bytes`, and its size is a multiple of it. */
+export { align } from "velt/lang/intrinsics/decorators";

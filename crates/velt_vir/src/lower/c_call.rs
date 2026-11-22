@@ -163,15 +163,21 @@ impl FnLower<'_, '_> {
                 continue;
             }
             let v = match t {
-                // `Ptr<T>` and `Ptr<T> | null` are C's pointer word already (#3094).
-                CTy::Ptr { .. } => self.expr(a),
+                // `Ptr<T>` and `Ptr<T> | null` are C's pointer word already (#3094); a
+                // `@repr("transparent")` struct of one passes it.
+                CTy::Ptr { .. } => {
+                    let v = self.expr(a);
+                    self.unwrap_transparent(v, a.ty).0
+                }
                 CTy::Null => {
                     self.expr(a);
                     cint(0, Ty::Ptr)
                 }
                 _ => {
                     let v = self.expr(a);
-                    let v = self.freeze(v, a.ty);
+                    // A `@repr("transparent")` struct passes its field (`collect::c_sig`).
+                    let (v, ty) = self.unwrap_transparent(v, a.ty);
+                    let v = self.freeze(v, ty);
                     match (narrow(*t, wasm), c_vir(*t, wasm)) {
                         (true, ct) => self.rvalue_temp(ct, Rvalue::Cast(v, ct)),
                         (false, _) => v,
@@ -307,14 +313,22 @@ impl FnLower<'_, '_> {
         if vret != cret {
             result = self.rvalue_temp(cret, Rvalue::Cast(result, cret));
         }
-        match c.ret {
+        let result = self.c_result(&symbol, c.ret, result);
+        // A `@repr("transparent")` struct is built around what C returns (`collect::c_sig`).
+        self.wrap_transparent(result, ret)
+    }
+
+    /// What C function `symbol` returned (`result`, of its C type `ret`) as Velt's value of it.
+    fn c_result(&mut self, symbol: &str, ret: CTy, result: Operand) -> Operand {
+        let wasm = wasm32(&self.cx.target);
+        match ret {
             // The pointer word is `Ptr<T>` and `Ptr<T> | null` as they are (#3094).
             CTy::Ptr { nullable } => {
                 if !nullable {
                     // C has no non-null pointer type, so the header check can't see this: a NULL
                     // where the declaration says `Ptr<T>` stops the program here, not where the
                     // pointer is used (where it would read as `null`).
-                    let name = base_symbol(&symbol);
+                    let name = base_symbol(symbol);
                     self.stop_if_null(result.clone(), &format!(
                         "C function `{name}` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`"
                     ));

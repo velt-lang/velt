@@ -140,6 +140,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 |---|---|---|
 | `bool`, `i8`…`i64`, `u8`…`u64`, `isize`, `usize`, `f32`, `f64` | `_Bool`, `int8_t`…, `ssize_t`, `size_t`, `float`, `double` | by value; `bool` is C's `_Bool` only, never an `int` flag |
 | `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` |
+| a `@repr("transparent")` struct (velt/compiler) | its one field's C type | exactly as the field, on every target: `struct Meters { readonly m: f64; }` is a `double`, not a C struct of one (which Windows x64 passes in an integer register) |
 | `null` (as a parameter type) | any pointer | always `NULL` |
 | `readonly T[]`, `T[]` (`T` a number type), views of bytes | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |

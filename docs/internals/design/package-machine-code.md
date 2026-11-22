@@ -315,6 +315,36 @@ separate step on `velt/simd`.
 
 Both are compile-time decorators (#2203) in `velt/compiler`.
 
+**As built in step 6.** `velt/compiler` exports `repr` and `align` (declared in
+std/lang/intrinsics/decorators.velt, roles `decorator_repr` and `decorator_align`); sema's
+`decorators/layout.rs` checks them and lowering reads `Program::decorators` (no HIR type
+changes).
+
+- **Transparent.** "Exactly one non-zero-size field" is exactly one field, neither optional (its
+  presence flag is a second part) nor `void`. Where it crosses to C (`declare c` parameters and
+  results, `@export`), its `CTy` is its field's (`collect::c_sig::crossing_ty`, transparent of
+  transparent too), and lowering passes the field (`c_call.rs`) or builds the struct around what
+  C gives (`c_call.rs`'s result, `c_export.rs`'s parameters). A struct that breaks the rules
+  crosses as nothing, so its declaration is the usual error besides the rule's own. Not on a
+  class, an enum or a `declare c struct`, and not with `@align`, which would change its layout.
+  crates/veltc/tests/layout_decorators.rs builds a package with transparent structs of `f64`,
+  `f32`, `u64`, `u8` and `Ptr<u8>` for each of the four conventions, requires Velt's
+  declarations and exports to be those of the same package written with the fields' types, and
+  those to be the types clang declares the fields' C prototypes with; on Windows x64 clang passes
+  a C struct of one `double` as an `i64`, which is what the decorator rules out.
+  std/compiler/layout.test.velt calls the C library through them in debug and release builds.
+- **Align.** `n` is a power of two from 1 to 4096 (a page). "At least the natural alignment" is
+  not an error but a floor, as Rust's `repr(align)`: the struct's alignment is the larger of the
+  two, so `@align(2)` on a struct of a `u64` changes nothing, and a generic struct's natural
+  alignment, which depends on its type arguments, needs no check per instance. The size is a
+  multiple of the alignment, so arrays are padded, and a struct holding one takes its
+  alignment. Heap blocks (array buffers, boxes) come from `velt_rt_alloc` with the layout's
+  alignment, and LLVM aligns stack slots; Cranelift aligns a stack slot to at most 16 bytes from
+  the frame's start, which no Velt code can see (nothing takes a local's address), so debug
+  builds keep every guarantee a program can observe.
+- **Left for a later change:** the aligned forms of step 5's loads and stores (on a `Ptr<T>` to
+  an `@align(32/64)` type) and `@cold`.
+
 ## 6. What a numeric package writes
 
 ```ts

@@ -1,0 +1,125 @@
+// velt/compiler (tests): white-box tests, run by `velt test std/`.
+//
+// The layout decorators (docs/internals/design/package-machine-code.md §5): a
+// `@repr("transparent")` struct crosses to C as its one field, both ways, and an `@align(n)`
+// struct's values keep their fields in arrays, in other structs and in sets (the layouts
+// themselves: crates/veltc/tests/layout_decorators.rs).
+import { describe, expect, it } from "velt/test";
+import { Ptr } from "velt/ffi/ptr";
+import { align, repr } from "velt/lang/intrinsics/decorators";
+import { Set } from "velt/collections/set";
+
+@repr("transparent")
+struct Meters {
+  readonly m: f64;
+}
+
+@repr("transparent")
+struct Ratio {
+  readonly r: f32;
+}
+
+@repr("transparent")
+struct Count {
+  readonly n: i64;
+}
+
+/** A transparent struct of a transparent struct crosses as the innermost field. */
+@repr("transparent")
+struct Distance {
+  readonly meters: Meters;
+}
+
+@repr("transparent")
+struct Block {
+  readonly p: Ptr<u8>;
+}
+
+declare c("c") function sqrt(x: Meters): Meters;
+declare c("c") function cbrtf(x: Ratio): Ratio;
+declare c("c") function llabs(x: Count): Count;
+declare c("c") function sqrt$twice(x: Distance): Distance;
+declare c("c") function malloc(n: usize): Block;
+declare c("c") function memset(p: Block, c: i32, n: usize): Block;
+declare c("c") function free(p: Block): void;
+
+@align(64)
+struct Line {
+  readonly n: u64;
+}
+
+/** An aligned struct inside another: the outer one takes its alignment. */
+struct Tagged {
+  readonly tag: u8;
+  readonly line: Line;
+}
+
+/** `@align` never lowers the natural alignment. */
+@align(2)
+struct Word {
+  readonly w: u64;
+}
+
+describe("@repr(\"transparent\")", () => {
+  it("passes a struct of one number to C as the number", () => {
+    // SAFETY: `sqrt`, `cbrtf` and `llabs` take any value (`llabs` any but LLONG_MIN).
+    const root = unsafe { sqrt({ m: 2.25 }) };
+    const cube = unsafe { cbrtf({ r: 27 }) };
+    const abs = unsafe { llabs({ n: -42 }) };
+    expect(root.m).toBe(1.5);
+    expect(cube.r).toBe(3);
+    expect(abs.n).toBe(42);
+  });
+
+  it("passes a transparent struct of a transparent struct as the innermost field", () => {
+    // SAFETY: `sqrt` takes any double.
+    const d = unsafe { sqrt$twice({ meters: { m: 6.25 } }) };
+    expect(d.meters.m).toBe(2.5);
+  });
+
+  it("passes a struct of a pointer as the pointer", () => {
+    // SAFETY: the block is 16 bytes from `malloc`, written within them, and freed once.
+    const b = unsafe { malloc(16) };
+    const same = unsafe { memset(b, 7, 16) };
+    expect(Ptr.addressOf(same.p)).toBe(Ptr.addressOf(b.p));
+    unsafe {
+      free(b);
+    }
+    ;
+  });
+});
+
+describe("@align(n)", () => {
+  it("keeps each element of an array of aligned structs", () => {
+    const xs: Line[] = [{ n: 1 }, { n: 2 }, { n: 3 }];
+    xs.push({ n: 4 });
+    let sum: u64 = 0;
+    for (const x of xs) {
+      sum += x.n;
+    }
+    expect(sum).toBe(10);
+    expect(xs[3].n).toBe(4);
+  });
+
+  it("keeps the fields of a struct holding an aligned one", () => {
+    const ts: Tagged[] = [
+      { tag: 1, line: { n: 5 } },
+      { tag: 2, line: { n: 6 } },
+    ];
+    expect(ts[1].line.n + (ts[1].tag as u64)).toBe(8);
+    expect(ts[0].tag).toBe(1);
+  });
+
+  it("never lowers the natural alignment", () => {
+    const ws: Word[] = [{ w: 1 }, { w: 2 }];
+    expect(ws[0].w + ws[1].w).toBe(3);
+  });
+
+  it("compares and hashes by the fields, not the padding", () => {
+    const a: Line = { n: 9 };
+    const b: Line = { n: 9 };
+    expect(a === b).toBe(true);
+    const seen = new Set<Line>([a, b, { n: 10 }]);
+    expect(seen.size).toBe(2);
+  });
+});
