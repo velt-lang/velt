@@ -4,8 +4,10 @@
 //! memory, copied in and out through an 8-aligned view, `slot.rs` `raw_view`), a spawned task's
 //! state and result (`sched_make.velt` rounds the task's root up) and a module variable
 //! (`module_blocks.velt` rounds the block up). Each used to be a compiler panic or a run-time
-//! one. The program runs in debug and release builds, and in a release build for `x86-64-v3`,
-//! whose aligned vector moves fault on a misaligned block.
+//! one. The program runs in debug and release builds, and in a release build for `x86-64-v3`;
+//! that run checks the values and that nothing stops, not the alignment (Velt code takes no
+//! addresses, and a misaligned block can go unnoticed), which the layout test below and
+//! std/lang/hooks/aligned_blocks.test.velt check.
 
 use std::path::Path;
 use std::process::Output;
@@ -65,6 +67,15 @@ async function main() {
     for (const x of makeGen(i)) {
       generated += x;
     }
+    // Shared through two references: a counted object, its count in the word before it.
+    const g = gen(i);
+    const h = g;
+    for (const x of g) {
+      generated += x;
+    }
+    if (!h.next().done) {
+      generated += 1000000;
+    }
   }
   const ch = channel<L>(4);
   let sent: u64 = 0;
@@ -92,9 +103,9 @@ async function main() {
 }
 "#;
 
-/// generated: 11 · (0 + … + 99); sent: 10 · Σ(i + round) over 25 rounds of i = 0..3; spawned:
+/// generated: 2 · 11 · (0 + … + 99); sent: 10 · Σ(i + round) over 25 rounds of i = 0..3; spawned:
 /// 14 · (0 + … + 49); the counter: 2^10.
-const EXPECTED: &str = "54450 13500 17150 1024\n";
+const EXPECTED: &str = "108900 13500 17150 1024\n";
 
 fn velt(dir: &Path, args: &[&str]) -> Output {
     no_window::command(env!("CARGO_BIN_EXE_velt"))
@@ -154,16 +165,95 @@ fn a_generator_object_and_a_channel_slot_are_laid_out_for_the_alignment() {
     let o = velt(dir.path(), &["build", "main.velt", "--emit", "vir"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let vir = String::from_utf8_lossy(&o.stdout).to_string();
-    // The object's block: aligned to 32 (the state's alignment), freed the same way.
-    for call in ["velt_rt_alloc(", "velt_rt_free("] {
-        assert!(
-            (vir.lines()).any(|l| l.contains(call) && l.contains(", 32_u64)")),
-            "no `{call}…, 32)` for the generator object in:\n{vir}"
+    // Each generator object: its block aligned to the state's 32 bytes, the object `lead` bytes
+    // into it, so that the state at the generator class's offset is aligned; a counted object's
+    // count in the word before it, inside the lead.
+    let placed = generator_placements(&vir);
+    assert!(!placed.is_empty(), "no aligned generator object in:\n{vir}");
+    for p in &placed {
+        assert_eq!(
+            (p.lead + p.state_off) % p.align,
+            0,
+            "{p:?}: the state is not aligned in:\n{vir}"
         );
+        if p.counted {
+            assert!(p.lead >= 8, "{p:?}: no room for the count in:\n{vir}");
+        }
     }
+    assert!(
+        placed.iter().any(|p| p.counted),
+        "no counted generator object in:\n{vir}"
+    );
+    assert!(
+        (vir.lines()).any(|l| l.contains("velt_rt_free(") && l.contains(", 32_u64)")),
+        "the generator object is not freed with its block's alignment in:\n{vir}"
+    );
     // The slot's view: `L`'s 32 bytes as words, aligned to 8.
     assert!(
         (vir.lines()).any(|l| l.starts_with("agg#") && l.contains(" L bytes size=32 align=8 ")),
         "no 8-aligned view of `L` in:\n{vir}"
     );
+}
+
+/// Where a generator object sits in its block, from the VIR: the block's alignment, the
+/// object's offset into it, the state's offset in the object, and whether its count word is in
+/// front of it.
+#[derive(Debug)]
+struct Placement {
+    align: i64,
+    lead: i64,
+    state_off: i64,
+    counted: bool,
+}
+
+/// Every allocation aligned beyond 8 whose block is then written as a generator object
+/// (`agg#K <name> generator … { …, agg#S@<state offset> }`): `_b = call … velt_rt_alloc(n, align)`,
+/// `_o = ptradd _b, lead`, then `ptradd _o, -8` for a count, and `(*_x as agg#K)` stores.
+fn generator_placements(vir: &str) -> Vec<Placement> {
+    let gens: std::collections::HashMap<String, i64> = (vir.lines())
+        .filter(|l| l.starts_with("agg#") && l.contains(" generator size="))
+        .filter_map(|l| {
+            let id = l.split_whitespace().next()?.to_string();
+            let last = l.trim_end_matches(" }").rsplit(", ").next()?;
+            let off = last.rsplit('@').next()?.parse().ok()?;
+            Some((id, off))
+        })
+        .collect();
+    let lines: Vec<&str> = vir.lines().collect();
+    let mut out = vec![];
+    for (i, l) in lines.iter().enumerate() {
+        let Some(args) = l.split("velt_rt_alloc(").nth(1) else {
+            continue;
+        };
+        let Some(align) = (args.split(", ").nth(1))
+            .and_then(|a| a.split("_u64").next())
+            .and_then(|a| a.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        if align <= 8 {
+            continue;
+        }
+        let block = l.trim().split(" = ").next().unwrap_or("");
+        let after = &lines[i + 1..(i + 12).min(lines.len())];
+        let lead = after.iter().find_map(|a| {
+            let rest = a.trim().split(" = ptradd ").nth(1)?;
+            let (from, by) = rest.split_once(", ")?;
+            (from == block).then(|| by.trim_end_matches("_i64").parse::<i64>().ok())?
+        });
+        let state_off = after.iter().find_map(|a| {
+            let k = a.split(" as agg#").nth(1)?.split(')').next()?;
+            gens.get(&format!("agg#{k}")).copied()
+        });
+        if let (Some(lead), Some(state_off)) = (lead, state_off) {
+            let counted = after.iter().any(|a| a.contains(", -8_i64"));
+            out.push(Placement {
+                align,
+                lead,
+                state_off,
+                counted,
+            });
+        }
+    }
+    out
 }
