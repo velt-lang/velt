@@ -326,8 +326,8 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
 
 - A C struct has fields only: no methods, constructor, type parameters, defaults, optional,
   private or static fields, `implements`, and at least one field. Fields are integers, `f32`,
-  `f64`, `bool`, C pointers (`Ptr<T>`, `Ptr<T> | null`: one word each, NULL as `null`) and other
-  C structs; a struct cannot hold itself by value (a `Ptr<S> | null` field points at one). A
+  `f64`, `bool`, C pointers (`Ptr<T>`, `Ptr<T> | null`: one word each, NULL as `null`; `Ptr<T> |
+  undefined` is the same word, NULL as `undefined`, as in signatures) and other C structs; a struct cannot hold itself by value (a `Ptr<S> | null` field points at one). A
   Velt enum, a `declare c type` by value and `Ptr<T> | null | undefined` (two words) are refused
   with what to declare instead.
 - In Velt it is a value: Copy, built from a literal of its type, with read-only fields (a
@@ -340,7 +340,8 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
   number, `bool`, a pointer or a C struct; `void` and a `declare c type` have no bytes Velt
   knows and are refused, at the call or where a type parameter is instantiated. A read checks
   every pointer in the value declared non-null, in nested structs too: one C left NULL stops the
-  program, naming the field (`inner.data`). A struct without such a field pays nothing.
+  program, naming the field (`inner.data`). A struct without such a field pays nothing. A `bool`
+  read is its byte's truth to C, 0 or not, so a byte holding 2 is `true` (and `=== true`).
 - On wasm32 C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's 8, so `Ptr.read` and
   `Ptr.write` of a type holding one are compile errors naming the target; a struct of other
   fields is C's layout there too.

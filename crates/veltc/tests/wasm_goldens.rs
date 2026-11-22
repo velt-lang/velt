@@ -480,7 +480,7 @@ fn a_c_pointer_past_32_bits_stops_on_wasm32() {
 }
 
 /// On wasm32 C's pointers are 4 bytes and Velt's `Ptr<T>` 8, so a C struct holding one isn't C's
-/// layout there: struct_fields.velt's `Ptr.read` and `Ptr.write` of its `Node` (eight calls) and of
+/// layout there: struct_fields.velt's `Ptr.read` and `Ptr.write` of its `Node` (nine calls) and of
 /// a pointer are compile errors naming the target, while those of a `bool` and a `u8` aren't
 /// (#3094). A check needs no runtime or runner.
 #[test]
@@ -503,7 +503,7 @@ fn ptr_read_of_a_pointer_field_struct_is_refused_on_wasm32() {
         .count();
     let others = err.matches("aren't available on wasm32").count() - refused;
     assert!(
-        !o.status.success() && refused == 8 && others == 2 && err.contains("of a `Ptr<u8>`"),
+        !o.status.success() && refused == 9 && others == 2 && err.contains("of a `Ptr<u8>`"),
         "exit {:?}, {refused} refusals\n{err}",
         o.status
     );

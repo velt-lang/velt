@@ -47,7 +47,7 @@ export struct Ptr<T> {
   /**
    * The `S` at element `index` of `p` (`p[index]` in C): `S` is a number type, `bool`, a pointer
    * or a C struct. A pointer field of the struct declared `Ptr<T>` (not `| null`) that C left
-   * `NULL` stops the program, naming the field. Unsafe: nothing checks that an `S` is there.
+   * `NULL` stops the program, naming the field; a `bool` is its byte's truth to C, 0 or not. Unsafe: nothing checks that an `S` is there.
    */
   static unsafe read<S>(p: Ptr<S>, index: usize): S {
     // SAFETY: the caller's promise.
@@ -63,7 +63,6 @@ export struct Ptr<T> {
     unsafe {
       ptrWrite<S>(p, index, s);
     }
-    ;
   }
 }
 

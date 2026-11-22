@@ -3,7 +3,8 @@
 //! `bool`, a C pointer or a C struct (sema's `c_memory.rs`), whose aggregate is C's layout
 //! (`c_layout.rs`). A read checks the pointers in the value declared non-null, in nested C
 //! structs too: C may have left one `NULL`, which a `Ptr<T>` never is (with the null niche it
-//! would read as `null` once widened), so the program stops, naming the field.
+//! would read as `null` once widened), so the program stops, naming the field. A `bool` in it
+//! is its byte's truth to C, 0 or not.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -17,12 +18,51 @@ impl FnLower<'_, '_> {
         let ty = self.sub(ty);
         let t = self.vty(ty);
         let at = self.ptr_element(p, index, t);
-        let place = proj(&self.operand_place(at, Ty::Ptr), Proj::Deref(t));
+        let place = proj(&self.operand_place(at.clone(), Ty::Ptr), Proj::Deref(t));
         let v = self.rvalue_temp(t, Rvalue::Use(Operand::Copy(place)));
         let held = self.operand_place(v.clone(), t);
+        let base = self.rvalue_temp(Ty::U64, Rvalue::Cast(at, Ty::U64));
+        self.normalize_bools(&held, ty, &base, 0);
         let s = self.cx.type_name(ty);
         self.stop_on_null(&held, ty, &s, "");
         v
+    }
+
+    /// Makes each `bool` in the value at `place` (of type `ty`, read from `base + offset`) what
+    /// its byte in C memory means to C: 0 is `false`, anything else `true`. A byte C memory holds
+    /// is not always 0 or 1 (a `char`, or bytes the program wrote), and a `bool` holding 2 would
+    /// print `true` and not be `=== true`.
+    fn normalize_bools(&mut self, place: &Place, ty: TyId, base: &Operand, offset: u32) {
+        match self.kind(ty) {
+            TyKind::Bool => {
+                let addr = self.u64_op(BinOp::Add, base.clone(), cint(offset.into(), Ty::U64));
+                let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let byte = proj(&self.operand_place(at, Ty::Ptr), Proj::Deref(Ty::U8));
+                let byte = self.rvalue_temp(Ty::U8, Rvalue::Use(Operand::Copy(byte)));
+                let set =
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, byte, cint(0, Ty::U8)));
+                self.assign(place.clone(), Rvalue::Use(set));
+            }
+            TyKind::Adt(d, _) if self.cx.c_struct(ty) => {
+                let fields: Vec<TyId> = match self.cx.hir.def(d) {
+                    hir::Def::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                    _ => return,
+                };
+                let Ty::Agg(agg) = self.vty(ty) else {
+                    return;
+                };
+                for (k, f) in fields.into_iter().enumerate() {
+                    if !self.cx.holds_bool(f) {
+                        continue;
+                    }
+                    let vf = self.cx.vir_field(ty, k as u32);
+                    let at = self.cx.aggs[agg.0 as usize].fields[vf as usize].1;
+                    let field = proj(place, Proj::Field(vf));
+                    self.normalize_bools(&field, f, base, offset + at);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// `ptrWrite<S>(p, index, s)`.
@@ -90,6 +130,18 @@ impl FnLower<'_, '_> {
 }
 
 impl super::Cx<'_> {
+    /// Is `t` a `bool`, or a C struct holding one (in a nested C struct too)?
+    pub(super) fn holds_bool(&self, t: TyId) -> bool {
+        match self.kind(t) {
+            TyKind::Bool => true,
+            TyKind::Adt(d, _) if self.c_struct(t) => match self.hir.def(d) {
+                hir::Def::Adt(a) => a.fields.iter().any(|f| self.holds_bool(f.ty)),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Is `t` a non-null C pointer, or a C struct holding one (in a nested C struct too)?
     pub(super) fn holds_non_null_ptr(&self, t: TyId) -> bool {
         match self.kind(t) {

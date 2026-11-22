@@ -1,7 +1,7 @@
 // C structs with pointer fields (#3094): `Ptr<T>` and `Ptr<T> | null` fields are one word each,
 // at C's offsets, `NULL` as `null`, so `Ptr.write` and `Ptr.read` move them to and from C memory
 // as they are. Here a list lives in `calloc`'d memory, linked by its `next` pointers, and a struct
-// nests another with a pointer in it. Printed pointers are fixed addresses (`Ptr.at`): the
+// nests another with a pointer in it. A `bool` read from C memory is its byte's truth to C. Printed pointers are fixed addresses (`Ptr.at`): the
 // output is the same everywhere.
 import { Ptr } from "velt/ffi";
 
@@ -70,6 +70,14 @@ function main() {
   unsafe { Ptr.write(Ptr.at<u8>(Ptr.addressOf(p) + 120 + 16), 0, 77) };
   // SAFETY: element 3.
   console.log(unsafe { Ptr.read(p, 3) }.label.len);
+  // A `bool` is its byte's truth to C: 2 there reads as `true`, and is `true`.
+  // SAFETY: the byte of element 0's `done`, at offset 32.
+  unsafe { Ptr.write(Ptr.at<u8>(Ptr.addressOf(p) + 32), 0, 2) };
+  // SAFETY: element 0.
+  const two = unsafe { Ptr.read(p, 0) }.done;
+  console.log(two, two === true, !two);
+  // SAFETY: the same byte as a `bool` of its own.
+  console.log(unsafe { Ptr.read(Ptr.at<bool>(Ptr.addressOf(p) + 32), 0) } === true);
   // SAFETY: allocated above, not used after.
   unsafe { free(p) };
 }
