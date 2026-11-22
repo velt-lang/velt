@@ -285,17 +285,26 @@ impl Ctx<'_> {
 /// `ty`: what [`value_ty`] says, or for a `@repr("transparent")` struct what crosses for its one
 /// field (lowering passes the field: velt_vir `c_call.rs`, `c_export.rs`).
 pub(crate) fn crossing_ty(cx: &mut Ctx, mut ty: TyId) -> Option<CTy> {
-    // A transparent struct of a transparent struct of …: a struct can't hold itself by value
-    // (reported elsewhere), so a few levels are all there are; the bound keeps an erroneous
-    // program from looping.
-    for _ in 0..16 {
+    // A transparent struct of a transparent struct of …, to any depth (`W<W<W<f64>>>`). A struct
+    // can't hold itself by value (reported elsewhere): a type met again stops an erroneous
+    // program, and the bound one whose generic arguments grow at each level.
+    let mut seen: Vec<TyId> = vec![];
+    while seen.len() < MAX_TRANSPARENT_DEPTH {
         if let Some(t) = value_ty(cx, ty) {
             return Some(t);
         }
+        if seen.contains(&ty) {
+            return None;
+        }
+        seen.push(ty);
         ty = crate::decorators::transparent_field(cx, ty)?;
     }
     None
 }
+
+/// How many transparent structs [`crossing_ty`] looks through: more than any type written by hand
+/// nests, few enough that a type that never ends costs nothing.
+const MAX_TRANSPARENT_DEPTH: usize = 1024;
 
 /// What crosses for a value of type `ty` (`None`: nothing can).
 pub(crate) fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {

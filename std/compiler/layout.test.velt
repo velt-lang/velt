@@ -30,6 +30,12 @@ struct Distance {
   readonly meters: Meters;
 }
 
+/** Generic, so it nests to any depth: `Wrap<Wrap<…<Meters>…>>` still crosses as a `double`. */
+@repr("transparent")
+struct Wrap<T> {
+  readonly v: T;
+}
+
 @repr("transparent")
 struct Block {
   readonly p: Ptr<u8>;
@@ -39,6 +45,9 @@ declare c("c") function sqrt(x: Meters): Meters;
 declare c("c") function cbrtf(x: Ratio): Ratio;
 declare c("c") function llabs(x: Count): Count;
 declare c("c") function sqrt$twice(x: Distance): Distance;
+declare c("c") function sqrt$deep(
+  x: Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Meters>>>>>>>>>>>>>>>>>>>>,
+): Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Meters>>>>>>>>>>>>>>>>>>>>;
 declare c("c") function malloc(n: usize): Block;
 declare c("c") function memset(p: Block, c: i32, n: usize): Block;
 declare c("c") function free(p: Block): void;
@@ -75,6 +84,39 @@ describe("@repr(\"transparent\")", () => {
     // SAFETY: `sqrt` takes any double.
     const d = unsafe { sqrt$twice({ meters: { m: 6.25 } }) };
     expect(d.meters.m).toBe(2.5);
+  });
+
+  it("passes twenty transparent structs nested as the innermost field", () => {
+    // SAFETY: `sqrt` takes any double.
+    const d =
+      unsafe { sqrt$deep({
+        v: {
+          v: {
+            v: {
+              v: {
+                v: {
+                  v: {
+                    v: {
+                      v: {
+                        v: {
+                          v: {
+                            v: {
+                              v: {
+                                v: { v: { v: { v: { v: { v: { v: { v: { m: 2.25 } } } } } } } },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }) };
+    expect(d.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.m).toBe(1.5);
   });
 
   it("passes a struct of a pointer as the pointer", () => {
