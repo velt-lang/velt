@@ -224,6 +224,7 @@ impl FnCx<'_, '_> {
             },
             false => obj,
         };
+        let promise_member = self.promise_member_named(name, &obj);
         let (obj, any) = self.dynamic_receiver(obj, Some(Some(name)))?;
         let Some(any) = any else {
             return Ok(self.error_expr(span));
@@ -233,6 +234,10 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         }
         let key = self.key_lit(name, span);
+        if promise_member {
+            let get = |s: &mut Self, held| s.any_op(Intrinsic::AnyGet, vec![held, key], any, span);
+            return Ok(self.promise_member_get(obj, name, any, span, get));
+        }
         Ok(self.any_op(Intrinsic::AnyGet, vec![obj, key], any, span))
     }
 
@@ -344,6 +349,7 @@ impl FnCx<'_, '_> {
             }
         }
         let typed_callbacks = self.narrowed_dynamic_instance(&recv);
+        let promise_member = self.promise_member_named(&prop.name, &recv);
         let (recv, any) = self.dynamic_receiver(recv, Some(Some(&prop.name)))?;
         let Some(any) = any else {
             self.check_args_loose(args);
@@ -372,16 +378,22 @@ impl FnCx<'_, '_> {
         if user && prop.name == "apply" && self.apply_reads_list(args) {
             return Ok(self.any_apply_method(recv, key, text, args, any, span));
         }
-        let mut all = vec![recv, key, text];
         let outer = self.any_callback;
         let boxed = self.dynamic_args(args, any, typed_callbacks);
         self.any_callback = outer;
         let Some(boxed) = boxed else {
             return Ok(self.error_expr(span));
         };
-        all.extend(boxed);
         self.note_any_call();
-        Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span))
+        let call = move |s: &mut Self, recv, boxed: Vec<hir::Expr>| {
+            let mut all = vec![recv, key, text];
+            all.extend(boxed);
+            s.intrinsic(Intrinsic::AnyCall, all, any, span)
+        };
+        if promise_member {
+            return Ok(self.promise_member_call(recv, &prop.name, boxed, any, span, call));
+        }
+        Ok(call(self, recv, boxed))
     }
 
     /// Is `recv` a variable declared `object` or `unknown` that a test narrowed to an instance

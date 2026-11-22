@@ -512,6 +512,10 @@ with_module_hooks! {
     await_any => lang_hooks_any_ops, "awaitAny", sig((&unknown) -> Promise(unknown, unknown));
     /// Does an `any` hold an object or a function (the thenable stop, `await_value.rs`, #3412)?
     any_holds_object => lang_hooks_any_ops, "anyHoldsObject", sig((&any) -> bool);
+    /// `p.then` / `catch` / `finally` read through `any`: the shared function (`any_promise_members.rs`).
+    any_promise_method => lang_hooks_any_promise, "anyPromiseMethod", sig((&string) -> any);
+    /// `p.then(…)` / `catch` / `finally` called through `any` on a promise (`any_promise_members.rs`).
+    any_promise_call => lang_hooks_any_promise, "anyPromiseCall", sig((&unknown, &string, &[any]) -> any);
     /// `ToNumber` of an object an `any` holds, for `-`, `*`, `<`, `+x` (`dynamic_arith.rs`).
     any_object_number => lang_hooks_any_ops, "anyObjectNumber", sig((&any, &string) -> f64);
     /// `a + b` of dynamic values one of which holds a string or an object (`dynamic_arith.rs`).
