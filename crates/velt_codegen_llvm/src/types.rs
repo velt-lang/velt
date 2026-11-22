@@ -97,15 +97,19 @@ pub(crate) fn global_name(symbol: &str) -> String {
 
 /// Bytes for an LLVM `c"..."` string or quoted name.
 pub(crate) fn escape_bytes(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len());
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    // Bytes, not `format!` per escape: a table of numbers (static data, #3457) is mostly
+    // escapes, three characters each.
+    let mut out = Vec::with_capacity(bytes.len() * 3);
     for &b in bytes {
         if (0x20..0x7f).contains(&b) && b != b'"' && b != b'\\' {
-            s.push(b as char);
+            out.push(b);
         } else {
-            s.push_str(&format!("\\{b:02X}"));
+            out.extend_from_slice(&[b'\\', HEX[usize::from(b >> 4)], HEX[usize::from(b & 15)]]);
         }
     }
-    s
+    // ASCII only: printable bytes as they are, the rest as `\XX`.
+    String::from_utf8(out).expect("ICE: escaped bytes are ASCII")
 }
 
 /// Layout of an aggregate, or an error for an unknown id.
