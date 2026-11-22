@@ -1,14 +1,14 @@
 // sqlite (internal): the functions of SQLite's C API the driver calls, and the constants it needs.
 // Every other file of the driver is plain Velt.
 
-import { CString, OutPtr, Ptr, StrBytes } from "velt/ffi";
+import { CString, Out, Ptr, StrBytes } from "velt/ffi";
 
 export declare c type sqlite3;
 export declare c type sqlite3_stmt;
 
 export declare c("sqlite3") function sqlite3_open_v2(
   name: CString,
-  db: OutPtr<sqlite3>,
+  db: Out<Ptr<sqlite3> | null>,
   flags: i32,
   vfs: null,
 ): i32;
@@ -34,8 +34,8 @@ export declare c("sqlite3") function sqlite3_prepare_v3(
   sql: CString,
   bytes: i32,
   flags: u32,
-  stmt: OutPtr<sqlite3_stmt>,
-  tail: OutPtr<u8>,
+  stmt: Out<Ptr<sqlite3_stmt> | null>,
+  tail: Out<Ptr<u8> | null>,
 ): i32;
 export declare c("sqlite3") function sqlite3_finalize(s: Ptr<sqlite3_stmt>): i32;
 export declare c("sqlite3") function sqlite3_step(s: Ptr<sqlite3_stmt>): i32;

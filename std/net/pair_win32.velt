@@ -7,7 +7,7 @@
 // Elsewhere: std/net/pair_posix.velt.
 
 import { IoResult } from "velt/native/result";
-import { bind, connect$net, getsockname, listen, socket } from "#net-calls";
+import { bind, connect$net, getsockname, listen, sockaddr, socket } from "#net-calls";
 import * as r from "#reactor";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as fs from "velt/net/fd_socket";
@@ -39,7 +39,7 @@ export function connectedPair(): IoResult<i32[]> {
   }
   m.st32(len, SIN_SIZE as u32);
   // SAFETY: a `sockaddr_in` (127.0.0.1, port 0) and its length.
-  if (unsafe { bind(l, m.ptr(mine), SIN_SIZE as u32) } !== 0) {
+  if (unsafe { bind(l, m.ptrTo<sockaddr>(mine), SIN_SIZE as u32) } !== 0) {
     return fail(sa, r.errno(), l, -1, -1);
   }
   // SAFETY: no precondition.
@@ -47,7 +47,7 @@ export function connectedPair(): IoResult<i32[]> {
     return fail(sa, r.errno(), l, -1, -1);
   }
   // SAFETY: room for a `sockaddr_in` and its length word.
-  if (unsafe { getsockname(l, m.ptr(mine), m.ptr(len)) } !== 0) {
+  if (unsafe { getsockname(l, m.ptrTo<sockaddr>(mine), m.ptrTo<u32>(len)) } !== 0) {
     return fail(sa, r.errno(), l, -1, -1);
   }
   // SAFETY: no precondition.
@@ -56,13 +56,13 @@ export function connectedPair(): IoResult<i32[]> {
     return fail(sa, r.errno(), l, -1, -1);
   }
   // SAFETY: the listener's address, as getsockname filled it.
-  if (unsafe { connect$net(c, m.ptr(mine), SIN_SIZE as u32) } !== 0) {
+  if (unsafe { connect$net(c, m.ptrTo<sockaddr>(mine), SIN_SIZE as u32) } !== 0) {
     return fail(sa, r.errno(), l, c, -1);
   }
   // The connecting end's own address: the peer address the accept must see.
   m.st32(len, SIN_SIZE as u32);
   // SAFETY: room for a `sockaddr_in` and its length word.
-  if (unsafe { getsockname(c, m.ptr(mine), m.ptr(len)) } !== 0) {
+  if (unsafe { getsockname(c, m.ptrTo<sockaddr>(mine), m.ptrTo<u32>(len)) } !== 0) {
     return fail(sa, r.errno(), l, c, -1);
   }
   let a: i32 = -1;

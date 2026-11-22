@@ -132,6 +132,8 @@ function startOn(e: usize): void {
   end.open(e);
   if (processEnv("VELT_RC_STATS") === "1") {
     wk.countWakes();
+    // The test pause of a join handle's drop (sched_debug.velt `HANDLE_PAUSE`, #3438).
+    dbg.handlePauseSetup();
   }
   t.install(e);
   // The runtime's leaves that need its timers and I/O find them from this thread.

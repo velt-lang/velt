@@ -142,7 +142,11 @@ impl FnLower<'_, '_> {
                     }
                     self.assign(flag, crate::vir::Rvalue::Use(Self::ctrue()));
                 }
-                self.any_replace(fp, val, fty);
+                match self.cx.weak_field(ty, i as u32) {
+                    // Its slot (weak_fields.rs).
+                    Some(_) => self.weak_store(fp, val, fty),
+                    None => self.any_replace(fp, val, fty),
+                }
                 self.ret_status(ST_OK);
             }
             self.switch_to(next);

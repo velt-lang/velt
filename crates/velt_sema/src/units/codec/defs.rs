@@ -30,7 +30,7 @@ structs! {
     MethodRef { def, is_static }
     FieldInfo {
         name, ty, declared, span, readonly, optional, has_default, default, default_throws,
-        private_to,
+        private_to, weak,
     }
     Redefined { field, at, name, init, throws }
     AdtInfo<'_> {
@@ -43,7 +43,7 @@ structs! {
     IfaceInfo<'_> { name, qual_name, module, span, generics, fields, methods, parents, decl }
     GlobalInfo<'_> { name, qual_name, module, span, ty, init, state, src, mutable, stored, c_const, c_global }
     GlobalSrc<'_> { ann, init, span, owner, is_private, c_const, c_global }
-    AliasInfo<'_> { module, decl, expanding, used, outer }
+    AliasInfo<'_> { module, decl, expanding, used, pointees_checked, outer }
     Extension { generics, target, methods, implements }
 }
 

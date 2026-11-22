@@ -1,7 +1,7 @@
 // velt/net/websocket (internal): text in and out of byte buffers, and the UTF-8 check of text
 // that arrives in pieces (std/encoding/utf8). Public APIs only, as a package would write them.
 
-import { validPrefix } from "velt/encoding/utf8";
+import { validPrefix } from "velt/encoding/utf8_valid";
 import { writeUtf8 } from "velt/lang/bytes/copy";
 
 /**

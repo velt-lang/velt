@@ -116,6 +116,22 @@ fn a_stale_pin_directory_is_swept() {
     assert!(other.join("object").exists());
 }
 
+/// The sweep runs when its marker is missing or older than an hour, and renews the marker;
+/// a build within the hour lists no temporary directory.
+#[test]
+fn the_sweep_runs_at_most_once_an_hour() {
+    let tmp = tempfile::tempdir().unwrap();
+    let swept = tmp.path().join("warm/hooks").join(SWEPT);
+    let now = std::time::SystemTime::now();
+    assert!(sweep_due(&swept, now));
+    assert!(!sweep_due(&swept, now));
+    let later = now + SWEEP_EVERY / 2;
+    assert!(!sweep_due(&swept, later));
+    let past = now + SWEEP_EVERY + std::time::Duration::from_secs(1);
+    assert!(sweep_due(&swept, past));
+    assert!(!sweep_due(&swept, past));
+}
+
 /// An object gone before the check is a miss: the build loads the module.
 #[test]
 fn an_object_gone_before_the_check_is_a_miss() {

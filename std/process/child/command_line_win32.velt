@@ -25,8 +25,8 @@ import * as m from "velt/lang/hooks/sched_mem";
 import { CommandSpec } from "velt/process/child/spec";
 import { envPairs } from "#env-sys";
 
-declare c("c") function GetFileAttributesW(name: Ptr<u16>): u32;
-declare c("c") function NeedCurrentDirectoryForExePathW(name: Ptr<u16>): i32;
+declare c("c") function GetFileAttributesW(name: Ptr<u16> | null): u32;
+declare c("c") function NeedCurrentDirectoryForExePathW(name: Ptr<u16> | null): i32;
 
 const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;

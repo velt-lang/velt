@@ -6,8 +6,10 @@
 // `CALM_TICKS` ticks, the monitor takes that back:
 //
 // 1. It asks each spare to retire (`E_RETIRED` `R_ASKED`, and a wake). A spare answers at its
-//    park: it declines when its timer block holds anything (tasks anchored to it wait for those
-//    timers), else it retires (`R_RETIRED`). A retired spare runs no task: it hands its inbox and
+//    park. Its pending sleeps go with their tasks to worker 0 when the tasks may move
+//    (sched_sleep_carry.velt `carryHome`); it declines when its timer block still holds anything
+//    (tasks anchored to it for good, or a sleep fired or due, wait for those timers), else it
+//    retires (`R_RETIRED`). A retired spare runs no task: it hands its inbox and
 //    queue to worker 0, which becomes the tasks' home, and sleeps in its reactor, whose events
 //    (sockets registered there) it still delivers, the woken tasks going to worker 0 the same way.
 // 2. With every spare retired it asks worker 0 to relax (`E_RELAX`); worker 0 does so between two
@@ -34,6 +36,7 @@ import * as mon from "./sched_monitor";
 import * as ow from "./sched_order_wait";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
+import * as sc from "./sched_sleep_carry";
 import * as mv from "./sched_sleep_move";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
@@ -154,6 +157,11 @@ export function idleDuties(g: usize): bool {
 /**
  * Nothing for a spare to do, and worker 0 (`g`) not stalled at tick `now`: every spare (`n`
  * started workers) asleep with nothing queued, no task between two workers, nothing offered.
+ * A spare asked to retire, or retired, and in no poll counts as asleep while awake: the ask's
+ * own wake (`ask`) gets it up to answer (`retiredLook`), and a retired one hands on what reaches
+ * it. Taken for busy, the request was taken back before the answer whenever the OS was slow to
+ * run the spare's thread (a tick, on a loaded machine), the ask came again `CALM_TICKS` later, and
+ * worker 0 stayed shared, its workers woken over and over (#3500).
  */
 function calm(g: usize, n: usize, now: usize): bool {
   if (mon.stalled(g, now) || m.load(g + t.E_MOVING) !== 0) {
@@ -162,7 +170,10 @@ function calm(g: usize, n: usize, now: usize): bool {
   for (let i: usize = 1; i < n; i++) {
     const s = t.worker(i);
     if (
-      m.load32(s + t.E_PARK) !== 1 ||
+      (
+        m.load32(s + t.E_PARK) !== 1 &&
+        ((m.load32(s + t.E_RETIRED) & t.R_AWAY) === 0 || m.load(s + t.E_CURRENT) !== 0)
+      ) ||
       m.load(s + t.E_INBOX) !== 0 ||
       m.load(s + t.E_OFFER) !== 0 ||
       q.any(s)
@@ -204,7 +215,11 @@ export function retiredLook(e: usize): void {
       mv.serve(e);
     }
     if (s === t.R_ASKED) {
-      if (keeps(e)) {
+      // Pending sleeps go with their tasks to worker 0 when they can (#3117). A request for one
+      // that comes meanwhile, or waits here for a sleep an offered task carries, may wait on a
+      // retired spare: the loop serves its list on every pass and never sleeps on it, and the
+      // request goes on to the sleep's worker once one holds it (sched_sleep_move.velt `one`).
+      if (keeps(e) && (m.ld(e + t.E_UNREF) !== 0 || !sc.carryHome(e, g))) {
         m.cas32(e + t.E_RETIRED, t.R_ASKED, t.R_DECLINED);
         continue;
       }
@@ -251,10 +266,6 @@ export function retiredLook(e: usize): void {
  * leaf to see it (that task's poll reads them from this worker's block)?
  */
 function keeps(e: usize): bool {
-  if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
-    // A request that waits for a carried sleep's task (sched_sleep_move.velt).
-    return true;
-  }
   const b = m.ld(e + t.E_TIMERS);
   if (m.ld(e + t.E_UNREF) !== 0) {
     return true;

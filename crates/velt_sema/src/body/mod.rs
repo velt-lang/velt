@@ -70,7 +70,9 @@ pub(crate) mod lazy_std;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 mod type_guards;
-pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
+mod weak_copy;
+pub(crate) use generators::GenCopy;
+pub(crate) use weak_copy::{weak_copy_error, weak_copy_error_as, Held};
 mod chain_facts;
 mod literal_patterns;
 mod locals;
@@ -101,6 +103,7 @@ mod unsafe_code;
 pub(crate) use unsafe_code::unsafe_fn;
 mod untyped_let;
 mod using;
+mod written_type;
 mod yield_infer;
 
 use self::expr::trial_memo::NamedLocal;

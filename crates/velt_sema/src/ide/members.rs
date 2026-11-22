@@ -505,7 +505,8 @@ fn bind(table: &TyTable, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) ->
         },
         (TyKind::Array(p), TyKind::Array(a))
         | (TyKind::Option(p, _), TyKind::Option(a, _))
-        | (TyKind::Shared(p), TyKind::Shared(a)) => bind(table, *p, *a, slots),
+        | (TyKind::Shared(p), TyKind::Shared(a))
+        | (TyKind::Ptr(p), TyKind::Ptr(a)) => bind(table, *p, *a, slots),
         (TyKind::Map(p1, p2), TyKind::Map(a1, a2))
         | (TyKind::Promise(p1, p2), TyKind::Promise(a1, a2))
         | (TyKind::Result(p1, p2), TyKind::Result(a1, a2)) => {

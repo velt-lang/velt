@@ -20,9 +20,11 @@ import {
   EXT_RENEGOTIATION_INFO,
   EXT_SUPPORTED_VERSIONS,
   SECP256R1,
+  SECP384R1,
   X25519,
 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
+import { groupSupported, pointFormOk } from "velt/net/tls/key_exchange";
 import { knownSuite } from "velt/net/tls/record_cipher";
 import { DOWNGRADE_TLS12, tls12Suite } from "velt/net/tls/suites12";
 
@@ -227,7 +229,7 @@ export function parseServerHello(
     if (group == 0) {
       throw new TlsFailure(MISSING_EXTENSION, "the ServerHello has no key share");
     }
-    if (group != offered || keyShare.length != (group == X25519 ? 32 : 65)) {
+    if (group != offered || !pointFormOk(group, keyShare)) {
       throw new TlsFailure(
         ILLEGAL_PARAMETER,
         `the server's key share is not for ${groupName(offered)}`,
@@ -238,7 +240,7 @@ export function parseServerHello(
       ILLEGAL_PARAMETER,
       `the HelloRetryRequest asks for the ${groupName(group)} share already sent`,
     );
-  } else if (group != 0 && group != X25519 && group != SECP256R1) {
+  } else if (group != 0 && !groupSupported(group)) {
     // Not one of supported_groups (RFC 8446 §4.1.4).
     throw new TlsFailure(
       ILLEGAL_PARAMETER,
@@ -289,13 +291,16 @@ function hex4(v: usize): string {
   return v.toString(16).padStart(4, "0");
 }
 
-/** The name of the named group `g` for messages: X25519, secp256r1, else its number in hex. */
+/** The name of the named group `g` for messages: X25519, secp256r1, secp384r1, else its number in hex. */
 export function groupName(g: usize): string {
   if (g == X25519) {
     return "X25519";
   }
   if (g == SECP256R1) {
     return "secp256r1";
+  }
+  if (g == SECP384R1) {
+    return "secp384r1";
   }
   return `group 0x${hex4(g)}`;
 }

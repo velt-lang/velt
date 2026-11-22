@@ -1,0 +1,89 @@
+# velt/arch by C intrinsic
+
+Generated from velt_vir's table (`crates/velt_vir/src/arch`) by `cargo xtask gen-arch`: the
+velt/arch method for each C intrinsic of Intel's guide and Arm's ACLE that it has (#3222,
+`docs/internals/design/package-machine-code.md` §3). A method runs only where the CPU has its
+feature: behind its class's `isSupported()`, or in a function gated on the feature.
+
+| C intrinsic | Instruction | velt/arch | Feature |
+|---|---|---|---|
+| `__crc32b` | `crc32b` | `Crc32.computeCrc32U8` (velt/arch/arm) | `crc-arm` |
+| `__crc32cb` | `crc32cb` | `Crc32.computeCrc32CU8` (velt/arch/arm) | `crc-arm` |
+| `__crc32cd` | `crc32cx` | `Crc32.computeCrc32CU64` (velt/arch/arm) | `crc-arm` |
+| `__crc32ch` | `crc32ch` | `Crc32.computeCrc32CU16` (velt/arch/arm) | `crc-arm` |
+| `__crc32cw` | `crc32cw` | `Crc32.computeCrc32CU32` (velt/arch/arm) | `crc-arm` |
+| `__crc32d` | `crc32x` | `Crc32.computeCrc32U64` (velt/arch/arm) | `crc-arm` |
+| `__crc32h` | `crc32h` | `Crc32.computeCrc32U16` (velt/arch/arm) | `crc-arm` |
+| `__crc32w` | `crc32w` | `Crc32.computeCrc32U32` (velt/arch/arm) | `crc-arm` |
+| `_andn_u32` | `andn` | `Bmi1.andNotU32` (velt/arch/x86) | `bmi1-x86` |
+| `_andn_u64` | `andn` | `Bmi1.andNotU64` (velt/arch/x86) | `bmi1-x86` |
+| `_bextr2_u32` | `bextr` | `Bmi1.bitFieldExtractU32` (velt/arch/x86) | `bmi1-x86` |
+| `_bextr2_u64` | `bextr` | `Bmi1.bitFieldExtractU64` (velt/arch/x86) | `bmi1-x86` |
+| `_blsi_u32` | `blsi` | `Bmi1.extractLowestSetBitU32` (velt/arch/x86) | `bmi1-x86` |
+| `_blsi_u64` | `blsi` | `Bmi1.extractLowestSetBitU64` (velt/arch/x86) | `bmi1-x86` |
+| `_blsmsk_u32` | `blsmsk` | `Bmi1.getMaskUpToLowestSetBitU32` (velt/arch/x86) | `bmi1-x86` |
+| `_blsmsk_u64` | `blsmsk` | `Bmi1.getMaskUpToLowestSetBitU64` (velt/arch/x86) | `bmi1-x86` |
+| `_blsr_u32` | `blsr` | `Bmi1.resetLowestSetBitU32` (velt/arch/x86) | `bmi1-x86` |
+| `_blsr_u64` | `blsr` | `Bmi1.resetLowestSetBitU64` (velt/arch/x86) | `bmi1-x86` |
+| `_bzhi_u32` | `bzhi` | `Bmi2.zeroHighBitsU32` (velt/arch/x86) | `bmi2-x86` |
+| `_bzhi_u64` | `bzhi` | `Bmi2.zeroHighBitsU64` (velt/arch/x86) | `bmi2-x86` |
+| `_lzcnt_u32` | `lzcnt` | `Lzcnt.leadingZeroCountU32` (velt/arch/x86) | `lzcnt-x86` |
+| `_lzcnt_u64` | `lzcnt` | `Lzcnt.leadingZeroCountU64` (velt/arch/x86) | `lzcnt-x86` |
+| `_mm256_add_epi32` | `vpaddd` | `Avx2.addU32` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_add_epi64` | `vpaddq` | `Avx2.addU64` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_add_epi8` | `vpaddb` | `Avx2.addU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_add_pd` | `vaddpd` | `Avx.addF64` (velt/arch/x86) | `avx-x86` |
+| `_mm256_add_ps` | `vaddps` | `Avx.addF32` (velt/arch/x86) | `avx-x86` |
+| `_mm256_blendv_epi8` | `vpblendvb` | `Avx2.blendVariableU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_cmpeq_epi8` | `vpcmpeqb` | `Avx2.compareEqualU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_fmadd_pd` | `vfmadd213pd` | `Fma.multiplyAddF64` (velt/arch/x86) | `fma-x86` |
+| `_mm256_fmadd_ps` | `vfmadd213ps` | `Fma.multiplyAddF32` (velt/arch/x86) | `fma-x86` |
+| `_mm256_madd_epi16` | `vpmaddwd` | `Avx2.multiplyAddAdjacentI16` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_maddubs_epi16` | `vpmaddubsw` | `Avx2.multiplyAddAdjacentU8I8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_max_epu8` | `vpmaxub` | `Avx2.maxU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_min_epu8` | `vpminub` | `Avx2.minU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_movemask_epi8` | `vpmovmskb` | `Avx2.moveMaskU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_mul_pd` | `vmulpd` | `Avx.multiplyF64` (velt/arch/x86) | `avx-x86` |
+| `_mm256_mul_ps` | `vmulps` | `Avx.multiplyF32` (velt/arch/x86) | `avx-x86` |
+| `_mm256_mullo_epi32` | `vpmulld` | `Avx2.multiplyLowU32` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_permutevar8x32_epi32` | `vpermd` | `Avx2.permuteVarU32` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_sad_epu8` | `vpsadbw` | `Avx2.sumAbsoluteDifferencesU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_shuffle_epi8` | `vpshufb` | `Avx2.shuffleU8` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_sllv_epi32` | `vpsllvd` | `Avx2.shiftLeftLogicalVariableU32` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_srlv_epi32` | `vpsrlvd` | `Avx2.shiftRightLogicalVariableU32` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_sub_epi32` | `vpsubd` | `Avx2.subtractU32` (velt/arch/x86) | `avx2-x86` |
+| `_mm512_add_epi32` | `vpaddd` | `Avx512F.addU32` (velt/arch/x86) | `avx512f-x86` |
+| `_mm512_add_epi8` | `vpaddb` | `Avx512BW.addU8` (velt/arch/x86) | `avx512bw-x86` |
+| `_mm512_add_ps` | `vaddps` | `Avx512F.addF32` (velt/arch/x86) | `avx512f-x86` |
+| `_mm512_cmpeq_epi32_mask` | `vpcmpeqd` | `Avx512F.compareEqualU32` (velt/arch/x86) | `avx512f-x86` |
+| `_mm512_cmpeq_epi8_mask` | `vpcmpeqb` | `Avx512BW.compareEqualU8` (velt/arch/x86) | `avx512bw-x86` |
+| `_mm512_lzcnt_epi32` | `vplzcntd` | `Avx512CD.leadingZeroCountU32` (velt/arch/x86) | `avx512cd-x86` |
+| `_mm512_mask_blend_epi32` | `vpblendmd` | `Avx512F.blendU32` (velt/arch/x86) | `avx512f-x86` |
+| `_mm512_min_epu8` | `vpminub` | `Avx512BW.minU8` (velt/arch/x86) | `avx512bw-x86` |
+| `_mm512_movepi8_mask` | `vpmovb2m` | `Avx512BW.moveMaskU8` (velt/arch/x86) | `avx512bw-x86` |
+| `_mm512_mullo_epi32` | `vpmulld` | `Avx512F.multiplyLowU32` (velt/arch/x86) | `avx512f-x86` |
+| `_mm512_mullo_epi64` | `vpmullq` | `Avx512DQ.multiplyLowU64` (velt/arch/x86) | `avx512dq-x86` |
+| `_mm512_permutexvar_epi32` | `vpermd` | `Avx512F.permuteVarU32` (velt/arch/x86) (operands swapped: value, then indices) | `avx512f-x86` |
+| `_mm512_permutexvar_epi8` | `vpermb` | `Avx512Vbmi.permuteVarU8` (velt/arch/x86) (operands swapped: value, then indices) | `avx512vbmi-x86` |
+| `_mm512_popcnt_epi8` | `vpopcntb` | `Avx512Bitalg.popCountU8` (velt/arch/x86) | `avx512bitalg-x86` |
+| `_mm512_shuffle_epi8` | `vpshufb` | `Avx512BW.shuffleU8` (velt/arch/x86) | `avx512bw-x86` |
+| `_mm_crc32_u16` | `crc32w` | `Sse42.crc32U16` (velt/arch/x86) | `sse4.2-x86` |
+| `_mm_crc32_u32` | `crc32l` | `Sse42.crc32U32` (velt/arch/x86) | `sse4.2-x86` |
+| `_mm_crc32_u64` | `crc32q` | `Sse42.crc32U64` (velt/arch/x86) | `sse4.2-x86` |
+| `_mm_crc32_u8` | `crc32b` | `Sse42.crc32U8` (velt/arch/x86) | `sse4.2-x86` |
+| `_mm_popcnt_u32` | `popcnt` | `Popcnt.popCountU32` (velt/arch/x86) | `popcnt-x86` |
+| `_mm_popcnt_u64` | `popcnt` | `Popcnt.popCountU64` (velt/arch/x86) | `popcnt-x86` |
+| `_mm_shuffle_epi8` | `pshufb` | `Ssse3.shuffle` (velt/arch/x86) | `ssse3-x86` |
+| `_pdep_u32` | `pdep` | `Bmi2.parallelBitDepositU32` (velt/arch/x86) | `bmi2-x86` |
+| `_pdep_u64` | `pdep` | `Bmi2.parallelBitDepositU64` (velt/arch/x86) | `bmi2-x86` |
+| `_pext_u32` | `pext` | `Bmi2.parallelBitExtractU32` (velt/arch/x86) | `bmi2-x86` |
+| `_pext_u64` | `pext` | `Bmi2.parallelBitExtractU64` (velt/arch/x86) | `bmi2-x86` |
+| `_tzcnt_u32` | `tzcnt` | `Bmi1.trailingZeroCountU32` (velt/arch/x86) | `bmi1-x86` |
+| `_tzcnt_u64` | `tzcnt` | `Bmi1.trailingZeroCountU64` (velt/arch/x86) | `bmi1-x86` |
+| `vdotq_s32` | `sdot` | `Dp.dotProductI8` (velt/arch/arm) | `dotprod-arm` |
+| `vdotq_u32` | `udot` | `Dp.dotProductU8` (velt/arch/arm) | `dotprod-arm` |
+| `vmmlaq_s32` | `smmla` | `I8mm.matrixMultiplyAccumulateI8` (velt/arch/arm) | `i8mm-arm` |
+| `vmmlaq_u32` | `ummla` | `I8mm.matrixMultiplyAccumulateU8` (velt/arch/arm) | `i8mm-arm` |
+| `vmull_high_p64` | `pmull2` | `Pmull.polynomialMultiplyWideningUpper` (velt/arch/arm) | `clmul-arm` |
+| `vmull_p64` | `pmull` | `Pmull.polynomialMultiplyWideningLower` (velt/arch/arm) | `clmul-arm` |
+| `vusdotq_s32` | `usdot` | `I8mm.dotProductUnsignedSigned` (velt/arch/arm) | `i8mm-arm` |

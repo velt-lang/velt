@@ -45,8 +45,9 @@ pub(crate) fn validate_moves(cx: &mut Ctx) {
         visit::exprs_mut(&mut block, &mut |e: &mut Expr| {
             if soft.contains(&e.span) && soft::is_moved_place(e) {
                 // A `using` variable keeps its value until the end of its block (except for its
-                // `await using` cleanup call, which carries the declared name's span).
-                if let E::Local(l, _) = e.kind {
+                // `await using` cleanup call, which carries the declared name's span), also when
+                // it is read narrowed or downcast (`if (m) { const { a } = m; return a; }`).
+                if let Some(l) = super::shares::whole_local(e) {
                     let using = kinds.get(l.0 as usize) == Some(&LocalKind::Using);
                     if using && e.span != f.body.locals[l.0 as usize].span {
                         return soft::make_share(e);

@@ -534,8 +534,10 @@ fn computes_only(ext: &ExternFn) -> bool {
             | SimdCall::Prefetch,
         ) => true,
         // A 256-bit operation writes its result through a pointer; the start-up hook's store of
-        // the CPU's feature word is a store.
-        Some(SimdCall::Inst(_) | SimdCall::Wide(..) | SimdCall::CpuWordSet) | None => false,
+        // the CPU's feature word is a store. A CPU extension's instruction stays where its
+        // check put it.
+        Some(SimdCall::Inst(_) | SimdCall::Arch(_) | SimdCall::Wide(..) | SimdCall::CpuWordSet)
+        | None => false,
     }
 }
 

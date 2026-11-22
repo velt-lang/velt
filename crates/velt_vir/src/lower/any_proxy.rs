@@ -17,7 +17,6 @@ use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 use super::any_member::{SLOT_APPLY, SLOT_CALL, ST_OK, ST_UNSUPPORTED};
 use super::glue::VtableKey;
 use super::operand::proj;
-use super::rt::Rt;
 use super::FnLower;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
@@ -70,9 +69,8 @@ impl FnLower<'_, '_> {
             }
             ProxyKey::Num(i) => {
                 let ks = self.temp(Ty::Agg(STR_AGG));
-                let ka = self.addr(Place::local(ks));
                 let iv = Operand::Copy(Place::local(i));
-                self.call_rt(Rt::StrFromF64, vec![iv, ka], None);
+                self.float_text_into(iv, Place::local(ks));
                 self.any_box_into(Operand::Copy(Place::local(ks)), s, &out);
             }
             ProxyKey::Sym(k) => {

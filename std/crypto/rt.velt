@@ -1,13 +1,7 @@
-// velt/crypto (internal): the runtime and SIMD functions velt/crypto calls: the OS generator and the
-// SHA instructions (std/simd/sha.velt), called bare in the gated functions.
+// velt/crypto (internal): the SIMD functions velt/crypto calls: the SHA instructions
+// (std/simd/sha.velt), called bare in the gated functions.
 
 import { u32x4 } from "velt/simd";
-
-/** `(uint64_t n, VeltBytes* out)`: `n` bytes from the OS CSPRNG. */
-export declare function velt_rt_random_bytes(n: u64): u8[];
-
-/** A uniformly random `u64` from the OS CSPRNG. */
-export declare function velt_rt_random_u64(): u64;
 
 /** The SHA instructions (std/simd/sha.velt), called bare in the gated functions below. */
 export declare function velt_simd_u32x4_sha1c(abcd: u32x4, e: u32, wk: u32x4): u32x4;

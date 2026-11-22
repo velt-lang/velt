@@ -1,0 +1,169 @@
+// check: no leaks
+// A `read` callback that stores one of the caller's own objects into the caller's containers,
+// itself or captured by a closure, stores that object, as in JavaScript: a closure made in the
+// callback and called after the `read` changes the caller's array, not a copy of it, and the
+// object's elements, which the caller holds already, are not counted again (#3126). The
+// program also keeps the array's type in a `Map`.
+
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+class Bag {
+  rows: number[][][] = [[[1]], [[2]]];
+}
+
+function fresh(): number[][][] {
+  return [[[1]], [[2]], [[3]]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const b = new RwLock(new Box());
+  const groups = new Map<string, number[][][]>();
+  groups.set("z", [[[0]]]);
+  let n = 0;
+
+  // A closure in a variable of the caller's, called after each `read`.
+  const out = fresh();
+  let later: (() => number) | null = null;
+  for (let r = 0; r < 3; r++) {
+    a.read((x) => {
+      later = () => out.pop()!.length;
+      out.push([[r, x.items.length]]);
+    });
+    n += later!();
+  }
+  console.log("variable", n, out.length, JSON.stringify(out));
+
+  // Closures kept in an array of the caller's.
+  const queue = fresh();
+  const fs: (() => number)[] = [];
+  a.read((x) => {
+    fs.push(() => queue.shift()!.length);
+    fs.push(() => {
+      queue.push([[9]]);
+      return queue.length;
+    });
+  });
+  for (const f of fs) {
+    n += f();
+  }
+  console.log("array", n, queue.length, JSON.stringify(queue));
+
+  // Made by a helper closure in the callback: stored by the helper itself, and through a
+  // `const` of the callback's.
+  const o1 = fresh();
+  const made1: (() => number)[] = [];
+  for (let r = 0; r < 2; r++) {
+    a.read((x) => {
+      const mk = () => {
+        made1.push(() => o1.pop()!.length);
+      };
+      mk();
+      o1.push([[r]]);
+    });
+  }
+  for (const f of made1) {
+    n += f();
+  }
+  console.log("inner-store", n, o1.length, JSON.stringify(o1));
+  const o2 = fresh();
+  let l2: (() => number) | null = null;
+  for (let r = 0; r < 2; r++) {
+    a.read((x) => {
+      const mk = () => () => o2.pop()!.length;
+      const made = mk();
+      l2 = made;
+      o2.push([[r]]);
+    });
+    n += l2!();
+  }
+  console.log("via-const", n, o2.length, JSON.stringify(o2));
+
+  // The caller's array itself, stored as it is and inside new objects and arrays.
+  const own = fresh();
+  const holder: number[][][][] = [];
+  let held: { o: number[][][] } | null = null;
+  for (let r = 0; r < 3; r++) {
+    a.read((x) => {
+      holder.push(own);
+      holder.push([[[7]]], own);
+      held = { o: own };
+    });
+  }
+  // Chosen by a condition, inline and through a variable of the callback's.
+  const spare = fresh();
+  for (let r = 0; r < 4; r++) {
+    a.read((x) => {
+      holder.push(r % 2 === 0 ? own : spare);
+      const pick = r > 1 ? own : spare;
+      holder.push(pick);
+    });
+  }
+  own[0][0].push(99);
+  n += holder.length + held!.o.length;
+  console.log("stored", n, JSON.stringify(holder[0]), holder[2] === own, held!.o === own);
+  console.log("chosen", holder.length, holder[9] === own, holder[10] === spare, holder[16] === own);
+
+  // A class instance, a `Map` and a closure of the caller's, stored as they are.
+  const bag = new Bag();
+  const bags: Bag[] = [];
+  const m = new Map<string, number[][]>();
+  m.set("k", [[1], [2]]);
+  const ms: Map<string, number[][]>[] = [];
+  let calls = 0;
+  const g = () => {
+    calls++;
+    return queue.pop()!.length;
+  };
+  const gs: (() => number)[] = [];
+  for (let r = 0; r < 3; r++) {
+    a.read((x) => {
+      bags.push(bag);
+      ms.push(m);
+      gs.push(g);
+    });
+  }
+  bag.rows[0][0].push(5);
+  for (const f of gs) {
+    n += f();
+  }
+  console.log(
+    "own",
+    bags.length,
+    bags[2] === bag,
+    JSON.stringify(bags[0].rows),
+    ms[1] === m,
+    calls,
+    queue.length,
+  );
+
+  // With an element the reader made in it, and the caller's elements stored again after.
+  const mixed = fresh();
+  const parts: number[][][] = [];
+  a.read((x) => {
+    mixed.push(structuredClone(x.items.slice()));
+    holder.push(mixed);
+    parts.push(mixed[3], mixed[0]);
+  });
+  mixed[3][0].push(8);
+  mixed[0][0].push(6);
+  console.log("mixed", JSON.stringify(holder[holder.length - 1]), JSON.stringify(parts));
+
+  // From a `read` nested in another.
+  const deep = fresh();
+  a.read((x) => {
+    b.read((y) => {
+      const k = y.items.length;
+      later = () => {
+        deep.unshift([[k]]);
+        return deep.length;
+      };
+      holder.push(deep);
+    });
+  });
+  n += later!();
+  console.log("nested", n, JSON.stringify(deep), holder[holder.length - 1] === deep);
+  console.log(a.read((x) => JSON.stringify(x.items)), groups.size);
+}

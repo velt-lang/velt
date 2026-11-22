@@ -13,6 +13,7 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{Nothing, TyId, TyKind};
 use crate::type_defaults::DefaultsOf;
+use crate::weak_types::WeakPlace;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
 #[derive(Clone, Default)]
@@ -133,6 +134,7 @@ impl Ctx<'_> {
             }
             ast::TypeExprKind::Query(path) => self.resolve_query(t, path, env),
             ast::TypeExprKind::KeyOf(inner) => self.resolve_keyof(t, inner, env),
+            ast::TypeExprKind::Weak(inner) => self.weak_misplaced(t, inner, env),
             ast::TypeExprKind::Conditional(c) => self.resolve_conditional(t, c, env),
             ast::TypeExprKind::Mapped(m) => self.resolve_mapped(t, m, env),
             ast::TypeExprKind::TemplateLiteral { quasis, types } => {
@@ -170,7 +172,11 @@ impl Ctx<'_> {
             } else {
                 f.ty.clone()
             };
-            let t = self.resolve_type(&written, env);
+            let t = self
+                .resolve_weak_annotation(&written, env, WeakPlace::Other, &mut |cx, t, env| {
+                    cx.resolve_type(t, env)
+                })
+                .0;
             let name = self.member_key(env.module, &f.name);
             if out.iter().any(|o| o.name == name) {
                 self.err(
@@ -389,6 +395,7 @@ impl Ctx<'_> {
         t: &ast::TypeExpr,
         env: &TyEnv,
     ) -> TyId {
+        let written = args;
         if args.len() == 2 && self.is_iterator_result_alias(item) {
             return match self.iterator_result_args(args, env) {
                 Some(args) => self.item_type_args(item, name, args, t),
@@ -439,6 +446,12 @@ impl Ctx<'_> {
             }
             _ => args,
         };
+        if let Item::Def(d) = item {
+            if self.is_ptr_decl(d) {
+                let chosen = Self::names_env(written, env);
+                return self.ptr_type_written(&args, t, chosen);
+            }
+        }
         let r = self.item_type_args(item, name, args, t);
         self.generator_site_if(site, r, t.span, env.module)
     }
@@ -452,12 +465,9 @@ impl Ctx<'_> {
         t: &ast::TypeExpr,
     ) -> TyId {
         match item {
+            Item::Def(d) if self.is_ptr_decl(d) => self.ptr_type_written(&args, t, false),
             Item::Def(d) => self.def_type(d, name, args, t),
-            Item::Alias(a) => {
-                let body = self.aliases[a as usize].decl.ty.span;
-                self.fn_sites.alias_written.insert(t.span, body);
-                self.expand_alias(a, args, t)
-            }
+            Item::Alias(a) => self.alias_written(a, args, t),
         }
     }
 

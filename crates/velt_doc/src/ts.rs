@@ -688,6 +688,7 @@ impl TsPrinter<'_> {
             {
                 self.operand(&args[0])
             }
+            TypeExprKind::Weak(inner) => self.operand(inner), // `weak T | null` is `T | null`
             _ => s,
         }
     }

@@ -26,11 +26,11 @@ pub struct Hook {
     /// `hook_replaces.rs` lists every place left that still names one, #2197). An extern the
     /// hook only wraps is not listed: `processWrite` writes through `velt_rt_write_str`, which
     /// stays the runtime's job. A hook may also call an extern it replaces for some of its
-    /// inputs (`numberText` hands a float that is not whole to `velt_rt_str_from_f64`): what
-    /// counts is that the compiler no longer calls it in the hook's place.
+    /// inputs: what counts is that the compiler no longer calls it in the hook's place.
     pub replaces: &'static [&'static str],
-    /// Lowering calls the runtime instead when the hook is missing or left unchecked (it is
-    /// one of [`super::ON_DEMAND_FLOAT`] or [`super::ON_DEMAND_WRITE`]): its `velt_vir` builder
+    /// Lowering does without it when the hook is missing or left unchecked (it is one of
+    /// [`super::ON_DEMAND_FLOAT`], whose place `number_text` / `number_push` take, or of
+    /// [`super::INSPECT_SHAPES`], whose place lowering's own glue takes): its `velt_vir` builder
     /// returns an `Option`. Every other lowered hook missing is an internal compiler error.
     pub fallback: bool,
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.velt`)

@@ -1,0 +1,11 @@
+// A store of an `any` into an element of a `number[]` is no conversion: JavaScript keeps the
+// value itself there (a string stays a string), so the store is the type claim it is everywhere
+// else and stops with the conversion's `TypeError`. Only an integer array's element (a
+// `Buffer`'s byte) converts what it is given (std/buffer_any_convert).
+const text: any = "7";
+const bytes: u8[] = [0];
+bytes[0] = text;
+console.log(bytes[0]);
+const numbers: number[] = [0];
+numbers[0] = text;
+console.log("not reached");

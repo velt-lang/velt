@@ -105,21 +105,15 @@ fn division_by_nonzero_constant_has_no_check() {
 }
 
 #[test]
-fn pow_and_casts() {
+fn casts() {
+    // `**` is std's: `powI64` on integers and `powF64` on floats, hooks sema demands, which a
+    // hand-built program has not (the goldens lang/pow_int and lang/math_pow_node run them).
     let mut pb = PB::new();
     let t = pb.t;
     let mut f = FB::new("main", t.unit);
     let x = f.local("x", t.f64);
     let body = vec![
         let_(x, flt(2.0, t.f64)),
-        se(print(
-            vec![
-                // `**` on floats is std's `powF64` hook (lang/math_pow_node runs it).
-                bin(B::Pow, int(2, t.i64), int(10, t.i64)),
-                bin(B::Pow, int(3, t.u8), int(5, t.u8)),
-            ],
-            t,
-        )),
         se(print(
             vec![
                 cast(flt(1e10, t.f64), t.i32),
@@ -133,8 +127,5 @@ fn pow_and_casts() {
     ];
     pb.add_main(f.build(body));
     let out = run(&pb.finish());
-    assert_eq!(
-        out.stdout,
-        "1024 243\n2147483647 -3 255 9223372036854775807 2\n"
-    );
+    assert_eq!(out.stdout, "2147483647 -3 255 9223372036854775807 2\n");
 }
