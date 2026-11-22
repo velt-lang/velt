@@ -1,0 +1,84 @@
+// velt/crypto (tests): the probe of scripts/ct-counts.py for RSA signing, which no program can
+// import: a PKCS#1 v1.5 and a PSS signature by the private key in the file $VELT_CT_SECRET names
+// (p, q, dP, dQ and qInv, 128 bytes each; the modulus in the file of that name with ".pub" added;
+// a fixed key without the file, so that this also runs with the other tests). The key is read as bytes and nothing here
+// branches on it; what is checked costs the same for every key of one size.
+import { RsaSigner } from "velt/crypto/rsa_sign";
+import { hexDecode } from "velt/encoding";
+import { readFileBytesSync } from "velt/fs";
+import { describe, expect, it } from "velt/test";
+
+// `count` numbers of 128 bytes each from `file`.
+function numbers(file: u8[], count: usize): u8[][] {
+  const out: u8[][] = [];
+  for (let i: usize = 0; i < count; i++) {
+    out.push(file.slice((128 * i) as i64, (128 * i + 128) as i64));
+  }
+  return out;
+}
+
+// A 2048-bit key (rsa_sign.test.velt's first).
+function fixed(): u8[][] {
+  return [
+    hexDecode(
+      "b158fdc5641868811bd1070d73bcecc873a0bfcffc3b6ae01646d12688442fe4b997bcf743cde1bd765def3f0289" +
+        "afa2730c57d951ce3a9078f7e97ca9e4de4d618cce98b9d9083ec43a27dc7ec2ca6da85e11501ce5c0310b4a6dc4" +
+        "5edec023fc98a67ca87dea1337cdacb9127ffdf9c82f8a3f7713e4ff681c6e97ecabf4b7c2d522d5140c53bb404b" +
+        "75ad3a72804dbc1edacc2088934d7253e1cc5e25770971999b1beb278d2e670eb3b38e7ebc90dc701dcbf951e91e" +
+        "426c52196f04b7990117c681879f4f5dc148f57dcc54a5409e8782929a428922d99cb32878826270f8f7a8298f62" +
+        "eaf60c40a8079c0beeb384788a9187272cf6fb92ddd1eaf5781b",
+    ),
+    hexDecode("010001"),
+    hexDecode(
+      "e6ea3c1a9553be539eb272dcc28cde0fdae4f76d2b131d029ea14b4bcccbe70da5b7114bea3ea6f4be17557de661" +
+        "fba25285cf1f63b20d96dded5d58b511caa4d50a023ca6f6b946e828abe258d040bf64de4e4c668a6c28e1d90029" +
+        "22437dc5f0fb9d3548654256fc1e7ea566b687590f2fa25dc6e203210f63f4bfeaf28ceb",
+    ),
+    hexDecode(
+      "c49d0b331f48518c8d58d747ea4a554f1b25ea532150f7aa994b55bb75f996cdbea102210b63cb204e862916b3d7" +
+        "3c0256c8b4a50b21e9ad4705334c67c2242d879c4ba265302b4f4d22d16ef6ff1a14b1db612c115d391a5c30a113" +
+        "badb401e881ca804c37e99a87f2122a3cb18ea529205a6d3d00a3c59c7802ceb6b753591",
+    ),
+    hexDecode(
+      "3a9da2fc2c83c180807c53e3ee0ecc1fc234f509e53148dfed5c8c3c85940ce6cdf61691eab854b133bfc097e0ef" +
+        "666ce1fdcd81ee50b85a5fa36d5aa33c0cf0a29393d5c99c3f93dc42d6bef2448aeb0ab3d3b4592332297e8b131b" +
+        "5df33bee0f2a0fd202ba91887b1f528eb1f00b9373e36797de7068d2ef913403b3a43659",
+    ),
+    hexDecode(
+      "86b83cf658970b19cdb8743ad8b4fa636becbcf51d3d079723d6d4f5d04ea7206f608fbee8b906742a9a0f09794d" +
+        "1fd75273d023cecefbf93952bce5bbaaf173291ad5507f195473d01ced78a5520322ef03ad3faede3bc46e2afc14" +
+        "32d30cca5ee593d33fc93dac90ffb96696418a3dedc4659d794daa30b25c876b00849da1",
+    ),
+    hexDecode(
+      "8cc202743f4fa358f840539eb1126d8eb0bfc34598474ccd913a5a22a3d718198edf328148cff5ba995a9b04b305" +
+        "88899e8beefc16518c6c0f9b4bb308b44fb781d092154b06f7707b1b1ea7f30adfb07806a31d1403b736e220b374" +
+        "b53f384a5f19fc3909c3ff626ed7602ea65babb6e50537d83e60e4970666c209854f4c3e",
+    ),
+  ];
+}
+
+describe("the RSA signing probe", () => {
+  it("signs with the key it is given", () => {
+    const path = process.env.VELT_CT_SECRET;
+    let k = fixed();
+    if (path != null) {
+      // The secret numbers at fixed places, and the modulus, which is public, from its own file.
+      const s = numbers(readFileBytesSync(path), 5);
+      const e: u8[] = [1, 0, 1];
+      k = [readFileBytesSync(`${path}.pub`), e, s[0], s[1], s[2], s[3], s[4]];
+    }
+    const key = new RsaSigner(k[0], k[1], k[2], k[3], k[4], k[5], k[6]);
+    const digest = Buffer.alloc(32);
+    for (let i: usize = 0; i < 32; i++) {
+      digest[i] = (5 * i + 3) as u8;
+    }
+    const a = key.signPkcs1(digest);
+    const b = key.signPss(digest, Buffer.alloc(32));
+    // The end of what ct-counts.py counts (scripts/ct-shim.c).
+    const stop = process.env.VELT_CT_STOP;
+    if (stop != null) {
+      readFileBytesSync(stop);
+    }
+    expect(a.length + b.length).toBe(512);
+  });
+});

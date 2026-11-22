@@ -130,6 +130,7 @@ pub fn ty(t: &TypeExpr) -> String {
             format!("typeof {}", path.join("."))
         }
         TypeExprKind::KeyOf(t) => format!("keyof {}", ty(t)),
+        TypeExprKind::Weak(t) => format!("weak {}", ty(t)),
         TypeExprKind::Conditional(c) => format!(
             "({} extends {} ? {} : {})",
             ty(&c.check),

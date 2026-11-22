@@ -134,6 +134,16 @@ glibc 2.31 or newer (the release toolchains' baseline, Debian 11).
 - Arguments: `-pie --dynamic-linker <loader> --eh-frame-hdr -z relro -z noexecstack
   --hash-style=gnu --build-id`, the stubs `--as-needed`. `--allow-shlib-undefined`, because the
   shared runtime was linked against the build machine's glibc and may bind newer versions.
+- **Outline-atomics helpers (arm64).** LLVM's code for arm64 Linux calls `__aarch64_cas4_acq`
+  and its like (`-moutline-atomics`). The static runtime has them (Rust's compiler builtins); the
+  shared runtime does not export them, and the kit has `libgcc_s.so`'s stubs, not `libgcc.a`. A
+  link against the shared runtime therefore names the static runtime archive last, after the C
+  libraries (`LinkRequest::helpers_lib`, `cc` links too): the linker takes only the members
+  defining a symbol still undefined, the helpers. Before libm, a program's `fmod` came from the
+  archive's compiler builtins and brought Rust's std and the static runtime's `main` along;
+  among the objects, the program's runtime calls would bring the static runtime in beside the
+  shared one. A linker also takes archive members for what a shared library leaves undefined;
+  the shared runtime's undefined symbols are all the C libraries', which the kit's stubs define.
 
 ## Linux, musl (`*-unknown-linux-musl`)
 

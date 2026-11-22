@@ -23,11 +23,11 @@ export { CString } from "velt/ffi/c_string";
  */
 export { CVarArgs } from "velt/ffi/c_var_args";
 
-/** A number a C function writes through a pointer parameter. */
+/**
+ * A value a C function writes through a pointer parameter: a number or `bool` (`int *out`), or
+ * a pointer that may be `NULL` (`Out<Ptr<T> | null>` for `T **out`).
+ */
 export { Out } from "velt/ffi/out";
-
-/** A pointer a C function writes through a pointer parameter (`T **out`). */
-export { OutPtr } from "velt/ffi/out_ptr";
 
 /** The calling thread's C `errno`, read and set in place (unsafe). */
 export { errno, setErrno } from "velt/ffi/errno";

@@ -69,6 +69,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyUnboundMethod
         | I::Identity
         | I::ToAny
+        | I::SpreadParam
         | I::AnyReflectInfo
         | I::AnyReflectCount
         | I::AnyReflectName
@@ -79,6 +80,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::StrByteLen
         | I::AddressLoad
         | I::AddressArray
+        | I::AddressArrayOwned
         | I::AddressStore
         | I::AtomicAddress
         | I::AddressAtomicLoad
@@ -86,6 +88,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AddressAtomicRmw
         | I::AddressAtomicCas
         | I::AddressAtomicCasWeak
+        | I::PtrFromAddress
+        | I::PtrToAddress
         | I::ExportedAddress
         | I::Exit
         | I::Panic
@@ -217,6 +221,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::RecordViewSet
         | I::RecordViewDelete
         | I::RecordViewFlush => false,
-        I::StrWord0 | I::StrWord1 | I::StrWord2 | I::StrDataAddress => false,
+        I::StrWord0 | I::StrWord1 | I::StrWord2 | I::StrDataAddress | I::StrAt => false,
     }
 }

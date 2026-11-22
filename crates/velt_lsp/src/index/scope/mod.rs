@@ -350,7 +350,7 @@ impl<'a> Walker<'a> {
                 sigs.iter().for_each(|s| self.function(&s.sig, None));
                 self.ty(members);
             }
-            ast::TypeExprKind::KeyOf(t) => self.ty(t),
+            ast::TypeExprKind::KeyOf(t) | ast::TypeExprKind::Weak(t) => self.ty(t),
             ast::TypeExprKind::Conditional(c) => {
                 [&c.check, &c.extends, &c.then, &c.else_]
                     .into_iter()

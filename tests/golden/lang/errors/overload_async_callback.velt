@@ -1,0 +1,18 @@
+// An async callback passed to an overload whose callback's rest is typed by a type parameter,
+// over an implementation that takes a callback of `unknown` values (#379): the implementation
+// calls it through that type, which can't return a promise yet (#924), so the call is refused
+// here, also for a callback whose result can hold a promise. tsc accepts it, and Node prints
+// `made function function function`.
+interface Ctx {
+  id: string;
+}
+
+function wrap<A extends unknown[], R>(impl: (rq: Ctx, ...args: A) => R): (wire: unknown[]) => unknown;
+function wrap(impl: (rq: Ctx, ...args: unknown[]) => unknown): (wire: unknown[]) => unknown {
+  return (wire: unknown[]): unknown => impl({ id: "rq" }, ...wire);
+}
+
+const inc = wrap(async (rq: Ctx, n: number): Promise<number> => n + 1);
+const either = wrap((rq: Ctx, n: number): number | Promise<number> => (n > 0 ? Promise.resolve(n) : -1));
+const maybe = wrap((rq: Ctx, n: number): Promise<number> | undefined => undefined);
+console.log("made", typeof inc, typeof either, typeof maybe);

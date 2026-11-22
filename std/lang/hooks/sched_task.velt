@@ -27,8 +27,9 @@
 //   first entry), the rejected promises nobody handled, reported once its microtasks are drained
 //   (sched_node.velt `report`), the task's size in bytes (to free it with), its sleeps due to
 //   fire (sched_sleep.velt), its home worker, its join slot's word, its result's transfer glue,
-//   the join handle (a heap future, rt_abi_async.md §1) whose result slot follows, then the
-//   initial state copied in: one allocation per spawn.
+//   its id, the list of its started promises that only their owner can run and their number
+//   (sched_task_lost.velt), the join handle (a heap future, rt_abi_async.md §1) whose result
+//   slot follows, then the initial state copied in: one allocation per spawn.
 //
 // Workers (#2649 step 3): every worker thread has a block of this layout (`exec()` is this
 // thread's); the first is worker 0's, the thread that runs `main`, which also holds what is
@@ -301,7 +302,14 @@ export const E_LIVE_F: usize = 984;
  * atomically: the program's end after `main` waits for them (sched.velt `schedFinish`).
  */
 export const E_BLOCKING: usize = 992;
-export const E_SIZE: usize = 1000;
+/**
+ * What other workers ask of this one's sleeps (a stack any thread pushes on, taken whole by the
+ * worker: sched_sleep_move.velt).
+ */
+export const E_SLEEP_ASKS: usize = 1000;
+/** The newest task of its own offer at its last I/O tick (sched_spread.velt `reclaim`). */
+export const E_OFFER_SEEN: usize = 1008;
+export const E_SIZE: usize = 1016;
 /** The spawns of a lazy worker 0's poll that go on `E_PREST`, which the monitor may take. */
 export const PEND_STACKED: usize = 64;
 /** `E_LAZY`'s states. */
@@ -336,6 +344,12 @@ export const T_ROOT: usize = 48;
 export const T_RESULT_DROP: usize = 56;
 export const T_RESULT_SIZE: usize = 64;
 export const T_JOINER: usize = 72;
+/**
+ * The cx its root is polled with (its await word's address, then the task as the waker). A cx at
+ * its waker's address plus `T_CX` is a task's own, and no other is (sched_yield.velt tests that
+ * instead of the waker's table): a started promise's is at `N_CX`, a join's below its children's
+ * records, the probe's above its waker by less, the runtime's below its header.
+ */
 export const T_CX: usize = 80;
 export const T_WORD: usize = 96;
 export const T_WOKEN: usize = 104;
@@ -359,9 +373,21 @@ export const SK_ENDING: u32 = 2;
 export const T_TRANSFER: usize = 168;
 /** The task's id for `velt_rt_task_id` (0 until first asked for; sched_id.velt). */
 export const T_ID: usize = 176;
+/**
+ * The task's started promises that nothing but their owner can run (sched_task_lost.velt): the
+ * first of their list and how many they are. Both are read only with flag `LOST` set, which the
+ * first link sets after it stored them, so a spawn stores neither.
+ */
+export const T_LOST: usize = 184;
+export const T_LISTED: usize = 192;
+/**
+ * The task's yield block (sched_yield_list.velt: its list of yields waiting for their turn, its
+ * yield generation and numbers), made when it first needs one (0: none), freed with the task.
+ */
+export const T_YIELDS: usize = 200;
 /** The join handle (a heap future: its header, then its result slot at `T_SLOT`). */
-export const T_JOIN: usize = 184;
-export const T_SLOT: usize = 200;
+export const T_JOIN: usize = 208;
+export const T_SLOT: usize = 224;
 
 /** A task's states. */
 export const IDLE: u32 = 0;
@@ -369,6 +395,13 @@ export const SCHEDULED: u32 = 1;
 export const RUNNING: u32 = 2;
 export const NOTIFIED: u32 = 3;
 export const DONE: u32 = 4;
+/**
+ * Running, and its root (or a child state polled with the root's cx: an inline `Promise.all`'s)
+ * yielded in this poll (sched_yield.velt): queued again at the poll's end as `NOTIFIED` is, and
+ * what yielded goes on only in a later poll (whose `RUNNING` ends this state), though this one
+ * may poll the root again to run its microtasks.
+ */
+export const YIELDED: u32 = 5;
 
 /**
  * A task's flags (changed by the thread polling it): the root of `main`; it
@@ -379,6 +412,18 @@ export const DONE: u32 = 4;
  * root was polled as a microtask's job or by a due sleep (sched_run.velt `runWoken` reads it).
  */
 export const ROOT: u32 = 4;
+/** Yields of it wait for their turn (`T_YIELDS`): its next poll fires them (sched_yield.velt). */
+export const YIELDS: u32 = 1;
+/**
+ * It made stored yields in this poll: its next poll begins a yield generation (`T_YIELDS`). A low
+ * bit: sched_run.velt `run` tests it with the flags that leave the straight path, in one constant.
+ */
+export const FRESH: u32 = 2;
+/**
+ * Its root yielded with no record, its list empty, with a yield block (sched_yield.velt
+ * `rootYield`): while it is `YIELDED`, a yield joining the list gets the root's record first.
+ */
+export const ROOT_ALONE: u32 = 8388608;
 export const LOCALS: u32 = 8;
 export const ROOT_DONE: u32 = 16;
 export const TIMED: u32 = 32;
@@ -418,6 +463,21 @@ export const BATCHED: u32 = 65536;
  * (sched_join.velt `polledFlags`).
  */
 export const JOIN_DUE: u32 = 131072;
+/**
+ * It listed a started promise that only its owner can run (`T_LOST` and `T_LISTED` hold values):
+ * the end of its polls looks whether anything can still wake it (sched_task_lost.velt `parks`).
+ */
+export const LOST: u32 = 1048576;
+/**
+ * Nothing can wake it any more (sched_task_lost.velt): its next poll drops its root instead of
+ * polling it.
+ */
+export const CANCEL: u32 = 2097152;
+/**
+ * Its owner-only promises are also linked (`T_LOST`), for the park's check: decided at its first,
+ * with the block counters on (sched_task_lost.velt `list`).
+ */
+export const LINKED: u32 = 4194304;
 
 /**
  * The join slot's word (`T_JOIN_STATE`): its lock (guards `T_JOINER`), the root is done (the
@@ -433,6 +493,11 @@ export const J_CLAIMED: u32 = 8;
  * `lockJoin`), whatever the lock mode.
  */
 export const J_FOREIGN: u32 = 64;
+/**
+ * The task parked with its handle the only thing left that keeps it (sched_task_lost.velt
+ * `parks`): the handle's drop wakes it, so its next park finds it can never be woken again.
+ */
+export const J_PARKED: u32 = 128;
 
 /**
  * This thread's worker block; off the workers (a thread of the runtime's, a C library's),

@@ -87,11 +87,36 @@ impl Translator<'_, '_> {
             // Cranelift has none of these instructions: the CPU "lacks" them here, so every
             // check is false and the operations sit behind it as dead code (std/simd/sha.velt
             // runs the emulation). They give a zero value, never computed at run time.
-            SimdCall::Has(_) => Inlined::Value(self.builder.ins().iconst(types::I8, 0)),
+            SimdCall::Has(_) | SimdCall::OnArch(_) => {
+                Inlined::Value(self.builder.ins().iconst(types::I8, 0))
+            }
+            // No gated code runs here, so std's feature word reads as "nothing" and the
+            // requirement (filled in by the driver for a build, `driver/cpu_check.rs`) as none.
+            SimdCall::CpuWord | SimdCall::CpuRequired => {
+                Inlined::Value(self.builder.ins().iconst(types::I64, 0))
+            }
+            SimdCall::CpuWordSet => Inlined::Unit,
             SimdCall::Inst(ExtOp::Sha1H) => {
                 Inlined::Value(self.builder.ins().iconst(types::I32, 0))
             }
+            // On x86-64 a call of the function the module defines (cpuid.rs), elsewhere zeros.
+            SimdCall::Cpuid | SimdCall::Xgetbv
+                if matches!(self.decls.externs.get(id.0 as usize), Some(Some(_))) =>
+            {
+                return None
+            }
             SimdCall::Inst(_) | SimdCall::Cpuid => Inlined::Value(self.zero_vector()),
+            // velt/arch's instructions are only in gated code, which never runs here.
+            SimdCall::Arch(op) => {
+                let ty = match op.row().ret.ty() {
+                    velt_vir::vir::Ty::V128 => return Some(Inlined::Value(self.zero_vector())),
+                    velt_vir::vir::Ty::U8 => types::I8,
+                    velt_vir::vir::Ty::U16 => types::I16,
+                    velt_vir::vir::Ty::U32 => types::I32,
+                    _ => types::I64,
+                };
+                Inlined::Value(self.builder.ins().iconst(ty, 0))
+            }
             SimdCall::Xgetbv => Inlined::Value(self.builder.ins().iconst(types::I64, 0)),
             // Cranelift has no prefetch: the hint is dropped.
             SimdCall::Prefetch => Inlined::Unit,

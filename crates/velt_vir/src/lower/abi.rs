@@ -132,6 +132,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::Oob(signed) => Self::build_oob(cx, *signed),
             Work::ArrayGrow => Self::build_array_grow(cx),
             Work::ArrayTooLong => Self::build_array_too_long(cx),
+            Work::ArrayOwnerDrop => Self::build_array_owner_drop(cx),
             Work::Main => Self::build_main(cx),
             Work::SyncMainRoot => Self::build_sync_main_root(cx),
             Work::MainFinish => Self::build_main_finish(cx),
@@ -287,9 +288,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         func.param_attrs = attrs;
         func.cold = cold;
         func.inline = inline;
-        // The extension of the same name (`@targetFeature`'s; a test of velt_vir checks each).
-        let target = hir_prog.cpu_targets.get(&def);
-        func.target = target.map(|t| crate::simd::Ext::named(t.name()).expect("ICE: a CPU target"));
+        // `@targetFeature`'s set (sema and velt_vir share the features' table).
+        func.target = hir_prog.cpu_targets.get(&def).copied().unwrap_or_default();
         func
     }
 
@@ -308,11 +308,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let by_ref = self.cx.by_ref_params.contains(&(def, self.targs.clone()));
         // Params passed in a register (`reg_param`): (HIR local, VIR param, its slot layout).
         let mut in_regs: Vec<(usize, Vec<Local>, RegParam)> = vec![];
+        // A rest parameter that is a tuple here, taken as its elements (`rest_tuple_params.rs`).
+        let mut rest_tuple = None;
         for p in &f.params {
             if captured.contains(&p.local) {
                 continue;
             }
             let decl = &f.body.locals[p.local.0 as usize];
+            if let Some(ts) = self.rest_tuple_of(def, f, p) {
+                let name = decl.name.clone();
+                rest_tuple = Some(self.rest_tuple_params(p, &ts, &name, &mut params, &mut attrs));
+                continue;
+            }
             let ty = self.sub(p.ty);
             let vt = self.cx.ty(ty);
             if let Some(reg) = (!by_ref)
@@ -412,6 +419,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let env = self.wrapper_own_env(def, env);
             self.self_env = Some(env);
             self.bind_captures(def, f, env, &mut info);
+        }
+        if let Some(r) = rest_tuple {
+            self.finish_rest_tuple(r, &mut info);
         }
         self.declare_body_locals(f, info);
         (params, attrs)

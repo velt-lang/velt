@@ -213,6 +213,7 @@ impl<'a> Walker<'a, '_> {
             T::Array(x)
             | T::Construct { ty: x, .. }
             | T::KeyOf(x)
+            | T::Weak(x)
             | T::TupleRest(x)
             | T::TupleOptional(x) => self.ty(x),
             T::GenericFunction { ty, .. } => self.ty(ty),

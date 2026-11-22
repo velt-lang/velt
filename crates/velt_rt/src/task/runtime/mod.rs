@@ -142,8 +142,8 @@ pub fn worker_count() -> usize {
 /// the rest of the process, so the leaves it polls find the host's timers and I/O.
 ///
 /// `2` also marks the process as one whose tasks are the Velt executor's ([`velt_executor`]):
-/// they have no runtime task (`velt_rt_task_id` is 0 in all of them), so what the runtime keeps
-/// per task must not take them for code outside a task.
+/// they have no runtime task (`task::local::task_key` is 0 in all of them), so what the runtime
+/// keeps per task must not take them for code outside a task.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_set_scheduler(kind: u32) {
     if kind == 2 {

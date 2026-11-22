@@ -7,9 +7,7 @@
 //! promise created during the current poll of the task can only have been woken by that poll's
 //! own code (a promise it settled), never by a timer, which fire at the start of a poll
 //! (timers.rs), so such a loser runs once right away; an older one waits for the task's next
-//! poll. So does every loser when something yielded during the poll (`yieldNow()`, a macrotask
-//! in JS terms: what yielded must not resume before the task's next poll). A loop whose
-//! combinators settle without suspending therefore no longer piles up losers
+//! poll. A loop whose combinators settle without suspending therefore no longer piles up losers
 //! that JS would have finished between its iterations (#150).
 
 use std::cell::Cell;
@@ -50,7 +48,7 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_detach(
         node::mark_started(f, &(*set).shared, quiet_drop);
         node::count_set(f);
         set::add_member(set, f);
-        fresh = node::created_in(f, tcx.turn) && !tcx.yielded.get();
+        fresh = node::created_in(f, tcx.turn);
         if !fresh {
             // Its leaves hold its owner's waker: one poll from the set makes them wake the node.
             node::queue(f);
@@ -74,8 +72,7 @@ unsafe fn give_up_inner(f: *mut VeltFut, fresh: bool) {
     let candidate = !set.is_null()
         && node::is_started(f)
         && node::running_in(f, &(*set).shared)
-        && node::created_in(f, tcx.turn)
-        && !tcx.yielded.get();
+        && node::created_in(f, tcx.turn);
     if !candidate {
         return crate::task::drop_fut(f);
     }

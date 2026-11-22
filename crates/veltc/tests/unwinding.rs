@@ -64,7 +64,6 @@ fn velt(dir: &test_dir::TestDir, main: &str, args: &[&str]) -> Output {
 /// took it by mistake hands back `FOREIGN-CAUGHT`.
 const PROBE: &str = r#"
 import { Ptr, StrBytes } from "velt/ffi";
-import { ptrAddress, ptrOf } from "velt/ffi/ptr";
 
 import { fnAddress } from "velt/lang/intrinsics";
 import { catchUnwindAt } from "velt/lang/intrinsics/unwind";
@@ -148,7 +147,7 @@ export function raiseForeign(): void {
     }
     memset(e, 0, 48);
     memcpy(e, "OTHRLANG", 8);
-    memcpy(ptrOf<u8>(ptrAddress(e) + 32), "FOREIGN-CAUGHT", 14);
+    memcpy(Ptr.at<u8>(Ptr.addressOf(e) + 32), "FOREIGN-CAUGHT", 14);
     _Unwind_RaiseException(e);
   }
 }

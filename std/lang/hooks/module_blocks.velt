@@ -11,12 +11,100 @@
 // The caller holds the module lock, or no other thread can reach module state yet: the executor
 // in Velt's lock (sched_module.velt) on its workers, or a program without the executor (one
 // thread). At a normal end with the debug counters on, the blocks go (`dropAll`).
+//
+// Prebuilt (velt_common `std_hooks/prebuilt.rs`): `velt cache warm` compiles this module once
+// into an object of the build cache, and a native program with module state calls its entry
+// points (`velt_hook_module_*`) as it called the runtime's, without loading it. The state below
+// (`DESC` … `CAP`) is this module's own, so nothing else imports it: lowering and the executor's
+// lock reach it through the hooks alone. Where the cache has no object, the program loads it,
+// so it imports little (its own words and C allocation, below): that is such a program's compile
+// time.
 
-import { addressLoad, inline, noInline } from "velt/lang/intrinsics";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
 import { addressCall } from "velt/lang/intrinsics/future";
-import * as m from "./sched_mem";
 
 declare function velt_rt_write_str(stream: u32, s: string);
+declare function velt_rt_flush();
+declare function velt_rt_exit(code: i32): never;
+// As sched_mem.velt declares them: one C symbol has one signature in a program.
+declare c("c") function calloc$blocks(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$blocks(p: Ptr<u8> | null): void;
+// As std/process/env_posix.velt declares it.
+declare c("c") function getenv$blocks(name: readonly u8[]): Ptr<u8> | null;
+
+/**
+ * Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? Read from the C library and not
+ * through velt/process, whose lock around the environment is state a program shares: this
+ * module's object keeps none but its own. Asked once, when a program without tasks ends.
+ */
+function counting(): bool {
+  // "VELT_RC_STATS" and a NUL.
+  const name: u8[] = [86, 69, 76, 84, 95, 82, 67, 95, 83, 84, 65, 84, 83, 0];
+  // SAFETY: `name` is NUL-terminated and alive during the call.
+  const p = unsafe { getenv$blocks(name) };
+  if (p === null) {
+    return false;
+  }
+  const at = Ptr.addressOf(p);
+  // "1" exactly.
+  return byte(at) === 49 && byte(at + 1) === 0;
+}
+
+/** The word at `a`: a word of a block's table entry or of a descriptor. */
+@inline("always")
+function ld(a: usize): usize {
+  // SAFETY: as the doc says (module docs: the lock, or one thread).
+  return unsafe { addressLoad<usize>(a) };
+}
+
+@inline("always")
+function st(a: usize, v: usize): void {
+  // SAFETY: as `ld`'s.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
+}
+
+/** Copies the `n` bytes (whole words) at `src` to `dst`. */
+function copyWords(dst: usize, src: usize, n: usize): void {
+  for (let i: usize = 0; i < n; i += 8) {
+    st(dst + i, ld(src + i));
+  }
+}
+
+/**
+ * Stops the program with `message`, as the runtime's allocator does when it has no memory
+ * (heap.velt `outOfMemory`): written and exited with a panic's code, and not a panic, which
+ * would make this module's entry points take their callers' locations (velt_vir
+ * `track_caller.rs`), and an entry point of the module's object takes none (design/std-object.md
+ * "Prebuilt hook modules").
+ */
+@noInline
+function stop(message: string): never {
+  velt_rt_flush();
+  velt_rt_write_str(2, message);
+  velt_rt_exit(101);
+}
+
+/** `n` bytes set to 0, aligned to 16, from the C library; freed with `release`. */
+function zeroed(n: usize): usize {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const p = unsafe { calloc$blocks(1, n) };
+  if (p === null) {
+    stop("panic: memory allocation of a module state block failed\n");
+  }
+  return Ptr.addressOf(p);
+}
+
+/** Frees what `zeroed` gave. */
+function release(p: usize): void {
+  // SAFETY: `p` came from calloc and is not used after. `Ptr.orNull`, as `free` takes NULL:
+  // `Ptr.at` stops on 0, so this would report its callers' locations (#3094).
+  unsafe {
+    free$blocks(Ptr.orNull<u8>(p));
+  }
+}
 
 /**
  * The block last reached: its descriptor, its address, and the slots initialized. Changed with
@@ -47,9 +135,52 @@ const DESC_REST: usize = 40;
 /** A block's `ready` count once its last slot is initialized (lowering reports it). */
 const ALL_READY: usize = 0xffff_ffff_ffff_ffff;
 
+/**
+ * `velt_rt_module_state` in a program without the executor (velt_common std_hooks.rs
+ * `module_state`): one thread, so no lock; the executor's workers go through sched_module.velt.
+ * Kept a call, as the runtime's entry was: velt_opt's `module_state` pass (#1571), which runs
+ * after inlining, makes the accesses of one function call ask once by finding this call.
+ */
+@noInline
+export function moduleState(desc: usize, slot: u64): usize {
+  return state(desc, slot);
+}
+
+/** `velt_rt_module_block` in a program without the executor. */
+export function moduleBlock(desc: usize): usize {
+  return block(desc);
+}
+
+/** `velt_rt_module_ready` in a program without the executor. */
+export function moduleReady(state: usize, n: u64): void {
+  ready(state, n);
+}
+
+/**
+ * The end of a program without the executor, `main` done with exit code `code`: at a normal end
+ * (0) with the debug counters on (`VELT_RC_STATS=1`), the blocks go (`dropAll`), as the runtime's
+ * drop at exit did; else they are kept to the end, as in Node.
+ */
+export function moduleExit(code: i32): void {
+  if (code !== 0) {
+    return;
+  }
+  if (counting()) {
+    dropAll();
+  }
+}
+
+/**
+ * The blocks go (`dropAll`): the executor's normal end with the debug counters on
+ * (sched_module.velt `dropAtExit`, which holds the lock).
+ */
+export function moduleDrop(): void {
+  dropAll();
+}
+
 /** The block of the program's descriptor `desc`, to reach slot `slot` (made on first use). */
 @inline("always")
-export function state(desc: usize, slot: u64): usize {
+function state(desc: usize, slot: u64): usize {
   if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
     return BLOCK.load("relaxed") as usize;
   }
@@ -57,7 +188,7 @@ export function state(desc: usize, slot: u64): usize {
 }
 
 /** The block of `desc` without the slot check (the root file's `main`), made on first use. */
-export function block(desc: usize): usize {
+function block(desc: usize): usize {
   if (DESC.load("acquire") as usize === desc) {
     return BLOCK.load("relaxed") as usize;
   }
@@ -69,16 +200,16 @@ export function block(desc: usize): usize {
 }
 
 /** The slots of block `state` below `n` are initialized. */
-export function ready(state: usize, n: u64): void {
+function ready(state: usize, n: u64): void {
   const at = entryOfBlock(state);
   if (at === 0) {
     // Every block has its entry before its initializers run (`newBlock`).
     return;
   }
-  m.st(at + 16, n as usize);
+  st(at + 16, n as usize);
   BLOCK.store(state as u64, "relaxed");
   READY.store(n, "relaxed");
-  DESC.store(m.ld(at) as u64, "release");
+  DESC.store(ld(at) as u64, "release");
 }
 
 /**
@@ -86,7 +217,7 @@ export function ready(state: usize, n: u64): void {
  * initialized is dropped and freed, in the order they were made, as the runtime did, so the
  * counters see what module state held as freed. The caller holds the lock and keeps it.
  */
-export function dropAll(): void {
+function dropAll(): void {
   const table = TABLE.load("relaxed") as usize;
   const n = COUNT.load("relaxed") as usize;
   // Taken out first, as the runtime took its list: drop glue that reaches module state again
@@ -100,28 +231,28 @@ export function dropAll(): void {
     const at = table + i * ENTRY;
     // A program that stops before its root file's statements reached each declaration leaves
     // slots that hold nothing to drop.
-    if (m.ld(at + 16) !== ALL_READY) {
+    if (ld(at + 16) !== ALL_READY) {
       continue;
     }
-    const desc = m.ld(at);
-    const p = m.ld(at + 8);
+    const desc = ld(at);
+    const p = ld(at + 8);
     // SAFETY: the descriptor's `drop` drops the block it initialized, once.
     unsafe {
-      addressCall(m.ld(desc + DESC_DROP), p);
+      addressCall(ld(desc + DESC_DROP), p);
     }
     freeBlock(p);
   }
   if (table !== 0) {
-    m.lastingRelease(table);
+    release(table);
   }
 }
 
 /** Makes entry `at` the block reached now (`DESC`, `BLOCK`, `READY`): its address. */
 function use(at: usize): usize {
-  const p = m.ld(at + 8);
+  const p = ld(at + 8);
   BLOCK.store(p as u64, "relaxed");
-  READY.store(m.ld(at + 16) as u64, "relaxed");
-  DESC.store(m.ld(at) as u64, "release");
+  READY.store(ld(at + 16) as u64, "relaxed");
+  DESC.store(ld(at) as u64, "release");
   return p;
 }
 
@@ -130,7 +261,7 @@ function entryOf(desc: usize): usize {
   const table = TABLE.load("relaxed") as usize;
   const n = COUNT.load("relaxed") as usize;
   for (let i: usize = 0; i < n; i++) {
-    if (m.ld(table + i * ENTRY) === desc) {
+    if (ld(table + i * ENTRY) === desc) {
       return table + i * ENTRY;
     }
   }
@@ -142,7 +273,7 @@ function entryOfBlock(p: usize): usize {
   const table = TABLE.load("relaxed") as usize;
   const n = COUNT.load("relaxed") as usize;
   for (let i: usize = 0; i < n; i++) {
-    if (m.ld(table + i * ENTRY + 8) === p) {
+    if (ld(table + i * ENTRY + 8) === p) {
       return table + i * ENTRY;
     }
   }
@@ -157,19 +288,19 @@ function addEntry(desc: usize, p: usize, done: usize): usize {
   if (n === cap) {
     // Room for twice as many; the old table goes, as nothing holds an entry across the lock.
     const more = cap === 0 ? 4 : cap * 2;
-    const bigger = m.lastingZeroed(more * ENTRY);
+    const bigger = zeroed(more * ENTRY);
     if (n !== 0) {
-      m.copy(bigger, table, n * ENTRY);
-      m.lastingRelease(table);
+      copyWords(bigger, table, n * ENTRY);
+      release(table);
     }
     table = bigger;
     TABLE.store(table as u64, "relaxed");
     CAP.store(more as u64, "relaxed");
   }
   const at = table + n * ENTRY;
-  m.st(at, desc);
-  m.st(at + 8, p);
-  m.st(at + 16, done);
+  st(at, desc);
+  st(at + 8, p);
+  st(at + 16, done);
   COUNT.store((n + 1) as u64, "relaxed");
   return at;
 }
@@ -185,7 +316,7 @@ function slow(desc: usize, slot: u64): usize {
     newBlock(desc);
     at = entryOf(desc);
   }
-  if (at === 0 || slot >= (m.ld(at + 16) as u64)) {
+  if (at === 0 || slot >= (ld(at + 16) as u64)) {
     notReady(desc, slot);
   }
   return use(at);
@@ -193,13 +324,13 @@ function slow(desc: usize, slot: u64): usize {
 
 /** The bytes of `desc`'s block (at least 1, as the runtime's layout). */
 function bytesOf(desc: usize): usize {
-  const size = m.ld(desc + DESC_SIZE);
+  const size = ld(desc + DESC_SIZE);
   return size === 0 ? 1 : size;
 }
 
 /** The alignment of `desc`'s block (at least 1). */
 function alignOf(desc: usize): usize {
-  const align = m.ld(desc + DESC_ALIGN);
+  const align = ld(desc + DESC_ALIGN);
   return align === 0 ? 1 : align;
 }
 
@@ -213,14 +344,14 @@ function alignOf(desc: usize): usize {
  */
 function allocBlock(desc: usize): usize {
   if (alignOf(desc) > 8) {
-    panic("ICE: a module state block aligned to more than 8 bytes");
+    stop("ICE: a module state block aligned to more than 8 bytes\n");
   }
-  return m.lastingZeroed(bytesOf(desc));
+  return zeroed(bytesOf(desc));
 }
 
 /** Gives back block `p`, which `allocBlock` made and nothing uses any more. */
 function freeBlock(p: usize): void {
-  m.lastingRelease(p);
+  release(p);
 }
 
 /**
@@ -235,8 +366,8 @@ function newBlock(desc: usize): usize {
   // SAFETY: the descriptor's `init` and `rest` take the block they initialize; `p` is a zeroed
   // block of its size and alignment.
   unsafe {
-    addressCall(m.ld(desc + DESC_INIT), p);
-    const rest = m.ld(desc + DESC_REST);
+    addressCall(ld(desc + DESC_INIT), p);
+    const rest = ld(desc + DESC_REST);
     if (rest !== 0 && !first) {
       addressCall(rest, p);
     }
@@ -244,10 +375,16 @@ function newBlock(desc: usize): usize {
   return p;
 }
 
-/** A slot read before its initializer ran: the runtime's uncaught `ReferenceError`. */
+/**
+ * A slot read before its initializer ran: the runtime's uncaught `ReferenceError`, written and
+ * exited as the runtime did (stdout flushed first, exit code 1). A call, cold, small: every
+ * program with module state compiles it.
+ */
+@noInline
 function notReady(desc: usize, slot: u64): never {
-  let at = m.ld(desc + DESC_NAMES);
-  let name = "";
+  let at = ld(desc + DESC_NAMES);
+  velt_rt_flush();
+  velt_rt_write_str(2, "Uncaught ReferenceError: Cannot access '");
   if (at !== 0) {
     for (let i: u64 = 0; i < slot; i++) {
       while (byte(at) !== 0) {
@@ -255,18 +392,17 @@ function notReady(desc: usize, slot: u64): never {
       }
       at++;
     }
-    // Names are identifiers: ASCII, or code points written as `?` here.
+    // Names are identifiers: ASCII, one byte a write (the error ends the program).
     while (byte(at) !== 0) {
-      const b = byte(at);
-      name += b < 128 ? String.fromCharCode(b as number) : "?";
+      velt_rt_write_str(2, String.fromCharCode(byte(at) as number));
       at++;
     }
   }
-  velt_rt_write_str(2, `Uncaught ReferenceError: Cannot access '${name}' before initialization\n`);
-  process.exit(1);
+  velt_rt_write_str(2, "' before initialization\n");
+  velt_rt_exit(1);
 }
 
 function byte(a: usize): u8 {
-  // SAFETY: inside the descriptor's names, a static string.
+  // SAFETY: inside the descriptor's names, a static string, or a C string of the environment.
   return unsafe { addressLoad<u8>(a) };
 }

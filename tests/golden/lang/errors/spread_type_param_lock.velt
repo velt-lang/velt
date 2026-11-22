@@ -1,0 +1,13 @@
+// A spread of a value of a type parameter into a rest of `unknown` (#943), at an instantiation
+// whose element holds a lock: an `unknown` would be read without the lock, so the
+// instantiation is refused where the spread is written, as a conversion of such a value to
+// `unknown` is.
+function show(...xs: unknown[]): number {
+  return xs.length;
+}
+
+function spread<A extends unknown[]>(args: A): number {
+  return show(...args);
+}
+
+console.log(spread<[Mutex<number>]>([new Mutex(1)]));

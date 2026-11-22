@@ -44,6 +44,8 @@ pub(crate) struct Assumed {
     pub(in super::super) record_conversion: bool,
     /// Code running on the executor that those passes reached ([`super::live::Live::tasks`]).
     pub(in super::super) tasks: bool,
+    /// Module state that those passes reached ([`super::live::Live::module_state`]).
+    pub(in super::super) module_state: bool,
     /// Hooks (`HOOKS` indexes) that a `hookCall` reached by those passes calls: their modules are
     /// demanded when the call is checked ([`super::hook_stubs`]).
     pub(in super::super) hooks: Vec<usize>,
@@ -71,10 +73,12 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     let mut added = !new_defs.is_empty()
         || assumed.constructs | late.constructs != assumed.constructs
         || late.record_conversion && !assumed.record_conversion
-        || late.tasks && !assumed.tasks;
+        || late.tasks && !assumed.tasks
+        || late.module_state && !assumed.module_state;
     assumed.constructs |= late.constructs;
     assumed.record_conversion |= late.record_conversion;
     assumed.tasks |= late.tasks;
+    assumed.module_state |= late.module_state;
     assumed.defs.extend(new_defs);
     for h in late.hooks {
         if !assumed.hooks.contains(&h) {
@@ -123,7 +127,7 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
                 }
                 _ => {}
             }
-            todo.extend(crate::types::children(kind));
+            todo.extend(crate::types::contents(kind));
         }
     }
     classes.sort();
@@ -509,7 +513,7 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
         | TyKind::Result(..)
         | TyKind::Promise(..)
         | TyKind::Shared(_) => {
-            (crate::types::children(&kind).into_iter()).any(|c| may_print_int(cx, c))
+            (crate::types::contents(&kind).into_iter()).any(|c| may_print_int(cx, c))
         }
         _ => true,
     };
@@ -517,9 +521,31 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
     may
 }
 
+/// What one definition of a non-std module, walked into `w` from `start` on, tells the hooks that
+/// wait for what the program does. std's own code doesn't count here: it puts its records into
+/// `any` values in most programs, and where lowering builds its text conversions and a float hook
+/// stayed unchecked, it calls the runtime. The integer hooks, which have no such fallback, count
+/// the constructs of live code, std's included.
+pub(super) fn note_program_code(
+    cx: &mut Ctx,
+    w: &super::Walk,
+    (types, conversions, into_any, first_text): (usize, usize, usize, usize),
+) {
+    cx.lazy.live.texts.extend(&w.texts[first_text..]);
+    note_program_dyn(cx, &w.into_any[into_any..]);
+    if !cx.lazy.record_hooks {
+        super::super::record_conversions::note_user_conversions(
+            cx,
+            &w.types[types..],
+            &w.conversions[conversions..],
+            &w.into_any[into_any..],
+        );
+    }
+}
+
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Assumed {
-        constructs, defs, record_conversion, tasks, hooks,
+        constructs, defs, record_conversion, tasks, hooks, module_state,
     }
 }

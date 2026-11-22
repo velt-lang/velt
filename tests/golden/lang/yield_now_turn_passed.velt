@@ -1,0 +1,41 @@
+// A stored yield's turn comes in the poll after the one that made it, whoever polls it and
+// whenever (#3241): first awaited two turns later, it is ready at once, as a Node promise that
+// `setImmediate` resolved long before. And the root's turn keeps its place when the yields
+// after it join the list in the same turn: a started promise that yields after the root did
+// resumes after it. The expected output is Node's for this program with `yieldNow` a promise
+// `setImmediate` resolves, and a call of `main()` added at the end.
+
+async function tick(name: string, n: i64): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(name, i);
+    await Promise.resolve();
+  }
+}
+
+async function later(): Promise<void> {
+  await Promise.resolve();
+  await yieldNow();
+  console.log("later resumed");
+}
+
+async function main() {
+  const y = yieldNow();
+  await yieldNow();
+  await yieldNow();
+  // Two turns on: `y` is resolved already.
+  const t = tick("tick", 3);
+  await y;
+  console.log("y");
+  await t;
+  const a = Promise.all([yieldNow(), tick("all", 2)]);
+  await yieldNow();
+  await yieldNow();
+  await a;
+  console.log("all");
+  // The root yields first, then a started promise does in the same turn.
+  const q = later();
+  await yieldNow();
+  console.log("root resumed");
+  await q;
+  console.log("done");
+}

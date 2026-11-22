@@ -23,8 +23,8 @@
 //! is. Runs once the rounds are done, so calls inlined into one function share one lookup.
 
 use velt_vir::vir::{
-    BasicBlock, BinOp, BlockId, Callee, Const, ExternId, Function, Local, LocalDecl, Operand,
-    Place, Program, Rvalue, Stmt, Terminator, Ty,
+    BasicBlock, BinOp, BlockId, Callee, Const, ExternId, FuncId, Function, Local, LocalDecl,
+    Operand, Place, Program, Rvalue, Stmt, Terminator, Ty,
 };
 
 use crate::srclocs::{prepend_stmts, push_stmt};
@@ -33,7 +33,19 @@ use crate::srclocs::{prepend_stmts, push_stmt};
 #[derive(Clone, Copy)]
 pub(crate) struct Lookups {
     state: Option<ExternId>,
+    /// module_blocks.velt's hook as an entry point of its module's prebuilt object
+    /// (`velt_hook_module_state`, velt_common `std_hooks/prebuilt.rs`), which a program without
+    /// the executor calls where the build links the object: arguments and result as the hooks'.
+    state_entry: Option<ExternId>,
+    /// std's hooks for the lookup on a native target (#2196 9c): the executor in Velt's
+    /// (sched.velt `schedModuleState`, which takes the lock as the runtime's entry does) and
+    /// module_blocks.velt's in a program without the executor. Their address argument is the
+    /// descriptor cast to an integer (`desc_static`), their result the block as one.
+    state_hooks: [Option<FuncId>; 2],
     block_on: Option<ExternId>,
+    /// The executor in Velt's `schedBlockOn`, which hands the lock to the tasks as
+    /// `velt_rt_block_on` does.
+    block_on_hook: Option<FuncId>,
     host_main: Option<ExternId>,
 }
 
@@ -46,54 +58,122 @@ impl Lookups {
                 .position(|e| e.symbol == name)
                 .map(|i| ExternId(i as u32))
         };
+        let hook = |name: &str| {
+            let symbol = velt_vir::mangle::mangle(name);
+            (program.funcs.iter())
+                .position(|f| f.symbol == symbol)
+                .map(|i| FuncId(i as u32))
+        };
         Lookups {
             state: ext("velt_rt_module_state"),
+            state_entry: ext(&velt_common::std_hooks::prebuilt::symbol(
+                &velt_common::std_hooks::HOOKS[velt_common::std_hooks::hook_index::module_state],
+            )),
+            state_hooks: [
+                hook(velt_common::std_hook!(sched_module_state)),
+                hook(velt_common::std_hook!(module_state)),
+            ],
             block_on: ext("velt_rt_block_on"),
+            block_on_hook: hook(velt_common::std_hook!(sched_block_on)),
             host_main: ext("velt_rt_host_main"),
         }
     }
 }
 
-/// One `velt_rt_module_state(desc, slot)` call: its block, descriptor, slot and destination.
+/// One `velt_rt_module_state(desc, slot)` call (or std's hook for it): its block, descriptor,
+/// slot, destination and the destination's type.
 struct Site {
     block: usize,
     desc: Const,
     slot: i128,
     dest: Place,
+    ty: Ty,
+}
+
+/// The descriptor a hook's address argument `a` holds, in block `b` before its call: the static
+/// itself, or a local the block set to it cast to an integer (lowering's `desc_arg`).
+fn desc_static(b: &BasicBlock, a: &Operand) -> Option<Const> {
+    match a {
+        Operand::Const(c @ Const::Static(_), _) => Some(c.clone()),
+        Operand::Copy(p) if p.proj.is_empty() => {
+            for s in b.stmts.iter().rev() {
+                if let Stmt::Assign(to, rv) = s {
+                    if to.proj.is_empty() && to.local == p.local {
+                        return match rv {
+                            Rvalue::Cast(Operand::Const(c @ Const::Static(_), Ty::Ptr), _)
+                            | Rvalue::Use(Operand::Const(c @ Const::Static(_), _)) => {
+                                Some(c.clone())
+                            }
+                            _ => None,
+                        };
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// Cache the module state lookups of `func`; returns whether any call changed.
 pub(crate) fn run(lookups: Lookups, func: &mut Function) -> bool {
-    let Some(state) = lookups.state else {
+    let none = lookups.state.is_none() && lookups.state_entry.is_none();
+    if none && lookups.state_hooks.iter().all(Option::is_none) {
         return false;
-    };
+    }
     let mut sites = vec![];
     for (bi, b) in func.blocks.iter().enumerate() {
         let Terminator::Call {
-            callee: Callee::Extern(e),
-            args,
-            dest,
-            ..
+            callee, args, dest, ..
         } = &b.term
         else {
             continue;
         };
-        if Some(*e) == lookups.block_on || Some(*e) == lookups.host_main {
-            return false;
-        }
-        if *e != state {
-            continue;
-        }
-        match (args.as_slice(), dest) {
-            (
-                [Operand::Const(desc @ Const::Static(_), Ty::Ptr), Operand::Const(Const::Int(slot), Ty::U64)],
-                Some(dest),
-            ) => sites.push(Site {
-                block: bi,
-                desc: desc.clone(),
-                slot: *slot,
-                dest: dest.clone(),
-            }),
+        let desc = match callee {
+            Callee::Extern(e) => {
+                if Some(*e) == lookups.block_on || Some(*e) == lookups.host_main {
+                    return false;
+                }
+                if Some(*e) == lookups.state_entry {
+                    args.first().and_then(|a| desc_static(b, a))
+                } else if Some(*e) == lookups.state {
+                    match args.first() {
+                        Some(Operand::Const(desc @ Const::Static(_), Ty::Ptr)) => {
+                            Some(desc.clone())
+                        }
+                        _ => None,
+                    }
+                } else {
+                    continue;
+                }
+            }
+            Callee::Func(f) => {
+                if Some(*f) == lookups.block_on_hook {
+                    return false;
+                }
+                if !lookups.state_hooks.contains(&Some(*f)) {
+                    continue;
+                }
+                args.first().and_then(|a| desc_static(b, a))
+            }
+            _ => continue,
+        };
+        let dest_ty = dest
+            .as_ref()
+            .filter(|d| d.proj.is_empty())
+            .map(|d| func.locals[d.local.0 as usize].ty);
+        match (desc, args.get(1), dest, dest_ty) {
+            (Some(desc), Some(Operand::Const(Const::Int(slot), Ty::U64)), Some(dest), Some(ty))
+                if args.len() == 2 =>
+            {
+                sites.push(Site {
+                    block: bi,
+                    desc,
+                    slot: *slot,
+                    dest: dest.clone(),
+                    ty,
+                })
+            }
             _ => return false,
         }
     }
@@ -101,15 +181,16 @@ pub(crate) fn run(lookups: Lookups, func: &mut Function) -> bool {
         return false;
     }
     // One `(checked, block)` pair per descriptor (one per program, but code swapped in by
-    // `velt dev` has its own).
-    let mut caches: Vec<(Const, Local, Local)> = vec![];
+    // `velt dev` has its own), the block of the lookup's result type (a pointer from the
+    // runtime's entry, an integer from std's hooks).
+    let mut caches: Vec<(Const, Ty, Local, Local)> = vec![];
     for site in sites {
-        let (checked, block) = match caches.iter().find(|c| c.0 == site.desc) {
-            Some(&(_, c, b)) => (c, b),
+        let (checked, block) = match caches.iter().find(|c| c.0 == site.desc && c.1 == site.ty) {
+            Some(&(_, _, c, b)) => (c, b),
             None => {
                 let c = new_local(func, Ty::U64, "ms.checked");
-                let b = new_local(func, Ty::Ptr, "ms.block");
-                caches.push((site.desc.clone(), c, b));
+                let b = new_local(func, site.ty, "ms.block");
+                caches.push((site.desc.clone(), site.ty, c, b));
                 (c, b)
             }
         };
@@ -117,10 +198,10 @@ pub(crate) fn run(lookups: Lookups, func: &mut Function) -> bool {
     }
     let init = caches
         .iter()
-        .flat_map(|&(_, c, b)| {
+        .flat_map(|&(_, ty, c, b)| {
             [
                 Stmt::Assign(Place::local(c), Rvalue::Use(int(0, Ty::U64))),
-                Stmt::Assign(Place::local(b), Rvalue::Use(int(0, Ty::Ptr))),
+                Stmt::Assign(Place::local(b), Rvalue::Use(int(0, ty))),
             ]
         })
         .collect();

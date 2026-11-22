@@ -1,0 +1,85 @@
+// velt/fs (internal): the `#mapped-source` variant of the targets with `mmap` (macOS, Linux;
+// std/imports.velt): a `MappedFile` is a mapping of the file, and its arrays are that memory.
+
+import { addressArrayOwned, fnAddress } from "velt/lang/intrinsics";
+import { adviseMap, closeFd, fstatFd, lastError, mapRead, openPath, unmapRead } from "#fd-system";
+import { cPath } from "velt/fs/fd/args";
+import { isMac } from "velt/fs/fd/system";
+import { osError } from "velt/fs/errors";
+import { letGo, MapOptions, Mapping, newOwner, outsideFile, partOf } from "velt/fs/mapped_part";
+
+/** Maps the part of the file at `path` that `options` names (`MappedFile.open`). */
+export function mapFile(path: string, options: MapOptions | undefined): Mapping {
+  const fd = openPath(cPath(path), isMac() ? 0x1000000 : 0x80000, 0); // O_RDONLY | O_CLOEXEC
+  if (fd < 0) {
+    throw osError(lastError(), "open", path);
+  }
+  const st = fstatFd(fd);
+  if (st == null) {
+    const e = lastError();
+    closeFd(fd);
+    throw osError(e, "fstat", path);
+  }
+  // Only a regular file has bytes to map: a directory's `mmap` fails with an errno Node has
+  // no name for, and a device reports a size of 0 whatever it holds. (So does a file of
+  // /proc or /sys, but that one is a regular file: it maps as no bytes, which the doc says.)
+  const kind = st.st_mode & 0o170000;
+  if (kind != 0o100000) {
+    closeFd(fd);
+    throw osError(kind == 0o040000 ? 21 : 22, "mmap", path); // EISDIR, EINVAL
+  }
+  const size = st.st_size as number;
+  const part = partOf(size, options);
+  if (part == null) {
+    closeFd(fd);
+    throw outsideFile(path, size, options);
+  }
+  if (part.length == 0) {
+    // No bytes: nothing to map (`mmap` refuses a length of 0).
+    closeFd(fd);
+    return { address: 0, from: 0, bytes: shared([]), owner: 0 };
+  }
+  // A mapping starts at a page of the file: a multiple of 64 KiB is one for every page size
+  // in use (4, 16 and 64 KiB).
+  const lead = part.offset % 65536;
+  const len = part.length as usize;
+  const base = mapRead(fd, (lead as usize) + len, (part.offset - lead) as i64);
+  const e = base == 0 ? lastError() : 0;
+  // The mapping keeps the file; the descriptor is not needed any more.
+  closeFd(fd);
+  if (base == 0) {
+    throw osError(e, "mmap", path);
+  }
+  const address = base + (lead as usize);
+  const owner = newOwner(fnAddress(release), base, (lead as usize) + len);
+  // SAFETY: `address` is `len` readable bytes of a mapping that stays until `owner`'s last
+  // array is dropped, of which this is the first, and the array is only ever read: it leaves
+  // this function as a `shared<u8[]>`.
+  const bytes: u8[] = unsafe { addressArrayOwned<u8>(address, len, owner) };
+  return { address, from: part.offset as usize, bytes: shared(bytes), owner };
+}
+
+/** What the drop of an array over a mapping calls with its owner: unmaps with the last one. */
+function release(owner: usize): void {
+  // SAFETY: called by the drop of an array that held `owner`; once the last is gone nothing
+  // reads the mapping.
+  unsafe {
+    const gone = letGo(owner);
+    if (gone != null) {
+      // A failure has no one to report to (the drop of an array), and a whole mapping of our
+      // own is not refused.
+      unmapRead(gone.base, gone.len);
+    }
+  }
+}
+
+/** `madvise` on `len` bytes of a mapping from `address`: 0, or the `errno`. */
+export function adviseMapping(address: usize, len: usize, advice: i32): i32 {
+  return adviseMap(address, len, advice) != 0 ? lastError() : 0;
+}
+
+/**
+ * Whether a typed method's array is a copy of its range (`copyOf`): the arrays are over the mapping,
+ * which stays while one of them does.
+ */
+export const COPIES: bool = false;
