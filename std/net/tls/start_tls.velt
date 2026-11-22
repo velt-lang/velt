@@ -68,6 +68,18 @@ export struct TlsStartOptions {
  * an IP address.
  */
 export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): Promise<TlsStream> {
+  return new TlsStream(await clientHandshake(stream, opts, "startTls"));
+}
+
+/**
+ * `startTls`'s handshake over `stream`: the engine once it is done (std/net/tls/fd_client.velt
+ * keeps it on the reactor). `who` names the caller in an `EINVAL` message.
+ */
+export async function clientHandshake(
+  stream: ByteStream,
+  opts: TlsStartOptions,
+  who: string,
+): Promise<TlsEngine> {
   const serverName = opts.serverName ?? "";
   let verifier: CertificateVerifier | null = null;
   if (opts.verify !== false) {
@@ -76,28 +88,28 @@ export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): 
       if (serverName == "") {
         throw new IoError(
           "EINVAL",
-          "startTls: `serverName` is needed to check the server's certificate (or pass `verify: false` to encrypt without checking it)",
+          `${who}: \`serverName\` is needed to check the server's certificate (or pass \`verify: false\` to encrypt without checking it)`,
         );
       }
       for (const c of utf8Encode(serverName)) {
         if (c >= 0x80) {
           throw new IoError(
             "EINVAL",
-            `startTls: the server name "${serverName}" is not ASCII; give an internationalized name in its "xn--" form`,
+            `${who}: the server name "${serverName}" is not ASCII; give an internationalized name in its "xn--" form`,
           );
         }
       }
       if (ipAddressBytes(serverName) == null && !dnsServerNameOk(serverName)) {
         throw new IoError(
           "EINVAL",
-          `startTls: the server name "${serverName}" is neither a DNS name nor an IP address`,
+          `${who}: the server name "${serverName}" is neither a DNS name nor an IP address`,
         );
       }
     }
     const now = Math.floor((Date.now() as number) / 1000) as i64;
     const builtin = opts.builtinRoots !== false;
     if (!builtin && (opts.ca ?? "") == "") {
-      throw new IoError("EINVAL", "startTls: `ca` is needed when `builtinRoots` is false");
+      throw new IoError("EINVAL", `${who}: \`ca\` is needed when \`builtinRoots\` is false`);
     }
     const anchors = trustAnchors(opts.ca ?? "");
     verifier = new CertificateVerifier(anchors, serverName, checkName, now, builtin);
@@ -119,5 +131,5 @@ export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): 
     },
     key,
   );
-  return new TlsStream(engine);
+  return engine;
 }
