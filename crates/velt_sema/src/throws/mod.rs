@@ -30,6 +30,7 @@ mod promise_vars;
 mod recheck;
 mod sets;
 mod union_names;
+mod units_open;
 mod var_known;
 mod vars;
 

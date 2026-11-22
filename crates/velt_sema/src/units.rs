@@ -53,12 +53,17 @@ pub struct Summaries {
     /// whether code outside a function does ([`app_reads_shared`]).
     pub(crate) shared_readers: rustc_hash::FxHashSet<crate::hir::DefId>,
     pub(crate) shared_read_outside: bool,
+    /// std's function-type throws sites (the traps of `ProxyHandler`) with the types std's
+    /// check resolved them to, before any program stored into them: the app's rounds give a
+    /// closure made for one what their seeds give the site (`Ctx::app_trap_error`).
+    pub(crate) trap_sites: Vec<(velt_common::Span, crate::hir::TyId)>,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
+        trap_sites,
     }
 }
 
@@ -132,6 +137,7 @@ pub(crate) fn finish_std(cx: &mut Ctx) {
     // Whether std's code read a `shared` is the program's question: its std code, not all of
     // std's (`app_reads_shared`).
     cx.frozen_reads = false;
+    cx.unit_sums.trap_sites = cx.std_trap_sites();
     codec::unit::clear_memos(cx);
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;

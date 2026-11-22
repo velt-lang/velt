@@ -527,6 +527,45 @@ impl Ctx<'_> {
         }
     }
 
+    /// std's sites (the traps of std/lang/proxy's `ProxyHandler`, [`Self::site_module`]) with
+    /// the types std's check resolved them to: what a check by units keeps for the app's
+    /// rounds (`units::Summaries::trap_sites`, [`Self::app_trap_error`]).
+    pub(crate) fn std_trap_sites(&self) -> Vec<(Span, TyId)> {
+        let std = &self.fn_sites.found.proxy_sites;
+        let mut out: Vec<(Span, TyId)> = (self.fn_sites.sites.iter())
+            .filter(|(s, _)| std.contains(s))
+            .copied()
+            .collect();
+        out.sort_by_key(|(s, t)| (s.file.0, s.lo, t.0));
+        out
+    }
+
+    /// In the app's stage of a check by units, the error type std trap site `site` has in this
+    /// round: std's unit resolved its traps' types before any program stored into them, so a
+    /// closure stored into one (a handler's trap) is held to what this round's seeds give the
+    /// site, as a whole-program check resolves the trap's type from them. `None` elsewhere, and
+    /// for a site that is no std trap's.
+    pub(crate) fn app_trap_error(&mut self, site: Option<Span>) -> Option<TyId> {
+        if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+            eprintln!(
+                "dbg-trap: app_trap_error stage={:?} site={site:?} trap_sites={} listed={} seeded={:?}",
+                self.units_stage,
+                self.unit_sums.trap_sites.len(),
+                site.is_some_and(|s| self.unit_sums.trap_sites.iter().any(|(t, _)| *t == s)),
+                site.map(|s| self.fn_sites.seeds.sites.get(&s).map(|m| m.len()))
+            );
+        }
+        let span = site?;
+        if self.units_stage != crate::units::Stage::App
+            || !(self.unit_sums.trap_sites.iter()).any(|(s, _)| *s == span)
+        {
+            return None;
+        }
+        let members = self.fn_sites.seeds.sites.get(&span)?.clone();
+        let ms: Vec<TyId> = members.iter().filter_map(|p| self.unport(p)).collect();
+        self.error_union(&ms)
+    }
+
     /// A closure throwing `err` is used as a value of function type `used_as`, which does not
     /// allow it: add `err` to the sites `used_as` may come from. False when no site matches or
     /// `err` can't be kept (then the use is reported). Any thrown type another check can hold is

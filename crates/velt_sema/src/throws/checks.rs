@@ -149,6 +149,19 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         let site = cx.closure_site_for(d, used_as);
         let matched =
             own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site, None));
+        // A std trap's type in the app's stage of a check by units keeps the error type std's
+        // unit resolved it to; this round's seeds for its site already hold what the closure
+        // throws, which is the round a whole-program check drops this report in.
+        if let Some(seeded) = cx.app_trap_error(site.or_else(|| cx.var_site(used_as))) {
+            let own = own_final(cx, d);
+            if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+                let (s, o) = (cx.display(seeded), own.map(|o| cx.display(o)));
+                eprintln!("dbg-trap: seeded {s} own {o:?}");
+            }
+            if cx.error_outside(Some(seeded), own).is_none() {
+                return;
+            }
+        }
         let inferred = cx.ty.inferred_fns.contains(&used_as);
         // As written: error-set variables (`vars`) allow nothing.
         let never = cx.ty.never;

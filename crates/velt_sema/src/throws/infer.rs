@@ -34,8 +34,13 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
             }
         }
     }
-    let mut guarded = Guarded::new(cx, &fns);
-    let mut work = Worklist::new(cx, &fns, &groups);
+    // In the app's stage of a check by units, std's functions that may run the program's code
+    // too, from the error types std's stage gave them (`units_open`); only the app's functions
+    // are checked below.
+    let mut all = fns.clone();
+    all.extend(super::units_open::open_std_fns(cx));
+    let mut guarded = Guarded::new(cx, &all);
+    let mut work = Worklist::new(cx, &all, &groups);
     let mut round = 0;
     loop {
         // The functions to evaluate: all of them at first, and all again after the stored
