@@ -8,7 +8,6 @@
 //! reference to its heap buffer, otherwise the text moves to a fresh buffer first (strings are
 //! immutable values: other copies never see the append).
 
-use crate::fmt;
 use crate::str::{Summary, VeltStr};
 use velt_text::json_escape::{push_json_string, push_json_string_counted};
 
@@ -149,47 +148,6 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_u8s(
     }
 }
 
-/// The most bytes [`velt_rt_bytes_put_f64`] writes: JavaScript's longest number text
-/// (`-2.2250738585072014e-308` is 24).
-pub const PUT_F64_ROOM: u64 = 32;
-
-/// Write finite `v` as `JSON.stringify` writes it (JavaScript's shortest round-trip text) into
-/// the `u8[]` `bytes` at byte `at`, and return the position after it: a writer that gathers
-/// its text in a byte array (std/encoding/json/tape.velt's `ByteOut`) prints a double in place, without
-/// handing its bytes to a builder first. Writes nothing and returns `at` unless the array has
-/// [`PUT_F64_ROOM`] bytes from `at` (callers make room first).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_put_f64(
-    bytes: *mut crate::bytes::VeltBytes,
-    at: u64,
-    v: f64,
-) -> u64 {
-    let b = &mut *bytes;
-    if b.len < at || b.len - at < PUT_F64_ROOM {
-        return at;
-    }
-    crate::freed::check_value(v.to_bits(), "a number read from a freed block");
-    let room = std::slice::from_raw_parts_mut(b.ptr.add(at as usize), PUT_F64_ROOM as usize);
-    let mut out = InPlace { room, n: 0 };
-    velt_text::fmt::push_f64(&mut out, v);
-    at + out.n as u64
-}
-
-/// Text written into a fixed slice (what does not fit is dropped; [`PUT_F64_ROOM`] always fits).
-struct InPlace<'a> {
-    room: &'a mut [u8],
-    n: usize,
-}
-
-impl velt_text::Out for InPlace<'_> {
-    #[inline]
-    fn extend(&mut self, bytes: &[u8]) {
-        let k = bytes.len().min(self.room.len() - self.n);
-        self.room[self.n..self.n + k].copy_from_slice(&bytes[..k]);
-        self.n += k;
-    }
-}
-
 /// Append text whose summary is unknown (counted; out of line, off the hot ASCII paths).
 #[inline(never)]
 unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {
@@ -200,50 +158,6 @@ unsafe fn push_counted(buf: *mut VeltStrBuf, text: &[u8]) {
 #[inline(always)]
 unsafe fn push_ascii(buf: *mut VeltStrBuf, text: &[u8]) {
     (*buf).push_ascii(text);
-}
-
-/// Append a decimal `i64`: a whole float's digits. Not an extern: compiled code appends an
-/// integer through std (velt/lang/hooks/number_text, #2197).
-unsafe fn push_i64(buf: *mut VeltStrBuf, v: i64) {
-    // At most 20 bytes (`-9223372036854775808`).
-    let mut room = [0u8; 20];
-    let mut out = InPlace {
-        room: &mut room,
-        n: 0,
-    };
-    velt_text::fmt::push_i64(&mut out, v);
-    let n = out.n;
-    push_ascii(buf, &room[..n]);
-}
-
-/// Append an `f64` formatted like JS `String(v)`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_f64(buf: *mut VeltStrBuf, v: f64) {
-    // A whole number below 2^53 (`${i}`) is its integer digits, as fast as an integer's.
-    if let Some(i) = fmt::whole(v) {
-        return push_i64(buf, i);
-    }
-    (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
-}
-
-/// Append an `f64` the way `console.log` prints it (node's `util.inspect`: `-0` is `-0`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_f64(buf: *mut VeltStrBuf, v: f64) {
-    if v != 0.0 {
-        if let Some(i) = fmt::whole(v) {
-            return push_i64(buf, i);
-        }
-    }
-    (*buf).push_with_summary(|b| fmt::push_inspect_f64(b, v), |n| Some(Summary::ascii(n)));
-}
-
-/// Append an `f64` the way `JSON.stringify` does: JS formatting, `null` for NaN/±Infinity.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_json_f64(buf: *mut VeltStrBuf, v: f64) {
-    if !v.is_finite() {
-        return push_ascii(buf, b"null");
-    }
-    (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
 }
 
 /// Append `true` / `false`.
@@ -357,45 +271,20 @@ mod tests {
         let mut b = new_buf(0);
         let name = VeltStr::from_static("wörld".as_bytes());
         unsafe {
-            velt_rt_strbuf_push_bytes(&mut b, b"x=".as_ptr(), 2);
-            velt_rt_strbuf_push_f64(&mut b, -42.0);
-            velt_rt_strbuf_push_byte(&mut b, b' ');
-            velt_rt_strbuf_push_f64(&mut b, 9007199254740991.0);
-            velt_rt_strbuf_push_byte(&mut b, b' ');
-            velt_rt_strbuf_push_f64(&mut b, 0.1 + 0.2);
-            velt_rt_strbuf_push_byte(&mut b, b' ');
-            velt_rt_strbuf_push_f64(&mut b, 1e21);
+            velt_rt_strbuf_push_bytes(&mut b, b"x=-42 ".as_ptr(), 6);
             velt_rt_strbuf_push_bool(&mut b, 1);
             velt_rt_strbuf_push_str(&mut b, &name);
             velt_rt_strbuf_push_bytes(&mut b, std::ptr::null(), 0);
         }
-        let want = "x=-42 9007199254740991 0.30000000000000004 1e+21truewörld";
+        let want = "x=-42 truewörld";
         assert_eq!(finish(b), want);
-    }
-
-    #[test]
-    fn put_f64_writes_in_place_and_needs_its_room() {
-        use crate::bytes::VeltBytes;
-        let mut bytes = VeltBytes::from_vec(vec![b'.'; 40]);
-        let put = |b: &mut VeltBytes, at: u64, v: f64| unsafe { velt_rt_bytes_put_f64(b, at, v) };
-        let end = put(&mut bytes, 1, -2.2250738585072014e-308);
-        let text = unsafe { bytes.as_bytes() };
-        assert_eq!(&text[..end as usize], b".-2.2250738585072014e-308");
-        assert_eq!(text[end as usize], b'.');
-        assert_eq!(put(&mut bytes, 3, 0.1 + 0.2), 3 + 19);
-        assert_eq!(put(&mut bytes, 0, -0.0), 1);
-        // Fewer than 32 bytes from `at`: nothing written.
-        assert_eq!(put(&mut bytes, 9, 1.5), 9);
-        assert_eq!(put(&mut bytes, 41, 1.5), 41);
-        unsafe { drop(bytes.take_vec()) };
     }
 
     #[test]
     fn short_results_stay_inline() {
         let mut b = new_buf(8);
         unsafe {
-            velt_rt_strbuf_push_bytes(&mut b, b"line ".as_ptr(), 5);
-            velt_rt_strbuf_push_f64(&mut b, 123456.0);
+            velt_rt_strbuf_push_bytes(&mut b, b"line 123456".as_ptr(), 11);
             velt_rt_strbuf_push_bytes(&mut b, b": fizz ok".as_ptr(), 9);
         }
         assert!(b.is_inline());
@@ -408,13 +297,10 @@ mod tests {
         let s = VeltStr::from_static("q\"uote\\\n\t\u{1}\u{1f}\u{7f}é\u{2028}".as_bytes());
         unsafe {
             velt_rt_strbuf_push_json_str(&mut b, &s);
-            velt_rt_strbuf_push_json_f64(&mut b, f64::NAN);
-            velt_rt_strbuf_push_json_f64(&mut b, -f64::INFINITY);
-            velt_rt_strbuf_push_json_f64(&mut b, 2.5);
         }
         assert_eq!(
             finish(b),
-            "\"q\\\"uote\\\\\\n\\t\\u0001\\u001f\u{7f}é\u{2028}\"nullnull2.5"
+            "\"q\\\"uote\\\\\\n\\t\\u0001\\u001f\u{7f}é\u{2028}\""
         );
     }
 
