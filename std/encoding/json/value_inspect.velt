@@ -6,9 +6,9 @@
 
 import { JsonValue } from "velt/prelude/json/json_value";
 import { inspectMore } from "velt/lang/hooks/inspect";
+import { hookCall } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
-declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
 declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_inspect_key(buf: string, s: string);
 declare function velt_rt_strbuf_len(buf: string): u64;
@@ -59,7 +59,8 @@ function inspectAt(buf: string, v: JsonValue, depth: u32): void {
     if (n != n || n == Infinity || n == -Infinity) {
       velt_rt_strbuf_push_str(buf, "null");
     } else {
-      velt_rt_strbuf_push_f64(buf, n);
+      const text: string = hookCall("number_shortest", n);
+      velt_rt_strbuf_push_str(buf, text);
     }
     return;
   }
