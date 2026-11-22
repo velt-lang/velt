@@ -104,6 +104,7 @@ On the decorated function, at the decorator:
 
 - `` `@variant` applies to a top-level function that is not a generator ``
 - `` `@variant` names `fetchPlan`, which is no function of this module ``
+- `` `@variant` names `fetch` itself: the plain function must be another function of this module ``
 - `` `@variant`'s `fetchPlain` must be a top-level function with the same parameters and type parameters ``
 - `` `@variant` takes the plain function's name and its conditions ``
 - `` `@variant` needs a condition ``

@@ -373,6 +373,12 @@ pub(super) fn variant(cx: &mut Ctx, roles: Roles, d: DefId, sig: &ast::FnSig) {
     }
     let target = match cx.scopes[module].items.get(plain.as_str()).copied() {
         Some(Item::Def(p)) if p != d && matches!(cx.info[p.0 as usize], DefInfo::Fn(_)) => p,
+        Some(Item::Def(p)) if p == d => {
+            return fail(
+                cx,
+                format!("`@variant` names `{plain}` itself: the plain function must be another function of this module"),
+            );
+        }
         _ => {
             return fail(
                 cx,
