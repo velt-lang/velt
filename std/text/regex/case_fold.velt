@@ -1,0 +1,68 @@
+// velt/text (internal): the characters that match each other under the `i` flag, read from
+// the generated tables (unicode_tables.velt).
+
+import { strByteLen } from "velt/lang/intrinsics";
+import { CharSet } from "velt/text/regex/char_set";
+import { POINT_CASE, UNIT_CASE } from "velt/text/regex/unicode_tables";
+import { readNumber } from "velt/text/regex/unicode_props";
+
+/** Adds to `s` the other case of the ASCII letters in its range `lo..=hi`, and with the `u`
+ * flag the two characters past ASCII that fold to one: the Kelvin sign (U+212A) to `k`, and `ſ`
+ * to `s`. */
+function addAscii(s: CharSet, lo: u32, hi: u32, unicode: bool): void {
+  if (lo <= 0x5a && hi >= 0x41) {
+    s.add((lo > 0x41 ? lo : 0x41) + 32, (hi < 0x5a ? hi : 0x5a) + 32);
+  }
+  if (lo <= 0x7a && hi >= 0x61) {
+    s.add((lo > 0x61 ? lo : 0x61) - 32, (hi < 0x7a ? hi : 0x7a) - 32);
+  }
+  if (unicode && ((lo <= 0x4b && hi >= 0x4b) || (lo <= 0x6b && hi >= 0x6b))) {
+    s.add(0x212a, 0x212a);
+  }
+  if (unicode && ((lo <= 0x53 && hi >= 0x53) || (lo <= 0x73 && hi >= 0x73))) {
+    s.add(0x17f, 0x17f);
+  }
+}
+
+/** Adds to the normalized `s` every character that matches one of its members whatever the
+ * case: JavaScript's `Canonicalize`, simple case folding with the `u` flag (`unicode`) and
+ * `toUpperCase` of one code unit without. `s` is then no longer normalized. */
+export function closeOverCase(s: CharSet, unicode: bool): void {
+  const n = s.ranges.length;
+  if (n == 0) {
+    return;
+  }
+  for (let i: usize = 0; i < n && s.ranges[i] < 0x80; i += 2) {
+    addAscii(s, s.ranges[i], s.ranges[i + 1], unicode);
+  }
+  if (s.ranges[n - 1] < 0x80) {
+    return;
+  }
+  // The table's runs are in order, and so are the set's ranges: one pass over both.
+  const data = unicode ? POINT_CASE : UNIT_CASE;
+  const at: usize[] = [0];
+  let lo: u32 = 0;
+  let r: usize = 0;
+  while (at[0] < strByteLen(data) && r < n) {
+    lo += readNumber(data, at);
+    const hi = lo + readNumber(data, at);
+    const zigzag = readNumber(data, at);
+    if (hi < 0x80) {
+      continue;
+    }
+    while (r < n && s.ranges[r + 1] < lo) {
+      r += 2;
+    }
+    // A run may meet several ranges, and a range several runs.
+    for (let k = r; k < n && s.ranges[k] <= hi; k += 2) {
+      const from = s.ranges[k] > lo ? s.ranges[k] : lo;
+      const to = s.ranges[k + 1] < hi ? s.ranges[k + 1] : hi;
+      if ((zigzag & 1) != 0) {
+        const down = (zigzag + 1) >> 1;
+        s.add(from - down, to - down);
+      } else {
+        s.add(from + (zigzag >> 1), to + (zigzag >> 1));
+      }
+    }
+  }
+}

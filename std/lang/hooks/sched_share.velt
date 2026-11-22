@@ -44,6 +44,7 @@ import * as off from "./sched_off";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as away from "./sched_share_away";
+import * as hand from "./sched_share_hand";
 import * as sd from "./sched_share_drop";
 import * as ss from "./sched_share_settle";
 import * as wt from "./sched_share_wait";
@@ -119,6 +120,12 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
     const fwd = forwardOf(f);
     if (fwd === 0) {
       return newHandle(m.ld(f - 8));
+    }
+    // Handed over from this task and copied before it left (#3424): the copy is handed over too
+    // (sched_share_hand.velt).
+    const c = hand.copyHandedOver(fwd, task);
+    if (c !== 0) {
+      return c;
     }
     // Handed to this task and shared again here: its proxy, which delivers this task's own
     // copy, becomes the promise shared on this task (`f` goes on forwarding to it).

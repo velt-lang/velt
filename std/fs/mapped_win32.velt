@@ -43,7 +43,7 @@ declare c("c") function MapViewOfFile(
   offsetLow: u32,
   bytes: usize,
 ): Ptr<void> | null;
-declare c("c") function UnmapViewOfFile(base: Ptr<void>): i32;
+declare c("c") function UnmapViewOfFile(base: Ptr<void> | null): i32;
 declare c("c") function CloseHandle(handle: Ptr<void>): i32;
 declare c("c") function GetLastError(): u32;
 
@@ -179,7 +179,7 @@ function release(owner: usize): void {
     if (gone != null) {
       // A failure has no one to report to (the drop of an array), and a view of our own is not
       // refused.
-      UnmapViewOfFile(Ptr.at<void>(gone.base));
+      UnmapViewOfFile(Ptr.orNull<void>(gone.base));
     }
   }
 }

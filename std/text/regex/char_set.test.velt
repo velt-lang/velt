@@ -1,0 +1,25 @@
+// velt/text (tests): white-box tests of char_set.velt, run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { CharSet } from "velt/text/regex/char_set";
+
+describe("CharSet", () => {
+  it("normalizes, negates and intersects", () => {
+    const s = new CharSet();
+    s.add(0x61, 0x7a);
+    s.add(0x30, 0x39);
+    s.add(0x35, 0x41);
+    s.add(0x42, 0x42);
+    s.normalize();
+    expect(s.ranges).toEqual([0x30, 0x42, 0x61, 0x7a]);
+    expect(s.contains(0x40)).toBe(true);
+    expect(s.contains(0x43)).toBe(false);
+    expect(s.contains(0x7b)).toBe(false);
+    s.negate(0xffff);
+    expect(s.ranges).toEqual([0, 0x2f, 0x43, 0x60, 0x7b, 0xffff]);
+    const t = new CharSet();
+    t.add(0x20, 0x50);
+    s.intersect(t);
+    expect(s.ranges).toEqual([0x20, 0x2f, 0x43, 0x50]);
+    expect(s.count(100)).toBe(30);
+  });
+});

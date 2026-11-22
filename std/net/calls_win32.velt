@@ -11,7 +11,7 @@
 
 import { StrBytes } from "velt/ffi/str_bytes";
 import { Ptr } from "velt/ffi/ptr";
-import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import { addressLoad, addressStore, ptrFromAddress } from "velt/lang/intrinsics";
 import * as m from "velt/lang/hooks/sched_mem";
 
 const INVALID: usize = 0xffffffffffffffff;
@@ -94,7 +94,7 @@ declare c("c") function inet_ntop$win(
   dst: Ptr<u8> | null,
   size: usize,
 ): Ptr<u8> | null;
-declare c("c") function memmove$text(dst: Ptr<u8> | null, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function memmove$text(dst: Ptr<u8> | null, src: StrBytes, n: usize): Ptr<u8> | null;
 declare c("c") function FormatMessageA(
   flags: u32,
   source: Ptr<u8> | null,
@@ -195,7 +195,7 @@ export function strerror(e: i32): Ptr<u8> {
     addressStore<u8>(buf + n, 0);
   }
   // SAFETY: `buf` is this thread's message buffer, never 0, holding the NUL-terminated text.
-  return unsafe { Ptr.at<u8>(buf) };
+  return unsafe { ptrFromAddress<u8>(buf) };
 }
 
 export function close$net(fd: i32): i32 {

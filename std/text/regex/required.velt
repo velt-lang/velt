@@ -1,0 +1,158 @@
+// velt/text (internal): a byte every match of a pattern has, when there is one (`(\w+)=(\d+);`
+// has `=` and `;`): a subject without it from the search's start on has no match, which one
+// byte scan says (find.velt) before any matcher runs. Only ASCII bytes count, which are never
+// part of another character's bytes; of several, the one least likely in text is taken.
+
+import { ALT, ASSERT, AT_END, CAT, CHAR, GROUP, Node, REPEAT, SET } from "velt/text/regex/node";
+
+/** How unlikely ASCII byte `b` is in text: 0 for a letter, a digit or a space, 1 for common
+ * punctuation, 2 for the rest. */
+function rarity(b: u32): u32 {
+  const l = b | 0x20;
+  if ((l >= 0x61 && l <= 0x7a) || (b >= 0x30 && b <= 0x39) || b == 0x20) {
+    return 0;
+  }
+  return b == 0x2c || b == 0x2e || b == 0x2d || b == 0x5f || b == 0x3a || b == 0x2f ? 1 : 2;
+}
+
+/** The ASCII bytes every match of `n` has, as two 64-bit masks into `out`. */
+function bytesOf(n: Node, out: u64[]): void {
+  out[0] = 0;
+  out[1] = 0;
+  const kind = n.kind;
+  if (kind == CHAR) {
+    if (n.a < 0x80) {
+      out[(n.a >> 6) as usize] = (1 as u64) << ((n.a & 63) as u64);
+    }
+  } else if (kind == SET) {
+    const set = n.set;
+    if (set != null && set.ranges.length == 2 && set.ranges[0] == set.ranges[1]) {
+      const c = set.ranges[0];
+      if (c < 0x80) {
+        out[(c >> 6) as usize] = (1 as u64) << ((c & 63) as u64);
+      }
+    }
+  } else if (kind == GROUP || (kind == REPEAT && n.a > 0)) {
+    bytesOf(n.kids[0], out);
+  } else if (kind == CAT || kind == ALT) {
+    const kid: u64[] = [0, 0];
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      bytesOf(n.kids[i], kid);
+      if (kind == CAT) {
+        out[0] |= kid[0];
+        out[1] |= kid[1];
+      } else {
+        out[0] = i == 0 ? kid[0] : out[0] & kid[0];
+        out[1] = i == 0 ? kid[1] : out[1] & kid[1];
+      }
+    }
+  }
+}
+
+/** Does every match of `n` end where the subject does (`$` without the `m` flag, on every way
+ * through it)? */
+export function endsAtEnd(n: Node): bool {
+  const kind = n.kind;
+  if (kind == ASSERT) {
+    return n.a == AT_END;
+  }
+  if (kind == CAT) {
+    // Whatever follows `$` matches nothing.
+    return n.kids.some((k) => endsAtEnd(k));
+  }
+  if (kind == ALT) {
+    return n.kids.length > 0 && n.kids.every((k) => endsAtEnd(k));
+  }
+  if (kind == GROUP || (kind == REPEAT && n.a > 0)) {
+    return endsAtEnd(n.kids[0]);
+  }
+  return false;
+}
+
+/** The ASCII byte every match of `n` ends with, as far as its shape says, or -1. */
+function lastByte(n: Node): i64 {
+  const kind = n.kind;
+  if (kind == CHAR) {
+    return n.a < 0x80 ? n.a as i64 : -1;
+  }
+  if (kind == SET) {
+    const set = n.set;
+    if (set != null && set.ranges.length == 2 && set.ranges[0] == set.ranges[1]) {
+      return set.ranges[0] < 0x80 ? set.ranges[0] as i64 : -1;
+    }
+    return -1;
+  }
+  if (kind == GROUP || (kind == REPEAT && n.a == 1 && n.b == 1)) {
+    return lastByte(n.kids[0]);
+  }
+  if (kind == CAT) {
+    return n.kids.length > 0 ? lastByte(n.kids[n.kids.length - 1]) : -1;
+  }
+  if (kind == ALT && n.kids.length > 0) {
+    const b = lastByte(n.kids[0]);
+    return n.kids.every((k) => lastByte(k) == b) ? b : -1;
+  }
+  return -1;
+}
+
+/** Can a match of `n` have character `c` in it? */
+function mayHave(n: Node, c: u32): bool {
+  const kind = n.kind;
+  if (kind == CHAR) {
+    return n.a == c;
+  }
+  if (kind == SET) {
+    const set = n.set;
+    return set == null || set.contains(c);
+  }
+  return n.kids.some((k) => mayHave(k, c));
+}
+
+/** Does every match of `n` end with `c`, and have it nowhere else? */
+function onlyAtEnd(n: Node, c: u32): bool {
+  const kind = n.kind;
+  if (kind == CHAR || kind == SET) {
+    return lastByte(n) == c as i64;
+  }
+  if (kind == GROUP || (kind == REPEAT && n.a == 1 && n.b == 1)) {
+    return onlyAtEnd(n.kids[0], c);
+  }
+  if (kind == ALT) {
+    return n.kids.length > 0 && n.kids.every((k) => onlyAtEnd(k, c));
+  }
+  if (kind == CAT && n.kids.length > 0) {
+    const last = n.kids.length - 1;
+    for (let i: usize = 0; i < last; i++) {
+      if (mayHave(n.kids[i], c)) {
+        return false;
+      }
+    }
+    return onlyAtEnd(n.kids[last], c);
+  }
+  return false;
+}
+
+/** The ASCII byte, other than a letter, a digit or a space, that every match of `tree` ends
+ * with and has nowhere else (`;` of `(\w+)=(\d+);`), or -1. A subject's matches then end
+ * after its bytes `b`, and none goes over one: find.velt reads back from each `b` for where a
+ * match starts. */
+export function suffixByte(tree: Node): i64 {
+  const b = lastByte(tree);
+  return b >= 0 && rarity(b as u32) > 0 && onlyAtEnd(tree, b as u32) ? b : -1;
+}
+
+/** The byte every match of `tree` has that is least likely in text, or -1 for none (or none
+ * that is likely to be missing: a letter, a digit or a space). */
+export function requiredByte(tree: Node): i64 {
+  const mask: u64[] = [0, 0];
+  bytesOf(tree, mask);
+  let best: i64 = -1;
+  let rank: u32 = 0;
+  for (let b: u32 = 0; b < 128; b++) {
+    if (((mask[(b >> 6) as usize] >> ((b & 63) as u64)) & 1) != 0 && rarity(b) > rank) {
+      best = b as i64;
+      rank = rarity(b);
+    }
+  }
+  return best;
+}
