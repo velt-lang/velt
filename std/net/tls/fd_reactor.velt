@@ -19,10 +19,12 @@ import * as ops from "velt/net/tls/fd_ops";
 const LISTEN: TlsListenSide = {};
 const CONNECT: TlsConnectSide = {};
 
-// The status of failure `e` for std/net/tcp_sched.velt, whose results carry codes: the runtime's
-// code of the `IoError`'s name; a TLS failure (`EPROTO`) is `EILSEQ`, as the runtime's TLS
-// listener reports it. The message is kept.
-function status(e: unknown): IoStatus {
+/**
+ * The status of failure `e` for std/net/tcp_sched.velt, whose results carry codes: the runtime's
+ * code of the `IoError`'s name; a TLS failure (`EPROTO`) is `EILSEQ`, as the runtime's TLS
+ * listener reports it. The message is kept. `fetch`'s `https:` dial reports the same codes.
+ */
+export function status(e: unknown): IoStatus {
   if (!(e instanceof IoError)) {
     return { code: 5, message: `TLS: ${e}` };
   }
@@ -157,6 +159,9 @@ extend TlsServer implements ReactorTls {
     } catch (e) {
       return fs.failed(status(e), "");
     }
+  }
+  idleOpen(s: u64): bool {
+    return ops.idleOpen(s);
   }
   close(s: u64) {
     ops.close(s);
