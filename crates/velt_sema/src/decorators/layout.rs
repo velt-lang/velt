@@ -132,7 +132,7 @@ pub(super) fn check(cx: &mut Ctx, d: DefId, is_enum: bool) {
         transparent_rules(cx, d, span);
     }
     if let Some((span, arg)) = aligned {
-        let ok = matches!(arg, Some(ConstTree::Int(n)) if n >= 1 && n <= MAX_ALIGN && (n as u64).is_power_of_two());
+        let ok = matches!(arg, Some(ConstTree::Int(n)) if (1..=MAX_ALIGN).contains(&n) && (n as u64).is_power_of_two());
         if !ok {
             let shown = match arg {
                 Some(ConstTree::Int(n)) => n.to_string(),
