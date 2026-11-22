@@ -182,6 +182,7 @@ mod stringify;
 mod strings;
 mod symbols;
 mod system_views;
+mod tables;
 mod template;
 mod this_fn;
 mod thread_local;
