@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "velt/fs";
 import { platform, tmpdir } from "velt/os";
+import { AbortController, AbortError, AbortSignal, TimeoutError } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { nextPause } from "velt/fs/fd/lock";
 import * as pool from "velt/lang/hooks/sched_blocking";
@@ -249,6 +250,93 @@ describe("file locks", () => {
     unlinkSync(path);
   });
 
+  it("a signal aborted already rejects before the first try, and takes no lock", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("aborted");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    const early = new AbortController();
+    early.abort("not needed");
+    expect(await why(lock(a, { signal: early.signal }))).toBe("AbortError: not needed");
+    // The range is free, and `a` did not take it.
+    expect(lockSync(b)).toBe(true);
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
+  it("an abort ends a wait, and the waiter takes no lock afterwards", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("abort");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    const c = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    const ac = new AbortController();
+    const waiting = lock(b, { signal: ac.signal });
+    // The waiter has asked and been refused, and is pausing.
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+    }
+    ac.abort("given up");
+    expect(await why(waiting)).toBe("AbortError: given up");
+    unlockSync(a);
+    expect(lockSync(c)).toBe(true);
+    closeSync(a);
+    closeSync(b);
+    closeSync(c);
+    unlinkSync(path);
+  });
+
+  it("AbortSignal.timeout puts a time limit on the wait", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("timeout");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    const c = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    // timing: the holder never gives the lock back; the limit only has to end the wait.
+    expect(await why(lock(b, { signal: AbortSignal.timeout(20) }))).toBe(
+      "TimeoutError: The operation was aborted due to timeout",
+    );
+    unlockSync(a);
+    expect(lockSync(c)).toBe(true);
+    closeSync(a);
+    closeSync(b);
+    closeSync(c);
+    unlinkSync(path);
+  });
+
+  it("a signal that is not aborted lets the wait end with the lock", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("not-aborted");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    const ac = new AbortController();
+    const waiting = lock(b, { signal: ac.signal });
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+    }
+    unlockSync(a);
+    await waiting;
+    expect(lockSync(a)).toBe(false);
+    // An abort once the lock is held changes nothing.
+    ac.abort();
+    expect(lockSync(a)).toBe(false);
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
   it("is ENOSYS where the descriptors are not there yet", () => {
     if (POSIX) {
       return;
@@ -260,4 +348,16 @@ describe("file locks", () => {
 async function take(fd: number, state: { got: bool }): Promise<void> {
   await lock(fd);
   state.got = true;
+}
+
+/** How `p` ended: "resolved", or the kind and message of what it rejected with. */
+async function why(p: Promise<void, unknown>): Promise<string> {
+  try {
+    await p;
+    return "resolved";
+  } catch (e) {
+    const kind =
+      e instanceof TimeoutError ? "TimeoutError" : e instanceof AbortError ? "AbortError" : "other";
+    return `${kind}: ${(e as Error).message}`;
+  }
 }
