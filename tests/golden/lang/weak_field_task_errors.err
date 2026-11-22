@@ -1,0 +1,9 @@
+`unknown`, which holds a `weak` field, cannot be passed to another task
+an `unknown` may be a `H`, which holds a `weak` field: an interface value may hold anything converted to it in the program
+`H`, which has a `weak` field, cannot be passed to another task
+an async closure cannot capture `h`, which holds a `weak` field
+`Peek`, which holds a `weak` field, cannot be passed to another task
+a `Peek` may be a `Named`, which holds a `weak` field: an interface value may hold anything converted to it in the program
+`Base`, which holds a `weak` field, cannot be passed to another task
+a `Base` may be a `Sub`, which holds a `weak` field: a class value may hold anything converted to it in the program
+the function passed to `with` cannot use `h`, which holds a `weak` field

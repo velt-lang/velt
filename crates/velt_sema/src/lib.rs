@@ -113,6 +113,7 @@ mod kept_consts;
 mod kept_reload;
 mod key_groups;
 mod known;
+mod known_weak;
 mod layout_merge;
 mod linked;
 mod literals;

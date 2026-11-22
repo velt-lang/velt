@@ -45,15 +45,17 @@ const WINDOWS: Platform = Platform {
     ],
     // Besides the C library and kernel32, what std's own `declare c` functions call on Windows
     // (std/lang/hooks/reactor_afd.velt: Winsock, ntdll's AFD calls, `WaitOnAddress`; the time
-    // zones std/time/localtime_win32.velt enumerates, advapi32's): std declares them from `c`, so
-    // the program links their import libraries itself. An import library adds nothing a program
-    // doesn't call.
+    // zones std/time/localtime_win32.velt enumerates, advapi32's; bcrypt's random generator): std
+    // declares them from `c`, so the program links their import libraries itself. An import library
+    // adds nothing a program doesn't call. `shared_libs_tests.rs` checks the list against std.
     shared_native_libs: &[
         "kernel32.lib",
         "advapi32.lib",
         "ws2_32.lib",
         "ntdll.lib",
         "synchronization.lib",
+        // The OS random generator (std/lang/random/os_win32.velt's `BCryptGenRandom`).
+        "bcrypt.lib",
         "msvcrt.lib",
     ],
     base_args: &[
@@ -499,3 +501,7 @@ mod tests {
         assert_eq!(pos(&fixed, "/t/libvelt_rt.a"), None, "{fixed:?}");
     }
 }
+
+#[cfg(test)]
+#[path = "shared_libs_tests.rs"]
+mod shared_libs_tests;

@@ -6,10 +6,10 @@ use velt_syntax::ast;
 
 use super::accessor_rmw::Rmw;
 use super::any_text::Hint;
+use super::assign_checks::assigned_literal;
 use super::dynamic_arith::DynRmw;
 use super::element_value::ElementWrite;
 use super::ops::hir_binop;
-use crate::body::narrow::nothing_word;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, TyId, UseMode};
@@ -326,6 +326,11 @@ impl FnCx<'_, '_> {
                     }
                 }
             }
+            if let Some(AssignTarget::Place(p)) = &checked {
+                if self.weak_field_place(p) && super::assign_paths::is_pure_place(target) {
+                    return (self.weak_logical_assign(op, target, value, span), true);
+                }
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
@@ -435,7 +440,13 @@ impl FnCx<'_, '_> {
                 Some(v) => v,
                 // Stored into the place's site (`throws::fn_flows`).
                 None => self.stored_into(self.site_of_value(&place), |s| {
-                    let v = s.expr(value, Some(lty), Want::Move);
+                    // A `weak` field keeps no reference: the value stays its owner's (a variable
+                    // assigned to it keeps its object alive, as in JavaScript).
+                    let want = match s.weak_field_place(&place) {
+                        true => Want::Borrow,
+                        false => Want::Move,
+                    };
+                    let v = s.expr(value, Some(lty), want);
                     // A local declared from a literal takes the type of what it is assigned
                     // (`literal_locals`); other places are a typed position.
                     if s.literal_assign(&place, &v) {
@@ -781,19 +792,5 @@ impl FnCx<'_, '_> {
             span,
         };
         self.mk(H::Block(block), lty, span)
-    }
-}
-
-/// The literal a plain assignment's value `value` is (`b = null`, `b = c = 0`, through
-/// parentheses), which the assignment's own value then is.
-fn assigned_literal(op: Option<ast::BinaryOp>, value: &ast::Expr) -> Option<&ast::Expr> {
-    if op.is_some() {
-        return None;
-    }
-    match &value.kind {
-        ast::ExprKind::Paren(inner) => assigned_literal(None, inner),
-        ast::ExprKind::Assign { op, value, .. } => assigned_literal(*op, value),
-        ast::ExprKind::Lit(_) => Some(value),
-        _ => nothing_word(value).map(|_| value),
     }
 }

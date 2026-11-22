@@ -26,7 +26,7 @@ structs! {
         name, kind, generics, fields, is_copy, declared_struct, c_struct, private_fields, opaque,
         base, inherited_inits, ctor, dispose, to_string, to_json, inspect, vtable, span,
     }
-    FieldDef { name, ty, default, optional, private, presence, hidden, cell }
+    FieldDef { name, ty, default, optional, private, presence, hidden, cell, weak }
     FieldInit { field, depth, at, init }
     EnumDef { name, generics, variants, is_copy, is_union, span }
     VariantDef { name, payload, discriminant, str_value }
@@ -584,8 +584,9 @@ enums! {
         215 => SpreadParam,
         218 => PtrFromAddress,
         219 => PtrToAddress,
-        220 => PtrRead,
-        221 => PtrWrite,
+        220 => IsUnique,
+        221 => PtrRead,
+        222 => PtrWrite,
     }
 }
 

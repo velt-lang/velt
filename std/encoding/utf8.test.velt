@@ -7,7 +7,7 @@
 // the range are 0xff, so a scan that reads past either end gives a wrong answer. (Was the golden
 // std/utf8_prefix.)
 import { describe, expect, it } from "velt/test";
-import { validPrefix } from "velt/encoding/utf8";
+import { validPrefix } from "velt/encoding/utf8_valid";
 
 // Whether `b` may follow `lead` as continuation byte `k` (Unicode Table 3-7).
 function continues(lead: u8, k: usize, b: u8): bool {

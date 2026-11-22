@@ -54,7 +54,12 @@ impl Cx<'_> {
         // A weak map or ref is not counted, but its transfer glue panics (glue/transfer.rs):
         // it cannot go to another thread, moved or copied. So does a generator object's, which
         // is counted only when the program also clones or shares it somewhere.
-        if self.counted(t) || self.weak_class(t).is_some() || self.is_generator_obj(t) {
+        // A class with a `weak` field: its transfer glue panics too (weak_fields.rs).
+        if self.counted(t)
+            || self.weak_class(t).is_some()
+            || self.weak_holder(t).is_some()
+            || self.is_generator_obj(t)
+        {
             return true;
         }
         let parts = match self.kind(t) {
