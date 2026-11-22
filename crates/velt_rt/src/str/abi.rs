@@ -2,7 +2,6 @@
 //! (`clone`: a count increment, never a deep copy), drop and comparison.
 
 use super::{write_out, VeltStr};
-use crate::fmt;
 use crate::str_array::VeltStrArray;
 use std::cmp::Ordering;
 
@@ -56,14 +55,8 @@ pub unsafe extern "C" fn velt_rt_str_join(
     write_out(out, VeltStr::join(parts, &*sep));
 }
 
-// No integer to string here: an integer's text is std's (velt/lang/hooks/number_text, #2197).
-
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_from_f64(v: f64, out: *mut VeltStr) {
-    let mut b = Vec::with_capacity(32);
-    fmt::push_f64(&mut b, v);
-    write_out(out, VeltStr::from_bytes(&b));
-}
+// No number to string here: a number's text is std's (velt/lang/hooks/number_text, #2197,
+// #2196).
 
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_from_bool(v: u8, out: *mut VeltStr) {
@@ -302,16 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn from_numbers() {
-        for (v, want) in [
-            (1e21, "1e+21"),
-            (-0.0, "0"),
-            (2.5, "2.5"),
-            (f64::NAN, "NaN"),
-        ] {
-            let s = call(|o| unsafe { velt_rt_str_from_f64(v, o) });
-            assert_eq!(text(&s), want);
-        }
+    fn from_bools() {
         let t = call(|o| unsafe { velt_rt_str_from_bool(1, o) });
         let f = call(|o| unsafe { velt_rt_str_from_bool(0, o) });
         assert_eq!((text(&t), t.is_static(), text(&f)), ("true", true, "false"));

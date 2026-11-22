@@ -5,13 +5,9 @@
 // Every secret of the schedule is as long as the suite's hash (32 or 48 bytes), so the functions
 // that take one use the hash of that length; only `handshakeSecret` is told.
 
-import {
-  hkdfExpandSha256,
-  hkdfExpandSha384,
-  hkdfExtractSha256,
-  hkdfExtractSha384,
-} from "velt/crypto/hkdf";
+import { hkdfExtractSha256, hkdfExtractSha384 } from "velt/crypto/hkdf";
 import { hmacSha256, hmacSha384 } from "velt/crypto/hmac";
+import { HmacKey } from "velt/crypto/hmac_key";
 import { arrayTruncate } from "velt/lang/intrinsics";
 
 /** The bytes of a SHA-384 secret (and transcript hash); SHA-256's are 32. */
@@ -22,11 +18,25 @@ const PREFIX: u8[] = [0x74, 0x6c, 0x73, 0x31, 0x33, 0x20];
 
 /**
  * HKDF-Expand-Label(secret, label, context, length) (RFC 8446 §7.1), "tls13 " prefixed, with
- * the hash `secret` is as long as. The HkdfLabel goes straight into one buffer of its exact size
- * (labels are ASCII), with room for HKDF-Expand's first counter byte: up to the hash's length
- * (every key, IV and secret of the suites) is one HMAC of it, cut to `length`.
+ * the hash `secret` is as long as. To expand one secret more than once, prepare it once
+ * (`prepareSecret`) and call `expandLabelWith`.
  */
 export function expandLabel(secret: u8[], label: string, context: u8[], length: usize): u8[] {
+  return expandLabelWith(prepareSecret(secret), label, context, length);
+}
+
+/** `secret` as an HMAC key of its hash, for several `expandLabelWith`s (hmac_key.velt). */
+export function prepareSecret(secret: u8[]): HmacKey {
+  return new HmacKey(secret, secret.length == SHA384_LEN);
+}
+
+/**
+ * HKDF-Expand-Label with a prepared secret. The HkdfLabel goes straight into one buffer of its
+ * exact size (labels are ASCII), with room for HKDF-Expand's counter byte: up to the hash's
+ * length (every key, IV and secret of the suites) is one HMAC of it, cut to `length`; longer
+ * outputs run HKDF-Expand's chain (RFC 5869 §2.3).
+ */
+export function expandLabelWith(key: HmacKey, label: string, context: u8[], length: usize): u8[] {
   const l = label.length as usize;
   const n = 4 + 6 + l + context.length;
   const info = Buffer.alloc(n + 1);
@@ -43,15 +53,26 @@ export function expandLabel(secret: u8[], label: string, context: u8[], length: 
   for (let i: usize = 0; i < context.length; i++) {
     info[10 + l + i] = context[i];
   }
-  const sha384 = secret.length == SHA384_LEN;
-  if (length > (sha384 ? SHA384_LEN : 32)) {
-    arrayTruncate(info, n);
-    return sha384 ? hkdfExpandSha384(secret, info, length) : hkdfExpandSha256(secret, info, length);
-  }
   info[n] = 1;
-  const t = sha384 ? hmacSha384(secret, info) : hmacSha256(secret, info);
-  arrayTruncate(t, length);
-  return t;
+  const t = key.mac(info);
+  if (length <= key.length) {
+    arrayTruncate(t, length);
+    return t;
+  }
+  // T(i) = HMAC(PRK, T(i - 1) | info | i), at most 255 blocks (lengths here are u16).
+  arrayTruncate(info, n);
+  const out = t;
+  let prev = t;
+  let counter: u8 = 2;
+  while (out.length < length) {
+    const block = prev.concat(info).concat([counter]);
+    prev = key.mac(block);
+    for (let i: usize = 0; i < prev.length && out.length < length; i++) {
+      out.push(prev[i]);
+    }
+    counter = counter + 1;
+  }
+  return out;
 }
 
 // SHA-256 of the empty string: Derive-Secret's context for "derived".
@@ -232,11 +253,11 @@ const EARLY_DERIVED_384: u8[] = [
 ];
 
 // Derive-Secret(secret, "derived", "") for the next extract.
-function derived(secret: u8[]): u8[] {
+function derived(secret: HmacKey): u8[] {
   if (secret.length == SHA384_LEN) {
-    return expandLabel(secret, "derived", EMPTY_HASH_384, SHA384_LEN);
+    return expandLabelWith(secret, "derived", EMPTY_HASH_384, SHA384_LEN);
   }
-  return expandLabel(secret, "derived", EMPTY_HASH, 32);
+  return expandLabelWith(secret, "derived", EMPTY_HASH, 32);
 }
 
 /**
@@ -252,6 +273,11 @@ export function handshakeSecret(shared: u8[], hashLen: usize): u8[] {
 
 /** The master secret after `handshake`. */
 export function masterSecret(handshake: u8[]): u8[] {
+  return masterSecretWith(prepareSecret(handshake));
+}
+
+/** The master secret after the prepared handshake secret (`prepareSecret`). */
+export function masterSecretWith(handshake: HmacKey): u8[] {
   if (handshake.length == SHA384_LEN) {
     return hkdfExtractSha384(derived(handshake), Buffer.alloc(SHA384_LEN));
   }

@@ -214,8 +214,10 @@ export function fcntlLock(
 }
 
 /**
- * `fstat(fd)` with the fields at these byte offsets of `struct stat` (`mode16`: `st_mode` is a
- * 16-bit `mode_t`, macOS's): the fields, or `null` with the error for `lastError()`.
+ * `fstat(fd)` with the fields at these byte offsets of `struct stat`: the fields, or `null` with
+ * the error for `lastError()`. `mode16`: `st_mode` is a 16-bit `mode_t` and `st_dev` a 32-bit
+ * `dev_t` (macOS's); `ino32`: `st_ino` is a 32-bit inode at 4 (macOS x86-64's legacy
+ * `struct stat`), else a 64-bit one at 8. `st_dev` is at 0 on every target.
  */
 export function fstatAt(
   fd: i32,
@@ -223,8 +225,9 @@ export function fstatAt(
   mode16: bool,
   size: usize,
   mtime: usize,
+  ino32: bool,
 ): Stat | null {
-  return statWith(fd, null, false, mode, mode16, size, mtime);
+  return statWith(fd, null, false, mode, mode16, size, mtime, ino32);
 }
 
 /**
@@ -238,9 +241,10 @@ export function statAt(
   mode16: bool,
   size: usize,
   mtime: usize,
+  ino32: bool,
 ): Stat | null {
   checkPath(follow ? "stat" : "lstat", path);
-  return statWith(-1, path, follow, mode, mode16, size, mtime);
+  return statWith(-1, path, follow, mode, mode16, size, mtime, ino32);
 }
 
 /** `fstat(fd)`, or with a `path` (checked by the caller) `stat` or `lstat` of it. */
@@ -252,6 +256,7 @@ function statWith(
   mode16: bool,
   size: usize,
   mtime: usize,
+  ino32: bool,
 ): Stat | null {
   if (mode + 4 > STAT_SIZE || size + 8 > STAT_SIZE || mtime + 16 > STAT_SIZE) {
     panic("fstat: a field's offset is past the end of struct stat");
@@ -280,6 +285,8 @@ function statWith(
     // malloc's memory is aligned for every field.
     unsafe {
       out = {
+        st_dev: mode16 ? addressLoad<i32>(at) as u64 : addressLoad<u64>(at),
+        st_ino: ino32 ? addressLoad<u32>(at + 4) as u64 : addressLoad<u64>(at + 8),
         st_mode: mode16 ? addressLoad<u16>(at + mode) as u32 : addressLoad<u32>(at + mode),
         st_size: addressLoad<i64>(at + size),
         st_mtime: addressLoad<i64>(at + mtime),

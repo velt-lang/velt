@@ -30,6 +30,12 @@ pub struct FieldDef {
     /// (printing, keys, `in`, spreads, `any` reads and writes) sees the field as optional, of
     /// the cell's field's type, present when the cell is there.
     pub cell: bool,
+    /// Declared `weak T | null` (docs/internals/design/cycles.md "`weak T`"): `ty` is the read
+    /// type, `T | null`, with `T` a class. The field holds the slot of its target in the weak
+    /// core (std/lang/hooks/weak_slots.velt), 0 for `null`, not a counted reference: a read is
+    /// the slot's target, retained, a write takes the new target's slot and gives up the old one,
+    /// and the field is no edge of the ownership graph. Additive.
+    pub weak: bool,
 }
 
 /// An initializer a class gives a field it inherits: an error class's `name = "AppError"`

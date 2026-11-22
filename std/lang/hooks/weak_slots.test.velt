@@ -5,6 +5,7 @@ import { describe, expect, it } from "velt/test";
 import {
   weakMapDelete,
   weakMapHas,
+  weakRelease,
   weakSlot,
   weakSlotDrop,
   weakTracked,
@@ -14,11 +15,13 @@ import { ld } from "velt/lang/hooks/weak_mem";
 import {
   count,
   finish,
+  isGated,
   isMarked,
   live,
   objMap,
   plain,
   release,
+  retain,
   set,
 } from "velt/lang/hooks/weak_test_objects";
 
@@ -94,6 +97,38 @@ describe("weak slots", () => {
     expect(weakMapDelete(m, k)).toBe(true);
     // The record stays for the slot: freeing the object still clears it.
     expect(isMarked(k)).toBe(true);
+    release(k);
+    expect(ld(s + S_TARGET)).toBe(0);
+    weakSlotDrop(s);
+    expect(finish([m])).toBe(true);
+    expect(live()).toBe(before);
+  });
+
+  it("leave their object without a gate: a release above the last is a plain decrement", () => {
+    const before = live();
+    const o = retain(plain());
+    const s = weakSlot(o);
+    expect(isGated(o)).toBe(false);
+    // The inline sequence decrements it without calling the core; `weakRelease` makes the same
+    // decrement when called.
+    expect(weakRelease(o)).toBe(false);
+    expect(count(o)).toBe(1);
+    expect(isMarked(o)).toBe(true);
+    release(o);
+    expect(ld(s + S_TARGET)).toBe(0);
+    weakSlotDrop(s);
+    expect(live()).toBe(before);
+  });
+
+  it("leave the gate to a weak map key's entries", () => {
+    const before = live();
+    const m = objMap();
+    const k = retain(plain());
+    const s = weakSlot(k);
+    set(m, k, plain());
+    expect(isGated(k)).toBe(true);
+    release(k);
+    expect(count(k)).toBe(1);
     release(k);
     expect(ld(s + S_TARGET)).toBe(0);
     weakSlotDrop(s);

@@ -147,7 +147,11 @@ fn a_prebuilt_hook_calls_its_object_and_loads_its_module_without_one() {
             (found(&served), text(&served.stdout).as_str()),
             ("object", FIRST_OUT)
         );
-        assert!(text(&served.stderr).contains("prebuilt hooks: 1 objects linked"));
+        // The probe's object, and std's float printer's (`number_shortest`): the program writes
+        // the f64s `value` returns.
+        let err = text(&served.stderr);
+        assert!(err.contains("number_shortest: object found"), "{err}");
+        assert!(err.contains("prebuilt hooks: 2 objects linked"), "{err}");
         if mode == ["run"] {
             let check = velt(dir, "a.velt", FIRST, &["check"], &[]);
             assert_eq!(found(&check), "object");

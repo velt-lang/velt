@@ -188,16 +188,17 @@ pub enum Intrinsic {
     NeedsDrop,
     /// std only (std/lang/intrinsics/task.velt): `moduleStateUsed() -> bool`, a constant:
     /// does the program have module state (`Program::module_state`) or functions that may have
-    /// properties through `any` (which are module state too), so that its tasks may take the
-    /// process-wide module lock (rt_abi.md "Module state")? velt/net's `TcpListener.workers()`
-    /// spreads a server's connections over the workers only without it (#2744), until #2726
-    /// replaces the module lock.
+    /// properties through `any` (module state too), so that its tasks may take the process-wide
+    /// module lock (rt_abi.md "Module state")? velt/net's `TcpListener.workers()` spreads a
+    /// server's connections over the workers only without it (#2744), until #2726 replaces it.
     ModuleStateUsed,
-    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a
-    /// constant: can a value of type `T` that a call borrows be reached through another
-    /// reference while the call runs (lowering counts the type, or borrows values of it inside
-    /// counted objects)? Only then can a callback change it. The value is not evaluated.
+    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a constant:
+    /// can a value of type `T` that a call borrows be reached through another reference while
+    /// the call runs (lowering counts the type, or borrows values of it inside counted objects)?
+    /// Only then can a callback change it. The value is not evaluated.
     MayAlias,
+    /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
+    IsUnique,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.

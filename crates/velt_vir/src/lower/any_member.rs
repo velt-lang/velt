@@ -35,6 +35,19 @@ pub(super) const SLOT_INDEX: i128 = 6;
 pub(super) const SLOT_CALL: i128 = 7;
 pub(super) const SLOT_APPLY: i128 = 8;
 
+/// Is `slot` one of the slots `any_member_entries` adds only with the member slots?
+fn is_member_slot(slot: i128) -> bool {
+    use super::{any_delete::SLOT_DELETE, any_has::SLOT_HAS, any_set};
+    (SLOT_GET..=SLOT_APPLY).contains(&slot)
+        || [
+            any_set::SLOT_SET,
+            any_set::SLOT_SET_INDEX,
+            SLOT_HAS,
+            SLOT_DELETE,
+        ]
+        .contains(&slot)
+}
+
 pub(super) const ST_OK: i128 = 0;
 pub(super) const ST_UNSUPPORTED: i128 = 1;
 pub(super) const ST_NOT_FN: i128 = 2;
@@ -319,9 +332,12 @@ impl FnLower<'_, '_> {
     }
 
     /// Call descriptor slot `slot` of `desc` with `args` of VIR types `params`. A member slot
-    /// (`SLOT_GET` to `SLOT_APPLY`) is in the tables when sema saw a member of an `any` used
-    /// (`hir::Program::dyn_members`), or when a pass before built such a call
-    /// (`Boxing::any_members`): without it the call would jump to a null entry (#2578).
+    /// (`SLOT_GET` to `SLOT_APPLY`, and the write, `has` and `delete` slots, which
+    /// `any_member_entries` adds only with them) is in the tables when sema saw a member of an
+    /// `any` used (`hir::Program::dyn_members`), or when a pass before built such a call
+    /// (`Boxing::any_members`): without it the call would jump past the table (#2578). Std
+    /// called by name doesn't tell sema (`FnCx::note_dyn_members`), so a `"k" in v` there in a
+    /// program with no member use of its own is one (#3492).
     pub(super) fn any_slot(
         &mut self,
         desc: Operand,
@@ -329,7 +345,7 @@ impl FnLower<'_, '_> {
         args: Vec<Operand>,
         params: Vec<Ty>,
     ) -> Operand {
-        if (SLOT_GET..=SLOT_APPLY).contains(&slot) && self.cx.hir.dyn_members.is_none() {
+        if is_member_slot(slot) && self.cx.hir.dyn_members.is_none() {
             self.cx.note_any_member_call();
         }
         let f = self.dispatch(desc, slot);
@@ -397,7 +413,7 @@ impl FnLower<'_, '_> {
                 NullKey::Num(i) => {
                     let ks = self.temp(Ty::Agg(STR_AGG));
                     let ka = self.addr(Place::local(ks));
-                    self.call_rt(Rt::StrFromF64, vec![i.clone(), ka.clone()], None);
+                    self.float_text_into(i.clone(), Place::local(ks));
                     ka
                 }
             };

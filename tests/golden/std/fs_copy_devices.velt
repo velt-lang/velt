@@ -1,0 +1,17 @@
+// requires: unix
+// copyFile copies as many bytes as `fstat` gives the source, as libuv does: a device (size 0) is
+// copied as an empty file, not read until it ends (`/dev/zero` never does). The expected output
+// is Node's.
+import { copyFile, copyFileSync, existsSync, mkdir, readFileBytes, remove } from "velt/fs";
+
+async function main() {
+  const d = "velt_fs_copy_devices_tmp";
+  if (existsSync(d)) {
+    await remove(d, { recursive: true }); // left by an interrupted run
+  }
+  await mkdir(d);
+  copyFileSync("/dev/null", `${d}/null`);
+  await copyFile("/dev/zero", `${d}/zero`);
+  console.log((await readFileBytes(`${d}/null`)).length, (await readFileBytes(`${d}/zero`)).length);
+  await remove(d, { recursive: true });
+}

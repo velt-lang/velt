@@ -16,7 +16,11 @@ impl FnLower<'_, '_> {
             for (i, f) in fields.iter().enumerate() {
                 let v = self.consume(f);
                 let p = self.field_place(&obj, ty, i as u32);
-                self.store(p, v);
+                match self.cx.weak_field(ty, i as u32) {
+                    // Its slot (weak_fields.rs); the new object's field holds 0.
+                    Some(read) => self.weak_store(p, v, read),
+                    None => self.store(p, v),
+                }
             }
             return Operand::Copy(obj);
         }

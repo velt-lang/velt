@@ -1,0 +1,9 @@
+symlink exists EEXIST EEXIST: file already exists, symlink 'a.txt' -> 'velt_fs_links_errors_tmp/link'
+symlinkSync missing dir ENOENT ENOENT: no such file or directory, symlink 'a.txt' -> 'velt_fs_links_errors_tmp/no/link'
+readlink file EINVAL EINVAL: invalid argument, readlink 'velt_fs_links_errors_tmp/a.txt'
+readlink missing ENOENT ENOENT: no such file or directory, readlink 'velt_fs_links_errors_tmp/nope'
+readlinkSync missing ENOENT ENOENT: no such file or directory, readlink 'velt_fs_links_errors_tmp/nope'
+realpath missing ENOENT ENOENT: no such file or directory, realpath 'velt_fs_links_errors_tmp/nope'
+realpathSync missing ENOENT
+long target: 300 true
+realpath: true

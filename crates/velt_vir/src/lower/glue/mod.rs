@@ -64,6 +64,7 @@ pub(in crate::lower) mod vtable;
 
 pub(super) use demand::demand_off;
 pub(super) use generic_slots::{GenericSlot, SlotKey};
+pub(super) use literals::int_literal_text;
 #[cfg(test)]
 pub(crate) use literals::{inspect_key, inspect_quote};
 pub(super) use slot_uses::GlueSlots;

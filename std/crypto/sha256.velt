@@ -10,7 +10,7 @@ import { utf8Encode } from "velt/encoding/utf8";
 import { hexEncode } from "velt/encoding/hex";
 import { inline, noInline } from "velt/lang/intrinsics";
 import { BLOCK, finalBlocks, keyBlock, wordsToBytes } from "velt/crypto/blocks";
-import { sha256Arm, sha256X86 } from "velt/crypto/sha256_simd";
+import { blocks256Arm, blocks256X86, sha256Arm, sha256X86 } from "velt/crypto/sha256_simd";
 import { H256 } from "velt/crypto/tables";
 import { Sha256 } from "velt/arch/arm/sha256";
 import { Sha } from "velt/arch/x86/sha";
@@ -46,6 +46,31 @@ export function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
     sha256Block(h, tail, off);
   }
   return wordsToBytes(h);
+}
+
+/**
+ * The `count` 64-byte blocks of `data` from `off` into the state `h` (eight words, A first):
+ * with the CPU's SHA instructions where it has them, else the portable rounds. For a hasher that
+ * keeps its state between pieces (`Sha256`).
+ */
+export function sha256Blocks(h: u32[], data: u8[], off: usize, count: usize) {
+  // The caller keeps to its data; said once so that nothing below reads past it, and loudly,
+  // as in `sha256Block`.
+  // In this form, `off + count * BLOCK` cannot wrap.
+  if (off > data.length || count > (data.length - off) / BLOCK || h.length != 8) {
+    blockFault();
+  }
+  if (Sha256.isSupported()) {
+    blocks256Arm(h, data, off, count);
+    return;
+  }
+  if (Sha.isSupported()) {
+    blocks256X86(h, data, off, count);
+    return;
+  }
+  for (let i: usize = 0; i < count; i++) {
+    sha256Block(h, data, off + i * BLOCK);
+  }
 }
 
 /** Lowercase hex SHA-256 of the UTF-8 bytes of `s`. */
