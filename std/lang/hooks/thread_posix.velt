@@ -91,7 +91,7 @@ function startThread(start: usize, arg: usize, detach: bool): bool {
         rc = pthread_attr_setdetachstate(attr, r.PTHREAD_CREATE_DETACHED);
       }
       if (rc === 0) {
-        rc = pthread_create(t, attr, m.ptrTo<void>(start), m.ptrOrNull<void>(arg));
+        rc = pthread_create(t, attr, m.ptrTo<void>(start), m.ptrTo<void>(arg));
       }
       pthread_attr_destroy(attr);
     }

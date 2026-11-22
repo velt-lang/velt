@@ -7,14 +7,14 @@ import { Ptr } from "velt/ffi/ptr";
 // C declarations, so that the `Ptr` is passed as the pointer it is: a Velt-ABI declaration passes
 // it as the address of a copy, which the runtime would lock instead (and an integer address is
 // 64 bits where a wasm32 pointer is 32).
-declare c("c") function velt_rt_mutex_lock(lock: Ptr<u64>): void;
-declare c("c") function velt_rt_mutex_unlock(lock: Ptr<u64>): void;
+declare c("c") function velt_rt_mutex_lock(lock: Ptr<u64> | null): void;
+declare c("c") function velt_rt_mutex_unlock(lock: Ptr<u64> | null): void;
 
 /** Locks the lock word at `p`. */
 export function mutexLock(p: usize): void {
   // SAFETY: `p` is a lock word, zeroed when made and locked only through these two functions.
   unsafe {
-    velt_rt_mutex_lock(Ptr.at<u64>(p));
+    velt_rt_mutex_lock(Ptr.orNull<u64>(p));
   }
 }
 
@@ -22,6 +22,6 @@ export function mutexLock(p: usize): void {
 export function mutexUnlock(p: usize): void {
   // SAFETY: as `mutexLock`, held by this thread.
   unsafe {
-    velt_rt_mutex_unlock(Ptr.at<u64>(p));
+    velt_rt_mutex_unlock(Ptr.orNull<u64>(p));
   }
 }

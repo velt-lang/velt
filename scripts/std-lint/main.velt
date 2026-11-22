@@ -362,6 +362,22 @@ function lint(std: Std): Problem[] {
         ),
       );
     }
+    // velt/ffi's checking `Ptr.at` (#3094): it stops the program on 0, so every std function
+    // that reaches it reports its caller's location, a hidden parameter or a copy per call site
+    // up the whole chain (a prebuilt hook then has no plain symbol to export).
+    if (
+      !file.startsWith("ffi/") &&
+      !isTest(file) &&
+      (text.includes("Ptr.at<") || text.includes("Ptr.at("))
+    ) {
+      problems.push(
+        new Problem(
+          file,
+          "checkedPtr",
+          "calls `Ptr.at`, which stops on 0 and so makes every caller up the chain track its call site: std's own addresses take `Ptr.orNull` (the C parameter `Ptr<T> | null`, the same word), or `ptrFromAddress` where velt/ffi needs a non-null pointer, with the reason it isn't 0 (#3094)",
+        ),
+      );
+    }
     if (std.isIndex(file) && !special(file)) {
       if (text.includes("\nexport * from") || text.startsWith("export * from")) {
         problems.push(
