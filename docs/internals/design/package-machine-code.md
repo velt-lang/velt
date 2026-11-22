@@ -374,19 +374,19 @@ changes).
   alignment, which depends on its type arguments, needs no check per instance. The size is a
   multiple of the alignment, so arrays are padded, and a struct holding one takes its
   alignment. Heap blocks (array buffers, boxes) come from `velt_rt_alloc` with the layout's
-  alignment, and LLVM aligns stack slots; Cranelift aligns a stack slot to at most 16 bytes from
-  the frame's start, which no Velt code can see (nothing takes a local's address), so debug
-  builds keep every guarantee a program can observe.
+  alignment, and LLVM aligns stack slots. Cranelift aligns a stack slot to at most 16 bytes from
+  the frame's start, so a slot aligned above that gets the extra room and its address is
+  rounded up where it is taken (velt_codegen_cl `Storage::Slot`, #3539): debug builds hold every
+  value at a multiple of its alignment too.
 - **No aligned loads and stores.** The aligned forms of step 5's loads and stores were planned
   for here and are dropped:
-  - **Unsound across builds:** a debug build's stack slot is aligned to at most 16 bytes, and a
-    debug build may link std functions compiled once by LLVM (the std cache). Giving
-    `Vector256` / `Vector512` `@align(32/64)` and their rows aligned loads would let such a
-    function receive a debug build's 16-byte-aligned value and fault. A program's own `@align`
-    struct can't reach that path, because std's cached code never holds a program's types;
-    std's vector types can.
   - **No gain:** on every CPU since Haswell and Zen an unaligned form costs the same as the
     aligned one on aligned data.
+  - **Risk for nothing:** an aligned form faults on any address that isn't aligned, so every
+    home of a vector value would have to keep the guarantee forever. When the forms were
+    dropped, a debug build's stack slot didn't (it was aligned to at most 16 bytes, and a debug
+    build may link LLVM-compiled std functions from the std cache); #3539 has since fixed
+    that, but the first point stands.
 
   What does pay is aligning the data itself, and `@align` does that for any program: wrap the
   vector in a struct, and arrays of it start each element on a cache line.
@@ -398,8 +398,6 @@ changes).
   }
   ```
 
-  The same debug-build limit applies to C code that does aligned loads on the address of an
-  `@align(32/64)` local: #3539.
 - **Left for a later change:** `@cold` (its own VIR flag: #3509).
 
 ## 6. What a numeric package writes
