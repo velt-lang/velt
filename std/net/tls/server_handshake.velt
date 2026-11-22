@@ -6,7 +6,6 @@
 // sends what it says. No client certificates are asked for, no tickets are issued, and early data
 // is never accepted (a client only sends it when resuming with a ticket).
 
-import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
 import { randomBytes } from "velt/crypto/random";
 import { sha256 } from "velt/crypto/sha256";
 import { sha384 } from "velt/crypto/sha512";
@@ -56,11 +55,11 @@ import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey } from "velt/net/tls/server_key";
+import { chooseScheme, schemeNames, signWith } from "velt/net/tls/server_signer";
 import { TranscriptHash } from "velt/net/tls/transcript_hash";
 import { u8x16 } from "velt/simd";
 
 /** ecdsa_secp256r1_sha256, the signature scheme of the server's CertificateVerify. */
-const ECDSA_P256_SHA256: usize = 0x0403;
 
 // Where the handshake is.
 const WAIT_HELLO = 0;
@@ -91,6 +90,7 @@ export const S_DONE12 = 5;
 /** The server's side of one handshake. */
 export class ServerHandshake {
   private key: ServerKey;
+  private scheme: usize = 0;
   private protocols: string[];
   private state: i32 = WAIT_HELLO;
   private transcript: u8[] = [];
@@ -128,6 +128,11 @@ export class ServerHandshake {
   /** TLS 1.2: the server random and the ECDHE private key to use instead of new ones (tests). */
   fixedRandom: u8[] | null = null;
   fixedKey: u8[] | null = null;
+  /**
+   * Answer as a server that has no TLS 1.3 (tests): TLS 1.2 also for a client that offers
+   * TLS 1.3, and no downgrade mark in the server random.
+   */
+  only12: bool = false;
 
   /** A handshake that presents `key` and chooses among `protocols` with ALPN (none: no ALPN). */
   constructor(key: ServerKey, protocols: string[]) {
@@ -193,14 +198,15 @@ export class ServerHandshake {
     if (!retried) {
       this.compat = offer.sessionId.length > 0;
       this.serverName = offer.serverName;
-      if (!offer.schemes.includes(ECDSA_P256_SHA256)) {
+      this.scheme = chooseScheme(this.key, offer.schemes, offer.tls13);
+      if (this.scheme == 0) {
         throw new TlsFailure(
           HANDSHAKE_FAILURE,
-          "the client accepts no signature scheme of the certificate's key (ecdsa_secp256r1_sha256)",
+          `the client accepts no signature scheme of the certificate's key (${schemeNames(this.key, offer.tls13)})`,
         );
       }
       this.alpn = this.chooseAlpn(offer.alpn);
-      if (!offer.tls13) {
+      if (!offer.tls13 || this.only12) {
         // A TLS 1.2 client (parseClientHello refuses older ones).
         const t = new ServerHandshake12(
           this.key,
@@ -210,6 +216,7 @@ export class ServerHandshake {
           u8x16.hasAes(),
           this.fixedRandom,
           this.fixedKey,
+          !this.only12,
         );
         this.tls12 = t;
         this.suite = t.suite;
@@ -317,11 +324,11 @@ export class ServerHandshake {
     for (let i: usize = 0; i < th.length; i++) {
       signed.push(th[i]);
     }
-    const sig = p256Sign(this.key.key, sha256(signed));
+    const sig = signWith(this.key, this.scheme, signed);
     const cv = new ByteWriter();
     cv.u8(CERTIFICATE_VERIFY);
     const vb = cv.begin(3);
-    cv.u16(ECDSA_P256_SHA256);
+    cv.u16(this.scheme);
     const s = cv.begin(2);
     cv.put(sig);
     cv.end(s, 2);

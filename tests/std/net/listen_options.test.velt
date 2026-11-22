@@ -1,0 +1,34 @@
+// `listenTls` with options the program's own code never spells out (filled from a config file's
+// JSON): the TLS server in Velt still loads (std/prelude/global/tls_reactor.velt matches
+// `listenTls` too), and serves.
+import { describe, expect, it } from "velt/test";
+import { connect, listenTls, startTls, TlsListenOptions } from "velt/net";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+
+describe("listenTls", () => {
+  it("serves with options read from JSON", async () => {
+    // The field's name is put together at run time: no word of this file may name it, as a
+    // template literal's text would (the globals' word scan reads it as code).
+    const field = "ce" + "rt";
+    const text = `{"${field}":${JSON.stringify(TEST_CERT)},"key":${JSON.stringify(TEST_KEY)}}`;
+    const opts: TlsListenOptions = JSON.parse(text);
+    const server = await listenTls("127.0.0.1:0", opts);
+    const serving = spawn(
+      (async () => {
+        const c = await server.accept();
+        await c.write("hello");
+        c.shutdown();
+        c.close();
+      })(),
+    );
+    const t = await startTls(await connect(`127.0.0.1:${server.port}`), {
+      serverName: "localhost",
+      ca: TEST_CA,
+    });
+    const got = String.fromCharCode(...(await t.read()));
+    t.close();
+    server.close();
+    await serving;
+    expect(got).toBe("hello");
+  });
+});

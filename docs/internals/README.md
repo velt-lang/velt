@@ -147,8 +147,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 The **runtime** (`velt_rt`) is a Rust static library: memory allocation (mimalloc), strings,
 formatting, JSON, regular expressions, promise combinators, and the tokio-based I/O the standard
-library builds on (file system, sockets, timers, processes, TLS through rustls). HTTP is written in
-Velt (`std/net/http`), and the database drivers are packages (`packages/sqlite`,
+library builds on (file system, sockets, timers, processes). TLS (`std/net/tls`) and HTTP are
+written in Velt (`std/net/http`), and the database drivers are packages (`packages/sqlite`,
 `packages/postgres`, `packages/redis`). On native targets the executor that runs tasks, microtasks
 and timers is written in Velt (`std/lang/hooks/sched.velt`): lowering calls its hooks where it would
 call the runtime's executor (`crates/velt_vir/src/lower/sched.rs`), and the runtime's I/O wakes its
@@ -173,7 +173,7 @@ own executor.
 | `velt_rt_wasm` | the WebAssembly runtime and its JavaScript glue |
 | `velt_rt_host` | the runtime's sources built as an rlib, which hosts JIT-compiled programs in `velt dev` |
 | `velt_text` | Velt's string encoding, number formatting and database JSON, shared by the runtime and std's native libraries |
-| `velt_tls` | the TLS client setup (rustls, Mozilla's roots, extra CAs), shared by the runtime and native libraries |
+| `velt_tls` | a rustls client setup (Mozilla's roots, extra CAs) for native libraries (`packages/postgres/native`); programs' TLS is Velt's, std/net/tls/ |
 | `velt_build_cache` | the machine-wide build cache: compiled code keyed by content, bounded in size |
 | `velt_fmt` | formatter |
 | `velt_lsp` | language server |

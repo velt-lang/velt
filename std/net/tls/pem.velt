@@ -1,0 +1,56 @@
+// velt/net (internal): PEM text (RFC 7468) as TLS takes it for certificates and keys: the
+// blocks between `-----BEGIN label-----` and `-----END label-----`, their base64 decoded.
+// Text outside the blocks is skipped, as OpenSSL and rustls skip it.
+
+import { base64Decode } from "velt/encoding/base64";
+import { IoError } from "velt/io/error";
+
+/** One PEM block: its label ("CERTIFICATE") and its DER bytes. */
+export struct PemBlock {
+  label: string;
+  der: u8[];
+}
+
+function invalid(message: string): IoError {
+  return new IoError("EINVAL", message);
+}
+
+/**
+ * The PEM blocks of `text`, in order. Throws `EINVAL` for a block that is not valid PEM, naming
+ * `what` ("certificate", "key").
+ */
+export function pemBlocks(text: string, what: string): PemBlock[] throws IoError {
+  const out: PemBlock[] = [];
+  let at = 0;
+  while (true) {
+    const begin = text.indexOf("-----BEGIN ", at);
+    if (begin < 0) {
+      return out;
+    }
+    const labelEnd = text.indexOf("-----", begin + 11);
+    if (labelEnd < 0) {
+      throw invalid(`invalid ${what} PEM: a BEGIN line without its end`);
+    }
+    const label = text.slice(begin + 11, labelEnd);
+    const endLine = `-----END ${label}-----`;
+    const end = text.indexOf(endLine, labelEnd + 5);
+    if (end < 0) {
+      throw invalid(`invalid ${what} PEM: "${label}" without its END line`);
+    }
+    let b64 = "";
+    for (const line of text.slice(labelEnd + 5, end).split("\n")) {
+      b64 += line.trim();
+    }
+    let der: u8[] = [];
+    try {
+      der = base64Decode(b64);
+    } catch (e) {
+      throw invalid(`invalid ${what} PEM: "${label}" is not valid base64`);
+    }
+    if (der.length == 0) {
+      throw invalid(`invalid ${what} PEM: "${label}" is empty`);
+    }
+    out.push({ label: label, der: der });
+    at = end + (endLine.length as i64);
+  }
+}
