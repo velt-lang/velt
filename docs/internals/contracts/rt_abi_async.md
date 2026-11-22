@@ -573,8 +573,6 @@ their own forms); functions taking one never accept the other.
 | `velt_rt_bytes_drop` | `(VeltBytes* b)` — frees if `cap > 0`, zeroes. Never given an array whose `cap` has bit 63 set (an owner, `rt_abi.md` "Array length limit") |
 | `velt_rt_bytes_from_str` | `(const VeltStr* s, VeltBytes* out)` — copy |
 | `velt_rt_bytes_to_str` | `(const VeltBytes* b, IoResult<VeltStr>* out)` — copy, `EILSEQ` if invalid |
-| `velt_rt_bytes_to_str_lossy` | `(const VeltBytes* b, VeltStr* out)` — copy, an invalid sequence as U+FFFD (WHATWG, as `utf8DecodeLossy`) |
-| `velt_rt_bytes_is_utf8` | `(const VeltBytes* b) -> u8` — whether `b` is valid UTF-8 |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` — drops elements + buffer, zeroes |
 
 ## 5. std/fs
