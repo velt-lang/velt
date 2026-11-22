@@ -122,6 +122,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("addressAtomicLoad", Op(I::AddressAtomicLoad)),
     ("addressAtomicRmw", Op(I::AddressAtomicRmw)),
     ("addressAtomicStore", Op(I::AddressAtomicStore)),
+    ("ptrFromAddress", Op(I::PtrFromAddress)),
+    ("ptrToAddress", Op(I::PtrToAddress)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("addressCall3", Op(I::AddressCall3)),
@@ -172,6 +174,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("fnCapturesNothing", Op(I::FnCapturesNothing)),
     ("holdsNull", Op(I::HoldsNull)),
     ("mayAlias", Op(I::MayAlias)),
+    ("isUnique", Op(I::IsUnique)),
     ("needsDrop", Op(I::NeedsDrop)),
     ("needsTransfer", Op(I::NeedsTransfer)),
     ("nullAs", Op(I::NullAs)),

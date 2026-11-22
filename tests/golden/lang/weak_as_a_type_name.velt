@@ -1,0 +1,30 @@
+// `weak` is a type operator only before a type name on the same line (`parent: weak Node |
+// null`): TypeScript that names a type `weak` keeps working, written without semicolons too.
+type weak = number
+
+class C {
+  a: weak
+  b: number
+  constructor() {
+    this.a = 1
+    this.b = 2
+  }
+}
+
+interface I {
+  x: weak
+  y: weak
+}
+
+function show(n: number): void {
+  console.log("show", n)
+}
+
+let x: weak
+show(1)
+x = 2
+const i: I = { x: x, y: 3 }
+const c = new C()
+const asWeak = (c.a as weak as number) + i.y
+const pair = { n: 4 } as unknown as { n: weak }
+console.log(c.a + c.b, i.x + i.y, asWeak, pair.n)

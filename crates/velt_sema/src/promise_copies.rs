@@ -145,6 +145,10 @@ pub(crate) fn collect(cx: &mut Ctx) -> Vec<(DefId, Facts)> {
     let mut out = vec![];
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
+        // In a check by units, std's code the program has (`lazy_std::walks`).
+        if !crate::body::lazy_std::walks(cx, DefId(i as u32)) {
+            continue;
+        }
         let mut facts = Facts::default();
         let guards = guards_of(&cx.ty, &f.body.block);
         // A capture that shares the enclosing variable copies it, without an intrinsic.

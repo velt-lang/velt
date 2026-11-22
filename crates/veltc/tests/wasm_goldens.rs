@@ -73,6 +73,9 @@ const UNSUPPORTED: &[&str] = &[
     // wasm's executor is still the runtime's, whose `yieldNow()` wakes at once instead of taking
     // its turn after the microtasks queued before it, as the executor in Velt does (#3307).
     "yield_now_order",
+    "yield_now_immediates",
+    "yield_now_due_sleep",
+    "yield_now_turn_passed",
     // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
     // WebAssembly stacks overflow.
     "deep_generator_frames",
@@ -237,12 +240,15 @@ const SHARDS: usize = 8;
 const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
 /// the std code written with them, `random` (its seed is WASI's, through wasi-libc),
-/// `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
+/// `crypto`, `crypto_random_int` and `uuid` (the OS's random bytes are WASI's too,
+/// std/lang/random/os_wasi.velt), `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
 /// of its own there), and two ephemeron caches, whose trials call between
 /// std's weak core and the compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
+    "crypto",
+    "crypto_random_int",
     "fs_mapped_file_getters",
     "fs_mapped_file_portable",
     "half_dot",
@@ -282,6 +288,7 @@ const WASI_STD: &[&str] = &[
     "typed_arrays_basic",
     "typed_arrays_edges",
     "utf8_valid",
+    "uuid",
     // The weak core in std calls trace glue, which calls the core's `visit` back: an indirect
     // call whose signature must match on wasm32 (#3145).
     "weakmap_ephemeron",
@@ -433,10 +440,53 @@ fn conditional_imports_pick_the_target_variant() {
     }
 }
 
+/// A C pointer has 32 bits on wasm32 and an address 64 (`usize`): tests/golden/lang/c_pointers/
+/// wide.velt stops at an address past 32 bits there, after printing one that fits, instead of
+/// cutting it to another address or to a NULL behind a `Ptr<T>` (#3094). The package's goldens
+/// are not among [`WASI_DIRS`]' top-level files; it is copied into a work directory, whose
+/// build goes to its own `target/velt`.
+#[test]
+fn a_c_pointer_past_32_bits_stops_on_wasm32() {
+    if let Some(missing) = missing_tools("wasm32-wasip1", "wasmtime") {
+        eprintln!("note: {missing} not available; skipping C pointers on wasm32-wasip1");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-wasip1");
+    let fixture = root.join("tests/golden/lang/c_pointers");
+    for mode in [None, Some("--release")] {
+        let work = work_dir::work_dir(&root, "golden-work-wide").join(format!(
+            "{}-{}",
+            mode.is_some(),
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&work);
+        copy_dir(&fixture, &work);
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["run", "--target", "wasm32-wasip1"])
+            .args(mode)
+            .arg(work.join("wide.velt"))
+            .current_dir(&work)
+            .output()
+            .expect("run velt");
+        let _ = std::fs::remove_dir_all(&work);
+        let (out, err) = (
+            String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+            String::from_utf8_lossy(&o.stderr),
+        );
+        let stopped = !o.status.success() && err.contains("does not fit a pointer");
+        assert!(
+            out == "Ptr(0xfffffff0)\n" && stopped,
+            "{mode:?}: exit {:?}\n--- stdout ---\n{out}--- stderr ---\n{err}",
+            o.status
+        );
+    }
+}
+
 /// `Math.random()`'s seed on WebAssembly: WASI's `random_get` through wasi-libc, and the JS
 /// host's `crypto.getRandomValues` (`velt:random`). Two runs of tests/wasm_random/main.velt print
 /// different numbers on each target, which a constant seed (a `fill` that does nothing, a
-/// `seed_wasi` returning a constant) fails.
+/// `fillRandomAt` in os_wasi.velt doing nothing) fails.
 #[test]
 fn math_random_seeds_each_run_on_webassembly() {
     let root = root();
@@ -470,6 +520,45 @@ fn math_random_seeds_each_run_on_webassembly() {
         let (one, two) = (run(), run());
         let _ = std::fs::remove_dir_all(&work);
         assert_ne!(one, two, "{target}: two runs printed the same numbers");
+    }
+}
+
+/// velt/crypto's `randomBytes` on WebAssembly, past the JS host's limit of 65,536 bytes a
+/// `crypto.getRandomValues` call (velt_web.mjs `randomHost`, which chunks) and WASI's 256 bytes a
+/// `getentropy` call (std/lang/random/os_wasi.velt): tests/wasm_random/large.velt draws 16 to
+/// 200,000 bytes and checks the length and every 64 KiB part's zero count, on both targets.
+#[test]
+fn crypto_random_bytes_fill_large_draws_on_webassembly() {
+    let root = root();
+    let main = root.join("crates/veltc/tests/wasm_random/large.velt");
+    for (target, runner) in [
+        ("wasm32-wasip1", "wasmtime"),
+        ("wasm32-unknown-unknown", "node"),
+    ] {
+        if let Some(missing) = missing_tools(target, runner) {
+            eprintln!("note: {missing} not available; skipping large random draws on {target}");
+            continue;
+        }
+        build_runtime(&root, target);
+        let work = own_build_dir(&root, "golden-work-random-large", target);
+        let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(["run", "--target", target])
+            .arg(&main)
+            .current_dir(&work)
+            .output()
+            .expect("run velt");
+        let _ = std::fs::remove_dir_all(&work);
+        assert!(
+            o.status.success(),
+            "{target}: exit {:?}\n{}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+            "16: ok\n256: ok\n257: ok\n65536: ok\n65537: ok\n200000: ok\n",
+            "{target}"
+        );
     }
 }
 

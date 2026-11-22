@@ -49,8 +49,12 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
+    // The blocks of module state (#2196 9c): a native program with module state.
+    "std/lang/hooks/module_blocks",
     // The weak core (#3145), demanded by a weak collection's intrinsic (`Construct::Weak`).
     "std/lang/hooks/weak",
+    // The inline `Mutex` lock (#2196), demanded by a `Mutex`'s `with` (`Construct::Mutex`).
+    "std/lang/hooks/mutex",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
     // The other string methods in Velt, called by role too (#2198).

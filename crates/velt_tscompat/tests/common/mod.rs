@@ -159,7 +159,7 @@ impl Loader {
 
     /// The module `spec` names from module `from`, loaded if new.
     fn import(&mut self, from: usize, spec: &str) -> Option<usize> {
-        // A std file's conditional import (`#random-seed`): the file std/imports.velt selects
+        // A std file's conditional import (`#os-random`): the file std/imports.velt selects
         // for a native build, as veltc's loader picks it (velt_loader conditional.rs).
         if vpm::imports::is_specifier(spec) && self.modules[from].is_std {
             let file = std_conditional(spec)?;

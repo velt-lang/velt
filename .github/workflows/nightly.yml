@@ -487,9 +487,10 @@ jobs:
             }
 
   # The tests that have failed now and then in the merge queue, mostly on Windows and macOS: the
-  # async, promise and timer goldens, the `velt dev` reload goldens and the packages' tests
-  # (`velt test` in packages/<name>, crates/veltc/tests/packages.rs), each run 8 times on the
-  # schedule and `flake_rounds` (20) times by hand (one job per OS and suite; a round takes 3 to 6
+  # async, promise and timer goldens, the `velt dev` reload goldens, the packages' tests
+  # (`velt test` in packages/<name>, crates/veltc/tests/packages.rs) and the scheduler's
+  # timing-dependent negative controls (`controls`: std_scheduler_bounds.rs, #3495), each run 8
+  # times on the schedule and `flake_rounds` (20) times by hand (one job per OS and suite; a round takes 3 to 6
   # minutes). There are no automatic retries here
   # or anywhere else (they would hide real races in the runtime): every failure is recorded, the
   # job fails, and `flake-report` opens or updates one issue per test that failed, so a flaky test
@@ -501,7 +502,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-        suite: [golden, reload_goldens, packages]
+        suite: [golden, reload_goldens, packages, controls]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     env:
@@ -519,7 +520,7 @@ jobs:
       - name: build the tests
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        run: cargo test -p veltc --test golden --test reload --test packages --no-run
+        run: cargo test -p veltc --test golden --test reload --test packages --test std_scheduler_bounds --no-run
       # failures.tsv: one line per test and round that failed (test, round, log): the golden file,
       # reload case or package the failure names, else (a crash, a build error) the whole test.
       - name: ${{ matrix.suite }}, ${{ env.ROUNDS }} times
@@ -537,6 +538,9 @@ jobs:
               cargo test -q -p veltc --test golden -- --exact golden > "$out/logs/$log" 2>&1
             elif [ "$SUITE" = packages ]; then
               cargo test -q -p veltc --test packages every_package_passes_its_tests -- --exact > "$out/logs/$log" 2>&1
+            elif [ "$SUITE" = controls ]; then
+              # The timing-dependent negative controls the gate leaves out (#3495).
+              cargo test -q -p veltc --test std_scheduler_bounds a_scan_without_the_fix_ends_the_program_early -- --exact --ignored > "$out/logs/$log" 2>&1
             else
               cargo test -q -p veltc --test reload reload_goldens -- --exact > "$out/logs/$log" 2>&1
             fi && status=ok || status=failed

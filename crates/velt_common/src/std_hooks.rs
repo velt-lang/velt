@@ -51,10 +51,13 @@ pub use hook::Hook;
 mod weak_hooks;
 #[macro_use]
 mod string_hooks;
+#[macro_use]
+mod module_hooks;
+pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then the string methods' (`string_hooks.rs`) and the weak core's
-// (`weak_hooks.rs`), given to `hooks!` together.
-with_string_hooks! {
+// The table: these rows, then module state's (`module_hooks.rs`), the string methods'
+// (`string_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
+with_module_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -245,6 +248,16 @@ with_string_hooks! {
     /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir `entry.rs`).
     clock_start => lang_hooks_clock, "clockStart", sig(() -> void), lowered, constructs(Clock);
 
+    // mutex.velt: a `Mutex`'s lock (#2196), inline on a native target: a compare-and-swap of its
+    // lock word, the runtime's parking only when the lock is taken or a thread waits. Not a
+    // `replaces`: a wasm build keeps velt_rt_wasm's `velt_rt_mutex_lock` and executor.
+    /// `m.with(f)`'s lock of the word at the address.
+    mutex_lock => lang_hooks_mutex, "mutexLock", sig((usize) -> void), lowered,
+        bench("mutex_with"), constructs(Mutex);
+    /// `m.with(f)`'s unlock of the word at the address.
+    mutex_unlock => lang_hooks_mutex, "mutexUnlock", sig((usize) -> void), lowered,
+        bench("mutex_with"), constructs(Mutex);
+
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.
     /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's
@@ -380,10 +393,6 @@ with_string_hooks! {
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;
     sched_module_ready => lang_hooks_sched, "schedModuleReady", sig((usize, u64) -> void), lowered;
-    /// The end of `velt_main` with exit code `(code)` in a program whose synchronous `main`
-    /// reaches no task (no `sched_finish`): the blocks go at a normal end with the debug counters
-    /// on, as the runtime's did.
-    sched_module_exit => lang_hooks_sched, "schedModuleExit", sig((i32) -> void), lowered;
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
@@ -720,11 +729,11 @@ with_string_hooks! {
     /// The bytes a typed array or `DataView` passed to a C or host function views (`system_views.rs`).
     view_bytes => lang_typed_array_buffer_view, "viewBytes", sig((&BufferView) -> usize), lowered;
 
-    // ffi/ptr.velt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
-    ffi_ptr_of => ffi_ptr, "ptrOf", sig(<A>(usize) -> Ptr(A)), lowered;
-    ffi_ptr_or_null => ffi_ptr, "ptrOrNull", sig(<A>(usize) -> or_null(Ptr(A))), lowered;
-    ffi_ptr_address => ffi_ptr, "ptrAddress", sig(<A>(Ptr(A)) -> usize), lowered;
-    ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", sig(<A>(or_null(Ptr(A))) -> usize), lowered;
+    // ffi/ptr.velt: `Ptr<T>`, a C pointer, is `hir::TyKind::Ptr` (#3094); the declaration gives
+    // its name, documentation and statics (`velt_sema` `resolve.rs`).
+    ffi_ptr_type => ffi_ptr, "Ptr", type_kind;
+    /// A pointer as `console.log` and `inspect` show it, `Ptr(0x…)` (`velt_vir` `glue/format.rs`).
+    ffi_ptr_push => ffi_ptr, "ptrPush", sig((&mut string, u64) -> void), lowered;
     // ffi/str_bytes.velt: the string whose bytes a `StrBytes` argument passes.
     ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", sig((move string) -> string), lowered;
     // ffi/c_string.velt: the bytes a `CString` argument passes.

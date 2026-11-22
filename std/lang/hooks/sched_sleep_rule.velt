@@ -1,0 +1,33 @@
+// velt/lang/hooks (internal): the rule of the sleeps (sched_sleep.velt), checked in a counted run
+// (`VELT_RC_STATS`, as the tests run): a sleep is touched only on the worker whose block holds it,
+// and expires for a task of that worker (#3207). A program that breaks it fails with an `ICE:`
+// every time, not only when memory happens to break.
+
+import { noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/** A sleep was `what` (dropped, expired for a task) on another worker than the one holding it. */
+@noInline
+export function held(what: string): never {
+  panic(`ICE: a sleep ${what} on another worker than the one that holds it`);
+}
+
+/**
+ * The sleeps of block `b` that `expire` is about to move at `now`: each one's task is of this
+ * worker. A pass of its own, so the loop of `expire` checks nothing.
+ */
+@noInline
+export function checkExpiring(b: usize, now: u64): void {
+  const e = t.exec();
+  let f = m.ld(b + sl.TM_FIRST);
+  while (f !== 0 && sl.deadline(f) <= now) {
+    const k = wk.taskOf(m.ld(f + sl.S_WAKER));
+    if (k !== 0 && m.ld(k + t.T_HOME) !== e) {
+      held("expires for a task");
+    }
+    f = m.ld(f + sl.S_NEXT);
+  }
+}

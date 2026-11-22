@@ -31,10 +31,13 @@
 // `giveUp`), which is always in a poll of its task, and a promise is freed only after it
 // finished, so the links never hold a freed one, whichever thread drops the owner's handle.
 //
+// A promise handed to another task and dropped or freed there, on another worker, cannot reach
+// the count or give the promise up (both are the task's thread's). Its drop gives its reference
+// to the task instead, on the task's woken stack, and wakes the task (sched_node_lost.velt
+// `droppedAway`, `releaseAway` below): the poll that follows gives up a suspended one, or frees
+// a finished one, on the task's own thread, and the task's park then sees the count as it is.
+//
 // Not covered, each left as it was:
-// - A promise handed to another task and dropped there, on another worker, while it is
-//   suspended: that drop cannot reach this count or give the promise up (both are the task's
-//   thread's), and nothing polls the task afterwards. The promise stays, and its task with it.
 // - A root waiting in a combinator (`Promise.all`, a race with children), which keeps the
 //   awaiter's waker, or holding a promise that finished: the counts say a reference is left.
 // - A waker dropped without a wake after the task parked (a cleared timer): no poll follows.
@@ -45,8 +48,11 @@ import * as fr from "./sched_fut_root";
 import * as lk from "./sched_lock";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
+import * as mod from "./sched_module";
 import * as nd from "./sched_node";
 import * as nc from "./sched_node_catch";
+import * as sh from "./sched_share";
+import * as ls from "./sched_share_listed";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
@@ -79,10 +85,19 @@ export function list(task: usize, n: usize): void {
  */
 @inline("always")
 export function unlist(task: usize, n: usize, fl: u32): void {
+  if ((fl & (NLINKED | sh.HUB_HERE)) !== 0) {
+    unlistRare(task, n, fl);
+  }
+  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
+}
+
+/** `unlist` for a linked node or a shared one (sched_share_listed.velt `unlisted`). */
+@noInline
+function unlistRare(task: usize, n: usize, fl: u32): void {
   if ((fl & NLINKED) !== 0) {
     unlinkCounted(task, n);
   }
-  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
+  ls.unlisted(task, n, fl);
 }
 
 /**
@@ -142,9 +157,32 @@ function unlinkCounted(task: usize, n: usize): void {
 @inline("always")
 export function parks(k: usize): bool {
   const gate = t.LOST | t.ROOT | t.ROOT_DONE | t.CANCEL | nc.T_CATCHES;
-  if ((m.ld32(k + t.T_FLAGS) & gate) !== t.LOST) {
+  const fl = m.ld32(k + t.T_FLAGS);
+  if ((fl & gate) !== t.LOST) {
     return false;
   }
+  if ((fl & (t.LINKED | t.TOUCHED)) === (t.LINKED | t.TOUCHED)) {
+    return parksHeld(k);
+  }
+  return counts(k);
+}
+
+/**
+ * `parks` for a touched task whose promises are linked (the block counters on), whose poll gave
+ * the module lock back already (sched_run.velt `runEnd`): under the lock again, as another
+ * touched task may take one of them off its list meanwhile (sched_node_lost.velt `unlistAway`).
+ */
+@noInline
+function parksHeld(k: usize): bool {
+  mod.enter();
+  const r = counts(k);
+  mod.leave();
+  return r;
+}
+
+/** `parks`'s counts for task `k`, past its flags. */
+@inline("always")
+function counts(k: usize): bool {
   const l = m.ld(k + t.T_LISTED);
   if (l === 0 || l !== m.ld(k + t.T_LOCALS)) {
     return false;
@@ -214,6 +252,7 @@ function checkListDead(k: usize, l: usize): void {
     const refs = m.load(n + nd.N_REFS);
     const fl = m.load32(n + nd.N_FLAGS);
     checkListed(k, n, refs, fl);
+    ls.checkHub(k, n, fl);
     const state = fl & (quiet | busy | nd.DETACHED);
     if (!(state === quiet && refs === 2) && !(state === (quiet | nd.DETACHED) && refs === 1)) {
       panic("ICE: an owner-only promise can be woken at its task's park");
@@ -238,8 +277,8 @@ function checkListDead(k: usize, l: usize): void {
  */
 @noInline
 export function cancel(k: usize): void {
-  if (wk.counting()) {
-    checkCancel(k);
+  if (wk.counting() && !stillLost(k)) {
+    panic("ICE: a task is dropped as parked for ever while a reference to it is left");
   }
   t.flags(k, t.ROOT_DONE, t.CANCEL);
   const root = m.ld(k + t.T_ROOT);
@@ -273,6 +312,28 @@ export function handleDropped(k: usize, s: u32, kind: u32, joiner: usize): void 
   mk.unlockJoin(k, s & ~(t.J_HANDLE | t.J_PARKED), kind);
   if (joiner !== 0) {
     m.wakerDrop(joiner);
+  }
+}
+
+/**
+ * Gives back a reference to task `k` from a thread that is not polling it, with a wake: the poll
+ * that follows ends with the count as it is now (`parks`), and takes what the caller put on the
+ * task's woken stack. With the join slot's lock held from before the count goes down until after
+ * the wake: a task is not freed while that lock is held (sched_wake.velt `release`), so the wake
+ * touches a live task whatever the task does meanwhile. The last reference frees the task, with
+ * the lock given back first (nobody else can reach the task then).
+ */
+@noInline
+export function releaseAway(k: usize): void {
+  const kind = lk.kind();
+  const s = mk.lockJoin(k, kind);
+  const last = m.dec(k + t.T_REFS) === 1;
+  if (!last) {
+    wk.wake(k);
+  }
+  mk.unlockJoin(k, s, kind);
+  if (last) {
+    wk.freed(k);
   }
 }
 
@@ -317,18 +378,20 @@ function checkListed(k: usize, n: usize, refs: usize, fl: u32): void {
   }
 }
 
-/** Task `k` at its last poll: still nothing that could have woken it (`parks`'s rule). */
-function checkCancel(k: usize): void {
+/**
+ * Task `k` at its last poll (flag `CANCEL`): is it still parked for ever, as its park found it
+ * (`parks`'s rule)? Not when its counts moved since (another touched task handed over a holder of
+ * one of its promises, under the module lock: sched_share_listed.velt `handedOver`), or something
+ * woke it: sched_run.velt `runOther` polls it as any other then.
+ */
+export function stillLost(k: usize): bool {
   const l = m.ld(k + t.T_LISTED);
-  if (l !== m.ld(k + t.T_LOCALS) || m.load(k + t.T_REFS) !== l + 1) {
-    panic("ICE: a task is dropped as parked for ever while a reference to it is left");
-  }
-  if (
-    t.has(k, t.ROOT | t.ROOT_DONE) ||
-    (m.load32(k + t.T_JOIN_STATE) & t.J_HANDLE) !== 0 ||
-    m.load(k + t.T_WOKEN) !== 0 ||
-    m.ld32(k + t.T_WORD) !== 0
-  ) {
-    panic("ICE: a task is dropped as parked for ever while it can still run");
-  }
+  return (
+    l === m.ld(k + t.T_LOCALS) &&
+    m.load(k + t.T_REFS) === l + 1 &&
+    !t.has(k, t.ROOT | t.ROOT_DONE) &&
+    (m.load32(k + t.T_JOIN_STATE) & t.J_HANDLE) === 0 &&
+    m.load(k + t.T_WOKEN) === 0 &&
+    m.ld32(k + t.T_WORD) === 0
+  );
 }

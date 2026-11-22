@@ -6,6 +6,7 @@
 
 import { inline, noInline, stateDrop, statePoll, stdUsed } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
+import * as fi from "./sched_fire";
 import * as fg from "./sched_foreign";
 import * as jn from "./sched_join";
 import * as lk from "./sched_lock";
@@ -26,6 +27,7 @@ import * as t from "./sched_task";
 import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
 import * as yl from "./sched_yield";
+import * as ls from "./sched_yield_list";
 
 /**
  * Polls task `k` once: its woken started promises, its due sleeps, its root, its microtasks. A
@@ -50,14 +52,13 @@ export function run(e: usize, k: usize, mode: u32): void {
     m.storeRelease(e + t.E_CURRENT, k);
   }
   const fl = m.ld32(k + t.T_FLAGS);
-  yl.begin(k, fl);
   // Fresh tasks matter to other workers only (sched_monitor.velt).
   if (mode !== 0 && mode !== t.M_LAZY && (fl & t.STARTED) === 0) {
     t.flags(k, t.STARTED, 0);
   }
   // One test on the straight path: the root polled, nothing else (a task whose root catches
-  // panics, sched_node_catch.velt `T_CATCHES`, polls it in `runOther`).
-  if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED | nc.T_CATCHES)) === 0) {
+  // panics, sched_node_catch.velt `T_CATCHES`, or that made stored yields, polls it in `runOther`).
+  if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED | nc.T_CATCHES | t.FRESH)) === 0) {
     pollRunning(e, k);
   } else {
     runOther(e, k, fl);
@@ -110,18 +111,21 @@ function again(e: usize, mode: u32): bool {
 }
 
 /**
- * `run`'s poll of task `k` (flags `fl`) off the straight path: a task touching the program's
- * module state takes its lock first; then its woken promises and sleeps, or its root unless it is
- * done (through the catch when it catches).
+ * `run`'s poll of task `k` (flags `fl`) off the straight path: its stored yields' generation
+ * moves on (sched_yield.velt `begin`); a task touching the program's module state takes its lock
+ * first; then its woken promises and sleeps, or its root unless it is done (through the catch
+ * when it catches).
  */
 @noInline
 function runOther(e: usize, k: usize, fl: u32): void {
+  if (stdUsed("yields")) {
+    yl.begin(k, fl);
+  }
   if ((fl & t.TOUCHED) !== 0) {
     mod.enter();
   }
-  if ((fl & t.CANCEL) !== 0) {
+  if ((fl & t.CANCEL) !== 0 && cancelled(k)) {
     // Nothing can wake it: its root is dropped, not polled (sched_task_lost.velt).
-    lt.cancel(k);
   } else if ((fl & t.LOCALS) !== 0) {
     runWoken(e, k, fl);
   } else if ((fl & (t.ROOT_DONE | nc.T_CATCHES)) === 0) {
@@ -132,16 +136,30 @@ function runOther(e: usize, k: usize, fl: u32): void {
 }
 
 /**
+ * The last poll of task `k` (flag `CANCEL`), with the module lock held when it is touched: its
+ * root is dropped if it is still parked for ever (sched_task_lost.velt `stillLost`). Otherwise its
+ * park's verdict went stale meanwhile, and it is polled as any other (false).
+ */
+@noInline
+function cancelled(k: usize): bool {
+  if (lt.stillLost(k)) {
+    lt.cancel(k);
+    return true;
+  }
+  t.flags(k, 0, t.CANCEL);
+  return false;
+}
+
+/**
  * The started promises of task `k` woken since its last poll, run in the order they were woken,
- * then its due sleeps (flag `TIMED`, which comes with `LOCALS`: flags `fl`), then its root. A
+ * then its due sleeps and its yields (flags `TIMED` and `YIELDS`, which come with `LOCALS`: flags
+ * `fl`; sched_fire.velt), then its root. A
  * microtask or a sleep that resumed the root meanwhile set flag `POLLED`: the root is not polled
  * again then, so a root that yielded there waits for the task's next poll.
  */
 @inline("always")
 function runWoken(e: usize, k: usize, fl: u32): void {
-  if ((fl & t.CARRIED) !== 0) {
-    sc.adopt(e, k);
-  }
+  sc.adoptCarried(e, k, fl);
   t.flags(k, 0, t.POLLED);
   if ((fl & t.LOCALS) !== 0) {
     let n = wn.takeWoken(k);
@@ -154,62 +172,15 @@ function runWoken(e: usize, k: usize, fl: u32): void {
     }
   }
   if ((fl & t.TIMED) !== 0) {
-    fireDue(e, k);
+    fi.fireDue(e, k);
+  }
+  if (stdUsed("yields") && (fl & t.YIELDS) !== 0) {
+    fi.fireYields(e, k);
   }
   if (!t.has(k, t.POLLED)) {
     // After its promises, the root's turn has a budget of its own (sched_budget.velt).
     bd.refill();
     pollRoot(e, k);
-  }
-}
-
-/**
- * Fires task `k`'s due sleeps one at a time, in timer order (sched_sleep.velt): each resumes its
- * waiter at once, and the task's microtasks run before the next, as in Node's timer phase. A
- * waiter that polls several sleeps (`Promise.all`) finds only those fired so far ready. A waiter
- * woken meanwhile (it yielded) is not resumed again in this poll: that sleep and the ones after
- * it fire in the next. A root woken during a step by something else (a combinator of the
- * runtime) resumes before the next sleep fires, as Node runs a settled promise's reaction before
- * the next timer.
- */
-function fireDue(e: usize, k: usize): void {
-  t.flags(k, 0, t.TIMED);
-  // The root was woken while it was polled here: it is not polled again in this poll.
-  let woken = false;
-  while (true) {
-    const f = sl.firstDue(k);
-    if (f === 0) {
-      return;
-    }
-    const w0 = sl.waiter(f);
-    const own = w0 !== k && node.ownNode(k, w0);
-    if (w0 === k ? woken : own && node.queued(w0)) {
-      t.flags(k, t.TIMED, 0);
-      return;
-    }
-    const w = sl.fire(k, f);
-    if (w === k) {
-      // The sleep's reference first (the executor's keeps `k`): an uncaught error in the poll
-      // ends the program, which gives back the references the executor holds (sched_exit.velt).
-      wk.release(k);
-      pollRootAgain(e, k);
-      drain(e, k);
-      woken = m.load32(k + t.T_STATE) === t.NOTIFIED;
-    } else {
-      if (own) {
-        node.run(k, w, false);
-        node.release(w);
-      } else {
-        m.wakeOwned(w);
-      }
-      drain(e, k);
-      if (!woken && !t.has(k, t.ROOT_DONE) && m.load32(k + t.T_STATE) === t.NOTIFIED) {
-        m.store32(k + t.T_STATE, t.RUNNING);
-        pollRootAgain(e, k);
-        drain(e, k);
-        woken = m.load32(k + t.T_STATE) === t.NOTIFIED;
-      }
-    }
   }
 }
 
@@ -227,7 +198,12 @@ function runEnd(e: usize, k: usize, mode: u32): void {
       order.released(e, k);
     }
   }
-  if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0) {
+  if (ls.waiting(k)) {
+    // Yields made during this poll have their turn in its next one (sched_fire.velt); the task
+    // does not finish before.
+    m.store32(k + t.T_STATE, t.SCHEDULED);
+    requeue(e, k, mode);
+  } else if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0) {
     finish(e, k);
   } else if (m.load(k + t.T_WOKEN) !== 0) {
     // Promises woken during this poll run in its next one.
@@ -307,7 +283,7 @@ function pollRunning(e: usize, k: usize): void {
 
 /** Runs task `k`'s microtasks, those queued meanwhile too: each resumes its waiter directly. */
 @noInline
-function drain(e: usize, k: usize): void {
+export function drain(e: usize, k: usize): void {
   if (m.ld(k + t.T_MICRO) === 0) {
     if (m.ld(k + t.T_UNHANDLED) !== 0) {
       rp.report(k);
@@ -342,7 +318,7 @@ function drain(e: usize, k: usize): void {
 }
 
 /** Polls task `k`'s root from a microtask or a due sleep, unless it is done; marks it polled. */
-function pollRootAgain(e: usize, k: usize): void {
+export function pollRootAgain(e: usize, k: usize): void {
   pollRoot(e, k);
   t.flags(k, t.POLLED, 0);
 }
@@ -434,7 +410,7 @@ function finish(e: usize, k: usize): void {
     if (foreign) {
       return fg.ended(e, g, k);
     }
-    wk.release(k);
+    wk.releaseHere(k);
     if (mk.liveDown(g, e) === 1 && e !== g) {
       // The last live task: worker 0 may wait for that in `schedFinish`.
       wk.unpark(g);
@@ -446,5 +422,5 @@ function finish(e: usize, k: usize): void {
     return fg.ended(e, e, k);
   }
   m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
-  wk.release(k);
+  wk.releaseHere(k);
 }

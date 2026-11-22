@@ -1,0 +1,16 @@
+// A cast to `Record<symbol, V>` with `V` neither `unknown` nor `any`, of a value that is not
+// already a record of `V`, is not supported yet: Velt would convert each string-keyed entry to
+// `V`, where Node looks only at the symbol keys.
+const P = Symbol("p");
+function slotOf(locals: object): { value?: number } {
+  const bag = locals as Record<symbol, { value?: number } | undefined>;
+  let slot = bag[P];
+  if (!slot) {
+    slot = {};
+    Object.defineProperty(bag, P, { value: slot, enumerable: false, writable: false, configurable: true });
+  }
+  return slot;
+}
+const nums: Record<string, number> = { a: 1 };
+const same = nums as Record<symbol, number>;
+console.log(slotOf({}), same);

@@ -15,7 +15,7 @@
 // A file another process holds without sharing and a directory whose entries are still going
 // are tried again for a short while, as `remove_dir_all` does.
 
-import { OutPtr } from "velt/ffi/out_ptr";
+import { Out } from "velt/ffi/out";
 import { Ptr } from "velt/ffi/ptr";
 import {
   close,
@@ -42,7 +42,7 @@ declare c type _IO_STATUS_BLOCK;
 declare c type LARGE_INTEGER;
 
 declare c("c") function NtCreateFile$tree(
-  handle: OutPtr<void>,
+  handle: Out<Ptr<void> | null>,
   access: u32,
   attributes: Ptr<_OBJECT_ATTRIBUTES>,
   status: Ptr<_IO_STATUS_BLOCK>,
@@ -149,7 +149,7 @@ unsafe function openIn(
   s[S_UNITS_AT] = units as u64;
   while (true) {
     s[S_ATTRIBUTES] = s[S_OBJ];
-    const out = new OutPtr<void>();
+    const out = new Out<Ptr<void> | null>(null);
     const status = NtCreateFile$tree(
       out,
       access,

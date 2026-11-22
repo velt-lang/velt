@@ -74,6 +74,14 @@ pub(crate) struct GlobalProps {
 }
 
 impl GlobalProps {
+    /// With each module `m` as `at(m)` (`units::remap_module_facts`); a site whose module `at`
+    /// drops is dropped.
+    pub(crate) fn remap(&mut self, at: &dyn Fn(usize) -> Option<usize>) {
+        self.sites
+            .retain_mut(|s| at(s.module).map(|m| s.module = m).is_some());
+        self.homes.retain(|_, m| at(*m).map(|n| *m = n).is_some());
+    }
+
     /// Is `d` the variable of a property of `globalThis`?
     pub(crate) fn is_slot(&self, d: DefId) -> bool {
         self.slots.values().any(|&s| s == d)

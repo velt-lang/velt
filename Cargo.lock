@@ -1508,6 +1508,7 @@ dependencies = [
 name = "velt_codegen_cl"
 version = "0.6.0"
 dependencies = [
+ "blake3",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
@@ -1516,6 +1517,7 @@ dependencies = [
  "cranelift-object",
  "object",
  "rustc-hash",
+ "sha2",
  "target-lexicon",
  "velt_common",
  "velt_vir",
@@ -1690,7 +1692,6 @@ dependencies = [
  "bytes",
  "cc",
  "futures-util",
- "getrandom 0.4.3",
  "libc",
  "libmimalloc-sys",
  "lock_api",
@@ -1715,7 +1716,6 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "futures-util",
- "getrandom 0.4.3",
  "libc",
  "libmimalloc-sys",
  "lock_api",
@@ -1740,7 +1740,6 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "futures-util",
- "getrandom 0.4.3",
  "libc",
  "libmimalloc-sys",
  "lock_api",
@@ -1763,7 +1762,6 @@ dependencies = [
 name = "velt_rt_wasm"
 version = "0.6.0"
 dependencies = [
- "memchr",
  "velt_text",
 ]
 
@@ -1891,6 +1889,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vpm"
 version = "0.6.0"
 dependencies = [
+ "blake3",
  "flate2",
  "getrandom 0.2.17",
  "icu_normalizer",

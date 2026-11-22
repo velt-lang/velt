@@ -14,6 +14,8 @@ import * as ow from "./sched_order_wait";
 import * as q from "./sched_queue";
 import * as rx from "./sched_relax";
 import * as sl from "./sched_sleep";
+import * as mv from "./sched_sleep_move";
+import * as sn from "./sched_spin";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as tick from "./sched_tick";
@@ -64,6 +66,24 @@ export function park(e: usize): void {
   if (io.anyDue(b)) {
     w.flushDue(b);
   }
+  const mode = m.ld32(e + t.E_MODE);
+  // Several workers: a task woken from another one may come within microseconds (sched_spin.velt).
+  const spins = mode !== 0 && mode !== t.M_LAZY;
+  if (spins && sn.spin(e)) {
+    if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+      // A request's push ends the spin as a task's does (sched_sleep_move.velt `send`): served
+      // now, as below, not after another spin.
+      mv.serve(e);
+    }
+    m.st32(e + t.E_DISPATCH, 0);
+    if (timersAny(e)) {
+      tookWork(e);
+    }
+    // As every way out of a park: a spare asked to retire while it spun was woken by that ask
+    // (sched_relax.velt `ask`), which never wakes it again, so it answers now.
+    retiring(e);
+    return;
+  }
   let timeout: i64 = -1;
   const timers = timersAny(e);
   if (timers) {
@@ -75,9 +95,16 @@ export function park(e: usize): void {
     }
   }
   m.store32(e + t.E_PARK, 1);
-  const mode = m.ld32(e + t.E_MODE);
-  if (m.load(e + t.E_INBOX) !== 0 || q.any(e) || !parkable(e)) {
+  // The inbox and the sleeps asked for (sched_sleep_move.velt) in one test.
+  if ((m.load(e + t.E_INBOX) | m.load(e + t.E_SLEEP_ASKS)) !== 0 || q.any(e) || !parkable(e)) {
     wk.awake(e);
+    if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+      // Served here, where a worker out of work finds them (a busy one at its I/O tick):
+      // the park's way in, which every sleep's round takes, looks at nothing for them. A
+      // sleep asked for may have expired in the timer look above: it is given up as what
+      // that made of it (seen, when its waker is not a task's; else due or fired: `release`).
+      mv.serve(e);
+    }
     ex.takeExit(e);
     m.st32(e + t.E_DISPATCH, 0);
     if (timers) {
@@ -100,8 +127,15 @@ export function park(e: usize): void {
   if ((mode & t.M_SPREAD) !== 0) {
     asleep = sp.now();
   }
+  const timed = spins && sn.off(e);
+  const at = timed ? (sl.clock() as usize) : 0;
+  const unparks = timed ? m.load(e + t.E_UNPARKS) : 0;
   io.park(b, timeout, e + t.E_PARK, e + t.E_UNPARKS);
   m.store32(e + t.E_PARK, 0);
+  if (timed && m.load(e + t.E_UNPARKS) !== unparks) {
+    // Another worker woke it (its own timers and sockets don't turn the spin back on).
+    sn.woke(e, at);
+  }
   ex.takeExit(e);
   if (timers) {
     woke(e);
