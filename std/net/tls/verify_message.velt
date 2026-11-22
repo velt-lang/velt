@@ -68,11 +68,13 @@ export function unknownIssuerMessage(leaf: Certificate, sent: u8[][]): string {
     : "unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)";
 }
 
-// An iPAddress entry's bytes as text. `openssl`: OpenSSL's form, which Node shows in the list of
-// alternative names (IPv6 as eight groups in upper-case hex, nothing shortened). Otherwise RFC
-// 5952's, which Node shows in the list of addresses: lower case, no leading zeros, and the
-// longest run of two or more zero groups (the first of equals) as "::", and an IPv4-compatible or
-// IPv4-mapped address's last 32 bits in dotted form, as libuv's inet_ntop does.
+/**
+ * An iPAddress entry's bytes as text. `openssl`: OpenSSL's form, which Node shows in the list of
+ * alternative names (IPv6 as eight groups in upper-case hex, nothing shortened). Otherwise RFC
+ * 5952's, which Node shows in the list of addresses: lower case, no leading zeros, and the
+ * longest run of two or more zero groups (the first of equals) as "::", and an IPv4-compatible or
+ * IPv4-mapped address's last 32 bits in dotted form, as libuv's inet_ntop does.
+ */
 export function ipText(b: u8[], start: usize, end: usize, openssl: bool): string {
   const parts: string[] = [];
   if (end - start == 4) {
