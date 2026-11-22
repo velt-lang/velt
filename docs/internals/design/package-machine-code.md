@@ -380,10 +380,24 @@ changes).
   two, so `@align(2)` on a struct of a `u64` changes nothing, and a generic struct's natural
   alignment, which depends on its type arguments, needs no check per instance. The size is a
   multiple of the alignment, so arrays are padded, and a struct holding one takes its
-  alignment. Heap blocks (array buffers, boxes) come from `velt_rt_alloc` with the layout's
-  alignment, and LLVM aligns stack slots; Cranelift aligns a stack slot to at most 16 bytes from
-  the frame's start, which no Velt code can see (nothing takes a local's address), so debug
-  builds keep every guarantee a program can observe.
+  alignment. Every home of a value keeps it:
+  - array buffers and other heap blocks of one value come from `velt_rt_alloc` with the
+    layout's alignment;
+  - a counted box (a closure's environment, a captured `let` that is assigned) puts a header of
+    `max(8, n)` bytes in front of its payload, the count in the header's last word;
+  - a generator's object starts far enough into a block aligned to its state that the state, at
+    its class's fixed offset, is aligned (velt_vir `gen_object.rs` `gen_lead`);
+  - a spawned task's state starts at the next multiple of its alignment in a block with room for
+    that (`sched_make.velt` `alignedRoot`), and the task's result is copied in and out of its
+    slot as bytes;
+  - a module variable's block is rounded up within a larger one from the C library, which keeps
+    the larger block's address in the word before it (`module_blocks.velt` `alignedBlock`);
+  - a std slot (a channel's ring, a hand-off) is std's own memory, which a value is copied into
+    and out of through an 8-aligned view of its bytes (velt_vir `slot.rs` `raw_view`), so the
+    value itself is only ever in an aligned temporary;
+  - LLVM aligns stack slots. Cranelift aligns a stack slot to at most 16 bytes from the frame's
+    start, which no Velt code can see (nothing takes a local's address), so debug builds keep
+    every guarantee a program can observe.
 - **No aligned loads and stores.** The aligned forms of step 5's loads and stores were planned
   for here and are dropped:
   - **Unsound across builds:** a debug build's stack slot is aligned to at most 16 bytes, and a

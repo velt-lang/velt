@@ -51,6 +51,9 @@ pub(super) struct Layouts {
     text: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
+    /// The 8-aligned view of each aggregate aligned beyond 8 that sits in a std slot
+    /// (slot.rs `raw_view`).
+    pub(super) raw_views: FxHashMap<AggId, AggId>,
     /// Tables of generator instances (async_fn/gen_object.rs).
     pub(super) gen_tables: FxHashMap<(DefId, Vec<TyId>), crate::vir::StaticId>,
     /// State of the `Promise.all` wrapper future (async_fn/tasks.rs).

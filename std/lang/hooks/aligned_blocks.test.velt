@@ -1,0 +1,38 @@
+// velt/lang/hooks (tests): white-box tests, run by `velt test std/`.
+//
+// Where a value aligned beyond its block's alignment (an `@align(32)` or `@align(64)` struct)
+// starts: a spawned task's state in its block (`alignedRoot`, sched_make.velt) and a module
+// variable's block in the C library's (`alignedBlock`, module_blocks.velt). The programs that
+// use them: crates/veltc/tests/align_homes.rs.
+import { describe, expect, it } from "velt/test";
+import { alignedRoot } from "velt/lang/hooks/sched_make";
+import { alignedBlock } from "velt/lang/hooks/module_blocks";
+
+describe("aligned blocks", () => {
+  it("a task's state starts at a multiple of its alignment, within the room added for it", () => {
+    for (const align of [16, 32, 64, 4096] as u64[]) {
+      for (let at: usize = 4096; at < 4096 + 256; at += 8) {
+        const root = alignedRoot(at, align);
+        expect(root % (align as usize)).toBe(0);
+        expect(root >= at).toBe(true);
+        expect(root - at <= (align as usize) - 8).toBe(true);
+      }
+    }
+  });
+
+  it("an 8-aligned task state starts where it always did", () => {
+    expect(alignedRoot(4104, 8)).toBe(4104);
+    expect(alignedRoot(4104, 1)).toBe(4104);
+  });
+
+  it("a module block starts at a multiple of its alignment, past a word, within the larger block", () => {
+    for (const align of [32, 64, 128, 4096] as usize[]) {
+      for (let raw: usize = 65536; raw < 65536 + 512; raw += 16) {
+        const p = alignedBlock(raw, align);
+        expect(p % align).toBe(0);
+        expect(p >= raw + 8).toBe(true);
+        expect(p - raw <= align).toBe(true);
+      }
+    }
+  });
+});
