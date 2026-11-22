@@ -170,9 +170,6 @@ mod tests {
     fn empty_arrays_have_an_even_data_pointer() {
         let b = VeltBytes::from_vec(Vec::new());
         assert_eq!((b.len, b.cap, b.ptr as usize & 1), (0, 0, 0));
-        let mut z = MaybeUninit::<VeltBytes>::uninit();
-        unsafe { crate::bytes_ops::velt_rt_bytes_zeroed(0, z.as_mut_ptr()) };
-        assert_eq!(unsafe { z.assume_init() }.ptr as usize & 1, 0);
         assert_eq!(empty_data::<u8>() as usize & 1, 0);
         assert_eq!(empty_data::<u64>() as usize % 8, 0);
     }

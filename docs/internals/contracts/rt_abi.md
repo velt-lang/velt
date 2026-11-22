@@ -891,10 +891,10 @@ RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and 
 2^52 - 1 bytes` (exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an
 array's `len` to be at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed
 array's byte length is below 2^52 for the same reason (its buffer is a `u8[]`).
-`velt_rt_bytes_zeroed(n)` and `velt_rt_bytes_uninit(n)` check `n` against the limit too. A buffer
-within the limit that the target cannot allocate is out of memory (`velt_rt_alloc` above), never a
-smaller block: on wasm32 a byte size past 2^31 - 1 stops the program there, in `velt_rt_realloc`, in
-`velt_rt_bytes_zeroed` and in `velt_rt_bytes_uninit` (which `u8[]`'s `concat` allocates with).
+`Buffer.alloc(n)` and `allocUnsafe(n)` (std/lang/bytes/raw.velt) allocate through generated code's
+array allocation, which checks `n` against the limit too. A buffer within the limit that the target
+cannot allocate is out of memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte
+size past 2^31 - 1 stops the program there or in `velt_rt_realloc`.
 
 `cap` read as an `i64` says whose the buffer is: positive, a capacity in elements of a buffer the
 array owns; 0, no buffer or memory the array does not own (a constant table, std's `addressArray`);
@@ -1195,17 +1195,11 @@ mutex, hashing, the other string and byte-array functions).
 ## Byte arrays, number formatting, binary stdio
 Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.md, handles are
 `u64`), checked against the runtime by `crates/velt_rt/tests/std_externs.rs`:
-- `u8[]` (`std/prelude/bytes.velt`, `std/lang/bytes/copy.velt`):
-  `velt_rt_bytes_zeroed(n: u64): u8[]`,
-  `velt_rt_bytes_uninit(n: u64): u8[]` (contents not set: `Buffer.allocUnsafe`),
-  `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
-  `velt_rt_bytes_copy(dst: u8[], src: u8[], targetStart: i64, sourceStart: i64,
-  sourceEnd: i64): i64` (Node's `src.copy(dst, …)`: the bytes copied, −1 for a position out of
-  range), `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
-  `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`. Searching (`indexOf`,
-  `lastIndexOf`, `includes`), filling and concatenating (`std/lang/bytes/search.velt`,
-  `copy.velt`) and XOR masking (`xorMask`) are Velt code on SIMD vectors, and UTF-8 validation
-  (`utf8Valid`, `validPrefix`) is in `std/encoding/utf8.velt`.
+- `u8[]`: allocation (`Buffer.alloc`, `allocUnsafe`), `set`, `copy`, `copyWithin` and `slice` are
+  Velt code (`std/lang/bytes/raw.velt`: the runtime's array allocation and the C library's
+  `memmove`/`memset`), and so are searching (`indexOf`, `lastIndexOf`, `includes`), filling and
+  concatenating (`std/lang/bytes/search.velt`, `copy.velt`) and XOR masking (`xorMask`) on SIMD
+  vectors; UTF-8 validation (`utf8Valid`, `validPrefix`) is in `std/encoding/utf8.velt`.
 - On a range `[start, end)` (relative indices) so no slice is made:
   `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (`u8[]`'s
   `utf8Slice` in `std/prelude/bytes.velt`; an invalid sequence as U+FFFD, one per maximal

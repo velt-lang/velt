@@ -1,0 +1,145 @@
+// velt/lang/bytes (internal): byte arrays made and copied (#2196): `Buffer.alloc` and
+// `allocUnsafe`, `set`, `copy`, `copyWithin` and `slice` on `u8[]`. An array comes from the
+// runtime's allocator (`arrayWithCapacity`), so generated code can grow and free it; its bytes
+// are moved and zeroed by `#bytes-move`: the C library's `memmove` and `memset` (one call each)
+// on native targets and WASI, a Velt loop on the JS host.
+//
+// Positions follow JS: `copyWithin` and `slice` take relative indices (negative counts from the
+// end) clamped to the array. An array written in place is never reallocated, so its length and
+// capacity stay as they are.
+
+import {
+  arrayDataAddress,
+  arrayReadAddress,
+  arraySetLen,
+  arrayWithCapacity,
+} from "velt/lang/intrinsics";
+import { MAX_BLOCK } from "#bytes-limit";
+import { moveAt, zeroAt } from "#bytes-move";
+import { outOfMemory } from "velt/lang/hooks/heap";
+
+/**
+ * Position `i` as JS reads it in an array of `n`: a negative one counts from the end; clamped to
+ * `0..=n` in `i64` before converting, so a position past a 32-bit `usize` (wasm32) isn't cut.
+ */
+export function relative(i: i64, n: usize): usize {
+  const len = n as i64;
+  if (i < 0) {
+    return i < -len ? 0 : (len + i) as usize;
+  }
+  return i < len ? i as usize : n;
+}
+
+/**
+ * `n` bytes whose contents are not set (`Buffer.allocUnsafe(n)`): whatever the runtime's block
+ * held, any byte values. Past the array length limit, the limit's `RangeError`; past the
+ * target's largest block (WebAssembly's 32 bits, `#bytes-limit`), out of memory, as the
+ * runtime's allocator reports it.
+ */
+export function bytesUninit(n: usize): u8[] {
+  if ((n as u64) > MAX_BLOCK) {
+    outOfMemory(n as u64);
+  }
+  const out: u8[] = arrayWithCapacity<u8>(n);
+  arraySetLen(out, n);
+  return out;
+}
+
+/** `n` zero bytes (`Buffer.alloc(n)`). */
+export function bytesZeroed(n: usize): u8[] {
+  const out = bytesUninit(n);
+  if (n > 0) {
+    // SAFETY: `out` has `n` bytes at its data address, which nothing else uses yet.
+    unsafe {
+      zeroAt(arrayDataAddress(out), n);
+    }
+  }
+  return out;
+}
+
+/**
+ * Copies `src` into `dst` at `offset` (`typedArray.set(src, offset)`): false, and nothing
+ * copied, when it does not fit. `src` may be `dst`.
+ */
+export function bytesSet(dst: u8[], src: readonly u8[], offset: usize): bool {
+  const n = src.length;
+  if (offset > dst.length || n > dst.length - offset) {
+    return false;
+  }
+  if (n > 0) {
+    // SAFETY: `src[0..n)` and `dst[offset..offset + n)` are inside their arrays, and `moveAt`
+    // allows them to overlap (the same array).
+    unsafe {
+      moveAt(arrayDataAddress(dst) + offset, arrayReadAddress(src), n);
+    }
+  }
+  return true;
+}
+
+/**
+ * Copies `src[sourceStart..sourceEnd)` into `dst` at `targetStart` (Node's `src.copy(dst,
+ * targetStart, sourceStart, sourceEnd)`): as many bytes as fit, their number returned;
+ * `sourceEnd` is clamped to `src`'s length. -1 for a negative position or a `sourceStart` past
+ * `src`'s end. `src` may be `dst`.
+ */
+export function bytesCopy(
+  dst: u8[],
+  src: readonly u8[],
+  targetStart: i64,
+  sourceStart: i64,
+  sourceEnd: i64,
+): i64 {
+  // Compared in `i64`, so a position past a 32-bit `usize` (wasm32) isn't cut.
+  const srcLen = src.length as i64;
+  if (targetStart < 0 || sourceStart < 0 || sourceEnd < 0 || sourceStart > srcLen) {
+    return -1;
+  }
+  const end = sourceEnd < srcLen ? sourceEnd as usize : src.length;
+  const from = sourceStart as usize;
+  if (targetStart >= (dst.length as i64) || from >= end) {
+    return 0;
+  }
+  const at = targetStart as usize;
+  const room = dst.length - at;
+  const count = end - from < room ? end - from : room;
+  // SAFETY: `src[from..from + count)` and `dst[at..at + count)` are inside their arrays, and
+  // `moveAt` allows them to overlap (the same array).
+  unsafe {
+    moveAt(arrayDataAddress(dst) + at, arrayReadAddress(src) + from, count);
+  }
+  return count as i64;
+}
+
+/** Copies `[start, end)` to `target` within `b` (JS `copyWithin`, relative indices). */
+export function bytesCopyWithin(b: u8[], target: i64, start: i64, end: i64) {
+  const n = b.length;
+  const to = relative(target, n);
+  const from = relative(start, n);
+  const stop = relative(end, n);
+  if (stop <= from || to >= n) {
+    return;
+  }
+  const count = stop - from < n - to ? stop - from : n - to;
+  // SAFETY: `b[from..from + count)` and `b[to..to + count)` are inside `b`; `moveAt` allows them
+  // to overlap.
+  unsafe {
+    const p = arrayDataAddress(b);
+    moveAt(p + to, p + from, count);
+  }
+}
+
+/** `[start, end)` of `b` (relative indices) as a new array (JS `slice`): one copy. */
+export function bytesSlice(b: readonly u8[], start: i64, end: i64): u8[] {
+  const from = relative(start, b.length);
+  const stop = relative(end, b.length);
+  const n = stop > from ? stop - from : 0;
+  const out = bytesUninit(n);
+  if (n > 0) {
+    // SAFETY: `b[from..from + n)` is inside `b` and `out` has `n` bytes; they are different
+    // arrays.
+    unsafe {
+      moveAt(arrayDataAddress(out), arrayReadAddress(b) + from, n);
+    }
+  }
+  return out;
+}
