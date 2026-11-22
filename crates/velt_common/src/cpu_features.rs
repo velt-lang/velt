@@ -116,7 +116,7 @@ features! {
     /// SSE4.1.
     Sse41X86 = "sse4.1-x86", X86_64, 2, [Ssse3X86], "+sse4.1", "+sse4.1", "Sse41", "SSE4.1";
     /// SSE4.2 (with CRC32 and the string instructions).
-    Sse42X86 = "sse4.2-x86", X86_64, 3, [Sse41X86], "+sse4.2", "+sse4.2", "Sse42", "SSE4.2";
+    Sse42X86 = "sse4.2-x86", X86_64, 3, [Sse41X86], "+sse4.2,+crc32", "+sse4.2,+crc32", "Sse42", "SSE4.2";
     /// POPCNT.
     PopcntX86 = "popcnt-x86", X86_64, 4, [], "+popcnt", "+popcnt", "Popcnt", "POPCNT";
     /// CMPXCHG16B.

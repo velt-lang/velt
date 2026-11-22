@@ -171,6 +171,7 @@ impl Analysis {
             TyKind::Error
             | TyKind::Result(..)
             | TyKind::Symbol
+            | TyKind::Ptr(_)
             | TyKind::Simd(_)
             | TyKind::Op(..) => TypeView::Other,
         }

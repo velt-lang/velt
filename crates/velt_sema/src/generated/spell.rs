@@ -117,6 +117,7 @@ fn spell_depth(cx: &mut Ctx, t: TyId, depth: u32, params: bool) -> Option<String
         TyKind::Unit => "void".into(),
         TyKind::Never => "never".into(),
         TyKind::Symbol => "symbol".into(),
+        TyKind::Ptr(p) => format!("Ptr<{}>", spell_depth(cx, p, d1, params)?),
         TyKind::Simd(s) => s.name().into(),
         TyKind::Literal(l) => match l {
             LitValue::Str(s) => format!("{s:?}"),

@@ -1058,7 +1058,6 @@ parameter would not match on wasm32.
 | `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(u64 r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
-| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/encoding/json/reader.velt`) asks after a failure |
 
 Except where stated, `u8` results are 1 = ok, 0 = failed (outputs untouched). **The first failure
 is sticky**: every later call fails (`peek` returns 10), so a decoder can bail out on the first 0
@@ -1137,7 +1136,6 @@ given). Objects keep key order (first occurrence; a duplicate key replaces the v
 | `velt_rt_json_value_as_bool` | `(VeltJson v) -> u8` | 1 only for `true` (use `kind` to tell `false` from non-bools) |
 | `velt_rt_json_value_as_str` | `(VeltJson v, VeltStr* out) -> u8` | owned copy; 0 if not a string |
 | `velt_rt_json_value_stringify` | `(VeltJson v, VeltStr* out)` | `JSON.stringify`: no whitespace, key order kept, numbers JS-formatted; null handle ⇒ `null` |
-| `velt_rt_json_relayout` | `(const VeltStr* text, const VeltStr* keys, u8 flags, const VeltStr* indent, VeltStr* out)` | `JSON.stringify(value, replacer, space)` from the compact `text` of `JSON.stringify(value)`: with `flags` bit 0, objects at any depth keep only the keys listed in `keys` (the compact JSON text of an array of strings; duplicates ignored), in that order; with bit 1, line breaks, `indent` (JS's gap, possibly empty, as for a `space` in (0, 1)) per level and `": "` after keys; without it no whitespace (`indent` ignored); malformed `text` is returned unchanged |
 | `velt_rt_json_value_clone` | `(VeltJson v) -> VeltJson` | O(1) new reference to the same value (may be the same pointer); the editors copy a node shared this way before changing it, so neither handle sees the other's later edits |
 | `velt_rt_json_value_free` | `(VeltJson v)` | null ok |
 | `velt_rt_json_value_new_null` / `_new_bool(u8)` / `_new_number(f64)` / `_new_string(const VeltStr*)` / `_new_array()` / `_new_object()` | `(…) -> VeltJson` | a new value (the string is copied) |

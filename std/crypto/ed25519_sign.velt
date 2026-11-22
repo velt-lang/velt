@@ -1,0 +1,157 @@
+// velt/crypto (internal): Ed25519 signing (RFC 8032 §5.1.5 and §5.1.6), for a TLS server's
+// CertificateVerify with an Ed25519 key (#2392 step 4).
+//
+// Constant time in the seed and what comes from it (the scalar a, the prefix and the nonce r):
+// a multiple of the base point is x25519_base.velt's fixed-base multiplication (masked table
+// scans, complete additions); r is reduced mod L, and S = r + h a mod L computed, by a fixed
+// sequence of shifts and masked subtractions. The message, the public key and the signature are
+// public.
+
+import { CryptoError } from "velt/crypto/errors";
+import { Sha512, sha512 } from "velt/crypto/sha512";
+import { edwardsBaseMultiply } from "velt/crypto/x25519_base";
+
+// The group order L, little-endian 64-bit words.
+const L0: u64 = 0x5812631a5cf5d3ed;
+const L1: u64 = 0x14def9dea2f79cd6;
+const L2: u64 = 0x0000000000000000;
+const L3: u64 = 0x1000000000000000;
+
+/** The Ed25519 public key (32 bytes) of the private key `seed` (32 bytes, RFC 8032's k). */
+export function ed25519PublicKey(seed: u8[]): u8[] {
+  if (seed.length != 32) {
+    throw new CryptoError("Ed25519 needs a 32-byte private key");
+  }
+  const h = sha512(seed);
+  return edwardsBaseMultiply(octets(clamped(h)));
+}
+
+/**
+ * The Ed25519 signature (64 bytes: R, then S) of `message` by the private key `seed` (32
+ * bytes), whose public key is `publicKey` (`ed25519PublicKey(seed)`, which the caller keeps:
+ * computing it costs as much as the rest of a signature). A `publicKey` that is not the seed's
+ * gives a signature that does not verify and that, beside a real one of the same message,
+ * reveals the key: pass only what `ed25519PublicKey` returned. Throws `CryptoError` for a seed
+ * or a public key that is not 32 bytes.
+ */
+export function ed25519Sign(seed: u8[], publicKey: u8[], message: u8[]): u8[] {
+  if (seed.length != 32 || publicKey.length != 32) {
+    throw new CryptoError("Ed25519 needs a 32-byte private key and its 32-byte public key");
+  }
+  const h = sha512(seed);
+  const a = clamped(h);
+  // r = SHA-512(prefix, message) mod L.
+  const first = new Sha512();
+  first.update(h.slice(32, 64));
+  first.update(message);
+  const r = reduceWide(wide(first.digest()));
+  const out = edwardsBaseMultiply(octets(r));
+  // h = SHA-512(R, A, message) mod L (public).
+  const second = new Sha512();
+  second.update(out);
+  second.update(publicKey);
+  second.update(message);
+  const k = reduceWide(wide(second.digest()));
+  // S = r + h a mod L.
+  const product = mulWide(k, a);
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < 8; i++) {
+    const x = product[i] + (i < 4 ? r[i] : 0);
+    const c1 = (x < product[i]) as u64;
+    const y = x + carry;
+    carry = c1 | ((y < x) as u64);
+    product[i] = y;
+  }
+  const s = reduceWide(product);
+  for (let i: usize = 0; i < 32; i++) {
+    out.push(((s[i >> 3] >> ((8 * (i & 7)) as u64)) & 0xff) as u8);
+  }
+  return out;
+}
+
+// The scalar a of RFC 8032 §5.1.5 from the hash of the seed: its first 32 bytes, little-endian,
+// with the three low bits and the top bit cleared and bit 254 set.
+function clamped(h: u8[]): u64[] {
+  const a: u64[] = [0, 0, 0, 0];
+  for (let i: usize = 0; i < 32; i++) {
+    a[i >> 3] |= (h[i] as u64) << ((8 * (i & 7)) as u64);
+  }
+  a[0] &= 0xfffffffffffffff8;
+  a[3] = (a[3] & 0x3fffffffffffffff) | 0x4000000000000000;
+  return a;
+}
+
+// The 64 little-endian bytes `b` as eight words.
+function wide(b: u8[]): u64[] {
+  const w: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i: usize = 0; i < 64; i++) {
+    w[i >> 3] |= (b[i] as u64) << ((8 * (i & 7)) as u64);
+  }
+  return w;
+}
+
+/**
+ * The eight-word number `x` (little-endian 64-bit words) mod L, four words: bit by bit from the
+ * top, doubling and taking L away where the value reached it, by a mask (the value stays below
+ * 2^254). The same steps for every `x`. Exported for its tests.
+ */
+export function reduceWide(x: u64[]): u64[] {
+  let r0: u64 = 0;
+  let r1: u64 = 0;
+  let r2: u64 = 0;
+  let r3: u64 = 0;
+  for (let i: usize = 512; i > 0; i--) {
+    const bit = (x[(i - 1) >> 6] >> (((i - 1) & 63) as u64)) & 1;
+    r3 = (r3 << 1) | (r2 >> 63);
+    r2 = (r2 << 1) | (r1 >> 63);
+    r1 = (r1 << 1) | (r0 >> 63);
+    r0 = (r0 << 1) | bit;
+    // t = r - L; the last borrow says r was below L.
+    const [t0, b0] = sbb(r0, L0, 0);
+    const [t1, b1] = sbb(r1, L1, b0);
+    const [t2, b2] = sbb(r2, L2, b1);
+    const [t3, borrow] = sbb(r3, L3, b2);
+    const keep = 0 - borrow;
+    r0 = (r0 & keep) | (t0 & ~keep);
+    r1 = (r1 & keep) | (t1 & ~keep);
+    r2 = (r2 & keep) | (t2 & ~keep);
+    r3 = (r3 & keep) | (t3 & ~keep);
+  }
+  return [r0, r1, r2, r3];
+}
+
+// `a - b - borrow` and the borrow out of it.
+function sbb(a: u64, b: u64, borrow: u64): [u64, u64] {
+  const x = a - b;
+  return [x - borrow, ((a < b) as u64) | ((x < borrow) as u64)];
+}
+
+// The product of the four-word numbers `a` and `b`, eight words.
+function mulWide(a: u64[], b: u64[]): u64[] {
+  const out: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i: usize = 0; i < 4; i++) {
+    let carry: u64 = 0;
+    for (let j: usize = 0; j < 4; j++) {
+      const lo = a[i] * b[j];
+      const hi = Math.umulh(a[i], b[j]);
+      const x = out[i + j] + lo;
+      const c1 = (x < lo) as u64;
+      const y = x + carry;
+      const c2 = (y < x) as u64;
+      out[i + j] = y;
+      // hi is at most 2^64 - 2, and the two carries are not both set at its largest.
+      carry = hi + c1 + c2;
+    }
+    out[i + 4] = carry;
+  }
+  return out;
+}
+
+// The four-word number `x` as 32 little-endian bytes.
+function octets(x: u64[]): u8[] {
+  const out = Buffer.alloc(32);
+  for (let i: usize = 0; i < 32; i++) {
+    out[i] = ((x[i >> 3] >> ((8 * (i & 7)) as u64)) & 0xff) as u8;
+  }
+  return out;
+}

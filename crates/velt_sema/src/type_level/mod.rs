@@ -56,6 +56,19 @@ pub(crate) struct State {
     /// While an alias is expanded: the outermost use of an alias, as written, where a
     /// type-level form that can't be evaluated is reported.
     pub(crate) alias_site: Option<Span>,
+    /// While an alias written with type arguments is expanded: that outermost use, where a
+    /// `Ptr<T>` in its body (also through a conditional type) whose pointee they made one C
+    /// has no values of is reported (`Ctx::ptr_type_written`, #3094).
+    pub(crate) ptr_site: Option<Span>,
+    /// The spans a refused pointee was reported at (`Ctx::refuse_pointee`): an alias's body is
+    /// resolved at every use, and its mistake is reported once.
+    pub(crate) ptr_refused: rustc_hash::FxHashSet<Span>,
+    /// How many pointees were refused so far: an expansion that refused one isn't walked
+    /// again for them (`Ctx::alias_written`).
+    pub(crate) ptr_refusals: u32,
+    /// The pointer types whose pointee was refused: they stay pointer types, and a C signature
+    /// or struct that holds one isn't refused again for it (`c_sig::is_c_ptr`).
+    pub(crate) ptr_refused_types: rustc_hash::FxHashSet<TyId>,
     /// While a call's argument is checked against its parameter's type: the argument, where a
     /// deferred intersection that can't be reduced at these type arguments is reported.
     pub(crate) use_site: Option<Span>,
