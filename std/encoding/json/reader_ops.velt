@@ -3,7 +3,7 @@
 
 import { TOO_DEEP, TRAILING } from "velt/encoding/json/scan";
 import { utf8Substring } from "velt/encoding";
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { inline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 import {
   MARK_DEPTH_BITS,
   MISMATCH,
@@ -17,6 +17,16 @@ import {
 import { numberI64, numberU64 } from "velt/encoding/json/scan_number";
 import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
 import {
+  rowsBool,
+  rowsEnd,
+  rowsI64,
+  rowsMessage,
+  rowsReset,
+  rowsSkip,
+  rowsSkipUnknown,
+  rowsValue,
+} from "velt/encoding/json/rows_ops";
+import {
   readerDepthLeft,
   readerDetail,
   readerEndsMap,
@@ -26,19 +36,10 @@ import {
   readerWalk,
 } from "velt/encoding/json/reader_steps";
 
-declare function velt_rt_json_error(r: u64, expected: string, path: string): string;
-declare function velt_rt_json_reader_end(r: u64): u8;
-declare function velt_rt_json_reader_read_bool(r: u64, out: ReaderBool): u8;
-declare function velt_rt_json_reader_read_i64(r: u64, out: ReaderI64): u8;
-declare function velt_rt_json_reader_read_value(r: u64, out: string): u8;
-declare function velt_rt_json_reader_reset(r: u64, mark: u64);
-declare function velt_rt_json_reader_skip_unknown(r: u64): u8;
-declare function velt_rt_json_reader_skip_value(r: u64): u8;
-
 /** The `JsonError.message` for the current state: the decoder expected `expected` at `path`. */
 export function readerMessage(r: Reader, expected: string, path: string): string {
-  if (r.rows != 0) {
-    return velt_rt_json_error(r.rows, expected, path);
+  if (r.failed == ROWS) {
+    return rowsMessage(r, expected, path);
   }
   // Text that is not JSON fails as in Node, wherever the decoder stopped (not JSONC, which
   // Node does not read).
@@ -71,10 +72,8 @@ export function readerMessage(r: Reader, expected: string, path: string): string
 export function readerValueLimit(r: Reader): i64 {
   r.rowsValue = false;
   if (!readerValueStart(r, 0, 0)) {
-    if (r.rows != 0 && r.failed == ROWS) {
-      let out = "";
-      r.rowsValue = velt_rt_json_reader_read_value(r.rows, out) == 1;
-      r.rowsText = out;
+    if (r.failed == ROWS) {
+      rowsValue(r);
     }
     return -1;
   }
@@ -100,7 +99,7 @@ export function readerValueLimit(r: Reader): i64 {
  */
 export function readerSkipLookahead(r: Reader): bool {
   if (!readerValueStart(r, 0, 0)) {
-    return r.rows != 0 && r.failed == ROWS && velt_rt_json_reader_skip_value(r.rows) == 1;
+    return r.failed == ROWS && rowsSkip(r);
   }
   const b = strByteAt(r.src, r.pos as u64);
   if (b != 123 && b != 91) {
@@ -119,8 +118,8 @@ export function readerSkipLookahead(r: Reader): bool {
 
 /** Skips the value of a key the target type does not have (fails if unknown keys are rejected). */
 export function readerSkipUnknown(r: Reader): bool {
-  if (r.rows != 0 && r.failed == ROWS) {
-    return velt_rt_json_reader_skip_unknown(r.rows) == 1;
+  if (r.failed == ROWS) {
+    return rowsSkipUnknown(r);
   }
   if (r.rejectUnknown) {
     if (r.failed == NONE) {
@@ -133,10 +132,16 @@ export function readerSkipUnknown(r: Reader): bool {
 
 /** Goes back to `mark` and forgets any failure since. */
 export function readerReset(r: Reader, mark: u64) {
-  if (r.rows != 0 && r.failed == ROWS) {
-    velt_rt_json_reader_reset(r.rows, mark);
+  if (r.failed == ROWS) {
+    rowsReset(r, mark);
     return;
   }
+  readerTextReset(r, mark);
+}
+
+/** `readerReset` of a text reader (what a rows reader's nested text reader calls). */
+@inline("always")
+export function readerTextReset(r: Reader, mark: u64) {
   r.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
   r.depth = ((mark >> 1) & ((1 << MARK_DEPTH_BITS) - 1)) as usize;
   r.afterOpen = (mark & 1) == 1;
@@ -149,13 +154,7 @@ export function readerReset(r: Reader, mark: u64) {
  */
 export function readerReadU64(r: Reader): bool {
   if (!readerNumberStart(r)) {
-    if (r.rows != 0 && r.failed == ROWS) {
-      let out: ReaderI64 = { v: 0 };
-      const ok = velt_rt_json_reader_read_i64(r.rows, out) == 1 && out.v >= 0;
-      r.int = out.v;
-      return ok;
-    }
-    return false;
+    return r.failed == ROWS && rowsI64(r, true);
   }
   const v = numberU64(r.src, r.start, r.end, r.integer);
   if (v == null) {
@@ -168,13 +167,13 @@ export function readerReadU64(r: Reader): bool {
 
 /** A number value that is an integer exactly representable as `i64`: `int` after true. */
 export function readerReadI64(r: Reader): bool {
+  return r.failed == ROWS ? rowsI64(r, false) : readerTextI64(r);
+}
+
+/** `readerReadI64` of a text reader (what a rows reader's nested text reader calls). */
+@inline("always")
+export function readerTextI64(r: Reader): bool {
   if (!readerNumberStart(r)) {
-    if (r.rows != 0 && r.failed == ROWS) {
-      let out: ReaderI64 = { v: 0 };
-      const ok = velt_rt_json_reader_read_i64(r.rows, out) == 1;
-      r.int = out.v;
-      return ok;
-    }
     return false;
   }
   if (r.small) {
@@ -194,7 +193,7 @@ export function readerReadI64(r: Reader): bool {
 /** Only whitespace may follow the top-level value. */
 export function readerFinish(r: Reader): bool {
   if (r.failed != NONE) {
-    return r.rows != 0 && r.failed == ROWS && velt_rt_json_reader_end(r.rows) == 1;
+    return r.failed == ROWS && rowsEnd(r);
   }
   if (r.peekNonWs() >= 0) {
     r.fail(TRAILING);
@@ -229,13 +228,13 @@ export function shortPath(path: string): string {
 
 /** `true` or `false`: `int` is 1 or 0 after true. */
 export function readerReadBool(r: Reader): bool {
+  return r.failed == ROWS ? rowsBool(r) : readerTextBool(r);
+}
+
+/** `readerReadBool` of a text reader (what a rows reader's nested text reader calls). */
+@inline("always")
+export function readerTextBool(r: Reader): bool {
   if (!readerValueStart(r, 116, 102)) {
-    if (r.rows != 0 && r.failed == ROWS) {
-      let out: ReaderBool = { v: 0 };
-      const ok = velt_rt_json_reader_read_bool(r.rows, out) == 1;
-      r.int = out.v as i64;
-      return ok;
-    }
     return false;
   }
   const t = strByteAt(r.src, r.pos as u64) == 116;
@@ -244,12 +243,4 @@ export function readerReadBool(r: Reader): bool {
   }
   r.int = t ? 1 : 0;
   return true;
-}
-
-struct ReaderI64 {
-  v: i64;
-}
-
-struct ReaderBool {
-  v: u8;
 }
