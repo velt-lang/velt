@@ -1,0 +1,27 @@
+// The operating system's random numbers: 300K `randomBytes(16)`, 300K `randomInt` and 300K
+// `uuidv4()`, each one draw from the OS generator. Prints counts every run has the same. The Rust
+// port draws through the `getrandom` crate, as the runtime did, into a `Vec` per draw.
+import { randomBytes, randomInt } from "velt/crypto";
+import { uuidv4 } from "velt/random/uuid";
+
+function main() {
+  let len: i64 = 0;
+  for (let i = 0; i < 300000; i++) {
+    len += randomBytes(16).length as i64;
+  }
+  let inside: i64 = 0;
+  for (let i: i64 = 0; i < 300000; i++) {
+    const v = randomInt(-i, 1000 + i);
+    if (v >= -i && v < 1000 + i) {
+      inside++;
+    }
+  }
+  let dashes: i64 = 0;
+  for (let i = 0; i < 300000; i++) {
+    const u = uuidv4();
+    if (u.charCodeAt(8) == 45 && u.charCodeAt(14) == 52) {
+      dashes++;
+    }
+  }
+  console.log(len, inside, dashes);
+}

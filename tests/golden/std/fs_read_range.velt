@@ -43,15 +43,28 @@ async function main() {
   console.log(await bytes.read(), (await bytes.read()).length);
   bytes.close();
 
-  // openedStats() describes the file opened, even after its path names another one.
+  // openedStats() describes the file opened, even after its path names another one. Windows
+  // refuses to replace a file that is open (EPERM, as in Node): there the path is replaced once
+  // the reader is closed, so the lines printed are the same.
   const r = await openRead(path, { start: 2, end: 3 });
   const other = `${path}.other`;
   await writeFile(other, "a much longer file than the first one");
-  await rename(other, path);
+  let replaced = true;
+  try {
+    await rename(other, path);
+  } catch (e) {
+    if (e.code != "EPERM") {
+      throw e;
+    }
+    replaced = false;
+  }
   const s = r.openedStats();
   console.log("open file:", s.size, s.isFile(), s.mtimeMs > 0);
   console.log("its range:", JSON.stringify(await r.readString()));
   r.close();
+  if (!replaced) {
+    await rename(other, path);
+  }
   console.log("the path now:", (await readFile(path)).length);
 
   await remove(path);

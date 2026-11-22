@@ -1,0 +1,92 @@
+// check: no leaks
+// `weak T | null` fields (docs/internals/design/cycles.md "`weak T`"): a read gives the target,
+// or `null` once it was freed; a write keeps no reference, so what it was given stays its
+// owner's; printing, `any`, JSON and spreads see the target.
+
+class Node {
+  name: string;
+  parent: weak Node | null = null;
+  children: Node[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+  add(c: Node): Node {
+    c.parent = this;
+    this.children.push(c);
+    return c;
+  }
+  path(): string {
+    const p = this.parent;
+    return p === null ? this.name : `${p.path()}/${this.name}`;
+  }
+}
+
+class Leaf extends Node {
+  size = 0;
+}
+
+function show(n: Node): string {
+  const p = n.parent;
+  return p === null ? "null" : p.name;
+}
+
+// A child outlives its parent: the field reads `null` from then on.
+function orphan(): Node {
+  const p = new Node(`parent ${1}`);
+  const c = new Node(`child ${2}`);
+  c.parent = p;
+  console.log("while the parent lives:", show(c));
+  return c;
+}
+
+const root = new Node("root");
+const docs = root.add(new Node("docs"));
+const leaf = docs.add(new Leaf("a.txt"));
+console.log(leaf.path());
+console.log(show(root), show(docs), show(leaf));
+console.log(leaf.parent?.name, root.parent?.name);
+
+const c = orphan();
+console.log("after it went:", show(c));
+c.parent = docs;
+c.parent = docs;
+console.log("pointed again:", show(c));
+c.parent = null;
+console.log("cleared:", show(c));
+
+// A temporary keeps nothing alive through a weak field.
+c.parent = new Node(`temp ${3}`);
+console.log("a temporary:", show(c));
+
+// The field initializer, and a constructor's assignment.
+class Held {
+  owner: weak Node | null = root;
+  other: weak Node | null;
+  constructor(o: Node) {
+    this.other = o;
+  }
+}
+const h = new Held(docs);
+console.log(h.owner?.name, h.other?.name);
+
+console.log(leaf);
+const a: any = leaf;
+console.log(a.parent.name);
+a.parent = root;
+console.log(show(leaf));
+// JSON writes the target (a graph without a cycle: #3339 is a cycle's).
+const top = new Node("top");
+const below = new Node("below");
+below.parent = top;
+console.log(JSON.stringify(below), JSON.stringify(c));
+const spread = { ...docs };
+console.log(spread.name, spread.parent?.name);
+
+// Logical assignments read the field once and write it through its slot.
+const lone = new Node("lone");
+lone.parent ??= top;
+lone.parent ??= root;
+console.log(show(lone));
+lone.parent &&= root;
+lone.parent ||= top;
+console.log(show(lone));

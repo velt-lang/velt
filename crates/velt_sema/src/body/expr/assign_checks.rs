@@ -1,5 +1,6 @@
 //! Checks of assignment targets split out of `assign.rs`: writes to static fields,
-//! the field writes `crate::object_copies` needs to know about, and `a ??= b` on a place.
+//! the field writes `crate::object_copies` needs to know about, `a ??= b` on a place, and the
+//! literal a plain assignment's value is.
 
 use velt_syntax::ast;
 
@@ -8,6 +9,7 @@ use velt_common::{Diagnostic, Span};
 use super::accessor_rmw::{block, stmt};
 use super::assign::AssignTarget;
 use super::assign_paths::is_pure_place;
+use crate::body::narrow::nothing_word;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, DefId, ExprKind as H, TyId, TyKind};
 
@@ -128,6 +130,38 @@ impl FnCx<'_, '_> {
             });
     }
 
+    /// `a ??= b` (likewise `&&=`, `||=`) on a `weak` field, as JavaScript defines it:
+    /// `a ?? (a = b)`. The inner assignment checks `b` as a borrow (`weak_field_place`), so a
+    /// local at its last use keeps its object, which `a = a ?? b` would move into the field and
+    /// free at once. Its value is the field's.
+    pub(super) fn weak_logical_assign(
+        &mut self,
+        op: ast::BinaryOp,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let write = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Assign {
+                op: None,
+                target: Box::new(target.clone()),
+                value: Box::new(value.clone()),
+            },
+            span,
+        };
+        let e = ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind: ast::ExprKind::Binary {
+                op,
+                lhs: Box::new(target.clone()),
+                rhs: Box::new(write),
+            },
+            span,
+        };
+        self.expr(&e, None, Want::Move)
+    }
+
     /// `a ??= b` on a place (`checked` is the target as resolved; not a record key).
     pub(super) fn logical_assign(
         &mut self,
@@ -201,5 +235,19 @@ impl FnCx<'_, '_> {
             span: value.span,
         };
         self.assign(None, target, &rhs, span)
+    }
+}
+
+/// The literal a plain assignment's value `value` is (`b = null`, `b = c = 0`, through
+/// parentheses), which the assignment's own value then is.
+pub(super) fn assigned_literal(op: Option<ast::BinaryOp>, value: &ast::Expr) -> Option<&ast::Expr> {
+    if op.is_some() {
+        return None;
+    }
+    match &value.kind {
+        ast::ExprKind::Paren(inner) => assigned_literal(None, inner),
+        ast::ExprKind::Assign { op, value, .. } => assigned_literal(*op, value),
+        ast::ExprKind::Lit(_) => Some(value),
+        _ => nothing_word(value).map(|_| value),
     }
 }

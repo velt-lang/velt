@@ -22,4 +22,96 @@ export class Avx512F {
   static isSupported(): bool {
     return velt_simd_has_avx512f_x86() || (velt_simd_on_x86() && cpuHas(AVX512F_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The lanes of `left` plus those of `right`, wrapping.
+   *
+   * `_mm512_add_epi32` (`vpaddd`). Runs only where the CPU has it: call it behind
+   * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
+   */
+  static addU32(left: Vector512<u32>, right: Vector512<u32>): Vector512<u32> {
+    return velt_arch_avx512f_add_u32(left, right);
+  }
+
+  /**
+   * The low 32 bits of each product of `left`'s and `right`'s lanes.
+   *
+   * `_mm512_mullo_epi32` (`vpmulld`). Runs only where the CPU has it: call it behind
+   * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
+   */
+  static multiplyLowU32(left: Vector512<u32>, right: Vector512<u32>): Vector512<u32> {
+    return velt_arch_avx512f_multiply_low_u32(left, right);
+  }
+
+  /**
+   * The lanes of `left` plus those of `right`.
+   *
+   * `_mm512_add_ps` (`vaddps`). Runs only where the CPU has it: call it behind
+   * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
+   */
+  static addF32(left: Vector512<f32>, right: Vector512<f32>): Vector512<f32> {
+    return velt_arch_avx512f_add_f32(left, right);
+  }
+
+  /**
+   * Bit `i` set where lane `i` of `left` equals that of `right`.
+   *
+   * `_mm512_cmpeq_epi32_mask` (`vpcmpeqd`). Runs only where the CPU has it: call it behind
+   * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
+   */
+  static compareEqualU32(left: Vector512<u32>, right: Vector512<u32>): u16 {
+    return velt_arch_avx512f_compare_equal_u32(left, right);
+  }
+
+  /**
+   * Lane `i` is `right`'s where bit `i` of `mask` is set, else `left`'s.
+   *
+   * `_mm512_mask_blend_epi32` (`vpblendmd`). Runs only where the CPU has it: call it behind
+   * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`.
+   */
+  static blendU32(mask: u16, left: Vector512<u32>, right: Vector512<u32>): Vector512<u32> {
+    return velt_arch_avx512f_blend_u32(mask, left, right);
+  }
+
+  /**
+   * Lane `i` is lane `indices[i] & 15` of `value`.
+   *
+   * `_mm512_permutexvar_epi32` (`vpermd`). Runs only where the CPU has it: call it behind
+   * `Avx512F.isSupported()`, or in a function gated on `avx512f-x86`. Its operands are in the
+   * opposite order to `_mm512_permutexvar_epi32`'s, which takes the indices first.
+   */
+  static permuteVarU32(value: Vector512<u32>, indices: Vector512<u32>): Vector512<u32> {
+    return velt_arch_avx512f_permute_var_u32(value, indices);
+  }
 }
+
+import { Vector512 } from "velt/arch/x86/vector512";
+
+declare function velt_arch_avx512f_add_u32(
+  left: Vector512<u32>,
+  right: Vector512<u32>,
+): Vector512<u32>;
+declare function velt_arch_avx512f_multiply_low_u32(
+  left: Vector512<u32>,
+  right: Vector512<u32>,
+): Vector512<u32>;
+declare function velt_arch_avx512f_add_f32(
+  left: Vector512<f32>,
+  right: Vector512<f32>,
+): Vector512<f32>;
+declare function velt_arch_avx512f_compare_equal_u32(
+  left: Vector512<u32>,
+  right: Vector512<u32>,
+): u16;
+declare function velt_arch_avx512f_blend_u32(
+  mask: u16,
+  left: Vector512<u32>,
+  right: Vector512<u32>,
+): Vector512<u32>;
+declare function velt_arch_avx512f_permute_var_u32(
+  value: Vector512<u32>,
+  indices: Vector512<u32>,
+): Vector512<u32>;

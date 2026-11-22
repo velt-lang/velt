@@ -75,17 +75,17 @@ export function lockRange(fd: i32, mode: i32, start: i64, len: i64): i32 {
  */
 export function fstatFd(fd: i32): Stat | null {
   if (arch() == "x64") {
-    return posixFstatAt(fd, 24, false, 48, 88);
+    return posixFstatAt(fd, 24, false, 48, 88, false);
   }
-  return posixFstatAt(fd, 16, false, 48, 88);
+  return posixFstatAt(fd, 16, false, 48, 88, false);
 }
 
 /** `stat(path)` (`follow`) or `lstat(path)`'s fields, at `fstatFd`'s offsets, or `null`. */
 export function statPath(path: readonly u8[], follow: bool): Stat | null {
   if (arch() == "x64") {
-    return posixStatAt(path, follow, 24, false, 48, 88);
+    return posixStatAt(path, follow, 24, false, 48, 88, false);
   }
-  return posixStatAt(path, follow, 16, false, 48, 88);
+  return posixStatAt(path, follow, 16, false, 48, 88, false);
 }
 
 // The functions both POSIX variants share, from posix.velt (a variant defines what it exports:

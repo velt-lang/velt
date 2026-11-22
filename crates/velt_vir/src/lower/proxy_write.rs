@@ -78,7 +78,7 @@ impl FnLower<'_, '_> {
             |lw| {
                 let fp = lw.proxy_hot_place(ptr, bty, index);
                 let v = Operand::Copy(Place::local(val));
-                lw.store_assigned(place, fp, v, fty, true, drops);
+                lw.proxy_hot_store(place, fp, (bty, index), v, drops);
             },
         );
     }
@@ -137,10 +137,29 @@ impl FnLower<'_, '_> {
                     return;
                 }
                 let fp = lw.proxy_hot_place(&ptr, bty, index);
-                lw.store_assigned(place, fp, v, fty, true, drops);
+                lw.proxy_hot_store(place, fp, (bty, index), v, drops);
             },
         );
         super::unit()
+    }
+
+    /// Store the owned `v` into field `index` of the `bty` object itself (not a proxy), at `fp`:
+    /// a weak field takes its slot (weak_fields.rs).
+    fn proxy_hot_store(
+        &mut self,
+        place: &hir::Expr,
+        fp: Place,
+        (bty, index): (TyId, u32),
+        v: Operand,
+        drops: bool,
+    ) {
+        match self.cx.weak_field(bty, index) {
+            Some(read) => self.weak_store(fp, v, read),
+            None => {
+                let fty = self.cx.member_ty(bty, index);
+                self.store_assigned(place, fp, v, fty, true, drops);
+            }
+        }
     }
 
     /// [`proxy_assign`](Self::proxy_assign), also giving the assigned value when `want` (the

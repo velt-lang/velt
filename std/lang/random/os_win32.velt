@@ -1,0 +1,46 @@
+// velt/lang/random (internal): the operating system's random numbers on Windows (`#os-random`,
+// os.velt): `BCryptGenRandom` with the system's preferred generator (bcrypt.dll, which every
+// program links), at most 4 GiB - 1 bytes a call.
+
+import { Ptr } from "velt/ffi/ptr";
+import { noInline } from "velt/lang/intrinsics/decorators";
+
+declare c("c") function BCryptGenRandom(
+  algorithm: Ptr<void> | null,
+  buf: Ptr<u8>,
+  n: u32,
+  flags: u32,
+): i32;
+
+/** `BCRYPT_USE_SYSTEM_PREFERRED_RNG`: no algorithm handle, the system's generator. */
+const SYSTEM_PREFERRED: u32 = 2;
+
+/** The most one call takes (its length is a `ULONG`). */
+const MAX_CALL: usize = 0xffffffff;
+
+/**
+ * Fills the `n` bytes at `base` with the OS generator's. Stops the program if the generator
+ * fails. Unsafe: the memory must be there and writable, and nothing else use it meanwhile.
+ */
+export unsafe function fillRandomAt(base: usize, n: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    const k = n - done < MAX_CALL ? n - done : MAX_CALL;
+    let status: i32 = 0;
+    // SAFETY: bytes `done..done + k` of the caller's memory; no algorithm handle with
+    // SYSTEM_PREFERRED.
+    unsafe {
+      status = BCryptGenRandom(null, Ptr.at<u8>(base + done), k as u32, SYSTEM_PREFERRED);
+    }
+    if (status != 0) {
+      stop();
+    }
+    done += k;
+  }
+}
+
+/** A failed `BCryptGenRandom`: the program stops, with no safe source to fall back on. */
+@noInline
+function stop(): void {
+  panic("the OS random number generator failed (BCryptGenRandom)");
+}

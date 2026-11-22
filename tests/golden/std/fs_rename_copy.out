@@ -1,0 +1,13 @@
+alpha alpha
+over a longer file: alpha
+onto itself: alpha
+big: 200003 true
+copy missing ENOENT ENOENT: no such file or directory, copyfile 'velt_fs_rename_copy_tmp/nope' -> 'velt_fs_rename_copy_tmp/x.txt'
+copy into missing dir ENOENT ENOENT: no such file or directory, copyfile 'velt_fs_rename_copy_tmp/a.txt' -> 'velt_fs_rename_copy_tmp/no/x.txt'
+copySync missing ENOENT ENOENT: no such file or directory, copyfile 'velt_fs_rename_copy_tmp/nope' -> 'velt_fs_rename_copy_tmp/x.txt'
+copy dir: refused, left behind: false
+false false alpha
+dir renamed: false true
+rename missing ENOENT ENOENT: no such file or directory, rename 'velt_fs_rename_copy_tmp/nope' -> 'velt_fs_rename_copy_tmp/x'
+renameSync missing ENOENT ENOENT: no such file or directory, rename 'velt_fs_rename_copy_tmp/nope' -> 'velt_fs_rename_copy_tmp/x'
+rename into missing dir ENOENT ENOENT: no such file or directory, rename 'velt_fs_rename_copy_tmp/b2.txt' -> 'velt_fs_rename_copy_tmp/no/x'

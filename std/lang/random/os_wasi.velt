@@ -1,0 +1,29 @@
+// velt/lang/random (internal): random numbers under WASI (`#os-random`, os.velt): the host's
+// `random_get` through wasi-libc's `getentropy` (docs/internals/design/wasi-libc.md), at most 256
+// bytes a call.
+
+import { Ptr } from "velt/ffi/ptr";
+
+declare c("c") function getentropy(buf: Ptr<u8>, len: usize): i32;
+
+/** The most `getentropy` gives in one call. */
+const MAX_CALL: usize = 256;
+
+/**
+ * Fills the `n` bytes at `base` with the host's random bytes. Stops the program if `random_get`
+ * fails. Unsafe: the memory must be there and writable, and nothing else use it meanwhile.
+ */
+export unsafe function fillRandomAt(base: usize, n: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    const k = n - done < MAX_CALL ? n - done : MAX_CALL;
+    // SAFETY: bytes `done..done + k` of the caller's memory, at most 256.
+    const rc = unsafe { getentropy(Ptr.at<u8>(base + done), k) };
+    // random_get is a host call and may fail; going on would hand out zeros. A panic, not a
+    // throw: `Math.random()` throws nothing, and neither may its callers because of it.
+    if (rc != 0) {
+      panic("WASI random_get failed: no random numbers");
+    }
+    done += k;
+  }
+}
