@@ -53,11 +53,14 @@ mod weak_hooks;
 mod string_hooks;
 #[macro_use]
 mod module_hooks;
+#[macro_use]
+mod decorator_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then module state's (`module_hooks.rs`), the string methods'
-// (`string_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
-with_module_hooks! {
+// The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
+// (`module_hooks.rs`), the string methods' (`string_hooks.rs`) and the weak core's
+// (`weak_hooks.rs`), given to `hooks!` together.
+with_decorator_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -762,27 +765,6 @@ with_module_hooks! {
     host_await_ref => host_promise, "hostAwaitRef", sig(async (move Promise(HostSettled(u32), never)) -> HostRef throws IoError), lowered;
     /// `host_await` for a `HostRef | null` result.
     host_await_ref_or_null => host_promise, "hostAwaitRefOrNull", sig(async (move Promise(HostSettled(u32), never)) -> or_null(HostRef) throws IoError), lowered;
-
-    // lang/intrinsics/decorators.velt: the compile-time decorators the compiler acts on (#2203),
-    // found by these roles, never by the name a use is written with.
-    /// `@inline` on a function or method (any module; velt/compiler re-exports it):
-    /// `@inline("always")` inlines every call in release builds (`vir::Inline::Always`), the
-    /// default `"hint"` is `vir::Inline::Default` while a program is one unit (`velt_sema`
-    /// `decorators/known.rs`, `velt_vir` lowering).
-    decorator_inline => lang_intrinsics_decorators, "inline", decorator;
-    /// `@noInline`: calls stay calls (`vir::Inline::Never`).
-    decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
-    /// `@intrinsic declare function`: the declaration of a compiler intrinsic
-    /// (`velt_sema` `intrinsic_decls.rs`).
-    decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
-    /// `@targetFeature("sha-arm")` on a function (any module; velt/compiler re-exports it): the
-    /// CPU extension it is compiled for (`velt_sema` `body/gated.rs`, `hir::Program::cpu_targets`).
-    decorator_target_feature => lang_intrinsics_decorators, "targetFeature", decorator;
-    // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
-    // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
-    /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C
-    /// calling convention, whose parameters and result cross as a `declare c` function's.
-    decorator_export => ffi_export, "export", decorator;
 }
 
 #[macro_use]
