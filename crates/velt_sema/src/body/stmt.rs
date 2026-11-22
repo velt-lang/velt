@@ -277,7 +277,7 @@ impl FnCx<'_, '_> {
         // Each branch starts from the state before the `if` with the condition's facts assumed,
         // and ends with what still holds there: a branch's own assignments win over the facts it
         // started from (#1226). Those end states are joined below.
-        // `if (u32x4.hasShaX86())`, `if (typeIs<A, B>())`: what the `then` branch may call.
+        // `if (Sha.isSupported())`, `if (typeIs<A, B>())`: what the `then` branch may call.
         let guards = self.enter_guards(&c);
         let unmarked = self.instanceof_unmark(cond);
         let (t, then_facts) = self.block_narrowed_ending(then, &when_true);
@@ -335,7 +335,10 @@ impl FnCx<'_, '_> {
             self.cx
                 .err("`const` declarations must be initialized", v.span);
         }
-        let ann = v.ty.as_ref().map(|t| self.resolve(t));
+        // `weak T | null` may type a `let` or `const` naming one variable.
+        let var = matches!(v.kind, ast::VarKind::Let | ast::VarKind::Const)
+            && matches!(v.pattern.kind, ast::PatternKind::Ident(_));
+        let ann = v.ty.as_ref().map(|t| self.resolve_as(t, var));
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
             let init_ty = v.init.as_ref().and_then(crate::throws::written_init_type);
             if let Some(t) = v.ty.as_ref().or(init_ty) {
@@ -715,26 +718,6 @@ impl FnCx<'_, '_> {
                 Self::push(out, S::Return(Some(h)), span);
             }
         }
-    }
-
-    pub fn resolve(&mut self, t: &ast::TypeExpr) -> hir::TyId {
-        let env = self.env.clone();
-        // `typeof x` may name the locals in scope (`crate::type_queries`).
-        let mut heads = vec![];
-        velt_syntax::visit::type_queries(t, &mut |path| {
-            if let Some(h) = path.first() {
-                heads.push(h.name.clone());
-            }
-        });
-        let base = self.cx.query_locals.len();
-        for h in heads {
-            if let Some(ty) = self.peek_local_ty(&h) {
-                self.cx.query_locals.push((h, ty));
-            }
-        }
-        let ty = self.cx.resolve_type(t, &env);
-        self.cx.query_locals.truncate(base);
-        ty
     }
 }
 

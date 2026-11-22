@@ -69,7 +69,7 @@ pub(super) fn crossing_fns(
                         .collect();
                     work.extend(impls);
                 }
-                k => work.extend(crate::types::children(&k)),
+                k => work.extend(crate::types::contents(&k)),
             }
         }
     }
@@ -317,5 +317,29 @@ fn same_shape(cx: &Ctx, a: TyId, b: TyId, depth: u32) -> bool {
             std::mem::discriminant(ka) == std::mem::discriminant(kb)
                 && all(&crate::types::children(ka), &crate::types::children(kb))
         }
+    }
+}
+
+/// May a value of type `t` hold a function value: a function type, or a type with one among its
+/// parts, a type parameter, an interface or a dynamic value (`any`, `unknown`, `object`), whose
+/// contents aren't known? A `shared` value or a lock holds its own.
+pub(super) fn may_hold_fn(cx: &mut Ctx, t: TyId) -> bool {
+    may_hold_fn_in(cx, t, &mut rustc_hash::FxHashSet::default())
+}
+
+fn may_hold_fn_in(cx: &mut Ctx, t: TyId, seen: &mut rustc_hash::FxHashSet<TyId>) -> bool {
+    if !seen.insert(t) {
+        return false;
+    }
+    if is_dynamic(cx, t) {
+        return true;
+    }
+    match cx.ty.kind(t).clone() {
+        TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) | TyKind::Param(_) => true,
+        TyKind::Shared(_) => false,
+        k => cx
+            .parts_of(k)
+            .into_iter()
+            .any(|p| may_hold_fn_in(cx, p, seen)),
     }
 }

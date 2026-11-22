@@ -85,6 +85,12 @@ fn analyze_after_bodies(cx: &mut ctx::Ctx) {
 
 /// The generated code collected, checked and bound ([`generated::phase`]).
 fn generated_phase(cx: &mut ctx::Ctx) {
+    // Code is generated for a program (`crate::units`): std's unit holds no generated module
+    // (`generating::install` adds the ones the driver hands in to the app's copies), so it does not depend
+    // on the check's generator; the app's stage generates for std's demands too.
+    if cx.units_stage == units::Stage::Std {
+        return;
+    }
     timings::pass("generated::phase", || generated::phase::run(cx));
 }
 
@@ -133,6 +139,7 @@ pub(crate) fn analyze_after_phase(cx: &mut ctx::Ctx) {
     body::lazy_std::finish_live(cx);
     let before = error_count(cx);
     generated::bind::fix_modes(cx);
+    units::app_reads_shared(cx);
     timings::pass("ownership_passes", || ownership_passes(cx));
     if cx.fn_sites.again() {
         return;

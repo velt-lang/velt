@@ -5,12 +5,22 @@
 // collects a promise nobody can settle together with the functions waiting for it; here such a
 // node is given up, its state dropped. A node gets there in two places: its owner drops it while
 // it is suspended (`dropPending`), or a poll leaves it suspended with its owner gone (`parked`).
+// A node that only its owner's poll can run (`ownerOnly`, `nested`) is listed for its task, which
+// is given up the same way once all its promises are like that (sched_task_lost.velt).
 
 import { inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as aw from "./sched_node_await";
+import * as lk from "./sched_lock";
+import * as nc from "./sched_node_catch";
+import * as nw from "./sched_node_wake";
 import * as t from "./sched_task";
+import * as lt from "./sched_task_lost";
+import * as wk from "./sched_wake";
+
+/** sched_task_lost.velt's flag, for sched_node.velt: the node is counted owner-only (`list`). */
+export const LISTED: u32 = lt.LISTED;
 
 /**
  * The end of sched_node.velt `nodeDrop` for started node `n` that has not finished, its owner on
@@ -31,18 +41,135 @@ export function dropPending(n: usize): void {
 }
 
 /**
+ * The end of sched_node.velt `nodeDrop` for started node `n` whose owner is not on its task's
+ * thread (the promise was handed to another task, which drops it): the owner's reference goes.
+ * Two cases leave the node's task with nothing to poll it again (#3323), and in both the
+ * reference is given to the task instead, on its woken stack, with the task woken:
+ * - `n` is suspended and its task's is the only other reference: nothing can wake it any more,
+ *   but only its task's thread may give it up. The task's poll runs it as a woken node, and that
+ *   run finds it parked with its owner gone (sched_node.velt `run`, `parked`).
+ * - `n` finished and this is its last reference: freeing it here would give its reference to
+ *   its task back on this thread, with no poll after it, and a task that waits for that count
+ *   to park for ever (sched_task_lost.velt `parks`) would never look again. The task's poll
+ *   frees it instead.
+ * The task is kept meanwhile by a reference of its own, given back with a wake
+ * (sched_task_lost.velt `releaseAway`). With one thread at the executor (the owner is a thread
+ * that is no worker) the reference just goes, as before.
+ */
+@noInline
+export function droppedAway(n: usize): void {
+  const task = m.ld(n + nd.N_TASK);
+  const fl = m.load32(n + nd.N_FLAGS);
+  const refs = m.load(n + nd.N_REFS);
+  // The flags first, then the count. A count of 1 is ours alone, whatever the flags said: the
+  // node may have finished on its task between the two loads, and the task given its
+  // reference back. A count of 2 with the node unfinished is ours and the task's.
+  const lone = refs === 1 || (refs === 2 && (fl & nd.FINISHED) === 0);
+  if (!lone || task === 0 || lk.mode() !== lk.LK_ON) {
+    nd.release(n);
+    return;
+  }
+  if ((fl & lt.NLINKED) !== 0) {
+    // On its task's list of owner-only promises (a counted run links them through the woken
+    // stack's links, which the hand-over below is about to use). It cannot get here: a promise
+    // is listed by an adoption poll, which is its owner's own await in its task, so its handle
+    // sits in that awaiting frame, and the frame is dropped on the task's thread (its task's
+    // last poll, or the frame's own promise given up there): the own side of `nodeDrop`.
+    panic("ICE: a promise on its task's list of owner-only promises is dropped off its task");
+  }
+  m.inc(task + t.T_REFS);
+  nw.give(n);
+  lt.releaseAway(task);
+}
+
+/**
+ * A freed node's reference to its task `task` goes (sched_node.velt `release`). On the task's own
+ * thread as it always did. Anywhere else (a waker of the node dropped on another worker, the
+ * owner's drop there, a holder's) the task is woken with it (`releaseAway`): the reference may
+ * be the one that kept the task from being found parked for ever (sched_task_lost.velt
+ * `parks`), and no poll of the task would follow to look again.
+ */
+@inline("always")
+export function taskRef(task: usize): void {
+  const e = t.here();
+  if (e !== 0 && m.ld(e + t.E_CURRENT) === task) {
+    wk.release(task);
+    return;
+  }
+  taskRefAway(task);
+}
+
+/** `taskRef` off the task's thread: with one thread at the executor, as on it. */
+@noInline
+function taskRefAway(task: usize): void {
+  if (lk.mode() !== lk.LK_ON) {
+    wk.release(task);
+    return;
+  }
+  lt.releaseAway(task);
+}
+
+/**
  * An adoption poll left started node `n` suspended (sched_node.velt `pollNode`), its owner's and
  * its task's its only references: no leaf holds its own waker, so it runs again only when its
  * owner polls it, and its leaves wake the owner. The owner's waker is not kept in it then: an
- * owner that nothing else can wake is `unreachable`. Pending, always.
+ * owner that nothing else can wake is `unreachable`. Its task `task` lists it (its flags `was`
+ * say whether it is listed already), so a task whose promises are all like that can be found
+ * parked for ever (sched_task_lost.velt). Pending, always.
  */
 @inline("always")
-export function ownerOnly(n: usize): u32 {
+export function ownerOnly(task: usize, n: usize, was: u32): u32 {
   const w = aw.takePlain(n);
   if (w !== 0) {
     m.wakerDrop(w);
   }
+  // Not for `main`'s root, whose park is never looked at (sched_task_lost.velt `parks`).
+  if ((was & lt.LISTED) === 0 && !t.has(task, t.ROOT)) {
+    lt.list(task, n);
+  }
   return 0;
+}
+
+/**
+ * The owner of started node `n` (flags `fl`) polls it with `cx` on worker `e`, and sched_node.velt
+ * `pollNode` did not adopt it: is that only because an adoption is under way already (the
+ * owner's own state is being polled by its owner), with `n` owner-only all the same? Then it is
+ * left as `ownerOnly` leaves it, with no awaiter (true). No waker of `n` exists, so only an
+ * adoption can finish it, and the adopter gets the result from that poll, never through the
+ * awaiter's word. Stored there, the waker of the outermost adopter would count as a reference
+ * that can wake it: a chain of functions each awaiting the next, the last on a promise nobody
+ * can settle, would look alive for ever. Not under a catch, whose adoptions keep the awaiter
+ * (sched_node_catch.velt `adoptCaught`).
+ */
+@inline("always")
+export function nested(e: usize, task: usize, n: usize, cx: usize, fl: u32): bool {
+  if (
+    (fl & (nd.RUNNING | nd.QUEUED | nd.CATCHES | nd.ADOPTED)) !== 0 ||
+    m.ld(e + t.E_ADOPTING) === 0 ||
+    m.ld(e + nc.E_CATCHING) >= 2 ||
+    wk.taskOf(m.ld(cx + 8)) !== task ||
+    m.load(n + nd.N_REFS) !== 2
+  ) {
+    return false;
+  }
+  leftNested(e, task, n, fl);
+  return true;
+}
+
+/** `nested`'s exit for node `n` of task `task`, out of line; checked with the counters on. */
+@noInline
+function leftNested(e: usize, task: usize, n: usize, fl: u32): void {
+  if (wk.counting()) {
+    const now = m.load32(n + nd.N_FLAGS);
+    const busy = nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED;
+    if (m.ld(e + t.E_CURRENT) !== task || (now & (nd.STARTED | busy)) !== nd.STARTED) {
+      panic("ICE: a promise left without an awaiter under an adoption can still run");
+    }
+  }
+  if ((fl & lt.LISTED) === 0 && !t.has(task, t.ROOT)) {
+    nd.setFlags(n, lt.LISTED);
+  }
+  ownerOnly(task, n, fl);
 }
 
 /**
@@ -99,7 +226,11 @@ export function handedOff(n: usize): void {
  */
 @noInline
 function giveUp(task: usize, n: usize): void {
-  nd.setFlags(n, nd.FINISHED);
+  const was = m.or32(n + nd.N_FLAGS, nd.FINISHED);
+  if ((was & lt.LISTED) !== 0) {
+    // Finished: off its task's list of promises only their owner can run.
+    lt.unlist(task, n, was);
+  }
   // SAFETY: the state's own drop glue (a non-catching node keeps it, `N_DROP`) on a state that
   // is suspended, not being polled, and never polled again.
   unsafe {

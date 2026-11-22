@@ -1,0 +1,40 @@
+// velt/arch/x86 (internal): `Ssse3`, the check of `ssse3-x86` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { SSSE3_X86 } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("ssse3-x86")`) and what such code calls.
+declare function velt_simd_has_ssse3_x86(): bool;
+// Whether this build runs x86-64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_x86(): bool;
+
+/** SSSE3. The check of `@targetFeature("ssse3-x86")`. */
+export class Ssse3 {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=SSSE3`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_ssse3_x86() || (velt_simd_on_x86() && cpuHas(SSSE3_X86));
+  }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * Byte `i` is byte `mask[i] & 15` of `value`, or 0 where bit 7 of `mask[i]` is set.
+   *
+   * `_mm_shuffle_epi8` (`pshufb`). Runs only where the CPU has it: call it behind
+   * `Ssse3.isSupported()`, or in a function gated on `ssse3-x86`.
+   */
+  static shuffle(value: u8x16, mask: u8x16): u8x16 {
+    return velt_arch_ssse3_shuffle(value, mask);
+  }
+}
+
+declare function velt_arch_ssse3_shuffle(value: u8x16, mask: u8x16): u8x16;

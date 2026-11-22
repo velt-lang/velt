@@ -287,3 +287,195 @@ async function main() {
   console.log(`waited ${sum}, marked ${MARKED.load()}`);
 }
 "#;
+
+/// Runs of [`SETTLED_ACROSS`] at each worker count.
+const SETTLE_RUNS: usize = 5;
+
+/// A task on worker 1 settles `main`'s promise with an object that holds a promise of its own,
+/// and `main` hands the object on to a third task the moment it is settled. The settling step
+/// (std/lang/promise/settle.velt `fulfillLater`) used to open the promise's latch while its
+/// frame still referenced the object: handed on in that window the object was copied, the copy
+/// shared the promise inside on `main`'s task, and the frame's own reference was then dropped
+/// on worker 1, a holder of a shared promise dropped off its task (an `ICE:`, #3360). The window
+/// is a few instructions, so `main`'s std passes this nearly always on a quiet machine (1 run
+/// in 30 failed on a loaded one); with the window widened (the settling step spinning 0.3 ms
+/// before its frame ends) `main`'s std fails every run and the fix none.
+#[test]
+fn a_value_settled_from_another_task_is_let_go_before_its_awaiter_sees_it() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "settled_across", SETTLED_ACROSS);
+    let mut bad = Vec::new();
+    for threads in ["4", "8"] {
+        for i in 0..SETTLE_RUNS {
+            let (code, out, err) = run(&exe, threads);
+            if code != 0 || out != "done 600\n" || !all_freed(&err) {
+                bad.push(format!(
+                    "{threads} workers, run {i}: exit {code}, stdout {out:?}, stderr {err}"
+                ));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// The program of [`a_value_settled_from_another_task_is_let_go_before_its_awaiter_sees_it`].
+const SETTLED_ACROSS: &str = r#"class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+// Finishes after `n` turns of its task.
+async function soon(n: i64): Promise<number> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 1: settles main's promise with an object that holds a promise of this task, and
+// returns. The settling step runs at the task's next poll.
+async function maker(r: i64, give: (h: Holder) => void): Promise<number> {
+  const p = soon(1 + (r % 4));
+  give(new Holder(p));
+  return 1;
+}
+
+// On worker 2: awaits the promise in what it was given.
+async function user(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 300; r++) {
+    const got = Promise.withResolvers<Holder>();
+    sum += await spawn(maker(r, got.resolve), { worker: 1 });
+    // Handed on the moment it is settled: main is awake, and the task on worker 1 may still be
+    // in the step that settled it.
+    sum += await spawn(user(await got.promise), { worker: 2 });
+  }
+  console.log(`done ${sum}`);
+}
+"#;
+
+/// Runs of [`BARE_PROMISE`] and [`RECORD_PROMISE`] at each worker count. Both failed every run
+/// before the fix, so a few runs are enough.
+const PROMISE_RUNS: usize = 3;
+
+/// A task on worker 1 settles `main`'s promise with a bare promise of its own task, and with an
+/// object type holding one. `needsTransfer` said a promise has nothing to transfer, so `resolve`
+/// settled at once and copied the transferred promise into the outcome on worker 1: the copy of
+/// a holder handed over shares its proxy there, and `main` dropped a handle of a hub of worker 1's
+/// task (an `ICE:` every run, #3389). The settling step's own copy after `transfer` did the same
+/// once `needsTransfer` was right.
+#[test]
+fn a_promise_settled_from_another_task_reaches_its_awaiter_handed_over() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let mut bad = Vec::new();
+    for (name, src) in [
+        ("bare_promise", BARE_PROMISE),
+        ("record_promise", RECORD_PROMISE),
+    ] {
+        let exe = build_std(dir.path(), name, src);
+        for threads in ["4", "8"] {
+            for i in 0..PROMISE_RUNS {
+                let (code, out, err) = run(&exe, threads);
+                if code != 0 || out != "done 40\n" || !all_freed(&err) {
+                    bad.push(format!(
+                        "{name}, {threads} workers, run {i}: exit {code}, stdout {out:?}, stderr {err}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} runs went wrong:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}
+
+/// The bare promise of [`a_promise_settled_from_another_task_reaches_its_awaiter_handed_over`]
+/// (#3369's review, `p2h_bare_promise_temp`).
+const BARE_PROMISE: &str = r#"async function soon(n: i64): Promise<number> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 1: settles main's promise with a promise of this task, made for the call.
+async function maker(give: (p: Promise<number>) => void): Promise<number> {
+  give(soon(2));
+  for (let y: i64 = 0; y < 6; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 20; r++) {
+    const got = Promise.withResolvers<Promise<number>>();
+    const mk = spawn(maker(got.resolve), { worker: 1 });
+    const p = await got.promise;
+    sum += await p;
+    sum += await mk;
+  }
+  console.log(`done ${sum}`);
+}
+"#;
+
+/// The object type holding a promise of
+/// [`a_promise_settled_from_another_task_reaches_its_awaiter_handed_over`] (#3369's review,
+/// `p6_record`): `main` hands it on to a task on worker 2.
+const RECORD_PROMISE: &str = r#"type R = { p: Promise<number> };
+
+async function soon(n: i64): Promise<number> {
+  for (let i: i64 = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 1: settles main's promise with a record holding a promise of this task.
+async function maker(give: (r: R) => void): Promise<number> {
+  give({ p: soon(2) });
+  for (let y: i64 = 0; y < 6; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+// On worker 2: awaits the promise in what it was given.
+async function user(r: R): Promise<number> {
+  return await r.p;
+}
+
+async function main() {
+  let sum = 0;
+  for (let r: i64 = 0; r < 20; r++) {
+    const got = Promise.withResolvers<R>();
+    const mk = spawn(maker(got.resolve), { worker: 1 });
+    sum += await spawn(user(await got.promise), { worker: 2 });
+    sum += await mk;
+  }
+  console.log(`done ${sum}`);
+}
+"#;

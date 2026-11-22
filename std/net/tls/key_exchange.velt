@@ -1,0 +1,56 @@
+// velt/net (internal): the ECDHE groups of both handshakes and both versions: X25519,
+// secp256r1 and secp384r1 (RFC 8446 §4.2.7, RFC 8422 §5.1.1), behind one set of functions so a
+// handshake names a group and nothing else.
+
+import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
+import { p384Ecdh, p384PrivateKey, p384PublicKey } from "velt/crypto/p384_ecdh";
+import { randomBytes } from "velt/crypto/random";
+import { x25519, x25519PublicKey } from "velt/crypto/x25519";
+import { SECP256R1, SECP384R1, X25519 } from "velt/net/tls/client_hello";
+
+/** Whether `group` is one this stack has. */
+export function groupSupported(group: usize): bool {
+  return group == X25519 || group == SECP256R1 || group == SECP384R1;
+}
+
+/**
+ * Whether `point` has the form of a public value of `group`: 32 bytes for X25519, an
+ * uncompressed point (0x04, x, y) for the curves. Whether it is on the curve is `exchangeSecret`'s
+ * to find. False for a group this stack does not have.
+ */
+export function pointFormOk(group: usize, point: u8[]): bool {
+  if (group == X25519) {
+    return point.length == 32;
+  }
+  if (group == SECP256R1) {
+    return point.length == 65 && point[0] == 4;
+  }
+  return group == SECP384R1 && point.length == 97 && point[0] == 4;
+}
+
+/** A new private key for `group`. */
+export function exchangeKey(group: usize): u8[] {
+  if (group == X25519) {
+    return randomBytes(32);
+  }
+  return group == SECP256R1 ? p256PrivateKey() : p384PrivateKey();
+}
+
+/** The public value to send for the private key `key` of `group`. */
+export function exchangePublic(group: usize, key: u8[]): u8[] {
+  if (group == X25519) {
+    return x25519PublicKey(key);
+  }
+  return group == SECP256R1 ? p256PublicKey(key) : p384PublicKey(key);
+}
+
+/**
+ * The shared secret of the private key `key` and the peer's public value `point`. Throws for a
+ * point that is not on the curve, or an X25519 one of small order.
+ */
+export function exchangeSecret(group: usize, key: u8[], point: u8[]): u8[] {
+  if (group == X25519) {
+    return x25519(key, point);
+  }
+  return group == SECP256R1 ? p256Ecdh(key, point) : p384Ecdh(key, point);
+}

@@ -7,7 +7,7 @@
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
 //!   methods and builders, number formatting, the JSON reader, byte buffers
 //!   and their bulk operations, BigInts, results, object handles, hashing (also `velt/hash`'s
-//!   FNV-1a), HTML escaping, symbols, math, memory, the fs operations and the
+//!   FNV-1a), HTML escaping, math, memory, the fs operations and the
 //!   `*_sync` fs calls. Their
 //!   `repr(C)` types put a pointer only where an 8-byte field follows, so on wasm32 each pointer
 //!   occupies the first half of its 8-byte VIR slot (see `velt_codegen_llvm`'s
@@ -83,8 +83,6 @@ pub mod str_array;
 pub mod str_ops;
 #[path = "../../velt_rt/src/strbuf.rs"]
 pub mod strbuf;
-#[path = "../../velt_rt/src/symbol.rs"]
-pub mod symbol;
 pub mod task;
 #[path = "../../velt_rt/src/top_level_await.rs"]
 pub mod top_level_await;

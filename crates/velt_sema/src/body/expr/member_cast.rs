@@ -15,12 +15,20 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
-        // `(v as Record<symbol, unknown>)[KEY]` is `symbol_record_read`'s; nothing else is.
-        if self.symbol_record_elsewhere(ty, span) {
+        let target = self.resolve(ty);
+        let symbol_cast = self.symbol_record_cast(expr, ty, target, span);
+        if symbol_cast == Some(super::symbol_record::SymbolCast::Refused) {
             self.expr(expr, None, Want::Borrow);
             return self.error_expr(span);
         }
-        let target = self.resolve(ty);
+        if symbol_cast == Some(super::symbol_record::SymbolCast::Checked) {
+            // The record a dynamic value holds, checked to be that value itself.
+            return self.operand_once(expr, span, |cx, v| {
+                let h = cx.type_assertion(v, target, want, span);
+                let source = v.clone();
+                cx.record_call(h, velt_common::std_key!(record_symbol_bag), &[source], span)
+            });
+        }
         let nothing = self.nothing_cast(expr, target, span);
         if let Some(h) = nothing.or_else(|| self.callable_cast(expr, target, span)) {
             return h;

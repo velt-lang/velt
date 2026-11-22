@@ -97,16 +97,26 @@ fn rename_deref_place(p: &mut Place, resolved: &[Option<Local>]) {
 }
 
 fn block_local(func: &mut Function, usage: &Usage) -> bool {
+    block_local_counted(func, usage).0
+}
+
+/// [`block_local`], with the facts it looked at (for tests of its cost).
+fn block_local_counted(func: &mut Function, usage: &Usage) -> (bool, u64) {
     let n = func.locals.len();
     let mut changed = false;
-    // copy_of[a] = b while `a == b` is known to hold at this point of the block; `active`
-    // lists the set entries, which are cleared after each block (allocating the table per
-    // block was quadratic in long functions).
+    let mut looked = 0u64;
+    // copy_of[a] = b while `a == b` is known to hold at this point of the block. copies_of[b]
+    // lists the `a` set to copies of `b` (some may since have changed: checked when used), so
+    // a write of `b` forgets exactly those facts without a scan of all of them, which was
+    // quadratic in a long block of copies. `touched` lists the entries to clear after each
+    // block (allocating the tables per block was quadratic in long functions).
     let mut copy_of: Vec<Option<Local>> = vec![None; n];
-    let mut active: Vec<Local> = Vec::new();
+    let mut copies_of: Vec<Vec<Local>> = vec![vec![]; n];
+    let mut touched: Vec<Local> = Vec::new();
     for bi in 0..func.blocks.len() {
-        for a in active.drain(..) {
-            copy_of[a.0 as usize] = None;
+        for t in touched.drain(..) {
+            copy_of[t.0 as usize] = None;
+            copies_of[t.0 as usize].clear();
         }
         for si in 0..func.blocks[bi].stmts.len() {
             let mut rename = |op: &mut Operand| {
@@ -125,16 +135,18 @@ fn block_local(func: &mut Function, usage: &Usage) -> bool {
                 continue;
             };
             // `d` changed: forget facts about it on either side.
-            active.retain(|&a| {
-                let stale = a == d || copy_of[a.0 as usize] == Some(d);
-                if stale {
+            copy_of[d.0 as usize] = None;
+            for a in std::mem::take(&mut copies_of[d.0 as usize]) {
+                looked += 1;
+                if copy_of[a.0 as usize] == Some(d) {
                     copy_of[a.0 as usize] = None;
                 }
-                !stale
-            });
+            }
             if let Some((a, b)) = as_copy(func, usage, &func.blocks[bi].stmts[si]) {
+                looked += 1;
                 copy_of[a.0 as usize] = Some(b);
-                active.push(a);
+                copies_of[b.0 as usize].push(a);
+                touched.extend([a, b]);
             }
         }
         let mut rename = |op: &mut Operand| {
@@ -147,7 +159,7 @@ fn block_local(func: &mut Function, usage: &Usage) -> bool {
         };
         term_operands_mut(&mut func.blocks[bi].term, &mut rename);
     }
-    changed
+    (changed, looked)
 }
 
 #[cfg(test)]
@@ -227,5 +239,38 @@ mod tests {
         fb.ret(b, copy_local(x));
         let mut f = fb.finish();
         assert!(!run(&mut f));
+    }
+
+    /// `x0 = p; x1 = x0 + 1; y1 = x1; x2 = y1 + 1; y2 = x2; ...` in one block: a copy per
+    /// step, each copied local written once.
+    fn copies(n: usize) -> Function {
+        let mut fb = FuncBuilder::internal("f", &[Ty::I64], Ty::I64);
+        let p = fb.param(0);
+        let b = fb.block();
+        let mut prev = p;
+        for _ in 0..n {
+            let (x, y) = (fb.local(Ty::I64), fb.local(Ty::I64));
+            fb.assign(b, x, bin(BinOp::Add, copy_local(prev), int(1, Ty::I64)));
+            fb.assign(b, y, Rvalue::Use(copy_local(x)));
+            prev = y;
+        }
+        fb.ret(b, copy_local(prev));
+        fb.finish()
+    }
+
+    #[test]
+    fn a_long_block_of_copies_costs_linear_work() {
+        let work = |n| {
+            let mut f = copies(n);
+            let usage = Usage::of(&f);
+            block_local_counted(&mut f, &usage).1
+        };
+        let (small, large) = (work(500), work(4000));
+        // Forgetting the facts about a written local by a scan of every fact costs the square
+        // of the block's length.
+        assert!(
+            large <= small * 9,
+            "8 times the block costs {large} against {small}: more than linear"
+        );
     }
 }

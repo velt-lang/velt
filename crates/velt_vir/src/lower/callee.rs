@@ -38,7 +38,8 @@ impl super::Cx<'_> {
             (TyKind::Tuple(xs), TyKind::Tuple(ys)) => self.match_all(xs, ys, binds),
             (TyKind::Array(x), TyKind::Array(y))
             | (TyKind::Option(x, _), TyKind::Option(y, _))
-            | (TyKind::Shared(x), TyKind::Shared(y)) => self.match_ty(*x, *y, binds),
+            | (TyKind::Shared(x), TyKind::Shared(y))
+            | (TyKind::Ptr(x), TyKind::Ptr(y)) => self.match_ty(*x, *y, binds),
             (TyKind::Result(a, b), TyKind::Result(c, d))
             | (TyKind::Map(a, b), TyKind::Map(c, d))
             | (TyKind::Promise(a, b), TyKind::Promise(c, d)) => {

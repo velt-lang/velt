@@ -70,13 +70,14 @@ impl Cx<'_> {
             TyKind::Option(e, n) => TyKind::Option(w(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(w(self, a), w(self, b)),
             TyKind::Shared(e) => TyKind::Shared(w(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(w(self, e)),
             _ => return t,
         };
         self.intern(k)
     }
 
     /// The keys of the function values `ty` holds as a member ([`FnLower::note_fn_compared_in`]).
-    fn fn_keys_in(&mut self, ty: TyId, depth: u32, out: &mut Vec<FnKey>) {
+    pub(super) fn fn_keys_in(&mut self, ty: TyId, depth: u32, out: &mut Vec<FnKey>) {
         if depth > 8 {
             return;
         }
@@ -224,6 +225,13 @@ impl FnLower<'_, '_> {
     /// (which the glue compares member by member). Nothing for a type holding none, so closures keep a frame
     /// environment in a program comparing only other values.
     pub(super) fn note_fn_compared_in(&mut self, ty: TyId) {
+        // In a shared instance (shape/) the type is known per dictionary: noted then.
+        if self.cx.mentions_ph(ty) {
+            if !self.glue {
+                self.cx.facts.glue_compared.insert(ty);
+            }
+            return;
+        }
         let mut keys = vec![];
         self.cx.fn_keys_in(ty, 0, &mut keys);
         if keys.is_empty() {

@@ -119,11 +119,6 @@ fn velt_with(
     cmd.output().unwrap()
 }
 
-/// Whether debug builds on this machine link prebuilt objects: not on arm64 Linux, whose debug
-/// link need not have the helpers the objects' atomics call (prebuilt.rs `debug_link_takes`).
-fn debug_takes_objects() -> bool {
-    !velt_codegen_llvm::calls_outline_atomics(&velt_codegen_cl::host_triple())
-}
 /// What a build's statistics say of the module of `toPrecision` (std/lang/hooks/number_digits):
 /// `off` where they say nothing of it (prebuilt objects off: nothing is looked up).
 fn digits_object(o: &Output) -> &'static str {
@@ -184,12 +179,8 @@ fn an_installed_toolchain_s_hook_objects_are_linked() {
     .unwrap();
     let off = [("VELT_BUILD_CACHE", "off")];
     let expected = "1234.57\n";
-    // A debug build, as on a machine without clang; a release build (the same objects, for the
-    // target's default CPU) where debug builds take none.
-    let args: &[&str] = match debug_takes_objects() {
-        true => &["run", "a.velt"],
-        false => &["run", "--release", "a.velt"],
-    };
+    // A debug build, as on a machine without clang.
+    let args: &[&str] = &["run", "a.velt"];
     let run = |env: &[(&str, &str)]| {
         let o = velt_with(&prefix, &work, &home, args, env);
         let err = String::from_utf8_lossy(&o.stderr).into_owned();
