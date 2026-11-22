@@ -2,9 +2,10 @@
 //! instruction is a row here, then `cargo xtask gen-arch` (which rewrites the std methods and
 //! the C-name index) and the LLVM test of every row (`velt_codegen_llvm` `tests/arch.rs`).
 
+use super::Lane;
 use super::Llvm::{Call, Ir};
 use super::Row;
-use super::Val::{self, I32x4, I8x16, U32x4, U64x2, U8x16, U16, U32, U64, U8};
+use super::Val::{self, I32x4, I8x16, U32x4, U64x2, U8x16, U16, U32, U64, U8, V256, V512};
 use crate::simd::Ext;
 
 const V: &str = "value";
@@ -47,6 +48,24 @@ const AARCH64_CRC: &[&str] = &[
     "declare i32 @llvm.aarch64.crc32ch(i32, i32)",
 ];
 const PMULL: &[&str] = &["declare <16 x i8> @llvm.aarch64.neon.pmull64(i64, i64)"];
+
+// The 256- and 512-bit vectors (`Vector256<T>`, `Vector512<T>`).
+const YU8: Val = V256(Lane::U8);
+const YI8: Val = V256(Lane::I8);
+const YI16: Val = V256(Lane::I16);
+const YU32: Val = V256(Lane::U32);
+const YI32: Val = V256(Lane::I32);
+const YU64: Val = V256(Lane::U64);
+const YF32: Val = V256(Lane::F32);
+const YF64: Val = V256(Lane::F64);
+const ZU8: Val = V512(Lane::U8);
+const ZU32: Val = V512(Lane::U32);
+const ZU64: Val = V512(Lane::U64);
+const ZF32: Val = V512(Lane::F32);
+const LR32: &[(&str, Val)] = &[("left", YU32), ("right", YU32)];
+const LR8: &[(&str, Val)] = &[("left", YU8), ("right", YU8)];
+const ZLR8: &[(&str, Val)] = &[("left", ZU8), ("right", ZU8)];
+const ZLR32: &[(&str, Val)] = &[("left", ZU32), ("right", ZU32)];
 
 /// Every instruction.
 #[rustfmt::skip]
@@ -185,4 +204,124 @@ pub static ROWS: &[Row] = &[
     row(Ext::I8mmArm, "dotProductUnsignedSigned", "vusdotq_s32", "usdot", &[("addend", I32x4), ("left", U8x16), ("right", I8x16)], I32x4,
         Call("llvm.aarch64.neon.usdot.v4i32.v16i8"),
         "Lane `i` of `addend` plus the products of the unsigned bytes `4i` to `4i + 3` of `left` and the signed ones of `right`."),
+    // AVX: 256-bit floats.
+    row(Ext::AvxX86, "addF32", "_mm256_add_ps", "vaddps", &[("left", YF32), ("right", YF32)], YF32,
+        Ir { decls: &[], body: "%r = fadd <8 x float> %x0, %x1" },
+        "The lanes of `left` plus those of `right`."),
+    row(Ext::AvxX86, "multiplyF32", "_mm256_mul_ps", "vmulps", &[("left", YF32), ("right", YF32)], YF32,
+        Ir { decls: &[], body: "%r = fmul <8 x float> %x0, %x1" },
+        "The lanes of `left` times those of `right`."),
+    row(Ext::AvxX86, "addF64", "_mm256_add_pd", "vaddpd", &[("left", YF64), ("right", YF64)], YF64,
+        Ir { decls: &[], body: "%r = fadd <4 x double> %x0, %x1" },
+        "The lanes of `left` plus those of `right`."),
+    row(Ext::AvxX86, "multiplyF64", "_mm256_mul_pd", "vmulpd", &[("left", YF64), ("right", YF64)], YF64,
+        Ir { decls: &[], body: "%r = fmul <4 x double> %x0, %x1" },
+        "The lanes of `left` times those of `right`."),
+    // FMA at 256 bits.
+    row(Ext::FmaX86, "multiplyAddF32", "_mm256_fmadd_ps", "vfmadd*ps", &[("a", YF32), ("b", YF32), ("c", YF32)], YF32,
+        Call("llvm.fma.v8f32"),
+        "`a * b + c` in each lane, rounded once."),
+    row(Ext::FmaX86, "multiplyAddF64", "_mm256_fmadd_pd", "vfmadd*pd", &[("a", YF64), ("b", YF64), ("c", YF64)], YF64,
+        Call("llvm.fma.v4f64"),
+        "`a * b + c` in each lane, rounded once."),
+    // AVX2: 256-bit integers.
+    row(Ext::Avx2X86, "compareEqualU8", "_mm256_cmpeq_epi8", "vpcmpeqb", LR8, YU8,
+        Ir { decls: &[], body: "%c = icmp eq <32 x i8> %x0, %x1\n%r = sext <32 x i1> %c to <32 x i8>" },
+        "Each byte all ones where `left`'s equals `right`'s, else 0."),
+    row(Ext::Avx2X86, "moveMaskU8", "_mm256_movemask_epi8", "vpmovmskb", &[(V, YU8)], U32,
+        Call("llvm.x86.avx2.pmovmskb"),
+        "Bit `i` is the top bit of byte `i` of `value`."),
+    row(Ext::Avx2X86, "shuffleU8", "_mm256_shuffle_epi8", "vpshufb", &[(V, YU8), ("mask", YU8)], YU8,
+        Call("llvm.x86.avx2.pshuf.b"),
+        "In each 128-bit half, byte `i` is byte `mask[i] & 15` of the same half of `value`, or 0 where bit 7 of `mask[i]` is set."),
+    row(Ext::Avx2X86, "addU8", "_mm256_add_epi8", "vpaddb", LR8, YU8,
+        Ir { decls: &[], body: "%r = add <32 x i8> %x0, %x1" },
+        "The bytes of `left` plus those of `right`, wrapping."),
+    row(Ext::Avx2X86, "addU32", "_mm256_add_epi32", "vpaddd", LR32, YU32,
+        Ir { decls: &[], body: "%r = add <8 x i32> %x0, %x1" },
+        "The lanes of `left` plus those of `right`, wrapping."),
+    row(Ext::Avx2X86, "subtractU32", "_mm256_sub_epi32", "vpsubd", LR32, YU32,
+        Ir { decls: &[], body: "%r = sub <8 x i32> %x0, %x1" },
+        "The lanes of `left` minus those of `right`, wrapping."),
+    row(Ext::Avx2X86, "multiplyLowU32", "_mm256_mullo_epi32", "vpmulld", LR32, YU32,
+        Ir { decls: &[], body: "%r = mul <8 x i32> %x0, %x1" },
+        "The low 32 bits of each product of `left`'s and `right`'s lanes."),
+    row(Ext::Avx2X86, "addU64", "_mm256_add_epi64", "vpaddq", &[("left", YU64), ("right", YU64)], YU64,
+        Ir { decls: &[], body: "%r = add <4 x i64> %x0, %x1" },
+        "The lanes of `left` plus those of `right`, wrapping."),
+    row(Ext::Avx2X86, "permuteVarU32", "_mm256_permutevar8x32_epi32", "vpermd|vpermps", &[(V, YU32), ("indices", YU32)], YU32,
+        Call("llvm.x86.avx2.permd"),
+        "Lane `i` is lane `indices[i] & 7` of `value`."),
+    row(Ext::Avx2X86, "minU8", "_mm256_min_epu8", "vpminub", LR8, YU8,
+        Ir { decls: &["declare <32 x i8> @llvm.umin.v32i8(<32 x i8>, <32 x i8>)"], body: "%r = call <32 x i8> @llvm.umin.v32i8(<32 x i8> %x0, <32 x i8> %x1)" },
+        "The smaller of each pair of bytes, unsigned."),
+    row(Ext::Avx2X86, "maxU8", "_mm256_max_epu8", "vpmaxub", LR8, YU8,
+        Ir { decls: &["declare <32 x i8> @llvm.umax.v32i8(<32 x i8>, <32 x i8>)"], body: "%r = call <32 x i8> @llvm.umax.v32i8(<32 x i8> %x0, <32 x i8> %x1)" },
+        "The larger of each pair of bytes, unsigned."),
+    row(Ext::Avx2X86, "multiplyAddAdjacentI16", "_mm256_madd_epi16", "vpmaddwd", &[("left", YI16), ("right", YI16)], YI32,
+        Call("llvm.x86.avx2.pmadd.wd"),
+        "Lane `i` is `left[2i] * right[2i] + left[2i + 1] * right[2i + 1]`, signed."),
+    row(Ext::Avx2X86, "multiplyAddAdjacentU8I8", "_mm256_maddubs_epi16", "vpmaddubsw", &[("left", YU8), ("right", YI8)], YI16,
+        Call("llvm.x86.avx2.pmadd.ub.sw"),
+        "Lane `i` is `left[2i] * right[2i] + left[2i + 1] * right[2i + 1]` (`left` unsigned, `right` signed), saturated to `i16`."),
+    row(Ext::Avx2X86, "sumAbsoluteDifferencesU8", "_mm256_sad_epu8", "vpsadbw", LR8, YU64,
+        Call("llvm.x86.avx2.psad.bw"),
+        "Lane `i` is the sum of `|left[j] - right[j]|` over bytes `8i` to `8i + 7`."),
+    row(Ext::Avx2X86, "blendVariableU8", "_mm256_blendv_epi8", "vpblendvb", &[("left", YU8), ("right", YU8), ("mask", YU8)], YU8,
+        Call("llvm.x86.avx2.pblendvb"),
+        "Byte `i` is `right`'s where the top bit of `mask[i]` is set, else `left`'s."),
+    row(Ext::Avx2X86, "shiftLeftLogicalVariableU32", "_mm256_sllv_epi32", "vpsllvd", &[(V, YU32), ("count", YU32)], YU32,
+        Call("llvm.x86.avx2.psllv.d.256"),
+        "Each lane of `value` shifted left by the same lane of `count` (0 from 32 on)."),
+    row(Ext::Avx2X86, "shiftRightLogicalVariableU32", "_mm256_srlv_epi32", "vpsrlvd", &[(V, YU32), ("count", YU32)], YU32,
+        Call("llvm.x86.avx2.psrlv.d.256"),
+        "Each lane of `value` shifted right by the same lane of `count`, zeros in (0 from 32 on)."),
+    // AVX-512 F: 512-bit vectors and 16-bit masks.
+    row(Ext::Avx512fX86, "addU32", "_mm512_add_epi32", "vpaddd", ZLR32, ZU32,
+        Ir { decls: &[], body: "%r = add <16 x i32> %x0, %x1" },
+        "The lanes of `left` plus those of `right`, wrapping."),
+    row(Ext::Avx512fX86, "multiplyLowU32", "_mm512_mullo_epi32", "vpmulld", ZLR32, ZU32,
+        Ir { decls: &[], body: "%r = mul <16 x i32> %x0, %x1" },
+        "The low 32 bits of each product of `left`'s and `right`'s lanes."),
+    row(Ext::Avx512fX86, "addF32", "_mm512_add_ps", "vaddps", &[("left", ZF32), ("right", ZF32)], ZF32,
+        Ir { decls: &[], body: "%r = fadd <16 x float> %x0, %x1" },
+        "The lanes of `left` plus those of `right`."),
+    row(Ext::Avx512fX86, "compareEqualU32", "_mm512_cmpeq_epi32_mask", "vpcmpeqd", ZLR32, U16,
+        Ir { decls: &[], body: "%c = icmp eq <16 x i32> %x0, %x1\n%r = bitcast <16 x i1> %c to i16" },
+        "Bit `i` set where lane `i` of `left` equals that of `right`."),
+    row(Ext::Avx512fX86, "blendU32", "_mm512_mask_blend_epi32", "vpblendmd|vmovdqa32|vmovdqu32", &[("mask", U16), ("left", ZU32), ("right", ZU32)], ZU32,
+        Ir { decls: &[], body: "%m = bitcast i16 %x0 to <16 x i1>\n%r = select <16 x i1> %m, <16 x i32> %x2, <16 x i32> %x1" },
+        "Lane `i` is `right`'s where bit `i` of `mask` is set, else `left`'s."),
+    row(Ext::Avx512fX86, "permuteVarU32", "_mm512_permutexvar_epi32", "vpermd|vpermps", &[(V, ZU32), ("indices", ZU32)], ZU32,
+        Call("llvm.x86.avx512.permvar.si.512"),
+        "Lane `i` is lane `indices[i] & 15` of `value`."),
+    // AVX-512 BW: bytes and 64-bit masks.
+    row(Ext::Avx512bwX86, "addU8", "_mm512_add_epi8", "vpaddb", ZLR8, ZU8,
+        Ir { decls: &[], body: "%r = add <64 x i8> %x0, %x1" },
+        "The bytes of `left` plus those of `right`, wrapping."),
+    row(Ext::Avx512bwX86, "compareEqualU8", "_mm512_cmpeq_epi8_mask", "vpcmpeqb", ZLR8, U64,
+        Ir { decls: &[], body: "%c = icmp eq <64 x i8> %x0, %x1\n%r = bitcast <64 x i1> %c to i64" },
+        "Bit `i` set where byte `i` of `left` equals that of `right`."),
+    row(Ext::Avx512bwX86, "minU8", "_mm512_min_epu8", "vpminub", ZLR8, ZU8,
+        Ir { decls: &["declare <64 x i8> @llvm.umin.v64i8(<64 x i8>, <64 x i8>)"], body: "%r = call <64 x i8> @llvm.umin.v64i8(<64 x i8> %x0, <64 x i8> %x1)" },
+        "The smaller of each pair of bytes, unsigned."),
+    row(Ext::Avx512bwX86, "shuffleU8", "_mm512_shuffle_epi8", "vpshufb", &[(V, ZU8), ("mask", ZU8)], ZU8,
+        Call("llvm.x86.avx512.pshuf.b.512"),
+        "In each 128-bit quarter, byte `i` is byte `mask[i] & 15` of the same quarter of `value`, or 0 where bit 7 of `mask[i]` is set."),
+    row(Ext::Avx512bwX86, "moveMaskU8", "_mm512_movepi8_mask", "vpmovb2m|vpcmpgtb", &[(V, ZU8)], U64,
+        Ir { decls: &[], body: "%c = icmp slt <64 x i8> %x0, zeroinitializer\n%r = bitcast <64 x i1> %c to i64" },
+        "Bit `i` is the top bit of byte `i` of `value`."),
+    // AVX-512 VBMI, CD, BITALG and DQ.
+    row(Ext::Avx512vbmiX86, "permuteVarU8", "_mm512_permutexvar_epi8", "vpermb", &[(V, ZU8), ("indices", ZU8)], ZU8,
+        Call("llvm.x86.avx512.permvar.qi.512"),
+        "Byte `i` is byte `indices[i] & 63` of `value`."),
+    row(Ext::Avx512cdX86, "leadingZeroCountU32", "_mm512_lzcnt_epi32", "vplzcntd", &[(V, ZU32)], ZU32,
+        Ir { decls: &["declare <16 x i32> @llvm.ctlz.v16i32(<16 x i32>, i1)"], body: "%r = call <16 x i32> @llvm.ctlz.v16i32(<16 x i32> %x0, i1 false)" },
+        "The number of zero bits above the highest bit set in each lane (32 for 0)."),
+    row(Ext::Avx512bitalgX86, "popCountU8", "_mm512_popcnt_epi8", "vpopcntb", &[(V, ZU8)], ZU8,
+        Ir { decls: &["declare <64 x i8> @llvm.ctpop.v64i8(<64 x i8>)"], body: "%r = call <64 x i8> @llvm.ctpop.v64i8(<64 x i8> %x0)" },
+        "The number of bits set in each byte."),
+    row(Ext::Avx512dqX86, "multiplyLowU64", "_mm512_mullo_epi64", "vpmullq", &[("left", ZU64), ("right", ZU64)], ZU64,
+        Ir { decls: &[], body: "%r = mul <8 x i64> %x0, %x1" },
+        "The low 64 bits of each product of `left`'s and `right`'s lanes."),
 ];

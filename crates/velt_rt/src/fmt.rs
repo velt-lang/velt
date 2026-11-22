@@ -1,5 +1,7 @@
-//! Number formatting as JavaScript prints it (in `velt_text`, shared with std's native libraries),
-//! with the debug runtime's check that a formatted value was not read from a freed block.
+//! Number formatting as JavaScript prints it, for the runtime's own text (its JSON values,
+//! database parameters; compiled code prints numbers through std), in `velt_text`, shared with
+//! std's native libraries, with the debug runtime's check that a formatted value was not read from
+//! a freed block.
 
 pub use velt_text::fmt::*;
 
@@ -13,10 +15,4 @@ pub fn push_i64(out: &mut Vec<u8>, v: i64) {
 pub fn push_f64(out: &mut Vec<u8>, v: f64) {
     crate::freed::check_value(v.to_bits(), "a number read from a freed block");
     velt_text::fmt::push_f64(out, v)
-}
-
-/// Append `v` as `console.log` prints it (`-0` is `-0`).
-pub fn push_inspect_f64(out: &mut Vec<u8>, v: f64) {
-    crate::freed::check_value(v.to_bits(), "a number read from a freed block");
-    velt_text::fmt::push_inspect_f64(out, v)
 }

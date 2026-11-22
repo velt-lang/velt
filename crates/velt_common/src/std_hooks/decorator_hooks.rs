@@ -1,15 +1,14 @@
-//! The rows of the hook table for the compile-time decorators the compiler acts on (#2203):
-//! found by their roles, never by the name a use is written with. Kept apart from the rest of
-//! the table ([`super`]), which [`with_decorator_hooks`] gives on, with these rows after it, to
-//! `with_module_hooks!`.
+//! The decorators' rows of the hook table: the compile-time decorators the compiler acts on
+//! (#2203), found by these roles, never by the name a use is written with. Kept apart from the
+//! rest of the table ([`super`]), which [`with_decorator_hooks`] gives on, with these rows after
+//! it, to `with_module_hooks!`.
 
-/// `with_module_hooks!` over the rows given, then these.
+/// `with_module_hooks!` over the rows given, then the decorators'.
 macro_rules! with_decorator_hooks {
     ($($rows:tt)*) => {
         with_module_hooks! {
             $($rows)*
-            // lang/intrinsics/decorators.velt: the compile-time decorators the compiler acts on (#2203),
-            // found by these roles, never by the name a use is written with.
+            // lang/intrinsics/decorators.velt.
             /// `@inline` on a function or method (any module; velt/compiler re-exports it):
             /// `@inline("always")` inlines every call in release builds (`vir::Inline::Always`), the
             /// default `"hint"` is `vir::Inline::Default` while a program is one unit (`velt_sema`

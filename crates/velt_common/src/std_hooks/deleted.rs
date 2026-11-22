@@ -122,4 +122,13 @@ pub const DELETED: &[&str] = &[
     "velt_rt_str_replace",
     "velt_rt_str_replace_all",
     "velt_rt_str_code_points",
+    // #2196: floats as text (std/lang/hooks/number_text, number_write, number_shortest,
+    // velt/lang/number/format); `JSON.stringify`'s float literals are the compiler's text, and
+    // the JSON writers' floats std's.
+    "velt_rt_str_from_f64",
+    "velt_rt_strbuf_push_f64",
+    "velt_rt_strbuf_push_inspect_f64",
+    "velt_rt_strbuf_push_json_f64",
+    "velt_rt_write_f64",
+    "velt_rt_bytes_put_f64",
 ];

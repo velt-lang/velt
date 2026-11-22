@@ -1,0 +1,14 @@
+// Integer literal types of a width of their own (Velt-only suffixes) print their digits; an
+// unsuffixed one is a `number`'s and prints the double it denotes, as Node.
+type M = 18446744073709551615u64 | 1u64;
+const m: M = 18446744073709551615u64;
+console.log(m, `${m}`, [m], JSON.stringify(m), String(m));
+type S = -2147483648i32 | 7i32;
+const s: S = -2147483648i32;
+console.log(s, `${s}`, [s], JSON.stringify(s));
+type B = 255u8 | 0u8;
+const b: B = 255u8;
+console.log(b, `${b}`, [b], JSON.stringify(b));
+type N = 9007199254740993 | 0.5;
+const n: N = 9007199254740993;
+console.log(n, `${n}`, JSON.stringify(n));

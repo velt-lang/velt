@@ -33,9 +33,13 @@ fn ir_of(src: &str, flags: &[&str]) -> String {
 
 const READ: &str = "const p = new Proxy({ a: 1 } as any, {});\nconsole.log(p.a);\n";
 
-/// Lines of release IR for `READ`: 37,557 when the budget was set. A real need can raise it; a
-/// new dependency of `Proxy` on the array algorithms or on `sort` can't get past it.
-const READ_BUDGET: usize = 46_000;
+/// Lines of release IR for `READ`: 37,557 when the budget was set, 47,165 since std prints
+/// numbers (#3154). A proxy's key text needs a float's text (`p[1.5]` reads the key `"1.5"`),
+/// and std's shortest printer, about 5,200 lines, is that now. A real build links it prebuilt
+/// (velt/lang/hooks/number_shortest, from the build cache or the toolchain), but `--emit llvm`
+/// compiles it in. A real need can raise the budget; a new dependency of `Proxy` on the array
+/// algorithms or on `sort` can't get past it.
+const READ_BUDGET: usize = 51_000;
 
 #[test]
 fn one_proxy_stays_within_its_budget() {

@@ -2,7 +2,7 @@
 // `toString(radix)` and the conversions a float index or an int32 product compiles to. Nothing
 // imports these; the compiler calls them (velt_common `std_hooks.rs`).
 
-import { trunc } from "velt/lang/intrinsics";
+import { strAsciiWords, trunc } from "velt/lang/intrinsics";
 import { f64Radix, intRadix } from "velt/lang/number/radix";
 
 // JS's ToInt32 (`x | 0`), as the prelude's `Math` has it.
@@ -76,7 +76,52 @@ export function floatIndex(x: f64): usize {
   if (x >= 0.0 && trunc(x) == x && x < 18446744073709551616.0) {
     return x as usize;
   }
-  panic(`index out of bounds: the index is ${x}`);
+  panic(`index out of bounds: the index is ${badIndex(x)}`);
+}
+
+/**
+ * The text of an index `floatIndex` refuses, without std's float printing (`floatIndex` is in every
+ * program): a whole number in its digits, NaN and the infinities by name, anything else said in
+ * words.
+ */
+function badIndex(x: f64): string {
+  if (x != x) {
+    return "NaN";
+  }
+  if (x == Infinity || x == -Infinity) {
+    return x > 0 ? "Infinity" : "-Infinity";
+  }
+  if (trunc(x) != x) {
+    return "not a whole number";
+  }
+  if (x < -9223372036854775808.0 || x >= 18446744073709551616.0) {
+    return "out of the 64-bit range";
+  }
+  // The digits from the last, each byte placed in the three words of an inline string (at most
+  // 20 digits and a minus).
+  const neg = x < 0;
+  let a: u64 = neg ? (-x) as u64 : x as u64;
+  let len: u64 = neg ? 2 : 1;
+  for (let rest = a; rest >= 10; rest = rest / 10) {
+    len++;
+  }
+  let w0: u64 = neg ? 0x2d : 0;
+  let w1: u64 = 0;
+  let w2: u64 = 0;
+  let at = len;
+  while (at > (neg ? 1 : 0)) {
+    at--;
+    const d = 48 + a % 10;
+    a = a / 10;
+    if (at < 8) {
+      w0 = w0 | (d << (at * 8));
+    } else if (at < 16) {
+      w1 = w1 | (d << ((at - 8) * 8));
+    } else {
+      w2 = w2 | (d << ((at - 16) * 8));
+    }
+  }
+  return strAsciiWords(w0, w1, w2, len as usize);
 }
 
 /**

@@ -11,14 +11,11 @@ velt_rt velt_rt_bytes_copy
 velt_rt velt_rt_bytes_copy_within
 velt_rt velt_rt_bytes_drop
 velt_rt velt_rt_bytes_from_str
-velt_rt velt_rt_bytes_is_utf8
-velt_rt velt_rt_bytes_put_f64
 velt_rt velt_rt_bytes_range_to_str
 velt_rt velt_rt_bytes_range_to_str_lossy
 velt_rt velt_rt_bytes_set
 velt_rt velt_rt_bytes_slice
 velt_rt velt_rt_bytes_to_str
-velt_rt velt_rt_bytes_to_str_lossy
 velt_rt velt_rt_bytes_uninit
 velt_rt velt_rt_bytes_zeroed
 velt_rt velt_rt_catch_arm
@@ -239,7 +236,6 @@ velt_rt velt_rt_str_drop
 velt_rt velt_rt_str_eq
 velt_rt velt_rt_str_from_bool
 velt_rt velt_rt_str_from_char_code
-velt_rt velt_rt_str_from_f64
 velt_rt velt_rt_str_hash
 velt_rt velt_rt_str_is_well_formed
 velt_rt velt_rt_str_join
@@ -260,12 +256,9 @@ velt_rt velt_rt_strbuf_new
 velt_rt velt_rt_strbuf_push_bool
 velt_rt velt_rt_strbuf_push_byte
 velt_rt velt_rt_strbuf_push_bytes
-velt_rt velt_rt_strbuf_push_f64
-velt_rt velt_rt_strbuf_push_inspect_f64
 velt_rt velt_rt_strbuf_push_inspect_json
 velt_rt velt_rt_strbuf_push_inspect_key
 velt_rt velt_rt_strbuf_push_inspect_str
-velt_rt velt_rt_strbuf_push_json_f64
 velt_rt velt_rt_strbuf_push_json_str
 velt_rt velt_rt_strbuf_push_json_value
 velt_rt velt_rt_strbuf_push_str
@@ -320,7 +313,6 @@ velt_rt velt_rt_visit_leave
 velt_rt velt_rt_worker_count
 velt_rt velt_rt_write_bool
 velt_rt velt_rt_write_byte
-velt_rt velt_rt_write_f64
 velt_rt velt_rt_write_str
 velt_rt velt_rt_xfer_begin
 velt_rt velt_rt_xfer_defer
@@ -497,7 +489,6 @@ velt_rt_wasm velt_rt_unhandled_defer
 velt_rt_wasm velt_rt_worker_count
 velt_rt_wasm velt_rt_write_bool
 velt_rt_wasm velt_rt_write_byte
-velt_rt_wasm velt_rt_write_f64
 velt_rt_wasm velt_rt_write_str
 velt_rt_wasm velt_rt_xfer_keep_shared
 velt_rt_wasm velt_rt_yield_now

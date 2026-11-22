@@ -112,6 +112,11 @@ with_decorator_hooks! {
     /// don't settle, from its bytes `start` to `end`.
     number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
         replaces("velt_rt_parse_float"), prebuilt;
+    /// `String(x)` of any float by std's float printing (velt/lang/number/format), for code that
+    /// doesn't load it: std's own (the JSON writers, `StringBuilder`, the digits of
+    /// `toExponential()`) and the float hooks of velt/lang/hooks/number_text and number_write.
+    number_shortest => lang_hooks_number_shortest, "shortestText", sig((f64) -> string),
+        replaces("velt_rt_str_from_f64"), prebuilt;
     /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
     /// string held as `any`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
@@ -145,26 +150,33 @@ with_decorator_hooks! {
     uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64, u8) -> void), lowered,
         replaces("velt_rt_write_u64"), constructs(Format);
     /// A float as `console.log` prints it and the byte after it: a whole number below 2^53 other
-    /// than `-0` by `whole_number_write`, anything else by the runtime's printer, which lowering
-    /// calls while this is unchecked ([`ON_DEMAND_WRITE`]). It holds no integer hook, so a printed
-    /// float checks no integer printing. numrep turns a call with such an `x` into one of
-    /// `int_write` where the program has that, else of `whole_number_write`.
+    /// than `-0` by `whole_number_write`, anything else by std's float printing
+    /// (`number_shortest`). It holds no integer hook, so a printed float checks no integer
+    /// printing. numrep turns a call with such an `x` into one of `int_write` where the program
+    /// has that, else of `whole_number_write`.
     number_write => lang_hooks_number_write, "numberWrite", sig((u32, f64, u8) -> void), lowered,
-        fallback, replaces("velt_rt_write_f64");
+        replaces("velt_rt_write_f64"), constructs(WriteFloat);
     /// A whole number below 2^53 other than `-0`, as an `i64`, and the byte after it, as
     /// `number_write` writes the float, by digits of its own (no integer hook): `number_write`'s
     /// and numrep's.
     whole_number_write => lang_hooks_number_write, "wholeNumberWrite", sig((u32, i64, u8) -> void),
-        lowered, fallback;
-    /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
-    /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
-    /// whole `x` into one of `int_text`.
-    number_text => lang_hooks_number_text, "numberText", sig((f64) -> string), lowered, fallback,
-        replaces("velt_rt_str_from_f64"), bench("float_to_string");
+        lowered, constructs(WriteFloat);
+    /// `String(x)` of a float (`velt_vir` `template.rs`), whole numbers included, by std's float
+    /// printing (`number_shortest`), so that it holds no integer printing. `velt_opt` numrep
+    /// turns a call with a whole `x` into one of `int_text` where the program has that. `TextFloat` also covers a numeric
+    /// key read through `any` or a proxy (`velt_vir` `any_has.rs`, `any_member.rs`, `any_proxy.rs`,
+    /// `proxy_throws.rs`).
+    number_text => lang_hooks_number_text, "numberText", sig((f64) -> string), lowered,
+        replaces("velt_rt_str_from_f64"), bench("float_to_string"), constructs(TextFloat);
     /// A float appended to a builder, as `number_text`; numrep turns a call with a whole `x` into
     /// `int_push`.
-    number_push => lang_hooks_number_text, "numberPush", sig((&mut string, f64) -> void), lowered, fallback,
-        replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
+    number_push => lang_hooks_number_text, "numberPush", sig((&mut string, f64) -> void), lowered,
+        replaces("velt_rt_strbuf_push_f64"), bench("float_to_string"), constructs(TextFloat);
+    /// A float appended to a builder as `console.log` prints it (`-0` is `-0`), as `number_push`
+    /// otherwise: the formatting glue (`velt_vir` `glue/format.rs`, `console.rs`).
+    number_inspect_push => lang_hooks_number_text, "numberInspectPush",
+        sig((&mut string, f64) -> void), lowered, replaces("velt_rt_strbuf_push_inspect_f64"),
+        constructs(TextFloat);
     /// `String(x)` of a float, all of it by std's printing (velt/lang/number/format): lowering
     /// calls it instead of `number_text` where its module is loaded ([`ON_DEMAND_MODULES`], for a
     /// program that converts an operand that may be a float).
@@ -778,9 +790,7 @@ mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
 pub mod prebuilt;
-pub use on_demand::{
-    on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE,
-};
+pub use on_demand::{on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES};
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]
