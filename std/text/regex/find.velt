@@ -152,6 +152,19 @@ function bounded(prog: Program, m: Search, s: string, len: usize, from: usize, f
  * matchers' work between the two. `MATCHED`, `FAILED`, or `GAVE_UP`. */
 function automaton(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool): i64 {
   const slots = m.slots;
+  // Every match ends where the subject does: where one starts is the backward automaton's
+  // answer from there, and the subject is read from its end only as far as a match can reach.
+  if (prog.endsAtEnd && !fixed) {
+    const start = backward(startsOf(prog, m), s, len, from);
+    if (start == GAVE_UP) {
+      dropStarts(m);
+      return GAVE_UP;
+    }
+    if (start < 0) {
+      return FAILED;
+    }
+    return groupsOf(prog, m, s, len, start, len as i64, len);
+  }
   const kept = m.endsKept;
   const ends = m.ends ?? (kept != null ? thaw(prog, false, kept) : new Dfa(prog, false));
   m.ends = ends;
@@ -174,18 +187,46 @@ function automaton(prog: Program, m: Search, s: string, len: usize, from: usize,
     return MATCHED;
   }
   if (!fixed) {
-    const back = prog.backward ?? prog;
-    const keptStarts = m.startsKept;
-    const starts =
-      m.starts ?? (keptStarts != null ? thaw(back, true, keptStarts) : new Dfa(back, true));
-    m.starts = starts;
-    start = backward(starts, s, end as usize, from);
+    start = backward(startsOf(prog, m), s, end as usize, from);
     if (start == GAVE_UP) {
-      m.starts = null;
-      m.startsKept = null;
-      m.startsFull = true;
+      dropStarts(m);
       return GAVE_UP;
     }
+  }
+  return groupsOf(prog, m, s, len, start, end, ends.began);
+}
+
+/** The backward automaton of `m`'s search: kept, or started from the regex's tables. */
+function startsOf(prog: Program, m: Search): Dfa {
+  const back = prog.backward ?? prog;
+  const keptStarts = m.startsKept;
+  const starts =
+    m.starts ?? (keptStarts != null ? thaw(back, true, keptStarts) : new Dfa(back, true));
+  m.starts = starts;
+  return starts;
+}
+
+/** The backward automaton filled up: not kept, nor its tables. */
+function dropStarts(m: Search): void {
+  m.starts = null;
+  m.startsKept = null;
+  m.startsFull = true;
+}
+
+/** The slots of the match from `start` to `end` (`tried`: a start the reader of groups was
+ * tried from already). `MATCHED`, or `FAILED` when no matcher finds it. */
+function groupsOf(
+  prog: Program,
+  m: Search,
+  s: string,
+  len: usize,
+  start: i64,
+  end: i64,
+  tried: usize,
+): i64 {
+  const slots = m.slots;
+  if (slots.length == 0) {
+    return MATCHED;
   }
   if (slots.length == 2) {
     slots[0] = start;
@@ -196,7 +237,7 @@ function automaton(prog: Program, m: Search, s: string, len: usize, from: usize,
   // part of it, so the matchers read up to its end only; but with the whole subject when the
   // program has `$`, which must not hold where the match ends before the subject does
   // (`(a$)|(a)` on `"ab"`).
-  if (start as usize != ends.began && straight(prog, s, start as usize, end as usize, slots)) {
+  if (start as usize != tried && straight(prog, s, start as usize, end as usize, slots)) {
     return MATCHED;
   }
   for (let k: usize = 0; k < slots.length; k++) {

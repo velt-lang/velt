@@ -99,6 +99,30 @@ describe("Automaton", () => {
     expect(program("a$").automaton).toBe(true);
   });
 
+  it("finds a match that ends with the subject from its end", () => {
+    expect(program("(\\w+), $").endsAtEnd).toBe(true);
+    expect(program("a$b?").endsAtEnd).toBe(true);
+    expect(program("(?:a|b$)$").endsAtEnd).toBe(true);
+    expect(program("(a$)|(a)").endsAtEnd).toBe(false);
+    expect(program("(?:a$)*").endsAtEnd).toBe(false);
+    expect(program("a$", "m").endsAtEnd).toBe(false);
+    const x = "x".repeat(300);
+    // Without slots (`test`): no match is no match, not one at the end.
+    const words = program("(\\w+), $");
+    const none = new Search(0);
+    none.uses = 2;
+    expect(find(words, none, x + ", y", 0, false)).toBe(false);
+    const one = new Search(0);
+    one.uses = 2;
+    expect(find(words, one, x + "ab, ", 0, false)).toBe(true);
+    for (const source of ["(\\w+), $", "a+$", "(a|ab)(c|bcd)?$", "(?:a|b$)$", "x*$", "[^,]*,?$"]) {
+      const p = program(source);
+      for (const s of [x, x + "a", x + "ab, ", x + "abcd", x + ",", "", "ab, "]) {
+        expect(warm(p, s)).toEqual(pk(p, s));
+      }
+    }
+  });
+
   it("matches `$` where the subject ends only", () => {
     const x = "x".repeat(300);
     const prog = program("(\\w+), $");

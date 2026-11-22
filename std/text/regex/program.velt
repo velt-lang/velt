@@ -114,6 +114,9 @@ export class Program {
   /** The program has `$` (without the `m` flag), the one assertion an automaton runs: a match
    * read off between the automaton's ends is read with the whole subject after it. */
   atEnd: bool = false;
+  /** Every match ends where the subject does (required.velt `endsAtEnd`): a search finds its
+   * start with the backward automaton alone, from the subject's end. */
+  endsAtEnd: bool = false;
 
   /** Per instruction, which hint a split has, plus one (0: none), and the hints: 128 bytes
    * each, per ASCII character whether the split's first way can start with it (1), its second

@@ -3,7 +3,7 @@
 // byte scan says (find.velt) before any matcher runs. Only ASCII bytes count, which are never
 // part of another character's bytes; of several, the one least likely in text is taken.
 
-import { ALT, CAT, CHAR, GROUP, Node, REPEAT, SET } from "velt/text/regex/node";
+import { ALT, ASSERT, AT_END, CAT, CHAR, GROUP, Node, REPEAT, SET } from "velt/text/regex/node";
 
 /** How unlikely ASCII byte `b` is in text: 0 for a letter, a digit or a space, 1 for common
  * punctuation, 2 for the rest. */
@@ -47,6 +47,26 @@ function bytesOf(n: Node, out: u64[]): void {
       }
     }
   }
+}
+
+/** Does every match of `n` end where the subject does (`$` without the `m` flag, on every way
+ * through it)? */
+export function endsAtEnd(n: Node): bool {
+  const kind = n.kind;
+  if (kind == ASSERT) {
+    return n.a == AT_END;
+  }
+  if (kind == CAT) {
+    // Whatever follows `$` matches nothing.
+    return n.kids.some((k) => endsAtEnd(k));
+  }
+  if (kind == ALT) {
+    return n.kids.length > 0 && n.kids.every((k) => endsAtEnd(k));
+  }
+  if (kind == GROUP || (kind == REPEAT && n.a > 0)) {
+    return endsAtEnd(n.kids[0]);
+  }
+  return false;
 }
 
 /** The byte every match of `tree` has that is least likely in text, or -1 for none (or none

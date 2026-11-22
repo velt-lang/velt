@@ -3,12 +3,23 @@
 // over the lines as one text (`bench/regex/run.sh` counts each row's instructions). The
 // argument names the row, 0 to 9; without one, every row runs.
 function lines(width: number, count: number, value: string): string[] {
+  // The words are made once: the lines are only joined from them, so building them costs the
+  // same whatever else the program holds (a number formatted per word did not: it was inlined
+  // differently once the regex engine was linked in).
+  const keys: string[] = [];
+  for (let i = 0; i < 97; i++) {
+    keys.push("key" + i + "=");
+  }
+  const values: string[] = [];
+  for (let i = 0; i < 13; i++) {
+    values.push(value + i + ", ");
+  }
   const out: string[] = [];
   for (let i = 0; i < count; i++) {
     let line = "";
     let k = i;
     while (line.length < width - 24) {
-      line += "key" + (k % 97) + "=" + value + (k % 13) + ", ";
+      line += keys[k % 97] + values[k % 13];
       k = (k * 31 + 7) % 1000;
     }
     out.push(line.padEnd(width - 2, "x") + ", ");

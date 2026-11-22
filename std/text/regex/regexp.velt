@@ -332,7 +332,10 @@ export class RegExp implements Pattern {
     const m = new Search(slots);
     const cursor = this.#cursor;
     m.uses = cursor.calls.add(1, "relaxed") + 1;
-    m.endsKept = cursor.ends.load("acquire");
+    // A program whose matches end where the subject does runs only the backward automaton.
+    if (!this.#prog.endsAtEnd) {
+      m.endsKept = cursor.ends.load("acquire");
+    }
     m.startsKept = cursor.starts.load("acquire");
     return m;
   }

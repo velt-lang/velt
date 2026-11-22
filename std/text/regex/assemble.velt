@@ -8,7 +8,7 @@ import { hint } from "velt/text/regex/hints";
 import { parsePattern } from "velt/text/regex/parse_pattern";
 import { Parser } from "velt/text/regex/parser";
 import { Program } from "velt/text/regex/program";
-import { requiredByte } from "velt/text/regex/required";
+import { endsAtEnd, requiredByte } from "velt/text/regex/required";
 
 /** The program of `pattern` with `flags` (valid ones); the names of its groups are added to
  * `names`. Throws `RegExpError` for a pattern that is none. */
@@ -26,6 +26,7 @@ export function assemble(pattern: string, flags: string, names: string[]): Progr
     hint(prog);
     classify(prog);
     prog.required = requiredByte(tree);
+    prog.endsAtEnd = prog.automaton && endsAtEnd(tree);
   }
   if (prog.automaton) {
     const back = new Compiler(parser, true);
