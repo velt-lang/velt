@@ -141,6 +141,5 @@ fn finish_sema(
         std_summary::write(hir, &opts.input.display().to_string());
     }
     sess.stop_if_errors()?;
-    sess.stop_if_errors()?;
     hir.ok_or_else(|| BuildError::Ice("sema returned no program but reported no errors".into()))
 }

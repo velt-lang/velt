@@ -109,8 +109,7 @@ impl CliLoader {
         listed.unwrap_or_default()
     }
 
-    /// The public modules of the std root (listed on first use), as `velt/` specifiers resolve
-    /// them.
+    /// The std root's public modules (listed on first use), as `velt/` specifiers resolve them.
     fn std_modules(&self) -> Vec<ModuleEntry> {
         let Some(root) = loader::std_root() else {
             return vec![];
@@ -151,6 +150,16 @@ impl CliLoader {
 }
 
 impl ProgramLoader for CliLoader {
+    fn load(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Result<LoadedProgram, String> {
+        self.load_preloaded(root, overlay, &[], sm, diags)
+    }
+
     fn load_preloaded(
         &self,
         root: &Path,
@@ -474,8 +483,7 @@ mod tests {
         assert_eq!(installed, [app]);
     }
 
-    /// The real loader behind the server: unsaved buffers win over the disk, and imports of
-    /// files that exist only on disk resolve.
+    /// The real loader: unsaved buffers win over the disk; imports of files only on disk resolve.
     #[test]
     fn server_uses_the_cli_loader_with_open_buffers() {
         let dir = tempfile::tempdir().unwrap();

@@ -78,17 +78,14 @@ pub struct LoadedProgram {
 pub trait ProgramLoader: Send + Sync {
     /// Load `root` and its imports into `sm`. `overlay` holds the unsaved text of open documents
     /// (keyed by the paths the server derived from their URIs) and wins over the disk. Import and
-    /// syntax problems go into `diags`; `Err` means the root itself could not be read. A loader
-    /// implements this or [`Self::load_preloaded`]; each defaults to the other.
+    /// syntax problems go into `diags`; `Err` means the root itself could not be read.
     fn load(
         &self,
         root: &Path,
         overlay: &HashMap<PathBuf, String>,
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
-    ) -> Result<LoadedProgram, String> {
-        self.load_preloaded(root, overlay, &[], sm, diags)
-    }
+    ) -> Result<LoadedProgram, String>;
 
     /// [`Self::load`] with the std modules `preload` (canonical paths) loaded up front: those a
     /// check of the document demanded that could not be served in the middle of it

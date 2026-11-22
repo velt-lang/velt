@@ -4,8 +4,8 @@
 // specific `extend` of `TlsServer`, which the TLS server and client (std/net/tls/fd_server.velt,
 // fd_client.velt) load. tcp_sched and `fetch` call those by role (velt_common `std_hooks.rs`
 // `sched_tls_listen`, `sched_tls_connect`, `sched_tls_handshake`), so a program loads them, and
-// fd_reactor.velt with them, only when live code can listen or connect with TLS (#2392). A program
-// that can't parses, checks and builds none of them.
+// fd_reactor.velt with them, only when live code can listen or connect with TLS (#2392). Any other
+// program loads, checks and builds none of them.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
