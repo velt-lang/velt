@@ -148,29 +148,33 @@ fn enums_and_c_types_by_value_say_what_to_declare() {
         "{e}"
     );
     assert!(e.contains("field `h` of C struct `X` has type `H`"), "{e}");
-    assert!(e.contains("a `Ptr<T>` field comes in a later layer"), "{e}");
+    assert!(e.contains("declare the field `Ptr<T>`"), "{e}");
 }
 
-/// `Ptr<T> | null` is an option of the address in Velt, larger than C's pointer: pointer fields
-/// wait for their own storage.
+/// A pointer field is C's pointer: `Ptr<T>` and `Ptr<T> | null` are one word, `NULL` as `null`
+/// (#3094). `Ptr<T> | null | undefined` is two, and an array of pointers waits for `T[N]`.
 #[test]
-fn pointer_fields_wait_for_their_layer() {
+fn pointer_fields_are_c_pointers() {
     let e = std_diagnostics(
         "import { Ptr } from \"velt/ffi\";
-         declare c struct Node { value: i32; next: Ptr<Node> | null; first: Ptr<u8>; ps: [Ptr<u8>, Ptr<u8>]; }
+         declare c struct Node { value: i32; next: Ptr<Node> | null; first: Ptr<u8>; ps: [Ptr<u8>, Ptr<u8>]; u: Ptr<u8> | null | undefined; }
          function main() {}",
     );
-    for field in ["`next`", "`first`"] {
+    for field in ["`next`", "`first`", "`value`"] {
         assert!(
-            e.contains(&format!("field {field} of C struct `Node` is a pointer")),
-            "missing {field}:\n{e}"
+            !e.contains(&format!("field {field} of C struct `Node`")),
+            "{field} refused:\n{e}"
         );
     }
     assert!(
         e.contains("field `ps` of C struct `Node` is a C array"),
         "{e}"
     );
-    assert!(e.contains("stored as C's address"), "{e}");
+    assert!(
+        e.contains("field `u` of C struct `Node` has type `Ptr<u8> | null | undefined`"),
+        "{e}"
+    );
+    assert!(e.contains("no room for `undefined` too"), "{e}");
 }
 
 /// `src` checked as std code (which may use velt/ffi's raw API); the rendered diagnostics.
@@ -190,10 +194,7 @@ fn a_c_struct_is_never_empty_or_recursive() {
     let e = err_src("declare c struct Rec { r: Rec; } function main() {}");
     assert!(e.contains("recursive type `Rec` has infinite size"), "{e}");
     assert!(e.contains("a C struct can't hold itself"), "{e}");
-    assert!(
-        !e.contains("Ptr<Rec>"),
-        "pointer fields aren't there yet: {e}"
-    );
+    assert!(e.contains("`Ptr<T> | null` field"), "{e}");
 }
 
 #[test]
@@ -256,4 +257,92 @@ fn a_c_struct_is_not_made_with_new() {
          function main() {{ const p = new CGPoint(); console.log(p.x); }}"
     ));
     assert!(e.contains("`CGPoint` is a struct, not a class"), "{e}");
+}
+
+const PTR_MEMORY: &str = "import { Ptr } from \"velt/ffi\";
+declare c type H;
+declare c struct Inner { tag: i8; data: Ptr<u8>; }
+declare c struct Node { x: f32; next: Ptr<Node> | null; inner: Inner; }
+declare c struct Plain { x: f64; y: i32; }
+function first<T>(p: Ptr<T>): T {
+  // SAFETY: a test of the checks only; never run.
+  return unsafe { Ptr.read(p, 0) };
+}
+function main() {}";
+
+/// `src` checked as std code with `opts`; the rendered diagnostics.
+fn std_diagnostics_with(src: &str, opts: velt_sema::CheckOptions) -> String {
+    let mut l = common::programs::load_src(src);
+    let root = l.root;
+    l.modules[root].is_std = true;
+    let (_, d) = velt_sema::check_with(&l.modules, l.root, opts);
+    l.render(&d)
+}
+
+/// `Ptr.read` and `Ptr.write` move a number, `bool`, a C pointer or a C struct (#3094), also
+/// through a type parameter.
+#[test]
+fn ptr_read_and_write_move_what_c_lays_out() {
+    let e = std_diagnostics(&format!(
+        "{PTR_MEMORY}
+         export function use(n: Ptr<Node>, b: Ptr<u8>, pp: Ptr<Ptr<u8> | null>) {{
+           // SAFETY: never run.
+           const v = unsafe {{ Ptr.read(n, 1) }};
+           // SAFETY: never run.
+           unsafe {{ Ptr.write(n, 2, {{ ...v, next: n }}) }};
+           // SAFETY: never run.
+           console.log(unsafe {{ Ptr.read(b, 3) }}, unsafe {{ Ptr.read(pp, 0) }}, first(n).x);
+         }}"
+    ));
+    assert!(!e.contains("error"), "{e}");
+}
+
+/// `void` and a `declare c type` have no bytes Velt knows, whether written at the call or
+/// reached through a type parameter (reported where it is instantiated).
+#[test]
+fn ptr_read_refuses_void_and_opaque_types() {
+    let e = std_diagnostics(&format!(
+        "{PTR_MEMORY}
+         export function use(v: Ptr<void>, h: Ptr<H>) {{
+           // SAFETY: never run.
+           unsafe {{ Ptr.read(v, 0) }};
+           // SAFETY: never run.
+           unsafe {{ Ptr.write(h, 0, Ptr.read(h, 0)) }};
+           first(v);
+         }}"
+    ));
+    assert!(
+        e.matches("`Ptr.read` and `Ptr.write` can't move a `void`")
+            .count()
+            == 2,
+        "{e}"
+    );
+    assert!(e.contains("can't move a `H`"), "{e}");
+    assert!(e.contains("read them through a `Ptr<u8>`"), "{e}");
+    assert!(e.contains("a `declare c type` is opaque"), "{e}");
+}
+
+/// On wasm32, C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's 8: what holds one isn't
+/// C's memory there. A struct of other fields is.
+#[test]
+fn ptr_read_of_word_sized_fields_is_refused_on_wasm32() {
+    let src = format!(
+        "{PTR_MEMORY}
+         export function use(n: Ptr<Node>, p: Ptr<Plain>, z: Ptr<usize>) {{
+           // SAFETY: never run.
+           console.log(unsafe {{ Ptr.read(n, 0) }}.x, unsafe {{ Ptr.read(p, 0) }}.x, unsafe {{ Ptr.read(z, 0) }});
+         }}"
+    );
+    let wasm32 = velt_sema::CheckOptions {
+        wasm32: true,
+        ..Default::default()
+    };
+    let e = std_diagnostics_with(&src, wasm32);
+    assert!(
+        e.contains("`Ptr.read` and `Ptr.write` of a `Node` aren't available on wasm32"),
+        "{e}"
+    );
+    assert!(e.contains("of a `usize` aren't available on wasm32"), "{e}");
+    assert!(!e.contains("`Plain`"), "{e}");
+    assert!(!std_diagnostics(&src).contains("error"));
 }

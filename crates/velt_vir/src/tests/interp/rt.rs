@@ -132,7 +132,7 @@ impl Interp<'_> {
                 b.extend(self.str_bytes(a[1]));
                 self.new_str(a[2], &b);
             }
-            "velt_rt_str_from_f64" => self.new_str(a[1], js_num(f64::from_bits(a[0])).as_bytes()),
+            "velt_test_str_from_f64" => self.new_str(a[1], js_num(f64::from_bits(a[0])).as_bytes()),
             "velt_rt_str_from_bool" => {
                 self.new_str(a[1], if a[0] & 1 == 1 { b"true" } else { b"false" })
             }
@@ -170,7 +170,6 @@ impl Interp<'_> {
                 let n = inspect_num(f64::from_bits(a[1]));
                 self.out(a[0], &format!("{n}{}", a[2] as u8 as char))
             }
-            "velt_rt_write_f64" => self.out(a[0], &inspect_num(f64::from_bits(a[1]))),
             "velt_rt_write_bool" => self.out(a[0], if a[1] & 1 == 1 { "true" } else { "false" }),
             "velt_rt_write_byte" => self.out(a[0], &((a[1] as u8) as char).to_string()),
             "velt_rt_flush" => {}

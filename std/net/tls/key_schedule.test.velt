@@ -1,0 +1,55 @@
+// velt/net (tests): `expandLabel` and `expandLabelWith` (key_schedule.velt) give HKDF-Expand of
+// the HkdfLabel (RFC 8446 §7.1), as velt/crypto's `hkdfExpandSha256` and `hkdfExpandSha384`
+// compute it, for outputs up to the hash's length (one HMAC) and longer (HKDF-Expand's chain),
+// with one prepared secret used for several labels; RFC 8448's first derived key pins one value.
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { describe, expect, it } from "velt/test";
+import { hkdfExpandSha256, hkdfExpandSha384 } from "velt/crypto/hkdf";
+import { expandLabel, expandLabelWith, prepareSecret } from "velt/net/tls/key_schedule";
+
+// The HkdfLabel of `label` and `context` for `length` bytes, built independently.
+function hkdfLabel(label: string, context: u8[], length: usize): u8[] {
+  const full = "tls13 " + label;
+  const out: u8[] = [((length >> 8) & 0xff) as u8, (length & 0xff) as u8, full.length as u8];
+  for (let i: i64 = 0; i < (full.length as i64); i++) {
+    out.push(full.charCodeAt(i) as u8);
+  }
+  out.push(context.length as u8);
+  return out.concat(context);
+}
+
+function secret(n: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(((i * 29 + 5) & 0xff) as u8);
+  }
+  return out;
+}
+
+describe("expandLabel", () => {
+  it("gives RFC 8448's server handshake key", () => {
+    // RFC 8448 §3, "derive write traffic keys for handshake data".
+    const s = hexDecode("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38");
+    expect(hexEncode(expandLabel(s, "key", [], 16))).toBe("3fce516009c21727d0f2e4e86ee403bc");
+    expect(hexEncode(expandLabel(s, "iv", [], 12))).toBe("5d313eb2671276ee13000b30");
+  });
+
+  it("is HKDF-Expand of the HkdfLabel, short and long, with SHA-256 and SHA-384", () => {
+    for (const n of [32, 48] as usize[]) {
+      const s = secret(n);
+      const prepared = prepareSecret(s);
+      const context = secret(20);
+      for (const length of [1, 12, 16, 32, 33, 48, 49, 64, 100, 255] as usize[]) {
+        const info = hkdfLabel("c hs traffic", context, length);
+        const want =
+          n == 48 ? hkdfExpandSha384(s, info, length) : hkdfExpandSha256(s, info, length);
+        expect(`${n} ${length} ${hexEncode(expandLabel(s, "c hs traffic", context, length))}`).toBe(
+          `${n} ${length} ${hexEncode(want)}`,
+        );
+        expect(hexEncode(expandLabelWith(prepared, "c hs traffic", context, length))).toBe(
+          hexEncode(want),
+        );
+      }
+    }
+  });
+});

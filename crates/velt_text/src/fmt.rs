@@ -25,16 +25,6 @@ pub fn push_bool(out: &mut (impl Out + ?Sized), v: u8) {
     out.extend(if v != 0 { b"true" } else { b"false" });
 }
 
-/// Append `v` formatted like node's `util.inspect` (what `console.log` prints): as
-/// [`push_f64`], except that `-0` is `-0`.
-pub fn push_inspect_f64(out: &mut (impl Out + ?Sized), v: f64) {
-    if v == 0.0 && v.is_sign_negative() {
-        out.extend(b"-0");
-        return;
-    }
-    push_f64(out, v);
-}
-
 /// `v` as an integer when it is a whole number below 2^53 in magnitude (`-0` is 0): what JS
 /// prints for it is the integer's digits.
 #[inline]
