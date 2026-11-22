@@ -68,9 +68,11 @@ pub(crate) fn block_size(size: u64, align: usize) -> usize {
 
 /// The allocator entry points; each returns null when the request cannot be satisfied. Not in
 /// the debug runtime linked into programs: its global allocator checks blocks (`debug_alloc`),
-/// and blocks move between generated code and Rust code, so both must go through it.
+/// and blocks move between generated code and Rust code, so both must go through it. The
+/// runtime's string buffers come from here too (`str/heap.rs`): plain `mi_malloc` for an
+/// alignment of 8, where Rust's `alloc` would take mimalloc's aligned path.
 #[cfg(all(feature = "mimalloc", any(not(debug_assertions), velt_rt_host)))]
-mod raw {
+pub(crate) mod raw {
     use libmimalloc_sys as mi;
     use std::ffi::c_void;
 
@@ -78,7 +80,7 @@ mod raw {
     const MIN_ALIGN: usize = 8;
 
     /// `align` is a power of two.
-    pub(super) fn alloc(size: usize, align: usize) -> *mut u8 {
+    pub(crate) fn alloc(size: usize, align: usize) -> *mut u8 {
         // SAFETY: plain C allocation calls.
         unsafe {
             if align <= MIN_ALIGN {
@@ -90,7 +92,7 @@ mod raw {
     }
 
     /// SAFETY: `p` is a live mimalloc block allocated with alignment `align`.
-    pub(super) unsafe fn realloc(p: *mut u8, _old: usize, align: usize, new: usize) -> *mut u8 {
+    pub(crate) unsafe fn realloc(p: *mut u8, _old: usize, align: usize, new: usize) -> *mut u8 {
         if align <= MIN_ALIGN {
             mi::mi_realloc(p as *mut c_void, new) as *mut u8
         } else {
@@ -99,14 +101,14 @@ mod raw {
     }
 
     /// SAFETY: `p` is a live mimalloc block.
-    pub(super) unsafe fn free(p: *mut u8, _size: usize, _align: usize) {
+    pub(crate) unsafe fn free(p: *mut u8, _size: usize, _align: usize) {
         mi::mi_free(p as *mut c_void);
     }
 }
 
 /// The allocator entry points over the Rust global allocator; each returns null on failure.
 #[cfg(not(all(feature = "mimalloc", any(not(debug_assertions), velt_rt_host))))]
-mod raw {
+pub(crate) mod raw {
     use std::alloc::{self, Layout};
 
     fn layout(size: usize, align: usize) -> Layout {
@@ -117,49 +119,21 @@ mod raw {
     }
 
     /// `size` > 0 (callers handle zero-sized requests).
-    pub(super) fn alloc(size: usize, align: usize) -> *mut u8 {
+    pub(crate) fn alloc(size: usize, align: usize) -> *mut u8 {
         // SAFETY: the layout is non-zero-sized.
         unsafe { alloc::alloc(layout(size, align)) }
     }
 
     /// SAFETY: `p` was allocated with `(old, align)` by this allocator; `new` > 0.
-    pub(super) unsafe fn realloc(p: *mut u8, old: usize, align: usize, new: usize) -> *mut u8 {
+    pub(crate) unsafe fn realloc(p: *mut u8, old: usize, align: usize, new: usize) -> *mut u8 {
         let _ = layout(new, align); // validate
         alloc::realloc(p, layout(old, align), new)
     }
 
     /// SAFETY: `p` was allocated with `(size, align)` by this allocator.
-    pub(super) unsafe fn free(p: *mut u8, size: usize, align: usize) {
+    pub(crate) unsafe fn free(p: *mut u8, size: usize, align: usize) {
         alloc::dealloc(p, layout(size, align));
     }
-}
-
-/// A block for the runtime's own use (a string's buffer), from the allocator entry points under
-/// `velt_rt_alloc`: plain `mi_malloc` for an alignment of 8 or less, where Rust's `alloc` would
-/// take mimalloc's aligned path. Null when the request cannot be satisfied; `size` > 0 and
-/// `align` a power of two. Freed with [`block_free`] (or `velt_rt_free`, or Rust's `dealloc`:
-/// one allocator under all of them).
-#[inline]
-pub(crate) fn block_alloc(size: usize, align: usize) -> *mut u8 {
-    raw::alloc(size, align)
-}
-
-/// Resize a block from [`block_alloc`]; null when the request cannot be satisfied.
-///
-/// # Safety
-/// `p` is a live block of `old` bytes allocated with alignment `align`; `new` > 0.
-#[inline]
-pub(crate) unsafe fn block_realloc(p: *mut u8, old: usize, align: usize, new: usize) -> *mut u8 {
-    raw::realloc(p, old, align, new)
-}
-
-/// Free a block from [`block_alloc`].
-///
-/// # Safety
-/// `p` is a live block of `size` bytes allocated with alignment `align`.
-#[inline]
-pub(crate) unsafe fn block_free(p: *mut u8, size: usize, align: usize) {
-    raw::free(p, size, align)
 }
 
 #[no_mangle]

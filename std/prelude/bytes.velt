@@ -9,12 +9,11 @@
 // `Buffer.alloc(n)` makes a zeroed array in one allocation and one memset. Positions follow JS:
 // negative ones count from the end.
 
-import { inline, noInline, strByteLen } from "velt/lang/intrinsics";
+import { hookCall, inline, noInline, strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
 import { received, textEquals } from "velt/lang/bytes/text";
 import { byteLengthIn, textBytes, utf8Bytes } from "velt/lang/bytes/encodings";
 import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
-import { rangeText } from "velt/lang/bytes/range_text";
 import {
   bytesCopy,
   bytesCopyWithin,
@@ -346,7 +345,8 @@ extend Array<u8> {
     const n = this.length;
     const from = clamped(start, n);
     const to = clamped(end, n);
-    return rangeText(this, from, to > from ? to : from);
+    // By role: the decoder (velt/lang/bytes/range_text) loads only where live code calls this.
+    return hookCall("bytes_range_text", this, from, to > from ? to : from);
   }
 
   /**

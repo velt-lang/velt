@@ -120,8 +120,8 @@ pub(super) unsafe fn mark_remembered(data: *mut u8) {
 /// surrogates); returns the address of its first byte.
 pub(super) fn alloc(cap: usize, header: bool) -> *mut u8 {
     let l = layout(cap, header);
-    // A non-zero size (the prefix), as `block_alloc` needs.
-    let base = crate::mem::block_alloc(l.size(), l.align());
+    // A non-zero size (the prefix), as `raw::alloc` needs.
+    let base = crate::mem::raw::alloc(l.size(), l.align());
     if base.is_null() {
         alloc::handle_alloc_error(l);
     }
@@ -151,7 +151,7 @@ pub(super) unsafe fn grow(data: *mut u8, cap: usize, new_cap: usize, header: boo
     let new = layout(new_cap, header);
     let p = prefix(header);
     let old = layout(cap, header);
-    let base = crate::mem::block_realloc(data.sub(p), old.size(), old.align(), new.size());
+    let base = crate::mem::raw::realloc(data.sub(p), old.size(), old.align(), new.size());
     if base.is_null() {
         alloc::handle_alloc_error(new);
     }
@@ -171,7 +171,7 @@ pub(super) unsafe fn add_header(data: *mut u8, cap: usize, len: usize, new_cap: 
     std::ptr::copy_nonoverlapping(data, new, len);
     stats::free();
     let l = layout(cap, false);
-    crate::mem::block_free(data.sub(COUNT), l.size(), l.align());
+    crate::mem::raw::free(data.sub(COUNT), l.size(), l.align());
     new
 }
 
@@ -236,7 +236,7 @@ pub(super) unsafe fn release(data: *mut u8, cap: usize, header: bool) {
         return free_with_header(data, cap);
     }
     let l = layout(cap, false);
-    crate::mem::block_free(data.sub(COUNT), l.size(), l.align());
+    crate::mem::raw::free(data.sub(COUNT), l.size(), l.align());
 }
 
 /// Free a non-ASCII buffer and its breadcrumb table: out of line, so dropping a string (inlined
@@ -254,5 +254,5 @@ unsafe fn free_with_header(data: *mut u8, cap: usize) {
     }
     super::crumbs::free(table_of(table));
     let l = layout(cap, true);
-    crate::mem::block_free(data.sub(HEADER), l.size(), l.align());
+    crate::mem::raw::free(data.sub(HEADER), l.size(), l.align());
 }
