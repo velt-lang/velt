@@ -10,10 +10,19 @@ import {
   velt_simd_u32x4_sha256rnds2,
   velt_simd_u32x4_sha256su0,
   velt_simd_u32x4_sha256su1,
+  velt_simd_u32x4_load,
 } from "velt/crypto/rt";
 import { H256, K256 } from "velt/crypto/tables";
 import { blockWords, keyWords, newBytes, Pair, tailBlock, tailBlocks } from "velt/crypto/vectors";
-import { targetFeature } from "velt/lang/intrinsics";
+import { inline, targetFeature } from "velt/lang/intrinsics";
+
+// Four words of a constant table at `at` (below its length less 3), unchecked and inline: the
+// table comes in as a parameter, which the load borrows (a module constant passed to the extern
+// directly would be copied at every call).
+@inline("always")
+function words(table: u32[], at: usize): u32x4 {
+  return velt_simd_u32x4_load(table, at as u64);
+}
 
 // One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2, in four batches of four
 // with the next sixteen message words made after each batch (but the last). The schedule
@@ -27,10 +36,10 @@ function rounds256Arm(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair
   let m3 = w3;
   let t = s;
   for (let j: usize = 0; j < 16; j += 4) {
-    t = group256Arm(t, m0.add(u32x4.load(K256, 4 * j)));
-    t = group256Arm(t, m1.add(u32x4.load(K256, 4 * j + 4)));
-    t = group256Arm(t, m2.add(u32x4.load(K256, 4 * j + 8)));
-    t = group256Arm(t, m3.add(u32x4.load(K256, 4 * j + 12)));
+    t = group256Arm(t, m0.add(words(K256, 4 * j)));
+    t = group256Arm(t, m1.add(words(K256, 4 * j + 4)));
+    t = group256Arm(t, m2.add(words(K256, 4 * j + 8)));
+    t = group256Arm(t, m3.add(words(K256, 4 * j + 12)));
     if (j < 12) {
       m0 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m0, m1), m2, m3);
       m1 = velt_simd_u32x4_sha256su1(velt_simd_u32x4_sha256su0(m1, m2), m3, m0);
@@ -64,7 +73,7 @@ export function sha256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
 @targetFeature("sha-arm")
 export function hmac256Arm(k: u8[], data: u8[]): u8[] {
   const inner = state256Arm(k, 0x36, true, data);
-  let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
+  let s: Pair = { a: words(H256, 0), b: words(H256, 4) };
   const p = u8x16.splat(0x5c);
   s = rounds256Arm(s, keyWords(k, p, 0), keyWords(k, p, 1), keyWords(k, p, 2), keyWords(k, p, 3));
   // The 32-byte digest, the 0x80 marker, zeros, and the length: (64 + 32) bytes = 768 bits.
@@ -80,7 +89,7 @@ export function hmac256Arm(k: u8[], data: u8[]): u8[] {
 // The state after SHA-256 (ARMv8) of `data`, after a keyed first block (see `sha256Of`).
 @targetFeature("sha-arm")
 function state256Arm(key: u8[], pad: u8, keyed: bool, data: u8[]): Pair {
-  let s: Pair = { a: u32x4.load(H256, 0), b: u32x4.load(H256, 4) };
+  let s: Pair = { a: words(H256, 0), b: words(H256, 4) };
   if (keyed) {
     const p = u8x16.splat(pad);
     s = rounds256Arm(
@@ -123,7 +132,7 @@ function rounds256X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair
   let cdgh = s.b;
   // Groups 0–11 also make the message words of groups 4–15; 12–15 use them up.
   for (let j: usize = 0; j < 12; j++) {
-    const wk = m0.add(u32x4.load(K256, 4 * j));
+    const wk = m0.add(words(K256, 4 * j));
     cdgh = velt_simd_u32x4_sha256rnds2(cdgh, abef, wk);
     abef = velt_simd_u32x4_sha256rnds2(abef, cdgh, u32x4.shuffle(wk, wk, 2, 3, 0, 0));
     const tail = u32x4.shuffle(m2, m3, 1, 2, 3, 4);
@@ -134,7 +143,7 @@ function rounds256X86(s: Pair, w0: u32x4, w1: u32x4, w2: u32x4, w3: u32x4): Pair
     m3 = next;
   }
   for (let j: usize = 12; j < 16; j++) {
-    const wk = m0.add(u32x4.load(K256, 4 * j));
+    const wk = m0.add(words(K256, 4 * j));
     cdgh = velt_simd_u32x4_sha256rnds2(cdgh, abef, wk);
     abef = velt_simd_u32x4_sha256rnds2(abef, cdgh, u32x4.shuffle(wk, wk, 2, 3, 0, 0));
     m0 = m1;
@@ -152,8 +161,8 @@ export function sha256X86(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
 // SHA-256's initial state as ABEF / CDGH (A in lane 3).
 @targetFeature("sha-x86")
 function initial256X86(): Pair {
-  const dcba = u32x4.load(H256, 0);
-  const hgfe = u32x4.load(H256, 4);
+  const dcba = words(H256, 0);
+  const hgfe = words(H256, 4);
   const cdab = u32x4.shuffle(dcba, dcba, 1, 0, 3, 2);
   const efgh = u32x4.shuffle(hgfe, hgfe, 3, 2, 1, 0);
   return { a: u32x4.shuffle(efgh, cdab, 2, 3, 4, 5), b: u32x4.shuffle(efgh, cdab, 0, 1, 6, 7) };

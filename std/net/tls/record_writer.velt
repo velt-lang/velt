@@ -68,7 +68,9 @@ export class RecordWriter {
     this.suite = 0;
     this.writeLimit = KEY_RECORDS;
     this.tls12 = false;
-    this.buf = Buffer.alloc(BATCH * RECORD);
+    // Not zeroed: only what a record is sealed into is ever written out, and the pages a
+    // handshake-only connection never fills are never touched.
+    this.buf = Buffer.allocUnsafe(BATCH * RECORD);
     this.sealedPlain = 0;
     this.turns = new Turns();
     this.shutDown = false;

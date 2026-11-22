@@ -30,6 +30,9 @@ pub(crate) fn helper(symbol: &str, x86: bool) -> Option<(String, Vec<String>, Ve
     if op == FieldOp::P256Double {
         return Some((name.clone(), double_helper(&name, x86), params, ret));
     }
+    if op == FieldOp::X25519Ladder {
+        return Some((name.clone(), crate::field25519::ladder_helper(&name, x86), params, ret));
+    }
     let b_param = match op {
         FieldOp::P256Sqr => "",
         _ => ", i64 %b",
@@ -99,17 +102,17 @@ const CONSTRAINTS: &str = "={rsi},={rdi},0,1,{r15},~{rax},~{rdx},~{rcx},~{r8},~{
 const ADX_CONSTRAINTS: &str = "={rsi},={rdi},0,1,*m,~{rax},~{rdx},~{rcx},~{r8},~{r9},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{memory},~{dirflag},~{fpsr},~{flags}";
 
 /// The full product's limbs `t0..t7`.
-const T: [&str; 8] = ["%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15"];
+pub(crate) const T: [&str; 8] = ["%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15"];
 
 /// Where a BMI2/ADX sequence finds its operands and puts its result: the standalone operations
 /// read `a` at RSI and `b` at RDI and store at the address in `$4`; the fused point doubling
 /// ([`adx_double`]) keeps every value in a scratch area at RSI, at constant offsets.
 #[derive(Clone, Copy)]
-struct Ops {
-    a: usize,
-    b: usize,
+pub(crate) struct Ops {
+    pub(crate) a: usize,
+    pub(crate) b: usize,
     /// `None`: at `$4`; `Some(off)`: at `off(%rsi)`.
-    dst: Option<usize>,
+    pub(crate) dst: Option<usize>,
 }
 
 impl Ops {
@@ -124,18 +127,18 @@ impl Ops {
         self.dst.is_some()
     }
     /// Limb `k` of `a`.
-    fn a(&self, k: usize) -> String {
+    pub(crate) fn a(&self, k: usize) -> String {
         format!("{}(%rsi)", self.a + 8 * k)
     }
     /// Limb `k` of `b`.
-    fn b(&self, k: usize) -> String {
+    pub(crate) fn b(&self, k: usize) -> String {
         match self.fused() {
             true => format!("{}(%rsi)", self.b + 8 * k),
             false => format!("{}(%rdi)", 8 * k),
         }
     }
     /// Stores `limbs` as the result.
-    fn store(&self, out: &mut Vec<String>, limbs: [&str; 4]) {
+    pub(crate) fn store(&self, out: &mut Vec<String>, limbs: [&str; 4]) {
         let at = match self.dst {
             Some(off) => off,
             None => {
@@ -157,6 +160,14 @@ const P3_SLOT: usize = 32 * SLOTS;
 /// no row waits on a reduction), then [`reduce_low`] and [`add_high`].
 fn adx_mul(o: Ops) -> Vec<String> {
     let mut out = vec![];
+    adx_product(&mut out, o);
+    reduce_low(&mut out, o);
+    add_high(&mut out, o);
+    out
+}
+
+/// The full product `a * b` into `T[0..8]`.
+pub(crate) fn adx_product(out: &mut Vec<String>, o: Ops) {
     out.push(format!("movq {}, %rdx", o.b(0)));
     out.push(format!("mulxq {}, {}, {}", o.a(0), T[0], T[1]));
     out.push(format!("mulxq {}, %rax, {}", o.a(1), T[2]));
@@ -178,14 +189,19 @@ fn adx_mul(o: Ops) -> Vec<String> {
         // OF ended in the top limb, which cannot overflow; CF goes there too.
         out.push(format!("adcq $$0, {}", T[i + 4]));
     }
-    reduce_low(&mut out, o);
-    add_high(&mut out, o);
-    out
 }
 
 /// The BMI2/ADX square: the six products of distinct limbs once, doubled, plus the four squares.
 fn adx_sqr(o: Ops) -> Vec<String> {
     let mut out = vec![];
+    adx_square_product(&mut out, o);
+    reduce_low(&mut out, o);
+    add_high(&mut out, o);
+    out
+}
+
+/// The full square `a * a` into `T[0..8]`.
+pub(crate) fn adx_square_product(out: &mut Vec<String>, o: Ops) {
     // a0 (a1, a2, a3) at limbs 1..4.
     out.push(format!("movq {}, %rdx", o.a(0)));
     out.push(format!("mulxq {}, {}, {}", o.a(1), T[1], T[2]));
@@ -231,9 +247,6 @@ fn adx_sqr(o: Ops) -> Vec<String> {
     out.push("mulxq %rdx, %rcx, %rdx".into());
     out.push(format!("adcq %rcx, {}", T[6]));
     out.push(format!("adcq %rdx, {}", T[7]));
-    reduce_low(&mut out, o);
-    add_high(&mut out, o);
-    out
 }
 
 /// Four rounds on the low half `t0..t3` alone (module docs): round `k` adds `m p / 2^64` for
@@ -551,7 +564,7 @@ fn portable_add_sub(add: bool) -> String {
 /// Whether the CPU has BMI2 and ADX: CPUID leaf 7, EBX bits 8 and 19 (where leaf 0 says leaf 7
 /// exists), asked once and kept in `@velt.field.cpu` (0: not asked, 1: no, 2: yes). A race asks
 /// twice and stores the same answer.
-const HAS_ADX: &str = "define internal i1 @velt.field.has_adx() alwaysinline nounwind {
+pub(crate) const HAS_ADX: &str = "define internal i1 @velt.field.has_adx() alwaysinline nounwind {
 entry:
   %k = load atomic i8, ptr @velt.field.cpu monotonic, align 1
   %known = icmp ne i8 %k, 0
@@ -583,7 +596,7 @@ store:
   ret i8 %v
 }";
 
-const CPU_BYTE: &str = "@velt.field.cpu = internal global i8 0, align 1";
+pub(crate) const CPU_BYTE: &str = "@velt.field.cpu = internal global i8 0, align 1";
 
 /// The six accumulator registers, rotated: limb `k` of row `i` is `ACC[(i + k) % 6]`.
 const ACC: [&str; 6] = ["%r8", "%r9", "%r10", "%r11", "%r12", "%r13"];
@@ -692,12 +705,12 @@ fn mul_rows() -> Vec<String> {
 }
 
 /// The 32-bit name of a 64-bit register (`%r8` is `%r8d`).
-fn low32(r: &str) -> String {
+pub(crate) fn low32(r: &str) -> String {
     format!("{r}d")
 }
 
 /// The assembly text of `lines` as LLVM IR's string escapes have it: one instruction a line.
-fn asm_text(lines: &[String]) -> String {
+pub(crate) fn asm_text(lines: &[String]) -> String {
     lines.join("\\0A")
 }
 

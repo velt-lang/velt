@@ -27,6 +27,12 @@ pub enum FieldOp {
     /// on y^2 = x^3 - 3x + b ([`double_p256`]), `d` may be `p`; true when done, false where the
     /// target has no fused form (the caller doubles with the other operations then).
     P256Double,
+    /// `(r, d, u, k) -> bool`: registers `d` and `d + 1` = X2 and Z2 (fully reduced) after RFC
+    /// 7748's Montgomery ladder on Curve25519 for the u-coordinate at register `u` (four 64-bit
+    /// limbs, below 2^256, not necessarily reduced) and the scalar at register `k` (already
+    /// clamped), [`x25519_ladder`]; true when done, false where the target has no fused form
+    /// (std runs its own ladder then).
+    X25519Ladder,
 }
 
 /// The P-256 prime, little-endian limbs.
@@ -38,12 +44,13 @@ pub const P256: [u64; 4] = [
 ];
 
 impl FieldOp {
-    pub const ALL: [FieldOp; 5] = [
+    pub const ALL: [FieldOp; 6] = [
         FieldOp::P256Mul,
         FieldOp::P256Sqr,
         FieldOp::P256Add,
         FieldOp::P256Sub,
         FieldOp::P256Double,
+        FieldOp::X25519Ladder,
     ];
 
     /// The extern's symbol.
@@ -54,6 +61,7 @@ impl FieldOp {
             FieldOp::P256Add => "velt_field_p256_add",
             FieldOp::P256Sub => "velt_field_p256_sub",
             FieldOp::P256Double => "velt_field_p256_double",
+            FieldOp::X25519Ladder => "velt_field_x25519_ladder",
         }
     }
 
@@ -66,7 +74,7 @@ impl FieldOp {
     pub const fn operands(self) -> usize {
         match self {
             FieldOp::P256Sqr | FieldOp::P256Double => 1,
-            FieldOp::P256Mul | FieldOp::P256Add | FieldOp::P256Sub => 2,
+            FieldOp::P256Mul | FieldOp::P256Add | FieldOp::P256Sub | FieldOp::X25519Ladder => 2,
         }
     }
 
@@ -75,7 +83,7 @@ impl FieldOp {
         let mut params = vec![Ty::Ptr, Ty::U64];
         params.extend(std::iter::repeat_n(Ty::U64, self.operands()));
         let ret = match self {
-            FieldOp::P256Double => Ty::Bool,
+            FieldOp::P256Double | FieldOp::X25519Ladder => Ty::Bool,
             _ => Ty::Unit,
         };
         (params, ret)
@@ -90,6 +98,7 @@ impl FieldOp {
             FieldOp::P256Add => add_mod(a, b, P256),
             FieldOp::P256Sub => sub_mod(a, b, P256),
             FieldOp::P256Double => panic!("ICE: a point doubling is `double_p256`"),
+            FieldOp::X25519Ladder => panic!("ICE: the X25519 ladder is `x25519_ladder`"),
         }
     }
 }
@@ -115,6 +124,119 @@ pub fn double_p256(x: [u64; 4], y: [u64; 4], z: [u64; 4]) -> [[u64; 4]; 3] {
     let g8 = add(add(add(g2, g2), add(g2, g2)), add(add(g2, g2), add(g2, g2)));
     let y3 = sub(mul(alpha, sub(beta4, x3)), g8);
     [x3, y3, z3]
+}
+
+/// p = 2^255 - 19, little-endian limbs.
+pub const P25519: [u64; 4] = [
+    0xffff_ffff_ffff_ffed,
+    0xffff_ffff_ffff_ffff,
+    0xffff_ffff_ffff_ffff,
+    0x7fff_ffff_ffff_ffff,
+];
+
+/// `a` (below 2^256) reduced mod 2^255 - 19.
+pub fn freeze25519(a: [u64; 4]) -> [u64; 4] {
+    // 2^255 = 19: fold bit 255 in twice (the first fold can carry into it once more).
+    let mut t = a;
+    for _ in 0..2 {
+        let top = t[3] >> 63;
+        t[3] &= 0x7fff_ffff_ffff_ffff;
+        let mut carry = u128::from(top * 19);
+        for limb in &mut t {
+            let s = u128::from(*limb) + carry;
+            *limb = s as u64;
+            carry = s >> 64;
+        }
+    }
+    // Now below 2^255: less p when not below it.
+    let (mut d, mut borrow) = ([0u64; 4], 0u64);
+    for j in 0..4 {
+        let (x, b1) = t[j].overflowing_sub(P25519[j]);
+        let (y, b2) = x.overflowing_sub(borrow);
+        d[j] = y;
+        borrow = u64::from(b1 || b2);
+    }
+    if borrow == 0 {
+        d
+    } else {
+        t
+    }
+}
+
+fn add25519(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    add_mod(freeze25519(a), freeze25519(b), P25519)
+}
+
+fn sub25519(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    sub_mod(freeze25519(a), freeze25519(b), P25519)
+}
+
+fn mul25519(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    let mut t = [0u64; 8];
+    for i in 0..4 {
+        let mut carry = 0u128;
+        for j in 0..4 {
+            let s = u128::from(a[i]) * u128::from(b[j]) + u128::from(t[i + j]) + carry;
+            t[i + j] = s as u64;
+            carry = s >> 64;
+        }
+        t[i + 4] = carry as u64;
+    }
+    // t = lo + 2^256 hi = lo + 38 hi.
+    let mut r = [0u64; 4];
+    let mut carry = 0u128;
+    for j in 0..4 {
+        let s = u128::from(t[j]) + 38 * u128::from(t[4 + j]) + carry;
+        r[j] = s as u64;
+        carry = s >> 64;
+    }
+    // carry * 2^256 = 38 carry, which fits; once more for a last carry.
+    let mut c = carry * 38;
+    for _ in 0..2 {
+        for limb in &mut r {
+            let s = u128::from(*limb) + c;
+            *limb = s as u64;
+            c = s >> 64;
+        }
+        c *= 38;
+    }
+    freeze25519(r)
+}
+
+/// X2 and Z2, fully reduced, after RFC 7748 §5's ladder (255 steps, a24 = 121665) for the
+/// u-coordinate `u` (below 2^256) and the clamped scalar `k`, before the final inversion.
+pub fn x25519_ladder(u: [u64; 4], k: [u64; 4]) -> ([u64; 4], [u64; 4]) {
+    let x1 = freeze25519(u);
+    let (mut x2, mut z2, mut x3, mut z3) = ([1, 0, 0, 0], [0u64; 4], x1, [1, 0, 0, 0]);
+    let mut swap = 0;
+    for pos in (0..255).rev() {
+        let bit = (k[pos / 64] >> (pos % 64)) & 1;
+        if swap ^ bit == 1 {
+            std::mem::swap(&mut x2, &mut x3);
+            std::mem::swap(&mut z2, &mut z3);
+        }
+        swap = bit;
+        let a = add25519(x2, z2);
+        let aa = mul25519(a, a);
+        let b = sub25519(x2, z2);
+        let bb = mul25519(b, b);
+        let e = sub25519(aa, bb);
+        let c = add25519(x3, z3);
+        let d = sub25519(x3, z3);
+        let da = mul25519(d, a);
+        let cb = mul25519(c, b);
+        let t = add25519(da, cb);
+        x3 = mul25519(t, t);
+        let t = sub25519(da, cb);
+        z3 = mul25519(x1, mul25519(t, t));
+        x2 = mul25519(aa, bb);
+        z2 = mul25519(e, add25519(aa, mul25519(e, [121_665, 0, 0, 0])));
+    }
+    if swap == 1 {
+        std::mem::swap(&mut x2, &mut x3);
+        std::mem::swap(&mut z2, &mut z3);
+    }
+    (freeze25519(x2), freeze25519(z2))
 }
 
 /// `a + b` mod `p` for `a`, `b` below `p`.
@@ -239,6 +361,41 @@ mod tests {
         assert_eq!(
             FieldOp::P256Sub.eval([5, 0, 0, 0], [3, 0, 0, 0]),
             [2, 0, 0, 0]
+        );
+    }
+
+    /// RFC 7748 §5.2's first vector: X2 / Z2 is the output u-coordinate.
+    #[test]
+    fn x25519_ladder_gives_the_rfc_vector() {
+        let words = |hex: &str| -> [u64; 4] {
+            let b: Vec<u8> = (0..32)
+                .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+                .collect();
+            std::array::from_fn(|j| u64::from_le_bytes(b[8 * j..8 * j + 8].try_into().unwrap()))
+        };
+        let mut k = words("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4");
+        k[0] &= !7;
+        k[3] &= 0x7fff_ffff_ffff_ffff;
+        k[3] |= 0x4000_0000_0000_0000;
+        let mut u = words("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c");
+        u[3] &= 0x7fff_ffff_ffff_ffff;
+        let (x2, z2) = x25519_ladder(u, k);
+        // z2^(p - 2), by square-and-multiply.
+        let mut e = P25519;
+        e[0] -= 2;
+        let (mut acc, mut base) = ([1, 0, 0, 0], z2);
+        for w in e {
+            for bit in 0..64 {
+                if (w >> bit) & 1 == 1 {
+                    acc = mul25519(acc, base);
+                }
+                base = mul25519(base, base);
+            }
+        }
+        let out = mul25519(x2, acc);
+        assert_eq!(
+            out,
+            words("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")
         );
     }
 

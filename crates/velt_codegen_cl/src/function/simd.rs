@@ -79,8 +79,12 @@ impl Translator<'_, '_> {
             if (params.to_vec(), ret) != op.signature() {
                 return None;
             }
-            // No fused point doubling here: false, and std doubles with the other operations.
-            if op == velt_vir::field::FieldOp::P256Double {
+            // No fused point doubling or X25519 ladder here: false, and std does it with its own
+            // operations.
+            if matches!(
+                op,
+                velt_vir::field::FieldOp::P256Double | velt_vir::field::FieldOp::X25519Ladder
+            ) {
                 return Some(Inlined::Value(self.builder.ins().iconst(types::I8, 0)));
             }
             self.field_op(op, values);
