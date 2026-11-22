@@ -1,0 +1,105 @@
+// bench/pager/run.sh measures this against pager.rs (#1718).
+// A SQLite table-leaf page decoder in plain TypeScript (#1718's yardstick): pages are
+// Uint8Arrays, reads go through DataView and subarray as Node code writes them.
+const PAGE = 4096;
+const PAGES = 64;
+const ROUNDS = Number(process.argv[2] ?? "400");
+
+function putVarint(page: Uint8Array, at: number, v: number): number {
+  // Big-endian base-128, high bit set on every byte but the last (SQLite's varint, small values).
+  const bytes: number[] = [];
+  do {
+    bytes.unshift(v & 0x7f);
+    v = Math.floor(v / 128);
+  } while (v > 0);
+  for (let i = 0; i < bytes.length; i++) {
+    page[at + i] = i < bytes.length - 1 ? bytes[i] | 0x80 : bytes[i];
+  }
+  return bytes.length;
+}
+
+function buildPage(seed: number): Uint8Array {
+  const page = new Uint8Array(PAGE);
+  const dv = new DataView(page.buffer, page.byteOffset, page.byteLength);
+  let content = PAGE;
+  let cells = 0;
+  const pointers: number[] = [];
+  while (true) {
+    const payload = 20 + ((seed * 7 + cells * 13) % 60);
+    const cellLen = 2 + 3 + payload;
+    if (content - cellLen < 8 + (pointers.length + 1) * 2 + 16) {
+      break;
+    }
+    content -= cellLen;
+    let at = content;
+    at += putVarint(page, at, payload);
+    at += putVarint(page, at, seed * 1000 + cells);
+    for (let i = 0; i < payload; i++) {
+      page[at + i] = (seed + cells + i) & 0xff;
+    }
+    pointers.push(content);
+    cells++;
+  }
+  page[0] = 13; // table leaf
+  dv.setUint16(3, cells);
+  dv.setUint16(5, content);
+  for (let i = 0; i < cells; i++) {
+    dv.setUint16(8 + i * 2, pointers[i]);
+  }
+  return page;
+}
+
+// The varint at `at` of `page`: its value and length, as [value, length].
+function varint(page: Uint8Array, at: number, out: number[]) {
+  let v = 0;
+  let i = 0;
+  while (i < 8) {
+    const b = page[at + i];
+    v = v * 128 + (b & 0x7f);
+    i++;
+    if (b < 0x80) {
+      break;
+    }
+  }
+  out[0] = v;
+  out[1] = i;
+}
+
+function decodePage(page: Uint8Array, out: number[]): number {
+  const dv = new DataView(page.buffer, page.byteOffset, page.byteLength);
+  if (page[0] != 13) {
+    return 0;
+  }
+  const cells = dv.getUint16(3);
+  let sum = 0;
+  for (let i = 0; i < cells; i++) {
+    const at = dv.getUint16(8 + i * 2);
+    varint(page, at, out);
+    const payload = out[0];
+    const n1 = out[1];
+    varint(page, at + n1, out);
+    const rowid = out[0];
+    const start = at + n1 + out[1];
+    const body = page.subarray(start, start + payload);
+    const bdv = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    sum += rowid + payload + bdv.getUint32(0) + bdv.getUint32(4, true);
+  }
+  return sum;
+}
+
+function main() {
+  const pages: Uint8Array[] = [];
+  for (let p = 0; p < PAGES; p++) {
+    pages.push(buildPage(p));
+  }
+  const out = [0, 0];
+  let total = 0;
+  for (let r = 0; r < ROUNDS; r++) {
+    for (let p = 0; p < PAGES; p++) {
+      total += decodePage(pages[p], out);
+    }
+  }
+  console.log(total);
+}
+
+
