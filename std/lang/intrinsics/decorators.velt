@@ -34,6 +34,17 @@ export declare decorator function inline(
 export declare decorator function noInline(): FunctionDecorator | MethodDecorator;
 
 /**
+ * On a function or method of std, a package or the program (velt/compiler re-exports it;
+ * docs/internals/design/package-machine-code.md §1): its calls are rare, as Rust's `#[cold]`. For
+ * an error path, a slow fallback or a resize: release builds lay the branches that lead to its
+ * calls out of the hot code, and the optimizer keeps all but a trivial body out of its callers.
+ * Its calls return as any others do. Not with `@inline`, which asks the opposite, nor on a
+ * generator, an async function or a `declare function`: sema reports them. With `@noInline`, no
+ * call is inlined at all.
+ */
+export declare decorator function cold(): FunctionDecorator | MethodDecorator;
+
+/**
  * On a function (not a method) of std, a package or the program (velt/compiler re-exports it;
  * docs/internals/design/package-machine-code.md §2): the function is compiled for the CPU
  * features `targets` (one or more, `"avx2-x86"`, `"bmi2-x86"`, `"crc-arm"`, …) and everything they

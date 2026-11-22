@@ -1429,6 +1429,17 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   becomes its base, a union each member (`union_to_common`), a `T | null` its payload, and its
   nothing, like the literals `null` and `undefined` written where `any` is expected, the nothing
   of `boolean | null` / `boolean | undefined` (the dynamic `null` / `undefined`).
+- A promise is boxed as it is, in the table of its own `Promise<T, E>` (velt_vir
+  `lower/any_await.rs`): its class id word is `PROMISE_ID`, and only such a table has the await
+  slot. `await x` of an `any` or `unknown` is a call of std's `awaitAny(x)` (a hook,
+  std/lang/hooks/any_ops.velt), awaited: the value is an `unknown` (an `any` again for an `any`
+  `x`), a rejection thrown as an `unknown`. `awaitAny` is `Intrinsic::AnyPromise(x)` — a
+  `Promise<unknown, unknown>` that polls the boxed promise and boxes its value or reason as it
+  settles (a widening wrapper, `async_fn/widen.rs`), or `undefined` when `x` holds no promise —
+  else `Promise.resolve(x)`, the one step JavaScript takes for a value that is no promise. A
+  thenable is not adopted (#3412). `Intrinsic::AnyIsPromise(x)` (`x instanceof Promise`, and
+  the promise member test of a union) borrows `x` of any type `T`: the table test for a dynamic
+  `T`, else a constant (`true` for a promise type), with no conversion to a dynamic type.
 - The table of `any_impl` for a concrete type is its type descriptor (velt_vir `lower/any.rs`).
   Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
   integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7
@@ -1917,15 +1928,16 @@ or string; for `any` or `unknown`, the tree as written). An abstract property
 `DecoratorTarget::Def`. The map is a side table, so a program without decorators has an empty
 one and no other HIR type changes. Lowering reads only the decorators the compiler acts on, each
 found by its `def`'s qualified name from the hook table (`std_hooks`, `decorator_*`): `@inline`
-and `@noInline` on a `Def(f)` set `vir::Function::inline` (contracts README "Inlining
-decorators"); `@repr("transparent")` and `@align(n)` on a struct's `Def` (velt/compiler,
-`decorator_repr`, `decorator_align`; docs/internals/design/package-machine-code.md §5) are read
-for its layout and its C crossing: `@align`'s one argument is an `Int`, a power of two from 1 to
-4096, which raises the value aggregate's alignment and pads its size; a transparent struct has
-exactly one field, neither optional nor `void`, and where it crosses to C the `CTy` is its field's
-(lowering passes the field and builds the struct around a result); sema reports both on
-anything but a struct, and the pair together. `@intrinsic` is sema's alone. A TC39 run-time
-decorator is a compile error (#2204), so it never gets here.
+and `@noInline` on a `Def(f)` set `vir::Function::inline`, and `@cold` sets
+`vir::Function::rare` (contracts README "Inlining decorators"); `@repr("transparent")` and
+`@align(n)` on a struct's `Def` (velt/compiler, `decorator_repr`, `decorator_align`;
+docs/internals/design/package-machine-code.md §5) are read for its layout and its C crossing:
+`@align`'s one argument is an `Int`, a power of two from 1 to 4096, which raises the value
+aggregate's alignment and pads its size; a transparent struct has exactly one field, neither
+optional nor `void`, and where it crosses to C the `CTy` is its field's (lowering passes the field
+and builds the struct around a result); sema reports both on anything but a struct, and the pair
+together. `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error (#2204), so
+it never gets here.
 
 `@export("c_name")` (velt/ffi, `std_hooks` `decorator_export`, #2203) is read through its
 own side table, `Program::c_exports: Vec<CExport>`, in the order sema checked them (empty without

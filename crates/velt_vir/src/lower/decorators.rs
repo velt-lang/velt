@@ -33,6 +33,15 @@ impl Cx<'_> {
         }
         Inline::Default
     }
+
+    /// `@cold` on function `def` (`Function::rare`): sema has checked it is on a function with a
+    /// body that is neither async nor a generator, and not `@inline`.
+    pub(super) fn is_rare(&self, def: DefId) -> bool {
+        let uses = self.hir.decorators.get(&hir::DecoratorTarget::Def(def));
+        (uses.map_or(&[][..], Vec::as_slice).iter()).any(|u| {
+            matches!(self.hir.def(u.def), hir::Def::ExternFn(x) if x.name == std_hook!(decorator_cold))
+        })
+    }
 }
 
 impl Cx<'_> {
