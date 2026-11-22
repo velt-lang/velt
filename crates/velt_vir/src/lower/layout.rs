@@ -7,7 +7,8 @@
 //!   aggregate per variant `{ tag: u32, payload... }` reached with `Proj::Cast`. The tag is the
 //!   variant index. `Result<T, E>` works the same with a `u8` tag (views: Ok, Err; a `void`
 //!   payload has no field).
-//! - `T | null` without a niche: `{ some: bool, value: T }`.
+//! - `T | null` without a niche: `{ some: bool, value: T }` (with one, a class, `shared<T>`,
+//!   `symbol` or a C pointer `Ptr<T>`, it is the word itself, 0 for none: type_kinds.rs).
 //! - Class objects: `[vtable: ptr]` + all fields (base-class fields first, so a subclass object
 //!   starts with its base's layout and upcasts are free). The vtable pointer exists when the
 //!   class hierarchy has more than one class or any virtual slot; it points to a dispatcher
@@ -173,7 +174,11 @@ impl Cx<'_> {
                 // Fields, then presence flags (`Cx::presence_slot`).
                 let tys = self.part_types(t);
                 let tys = self.stored_tys(tys);
-                self.new_agg(name, &tys)
+                let a = self.new_agg(name, &tys);
+                if self.c_struct(t) {
+                    self.assert_c_layout(t, a);
+                }
+                a
             }
             TyKind::Tuple(es) => {
                 let tys = self.stored_tys(es);

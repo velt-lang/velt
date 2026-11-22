@@ -15,6 +15,7 @@
 
 import { Fe25519 } from "velt/crypto/field25519";
 import { X25519_BASE } from "velt/crypto/x25519_base_table";
+import { noInline } from "velt/lang/intrinsics";
 
 // Registers: the accumulator (X : Y : Z : T), the completed point of ref10's `ge_p1p1`
 // ((X : Z), (Y : T)), the selected entry (y + x, y - x, 2 d x y), temporaries, and the
@@ -43,6 +44,21 @@ export function x25519BaseMultiply(scalar: u8[]): u8[] {
   k[0] &= 248;
   k[31] &= 127;
   k[31] |= 64;
+  return baseMultiply(k, false);
+}
+
+/**
+ * The Edwards25519 encoding (32 bytes: y, with x's low bit on top) of the base point times `k`
+ * (32 little-endian bytes, taken as they are, below 2^255): Ed25519's public key and R
+ * (ed25519_sign.velt). Constant time in `k`, as `x25519BaseMultiply`.
+ */
+export function edwardsBaseMultiply(k: u8[]): u8[] {
+  return baseMultiply(k, true);
+}
+
+// `k` B for the 32 little-endian bytes `k` (below 2^255): its Edwards encoding when `edwards`
+// (which is public), else its Montgomery u.
+function baseMultiply(k: u8[], edwards: bool): u8[] {
   const e = digits(k);
   const f = new Fe25519(REGS);
   // The identity: (0 : 1 : 1 : 0).
@@ -59,6 +75,15 @@ export function x25519BaseMultiply(scalar: u8[]): u8[] {
     pick(f, i >> 1, e[i]);
     addEntry(f);
   }
+  if (edwards) {
+    // x = X / Z, y = Y / Z.
+    f.invert(C, Z, SCRATCH);
+    f.mul(A, X, C);
+    f.mul(B, Y, C);
+    const out = f.encode(B);
+    out[31] |= (f.encode(A)[0] & 1) << 7;
+    return out;
+  }
   // u = (Z + Y) / (Z - Y): 0 for the identity, as the ladder gives.
   f.add(A, Z, Y);
   f.sub(B, Z, Y);
@@ -67,7 +92,7 @@ export function x25519BaseMultiply(scalar: u8[]): u8[] {
   return f.encode(A);
 }
 
-// The 64 signed radix-16 digits of the clamped scalar `k` (little-endian), each in [-8, 8]:
+// The 64 signed radix-16 digits of the scalar `k` (little-endian, below 2^255), each in [-8, 8]:
 // sum e_i 16^i = k. Arithmetic only, no branch.
 function digits(k: u8[]): i64[] {
   const e: i64[] = [];
@@ -115,12 +140,33 @@ function pick(f: Fe25519, t: usize, d: i64) {
   }
   // The identity for a zero digit: y + x = y - x = 1 (2 d x y stays 0).
   f.set(A, 1);
-  const none = 0 - ((abs - 1) >> 63);
+  const none = identityMask(abs);
   f.select(YPX, A, YPX, none);
   f.select(YMX, A, YMX, none);
   f.swap(YPX, YMX, neg);
   f.sub(A, ZERO, XY2D);
-  f.select(XY2D, A, XY2D, 0 - neg);
+  f.select(XY2D, A, XY2D, signMask(neg));
+}
+
+// The masks of the selects after the table scan, each in a function of its own and out of
+// line, as field_p256.velt's `isZero`: inlined, LLVM can see that a mask is one comparison of
+// the secret digit and make the select a branch on it. Whether it does depends on the build: on a
+// review's builder the identity's mask, inlined, compiled to `test; js` (21 instruction counts
+// over 70 scalars, memcheck flagging `select`), where another build did not branch.
+// crates/veltc/tests/x25519_masks.rs checks that both stay functions of their own and are called.
+// The scan's own masks stay inline (512 calls would cost a tenth of the operation); no build has
+// been seen to branch on them, and memcheck would show it.
+
+// All ones when the digit's magnitude `abs` is 0 (the identity is selected), else 0.
+@noInline
+function identityMask(abs: u64): u64 {
+  return 0 - ((abs - 1) >> 63);
+}
+
+// All ones for a negative digit (`neg` 1), else 0.
+@noInline
+function signMask(neg: u64): u64 {
+  return 0 - neg;
 }
 
 // The accumulator += the selected entry (ref10's `ge_madd`, then `ge_p1p1_to_p3`).

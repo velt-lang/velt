@@ -7,7 +7,7 @@
 // starts and nothing is counted but those rare events.
 
 import { Ptr, export as cExport } from "velt/ffi";
-import { exportedAddress } from "velt/lang/intrinsics";
+import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as os from "#sched-os";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
@@ -66,6 +66,48 @@ function debugMain(arg: Ptr<u8> | null): Ptr<u8> | null {
     line(g, (sl() - t0) / 1000000);
   }
   return null;
+}
+
+/**
+ * The windows a join handle's drop races its task's last park in (#3438), held open for tests:
+ * with the block counters on (`VELT_RC_STATS=1`) and `VELT_SCHED_HANDLE_PAUSE` set to `drop` or
+ * `count`, `handlePause(window)` holds the calling thread for 50 ms there:
+ * - `drop` (1): sched_join.velt `dropRunning`, after the slot's unlock;
+ * - `count` (2): sched_task_lost.velt `counts`, between its loads of the slot's word and the count.
+ *
+ * Without the counters it is never on; each window then costs one relaxed load.
+ * crates/veltc/tests/std_scheduler_handle_drop.rs runs the programs that leaked through them.
+ */
+export const HANDLE_PAUSE = new Atomic<u64>(0);
+
+/** Turns the handle pause on when the environment asks for it (counted runs only). */
+export function handlePauseSetup(): void {
+  const v = processEnv("VELT_SCHED_HANDLE_PAUSE");
+  if (v === "drop") {
+    HANDLE_PAUSE.store(1, "relaxed");
+  } else if (v === "count") {
+    HANDLE_PAUSE.store(2, "relaxed");
+  }
+}
+
+/**
+ * 50 ms with the core given away, when the handle pause is on for window `which`: one relaxed
+ * load where it is called, the pause out of line.
+ */
+@inline("always")
+export function handlePause(which: u64): void {
+  if (HANDLE_PAUSE.load("relaxed") === which) {
+    handlePaused();
+  }
+}
+
+/** `handlePause`'s 50 ms. */
+@noInline
+function handlePaused(): void {
+  const t0 = sl();
+  while (sl() - t0 < 50000000) {
+    m.yieldCore();
+  }
 }
 
 /** The monotonic clock in nanoseconds. */

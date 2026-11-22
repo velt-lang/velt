@@ -55,6 +55,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         I::FnAddress | I::SlotSize | I::SlotStore | I::PromiseAt | I::RawAlloc => false,
         I::SymbolAddress | I::SymbolAt => false,
         I::RawFree => false,
+        // Shares the promise an `any` holds into a wrapper; formats and copies nothing.
+        I::AnyPromise | I::AnyIsPromise => false,
         // Run no user code (what they drop is counted as drops; the function values they call
         // as callbacks; generator resumes apart).
         I::StrConcat
@@ -88,6 +90,10 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AddressAtomicRmw
         | I::AddressAtomicCas
         | I::AddressAtomicCasWeak
+        | I::PtrFromAddress
+        | I::PtrToAddress
+        | I::PtrRead
+        | I::PtrWrite
         | I::ExportedAddress
         | I::Exit
         | I::Panic
@@ -136,6 +142,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::NeedsDrop
         | I::ModuleStateUsed
         | I::MayAlias
+        | I::IsUnique
         | I::HoldsNull
         | I::NullAs
         | I::Truthy

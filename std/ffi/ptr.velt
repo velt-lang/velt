@@ -1,58 +1,95 @@
-// velt/ffi (internal): `Ptr<T>`, an address of C memory, and the functions lowering calls to pass
-// one to a C function and to take one from it (crates/velt_vir/src/lower/c_call.rs).
+// velt/ffi (internal): `Ptr<T>`, an address of C memory (docs/internals/design/c-ffi.md, #3094).
+// The compiler's own type kind (`hir::TyKind::Ptr`): this declaration gives it its name, its
+// documentation and its statics (`velt_common` `std_hooks`, `ffi_ptr_type`), never a type of its
+// own. One machine word: `Ptr<T> | null` is the same word, with 0 as `null`.
+
+import { ptrFromAddress, ptrRead, ptrToAddress, ptrWrite } from "velt/lang/intrinsics/address";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
 /**
  * The address of a `T` in C memory (docs/internals/design/c-ffi.md): what a C function declared
  * with `declare c` returns as `Ptr<T>`, and passes to C when given as an argument. `T` is a type
- * declared with `declare c type` (or a number type, for a pointer to numbers); `Ptr<T> | null`
- * is a pointer that may be `NULL`. Nothing in Velt reads or writes through one without `unsafe`
- * code.
+ * declared with `declare c type` or `declare c struct`, a number type, `bool`, `void` or another
+ * pointer; `Ptr<T> | null` is a pointer that may be `NULL`. Nothing in Velt reads or writes
+ * through one without `unsafe` code. A pointer is compared by its address, prints as
+ * `Ptr(0x7ffd5e8c1a30)`, and is never `NULL`.
  */
 export struct Ptr<T> {
-  private readonly address: usize;
-
   /**
-   * A pointer to `address`. Unsafe: nothing checks that a `T` is there, and C will read or
-   * write it.
+   * A pointer to `address`, which is not 0 (the program stops on 0: a pointer that may be `NULL`
+   * is `Ptr.orNull`'s). Unsafe: nothing checks that a `T` is there, and C will read or write it.
    */
   static unsafe at<T>(address: usize): Ptr<T> {
-    return { address };
+    if (address == 0) {
+      panic("Ptr.at(0): a C pointer is never NULL; use Ptr.orNull for one that may be");
+    }
+    // SAFETY: not 0, so a `Ptr<T>` holds it; what is at it is the caller's promise.
+    return unsafe { ptrFromAddress<T>(address) };
   }
 
-  /** The address `p` holds. */
-  static addressOf<T>(p: Ptr<T>): usize {
-    return p.address;
+  /**
+   * A pointer to `address`, or `null` for 0. Unsafe: as `at`.
+   */
+  static unsafe orNull<T>(address: usize): Ptr<T> | null {
+    if (address == 0) {
+      return null;
+    }
+    // SAFETY: as in `at`.
+    return unsafe { ptrFromAddress<T>(address) };
+  }
+
+  /** The address `p` holds, or 0 for `null`. */
+  static addressOf<T>(p: Ptr<T> | null): usize {
+    return ptrToAddress<T>(p);
+  }
+
+  /**
+   * The `S` at element `index` of `p` (`p[index]` in C): `S` is a number type, `bool`, a pointer
+   * or a C struct. A pointer field of the struct declared `Ptr<T>` (not `| null`) that C left
+   * `NULL` stops the program, naming the field; a `bool` is its byte's truth to C, 0 or not. Unsafe: nothing checks that an `S` is there.
+   */
+  static unsafe read<S>(p: Ptr<S>, index: usize): S {
+    // SAFETY: the caller's promise.
+    return unsafe { ptrRead<S>(p, index) };
+  }
+
+  /**
+   * Writes `s` at element `index` of `p` (`p[index] = s` in C). Unsafe: nothing checks that the
+   * memory is there, writable, and not read or written by anything else meanwhile.
+   */
+  static unsafe write<S>(p: Ptr<S>, index: usize, s: S): void {
+    // SAFETY: the caller's promise.
+    unsafe {
+      ptrWrite<S>(p, index, s);
+    }
   }
 }
+
+/** The hexadecimal digits of `ptrPush`. */
+const HEX_DIGITS: string = "0123456789abcdef";
 
 /**
- * The `Ptr` a C function declared to return `Ptr<T>` returned (std only, lowering calls it
- * after stopping the program on NULL).
+ * Appends `Ptr(0x…)` of a pointer at `address` to the builder `buf`: how `console.log` and
+ * `inspect` show one (lowering calls it, velt_vir `glue/format.rs`). The address in lowercase
+ * hexadecimal, without leading zeros.
  */
-export function ptrOf<T>(address: usize): Ptr<T> {
-  // SAFETY: the C function's declaration says it returns a pointer to a `T`; the header check
-  // holds the declaration to the C function's.
-  return unsafe { Ptr.at<T>(address) };
-}
-
-/** The `Ptr` a C function returned, or `null` for `NULL` (std only, as `ptrOf`). */
-export function ptrOrNull<T>(address: usize): Ptr<T> | null {
-  if (address == 0) {
-    return null;
+export function ptrPush(buf: string, address: u64): void {
+  // The digits after the builder are locals (CLAUDE.md "the string builder passed as a
+  // `string`").
+  let text = "Ptr(0x";
+  let shift: u64 = 60;
+  while (shift > 0 && (address >> shift) == 0) {
+    shift -= 4;
   }
-  // SAFETY: as in `ptrOf`.
-  return unsafe { Ptr.at<T>(address) };
-}
-
-/** The address a `Ptr` argument passes to C (std only, as `ptrOf`). */
-export function ptrAddress<T>(p: Ptr<T>): usize {
-  return Ptr.addressOf(p);
-}
-
-/** The address a `Ptr<T> | null` argument passes to C, 0 for `null` (std only, as `ptrOf`). */
-export function ptrAddressOrZero<T>(p: Ptr<T> | null): usize {
-  if (p === null) {
-    return 0;
+  while (true) {
+    const digit = ((address >> shift) & 15) as i64;
+    text += HEX_DIGITS[digit];
+    if (shift == 0) {
+      break;
+    }
+    shift -= 4;
   }
-  return Ptr.addressOf(p);
+  text += ")";
+  velt_rt_strbuf_push_str(buf, text);
 }

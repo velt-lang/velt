@@ -146,6 +146,7 @@ fn show(p: &Program, t: TyId, env: Option<&Env>) -> String {
         TyKind::Result(x, e) => format!("Result<{}, {}>", show(p, *x, env), show(p, *e, env)),
         TyKind::Promise(x, e) => format!("Promise({}, {})", show(p, *x, env), show(p, *e, env)),
         TyKind::Shared(x) => format!("Shared<{}>", show(p, *x, env)),
+        TyKind::Ptr(x) => format!("Ptr({})", show(p, *x, env)),
         TyKind::FnPtr {
             params,
             ret,
@@ -301,6 +302,8 @@ fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
     };
     let (f, s) = match (d, sig) {
         (Def::Adt(_), Sig::Class) => return None,
+        // A type kind's declaration (`Ptr`, #3094): a struct whose name the compiler resolves.
+        (Def::Adt(_), Sig::TypeKind) => return None,
         // A `declare decorator function`: what it takes is its own declaration's.
         (Def::ExternFn(x), Sig::Decorator) => {
             return (!x.is_decorator).then(|| "not a `declare decorator function`".to_string())
@@ -394,8 +397,9 @@ fn every_hook_resolves_with_its_signature() {
 
 /// Lazy std checks the lowered hooks of the values a program has: lowering calls them
 /// (`velt_common` `hook_sig.rs`). This program holds an `any`, arrays and functions, and has no
-/// class object, no reference to a host value, no float printed, no `catchUnwind` and no weak
-/// collection, which the unchecked hooks wait for (a printed float for both of its writers).
+/// class object, no reference to a host value, no `**`, no `catchUnwind` and no weak collection,
+/// which the unchecked hooks wait for. Its `any` may hold a float, so the float writers are
+/// checked (`TextFloat`).
 #[test]
 fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
     let p = ok_src(LOADS_ALL);
@@ -411,8 +415,7 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
         unchecked,
         [
             "pow_f64",
-            "number_write",
-            "whole_number_write",
+            "pow_i64",
             "panic_raise",
             "class_object",
             "host_ref_handle",

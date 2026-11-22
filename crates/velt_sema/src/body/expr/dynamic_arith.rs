@@ -17,7 +17,7 @@ use crate::hook_calls::{self as hooks, ty, Call, HookTy};
 
 /// `Intrinsic::AnyTag` of a number; tags up to it (`undefined`, `null`, booleans, numbers) add
 /// as numbers.
-const TAG_NUMBER: u128 = 3;
+pub(crate) const TAG_NUMBER: u128 = 3;
 /// `Intrinsic::AnyTag` of a function; it and objects convert with `ToPrimitive`.
 pub(crate) const TAG_FUNCTION: u128 = 6;
 

@@ -102,7 +102,7 @@ impl FnCx<'_, '_> {
                 | TyKind::Unit
                 | TyKind::Simd(_)
                 | TyKind::Shared(_) => return None,
-                k => crate::types::children(&k),
+                k => crate::types::contents(&k),
             }
         };
         let mut found = false;
@@ -135,7 +135,7 @@ impl FnCx<'_, '_> {
             .map(|f| self.cx.subst(f, &args))
             .collect(),
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Param(_) => vec![],
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts.into_iter().any(|p| self.may_hold_lock(p, seen))
     }

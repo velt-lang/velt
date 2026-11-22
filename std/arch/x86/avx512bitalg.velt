@@ -22,4 +22,21 @@ export class Avx512Bitalg {
   static isSupported(): bool {
     return velt_simd_has_avx512bitalg_x86() || (velt_simd_on_x86() && cpuHas(AVX512BITALG_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The number of bits set in each byte.
+   *
+   * `_mm512_popcnt_epi8` (`vpopcntb`). Runs only where the CPU has it: call it behind
+   * `Avx512Bitalg.isSupported()`, or in a function gated on `avx512bitalg-x86`.
+   */
+  static popCountU8(value: Vector512<u8>): Vector512<u8> {
+    return velt_arch_avx512bitalg_pop_count_u8(value);
+  }
 }
+
+import { Vector512 } from "velt/arch/x86/vector512";
+
+declare function velt_arch_avx512bitalg_pop_count_u8(value: Vector512<u8>): Vector512<u8>;

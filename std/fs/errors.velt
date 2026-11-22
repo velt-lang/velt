@@ -71,10 +71,16 @@ const ERRNOS =
   "122 EDQUOT: disk quota exceeded\n";
 
 /**
- * The `IoError` for the errno `e` of the system call `syscall` (on `path`, if any), as Node
- * writes it: `ENOENT: no such file or directory, open 'a.txt'`.
+ * The `IoError` for the errno `e` of the system call `syscall` (on `path`, if any, and to `dest`
+ * for a call with two paths), as Node writes it: `ENOENT: no such file or directory, open
+ * 'a.txt'`, `…, rename 'a' -> 'b'`.
  */
-export function osError(e: i32, syscall: string, path: string | null = null): IoError {
+export function osError(
+  e: i32,
+  syscall: string,
+  path: string | null = null,
+  dest: string | null = null,
+): IoError {
   const key = `\n${isMac() ? linuxErrno(e) : e} `;
   const at = ERRNOS.indexOf(key);
   let line = "UNKNOWN: unknown error";
@@ -84,5 +90,6 @@ export function osError(e: i32, syscall: string, path: string | null = null): Io
   }
   const code = line.slice(0, line.indexOf(":"));
   const on = path == null ? "" : ` '${path}'`;
-  return new IoError(code, `${line}, ${syscall}${on}`);
+  const to = dest == null ? "" : ` -> '${dest}'`;
+  return new IoError(code, `${line}, ${syscall}${on}${to}`);
 }

@@ -6,7 +6,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { osError } from "velt/fs/errors";
 import { keepOsError, lastOsError } from "velt/os/rt";
 
-declare c("c") function read$stdin(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function read$stdin(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
 
 /** `EINTR`, the same on macOS and Linux. */
 const EINTR: i32 = 4;
@@ -21,7 +21,7 @@ export struct Chunk {
 export function readChunk(p: usize, n: usize): Chunk {
   while (true) {
     // SAFETY: `p` has room for `n` bytes (the caller's buffer).
-    const got = unsafe { read$stdin(0, Ptr.at<u8>(p), n) };
+    const got = unsafe { read$stdin(0, Ptr.orNull<u8>(p), n) };
     if (got >= 0) {
       return { count: got as usize, error: null };
     }

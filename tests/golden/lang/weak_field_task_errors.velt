@@ -1,0 +1,67 @@
+// A value holding a class with a `weak` field (docs/internals/design/cycles.md "`weak T`")
+// cannot go to another task, as a weak collection cannot: through an `unknown`, a promise held
+// in a variable and spawned later, an async closure's capture, an interface value or a base
+// class value, or across a `with` lock. Each error names the `weak` field.
+class T {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class H {
+  t: weak T | null = null;
+}
+
+interface Peek {
+  peek(): i64;
+}
+
+class Named implements Peek {
+  h: H = new H();
+  peek(): i64 {
+    return this.h.t?.n ?? 0;
+  }
+}
+
+class Base {
+  k: i64 = 0;
+}
+
+class Sub extends Base {
+  w: weak T | null = null;
+}
+
+async function runU(u: unknown): Promise<string> {
+  return typeof u;
+}
+
+async function run(h: H): Promise<i64> {
+  await Promise.resolve(0);
+  return h.t?.n ?? 0;
+}
+
+async function runPeek(p: Peek): Promise<i64> {
+  return p.peek();
+}
+
+async function runBase(b: Base): Promise<i64> {
+  return b.k;
+}
+
+async function main() {
+  const t = new T(7);
+  const h = new H();
+  h.t = t;
+  console.log(await spawn(runU(h)));
+  const p = run(h);
+  console.log(await spawn(p));
+  const f = async () => h.t?.n ?? 0;
+  console.log(await f());
+  const peek: Peek = new Named();
+  console.log(await spawn(runPeek(peek)));
+  const b: Base = new Sub();
+  console.log(await spawn(runBase(b)));
+  const m = new Mutex<i64>(1);
+  console.log(m.with((v) => v + (h.t?.n ?? 0)), t.n);
+}

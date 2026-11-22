@@ -1,0 +1,61 @@
+// Expected output is Node's (v24): `node --experimental-strip-types` on a copy named .ts.
+// #3435: `(b[i] ||= v)` (also `&&=`, `??=`) used as a value on an integer array is `v` when the
+// element is stored, as `(b[i] = v)` is: an `any` `v` as it is, before the store converts it.
+// When the element decides, the value is the element and `v` is not evaluated.
+const c = Buffer.alloc(4);
+const anyv = (): any => "0x20";
+const ra = (c[3] ||= anyv());
+console.log(ra, typeof ra, c[3]);
+
+let calls = 0;
+function gives(): any {
+  calls++;
+  return " 12 ";
+}
+c[0] = 5;
+const kept = (c[0] ||= gives());
+const anded = (c[0] &&= gives());
+const nulled = (c[1] ??= gives());
+console.log(kept, anded, nulled, calls, c.join(","));
+
+// An element of an `any[]` and a value used in a larger expression.
+const vals: any[] = [true, "7", [9]];
+const d = Buffer.alloc(3);
+const out: any[] = [];
+for (let i = 0; i < vals.length; i++) {
+  out.push((d[i] ||= vals[i]));
+}
+console.log(out.join("|"), d.join(","));
+const e = Buffer.alloc(1);
+console.log("v=" + (e[0] ||= anyv()), e[0]);
+
+// A value the store wraps, and a value that is already a number.
+const big: any = "70000";
+const g = Buffer.alloc(1);
+console.log((g[0] ||= big), g[0]);
+const f = Buffer.alloc(2);
+console.log((f[0] ||= 7), (f[0] ||= 8), f.join(","));
+
+// The element stored is the one read, even when the right side gives the variable or field
+// another Buffer first.
+class Holder {
+  buf: u8[] = Buffer.alloc(1);
+  swap(): any {
+    this.buf = Buffer.alloc(1);
+    return 3;
+  }
+  run(): void {
+    const old = this.buf;
+    const r = (this.buf[0] ||= this.swap());
+    console.log(r, old[0], this.buf[0]);
+  }
+}
+new Holder().run();
+let local = Buffer.alloc(1);
+const first = local;
+const replace = (): any => {
+  local = Buffer.alloc(1);
+  return "4";
+};
+const s = (local[0] ||= replace());
+console.log(s, first[0], local[0]);

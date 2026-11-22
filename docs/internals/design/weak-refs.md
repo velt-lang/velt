@@ -26,8 +26,12 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
 
 - **A flag in the count word.** Bit 63 (`RC_WEAK`, the sign bit) is set while the object is
   weakly held: a weak-map key, a `WeakRef` target, the target of a `weak T` reference, or a member
-  of an ephemeron cycle (below).
-  Counts never get near 2^63, so the bit costs no range, and retain stays `count += 1`.
+  of an ephemeron cycle (below). Bit 62 (`RC_GATED`) is set besides once the object's record has a
+  release gate (`R_GATE`, below: a weak map key, or an object on an entry's path back to one).
+  Without it a release that leaves the count above 0 is a plain decrement: the generated sequence
+  makes it inline for the classes `weak` fields refer to, so such a target takes the lock only
+  when it is freed, and `weakRelease` makes it for the rest.
+  Counts never get near 2^62, so the bits cost no range, and retain stays `count += 1`.
 - **One side table for the process**, behind a lock, from object address to a record: the maps
   the object is a key of, the entries whose value graph refers to it, its `WeakRef` slots, the
   slot of its `weak T` references, and two small counts used by the ephemeron rule (`hint`,
@@ -203,7 +207,9 @@ reaches it, and the trial uses the record's trace for such keys.
   of decrementing it.
 - **Weak handles belong to one task.** A `WeakMap`, `WeakSet` or `WeakRef` (a class instance with
   a plain count) stays with the task that made it (see "Threads and `shared`"). The task itself
-  may run on several threads in turn, which the process-wide table allows. A weakly held object
+  may run on several threads in turn, which the process-wide table allows. So does an object of
+  a class with a `weak` field, whose slots are this task's ([cycles.md](cycles.md) "`weak T`"):
+  its transfer glue panics as a `WeakRef`'s does. A weakly held object
   is never transferred in place either (its count word is never 1, so the transfer deep-copies
   it, and the copy is not weakly held). An object with `RC_WEAK` set and no record is an `ICE:`
   that `weakRelease` reports before it touches the count word.
@@ -236,11 +242,14 @@ For weak-capable types only, `release_as` (`lower/rc.rs`) changes the release's 
 c = *rc
 if c as i64 > 1 { *rc = c - 1 }                                              // shared path
 else if c == 1  { drop the fields; free }                                    // unique path
+else if (c << 1) as i64 > 2 { *rc = c - 1 }                                  // weakly held, no gate
 else            { if weakRelease(obj) { drop the fields; free } }           // RC_WEAK: cold
 ```
 
 A weakly held object's count word is negative as a signed number, so it leaves the shared path
-with the unique case and goes to the cold call, which removes the object from every map and
+with the unique case; for the classes `weak` fields refer to (velt_vir `weak_fields.rs`
+`slot_target`), one without a release gate whose count stays above 0 is decremented there and
+then (the other types leave that test out), and anything else goes to the cold call, which removes the object from every map and
 `WeakRef` before the generated code frees it. The sequence is used at every release (drop glue,
 boxed values, half-built objects, the queued drops of `drop_depth.rs`), at `drop_chain.rs`'s
 `take` and at `transfer.rs`'s release of the sender's reference after a deep copy.

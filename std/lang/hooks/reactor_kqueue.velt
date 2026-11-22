@@ -88,24 +88,24 @@ declare c("c") function kqueue(): i32;
 // C's `kevent`, named apart from `struct kevent` (one Velt name is one thing).
 declare c("c") function kevent$io(
   kq: i32,
-  changes: Ptr<kevent>,
+  changes: Ptr<kevent> | null,
   nchanges: i32,
-  events: Ptr<kevent>,
+  events: Ptr<kevent> | null,
   nevents: i32,
-  timeout: Ptr<timespec>,
+  timeout: Ptr<timespec> | null,
 ): i32;
 declare c("c") function fcntl$io(fd: i32, cmd: i32, ...args: CVarArgs): i32;
 declare c("c") function setsockopt$io(
   fd: i32,
   level: i32,
   name: i32,
-  value: Ptr<u8>,
+  value: Ptr<u8> | null,
   len: u32,
 ): i32;
 // The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
 // symbol has one signature in a program.
 declare c("c") function __error(): Ptr<i32>;
-declare c("c") function accept$io(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>): i32;
+declare c("c") function accept$io(fd: i32, addr: Ptr<sockaddr> | null, len: Ptr<u32> | null): i32;
 declare c("c") function close$io(fd: i32): i32;
 
 /** The calling thread's `errno`. */
@@ -127,7 +127,7 @@ export function open(): usize {
   change(r, 0, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0);
   // SAFETY: one change record in the block; no events wanted.
   unsafe {
-    kevent$io(kq, m.ptrTo<kevent>(r + R_CHANGE), 1, m.ptrTo<kevent>(0), 0, m.ptrTo<timespec>(0));
+    kevent$io(kq, m.ptrTo<kevent>(r + R_CHANGE), 1, null, 0, null);
   }
   m.st(r + R_TRIGGER, 0);
   m.st32(r + R_TRIGGER + 8, ((EVFILT_USER as u16) as u32));
@@ -170,9 +170,8 @@ function changeBoth(r: usize, fd: i32, flags: u16, source: usize): i32 {
   m.copy(c + EV, c, EV);
   m.st32(c + EV + 8, ((EVFILT_WRITE as u16) as u32) | ((flags as u32) << 16));
   const kq = m.ld(r + R_KQ) as i32;
-  const none = m.ptrTo<kevent>(0);
   // SAFETY: two change records at `c`.
-  const n = unsafe { kevent$io(kq, m.ptrTo<kevent>(c), 2, none, 0, m.ptrTo<timespec>(0)) };
+  const n = unsafe { kevent$io(kq, m.ptrTo<kevent>(c), 2, null, 0, null) };
   m.release(c, 2 * EV);
   return n < 0 ? errno() : 0;
 }
@@ -190,10 +189,10 @@ export function wait(r: usize, timeoutMs: i64): usize {
   }
   const kq = m.ld(r + R_KQ) as i32;
   const events = m.ptrTo<kevent>(r + R_EVENTS);
-  const none = m.ptrTo<kevent>(0);
+  // No timeout (0): wait until an event.
   const until = m.ptrTo<timespec>(ts);
   // SAFETY: the block has room for MAX_EVENTS events and the timespec.
-  const n = unsafe { kevent$io(kq, none, 0, events, MAX_EVENTS as i32, until) };
+  const n = unsafe { kevent$io(kq, null, 0, events, MAX_EVENTS as i32, until) };
   return n < 0 ? 0 : n as usize;
 }
 
@@ -244,9 +243,8 @@ export function watchExit(r: usize, exit: i32, source: usize): i32 {
   m.st32(c + 12, NOTE_EXIT);
   m.st(c + 24, source);
   const kq = m.ld(r + R_KQ) as i32;
-  const none = m.ptrTo<kevent>(0);
   // SAFETY: one change record at `c`.
-  const n = unsafe { kevent$io(kq, m.ptrTo<kevent>(c), 1, none, 0, m.ptrTo<timespec>(0)) };
+  const n = unsafe { kevent$io(kq, m.ptrTo<kevent>(c), 1, null, 0, null) };
   m.release(c, EV);
   if (n < 0) {
     return errno();
@@ -264,16 +262,16 @@ export const EXITED: i32 = ESRCH;
  */
 export const SPAWN_FLAGS: i16 = 0x4000;
 
-declare c("c") function pipe$io(fds: Ptr<i32>): i32;
+declare c("c") function pipe$io(fds: Ptr<i32> | null): i32;
 declare c("c") function posix_spawn_file_actions_addinherit_np(
-  fa: Ptr<posix_spawn_file_actions_t>,
+  fa: Ptr<posix_spawn_file_actions_t> | null,
   fd: i32,
 ): i32;
 
 /** A pipe at `fds` (read end, write end), both close-on-exec; 0, or -1 with `errno` set. */
 export function pipeCloexec(fds: usize): i32 {
   // SAFETY: room for two descriptors.
-  if (unsafe { pipe$io(Ptr.at<i32>(fds)) } !== 0) {
+  if (unsafe { pipe$io(Ptr.orNull<i32>(fds)) } !== 0) {
     return -1;
   }
   // SAFETY: F_SETFD takes an `int`, passed as C's `...` argument.
@@ -301,21 +299,19 @@ export function wake(r: usize): void {
   // wake a worker while the process ends).
   // SAFETY: one change record.
   unsafe {
-    kevent$io(
-      m.ld(r + R_KQ) as i32,
-      m.ptrTo<kevent>(r + R_TRIGGER),
-      1,
-      m.ptrTo<kevent>(0),
-      0,
-      m.ptrTo<timespec>(0),
-    );
+    kevent$io(m.ld(r + R_KQ) as i32, m.ptrTo<kevent>(r + R_TRIGGER), 1, null, 0, null);
   }
 }
 
-/** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
+/**
+ * Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. `addr`
+ * and `len` are 0 (`NULL`) when the peer's address isn't wanted.
+ */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
-  // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
-  const s = unsafe { accept$io(fd, m.ptrTo<sockaddr>(addr), m.ptrTo<u32>(len)) };
+  const a = m.ptrTo<sockaddr>(addr);
+  const l = m.ptrTo<u32>(len);
+  // SAFETY: `addr` holds the `socklen_t` at `len` bytes, or both are NULL.
+  const s = unsafe { accept$io(fd, a, l) };
   if (s >= 0 && prepare(s) !== 0) {
     // SAFETY: the descriptor accept returned, not used after.
     unsafe {
@@ -347,8 +343,13 @@ export function prepare(fd: i32): i32 {
 /** `UL_COMPARE_AND_WAIT | ULF_NO_ERRNO`: wait while the 32-bit word holds the value. */
 const COMPARE_AND_WAIT: u32 = 0x01000001;
 
-declare c("c") function __ulock_wait(op: u32, addr: Ptr<u8>, value: u64, timeoutUs: u32): i32;
-declare c("c") function __ulock_wake(op: u32, addr: Ptr<u8>, wakeValue: u64): i32;
+declare c("c") function __ulock_wait(
+  op: u32,
+  addr: Ptr<u8> | null,
+  value: u64,
+  timeoutUs: u32,
+): i32;
+declare c("c") function __ulock_wake(op: u32, addr: Ptr<u8> | null, wakeValue: u64): i32;
 
 /**
  * Sleeps while the `u32` at `word` is `expected` (a lock's waiters: sched_module.velt); it may
@@ -383,7 +384,12 @@ export function wordWake(word: usize): void {
 // count are `natural_t`s (unsigned), its info `integer_t`s.
 declare c("c") function pthread_self(): Ptr<void>;
 declare c("c") function pthread_mach_thread_np(thread: Ptr<void>): u32;
-declare c("c") function thread_info(thread: u32, flavor: u32, info: Ptr<i32>, count: Ptr<u32>): i32;
+declare c("c") function thread_info(
+  thread: u32,
+  flavor: u32,
+  info: Ptr<i32> | null,
+  count: Ptr<u32> | null,
+): i32;
 
 /** `THREAD_BASIC_INFO` and its count of `int`s (user and system time, then six more). */
 const THREAD_BASIC_INFO: u32 = 3;
