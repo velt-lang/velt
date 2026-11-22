@@ -418,7 +418,18 @@ impl FnLower<'_, '_> {
             },
             |lw| {
                 let fp = lw.proxy_hot_place(ptr, bty, index);
-                lw.assign(Place::local(val), Rvalue::Use(Operand::Copy(fp)));
+                match (lw.cx.weak_field(bty, index), slot) {
+                    // A weak field's target, retained into the slot (weak_fields.rs).
+                    (Some(read), Some(slot)) => {
+                        let w = lw.weak_value(fp, read);
+                        lw.assign(Place::local(slot), Rvalue::Use(w));
+                        lw.assign(
+                            Place::local(val),
+                            Rvalue::Use(Operand::Copy(Place::local(slot))),
+                        );
+                    }
+                    _ => lw.assign(Place::local(val), Rvalue::Use(Operand::Copy(fp))),
+                }
             },
         );
         Place::local(val)

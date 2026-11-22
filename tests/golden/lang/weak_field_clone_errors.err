@@ -1,0 +1,7 @@
+`Peek`, which holds a `weak` field, cannot be copied
+a `Peek` may be a `Named`, which holds a `weak` field: an interface value may hold anything converted to it in the program
+`Peek[]`, which holds a `weak` field, cannot be copied
+`Base`, which holds a `weak` field, cannot be copied
+a `Base` may be a `Sub`, which holds a `weak` field: a class value may hold anything converted to it in the program
+`unknown[]`, which holds a `weak` field, cannot be copied
+an `unknown` may be a `H`, which holds a `weak` field: an interface value may hold anything converted to it in the program

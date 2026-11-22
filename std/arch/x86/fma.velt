@@ -22,4 +22,40 @@ export class Fma {
   static isSupported(): bool {
     return velt_simd_has_fma_x86() || (velt_simd_on_x86() && cpuHas(FMA_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * `a * b + c` in each lane, rounded once.
+   *
+   * `_mm256_fmadd_ps` (`vfmadd213ps`). Runs only where the CPU has it: call it behind
+   * `Fma.isSupported()`, or in a function gated on `fma-x86`.
+   */
+  static multiplyAddF32(a: Vector256<f32>, b: Vector256<f32>, c: Vector256<f32>): Vector256<f32> {
+    return velt_arch_fma_multiply_add_f32(a, b, c);
+  }
+
+  /**
+   * `a * b + c` in each lane, rounded once.
+   *
+   * `_mm256_fmadd_pd` (`vfmadd213pd`). Runs only where the CPU has it: call it behind
+   * `Fma.isSupported()`, or in a function gated on `fma-x86`.
+   */
+  static multiplyAddF64(a: Vector256<f64>, b: Vector256<f64>, c: Vector256<f64>): Vector256<f64> {
+    return velt_arch_fma_multiply_add_f64(a, b, c);
+  }
 }
+
+import { Vector256 } from "velt/arch/x86/vector256";
+
+declare function velt_arch_fma_multiply_add_f32(
+  a: Vector256<f32>,
+  b: Vector256<f32>,
+  c: Vector256<f32>,
+): Vector256<f32>;
+declare function velt_arch_fma_multiply_add_f64(
+  a: Vector256<f64>,
+  b: Vector256<f64>,
+  c: Vector256<f64>,
+): Vector256<f64>;

@@ -110,23 +110,36 @@ fn both_if(undefined: bool) -> Nothing {
     }
 }
 
+/// Where a `weak T | null` is written, for what lowering handles yet.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WeakPlace {
+    /// A class's own field (not a static one).
+    ClassField,
+    /// An abstract property (`abstract a: weak T | null`, given as abstract accessors).
+    AbstractProperty,
+    /// An interface's or an object type's member, a variable, a static field.
+    Other,
+}
+
 impl Ctx<'_> {
     /// The type written for a field or a variable, `t`, read with `resolve`: a `weak T | null` at
-    /// its top is checked and resolved as `T | null`.
+    /// its top is checked and resolved as `T | null`, the read type. The flag says the type was
+    /// `weak` (and well formed, at a `place` lowering handles: `hir::FieldDef::weak`).
     pub(crate) fn resolve_weak_annotation(
         &mut self,
         t: &ast::TypeExpr,
         env: &TyEnv,
+        place: WeakPlace,
         resolve: &mut dyn FnMut(&mut Self, &ast::TypeExpr, &TyEnv) -> TyId,
-    ) -> TyId {
+    ) -> (TyId, bool) {
         let (target, nothing) = match weak_shape(t) {
-            WeakShape::None => return resolve(self, t, env),
+            WeakShape::None => return (resolve(self, t, env), false),
             WeakShape::Mixed(span) => {
                 self.err(
                     "`weak` may only be united with `null` (and `undefined`): write `weak T | null`",
                     span,
                 );
-                return self.ty.error;
+                return (self.ty.error, false);
             }
             WeakShape::NoNull {
                 target,
@@ -151,17 +164,46 @@ impl Ctx<'_> {
         };
         let to = resolve(self, target, env);
         if to == self.ty.error {
-            return to;
+            return (to, false);
         }
         if let Err(what) = self.weak_target(to) {
             self.err(
                 format!("`weak` refers to an object with an identity: {what}"),
                 target.span,
             );
-            return self.ty.error;
+            return (self.ty.error, false);
         }
-        self.err("`weak` references are not implemented yet (#3119)", t.span);
-        self.ty.option_of(to, nothing)
+        let read = self.ty.option_of(to, nothing);
+        if let Some(what) = self.weak_not_lowered(to, nothing, place) {
+            self.err(
+                format!("`weak` {what} is not implemented yet (#3119)"),
+                t.span,
+            );
+            return (read, false);
+        }
+        (read, true)
+    }
+
+    /// What of a well-formed `weak T | null` lowering does not handle yet: the places and targets
+    /// other than a class's own field referring to a class, and a written `undefined`.
+    fn weak_not_lowered(
+        &mut self,
+        to: TyId,
+        nothing: Nothing,
+        place: WeakPlace,
+    ) -> Option<&'static str> {
+        match place {
+            WeakPlace::ClassField => {}
+            WeakPlace::AbstractProperty => return Some("on an abstract property"),
+            WeakPlace::Other => return Some("outside a class's own field"),
+        }
+        if nothing != Nothing::Null {
+            return Some("with `undefined`");
+        }
+        match self.ty.kind(to).clone() {
+            TyKind::Adt(d, _) if self.adt(d).is_some_and(|a| a.kind == AdtKind::Class) => None,
+            _ => Some("to anything but a class instance"),
+        }
     }
 
     /// The signature of an abstract property's accessor (`abstract a: weak T | null`, which the
@@ -180,7 +222,8 @@ impl Ctx<'_> {
             return None;
         }
         if m.is_getter {
-            self.resolve_weak_annotation(t, env, &mut |cx, t, env| cx.resolve_type(t, env));
+            let place = WeakPlace::AbstractProperty;
+            self.resolve_weak_annotation(t, env, place, &mut |cx, t, env| cx.resolve_type(t, env));
         }
         let mut out = sig.clone();
         match m.is_getter {
@@ -235,5 +278,20 @@ impl Ctx<'_> {
                 "`{shown}` is not a class, an object type, an interface, an array or a map"
             )),
         }
+    }
+}
+
+impl crate::body::FnCx<'_, '_> {
+    /// Is the place `place` a `weak` field (`hir::FieldDef::weak`)?
+    pub(crate) fn weak_field_place(&mut self, place: &crate::hir::Expr) -> bool {
+        let crate::hir::ExprKind::Field { base, index, .. } = &place.kind else {
+            return false;
+        };
+        let TyKind::Adt(d, _) = self.cx.ty.kind(base.ty).clone() else {
+            return false;
+        };
+        (self.cx.adt(d))
+            .and_then(|a| a.fields.get(*index as usize))
+            .is_some_and(|f| f.weak)
     }
 }

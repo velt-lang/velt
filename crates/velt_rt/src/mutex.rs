@@ -1,21 +1,25 @@
 //! The lock of `Mutex<T>` (`velt_rt_mutex_*`), on an 8-byte word inside the shared object that
-//! generated code owns, so it never allocates.
+//! generated code owns, so it never allocates. On a native target an uncontended lock and
+//! unlock are std's (std/lang/hooks/mutex.velt: a compare-and-swap of the word's first 32 bits),
+//! which calls the slow paths here (`velt_rt_mutex_lock_slow`, `velt_rt_mutex_unlock_slow`) when
+//! the lock is held or threads are parked on it.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Size of the lock word generated code reserves inside a `Mutex<T>` object (align 8).
 pub const MUTEX_SIZE: usize = 8;
 
-/// The lock of a `Mutex<T>`: one byte, as `parking_lot`'s (a locked bit, and a bit saying that
-/// threads are parked on it), with a different way of waiting. `with` bodies never await and
-/// are short, so a thread that finds the lock taken spins briefly without leaving the CPU and
-/// then parks. `parking_lot` yields the thread between the two, up to seven times: each a
-/// system call, and under contention (many tasks sending to the same WebSocket connections
-/// from several threads) that was most of what the waiting threads did.
-struct Lock(AtomicU8);
+/// The lock of a `Mutex<T>`: 32 bits (std's compare-and-swap is 32 or 64 bits wide), with
+/// `parking_lot`'s two bits (a locked bit, and a bit saying that threads are parked on it) and a
+/// different way of waiting. `with` bodies never await and are short, so a thread that finds the
+/// lock taken spins briefly without leaving the CPU and then parks. `parking_lot` yields the
+/// thread between the two, up to seven times: each a system call, and under contention (many
+/// tasks sending to the same WebSocket connections from several threads) that was most of what
+/// the waiting threads did.
+struct Lock(AtomicU32);
 
-const LOCKED: u8 = 1;
-const PARKED: u8 = 2;
+const LOCKED: u32 = 1;
+const PARKED: u32 = 2;
 /// Rounds of spinning (1, 2, 4… pauses, 16 at most) before parking.
 const SPINS: u32 = 10;
 /// Unpark token: the lock was handed to the woken thread, which owns it now.
@@ -94,6 +98,8 @@ impl Lock {
         }
     }
 
+    /// The unlock std's `mutexUnlock` does inline (the runtime's tests use this one).
+    #[cfg(test)]
     #[inline]
     fn unlock(&self) {
         let alone = self
@@ -132,26 +138,38 @@ pub unsafe extern "C" fn velt_rt_mutex_init(p: *mut u64) {
     p.write(0);
 }
 
-/// Lock (blocking the thread; `with` bodies never await, so holds are short). The module lock
-/// stays held meanwhile: a `with` callback never waits for it (task/local/module_state.rs).
+/// The lock's slow path (std/lang/hooks/mutex.velt `mutexLock`, whose compare-and-swap found it
+/// held): spin briefly, then park until it is free or handed over (blocking the thread; `with`
+/// bodies never await, so holds are short).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_mutex_lock(p: *mut u64) {
-    (*(p as *const Lock)).lock();
-    crate::task::local::mutex_locked();
+pub unsafe extern "C" fn velt_rt_mutex_lock_slow(p: *mut u64) {
+    (*(p as *const Lock)).lock_slow();
 }
 
-/// [`velt_rt_mutex_lock`] from code that may run in a `read` callback (velt_vir: code not known
-/// to run outside one), where a `with` stops the program: the callback shares the `RwLock`'s
-/// value without counting it, which a `with` callback could not tell from what it changes.
+/// The unlock's slow path (std/lang/hooks/mutex.velt `mutexUnlock`, whose compare-and-swap found
+/// threads parked on the lock): wake one, or hand the lock to it.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_mutex_unlock_slow(p: *mut u64) {
+    (*(p as *const Lock)).unlock_slow();
+}
+
+/// The lock from code that may run in a `read` callback (velt_vir: code not known to run outside
+/// one), where a `with` stops the program: the callback shares the `RwLock`'s value without
+/// counting it, which a `with` callback could not tell from what it changes. Its unlock is std's
+/// (`mutexUnlock`), as any `with`'s.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_mutex_lock_checked(p: *mut u64) {
     crate::read_mode::refuse_in_read("with");
-    velt_rt_mutex_lock(p)
+    lock(p);
 }
 
-/// Unlock a mutex locked by this thread's `velt_rt_mutex_lock`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_mutex_unlock(p: *mut u64) {
-    crate::task::local::mutex_unlocked();
+/// Lock the `Mutex` whose lock word is at `p`, as std's `mutexLock` does (the runtime's tests).
+pub(crate) unsafe fn lock(p: *mut u64) {
+    (*(p as *const Lock)).lock();
+}
+
+/// Unlock it, as std's `mutexUnlock` does.
+#[cfg(test)]
+pub(crate) unsafe fn unlock(p: *mut u64) {
     (*(p as *const Lock)).unlock();
 }

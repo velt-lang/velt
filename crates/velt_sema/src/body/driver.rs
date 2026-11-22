@@ -10,6 +10,7 @@ use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
 use crate::hir::{self, Def, DefId, ExprKind as H, TyId, TyKind};
 use crate::resolve::TyEnv;
+use crate::weak_types::WeakPlace;
 
 /// How many times a body is checked again for the types of its locals declared from literals
 /// (`literal_locals`): one decision may let another local be decided.
@@ -222,7 +223,11 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     }
     let ann = ann.map(|t| {
         let env = TyEnv::new(module, &[]);
-        (fcx.cx).resolve_weak_annotation(t, &env, &mut |cx, t, env| cx.resolve_type(t, env))
+        (fcx.cx)
+            .resolve_weak_annotation(t, &env, WeakPlace::Other, &mut |cx, t, env| {
+                cx.resolve_type(t, env)
+            })
+            .0
     });
     if let (Some(t), DefInfo::Global(g)) = (ann, &mut fcx.cx.info[d.0 as usize]) {
         g.ty = t;
