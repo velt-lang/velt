@@ -283,7 +283,7 @@ impl Moves<'_> {
             let i = c.outer.0 as usize;
             // A second escaping closure capturing a variable that one of them assigns.
             if escaping && matches!(c.mode, PassMode::Owned | PassMode::Copy) && self.boxable[i] {
-                let prev = st.as_ref().and_then(|s| s.captured[i]);
+                let prev = st.as_ref().and_then(|s| s.captured(i));
                 if prev.is_some_and(|(_, _, w)| w || writes(&c)) {
                     self.boxed.insert(c.outer);
                 }
@@ -328,8 +328,8 @@ impl Moves<'_> {
                 // run before `holder` leaves its block, and what it wrote is read after (#2833).
                 let holder = holder.filter(|_| !kept(&c) && !w);
                 if let Some(s) = st {
-                    let before = s.captured[i].is_some_and(|(_, _, x)| x);
-                    s.captured[i] = Some((span, holder.map(|h| h.0 as usize), w || before));
+                    let before = s.captured(i).is_some_and(|(_, _, x)| x);
+                    s.set_captured(i, Some((span, holder.map(|h| h.0 as usize), w || before)));
                 }
             }
             // A closure that doesn't escape, but makes one that keeps this variable by value (an
@@ -337,8 +337,8 @@ impl Moves<'_> {
             // and by no local.
             if !escaping && kept(&c) {
                 if let Some(s) = st {
-                    let before = s.captured[i].is_some_and(|(_, _, x)| x);
-                    s.captured[i] = Some((span, None, before));
+                    let before = s.captured(i).is_some_and(|(_, _, x)| x);
+                    s.set_captured(i, Some((span, None, before)));
                 }
             }
         }
