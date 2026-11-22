@@ -10,3 +10,13 @@ optional missing undefined
 optional own own 6
 skipped undefined 0
 evaluated 2 present
+cast optional 6
+unknown cast optional 4
+optional read 3 undefined
+call result 3
+index 3
+member 3
+call result catch 2
+chain 3 undefined undefined
+chain skipped present
+optional read own own 6

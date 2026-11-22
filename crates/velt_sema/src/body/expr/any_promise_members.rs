@@ -162,10 +162,12 @@ impl FnCx<'_, '_> {
         self.block_with(lets, pick, any, span)
     }
 
-    /// `recv.name?.(args)` (`name` one of [`PROMISE_MEMBERS`]) where `recv` is a path to an
-    /// `any` / `unknown`: on a promise the call `recv.name(args)` (its member is never missing),
-    /// on anything else the member read, then `undefined` if it is `null` / `undefined`, else
-    /// called as before (`AnyApply`). `None` for any other optional call.
+    /// `recv.name?.(args)` and `recv?.name?.(args)` (`name` one of [`PROMISE_MEMBERS`]) where
+    /// `recv`, any expression, is an `any` / `unknown`: `recv` held, `undefined` if it is
+    /// `null` / `undefined` and the member read is optional; then on a promise the call
+    /// `recv.name(args)` (its member is never missing), on anything else the member read,
+    /// `undefined` if it is `null` / `undefined`, else called as before (`AnyApply`). `None` for
+    /// any other optional call.
     pub(super) fn promise_member_optional_call(
         &mut self,
         callee: &ast::Expr,
@@ -175,7 +177,7 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Member {
             object,
             prop,
-            optional: false,
+            optional: read_optional,
         } = &callee.kind
         else {
             return None;
@@ -183,9 +185,23 @@ impl FnCx<'_, '_> {
         if !PROMISE_MEMBERS.contains(&prop.name.as_str()) || self.cx.scopes[self.module].is_std {
             return None;
         }
-        let t = self.peek_ty(object)?;
+        // Typed on trial (nothing kept) to choose; checked for real below.
+        let t = self.trial_type(object)?;
         if !matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown)) {
             return None;
+        }
+        // `a?.b.then?.(f)`: short-circuited at `a?.`, the rest (`<a>.b.then?.(f)`) back here.
+        let call = setters::synth(
+            ast::ExprKind::Call {
+                callee: Box::new(callee.clone()),
+                type_args: vec![],
+                args: args.to_vec(),
+                optional: true,
+            },
+            span,
+        );
+        if let Some(h) = self.short_circuit_call(&call, None) {
+            return Some(h);
         }
         let recv = self.receiver_expr(object);
         let (recv, any) = match self.dynamic_receiver(recv, Some(Some(&prop.name))) {
@@ -196,12 +212,12 @@ impl FnCx<'_, '_> {
                 return Some(self.error_expr(span));
             }
             Err(_) => panic!(
-                "ICE: `{}` peeked as dynamic but checked as typed",
+                "ICE: the receiver of `{}?.()` typed dynamic on trial but typed when checked",
                 prop.name
             ),
         };
-        // In Node's order: the receiver, its member, the test for `null` / `undefined`, and only
-        // then the arguments and the call.
+        // In Node's order: the receiver (and its test for `null` / `undefined` in `recv?.`), its
+        // member, the member's test, and only then the arguments and the call.
         let str_ = self.cx.ty.str_;
         let text = format!("{}.{}", self.callee_text(&recv), prop.name);
         let recv = self.share_if_place(recv);
@@ -217,8 +233,6 @@ impl FnCx<'_, '_> {
         let read = |s: &mut Self| s.mk(H::Local(m, UseMode::Borrow), any, span);
         let r = read(self);
         let missing = self.dynamic_null_compare(r, "null", false, true, span);
-        let undefined = setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
-        let undefined = self.expr(&undefined, Some(any), Want::Move);
         let Some(boxed) = self.dynamic_args(args, any, false) else {
             return Some(self.error_expr(span));
         };
@@ -231,7 +245,27 @@ impl FnCx<'_, '_> {
         };
         let h = held(self);
         let present = self.promise_member_call(h, &prop.name, boxed, any, span, apply);
-        let pick = self.mk(
+        let pick = self.pick_undefined(missing, present, any, span);
+        let mut value = self.block_with(vec![(m, member)], pick, any, span);
+        if *read_optional {
+            let h = held(self);
+            let nothing = self.dynamic_null_compare(h, "null", false, true, span);
+            value = self.pick_undefined(nothing, value, any, span);
+        }
+        Some(self.block_with(vec![(t, recv)], value, any, span))
+    }
+
+    /// `missing ? undefined : present`, of type `any`.
+    fn pick_undefined(
+        &mut self,
+        missing: hir::Expr,
+        present: hir::Expr,
+        any: TyId,
+        span: Span,
+    ) -> hir::Expr {
+        let undefined = setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+        let undefined = self.expr(&undefined, Some(any), Want::Move);
+        self.mk(
             H::If {
                 cond: Box::new(missing),
                 then: Box::new(undefined),
@@ -239,8 +273,7 @@ impl FnCx<'_, '_> {
             },
             any,
             span,
-        );
-        Some(self.block_with(vec![(t, recv), (m, member)], pick, any, span))
+        )
     }
 
     /// The string literal `name`.

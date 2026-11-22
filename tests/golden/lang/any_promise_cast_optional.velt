@@ -43,5 +43,22 @@ async function main(): Promise<void> {
   };
   console.log("skipped", plain.then?.(mark("missing")), seen.length);
   console.log("evaluated", await p.then?.(mark("present")), seen.join(","));
+
+  // Optional calls on receivers that aren't variables, and on an optional member read.
+  const inc = (v: any) => v + 1;
+  const u: unknown = later(3);
+  const getP = (): any => p;
+  const none: any = null;
+  console.log("cast optional", await (typed as any).then?.(inc));
+  console.log("unknown cast optional", await (u as any).then?.(inc));
+  console.log("optional read", await p?.then?.(inc), none?.then?.(inc));
+  console.log("call result", await getP().then?.(inc));
+  console.log("index", await [p][0].then?.(inc));
+  console.log("member", await ({ q: p } as any).q.then?.(inc));
+  console.log("call result catch", await getP().catch?.((e: any) => "no"));
+  const box: any = { p };
+  console.log("chain", await box?.p.then?.(inc), none?.p.then?.(inc), none?.p.then?.(mark("x")));
+  console.log("chain skipped", seen.join(","));
+  console.log("optional read own", own?.then?.((v: any) => v * 2));
 }
 main();

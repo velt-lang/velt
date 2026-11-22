@@ -22,6 +22,29 @@ impl FnCx<'_, '_> {
             return None;
         }
         let link = nearest_link(chain_object(e)?)?;
+        self.short_circuit_at(e, link, exp, want)
+    }
+
+    /// `e`, the optional call `recv.name?.(args)`, when `recv` continues an optional chain past
+    /// a `?.` link (`a?.b.then?.(f)`): short-circuited at that link as [`Self::short_circuit`]
+    /// does a chain, the rest (`<link>.b.then?.(f)`) checked on the link's value.
+    pub(super) fn short_circuit_call(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<TyId>,
+    ) -> Option<hir::Expr> {
+        let link = nearest_link(chain_object(chain_object(e)?)?)?;
+        self.short_circuit_at(e, link, exp, Want::Move)
+    }
+
+    /// `e` short-circuited at its chain's `?.` link `link`.
+    fn short_circuit_at(
+        &mut self,
+        e: &ast::Expr,
+        link: &ast::Expr,
+        exp: Option<TyId>,
+        want: Want,
+    ) -> Option<hir::Expr> {
         let object = chain_object(link)?;
         let name = format!("<chain@{}>", link.span.lo);
         let rest = rewrite(e, link.span, &name, object.span);
