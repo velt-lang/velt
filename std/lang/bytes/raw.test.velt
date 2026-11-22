@@ -3,6 +3,7 @@
 // cases of the Rust tests they replace (relative indices past 32 bits, `set` that does not fit,
 // overlapping copies within one array).
 import { describe, expect, it } from "velt/test";
+import { arraySetLen } from "velt/lang/intrinsics";
 import {
   bytesCopy,
   bytesCopyWithin,
@@ -66,6 +67,25 @@ describe("set and copyWithin", () => {
     expect(text(d)).toBe("ab..ab");
     bytesCopyWithin(d, 1, 0, -2);
     expect(text(d)).toBe("aab..b");
+  });
+
+  it("copies no further than the array's end when the target leaves less room", () => {
+    // Length 8 in a capacity of 16 whose spare bytes are "x": a copy past the length changes
+    // them, which reading all 16 back shows.
+    const d = bytesUninit(16);
+    for (let i: usize = 0; i < 16; i++) {
+      d[i] = 0x78;
+    }
+    arraySetLen(d, 8);
+    for (let i: usize = 0; i < 8; i++) {
+      d[i] = (0x61 + i) as u8;
+    }
+    bytesCopyWithin(d, 6, 0, 8);
+    expect(text(d)).toBe("abcdefab");
+    bytesCopyWithin(d, -3, 0, 8);
+    expect(text(d)).toBe("abcdeabc");
+    arraySetLen(d, 16);
+    expect(text(d)).toBe("abcdeabcxxxxxxxx");
   });
 
   it("copies within one array when the ranges overlap", () => {
