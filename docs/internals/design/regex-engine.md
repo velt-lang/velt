@@ -288,9 +288,9 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 
 | Program | `regex` crate | std engine |
 |---|---|---|
-| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 198.7 M |
-| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 17.4 G |
-| `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.69 G |
+| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 198.6 M |
+| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 17.6 G |
+| `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.63 G |
 | `long.velt` 0: `/(a+)+b/` fails | 3.67 M | 3.49 M |
 | `long.velt` 1: `/(a+)+b/` matches | 18.12 M | 6.51 M |
 | `long.velt` 2: `/.*.*.*=.*/` fails | 4.03 M | 2.83 M |
@@ -299,15 +299,15 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 | `long.velt` 5: `/([^,]*,)*x/` matches | 26.29 M | 21.39 M |
 | `long.velt` 6: `/(a\|b)*c/` fails | 3.67 M | 3.49 M |
 | `long.velt` 7: `/(a\|b)*c/` matches | 12.79 M | 11.89 M |
-| `lines.velt` 0: `/(\w+)=(\d+);/.test`, 320 B | 19.63 M | 19.68 M |
-| `lines.velt` 1: `/(\w+), $/.exec`, 320 B | 25.32 M | 27.63 M |
-| `lines.velt` 2: `/([^,]*,)*#/.test`, 320 B | 24.82 M | 19.64 M |
-| `lines.velt` 3: `/value\d+/i.test`, near misses, 320 B | 20.77 M | 20.88 M |
-| `lines.velt` 4: as 0, 250 B | 16.30 M | 16.24 M |
-| `lines.velt` 5: as 1, 250 B | 21.91 M | 24.30 M |
-| `lines.velt` 6: as 2, 250 B | 20.48 M | 16.20 M |
-| `lines.velt` 7: as 3, 250 B | 17.30 M | 17.31 M |
-| `lines.velt` 8: `replace(/(key)(\d)/g, "$2$1")`, one text | 90.49 M | 91.64 M |
+| `lines.velt` 0: `/(\w+)=(\d+);/.test`, 320 B | 19.63 M | 19.98 M |
+| `lines.velt` 1: `/(\w+), $/.exec`, 320 B | 25.32 M | 23.86 M |
+| `lines.velt` 2: `/([^,]*,)*#/.test`, 320 B | 24.82 M | 19.74 M |
+| `lines.velt` 3: `/value\d+/i.test`, near misses, 320 B | 20.77 M | 20.98 M |
+| `lines.velt` 4: as 0, 250 B | 16.30 M | 16.54 M |
+| `lines.velt` 5: as 1, 250 B | 21.91 M | 20.53 M |
+| `lines.velt` 6: as 2, 250 B | 20.48 M | 16.30 M |
+| `lines.velt` 7: as 3, 250 B | 17.30 M | 17.42 M |
+| `lines.velt` 8: `replace(/(key)(\d)/g, "$2$1")`, one text | 90.49 M | 91.86 M |
 | `lines.velt` 9: `/value\d+/i.test`, 50 lines of 12,800 B | 17.15 M | 17.13 M |
 
 Compiling a pattern is the larger difference in the first three: it allocates a few small
@@ -323,11 +323,9 @@ A `lines` row's number includes building its lines (18.5 M for the 320-byte rows
 the 250-byte ones), from words made once, so that it costs the same on both sides: a number
 formatted per word was inlined differently once the engine was linked in.
 
-Rows 1 and 5 (`exec` of a pattern that ends in `$`, every line a match) are about 10% above the
-old engine. The search itself reads only the line's last word, backwards; what costs more than
-the old engine's whole call is the call's own: making its search memory and its automaton over
-the regex's kept tables (about 1,200 instructions a call), which a regex can only keep without
-a lock as tables that never change.
+Rows 1 and 5 (`exec` of a pattern that ends in `$`, every line a match) read only the line's
+last word, backwards, over the regex's kept tables, with no search memory made; rows 0 and 4
+are a byte scan per line that finds no `;`.
 
 The Pike machine is the slow matcher, tens of instructions per byte and thread. It runs when
 the subject is too long for the backtracker's memory and the program has no automaton (it has
