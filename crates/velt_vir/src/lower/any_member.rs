@@ -158,6 +158,8 @@ impl Cx<'_> {
             | TyKind::Array(_)
             | TyKind::Tuple(_)
             | TyKind::FnPtr { .. } => true,
+            // Not a promise: glue that boxes a result, field or element (a call through `any`)
+            // doesn't box one yet; `ToDyn` does (any_await.rs, #924 step 1).
             TyKind::Adt(d, args) => match self.hir.def(*d) {
                 hir::Def::Adt(_) => true,
                 // A union whose members are boxable (`string | symbol`, an element of the keys
@@ -166,8 +168,7 @@ impl Cx<'_> {
                     e.is_union
                         && args.is_empty()
                         && e.variants.iter().all(|v| match v.payload.as_slice() {
-                            // A promise member is never held as `any`: boxing one stops
-                            // (`any_box_with`), the other members box.
+                            // A promise member is boxed as it is (any_await.rs).
                             [p] => {
                                 !self.is_dynamic(*p)
                                     && (self.any_boxable_plain(*p)
@@ -239,8 +240,13 @@ impl FnLower<'_, '_> {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
                 self.for_each_variant_total(&p, t, |lw, v, parts| match parts.as_slice() {
-                    [(_, pt)] if matches!(lw.cx.kind(*pt), TyKind::Promise(..)) => {
-                        lw.panic_msg("TypeError: a promise cannot be held as `any` yet (#924)");
+                    // A program running no async code holds no promise, and can't build the
+                    // table of one (its glue is the executor's): that member never comes.
+                    [(_, pt)]
+                        if matches!(lw.cx.kind(*pt), TyKind::Promise(..))
+                            && !lw.cx.executor_loaded() =>
+                    {
+                        lw.panic_msg("TypeError: a promise held as `any` without async code");
                         lw.terminate(Terminator::Unreachable);
                         let next = lw.new_block();
                         lw.switch_to(next);
@@ -276,6 +282,15 @@ impl FnLower<'_, '_> {
     }
 
     fn any_box_raw(&mut self, v: Operand, t: TyId, out: &Place) {
+        // A program running no async code holds no promise, and can't build the table of one
+        // (its glue is the executor's): an option's promise payload never comes.
+        if matches!(self.cx.kind(t), TyKind::Promise(..)) && !self.cx.executor_loaded() {
+            self.panic_msg("TypeError: a promise held as `any` without async code");
+            self.terminate(Terminator::Unreachable);
+            let next = self.new_block();
+            self.switch_to(next);
+            return;
+        }
         // An object type is one counted object when the program writes through `any`
         // (`any_set`), so the box holds the object itself, not a copy.
         let any = self.cx.any_ty();

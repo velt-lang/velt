@@ -175,8 +175,7 @@ pub enum Intrinsic {
     /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
-    /// by sema around a value a `Mutex.with` callback stores across the lock
-    /// (ownership/locked).
+    /// by sema around a value a `Mutex.with` callback stores across the lock (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
     /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
@@ -394,8 +393,7 @@ pub enum Intrinsic {
     /// functions). Additive.
     AddressLoad,
     /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema
-    /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
-    /// Additive.
+    /// checks it): `v` written at `address`, unchecked (intrinsics.md). Additive.
     AddressStore,
     /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
     /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
@@ -435,8 +433,7 @@ pub enum Intrinsic {
     FutDrop,
     /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds
     /// for an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index
-    /// of its `CExport` there. For a C API that takes a function pointer (`pthread_create`).
-    /// Additive.
+    /// of its `CExport` there. For a C API taking a function pointer (`pthread_create`). Additive.
     ExportedAddress,
     /// std only: `catchUnwind(f: () => void) -> usize`: call `f` (borrowed) and return 0 when it
     /// returns, or the address of the Velt panic's exception object when a Velt panic unwound
@@ -721,6 +718,10 @@ pub enum Intrinsic {
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
+    /// std only: `(x: borrow unknown) -> Promise<unknown, unknown> | undefined`, awaits x's. Additive.
+    AnyPromise,
+    /// `(x: borrow T) -> bool`: `x instanceof Promise`, by its table if dynamic. Additive.
+    AnyIsPromise,
     /// std only: `(name: string literal) -> bool`, a constant: can the program call the array
     /// method `name` through `any`, so that its generic algorithm on a proxy can run
     /// (velt/lang/proxy/array)? True when `name` is called by name, when a method is called by a
@@ -744,8 +745,7 @@ pub enum Intrinsic {
     /// std only: `(x: borrow any, index: i64, op: i64) -> i64`, the holes those methods made in
     /// the array `x` holds (identified by its data pointer): `op` 0 tests element `index`, 1
     /// records it (only in a trap call of a method on `x`, else -1), 2 forgets it, 3 forgets
-    /// those from `index` on, 4 gives the first below `index` (or -1)
-    /// (`velt_rt_proxy_array_hole`).
+    /// those from `index` on, 4 gives the first below `index` (or -1) (`velt_rt_proxy_array_hole`).
     ProxyArrayHole,
     /// `(x: borrow T) -> bool`, made by sema only: whether the value of the class or object type
     /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that
