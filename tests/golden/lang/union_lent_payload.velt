@@ -1,7 +1,9 @@
-// A local lent to a union parameter that only reads it (#3537): the union holds a borrowed copy
-// of the local, so nothing is retained or dropped for it, and the local is as it was after the
-// call. A callee that keeps the value (in an object) or changes the union, and a later argument
-// that assigns the local, still work on values of their own. The leak check counts every block.
+// A local lent to a union parameter (#3537): the union holds a borrowed copy of the local, so
+// nothing is retained or dropped for it, and the local is as it was after the call. A callee that
+// changes the array or object it was lent changes the caller's, directly or as a function value.
+// A callee that keeps the value (in an object) or reassigns the union, a later argument that
+// assigns the local, and a closure that assigns it during the call still work on values of their
+// own. The leak check counts every block.
 class Foo {
   n: number = 1;
 }
@@ -21,6 +23,30 @@ function size(x: u8[] | Foo, k: number): number {
 function swap(x: u8[] | Foo): number {
   x = new Foo();
   return x instanceof Foo ? x.n : 0;
+}
+
+function poke(x: u8[] | Foo): number {
+  if (x instanceof Foo) {
+    x.n = 9;
+    return x.n;
+  }
+  x[0] = 5;
+  return x[0];
+}
+
+function grow(x: u8[] | Foo): number {
+  if (x instanceof Foo) {
+    return 0;
+  }
+  for (let i = 0; i < 100; i++) {
+    x.push(1 as u8);
+  }
+  return x.length as number;
+}
+
+function readAfter(x: u8[] | Foo, f: () => void): number {
+  f();
+  return x instanceof Foo ? x.n : (x.length as number);
 }
 
 function label(x: string | Foo): string {
@@ -53,4 +79,18 @@ function main() {
   console.log(swap(b), b.length);
   let d = Buffer.alloc(5);
   console.log(size(d, (d = Buffer.alloc(2)).length), d.length);
+
+  // Callees that change what they were lent: the caller's array and object.
+  const e = Buffer.alloc(4);
+  const g = new Foo();
+  console.log(poke(e), e[0], poke(g), g.n, grow(e), e.length);
+  const changers = [poke, grow];
+  console.log(changers[0](e), changers[1](e), e.length);
+
+  // A closure that assigns the lent local while the callee holds the union.
+  let h: u8[] = Buffer.alloc(8);
+  const reset = (): void => {
+    h = Buffer.alloc(1);
+  };
+  console.log(readAfter(h, reset), h.length);
 }

@@ -1,8 +1,8 @@
-//! A union made from a local only to be lent to a call that reads it (`size(b)` for
-//! `size(x: u8[] | Foo)`, #3537) holds a borrowed copy of the local: no retain before the call
-//! and no union drop after it. Where the union must own its payload it still does: a later
-//! argument that assigns the local, a callee that changes the union, a payload that is not a
-//! local. What each program prints is checked by the golden `lang/union_lent_payload`.
+//! A union made from a local only to be lent to a call (`size(b)` for `size(x: u8[] | Foo)`,
+//! #3537) holds a borrowed copy of the local: no retain before the call and no union drop after
+//! it, also for a callee that changes the array it was lent. Where the union must own its payload
+//! it still does: a later argument that assigns the local, a closure that can assign it, a callee
+//! that reassigns the union, a payload that is not a local. What each program prints is checked by the golden `lang/union_lent_payload`.
 
 mod no_window;
 mod test_dir;
@@ -67,6 +67,55 @@ function main() {
     assert!(
         !retains(&vir),
         "`b` is retained for the union:\n{}",
+        main_of(&vir)
+    );
+}
+
+#[test]
+fn a_local_lent_to_a_union_param_that_changes_its_array_is_not_retained() {
+    // `poke` changes the array (`BorrowMut`): the caller's own, so the borrowed copy is enough.
+    let vir = vir("function poke(x: u8[] | Foo): number {
+  if (x instanceof Foo) {
+    return 0;
+  }
+  x[0] = 5;
+  return x[0];
+}
+function main() {
+  const b = Buffer.alloc(8);
+  console.log(poke(b), b[0]);
+}
+");
+    assert!(
+        !drops_union(&vir),
+        "the lent union is dropped:\n{}",
+        main_of(&vir)
+    );
+    assert!(
+        !retains(&vir),
+        "`b` is retained for the union:\n{}",
+        main_of(&vir)
+    );
+}
+
+#[test]
+fn a_local_a_closure_assigns_keeps_the_union_owning() {
+    // `reset` may run during the call and free the array `b` held: the union keeps its own.
+    let vir = vir("function readAfter(x: u8[] | Foo, f: () => void): number {
+  f();
+  return x instanceof Foo ? x.n : (x.length as number);
+}
+function main() {
+  let b: u8[] = Buffer.alloc(8);
+  const reset = (): void => {
+    b = Buffer.alloc(1);
+  };
+  console.log(readAfter(b, reset), b.length);
+}
+");
+    assert!(
+        drops_union(&vir),
+        "the union does not own its payload:\n{}",
         main_of(&vir)
     );
 }

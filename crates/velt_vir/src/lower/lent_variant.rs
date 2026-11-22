@@ -1,7 +1,10 @@
 //! A union built only to be lent to a call (`take(b)` for `take(x: u8[] | Foo)`, #3537): the
-//! callee only reads its parameter, and the caller's own reference to the payload lives on past
-//! the call, so the union holds a borrowed copy of the payload, as the payload's own type is
-//! lent. Nothing is retained for it and no drop glue runs after the call. Built the usual way
+//! callee borrows its parameter, and the caller's own reference to the payload lives on past the
+//! call, so the union holds a borrowed copy of the payload, as the payload's own type is lent.
+//! A callee that borrows it to change it (`BorrowMut`, or `Borrow` with a modified parameter for
+//! a function used as a value) changes the payload's contents, the caller's own array or object,
+//! never the union: a parameter the body reassigns is `Owned` (velt_sema ownership/mutation.rs),
+//! or an error where the ABI is fixed, and a struct payload cannot be changed at all. Nothing is retained for it and no drop glue runs after the call. Built the usual way
 //! (`variant`, adt.rs), the union would own its payload: a retain before the call and the
 //! union's drop after it, for a value that was never anyone else's.
 
@@ -15,10 +18,10 @@ use crate::vir::{Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
     /// The union argument `a` built around a borrowed copy of its one payload, or `None` where it
-    /// must own it. Only for an argument the callee borrows without changing it (the caller
-    /// checks the pass mode), whose payload is a local that no closure or reference can reach
-    /// (`stays_put`) and that the arguments after it (`later`) do not assign: then nothing but
-    /// this frame can replace it before the call returns.
+    /// must own it. Only for an argument the callee borrows (the caller checks the pass mode),
+    /// whose payload is a local that no closure or reference can reach (`stays_put`) and that
+    /// the arguments after it (`later`) do not assign: then nothing but this frame can replace
+    /// it before the call returns.
     pub(super) fn lent_variant(&mut self, a: &hir::Expr, later: Later) -> Option<Operand> {
         let hir::ExprKind::Variant { variant, args, .. } = &a.kind else {
             return None;
