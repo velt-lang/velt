@@ -130,7 +130,7 @@ pub(crate) fn helper(
         // compiles for, which needs nothing.
         SimdCall::CpuRequired => Some("0".to_string()),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
-        SimdCall::Arch(op) => Some(arch::op(&mut body, arch, op)),
+        SimdCall::Arch(op) => arch::op(&mut body, arch, op),
         SimdCall::Cpuid => Some(aes::cpuid(&mut body, arch)),
         SimdCall::Xgetbv => Some(aes::xgetbv(&mut body, arch)),
         SimdCall::Prefetch => {

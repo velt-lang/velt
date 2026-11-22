@@ -15,29 +15,44 @@ pub(super) fn attributes(arch: Arch, call: SimdCall) -> String {
     let features = match call {
         _ if arch == Arch::Wasm => return WASM_SIMD.to_string(),
         SimdCall::Inst(op) if has_ext(arch, op.ext()) => op.ext().op_features(),
-        SimdCall::Arch(op) if has_ext(arch, op.ext()) => op.ext().gated_features(),
+        SimdCall::Arch(op) if has_ext(arch, op.ext()) => {
+            // A 256- or 512-bit row's vectors are legal at that width: without the attribute
+            // LLVM may split a 512-bit operation into two 256-bit ones.
+            return match op.width() {
+                128 => format!(" \"target-features\"=\"{}\"", op.ext().gated_features()),
+                w => format!(
+                    " \"target-features\"=\"{}\" \"min-legal-vector-width\"=\"{w}\"",
+                    op.ext().gated_features()
+                ),
+            };
+        }
         _ => return String::new(),
     };
     format!(" \"target-features\"=\"{features}\"")
 }
 
 /// The row `op` on the helper's arguments (`%a0`, …), as the helper returns it (a vector as
-/// `<16 x i8>`).
-pub(super) fn op(b: &mut Body, arch: Arch, op: ArchOp) -> String {
+/// `<16 x i8>`); `None` for a wide result, which it stores through its last argument.
+pub(super) fn op(b: &mut Body, arch: Arch, op: ArchOp) -> Option<String> {
     let r = op.row();
     if !has_ext(arch, op.ext()) {
-        return zero(r.ret);
+        return r.ret.wide().is_none().then(|| zero(r.ret));
     }
-    // `%x<i>`: argument `i` as the row's operation sees it (a no-op cast for a scalar).
+    // `%x<i>`: argument `i` as the row's operation sees it: a wide vector loaded from its
+    // address (unaligned: 8-byte aligned, as a `V128` is), a no-op cast for a scalar.
     for (i, (_, v)) in r.params.iter().enumerate() {
-        let from = if v.is_vector() { "<16 x i8>" } else { v.llvm() };
-        b.lines
-            .push_str(&format!("  %x{i} = bitcast {from} %a{i} to {}\n", v.llvm()));
+        let t = v.llvm();
+        let line = match (v.wide(), v.is_vector()) {
+            (Some(_), _) => format!("  %x{i} = load {t}, ptr %a{i}, align 8\n"),
+            (None, true) => format!("  %x{i} = bitcast <16 x i8> %a{i} to {t}\n"),
+            (None, false) => format!("  %x{i} = bitcast {t} %a{i} to {t}\n"),
+        };
+        b.lines.push_str(&line);
     }
     let ret = r.ret.llvm();
     match r.llvm {
         Llvm::Call(name) => {
-            let types: Vec<&str> = r.params.iter().map(|(_, v)| v.llvm()).collect();
+            let types: Vec<String> = r.params.iter().map(|(_, v)| v.llvm()).collect();
             let args: Vec<String> = (types.iter().enumerate())
                 .map(|(i, t)| format!("{t} %x{i}"))
                 .collect();
@@ -53,12 +68,18 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ArchOp) -> String {
             }
         }
     }
+    if r.ret.wide().is_some() {
+        let out = r.params.len();
+        b.lines
+            .push_str(&format!("  store {ret} %r, ptr %a{out}, align 8\n"));
+        return None;
+    }
     if r.ret.is_vector() {
         b.lines
             .push_str(&format!("  %rb = bitcast {ret} %r to <16 x i8>\n"));
-        return "%rb".to_string();
+        return Some("%rb".to_string());
     }
-    "%r".to_string()
+    Some("%r".to_string())
 }
 
 /// A zero of the helper's result type.

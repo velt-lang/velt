@@ -22,4 +22,60 @@ export class Avx {
   static isSupported(): bool {
     return velt_simd_has_avx_x86() || (velt_simd_on_x86() && cpuHas(AVX_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The lanes of `left` plus those of `right`.
+   *
+   * `_mm256_add_ps` (`vaddps`). Runs only where the CPU has it: call it behind `Avx.isSupported()`,
+   * or in a function gated on `avx-x86`.
+   */
+  static addF32(left: Vector256<f32>, right: Vector256<f32>): Vector256<f32> {
+    return velt_arch_avx_add_f32(left, right);
+  }
+
+  /**
+   * The lanes of `left` times those of `right`.
+   *
+   * `_mm256_mul_ps` (`vmulps`). Runs only where the CPU has it: call it behind `Avx.isSupported()`,
+   * or in a function gated on `avx-x86`.
+   */
+  static multiplyF32(left: Vector256<f32>, right: Vector256<f32>): Vector256<f32> {
+    return velt_arch_avx_multiply_f32(left, right);
+  }
+
+  /**
+   * The lanes of `left` plus those of `right`.
+   *
+   * `_mm256_add_pd` (`vaddpd`). Runs only where the CPU has it: call it behind `Avx.isSupported()`,
+   * or in a function gated on `avx-x86`.
+   */
+  static addF64(left: Vector256<f64>, right: Vector256<f64>): Vector256<f64> {
+    return velt_arch_avx_add_f64(left, right);
+  }
+
+  /**
+   * The lanes of `left` times those of `right`.
+   *
+   * `_mm256_mul_pd` (`vmulpd`). Runs only where the CPU has it: call it behind `Avx.isSupported()`,
+   * or in a function gated on `avx-x86`.
+   */
+  static multiplyF64(left: Vector256<f64>, right: Vector256<f64>): Vector256<f64> {
+    return velt_arch_avx_multiply_f64(left, right);
+  }
 }
+
+import { Vector256 } from "velt/arch/x86/vector256";
+
+declare function velt_arch_avx_add_f32(left: Vector256<f32>, right: Vector256<f32>): Vector256<f32>;
+declare function velt_arch_avx_multiply_f32(
+  left: Vector256<f32>,
+  right: Vector256<f32>,
+): Vector256<f32>;
+declare function velt_arch_avx_add_f64(left: Vector256<f64>, right: Vector256<f64>): Vector256<f64>;
+declare function velt_arch_avx_multiply_f64(
+  left: Vector256<f64>,
+  right: Vector256<f64>,
+): Vector256<f64>;
