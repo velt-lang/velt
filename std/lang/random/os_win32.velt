@@ -26,10 +26,12 @@ export unsafe function fillRandomAt(base: usize, n: usize): void {
   let done: usize = 0;
   while (done < n) {
     const k = n - done < MAX_CALL ? n - done : MAX_CALL;
+    let status: i32 = 0;
     // SAFETY: bytes `done..done + k` of the caller's memory; no algorithm handle with
     // SYSTEM_PREFERRED.
-    const status =
-      unsafe { BCryptGenRandom(null, Ptr.at<u8>(base + done), k as u32, SYSTEM_PREFERRED) };
+    unsafe {
+      status = BCryptGenRandom(null, Ptr.at<u8>(base + done), k as u32, SYSTEM_PREFERRED);
+    }
     if (status != 0) {
       stop();
     }
