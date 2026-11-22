@@ -12,7 +12,8 @@
 //! `out` points at an all-zero value of the type written; `col` is below the column count.
 
 use crate::bytes::VeltBytes;
-use crate::str::VeltStr;
+use crate::str::{Summary, VeltStr};
+use velt_text::json_escape::push_json_string;
 use velt_text::rows::{header_end, name_at, NAMES};
 use velt_text::rows_cursor::{Cell, RawCursor};
 
@@ -246,6 +247,40 @@ pub unsafe extern "C" fn velt_rt_rows_str(st: u64, col: u64, out: *mut VeltStr) 
             Err(_) => VeltStr::from_text(&String::from_utf8_lossy(t)),
         }
     });
+    OK
+}
+
+/// A text cell appended to the string builder `buf` as a JSON string literal, quoted and escaped
+/// as `JSON.stringify` does (text that is not UTF-8 gets U+FFFD): what std's rows reader
+/// (std/encoding/json/rows_text.velt) writes a `JsonValue`'s text with, without making a string
+/// of the cell first. Nothing is appended for a null or another kind.
+///
+/// # Safety
+/// As the module says; `buf` is a live string builder (`velt_rt_strbuf_new`).
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_push_text_json(st: u64, col: u64, buf: *mut VeltStr) -> u8 {
+    let t = match cell(st, col) {
+        Cell::Text(t) | Cell::Ascii(t) => t,
+        Cell::Null => return NULL,
+        _ => return MISMATCH,
+    };
+    if t.is_ascii() {
+        // Escaped ASCII is ASCII.
+        (*buf).push_with_ascii(|b| push_json_string(b, t));
+        return OK;
+    }
+    let text = String::from_utf8_lossy(t);
+    // Only ASCII is escaped, into ASCII: the output has the text's units plus one per added byte.
+    let (len, units) = (text.len(), text.encode_utf16().count());
+    (*buf).push_with_summary(
+        |b| push_json_string(b, text.as_bytes()),
+        |out| {
+            Some(Summary {
+                units: units + (out - len),
+                lone: 0,
+            })
+        },
+    );
     OK
 }
 

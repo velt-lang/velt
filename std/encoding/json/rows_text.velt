@@ -119,9 +119,9 @@ function putCell(cells: RowCells, w: TreeWriter, buf: string, col: usize): void 
     cells.f64(col);
     w.n = putNumber(w.buf, w.n, cells.num);
   } else if (k == CELL_TEXT) {
-    cells.textAt(col);
-    const t = cells.text;
-    w.text(buf, t);
+    w.flush(buf);
+    cells.pushTextJson(col, buf);
+    w.last = 34;
   } else if (k == CELL_JSON) {
     cells.jsonAt(col);
     const t = cells.text;
