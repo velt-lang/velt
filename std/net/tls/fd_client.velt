@@ -8,18 +8,22 @@
 
 import { IoError } from "velt/io/error";
 import { noteStdUse } from "velt/lang/intrinsics";
+import { errorCodeName } from "velt/native/error";
 import { IoResult } from "velt/native/result";
 import { velt_rt_tcp_close, velt_rt_tcp_connect } from "#net-tcp";
 import * as fs from "velt/net/fd_socket";
 import { TcpStream } from "velt/net/tcp_stream";
 import { FdTlsConn } from "velt/net/tls/fd_conn";
 import { ConnectHook, TlsConnectSide } from "velt/net/tls/fd_connect_hook";
-import "velt/net/tls/fd_reactor";
+import { status } from "velt/net/tls/fd_reactor";
 import { TlsSession } from "velt/net/tls/fd_session";
 import { addConn, Conn } from "velt/net/tls/fd_table";
 import { clientHandshake } from "velt/net/tls/start_tls";
 import { TlsEngine } from "velt/net/tls/tls_engine";
-import { AbortError, AbortSignal } from "velt/task";
+import { AbortController, AbortError, AbortSignal } from "velt/task";
+
+/** How long a client handshake may take (milliseconds), as the runtime's rustls client allowed. */
+export const HANDSHAKE_MS: i64 = 10000;
 
 /** The host of "host:port" ("[v6]:port" gives the address without its brackets). */
 export function hostOf(addr: string): string {
@@ -34,14 +38,16 @@ export function hostOf(addr: string): string {
 /**
  * A TLS stream to `addr` once its handshake is done: the server's certificate checked against
  * the built-in roots and the PEM certificates of `ca`, for `serverName` (the address's host when
- * ""), offering the comma-separated ALPN protocols of `alpn`. A failure to connect is a status;
- * a handshake that fails throws (`EPROTO`, "TLS: …"; `EINVAL` for a bad `ca` or name).
+ * ""), offering the comma-separated ALPN protocols of `alpn`, all within `limitMs` milliseconds.
+ * A failure to connect is a status; a handshake that fails throws (`EPROTO`, "TLS: …"; `EINVAL`
+ * for a bad `ca` or name; `ETIMEDOUT` once the limit passed).
  */
 export async function connectTls(
   addr: string,
   serverName: string,
   ca: string,
   alpn: string,
+  limitMs: i64 = HANDSHAKE_MS,
 ): Promise<IoResult<u64>, IoError> {
   const name = serverName == "" ? hostOf(addr) : serverName;
   const d = await velt_rt_tcp_connect(addr);
@@ -50,17 +56,14 @@ export async function connectTls(
   }
   const fd = d.value;
   try {
-    const engine = await clientHandshake(
-      TcpStream.ofHandle(fd),
-      { serverName: name, ca: ca, alpn: alpn == "" ? [] : alpn.split(",") },
-      "connectTls",
-    );
+    const engine = await handshakeWithin(fd, name, ca, alpn, "connectTls", limitMs, null);
     const c: Conn = shared(new Mutex<TlsSession>(new FdTlsConn(fd, engine, null, 0)));
     return fs.value(addConn(c));
   } catch (e) {
-    velt_rt_tcp_close(fd);
-    // A failure of the crypto (a point off the curve, say) is the handshake's, as TLS reports it.
-    throw e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
+    if (e instanceof IoError) {
+      throw e;
+    }
+    throw new IoError("EPROTO", `TLS: ${e}`);
   }
 }
 
@@ -72,43 +75,56 @@ class Attempt {
 }
 
 // Runs the client handshake over socket `fd` into `a`.
-async function attempt(fd: u64, serverName: string, ca: string, alpn: string, a: Attempt) {
+async function attempt(
+  fd: u64,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  who: string,
+  a: Attempt,
+) {
   try {
     a.engine = await clientHandshake(
       TcpStream.ofHandle(fd),
       { serverName: serverName, ca: ca, alpn: alpn == "" ? [] : alpn.split(",") },
-      "fetch",
+      who,
     );
   } catch (e) {
+    // A failure of the crypto (a point off the curve, say) is the handshake's, as TLS reports it.
     a.failure = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
   }
   a.done = true;
 }
 
+// Resolves after `ms` milliseconds, or once `stop` is aborted: the timer goes with it.
+async function expire(ms: i64, stop: AbortSignal) {
+  await Promise.race([sleep(ms), stop.whenAborted()]);
+}
+
 /**
- * The TLS stream of connected socket `fd` (on the reactor) once the client handshake is done,
- * as `connectTls`'s, within `limitMs` milliseconds and before `signal` aborts (`fetch`'s
- * `https:`). Losing to either closes the socket, which ends the handshake; so does a failure.
- * Throws `ETIMEDOUT` for the time limit, the signal's reason for an abort, else the handshake's
- * `IoError`.
+ * The client handshake over connected socket `fd`, for `connectTls` and `fetch` (`who` names it
+ * in errors), within `limitMs` milliseconds and before `signal` aborts. Losing to either closes
+ * the socket, which ends the handshake; so does a failure. Throws `ETIMEDOUT` for the time limit,
+ * the signal's reason for an abort, else the handshake's `IoError`.
  */
-export async function handshakeOn(
+export async function handshakeWithin(
   fd: u64,
   serverName: string,
   ca: string,
   alpn: string,
+  who: string,
   limitMs: i64,
   signal: AbortSignal | null,
-): Promise<u64, IoError | AbortError> {
-  // The program reads and writes TLS streams of the reactor's: tcp_sched checks for them.
-  noteStdUse("reactorTls");
+): Promise<TlsEngine, IoError | AbortError> {
   const a = new Attempt();
-  const running = attempt(fd, serverName, ca, alpn, a);
-  const racers: Promise<void>[] = [running, AbortSignal.timeout(limitMs).whenAborted()];
+  const running = attempt(fd, serverName, ca, alpn, who, a);
+  const stop = new AbortController();
+  const racers: Promise<void>[] = [running, expire(limitMs, stop.signal)];
   if (signal != null) {
     racers.push(signal.whenAborted());
   }
   await Promise.race(racers);
+  stop.abort();
   if (!a.done) {
     // Closing the socket fails the handshake's wait, so its task ends.
     velt_rt_tcp_close(fd);
@@ -123,8 +139,7 @@ export async function handshakeOn(
     velt_rt_tcp_close(fd);
     throw failure;
   }
-  const c: Conn = shared(new Mutex<TlsSession>(new FdTlsConn(fd, a.engine!, null, 0)));
-  return addConn(c);
+  return a.engine!;
 }
 
 /** The client's `connect` for std/net/tls/fd_reactor.velt. */
@@ -137,4 +152,36 @@ extend TlsConnectSide implements ConnectHook {
   ): Promise<IoResult<u64> | null> {
     return await connectTls(addr, serverName, ca, alpn);
   }
+}
+
+/**
+ * The TLS stream of connected socket `fd` (on the reactor) once the client handshake is done,
+ * as `connectTls`'s, within `limitMs` milliseconds and before `signal` aborts (`fetch`'s
+ * `https:`; `handshakeWithin`). Throws `ETIMEDOUT` for the time limit, the signal's reason for an
+ * abort, else the handshake's failure with the code `connectTls` gives it (`status`: `EILSEQ` for
+ * a TLS failure).
+ */
+export async function handshakeOn(
+  fd: u64,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  limitMs: i64,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
+  // The program reads and writes TLS streams of the reactor's: tcp_sched checks for them.
+  noteStdUse("reactorTls");
+  let engine: TlsEngine | null = null;
+  try {
+    engine = await handshakeWithin(fd, serverName, ca, alpn, "fetch", limitMs, signal);
+  } catch (e) {
+    // Not an `IoError`: the signal's reason (a handshake's failure always is one).
+    if (!(e instanceof IoError)) {
+      throw e;
+    }
+    const st = status(e);
+    throw new IoError(errorCodeName(st.code), st.message);
+  }
+  const c: Conn = shared(new Mutex<TlsSession>(new FdTlsConn(fd, engine!, null, 0)));
+  return addConn(c);
 }
