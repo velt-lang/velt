@@ -206,16 +206,12 @@ impl FnCx<'_, '_> {
         // A freezable type's field (`frozen_write.rs`): the same, so that only a write tests the
         // frozen mark, inside the branch.
         if let Some(AssignTarget::Place(p)) = &checked {
-            let frozen = self.take_frozen_guard(target.span);
+            // The write tests the mark again, after its value (`frozen_after_value`).
+            let frozen = self.take_frozen_guard(target.span).is_some();
             if frozen || self.logical_element_store(p) {
                 let cond = self.decides(op, target.clone(), span);
-                let n = self.call_temps.len();
                 let write = self.assign(None, target, value, span);
-                let mut stmts = match frozen {
-                    true => self.call_temps.split_off(n),
-                    false => vec![],
-                };
-                stmts.push(stmt(hir::StmtKind::Expr(write), span));
+                let stmts = vec![stmt(hir::StmtKind::Expr(write), span)];
                 let unit = self.cx.ty.unit;
                 let then = self.mk(H::Block(block(stmts, None, span)), unit, span);
                 let els = self.mk(H::Block(block(vec![], None, span)), unit, span);

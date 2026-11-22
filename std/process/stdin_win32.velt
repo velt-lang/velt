@@ -19,27 +19,27 @@ declare c type _CONSOLE_READCONSOLE_CONTROL;
 declare c type _OVERLAPPED;
 
 declare c("c") function GetStdHandle(which: u32): Ptr<void> | null;
-declare c("c") function GetConsoleMode$stdin(handle: Ptr<void>, mode: Ptr<u32>): i32;
+declare c("c") function GetConsoleMode$stdin(handle: Ptr<void> | null, mode: Ptr<u32> | null): i32;
 declare c("c") function ReadConsoleW(
-  handle: Ptr<void>,
-  units: Ptr<u16>,
+  handle: Ptr<void> | null,
+  units: Ptr<u16> | null,
   count: u32,
-  read: Ptr<u32>,
+  read: Ptr<u32> | null,
   control: Ptr<_CONSOLE_READCONSOLE_CONTROL> | null,
 ): i32;
 declare c("c") function ReadFile(
   handle: Ptr<void> | null,
-  buf: Ptr<u8>,
+  buf: Ptr<u8> | null,
   count: u32,
-  read: Ptr<u32>,
+  read: Ptr<u32> | null,
   overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function WideCharToMultiByte(
   codePage: u32,
   flags: u32,
-  units: Ptr<u16>,
+  units: Ptr<u16> | null,
   count: i32,
-  out: Ptr<u8>,
+  out: Ptr<u8> | null,
   size: i32,
   defaultChar: Ptr<u8> | null,
   usedDefault: Ptr<i32> | null,
@@ -91,7 +91,7 @@ export function readChunk(p: usize, n: usize): Chunk {
   }
   const w = Ptr.addressOf(word);
   // SAFETY: `h` is standard input's handle, and `w` holds a DWORD the call writes.
-  const console = unsafe { GetConsoleMode$stdin(Ptr.at<void>(h), Ptr.at<u32>(w)) } !== 0;
+  const console = unsafe { GetConsoleMode$stdin(Ptr.orNull<void>(h), Ptr.orNull<u32>(w)) } !== 0;
   let out = console ? readConsole(h, p, n, w) : readPipe(h, p, n, w);
   // A console read that gave only a high surrogate (kept for its low half) isn't the end of
   // input: read on.
@@ -117,11 +117,11 @@ unsafe function consoleRead(h: usize, into: usize, count: u32, w: usize, control
     SetLastError$stdin(0);
   }
   // SAFETY: the caller's statement about the three addresses.
-  const ctl = unsafe { Ptr.at<_CONSOLE_READCONSOLE_CONTROL>(control) };
+  const ctl = unsafe { Ptr.orNull<_CONSOLE_READCONSOLE_CONTROL>(control) };
   // SAFETY: `h` is standard input's handle (the caller's statement).
-  const console = unsafe { Ptr.at<void>(h) };
+  const console = unsafe { Ptr.orNull<void>(h) };
   // SAFETY: the caller's statement about the three addresses.
-  return unsafe { ReadConsoleW(console, Ptr.at<u16>(into), count, Ptr.at<u32>(w), ctl) };
+  return unsafe { ReadConsoleW(console, Ptr.orNull<u16>(into), count, Ptr.orNull<u32>(w), ctl) };
 }
 
 /** The units count `ReadConsoleW` wrote at `w`. */
@@ -140,7 +140,7 @@ function aborted(): bool {
  * `count` UTF-16 units at `from` as UTF-8 at `to` (room for `size` bytes): the bytes written, 0 on
  * a failure. Unsafe: both point at that much memory.
  */
-unsafe function utf8Of(from: Ptr<u16>, count: i32, to: Ptr<u8>, size: i32): i32 {
+unsafe function utf8Of(from: Ptr<u16> | null, count: i32, to: Ptr<u8> | null, size: i32): i32 {
   // SAFETY: the caller's statement about both buffers; no default character, no flag out.
   return unsafe { WideCharToMultiByte(CP_UTF8, 0, from, count, to, size, null, null) };
 }
@@ -149,9 +149,10 @@ unsafe function utf8Of(from: Ptr<u16>, count: i32, to: Ptr<u8>, size: i32): i32 
 function readPipe(h: usize, p: usize, n: usize, w: usize): Chunk {
   const count = n > 0x7fffffff ? 0x7fffffff : n;
   // SAFETY: `h` is standard input's handle.
-  const file = unsafe { Ptr.at<void>(h) };
+  const file = unsafe { Ptr.orNull<void>(h) };
   // SAFETY: `p` has room for `count` bytes, `w` for the DWORD the call writes.
-  const ok = unsafe { ReadFile(file, Ptr.at<u8>(p), count as u32, Ptr.at<u32>(w), null) } !== 0;
+  const got = unsafe { ReadFile(file, Ptr.orNull(p), count as u32, Ptr.orNull(w), null) };
+  const ok = got !== 0;
   if (!ok) {
     // SAFETY: no precondition.
     const e = unsafe { GetLastError$stdin() };
@@ -234,7 +235,7 @@ function readConsole(h: usize, p: usize, n: usize, w: usize): Chunk {
     }
     if (total > 0) {
       // SAFETY: `total` units at `units`, room for `n` bytes at `p`.
-      const bytes = unsafe { utf8Of(Ptr.at<u16>(units), total as i32, Ptr.at<u8>(p), n as i32) };
+      const bytes = unsafe { utf8Of(Ptr.orNull(units), total as i32, Ptr.orNull(p), n as i32) };
       out = bytes > 0 ? { count: bytes as usize, error: null } : failed();
     }
   }

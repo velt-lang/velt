@@ -11,3 +11,13 @@ export function frozenWriteError(name: string): void {
 export function frozenDefineError(name: string): void {
   throw new TypeError("Cannot redefine property: " + name);
 }
+
+/** A write that would add optional field `name`, absent, to a frozen object. */
+export function frozenAddError(name: string): void {
+  throw new TypeError("Cannot add property " + name + ", object is not extensible");
+}
+
+/** `Object.defineProperty` of optional field `name`, absent, on a frozen object. */
+export function frozenDefineAddError(name: string): void {
+  throw new TypeError("Cannot define property " + name + ", object is not extensible");
+}

@@ -10,7 +10,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 
 declare c("c") function open$memory(path: Ptr<u8>, oflag: i32, ...args: CVarArgs): i32;
-declare c("c") function read$memory(fd: i32, buf: Ptr<void>, nbyte: usize): isize;
+declare c("c") function read$memory(fd: i32, buf: Ptr<void> | null, nbyte: usize): isize;
 declare c("c") function close$memory(fd: i32): i32;
 declare c("c") function sysconf$memory(name: i32): i64;
 declare c("c") function calloc$memory(n: usize, size: usize): Ptr<u8> | null;
@@ -51,7 +51,7 @@ export function memoryFigures(): [i64, i64] {
     addressStore<u64>(p + 8, PATH1);
     const fd = open$memory(block, OPEN_FLAGS);
     if (fd >= 0) {
-      n = read$memory(fd, Ptr.at<void>(p + TEXT_AT), ROOM);
+      n = read$memory(fd, Ptr.orNull<void>(p + TEXT_AT), ROOM);
       close$memory(fd);
     }
   }

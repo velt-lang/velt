@@ -1,0 +1,39 @@
+// Patterns that are no literal over a long subject, where the search fails and where it
+// succeeds: the shapes a log or CSV scanner runs (`bench/regex/run.sh` counts each row's
+// instructions). The argument names the row, 0 to 7; without one, every row runs.
+function row(which: number, n: number): number {
+  const as = "a".repeat(n);
+  const xs = "x".repeat(n);
+  const fields = "aa,".repeat(n / 3);
+  const abs = "ab".repeat(n / 2);
+  let found = 0;
+  if (which == 0) {
+    found += /(a+)+b/.test(as) ? 1 : 0;
+  } else if (which == 1) {
+    found += /(a+)+b/.exec(as + "b")?.index ?? -1;
+  } else if (which == 2) {
+    found += /.*.*.*=.*/.test(xs) ? 1 : 0;
+  } else if (which == 3) {
+    found += /.*.*.*=.*/.exec(xs + "=" + xs)?.value.length ?? -1;
+  } else if (which == 4) {
+    found += /([^,]*,)*x/.test(fields) ? 1 : 0;
+  } else if (which == 5) {
+    found += /([^,]*,)*x/.exec(fields + "x")?.value.length ?? -1;
+  } else if (which == 6) {
+    found += /(a|b)*c/.test(abs) ? 1 : 0;
+  } else {
+    found += /(a|b)*c/.exec(abs + "c")?.value.length ?? -1;
+  }
+  return found;
+}
+
+function main() {
+  const which = process.argv.length > 2 ? parseInt(process.argv[2]) : -1;
+  let total = 0;
+  for (let r = 0; r < 8; r++) {
+    if (which < 0 || which == r) {
+      total += row(r, 100000);
+    }
+  }
+  console.log(total);
+}

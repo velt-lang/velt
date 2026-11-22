@@ -1,0 +1,68 @@
+// The forms of a write to a frozen object, each as Node runs it (#2623): the value is evaluated
+// before the write throws, a write adding an absent optional field throws "Cannot add
+// property", and `Object.defineProperty` with the value a field already has (SameValue) keeps it.
+interface Opts {
+  x: number;
+  s?: string;
+}
+
+function attempt(what: string, write: () => void): void {
+  try {
+    write();
+    console.log(what, "ok");
+  } catch (e) {
+    console.log(what, e instanceof TypeError, (e as Error).message);
+  }
+}
+
+function rhs(n: number): number {
+  console.log("rhs", n);
+  return n;
+}
+
+const a: Opts = { x: 2 };
+const open: Opts = { x: 1, s: "s" };
+open.x = 3;
+Object.freeze(a);
+attempt("assign", () => {
+  a.x = rhs(5);
+});
+attempt("compound", () => {
+  a.x += rhs(6);
+});
+attempt("add", () => {
+  a.s = "z";
+});
+attempt("add logical", () => {
+  a.s ??= "q";
+});
+attempt("define same", () => {
+  Object.defineProperty(a, "x", { value: 2 });
+});
+attempt("define other", () => {
+  Object.defineProperty(a, "x", { value: rhs(3) });
+});
+attempt("define add", () => {
+  Object.defineProperty(a, "s", { value: "z" });
+});
+console.log(a.x, a.s, Object.isFrozen(a));
+
+const b: Opts = { x: NaN, s: "t" };
+const z: Opts = { x: 0 };
+Object.freeze(b);
+Object.freeze(z);
+attempt("define NaN", () => {
+  Object.defineProperty(b, "x", { value: NaN });
+});
+attempt("define present", () => {
+  Object.defineProperty(b, "s", { value: "t" });
+});
+attempt("define -0", () => {
+  Object.defineProperty(z, "x", { value: -0 });
+});
+attempt("write present", () => {
+  b.s = "u";
+});
+Object.defineProperty(open, "x", { value: 4 });
+open.s = undefined;
+console.log(open.x, open.s, b.s);

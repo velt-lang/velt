@@ -268,9 +268,10 @@ impl FnCx<'_, '_> {
             op,
             None | Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
         );
-        let ((h, valued), temps) = self.with_asserted(rmw, span, |cx| {
+        let ((h, valued), mut temps) = self.with_asserted(rmw, span, |cx| {
             cx.target_scope(|cx| cx.assign_as_here(op, target, value, as_value, span))
         });
+        let h = self.frozen_after_value(target.span, h, &mut temps);
         (self.with_lets(temps, h), valued)
     }
 

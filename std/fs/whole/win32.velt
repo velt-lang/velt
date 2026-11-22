@@ -47,7 +47,7 @@ declare c("c") function WriteFile(
 ): i32;
 declare c("c") function GetFileInformationByHandle(
   handle: Ptr<void> | null,
-  info: Ptr<_BY_HANDLE_FILE_INFORMATION>,
+  info: Ptr<_BY_HANDLE_FILE_INFORMATION> | null,
 ): i32;
 declare c("c") function GetFileInformationByHandleEx(
   handle: Ptr<void> | null,
@@ -255,7 +255,7 @@ function handleInfo(h: Ptr<void>, info: u32[]): u32 {
   }
   const at = Ptr.addressOf(block);
   // SAFETY: `at` is the block's address, HANDLE_INFO_SIZE bytes, as many as the struct's.
-  const out = unsafe { Ptr.at<_BY_HANDLE_FILE_INFORMATION>(at) };
+  const out = unsafe { Ptr.orNull<_BY_HANDLE_FILE_INFORMATION>(at) };
   // SAFETY: `h` is an open handle and `out` points at room for the struct the call fills; it
   // keeps no pointer after it returns.
   const ok = unsafe { GetFileInformationByHandle(h, out) } !== 0;

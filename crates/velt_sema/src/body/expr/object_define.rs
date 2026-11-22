@@ -22,7 +22,7 @@ use super::object_assign::{is_place, reads_place};
 use super::object_builtins::strip_parens;
 use super::setters::synth;
 use crate::body::{FnCx, Want};
-use crate::hir;
+use crate::hir::{self, TyId};
 use crate::symbols::Presence;
 
 /// The member `defineProperty` writes: `o[KEY]` (a symbol) or `o.name`.
@@ -216,6 +216,17 @@ impl FnCx<'_, '_> {
                 &mut lets,
             );
         }
+        let keep = match &key_place {
+            Key::Member(_) => self.frozen_define_keep(
+                ot,
+                &name,
+                target(base.clone()),
+                &base,
+                &mut value,
+                &mut lets,
+            ),
+            Key::Index(_) => None,
+        };
         let assign = synth(
             ast::ExprKind::Assign {
                 op: None,
@@ -225,8 +236,16 @@ impl FnCx<'_, '_> {
             span,
         );
         let defining = std::mem::replace(&mut self.defining, true);
-        let h = self.expr_stmt(&assign);
+        let mut h = self.expr_stmt(&assign);
         self.defining = defining;
+        if let Some(keep) = keep {
+            let kind = hir::ExprKind::If {
+                cond: Box::new(keep),
+                then: Box::new(self.unit_expr(span)),
+                els: Box::new(h),
+            };
+            h = self.mk(kind, self.cx.ty.unit, span);
+        }
         lets.push(hir::Stmt {
             span,
             kind: hir::StmtKind::Expr(h),
@@ -238,6 +257,76 @@ impl FnCx<'_, '_> {
         };
         self.pop_scope();
         self.with_lets(lets, read)
+    }
+
+    /// `Object.defineProperty(o, "f", { value: v })` of a freezable `o` (`frozen_write.rs`): Node
+    /// keeps a frozen object's field defined with the value it holds (SameValue) and throws
+    /// otherwise. `value` becomes a temporary holding `v`, evaluated first, and this gives the
+    /// test that skips the write: `Object.is(o.f, v)`, and `"f" in o` for an optional field.
+    fn frozen_define_keep(
+        &mut self,
+        ot: TyId,
+        name: &str,
+        field: ast::Expr,
+        base: &ast::Expr,
+        value: &mut ast::Expr,
+        lets: &mut Vec<hir::Stmt>,
+    ) -> Option<hir::Expr> {
+        if !self.cx.frozen_checked(ot) {
+            return None;
+        }
+        let ft = self.trial_type(&field)?;
+        let v = self.expr(value, Some(ft), Want::Move);
+        *value = self.temp_ident("frozen_define", v, lets);
+        let span = field.span;
+        let object = synth(
+            ast::ExprKind::Ident(ast::Ident {
+                name: "Object".into(),
+                span,
+            }),
+            span,
+        );
+        let is = synth(
+            ast::ExprKind::Member {
+                object: Box::new(object),
+                prop: ast::Ident {
+                    name: "is".into(),
+                    span,
+                },
+                optional: false,
+            },
+            span,
+        );
+        let mut cond = synth(
+            ast::ExprKind::Call {
+                callee: Box::new(is),
+                type_args: vec![],
+                args: vec![field, value.clone()],
+                optional: false,
+            },
+            span,
+        );
+        if let Some(Presence::Optional(_)) = self.cx.declared_presence(ot, name) {
+            let key = synth(ast::ExprKind::Lit(ast::Lit::Str(name.to_string())), span);
+            let has = synth(
+                ast::ExprKind::Binary {
+                    op: ast::BinaryOp::In,
+                    lhs: Box::new(key),
+                    rhs: Box::new(base.clone()),
+                },
+                span,
+            );
+            cond = synth(
+                ast::ExprKind::Binary {
+                    op: ast::BinaryOp::And,
+                    lhs: Box::new(has),
+                    rhs: Box::new(cond),
+                },
+                span,
+            );
+        }
+        let b = self.cx.ty.bool_;
+        Some(self.expr(&cond, Some(b), Want::Move))
     }
 
     /// `Object.defineProperty(globalThis, "K", d)`: an assignment of the variable standing for

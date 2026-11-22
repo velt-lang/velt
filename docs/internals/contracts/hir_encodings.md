@@ -790,9 +790,9 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   or logical assignment, `++`/`--`, and the writes `Object.assign`, `Object.defineProperty` and
   destructuring make): `if (IsFrozen(o)) frozenWriteError("f")` (`frozenDefineError` for a
   definition), std/lang/hooks/frozen.velt, an ordinary throw of Node's `TypeError`.
-  `Intrinsic::Freeze(value)` (additive, units codec tag 221; `(T) -> T`, the value moved):
+  `Intrinsic::Freeze(value)` (additive, units codec tag 225; `(T) -> T`, the value moved):
   `Object.freeze(value)` of a freezable type's value, the value with its mark set.
-  `Intrinsic::IsFrozen(value)` (additive, tag 222; `(borrow T) -> bool`, `T` an object type):
+  `Intrinsic::IsFrozen(value)` (additive, tag 226; `(borrow T) -> bool`, `T` an object type):
   the mark of a freezable type's value; `false` for another object type, none of whose values
   can be frozen. Sema answers `Object.isFrozen` of other values itself (a primitive is frozen, a
   value of a frozen literal's readonly type is frozen, other values are not).

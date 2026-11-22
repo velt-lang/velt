@@ -57,6 +57,6 @@ export function current(): usize {
 export function restore(loc: usize): void {
   // SAFETY: `loc` is a location compiled code recorded (a static string) or 0, for NULL.
   unsafe {
-    velt_rt_set_throw_loc$loc(m.ptrOrNull<u8>(loc));
+    velt_rt_set_throw_loc$loc(m.ptrTo<u8>(loc));
   }
 }

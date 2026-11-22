@@ -585,8 +585,10 @@ enums! {
         218 => PtrFromAddress,
         219 => PtrToAddress,
         220 => IsUnique,
-        221 => Freeze,
-        222 => IsFrozen,
+        221 => PtrRead,
+        222 => PtrWrite,
+        225 => Freeze,
+        226 => IsFrozen,
     }
 }
 

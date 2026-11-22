@@ -4,13 +4,4 @@
 
 import type { Allow } from "./types";
 
-export const allow: Allow = {
-  oversize: [
-  ],
-  multiClass: [
-  ],
-  indexCode: [
-  ],
-  unowned: [
-  ],
-};
+export const allow: Allow = { oversize: [], multiClass: [], indexCode: [], unowned: [] };

@@ -1,0 +1,35 @@
+// Typed arrays from a mapped file, pinned and counted: 2,000,000 reads of one 32-bit value at
+// computed offsets of a 64 KiB file, each through an array of its own (argument 1):
+//   arrays   `m.u32s(at, 1)[0]`: the typed method's array, over the pinned mapping
+//   counted  `m.countedU32s(at, 1)[0]`: a counted array, which holds the mapping while it lives
+// Each prints the same checksum. Any other argument reads nothing: what writing and opening the
+// file cost. The difference is what a counted array costs over a pinned one: a hold taken
+// without an atomic when it is made, one atomic decrement when it is dropped.
+//
+//   velt build --release bench/fs/mapped_counted.velt -o /tmp/mc && /tmp/mc counted
+import * as fs from "velt/fs";
+
+function main() {
+  const mode = process.argv[2] ?? "counted";
+  const path = `mapped-counted-${process.pid}.tmp`;
+  let text = "";
+  for (let i = 0; i < 65536; i++) {
+    text += String.fromCharCode(48 + (i % 64));
+  }
+  fs.writeFileSync(path, text);
+  const m = fs.MappedFile.open(path);
+  let sum = 0;
+  if (mode == "arrays") {
+    for (let i = 0; i < 2000000; i++) {
+      const at = ((i * 13) % 16383) * 4;
+      sum += m.u32s(at, 1)[0] & 1023;
+    }
+  } else if (mode == "counted") {
+    for (let i = 0; i < 2000000; i++) {
+      const at = ((i * 13) % 16383) * 4;
+      sum += m.countedU32s(at, 1)[0] & 1023;
+    }
+  }
+  console.log(sum);
+  fs.rmSync(path);
+}

@@ -24,7 +24,8 @@ use crate::hir::{DefId, TyId, TyKind};
 
 impl Ctx<'_> {
     /// The key of object type `d` that stays the same from round to round (a `DefId` of an
-    /// anonymous type may not): the type as shown, over its type parameters.
+    /// anonymous type may not): the type as shown, over its type parameters. Two types shown
+    /// the same way share a key, so both are freezable: that only tests more writes.
     pub(crate) fn frozen_key(&mut self, d: DefId) -> Option<String> {
         let n = self.adt(d)?.generics.names.len();
         let args: Vec<TyId> = (0..n as u32).map(|i| self.ty.param(i)).collect();

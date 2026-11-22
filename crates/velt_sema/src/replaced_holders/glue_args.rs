@@ -90,6 +90,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AddressAtomicCasWeak
         | I::PtrFromAddress
         | I::PtrToAddress
+        | I::PtrRead
+        | I::PtrWrite
         | I::ExportedAddress
         | I::Exit
         | I::Panic

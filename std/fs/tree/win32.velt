@@ -33,7 +33,7 @@ declare c("c") function FindFirstFileExW(
   filter: Ptr<void> | null,
   flags: u32,
 ): Ptr<void> | null;
-declare c("c") function FindNextFileW(handle: Ptr<void>, data: Ptr<_WIN32_FIND_DATAW>): i32;
+declare c("c") function FindNextFileW(handle: Ptr<void>, data: Ptr<_WIN32_FIND_DATAW> | null): i32;
 declare c("c") function FindClose(handle: Ptr<void>): i32;
 declare c("c") function CreateDirectoryW(
   name: readonly u16[],
@@ -118,7 +118,7 @@ function read(path: string, names: string[], kinds: u8[]): i32 {
   }
   const h: Ptr<void> = found;
   // SAFETY: `at` is the block's address, which holds a WIN32_FIND_DATAW.
-  const data = unsafe { Ptr.at<_WIN32_FIND_DATAW>(at) };
+  const data = unsafe { Ptr.orNull<_WIN32_FIND_DATAW>(at) };
   let error: i32 = 0;
   while (true) {
     // SAFETY: the find call before filled the block at `at`, FIND_DATA_BYTES bytes, and the

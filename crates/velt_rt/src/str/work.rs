@@ -1,7 +1,6 @@
-//! Code units scanned to translate positions (`crumbs.rs`, `wtf8::count_units`, the regex
-//! offsets), counted per thread in unit tests only: cost tests check that a loop over a long
-//! string stays linear by counting this work, never by timing it. Other builds compile the hook
-//! to nothing.
+//! Code units scanned to translate positions (`crumbs.rs`, `wtf8::count_units`), counted per
+//! thread in unit tests only: cost tests check that a loop over a long string stays linear by
+//! counting this work, never by timing it. Other builds compile the hook to nothing.
 
 #[cfg(test)]
 thread_local! {
