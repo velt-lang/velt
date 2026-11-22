@@ -1,0 +1,26 @@
+// console.log of a `JsonValue` too long for one line breaks like node's `util.inspect` of the
+// parsed object: one member per line, number arrays in columns, long strings split at their
+// line breaks, members deeper than 2 levels as [Object] / [Array]. A string at the top level
+// prints raw and is never laid out. Expected output: node's console.log of `JSON.parse` of each
+// document.
+
+function main() {
+  const docs: string[] = [
+    "{\"name\":\"velt\",\"version\":\"0.1.0\",\"keywords\":[\"compiler\",\"typescript\",\"native\"],\"private\":true}",
+    "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30]",
+    "{\"matrix\":[[1,2,3],[4,5,6],[7,8,9]],\"labels\":[\"row one\",\"row two\",\"row three\"]}",
+    "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":1}}},\"list\":[[[[1]]]]},\"sibling\":\"a string value of some length\"}",
+    "{\"text\":\"first line\\nsecond line that makes the whole string longer than one line\"}",
+    "[\"日本語\",\"中文\",\"한국어\",\"abc\",\"défini\",\"x\",\"y\",\"z\"]",
+    "{\"users\":[{\"id\":1,\"name\":\"alice\",\"admin\":true},{\"id\":2,\"name\":\"bob\",\"admin\":false}]}",
+    "\"a top-level string, printed raw, however long it is, with a comma, and more commas, and more\"",
+  ];
+  for (const d of docs) {
+    console.log(JsonValue.parse(d));
+  }
+  const big: string[] = [];
+  for (let i = 0; i < 120; i++) {
+    big.push(`${i * 3}`);
+  }
+  console.log(JsonValue.parse("[" + big.join(",") + "]"));
+}
