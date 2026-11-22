@@ -1,0 +1,49 @@
+// velt/fs (internal): `MappedFile.advise`, the advice for a range of a mapping (`madvise`).
+
+import { adviseMapping, COPIES } from "#mapped-source";
+import { osError } from "velt/fs/errors";
+
+/**
+ * Gives `advice` for `length` bytes (to the end when left out) from byte `byteOffset` of a
+ * mapping of `size` bytes at `address`, `from` bytes into its file (`MappedFile.advise`).
+ */
+export function adviseRange(
+  address: usize,
+  from: usize,
+  size: number,
+  advice: string,
+  byteOffset: number,
+  length: number | undefined,
+) {
+  const len = length === undefined ? size - byteOffset : length;
+  if (
+    !Number.isInteger(byteOffset) ||
+    !Number.isInteger(len) ||
+    byteOffset < 0 ||
+    len < 0 ||
+    byteOffset + len > size
+  ) {
+    throw new RangeError(
+      `advise: ${byteOffset}..${byteOffset + len} is not inside the ${size} mapped bytes`,
+    );
+  }
+  if (len == 0 || COPIES) {
+    // Nothing to advise, or no mapping to give the advice for.
+    return;
+  }
+  // `madvise` takes whole pages from a page's start: round the start down to a multiple of
+  // 64 KiB from the mapping's start, which is a page's start for every page size in use (4,
+  // 16 and 64 KiB). The mapping starts that many bytes before `address`.
+  const lead = from % 65536;
+  const at = (lead as number) + byteOffset;
+  const start = at - (at % 65536);
+  const code: i32 =
+    advice == "random"
+      ? 1
+      : advice == "sequential" ? 2 : advice == "willneed" ? 3 : advice == "dontneed" ? 4 : 0;
+  const base = address - lead;
+  const e = adviseMapping(base + (start as usize), (at - start + len) as usize, code);
+  if (e != 0) {
+    throw osError(e, "madvise");
+  }
+}
