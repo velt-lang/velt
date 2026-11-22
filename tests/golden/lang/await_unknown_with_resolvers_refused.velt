@@ -1,0 +1,17 @@
+// `Promise.withResolvers<unknown>().resolve(u)`, `u` an `unknown` holding a promise:
+// JavaScript adopts it, and Velt doesn't yet (#3425), so it stops with a TypeError rather than
+// settling with the promise itself. A value that is no promise settles it, as in Node.
+async function later(n: number): Promise<number> {
+  return n;
+}
+
+async function main(): Promise<void> {
+  const first = Promise.withResolvers<unknown>();
+  first.resolve("plain");
+  console.log(await first.promise);
+  const second = Promise.withResolvers<unknown>();
+  const held: unknown = later(3);
+  second.resolve(held);
+  console.log("not reached", await second.promise);
+}
+main();

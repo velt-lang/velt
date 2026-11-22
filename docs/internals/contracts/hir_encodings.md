@@ -1437,6 +1437,17 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   becomes its base, a union each member (`union_to_common`), a `T | null` its payload, and its
   nothing, like the literals `null` and `undefined` written where `any` is expected, the nothing
   of `boolean | null` / `boolean | undefined` (the dynamic `null` / `undefined`).
+- A promise is boxed as it is, in the table of its own `Promise<T, E>` (velt_vir
+  `lower/any_await.rs`): its class id word is `PROMISE_ID`, and only such a table has the await
+  slot. `await x` of an `any` or `unknown` is a call of std's `awaitAny(x)` (a hook,
+  std/lang/hooks/any_ops.velt), awaited: the value is an `unknown` (an `any` again for an `any`
+  `x`), a rejection thrown as an `unknown`. `awaitAny` is `Intrinsic::AnyPromise(x)` — a
+  `Promise<unknown, unknown>` that polls the boxed promise and boxes its value or reason as it
+  settles (a widening wrapper, `async_fn/widen.rs`), or `undefined` when `x` holds no promise —
+  else `Promise.resolve(x)`, the one step JavaScript takes for a value that is no promise. A
+  thenable is not adopted (#3412). `Intrinsic::AnyIsPromise(x)` (`x instanceof Promise`, and
+  the promise member test of a union) borrows `x` of any type `T`: the table test for a dynamic
+  `T`, else a constant (`true` for a promise type), with no conversion to a dynamic type.
 - The table of `any_impl` for a concrete type is its type descriptor (velt_vir `lower/any.rs`).
   Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
   integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7

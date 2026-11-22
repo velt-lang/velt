@@ -82,11 +82,14 @@ pub enum Construct {
     /// one): `console.log`'s float writers, which hold no other printing, so that a program that
     /// prints only floats demands none of the text hooks.
     WriteFloat,
+    /// `**` on integers (`a ** b`, `a **= b` on a declared integer type): std's `powI64`
+    /// (std/lang/hooks/pow_int.velt), which only a program that has one loads.
+    PowInt,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 12] = [
+    pub const ALL: [Construct; 13] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -99,6 +102,7 @@ impl Construct {
         Construct::Mutex,
         Construct::TextFloat,
         Construct::WriteFloat,
+        Construct::PowInt,
     ];
 
     /// The construct as the ICE names it.
@@ -116,6 +120,7 @@ impl Construct {
             Construct::Mutex => "Mutex (a Mutex's with)",
             Construct::TextFloat => "TextFloat (a float to text, or glue that may print one)",
             Construct::WriteFloat => "WriteFloat (console.log of a float)",
+            Construct::PowInt => "PowInt (`**` on integers)",
         }
     }
 

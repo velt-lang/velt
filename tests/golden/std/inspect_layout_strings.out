@@ -1,0 +1,85 @@
+[
+  'short',
+  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+]
+{ text: 'line one\nline two' }
+{
+  text: 'first line\nsecond line that makes the whole string longer than the line'
+}
+[
+  'x\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\n'
+]
+{
+  deeper: {
+    text: 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven'
+  }
+}
+[
+  'alpha beta gamma delta\nepsilon zeta eta theta iota kappa lambda mu'
+]
+[
+  [
+    'alpha beta gamma delta\nepsilon zeta eta theta iota kappa lambda mu'
+  ]
+]
+{
+  a: {
+    b: 'alpha beta gamma delta\nepsilon zeta eta theta iota kappa lambda mu'
+  }
+}
+[
+  'abcdefghijklmn\no',
+  'abcdefghijklmno\np',
+  'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'
+]
+[
+  `it's here\nand "there" too, with a line long enough to split the string`
+]
+[
+  'tab\there\n' +
+    'and a backslash \\ in a string long enough to be split at its break'
+]
+[
+  `it's "both"\n` +
+    'quotes in a string that is long enough to be split at the break'
+]
+[
+  'a line that ends with a line break and is long enough to split it\n'
+]
+[
+  '日本語', '中文',
+  '한국어', 'abc',
+  'défini', 'x',
+  'y',      'z',
+  'かな'
+]
+[
+  'é',     'é́',
+  'a',     'bb',
+  'ccc',   'dddd',
+  'eeeee', 'ffffff'
+]
+[
+  '漢',     '漢漢',
+  '漢漢漢', '漢漢漢漢',
+  '漢',     '漢漢',
+  '漢漢漢', '漢漢漢漢',
+  '漢',     '漢漢',
+  '漢漢漢', '漢漢漢漢'
+]
+[
+  '😀',     '😀😀',
+  '😀😀😀', '😀',
+  '😀😀',   '😀😀😀',
+  '😀',     '😀😀',
+  '😀😀😀', '😀'
+]
+{
+  emoji: '😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀',
+  more: '😀😀😀😀😀'
+}
+{ wide: '漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字', next: 1 }
+[
+  'üüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüü',
+  'ö'
+]

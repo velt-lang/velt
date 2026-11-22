@@ -1,0 +1,20 @@
+// A `shared(...)` function may capture a `JsonValue`, as Node lets a closure capture any value:
+// it is plain data (a tape, or a tree of nodes), so each call copies what it reads, as for any
+// other class. (Until #3318 it owned a runtime handle, so the capture was refused.) An edit of
+// the copy shows nowhere else.
+async function main() {
+  const h = JSON.parse<JsonValue>(`[1, {"a": "x"}]`);
+  const f = shared((x: i64): i64 => {
+    const q = h;
+    return x + q.len();
+  });
+  console.log(f(1), f(40));
+  const tree = JsonValue.object();
+  tree.set("k", JsonValue.of(1));
+  const g = shared((key: string): string => {
+    const t = tree.clone();
+    t.set(key, JsonValue.of(true));
+    return t.stringify();
+  });
+  console.log(g("a"), g("b"));
+}
