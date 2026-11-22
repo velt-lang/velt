@@ -277,6 +277,9 @@ function checkListDead(k: usize, l: usize): void {
  */
 @noInline
 export function cancel(k: usize): void {
+  if (wk.counting() && !stillLost(k)) {
+    panic("ICE: a task is dropped as parked for ever while a reference to it is left");
+  }
   t.flags(k, t.ROOT_DONE, t.CANCEL);
   const root = m.ld(k + t.T_ROOT);
   if (m.ld(k + t.T_POLL) === fnAddress(fr.futRootPoll)) {

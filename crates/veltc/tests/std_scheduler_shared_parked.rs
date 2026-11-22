@@ -451,10 +451,10 @@ async function main() {
 /// A park's verdict going stale before the cancel poll (the #3462 review's `p_kept_handed`):
 /// tasks keep a holder in module state and park on it, and `main` hands each over to worker 3 as
 /// soon as its task parked, which can take the promise off the task's list in between. The cancel
-/// poll looks again and polls the task as any other (sched_task_lost.velt `stillLost`): before, it
-/// dropped the root while a reference was left (an `ICE:` in about 90 runs of 100, counted). Run
-/// counted for exit 0 and the output; its blocks are not checked, as a stale verdict can still
-/// leave one task unreclaimed (#3476).
+/// poll looks again and polls the task as any other (sched_task_lost.velt `stillLost`); without that
+/// second look, `lt.cancel`'s counted check stops it with an `ICE:` (59 runs of 60). Run counted
+/// for exit 0 and the output; its blocks are not checked, as a stale verdict can still leave tasks
+/// unreclaimed (#3476).
 #[test]
 fn a_park_whose_verdict_went_stale_does_not_drop_its_task() {
     check_at(
