@@ -421,6 +421,24 @@ The getter is one range check and one load; the byte reads check four times, and
 is allocated, counted and freed for each read. The loop's own arithmetic (a remainder on a
 `number`) is in all three.
 
+## Pinned and counted arrays from a mapped file (`bench/fs/mapped_counted.velt`)
+
+2,000,000 reads of one 32-bit value at computed offsets of a 64 KiB `MappedFile`, each through an
+array of its own. User-space instructions (cachegrind, Linux x86-64, release, one thread; a
+debug-built compiler with a release runtime), less the 19.88 M the program costs with no reads;
+wall time the best of 15 interleaved runs, less the same. 2026-11-22.
+
+| program | instructions | per read | time |
+|---|---:|---:|---:|
+| `m.u32s(at, 1)[0]`: the typed method's array, over the pinned mapping | 241.39 M | 121 | 20.5 ms |
+| `m.countedU32s(at, 1)[0]`: a counted array, which holds the mapping | 289.39 M | 145 | 31.8 ms |
+
+A counted array takes one of the holds its `MappedFile` reserved (no atomic) and gives it back
+when it is dropped (one atomic decrement, through the owner block's function): 24 instructions
+and about half again the time of a pinned array, on a loop that makes one array per value. The
+typed methods cost what they did before the counted ones existed (`mapped_header.velt` rows
+unchanged).
+
 ## `f16x8` arithmetic (`bench/simd/half_arith.sh`)
 
 Instructions retired per element, 2^20 elements, 100 passes (each run with 0 and with 100 passes

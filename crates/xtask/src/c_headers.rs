@@ -11,7 +11,13 @@
 /// crates/xtask/src/zig.rs). With `VELT_ZIG_TESTS` set they fail without zig rather than skip
 /// (crates/veltc/tests/zig_env). The job's `cargo test` in `.github/workflows/ci.yml` and
 /// `nightly.yml` names the same files.
-pub const TESTS: &[&str] = &["c_headers", "c_constants", "c_sources", "c_export"];
+pub const TESTS: &[&str] = &[
+    "c_headers",
+    "c_constants",
+    "c_sources",
+    "c_export",
+    "c_struct_pointers",
+];
 
 const PATHS: &[&str] = &[
     "crates/veltc/src/native/",
@@ -76,6 +82,10 @@ const PATHS: &[&str] = &[
     // C variables (`declare c("lib") let`, tests/c_sources.rs): their lowering, the backends'
     // data imports, the dev JIT's lookup, the optimizer's and the std cache's handling of them.
     "crates/velt_vir/src/lower/c_global.rs",
+    // C structs moved to and from C memory (`Ptr.read`, `Ptr.write`, tests/c_struct_pointers.rs):
+    // their layout and the checks of what C wrote.
+    "crates/velt_vir/src/lower/c_layout.rs",
+    "crates/velt_vir/src/lower/ptr_memory.rs",
     "crates/velt_codegen_llvm/src/statics.rs",
     "crates/velt_codegen_cl/src/module.rs",
     "crates/velt_codegen_cl/src/c_libraries.rs",
@@ -145,7 +155,7 @@ mod tests {
             without_zig_tests("all() - binary_id(veltc::golden)"),
             "(all() - binary_id(veltc::golden)) - (binary_id(veltc::c_headers) \
              | binary_id(veltc::c_constants) | binary_id(veltc::c_sources) \
-             | binary_id(veltc::c_export))"
+             | binary_id(veltc::c_export) | binary_id(veltc::c_struct_pointers))"
         );
     }
 }

@@ -1,34 +1,18 @@
-// velt/text (internal): the runtime functions behind `RegExp` (rt_abi_async.md §14): the Rust
-// `regex` engine.
+// velt/text (internal): the runtime functions the regular expressions call: a string's bytes
+// as a string, and the string builder (std/text/string_builder.velt says how one is passed).
 
-import { IoResult } from "velt/native/result";
+/** The text of bytes `start..end` of `s`, both at the start of a character or the end. */
+export declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 
-export declare function velt_rt_regex_new(pattern: string, flags: string): IoResult<u64>;
+/** Makes `out` an empty builder with room for `cap` bytes. */
+export declare function velt_rt_strbuf_new(cap: u64, out: string);
 
-export declare function velt_rt_regex_free(re: u64);
+/** Appends `s` to the builder `buf`. */
+export declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
-export declare function velt_rt_regex_last_index(re: u64): f64;
+/** Appends the first `len` bytes of `bytes` to the builder `buf`: whole characters, `units`
+ * UTF-16 code units of them (`len` when they are ASCII; all ones when not known). */
+export declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
 
-export declare function velt_rt_regex_set_last_index(re: u64, value: f64);
-
-export declare function velt_rt_regex_group_count(re: u64): u64;
-
-export declare function velt_rt_regex_group_names(re: u64): string[];
-
-export declare function velt_rt_regex_test(re: u64, s: string, from: u64): bool;
-
-/** `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings"). */
-export declare function velt_rt_regex_exec(re: u64, s: string, from: u64, out: i64[]): bool;
-
-export declare function velt_rt_regex_exec_all(re: u64, s: string): i64[];
-
-export declare function velt_rt_regex_replace(
-  re: u64,
-  s: string,
-  replacement: string,
-  all: bool,
-): string;
-
-export declare function velt_rt_regex_split(re: u64, s: string, limit: u64): string[];
-
-export declare function velt_rt_regex_escape(s: string): string;
+/** Moves the text of the builder `buf` to `out`. */
+export declare function velt_rt_strbuf_finish(buf: string, out: string);
