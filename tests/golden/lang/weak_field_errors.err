@@ -1,0 +1,7 @@
+`weak` with `?` is not implemented yet (#3119)
+value of type `Node | null` may be null
+`Node`, which has a `weak` field, cannot be passed to another task
+`Holder`, which holds a `weak` field, cannot be passed to another task
+`Node`, which has a `weak` field, cannot be copied
+destructuring a `weak` field is not implemented yet (#3119): read it, `const parent = o.parent`
+`kid.parent` goes through a `weak` field, whose target may be gone between two reads, so a test does not narrow it

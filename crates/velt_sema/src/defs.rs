@@ -404,6 +404,8 @@ pub(crate) struct FieldInfo {
     pub default_throws: Vec<ThrowSrc>,
     /// `private`: the declaring type (inherited copies keep the base class).
     pub private_to: Option<DefId>,
+    /// Declared `weak T | null` (`hir::FieldDef::weak`).
+    pub weak: bool,
 }
 
 /// An initializer a class gives a field it inherits (`AdtInfo::redefined`).

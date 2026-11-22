@@ -61,6 +61,7 @@ pub(super) fn adt(name: &str, kind: AdtKind, fields: Vec<(&str, TyId, Option<Exp
                 // Like sema: a `null` default is what an optional field (`a?: T`) gets.
                 hidden: false,
                 cell: false,
+                weak: false,
                 optional: matches!(
                     default,
                     Some(Expr {

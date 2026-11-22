@@ -128,7 +128,12 @@ export function lastingRelease(p: usize): void {
   }
 }
 
-/** Copies `n` bytes from `src` to `dst` (which do not overlap). */
+/**
+ * Copies `n` bytes from `src` to `dst` (which do not overlap). Inlined: every async call copies
+ * its initial state with it (sched_node.velt `boxed`), a constant size at the call, so the copy
+ * is a few moves there; a program split into codegen units keeps it so only when marked (#3097).
+ */
+@inline("always")
 export function copy(dst: usize, src: usize, n: usize): void {
   // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.
   unsafe {

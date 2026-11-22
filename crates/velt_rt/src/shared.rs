@@ -473,7 +473,9 @@ fn read_unlock_nested(r: &crate::hazard::Reader, how: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mutex::{velt_rt_mutex_init, velt_rt_mutex_lock, velt_rt_mutex_unlock};
+    use crate::mutex::{
+        lock as velt_rt_mutex_lock, unlock as velt_rt_mutex_unlock, velt_rt_mutex_init,
+    };
     use crate::rwlock_write::{velt_rt_rwlock_write, velt_rt_rwlock_write_unlock};
 
     fn tag(how: u64) -> u8 {
