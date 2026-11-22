@@ -5,12 +5,9 @@
 import { addressArray } from "velt/lang/intrinsics";
 import { COPIES, mapFile } from "#mapped-source";
 import * as counted from "velt/fs/mapped_counted";
-import { adviseRange } from "velt/fs/mapped_advise";
+import { adviseRange, MapAdvice } from "velt/fs/mapped_advise";
 import { MappedBytes } from "velt/fs/mapped_bytes";
 import { copyOf, MapOptions, Mapping, pinOwner } from "velt/fs/mapped_part";
-
-/** How a range of a `MappedFile` will be read (`advise`). */
-export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
 
 /**
  * A file mapped into memory, read-only. `bytes` is the file (or the part of it that was

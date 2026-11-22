@@ -3,6 +3,9 @@
 import { adviseMapping, COPIES } from "#mapped-source";
 import { osError } from "velt/fs/errors";
 
+/** How a range of a `MappedFile` will be read (`advise`). */
+export type MapAdvice = "normal" | "random" | "sequential" | "willneed" | "dontneed";
+
 /**
  * Gives `advice` for `length` bytes (to the end when left out) from byte `byteOffset` of a
  * mapping of `size` bytes at `address`, `from` bytes into its file (`MappedFile.advise`).
@@ -11,7 +14,7 @@ export function adviseRange(
   address: usize,
   from: usize,
   size: number,
-  advice: string,
+  advice: MapAdvice,
   byteOffset: number,
   length: number | undefined,
 ) {
