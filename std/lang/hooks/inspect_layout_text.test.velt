@@ -167,6 +167,19 @@ describe("layoutText", () => {
     );
   });
 
+  // The printer escapes a lone surrogate (`\ud800`): a string split at its line break keeps it
+  // in its piece, as Node does.
+  it("splits a string with a lone surrogate", () => {
+    expect(
+      laid(
+        "[ 'first line with a lone \\ud800 surrogate\\nsecond line, long enough that the string is split at its break' ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  'first line with a lone \\ud800 surrogate\\n' +\n    'second line, long enough that the string is split at its break'\n]",
+    );
+  });
+
   it("lays out only the value, from where it starts", () => {
     const line = "label: [ 1, 2, 3, 4, 5, 6, 7 ]";
     expect(layoutText(line, 7, [])).toBe("[\n  1, 2, 3, 4,\n  5, 6, 7\n]");
