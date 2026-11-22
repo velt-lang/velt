@@ -199,6 +199,8 @@ pub enum Intrinsic {
     MayAlias,
     /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
     IsUnique,
+    /// Every read of a `weak` local (hir_encodings.md `LocalDef::weak`; additive, #3119).
+    WeakRead,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
@@ -621,9 +623,8 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
-    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
-    /// to std's weak core (`Construct::Weak`), which a program without weak collections
-    /// doesn't load.
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered to
+    /// std's weak core (`Construct::Weak`), which a program without weak collections doesn't load.
     WeakMapDrop,
     /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
     WeakRefDrop,

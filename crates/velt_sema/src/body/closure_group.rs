@@ -190,6 +190,7 @@ impl FnCx<'_, '_> {
             ty: mem.ty,
             mutable: false,
             boxed: false,
+            weak: false,
             span,
         });
         fr.kinds.push(LocalKind::Const);

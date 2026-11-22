@@ -89,6 +89,7 @@ fn add_capture(f: &mut Frame, name: &str, outer: LocalId, ty: TyId, span: Span) 
         ty,
         mutable: false,
         boxed: false,
+        weak: false,
         span,
     });
     f.kinds.push(LocalKind::Capture);
@@ -140,6 +141,7 @@ impl FnCx<'_, '_> {
             ty,
             mutable,
             boxed: false,
+            weak: false,
             span,
         });
         self.f.kinds.push(kind);
@@ -226,6 +228,9 @@ impl FnCx<'_, '_> {
             None => (j, prev),
         };
         let declared = (j, prev);
+        if self.outer[j].locals[prev.0 as usize].weak {
+            self.weak_captured(name, span);
+        }
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
         // A variable some closure assigns is not narrowed in the closures that capture it: the
         // check outside may no longer hold when they run (TS does not narrow it there either).

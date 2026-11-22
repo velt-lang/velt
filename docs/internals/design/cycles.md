@@ -234,9 +234,10 @@ to programs that have no cycles.
 The cycle-capability analysis and the trace glue above are built, and so are `weak T`'s syntax and
 checks (`velt_sema` `weak_types`: where it may go, its target, its `null`), its formatting, its
 `velt doc` TypeScript output, its `--ts-compat` rule (`weak-type`), its slots in the weak core and
-the lowering of a class's `weak` field whose target is a class (`velt_vir` `weak_fields`). Other
-`weak` references (variables and the closures capturing them, object type and interface members,
-interface, array and map targets, a field declared with `?`) are reported as not implemented yet,
+the lowering of a class's `weak` field and of a function's `weak` variable whose target is a class
+(`velt_vir` `weak_fields`). Other `weak` references (the closures capturing a variable, a module's
+variable that functions use, object type and interface members, interface, array and map targets,
+a field declared with `?`) are reported as not implemented yet,
 and so are a transfer or a `clone()` of a value with a `weak` field and a destructuring of one.
 They, the collector, the lint and `clone()` of cyclic graphs are accepted design, described here.
 
