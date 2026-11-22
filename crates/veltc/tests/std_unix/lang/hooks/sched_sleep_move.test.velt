@@ -1,0 +1,181 @@
+// velt/lang/hooks (tests): requests for a sleep that a retiring spare carries home
+// (sched_sleep_carry.velt `carryHome`, sched_sleep_move.velt `serve`), and the requests a worker
+// finds as its spin ends (sched_park.velt `park`), on worker blocks, sleeps and a task built by
+// hand, in a fixed order with no other thread: a request that reaches the spare after it carried
+// the sleep (or was on its list before) waits there until worker 0 adopts the sleep, then goes on
+// to worker 0, which serves it from its own block. Run from a copy of std by
+// crates/veltc/tests/std_scheduler_carry.rs (macOS and Linux: the scheduler's modules don't link
+// on Windows).
+import { describe, expect, it } from "velt/test";
+import * as m from "./sched_mem";
+import * as pk from "./sched_park";
+import * as sl from "./sched_sleep";
+import * as sc from "./sched_sleep_carry";
+import * as mv from "./sched_sleep_move";
+import * as t from "./sched_task";
+
+/** The bytes of a hand-built task: past its last field (`T_SLOT`). */
+const TASK: usize = 256;
+/** The bytes of a hand-built reactor block: past the fields a park reads before its wait. */
+const IO: usize = 128;
+/** A deadline no test reaches (ms). */
+const LATER: i64 = 3600000;
+
+/** A worker block with an empty timer block. */
+function worker(): usize {
+  const w = m.zeroed(t.E_SIZE);
+  m.st(w + t.E_TIMERS, m.zeroed(sl.TM_SIZE));
+  return w;
+}
+
+/**
+ * A task anchored to `home`, its waker the executor's (`taskOf` finds it), one reference held.
+ * Queued already (`SCHEDULED`): `carryHome`'s wake leaves it where it is.
+ */
+function task(home: usize): usize {
+  const k = m.zeroed(TASK);
+  m.st(k, t.main() + t.E_VT);
+  m.st(k + t.T_REFS, 1);
+  m.st32(k + t.T_STATE, t.SCHEDULED);
+  m.st32(k + t.T_FLAGS, t.ANCHORED);
+  m.st(k + t.T_HOME, home);
+  return k;
+}
+
+/** A sleep that task `k` polled on worker `e`: pending in `e`'s block, registered with `k`'s waker. */
+function pending(e: usize, k: usize): usize {
+  // timing: a sleep future made by hand and never awaited; nothing here waits for its deadline.
+  const f = sl.sleep(e, LATER);
+  m.st(f + sl.S_WAKER, m.wakerClone(k));
+  m.st(f + sl.S_HOME, e);
+  sl.insert(m.ld(e + t.E_TIMERS), f);
+  return f;
+}
+
+/** Gives back worker `w` and its timer block. */
+function freeWorker(w: usize): void {
+  m.release(m.ld(w + t.E_TIMERS), sl.TM_SIZE);
+  m.release(w, t.E_SIZE);
+}
+
+/** Has worker `w` requests on its list? */
+function asks(w: usize): bool {
+  return m.load(w + t.E_SLEEP_ASKS) !== 0;
+}
+
+/**
+ * The spare carried `f` home for `k` (on `g` now), with a request for it on the spare's list:
+ * the spare keeps the request, worker 0 adopts the sleep, the spare passes the request on, and
+ * worker 0 serves it from its own block.
+ */
+function carriedThenServed(spare: usize, g: usize, k: usize, f: usize, refs: usize): void {
+  // The sleep is in no block now: the spare serves nothing for it and keeps the request.
+  mv.serve(spare);
+  expect(asks(spare)).toBe(true);
+  expect(m.load(f + sl.S_STATE)).toBe(sl.CARRIED);
+  expect(m.ld(f + sl.S_HOME)).toBe(spare);
+  expect(m.ld(k + t.T_TIMERS)).toBe(f);
+  expect(m.ld(k + t.T_REFS)).toBe(refs);
+  // Worker 0 polls the task: the sleep joins its block.
+  sc.adopt(g, k);
+  expect(m.ld(f + sl.S_HOME)).toBe(g);
+  expect(m.load(f + sl.S_STATE)).toBe(sl.PENDING);
+  expect(m.ld(m.ld(g + t.E_TIMERS) + sl.TM_FIRST)).toBe(f);
+  // The spare's next look passes the request on to worker 0, which holds the sleep now.
+  mv.serve(spare);
+  expect(asks(spare)).toBe(false);
+  expect(asks(g)).toBe(true);
+  mv.serve(g);
+  expect(asks(g)).toBe(false);
+  expect(m.ld(m.ld(g + t.E_TIMERS) + sl.TM_FIRST)).toBe(0);
+  expect(m.ld(m.ld(g + t.E_TIMERS) + sl.TM_LAST)).toBe(0);
+}
+
+describe("velt/lang/hooks carried home", () => {
+  it("keeps a drop that comes after the carry until worker 0 holds the sleep", () => {
+    const spare = worker();
+    const g = worker();
+    const k = task(spare);
+    const f = pending(spare, k);
+    expect(sc.carryHome(spare, g)).toBe(true);
+    expect(m.ld(m.ld(spare + t.E_TIMERS) + sl.TM_FIRST)).toBe(0);
+    expect(m.ld(k + t.T_HOME)).toBe(g);
+    // The task drops the sleep on another worker: the request goes to the spare (`S_HOME`).
+    mv.dropAway(f);
+    expect(asks(spare)).toBe(true);
+    carriedThenServed(spare, g, k, f, 2);
+    // Worker 0 freed the sleep and dropped the waker it was registered with.
+    expect(m.ld(k + t.T_REFS)).toBe(1);
+    m.release(k, TASK);
+    freeWorker(spare);
+    freeWorker(g);
+  });
+
+  it("keeps a poll that comes after the carry, and worker 0 makes the sleep new again", () => {
+    const spare = worker();
+    const g = worker();
+    const k = task(spare);
+    const f = pending(spare, k);
+    expect(sc.carryHome(spare, g)).toBe(true);
+    // A poll on another worker asks the spare and stays pending.
+    expect(mv.ask(f, k)).toBe(0);
+    carriedThenServed(spare, g, k, f, 3);
+    // Both wakers woken (the request's and the registration's): the task polls it anew.
+    expect(m.load(f + sl.S_STATE)).toBe(sl.NEW);
+    expect(m.ld(f + sl.S_WAKER)).toBe(0);
+    expect(m.load(f + sl.S_ASKS)).toBe(0);
+    expect(m.ld(k + t.T_REFS)).toBe(1);
+    m.release(f, sl.S_SIZE);
+    m.release(k, TASK);
+    freeWorker(spare);
+    freeWorker(g);
+  });
+
+  it("carries a sleep whose request waits on the spare's list, and the request follows it", () => {
+    const spare = worker();
+    const g = worker();
+    const k = task(spare);
+    const f = pending(spare, k);
+    // Pushed between the spare's serve and its carry: the spare may retire with it waiting.
+    mv.dropAway(f);
+    expect(sc.carryHome(spare, g)).toBe(true);
+    carriedThenServed(spare, g, k, f, 2);
+    expect(m.ld(k + t.T_REFS)).toBe(1);
+    m.release(k, TASK);
+    freeWorker(spare);
+    freeWorker(g);
+  });
+});
+
+describe("velt/lang/hooks spin's end", () => {
+  it("serves the requests on the list when the spin ends, before the park returns", () => {
+    const e = worker();
+    const io = m.zeroed(IO);
+    m.st(e + t.E_IO, io);
+    m.st32(e + t.E_MODE, t.M_SHARED);
+    const k = task(e);
+    const f = pending(e, k);
+    mv.dropAway(f);
+    // Something on the inbox ends the spin at its first look (this test's worker is awake, so the
+    // spare spins), with the request still on the list.
+    const parcel = m.zeroed(TASK);
+    m.st(e + t.E_INBOX, parcel);
+    pk.park(e);
+    const spun = m.ld(e + t.E_SPIN) !== 0;
+    const left = asks(e);
+    if (left) {
+      // Served here so that the program's end has no request to wait for.
+      mv.serve(e);
+    }
+    m.st(e + t.E_INBOX, 0);
+    // It spun (its budget was set), and served the request on the way out.
+    expect(spun).toBe(true);
+    expect(left).toBe(false);
+    expect(m.ld(m.ld(e + t.E_TIMERS) + sl.TM_FIRST)).toBe(0);
+    expect(m.ld(k + t.T_REFS)).toBe(1);
+    m.release(parcel, TASK);
+    m.release(k, TASK);
+    m.release(io, IO);
+    freeWorker(e);
+  });
+});

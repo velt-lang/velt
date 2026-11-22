@@ -260,6 +260,16 @@ with_module_hooks! {
     /// `performance.now()`'s time origin, stamped by `velt_main` first thing (velt_vir `entry.rs`).
     clock_start => lang_hooks_clock, "clockStart", sig(() -> void), lowered, constructs(Clock);
 
+    // mutex.velt: a `Mutex`'s lock (#2196), inline on a native target: a compare-and-swap of its
+    // lock word, the runtime's parking only when the lock is taken or a thread waits. Not a
+    // `replaces`: a wasm build keeps velt_rt_wasm's `velt_rt_mutex_lock` and executor.
+    /// `m.with(f)`'s lock of the word at the address.
+    mutex_lock => lang_hooks_mutex, "mutexLock", sig((usize) -> void), lowered,
+        bench("mutex_with"), constructs(Mutex);
+    /// `m.with(f)`'s unlock of the word at the address.
+    mutex_unlock => lang_hooks_mutex, "mutexUnlock", sig((usize) -> void), lowered,
+        bench("mutex_with"), constructs(Mutex);
+
     // unwind.velt: the panic path in std (docs/internals/design/unwinding.md), in a program that
     // calls `catchUnwind`; its module is loaded on demand.
     /// Every panic (`velt_rt_panic`'s job when a catch is active): `(message)`. It raises Velt's

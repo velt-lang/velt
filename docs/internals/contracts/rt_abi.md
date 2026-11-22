@@ -790,9 +790,10 @@ The call takes the process-wide *module lock* unless the thread holds it: inside
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
 synchronous `main`) until `main`'s root starts (std's `schedBlockOn`, `velt_rt_block_on` on
 WebAssembly) or until `main` returns. A program that never
-calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
-keeps the module lock while it blocks; waiting for the module lock while the thread holds a
-`Mutex` stops with an `ICE:` panic (sema rejects module state in a `with` callback). On
+calls it pays nothing per task (a process-wide flag the first call sets). A `Mutex`'s lock
+keeps the module lock while it blocks; sema rejects module state in a `with` callback. Waiting
+for the module lock while the thread holds an `RwLock` stops with an `ICE:` panic; a held `Mutex`
+is not counted for that check on a native target (its lock is std's, which counts nothing). On
 WebAssembly (one thread) there is no lock.
 
 `uint8_t velt_rt_module_with(void)` and `void velt_rt_module_with_end(uint8_t took)`: the first

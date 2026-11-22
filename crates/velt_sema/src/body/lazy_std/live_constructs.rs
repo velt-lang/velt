@@ -432,19 +432,20 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `Clock`, and
+/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `Clock`,
 /// `Weak`: it demands the weak core, which only a program with weak collections needs, and which
-/// prints nothing. `TextFloat` is its own too, which `Dynamic` implies: a numeric key read
-/// through `any` is a float's text. A program that converts, formats or prints nothing that may
-/// hold a float checks no float hook. `WriteFloat`, `console.log`'s float writers, is its own as
-/// well, so that a program that prints only floats checks none of the text hooks; `TextFloat`
-/// implies it (an optional float printed alone is written by them too, and a type that may hold
-/// a float may be such a value).
+/// prints nothing, and `Mutex`, std's inline lock. `TextFloat` is its own too, which `Dynamic`
+/// implies: a numeric key read through `any` is a float's text. A program that converts, formats or
+/// prints nothing that may hold a float checks no float hook. `WriteFloat`, `console.log`'s float
+/// writers, is its own as well, so that a program that prints only floats checks none of the text
+/// hooks; `TextFloat` implies it (an optional float printed alone is written by them too, and a
+/// type that may hold a float may be such a value).
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
     let alone = Construct::CatchUnwind.bit()
         | Construct::PowFloat.bit()
         | Construct::Clock.bit()
-        | Construct::Weak.bit();
+        | Construct::Weak.bit()
+        | Construct::Mutex.bit();
     let (text, write) = (Construct::TextFloat.bit(), Construct::WriteFloat.bit());
     let own = alone | text | write;
     let integer = match present & !own {

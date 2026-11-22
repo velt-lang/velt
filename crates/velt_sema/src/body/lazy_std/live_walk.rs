@@ -185,6 +185,12 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
                 ),
             ..
         } => w.constructs |= Construct::Weak.bit(),
+        // A `Mutex`'s `with`: std's inline lock (velt_vir `async_fn/sync.rs`). An `RwLock`'s
+        // `write` lowers through the same intrinsic and marks it too, unused.
+        E::Call {
+            callee: Callee::Intrinsic(I::MutexWith),
+            ..
+        } => w.constructs |= Construct::Mutex.bit(),
         // A yield or a sleep is a leaf of the executor (velt_vir `sched_rt`: `schedYieldFut`,
         // `schedSleep`), even kept as a promise in code that is not async.
         E::Call {

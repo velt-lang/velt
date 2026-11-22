@@ -98,6 +98,7 @@ table! {
     lang_hooks_class_object => "lang/hooks/class_object",
     lang_hooks_error => "lang/hooks/error",
     lang_hooks_clock => "lang/hooks/clock",
+    lang_hooks_mutex => "lang/hooks/mutex",
     lang_hooks_heap => "lang/hooks/heap",
     lang_hooks_iter => "lang/hooks/iter",
     lang_hooks_json => "lang/hooks/json",

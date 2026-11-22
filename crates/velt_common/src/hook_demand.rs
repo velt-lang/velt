@@ -69,6 +69,10 @@ pub enum Construct {
     /// lowering calls std's weak core (std/lang/hooks/weak.velt) for it, and for the release of
     /// the types it makes weak-capable.
     Weak,
+    /// `m.with(f)` on a `Mutex`: lowering locks and unlocks it with std's inline lock
+    /// (std/lang/hooks/mutex.velt) on a native target. An `RwLock`'s `write`, which lowers
+    /// through the same intrinsic, marks it too and calls the runtime's lock.
+    Mutex,
     /// A float to text: `ToString` / `TemplateToString` of a value that may hold one, the
     /// formatting glue of such a value (`console.log`, `inspect`, `String()` of what is no
     /// scalar), and a numeric key read through `any` or a proxy. Sema takes `Dynamic` as this
@@ -82,7 +86,7 @@ pub enum Construct {
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 11] = [
+    pub const ALL: [Construct; 12] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -92,6 +96,7 @@ impl Construct {
         Construct::PowFloat,
         Construct::Clock,
         Construct::Weak,
+        Construct::Mutex,
         Construct::TextFloat,
         Construct::WriteFloat,
     ];
@@ -108,6 +113,7 @@ impl Construct {
             Construct::PowFloat => "PowFloat (`**` on floats)",
             Construct::Clock => "Clock (a read of Date.now or performance.now)",
             Construct::Weak => "Weak (a weak collection's intrinsic)",
+            Construct::Mutex => "Mutex (a Mutex's with)",
             Construct::TextFloat => "TextFloat (a float to text, or glue that may print one)",
             Construct::WriteFloat => "WriteFloat (console.log of a float)",
         }
