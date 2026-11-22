@@ -43,7 +43,11 @@ for prog in redux literal units; do
   row "$prog" "$b" "$h"
 done
 for prog in long lines; do
-  for r in 0 1 2 3 4 5 6 7; do
+  rows="0 1 2 3 4 5 6 7"
+  if [ "$prog" = lines ]; then
+    rows="$rows 8 9"
+  fi
+  for r in $rows; do
     b=$(VELT_THREADS=1 count "$OUT/$prog-base" "$r")
     h=$(VELT_THREADS=1 count "$OUT/$prog-head" "$r")
     row "$prog-$r" "$b" "$h"

@@ -29,47 +29,20 @@ function group(s: string, slots: i64[], at: usize, g: usize): string {
   return from < 0 ? "" : textOf(s, from as usize, slots[at + 2 * g + 1] as usize);
 }
 
-/** `$n` or `$nn` at the digit at byte `at` of `replacement`, for the match of `groups` groups
- * whose slots start at `slots[base]`: appends the group's text to `out` and returns how many
- * digits name it, two when that group exists; 0 when no group does (the `$` is then text). */
-function numbered(
-  s: string,
-  slots: i64[],
-  base: usize,
-  groups: usize,
-  replacement: string,
-  at: usize,
-  out: string[],
-): usize {
-  const d1 = (strByteAt(replacement, at as u64) - 0x30) as usize;
-  let two: usize = 0;
-  if (at + 1 < strByteLen(replacement)) {
-    const c = strByteAt(replacement, (at + 1) as u64);
-    two = c >= 0x30 && c <= 0x39 ? d1 * 10 + ((c - 0x30) as usize) : 0;
-  }
-  if (two >= 1 && two <= groups) {
-    out.push(group(s, slots, base, two));
-    return 2;
-  }
-  if (d1 >= 1 && d1 <= groups) {
-    out.push(group(s, slots, base, d1));
-    return 1;
-  }
-  return 0;
-}
+/** What a part of a replacement is (`parts`): its text, or a capture group's (0: the match),
+ * or the subject before the match, or after it. */
+const TEXT: i64 = -1;
+const BEFORE: i64 = -2;
+const AFTER: i64 = -3;
 
-/** `replacement` for the match of `s` whose slots start at `slots[base]`, with `$$ $& $\` $'
- * $n $nn $<name>` expanded as JavaScript's `GetSubstitution` does; `names` are the names of
- * groups 1.. (`""`: none). */
-export function substitution(
-  s: string,
-  slots: i64[],
-  base: usize,
-  names: string[],
-  replacement: string,
-): string {
+/** The parts of `replacement`, with `$$ $& $\` $' $n $nn $<name>` read as JavaScript's
+ * `GetSubstitution` reads them, for a pattern whose groups 1.. have the names `names` (`""`:
+ * none): per part, `TEXT` (its text in `texts`) or a group's number or `BEFORE` or `AFTER`
+ * in `kinds`. Read once per call, not once per match. */
+function parts(replacement: string, names: string[], kinds: i64[], texts: string[]): void {
   const n = strByteLen(replacement);
-  const parts: string[] = [];
+  const groups = names.length;
+  const named = names.some((name) => name != "");
   let from: usize = 0;
   let i: usize = 0;
   while (i + 1 < n) {
@@ -78,43 +51,63 @@ export function substitution(
       continue;
     }
     const c = strByteAt(replacement, (i + 1) as u64);
+    let kind = TEXT;
     let used: usize = 0;
-    const before = parts.length;
-    parts.push(velt_rt_str_byte_slice(replacement, from as u64, i as u64));
     if (c == 0x24) {
-      parts.push("$");
-      used = 2;
-    } else if (c == 0x26) {
-      parts.push(textOf(s, slots[base] as usize, slots[base + 1] as usize));
-      used = 2;
-    } else if (c == 0x60) {
-      parts.push(textOf(s, 0, slots[base] as usize));
-      used = 2;
-    } else if (c == 0x27) {
-      parts.push(textOf(s, slots[base + 1] as usize, strByteLen(s)));
+      // `$$`: one `$`, which ends the text before it.
+      kinds.push(TEXT);
+      texts.push(velt_rt_str_byte_slice(replacement, from as u64, (i + 1) as u64));
+      i += 2;
+      from = i;
+      continue;
+    }
+    if (c == 0x26 || c == 0x60 || c == 0x27) {
+      kind = c == 0x26 ? 0 : c == 0x60 ? BEFORE : AFTER;
       used = 2;
     } else if (c >= 0x30 && c <= 0x39) {
-      const digits = numbered(s, slots, base, names.length, replacement, i + 1, parts);
-      used = digits == 0 ? 0 : digits + 1;
-    } else if (c == 0x3c && names.some((name) => name != "")) {
+      const d1 = (c - 0x30) as usize;
+      let two: usize = 0;
+      if (i + 2 < n) {
+        const c2 = strByteAt(replacement, (i + 2) as u64);
+        two = c2 >= 0x30 && c2 <= 0x39 ? d1 * 10 + ((c2 - 0x30) as usize) : 0;
+      }
+      if (two >= 1 && two <= groups) {
+        kind = two as i64;
+        used = 3;
+      } else if (d1 >= 1 && d1 <= groups) {
+        kind = d1 as i64;
+        used = 2;
+      }
+    } else if (c == 0x3c && named) {
       const close = findByte(replacement, 0x3e, i + 2, n);
       if (close >= 0) {
         const name = velt_rt_str_byte_slice(replacement, (i + 2) as u64, close as u64);
+        // A name no group has stands for nothing.
         const g = names.indexOf(name) + 1;
-        parts.push(g > 0 ? group(s, slots, base, g as usize) : "");
+        kind = g > 0 ? g as i64 : TEXT;
         used = close as usize + 1 - i;
       }
     }
     if (used == 0) {
-      arrayTruncate(parts, before);
       i++;
-    } else {
-      i += used;
-      from = i;
+      continue;
     }
+    // The text before it, when there is some.
+    if (i > from) {
+      kinds.push(TEXT);
+      texts.push(velt_rt_str_byte_slice(replacement, from as u64, i as u64));
+    }
+    if (kind != TEXT) {
+      kinds.push(kind);
+      texts.push("");
+    }
+    i += used;
+    from = i;
   }
-  parts.push(velt_rt_str_byte_slice(replacement, from as u64, n as u64));
-  return parts.join("");
+  if (n > from) {
+    kinds.push(TEXT);
+    texts.push(velt_rt_str_byte_slice(replacement, from as u64, n as u64));
+  }
 }
 
 /** The most bytes of a subject appended to a builder where they are. */
@@ -146,6 +139,11 @@ export function replaceMatches(
   if (found.length == 0) {
     return s.clone();
   }
+  const kinds: i64[] = [];
+  const texts: string[] = [];
+  if (!plain) {
+    parts(replacement, names, kinds, texts);
+  }
   let buf = "";
   velt_rt_strbuf_new(len as u64, buf);
   let last: usize = 0;
@@ -163,9 +161,34 @@ export function replaceMatches(
     }
     if (plain) {
       velt_rt_strbuf_push_str(buf, replacement);
-    } else {
-      const text = substitution(s, found, at, names, replacement);
-      velt_rt_strbuf_push_str(buf, text);
+    }
+    for (let k: usize = 0; k < kinds.length; k++) {
+      const kind = kinds[k];
+      if (kind == TEXT) {
+        const text = texts[k];
+        velt_rt_strbuf_push_str(buf, text);
+        continue;
+      }
+      // A range of the subject: a group's (unset: nothing), or before or after the match.
+      let from =
+        kind == BEFORE ? 0 : kind == AFTER ? found[at + 1] : found[at + 2 * (kind as usize)];
+      let to =
+        kind == BEFORE
+          ? found[at]
+          : kind == AFTER ? len as i64 : found[at + 2 * (kind as usize) + 1];
+      if (from < 0 || to <= from) {
+        continue;
+      }
+      const a = from as usize;
+      const b = to as usize;
+      if (b - a > MAX_PIECE || inPair(s, a, len) || inPair(s, b, len)) {
+        const piece = textOf(s, a, b);
+        velt_rt_strbuf_push_str(buf, piece);
+      } else {
+        const piece: u8[] = unsafe { addressArray<u8>(strDataAddress(s) + a, b - a) };
+        const count = (b - a) as u64;
+        velt_rt_strbuf_push_u8s(buf, piece, count, ascii ? count : UNCOUNTED);
+      }
     }
     last = found[at + 1] as usize;
   }

@@ -121,6 +121,32 @@ function replacing() {
   );
 }
 
+function folded() {
+  // A literal under `i` is found whatever the case of its letters, also in the last bytes,
+  // where no step of the scan fits.
+  const near = "key=valab, ".repeat(40);
+  console.log(
+    /value\d+/i.test(near),
+    (near + "VaLuE7").match(/value\d+/gi),
+    (near + "vALUE12 value3 VALUEx").match(/value\d+/gi),
+    "xxVALUExx".search(/value/i),
+    "aValue".replace(/value/gi, "[$&]"),
+    /k\w+/iu.test("\u212aey"),
+  );
+}
+
+function replacements() {
+  const groups = /(?<k>key)(\d)(\d)?(x)?(y)?(z)?(w)?(v)?(u)?(t)?(s)?/g;
+  console.log(
+    "key1=value2, key3".replace(/(key)(\d)/g, "$2$1"),
+    "ab".replace(/b/, "$$-$&-$`-$'-$0-$3"),
+    "key12".replace(groups, "<$11|$1|$10|$2|$<k>|$<no>|$<k|$>"),
+    "aXbXc".replace(/X/g, "$'"),
+    "aXbXc".replace(/X/g, "$`"),
+    "abc".replace(/(?:)/g, "-"),
+  );
+}
+
 function errors() {
   for (const p of [
     "(a",
@@ -209,5 +235,7 @@ function main() {
   lines();
   replacing();
   loops();
+  folded();
+  replacements();
   errors();
 }

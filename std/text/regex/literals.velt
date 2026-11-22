@@ -37,6 +37,9 @@ class Literals {
   list: string[] = [""];
   /** Nothing but the strings matches, and nothing is captured. */
   exact: bool = true;
+  /** A letter of the strings stands for both its cases (`/value/i`): it is spelled lower case,
+   * and the scan compares it whatever the case (prefilter.velt). */
+  folded: bool = false;
 
   /** Extends every string with what `n` matches; false when it cannot (the strings are then
    * the starts of the matches so far, and stay that). */
@@ -51,6 +54,14 @@ class Literals {
     if (kind == SET) {
       const set = n.set ?? new CharSet();
       const r = set.ranges;
+      // An ASCII letter in both cases: one character, folded.
+      const lower = r.length == 4 ? r[2] : 0;
+      if (r.length == 4 && r[0] == r[1] && lower == r[3] && r[0] + 0x20 == lower) {
+        if (lower >= 0x61 && lower <= 0x7a) {
+          this.folded = true;
+          return this.cross([lower, lower]);
+        }
+      }
       if (r.length == 0 || set.count(MAX_SET + 1) > MAX_SET) {
         return false;
       }
@@ -107,6 +118,7 @@ class Literals {
       branch.list = this.list.slice();
       whole = branch.visit(n.kids[i]) && whole;
       this.exact = this.exact && branch.exact;
+      this.folded = this.folded || branch.folded;
       for (let k: usize = 0; k < branch.list.length; k++) {
         out.push(branch.list[k]);
       }
@@ -287,6 +299,21 @@ function chooseGrams(prog: Program, lits: string[], min: usize): bool {
   return true;
 }
 
+/** Per offset of the grams, what the scan ORs into the subject's bytes there before it
+ * compares them: 0x20 when the literals' letters are folded and every tuple has a lower case
+ * letter at that offset (an upper case one then compares equal), else 0. */
+function foldGrams(prog: Program, folded: bool): void {
+  const size = prog.gramSize;
+  for (let j: usize = 0; j < size; j++) {
+    let letters = folded;
+    for (let t = j; t < prog.grams.length && letters; t += size) {
+      letters = prog.grams[t] >= 0x61 && prog.grams[t] <= 0x7a;
+    }
+    prog.gramFold.push(letters ? 0x20 : 0);
+    prog.gramFolded = prog.gramFolded || letters;
+  }
+}
+
 /** Stores the first eight bytes of each literal of an `exact` program as a word, after the
  * mask of the bytes it has: what the search compares a candidate's first eight bytes with. */
 function literalWords(prog: Program): void {
@@ -315,7 +342,9 @@ export function analyze(prog: Program, tree: Node): void {
   if (min > 0) {
     prog.literals = lits.list;
     if (chooseGrams(prog, lits.list, min)) {
-      prog.exact = whole && lits.exact;
+      foldGrams(prog, lits.folded);
+      // A folded letter is found whatever its case, and a matcher checks what was found.
+      prog.exact = whole && lits.exact && !lits.folded;
       if (prog.exact) {
         literalWords(prog);
       }
@@ -337,6 +366,7 @@ export function analyze(prog: Program, tree: Node): void {
     return;
   }
   if (count > 0 && count == bytes.length && chooseGrams(prog, bytes, 1)) {
+    foldGrams(prog, false);
     return;
   }
   prog.scan = SCAN_FIRST;

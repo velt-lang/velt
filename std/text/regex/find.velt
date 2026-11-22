@@ -17,7 +17,7 @@ import {
   literalFind,
   literalStart,
 } from "velt/text/regex/prefilter";
-import { Program } from "velt/text/regex/program";
+import { Program, SCAN_NONE } from "velt/text/regex/program";
 import { listsOf, Search } from "velt/text/regex/search";
 import { straight } from "velt/text/regex/straight";
 
@@ -92,6 +92,14 @@ export function find(prog: Program, m: Search, s: string, from: usize, sticky: b
     return false;
   }
   const fixed = sticky || prog.anchored;
+  // Where a match may start, before any matcher runs: none, or the first place to look.
+  if (!fixed && prog.scan != SCAN_NONE) {
+    const at = candidate(prog, m, s, from, len);
+    if (at < 0) {
+      return false;
+    }
+    from = at as usize;
+  }
   // A long subject is the automaton's when the program has one: on a regex's first search the
   // backtracker gets a few steps first, enough for a match that is near and short. Once the
   // regex has searched before (it keeps its automaton), the automaton goes first, from a
@@ -219,8 +227,10 @@ function scan(
   memory: bool,
 ): i64 {
   let pos = from;
+  // `find` scanned to `from` already (where its scan stopped when it has one).
+  let scanned = prog.scan != SCAN_NONE;
   while (true) {
-    if (!fixed) {
+    if (!fixed && !scanned) {
       const next = candidate(prog, m, s, pos, len);
       if (next < 0) {
         return FAILED;
@@ -233,5 +243,6 @@ function scan(
     }
     // Every code unit is tried, also the low half of a pair (decode.velt).
     pos = after(s, pos, true);
+    scanned = false;
   }
 }

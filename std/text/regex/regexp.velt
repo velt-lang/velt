@@ -23,14 +23,16 @@ import { RegExpError } from "velt/text/regex/errors";
 import { find, findAll } from "velt/text/regex/find";
 import { MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
 import { positionOf, textOf, unitOf } from "velt/text/regex/offsets";
-import { Program } from "velt/text/regex/program";
+import { Program, SCAN_NONE } from "velt/text/regex/program";
+import { candidate } from "velt/text/regex/prefilter";
+import { findByte } from "velt/lang/string/byte_scan";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
 import { escapePattern, replaceMatches, splitMatches } from "velt/text/regex/replace";
 import { Search } from "velt/text/regex/search";
 import { DfaTables, grew } from "velt/text/regex/dfa_tables";
 // The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
-import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
 
 /** The program of `pattern` with `flags`, and the names of its groups in `names`. */
 function compile(pattern: string, flags: string, names: string[]): Program {
@@ -41,6 +43,20 @@ function compile(pattern: string, flags: string, names: string[]): Program {
     }
   }
   return assemble(pattern, flags, names);
+}
+
+/** Where a search of `prog` in `s` from byte `at` has to start looking: there, or where the
+ * scan finds a match may start; -1 when the byte every match has is missing or the scan finds
+ * no place, which a call then says without making a search memory. */
+function look(prog: Program, s: string, at: usize, sticky: bool): i64 {
+  if (sticky || prog.anchored) {
+    return at as i64;
+  }
+  const len = strByteLen(s);
+  if (prog.required >= 0 && findByte(s, prog.required as u8, at, len) < 0) {
+    return -1;
+  }
+  return prog.scan == SCAN_NONE ? at as i64 : candidate(prog, null, s, at, len);
 }
 
 /** A `RegExp`'s `lastIndex`, and what its calls keep for the next ones: in an object of its
@@ -91,10 +107,13 @@ export class RegExp implements Pattern {
       return false;
     }
     const prog = this.#prog;
-    const at = positionOf(s, start, prog.units);
     const sticky = this.sticky;
+    const at = look(prog, s, positionOf(s, start, prog.units), sticky);
+    if (at < 0) {
+      return false;
+    }
     const m = this.memory(0);
-    const found = find(prog, m, s, at, sticky);
+    const found = find(prog, m, s, at as usize, sticky);
     this.keep(m);
     return found;
   }
@@ -341,10 +360,13 @@ export class RegExp implements Pattern {
       return null;
     }
     const stride = 2 * (prog.groups as usize) + 2;
-    const at = positionOf(s, from, prog.units);
     const sticky = this.sticky;
+    const at = look(prog, s, positionOf(s, from, prog.units), sticky);
+    if (at < 0) {
+      return null;
+    }
     const m = this.memory(stride);
-    const found = find(prog, m, s, at, sticky);
+    const found = find(prog, m, s, at as usize, sticky);
     this.keep(m);
     return found ? this.matchOf(s, m.slots, 0) : null;
   }

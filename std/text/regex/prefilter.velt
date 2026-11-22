@@ -17,6 +17,7 @@ import { Search } from "velt/text/regex/search";
 
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
 declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
 declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
@@ -63,8 +64,8 @@ const ALL: u32 = 2;
  * the literal there went to `m.found` and its end to `m.floor`, before which nothing more is
  * looked at. */
 @inline("always")
-function hit(prog: Program, m: Search, s: string, p: usize, len: usize, mode: u32): i64 {
-  if (mode == ANY) {
+function hit(prog: Program, m: Search | null, s: string, p: usize, len: usize, mode: u32): i64 {
+  if (mode == ANY || m == null) {
     return p as i64;
   }
   if (p < m.floor) {
@@ -81,18 +82,20 @@ function hit(prog: Program, m: Search, s: string, p: usize, len: usize, mode: u3
 }
 
 /** The grams' scan, sixteen positions a step, for tuples of `size` bytes, `count` of them (1,
- * 2 or 4): both are constants where this is called, so each call is a loop of its own. The
+ * 2 or 4), with letters folded (`gramFold`) or not: all three are constants where this is
+ * called, so each call is a loop of its own. The
  * first hit at or after `from`, or, when the steps found none, `-2 - i` for the byte `i` they
  * stopped at. */
 @inline("always")
 function wide(
   prog: Program,
-  m: Search,
+  m: Search | null,
   s: string,
   from: usize,
   len: usize,
   size: usize,
   count: usize,
+  folded: bool,
   mode: u32,
 ): i64 {
   const g = prog.grams;
@@ -101,6 +104,12 @@ function wide(
   const o2 = size > 2 ? prog.gramAt[2] : 0;
   const o3 = size > 3 ? prog.gramAt[3] : 0;
   const reach = (size > 3 ? o3 : size > 2 ? o2 : size > 1 ? o1 : o0) + 16;
+  // What makes a letter of either case compare equal to the lower case one (0 elsewhere).
+  const fold = prog.gramFold;
+  const f0 = velt_simd_u8x16_splat(fold[0]);
+  const f1 = velt_simd_u8x16_splat(size > 1 ? fold[1] : 0);
+  const f2 = velt_simd_u8x16_splat(size > 2 ? fold[2] : 0);
+  const f3 = velt_simd_u8x16_splat(size > 3 ? fold[3] : 0);
   const a0 = velt_simd_u8x16_splat(g[0]);
   const a1 = velt_simd_u8x16_splat(size > 1 ? g[1] : 0);
   const a2 = velt_simd_u8x16_splat(size > 2 ? g[2] : 0);
@@ -125,27 +134,39 @@ function wide(
     // The steps call nothing, so what they read of `s` and of the program stays in registers.
     let bits: u64 = 0;
     while (steps && i <= stop) {
-      const v0 = strLoadU8x16(s, (i + o0) as u64);
+      const v0 =
+        folded
+          ? velt_simd_u8x16_or(strLoadU8x16(s, (i + o0) as u64), f0)
+          : strLoadU8x16(s, (i + o0) as u64);
       let ma = velt_simd_u8x16_eq(v0, a0);
       let mb = velt_simd_u8x16_eq(v0, b0);
       let mc = velt_simd_u8x16_eq(v0, c0);
       let md = velt_simd_u8x16_eq(v0, d0);
       if (size > 1) {
-        const v1 = strLoadU8x16(s, (i + o1) as u64);
+        const v1 =
+          folded
+            ? velt_simd_u8x16_or(strLoadU8x16(s, (i + o1) as u64), f1)
+            : strLoadU8x16(s, (i + o1) as u64);
         ma = velt_simd_mask8x16_and(ma, velt_simd_u8x16_eq(v1, a1));
         mb = velt_simd_mask8x16_and(mb, velt_simd_u8x16_eq(v1, b1));
         mc = velt_simd_mask8x16_and(mc, velt_simd_u8x16_eq(v1, c1));
         md = velt_simd_mask8x16_and(md, velt_simd_u8x16_eq(v1, d1));
       }
       if (size > 2) {
-        const v2 = strLoadU8x16(s, (i + o2) as u64);
+        const v2 =
+          folded
+            ? velt_simd_u8x16_or(strLoadU8x16(s, (i + o2) as u64), f2)
+            : strLoadU8x16(s, (i + o2) as u64);
         ma = velt_simd_mask8x16_and(ma, velt_simd_u8x16_eq(v2, a2));
         mb = velt_simd_mask8x16_and(mb, velt_simd_u8x16_eq(v2, b2));
         mc = velt_simd_mask8x16_and(mc, velt_simd_u8x16_eq(v2, c2));
         md = velt_simd_mask8x16_and(md, velt_simd_u8x16_eq(v2, d2));
       }
       if (size > 3) {
-        const v3 = strLoadU8x16(s, (i + o3) as u64);
+        const v3 =
+          folded
+            ? velt_simd_u8x16_or(strLoadU8x16(s, (i + o3) as u64), f3)
+            : strLoadU8x16(s, (i + o3) as u64);
         ma = velt_simd_mask8x16_and(ma, velt_simd_u8x16_eq(v3, a3));
         mb = velt_simd_mask8x16_and(mb, velt_simd_u8x16_eq(v3, b3));
         mc = velt_simd_mask8x16_and(mc, velt_simd_u8x16_eq(v3, c3));
@@ -177,36 +198,58 @@ function wide(
   }
 }
 
-/** `wide` for the program's tuples, as the loop for their size and number. */
-function wideScan(prog: Program, m: Search, s: string, from: usize, len: usize, mode: u32): i64 {
+/** `wide` for the program's tuples, as the loop for their size and number, folded or not. */
+function wideScan(
+  prog: Program,
+  m: Search | null,
+  s: string,
+  from: usize,
+  len: usize,
+  mode: u32,
+): i64 {
+  return prog.gramFolded
+    ? wideSized(prog, m, s, from, len, true, mode)
+    : wideSized(prog, m, s, from, len, false, mode);
+}
+
+@inline("always")
+function wideSized(
+  prog: Program,
+  m: Search | null,
+  s: string,
+  from: usize,
+  len: usize,
+  folded: bool,
+  mode: u32,
+): i64 {
   const size = prog.gramSize;
   const count = prog.grams.length / size;
   if (size == 1) {
     return count == 1
-      ? wide(prog, m, s, from, len, 1, 1, mode)
+      ? wide(prog, m, s, from, len, 1, 1, folded, mode)
       : count == 2
-        ? wide(prog, m, s, from, len, 1, 2, mode)
-        : wide(prog, m, s, from, len, 1, 4, mode);
+        ? wide(prog, m, s, from, len, 1, 2, folded, mode)
+        : wide(prog, m, s, from, len, 1, 4, folded, mode);
   }
   if (size == 2) {
     return count == 1
-      ? wide(prog, m, s, from, len, 2, 1, mode)
+      ? wide(prog, m, s, from, len, 2, 1, folded, mode)
       : count == 2
-        ? wide(prog, m, s, from, len, 2, 2, mode)
-        : wide(prog, m, s, from, len, 2, 4, mode);
+        ? wide(prog, m, s, from, len, 2, 2, folded, mode)
+        : wide(prog, m, s, from, len, 2, 4, folded, mode);
   }
   if (size == 3) {
     return count == 1
-      ? wide(prog, m, s, from, len, 3, 1, mode)
+      ? wide(prog, m, s, from, len, 3, 1, folded, mode)
       : count == 2
-        ? wide(prog, m, s, from, len, 3, 2, mode)
-        : wide(prog, m, s, from, len, 3, 4, mode);
+        ? wide(prog, m, s, from, len, 3, 2, folded, mode)
+        : wide(prog, m, s, from, len, 3, 4, folded, mode);
   }
   return count == 1
-    ? wide(prog, m, s, from, len, 4, 1, mode)
+    ? wide(prog, m, s, from, len, 4, 1, folded, mode)
     : count == 2
-      ? wide(prog, m, s, from, len, 4, 2, mode)
-      : wide(prog, m, s, from, len, 4, 4, mode);
+      ? wide(prog, m, s, from, len, 4, 2, folded, mode)
+      : wide(prog, m, s, from, len, 4, 4, folded, mode);
 }
 
 /** Is one of the grams of `prog` at byte `i` of `s`? */
@@ -215,7 +258,7 @@ function gramHere(prog: Program, s: string, i: usize): bool {
   for (let t: usize = 0; t < prog.grams.length; t += size) {
     let same = true;
     for (let j: usize = 0; j < size && same; j++) {
-      same = strByteAt(s, (i + prog.gramAt[j]) as u64) == prog.grams[t + j];
+      same = (strByteAt(s, (i + prog.gramAt[j]) as u64) | prog.gramFold[j]) == prog.grams[t + j];
     }
     if (same) {
       return true;
@@ -226,19 +269,37 @@ function gramHere(prog: Program, s: string, i: usize): bool {
 
 /** The scan by the grams of `prog` of the `len` bytes of `s` from `from` on, in mode `mode`:
  * the first result of `hit` that is not -1, or -1. */
-function gramScan(prog: Program, m: Search, s: string, from: usize, len: usize, mode: u32): i64 {
+function gramScan(
+  prog: Program,
+  m: Search | null,
+  s: string,
+  from: usize,
+  len: usize,
+  mode: u32,
+): i64 {
   if (len < prog.minBytes) {
     return -1;
   }
-  if (mode != ANY) {
+  if (mode != ANY && m != null) {
     m.floor = from;
   }
-  const found = wideScan(prog, m, s, from, len, mode);
+  let found = wideScan(prog, m, s, from, len, mode);
   if (found >= 0) {
     return found;
   }
-  // The last positions, which sixteen bytes do not fit after.
+  // The last positions, which sixteen bytes do not fit after: one more step, over the last
+  // sixteen it fits at (what it finds before where the steps stopped, they found already),
+  // and a byte loop only where no step fits at all.
   const last = len - prog.minBytes;
+  const reach = prog.gramAt[prog.gramSize - 1] + 16;
+  const stopped = (-2 - found) as usize;
+  // Only when the steps read up to there: before `from` nothing is looked at.
+  if (len >= reach && from <= len - reach && stopped <= last) {
+    found = wideScan(prog, m, s, len - reach, len, mode);
+    if (found >= 0) {
+      return found;
+    }
+  }
   for (let i = (-2 - found) as usize; i <= last; i++) {
     if (mode != ANY || gramHere(prog, s, i)) {
       const here = hit(prog, m, s, i, len, mode);
@@ -263,11 +324,18 @@ function firstScan(prog: Program, s: string, from: usize, len: usize): i64 {
 }
 
 /** The first byte at or after `from` where a match of `prog` in the `len` bytes of `s` may
- * start, or -1 when none can. `from` is a position (decode.velt), and so is the result. */
-export function candidate(prog: Program, m: Search, s: string, from: usize, len: usize): i64 {
+ * start, or -1 when none can (`m`: the search's, or none for a look before one is made). `from` is a position (decode.velt), and so is the result. */
+export function candidate(
+  prog: Program,
+  m: Search | null,
+  s: string,
+  from: usize,
+  len: usize,
+): i64 {
   if (prog.scan == SCAN_GRAMS) {
-    // One byte to look for: std's own search for one, which is short when the byte is near.
-    if (prog.grams.length == 1) {
+    // One byte to look for: std's own search for one, which is short when the byte is near
+    // (not a letter of either case: the wide scan folds it).
+    if (prog.grams.length == 1 && prog.gramFold[0] == 0) {
       return findByte(s, prog.grams[0], from, len);
     }
     return gramScan(prog, m, s, from, len, ANY);

@@ -24,6 +24,8 @@ d83d de00 61 d83d d83d de00 [ 'a', ',', 'b', ';' ]
 true false false true true
 false false true false false false
 true false 5000 b aa, 0 [b] true false
+false [ 'VaLuE7' ] [ 'vALUE12', 'value3' ] 2 a[Value] true
+1key=value2, 3key a$-b-a--$0-$3 <|key||1|key|| abXcbcc aabaXbc -a-b-c-
 Invalid regular expression: /(a/: Unterminated group
 Invalid regular expression: /a)/: Unmatched ')'
 Invalid regular expression: /a**/: Nothing to repeat

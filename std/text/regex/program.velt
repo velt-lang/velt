@@ -93,6 +93,11 @@ export class Program {
   gramAt: usize[] = [];
   gramSize: usize = 0;
   minBytes: usize = 0;
+  /** Per offset, what the scan ORs into the subject's byte before comparing: 0x20 where the
+   * tuples' letters stand for both cases (literals.velt `foldGrams`), else 0. */
+  gramFold: u8[] = [];
+  /** Some offset of `gramFold` is 0x20. */
+  gramFolded: bool = false;
   /** `SCAN_FIRST`: the first byte of every match, as four words of bits. */
   first: u64[] = [0, 0, 0, 0];
 
