@@ -33,6 +33,7 @@ import {
   statePoll,
 } from "velt/lang/intrinsics";
 import * as fr from "./sched_fut_root";
+import * as id from "./sched_id";
 import * as jn from "./sched_join";
 import * as mk from "./sched_make";
 import * as m from "./sched_mem";
@@ -122,7 +123,11 @@ const HELD_LAST = new ThreadLocal<u64>(0);
 /** An exported function's call from C begins (`schedExportEnter`). */
 export function exportEnter(): void {
   if (foreign()) {
-    DEPTH.set(DEPTH.get() + 1);
+    const d = DEPTH.get();
+    if (d === 0) {
+      id.enterForeignCall();
+    }
+    DEPTH.set(d + 1);
   }
 }
 
@@ -134,6 +139,7 @@ export function exportExit(): void {
   }
   DEPTH.set(d - 1);
   if (d === 1) {
+    id.leaveForeignCall();
     release();
   }
 }
