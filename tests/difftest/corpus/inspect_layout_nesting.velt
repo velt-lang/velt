@@ -1,0 +1,102 @@
+// console.log's line breaking of nested values (node's reduceToSingleString and
+// isBelowBreakLength): a container stays on one line while its entries, their count and its
+// indentation fit in 80 columns, else one entry per line, 2 spaces deeper per level. Objects,
+// arrays, class instances, Maps and Sets, at the edges of the limit, and past node's depth
+// limit of 2. Output from node 22.
+
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class Segment {
+  from: Point;
+  to: Point;
+  label: string;
+  constructor(from: Point, to: Point, label: string) {
+    this.from = from;
+    this.to = to;
+    this.label = label;
+  }
+}
+
+class Box {
+  inner: Box | null;
+  size: number;
+  constructor(inner: Box | null, size: number) {
+    this.inner = inner;
+    this.size = size;
+  }
+}
+
+function main() {
+  // The one-line limit: a key whose value grows one character at a time.
+  for (let n = 56; n <= 64; n++) {
+    console.log({ key: "v".repeat(n) });
+  }
+  for (let n = 52; n <= 60; n++) {
+    console.log({ a: "x".repeat(n), b: 1 });
+  }
+  // Many short entries: node counts one column per entry on top of their text.
+  const wide: { [k: string]: number } = {};
+  for (let i = 0; i < 14; i++) {
+    wide["k" + i] = i;
+  }
+  console.log(wide);
+  // Objects inside objects and arrays.
+  console.log({
+    name: "config",
+    server: { host: "localhost", port: 8080, tls: { enabled: true, cert: "/etc/cert.pem" } },
+    users: ["alice", "bob"],
+  });
+  console.log([
+    { id: 1, name: "first item" },
+    { id: 2, name: "second item" },
+    { id: 3, name: "x" },
+  ]);
+  console.log([[1, 2, 3], ["a", "b"], [], {}, [[]]]);
+  console.log({ empty: {}, list: [], nested: { empty: [] } });
+  // Class instances carry their name before the brace.
+  console.log(new Segment(new Point(0, 0), new Point(100, 200), "diagonal"));
+  console.log(new Segment(new Point(12345.678, -9876.54), new Point(1e10, -1e-10), "far apart"));
+  const segments: Segment[] = [];
+  for (let i = 0; i < 3; i++) {
+    segments.push(new Segment(new Point(i, i), new Point(i * 10, i * 20), "s" + i));
+  }
+  console.log(segments);
+  // Node's depth limit: past depth 2 a container prints as [Name], [Object] or [Array].
+  console.log(new Box(new Box(new Box(new Box(null, 4), 3), 2), 1));
+  console.log({ a: { b: { c: { d: 1 } } }, list: [[[[1]]]] });
+  console.log({ level1: { level2: { level3: "deep enough", other: [1, 2, 3] }, sibling: true } });
+  // Maps and Sets.
+  const m = new Map<string, number[]>();
+  for (let i = 0; i < 5; i++) {
+    m.set("entry number " + i, [i, i * 2, i * 3]);
+  }
+  console.log(m);
+  const small = new Map<string, number>();
+  small.set("a", 1);
+  small.set("b", 2);
+  console.log(small);
+  const s = new Set<string>();
+  for (let i = 0; i < 12; i++) {
+    s.add("member-" + i);
+  }
+  console.log(s);
+  const nums = new Set<number>();
+  for (let i = 0; i < 30; i++) {
+    nums.add(i * 7);
+  }
+  console.log(nums);
+  const byPoint = new Map<string, Point>();
+  byPoint.set("origin", new Point(0, 0));
+  byPoint.set("unit", new Point(1, 1));
+  console.log({ points: byPoint, count: 2 });
+  // Several arguments: each is laid out on its own.
+  console.log("first:", { a: "x".repeat(40), b: "y".repeat(40) }, "last");
+  console.log([1, 2], { long: "z".repeat(90) }, 3);
+}
