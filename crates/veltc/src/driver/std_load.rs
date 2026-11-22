@@ -87,14 +87,16 @@ impl<'a> StdLoad<'a> {
     }
 
     pub(crate) fn serve(&mut self, sess: &mut Session, demanded: &[String]) -> velt_sema::StdBatch {
-        // With std up front (`VELT_EAGER_STD`), only the executor's modules are left to demand;
-        // anything else demanded is not served, as without a loader.
+        // With std up front (`VELT_EAGER_STD`), only the executor's modules and the TLS client's
+        // and server's are left to demand (the TLS ones are refused, so the program is checked
+        // again with them up front, as without it); anything else demanded is not served, as
+        // without a loader.
         let executor_only: Vec<String>;
         let demanded = match loader::demand_std_on() {
             true => demanded,
             false => {
                 executor_only = (demanded.iter())
-                    .filter(|p| loader::executor_module(p))
+                    .filter(|p| loader::executor_module(p) || loader::tls_module(p))
                     .cloned()
                     .collect();
                 &executor_only[..]

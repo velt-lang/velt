@@ -293,6 +293,22 @@ const EXECUTOR_MODULES: &[&str] = &[
     velt_common::std_module!(net_dns_lookup_sched),
 ];
 
+/// The modules of the TLS client and server, which `hookCall`s of `sched_tls_listen`,
+/// `sched_tls_connect` and `sched_tls_handshake` demand (velt_common `std_hooks.rs`, #2392).
+/// Not loaded up front with the rest (`load_up_front`): a program that can't connect or listen
+/// with TLS never has them, and one that can has them loaded for the check again that a refused
+/// demand of them starts (`LoadOptions::refuse_out_of_rule`, `preload`).
+const TLS_MODULES: &[&str] = &[
+    velt_common::std_module!(net_tls_fd_client),
+    velt_common::std_module!(net_tls_fd_server),
+];
+
+/// Is `path` (a canonical std module path) the TLS client's or server's module, which a caller
+/// with std up front (`VELT_EAGER_STD`) still lets a check demand, as without it?
+pub fn tls_module(path: &str) -> bool {
+    TLS_MODULES.contains(&path)
+}
+
 /// Is `path` (a canonical std module path) one of the executor in Velt's modules, which a caller
 /// with std up front may still serve on demand (`LoadOptions::demand_executor`)?
 pub fn executor_module(path: &str) -> bool {
