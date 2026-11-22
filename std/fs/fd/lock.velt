@@ -15,7 +15,9 @@ import { AbortSignal } from "velt/task/signal";
  * range) or `"shared"` (any number of shared locks, no exclusive one), on the `length` bytes
  * from byte `offset`. A `length` of 0, the default, is from `offset` to the end of the file
  * and whatever is written past it; the range need not exist in the file. `signal` ends a wait
- * of `lock` (`lockSync` does not wait, and does not read it).
+ * of `lock`, which then rejects with an `AbortError` (whose message is the reason given to
+ * `abort(reason)`) or a `TimeoutError` for `AbortSignal.timeout(ms)`; `lockSync` does not
+ * wait, and does not read it.
  */
 export type LockOptions = {
   mode?: "shared" | "exclusive";
@@ -82,9 +84,7 @@ export async function lock(fd: number, options?: LockOptions): Promise<void> {
     if (signal === undefined) {
       await later(pause);
     } else {
-      // The pause or the abort, whichever comes first. A timer that lost to the abort still
-      // fires, at most 50 ms later, and resolves nothing anyone waits for.
-      await Promise.race([later(pause), signal.whenAborted()]);
+      await pauseUnless(pause, signal);
       signal.throwIfAborted();
     }
     pause = nextPause(pause);
@@ -107,4 +107,25 @@ function later(ms: number): Promise<void> {
       ms as i64,
     );
   });
+}
+
+// Resolves after `ms` milliseconds, or as soon as `signal` aborts, whichever comes first. An
+// abort clears the timer, so a program with nothing else to do ends at once rather than when
+// the pause would have.
+async function pauseUnless(ms: number, signal: AbortSignal): Promise<void> {
+  const armed: Timer[] = [];
+  const timer = new Promise<void>((resolve) => {
+    armed.push(
+      setTimeout(
+        () => {
+          resolve();
+        },
+        ms as i64,
+      ),
+    );
+  });
+  await Promise.race([timer, signal.whenAborted()]);
+  if (signal.aborted && armed.length > 0) {
+    clearTimeout(armed[0]);
+  }
 }

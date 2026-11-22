@@ -277,11 +277,8 @@ describe("file locks", () => {
     const c = openSync(path, "r+");
     expect(lockSync(a)).toBe(true);
     const ac = new AbortController();
+    // The waiter asks before its first `await`, is refused, and pauses.
     const waiting = lock(b, { signal: ac.signal });
-    // The waiter has asked and been refused, and is pausing.
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve();
-    }
     ac.abort("given up");
     expect(await why(waiting)).toBe("AbortError: given up");
     unlockSync(a);
@@ -313,6 +310,49 @@ describe("file locks", () => {
     unlinkSync(path);
   });
 
+  it("an abort ends a pause at once, not when the pause is over", async () => {
+    if (!POSIX) {
+      return;
+    }
+    const path = file("abort-at-once");
+    const a = openSync(path, "r+");
+    const b = openSync(path, "r+");
+    expect(lockSync(a)).toBe(true);
+    const ac = new AbortController();
+    const seen: string[] = [];
+    const waiting = lock(b, { signal: ac.signal }).catch((e) => {
+      seen.push("rejected");
+    });
+    // timing: lets the waiter's pauses grow (1, 2, 4, 8, 16, 32 ms) so that the abort lands
+    // inside a long one; the order checked below does not depend on how long.
+    await new Promise<void>((resolve) => {
+      setTimeout(
+        () => {
+          resolve();
+        },
+        40,
+      );
+    });
+    ac.abort("given up");
+    // A timer queued right after the abort: a wait that saw the abort only at its next try
+    // would end after it.
+    const timer = new Promise<void>((resolve) => {
+      setTimeout(
+        () => {
+          seen.push("timer");
+          resolve();
+        },
+        0,
+      );
+    });
+    await waiting;
+    await timer;
+    expect(seen.join(",")).toBe("rejected,timer");
+    closeSync(a);
+    closeSync(b);
+    unlinkSync(path);
+  });
+
   it("a signal that is not aborted lets the wait end with the lock", async () => {
     if (!POSIX) {
       return;
@@ -323,9 +363,6 @@ describe("file locks", () => {
     expect(lockSync(a)).toBe(true);
     const ac = new AbortController();
     const waiting = lock(b, { signal: ac.signal });
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve();
-    }
     unlockSync(a);
     await waiting;
     expect(lockSync(a)).toBe(false);
