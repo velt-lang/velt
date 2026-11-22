@@ -552,6 +552,19 @@ impl FnCx<'_, '_> {
         } else if !self.cx.scopes[self.module].is_std {
             let site = self.site_of_value(&f);
             self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, site, span));
+        } else if self.cx.units_stage == crate::units::Stage::Std {
+            // std's stage of a check by units: a call through a trap (`ProxyHandler`) throws what
+            // the app's rounds store into the trap's site, which std's unit resolved before any
+            // program stored into it (`Ctx::app_trap_error`); a whole-program check re-checks
+            // this body with the trap's type resolved from its seeds instead.
+            // A trap is read from the handler (`h.get`), so its site is not known: like the
+            // program's calls, the source names the type, and every site of that type counts.
+            let site = self
+                .site_of_value(&f)
+                .filter(|s| self.cx.is_std_trap_site(*s));
+            if site.is_some() || self.cx.is_std_trap_type(f.ty) {
+                self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, site, span));
+            }
         }
         let mut f = f;
         set_place_mode(&mut f, UseMode::Borrow);

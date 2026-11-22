@@ -527,6 +527,17 @@ impl Ctx<'_> {
         }
     }
 
+    /// Is `span` one of std's function-type throws sites ([`Self::record_fn_site`])?
+    pub(crate) fn is_std_trap_site(&self, span: Span) -> bool {
+        self.fn_sites.found.proxy_sites.contains(&span)
+    }
+
+    /// Is `t` the type of one of std's function-type throws sites?
+    pub(crate) fn is_std_trap_type(&self, t: TyId) -> bool {
+        let std = &self.fn_sites.found.proxy_sites;
+        (self.fn_sites.sites.iter()).any(|(s, g)| *g == t && std.contains(s))
+    }
+
     /// std's sites (the traps of std/lang/proxy's `ProxyHandler`, [`Self::site_module`]) with
     /// the types std's check resolved them to: what a check by units keeps for the app's
     /// rounds (`units::Summaries::trap_sites`, [`Self::app_trap_error`]).

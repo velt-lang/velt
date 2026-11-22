@@ -158,7 +158,15 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
                 let (s, o) = (cx.display(seeded), own.map(|o| cx.display(o)));
                 eprintln!("dbg-trap: seeded {s} own {o:?}");
             }
-            if cx.error_outside(Some(seeded), own).is_none() {
+            // The closure's own errors as written: a variable it throws into counts as nothing,
+            // as in a diagnostic (`vars`).
+            let own = own.map(|o| cx.plain_type(o));
+            let (seeded, own) = (cx.canon_error(Some(seeded)), cx.canon_error(own));
+            if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+                let out = cx.error_outside(seeded, own).map(|m| cx.display(m));
+                eprintln!("dbg-trap: canon seeded {seeded:?} own {own:?} outside {out:?}");
+            }
+            if cx.error_outside(seeded, own).is_none() {
                 return;
             }
         }
@@ -209,6 +217,15 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         .with_label(clause, "declared here")
         .with_note(format!("add `{mn}` to the `throws` clause, or catch it"))
     };
+    if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+        eprintln!(
+            "dbg-trap: clause_violation reports (stage {:?}, seeds {}): {}\n{}",
+            cx.units_stage,
+            cx.fn_sites.seeds.sites.len(),
+            d.message,
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
     cx.error(d);
 }
 

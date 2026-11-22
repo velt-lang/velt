@@ -74,6 +74,25 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
             break;
         }
     }
+    if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+        for &d in &all {
+            let n = cx.fn_info(d).name.clone();
+            if n == "rd" || n.contains("Proxy.") || n.contains("Proxy::") {
+                let t = cx.fn_info(d).throws.map(|t| cx.display(t));
+                eprintln!(
+                    "dbg-trap: infer stage={:?} {n} (std {}) throws {t:?}",
+                    cx.units_stage,
+                    d.0 < cx.unit_base
+                );
+            }
+        }
+        eprintln!(
+            "dbg-trap: infer stage={:?} fixpoint {} fns, {} from std",
+            cx.units_stage,
+            all.len(),
+            all.len() - fns.len()
+        );
+    }
     super::checks::check_all(cx, &fns, &groups);
     cx.record_recursion_hints(&fns);
 }
