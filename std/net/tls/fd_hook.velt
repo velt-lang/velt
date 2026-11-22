@@ -28,7 +28,13 @@ export function isTls(h: u64): bool {
  */
 export interface ReactorTls {
   /** A TLS listener on `addr` served in Velt; null when the runtime's must serve this key. */
-  listen(addr: string, cert: string, key: string, alpn: string): Promise<IoResult<u64> | null>;
+  listen(
+    addr: string,
+    cert: string,
+    key: string,
+    alpn: string,
+    handed: u64,
+  ): Promise<IoResult<u64> | null>;
   /** A TLS stream to `addr` from the client in Velt; null when this program has none. */
   connect(
     addr: string,
@@ -76,6 +82,7 @@ extend<T extends TlsStubbed> T implements ReactorTls {
     cert: string,
     key: string,
     alpn: string,
+    handed: u64,
   ): Promise<IoResult<u64> | null> {
     return null;
   }

@@ -6,7 +6,13 @@ import { IoResult } from "velt/native/result";
 
 /** `listenTls` on the reactor: a TLS listener, or null when this program has no TLS server. */
 export interface ListenHook {
-  listen(addr: string, cert: string, key: string, alpn: string): Promise<IoResult<u64> | null>;
+  listen(
+    addr: string,
+    cert: string,
+    key: string,
+    alpn: string,
+    handed: u64,
+  ): Promise<IoResult<u64> | null>;
 }
 
 /** What has `ListenHook`: the stub below, or std/net/tls/fd_server.velt's. */
@@ -23,6 +29,7 @@ extend<T extends ListenStubbed> T implements ListenHook {
     cert: string,
     key: string,
     alpn: string,
+    handed: u64,
   ): Promise<IoResult<u64> | null> {
     return null;
   }
