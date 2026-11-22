@@ -6,8 +6,6 @@
 // verification); the server's Finished is always checked. No resumption and no renegotiation; a
 // CertificateRequest is answered with an empty Certificate (RFC 5246 §7.4.6). It does no I/O.
 
-import { sha256 } from "velt/crypto/sha256";
-import { sha384 } from "velt/crypto/sha512";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
   DECODE_ERROR,
@@ -30,6 +28,7 @@ import { KeyBlock12, keyBlock12, masterSecret12, verifyData12 } from "velt/net/t
 import { hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { groupName } from "velt/net/tls/server_hello";
 import { ecdsaSuite12, ivLength12, keyLength12 } from "velt/net/tls/suites12";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 
 // Handshake message types (RFC 5246 §7.4).
 const CERTIFICATE: u8 = 11;
@@ -58,6 +57,8 @@ export const DONE12 = 5;
 /** The client's side of a TLS 1.2 handshake, from the ServerHello on. */
 export class ClientHandshake12 {
   private transcript: u8[];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   private state: i32 = WAIT_CERTIFICATE;
   private hashLen: usize;
   private clientRandom: u8[];
@@ -126,7 +127,7 @@ export class ClientHandshake12 {
   }
 
   private hash(): u8[] {
-    return this.hashLen == 48 ? sha384(this.transcript) : sha256(this.transcript);
+    return this.th.of(this.transcript, this.hashLen == 48);
   }
 
   /** Handles the server's handshake message `m` (with its 4-byte header): what to do next. */
@@ -176,6 +177,7 @@ export class ClientHandshake12 {
       }
       this.state = DONE;
       this.transcript = [];
+      this.th.reset();
       return DONE12;
     }
     throw new TlsFailure(

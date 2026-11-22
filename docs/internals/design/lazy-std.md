@@ -93,20 +93,20 @@ the program formats (`Cx::format_demanded` in `crates/velt_vir/src/lower/hook_ca
 class or struct alone demands nothing. The integer hooks, `console.log`'s integer writers among
 them, act as one bit: a program demands none of them or all of them (`live_constructs.rs`
 `demanded_for`), so that glue, which lowering makes per type, does not depend on each call site
-being listed for the right construct.
+being listed for the right construct. The float text hooks (`numberText`, `numberPush`,
+`numberInspectPush`) are a bit of their own, `TextFloat`: demanded by a conversion or glue of a
+value that may hold a float, and by `Dynamic`. `console.log`'s float writers are another,
+`WriteFloat`: demanded by a float printed (and by `TextFloat`). They hold no integer printing
+(whole numbers have a writer of their own), so a program that prints only floats loads neither
+the integer hooks nor the float text hooks.
 
 Some hooks wait for what the program does, because lowering can do without them:
 
 | Hooks | Demanded by | Where unchecked |
 |---|---|---|
 | record hooks (`RECORD_HOOKS`) | a conversion to a record with string keys (`record_hooks_needed`) | the conversion stays a `TypeError` |
-| float hooks (`ON_DEMAND_FLOAT`) | a text conversion, in the program's own code, of a value that may hold a float (`number_text.rs`) | the runtime's printer |
-| `console.log`'s float writers (`ON_DEMAND_WRITE`) | live code that prints a float | the runtime's printer |
+| std's float printing inline at the program's conversions (`ON_DEMAND_FLOAT`) | a text conversion, in the program's own code, of a value that may hold a float (`number_text.rs`) | `numberText` / `numberPush`, which reach it by role, prebuilt |
 | inspect shapes (`INSPECT_SHAPES`) | see [printing typed values](inspect-shapes.md) | lowering's format glue |
-
-`console.log`'s float writers hold no integer printing (whole numbers have a writer of their own),
-so a program that prints only floats checks none of it. A float conversion in std's own code does
-not count as a demand and goes to the runtime's printer.
 
 ### Loading on demand
 
@@ -234,8 +234,7 @@ in exchange for not checking or loading the rest; some programs need an extra ch
 A program that converts a `number` no syntax marks as a float to text loads and checks std's float
 printer (`number_float`, `format`, `shortest`, `text`, `pow10`), about 14M instructions, which is
 noticeable on a small program (`class P { x: number = 3; }` printed in a template). That is the
-worst case of a rule that helps overall: hello world and programs with no float text are cheaper,
-and the std float printer is faster at run time than the runtime's.
+worst case of a rule that helps overall: hello world and programs with no float text are cheaper.
 
 ## Diagnostics
 

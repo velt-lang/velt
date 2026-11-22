@@ -8,7 +8,7 @@
 import { inspectNested, noInline } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
-declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
+declare function velt_rt_strbuf_push_byte(buf: string, b: u8);
 
 /**
  * Opens an object that cannot hold itself: false past the depth limit, after `cut` (`[Name]`).
@@ -46,9 +46,16 @@ export function inspectArray<E>(buf: string, a: E[], depth: u32): void {
 /** Node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of a container. */
 export function inspectMore(buf: string, remaining: u64): void {
   velt_rt_strbuf_push_str(buf, ", ... ");
-  // As a number: its digits, without compiling std's integer printing into every program.
-  const n = remaining as f64;
-  velt_rt_strbuf_push_f64(buf, n);
+  // Its digits from the first, without compiling std's number printing into every program.
+  let p: u64 = 1;
+  while (remaining / p >= 10) {
+    p = p * 10;
+  }
+  while (p > 0) {
+    const digit = (48 + (remaining / p) % 10) as u8;
+    velt_rt_strbuf_push_byte(buf, digit);
+    p = p / 10;
+  }
   if (remaining == 1) {
     velt_rt_strbuf_push_str(buf, " more item");
   } else {
