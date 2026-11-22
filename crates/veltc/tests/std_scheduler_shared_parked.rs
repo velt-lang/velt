@@ -649,6 +649,76 @@ fn a_shared_listed_waiting_promise_handed_over_gives_its_first_entry_back() {
     );
 }
 
+/// The owner races a promise of the task listed while it waits in the hub against one that
+/// finishes first, then hands it to worker 3: the race shares it, so it leaves the list through
+/// its own hub's hand-over (sched_share_listed.velt `leave`), and every task is still found parked
+/// for ever. Before, every run left 340 blocks.
+#[test]
+fn a_listed_waiting_promise_raced_then_handed_over_is_dropped() {
+    check("race_handed", RACE_HANDED, "used 20\n", 3);
+}
+
+/// The program of [`a_listed_waiting_promise_raced_then_handed_over_is_dropped`].
+const RACE_HANDED: &str = r#"// #3502 review: a promise of the task (`side`) is listed while it waits in a shared promise's hub;
+// then its owner races it against a promise that finishes first (the race's poll waits in its
+// place), and hands it to a task on worker 3, which drops it there.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const USED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 2;
+}
+
+async function user(p: Promise<number>): Promise<void> {
+  await yieldNow();
+  USED.add(1);
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const side = inner(d);
+  const r = inner(d);
+  await yieldNow();
+  await yieldNow();
+  const won = await Promise.race([side, soon()]);
+  void spawn(user(side), { worker: 3 });
+  return won + (await d.p) + (await r);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let i: i64 = 0; i < n; i++) {
+    void spawn(maker(), { worker: 1 + (i % 2) });
+  }
+  while (USED.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`used ${USED.load()}`);
+}
+"#;
+
 /// The program of [`a_shared_listed_waiting_promise_handed_over_gives_its_first_entry_back`].
 const WAITING_SHARED_TWICE: &str = r#"// #3487 second review: as ns_waiting_shared, then the owner hands a holder of `side` (shared by
 // then, and listed) to worker 3, and later a holder of the first shared promise: `side` leaves

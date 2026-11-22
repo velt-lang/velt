@@ -223,7 +223,10 @@ export function unlisted(task: usize, n: usize, fl: u32): void {
  */
 @noInline
 export function leaveWaiting(n: usize): void {
-  counted(n);
+  if (!counted(n) && wk.counting()) {
+    // `WAITS` outlived the wait it stands for: every way off the list or out of that hub clears it.
+    panic("ICE: a promise listed waiting in a hub is not waiting there");
+  }
   offList(m.ld(n + nd.N_TASK), n, m.load32(n + nd.N_FLAGS));
 }
 
@@ -238,17 +241,18 @@ export function leftList(n: usize, fl: u32): void {
   }
 }
 
-/** The entry of node `n` (flag `WAITS`) in the hub it waits in holds a reference again. */
-function counted(n: usize): void {
+/** The entry of node `n` (flag `WAITS`) in the hub it waits in holds a reference again: found? */
+function counted(n: usize): bool {
   const h = m.ld(x.get(n) + x.X_WAITS);
   const len = m.ld(h + sh.H_WLEN);
   for (let i: usize = 0; i < len; i++) {
     const at = wt.entry(h, i);
     if (m.ld(at + 8) === (n | UNCOUNTED)) {
       m.st(at + 8, m.wakerClone(n));
-      return;
+      return true;
     }
   }
+  return false;
 }
 
 /**
