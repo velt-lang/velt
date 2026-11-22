@@ -230,8 +230,15 @@ for that before any matcher runs.
   positions a step, compared with SIMD against at most four byte tuples. The offsets are the
   ones whose tuples are fewest and rarest. A hit of a literal pattern is checked by comparing
   eight bytes of the subject, as one word, with each string's.
+- **Case-folded letters.** A class that is an ASCII letter in both cases (`[vV]`, or `v`
+  under `i`) is one letter of the strings, folded: `/value\d+/i` starts with `value`. At an
+  offset whose letters are folded the scan ORs 0x20 into the subject's bytes before it compares
+  them, which makes either case of a letter equal its lower case and nothing else equal a
+  letter. A matcher checks what such a scan finds.
 - **First byte.** Without such strings, the set of bytes a match can start with.
 - A pattern that starts with `^` (without `m`) is tried at the start only.
+- `test` and `exec` look for the byte every match has (below) and scan for a start before they
+  make a search memory: a subject the scan answers costs no more than the scan.
 - **A byte every match has** (`required.velt`): of the ASCII bytes every match contains, the one
   least likely in text (`;` in `(\w+)=(\d+);`). A subject without it from the search's start
   on has no match; one byte scan per subject says so, and where it was found is kept for the
@@ -241,7 +248,8 @@ for that before any matcher runs.
 
 `matchAll`, `match` with `g` and `replace` with `g` find every match in one call (`findAll`), so
 a literal pattern scans the subject once, and `replace` appends the text between two matches to
-one buffer from the subject's own bytes.
+one buffer from the subject's own bytes. The replacement is read once per call into its parts
+(text, a group, the text before or after the match), which are appended for each match.
 
 ### `lastIndex`
 
@@ -256,25 +264,27 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 
 | Program | `regex` crate | std engine |
 |---|---|---|
-| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 189.2 M |
+| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 191.5 M |
 | `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 17.9 G |
 | `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.65 G |
-| `long.velt` 0: `/(a+)+b/` fails | 3.67 M | 3.48 M |
+| `long.velt` 0: `/(a+)+b/` fails | 3.67 M | 3.49 M |
 | `long.velt` 1: `/(a+)+b/` matches | 18.12 M | 6.40 M |
-| `long.velt` 2: `/.*.*.*=.*/` fails | 4.03 M | 2.85 M |
+| `long.velt` 2: `/.*.*.*=.*/` fails | 4.03 M | 2.86 M |
 | `long.velt` 3: `/.*.*.*=.*/` matches | 13.92 M | 7.92 M |
 | `long.velt` 4: `/([^,]*,)*x/` fails | 3.88 M | 3.54 M |
 | `long.velt` 5: `/([^,]*,)*x/` matches | 26.29 M | 20.89 M |
-| `long.velt` 6: `/(a\|b)*c/` fails | 3.67 M | 3.48 M |
+| `long.velt` 6: `/(a\|b)*c/` fails | 3.67 M | 3.49 M |
 | `long.velt` 7: `/(a\|b)*c/` matches | 12.79 M | 11.89 M |
-| `lines.velt` 0: `/(\w+)=(\d+);/.test`, 320 B | 27.69 M | 29.56 M |
-| `lines.velt` 1: `/(\w+), $/.exec`, 320 B | 33.39 M | 42.66 M |
-| `lines.velt` 2: `/([^,]*,)*#/.test`, 320 B | 32.88 M | 29.52 M |
-| `lines.velt` 3: `/value\d+;/i.test`, 320 B | 55.38 M | 29.49 M |
-| `lines.velt` 4: as 0, 250 B | 22.51 M | 24.11 M |
-| `lines.velt` 5: as 1, 250 B | 28.12 M | 36.26 M |
-| `lines.velt` 6: as 2, 250 B | 26.69 M | 24.06 M |
-| `lines.velt` 7: as 3, 250 B | 44.01 M | 24.04 M |
+| `lines.velt` 0: `/(\w+)=(\d+);/.test`, 320 B | 29.93 M | 30.91 M |
+| `lines.velt` 1: `/(\w+), $/.exec`, 320 B | 35.62 M | 46.35 M |
+| `lines.velt` 2: `/([^,]*,)*#/.test`, 320 B | 35.12 M | 30.88 M |
+| `lines.velt` 3: `/value\d+/i.test`, near misses, 320 B | 31.07 M | 32.10 M |
+| `lines.velt` 4: as 0, 250 B | 24.23 M | 24.88 M |
+| `lines.velt` 5: as 1, 250 B | 29.83 M | 39.38 M |
+| `lines.velt` 6: as 2, 250 B | 28.41 M | 24.85 M |
+| `lines.velt` 7: as 3, 250 B | 25.23 M | 25.95 M |
+| `lines.velt` 8: `replace(/(key)(\d)/g, "$2$1")`, one text | 100.79 M | 102.75 M |
+| `lines.velt` 9: `/value\d+/i.test`, 50 lines of 12,800 B | 27.95 M | 28.92 M |
 
 Compiling a pattern is the larger difference in the first three: it allocates a few small
 arrays, where an automaton library builds tables. A pattern that is no literal is also compiled
@@ -285,13 +295,18 @@ patterns searched line by line, 2,000 lines of 320 or 250 bytes. Each row's numb
 starting the program and building its subject: about 2.7 M for `long`, 26.6 M and 21.4 M for
 `lines`, so a `lines` row's matching is its number less that.
 
-Four `lines` rows are above the old engine, which kept no state between calls either but whose
-calls cost little. Rows 0 and 4 (+7%: one byte scan finds no `;`) spend about 900 instructions
-a call more than it, making the call's search memory and reading the regex's tables. Rows 1 and 5 (+28%,
-`exec` of a pattern that ends in `$`, every line a match) spend about 4,600 instructions a line
-more than its 3,400: the automaton reads every byte of the line to find where the match ends
-(about 3,200, 10 a byte), then the pass back and the groups take about 1,300, and making two
-automatons over the kept tables and the match the rest.
+A `lines` row's number includes building its lines, which is the same code on both sides but
+not the same machine code: with the engine linked in, LLVM inlines the number formatting the
+lines are built with differently, and building them costs about 1.25 M more (27.56 M against
+28.81 M for 320-byte lines, measured with callgrind). Less that, the matching of rows 0, 3, 4
+and 7 costs less than the old engine's (row 0: 0.96 M against 1.13 M; row 3: 2.15 M against
+2.27 M), and the rows are within 3.5% of it as whole programs.
+
+Rows 1 and 5 (`exec` of a pattern that ends in `$`, every line a match) are about 30% above
+it: the automaton reads every byte of the line to find where the match ends (about 3,200
+instructions a line, 10 a byte), then the pass back and the groups take about 1,300, and two
+automatons over the kept tables and the match the rest, where the old engine's whole search
+took about 3,400.
 
 The Pike machine is the slow matcher, tens of instructions per byte and thread. It runs when
 the subject is too long for the backtracker's memory and the program has no automaton (it has
