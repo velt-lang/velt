@@ -132,7 +132,9 @@ async function sendTo(u: u64, data: u8[], sa: usize, len: u32): Promise<IoResult
       return fs.failed(fs.osError(se), 0);
     }
     const n = data.length;
-    const p = n === 0 ? 0 : addressOf(data, 0);
+    // An empty datagram's array still has an address (a dangling one, never NULL: `addressOf`),
+    // which C doesn't read for 0 bytes.
+    const p = addressOf(data, 0);
     let sent: isize = 0;
     const to = m.ptrTo<sockaddr>(sa);
     // SAFETY: `data` holds `n` bytes at `p` (none: no buffer read); the address is getaddrinfo's.

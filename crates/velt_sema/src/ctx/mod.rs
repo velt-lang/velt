@@ -109,6 +109,9 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
+    /// What the passes after the bodies keep of a finished unit, which a later unit's check
+    /// starts from (`crate::units`).
+    pub unit_sums: crate::units::Summaries,
     /// Which part of a check by units this context checks (`crate::units`).
     pub units_stage: crate::units::Stage,
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
@@ -330,7 +333,7 @@ pub(crate) struct Ctx<'m> {
     /// ownership pass track `FnInfo::modified_params`.
     pub frozen_reads: bool,
     /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
-    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
+    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTargets>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
@@ -600,6 +603,7 @@ impl<'m> Ctx<'m> {
             def_spans: DefTable::default(),
             units: false,
             unit_base: 0,
+            unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
             scopes,
             prelude: FxHashMap::default(),

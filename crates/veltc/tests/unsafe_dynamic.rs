@@ -290,12 +290,12 @@ fn generated_code_can_t_contain_unsafe_code() {
     );
 }
 
-const POINTERS: &str = r#"import { CString, Out, OutPtr, Ptr } from "velt/ffi";
+const POINTERS: &str = r#"import { CString, Out, Ptr } from "velt/ffi";
 
 declare c("c") function strlen(s: Ptr<u8>): usize;
 declare c("c") function calloc(n: usize, size: usize): Ptr<u8>;
 declare c("c") function strcpy(dst: Ptr<u8>, src: CString): Ptr<u8>;
-declare c("c") function strtoll(s: CString, end: OutPtr<u8>, base: i32): i64;
+declare c("c") function strtoll(s: CString, end: Out<Ptr<u8> | null>, base: i32): i64;
 declare c("c") function strnlen(s: CString, n: usize): usize;
 
 export function getp(): Ptr<u8> {
@@ -308,14 +308,14 @@ export function deref(p: Ptr<u8>): usize {
   return unsafe { strlen(p) };
 }
 
-export function out(): OutPtr<u8> {
-  const o = new OutPtr<u8>();
+export function out(): Out<Ptr<u8> | null> {
+  const o = new Out<Ptr<u8> | null>(null);
   // SAFETY: `o` is an out parameter, the string is NUL-terminated.
   unsafe { strtoll(new CString("12"), o, 10); }
   return o;
 }
 
-export function derefOut(o: OutPtr<u8>): usize {
+export function derefOut(o: Out<Ptr<u8> | null>): usize {
   const p = o.value;
   return p === null ? 0 as usize : Ptr.addressOf(p) == 16 ? 16 as usize : 1 as usize;
 }
@@ -326,8 +326,9 @@ export function cLen(c: CString): usize {
 }
 "#;
 
-/// Each write to a pointer's address through `any`, from safe code, is refused before the
-/// address reaches C; the plain calls still work (an `OutPtr` is written by C, not by Velt).
+/// Safe code can't reach a pointer's address through `any`: a pointer doesn't convert to `any`
+/// at all (#3094), and an `Out` holding one, which does, gives its pointer field no dynamic
+/// form; the plain calls still work (an `Out` is written by C, not by Velt).
 #[test]
 fn a_pointer_s_address_can_t_be_written_through_any() {
     let dir = test_dir::TestDir::new();
@@ -350,21 +351,17 @@ fn a_pointer_s_address_can_t_be_written_through_any() {
         assert!(o.status.success(), "{}", text(&o));
         assert_eq!(String::from_utf8_lossy(&o.stdout), "2 1 3\n");
     }
-    // `Ptr` is a struct: its field is `readonly`.
-    let p = "  const p: any = getp();\n  p.address = 16;\n  console.log(deref(p));";
+    // A pointer has no dynamic form: converting one to `any` doesn't compile.
+    let p = "  const p: any = getp();\n  console.log(p);";
     project(root, POINTERS, &wrap(p));
     let o = velt(&app, &["run"]);
     let out = text(&o);
     assert!(!o.status.success(), "{out}");
-    assert!(o.status.code().is_some(), "{:?}", o.status);
-    assert!(
-        out.contains("TypeError") && out.contains("'address'"),
-        "{out}"
-    );
-    // `OutPtr` and `CString` are classes of std: their private fields are no members through
-    // `any`, so C still gets what they held.
+    assert!(out.contains("can't be converted to `any`"), "{out}");
+    // An `Out` of a pointer converts, but its pointer field has no dynamic form; `CString` is a
+    // class of std whose private field is no member through `any`: C still gets what they held.
     for (body, held) in [
-        ("  const p: any = out();\n  p.address = 16;\n  console.log(derefOut(p));", "1\n"),
+        ("  const p: any = out();\n  p.value = 16;\n  console.log(derefOut(p));", "1\n"),
         ("  const c: any = new CString(\"abc\");\n  c.bytes = [1 as u8];\n  console.log(cLen(c));", "3\n"),
     ] {
         project(root, POINTERS, &wrap(body));

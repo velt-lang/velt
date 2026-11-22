@@ -165,6 +165,7 @@ pub(super) fn lower_program_kept<'h>(
             diags.extend(cx.atomic_copy_diagnostics());
             diags.extend(cx.unavailable_diagnostics());
             diags.extend(cx.unreduced_diagnostics());
+            diags.extend(cx.spread_errors.iter().cloned());
             cx.unfreeze_module_reach();
             let seed = want_seed.then(|| cx.seed(&next));
             let types_now = cx.types.clone();

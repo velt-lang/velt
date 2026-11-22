@@ -1,0 +1,45 @@
+// velt/arch/x86 (tests): what holds on any CPU, run by `velt test std/`. A check answers for the feature
+// and everything it implies (velt_common `cpu_features`), so it is never true without the checks
+// of what it implies, whatever the CPU, `--cpu` or `VELT_CPU_DISABLE`; and off x86-64 every
+// check is false.
+import { describe, expect, it } from "velt/test";
+import { Aes } from "velt/arch/x86/aes";
+import { Avx } from "velt/arch/x86/avx";
+import { Avx2 } from "velt/arch/x86/avx2";
+import { Avx512BW } from "velt/arch/x86/avx512bw";
+import { Avx512F } from "velt/arch/x86/avx512f";
+import { Fma } from "velt/arch/x86/fma";
+import { Pclmulqdq } from "velt/arch/x86/pclmulqdq";
+import { Sha } from "velt/arch/x86/sha";
+import { Sse3 } from "velt/arch/x86/sse3";
+import { Sse41 } from "velt/arch/x86/sse41";
+import { Sse42 } from "velt/arch/x86/sse42";
+import { Ssse3 } from "velt/arch/x86/ssse3";
+import { ARCH } from "#os-arch";
+
+// Whether `a` implies `b` here: never `a` without `b`.
+function implies(a: bool, b: bool): bool {
+  return !a || b;
+}
+
+describe("velt/arch/x86 checks", () => {
+  it("answer for what a feature implies", () => {
+    expect(implies(Sse42.isSupported(), Sse41.isSupported())).toBe(true);
+    expect(implies(Sse41.isSupported(), Ssse3.isSupported())).toBe(true);
+    expect(implies(Ssse3.isSupported(), Sse3.isSupported())).toBe(true);
+    expect(implies(Avx.isSupported(), Sse42.isSupported())).toBe(true);
+    expect(implies(Avx2.isSupported(), Avx.isSupported())).toBe(true);
+    expect(implies(Fma.isSupported(), Avx.isSupported())).toBe(true);
+    expect(implies(Avx512F.isSupported(), Avx2.isSupported() && Fma.isSupported())).toBe(true);
+    expect(implies(Avx512BW.isSupported(), Avx512F.isSupported())).toBe(true);
+    expect(implies(Sha.isSupported(), Sse41.isSupported())).toBe(true);
+    expect(implies(Aes.isSupported(), Pclmulqdq.isSupported())).toBe(true);
+    expect(implies(Pclmulqdq.isSupported(), Sse41.isSupported())).toBe(true);
+  });
+
+  it("are false off x86-64", () => {
+    if (ARCH !== "x64") {
+      expect(Sse3.isSupported() || Avx2.isSupported() || Aes.isSupported()).toBe(false);
+    }
+  });
+});

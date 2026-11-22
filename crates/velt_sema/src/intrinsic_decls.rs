@@ -113,6 +113,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strLoadU8x16", Op(I::StrLoadU8x16)),
     // address.velt
     ("addressArray", Op(I::AddressArray)),
+    ("addressArrayOwned", Op(I::AddressArrayOwned)),
     ("addressLoad", Op(I::AddressLoad)),
     ("addressStore", Op(I::AddressStore)),
     ("exportedAddress", Op(I::ExportedAddress)),
@@ -121,6 +122,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("addressAtomicLoad", Op(I::AddressAtomicLoad)),
     ("addressAtomicRmw", Op(I::AddressAtomicRmw)),
     ("addressAtomicStore", Op(I::AddressAtomicStore)),
+    ("ptrFromAddress", Op(I::PtrFromAddress)),
+    ("ptrToAddress", Op(I::PtrToAddress)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("addressCall3", Op(I::AddressCall3)),
@@ -152,6 +155,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strWord0", Op(I::StrWord0)),
     ("strWord1", Op(I::StrWord1)),
     ("strWord2", Op(I::StrWord2)),
+    ("strAt", Op(I::StrAt)),
     ("strbufPushAsciiWord", Op(I::StrbufPushAsciiWord)),
     ("strbufPushAsciiWords", Op(I::StrbufPushAsciiWords)),
     // symbol.velt

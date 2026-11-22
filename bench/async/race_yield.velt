@@ -1,0 +1,20 @@
+// A stored yieldNow() (#2196 9d), 200000 rounds: each races a step against a yield the step
+// beats (the yield is given up pending), then joins a yield with a step (the yield finishes on
+// the task's next turn), as a loop that lets other tasks run between its pieces of work does.
+
+async function step(i: i64): Promise<void> {
+  if (i < 0) {
+    console.log("never");
+  }
+}
+
+async function main() {
+  const n: i64 = 200000;
+  let rounds: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    await Promise.race([step(i), yieldNow()]);
+    await Promise.all([yieldNow(), step(i)]);
+    rounds++;
+  }
+  console.log(rounds);
+}

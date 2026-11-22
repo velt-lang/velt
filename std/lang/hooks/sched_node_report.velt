@@ -36,11 +36,12 @@ export function dropResult(n: usize): void {
     offWorker(n);
     return;
   }
-  if (rejecting && m.ld(e + t.E_UNCAUGHT) !== 0) {
+  const thrown = m.ld(e + t.E_UNCAUGHT);
+  if (rejecting && thrown !== 0) {
     // An error a callback threw (sched.velt `schedUncaughtNow`): reported now, as Node's
-    // uncaught exception ends the process before the microtasks run.
+    // uncaught exception ends the process before the microtasks run, where the callback threw.
     m.st(e + t.E_UNCAUGHT, 0);
-    dropNow(n);
+    dropNow(n, thrown);
     return;
   }
   if ((m.load32(n + nd.N_FLAGS) & (WATCHED | tr.HANDED_OVER)) === WATCHED) {
@@ -56,7 +57,7 @@ export function dropResult(n: usize): void {
     m.st(task + t.T_UNHANDLED, n);
     return;
   }
-  dropNow(n);
+  dropNow(n, 0);
 }
 
 /** `dropResult` off the workers: a watched node is left to its task's list, as on a worker. */
@@ -66,13 +67,13 @@ function offWorker(n: usize): void {
     m.or32(n + nd.N_FLAGS, nd.DETACHED);
     return;
   }
-  dropNow(n);
+  dropNow(n, 0);
 }
 
 /** A node's flag: a combinator took it (`velt_rt_futs_handled`): its rejection is handled. */
 export const HANDLED: u32 = 16384;
 /** A node's flag: on its task's list since it finished with an error nobody awaited (`watch`). */
-const WATCHED: u32 = 32768;
+export const WATCHED: u32 = 32768;
 
 /**
  * Node `n` of task `task` finished and nobody awaits it, its owner still holding it: a rejection
@@ -113,14 +114,19 @@ function unclaimed(n: usize): bool {
 }
 
 /** Runs the drop glue of node `n`'s result. */
-function dropNow(n: usize): void {
+function dropNow(n: usize, thrown: usize): void {
   // A converted promise someone handled through the promise it stands for drops it quietly.
   const rdrop = al.resultDrop(n, m.ld(n + nd.N_RESULT_DROP));
   if (rdrop !== 0) {
-    // An error in it is reported where it was thrown; this thread's own location stays.
+    // An error in it is reported where it was thrown (`thrown`, above 1, for an error a callback
+    // threw: `dropResult`); this thread's own location stays.
     const fl = m.load32(n + nd.N_FLAGS);
-    const own = (fl & loc.LOC) !== 0 ? loc.current() : 0;
+    const moved = (fl & loc.LOC) !== 0 || thrown > 1;
+    const own = moved ? loc.current() : 0;
     loc.claim(fl, n + nd.N_POLL);
+    if (thrown > 1) {
+      loc.restore(thrown);
+    }
     const rejecting = (fl & nd.REJECTING) !== 0;
     if (rejecting) {
       REPORTING.set(n as u64);
@@ -132,7 +138,7 @@ function dropNow(n: usize): void {
     if (rejecting) {
       REPORTING.set(0);
     }
-    if ((fl & loc.LOC) !== 0) {
+    if (moved) {
       loc.restore(own);
     }
   }
@@ -167,7 +173,7 @@ export function report(task: usize): void {
         if (!watched || unclaimed(rev)) {
           // A held rejection reported now is the owner's no more: its later drop leaves it.
           m.or32(rev + nd.N_FLAGS, nd.DELIVERED);
-          dropNow(rev);
+          dropNow(rev, 0);
         }
         nd.release(rev);
       }

@@ -250,13 +250,13 @@ fn hir_enums_end_on_damaged_input() {
     );
 }
 
-/// A tag stays with its intrinsic for good: `IsUnique` (#3318) took the next free one, 213, and
-/// reads back as itself.
+/// A tag stays with its intrinsic for good: `IsUnique` (#3318) took the next free one, 220 (216
+/// and 217 are reserved by #3463), and reads back as itself.
 #[test]
-fn is_unique_is_intrinsic_tag_213() {
+fn is_unique_is_intrinsic_tag_220() {
     use crate::hir::Intrinsic;
     let mut w = Writer::new();
     Intrinsic::IsUnique.enc(&mut w);
-    assert_eq!(w.out, [213]);
+    assert_eq!(w.out, [220]);
     round_trip("intrinsics", &[Intrinsic::IsUnique, Intrinsic::SymbolAt]);
 }

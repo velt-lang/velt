@@ -55,6 +55,8 @@ impl Ctx<'_> {
             | TyKind::Float(_)
             | TyKind::Bool
             | TyKind::Symbol
+            // A C pointer (#3094): one word, never counted.
+            | TyKind::Ptr(_)
             | TyKind::Simd(_)
             | TyKind::Literal(_)
             | TyKind::Unit

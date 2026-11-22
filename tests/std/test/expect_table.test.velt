@@ -1,0 +1,38 @@
+// `expect(...).toEqual` against a module constant table (#1334) in a test file (#3414). Two
+// objects hold one array, so `u64[]` is a counted type, and `toEqual` reads the table in place
+// through a frozen instance: the message it builds with `inspect` must not count the table's
+// header, which has no count word in front of it. In a release run that freed a stack address
+// (under `VELT_RT_DEBUG_ALLOC=1`: "free of a block that was not allocated here"; without it a
+// crash or nothing, depending on what the stack held). `std/crypto/field_p256.test.velt` crashed
+// this way. The golden lang/frozen_table_format checks the release build with the checking
+// allocator on every run.
+import { describe, expect, it } from "velt/test";
+
+const TABLE: u64[] = [1, 2, 3, 4];
+
+class Holder {
+  a: u64[];
+  constructor(a: u64[]) {
+    this.a = a;
+  }
+}
+
+function pick(a: u64[]): u64[] {
+  const r: u64[] = [];
+  for (const x of a) {
+    r.push(x);
+  }
+  return r;
+}
+
+describe("toEqual against a module table", () => {
+  it("compares element by element, the table read in place", () => {
+    const shared: u64[] = [9, 9];
+    const h1 = new Holder(shared);
+    const h2 = new Holder(shared);
+    for (let i = 0; i < 16; i++) {
+      expect(pick([1, 2, 3, 4])).toEqual(TABLE);
+    }
+    expect(h1.a.length + h2.a.length).toBe(4);
+  });
+});

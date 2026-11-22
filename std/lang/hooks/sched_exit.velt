@@ -48,28 +48,25 @@ import * as r from "#reactor";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
+import * as loc from "./sched_node_loc";
 import * as nd from "./sched_node";
 import * as rp from "./sched_node_report";
 import * as wn from "./sched_node_woken";
 import { processEnv } from "./process";
-import * as sl from "./sched_sleep";
+import * as sf from "./sched_sleep_forget";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
-
-/** The runtime's `velt_rt_uncaught_now`: the report shows where the callback threw. */
-declare c("c") function velt_rt_uncaught_now$rt(): void;
 
 /**
  * `velt_rt_uncaught_now` on executor `e` (sched.velt `schedUncaughtNow`): the next rejection
  * nobody handles is an error a timer or microtask callback threw, reported at once
- * (sched_node.velt), not after the task's microtasks.
+ * (sched_node_report.velt `dropResult`), not after the task's microtasks. The word keeps where
+ * the callback threw (1: nowhere recorded), which the report shows instead of where the prelude
+ * throws the error again.
  */
 export function uncaughtNow(e: usize): void {
-  m.st(e + t.E_UNCAUGHT, 1);
-  // SAFETY: the runtime's entry takes nothing; it records where the error was thrown.
-  unsafe {
-    velt_rt_uncaught_now$rt();
-  }
+  const at = loc.current();
+  m.st(e + t.E_UNCAUGHT, at === 0 ? 1 : at);
 }
 
 /** 1 once an exit gave back the executor's blocks (an error in that is not given back twice). */
@@ -175,7 +172,7 @@ function takeExitNow(e: usize): void {
 }
 
 /** Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? */
-export function counting(): bool {
+function counting(): bool {
   return processEnv("VELT_RC_STATS") === "1";
 }
 
@@ -228,7 +225,7 @@ function root(g: usize): void {
   }
   const tb = m.ld(g + t.E_TIMERS);
   if (tb !== 0) {
-    sl.forget(tb, k);
+    sf.forget(tb, k);
   }
   ended(k);
   // The executor's reference, then `schedBlockOn`'s.

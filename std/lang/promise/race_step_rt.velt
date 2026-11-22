@@ -1,0 +1,8 @@
+// velt/lang/promise (internal): `#promise-race-step` where the race is the runtime's (WebAssembly,
+// velt_rt_wasm), which settles in the poll that finds the deciding input: `Promise.any` takes
+// Node's reaction step after it.
+
+/** Does the race take Node's reaction step itself (`Promise.any`, std/prelude/promise.velt)? */
+export function raceTakesStep(): bool {
+  return false;
+}

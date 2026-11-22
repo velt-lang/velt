@@ -1,0 +1,7 @@
+// `repeat` with a result longer than a string can be is JavaScript's RangeError, with Node's message
+// (std/prelude/string.velt, #2198).
+
+function main() {
+  console.log("before");
+  console.log("ab".repeat(2 ** 30).length);
+}

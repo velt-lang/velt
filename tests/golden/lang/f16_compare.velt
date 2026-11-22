@@ -70,7 +70,8 @@ function main() {
   console.log(arrs[tick("recv", 0)].indexOf(tick("arg", 0.1)));
   console.log(arrs[tick("recv", 0)].includes(tick("arg", 0.0999755859375)));
   console.log([m][tick("recv", 0)].get(tick("arg", 1.5)));
-  // An `any` holding one converts to an integer as `as` does: saturating, NaN is 0.
+  // An `any` holding one converts to an integer as a typed array stores a number (truncated,
+  // modulo 2^N; NaN and the infinities are 0); the cast `as` on the number itself saturates.
   const a: any = 300.5 as f16;
   const b: any = 1e10 as f16;
   const c: any = -2.5 as bf16;

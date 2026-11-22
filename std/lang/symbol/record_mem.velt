@@ -1,7 +1,8 @@
-// velt/lang/symbol (internal): the memory of a symbol record the registry makes at run time
-// (registry.velt), on a target with a C library: from `calloc`, as the runtime's records are,
-// so a record that lives as long as the process stays outside the leak counters
-// (`#symbol-record`, std/imports.velt; record_mem_js.velt for the browser).
+// velt/lang/symbol (internal): the memory of the symbol records made at run time, by the registry
+// (registry.velt, one record at a time) and by `Symbol()` (record.velt, 4 KiB chunks), on a
+// target with a C library: from `calloc`, so a record that lives as long as the process stays
+// outside the leak counters (`#symbol-record`, std/imports.velt; record_mem_js.velt for the
+// browser).
 
 import { Ptr } from "velt/ffi";
 
