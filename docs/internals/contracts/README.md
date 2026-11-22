@@ -151,7 +151,7 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   (`weak Node | null` is a union of `Weak(Node)` and `null`); `weak` stays a name everywhere else.
   Its meaning is sema's (`velt_sema` `weak_types`): only at the top of the type of a field or a
   variable, as the read type `T | null`. The AST encoding's version (`AST_FORMAT`) is `0x11` with
-  it (variant 25).
+  it (variant 25). A lowered `weak` class field is `FieldDef::weak` in HIR (hir_encodings.md).
 
 ## Host functions (additive AST, HIR and VIR extension, #1735)
 - Decorators (`ast.rs`, https://github.com/velt-lang/velt/issues/2203): `Decorator { expr, span }`

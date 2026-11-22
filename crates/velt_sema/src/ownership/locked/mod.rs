@@ -454,19 +454,15 @@ fn weak_across(
             if !reported.insert(at) {
                 continue;
             }
-            let msg = if inside {
-                format!(
-                    "a function returned from `with` cannot capture the weak collection `{}`",
-                    l.name
-                )
-            } else {
-                format!(
-                    "`with` calls a function that uses the weak collection `{}`",
-                    l.name
-                )
+            let held = crate::body::Held::new(cx.holds_weak_field_only(ty));
+            let msg = match inside {
+                true => format!(
+                    "a function returned from `with` cannot capture {}",
+                    held.named(&l.name)
+                ),
+                false => format!("`with` calls a function that uses {}", held.named(&l.name)),
             };
-            let note = crate::body::LOCK_NOTE;
-            cx.error(Diagnostic::error(msg, at).with_note(note));
+            cx.error(Diagnostic::error(msg, at).with_note(held.lock_note()));
         }
     }
 }
