@@ -78,7 +78,11 @@ fn module_lets_in_loops_ask_for_the_module_state_once_per_call() {
     );
     let lookups: Vec<_> = functions(&vir)
         .into_iter()
-        .filter(|(_, body)| body.iter().any(|l| l.contains("velt_rt_module_state(")))
+        .filter(|(_, body)| {
+            // The runtime's entry (WebAssembly) or std's hook for it (#2196 9c).
+            (body.iter())
+                .any(|l| l.contains("velt_rt_module_state(") || l.contains("N11moduleState("))
+        })
         .collect();
     assert!(!lookups.is_empty(), "{vir}");
     // Every function that asks keeps the answer for the rest of its call (`ms.checked`).

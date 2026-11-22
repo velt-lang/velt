@@ -157,6 +157,6 @@ wasi-libc already provides.
 - Packages cannot call C on WebAssembly.
 - std's file functions (`#fd-system`) have variants for macOS and Linux only; on `wasm32-wasip1`
   the `unsupported.velt` variant is used.
-- `Out<T>` and `OutPtr` arguments cross by address with no narrowing, so on wasm32 a C function
-  would write 4 bytes into an 8-byte `usize` field. A std declaration reachable on WebAssembly
-  must not pass a `usize` or `isize` field that way.
+- `Out<T>` arguments cross by address with no narrowing, so on wasm32 a C function would write
+  4 bytes into an 8-byte `usize` or `Ptr<T> | null` field. A std declaration reachable on
+  WebAssembly must not pass a `usize`, `isize` or pointer field that way.

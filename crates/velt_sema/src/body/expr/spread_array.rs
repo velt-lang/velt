@@ -94,6 +94,12 @@ impl FnCx<'_, '_> {
                     Ok(h) | Err(h) => h,
                 };
             }
+            // `g(...args)` with `args: A` into a rest of `unknown` (`spread_param`).
+            if self.cx.ty.array_elem(h.ty).is_none() {
+                h = match self.spread_param(h, span, exp_elem) {
+                    Ok(h) | Err(h) => h,
+                };
+            }
             if self.cx.ty.array_elem(h.ty).is_none() {
                 match self.spread_iterable(h, inner) {
                     // A string's characters, a `Map`'s entries: spread as that array.

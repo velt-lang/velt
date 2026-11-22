@@ -50,6 +50,13 @@ macro_rules! with_weak_hooks {
             /// A `WeakRef`'s drop (std's `WeakRef`, through `weakRefDrop`'s intrinsic).
             weak_ref_drop => lang_hooks_weak, "weakRefDrop", sig((u32) -> void), lowered,
                 constructs(Weak), replaces("velt_rt_weakref_drop"), prebuilt;
+            /// The slot of a `weak T` reference to `(obj)`, with one more reference
+            /// (weak_slots.velt; cycles.md "`weak T`").
+            weak_slot => lang_hooks_weak, "weakSlot", sig((usize) -> usize), lowered, constructs(Weak),
+                prebuilt;
+            /// A `weak T` field's or variable's reference to `(slot)` given up.
+            weak_slot_drop => lang_hooks_weak, "weakSlotDrop", sig((usize) -> void), lowered,
+                constructs(Weak), prebuilt;
         }
     };
 }

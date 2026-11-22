@@ -1,0 +1,95 @@
+// velt/arch/x86 (internal): `Bmi2`, the check of `bmi2-x86` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { BMI2_X86 } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("bmi2-x86")`) and what such code calls.
+declare function velt_simd_has_bmi2_x86(): bool;
+// Whether this build runs x86-64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_x86(): bool;
+
+/** BMI2 (PDEP, PEXT, MULX, …). The check of `@targetFeature("bmi2-x86")`. */
+export class Bmi2 {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=BMI2`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_bmi2_x86() || (velt_simd_on_x86() && cpuHas(BMI2_X86));
+  }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * `value` with the bits from bit `index & 0xff` up cleared.
+   *
+   * `_bzhi_u32` (`bzhi`). Runs only where the CPU has it: call it behind `Bmi2.isSupported()`, or
+   * in a function gated on `bmi2-x86`.
+   */
+  static zeroHighBitsU32(value: u32, index: u32): u32 {
+    return velt_arch_bmi2_zero_high_bits_u32(value, index);
+  }
+
+  /**
+   * `value` with the bits from bit `index & 0xff` up cleared.
+   *
+   * `_bzhi_u64` (`bzhi`). Runs only where the CPU has it: call it behind `Bmi2.isSupported()`, or
+   * in a function gated on `bmi2-x86`.
+   */
+  static zeroHighBitsU64(value: u64, index: u64): u64 {
+    return velt_arch_bmi2_zero_high_bits_u64(value, index);
+  }
+
+  /**
+   * The low bits of `value`, in order, placed at the bits set in `mask` (the others 0).
+   *
+   * `_pdep_u32` (`pdep`). Runs only where the CPU has it: call it behind `Bmi2.isSupported()`, or
+   * in a function gated on `bmi2-x86`.
+   */
+  static parallelBitDepositU32(value: u32, mask: u32): u32 {
+    return velt_arch_bmi2_parallel_bit_deposit_u32(value, mask);
+  }
+
+  /**
+   * The low bits of `value`, in order, placed at the bits set in `mask` (the others 0).
+   *
+   * `_pdep_u64` (`pdep`). Runs only where the CPU has it: call it behind `Bmi2.isSupported()`, or
+   * in a function gated on `bmi2-x86`.
+   */
+  static parallelBitDepositU64(value: u64, mask: u64): u64 {
+    return velt_arch_bmi2_parallel_bit_deposit_u64(value, mask);
+  }
+
+  /**
+   * The bits of `value` at the bits set in `mask`, in order, packed at the bottom.
+   *
+   * `_pext_u32` (`pext`). Runs only where the CPU has it: call it behind `Bmi2.isSupported()`, or
+   * in a function gated on `bmi2-x86`.
+   */
+  static parallelBitExtractU32(value: u32, mask: u32): u32 {
+    return velt_arch_bmi2_parallel_bit_extract_u32(value, mask);
+  }
+
+  /**
+   * The bits of `value` at the bits set in `mask`, in order, packed at the bottom.
+   *
+   * `_pext_u64` (`pext`). Runs only where the CPU has it: call it behind `Bmi2.isSupported()`, or
+   * in a function gated on `bmi2-x86`.
+   */
+  static parallelBitExtractU64(value: u64, mask: u64): u64 {
+    return velt_arch_bmi2_parallel_bit_extract_u64(value, mask);
+  }
+}
+
+declare function velt_arch_bmi2_zero_high_bits_u32(value: u32, index: u32): u32;
+declare function velt_arch_bmi2_zero_high_bits_u64(value: u64, index: u64): u64;
+declare function velt_arch_bmi2_parallel_bit_deposit_u32(value: u32, mask: u32): u32;
+declare function velt_arch_bmi2_parallel_bit_deposit_u64(value: u64, mask: u64): u64;
+declare function velt_arch_bmi2_parallel_bit_extract_u32(value: u32, mask: u32): u32;
+declare function velt_arch_bmi2_parallel_bit_extract_u64(value: u64, mask: u64): u64;

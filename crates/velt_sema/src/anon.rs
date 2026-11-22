@@ -192,6 +192,7 @@ impl Ctx<'_> {
             TyKind::Result(a, b) => TyKind::Result(c(self, a), c(self, b)),
             TyKind::Promise(v, e) => TyKind::Promise(c(self, v), c(self, e)),
             TyKind::Shared(e) => TyKind::Shared(c(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(c(self, e)),
             TyKind::FnPtr {
                 params,
                 ret,

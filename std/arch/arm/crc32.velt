@@ -1,0 +1,117 @@
+// velt/arch/arm (internal): `Crc32`, the check of `crc-arm` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { CRC_ARM } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("crc-arm")`) and what such code calls.
+declare function velt_simd_has_crc_arm(): bool;
+// Whether this build runs arm64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_arm(): bool;
+
+/** The CRC32 instructions (FEAT_CRC32). The check of `@targetFeature("crc-arm")`. */
+export class Crc32 {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=CRC32`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_crc_arm() || (velt_simd_on_arm() && cpuHas(CRC_ARM));
+  }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The CRC-32 of `crc` extended by the byte `data` (the bits reflected, no final inversion).
+   *
+   * `__crc32b` (`crc32b`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`, or
+   * in a function gated on `crc-arm`.
+   */
+  static computeCrc32U8(crc: u32, data: u8): u32 {
+    return velt_arch_crc32_compute_crc32_u8(crc, data);
+  }
+
+  /**
+   * The CRC-32 of `crc` extended by the two bytes of `data`, low byte first.
+   *
+   * `__crc32h` (`crc32h`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`, or
+   * in a function gated on `crc-arm`.
+   */
+  static computeCrc32U16(crc: u32, data: u16): u32 {
+    return velt_arch_crc32_compute_crc32_u16(crc, data);
+  }
+
+  /**
+   * The CRC-32 of `crc` extended by the four bytes of `data`, low byte first.
+   *
+   * `__crc32w` (`crc32w`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`, or
+   * in a function gated on `crc-arm`.
+   */
+  static computeCrc32U32(crc: u32, data: u32): u32 {
+    return velt_arch_crc32_compute_crc32_u32(crc, data);
+  }
+
+  /**
+   * The CRC-32 of `crc` extended by the eight bytes of `data`, low byte first.
+   *
+   * `__crc32d` (`crc32x`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`, or
+   * in a function gated on `crc-arm`.
+   */
+  static computeCrc32U64(crc: u32, data: u64): u32 {
+    return velt_arch_crc32_compute_crc32_u64(crc, data);
+  }
+
+  /**
+   * The CRC-32C of `crc` extended by the byte `data` (the bits reflected, no final inversion).
+   *
+   * `__crc32cb` (`crc32cb`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`,
+   * or in a function gated on `crc-arm`.
+   */
+  static computeCrc32CU8(crc: u32, data: u8): u32 {
+    return velt_arch_crc32_compute_crc32_c_u8(crc, data);
+  }
+
+  /**
+   * The CRC-32C of `crc` extended by the two bytes of `data`, low byte first.
+   *
+   * `__crc32ch` (`crc32ch`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`,
+   * or in a function gated on `crc-arm`.
+   */
+  static computeCrc32CU16(crc: u32, data: u16): u32 {
+    return velt_arch_crc32_compute_crc32_c_u16(crc, data);
+  }
+
+  /**
+   * The CRC-32C of `crc` extended by the four bytes of `data`, low byte first.
+   *
+   * `__crc32cw` (`crc32cw`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`,
+   * or in a function gated on `crc-arm`.
+   */
+  static computeCrc32CU32(crc: u32, data: u32): u32 {
+    return velt_arch_crc32_compute_crc32_c_u32(crc, data);
+  }
+
+  /**
+   * The CRC-32C of `crc` extended by the eight bytes of `data`, low byte first.
+   *
+   * `__crc32cd` (`crc32cx`). Runs only where the CPU has it: call it behind `Crc32.isSupported()`,
+   * or in a function gated on `crc-arm`.
+   */
+  static computeCrc32CU64(crc: u32, data: u64): u32 {
+    return velt_arch_crc32_compute_crc32_c_u64(crc, data);
+  }
+}
+
+declare function velt_arch_crc32_compute_crc32_u8(crc: u32, data: u8): u32;
+declare function velt_arch_crc32_compute_crc32_u16(crc: u32, data: u16): u32;
+declare function velt_arch_crc32_compute_crc32_u32(crc: u32, data: u32): u32;
+declare function velt_arch_crc32_compute_crc32_u64(crc: u32, data: u64): u32;
+declare function velt_arch_crc32_compute_crc32_c_u8(crc: u32, data: u8): u32;
+declare function velt_arch_crc32_compute_crc32_c_u16(crc: u32, data: u16): u32;
+declare function velt_arch_crc32_compute_crc32_c_u32(crc: u32, data: u32): u32;
+declare function velt_arch_crc32_compute_crc32_c_u64(crc: u32, data: u64): u32;

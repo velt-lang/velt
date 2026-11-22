@@ -75,6 +75,7 @@ impl Names {
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Ptr(p) => format!("Ptr<{}>", self.show(*p, param)),
             TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),

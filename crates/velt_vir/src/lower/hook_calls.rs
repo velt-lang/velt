@@ -238,6 +238,25 @@ impl<R> Val<R> {
     }
 }
 
+/// The prebuilt hook whose qualified name is `name` (`std/lang/hooks/module_blocks::moduleState`).
+fn prebuilt_named(name: &str) -> Option<&'static velt_common::std_hooks::Hook> {
+    let (module, item) = name.rsplit_once("::")?;
+    (velt_common::std_hooks::HOOKS.iter())
+        .find(|h| h.prebuilt && h.item == item && h.module() == module)
+}
+
+impl Cx<'_> {
+    /// The function sema declared for prebuilt hook `hook` in place of loading its module
+    /// (`velt_sema` `lazy_std/hook_stubs.rs` `declared_lowered`), if it did.
+    pub(super) fn hook_declared(&self, hook: &velt_common::std_hooks::Hook) -> Option<DefId> {
+        let symbol = velt_common::std_hooks::prebuilt::symbol(hook);
+        let found = self.hir.defs.iter().position(
+            |d| matches!(d, hir::Def::ExternFn(x) if x.symbol == symbol || x.name == symbol),
+        );
+        found.map(|i| DefId(i as u32))
+    }
+}
+
 /// The function a hook call goes to: one instance per shape with its dictionary when the hook is
 /// shared in this pass (shape/), else the instance of these type arguments. [`Call::emit_std`]
 /// and [`Call::emit_owned`] always call the latter, so a hook they emit stays per type.
@@ -301,13 +320,20 @@ impl<R> Call<R> {
         args: [Passed; N],
     ) -> Self {
         let task = super::module_state::executor_task_hook(name);
-        let def = (lw.cx.prelude_def(name)).unwrap_or_else(|| match task {
-            Some(item) => ice(format_args!(
-                "lowering calls the executor's `{item}` in a program sema found running nothing \
-                 on it (no live async code or executor extern, velt_sema `lazy_std` `sched_hooks`)"
-            )),
-            None => ice(format_args!("std without the hook `{name}`")),
-        });
+        let Some(def) = lw.cx.prelude_def(name) else {
+            // A prebuilt hook whose module the program doesn't load: sema declared it.
+            if let Some(hook) = prebuilt_named(name) {
+                return Self::declared(lw, hook, args);
+            }
+            match task {
+                Some(item) => ice(format_args!(
+                    "lowering calls the executor's `{item}` in a program sema found running \
+                     nothing on it (no live async code or executor extern, velt_sema `lazy_std` \
+                     `sched_hooks`)"
+                )),
+                None => ice(format_args!("std without the hook `{name}`")),
+            }
+        };
         lw.cx.sched_used |= task.is_some();
         Self::with(lw, def, targs, args)
     }
@@ -351,14 +377,11 @@ impl<R> Call<R> {
         hook: &velt_common::std_hooks::Hook,
         args: [Passed; N],
     ) -> Self {
-        let symbol = velt_common::std_hooks::prebuilt::symbol(hook);
-        let found = lw.cx.hir.defs.iter().position(
-            |d| matches!(d, hir::Def::ExternFn(x) if x.symbol == symbol || x.name == symbol),
-        );
-        let Some(def) = found.map(|i| DefId(i as u32)) else {
+        let Some(def) = lw.cx.hook_declared(hook) else {
             ice(format_args!(
-                "the hook `{}` is neither loaded nor declared (`{symbol}`)",
-                hook.name
+                "the hook `{}` is neither loaded nor declared (`{}`)",
+                hook.name,
+                velt_common::std_hooks::prebuilt::symbol(hook)
             ))
         };
         let argv = (args.into_iter())
@@ -542,6 +565,7 @@ macro_rules! builders {
     (@emit yes $f:ident $c:ident $name:ident [class]) => {};
     (@emit yes $f:ident $c:ident $name:ident [decorator]) => {};
     (@emit yes $f:ident $c:ident $name:ident [process_static]) => {};
+    (@emit yes $f:ident $c:ident $name:ident [type_kind]) => {};
     // An async hook's call is built as any other's: its result is what the promise resolves to.
     (@emit yes $f:ident $c:ident $name:ident [sig(async $($sig:tt)*)]) => {
         builders!(@emit yes $f $c $name [sig($($sig)*)]);

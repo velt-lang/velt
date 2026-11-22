@@ -1,0 +1,7 @@
+true
+[ 'db', 'cache' ] false
+2 2
+[ 'user' ] {"user":"ada"} { user: 'ada' }
+2
+true
+t t 1

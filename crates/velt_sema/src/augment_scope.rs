@@ -386,6 +386,7 @@ impl Walk<'_> {
             K::Named { args, .. } => args.iter_mut().for_each(|a| self.ty(a)),
             K::Array(e)
             | K::KeyOf(e)
+            | K::Weak(e)
             | K::Construct { ty: e, .. }
             | K::TupleRest(e)
             | K::TupleOptional(e) => self.ty(e),

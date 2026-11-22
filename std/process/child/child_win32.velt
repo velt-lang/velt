@@ -35,9 +35,9 @@ import * as sw from "velt/process/child/spawn_win32";
 import { CommandSpec } from "velt/process/child/spec";
 import { RawOutput } from "./rt";
 
-declare c("c") function WaitForSingleObject(h: Ptr<void>, ms: u32): u32;
-declare c("c") function GetExitCodeProcess(h: Ptr<void>, code: Out<u32>): i32;
-declare c("c") function TerminateProcess(h: Ptr<void>, code: u32): i32;
+declare c("c") function WaitForSingleObject(h: Ptr<void> | null, ms: u32): u32;
+declare c("c") function GetExitCodeProcess(h: Ptr<void> | null, code: Out<u32>): i32;
+declare c("c") function TerminateProcess(h: Ptr<void> | null, code: u32): i32;
 
 const INFINITE: u32 = 0xffffffff;
 const WAIT_OBJECT_0: u32 = 0;

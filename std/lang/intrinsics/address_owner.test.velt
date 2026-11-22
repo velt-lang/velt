@@ -1,0 +1,124 @@
+// velt/lang/intrinsics (tests): an array over memory at an address with an owner
+// (`addressArrayOwned`, docs/internals/design/intrinsics.md "Memory at an address"): the owner's
+// function is called once, when the array is dropped, and not for a copy.
+import { describe, expect, it } from "velt/test";
+import {
+  addressArrayOwned,
+  addressLoad,
+  addressStore,
+  fnAddress,
+  rawAlloc,
+  rawFree,
+} from "velt/lang/intrinsics";
+
+/** How many times an owner was told, and the block it was told with. */
+const TOLD = new Atomic<u32>(0);
+const BLOCK = new Atomic<u64>(0);
+
+function told(block: usize) {
+  TOLD.add(1);
+  BLOCK.store(block as u64);
+}
+
+/** An owner's block (its function, then a word of its own) and 4 `u32` of memory after it. */
+function owner(): usize {
+  const block = rawAlloc(32);
+  // SAFETY: the block has 32 bytes: the function at 0, a word at 8, four `u32` from 16.
+  unsafe {
+    addressStore<usize>(block, fnAddress(told));
+    addressStore<u64>(block + 8, 77);
+    for (let i: usize = 0; i < 4; i++) {
+      addressStore<u32>(block + 16 + i * 4, (10 + i) as u32);
+    }
+  }
+  return block;
+}
+
+/** The four values of `block` as an array its owner is told of. */
+function values(block: usize): shared<u32[]> {
+  // SAFETY: four aligned `u32` that stay until the test frees the block, after the array.
+  const xs: u32[] = unsafe { addressArrayOwned<u32>(block + 16, 4, block) };
+  return shared(xs);
+}
+
+function sum(xs: shared<u32[]>): u32 {
+  let s: u32 = 0;
+  for (const x of xs) {
+    s += x;
+  }
+  return s;
+}
+
+describe("addressArrayOwned", () => {
+  it("tells the owner once, when the last holder of the array is gone", () => {
+    const block = owner();
+    const before = TOLD.load();
+    {
+      const xs = values(block);
+      const again = xs;
+      expect(xs.length).toBe(4);
+      expect(sum(again)).toBe(46);
+      expect(xs[3]).toBe(13);
+      expect(TOLD.load()).toBe(before);
+    }
+    expect(TOLD.load()).toBe(before + 1);
+    expect(BLOCK.load()).toBe(block as u64);
+    // SAFETY: the block is still there: the owner's function frees nothing here.
+    expect(unsafe { addressLoad<u64>(block + 8) }).toBe(77);
+    // SAFETY: the block of `rawAlloc(32)`, with no array over it any more.
+    unsafe {
+      rawFree(block, 32);
+    }
+  });
+
+  it("does not tell the owner for a copy, which owns its own memory", () => {
+    const block = owner();
+    const before = TOLD.load();
+    let copy: u32[] = [];
+    // A spread and `structuredClone` copy through the clone glue, `slice` builds its array.
+    let spread: u32[] = [];
+    let cloned: u32[] = [];
+    {
+      const xs = values(block);
+      copy = xs.slice();
+      spread = [...xs];
+      cloned = structuredClone(xs);
+    }
+    expect(TOLD.load()).toBe(before + 1);
+    copy.push(99);
+    spread.push(98);
+    expect(copy).toEqual([10, 11, 12, 13, 99]);
+    expect(spread).toEqual([10, 11, 12, 13, 98]);
+    expect(cloned).toEqual([10, 11, 12, 13]);
+    copy = [];
+    spread = [];
+    cloned = [];
+    expect(TOLD.load()).toBe(before + 1);
+    // SAFETY: as above.
+    unsafe {
+      rawFree(block, 32);
+    }
+  });
+
+  it("tells the owner from another task that held the array last", async () => {
+    const block = owner();
+    const before = TOLD.load();
+    const xs = values(block);
+    const total = await spawn(async () => sum(xs));
+    expect(total).toBe(46);
+    expect(TOLD.load()).toBe(before);
+    await later(xs);
+    expect(TOLD.load()).toBe(before + 1);
+    // SAFETY: as above.
+    unsafe {
+      rawFree(block, 32);
+    }
+  });
+});
+
+/** Takes the last handle to another task, which drops it. */
+async function later(xs: shared<u32[]>): Promise<void> {
+  await spawn(async () => {
+    sum(xs);
+  });
+}

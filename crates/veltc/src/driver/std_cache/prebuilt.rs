@@ -39,8 +39,7 @@
 //! **Which builds.** Executables built with the std cache on (`std_cache::wanted`, so not for
 //! WebAssembly, whose programs load the module as before, nor `VELT_STD_OBJECT=0`), and `velt
 //! check`, which looks the object up as a debug build would and links nothing. Not a source
-//! generator host, nor `velt dev`'s JIT, which links nothing. Not a debug build on arm64 Linux,
-//! whose link may lack the helpers the objects' atomics call ([`debug_link_takes`]).
+//! generator host, nor `velt dev`'s JIT, which links nothing.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -123,11 +122,9 @@ impl Finder {
             return None;
         }
         let target = opts.target();
-        // A debug build links objects for the target's default CPU, where those run, and where
-        // its link has what they call ([`debug_link_takes`]).
+        // A debug build links objects for the target's default CPU, where those run.
         let cpu = match opts.release && linking {
             true => opts.cpu.clone(),
-            false if !debug_link_takes(&target) => return None,
             false if super::serve::default_cpu_runs(opts, &target) => None,
             false => return None,
         };
@@ -405,16 +402,6 @@ fn sweep_stale_pins(temp: &Path, now: std::time::SystemTime) {
 /// `VELT_PREBUILT_HOOKS=0`: no prebuilt objects (every hook module loaded as before).
 fn prebuilt_off() -> bool {
     std::env::var("VELT_PREBUILT_HOOKS").is_ok_and(|v| v == "0")
-}
-
-/// Whether a debug build for `target` (and `velt check`, which looks up what one would) may link
-/// prebuilt objects. Not where LLVM's code calls the outline-atomics helpers (arm64 Linux): a
-/// debug link need not have them (the shared runtime does not export them, and the bundled
-/// linker has no libgcc archive), so such a build compiles the modules into the program. A
-/// release build links the static runtime, which has them. Until debug links get the helpers too
-/// (#3315).
-fn debug_link_takes(target: &str) -> bool {
-    !velt_codegen_llvm::calls_outline_atomics(target)
 }
 
 /// The object's key: the lookup key and the hashes of the files it was compiled from.

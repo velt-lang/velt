@@ -1,0 +1,50 @@
+// An overload whose signature promises a function returning `Promise<R>` (TypeScript writes no
+// error type) over an implementation whose promise rejects: the signature's promise rejects with
+// what the implementation's does, and the caller catches it. Node prints the same.
+interface Options<S, R> {
+  handler(input: S): R;
+}
+
+function make<S, R>(o: Options<S, R>): (input: S) => Promise<R>;
+function make(o: Options<unknown, unknown>): (input: unknown) => Promise<unknown> {
+  return async (input: unknown): Promise<unknown> => {
+    if (input === 0) {
+      throw new Error("zero");
+    }
+    if (input === 1) {
+      throw new RangeError("one");
+    }
+    return o.handler(input);
+  };
+}
+
+// A signature whose own result is a `Promise<string>`, over an implementation's rejecting one.
+function fetchName(id: number): Promise<string>;
+function fetchName(id: number | string): Promise<string> {
+  const run = async (): Promise<string> => {
+    if (id === 0) {
+      throw new TypeError("no name");
+    }
+    return "name" + id;
+  };
+  return run();
+}
+
+async function main(): Promise<void> {
+  console.log(await fetchName(7));
+  try {
+    await fetchName(0);
+  } catch (e) {
+    console.log("caught", e instanceof TypeError);
+  }
+  const f = make({ handler: (n: number): string => "n" + n });
+  console.log(await f(2));
+  for (const n of [0, 1]) {
+    try {
+      await f(n);
+    } catch (e) {
+      console.log("caught", e instanceof RangeError, e instanceof Error ? e.message : "");
+    }
+  }
+}
+main();

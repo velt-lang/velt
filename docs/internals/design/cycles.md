@@ -231,8 +231,11 @@ to programs that have no cycles.
 
 ## Not yet implemented
 
-The cycle-capability analysis and the trace glue above are built. The collector, `weak T`, the lint
-and `clone()` of cyclic graphs are accepted design, described here.
+The cycle-capability analysis and the trace glue above are built, and so are `weak T`'s syntax and
+checks (`velt_sema` `weak_types`: where it may go, its target, its `null`), its formatting, its
+`velt doc` TypeScript output and its `--ts-compat` rule (`weak-type`). A well-formed `weak` is
+reported as not implemented yet. Its representation and lowering, the collector, the lint and
+`clone()` of cyclic graphs are accepted design, described here.
 
 ### The collector
 
@@ -348,23 +351,32 @@ const self: weak View | null = this;            // a closure capturing `self` ho
 button.onClick(() => self?.refresh());
 ```
 
-- **Syntax.** `weak` is a type operator, a contextual word parsed like `keyof` (`weak` stays a
-  valid name), binding tighter than `|`: `weak Node | null` is a weak reference to a `Node`, or
-  `null`. It is allowed in the type of a class field, an object type or interface member, and a
-  `let` or `const`; anywhere else (parameters, results, elements, type arguments) it is an
-  error naming the places it may go.
-- **Typing.** The target is a type whose values are objects (a class, an object type, an array,
-  a map or set). The written type must include `null`: `parent: weak Node` is an error with a
-  fix-it to `weak Node | null`. A read has the type `T | null` and yields a counted reference; a
-  write takes `T | null`. Sema narrows nothing through a weak field, since the target may be
-  gone between two reads: the "possibly null" error after `if (n.parent) n.parent.x` gets a note
-  showing `const p = n.parent; if (p) p.x`. `n.parent?.x` works as written.
+- **Syntax.** `weak` is a type operator, a contextual word parsed like `keyof`, binding tighter
+  than `|`: `weak Node | null` is a weak reference to a `Node`, or `null`. It is the operator
+  only before a type name or `(` on the same line, so TypeScript that names a type `weak` keeps
+  parsing, written without semicolons too (`a: weak` then `b: number` on the next line,
+  `x as weak as T`). It is allowed in the type of a class field (a constructor's parameter
+  property included: its parameter takes the type without `weak`; and an abstract property,
+  whose getter and setter do), an object type or interface
+  member, and a `let`, `const` or `var` (which Velt reads as `let`); anywhere else (parameters,
+  results, elements, type arguments) it is an error naming the places it may go.
+- **Typing.** The target is a type whose values are objects with an identity: a class, an object
+  type, an interface value (an interface with methods: a reference to an object and its table,
+  which the weak field keeps beside the slot), an array, a map or set. A struct, an interface of
+  fields only (stored by value), a type parameter, and the dynamic types `any`, `unknown` (which
+  may hold a number or a string) and `object` are not. The written type must include
+  `null`: `parent: weak Node` is an error with a fix-it to `weak Node | null`. A read has the
+  type `T | null` and yields a counted reference; a write takes `T | null`. Sema narrows nothing
+  through a weak field, since the target may be gone between two reads: the "possibly null" error
+  after `if (n.parent) n.parent.x` gets a note showing `const p = n.parent; if (p) p.x`.
+  `n.parent?.x` works as written.
 - **Representation.** A weak field holds a pointer to its target's **slot**, a counted block
   `[count][target]` shared by every weak reference to that target (Swift's side table). The
   target's weak-core record holds one reference to its slot and each weak field or variable one
-  more; freeing the target sets `slot.target = 0`. A read is inline and takes no lock:
-  `s = field; p = s ? s.target : 0; if p { retain p }`. A write gets the new target's slot
-  through the `weakSlot(obj)` std hook.
+  more, and keeps it until the target is freed, which sets `slot.target = 0`. A read is inline
+  and takes no lock: `s = field; p = s ? s.target : 0; if p { retain p }`. A write gets the new
+  target's slot through the `weakSlot(obj)` std hook and gives up the old one with
+  `weakSlotDrop(s)` (`std/lang/hooks/weak_slots.velt`, rt_abi.md "Weak references").
 - **The rest of the language.** A `weak` field is not an edge of the ownership graph and is
   skipped by trace glue, so `TreeNode` above is not cycle-capable. A closure captures a `weak`
   variable as its slot. A transfer to another task, and `clone()`, map a weak field to the copy
@@ -419,7 +431,9 @@ panics. `weak T` is Velt syntax; it parses in `.ts` files, and `--ts-compat` rep
   address of `T`'s descriptor);
 - lowering of the release sequence, descriptors and collection points for cycle-capable types,
   and the leak check on `tests/golden/lang/const_used_by_its_closures.velt`;
-- `weak T`, with its parser, formatter, LSP and `--ts-compat` support;
+- `weak T`'s slots in the weak core, and its lowering: field and variable reads and writes, drop
+  glue, trace glue and the cycle analysis skipping weak fields, closure captures, transfers and
+  `clone()`, and the narrowing note;
 - `clone()` of cyclic graphs, which recurses until the stack overflows on a cycle
   ([#508](https://github.com/velt-lang/velt/issues/508));
 - the `perf/cycle-capable` lint.

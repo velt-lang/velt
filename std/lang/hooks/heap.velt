@@ -1,9 +1,10 @@
 // velt/lang/hooks (internal): the allocator of a release build's generated code, mimalloc called
 // through `declare c` (#2196). Lowering emits the runtime's allocator calls (`velt_rt_alloc`,
 // `velt_rt_realloc`, `velt_rt_free`; rt_abi.md "Memory"), which the optimizer reads, and its last
-// step makes an allocation of a known size and every free a call of the hook here (velt_opt
-// `heap_calls`), inlined where it is called. Array buffers of a run-time length and their growth
-// keep the runtime's calls for now (`heapRealloc` waits for that: see `heap_calls`).
+// step makes each a call of the hook here (velt_opt `heap_calls`): an allocation of a known size
+// and every free call it inlined where they are; an array buffer of a run-time length and its
+// growth call a wrapper with the runtime function's signature and allocator attributes, which
+// stays out of line and has the hook inlined into it.
 // Debug builds, and release builds that link a debug runtime, keep the runtime's, which checks and
 // counts every block when the program runs with `VELT_RT_DEBUG_ALLOC` or `VELT_RC_STATS` set: its
 // Rust allocates and frees blocks generated code also uses. So does a runtime built without
@@ -43,9 +44,9 @@ const MAX_ARRAY_BYTES: u64 = 4503599627370495;
 
 /** Address `a` as a C pointer argument; 0 passes `NULL`. */
 @inline("always")
-function ptr(a: u64): Ptr<u8> {
+function ptr(a: u64): Ptr<u8> | null {
   // SAFETY: only passed to mimalloc, as a block it gave or `NULL`.
-  return unsafe { Ptr.at<u8>(a as usize) };
+  return unsafe { Ptr.orNull<u8>(a as usize) };
 }
 
 /** The address mimalloc returned; 0 for `NULL`. */
@@ -84,11 +85,11 @@ export function heapAlloc(size: u64, align: u64): u64 {
  * The block `p` of `old` bytes (from `heapAlloc` or the runtime, with `align`) grown or shrunk to
  * `size` bytes, what `velt_rt_realloc` does: generated code reallocates only to grow an array (an
  * empty one too: an `old` of 0 allocates), so past the length limit it stops here with the
- * `RangeError` lowering's own checks report. Out of line, as the runtime's was: it is the rare
- * path of every `push`, and inlined there LLVM kept more induction variables in the loop's hot
- * path (two more instructions per `push` in bench/closures.velt).
+ * `RangeError` lowering's own checks report. Generated code calls it through a wrapper with
+ * `velt_rt_realloc`'s signature and allocator attributes, which stays out of line (velt_opt's
+ * heap_calls, rt_abi.md "Memory"); it is inlined into that wrapper.
  */
-@noInline
+@inline("always")
 export function heapRealloc(p: u64, old: u64, align: u64, size: u64): u64 {
   if (size > MAX_ARRAY_BYTES) {
     arrayTooLong();
@@ -178,10 +179,18 @@ function digit(d: u64): string {
   return d == 8 ? "8" : "9";
 }
 
-/** Stops the program: an array's buffer past the length limit. */
+/**
+ * Stops the program: an array's buffer past the length limit. As the runtime's `velt_rt_realloc`
+ * does (`fatal`), with its message and exit code, and not as a panic: a `catchVeltPanic` running
+ * doesn't catch it, the message names no location, and nothing unwinds through the growth wrapper,
+ * which codegen marks `nounwind` (rt_abi.md "Memory").
+ */
 @noInline
 function arrayTooLong(): never {
-  panic(
-    "RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes",
+  velt_rt_flush();
+  velt_rt_write_str(
+    2,
+    "panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes\n",
   );
+  velt_rt_exit(101);
 }

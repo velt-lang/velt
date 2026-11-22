@@ -72,17 +72,19 @@ pub struct Reading {
     pub peak: usize,
 }
 
-/// Windows: the peak working set from kernel32, as `velt_rt`'s `memory_usage` reads its counters:
-/// `mi_process_info` loads `psapi.dll` on its first call, which can hang on the loader lock.
+/// Windows: `(working set, peak working set)` from kernel32's `K32GetProcessMemoryInfo`, which
+/// loads no library (`mi_process_info` loads `psapi.dll` on its first call, which can hang on
+/// the loader lock).
 #[cfg(windows)]
-fn os_peak() -> Option<usize> {
+fn counters() -> Option<(usize, usize)> {
     #[repr(C)]
     #[derive(Default)]
     struct ProcessMemoryCounters {
         cb: u32,
         page_fault_count: u32,
         peak_working_set_size: usize,
-        rest: [usize; 7],
+        working_set_size: usize,
+        rest: [usize; 6],
     }
     #[link(name = "kernel32")]
     extern "system" {
@@ -98,7 +100,52 @@ fn os_peak() -> Option<usize> {
     c.cb = cb;
     // SAFETY: `c` is a properly sized out buffer and `cb` says its size.
     let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, cb) };
-    (ok != 0).then_some(c.peak_working_set_size)
+    (ok != 0).then_some((c.working_set_size, c.peak_working_set_size))
+}
+
+/// Windows: the peak working set.
+#[cfg(windows)]
+fn os_peak() -> Option<usize> {
+    counters().map(|c| c.1)
+}
+
+/// Windows: the working set.
+#[cfg(windows)]
+fn os_rss() -> Option<usize> {
+    counters().map(|c| c.0)
+}
+
+/// Linux: the second field of `/proc/self/statm` (resident pages).
+#[cfg(target_os = "linux")]
+fn os_rss() -> Option<usize> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
+    // SAFETY: a plain query.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    usize::try_from(page).ok().map(|p| pages * p)
+}
+
+/// macOS: `task_info(MACH_TASK_BASIC_INFO)`.
+#[cfg(target_os = "macos")]
+fn os_rss() -> Option<usize> {
+    #[allow(deprecated)] // libc points to the mach2 crate; these bindings are still correct
+    // SAFETY: `info` is a properly sized out buffer for this flavor; `count` says its size.
+    unsafe {
+        let mut info: libc::mach_task_basic_info = std::mem::zeroed();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        let r = libc::task_info(
+            libc::mach_task_self(),
+            libc::MACH_TASK_BASIC_INFO,
+            &mut info as *mut libc::mach_task_basic_info as libc::task_info_t,
+            &mut count,
+        );
+        (r == libc::KERN_SUCCESS).then_some(info.resident_size as usize)
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn os_rss() -> Option<usize> {
+    None
 }
 
 /// The peak resident set as mimalloc, the compiler's allocator, reports it.
@@ -128,7 +175,7 @@ pub fn read() -> Option<Reading> {
     let peak = os_peak().unwrap_or(0);
     // The resident set as the OS counts it (mimalloc's current figure is its committed memory
     // on some systems).
-    let rss = usize::try_from(velt_rt_host::memory_usage::velt_rt_memory_rss()).unwrap_or(0);
+    let rss = os_rss().unwrap_or(0);
     (rss > 0).then_some(Reading {
         rss,
         peak: peak.max(rss),

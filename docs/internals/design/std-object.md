@@ -35,7 +35,6 @@ replaces.
 | Debug (either backend, with or without `-g`) | Every function the cache holds (`serve.rs`); a miss stays in the program |
 | `--emit obj`, `--emit vir`, `--emit llvm`, `--report numbers`, `--host` | Off: the output must be self-contained, or reads std's code |
 | WebAssembly | Off (no objects to link); a release build with `VELT_STD_OBJECT=1` uses it |
-| Debug builds for arm64 Linux | No prebuilt hook objects: LLVM's atomics there call the outline-atomics helpers (`__aarch64_*`), which a debug link need not have (the shared runtime does not export them; the bundled linker has no libgcc archive) |
 | `velt check`, `velt fmt`, `velt lsp`, `velt doc` | Never build or read objects (they stop before code generation); `velt check` looks up prebuilt hook objects as a debug build would |
 
 `VELT_STD_OBJECT=0` compiles all of std in the program everywhere, for debugging std itself and
@@ -200,7 +199,8 @@ it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`):
   modules.
 - **State of its own.** A module may keep thread-local values and static atomics in its *private*
   modules (`prebuilt::private`: modules nothing else imports, such as the weak core's
-  `weak*.velt`). The object keeps the static atomics; the manifest lists the thread-local values'
+  `weak*.velt`, and module_blocks.velt, whose blocks of module state are refused in every other
+  module's object). The object keeps the static atomics; the manifest lists the thread-local values'
   externs, and a build linking the object adds them to its program, whose unit defining
   `velt_main` defines their storage (vir.rs invariant 5: code compiled to link into a program
   declares them). Sema calls no object for a program that loads a private module itself, which

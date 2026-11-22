@@ -18,6 +18,11 @@ pub struct CheckOptions {
     /// unit, frozen, then the program checked against it; writes across the boundary are counted
     /// and printed. Needs every std module loaded and `eager_std`. Additive.
     pub units: bool,
+    /// A key of this compiler and std's sources, which the driver gives a check by units with
+    /// std as a unit of its own (`VELT_UNITS=2`): with `VELT_UNITS_DISK` set, std's unit is kept
+    /// on disk under it and loaded instead of checking std (`crate::units::disk`). `None`: std
+    /// is checked. Additive.
+    pub std_key: Option<u64>,
 }
 
 impl Default for CheckOptions {
@@ -27,6 +32,7 @@ impl Default for CheckOptions {
             eager_std: false,
             native_executor: true,
             units: false,
+            std_key: None,
         }
     }
 }

@@ -1,0 +1,17 @@
+// A C function whose declaration says `Ptr<T>` and returns NULL stops the program where it
+// returns, naming the function: C has no non-null pointer type, so no header check can see it,
+// and the word would otherwise read as `null` (#3094). `getenv` of a name no environment has
+// returns NULL; declared `Ptr<u8> | null`, that is `null`.
+import { CString, Ptr } from "velt/ffi";
+
+declare c("c") function getenv(name: CString): Ptr<u8> | null;
+declare c("c") function getenv$sure(name: CString): Ptr<u8>;
+
+function main() {
+  const name = new CString("VELT_GOLDEN_NO_SUCH_VARIABLE_3094");
+  // SAFETY: a NUL-terminated name; the result is only compared.
+  console.log(unsafe { getenv(name) } === null);
+  // SAFETY: as above.
+  const p = unsafe { getenv$sure(name) };
+  console.log("not reached", p);
+}

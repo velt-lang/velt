@@ -1,0 +1,42 @@
+// `Object.defineProperty` of a data property with `enumerable: false` on a record, as Node keeps
+// it: `Object.keys`, `JSON.stringify`, spreads and `console.log` skip it, a read gives its value,
+// and `Object.getOwnPropertyDescriptor` reports its attributes. A writable one may be written.
+const K = Symbol("k");
+const r: Record<string, unknown> = { u: 1 };
+Object.defineProperty(r, K, {
+  value: { n: 1 },
+  enumerable: false,
+  writable: false,
+  configurable: true,
+});
+console.log(Object.getOwnPropertyDescriptor(r, K), { ...r }, Object.getOwnPropertySymbols(r));
+console.log((r as Record<symbol, unknown>)[K]);
+Object.defineProperty(r, "s", {
+  value: 3,
+  enumerable: false,
+  writable: false,
+  configurable: false,
+});
+console.log(r.s, Object.keys(r), JSON.stringify(r), r);
+console.log(Object.getOwnPropertyDescriptor(r, "s"));
+Object.defineProperty(r, K, { value: 9, enumerable: false, writable: true, configurable: true });
+const bag = r as Record<symbol, unknown>;
+bag[K] = 10;
+console.log(bag[K], Object.getOwnPropertyDescriptor(r, K));
+r.u = 2;
+console.log(r, "s" in r, K in r);
+
+// Defined again with every attribute `true`, a hidden property becomes an entry, as in Node.
+Object.defineProperty(r, "hid", {
+  value: "secret",
+  enumerable: false,
+  writable: true,
+  configurable: true,
+});
+Object.defineProperty(r, "hid", {
+  value: "back",
+  enumerable: true,
+  writable: true,
+  configurable: true,
+});
+console.log(Object.keys(r), r.hid);

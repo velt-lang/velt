@@ -1,0 +1,22 @@
+// Symbols made at run time (`Symbol(d)` with a description computed then): their description,
+// `toString()`, `String(s)`, a template, `console.log` of the symbol, in an array and in an
+// object. Matches Node. (No leak check: a symbol keeps its description for the life of the
+// process, so the heap descriptions here are never freed.)
+function word(i: number): string {
+  return `w${i}-` + "x".repeat(i * 10);
+}
+
+function main() {
+  const made: symbol[] = [];
+  for (let i = 0; i < 4; i++) {
+    made.push(Symbol(word(i)));
+  }
+  for (const s of made) {
+    console.log(s.description, s.toString(), String(s));
+  }
+  console.log(made[1]);
+  console.log([made[0], Symbol()], { k: made[2] });
+  const odd = Symbol("päron 😀");
+  console.log(odd.description, odd.toString(), `${String(odd)}`);
+  console.log(Symbol().description, Symbol("").description === "", Symbol().toString());
+}

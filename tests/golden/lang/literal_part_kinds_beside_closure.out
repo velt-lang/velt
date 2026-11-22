@@ -1,0 +1,30 @@
+arr arr heap string long enough 0|29
+map map heap string long enough 0|29
+assignedObj pt heap string long enough 0|5|28
+plainObj plain heap string long enough 0|31
+opt inner heap string long enough 0|31
+tup tup heap string long enough 0|0|29
+fn fn heap string long enough 0|28
+un inner heap string long enough 0|31
+arrayLit inner heap string long enough 0|31
+tupleLit inner heap string long enough 0|31
+nestedLit inner heap string long enough 0|31
+member inner heap string long enough 0|31|c
+twoParts inner heap string long enough 0|tag heap string long enough 0|33|c2
+dyn named heap string long enough 0|31|c
+dynReplace named heap string long enough 0|2|replacement 0
+arr arr heap string long enough 1|29
+map map heap string long enough 1|29
+assignedObj pt heap string long enough 1|5|28
+plainObj plain heap string long enough 1|31
+opt inner heap string long enough 1|31
+tup tup heap string long enough 1|1|29
+fn fn heap string long enough 1|28
+un other heap string long enough 1|31
+arrayLit inner heap string long enough 1|31
+tupleLit inner heap string long enough 1|31
+nestedLit inner heap string long enough 1|31
+member inner heap string long enough 1|31|c
+twoParts inner heap string long enough 1|tag heap string long enough 1|33|c2
+dyn named heap string long enough 1|31|c
+dynReplace named heap string long enough 1|2|replacement 1

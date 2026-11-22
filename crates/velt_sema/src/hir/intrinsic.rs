@@ -153,12 +153,12 @@ pub enum Intrinsic {
     /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
     Share,
     /// `(parts: borrow P0, P1, …) -> TyOp::Spread(P0, P1, …)`: an object literal with a spread
-    /// whose fields are known only per instantiation (#350). Each part is an object value: a
-    /// spread source (a place, borrowed) or a one-field object literal holding an explicit
-    /// property (owned). Lowering builds the reduced object type, each field shared from the
-    /// last part that has it (an optional field only while present, as JavaScript copies only
-    /// the keys an object has).
+    /// whose fields are known only per instantiation (#350): each part is a spread source
+    /// (borrowed) or a one-field literal (owned), each field shared from the last part with it.
     SpreadObject,
+    /// `(value: borrow A) -> U[]`, `U` dynamic: `f(...args)` with `args: A` into a rest of `U[]`
+    /// (#943); per instantiation, a tuple's or an array's elements, each shared and boxed.
+    SpreadParam,
     /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with
     /// `K extends keyof T`, #350): at every instantiation `K` is one key of the object type `T`
     /// (sema checks it), and lowering reads that field, shared, as `object.<key>` would.
@@ -166,8 +166,8 @@ pub enum Intrinsic {
     /// `(object: borrow mut T, key: borrow K, value: T[K]) -> void`: `object[key] = value` in a
     /// generic body, as for `KeyRead`; lowering writes that field.
     KeyWrite,
-    /// `() -> T | null`, only as the value of a `presence` field in an `AdtLit`
-    /// (`FieldDef::presence`): the field is absent (its value `null`, its presence flag clear)
+    /// `() -> T | null`, only as a `presence` field's value in an `AdtLit` (`FieldDef::presence`)
+    /// or assigned to one (`delete o.a`): the field is absent (`null`, its presence flag clear)
     FieldAbsent,
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
@@ -178,8 +178,8 @@ pub enum Intrinsic {
     /// by sema around a value a `Mutex.with` callback stores across the lock (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
-    /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
-    /// (the value itself is not read)?
+    /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
+    /// object or a promise (whose holder is handed over)? The value itself is not read.
     NeedsTransfer,
     /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
@@ -308,9 +308,11 @@ pub enum Intrinsic {
     /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of the program's
     /// null-ended table of registry records (`SymbolStatic`, ids from 2^40) std's registry reads.
     SymbolRegistry,
-    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, and `symbolAt(address)` back): `usize`.
+    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, `symbolAt(address)` back; `strAt(address)`
+    /// another reference to the string there, a symbol's description, rt_abi.md "Symbols").
     SymbolAddress,
     SymbolAt,
+    StrAt,
     /// Compiler-internal (no source syntax): `ToString` of a template literal part whose type
     /// mentions a type parameter (`${x}` with `x: T`). It is `ToString`, except that where the
     /// value is a symbol once substituted (`symbol`, or the active member of a union or `T | null`
@@ -397,33 +399,32 @@ pub enum Intrinsic {
     /// Additive.
     AddressStore,
     /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
-    /// `bool` (sema checks it): an array of the `length` elements at `address` that does not own
-    /// them (`cap == 0`, velt_vir `lower/array`): dropping it frees nothing, and a copy of it is
-    /// an ordinary array. Nothing checks that the memory is there, stays there or is aligned
-    /// for `T`, and the array must never be written or grown: std hands it out only as
-    /// `shared<T[]>` (`MappedFile`, std/fs/mapped_file.velt). Additive.
+    /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
+    /// `lower/array`): dropping it frees nothing, a copy is an ordinary array. Unchecked, never
+    /// written or grown: std hands it out only as `shared<T[]>` (`MappedFile`). Additive.
     AddressArray,
+    /// std only: `addressArray` with an owner block, whose first word is called at the drop.
+    AddressArrayOwned,
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the
-    /// `Atomic*` intrinsics' integer literals.
-    ///
-    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
-    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
+    /// `Atomic*` intrinsics' integer literals. Changed (#3094), for all five `AddressAtomic*`:
+    /// renamed from `PtrAtomic*`; the first operand is a `usize` address, not a `Ptr<T>`. Not
+    /// additive.
     AddressAtomicLoad,
-    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
-    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, order: u8)`: `AtomicStore` at `address` (`T`: `v`'s).
     AddressAtomicStore,
-    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
-    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
-    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: `AtomicRmw` at `address` (the
+    /// declaration's `(address, op, v, order)` reordered by sema, `op` numbered as `AtomicRmw`'s).
     AddressAtomicRmw,
-    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
-    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: `AtomicCas`.
     AddressAtomicCas,
-    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
-    /// type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously; `T`: `expected`'s).
     AddressAtomicCasWeak,
+    /// std only (`Ptr.at`, `Ptr.orNull`, #3094): `ptrFromAddress<T>(a: usize) -> Ptr<T>`. Additive.
+    PtrFromAddress,
+    /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
+    PtrToAddress,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.
@@ -534,8 +535,7 @@ pub enum Intrinsic {
     /// is set, else static (0), heap or slice).
     StrWord2,
     /// std only: `(s: borrow string) -> usize`, the address of `s`'s UTF-8 bytes: inside the value
-    /// for an inline string, the buffer otherwise (#2778). Valid while `s` is alive and unchanged;
-    /// read with `addressLoad`.
+    /// for an inline string, the buffer otherwise (#2778), while `s` lives unchanged.
     StrDataAddress,
     /// `attempt(f)`: call `f: () => T throws E` (borrowed) and return its result or error as a
     /// value, of type `T | E` (or `E | null` when `T` is `void`); hir_encodings.md "Errors".
