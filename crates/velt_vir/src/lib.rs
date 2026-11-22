@@ -167,6 +167,7 @@ pub const STR_TEXT_AGG_NAME: &str = "string text";
 /// analysis (velt_codegen_llvm `tbaa.rs`).
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
+pub mod arch;
 pub mod atomic;
 pub mod c_abi;
 pub mod eh;

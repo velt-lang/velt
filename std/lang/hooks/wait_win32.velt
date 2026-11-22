@@ -22,9 +22,14 @@
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
 
-declare c("c") function WaitOnAddress(word: Ptr<u8>, compare: Ptr<u8>, size: usize, ms: u32): i32;
-declare c("c") function WakeByAddressSingle(word: Ptr<u8>): void;
-declare c("c") function NtSetTimerResolution(desired: u32, set: u8, current: Ptr<u8>): i32;
+declare c("c") function WaitOnAddress(
+  word: Ptr<u8> | null,
+  compare: Ptr<u8> | null,
+  size: usize,
+  ms: u32,
+): i32;
+declare c("c") function WakeByAddressSingle(word: Ptr<u8> | null): void;
+declare c("c") function NtSetTimerResolution(desired: u32, set: u8, current: Ptr<u8> | null): i32;
 
 /** `INFINITE`. */
 const FOREVER: u32 = 0xffffffff;

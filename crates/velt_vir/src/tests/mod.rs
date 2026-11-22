@@ -8,6 +8,7 @@ mod builder_m3;
 mod builder_prelude;
 mod c_globals;
 mod c_mismatch;
+mod c_pointers;
 mod c_wasi;
 mod catch_unwind_at;
 mod const_arrays;

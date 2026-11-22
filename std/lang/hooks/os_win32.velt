@@ -7,9 +7,9 @@ import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
 
 declare c("c") function SwitchToThread(): i32;
-declare c("c") function QueryPerformanceCounter(count: Ptr<u8>): i32;
-declare c("c") function QueryPerformanceFrequency(freq: Ptr<u8>): i32;
-declare c("c") function _write(fd: i32, buf: Ptr<u8>, n: u32): i32;
+declare c("c") function QueryPerformanceCounter(count: Ptr<u8> | null): i32;
+declare c("c") function QueryPerformanceFrequency(freq: Ptr<u8> | null): i32;
+declare c("c") function _write(fd: i32, buf: Ptr<u8> | null, n: u32): i32;
 
 /** Gives the core to another thread that is ready to run, if any. */
 export function yieldCore(): void {

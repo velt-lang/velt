@@ -185,6 +185,7 @@ mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
+mod type_kinds;
 mod type_tests;
 mod types;
 mod upcast;

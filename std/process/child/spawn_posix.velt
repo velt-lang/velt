@@ -34,38 +34,45 @@ declare c type posix_spawn_file_actions_t;
 declare c type posix_spawnattr_t;
 declare c type sigset_t;
 
-declare c("c") function posix_spawn_file_actions_init(fa: Ptr<posix_spawn_file_actions_t>): i32;
-declare c("c") function posix_spawn_file_actions_destroy(fa: Ptr<posix_spawn_file_actions_t>): i32;
+declare c("c") function posix_spawn_file_actions_init(
+  fa: Ptr<posix_spawn_file_actions_t> | null,
+): i32;
+declare c("c") function posix_spawn_file_actions_destroy(
+  fa: Ptr<posix_spawn_file_actions_t> | null,
+): i32;
 declare c("c") function posix_spawn_file_actions_adddup2(
-  fa: Ptr<posix_spawn_file_actions_t>,
+  fa: Ptr<posix_spawn_file_actions_t> | null,
   fd: i32,
   to: i32,
 ): i32;
 declare c("c") function posix_spawn_file_actions_addchdir_np(
-  fa: Ptr<posix_spawn_file_actions_t>,
+  fa: Ptr<posix_spawn_file_actions_t> | null,
   path: CString,
 ): i32;
-declare c("c") function posix_spawnattr_init(attr: Ptr<posix_spawnattr_t>): i32;
-declare c("c") function posix_spawnattr_destroy(attr: Ptr<posix_spawnattr_t>): i32;
-declare c("c") function posix_spawnattr_setflags(attr: Ptr<posix_spawnattr_t>, flags: i16): i32;
+declare c("c") function posix_spawnattr_init(attr: Ptr<posix_spawnattr_t> | null): i32;
+declare c("c") function posix_spawnattr_destroy(attr: Ptr<posix_spawnattr_t> | null): i32;
+declare c("c") function posix_spawnattr_setflags(
+  attr: Ptr<posix_spawnattr_t> | null,
+  flags: i16,
+): i32;
 declare c("c") function posix_spawnattr_setsigdefault(
-  attr: Ptr<posix_spawnattr_t>,
-  set: Ptr<sigset_t>,
+  attr: Ptr<posix_spawnattr_t> | null,
+  set: Ptr<sigset_t> | null,
 ): i32;
 declare c("c") function posix_spawnattr_setsigmask(
-  attr: Ptr<posix_spawnattr_t>,
-  set: Ptr<sigset_t>,
+  attr: Ptr<posix_spawnattr_t> | null,
+  set: Ptr<sigset_t> | null,
 ): i32;
-declare c("c") function sigemptyset(set: Ptr<sigset_t>): i32;
-declare c("c") function sigaddset(set: Ptr<sigset_t>, sig: i32): i32;
+declare c("c") function sigemptyset(set: Ptr<sigset_t> | null): i32;
+declare c("c") function sigaddset(set: Ptr<sigset_t> | null, sig: i32): i32;
 // `argv` and `envp`: NULL-terminated arrays of NUL-terminated strings (`char *const []`).
 declare c("c") function posix_spawn(
-  pid: Ptr<i32>,
+  pid: Ptr<i32> | null,
   path: CString,
-  fa: Ptr<posix_spawn_file_actions_t>,
-  attr: Ptr<posix_spawnattr_t>,
-  argv: Ptr<Ptr<u8>>,
-  envp: Ptr<Ptr<u8>>,
+  fa: Ptr<posix_spawn_file_actions_t> | null,
+  attr: Ptr<posix_spawnattr_t> | null,
+  argv: Ptr<Ptr<u8>> | null,
+  envp: Ptr<Ptr<u8>> | null,
 ): i32;
 declare c("c") function close$child(fd: i32): i32;
 /** The address of a byte array's elements (a copy of nothing returns its destination). */

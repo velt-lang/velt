@@ -179,8 +179,8 @@ pub enum Intrinsic {
     /// (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
-    /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
-    /// (the value itself is not read)?
+    /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
+    /// object or a promise (whose holder is handed over)? The value itself is not read.
     NeedsTransfer,
     /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
@@ -407,24 +407,23 @@ pub enum Intrinsic {
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the
-    /// `Atomic*` intrinsics' integer literals.
-    ///
-    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
-    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
+    /// `Atomic*` intrinsics' integer literals. Changed (#3094), for all five `AddressAtomic*`:
+    /// renamed from `PtrAtomic*`; the first operand is a `usize` address, not a `Ptr<T>`. Not
+    /// additive.
     AddressAtomicLoad,
-    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
-    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, order: u8)`: `AtomicStore` at `address` (`T`: `v`'s).
     AddressAtomicStore,
-    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
-    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
-    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: `AtomicRmw` at `address` (the
+    /// declaration's `(address, op, v, order)` reordered by sema, `op` numbered as `AtomicRmw`'s).
     AddressAtomicRmw,
-    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
-    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: `AtomicCas`.
     AddressAtomicCas,
-    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
-    /// type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously; `T`: `expected`'s).
     AddressAtomicCasWeak,
+    /// std only (`Ptr.at`, `Ptr.orNull`, #3094): `ptrFromAddress<T>(a: usize) -> Ptr<T>`. Additive.
+    PtrFromAddress,
+    /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
+    PtrToAddress,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

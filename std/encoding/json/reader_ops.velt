@@ -15,6 +15,7 @@ import {
   UNKNOWN,
 } from "velt/encoding/json/reader";
 import { numberI64, numberU64 } from "velt/encoding/json/scan_number";
+import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
 import {
   readerDepthLeft,
   readerDetail,
@@ -26,7 +27,6 @@ import {
 } from "velt/encoding/json/reader_steps";
 
 declare function velt_rt_json_error(r: u64, expected: string, path: string): string;
-declare function velt_rt_json_node_syntax(src: string, out: string): bool;
 declare function velt_rt_json_reader_end(r: u64): u8;
 declare function velt_rt_json_reader_read_bool(r: u64, out: ReaderBool): u8;
 declare function velt_rt_json_reader_read_i64(r: u64, out: ReaderI64): u8;
@@ -42,9 +42,11 @@ export function readerMessage(r: Reader, expected: string, path: string): string
   }
   // Text that is not JSON fails as in Node, wherever the decoder stopped (not JSONC, which
   // Node does not read).
-  let node = "";
-  if (!r.comments && !r.trailingCommas && velt_rt_json_node_syntax(r.src, node)) {
-    return node;
+  if (!r.comments && !r.trailingCommas) {
+    const node = nodeSyntaxMessage(r.src);
+    if (node != null) {
+      return node;
+    }
   }
   const where = shortPath(path);
   if (r.failed == SYNTAX) {

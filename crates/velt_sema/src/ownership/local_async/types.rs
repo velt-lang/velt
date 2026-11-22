@@ -69,7 +69,7 @@ pub(super) fn crossing_fns(
                         .collect();
                     work.extend(impls);
                 }
-                k => work.extend(crate::types::children(&k)),
+                k => work.extend(crate::types::contents(&k)),
             }
         }
     }

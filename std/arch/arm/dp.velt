@@ -22,4 +22,30 @@ export class Dp {
   static isSupported(): bool {
     return velt_simd_has_dotprod_arm() || (velt_simd_on_arm() && cpuHas(DOTPROD_ARM));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * Lane `i` of `addend` plus the products of bytes `4i` to `4i + 3` of `left` and `right`.
+   *
+   * `vdotq_u32` (`udot`). Runs only where the CPU has it: call it behind `Dp.isSupported()`, or in
+   * a function gated on `dotprod-arm`.
+   */
+  static dotProductU8(addend: u32x4, left: u8x16, right: u8x16): u32x4 {
+    return velt_arch_dp_dot_product_u8(addend, left, right);
+  }
+
+  /**
+   * Lane `i` of `addend` plus the products of bytes `4i` to `4i + 3` of `left` and `right`.
+   *
+   * `vdotq_s32` (`sdot`). Runs only where the CPU has it: call it behind `Dp.isSupported()`, or in
+   * a function gated on `dotprod-arm`.
+   */
+  static dotProductI8(addend: i32x4, left: i8x16, right: i8x16): i32x4 {
+    return velt_arch_dp_dot_product_i8(addend, left, right);
+  }
 }
+
+declare function velt_arch_dp_dot_product_u8(addend: u32x4, left: u8x16, right: u8x16): u32x4;
+declare function velt_arch_dp_dot_product_i8(addend: i32x4, left: i8x16, right: i8x16): i32x4;

@@ -113,7 +113,7 @@ impl Ctx<'_> {
                 };
                 tys.into_iter().map(|f| self.subst(f, &args)).collect()
             }
-            k => crate::types::children(&k),
+            k => crate::types::contents(&k),
         };
         parts
             .into_iter()
