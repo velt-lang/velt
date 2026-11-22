@@ -593,12 +593,9 @@ fn a_module_demanded_while_another_is_added_checks_as_up_front() {
     );
     let text = std.join("lang/hooks/number_text.velt");
     let src = std::fs::read_to_string(&text).unwrap();
-    let import = "import { trunc } from \"velt/lang/intrinsics\";";
+    // The probe's `hookCall` needs the module to import it.
+    let import = "import { hookCall, trunc } from \"velt/lang/intrinsics\";";
     assert!(src.contains(import), "number_text.velt's imports changed");
-    let src = src.replace(
-        import,
-        "import { hookCall, trunc } from \"velt/lang/intrinsics\";",
-    );
     std::fs::write(
         &text,
         format!("{src}\nlet probe: string = hookCall(\"float_text\", 1.5);\n"),

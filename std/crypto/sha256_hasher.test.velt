@@ -1,0 +1,71 @@
+// velt/crypto (tests): `Sha256` (sha256_hasher.velt) gives `sha256`'s digest of the whole message
+// however it is cut into pieces, for every length up to three blocks and a long one, including
+// pieces that end inside, at and past a block's end, digests asked for along the way (which
+// must not disturb the hashing), empty pieces and pieces given as a range of a larger array.
+// Run in debug (the portable rounds) and in release (the CPU's SHA instructions where it has
+// them) by `velt test`.
+import { hexEncode } from "velt/encoding/hex";
+import { describe, expect, it } from "velt/test";
+import { sha256 } from "velt/crypto/sha256";
+import { Sha256 } from "velt/crypto/sha256_hasher";
+
+function message(n: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(((i * 131 + 7) & 0xff) as u8);
+  }
+  return out;
+}
+
+describe("Sha256", () => {
+  it("hashes a message given whole, for each length up to three blocks", () => {
+    for (let n: usize = 0; n <= 192; n++) {
+      const m = message(n);
+      const s = new Sha256();
+      s.update(m);
+      expect(`${n} ${hexEncode(s.digest())}`).toBe(`${n} ${hexEncode(sha256(m))}`);
+    }
+  });
+
+  it("gives the same digest however the message is cut", () => {
+    const m = message(300);
+    const want = hexEncode(sha256(m));
+    for (const step of [1, 3, 31, 55, 56, 63, 64, 65, 100, 129] as usize[]) {
+      const s = new Sha256();
+      for (let at: usize = 0; at < m.length; at += step) {
+        const end = at + step < m.length ? at + step : m.length;
+        s.update(m, at, end);
+      }
+      expect(`${step} ${hexEncode(s.digest())}`).toBe(`${step} ${want}`);
+    }
+  });
+
+  it("goes on after a digest, which is the digest of what came so far", () => {
+    const m = message(1000);
+    const s = new Sha256();
+    for (let at: usize = 0; at < m.length; at += 37) {
+      const end = at + 37 < m.length ? at + 37 : m.length;
+      s.update(m, at, end);
+      s.update([]);
+      expect(`${end} ${hexEncode(s.digest())}`).toBe(
+        `${end} ${hexEncode(sha256(m.slice(0, end as i64)))}`,
+      );
+    }
+  });
+
+  it("hashes a long message given in large pieces", () => {
+    const m = message(70000);
+    const s = new Sha256();
+    s.update(m, 0, 1);
+    s.update(m, 1, 40001);
+    s.update(m, 40001, 70000);
+    expect(hexEncode(s.digest())).toBe(hexEncode(sha256(m)));
+  });
+
+  it("ignores a range that is not inside the array", () => {
+    const s = new Sha256();
+    s.update([1, 2, 3], 2, 1);
+    s.update([1, 2, 3], 0, 4);
+    expect(hexEncode(s.digest())).toBe(hexEncode(sha256([])));
+  });
+});
