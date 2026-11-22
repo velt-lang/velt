@@ -246,8 +246,5 @@ fn binary_rows_stand_for_the_same_json() {
     w.bytes(&[]);
     w.text("é".as_bytes());
     w.end_row();
-    assert_eq!(
-        crate::rows::to_json(&b.finish()).unwrap(),
-        w.into_array()
-    );
+    assert_eq!(crate::rows::to_json(&b.finish()).unwrap(), w.into_array());
 }
