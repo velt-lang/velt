@@ -54,16 +54,20 @@ pub struct Summaries {
     /// whether code outside a function does ([`app_reads_shared`]).
     pub(crate) shared_readers: rustc_hash::FxHashSet<crate::hir::DefId>,
     pub(crate) shared_read_outside: bool,
-    /// The unit's functions whose modes its inference raised, with the raised modes: the unit
-    /// itself holds their declared modes, for the app's bodies (`modes`).
-    pub(crate) raised_modes: Vec<modes::Modes>,
+    /// The declared modes of the unit's functions and interface slots whose modes its inference
+    /// raised, sorted: the unit itself holds the raised ones; the app's bodies read these
+    /// (`modes`).
+    pub(crate) declared_modes: Vec<modes::Modes>,
+    /// The app's bodies are being checked: they see `declared_modes` (`modes`). False in a saved
+    /// unit.
+    pub(crate) declared_now: bool,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
-        raised_modes,
+        declared_modes, declared_now,
     }
 }
 
@@ -109,6 +113,8 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         #[cfg(test)]
         codec::hook::std_unit(cx);
     }
+    // The app's bodies see std's modes as declared, as in a whole-program check (`modes`).
+    cx.unit_sums.declared_now = cx.units_stage == Stage::App;
     crate::timings::pass("units: app", || {
         crate::script_tdz::check(cx);
         let from = crate::collect::collect_app(cx, &app);
@@ -118,9 +124,7 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         crate::body::check_added(cx, from);
         crate::body::finish_bodies(cx, from.defs);
     });
-    if cx.units_stage == Stage::App {
-        modes::restore(cx);
-    }
+    cx.unit_sums.declared_now = false;
     if cx.units_stage == Stage::Both {
         cx.thaw_defs();
     }
@@ -141,8 +145,8 @@ pub(crate) fn finish_std(cx: &mut Ctx) {
     // Whether std's code read a `shared` is the program's question: its std code, not all of
     // std's (`app_reads_shared`).
     cx.frozen_reads = false;
-    // The app's bodies see std's modes as declared, as in a whole-program check (`modes`).
-    modes::keep_raised(cx);
+    // The declared modes of what std's inference raised, for the app's bodies (`modes`).
+    modes::keep_declared(cx);
     codec::unit::clear_memos(cx);
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;

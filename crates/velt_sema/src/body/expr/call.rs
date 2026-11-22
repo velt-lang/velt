@@ -235,6 +235,8 @@ impl FnCx<'_, '_> {
             let span = self.cx.fn_info(d).name_span;
             c.ret = self.generator_call_ret(d, c.ret, span);
         }
+        // A check by units: std's as declared while the app's bodies are checked (`units::modes`).
+        self.cx.as_declared(d, &mut c.params);
         c
     }
 

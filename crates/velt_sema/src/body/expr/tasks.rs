@@ -420,7 +420,11 @@ impl FnCx<'_, '_> {
         if !(f.is_async || f.is_generator) || f.kind == FnKind::Extern {
             return;
         }
-        let modes: Vec<PassMode> = f.params.iter().map(|p| p.mode).collect();
+        // A check by units: std's as declared while the app's bodies are checked.
+        let modes: Vec<PassMode> = match self.cx.declared_params(def) {
+            Some(ms) => ms.to_vec(),
+            None => f.params.iter().map(|p| p.mode).collect(),
+        };
         for (a, m) in args.iter().zip(modes) {
             let mut place = a;
             loop {

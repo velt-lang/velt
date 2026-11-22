@@ -544,9 +544,12 @@ impl FnCx<'_, '_> {
                 (Slot::GenericCall(_), None) => unreachable!("ICE: a generic slot is a method's"),
                 (Slot::SetValue(j), m) => {
                     let ty = field_tys[j as usize].1;
-                    let borrowed = m
-                        .and_then(|m| m.params.first())
-                        .is_some_and(|p| p.mode == PassMode::Borrow);
+                    // A check by units: std's slot as declared while the app's bodies are
+                    // checked (`units::modes`).
+                    let declared = (self.cx.declared_slot(iface, slot as u32))
+                        .and_then(|(_, ps)| ps.first().copied());
+                    let written = m.and_then(|m| m.params.first()).map(|p| p.mode);
+                    let borrowed = declared.or(written) == Some(PassMode::Borrow);
                     let setter = crate::collect::getters::field_setter_taking;
                     setter(self.cx, d, self_ty, j as usize, ty, borrowed)
                 }

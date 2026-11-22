@@ -39,12 +39,16 @@ impl FnCx<'_, '_> {
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, (&c.defaults, &c.params), span);
-        let this = self
+        let mut this = self
             .cx
             .fn_info(d)
             .this
             .clone()
             .expect("ICE: this parameter");
+        // A check by units: std's as declared while the app's bodies are checked.
+        if let Some(m) = self.cx.declared_this(d) {
+            this.mode = m;
+        }
         // A generic function infers its type arguments from the receiver too
         // (`function at<T>(this: T[], i: number): T`): it is checked as the first argument.
         if let (Some(t), false) = (this_arg, c.slot_names.is_empty()) {
