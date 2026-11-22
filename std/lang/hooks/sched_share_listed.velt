@@ -99,6 +99,40 @@ export function list(task: usize, n: usize): void {
 }
 
 /**
+ * `list` once a holder of the promise of hub `h` is dropped and another role keeps the hub
+ * (sched_share_drop.velt `dropped`): the hand-over of a holder took the node off the list
+ * (`handedOver`), and that holder's proxy, or a copy of it, may be what goes now (#3476). On the
+ * node's task's thread the node is listed again here. A holder kept in module state is dropped
+ * by another task, under the module lock (sched_node_lost.velt `heldApart`): the node's task is
+ * woken there instead, and its next poll lists the node as its root waits again (`list`, from
+ * sched_share.velt `pollHolder`), then finds it parked for ever.
+ */
+@inline("always")
+export function relist(h: usize): void {
+  const n = m.ld(h + sh.H_NODE);
+  if ((m.load32(n + nd.N_FLAGS) & (sh.HUB_HERE | lt.LISTED)) !== sh.HUB_HERE) {
+    return;
+  }
+  if (m.load(n + nd.N_REFS) !== 2) {
+    return;
+  }
+  relistSlow(n);
+}
+
+@noInline
+function relistSlow(n: usize): void {
+  const task = m.ld(n + nd.N_TASK);
+  const e = t.here();
+  if (e !== 0 && m.ld(e + t.E_CURRENT) === task) {
+    list(task, n);
+  } else if (lost.heldApart(task)) {
+    // A reference of its own while the task is woken, given back with the wake.
+    m.inc(task + t.T_REFS);
+    lt.releaseAway(task);
+  }
+}
+
+/**
  * Listed node `n` of task `task` leaves the list (sched_task_lost.velt `unlist`, its flags `fl`
  * from before): while its hub is there, its task's own wakers in it take their references back.
  */
