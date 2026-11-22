@@ -67,9 +67,9 @@ export function unlockSync(fd: number, options?: LockOptions) {
  * being waited for keeps the program running, as a pending read does (`process.exit()` ends
  * it all the same).
  *
- * With a `signal`, an abort ends the wait: the promise rejects with the signal's reason (an
- * `AbortError` for `abort()`, a `TimeoutError` for `AbortSignal.timeout(ms)`, which makes a time
- * limit) and no lock is taken. A signal aborted already rejects before the first try. An abort
+ * With a `signal`, an abort ends the wait: the promise rejects as `signal.throwIfAborted()`
+ * throws (an `AbortError`, whose message is the reason given to `abort(reason)`, or a
+ * `TimeoutError` for `AbortSignal.timeout(ms)`, which makes a time limit) and no lock is taken. A signal aborted already rejects before the first try. An abort
  * once the lock is taken changes nothing: the lock is held, and given back as any other.
  */
 export async function lock(fd: number, options?: LockOptions): Promise<void> {
