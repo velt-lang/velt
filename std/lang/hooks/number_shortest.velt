@@ -1,0 +1,23 @@
+// velt/lang/hooks (internal): `String(x)` of any float, all of it by std's printing
+// (velt/lang/number/format: the shortest digits, in Velt), for the code that turns a float into
+// text without std's float printing loaded: std's own code, and the compiler's hooks for a float
+// in a template, `String()` or `console.log` (velt/lang/hooks/number_text, number_write). They
+// reach it by role (`hookCall`), and it is prebuilt (velt_common `std_hooks/prebuilt.rs`): where
+// the build cache holds its object, a program calls that and checks none of the float printing.
+
+import { noInline } from "velt/lang/intrinsics";
+import { f64Text } from "velt/lang/number/format";
+import { i64Text, isWhole } from "velt/lang/number/integer";
+
+/**
+ * `String(x)`: `NaN`, `Infinity`, `0` for both zeros, a whole number below 10^21 in its digits,
+ * anything else in its shortest digits with ECMAScript's layout (`0.1`, `1.5e-7`, `1e+21`).
+ */
+@noInline
+export function shortestText(x: f64): string {
+  if (isWhole(x)) {
+    // `-0` too: its text is `0`.
+    return i64Text(x as i64);
+  }
+  return f64Text(x);
+}

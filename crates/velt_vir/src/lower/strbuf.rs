@@ -473,7 +473,8 @@ impl FnLower<'_, '_> {
     /// Append the float `v` of type `ty` the way `console.log` prints it (`-0` is `-0`).
     pub(super) fn push_inspect_float(&mut self, buf: &Operand, v: Operand, ty: TyId) {
         let v = self.float_as_f64(v, ty);
-        self.call_rt(Rt::StrbufPushInspectF64, vec![buf.clone(), v], None);
+        let (b, v) = (ty::Str::arg(buf.clone()), ty::F64::arg(v));
+        _ = hooks::number_inspect_push(self, Construct::TextFloat, b, v).emit(self);
     }
 
     /// Append an int/float/bool (or C-like enum discriminant) `v` of type `ty` in JS format, for
@@ -487,20 +488,19 @@ impl FnLower<'_, '_> {
         let from = self.cx.ty(ty);
         let b = buf.clone();
         match self.cx.kind(ty) {
-            // std's number printing (velt_common `std_hooks.rs`): its own float printing where
-            // the program loaded it, then `number_push`; the runtime where neither is checked
-            // (the float hooks are checked on demand).
+            // std's number printing (velt_common `std_hooks.rs`): its float printing inline where
+            // the program loaded it (checked on demand), else `number_push`.
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, ty);
                 let args = || (ty::Str::arg(b.clone()), ty::F64::arg(v.clone()));
                 let (b1, v1) = args();
-                let call = hooks::float_push(self, b1, v1).or_else(|| {
-                    let (b2, v2) = args();
-                    hooks::number_push(self, b2, v2)
-                });
-                match call {
-                    Some(c) => _ = c.emit(self),
-                    None => self.call_rt(Rt::StrbufPushF64, vec![b, v], None),
+                match hooks::float_push(self, b1, v1) {
+                    Some(call) => _ = call.emit(self),
+                    None => {
+                        let (b2, v2) = args();
+                        let f = Construct::TextFloat;
+                        _ = hooks::number_push(self, f, b2, v2).emit(self);
+                    }
                 }
             }
             TyKind::Bool => self.call_rt(Rt::StrbufPushBool, vec![b, v], None),
