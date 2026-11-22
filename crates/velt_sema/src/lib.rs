@@ -69,6 +69,7 @@ mod ffi_ptr;
 mod finalize;
 mod flow;
 mod fn_types;
+mod freezable;
 mod fresh_returns;
 pub mod generated;
 mod generating;
@@ -537,6 +538,7 @@ fn check_timed(
                 rewrite_diags(&mut cx);
             }
         }
+        freezable::assume(&mut cx, &assumed.borrow().frozen);
         if let (true, Some(o), units::Stage::Std) = (fresh, &order, stage.get()) {
             units::remap_module_facts(&mut cx, &|m| o.in_std(m));
         }

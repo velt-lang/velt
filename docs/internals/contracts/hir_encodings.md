@@ -737,8 +737,8 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   codec tag 220; value borrowed and evaluated): a `bool`, whether `value` is reached by no other
   reference, so a change in place shows nowhere else (copy-on-write: velt/encoding/json's tree).
   By kind: a counted object, array or box compares its whole count word with 1, so any flag in
-  it (an immortal count, a lock-set object's `LOCAL`/`STORED`, the cycle collector's
-  `BUFFERED` on a value it may trace) makes it `false`; a reference type the program never counts
+  it (an immortal count, a lock-set object's `LOCAL`/`STORED`, a frozen object's `RC_FROZEN`,
+  the cycle collector's `BUFFERED` on a value it may trace) makes it `false`; a reference type the program never counts
   is `true` (each value has one owner); a lock-set type (readers of an `RwLock` share its counts)
   is `false` without reading a count; any other kind (`shared<T>`, strings, functions,
   interface values, plain values) is `false`. A borrow (a parameter, a captured variable) is the
@@ -780,6 +780,22 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   type is shared as one counted object, others may be shared by copying their fields. A fact of
   the whole program, so it is a table of the program, not a flag on the definition: a
   definition's checked form doesn't depend on what other code does (#2943).
+- `Program::freezable` (additive, #2623): the object types (without type parameters) whose values
+  may be frozen at run time: a type `Object.freeze` is given a value of that the program writes,
+  or whose values reach `Object.isFrozen`, closed over the types sharing its storage (the same
+  canonical type or layout). Each is in `counted_objects`; it may be weak-capable, but is never
+  in a lock set (lowering makes an `RwLock` reaching one exclusive). Its counted objects carry `RC_FROZEN` (rt_abi.md "Counted objects") once frozen;
+  its release compares the count without the bit, and a uniqueness test sees a frozen object as
+  shared. Sema tests the mark before each write of such a type's field (an assignment, compound
+  or logical assignment, `++`/`--`, and the writes `Object.assign`, `Object.defineProperty` and
+  destructuring make): `if (IsFrozen(o)) frozenWriteError("f")` (`frozenDefineError` for a
+  definition), std/lang/hooks/frozen.velt, an ordinary throw of Node's `TypeError`.
+  `Intrinsic::Freeze(value)` (additive, units codec tag 221; `(T) -> T`, the value moved):
+  `Object.freeze(value)` of a freezable type's value, the value with its mark set.
+  `Intrinsic::IsFrozen(value)` (additive, tag 222; `(borrow T) -> bool`, `T` an object type):
+  the mark of a freezable type's value; `false` for another object type, none of whose values
+  can be frozen. Sema answers `Object.isFrozen` of other values itself (a primitive is frozen, a
+  value of a frozen literal's readonly type is frozen, other values are not).
 - `FieldDef::private` (additive): the field is declared `private` (in the type or the base class
   that declares it; interface fields never are). `console.log` / `inspect` leave out private
   fields of zero size (std's `runtime` markers); other `private` fields show, as in Node; `#x`

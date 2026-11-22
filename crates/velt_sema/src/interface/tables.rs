@@ -18,6 +18,7 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
         union_shapes,           // "type tables"
         counted_objects,        // "counted types"
         assigned_objects,       // "declarations" (a flag sema infers from every body)
+        freezable,              // "declarations" (with `assigned_objects`)
         changes_held: _,        // Per function (`Hashing::function`).
         glue_bodies: _,         // Bodies, which summaries leave to the per-function hashes.
         null_proto_records,     // "flags"
@@ -58,7 +59,8 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
     // Which object types have a field assigned: a flag of each declaration until it became a table
     // of the program (#2943), and a change of it still changes the declarations.
     let assigned = h.sorted_names(assigned_objects.iter().copied());
-    let declarations = finish((unordered(declarations), assigned));
+    let freezable = h.sorted_names(freezable.iter().copied());
+    let declarations = finish((unordered(declarations), assigned, freezable));
     // An implementation stands for itself by its content: its index moves.
     let imp = |h: &mut Hashing, i: u32| -> u64 {
         let Some(hir::ImplDef {

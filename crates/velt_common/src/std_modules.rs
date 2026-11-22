@@ -117,6 +117,7 @@ table! {
     lang_hooks_process_statics => "lang/hooks/process_statics",
     lang_hooks_program_thread => "lang/hooks/program_thread",
     lang_hooks_cpu => "lang/hooks/cpu",
+    lang_hooks_frozen => "lang/hooks/frozen",
     lang_hooks_proxy => "lang/hooks/proxy",
     lang_hooks_record => "lang/hooks/record",
     lang_hooks_sched => "lang/hooks/sched",

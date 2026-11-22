@@ -12,14 +12,12 @@ pub enum Intrinsic {
     PrintErr,
     /// 1 arg of int/float/bool/Str type → owned `Str` (JS formatting for floats: `1`, `1.5`, `NaN`).
     ToString,
-    /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and
-    /// not caught writes after `Uncaught ` and before the location: Node's header for an
-    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt/test`
-    /// reports a failed test with it.
+    /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and not caught writes
+    /// after `Uncaught ` and before the location: Node's header for an `Error` (`ParseError: bad`),
+    /// any other value as `console.log` prints it. `velt/test` reports a failed test with it.
     ErrorText,
-    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw`
-    /// on this thread, as an uncaught report ends, or `""` when not known (read it first thing
-    /// in the `catch`).
+    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw` on this thread,
+    /// as an uncaught report ends, or `""` when not known (read it first thing in the `catch`).
     ThrowLoc,
     /// `(x: borrow T) -> string` (`inspect`): `x` as Node's `util.inspect` writes
     /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
@@ -172,6 +170,14 @@ pub enum Intrinsic {
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
     FieldPresent,
+    /// `(v: T) -> T`, `T` an object type in `Program::freezable`: `Object.freeze(v)` of a value
+    /// made before, `v` itself with its frozen mark set (rt_abi.md "Counted objects",
+    /// `RC_FROZEN`), so that the checked writes of its type throw (#2623)
+    Freeze,
+    /// `(v: borrow T) -> bool`: JS `Object.isFrozen(v)`: a value of a type in `Program::freezable`
+    /// reads its frozen mark; a primitive (`T` not an object) is frozen; a value of a type made by
+    /// `Object.freeze` of a literal (readonly fields) is frozen; any other value is not (#2623)
+    IsFrozen,
     /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
@@ -233,10 +239,9 @@ pub enum Intrinsic {
     /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
     /// (hir_encodings.md "Type predicates on a type parameter").
     MayHoldPrimitive,
-    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type
-    /// `T` is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The
-    /// condition of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type
-    /// parameter").
+    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type `T` is
+    /// instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The condition of
+    /// the `if` that writes a `T` value's text (hir_encodings.md "Text of a type parameter").
     HoldsDynamic,
     /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a
     /// class: the condition of the text of a `T` value in a string `+`, which asks a class
@@ -254,11 +259,10 @@ pub enum Intrinsic {
     FnLength,
     /// `f.name` of a function value: a `string`, as [`Intrinsic::FnLength`]. Additive.
     FnName,
-    /// Inside a member of a recursive closure group (sema `nested_closures`): the closure
-    /// value of member `def` of the same group, made from the running closure's own
-    /// environment (`{ code of def, env }`, sharing it). The members capture the same
-    /// variables in the same order, so their environments have one layout. No args; the
-    /// result is owned.
+    /// Inside a member of a recursive closure group (sema `nested_closures`): the closure value of
+    /// member `def` of the same group, made from the running closure's own environment (`{ code of
+    /// def, env }`, sharing it). The members capture the same variables in the same order, so their
+    /// environments have one layout. No args; the result is owned.
     ClosureSibling(super::DefId),
     /// In the entry `main` only: evaluate the initializers of module state slots `from..to`
     /// (`ModuleState::deferred` on) into their slots, in order, as the state's initializer does
@@ -394,9 +398,8 @@ pub enum Intrinsic {
     /// at `address` in memory, unchecked (velt/ffi's raw reads of C memory, which are unsafe
     /// functions). Additive.
     AddressLoad,
-    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema
-    /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
-    /// Additive.
+    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema checks
+    /// it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address"). Additive.
     AddressStore,
     /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
     /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
@@ -434,10 +437,9 @@ pub enum Intrinsic {
     FutPoll,
     /// std only: `futDrop(f: usize)`: `f->drop(f)`, through offset 8 of the header. Additive.
     FutDrop,
-    /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds
-    /// for an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index
-    /// of its `CExport` there. For a C API that takes a function pointer (`pthread_create`).
-    /// Additive.
+    /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds for
+    /// an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index of its
+    /// `CExport` there. For a C API that takes a function pointer (`pthread_create`). Additive.
     ExportedAddress,
     /// std only: `catchUnwind(f: () => void) -> usize`: call `f` (borrowed) and return 0 when it
     /// returns, or the address of the Velt panic's exception object when a Velt panic unwound
@@ -558,10 +560,9 @@ pub enum Intrinsic {
     /// the generator: a suspended body runs its `finally` blocks and disposes its `using`
     /// values as if the `yield` were a `return`; then it is done.
     GeneratorReturn,
-    /// std only: `generatorResumeWith<T, E, N>(g: Generator<T, E, N> (modified),
-    /// value: N (borrowed)): bool`, throws `E` — `next(value)`: like `GeneratorResume`, and the
-    /// paused `yield` evaluates to (a copy of) `value`; a generator that has not started
-    /// ignores it.
+    /// std only: `generatorResumeWith<T, E, N>(g: Generator<T, E, N> (modified), value: N
+    /// (borrowed)): bool`, throws `E` — `next(value)`: like `GeneratorResume`, and the paused
+    /// `yield` evaluates to (a copy of) `value`; a generator that has not started ignores it.
     GeneratorResumeWith,
     /// std only: `generatorThrow<T, E, N>(g: Generator<T, E, N> (modified), error:
     /// any (borrowed)): u32`, throws `E` — `throw(error)`: resume the body with `error` thrown
@@ -573,9 +574,8 @@ pub enum Intrinsic {
     /// Compiler-internal: `(g: Generator<T, E, N> (modified)): bool`, throws `E` — one step of
     /// `yield* g` in a generator that takes `next(value)` or may be thrown into (after a first
     /// `GeneratorResume(g)` returned true): yield `g`'s value; then resume `g` the way this
-    /// generator is resumed (`next(value)` passes the value on, `throw(e)` throws `e` into `g`
-    /// and, if `g` did not catch it, at the `yield*`, closing closes `g`). True when `g` yielded
-    /// again.
+    /// generator is resumed (`next(value)` passes the value on, `throw(e)` throws `e` into `g` and,
+    /// if `g` did not catch it, at the `yield*`, closing closes `g`). True when `g` yielded again.
     YieldDelegate,
     /// Compiler-internal: `(call: owned) -> Generator<T, E>`, the initializer of the hidden
     /// local of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps

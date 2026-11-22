@@ -180,6 +180,14 @@ pub struct Program {
     /// field by field. A fact of the whole program, kept out of the definitions so a definition's
     /// checked form doesn't depend on what else the program does (#2943).
     pub assigned_objects: HashSet<DefId>,
+    /// The object types (`Def::Adt`) whose values may be frozen at run time (#2623): a type
+    /// `Object.freeze` is given a value of that the program writes, or whose values reach
+    /// `Object.isFrozen`, and the types sharing its storage (`same_layout`). Each is a counted
+    /// object (hir_encodings.md "Sharing") with a frozen mark in its count word (rt_abi.md
+    /// "Counted objects", `RC_FROZEN`), set by `Intrinsic::Freeze` and read by
+    /// `Intrinsic::IsFrozen`; sema checks every write of one against the mark. Never weak-capable
+    /// or lock-set. A fact of the whole program, kept out of the definitions (#2943).
+    pub freezable: HashSet<DefId>,
     /// The closures that change what they captured, and the classes' `clone()`s that may change
     /// their object (all but the standard library's that don't). Made when the program puts a
     /// function in `shared(...)` (`crate::ownership::local_async::record`): each call of one runs

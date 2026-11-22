@@ -137,6 +137,7 @@ impl FnCx<'_, '_> {
                     name: prop.name.clone(),
                     span: prop.span,
                     dynamic: false,
+                    checkable: false,
                 });
         }
         if let Some(f) = self.iface_field_of(obj.ty, &prop.name) {

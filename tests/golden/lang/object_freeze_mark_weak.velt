@@ -1,0 +1,28 @@
+// A frozen object as a `WeakMap` key: the weak release reads its count without the frozen mark,
+// and the object is freed when its last reference goes (#2623).
+interface Key {
+  name: string;
+}
+
+const seen = new WeakMap<Key, number>();
+function track(k: Key, n: number): void {
+  seen.set(k, n);
+}
+
+const k: Key = { name: "k" };
+k.name = "k1";
+Object.freeze(k);
+track(k, 1);
+console.log(seen.get(k), seen.has(k), Object.isFrozen(k));
+try {
+  k.name = "x";
+} catch (e) {
+  console.log((e as Error).message);
+}
+for (let i = 0; i < 3; i++) {
+  const t: Key = { name: `t${i}` };
+  Object.freeze(t);
+  track(t, i);
+  console.log(seen.get(t), Object.isFrozen(t));
+}
+console.log(k.name);

@@ -224,7 +224,9 @@ impl FnCx<'_, '_> {
             },
             span,
         );
+        let defining = std::mem::replace(&mut self.defining, true);
         let h = self.expr_stmt(&assign);
+        self.defining = defining;
         lets.push(hir::Stmt {
             span,
             kind: hir::StmtKind::Expr(h),

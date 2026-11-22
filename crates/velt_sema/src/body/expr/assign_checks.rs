@@ -127,6 +127,7 @@ impl FnCx<'_, '_> {
                 name: prop.name.clone(),
                 span: prop.span,
                 dynamic: false,
+                checkable: true,
             });
     }
 
@@ -202,20 +203,21 @@ impl FnCx<'_, '_> {
         }
         // `b[i] ||= v` on an integer array: `if (!b[i]) b[i] = v`, whose store converts an `any`
         // `v` (element_store.rs).
+        // A freezable type's field (`frozen_write.rs`): the same, so that only a write tests the
+        // frozen mark, inside the branch.
         if let Some(AssignTarget::Place(p)) = &checked {
-            if self.logical_element_store(p) {
+            let frozen = self.take_frozen_guard(target.span);
+            if frozen || self.logical_element_store(p) {
                 let cond = self.decides(op, target.clone(), span);
+                let n = self.call_temps.len();
                 let write = self.assign(None, target, value, span);
+                let mut stmts = match frozen {
+                    true => self.call_temps.split_off(n),
+                    false => vec![],
+                };
+                stmts.push(stmt(hir::StmtKind::Expr(write), span));
                 let unit = self.cx.ty.unit;
-                let then = self.mk(
-                    H::Block(block(
-                        vec![stmt(hir::StmtKind::Expr(write), span)],
-                        None,
-                        span,
-                    )),
-                    unit,
-                    span,
-                );
+                let then = self.mk(H::Block(block(stmts, None, span)), unit, span);
                 let els = self.mk(H::Block(block(vec![], None, span)), unit, span);
                 let kind = H::If {
                     cond: Box::new(cond),

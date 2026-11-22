@@ -227,16 +227,18 @@ pub(crate) fn check_frozen_dynamic(cx: &mut Ctx, seen: &[(TyId, Span, Seen)], wr
 /// Frozen objects seen as a type whose fields can be written (`Copies::frozen`): an
 /// `Object.freeze` result where such a type is expected (`const d: Desc = Object.freeze({ ... })`),
 /// or `Object.freeze(x)` of a value made before. Node throws when a frozen object's field is
-/// written, and Velt has no mark on the object to tell at run time; so each is an error once the
-/// program assigns a field of that name on a value of either type, through an interface or a
-/// type parameter (which may be either), or through `any` when a value holding one becomes an
-/// `any`. `Object.assign` and `Object.defineProperty` onto it are such assignments.
+/// written. A field write `o.f = v` of an object type without type parameters makes the type
+/// freezable (`crate::freezable`): its objects keep a frozen mark the write tests. Any other
+/// write of a field of that name on a value of either type is an error: through an interface or
+/// a type parameter (which may be either), through `any` when a value holding one becomes an
+/// `any`, `Object.assign`, or a write of a generic object type's field.
 pub(crate) fn check_frozen(
     cx: &mut Ctx,
     frozen: &[Frozen],
     seen: &[(TyId, Span, Seen)],
     writes: &[Write],
 ) {
+    let mut found = vec![];
     for f in frozen {
         let names: Vec<String> = match cx.ty.kind(f.from).clone() {
             TyKind::Adt(d, _) => (cx.adt(d).into_iter())
@@ -244,8 +246,16 @@ pub(crate) fn check_frozen(
                 .collect(),
             _ => continue,
         };
+        // A value of an object type whose values reach `Object.isFrozen` keeps a mark
+        // (`crate::freezable`).
+        let freezable = cx.may_be_freezable(f.from) && cx.may_be_freezable(f.to);
+        let asked = (cx.objects.is_frozen_types.clone().into_iter())
+            .any(|t| related(cx, t, f.from) || related(cx, t, f.to));
+        if freezable && asked {
+            found.extend([f.from, f.to]);
+        }
         let mut dynamic: Option<bool> = None;
-        let hit = writes.iter().find(|w| {
+        let mut hits = writes.iter().filter(|w| {
             (w.name.is_empty() || names.contains(&w.name))
                 && w.ty
                     .is_none_or(|t| related(cx, t, f.from) || related(cx, t, f.to))
@@ -260,7 +270,24 @@ pub(crate) fn check_frozen(
                         })
                     }))
         });
-        let Some(w) = hit else { continue };
+        // Writes the next round tests against the mark make the type freezable; another write
+        // (through `any`, a type parameter, `Object.assign`, …) stays an error.
+        let mut checked = false;
+        let hit = hits.find(
+            |w| match freezable && w.checkable && w.ty.is_some() && !w.dynamic {
+                true => {
+                    checked = true;
+                    false
+                }
+                false => true,
+            },
+        );
+        let Some(w) = hit else {
+            if checked {
+                found.extend([f.from, f.to]);
+            }
+            continue;
+        };
         let what = match w.name.is_empty() {
             true => "a field whose name it knows only at run time".to_string(),
             false => format!("field `{}`", cx.shown_name(&w.name)),
@@ -271,15 +298,17 @@ pub(crate) fn check_frozen(
                 format!("`Object.freeze` of a `{shown}`, in a program that assigns {what}, is not supported yet"),
                 f.span,
             )
-            .with_note("Node throws a `TypeError` when a frozen object's field is written, and Velt can't tell at run time that a value is frozen: freeze an object literal, `Object.freeze({ ... })`, or use a `Readonly<T>` type"),
+            .with_note("Node throws a `TypeError` when a frozen object's field is written; Velt tests a frozen mark only on a write `o.f = v` of an object type without type parameters: freeze an object literal, `Object.freeze({ ... })`, or use a `Readonly<T>` type"),
             false => Diagnostic::error(
                 format!("an `Object.freeze` result where a `{shown}` is expected, in a program that assigns {what}, is not supported yet"),
                 f.span,
             )
-            .with_note("Node throws a `TypeError` when a frozen object's field is written, and Velt can't tell at run time that a value is frozen: pass it where a `Readonly<T>` is expected"),
+            .with_note("Node throws a `TypeError` when a frozen object's field is written; Velt tests a frozen mark only on a write `o.f = v` of an object type without type parameters: pass it where a `Readonly<T>` is expected"),
         };
         cx.error(d.with_label(w.span, "assigned here"));
     }
+    crate::freezable::close_over_views(cx, &found);
+    crate::freezable::finish(cx);
 }
 
 /// A spread or rest of a type a cast makes a view of another object: Node copies all the object's

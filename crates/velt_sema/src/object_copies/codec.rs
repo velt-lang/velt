@@ -12,7 +12,7 @@ crate::units::codec::structs! {
         from, to, fields, absent, span, source, fresh, in_order, generic, record,
     }
     Write {
-        ty, name, span, dynamic,
+        ty, name, span, dynamic, checkable,
     }
     Frozen {
         from, to, span, existing,
