@@ -241,14 +241,16 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// and these of `std/`: the SIMD programs, whose vectors are WebAssembly `v128` values there,
 /// the std code written with them, `random` (its seed is WASI's, through wasi-libc),
 /// `crypto`, `crypto_random_int` and `uuid` (the OS's random bytes are WASI's too,
-/// std/lang/random/os_wasi.velt), `clock_reads` (the clocks are WASI's too), `fs_mapped_file_portable` (a `MappedFile` is memory
-/// of its own there), and two ephemeron caches, whose trials call between
-/// std's weak core and the compiler's glue.
+/// std/lang/random/os_wasi.velt), `clock_reads` (the clocks are WASI's too),
+/// `fs_mapped_file_portable` and `fs_mapped_counted_portable` (a `MappedFile` is memory of its
+/// own there), and two ephemeron caches, whose trials call between std's weak core and the
+/// compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
     "crypto",
     "crypto_random_int",
+    "fs_mapped_counted_portable",
     "fs_mapped_file_getters",
     "fs_mapped_file_portable",
     "half_dot",

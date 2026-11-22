@@ -1,0 +1,29 @@
+// `MappedFile`'s counted methods give the same values on every target: arrays over the mapping
+// that keep it while they live, and copies on WebAssembly, which has no mapping (#3432): this
+// golden also runs under wasmtime (wasm_goldens.rs names it). They check their ranges as the
+// typed methods do.
+import * as fs from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+
+function main() {
+  const dir = platform() == "win32" ? `${tmpdir()}\\` : "";
+  const path = `${dir}velt-golden-mapped-counted-${process.pid}.tmp`;
+  fs.writeFileSync(path, "0123456789abcdef");
+  const m = fs.MappedFile.open(path);
+  const words = m.countedU32s(4, 2);
+  const halves = m.countedU16s(0, 2);
+  console.log(words[0], words[1], halves[1], m.countedI8s(15, 1)[0], m.countedF64s(8, 0).length);
+  try {
+    m.countedU32s(2, 1);
+  } catch (e) {
+    console.log((e as RangeError).message);
+  }
+  m[Symbol.dispose]();
+  // The arrays outlive the `MappedFile`.
+  console.log(words[1], halves[0]);
+  try {
+    fs.rmSync(path);
+  } catch (e) {
+    // Windows may refuse to remove a file that is mapped.
+  }
+}
