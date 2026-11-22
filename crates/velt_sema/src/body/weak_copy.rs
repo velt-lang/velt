@@ -180,9 +180,11 @@ pub(crate) fn weak_copy_error_as(
             format!("{it} cannot be passed to another task"),
             format!("{owner}, and values passed to a spawned task (or sent on a channel) are copied for it: {}", held.inside("the task")),
         ),
-        GenCopy::TaskFn(_) | GenCopy::Capture(_) | GenCopy::LockCapture(_) | GenCopy::LockFn(_) => {
-            capture_message(&held, what)
-        }
+        GenCopy::TaskFn(_)
+        | GenCopy::Capture(_)
+        | GenCopy::LockCapture(_)
+        | GenCopy::LockFn(_)
+        | GenCopy::SharedFn(_) => capture_message(&held, what),
         GenCopy::Shared => (
             format!("{it} cannot be shared between threads"),
             format!("{owner}, and a `shared(...)` value may be used by several tasks at once"),
@@ -207,7 +209,7 @@ pub(crate) fn weak_copy_error_as(
 }
 
 /// The message and note of a closure capturing what `held` names crossing as `what` (a
-/// capture's crossing: `TaskFn`, `Capture`, `LockCapture`, `LockFn`).
+/// capture's crossing: `TaskFn`, `Capture`, `LockCapture`, `LockFn`, `SharedFn`).
 fn capture_message(held: &Held, what: &GenCopy) -> (String, String) {
     let owner = held.owner();
     match what {
@@ -226,6 +228,10 @@ fn capture_message(held: &Held, what: &GenCopy) -> (String, String) {
         GenCopy::LockFn(name) => (
             format!("a function stored into the locked value cannot capture {}", held.named(name)),
             held.lock_fn_note(),
+        ),
+        GenCopy::SharedFn(name) => (
+            format!("a function in `shared(...)` or a lock cannot capture {}", held.named(name)),
+            format!("a `shared(...)` value and a `Mutex`'s or `RwLock`'s value may be used by several tasks at once, each on its own thread, and {owner}: {}", held.inside("the function")),
         ),
         _ => panic!("ICE: a capture message for a crossing that is not a capture's"),
     }

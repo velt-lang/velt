@@ -1,0 +1,2 @@
+a function in `shared(...)` or a lock cannot capture the weak collection `wm`
+a function in `shared(...)` or a lock cannot capture the weak collection `ws`

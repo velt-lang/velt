@@ -1,2 +1,9 @@
-the function passed to `with` cannot use the `weak` variable `w`
+a function in `shared(...)` or a lock cannot capture the `weak` variable `inShared`
+a function in `shared(...)` or a lock cannot capture the `weak` variable `locked`
+a function returned from `with` cannot capture the `weak` variable `v`
+a function stored into the locked value cannot capture the `weak` variable `v`
+a function that uses the `weak` variable `sent` cannot be passed to another task
+a function that uses the `weak` variable `v` cannot be passed to another task
 an async closure cannot capture the `weak` variable `w`
+the function passed to `with` cannot use the `weak` variable `v`
+the function passed to `with` cannot use the `weak` variable `w`
