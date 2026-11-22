@@ -1,0 +1,52 @@
+// velt/lang/hooks (internal): a knob for tests only, with the block counters on (#3487):
+// `VELT_SCHED_WAKE_PAUSE=<n>` gives the core away `n` times right after a wake from a thread that
+// is not polling the task (`afterWake`), so the woken task runs, and parks, inside the window a
+// busy machine opens there now and then (sched_wake.velt `wakeGiving`).
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import { processEnv } from "./process";
+import * as m from "./sched_mem";
+import * as wk from "./sched_wake";
+
+/** The turns to give away after such a wake; 0: none. */
+const PAUSE = new Atomic<u64>(0);
+
+/** Reads `VELT_SCHED_WAKE_PAUSE` (sched_wake.velt `countWakes`, as the counters start). */
+export function read(): void {
+  PAUSE.store(asked(), "relaxed");
+}
+
+/** `VELT_SCHED_WAKE_PAUSE`, at most 100000; 0 when unset or not a number. */
+function asked(): u64 {
+  const v = processEnv("VELT_SCHED_WAKE_PAUSE");
+  if (v === undefined) {
+    return 0;
+  }
+  let n: u64 = 0;
+  for (const c of v.trim()) {
+    if (c < "0" || c > "9") {
+      return 0;
+    }
+    n = n * 10 + ((c.charCodeAt(0) - 48) as u64);
+    if (n > 100000) {
+      return 0;
+    }
+  }
+  return n;
+}
+
+/** A wake from a thread not the task's home is done (sched_wake_away.velt `wakeAway`). */
+@inline("always")
+export function afterWake(): void {
+  if (wk.counting()) {
+    pause();
+  }
+}
+
+@noInline
+function pause(): void {
+  const n = PAUSE.load("relaxed");
+  for (let i: u64 = 0; i < n; i++) {
+    m.yieldCore();
+  }
+}

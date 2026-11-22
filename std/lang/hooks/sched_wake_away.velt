@@ -1,0 +1,87 @@
+// velt/lang/hooks (internal): a wake by value with the locks on, several workers (#3487;
+// sched_wake.velt `wakeGiving`, sched_node_wake.velt `wakeGiving`). The woken task may run on
+// another thread before this one gives the waker's reference back, and a park there would count
+// that reference. So the reference goes with the wake: the wake that moves the task from `IDLE`
+// to `SCHEDULED` marks it `CARRY`, and the poll that takes it gives the reference back at its
+// start, before any park counts (sched_run.velt `run`), whichever queue, inbox or worker it comes
+// through. A wake that finds the task in any other state gives the reference back first and wakes
+// it after, under the join slot's lock, as sched_task_lost.velt `releaseAway` does; on the thread
+// polling the task, in the old order.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as tk from "./sched_task";
+import * as wk from "./sched_wake";
+import * as wp from "./sched_wake_pause";
+
+/**
+ * A bit of a task's state word, with `SCHEDULED` only: the wake that queued it handed its
+ * reference to the task's next poll (`wakeAway`). While a task is `SCHEDULED` nobody but its next
+ * poll writes the state (a wake that finds it so takes `locked`), so the bit stays until then.
+ */
+export const CARRY: u32 = 8;
+
+/**
+ * Wakes task `k` and gives back the caller's reference to it, from a thread that is not `k`'s
+ * home worker, with the locks on (`lk.mode()` is `LK_ON`).
+ */
+@noInline
+export function wakeAway(k: usize): void {
+  let s = m.load32(k + tk.T_STATE);
+  while (s === tk.IDLE) {
+    const was = m.cas32(k + tk.T_STATE, tk.IDLE, tk.SCHEDULED | CARRY);
+    if (was === tk.IDLE) {
+      wk.schedule(k);
+      wp.afterWake();
+      return;
+    }
+    s = was;
+  }
+  if (s === tk.DONE) {
+    // It ended: no park to count the reference, and nothing to wake.
+    wk.release(k);
+    return;
+  }
+  locked(k);
+}
+
+/**
+ * The poll of task `k` starts with its state `s` (sched_run.velt `run`): a reference a wake
+ * handed it (`CARRY`) goes back now, before any park counts. The executor's keeps the task.
+ */
+@inline("always")
+export function polled(k: usize, s: u32): void {
+  if ((s & CARRY) !== 0) {
+    m.dec(k + tk.T_REFS);
+  }
+}
+
+/**
+ * `wakeAway` for a task that is running, notified, yielded or already scheduled: the current or
+ * queued poll may count the reference before a release after the wake, so it goes back first,
+ * then the wake, under the join slot's lock (a task is not freed while it is held,
+ * sched_wake.velt `releaseHere`); the last reference frees the task, the lock given back first.
+ */
+@noInline
+function locked(k: usize): void {
+  const e = tk.here();
+  if (e !== 0 && m.ld(e + tk.E_CURRENT) === k) {
+    // Polled on this thread: its park comes after this returns, so the old order holds.
+    wk.wake(k);
+    wk.release(k);
+    return;
+  }
+  let s = m.load32(k + tk.T_JOIN_STATE);
+  while ((s & tk.J_LOCK) !== 0 || m.cas32(k + tk.T_JOIN_STATE, s, s | tk.J_LOCK) !== s) {
+    s = m.load32(k + tk.T_JOIN_STATE);
+  }
+  const last = m.dec(k + tk.T_REFS) === 1;
+  if (!last) {
+    wk.wake(k);
+    wp.afterWake();
+  }
+  m.store32(k + tk.T_JOIN_STATE, s);
+  if (last) {
+    wk.freed(k);
+  }
+}
