@@ -69,6 +69,78 @@ export function endsAtEnd(n: Node): bool {
   return false;
 }
 
+/** The ASCII byte every match of `n` ends with, as far as its shape says, or -1. */
+function lastByte(n: Node): i64 {
+  const kind = n.kind;
+  if (kind == CHAR) {
+    return n.a < 0x80 ? n.a as i64 : -1;
+  }
+  if (kind == SET) {
+    const set = n.set;
+    if (set != null && set.ranges.length == 2 && set.ranges[0] == set.ranges[1]) {
+      return set.ranges[0] < 0x80 ? set.ranges[0] as i64 : -1;
+    }
+    return -1;
+  }
+  if (kind == GROUP || (kind == REPEAT && n.a == 1 && n.b == 1)) {
+    return lastByte(n.kids[0]);
+  }
+  if (kind == CAT) {
+    return n.kids.length > 0 ? lastByte(n.kids[n.kids.length - 1]) : -1;
+  }
+  if (kind == ALT && n.kids.length > 0) {
+    const b = lastByte(n.kids[0]);
+    return n.kids.every((k) => lastByte(k) == b) ? b : -1;
+  }
+  return -1;
+}
+
+/** Can a match of `n` have character `c` in it? */
+function mayHave(n: Node, c: u32): bool {
+  const kind = n.kind;
+  if (kind == CHAR) {
+    return n.a == c;
+  }
+  if (kind == SET) {
+    const set = n.set;
+    return set == null || set.contains(c);
+  }
+  return n.kids.some((k) => mayHave(k, c));
+}
+
+/** Does every match of `n` end with `c`, and have it nowhere else? */
+function onlyAtEnd(n: Node, c: u32): bool {
+  const kind = n.kind;
+  if (kind == CHAR || kind == SET) {
+    return lastByte(n) == c as i64;
+  }
+  if (kind == GROUP || (kind == REPEAT && n.a == 1 && n.b == 1)) {
+    return onlyAtEnd(n.kids[0], c);
+  }
+  if (kind == ALT) {
+    return n.kids.length > 0 && n.kids.every((k) => onlyAtEnd(k, c));
+  }
+  if (kind == CAT && n.kids.length > 0) {
+    const last = n.kids.length - 1;
+    for (let i: usize = 0; i < last; i++) {
+      if (mayHave(n.kids[i], c)) {
+        return false;
+      }
+    }
+    return onlyAtEnd(n.kids[last], c);
+  }
+  return false;
+}
+
+/** The ASCII byte, other than a letter, a digit or a space, that every match of `tree` ends
+ * with and has nowhere else (`;` of `(\w+)=(\d+);`), or -1. A subject's matches then end
+ * after its bytes `b`, and none goes over one: find.velt reads back from each `b` for where a
+ * match starts. */
+export function suffixByte(tree: Node): i64 {
+  const b = lastByte(tree);
+  return b >= 0 && rarity(b as u32) > 0 && onlyAtEnd(tree, b as u32) ? b : -1;
+}
+
 /** The byte every match of `tree` has that is least likely in text, or -1 for none (or none
  * that is likely to be missing: a letter, a digit or a space). */
 export function requiredByte(tree: Node): i64 {

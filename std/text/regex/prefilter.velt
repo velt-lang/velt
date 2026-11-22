@@ -297,7 +297,8 @@ function gramScan(
   if (len >= reach && from <= len - reach && stopped <= last) {
     found = wideScan(prog, m, s, len - reach, len, mode);
     if (found >= 0) {
-      return found;
+      // A place the tuples fit at may be too near the end for a match (`valu` of `value\d+`).
+      return mode == ANY && (found as usize) > last ? -1 : found;
     }
   }
   for (let i = (-2 - found) as usize; i <= last; i++) {

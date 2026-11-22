@@ -48,9 +48,9 @@ const NO_START: u8 = 2;
 /** A state without threads, from which nothing matches. */
 export const DEAD: u8 = 4;
 /** The state a search anywhere starts in, while the scan skips from it. */
-const SKIPS: u8 = 8;
+export const SKIPS: u8 = 8;
 /** A state holds a match where the subject ends: a thread waits at `$` and leads to one. */
-const ENDS: u8 = 16;
+export const ENDS: u8 = 16;
 /** A transition that is not worked out; in one that is, where the row of its state starts
  * (`ROW`), that a run has to look at that state (`SLOW`), and that it holds a match (`HIT`). */
 export const UNKNOWN: u32 = 0xffffffff;
@@ -109,6 +109,9 @@ export class Dfa {
   /** The state a search at a fixed start where the subject ends starts in, plus one (`$`
    * holds there: the backward automaton of a match that ends with the subject). */
   fixedAtEnd: u32 = 0;
+  /** How many start states and transitions it has worked out: what tells kept tables that
+   * have more from those that have less (dfa_tables.velt `grew`). */
+  learned: usize = 0;
 
   constructor(prog: Program, longest: bool) {
     this.prog = prog;
@@ -248,6 +251,7 @@ export class Dfa {
     // (the thread waits there), unless the search starts where the subject ends.
     add(this.prog, m, "", atEnd ? 0 : 1, 1, 0, 0);
     const st = this.intern(fixed || atEnd);
+    this.learned++;
     if (atEnd) {
       this.fixedAtEnd = (st + 1) as u32;
     } else if (fixed) {
@@ -284,6 +288,7 @@ export class Dfa {
     const to = this.intern(done);
     if (to >= 0) {
       this.next[st * (this.classes + 1) + c] = this.entry(to as usize);
+      this.learned++;
     }
     return to;
   }

@@ -117,6 +117,12 @@ export class Program {
   /** Every match ends where the subject does (required.velt `endsAtEnd`): a search finds its
    * start with the backward automaton alone, from the subject's end. */
   endsAtEnd: bool = false;
+  /** Every match ends with `required` and has it nowhere else (required.velt `suffixByte`): a
+   * search reads back from each of the subject's `required` bytes for where a match starts. */
+  suffix: bool = false;
+  /** `endsAtEnd` or `suffix`, and not anchored: a call may search by the backward
+   * automaton's kept tables alone (quick.velt). */
+  quick: bool = false;
 
   /** Per instruction, which hint a split has, plus one (0: none), and the hints: 128 bytes
    * each, per ASCII character whether the split's first way can start with it (1), its second

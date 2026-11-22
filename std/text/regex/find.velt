@@ -136,6 +136,32 @@ function hasRequired(prog: Program, m: Search, s: string, from: usize, len: usiz
   return m.reqAt >= 0;
 }
 
+/** `find` of a program whose matches end after a byte `required` and have it nowhere else
+ * (`Program.suffix`): the backward automaton from after each such byte, the first at or after
+ * `from` first, says where the match that ends there starts. The first that has one is the
+ * leftmost match, as a match that starts further left would go over that byte, and it ends
+ * there. Each run back stops at the byte before, so the subject is read about twice at most.
+ * (A byte before `from`, where the scan put the search, has no match after `from` that ends
+ * there.) `MATCHED`, `FAILED`, or `GAVE_UP`. */
+function suffixed(prog: Program, m: Search, s: string, len: usize, from: usize): i64 {
+  const starts = startsOf(prog, m);
+  // `hasRequired` found the first.
+  let at = m.reqAt;
+  while (at >= 0) {
+    const end = (at as usize) + 1;
+    const start = backward(starts, s, end, from);
+    if (start == GAVE_UP) {
+      dropStarts(m);
+      return GAVE_UP;
+    }
+    if (start >= 0) {
+      return groupsOf(prog, m, s, len, start, end as i64, len + 1);
+    }
+    at = findByte(s, prog.required as u8, end, len);
+  }
+  return FAILED;
+}
+
 /** `find` by the matchers whose time is bounded whatever the pattern: the backtracker with a
  * memory when its table is small, else the Pike machine. */
 function bounded(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool): bool {
@@ -152,6 +178,13 @@ function bounded(prog: Program, m: Search, s: string, len: usize, from: usize, f
  * matchers' work between the two. `MATCHED`, `FAILED`, or `GAVE_UP`. */
 function automaton(prog: Program, m: Search, s: string, len: usize, from: usize, fixed: bool): i64 {
   const slots = m.slots;
+  // A match ends after a byte `required` and goes over none: read back from each.
+  if (prog.suffix && !fixed) {
+    const found = suffixed(prog, m, s, len, from);
+    if (found != GAVE_UP) {
+      return found;
+    }
+  }
   // Every match ends where the subject does: where one starts is the backward automaton's
   // answer from there, and the subject is read from its end only as far as a match can reach.
   if (prog.endsAtEnd && !fixed) {

@@ -1,0 +1,280 @@
+// velt/text (internal): a call's search run off the tables its regex kept (dfa_tables.velt):
+// for the programs whose matches the backward automaton alone finds, those that end where the
+// subject does (`Program.endsAtEnd`) and those that end after a byte they have nowhere else
+// (`Program.suffix`); and for a `test` of any program with an automaton, which asks only
+// whether the forward one sees a match end. Once a regex's earlier calls have worked out the
+// states a subject needs, such a call makes no search memory and no automaton: it reads the
+// kept tables in place, and the groups are read off by the reader of groups (straight.velt).
+// Where the tables lack a transition, or the reader stops, it says so, and the call takes the
+// whole way (find.velt).
+
+import { findByte } from "velt/lang/string/byte_scan";
+import {
+  addressLoad,
+  arrayReadAddress,
+  noInline,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+import { FAILED, MATCHED } from "velt/text/regex/backtrack";
+import { DEAD, ENDS, HIT, MATCH, ROW, SKIPS, SLOW, UNKNOWN } from "velt/text/regex/dfa";
+import { DfaTables } from "velt/text/regex/dfa_tables";
+import { candidate } from "velt/text/regex/prefilter";
+import { Cursor } from "velt/text/regex/cursor";
+import { Program, SCAN_NONE } from "velt/text/regex/program";
+import { straight } from "velt/text/regex/straight";
+
+/** What `quick` and `backKept` say when the tables or the reader cannot answer. */
+export const UNSURE: i64 = -3;
+
+/** Where the longest match of the backward program `back` that ends at byte `end` of `s`
+ * starts, not before `floor`, by its kept tables `t` alone: -1 when none ends there, `UNSURE`
+ * when the tables lack a transition the run needs (or the run reads past ASCII). When
+ * `earliest`, where the first match it comes to starts: a `test` asks only whether there is
+ * one. */
+function backKept(
+  back: Program,
+  t: shared<DfaTables>,
+  s: string,
+  end: usize,
+  floor: usize,
+  earliest: bool,
+): i64 {
+  const known = end == strByteLen(s) ? t.fixedAtEnd : t.fixed;
+  if (known == 0) {
+    return UNSURE;
+  }
+  const width = back.classStarts.length + 1;
+  const st = (known as usize) - 1;
+  const flags = t.flags[st];
+  let found: i64 = (flags & MATCH) != 0 ? end as i64 : -1;
+  if ((flags & DEAD) != 0 || (earliest && found >= 0)) {
+    return found;
+  }
+  const base = strDataAddress(s);
+  const next = unsafe { arrayReadAddress(t.next) };
+  const kinds = unsafe { arrayReadAddress(back.asciiClass) };
+  let row = st * width;
+  let pos = end;
+  while (pos > floor) {
+    const b = unsafe { addressLoad<u8>(base + pos - 1) } as usize;
+    if (b >= 0x80) {
+      return UNSURE;
+    }
+    const kind = unsafe { addressLoad<u8>(kinds + b) } as usize;
+    const to = unsafe { addressLoad<u32>(next + 4 * (row + kind)) };
+    if (to == UNKNOWN) {
+      return UNSURE;
+    }
+    pos--;
+    row = (to & ROW) as usize;
+    if ((to & HIT) != 0) {
+      found = pos as i64;
+      if (earliest) {
+        return found;
+      }
+    }
+    if ((to & SLOW) != 0) {
+      // The backward automaton marks no state to skip from: the state is dead.
+      return (t.flags[row / width] & DEAD) != 0 ? found : UNSURE;
+    }
+  }
+  return found;
+}
+
+/** The groups of the match `start..end` into `slots` (none, the match's ends, or every group's,
+ * as many as it holds): `MATCHED`, or `UNSURE` when the reader of groups stops. */
+function groups(prog: Program, s: string, start: usize, end: usize, slots: i64[]): i64 {
+  if (slots.length == 0) {
+    return MATCHED;
+  }
+  if (slots.length == 2) {
+    slots[0] = start as i64;
+    slots[1] = end as i64;
+    return MATCHED;
+  }
+  return straight(prog, s, start, end, slots) ? MATCHED : UNSURE;
+}
+
+/** The leftmost match of `prog` (`endsAtEnd` or `suffix`) in `s` at or after byte `from`, by
+ * the backward automaton's kept tables `t`: `MATCHED` with its slots in `slots`, `FAILED`, or
+ * `UNSURE` when the tables or the reader of groups cannot say. `first`: where the first byte
+ * `required` at or after `from` is, when the program has one. */
+export function quick(
+  prog: Program,
+  t: shared<DfaTables> | null,
+  s: string,
+  from: usize,
+  first: i64,
+  slots: i64[],
+): i64 {
+  const back = prog.backward;
+  if (t == null || back == null) {
+    return UNSURE;
+  }
+  const len = strByteLen(s);
+  const earliest = slots.length == 0;
+  if (prog.endsAtEnd) {
+    const start = backKept(back, t, s, len, from, earliest);
+    return start < 0
+      ? (start == UNSURE ? UNSURE : FAILED)
+      : groups(prog, s, start as usize, len, slots);
+  }
+  // `Program.suffix`: from after each byte `required`, the first that has a match is the
+  // leftmost (find.velt `suffixed`).
+  let at = first;
+  while (at >= 0) {
+    const end = (at as usize) + 1;
+    const start = backKept(back, t, s, end, from, earliest);
+    if (start == UNSURE) {
+      return UNSURE;
+    }
+    if (start >= 0) {
+      return groups(prog, s, start as usize, end, slots);
+    }
+    at = findByte(s, prog.required as u8, end, len);
+  }
+  return FAILED;
+}
+
+/** Whether `prog` (with an automaton, searched anywhere) has a match in `s` at or after byte
+ * `from`, by the forward automaton's kept tables `t`: `MATCHED`, `FAILED`, or `UNSURE` when
+ * the tables lack a transition the run needs (or the run reads past ASCII). The caller has
+ * seen the byte `required` there. */
+export function quickTest(prog: Program, t: shared<DfaTables> | null, s: string, from: usize): i64 {
+  if (t == null || t.anywhere == 0) {
+    return UNSURE;
+  }
+  const len = strByteLen(s);
+  const width = prog.classStarts.length + 1;
+  const base = strDataAddress(s);
+  const next = unsafe { arrayReadAddress(t.next) };
+  const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
+  let row = ((t.anywhere as usize) - 1) * width;
+  let pos = from;
+  while (true) {
+    const flags = t.flags[row / width];
+    if ((flags & MATCH) != 0 || (pos >= len && (flags & ENDS) != 0)) {
+      return MATCHED;
+    }
+    if ((flags & DEAD) != 0 || pos >= len) {
+      return FAILED;
+    }
+    if ((flags & SKIPS) != 0) {
+      // The state a search starts in: the scan finds where a match may start.
+      const at = candidate(prog, null, s, pos, len);
+      if (at < 0) {
+        return FAILED;
+      }
+      pos = at as usize;
+    }
+    // Through the transitions that are known, to one that is slow or to a match.
+    while (pos < len) {
+      const b = unsafe { addressLoad<u8>(base + pos) } as usize;
+      if (b >= 0x80) {
+        return UNSURE;
+      }
+      const to =
+        unsafe { addressLoad<u32>(
+          next + 4 * (row + (unsafe { addressLoad<u8>(kinds + b) } as usize)),
+        ) };
+      if (to == UNKNOWN) {
+        return UNSURE;
+      }
+      pos++;
+      row = (to & ROW) as usize;
+      if ((to & (SLOW | HIT)) != 0) {
+        break;
+      }
+    }
+  }
+  return FAILED;
+}
+
+/** What `lookTest` and `lookExec` say when they answered: there is a match, or none. */
+export const YES: i64 = -2;
+export const NO: i64 = -1;
+
+/** Where a search of `prog` in `s` from byte `at` has to start looking: there, or where the
+ * scan finds a match may start; `NO` when the byte every match has is missing or the scan finds
+ * no place, which a call then says without making a search memory. */
+function look(prog: Program, s: string, at: usize, sticky: bool): i64 {
+  if (sticky || prog.anchored) {
+    return at as i64;
+  }
+  const len = strByteLen(s);
+  if (prog.required >= 0 && findByte(s, prog.required as u8, at, len) < 0) {
+    return NO;
+  }
+  return prog.scan == SCAN_NONE ? at as i64 : candidate(prog, null, s, at, len);
+}
+
+/** The kept tables of the backward automaton and of the forward one. A function that loads a
+ * `shared` value from an `Atomic` is a section of the epoch (velt/sync/epoch) from its start to
+ * its end: these are called only when a call reads the tables, not on every call. */
+@noInline
+function startsOf(cursor: shared<Cursor>): shared<DfaTables> | null {
+  return cursor.starts.load("acquire");
+}
+
+@noInline
+function endsOf(cursor: shared<Cursor>): shared<DfaTables> | null {
+  return cursor.ends.load("acquire");
+}
+
+/** A program's `quick` search from byte `at`, its slots in `slots`: `YES`, `NO`, or -3 when it
+ * cannot say. */
+function quickly(prog: Program, cursor: shared<Cursor>, s: string, at: usize, slots: i64[]): i64 {
+  const first =
+    prog.required >= 0 ? findByte(s, prog.required as u8, at, strByteLen(s)) : at as i64;
+  if (first < 0) {
+    return NO;
+  }
+  const q = quick(prog, startsOf(cursor), s, at, first, slots);
+  return q == UNSURE ? UNSURE : q == MATCHED ? YES : NO;
+}
+
+/** What a `test` of `prog` in `s` from byte `at` (at `at` only when `sticky`) can say before it
+ * makes a search memory: `YES`, `NO`, or where the search has to start looking. */
+export function lookTest(
+  prog: Program,
+  cursor: shared<Cursor>,
+  s: string,
+  at: usize,
+  sticky: bool,
+): i64 {
+  if (!sticky && prog.quick) {
+    const none: i64[] = [];
+    const q = quickly(prog, cursor, s, at, none);
+    if (q != UNSURE) {
+      return q;
+    }
+  }
+  const from = look(prog, s, at, sticky);
+  // The kept tables are loaded once the scan has found a place a match may start.
+  if (from >= 0 && !sticky && prog.automaton && !prog.anchored && !prog.quick) {
+    const q = quickTest(prog, endsOf(cursor), s, from as usize);
+    if (q != UNSURE) {
+      return q == MATCHED ? YES : NO;
+    }
+  }
+  return from;
+}
+
+/** As `lookTest`, for an `exec`: on `YES` the match's slots are in `slots`. */
+export function lookExec(
+  prog: Program,
+  cursor: shared<Cursor>,
+  s: string,
+  at: usize,
+  sticky: bool,
+  slots: i64[],
+): i64 {
+  if (!sticky && prog.quick) {
+    const q = quickly(prog, cursor, s, at, slots);
+    if (q != UNSURE) {
+      return q;
+    }
+  }
+  return look(prog, s, at, sticky);
+}

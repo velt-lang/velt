@@ -190,10 +190,24 @@ backtracker's arrays, the Pike machine's (`lists.velt`, made when it first runs)
 automatons. A `RegExp` keeps what its automatons worked out from call to call, so they are
 worked out once, not once per `test` or `exec`: as `DfaTables` (`dfa_tables.velt`), a value that
 never changes, in an `Atomic` of the regex's cursor. A call's automaton reads those tables in
-place and copies them only when it works out a new state; a call that worked out more puts its
-tables there. No lock is held (a `RegExp` holds none, so it converts to `any`, prints and
-writes as JSON): calls on several threads read what is there, and the last to finish keeps its
-tables. The cursor also counts the calls.
+place and copies them only when it works out a new state or transition; a call that worked out
+more (it counts the start states and transitions it has, so a transition to a state it had
+counts too) puts its tables there. No lock is held (a `RegExp` holds none, so it converts to
+`any`, prints and writes as JSON): calls on several threads read what is there, and the last to
+finish keeps its tables. The cursor also counts the calls.
+
+**Off the kept tables** (`quick.velt`): once a regex's earlier calls have worked out the states
+a subject needs, a call needs neither a search memory nor an automaton. `test` and `exec` of a
+program whose matches the backward automaton alone finds (those that end with the subject, and
+those that end after a byte they have nowhere else, below) run it over the kept tables in
+place, and the reader of groups reads the groups; a `test` of any other program with an
+automaton runs the forward one so, from where the scan finds a match may start. A `test` stops
+at the first match it sees. Where the tables lack a transition the run needs, the run reads a
+byte past ASCII, or the reader stops, the call takes the whole way. The tables are loaded in
+functions of their own: a function that loads a `shared` value from an `Atomic` is a section of
+the epoch from its start to its end, which a call that the byte scan answers should not pay.
+`test` and `exec` are called, not inlined: the search inlined into a caller's loop made the
+caller's other code slower.
 
 **The reader of groups** (`straight.velt`): when the automaton has found a match and the search
 wants its groups, the program is run over the match with the hints alone, no stack and no
@@ -215,7 +229,12 @@ first: an attempt that stopped leaves none behind.
    groups or the backtracker between the ends. When every match ends where the subject does
    (`$` without `m` on every way through the pattern), the forward pass is left out: the
    backward automaton, from the subject's end, finds the leftmost start, reading back only as
-   far as a match can reach.
+   far as a match can reach. When every match ends with a byte it has nowhere else (`;` of
+   `(\w+)=(\d+);`) and the SIMD scan does not find where matches start, the forward pass is
+   left out too: the backward automaton, from after each such byte in turn, says where the
+   match that ends there starts. The first that has one is the leftmost match, as a match that
+   starts further left would go over that byte, and it ends there. Each run back stops at the
+   byte before, so the subject is read about twice at most.
 6. Otherwise, or when the automaton gave up: the backtracker with a memory when its table is at
    most 4 KiB, else the Pike machine.
 
@@ -238,6 +257,8 @@ for that before any matcher runs.
   offset whose letters are folded the scan ORs 0x20 into the subject's bytes before it compares
   them, which makes either case of a letter equal its lower case and nothing else equal a
   letter. A matcher checks what such a scan finds.
+- A place where the tuples fit fewer bytes before the subject's end than the shortest string
+  is no place a match starts (`valu` at the end of a line, for `value\d+`).
 - **First byte.** Without such strings, the set of bytes a match can start with.
 - A pattern that starts with `^` (without `m`) is tried at the start only.
 - `test` and `exec` look for the byte every match has (below) and scan for a start before they

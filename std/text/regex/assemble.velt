@@ -7,8 +7,8 @@ import { classify } from "velt/text/regex/classify";
 import { hint } from "velt/text/regex/hints";
 import { parsePattern } from "velt/text/regex/parse_pattern";
 import { Parser } from "velt/text/regex/parser";
-import { Program } from "velt/text/regex/program";
-import { endsAtEnd, requiredByte } from "velt/text/regex/required";
+import { Program, SCAN_GRAMS } from "velt/text/regex/program";
+import { endsAtEnd, requiredByte, suffixByte } from "velt/text/regex/required";
 
 /** The program of `pattern` with `flags` (valid ones); the names of its groups are added to
  * `names`. Throws `RegExpError` for a pattern that is none. */
@@ -25,8 +25,13 @@ export function assemble(pattern: string, flags: string, names: string[]): Progr
   if (!prog.exact) {
     hint(prog);
     classify(prog);
-    prog.required = requiredByte(tree);
+    // Read back from a byte every match ends with, unless the SIMD scan finds where matches
+    // start (`>.*\n|\n`): reading forwards from there costs less than reading lines back.
+    const suffix = prog.automaton && prog.scan != SCAN_GRAMS ? suffixByte(tree) : -1;
+    prog.suffix = suffix >= 0;
+    prog.required = prog.suffix ? suffix : requiredByte(tree);
     prog.endsAtEnd = prog.automaton && endsAtEnd(tree);
+    prog.quick = (prog.suffix || prog.endsAtEnd) && !prog.anchored;
   }
   if (prog.automaton) {
     const back = new Compiler(parser, true);
