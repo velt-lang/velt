@@ -29,6 +29,7 @@ mod promise_sites;
 mod promise_vars;
 mod recheck;
 mod sets;
+mod traps;
 mod union_names;
 mod var_known;
 mod vars;

@@ -353,6 +353,35 @@ fn the_app_s_bodies_see_std_s_modes_as_declared() {
     assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
 }
 
+/// std's unit resolves the types of its `ProxyHandler` traps before any program stores into
+/// them; a whole-program check resolves them from its seeds once the program's traps throw. So
+/// std's unit keeps its trap sites (`throws::traps`): the app's rounds hold a trap closure to
+/// what their seeds give its site, and a value whose type holds std's trap variables (a
+/// rejection reason) is read as written. A trap that throws is accepted and the reason is the
+/// trap's error; a trap that throws nothing stays quiet; the proxy-throws goldens check alike.
+#[test]
+fn a_proxy_trap_s_errors_reach_the_program_as_in_a_whole_program_check() {
+    let throwing = "class E1 extends Error {}\n\nfunction make(): any {\n  return new Proxy({ a: 1 } as any, {\n    get(t, k, r) {\n      if (k === \"g\") {\n        throw new E1(\"get\");\n      }\n      return Reflect.get(t, k, r);\n    },\n  });\n}\n\nasync function rd(p: any): Promise<number> {\n  return p.g;\n}\n\nasync function main() {\n  const rs = await Promise.allSettled([rd(make())]);\n  for (const x of rs) {\n    if (x.status === \"rejected\") {\n      console.log(x.reason.message);\n    }\n  }\n}\n";
+    let quiet = "function make(): any {\n  return new Proxy({ a: 1 } as any, {\n    get(t, k, r) {\n      return Reflect.get(t, k, r);\n    },\n  });\n}\n\nasync function rd(p: any): Promise<number> {\n  return p.a;\n}\n\nasync function main() {\n  const rs = await Promise.allSettled([rd(make())]);\n  for (const x of rs) {\n    if (x.status === \"fulfilled\") {\n      console.log(x.value);\n    }\n  }\n}\n";
+    for src in [throwing, quiet] {
+        let whole = check_in(None, src);
+        let two = check_in(Some("2"), src);
+        let said = String::from_utf8_lossy(&two.stderr).to_string();
+        assert!(whole.status.success(), "{src}");
+        assert!(two.status.success(), "{src}:\n{said}");
+    }
+    for path in [
+        "lang/proxy_throws_reason_one.velt",
+        "lang/proxy_throws_reason_two.velt",
+        "lang/proxy_throws_catch.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        assert_eq!(whole.status.code(), two.status.code(), "{path}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+    }
+}
+
 /// Questions about the whole program are answered from the std code it has
 /// (`lazy_std::units_live_set`), not from all of std's unit: whether it reads a `shared` value
 /// (`units::app_reads_shared`; a `read` callback passing the store's object to a function value
