@@ -13,8 +13,6 @@ mod handover;
 mod js_table;
 mod json_reader;
 mod json_union;
-mod json_value;
-mod json_value_edit;
 mod local;
 mod losers;
 mod net;
