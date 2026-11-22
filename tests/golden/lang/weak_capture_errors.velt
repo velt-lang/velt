@@ -1,0 +1,73 @@
+// A closure capturing a `weak` variable may not cross to another task or a lock: the variable
+// refers to its target through the weak core of the task that set it (#3119). An async closure
+// may run as a task on another thread, the function passed to `with` runs under a lock, a
+// function passed to a spawned task or sent on a channel goes to its thread, one stored into or
+// returned from a locked value is used by other threads, and so is one given to `shared(...)` or
+// as a lock's value.
+import { channel } from "velt/sync";
+
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function nameOf(n: Node | null): string {
+  return n === null ? "null" : n.name;
+}
+
+async function callIt(f: () => string): Promise<string> {
+  return f();
+}
+
+class Slot {
+  f: () => string;
+  constructor(f: () => string) {
+    this.f = f;
+  }
+}
+
+async function toTasks(w: Node): Promise<void> {
+  const v: weak Node | null = w;
+  console.log(await spawn(callIt(() => nameOf(v))));
+  const sent: weak Node | null = w;
+  const ch = channel<() => string>(1);
+  await ch.send(() => nameOf(sent));
+}
+
+function toLocks(w: Node): void {
+  const v: weak Node | null = w;
+  const m = new Mutex(new Slot(() => "none"));
+  m.with((s) => {
+    s.f = () => nameOf(v);
+  });
+  const g = m.with((s) => () => nameOf(v));
+  console.log(g());
+}
+
+function toShared(w: Node): void {
+  const inShared: weak Node | null = w;
+  shared(() => nameOf(inShared));
+}
+
+function toLockValue(w: Node): void {
+  const locked: weak Node | null = w;
+  const lk = new Mutex(() => nameOf(locked));
+  console.log(lk.with((f) => f()));
+}
+
+async function main() {
+  const a = new Node("a");
+  const w: weak Node | null = a;
+  const run = async () => nameOf(w);
+  console.log(await run());
+  const m = new Mutex(0);
+  m.with((v) => {
+    console.log(nameOf(w), v);
+  });
+  await toTasks(a);
+  toLocks(a);
+  toShared(a);
+  toLockValue(a);
+}

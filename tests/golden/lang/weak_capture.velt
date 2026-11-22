@@ -1,0 +1,125 @@
+// check: no leaks
+// Closures capturing a `weak` variable (velt_vir weak_captures.rs; cycles.md "`weak T`"): borrowed
+// for a call, kept by value (the capture holds the slot with a reference of its own, so it reads
+// `null` once the target went), assigned inside, shared in a cell by closures that outlive it,
+// captured through two closures, in a loop, read after the variable was reassigned, by a
+// generator closure, and copied with an object (`clone()`).
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function nameOf(n: Node | null): string {
+  return n === null ? "null" : n.name;
+}
+
+function borrowed(a: Node): string {
+  const w: weak Node | null = a;
+  let out = "";
+  [1, 2].forEach(() => {
+    out += nameOf(w);
+  });
+  return out;
+}
+
+function escaping(): () => string {
+  const t = new Node("t");
+  const w: weak Node | null = t;
+  const f = () => nameOf(w);
+  console.log("escaping, alive", f());
+  return f;
+}
+
+function assignedInside(a: Node, b: Node): string {
+  let w: weak Node | null = a;
+  [1].forEach(() => {
+    w = b;
+  });
+  return nameOf(w);
+}
+
+function shared(a: Node): string {
+  let w: weak Node | null = null;
+  const set = (n: Node) => {
+    w = n;
+  };
+  const get = () => nameOf(w);
+  const before = get();
+  set(a);
+  return `${before} ${get()}`;
+}
+
+function nested(a: Node): () => () => string {
+  const w: weak Node | null = a;
+  return () => () => nameOf(w);
+}
+
+function* gen(a: Node): Generator<string> {
+  const w: weak Node | null = a;
+  const inner = function* (): Generator<string> {
+    yield nameOf(w);
+    yield nameOf(w);
+  };
+  yield* inner();
+}
+
+function inALoop(a: Node): string {
+  const w: weak Node | null = a;
+  const fs: (() => string)[] = [];
+  for (let i = 0; i < 3; i++) {
+    fs.push(() => nameOf(w));
+  }
+  let out = "";
+  for (const f of fs) {
+    out += f();
+  }
+  return out;
+}
+
+function reassigned(a: Node, b: Node): string {
+  // The closure sees the variable, not its value at the capture, as in JavaScript.
+  let w: weak Node | null = a;
+  const f = () => nameOf(w);
+  w = b;
+  return f();
+}
+
+class Box {
+  f: () => string;
+  constructor(f: () => string) {
+    this.f = f;
+  }
+}
+
+function boxed(a: Node): Box {
+  const w: weak Node | null = a;
+  return new Box(() => nameOf(w));
+}
+
+function main() {
+  const a = new Node("a");
+  const b = new Node("b");
+  console.log("borrowed", borrowed(a));
+  const f = escaping();
+  console.log("escaping, gone", f());
+  console.log("assigned", assignedInside(a, b));
+  console.log("shared", shared(a));
+  const g = nested(a)();
+  console.log("nested", g());
+  let s = "";
+  for (const x of gen(a)) {
+    s += x;
+  }
+  console.log("generator", s);
+  console.log("in a loop", inALoop(a));
+  console.log("reassigned", reassigned(a, b));
+  let c: Node | null = new Node("c");
+  const box = boxed(c);
+  const copy = box.clone();
+  console.log("cloned", box.f(), copy.f());
+  c = null;
+  console.log("cloned, gone", box.f(), copy.f());
+  console.log(a.name, b.name);
+}

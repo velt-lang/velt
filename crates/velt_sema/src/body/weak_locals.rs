@@ -2,10 +2,11 @@
 //! `let parent: weak Node | null = node.parent` in a function body. The variable holds its
 //! target's slot; its reads are `Intrinsic::WeakRead` (`local_expr`), its initializer and the
 //! values assigned to it are borrowed, as a weak field's are, and a test does not narrow it
-//! (`refuse_fact`): the target may be gone between two reads. A closure capturing one is not
-//! lowered yet.
+//! (`refuse_fact`): the target may be gone between two reads. A closure's capture of one is a
+//! `weak` local too (`lookup_local`); `crate::weak_threads` refuses one crossing to another task
+//! or a lock.
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Span;
 use velt_syntax::ast;
 
 use super::{FnCx, LocalKind, Want};
@@ -51,19 +52,6 @@ impl FnCx<'_, '_> {
     pub(super) fn weak_local_read(&mut self, l: LocalId, ty: hir::TyId, span: Span) -> hir::Expr {
         let place = self.mk(hir::ExprKind::Local(l, hir::UseMode::Borrow), ty, span);
         self.intrinsic(hir::Intrinsic::WeakRead, vec![place], ty, span)
-    }
-
-    /// A closure captures the `weak` variable `name`: not lowered yet.
-    pub(super) fn weak_captured(&mut self, name: &str, span: Span) {
-        self.cx.error(
-            Diagnostic::error(
-                format!("a closure capturing the `weak` variable `{name}` is not implemented yet (#3119)"),
-                span,
-            )
-            .with_note(format!(
-                "read it before the closure and capture the copy: `const target = {name};`"
-            )),
-        );
     }
 }
 

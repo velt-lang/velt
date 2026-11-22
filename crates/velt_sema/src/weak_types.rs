@@ -115,7 +115,7 @@ fn both_if(undefined: bool) -> Nothing {
 pub(crate) enum WeakPlace {
     /// A class's own field (not a static one).
     ClassField,
-    /// A `let` or `const` in a function body (not one a closure captures: `weak_captured`).
+    /// A `let`, `const` or `var` in a function body, or a script's that no function uses.
     Local,
     /// An abstract property (`abstract a: weak T | null`, given as abstract accessors).
     AbstractProperty,

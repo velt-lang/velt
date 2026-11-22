@@ -22,6 +22,60 @@ function* reading(n: Node): Generator<string> {
   yield nameOf(w);
 }
 
+function earlyReturn(t: Node, out: boolean): string {
+  {
+    const w: weak Node | null = t;
+    if (out) {
+      return nameOf(w);
+    }
+  }
+  return "end";
+}
+
+function throwing(t: Node): string {
+  const w: weak Node | null = t;
+  if (nameOf(w) === "t") {
+    throw new Error("thrown");
+  }
+  return nameOf(w);
+}
+
+function finallyReturn(t: Node): string {
+  try {
+    const w: weak Node | null = t;
+    try {
+      return nameOf(w);
+    } finally {
+      const v: weak Node | null = t;
+      nameOf(v);
+    }
+  } finally {
+    nameOf(t);
+  }
+}
+
+function* stepping(t: Node): Generator<string> {
+  const w: weak Node | null = t;
+  for (let i = 0; i < 3; i++) {
+    yield nameOf(w);
+  }
+}
+
+async function* asyncStepping(t: Node): AsyncGenerator<string> {
+  const w: weak Node | null = t;
+  yield nameOf(w);
+  yield nameOf(w);
+}
+
+async function acrossAwaits(t: Node): Promise<string> {
+  let w: weak Node | null = t;
+  await Promise.resolve(0);
+  const first = nameOf(w);
+  w = null;
+  await Promise.resolve(0);
+  return first + nameOf(w);
+}
+
 describe("weak locals", () => {
   it("are given back by a generator dropped while it is suspended", () => {
     const before = weakSlotsLive();
@@ -89,5 +143,106 @@ describe("weak locals", () => {
     expect(names).toBe("xy");
     // Each node's record keeps its slot until the node is freed; no variable holds one.
     expect(weakSlotsLive()).toBe(before + 2);
+  });
+
+  it("give back their slot on every way out of their scope", () => {
+    const before = weakSlotsLive();
+    {
+      const t = new Node("t");
+      for (let i = 0; i < 4; i++) {
+        const w: weak Node | null = t;
+        if (i === 1) {
+          continue;
+        }
+        if (i === 2) {
+          break;
+        }
+        nameOf(w);
+      }
+      outer: for (let i = 0; i < 2; i++) {
+        for (let j = 0; j < 2; j++) {
+          const w: weak Node | null = t;
+          if (j === 1) {
+            continue outer;
+          }
+          nameOf(w);
+        }
+      }
+      expect(earlyReturn(t, true)).toBe("t");
+      expect(earlyReturn(t, false)).toBe("end");
+      let caught = "";
+      try {
+        throwing(t);
+      } catch (e) {
+        caught = "caught";
+      }
+      expect(caught).toBe("caught");
+      expect(finallyReturn(t)).toBe("t");
+      // `t`'s record holds the one slot; no variable kept a reference.
+      expect(weakSlotsLive()).toBe(before + 1);
+    }
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("give back their slot with a generator that ran out or returned early", () => {
+    const before = weakSlotsLive();
+    {
+      const t = new Node("t");
+      let all = "";
+      for (const x of stepping(t)) {
+        all += x;
+      }
+      expect(all).toBe("ttt");
+      for (const x of stepping(t)) {
+        all += x;
+        break;
+      }
+      const g = stepping(t);
+      g.next();
+      g.return();
+      expect(all).toBe("tttt");
+      expect(weakSlotsLive()).toBe(before + 1);
+      // `t` lives to here, so its record holds the slot above.
+      expect(t.name).toBe("t");
+    }
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("give back their slot in async functions and async generators", async () => {
+    const before = weakSlotsLive();
+    {
+      const t = new Node("t");
+      expect(await acrossAwaits(t)).toBe("tnull");
+      let all = "";
+      for await (const x of asyncStepping(t)) {
+        all += x;
+      }
+      const g = asyncStepping(t);
+      await g.next();
+      await g.return();
+      expect(all).toBe("tt");
+      expect(weakSlotsLive()).toBe(before + 1);
+      expect(t.name).toBe("t");
+    }
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("swap slots in every assignment form", () => {
+    const before = weakSlotsLive();
+    {
+      const a = new Node("a");
+      const b = new Node("b");
+      let w: weak Node | null = a;
+      let v: weak Node | null = null;
+      w = w;
+      v = w = b;
+      w ??= a;
+      v ||= a;
+      w &&= a;
+      expect(`${nameOf(w)} ${nameOf(v)}`).toBe("a b");
+      // `a`'s and `b`'s records hold their slots.
+      expect(weakSlotsLive()).toBe(before + 2);
+    }
+    expect(weakSlotsLive()).toBe(before);
   });
 });
