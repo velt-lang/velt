@@ -11,6 +11,7 @@ velt_rt velt_rt_bytes_drop
 velt_rt velt_rt_bytes_from_str
 velt_rt velt_rt_bytes_put_f64
 velt_rt velt_rt_bytes_to_str
+velt_rt velt_rt_bytes_zeroed
 velt_rt velt_rt_catch_arm
 velt_rt velt_rt_catch_free
 velt_rt velt_rt_catch_message

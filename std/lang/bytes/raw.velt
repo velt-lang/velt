@@ -2,7 +2,8 @@
 // `allocUnsafe`, `set`, `copy`, `copyWithin` and `slice` on `u8[]`. An array comes from the
 // runtime's allocator (`arrayWithCapacity`), so generated code can grow and free it; its bytes
 // are moved and zeroed by `#bytes-move`: the C library's `memmove` and `memset` (one call each)
-// on native targets and WASI, a Velt loop on the JS host.
+// on native targets and WASI, a Velt loop on the JS host. `Buffer.alloc` of 1 MiB or more is the
+// runtime's calloc (`velt_rt_bytes_zeroed`), which memory fresh from the system needs no memset for.
 //
 // Positions follow JS: `copyWithin` and `slice` take relative indices (negative counts from the
 // end) clamped to the array. An array written in place is never reallocated, so its length and
@@ -17,6 +18,9 @@ import {
 import { MAX_BLOCK } from "#bytes-limit";
 import { moveAt, zeroAt } from "#bytes-move";
 import { outOfMemory } from "velt/lang/hooks/heap";
+
+/** `(u64 n, VeltBytes* out)`: `n` zero bytes by calloc (the runtime's, for large `n`). */
+declare function velt_rt_bytes_zeroed(n: u64): u8[];
 
 /**
  * Position `i` as JS reads it in an array of `n`: a negative one counts from the end; clamped to
@@ -45,8 +49,18 @@ export function bytesUninit(n: usize): u8[] {
   return out;
 }
 
+/**
+ * The size from which `bytesZeroed` takes the runtime's calloc (`velt_rt_bytes_zeroed`): a
+ * block that large comes fresh from the system, already zero, which a memset would write anyway
+ * (64 MiB: +5% instructions); below it, the allocation and memset here are as fast or faster.
+ */
+const ZEROED_BY_RUNTIME: usize = 1048576;
+
 /** `n` zero bytes (`Buffer.alloc(n)`). */
 export function bytesZeroed(n: usize): u8[] {
+  if (n >= ZEROED_BY_RUNTIME) {
+    return velt_rt_bytes_zeroed(n as u64);
+  }
   const out = bytesUninit(n);
   if (n > 0) {
     // SAFETY: `out` has `n` bytes at its data address, which nothing else uses yet.
