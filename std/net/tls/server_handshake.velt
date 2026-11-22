@@ -27,16 +27,8 @@ import {
   CLIENT_HELLO,
   ENCRYPTED_EXTENSIONS,
   FINISHED,
-  SERVER_HELLO,
 } from "velt/net/tls/client_handshake";
-import {
-  EXT_ALPN,
-  EXT_KEY_SHARE,
-  EXT_SUPPORTED_VERSIONS,
-  SECP256R1,
-  SECP384R1,
-  X25519,
-} from "velt/net/tls/client_hello";
+import { EXT_ALPN, SECP256R1, SECP384R1, X25519 } from "velt/net/tls/client_hello";
 import { ClientOffer, parseClientHello } from "velt/net/tls/client_hello_parse";
 import {
   exchangeKey,
@@ -52,8 +44,7 @@ import {
   prepareSecret,
 } from "velt/net/tls/key_schedule";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
-import { HRR_RANDOM } from "velt/net/tls/server_hello";
-import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
+import { chooseSuite, helloRetryRequest, serverHello13 } from "velt/net/tls/server_hello13";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey } from "velt/net/tls/server_key";
 import { TranscriptHash } from "velt/net/tls/transcript_hash";
@@ -373,27 +364,9 @@ export class ServerHandshake {
     this.transcript = [254, 0, 0, first.length as u8];
     this.th.reset();
     this.add(first);
-    const w = new ByteWriter();
-    w.u8(SERVER_HELLO);
-    const b = w.begin(3);
-    w.u16(0x0303);
-    w.put(HRR_RANDOM);
-    const sid = w.begin(1);
-    w.put(offer.sessionId);
-    w.end(sid, 1);
-    w.u16(this.suite);
-    w.u8(0);
-    const exts = w.begin(2);
-    w.u16(EXT_SUPPORTED_VERSIONS);
-    w.u16(2);
-    w.u16(0x0304);
-    w.u16(EXT_KEY_SHARE);
-    w.u16(2);
-    w.u16(group);
-    w.end(exts, 2);
-    w.end(b, 3);
-    this.add(w.bytes);
-    this.retry = w.bytes;
+    const retry = helloRetryRequest(offer.sessionId, this.suite, group);
+    this.add(retry);
+    this.retry = retry;
     this.state = WAIT_RETRY_HELLO;
     return S_SEND_RETRY;
   }
