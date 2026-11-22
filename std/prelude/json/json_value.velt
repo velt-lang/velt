@@ -42,7 +42,16 @@ import {
 import { treeMember, treeOfTape, treeStringify, writeTree } from "velt/encoding/json/tree_text";
 import { inspectJsonValue } from "velt/encoding/json/value_inspect";
 import { frozenTree } from "velt/encoding/json/tree_freeze";
-import { treeAt, treeGet, treeKeys, treeLen, treeTapeKind } from "velt/encoding/json/tree_read";
+import {
+  treeAt,
+  treeBool,
+  treeGet,
+  treeKeys,
+  treeKind,
+  treeLen,
+  treeNumber,
+  treeString,
+} from "velt/encoding/json/tree_read";
 
 /**
  * A JSON value of any shape, as `JSON.parseValue` returns it (`velt/encoding/json` calls it `Value`). It
@@ -309,8 +318,7 @@ export class JsonValue {
       }
       return k == T_ARRAY ? TREE_ARRAY : TREE_OBJECT;
     }
-    const k = this.#tree!.kind;
-    return k == TREE_TAPE ? treeTapeKind(this.#tree!) : k;
+    return treeKind(this.#tree!);
   }
 
   /** Whether this value is JSON `null`. */
@@ -349,8 +357,7 @@ export class JsonValue {
     if (t != null) {
       return t.kind(this.#node) == T_NUMBER ? t.number(this.#node) : null;
     }
-    const tree = this.#tree!;
-    return tree.kind == TREE_NUMBER ? tree.num : null;
+    return treeNumber(this.#tree!);
   }
 
   /** The value if it is a boolean, else null. */
@@ -360,8 +367,7 @@ export class JsonValue {
       const k = t.kind(this.#node);
       return k == T_TRUE ? true : k == T_FALSE ? false : null;
     }
-    const tree = this.#tree!;
-    return tree.kind == TREE_BOOL ? tree.num != 0 : null;
+    return treeBool(this.#tree!);
   }
 
   /** The value if it is a string, else null. */
@@ -370,8 +376,7 @@ export class JsonValue {
     if (t != null) {
       return t.kind(this.#node) == T_STRING ? t.text(this.#node) : null;
     }
-    const tree = this.#tree!;
-    return tree.kind == TREE_STRING ? tree.text : null;
+    return treeString(this.#tree!);
   }
 
   /**

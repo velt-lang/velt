@@ -2,7 +2,15 @@
 // (std/prelude/json/json_value.velt).
 
 import { T_ARRAY } from "velt/encoding/json/tape";
-import { JsonTree, TREE_ARRAY, TREE_OBJECT, TREE_TAPE } from "velt/encoding/json/tree";
+import {
+  JsonTree,
+  TREE_ARRAY,
+  TREE_BOOL,
+  TREE_NUMBER,
+  TREE_OBJECT,
+  TREE_STRING,
+  TREE_TAPE,
+} from "velt/encoding/json/tree";
 import { treeMember } from "velt/encoding/json/tree_text";
 import { noInline } from "velt/lang/intrinsics";
 
@@ -55,9 +63,33 @@ export function treeKeys(t: JsonTree): string[] {
   return t.keys();
 }
 
-// The kind of a node left on a tape (always a container).
+// The scalar readers' tree side, out of line as the runtime's calls were: the tape side is what
+// loops read, and an inlined tree side would grow every loop that reads a parsed value.
+
+/** The node's kind (`TREE_*`; a node left on a tape answers for its container). */
 @noInline
-export function treeTapeKind(t: JsonTree): u32 {
-  const o = t.obj!;
-  return o.tape!.kind(o.node) == T_ARRAY ? TREE_ARRAY : TREE_OBJECT;
+export function treeKind(t: JsonTree): u32 {
+  if (t.kind == TREE_TAPE) {
+    const o = t.obj!;
+    return o.tape!.kind(o.node) == T_ARRAY ? TREE_ARRAY : TREE_OBJECT;
+  }
+  return t.kind;
+}
+
+/** The node's number, or null. */
+@noInline
+export function treeNumber(t: JsonTree): f64 | null {
+  return t.kind == TREE_NUMBER ? t.num : null;
+}
+
+/** The node's boolean, or null. */
+@noInline
+export function treeBool(t: JsonTree): bool | null {
+  return t.kind == TREE_BOOL ? t.num != 0 : null;
+}
+
+/** The node's string, or null. */
+@noInline
+export function treeString(t: JsonTree): string | null {
+  return t.kind == TREE_STRING ? t.text : null;
 }
