@@ -8,7 +8,7 @@ import { Avx2 } from "velt/arch/x86/avx2";
 import { Vector256 } from "velt/arch/x86/vector256";
 import { targetFeature } from "velt/compiler";
 import { Program } from "velt/text/regex/program";
-import { hit } from "velt/text/regex/scan_hit";
+import { hit, hitIn } from "velt/text/regex/scan_hit";
 import { Search } from "velt/text/regex/search";
 
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
@@ -235,7 +235,10 @@ function wide32(
       bits = (tail >> skip) << skip;
     }
     while (bits != 0) {
-      const found = hit(prog, m, s, at + (bits.trailingZeros() as usize), len, mode);
+      const p = at + (bits.trailingZeros() as usize);
+      const floor = m != null ? m.floor : 0;
+      const into = m != null ? m.found : null;
+      const found = hitIn(m, hit(prog, into, floor, s, p, len, mode));
       if (found >= 0) {
         return found;
       }

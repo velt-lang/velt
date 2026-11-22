@@ -223,7 +223,11 @@ without a memory first lets this reader try: it follows that one way with no sta
 character that does not fit means no match starts there, as every other way could not have
 started with it. Where both ways of a split may start with the next character, or that
 character is past ASCII, it says so and the backtracker takes the place. Its steps come out of
-the same fuel. `<[^>]*>`, `>.*\n|\n` and `(\w+)=(\d+);` are such programs.
+the same fuel, one per character read: such a program has no marks, so every loop reads one,
+and that bounds its instructions too. `<[^>]*>`, `>.*\n|\n` and `(\w+)=(\d+);` are such
+programs. `findAll` of such a program with a scan is the scan and this reader for each match;
+only a place the reader cannot answer, or a search that spends its fuel, takes the whole way
+(`find`).
 
 `find.velt` chooses:
 
@@ -288,8 +292,12 @@ for that before any matcher runs.
 
 `matchAll`, `match` with `g` and `replace` with `g` find every match in one call (`findAll`), so
 a literal pattern scans the subject once, and `replace` appends the text between two matches to
-one buffer from the subject's own bytes. The byte every match has is looked for once per call
-there, not once per match: each search's own scan finds its place. The replacement is read once per call into its parts
+one buffer from the subject's own bytes, by their address (`velt_rt_strbuf_push_bytes`, as is a
+plain replacement's text), not through an array made per piece. The byte every match has is
+looked for once per call there, not once per match: each search's own scan finds its place.
+A function that takes the search memory and the subject together has the subject copied for
+the call (the memory reaches a program's literals, which could be it), so the scans pass a hit
+the memory's `found` and `floor`, not the memory. The replacement is read once per call into its parts
 (text, a group, the text before or after the match), which are appended for each match.
 
 ### `lastIndex`
@@ -305,7 +313,7 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 
 | Program | `regex` crate | std engine |
 |---|---|---|
-| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 167.2 M |
+| `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 116.8 M |
 | `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 17.4 G |
 | `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.61 G |
 | `long.velt` 0: `/(a+)+b/` fails | 3.67 M | 3.49 M |
@@ -319,12 +327,12 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 | `lines.velt` 0: `/(\w+)=(\d+);/.test`, 320 B | 19.63 M | 19.98 M |
 | `lines.velt` 1: `/(\w+), $/.exec`, 320 B | 25.32 M | 23.86 M |
 | `lines.velt` 2: `/([^,]*,)*#/.test`, 320 B | 24.82 M | 19.74 M |
-| `lines.velt` 3: `/value\d+/i.test`, near misses, 320 B | 20.77 M | 20.43 M |
+| `lines.velt` 3: `/value\d+/i.test`, near misses, 320 B | 20.77 M | 20.42 M |
 | `lines.velt` 4: as 0, 250 B | 16.30 M | 16.54 M |
 | `lines.velt` 5: as 1, 250 B | 21.91 M | 20.53 M |
 | `lines.velt` 6: as 2, 250 B | 20.48 M | 16.30 M |
-| `lines.velt` 7: as 3, 250 B | 17.30 M | 16.94 M |
-| `lines.velt` 8: `replace(/(key)(\d)/g, "$2$1")`, one text | 90.49 M | 85.47 M |
+| `lines.velt` 7: as 3, 250 B | 17.30 M | 16.92 M |
+| `lines.velt` 8: `replace(/(key)(\d)/g, "$2$1")`, one text | 90.49 M | 63.61 M |
 | `lines.velt` 9: `/value\d+/i.test`, 50 lines of 12,800 B | 17.15 M | 16.78 M |
 
 Compiling a pattern is the larger difference in the first three: it allocates a few small

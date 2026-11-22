@@ -5,11 +5,12 @@ import { describe, expect, it } from "velt/test";
 import { strByteLen } from "velt/lang/intrinsics";
 import { assemble } from "velt/text/regex/assemble";
 import { backtrack, FAILED, MATCHED } from "velt/text/regex/backtrack";
-import { find, findAll } from "velt/text/regex/find";
+import { find, findAll, following } from "velt/text/regex/find";
+import { pike, pikeReset } from "velt/text/regex/pike";
 import { onePass, readsInOnePass, UNSURE } from "velt/text/regex/one_pass";
 import { candidate } from "velt/text/regex/prefilter";
 import { Program, SCAN_GRAMS } from "velt/text/regex/program";
-import { Search } from "velt/text/regex/search";
+import { listsOf, Search } from "velt/text/regex/search";
 
 function program(source: string, flags: string = ""): Program {
   const names: string[] = [];
@@ -106,6 +107,46 @@ describe("The one-pass reader", () => {
     const all = new Search(2);
     findAll(prog, all, s + "y");
     expect(all.found).toEqual([0, 201]);
+  });
+});
+
+/** Every match of `prog` in `s` as `findAll` finds them, by the Pike machine. */
+function allByPike(prog: Program, s: string): i64[] {
+  const len = strByteLen(s);
+  const out: i64[] = [];
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  let pos: usize = 0;
+  while (pos <= len) {
+    pikeReset(prog, listsOf(m), m.slots.length);
+    if (!pike(prog, m, s, len, pos, false)) {
+      break;
+    }
+    for (const v of m.slots) {
+      out.push(v);
+    }
+    pos = following(prog, s, len, m.slots[0] as usize, m.slots[1] as usize);
+  }
+  return out;
+}
+
+describe("Every match by the scan and the reader", () => {
+  it("finds what a loop of searches finds", () => {
+    const subjects = [
+      "a<2>b<>c<3 <4>> " + "x<y>".repeat(80),
+      ">head\nACGT\n>x\n\nT\n".repeat(20),
+      "|a|b||c|xyz|" + "-|qq|".repeat(70),
+      "key1=22; k=x; z9=7;".repeat(20),
+      "é<é>|é|<ü>",
+      "acxx abx ax acx " + "aab acx".repeat(40),
+    ];
+    for (const p of ["<[^>]*>", ">.*\n|\n", "\|[^|][^|]*\|", "(\w+)=(\d+);", "(ab|ac)x+"]) {
+      const prog = program(p);
+      for (const s of subjects) {
+        const m = new Search(2 * (prog.groups as usize) + 2);
+        findAll(prog, m, s);
+        expect(m.found).toEqual(allByPike(prog, s));
+      }
+    }
   });
 });
 

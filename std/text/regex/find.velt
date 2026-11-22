@@ -71,13 +71,46 @@ export function findAll(prog: Program, m: Search, s: string): void {
     m.reqFrom = 0;
     m.reqAt = len as i64;
   }
+  // A program the one-pass reader reads, with a scan: each search is the scan and the reader,
+  // and only a place the reader cannot answer takes the whole way (`find`).
+  const quick = prog.onePass && !prog.anchored && prog.scan != SCAN_NONE;
   let pos: usize = 0;
-  while (pos <= len && find(prog, m, s, pos, false)) {
+  while (pos <= len) {
+    const read = quick ? readFrom(prog, m, s, len, pos) : UNSURE;
+    if (read == FAILED || (read == UNSURE && !find(prog, m, s, pos, false))) {
+      return;
+    }
     for (let k: usize = 0; k < m.slots.length; k++) {
       m.found.push(m.slots[k]);
     }
     pos = following(prog, s, len, m.slots[0] as usize, m.slots[1] as usize);
   }
+}
+
+/** `find` from `from` by the scan and the one-pass reader alone (`Program.onePass`, with a
+ * scan, not anchored), with the fuel `find` gives a search: `MATCHED` with the slots in `m`,
+ * `FAILED`, or `UNSURE` when the reader could not answer a place or spent the fuel, where
+ * `find` takes the search. */
+function readFrom(prog: Program, m: Search, s: string, len: usize, from: usize): i64 {
+  m.fuel = len - from >= LONG ? FUEL : FUEL_PER_BYTE * ((len - from) as i64) + FUEL;
+  let pos = from;
+  while (true) {
+    const at = candidate(prog, m, s, pos, len);
+    if (at < 0) {
+      return FAILED;
+    }
+    pos = at as usize;
+    const read = onePass(prog, m, s, len, pos);
+    if (read != FAILED) {
+      return read == MATCHED ? MATCHED : UNSURE;
+    }
+    if (pos >= len) {
+      return FAILED;
+    }
+    // Every code unit is tried, also the low half of a pair (decode.velt).
+    pos = after(s, pos, true);
+  }
+  return FAILED;
 }
 
 /** Is there a match of `prog` in `s` that starts at or after position `from` (at `from` when

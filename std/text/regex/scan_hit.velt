@@ -6,7 +6,6 @@ import {
   addressLoad,
   arrayReadAddress,
   inline,
-  strByteLen,
   strLoadPartialU8x16,
   strLoadU8x16,
 } from "velt/lang/intrinsics";
@@ -44,7 +43,7 @@ function literalAt(prog: Program, s: string, p: usize, len: usize): i64 {
     if ((word & mask) != want) {
       continue;
     }
-    const n = strByteLen(lits[k]);
+    const n = prog.litBytes[k];
     if (n <= room && (n <= 8 || sameBytes(s, p + 8, lits[k], 8, n - 8))) {
       return k as i64;
     }
@@ -58,31 +57,46 @@ export const ANY: u32 = 0;
 export const FIRST: u32 = 1;
 export const ALL: u32 = 2;
 
-/** What a scan in mode `mode` makes of a hit at byte `p`: the result to return (`p`, in
- * `FIRST` mode with the literal there above it), or -1 to go on: nothing is there, or (`ALL`)
- * the literal there went to `m.found` and its end to `m.floor`, before which nothing more is
- * looked at. */
+/** What a scan in mode `mode` makes of a hit at byte `p`, for a search whose `found` and
+ * `floor` these are (none for a look before a search memory is made: `ANY` mode): the result
+ * to return (`p`, in `FIRST` mode with the literal there above it), -1 to go on (nothing is
+ * there), or, in `ALL` mode, `-3 - end` when the literal there went to `found` and ends at
+ * `end`: the scan's search memory looks at nothing before it any more (its `floor`). The search
+ * memory itself is not passed, so the subject is not copied for the call: a string the memory
+ * reaches (its automatons' program has literals) could otherwise be the subject. */
 @inline("always")
 export function hit(
   prog: Program,
-  m: Search | null,
+  found: i64[] | null,
+  floor: usize,
   s: string,
   p: usize,
   len: usize,
   mode: u32,
 ): i64 {
-  if (mode == ANY || m == null) {
+  if (mode == ANY || found == null) {
     return p as i64;
   }
-  if (p < m.floor) {
+  if (p < floor) {
     return -1;
   }
   const k = literalAt(prog, s, p, len);
   if (k < 0 || mode == FIRST) {
     return k < 0 ? -1 : (p as i64) | (k << LITERAL_SHIFT);
   }
-  m.floor = p + strByteLen(prog.literals[k as usize]);
-  m.found.push(p as i64);
-  m.found.push(m.floor as i64);
+  const end = p + prog.litBytes[k as usize];
+  found.push(p as i64);
+  found.push(end as i64);
+  return -3 - (end as i64);
+}
+
+/** `hit` for the search memory `m` (none in `ANY` mode): its `found` and `floor`, and the
+ * floor kept when a literal went to `found`. */
+@inline("always")
+export function hitIn(m: Search | null, result: i64): i64 {
+  if (result > -3 || m == null) {
+    return result;
+  }
+  m.floor = (-3 - result) as usize;
   return -1;
 }

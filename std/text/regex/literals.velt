@@ -326,6 +326,7 @@ function literalWords(prog: Program): void {
     }
     prog.litWord.push(n == 8 ? 0xffffffffffffffff : ((1 as u64) << ((8 * n) as u64)) - 1);
     prog.litWord.push(word);
+    prog.litBytes.push(strByteLen(lit));
   }
 }
 

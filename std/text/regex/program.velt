@@ -84,6 +84,8 @@ export class Program {
   /** Of an `exact` program: per literal, the mask of the first eight bytes it has, then those
    * bytes as a word (the first byte lowest). */
   litWord: u64[] = [];
+  /** Of an `exact` program: each literal's length in bytes. */
+  litBytes: usize[] = [];
   /** How the search finds where a match may start (prefilter.velt): `SCAN_…`. */
   scan: u32 = 0;
   /** `SCAN_GRAMS`: every match has one of the byte tuples of `grams` (`gramSize` bytes each;

@@ -61,11 +61,12 @@ export function readsInOnePass(prog: Program): bool {
 /** Is there a match of `prog` (one that `readsInOnePass`) in the `len` bytes of `s` that starts
  * at byte `start`? `MATCHED`, its slots in `m.slots` (as many as it has); `FAILED`; `UNSURE`
  * where the next character does not decide; or `SPENT`: the steps are taken from `m.fuel`, a
- * step per instruction and per character a span reads, as the backtracker takes them. */
+ * step per instruction that looks at the next character and per character a span reads. */
 export function onePass(prog: Program, m: Search, s: string, len: usize, start: usize): i64 {
   const slots = m.slots;
   const count = slots.length;
-  for (let k: usize = 0; k < count; k++) {
+  // The match's own slots are saved on every way to the match; a group's may not be.
+  for (let k: usize = 2; k < count; k++) {
     slots[k] = -1;
   }
   const base = strDataAddress(s);
@@ -82,11 +83,6 @@ export function onePass(prog: Program, m: Search, s: string, len: usize, start: 
   let pc: usize = 0;
   let pos = start;
   while (true) {
-    fuel--;
-    if (fuel < 0) {
-      m.fuel = -1;
-      return SPENT;
-    }
     // SAFETY: an instruction is three `u32`s, and `pc` is one of the program's: it starts at 0
     // and takes only the successors and targets the compiler wrote.
     const op = unsafe { addressLoad<u32>(code + 12 * pc) } & OP_MASK;
@@ -107,6 +103,13 @@ export function onePass(prog: Program, m: Search, s: string, len: usize, start: 
     }
     // The next byte, 0x100 where the subject ends.
     const next = pos < len ? byteAt(base, pos) as usize : 0x100;
+    // A step per character read: every loop of such a program reads one (it has no marks, so
+    // no loop's body can match nothing), so this bounds the instructions too.
+    fuel--;
+    if (fuel < 0) {
+      m.fuel = -1;
+      return SPENT;
+    }
     if (op == OP_CHAR) {
       // `readsInOnePass`: `a` is ASCII.
       if (next != a) {

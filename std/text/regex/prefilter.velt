@@ -5,7 +5,7 @@
 import { inline, strByteAt, strByteLen, strLoadU8x16 } from "velt/lang/intrinsics";
 import { findByte } from "velt/lang/string/byte_scan";
 import { Program, SCAN_FIRST, SCAN_GRAMS } from "velt/text/regex/program";
-import { ALL, ANY, FIRST, hit, LITERAL_SHIFT, POSITION } from "velt/text/regex/scan_hit";
+import { ALL, ANY, FIRST, hit, hitIn, LITERAL_SHIFT, POSITION } from "velt/text/regex/scan_hit";
 import { Search } from "velt/text/regex/search";
 import { wideAvx2 } from "velt/text/regex/wide_avx2";
 import { Avx2 } from "velt/arch/x86/avx2";
@@ -124,7 +124,10 @@ function wide(
       return -2 - (i as i64);
     }
     while (bits != 0) {
-      const found = hit(prog, m, s, i + (bits.trailingZeros() as usize), len, mode);
+      const p = i + (bits.trailingZeros() as usize);
+      const floor = m != null ? m.floor : 0;
+      const into = m != null ? m.found : null;
+      const found = hitIn(m, hit(prog, into, floor, s, p, len, mode));
       if (found >= 0) {
         return found;
       }
@@ -245,7 +248,9 @@ function gramScan(
   }
   for (let i = (-2 - found) as usize; i <= last; i++) {
     if (mode != ANY || gramHere(prog, s, i)) {
-      const here = hit(prog, m, s, i, len, mode);
+      const floor = m != null ? m.floor : 0;
+      const into = m != null ? m.found : null;
+      const here = hitIn(m, hit(prog, into, floor, s, i, len, mode));
       if (here >= 0) {
         return here;
       }
@@ -304,8 +309,7 @@ export function literalAll(prog: Program, m: Search, s: string, len: usize): voi
 /** The end of the match `found`, a result of `literalFind` that is not -1. */
 @inline("always")
 export function literalEnd(prog: Program, found: i64): usize {
-  return ((found & POSITION) as usize) +
-    strByteLen(prog.literals[(found >> LITERAL_SHIFT) as usize]);
+  return ((found & POSITION) as usize) + prog.litBytes[(found >> LITERAL_SHIFT) as usize];
 }
 
 /** The start of the match `found`, a result of `literalFind` that is not -1. */
