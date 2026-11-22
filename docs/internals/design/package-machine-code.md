@@ -330,11 +330,13 @@ parts, the shape of velt/simd's `f32x8`, and a row of the table takes them by ad
   `vpshufb` and `vpmovb2m`; VBMI's `vpermb`, CD's `vplzcntd`, BITALG's `vpopcntb`, DQ's
   `vpmullq`. Not yet: the bitwise operations (LLVM picks `vpand` or `vandps` freely), immediate
   operands (`vpternlogd`, `vpalignr`), masked loads and stores, and `f32x8` in one register.
+  `permuteVarU32` and `permuteVarU8` take the value first at both widths, the opposite of
+  Intel's `_mm512_permutexvar_*(idx, a)`; their docs and the C index say so.
 - **Tests.** The LLVM test also requires a 256-bit row to be a `ymm` instruction and a 512-bit
   one a `zmm` instruction, in velt's output and clang's; a row may list the equivalent forms LLVM
-  chooses between (`vpermd|vpermps`). The end-to-end test runs every wide row on the host (this
-  machine has AVX2 and AVX-512 F, BW, CD, DQ, VBMI and BITALG) against references written from
-  Intel's guide.
+  chooses between (`vpermd|vpermps`). The end-to-end test runs every wide row the test host's CPU has
+  against references written from Intel's guide (a host without AVX-512 checks those rows'
+  instructions only).
 
 ## 5. Layout decorators for value types (G4) — step 6
 

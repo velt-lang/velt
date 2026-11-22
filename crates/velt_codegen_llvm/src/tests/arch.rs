@@ -94,7 +94,7 @@ fn c_function(r: &Row) -> String {
         .collect();
     let mut args: Vec<String> = (0..r.params.len()).map(|i| format!("a{i}")).collect();
     // Intel's `permutexvar` takes the indices first; the method takes the value first.
-    if r.c.starts_with("_mm512_permutexvar_") {
+    if r.swapped() {
         args.swap(0, 1);
     }
     format!(

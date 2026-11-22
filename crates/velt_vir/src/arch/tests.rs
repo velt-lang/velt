@@ -146,3 +146,19 @@ fn the_wide_vector_types_are_generated() {
         }
     }
 }
+
+/// What the docs and the C index show of a row is one instruction, never the LLVM test's
+/// patterns (`vpermd|vpermps`, `vfmadd*ps`), whose `|` would also split the index's table.
+#[test]
+fn the_docs_name_one_instruction_per_row() {
+    for r in ROWS.iter() {
+        let m = r.mnemonic();
+        assert!(!m.contains(['|', '*']), "{}: `{m}`", r.method);
+    }
+    for c in super::SWAPPED {
+        assert!(ROWS.iter().any(|r| r.c == *c), "{c} is no row");
+    }
+    for line in c_index().lines().filter(|l| l.starts_with("| `")) {
+        assert_eq!(line.matches('|').count(), 5, "{line}");
+    }
+}

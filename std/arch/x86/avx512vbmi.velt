@@ -30,7 +30,8 @@ export class Avx512Vbmi {
    * Byte `i` is byte `indices[i] & 63` of `value`.
    *
    * `_mm512_permutexvar_epi8` (`vpermb`). Runs only where the CPU has it: call it behind
-   * `Avx512Vbmi.isSupported()`, or in a function gated on `avx512vbmi-x86`.
+   * `Avx512Vbmi.isSupported()`, or in a function gated on `avx512vbmi-x86`. Its operands are in the
+   * opposite order to `_mm512_permutexvar_epi8`'s, which takes the indices first.
    */
   static permuteVarU8(value: Vector512<u8>, indices: Vector512<u8>): Vector512<u8> {
     return velt_arch_avx512vbmi_permute_var_u8(value, indices);

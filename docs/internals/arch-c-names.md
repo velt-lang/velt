@@ -36,8 +36,8 @@ feature: behind its class's `isSupported()`, or in a function gated on the featu
 | `_mm256_add_ps` | `vaddps` | `Avx.addF32` (velt/arch/x86) | `avx-x86` |
 | `_mm256_blendv_epi8` | `vpblendvb` | `Avx2.blendVariableU8` (velt/arch/x86) | `avx2-x86` |
 | `_mm256_cmpeq_epi8` | `vpcmpeqb` | `Avx2.compareEqualU8` (velt/arch/x86) | `avx2-x86` |
-| `_mm256_fmadd_pd` | `vfmadd*pd` | `Fma.multiplyAddF64` (velt/arch/x86) | `fma-x86` |
-| `_mm256_fmadd_ps` | `vfmadd*ps` | `Fma.multiplyAddF32` (velt/arch/x86) | `fma-x86` |
+| `_mm256_fmadd_pd` | `vfmadd213pd` | `Fma.multiplyAddF64` (velt/arch/x86) | `fma-x86` |
+| `_mm256_fmadd_ps` | `vfmadd213ps` | `Fma.multiplyAddF32` (velt/arch/x86) | `fma-x86` |
 | `_mm256_madd_epi16` | `vpmaddwd` | `Avx2.multiplyAddAdjacentI16` (velt/arch/x86) | `avx2-x86` |
 | `_mm256_maddubs_epi16` | `vpmaddubsw` | `Avx2.multiplyAddAdjacentU8I8` (velt/arch/x86) | `avx2-x86` |
 | `_mm256_max_epu8` | `vpmaxub` | `Avx2.maxU8` (velt/arch/x86) | `avx2-x86` |
@@ -46,7 +46,7 @@ feature: behind its class's `isSupported()`, or in a function gated on the featu
 | `_mm256_mul_pd` | `vmulpd` | `Avx.multiplyF64` (velt/arch/x86) | `avx-x86` |
 | `_mm256_mul_ps` | `vmulps` | `Avx.multiplyF32` (velt/arch/x86) | `avx-x86` |
 | `_mm256_mullo_epi32` | `vpmulld` | `Avx2.multiplyLowU32` (velt/arch/x86) | `avx2-x86` |
-| `_mm256_permutevar8x32_epi32` | `vpermd|vpermps` | `Avx2.permuteVarU32` (velt/arch/x86) | `avx2-x86` |
+| `_mm256_permutevar8x32_epi32` | `vpermd` | `Avx2.permuteVarU32` (velt/arch/x86) | `avx2-x86` |
 | `_mm256_sad_epu8` | `vpsadbw` | `Avx2.sumAbsoluteDifferencesU8` (velt/arch/x86) | `avx2-x86` |
 | `_mm256_shuffle_epi8` | `vpshufb` | `Avx2.shuffleU8` (velt/arch/x86) | `avx2-x86` |
 | `_mm256_sllv_epi32` | `vpsllvd` | `Avx2.shiftLeftLogicalVariableU32` (velt/arch/x86) | `avx2-x86` |
@@ -58,13 +58,13 @@ feature: behind its class's `isSupported()`, or in a function gated on the featu
 | `_mm512_cmpeq_epi32_mask` | `vpcmpeqd` | `Avx512F.compareEqualU32` (velt/arch/x86) | `avx512f-x86` |
 | `_mm512_cmpeq_epi8_mask` | `vpcmpeqb` | `Avx512BW.compareEqualU8` (velt/arch/x86) | `avx512bw-x86` |
 | `_mm512_lzcnt_epi32` | `vplzcntd` | `Avx512CD.leadingZeroCountU32` (velt/arch/x86) | `avx512cd-x86` |
-| `_mm512_mask_blend_epi32` | `vpblendmd|vmovdqa32|vmovdqu32` | `Avx512F.blendU32` (velt/arch/x86) | `avx512f-x86` |
+| `_mm512_mask_blend_epi32` | `vpblendmd` | `Avx512F.blendU32` (velt/arch/x86) | `avx512f-x86` |
 | `_mm512_min_epu8` | `vpminub` | `Avx512BW.minU8` (velt/arch/x86) | `avx512bw-x86` |
-| `_mm512_movepi8_mask` | `vpmovb2m|vpcmpgtb` | `Avx512BW.moveMaskU8` (velt/arch/x86) | `avx512bw-x86` |
+| `_mm512_movepi8_mask` | `vpmovb2m` | `Avx512BW.moveMaskU8` (velt/arch/x86) | `avx512bw-x86` |
 | `_mm512_mullo_epi32` | `vpmulld` | `Avx512F.multiplyLowU32` (velt/arch/x86) | `avx512f-x86` |
 | `_mm512_mullo_epi64` | `vpmullq` | `Avx512DQ.multiplyLowU64` (velt/arch/x86) | `avx512dq-x86` |
-| `_mm512_permutexvar_epi32` | `vpermd|vpermps` | `Avx512F.permuteVarU32` (velt/arch/x86) | `avx512f-x86` |
-| `_mm512_permutexvar_epi8` | `vpermb` | `Avx512Vbmi.permuteVarU8` (velt/arch/x86) | `avx512vbmi-x86` |
+| `_mm512_permutexvar_epi32` | `vpermd` | `Avx512F.permuteVarU32` (velt/arch/x86) (operands swapped: value, then indices) | `avx512f-x86` |
+| `_mm512_permutexvar_epi8` | `vpermb` | `Avx512Vbmi.permuteVarU8` (velt/arch/x86) (operands swapped: value, then indices) | `avx512vbmi-x86` |
 | `_mm512_popcnt_epi8` | `vpopcntb` | `Avx512Bitalg.popCountU8` (velt/arch/x86) | `avx512bitalg-x86` |
 | `_mm512_shuffle_epi8` | `vpshufb` | `Avx512BW.shuffleU8` (velt/arch/x86) | `avx512bw-x86` |
 | `_mm_crc32_u16` | `crc32w` | `Sse42.crc32U16` (velt/arch/x86) | `sse4.2-x86` |

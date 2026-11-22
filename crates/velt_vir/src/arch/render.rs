@@ -57,13 +57,19 @@ fn method(s: &mut String, class: &str, ext: Ext, r: &Row) {
     s.push_str("  /**\n");
     wrap(s, "   * ", r.doc);
     s.push_str("   *\n");
-    let how = format!(
+    let mut how = format!(
         "`{}` (`{}`). Runs only where the CPU has it: call it behind `{class}.isSupported()`, \
          or in a function gated on `{}`.",
         r.c,
-        r.instr,
+        r.mnemonic(),
         ext.name()
     );
+    if r.swapped() {
+        how.push_str(&format!(
+            " Its operands are in the opposite order to `{}`'s, which takes the indices first.",
+            r.c
+        ));
+    }
     wrap(s, "   * ", &how);
     s.push_str("   */\n");
     let params: Vec<String> = (r.params.iter())
@@ -126,10 +132,14 @@ pub fn c_index() -> String {
          | C intrinsic | Instruction | velt/arch | Feature |\n|---|---|---|---|\n",
     );
     for r in rows {
+        let note = match r.swapped() {
+            true => " (operands swapped: value, then indices)",
+            false => "",
+        };
         s.push_str(&format!(
-            "| `{}` | `{}` | `{}.{}` ({}) | `{}` |\n",
+            "| `{}` | `{}` | `{}.{}` ({}){note} | `{}` |\n",
             r.c,
-            r.instr,
+            r.mnemonic(),
             r.ext.arch_class(),
             r.method,
             r.ext.arch_module(),

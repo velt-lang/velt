@@ -215,6 +215,25 @@ pub struct Row {
     pub doc: &'static str,
 }
 
+/// The rows whose operands are in the opposite order to their C intrinsic's: Intel's
+/// `permutexvar` takes the indices first, where the methods take the value first, as
+/// `Avx2.permuteVarU32` (`_mm256_permutevar8x32_epi32(a, idx)`) does.
+pub const SWAPPED: &[&str] = &["_mm512_permutexvar_epi32", "_mm512_permutexvar_epi8"];
+
+impl Row {
+    /// The instruction as the docs name it: the first of [`Row::instr`]'s forms, `*` (LLVM's
+    /// choice of operand order) as Intel's guide lists it first (`vfmadd*ps` is `vfmadd213ps`).
+    pub fn mnemonic(&self) -> String {
+        let first = self.instr.split('|').next().unwrap_or(self.instr);
+        first.replace('*', "213")
+    }
+
+    /// Whether its operands are in the opposite order to its C intrinsic's ([`SWAPPED`]).
+    pub fn swapped(&self) -> bool {
+        SWAPPED.contains(&self.c)
+    }
+}
+
 /// An instruction of [`ROWS`], by its index there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ArchOp(pub u16);

@@ -70,7 +70,7 @@ export class Avx512BW {
   /**
    * Bit `i` is the top bit of byte `i` of `value`.
    *
-   * `_mm512_movepi8_mask` (`vpmovb2m|vpcmpgtb`). Runs only where the CPU has it: call it behind
+   * `_mm512_movepi8_mask` (`vpmovb2m`). Runs only where the CPU has it: call it behind
    * `Avx512BW.isSupported()`, or in a function gated on `avx512bw-x86`.
    */
   static moveMaskU8(value: Vector512<u8>): u64 {
