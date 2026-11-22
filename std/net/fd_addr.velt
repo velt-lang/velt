@@ -26,8 +26,8 @@ const AI_NEXT: usize = 40;
 declare c("c") function getaddrinfo(
   host: CString,
   port: CString,
-  hints: Ptr<u8>,
-  res: Ptr<u8>,
+  hints: Ptr<u8> | null,
+  res: Ptr<u8> | null,
 ): i32;
 
 /** The NUL-terminated text at `p` (a message of the C library, an address inet_ntop wrote). */

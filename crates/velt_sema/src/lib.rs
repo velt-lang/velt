@@ -65,6 +65,7 @@ mod display;
 pub mod effects;
 mod enum_keys;
 mod expansive_types;
+mod ffi_ptr;
 mod finalize;
 mod flow;
 mod fn_types;

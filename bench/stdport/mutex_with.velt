@@ -1,0 +1,16 @@
+// An uncontended `Mutex`: 20M `with` calls on one thread, each adding one to the value (a lock and
+// an unlock each, nobody waiting). The Rust port locks a `std::sync::Mutex` the same number of
+// times.
+class Count {
+  n: i64 = 0;
+}
+
+function main() {
+  const m = new Mutex(new Count());
+  for (let i = 0; i < 20000000; i++) {
+    m.with((c) => {
+      c.n += 1;
+    });
+  }
+  console.log(m.with((c) => c.n));
+}

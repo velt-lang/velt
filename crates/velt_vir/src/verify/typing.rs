@@ -322,6 +322,17 @@ impl FnCheck<'_> {
                     op.name()
                 ));
             }
+            // velt/arch's instructions run only in a function gated on their feature (sema
+            // checks every call of the methods around them; nothing may move one out).
+            if let Some(op) = symbol.and_then(crate::arch::ArchOp::of_symbol) {
+                if !self.f.target.covers(op.ext()) {
+                    return Err(format!(
+                        "a call of `{}` in a function not gated on `{}`",
+                        op.symbol(),
+                        op.ext().name()
+                    ));
+                }
+            }
         }
         let (params, ret, noreturn, variadic) = self.callee_sig(callee)?;
         if params.len() != args.len() && !(variadic && args.len() > params.len()) {

@@ -1,0 +1,15 @@
+// `Ptr.at(0)` stops the program: a `Ptr<T>` is never NULL (0 is `Ptr<T> | null`'s `null`, so a
+// non-null pointer holding it would read as `null`), and `Ptr.orNull` is the one for an address
+// that may be 0 (#3094).
+import { Ptr } from "velt/ffi";
+
+declare c type FILE;
+
+function main() {
+  // SAFETY: never read through.
+  console.log(unsafe { Ptr.orNull<FILE>(0) });
+  const zero: usize = 0;
+  // SAFETY: as above.
+  const p = unsafe { Ptr.at<FILE>(zero) };
+  console.log("not reached", p);
+}

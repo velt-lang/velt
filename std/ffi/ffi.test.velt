@@ -1,7 +1,8 @@
 // velt/ffi (tests): white-box tests, run by `velt test std/`.
 //
-// What lowering calls for C functions' pointers and strings, and std's own C declarations of
-// the C library through them (std may declare C functions).
+// What lowering calls for C functions' strings, C pointers (`Ptr<T>`, one word with 0 as `null`,
+// #3094), and std's own C declarations of the C library through them (std may declare C
+// functions).
 import { describe, expect, it } from "velt/test";
 import {
   CString,
@@ -13,8 +14,8 @@ import {
   readCString,
   readUtf8,
 } from "velt/ffi";
-import { ptrAddress, ptrAddressOrZero, ptrOf, ptrOrNull } from "velt/ffi/ptr";
 import { strBytesOf } from "velt/ffi/str_bytes";
+import { inspect } from "velt/lang/intrinsics/report";
 import * as ffi from "velt/ffi";
 import { StrBytes as Text } from "velt/ffi";
 
@@ -25,16 +26,45 @@ declare c("c") function memcmp(a: StrBytes, b: StrBytes, n: usize): i32;
 declare c("c") function memcmp$ns(a: ffi.StrBytes, b: Text, n: usize): i32;
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8> | null): void;
-declare c("c") function memcpy(dst: Ptr<u8>, src: CString, n: usize): Ptr<u8>;
-declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+declare c("c") function memcpy(dst: Ptr<u8> | null, src: CString, n: usize): Ptr<u8>;
+declare c("c") function memset(p: Ptr<u8> | null, c: i32, n: usize): Ptr<u8>;
 declare c("c") function frexp(x: f64, exp: Out<i32>): f64;
 
 describe("velt/ffi pointers", () => {
   it("a pointer holds its address, and NULL is null", () => {
-    expect(ptrAddress(ptrOf<FILE>(48))).toBe(48);
-    expect(ptrOrNull<FILE>(0) === null).toBe(true);
-    expect(ptrAddressOrZero<FILE>(null)).toBe(0);
-    expect(ptrAddressOrZero(ptrOrNull<FILE>(64))).toBe(64);
+    // SAFETY: only addresses are compared; nothing reads through them.
+    unsafe {
+      expect(Ptr.addressOf(Ptr.at<FILE>(48))).toBe(48);
+      expect(Ptr.orNull<FILE>(0) === null).toBe(true);
+      expect(Ptr.addressOf<FILE>(null)).toBe(0);
+      expect(Ptr.addressOf(Ptr.orNull<FILE>(64))).toBe(64);
+      // One word: a pointer widened to `Ptr<T> | null` is the same pointer, never `null`.
+      const p: Ptr<FILE> | null = Ptr.at<FILE>(72);
+      expect(p !== null).toBe(true);
+      expect(Ptr.addressOf(p)).toBe(72);
+    }
+  });
+
+  it("a pointer prints as Ptr and its address in hexadecimal", () => {
+    // SAFETY: only printed; nothing reads through them.
+    unsafe {
+      expect(inspect(Ptr.at<FILE>(0x7ffd5e8c1a30))).toBe("Ptr(0x7ffd5e8c1a30)");
+      const some: Ptr<FILE> | null = Ptr.at<FILE>(16);
+      const none: Ptr<FILE> | null = null;
+      expect(inspect([some, none, Ptr.at<FILE>(0xfedcba9876543210)])).toBe(
+        "[ Ptr(0x10), null, Ptr(0xfedcba9876543210) ]",
+      );
+    }
+  });
+
+  it("pointers compare by address", () => {
+    // SAFETY: as above.
+    unsafe {
+      expect(Ptr.at<FILE>(48) === Ptr.at<FILE>(48)).toBe(true);
+      expect(Ptr.at<FILE>(48) === Ptr.at<FILE>(56)).toBe(false);
+      const none: Ptr<FILE> | null = null;
+      expect(Ptr.orNull<FILE>(0) === none).toBe(true);
+    }
   });
 
   it("a C function returns one and takes it back", () => {

@@ -251,6 +251,7 @@ impl Implicit {
             | TyKind::Never
             | TyKind::Error
             | TyKind::Symbol
+            | TyKind::Ptr(_)
             | TyKind::Simd(_)
             | TyKind::Literal(_) => {}
             TyKind::Param(i) => match env.and_then(|e| e.get(*i as usize)) {

@@ -44,9 +44,9 @@ const MAX_ARRAY_BYTES: u64 = 4503599627370495;
 
 /** Address `a` as a C pointer argument; 0 passes `NULL`. */
 @inline("always")
-function ptr(a: u64): Ptr<u8> {
+function ptr(a: u64): Ptr<u8> | null {
   // SAFETY: only passed to mimalloc, as a block it gave or `NULL`.
-  return unsafe { Ptr.at<u8>(a as usize) };
+  return unsafe { Ptr.orNull<u8>(a as usize) };
 }
 
 /** The address mimalloc returned; 0 for `NULL`. */

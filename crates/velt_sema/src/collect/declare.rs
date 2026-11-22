@@ -242,6 +242,17 @@ pub(super) fn new_def<'m>(
                     s.name.span,
                 );
             }
+            // velt/arch's instructions: only its gated methods may call them (code elsewhere
+            // could run one on a CPU without it).
+            if s.name.name.starts_with("velt_arch_") && !cx.scopes[m].is_std {
+                cx.error(
+                    velt_common::Diagnostic::error(
+                        format!("`{}` is an instruction of velt/arch: only the standard library may declare it", s.name.name),
+                        s.name.span,
+                    )
+                    .with_note("call its method in velt/arch/x86 or velt/arch/arm, behind its class's `isSupported()`"),
+                );
+            }
             // A prebuilt hook's entry point: a build that links its object declares it itself, typed
             // from the table (velt_common `std_hooks/prebuilt.rs`); another declaration would clash.
             if s.name
@@ -278,6 +289,7 @@ pub(super) fn new_def<'m>(
                 decl: a,
                 expanding: false,
                 used: false,
+                pointees_checked: false,
                 outer: vec![],
             });
             return Some((&a.name, Item::Alias(id)));

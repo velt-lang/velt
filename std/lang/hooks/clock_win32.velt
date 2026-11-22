@@ -14,9 +14,9 @@ import { addressLoad } from "velt/lang/intrinsics";
 declare c type LARGE_INTEGER;
 declare c type _FILETIME;
 
-declare c("c") function QueryPerformanceCounter$clock(count: Ptr<LARGE_INTEGER>): i32;
-declare c("c") function QueryPerformanceFrequency$clock(freq: Ptr<LARGE_INTEGER>): i32;
-declare c("c") function GetSystemTimePreciseAsFileTime(time: Ptr<_FILETIME>): void;
+declare c("c") function QueryPerformanceCounter$clock(count: Ptr<LARGE_INTEGER> | null): i32;
+declare c("c") function QueryPerformanceFrequency$clock(freq: Ptr<LARGE_INTEGER> | null): i32;
+declare c("c") function GetSystemTimePreciseAsFileTime(time: Ptr<_FILETIME> | null): void;
 declare c("c") function calloc$clock(n: usize, size: usize): Ptr<u8> | null;
 
 /** 100 ns ticks from 1601-01-01 (the `FILETIME` epoch) to 1970-01-01. */
@@ -54,7 +54,7 @@ export function monotonicNs(): u64 {
     // SAFETY: this thread's buffer holds a LARGE_INTEGER; the call succeeds on every Windows
     // since XP.
     unsafe {
-      QueryPerformanceFrequency$clock(Ptr.at<LARGE_INTEGER>(p));
+      QueryPerformanceFrequency$clock(Ptr.orNull<LARGE_INTEGER>(p));
     }
     // SAFETY: inside the buffer, which the call filled.
     f = unsafe { addressLoad<u64>(p) };
@@ -62,7 +62,7 @@ export function monotonicNs(): u64 {
   }
   // SAFETY: as above.
   unsafe {
-    QueryPerformanceCounter$clock(Ptr.at<LARGE_INTEGER>(p));
+    QueryPerformanceCounter$clock(Ptr.orNull<LARGE_INTEGER>(p));
   }
   // SAFETY: as above.
   const c = unsafe { addressLoad<u64>(p) };
@@ -81,7 +81,7 @@ export function realtimeNs(): i64 {
   }
   // SAFETY: this thread's buffer holds a FILETIME, which only this call uses.
   unsafe {
-    GetSystemTimePreciseAsFileTime(Ptr.at<_FILETIME>(p));
+    GetSystemTimePreciseAsFileTime(Ptr.orNull<_FILETIME>(p));
   }
   // SAFETY: inside the buffer, which the call filled (the ticks, little-endian).
   const ticks = unsafe { addressLoad<i64>(p) };

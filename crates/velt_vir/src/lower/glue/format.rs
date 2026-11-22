@@ -147,6 +147,7 @@ impl FnLower<'_, '_> {
             | TyKind::Bool
             | TyKind::Str
             | TyKind::Symbol
+            | TyKind::Ptr(_)
             | TyKind::Simd(_)
             | TyKind::Unit
             | TyKind::Never
@@ -180,6 +181,13 @@ impl FnLower<'_, '_> {
             }
             TyKind::Symbol => {
                 self.push_symbol(buf, Operand::Copy(place.clone()));
+            }
+            // `Ptr(0x7ffd5e8c1a30)` (#3094): std's text of the address.
+            TyKind::Ptr(_) => {
+                let p = Operand::Copy(place.clone());
+                let a = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
+                _ = hooks::ffi_ptr_push(self, ty::Str::arg(buf.clone()), ty::U64::arg(a))
+                    .emit(self);
             }
             TyKind::Unit => self.push_text(buf, "undefined"),
             TyKind::Simd(s) => self.push_text(buf, &Self::simd_text(s)),

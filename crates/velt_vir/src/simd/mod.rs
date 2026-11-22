@@ -385,11 +385,18 @@ pub enum SimdCall {
     /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
     /// (`arrayPrefetch`); never faults. Nothing under Cranelift and on wasm.
     Prefetch,
+    /// `velt_arch_<class>_<method>(…)`: an instruction of velt/arch (#3222 step 4, [`crate::arch`]),
+    /// which only a function gated on its feature calls (the verifier checks it). Only LLVM
+    /// lowers one: Cranelift never runs gated code and gives a zero.
+    Arch(crate::arch::ArchOp),
 }
 
 impl SimdCall {
     /// The operation `symbol` names, if it is a SIMD extern for a supported combination.
     pub fn of_symbol(symbol: &str) -> Option<SimdCall> {
+        if symbol.starts_with("velt_arch_") {
+            return crate::arch::ArchOp::of_symbol(symbol).map(SimdCall::Arch);
+        }
         let rest = symbol.strip_prefix("velt_simd_")?;
         if rest == "prefetch" {
             return Some(SimdCall::Prefetch);
@@ -447,6 +454,7 @@ impl SimdCall {
             SimdCall::Prefetch => (vec![Ptr], Unit),
             SimdCall::Cpuid => (vec![U32, U32], V128),
             SimdCall::Xgetbv => (vec![U32], U64),
+            SimdCall::Arch(op) => op.signature(),
             SimdCall::Inst(ExtOp::Sha1H) => (vec![U32], U32),
             SimdCall::Inst(op) => {
                 let mut params = vec![V128; op.vector_operands()];

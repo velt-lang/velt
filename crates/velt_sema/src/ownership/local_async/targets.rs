@@ -440,7 +440,7 @@ pub(super) fn held_adts(cx: &mut Ctx, lits: &Literals) -> Vec<DefId> {
                 let below: Vec<DefId> = lits.below(d).into_iter().filter(|&c| c != d).collect();
                 work.extend(super::types::adt_parts_below(cx, d, &args, &below));
             }
-            k => work.extend(crate::types::children(&k)),
+            k => work.extend(crate::types::contents(&k)),
         }
     }
     out.sort_by_key(|d| d.0);
