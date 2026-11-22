@@ -47,6 +47,19 @@ impl FnCx<'_, '_> {
                 _ => String::new(),
             };
             eprintln!("dbg-trap: no_field {} on {tn}: {k:?} {adt}", prop.name);
+            let only = self.cx.only_trap_vars(t);
+            eprintln!(
+                "dbg-trap:   vars {} only_trap_vars {only} use_vars {}",
+                self.cx.fn_sites.vars.len(),
+                self.cx.fn_sites.use_vars
+            );
+            if let Some(ms) = self.cx.union_members(t) {
+                for m in ms {
+                    let mk = self.cx.ty.kind(m).clone();
+                    let mn = self.cx.display(m);
+                    eprintln!("dbg-trap:   member {mn}: {mk:?}");
+                }
+            }
         }
         let mut d = Diagnostic::error(
             format!(

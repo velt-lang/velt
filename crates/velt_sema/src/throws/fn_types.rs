@@ -479,8 +479,18 @@ impl Ctx<'_> {
             .intern(TyKind::Op(crate::hir::TyOp::ErrSite(id), vec![]));
         self.fn_sites.vars.push(span);
         self.fn_sites.var_of.insert(span, v);
-        if self.scopes.get(module).is_some_and(|s| s.is_std) {
+        // A trap's site, also where the app's stage of a check by units resolves std's handler
+        // type for the program's types (`units::Summaries::trap_sites`).
+        let std_site = self.scopes.get(module).is_some_and(|s| s.is_std)
+            || (self.unit_sums.trap_sites.iter()).any(|(s, _)| *s == span);
+        if std_site {
             self.fn_sites.trap_vars.insert(id);
+        }
+        if std::env::var_os("VELT_DBG_TRAPS").is_some()
+            && self.units_stage != crate::units::Stage::Std
+        {
+            let path = self.modules.get(module).map(|m| m.path.clone());
+            eprintln!("dbg-trap: site_var {id} at {span:?} module {path:?} trap {std_site}");
         }
         Some(v)
     }

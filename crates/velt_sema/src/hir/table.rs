@@ -14,6 +14,19 @@ impl TyTable {
     }
 
     pub fn intern(&mut self, kind: TyKind) -> TyId {
+        if let TyKind::Adt(d, _) = &kind {
+            if let Some(want) = std::env::var("VELT_DBG_ADT")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+            {
+                if d.0 == want && !self.map.contains_key(&kind) {
+                    eprintln!(
+                        "dbg-adt: interning Adt({want})\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
+            }
+        }
         // An option of an option is one option (hir_encodings.md "Undefined"). `(T | null) |
         // undefined` (also under `T | null | undefined`) is `T | null | undefined`, whose value
         // is the outer option of a `T | null`; otherwise it is the inner option, whose nothing

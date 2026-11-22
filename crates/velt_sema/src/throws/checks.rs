@@ -353,6 +353,15 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     if cx.fn_sites.use_vars {
         fin = solved(cx, fin);
         obs = solved(cx, obs);
+    } else if cx.units {
+        // A check by units: std's unit keeps the variables its traps had in std's check, also
+        // in the app's rounds without variables, where a whole-program check has none: compared
+        // as written, a trap's variable counts as nothing (what the round's seeds give its site
+        // is in the types already).
+        let plain_fin = fin.map(|t| cx.plain_type(t));
+        fin = cx.canon_error(plain_fin);
+        let plain_obs = obs.map(|t| cx.plain_type(t));
+        obs = cx.canon_error(plain_obs);
     }
     let ok = if c.exact {
         fin == obs
