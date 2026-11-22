@@ -51,11 +51,6 @@ export declare async function velt_rt_fs_open_read_range(
 ): Promise<IoResult<u64>>;
 export declare function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats>;
 export declare async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>>;
-export declare async function velt_rt_fs_reader_read_string(
-  r: u64,
-  max: u64,
-): Promise<IoResult<string>>;
-export declare async function velt_rt_fs_reader_read_line(r: u64): Promise<LineRead>;
 export declare function velt_rt_fs_reader_close(r: u64);
 export declare async function velt_rt_fs_open_write(
   path: string,
@@ -72,12 +67,6 @@ export declare function velt_rt_fs_writer_free(w: u64);
 struct DirentList {
   names: string[];
   kinds: u8[];
-}
-
-// The runtime's `LineRead` (§14.4).
-struct LineRead {
-  line: IoResult<string>;
-  eof: bool;
 }
 
 /** The entries of a runtime listing, each with its type. */
