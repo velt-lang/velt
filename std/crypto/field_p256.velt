@@ -35,13 +35,55 @@ function mac(t: u64, a: u64, b: u64, c: u64): [u64, u64] {
 function adc(a: u64, b: u64, c: u64): [u64, u64] {
   const s = a + b;
   const s2 = s + c;
-  return [s2, ((s < a) as u64) | ((s2 < c) as u64)];
+  return [s2, ((s < a) as u64) | ((s2 < s) as u64)];
 }
 
 // `a - b - c` (c is 0 or 1) and its borrow.
 function sbb(a: u64, b: u64, c: u64): [u64, u64] {
   const d = a - b;
   return [d - c, ((a < b) as u64) | ((d < c) as u64)];
+}
+
+// One row of the interleaved Montgomery product: x + a b_i, then one round of reduction (+ m p
+// with m the low limb, p = -1 mod 2^64) and a shift down a limb; x stays below 2p. The row's
+// low halves and high halves are two separate carry chains (each an add-with-carry run), and
+// only the five limbs of x are live with the operands, so nothing spills.
+@inline("always")
+function row(x: [u64, u64, u64, u64, u64], a0: u64, a1: u64, a2: u64, a3: u64, bi: u64): [u64, u64, u64, u64, u64] {
+  const l0 = a0 * bi;
+  const l1 = a1 * bi;
+  const l2 = a2 * bi;
+  const l3 = a3 * bi;
+  const h0 = Math.umulh(a0, bi);
+  const h1 = Math.umulh(a1, bi);
+  const h2 = Math.umulh(a2, bi);
+  const h3 = Math.umulh(a3, bi);
+  // x += the low halves.
+  let [x0, c] = adc(x[0], l0, 0);
+  let x1: u64 = 0;
+  [x1, c] = adc(x[1], l1, c);
+  let x2: u64 = 0;
+  [x2, c] = adc(x[2], l2, c);
+  let x3: u64 = 0;
+  [x3, c] = adc(x[3], l3, c);
+  let [x4, x5] = adc(x[4], 0, c);
+  // x += the high halves, a limb up.
+  [x1, c] = adc(x1, h0, 0);
+  [x2, c] = adc(x2, h1, c);
+  [x3, c] = adc(x3, h2, c);
+  let k: u64 = 0;
+  [x4, k] = adc(x4, h3, c);
+  x5 += k;
+  // x += m p, m = x0: m (2^64 - 1) + x0 is m 2^64, m (2^32 - 1) + m is m << 32, limb 2 of p
+  // is zero, and only limb 3 needs a product.
+  const m = x0;
+  const ml = m * P3;
+  const mh = Math.umulh(m, P3);
+  [x1, c] = adc(x1, m << 32, 0);
+  [x2, c] = adc(x2, m >> 32, c);
+  [x3, c] = adc(x3, ml, c);
+  [x4, k] = adc(x4, mh, c);
+  return [x1, x2, x3, x4, x5 + k];
 }
 
 /** `n` registers of elements mod the P-256 prime, all zero. */
@@ -145,32 +187,12 @@ export class FeP256 {
     const a0 = r[oa];
     const a1 = r[oa + 1];
     const a2 = r[oa + 2];
-    const b0 = r[ob];
-    const b1 = r[ob + 1];
-    const b2 = r[ob + 2];
-    // The 512-bit product, row by row.
-    let c: u64 = 0;
-    let [t0, t1] = mac(0, a0, b0, 0);
-    [t1, c] = mac(t1, a0, b1, 0);
-    let [t2, t3] = mac(c, a0, b2, 0);
-    [t3, c] = mac(t3, a0, b3, 0);
-    let t4 = c;
-    [t1, c] = mac(t1, a1, b0, 0);
-    [t2, c] = mac(t2, a1, b1, c);
-    [t3, c] = mac(t3, a1, b2, c);
-    let t5: u64 = 0;
-    [t4, t5] = mac(t4, a1, b3, c);
-    [t2, c] = mac(t2, a2, b0, 0);
-    [t3, c] = mac(t3, a2, b1, c);
-    [t4, c] = mac(t4, a2, b2, c);
-    let t6: u64 = 0;
-    [t5, t6] = mac(t5, a2, b3, c);
-    [t3, c] = mac(t3, a3, b0, 0);
-    [t4, c] = mac(t4, a3, b1, c);
-    [t5, c] = mac(t5, a3, b2, c);
-    let t7: u64 = 0;
-    [t6, t7] = mac(t6, a3, b3, c);
-    this.reduce(d, t0, t1, t2, t3, t4, t5, t6, t7);
+    let x: [u64, u64, u64, u64, u64] = [0, 0, 0, 0, 0];
+    x = row(x, a0, a1, a2, a3, r[ob]);
+    x = row(x, a0, a1, a2, a3, r[ob + 1]);
+    x = row(x, a0, a1, a2, a3, r[ob + 2]);
+    x = row(x, a0, a1, a2, a3, b3);
+    this.store(d, x[0], x[1], x[2], x[3], x[4]);
   }
 
   /** `d = a^2 / 2^256` mod p: the 10 distinct products of `mul`'s 16. */
@@ -181,16 +203,25 @@ export class FeP256 {
     const a0 = r[oa];
     const a1 = r[oa + 1];
     const a2 = r[oa + 2];
-    // The products of distinct limbs, once.
+    // The products of distinct limbs, once: each row's low halves and high halves are separate
+    // carry chains.
     let c: u64 = 0;
-    let [t1, t2] = mac(0, a0, a1, 0);
-    [t2, c] = mac(t2, a0, a2, 0);
-    let [t3, t4] = mac(c, a0, a3, 0);
-    [t3, c] = mac(t3, a1, a2, 0);
-    let t5: u64 = 0;
-    [t4, t5] = mac(t4, a1, a3, c);
-    let t6: u64 = 0;
-    [t5, t6] = mac(t5, a2, a3, 0);
+    let k: u64 = 0;
+    // a0 (a1, a2, a3) at limbs 1..4.
+    const t1 = a0 * a1;
+    let [t2, c0] = adc(a0 * a2, Math.umulh(a0, a1), 0);
+    let [t3, c1] = adc(a0 * a3, Math.umulh(a0, a2), c0);
+    let t4 = Math.umulh(a0, a3) + c1;
+    // a1 (a2, a3) at limbs 3..5.
+    [t3, c] = adc(t3, a1 * a2, 0);
+    [t4, c] = adc(t4, a1 * a3, c);
+    let t5 = c;
+    [t4, c] = adc(t4, Math.umulh(a1, a2), 0);
+    [t5, c] = adc(t5, Math.umulh(a1, a3), c);
+    let t6 = c;
+    // a2 a3 at limbs 5..6.
+    [t5, c] = adc(t5, a2 * a3, 0);
+    [t6, k] = adc(t6, Math.umulh(a2, a3), c);
     // Twice that, plus the squares.
     const t7 = t6 >> 63;
     t6 = (t6 << 1) | (t5 >> 63);
@@ -198,15 +229,21 @@ export class FeP256 {
     t4 = (t4 << 1) | (t3 >> 63);
     t3 = (t3 << 1) | (t2 >> 63);
     t2 = (t2 << 1) | (t1 >> 63);
-    t1 = t1 << 1;
-    let [t0, h] = mac(0, a0, a0, 0);
-    [t1, c] = adc(t1, h, 0);
-    [t2, h] = mac(t2, a1, a1, c);
-    [t3, c] = adc(t3, h, 0);
-    [t4, h] = mac(t4, a2, a2, c);
-    [t5, c] = adc(t5, h, 0);
-    [t6, h] = mac(t6, a3, a3, c);
-    this.reduce(d, t0, t1, t2, t3, t4, t5, t6, t7 + h);
+    const u1 = t1 << 1;
+    const t0 = a0 * a0;
+    let [v1, e] = adc(u1, Math.umulh(a0, a0), 0);
+    let v2: u64 = 0;
+    [v2, e] = adc(t2, a1 * a1, e);
+    let v3: u64 = 0;
+    [v3, e] = adc(t3, Math.umulh(a1, a1), e);
+    let v4: u64 = 0;
+    [v4, e] = adc(t4, a2 * a2, e);
+    let v5: u64 = 0;
+    [v5, e] = adc(t5, Math.umulh(a2, a2), e);
+    let v6: u64 = 0;
+    [v6, e] = adc(t6, a3 * a3, e);
+    const v7 = t7 + Math.umulh(a3, a3) + e;
+    this.reduce(d, t0, v1, v2, v3, v4, v5, v6, v7);
   }
 
   // Stores the Montgomery reduction of the 512-bit `t` (below p^2): four rounds add m p, with m
@@ -222,15 +259,13 @@ export class FeP256 {
     let u3 = t3;
     for (let i = 0; i < 4; i++) {
       const m = u0;
-      const s1 = u1 + (m << 32);
-      const c1 = (m >> 32) + ((s1 < u1) as u64);
-      const s2 = u2 + c1;
-      const c2 = (s2 < c1) as u64;
-      const [s3, c3] = mac(u3, m, P3, c2);
+      const [s1, c1] = adc(u1, m << 32, 0);
+      const [s2, c2] = adc(u2, m >> 32, c1);
+      const [s3, c3] = adc(u3, m * P3, c2);
       u0 = s1;
       u1 = s2;
       u2 = s3;
-      u3 = c3;
+      u3 = Math.umulh(m, P3) + c3;
     }
     const [v0, k0] = adc(u0, t4, 0);
     const [v1, k1] = adc(u1, t5, k0);
