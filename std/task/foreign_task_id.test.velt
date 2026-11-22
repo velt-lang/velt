@@ -1,0 +1,85 @@
+// velt/task (tests): the task id of a C library's thread calling an exported function
+// (std/lang/hooks/sched_id.velt `enterForeignCall`, #2907). Each outermost call gets an id of its
+// own, from the counter tasks' ids come from: not 0, the same throughout the call, another call's
+// differs, and so does any task's. So a promise one call settles for another call, or for a task,
+// is transferred as one settled by another task is (std/lang/promise/settle.velt).
+import { describe, expect, it } from "velt/test";
+import { Ptr, export as cExport } from "velt/ffi";
+import {
+  addressAtomicLoad,
+  addressAtomicStore,
+  exportedAddress,
+  rawAlloc,
+  rawFree,
+} from "velt/lang/intrinsics";
+import * as th from "#sched-thread";
+import { taskId } from "velt/lang/hooks/sched_id";
+import * as m from "velt/lang/hooks/sched_mem";
+
+// The id twice, with a nested reading between (one call: one id), then the word that says it's
+// done. The words are its argument: an `@export` reaches no module state.
+@cExport("std_test_foreign_task_id")
+function foreignThread(arg: Ptr<u8> | null): Ptr<u8> | null {
+  const at = m.addr(arg);
+  const first = taskId();
+  const again = sameCall();
+  // SAFETY: three words the test owns until it has read the last.
+  unsafe {
+    addressAtomicStore<u64>(at, first, "seqcst");
+    addressAtomicStore<u64>(at + 8, again, "seqcst");
+    addressAtomicStore<u64>(at + 16, 1, "seqcst");
+  }
+  return null;
+}
+
+// The id seen deeper in the same call.
+function sameCall(): u64 {
+  return taskId();
+}
+
+// Runs `foreignThread` on a new C thread and returns the two ids it saw.
+async function idsOfACall(): Promise<[u64, u64]> {
+  const at = rawAlloc(24);
+  // SAFETY: three words the test just allocated.
+  unsafe {
+    addressAtomicStore<u64>(at, 0, "seqcst");
+    addressAtomicStore<u64>(at + 8, 0, "seqcst");
+    addressAtomicStore<u64>(at + 16, 0, "seqcst");
+  }
+  // SAFETY: `foreignThread` has the C signature of a thread's start routine.
+  expect(th.startDetached(unsafe { exportedAddress(foreignThread) }, at)).toBe(true);
+  let done: u64 = 0;
+  for (let i = 0; i < 400 && done === 0; i++) {
+    // timing: a bound on a wait for another thread's work, not a delay the test relies on.
+    await sleep(5);
+    // SAFETY: the words are live until freed below.
+    done = unsafe { addressAtomicLoad<u64>(at + 16, "seqcst") };
+  }
+  expect(done).toBe(1);
+  // SAFETY: the thread wrote both before `done`; nothing else uses the words.
+  const ids: [u64, u64] =
+    unsafe { [addressAtomicLoad<u64>(at, "seqcst"), addressAtomicLoad<u64>(at + 8, "seqcst")] };
+  // SAFETY: read; the thread is done with them.
+  unsafe {
+    rawFree(at, 24);
+  }
+  return ids;
+}
+
+describe("a C library's thread calling an exported function", () => {
+  it("has a task id of its own for the call", async () => {
+    if (!th.SUPPORTED) {
+      return;
+    }
+    const [a, aAgain] = await idsOfACall();
+    const [b, bAgain] = await idsOfACall();
+    expect(a === 0).toBe(false);
+    expect(aAgain).toBe(a);
+    expect(b === 0).toBe(false);
+    expect(bAgain).toBe(b);
+    expect(a === b).toBe(false);
+    const mine = taskId();
+    expect(a === mine).toBe(false);
+    expect(b === mine).toBe(false);
+  });
+});

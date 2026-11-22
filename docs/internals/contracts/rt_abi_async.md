@@ -405,7 +405,7 @@ stored (§13.5).
 | `velt_rt_latch_free` | `(u64 latch)` | releases the handle (a pending wait keeps the latch alive) |
 | `velt_rt_latch_open` | `(u64 latch)` | opens it and resumes every waiter; a no-op when open. A waiter of the task being polled (its root or one of its started promises) is queued in that task's microtask queue now, as Node queues a promise's reactions inside `resolve`; that entry is the waiter's `await` step. Other waiters are woken. |
 | `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open, and for a waiter queued by `velt_rt_latch_open`, once its queue reached that entry |
-| `velt_rt_task_id` | `() -> u64` | WebAssembly only (velt_rt_wasm) [velt_rt's export removed, #2196: native code and std get the id from the executor in Velt, std/lang/hooks/sched_id.velt]. a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
+| `velt_rt_task_id` | `() -> u64` | WebAssembly only (velt_rt_wasm) [velt_rt's export removed, #2196: native code and std get the id from the executor in Velt, std/lang/hooks/sched_id.velt]. a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; natively, a C library's thread has one for each outermost exported function's call, #2907; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
 
 ### 2.2 Channels (`velt/sync`)
 
