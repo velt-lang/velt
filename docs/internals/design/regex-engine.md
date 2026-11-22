@@ -268,7 +268,7 @@ same programs matched by Rust's `regex` crate, which the engine replaced:
 | Program | `regex` crate | std engine |
 |---|---|---|
 | `bench/benchmarks-game/regex-redux` on `fasta 100000` | 194.0 M | 198.7 M |
-| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 17.5 G |
+| `bench/regex/literal.velt` (compiles three patterns per iteration) | 88.6 G | 17.4 G |
 | `bench/regex/units.velt` (code-unit patterns over pairs) | 13.7 G | 0.69 G |
 | `long.velt` 0: `/(a+)+b/` fails | 3.67 M | 3.49 M |
 | `long.velt` 1: `/(a+)+b/` matches | 18.12 M | 6.51 M |
