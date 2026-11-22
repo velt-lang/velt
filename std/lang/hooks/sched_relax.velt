@@ -170,8 +170,10 @@ function calm(g: usize, n: usize, now: usize): bool {
   for (let i: usize = 1; i < n; i++) {
     const s = t.worker(i);
     if (
-      (m.load32(s + t.E_PARK) !== 1 &&
-        ((m.load32(s + t.E_RETIRED) & t.R_AWAY) === 0 || m.load(s + t.E_CURRENT) !== 0)) ||
+      (
+        m.load32(s + t.E_PARK) !== 1 &&
+        ((m.load32(s + t.E_RETIRED) & t.R_AWAY) === 0 || m.load(s + t.E_CURRENT) !== 0)
+      ) ||
       m.load(s + t.E_INBOX) !== 0 ||
       m.load(s + t.E_OFFER) !== 0 ||
       q.any(s)
