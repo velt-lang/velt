@@ -16,6 +16,7 @@ use super::AsyncInfo;
 use crate::lower::glue::VtableKey;
 use crate::lower::operand::proj;
 use crate::lower::{ice, Cx, FnLower, Work};
+use crate::vir::BinOp;
 use crate::vir::{
     self, AggId, AggLayout, Const, Function, Local, Operand, Place, Proj, Rvalue, StaticData,
     StaticId, Terminator, Ty,
@@ -72,10 +73,8 @@ impl Cx<'_> {
         let mut fields = self.aggs[oa.0 as usize].fields.clone();
         fields[0].0 = Ty::Ptr; // the class's `state: u64` word holds the table pointer
         let off = self.gen_state_off(gty);
-        let (size, align) = self.size_align(Ty::Agg(info.state));
-        if align > 8 {
-            ice("generator state aligned beyond its object's 8-byte alignment");
-        }
+        // A state aligned beyond 8 is placed by the object's block instead ([`gen_lead`]).
+        let (size, _) = self.size_align(Ty::Agg(info.state));
         fields.push((Ty::Agg(info.state), off as u32));
         let name = &self.fn_def(def).name;
         self.push_agg(AggLayout {
@@ -84,6 +83,33 @@ impl Cx<'_> {
             align: 8,
             fields,
         })
+    }
+
+    /// For instance `def<targs>` whose state is aligned beyond the object's 8 bytes (an
+    /// `@align(32)` struct held across a `yield`): how far into its heap block the object starts
+    /// (for a `counted` object, the header holding its count word), and the block's alignment,
+    /// so that the state at [`gen_state_off`](Self::gen_state_off) is aligned. The offset is the
+    /// class's, the same for every instance, so the object moves rather than the state. `None`
+    /// for an 8-aligned state: the object is allocated as any other.
+    pub(in crate::lower) fn gen_lead(
+        &mut self,
+        def: DefId,
+        targs: &[TyId],
+        info: &AsyncInfo,
+    ) -> Option<(i128, i128)> {
+        let (_, align) = self.size_align(Ty::Agg(info.state));
+        let align = i128::from(align);
+        if align <= 8 {
+            return None;
+        }
+        let gty = self.gen_class_ty(def, targs);
+        let off = self.gen_state_off(gty);
+        let lead = match self.counted(gty) {
+            // At least the count word before the object.
+            true => round_up(off + 8, align) - off,
+            false => round_up(off, align) - off,
+        };
+        Some((lead, align))
     }
 
     /// Byte offset of the state in an object of generator class `gty`: after the class's
@@ -185,10 +211,25 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let bx = self.cx.gen_box(def, targs, info);
         let gty = self.cx.gen_class_ty(def, targs);
         self.cx.note_gen_frame(gty, def, targs);
-        let obj = if self.cx.counted(gty) {
-            self.counted_alloc(Ty::Agg(bx))
-        } else {
-            self.alloc(Ty::Agg(bx))
+        let size = self.cx.aggs[bx.0 as usize].size;
+        let obj = match (self.cx.gen_lead(def, targs, info), self.cx.counted(gty)) {
+            (None, true) => self.counted_alloc(Ty::Agg(bx)),
+            (None, false) => self.alloc(Ty::Agg(bx)),
+            (Some((header, align)), true) => self.counted_alloc_with(size, header, align),
+            (Some((lead, align)), false) => {
+                let block = self.temp(Ty::Ptr);
+                let args = vec![
+                    crate::lower::cint(i128::from(size) + lead, Ty::U64),
+                    crate::lower::cint(align, Ty::U64),
+                ];
+                self.call_rt(crate::lower::rt::Rt::Alloc, args, Some(Place::local(block)));
+                let at = Rvalue::Binary(
+                    BinOp::PtrAdd,
+                    Operand::Copy(Place::local(block)),
+                    crate::lower::cint(lead, Ty::I64),
+                );
+                self.rvalue_temp(Ty::Ptr, at)
+            }
         };
         let obj = self.copy_to_temp(obj, Ty::Ptr);
         let base = proj(&Place::local(obj), Proj::Deref(Ty::Agg(bx)));
@@ -231,10 +272,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower::bare(cx, targs.to_vec());
         let obj = lw.new_local(Ty::Ptr, Some("obj".into()));
         let o = Operand::Copy(Place::local(obj));
-        if lw.cx.counted(gty) {
-            lw.counted_free(o, Ty::Agg(bx));
-        } else {
-            lw.free(o, Ty::Agg(bx));
+        let size = lw.cx.aggs[bx.0 as usize].size;
+        match (lw.cx.gen_lead(def, targs, &info), lw.cx.counted(gty)) {
+            (None, true) => lw.counted_free(o, Ty::Agg(bx)),
+            (None, false) => lw.free(o, Ty::Agg(bx)),
+            (Some((header, align)), true) => lw.counted_free_with(o, size, header, align),
+            (Some((lead, align)), false) => {
+                let at = Rvalue::Binary(BinOp::PtrAdd, o, crate::lower::cint(-lead, Ty::I64));
+                let block = lw.rvalue_temp(Ty::Ptr, at);
+                let args = vec![
+                    block,
+                    crate::lower::cint(i128::from(size) + lead, Ty::U64),
+                    crate::lower::cint(align, Ty::U64),
+                ];
+                lw.call_rt(crate::lower::rt::Rt::Free, args, None);
+            }
         }
         lw.terminate(Terminator::Return(crate::lower::unit()));
         let sym = format!("{}$free", lw.cx.instance_symbol(&name, targs));
@@ -269,4 +321,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let gty = self.cx.gen_class_ty(def, &targs);
         self.finish_call(vir::Callee::Func(fid), argv, gty, None)
     }
+}
+
+/// `x` rounded up to a multiple of `align`, a power of two.
+fn round_up(x: i128, align: i128) -> i128 {
+    (x + align - 1) & !(align - 1)
 }

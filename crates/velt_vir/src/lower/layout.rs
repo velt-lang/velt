@@ -3,9 +3,12 @@
 //!
 //! - A struct declared `@align(n)` has alignment `n` where that is more than its own, and its
 //!   size is a multiple of it (`Cx::align_of`; docs/internals/design/package-machine-code.md §5).
-//!   Stack slots and heap blocks take a layout's alignment in both backends (Cranelift, whose
-//!   slots are aligned to at most 16 bytes, rounds the address of one aligned above that up
-//!   within a larger slot: velt_codegen_cl `Storage::Slot`).
+//!   Every home of a value keeps it (the list: that note's §5 "As built in step 6"): heap blocks
+//!   with the layout's alignment, counted boxes and generator objects with a header or lead in
+//!   front, std's task blocks and module blocks rounded up, std slots copied through an
+//!   8-aligned view (slot.rs), and stack slots (Cranelift, whose slots are aligned to at most 16
+//!   bytes, rounds the address of one aligned above that up within a larger slot:
+//!   velt_codegen_cl `Storage::Slot`).
 //!
 //! - `void` fields (`IoResult<void>`) are zero-sized: they have no VIR field, so HIR field `i`
 //!   is VIR field [`vir_field`](Cx::vir_field)`(t, i)` (the non-`void` fields before it).
@@ -51,6 +54,9 @@ pub(super) struct Layouts {
     text: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
+    /// The 8-aligned view of each aggregate aligned beyond 8 that sits in a std slot
+    /// (slot.rs `raw_view`).
+    pub(super) raw_views: FxHashMap<AggId, AggId>,
     /// Tables of generator instances (async_fn/gen_object.rs).
     pub(super) gen_tables: FxHashMap<(DefId, Vec<TyId>), crate::vir::StaticId>,
     /// State of the `Promise.all` wrapper future (async_fn/tasks.rs).

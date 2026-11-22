@@ -8,6 +8,7 @@ import { describe, expect, it } from "velt/test";
 import { Ptr } from "velt/ffi/ptr";
 import { align, repr } from "velt/lang/intrinsics/decorators";
 import { Set } from "velt/collections/set";
+import { readBytes } from "velt/ffi/read";
 
 @repr("transparent")
 struct Meters {
@@ -128,6 +129,43 @@ describe("@repr(\"transparent\")", () => {
     // SAFETY: the block came from `malloc` and is freed once.
     unsafe {
       free(b);
+    }
+  });
+});
+
+describe("a transparent pointer argument", () => {
+  it("is read before the later arguments run", () => {
+    // SAFETY: `malloc` returns 4 bytes or NULL.
+    const one = unsafe { malloc(4) };
+    // SAFETY: as above.
+    const two = unsafe { malloc(4) };
+    // SAFETY: each block has 4 bytes.
+    unsafe {
+      memset(one, 0, 4);
+      memset(two, 0, 4);
+    }
+    let b = one;
+    // SAFETY: `b` is one of the two blocks, which have 4 bytes each.
+    unsafe {
+      memset(
+        b,
+        ((): i32 => {
+          b = two;
+          return 9;
+        })(),
+        4,
+      );
+    }
+    // SAFETY: each block has 4 bytes, written above.
+    const first = unsafe { readBytes(one.p, 4) };
+    // SAFETY: as above.
+    const second = unsafe { readBytes(two.p, 4) };
+    expect(first.join(",")).toBe("9,9,9,9");
+    expect(second.join(",")).toBe("0,0,0,0");
+    // SAFETY: both blocks came from `malloc` and are freed once.
+    unsafe {
+      free(one);
+      free(two);
     }
   });
 });

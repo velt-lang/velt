@@ -510,15 +510,33 @@ impl FnLower<'_, '_> {
     pub(super) fn counted_alloc(&mut self, layout: Ty) -> Operand {
         let (size, align) = self.cx.size_align(layout);
         let header = counted_header(align);
+        self.counted_alloc_with(size, header, header)
+    }
+
+    /// [`counted_alloc`](Self::counted_alloc) of `size` bytes with `header` bytes in front of
+    /// the payload (at least the count word, a multiple of 8), in a block aligned to `align`: a
+    /// payload whose alignment is needed at an offset into it (a generator's state) chooses its
+    /// own header. [`counted_free_with`](Self::counted_free_with) frees it.
+    pub(super) fn counted_alloc_with(&mut self, size: u32, header: i128, align: i128) -> Operand {
+        if header < COUNT || header % COUNT != 0 {
+            ice("a counted object's header is not whole words");
+        }
         let block = self.temp(Ty::Ptr);
         self.call_rt(
             Rt::Alloc,
             vec![
                 cint(i128::from(size) + header, Ty::U64),
-                cint(header, Ty::U64),
+                cint(align, Ty::U64),
             ],
             Some(Place::local(block)),
         );
+        // The count is the word before the payload: the block's first for the usual 8-byte
+        // header (written before the payload pointer is made, as it always was), else the
+        // header's last.
+        if header == COUNT {
+            let count = proj(&Place::local(block), Proj::Deref(Ty::U64));
+            self.assign(count, Rvalue::Use(cint(1, Ty::U64)));
+        }
         let payload = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Binary(
@@ -527,19 +545,16 @@ impl FnLower<'_, '_> {
                 cint(header, Ty::I64),
             ),
         );
-        // The word before the payload: the block's first, unless the header is longer.
-        let count = match header == COUNT {
-            true => Place::local(block),
-            false => {
-                let at = Rvalue::Binary(BinOp::PtrAdd, payload.clone(), cint(-COUNT, Ty::I64));
-                let Operand::Copy(at) = self.rvalue_temp(Ty::Ptr, at) else {
-                    ice("a temp is a place");
-                };
-                at
-            }
-        };
-        let count = proj(&count, Proj::Deref(Ty::U64));
-        self.assign(count, Rvalue::Use(cint(1, Ty::U64)));
+        if header != COUNT {
+            let at = Rvalue::Binary(BinOp::PtrAdd, payload.clone(), cint(-COUNT, Ty::I64));
+            let Operand::Copy(at) = self.rvalue_temp(Ty::Ptr, at) else {
+                ice("a temp is a place");
+            };
+            self.assign(
+                proj(&at, Proj::Deref(Ty::U64)),
+                Rvalue::Use(cint(1, Ty::U64)),
+            );
+        }
         payload
     }
 
@@ -547,6 +562,12 @@ impl FnLower<'_, '_> {
     pub(super) fn counted_free(&mut self, p: Operand, layout: Ty) {
         let (size, align) = self.cx.size_align(layout);
         let header = counted_header(align);
+        self.counted_free_with(p, size, header, header);
+    }
+
+    /// Free the counted object `p` that [`counted_alloc_with`](Self::counted_alloc_with) made
+    /// with the same `size`, `header` and `align`.
+    pub(super) fn counted_free_with(&mut self, p: Operand, size: u32, header: i128, align: i128) {
         let block = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Binary(BinOp::PtrAdd, p, cint(-header, Ty::I64)),
@@ -556,7 +577,7 @@ impl FnLower<'_, '_> {
             vec![
                 block,
                 cint(i128::from(size) + header, Ty::U64),
-                cint(header, Ty::U64),
+                cint(align, Ty::U64),
             ],
             None,
         );
