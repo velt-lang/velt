@@ -1,0 +1,2 @@
+the function passed to `with` cannot use the `weak` variable `w`
+an async closure cannot capture the `weak` variable `w`

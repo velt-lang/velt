@@ -228,9 +228,9 @@ impl FnCx<'_, '_> {
             None => (j, prev),
         };
         let declared = (j, prev);
-        if self.outer[j].locals[prev.0 as usize].weak {
-            self.weak_captured(name, span);
-        }
+        // A capture of a `weak` variable is one too: it holds its own reference to the slot
+        // (velt_vir `weak_fields`), and every read of it is a `WeakRead`.
+        let weak = self.outer[j].locals[prev.0 as usize].weak;
         let mut ty = self.outer[j].locals[prev.0 as usize].ty;
         // A variable some closure assigns is not narrowed in the closures that capture it: the
         // check outside may no longer hold when they run (TS does not narrow it there either).
@@ -255,6 +255,7 @@ impl FnCx<'_, '_> {
         for idx in j + 1..self.outer.len() {
             let f = &mut self.outer[idx];
             prev = add_narrowed_capture(f, name, prev, ty, span, narrowing);
+            f.locals[prev.0 as usize].weak = weak;
             if let Some(c) = closure {
                 f.closure_consts.insert(prev, c);
             }
@@ -274,6 +275,7 @@ impl FnCx<'_, '_> {
             };
         }
         let inner = add_narrowed_capture(&mut self.f, name, prev, ty, span, narrowing);
+        self.f.locals[inner.0 as usize].weak = weak;
         if let Some(n) = dropped {
             self.note_dropped_capture(inner, name, n);
         }

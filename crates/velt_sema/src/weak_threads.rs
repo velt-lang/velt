@@ -237,16 +237,35 @@ fn peel(mut e: &Expr) -> &Expr {
     }
 }
 
-/// The captures of closure `n`: type, name and where the captured variable is declared.
-pub(crate) fn captures(cx: &Ctx, n: DefId) -> Vec<(TyId, String, Span)> {
+/// The captures of closure `n`: type, name, where the captured variable is declared, and whether
+/// it is a `weak` variable (whose slot belongs to this task's weak core, whatever its type).
+pub(crate) fn captures(cx: &Ctx, n: DefId) -> Vec<(TyId, String, Span, bool)> {
     match &cx.defs[n.0 as usize] {
         Some(Def::Fn(f)) => f
             .captures
             .iter()
             .map(|c| &f.body.locals[c.inner.0 as usize])
-            .map(|l| (l.ty, l.name.clone(), l.span))
+            .map(|l| (l.ty, l.name.clone(), l.span, l.weak))
             .collect(),
         _ => vec![],
+    }
+}
+
+/// Record the crossing `what` makes of closure `n`'s capture of type `t` (at `at`); a `weak`
+/// variable's is reported at once.
+fn capture_crossing(
+    cx: &mut Ctx,
+    own: &mut Vec<(TyId, Need)>,
+    (t, weak): (TyId, bool),
+    what: GenCopy,
+    at: Span,
+) {
+    match weak {
+        true => {
+            let d = crate::body::weak_capture_error(&what, at);
+            cx.error(d);
+        }
+        false => own.push((t, Need::Cross(what, at))),
     }
 }
 
@@ -308,21 +327,21 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
         }
     }
     for n in lock_fns {
-        for (t, name, at) in captures(cx, n) {
+        for (t, name, at, weak) in captures(cx, n) {
             let what = GenCopy::LockCapture(name);
-            own.entry(n).or_default().push((t, Need::Cross(what, at)));
+            capture_crossing(cx, own.entry(n).or_default(), (t, weak), what, at);
         }
     }
     for (n, at) in task_fns {
-        for (t, name, _) in captures(cx, n) {
+        for (t, name, _, weak) in captures(cx, n) {
             let what = GenCopy::TaskFn(name);
-            own.entry(n).or_default().push((t, Need::Cross(what, at)));
+            capture_crossing(cx, own.entry(n).or_default(), (t, weak), what, at);
         }
     }
     for n in async_fns {
-        for (t, name, at) in captures(cx, n) {
+        for (t, name, at, weak) in captures(cx, n) {
             let what = GenCopy::Capture(name);
-            own.entry(n).or_default().push((t, Need::Cross(what, at)));
+            capture_crossing(cx, own.entry(n).or_default(), (t, weak), what, at);
         }
     }
     let crosses = own

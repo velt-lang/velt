@@ -95,6 +95,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let tv = self.trace_cx();
         for p in &f.params {
             let info = &self.info[p.local.0 as usize];
+            // A `weak` variable's capture holds a slot (weak_captures.rs): no edge.
+            if info.weak.is_some() {
+                continue;
+            }
             if info.cell {
                 self.trace_cell(p.local, tv);
             } else if info.droppable {
@@ -122,12 +126,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             DropEntry::Local(id) => {
                 let info = &self.info[id.0 as usize];
-                if info.cell {
-                    return self.trace_cell(*id, tv);
-                }
-                // A `weak` variable holds its target's slot: no edge (cycles.md).
+                // A `weak` variable holds its target's slot, in its cell too: no edge
+                // (cycles.md).
                 if info.weak.is_some() {
                     return;
+                }
+                if info.cell {
+                    return self.trace_cell(*id, tv);
                 }
                 let whole = info.moved_fields.is_empty() && info.gen.is_none();
                 let (ty, flag, state) = (info.ty, info.flag, info.state);

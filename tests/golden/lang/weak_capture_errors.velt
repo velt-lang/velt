@@ -1,0 +1,24 @@
+// A closure capturing a `weak` variable may not cross to another task or a lock: the variable
+// refers to its target through the weak core of the task that set it (#3119). An async closure
+// may run as a task on another thread, and the function passed to `with` runs under a lock.
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function nameOf(n: Node | null): string {
+  return n === null ? "null" : n.name;
+}
+
+async function main() {
+  const a = new Node("a");
+  const w: weak Node | null = a;
+  const run = async () => nameOf(w);
+  console.log(await run());
+  const m = new Mutex(0);
+  m.with((v) => {
+    console.log(nameOf(w), v);
+  });
+}
