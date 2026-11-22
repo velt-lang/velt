@@ -55,12 +55,13 @@ mod string_hooks;
 mod module_hooks;
 #[macro_use]
 mod decorator_hooks;
+#[macro_use]
+mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
-// (`module_hooks.rs`), the string methods' (`string_hooks.rs`) and the weak core's
-// (`weak_hooks.rs`), given to `hooks!` together.
-with_decorator_hooks! {
+// The table: these rows, then TLS's (`tls_hooks.rs`), the decorators', module state's, the string
+// methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+with_tls_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -391,12 +392,6 @@ with_decorator_hooks! {
     sched_io_supported => lang_hooks_sched_io, "supported", sig(() -> bool);
     /// The `std-scheduler` variant of `#net-dns`'s resolver (std/net/dns/lookup_sched.velt).
     sched_dns_lookup => net_dns_lookup_sched, "velt_rt_dns_lookup", sig(async (move string) -> IoResult([string]));
-    // The TLS server and client (std/net/tls/fd_server.velt, fd_client.velt), which `listenTls`,
-    // `connectTls` and `fetch`'s `https:` call by role: loaded only where live code reaches them,
-    // with a check again (veltc `sema_stage`: they can't be served in place, velt_loader (a1)).
-    sched_tls_listen => net_tls_fd_server, "velt_rt_tls_listen", sig(async (move string, move string, move string, move string, u64) -> IoResult(u64));
-    sched_tls_connect => net_tls_fd_client, "velt_rt_tls_connect", sig(async (move string, move string, move string, move string) -> IoResult(u64));
-    sched_tls_handshake => net_tls_fd_client, "velt_rt_tls_handshake", sig(async (u64, move string, move string, move string, i64, move or_null(AbortSignal)) -> IoResult(u64));
     // The child processes on the executor's reactor (std/process/child/child_reactor.velt), which
     // the `std-scheduler` variant of `#child-rt` calls by role, each the twin of the runtime's
     // function of its name (std/process/child/rt.velt).
