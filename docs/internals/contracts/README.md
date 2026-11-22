@@ -198,6 +198,11 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `T **`, `CTy::Out`); the `std_hooks` rows `ffi_ptr_of`, `ffi_ptr_or_null`, `ffi_ptr_address`
   and `ffi_ptr_address_or_zero` are removed; `Intrinsic::PtrAtomic*` are `AddressAtomic*`,
   taking an address, and `PtrFromAddress` / `PtrToAddress` are added. VIR types are unchanged.
+  A C struct's field may be a pointer (#3094 pull request 3), its aggregate C's layout on the
+  64-bit targets (lowering checks it); `Intrinsic::PtrRead` / `PtrWrite` (additive) are
+  velt/ffi's `Ptr.read` and `Ptr.write`, a read checking the element's non-null pointers.
+  `CheckOptions::wasm32` (additive) tells sema the target is wasm32, where they refuse a type
+  holding a pointer, `usize` or `isize`.
 - Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
   `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:
   CVarArgs`; its `CImport::params` and `ExternFnDef::params` are the fixed parameters, and a
