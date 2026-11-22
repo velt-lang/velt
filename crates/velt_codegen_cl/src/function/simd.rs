@@ -107,6 +107,8 @@ impl Translator<'_, '_> {
             }
             SimdCall::Inst(_) | SimdCall::Cpuid => Inlined::Value(self.zero_vector()),
             // velt/arch's instructions are only in gated code, which never runs here.
+            // A wide result is written through a pointer: nothing to write here.
+            SimdCall::Arch(op) if op.row().ret.wide().is_some() => Inlined::Unit,
             SimdCall::Arch(op) => {
                 let ty = match op.row().ret.ty() {
                     velt_vir::vir::Ty::V128 => return Some(Inlined::Value(self.zero_vector())),

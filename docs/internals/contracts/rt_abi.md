@@ -272,12 +272,17 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 [weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
-  held; the count proper is bits 0..62. Retain is unchanged (`count += 1`).
+  held. Bit 62 (`RC_GATED`) is set besides once its record has a release gate (a weak map key, or
+  an object on an entry's path back to its key): a release of an object without one needs the
+  core only when it frees the object. The count proper is bits 0..61. Retain is unchanged
+  (`count += 1`).
 - **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
   targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c
-  > 1 { count = c - 1 } else if c == 1 { drop; free } else if weakRelease(obj) { drop; free }`
-  (`RC_WEAK` is the sign bit, so the shared path keeps one compare). Other types release with the
-  plain sequence.
+  > 1 { count = c - 1 } else if c == 1 { drop; free } else if (int64_t)(c << 1) > 2 { count = c -
+  1 } else if weakRelease(obj) { drop; free }` (`RC_WEAK` is the sign bit, so the shared path keeps
+  one compare; the third test, with `RC_GATED` shifted into the sign bit, is a weakly held object
+  without it whose count stays above 0, emitted for the classes `weak` fields refer to; other
+  types leave it out and `weakRelease` makes that decrement). Other types release with the plain sequence.
 - **Trace glue** per counted type that can be a weak key or value, or be reached from one:
   `void trace(uint8_t* obj, VisitFn visit, void* ctx)` calls `visit(ctx, child, child_trace)` once
   for each counted reference `obj` owns (`child_trace` may be null: opaque), each argument a
@@ -316,7 +321,8 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
   a value reached through a `shared` `Mutex`, keeps its entries. The compiler keeps `WeakMap`,
   `WeakSet` and `WeakRef` values out of transfers (sema rejects them, or the transfer glue
   panics): a handle is used by one task at a time. Weak-capable types are never atomic. An object
-  with `RC_WEAK` set and no record is an ICE (`weakRelease` panics before it changes the count).
+  with `RC_WEAK` set and no record is an ICE (`weakRelease` panics before it changes the count;
+  without `RC_GATED`, at its last release, the first that calls it).
   Trace glue runs with the table locked and must only call `visit`.
 - **Compiler rules** for weak-capable types: a uniqueness test compares the whole count word with
   1 (a weakly held object is never unique), and every site that decrements a count directly
@@ -339,7 +345,7 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 | `weakRefDrop` | `(r: u32)` | |
 | `weakSlot` | `(obj: usize) -> usize` | the slot of a `weak T` reference to `obj`, a block `[count: usize][target: usize]` shared by every weak reference to it, with its count raised by one (the caller's); does not count `obj`; the slot's target reads 0 once `obj` was freed; 0 (`null`) gives 0, without the lock |
 | `weakSlotDrop` | `(slot: usize)` | gives up a reference to `slot`; 0 is none; takes no lock |
-| `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed); panics (ICE) when the object has no record |
+| `weakRelease` | `(obj: usize) -> bool` | cold release of an object with `RC_WEAK` set, given the caller's reference: true = it was the last one (the object has left every map and `WeakRef`; the caller drops and frees it), false = the count was decremented (and an ephemeron cycle the object belonged to may have been freed; the release sequence makes a decrement of an object without `RC_GATED` itself); panics (ICE) when the object has no record |
 
 ## Symbols
 
@@ -493,7 +499,10 @@ velt/arch's instructions are externs too, `velt_arch_<class>_<method>`
 defined by no runtime: `velt_vir::arch` gives each one's row (`SimdCall::Arch`), with its
 feature, its VIR signature (scalars, or `V128` for a 128-bit lane type) and how LLVM computes it.
 Only a function gated on the row's feature calls one (`vir::Function::target`; the verifier
-checks it). LLVM emits it inline; Cranelift, which never runs gated code, gives a zero.
+checks it). LLVM emits it inline; Cranelift, which never runs gated code, gives a zero. A row on
+velt/arch/x86's `Vector256<T>` or `Vector512<T>` (std structs of two or four `V128`s) takes each
+by address, as `f32x8`'s operations do: a `Ptr` per operand, and a result through one more `Ptr`,
+the last parameter.
 A 256-bit vector (`f32x8`) is not a VIR type: it is a value of two `V128` halves,
 the low lanes first (32 bytes, 8-byte aligned as a `V128` is; the helpers' loads and stores are
 unaligned), and `velt_simd_f32x8_<op>` (`SimdCall::Wide`, `velt_vir::simd::wide`)
@@ -789,9 +798,10 @@ The call takes the process-wide *module lock* unless the thread holds it: inside
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
 synchronous `main`) until `main`'s root starts (std's `schedBlockOn`, `velt_rt_block_on` on
 WebAssembly) or until `main` returns. A program that never
-calls it pays nothing per task (a process-wide flag the first call sets). `velt_rt_mutex_lock`
-keeps the module lock while it blocks; waiting for the module lock while the thread holds a
-`Mutex` stops with an `ICE:` panic (sema rejects module state in a `with` callback). On
+calls it pays nothing per task (a process-wide flag the first call sets). A `Mutex`'s lock
+keeps the module lock while it blocks; sema rejects module state in a `with` callback. Waiting
+for the module lock while the thread holds an `RwLock` stops with an `ICE:` panic; a held `Mutex`
+is not counted for that check on a native target (its lock is std's, which counts nothing). On
 WebAssembly (one thread) there is no lock.
 
 `uint8_t velt_rt_module_with(void)` and `void velt_rt_module_with_end(uint8_t took)`: the first
@@ -955,9 +965,10 @@ velt_web.mjs, which a host such as the Workers glue can call with a `fetch` of i
 is a JS object (a `HostRef`) holding the request's `AbortController`, then its `Response`, the
 body's reader and the piece last read; its async functions fulfill with nothing and reject with
 an error whose `name` is the `IoError` code native `fetch` gives the failure (`AbortError` once
-the call was aborted). `velt:random` (std/lang/random/seed_js.velt): `fill(buf: u8[])`, the seed
-of `Math.random()`'s generator, which the glue fills with `crypto.getRandomValues` (`randomHost` in
-velt_web.mjs); `buf` crosses as a view of the program's memory. `velt:clock`
+the call was aborted). `velt:random` (std/lang/random/os_js.velt): `fill(buf: u8[])`, random
+bytes for `Math.random()`'s seed, velt/crypto and UUIDs, which the glue fills with
+`crypto.getRandomValues` 65,536 bytes a call, its limit (`randomHost` in velt_web.mjs); `buf`
+crosses as a view of the program's memory, of any length. `velt:clock`
 (std/lang/hooks/clock_js.velt): `now(): f64` and `date(): f64`, the host's `performance.now()`
 and `Date.now()` in milliseconds, which `Date.now()` and `performance.now()` read (`clockHost`
 in velt_web.mjs).

@@ -1,0 +1,28 @@
+// A closure returned by a function, capturing a class with a `weak` field, passed to a spawned
+// task: its transfer panics (velt_vir glue/transfer.rs).
+class T {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class H {
+  t: weak T | null = null;
+}
+
+async function runF(f: () => i64): Promise<i64> {
+  return f();
+}
+
+function reader(h: H): () => i64 {
+  return () => h.t?.n ?? 0;
+}
+
+async function main() {
+  const t = new T(7);
+  const h = new H();
+  h.t = t;
+  console.log("before");
+  console.log(await spawn(runF(reader(h))), t.n);
+}

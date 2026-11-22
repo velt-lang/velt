@@ -118,6 +118,18 @@ impl FnCx<'_, '_> {
                     if let Some((d, _)) = self.adt_of(ty) {
                         self.cx
                             .rec_ref(name.span, crate::ide::record::Target::Field(d, x.0));
+                        let weak = (self.cx.adt(d))
+                            .and_then(|a| a.fields.get(x.0 as usize))
+                            .is_some_and(|f| f.weak);
+                        if weak {
+                            self.cx.err(
+                                format!(
+                                    "destructuring a `weak` field is not implemented yet (#3119): read it, `const {0} = o.{0}`",
+                                    name.name
+                                ),
+                                name.span,
+                            );
+                        }
                     }
                     x
                 }

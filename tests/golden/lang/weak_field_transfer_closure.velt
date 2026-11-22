@@ -1,0 +1,26 @@
+// A function value in a variable (not a closure literal at the crossing, so sema cannot see what
+// it captured) capturing a class with a `weak` field, passed to a spawned task: its transfer
+// panics (velt_vir glue/transfer.rs), as a `WeakRef`'s does: the slot belongs to this task.
+class T {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class H {
+  t: weak T | null = null;
+}
+
+async function runF(f: () => i64): Promise<i64> {
+  return f();
+}
+
+async function main() {
+  const t = new T(7);
+  const h = new H();
+  h.t = t;
+  const f = () => h.t?.n ?? 0;
+  console.log("before");
+  console.log(await spawn(runF(f)), t.n);
+}

@@ -22,4 +22,24 @@ export class Avx512DQ {
   static isSupported(): bool {
     return velt_simd_has_avx512dq_x86() || (velt_simd_on_x86() && cpuHas(AVX512DQ_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The low 64 bits of each product of `left`'s and `right`'s lanes.
+   *
+   * `_mm512_mullo_epi64` (`vpmullq`). Runs only where the CPU has it: call it behind
+   * `Avx512DQ.isSupported()`, or in a function gated on `avx512dq-x86`.
+   */
+  static multiplyLowU64(left: Vector512<u64>, right: Vector512<u64>): Vector512<u64> {
+    return velt_arch_avx512dq_multiply_low_u64(left, right);
+  }
 }
+
+import { Vector512 } from "velt/arch/x86/vector512";
+
+declare function velt_arch_avx512dq_multiply_low_u64(
+  left: Vector512<u64>,
+  right: Vector512<u64>,
+): Vector512<u64>;

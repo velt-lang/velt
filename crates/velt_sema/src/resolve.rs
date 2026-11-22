@@ -13,6 +13,7 @@ use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{Nothing, TyId, TyKind};
 use crate::type_defaults::DefaultsOf;
+use crate::weak_types::WeakPlace;
 
 /// Generic parameter names in scope (`Param(i)` is `params[i]`) and the module for lookups.
 #[derive(Clone, Default)]
@@ -172,7 +173,10 @@ impl Ctx<'_> {
                 f.ty.clone()
             };
             let t = self
-                .resolve_weak_annotation(&written, env, &mut |cx, t, env| cx.resolve_type(t, env));
+                .resolve_weak_annotation(&written, env, WeakPlace::Other, &mut |cx, t, env| {
+                    cx.resolve_type(t, env)
+                })
+                .0;
             let name = self.member_key(env.module, &f.name);
             if out.iter().any(|o| o.name == name) {
                 self.err(

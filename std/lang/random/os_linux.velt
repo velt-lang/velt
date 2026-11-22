@@ -1,0 +1,51 @@
+// velt/lang/random (internal): the operating system's random numbers on Linux (`#os-random`,
+// os.velt): the C library's `getrandom` (glibc 2.25, musl 1.1.20), which waits only until the
+// kernel's generator is seeded at boot and then never blocks, as the `getrandom` crate the
+// runtime used drew them.
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad } from "velt/lang/intrinsics/address";
+import { noInline } from "velt/lang/intrinsics/decorators";
+
+declare c("c") function getrandom(buf: Ptr<u8>, n: usize, flags: u32): isize;
+/**
+ * Where this thread's `errno` is, with glibc and musl alike (as std/ffi/errno_linux.velt): read
+ * here directly, so a program whose only use is `Math.random()` doesn't compile velt/ffi's.
+ */
+declare c("c") function __errno_location(): Ptr<i32>;
+
+/** `EINTR`: a signal arrived before the call wrote anything. */
+const EINTR: i32 = 4;
+
+/**
+ * Fills the `n` bytes at `base` with the OS generator's. Stops the program if the generator
+ * fails. Unsafe: the memory must be there and writable, and nothing else use it meanwhile.
+ */
+export unsafe function fillRandomAt(base: usize, n: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    // SAFETY: bytes `done..n` of the caller's memory, which the loop has not filled yet.
+    const got = unsafe { getrandom(Ptr.at<u8>(base + done), n - done, 0) };
+    if (got > 0) {
+      // A read past 256 bytes may be cut short by a signal.
+      done += got as usize;
+    } else {
+      retryOrStop(got);
+    }
+  }
+}
+
+/**
+ * After a `getrandom` that wrote nothing: back to the loop when it failed (`got` -1) with
+ * `EINTR`; on any other error, or a return of 0, the program stops, with no safe source to fall
+ * back on.
+ */
+@noInline
+function retryOrStop(got: isize): void {
+  // SAFETY: the C library gives the address of this thread's `errno`, an `int`, which the failed
+  // call just left.
+  const e = got < 0 ? unsafe { addressLoad<i32>(Ptr.addressOf(__errno_location())) } : 0;
+  if (e != EINTR) {
+    panic("the OS random number generator failed (getrandom)");
+  }
+}
