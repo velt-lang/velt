@@ -161,6 +161,7 @@ velt_rt velt_rt_rows_i64
 velt_rt velt_rt_rows_json
 velt_rt velt_rt_rows_kind
 velt_rt velt_rt_rows_next
+velt_rt velt_rt_rows_push_text_json
 velt_rt velt_rt_rows_str
 velt_rt velt_rt_rwlock_init
 velt_rt velt_rt_rwlock_read

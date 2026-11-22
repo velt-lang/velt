@@ -100,6 +100,9 @@ class ScoreAsInteger {
 // the decoder looks ahead in the row.
 type Either = { id: i64; score: f64 } | { id: i64; missing: string };
 
+// The same from the top, the copy's text cell kept as a `JsonValue` (written as JSON text).
+type Kept = { id: i64; missing: string } | { id: i64; name: JsonValue };
+
 struct Item {
   id: i64;
   name: string;
@@ -157,6 +160,7 @@ function main() {
   }
   // A union of whole results looks ahead from the top: the row is copied out of the cursor first.
   console.log(JSON.stringify(one<Either>()));
+  console.log(JSON.stringify(one<Kept>()));
   console.log(JSON.stringify(whole<Row[]>(2)));
   console.log(stepped<JsonValue>(3), stepped<Row>(3));
   console.log(bound<Item>({ id: 7, name: "ada", data: [1, 2], ok: true, gone: null }));
@@ -224,6 +228,7 @@ true expected number at $[0].meta.tags[0]
 {\"id\":2,\"score\":3}
 {\"id\":3,\"score\":4.5}
 {\"id\":1,\"score\":1.5}
+{\"id\":1,\"name\":\"row 1\"}
 [{\"id\":1,\"name\":\"row 1\",\"score\":1.5,\"note\":null},{\"id\":2,\"name\":\"row 2\",\"score\":3,\"note\":\"even\"}]
 3 3
 object id= int 7 name= text ada data= blob [1, 2] ok= true gone= null

@@ -986,7 +986,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_rows_next` / `_columns` / `_field` / `_field_map` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` / `(st) -> u64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none); the fields of the first 16 columns, 4 bits each (column `c` at bit `4c`: the field's index plus one, 0 for none and for an index of 15 or more) |
 | `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD) |
 | `velt_rt_rows_kind` / `_blob` | `(st, u64 col) -> u8` / `(st, u64 col, VeltBytes* out)` | what column `col` of the current row holds, numbered as std/db's `CellKind` (0 NULL, 1 boolean, 2 integer, 3 float, 4 text, 5 blob, 6 JSON); a blob's bytes (empty for another kind) |
-| `velt_rt_rows_json` | `(st, u64 col, VeltStr* out) -> u8` | a nested value's JSON text (`CellKind` 6): 1 = written, 2 = NULL, 0 = another kind; what std's `RowsReader` reads with a text reader (§12.3) |
+| `velt_rt_rows_json` | `(st, u64 col, VeltStr* out) -> u8` | a nested value's JSON text (`CellKind` 6): 1 = written, 2 = NULL, 0 = another kind; what std's `Reader` reads as text (§12.3) |
+| `velt_rt_rows_push_text_json` | `(st, u64 col, VeltStr* buf) -> u8` | appends a text cell (`CellKind` 4) to the string builder `buf` as a JSON string literal (`JSON.stringify`'s escaping; U+FFFD for text that is not UTF-8): 1 = appended, 2 = NULL, 0 = another kind (nothing appended); what `RowsReader` writes a `JsonValue`'s text with (§12.3) |
 | `velt_rt_rows_header` | `(st, VeltBytes* out)` | the cursor's header (`velt_text::rows`' layout: `single: u8`, `columns: u16`, each name with its length in front, bit 31 of a length marking an ASCII name): `RowsReader` takes `single` and the column names from it; with `names` empty, `velt_rt_rows_begin_named` starts a rows state for it |
 | `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell of a `RowSource`), else 0 |
 | `velt_rt_param_object` / `velt_rt_param_name` | `(u64 sink)` / `(u64 sink, const VeltStr* name)` | velt/db's `bindParams<P>` (the code velt/db/generate/bind.velt writes for `P`) hands a driver's parameter sink (its address; native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value |
@@ -1031,8 +1032,8 @@ The reader is std's Velt code, with no runtime functions: `Reader`
 over JSON text, and, for velt/db's `decodeRows<T>` / `decodeRow<T>` of a row type not read by
 column, `RowsReader` (std/encoding/json/rows_reader.velt) over a driver's row cursor. That one
 reads the cursor through the rows functions of §12.1 (`velt_rt_rows_*`) and answers every call as
-`Reader` would for the JSON the rows stand for (`[{"col":value,...},...]`, or one row's object).
-JSON is strict RFC 8259 unless the options ask for JSONC; the first failure is sticky.
+`Reader` would for the JSON the rows stand for (`[{"col":value,...},...]`, or one row's object);
+a nested JSON cell is read by the `Reader` itself, as text over the cell's JSON. JSON is strict RFC 8259 unless the options ask for JSONC; the first failure is sticky.
 
 ### 12.4 JSON error messages
 

@@ -17,8 +17,10 @@ import {
 } from "velt/db/rt";
 import { utf8DecodeLossy } from "velt/encoding";
 
+declare function velt_rt_strbuf_push_json_str(buf: string, s: string);
 declare function velt_rt_rows_header(st: u64): u8[];
 declare function velt_rt_rows_json(st: u64, col: u64, out: string): u8;
+declare function velt_rt_rows_push_text_json(st: u64, col: u64, buf: string): u8;
 declare function velt_rt_rows_i64(st: u64, col: u64, out: CellI64): u8;
 declare function velt_rt_rows_f64(st: u64, col: u64, out: CellF64): u8;
 declare function velt_rt_rows_bool(st: u64, col: u64, out: CellU8): u8;
@@ -193,6 +195,19 @@ export class RowCells {
     const ok = velt_rt_rows_str(this.st, col as u64, out) == OK;
     this.text = out;
     return ok;
+  }
+
+  /**
+   * Appends a text cell (`CELL_TEXT`) to the string builder `buf` as a JSON string literal
+   * (`JSON.stringify`'s quoting; text that is not UTF-8 has U+FFFD).
+   */
+  pushTextJson(col: usize, buf: string): void {
+    const c = this.copied;
+    if (c != null) {
+      velt_rt_strbuf_push_json_str(buf, c[this.row * this.names.length + col].text);
+      return;
+    }
+    velt_rt_rows_push_text_json(this.st, col as u64, buf);
   }
 
   /** A nested value's JSON text (`CELL_JSON`): `text` after true. */

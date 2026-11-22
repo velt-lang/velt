@@ -42,6 +42,7 @@ import {
   UNKNOWN,
 } from "velt/encoding/json/reader";
 import { shortPath } from "velt/encoding/json/reader_ops";
+import { strByteLen } from "velt/lang/intrinsics";
 import { rowsJsonText } from "velt/encoding/json/rows_text";
 import { RowsMark } from "velt/encoding/json/rows_mark";
 import { TreeWriter } from "velt/encoding/json/tree_text";
@@ -91,6 +92,8 @@ export class RowsReader {
   rowMarks: usize = 0;
   /** The byte buffer a value read whole is written with (rows_text.velt), kept for the next. */
   writer: TreeWriter | null = null;
+  /** The builder capacity for the next value read whole: the last one's length (rows are alike). */
+  valueCap: u64 = 64;
   /** What the last read gave: a key, a string or a value's JSON text; a number; a boolean. */
   text: string = "";
   num: f64 = 0;
@@ -295,10 +298,12 @@ export class RowsReader {
     }
     // The text goes into one builder (rows_text.velt).
     let buf = "";
-    velt_rt_strbuf_new(64, buf);
+    velt_rt_strbuf_new(this.valueCap, buf);
     const ok = rowsJsonText(this, buf);
     let text = "";
     velt_rt_strbuf_finish(buf, text);
+    const len = strByteLen(text) as u64;
+    this.valueCap = len > 64 ? len + 16 : 64;
     if (!ok || !rowsSkipValue(this)) {
       return this.mismatch();
     }
