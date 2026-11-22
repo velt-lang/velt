@@ -1,0 +1,251 @@
+// velt/fs (internal): the arrays of `MappedFile`'s counted methods (`countedU32s`, …), one
+// function per number type: each holds the mapping's owner, one of the holds its `MappedFile`
+// reserved for it (mapped_file.velt `countedAt`), so the mapping stays while the array does.
+
+import { copyOf } from "velt/fs/mapped_part";
+import { addressArrayOwned, addressAtomicRmw } from "velt/lang/intrinsics";
+
+/**
+ * How many holds of the owner a `MappedFile` reserves for counted views at a time: when they are
+ * handed out, it reserves as many again.
+ */
+export const RESERVE: u64 = 65536;
+
+/** Reserves `n` more holds of `owner` for counted views, all at once. */
+export function reserveHolds(owner: usize, n: u64) {
+  // SAFETY: the caller holds `owner` (through its `MappedFile`'s `bytes`), so the block is there.
+  unsafe {
+    addressAtomicRmw<u64>(owner + 8, "add", n, "relaxed");
+  }
+}
+
+/**
+ * Gives back the `n` reserved holds of `owner` that no counted view took, when their `MappedFile`
+ * is dropped. Its `bytes` still holds `owner`, so this is never the last hold.
+ */
+export function giveBackHolds(owner: usize, n: u64) {
+  // SAFETY: as `reserveHolds`; the holds given back were reserved by `reserveHolds`.
+  unsafe {
+    addressAtomicRmw<u64>(owner + 8, "sub", n, "acqrel");
+  }
+}
+
+/**
+ * The `count` `i8` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewI8(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<i8[]> {
+  if (at == 0) {
+    return shared(copyOf<i8>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `i8`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: i8[] = unsafe { addressArrayOwned<i8>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `u16` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewU16(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<u16[]> {
+  if (at == 0) {
+    return shared(copyOf<u16>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `u16`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: u16[] = unsafe { addressArrayOwned<u16>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `i16` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewI16(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<i16[]> {
+  if (at == 0) {
+    return shared(copyOf<i16>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `i16`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: i16[] = unsafe { addressArrayOwned<i16>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `u32` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewU32(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<u32[]> {
+  if (at == 0) {
+    return shared(copyOf<u32>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `u32`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: u32[] = unsafe { addressArrayOwned<u32>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `i32` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewI32(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<i32[]> {
+  if (at == 0) {
+    return shared(copyOf<i32>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `i32`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: i32[] = unsafe { addressArrayOwned<i32>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `u64` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewU64(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<u64[]> {
+  if (at == 0) {
+    return shared(copyOf<u64>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `u64`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: u64[] = unsafe { addressArrayOwned<u64>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `i64` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewI64(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<i64[]> {
+  if (at == 0) {
+    return shared(copyOf<i64>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `i64`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: i64[] = unsafe { addressArrayOwned<i64>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `f16` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewF16(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<f16[]> {
+  if (at == 0) {
+    return shared(copyOf<f16>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `f16`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: f16[] = unsafe { addressArrayOwned<f16>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `bf16` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewBf16(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<bf16[]> {
+  if (at == 0) {
+    return shared(copyOf<bf16>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `bf16`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: bf16[] = unsafe { addressArrayOwned<bf16>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `f32` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewF32(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<f32[]> {
+  if (at == 0) {
+    return shared(copyOf<f32>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `f32`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: f32[] = unsafe { addressArrayOwned<f32>(at, count as usize, owner) };
+  return shared(xs);
+}
+
+/**
+ * The `count` `f64` at `at` (from `countedAt`) in an array holding `owner`; a copy from byte
+ * `byteOffset` of `bytes` when `at` is 0 (no values, or no mapping).
+ */
+export function viewF64(
+  at: usize,
+  owner: usize,
+  bytes: shared<u8[]>,
+  byteOffset: number,
+  count: number,
+): shared<f64[]> {
+  if (at == 0) {
+    return shared(copyOf<f64>(bytes, byteOffset as usize, count as usize));
+  }
+  // SAFETY: `countedAt` checked that the values are inside the mapping and aligned for `f64`,
+  // and took the hold of `owner` this array keeps; it leaves as `shared`.
+  const xs: f64[] = unsafe { addressArrayOwned<f64>(at, count as usize, owner) };
+  return shared(xs);
+}

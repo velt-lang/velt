@@ -26,8 +26,8 @@ declare c("c") function memcmp(a: StrBytes, b: StrBytes, n: usize): i32;
 declare c("c") function memcmp$ns(a: ffi.StrBytes, b: Text, n: usize): i32;
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8> | null): void;
-declare c("c") function memcpy(dst: Ptr<u8> | null, src: CString, n: usize): Ptr<u8>;
-declare c("c") function memset(p: Ptr<u8> | null, c: i32, n: usize): Ptr<u8>;
+declare c("c") function memcpy(dst: Ptr<u8> | null, src: CString, n: usize): Ptr<u8> | null;
+declare c("c") function memset(p: Ptr<u8> | null, c: i32, n: usize): Ptr<u8> | null;
 declare c("c") function frexp(x: f64, exp: Out<i32>): f64;
 
 describe("velt/ffi pointers", () => {

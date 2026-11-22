@@ -1,0 +1,104 @@
+// velt/text (internal): whether a program can run as an automaton (dfa.velt), and the classes
+// of characters it cannot tell apart, which are the automaton's alphabet: worked out once,
+// when the pattern is compiled (assemble.velt).
+
+import { arrayTruncate, arrayWithCapacity } from "velt/lang/intrinsics";
+import { AT_END } from "velt/text/regex/node";
+import { OP_ASSERT, OP_CHAR, OP_MASK, Program } from "velt/text/regex/program";
+
+/** The most classes of characters and instructions an automaton is built for. */
+const MAX_CLASSES: usize = 255;
+const MAX_INSTRUCTIONS: usize = 4096;
+
+/** Works out the classes of characters `prog` cannot tell apart, and whether it can be an
+ * automaton: it has no assertion but `$` (what holds at a position is no part of a state; `$`
+ * holds only where the subject ends, which the automaton is told), and not too many classes or
+ * instructions. */
+export function classify(prog: Program): void {
+  const code = prog.code;
+  // Where a class starts: in ASCII a bit per character, past it a list.
+  let low: u64 = 1;
+  let high: u64 = 0;
+  const cuts: u32[] = [];
+  for (let i: usize = 0; i < code.length; i += 3) {
+    const op = code[i] & OP_MASK;
+    if ((op == OP_ASSERT && code[i + 1] != AT_END) || i > 3 * MAX_INSTRUCTIONS) {
+      return;
+    }
+    if (op == OP_ASSERT) {
+      prog.atEnd = true;
+    }
+    if (op == OP_CHAR) {
+      for (let c = code[i + 1]; c <= code[i + 1] + 1; c++) {
+        if (c < 64) {
+          low |= (1 as u64) << (c as u64);
+        } else if (c < 128) {
+          high |= (1 as u64) << ((c - 64) as u64);
+        } else if (c > 128) {
+          cuts.push(c);
+        }
+      }
+    }
+  }
+  for (let k: usize = 0; k < prog.sets.length; k++) {
+    // In ASCII a set's characters start and end where its bits change.
+    const lo = prog.ascii[2 * k];
+    const hi = prog.ascii[2 * k + 1];
+    low |= lo ^ (lo << 1);
+    high |= hi ^ ((hi << 1) | (lo >> 63));
+    const r = prog.sets[k].ranges;
+    for (let j: usize = 0; j < r.length; j++) {
+      const c = r[j] + ((j & 1) as u32);
+      if (c > 128) {
+        cuts.push(c);
+      }
+      // Every cut counts: a long list is made distinct, and one too long for the classes
+      // makes no automaton (a missing cut would put characters the program tells apart in
+      // one class).
+      if (cuts.length > 8 * MAX_CLASSES && !distinct(cuts)) {
+        return;
+      }
+    }
+  }
+  if (!distinct(cuts)) {
+    return;
+  }
+  const starts: u32[] = [];
+  const classes: u8[] = arrayWithCapacity(256);
+  for (let b: u64 = 0; b < 128; b++) {
+    if ((((b < 64 ? low : high) >> (b & 63)) & 1) != 0) {
+      starts.push(b as u32);
+    }
+    classes.push((starts.length - 1) as u8);
+  }
+  starts.push(128);
+  for (let i: usize = 0; i < cuts.length; i++) {
+    starts.push(cuts[i]);
+  }
+  if (starts.length > MAX_CLASSES) {
+    return;
+  }
+  // A byte past ASCII is no character: its class is the one after the last.
+  for (let b = 128; b < 256; b++) {
+    classes.push(starts.length as u8);
+  }
+  prog.asciiClass = classes;
+  prog.classStarts = starts;
+  prog.automaton = true;
+}
+
+/** Sorts `cuts` and keeps each value once: false when more are left than the classes hold. */
+function distinct(cuts: u32[]): bool {
+  if (cuts.length > 1) {
+    cuts.sort((x, y) => (x as f64) - (y as f64));
+  }
+  let n: usize = 0;
+  for (let i: usize = 0; i < cuts.length; i++) {
+    if (n == 0 || cuts[i] != cuts[n - 1]) {
+      cuts[n] = cuts[i];
+      n++;
+    }
+  }
+  arrayTruncate(cuts, n);
+  return n < MAX_CLASSES;
+}

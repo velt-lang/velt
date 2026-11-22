@@ -42,6 +42,8 @@ export function wait(h: usize, f: usize, cx: usize): void {
       ls.storeWaker(h, at, w);
       if ((old & ls.UNCOUNTED) === 0) {
         m.wakerDrop(old);
+      } else {
+        ls.replaced(old);
       }
     }
     return;

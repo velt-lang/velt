@@ -6,7 +6,7 @@
 import { Ptr } from "velt/ffi/ptr";
 import { strByteLen, strDataAddress } from "velt/lang/intrinsics";
 
-declare c("c") function memcmp(a: Ptr<void>, b: Ptr<void>, n: usize): i32;
+declare c("c") function memcmp(a: Ptr<void> | null, b: Ptr<void> | null, n: usize): i32;
 
 /** Whether `a` sorts before `b` by code point. */
 export function byCodePoint(a: string, b: string): bool {
@@ -15,9 +15,9 @@ export function byCodePoint(a: string, b: string): bool {
   const n = na < nb ? na : nb;
   // SAFETY: the address of `a`'s bytes, `na` of them, alive and unchanged while `a`, this
   // function's parameter, is.
-  const pa = unsafe { Ptr.at<void>(strDataAddress(a)) };
+  const pa = unsafe { Ptr.orNull<void>(strDataAddress(a)) };
   // SAFETY: as for `a`, with `nb` bytes.
-  const pb = unsafe { Ptr.at<void>(strDataAddress(b)) };
+  const pb = unsafe { Ptr.orNull<void>(strDataAddress(b)) };
   // SAFETY: C reads the first `n` bytes at each address, which both strings have, and keeps no
   // pointer.
   const r = unsafe { memcmp(pa, pb, n) };

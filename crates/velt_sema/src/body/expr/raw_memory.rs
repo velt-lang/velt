@@ -1,6 +1,7 @@
 //! The intrinsics on raw memory (std/lang/intrinsics/address.velt and atomic.velt's
 //! `atomicAddress`, docs/internals/design/intrinsics.md "Memory at an address"): what their
 //! declarations cannot say. `addressLoad<T>` and `addressStore<T>` move one number or `bool`;
+//! `ptrRead<S>` and `ptrWrite<S>` move what `Ctx::c_memory_refused` allows (`c_memory.rs`);
 //! the `addressAtomic*` ones work on an integer, and their orderings (and `addressAtomicRmw`'s
 //! operation) are string literals that become the integer literals the `Atomic*` intrinsics
 //! take; and `atomicAddress` takes only an `Atomic` that cannot move.
@@ -28,6 +29,14 @@ impl FnCx<'_, '_> {
                 let ok = t.is_none_or(|t| self.raw_value_ty(t, false));
                 self.raw_type_error(i, t, ok, "a number type or `bool`", span)?;
                 Some(args)
+            }
+            // `S`, the pointee: a C one already (`Ptr<S>`); `void` and an opaque C type have no
+            // bytes Velt knows, and on wasm32 a word-sized one isn't C's.
+            I::PtrRead | I::PtrWrite => {
+                match t.is_some_and(|t| self.cx.c_memory_refused(t, span)) {
+                    true => None,
+                    false => Some(args),
+                }
             }
             I::AddressAtomicLoad
             | I::AddressAtomicStore

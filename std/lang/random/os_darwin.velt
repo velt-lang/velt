@@ -5,7 +5,7 @@
 import { Ptr } from "velt/ffi/ptr";
 import { noInline } from "velt/lang/intrinsics/decorators";
 
-declare c("c") function getentropy(buf: Ptr<u8>, n: usize): i32;
+declare c("c") function getentropy(buf: Ptr<u8> | null, n: usize): i32;
 
 /** The most `getentropy` gives in one call. */
 const MAX_CALL: usize = 256;
@@ -19,7 +19,7 @@ export unsafe function fillRandomAt(base: usize, n: usize): void {
   while (done < n) {
     const k = n - done < MAX_CALL ? n - done : MAX_CALL;
     // SAFETY: bytes `done..done + k` of the caller's memory, at most 256.
-    if (unsafe { getentropy(Ptr.at<u8>(base + done), k) } != 0) {
+    if (unsafe { getentropy(Ptr.orNull<u8>(base + done), k) } != 0) {
       stop();
     }
     done += k;

@@ -206,12 +206,9 @@ pub(crate) struct Lazy {
     module_hooks: bool,
     /// [`cpu_hook`] has demanded std/lang/hooks/cpu.
     cpu_hook: bool,
-    /// The program's code converts a value that may hold a float to text: the float hooks are
-    /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
+    /// The program's code converts a value that may hold a float to text: std's float printing
+    /// is reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
-    /// Live code prints a float: `console.log`'s float writer is reached
-    /// (`velt_common::std_hooks::ON_DEMAND_WRITE`).
-    float_write: bool,
     /// The types of the values live code puts into an `any` or an interface value (`ToDyn`),
     /// and whether the program's own code puts a type parameter's value into one.
     dyn_held: FxHashSet<TyId>,
@@ -255,7 +252,6 @@ impl Lazy {
             module_hooks: false,
             cpu_hook: false,
             float_text: false,
-            float_write: false,
             dyn_held: FxHashSet::default(),
             dyn_generic: false,
             cycle_closed: FxHashSet::default(),
@@ -422,7 +418,6 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         number_text::reach_hooks(cx, texts, &mut found);
-        number_text::reach_writer(cx, &mut found);
         // A std function C calls (`@export`) is live though no checked code refers to it; in a
         // walk of std's unit, only once its module is loaded, as in lazy std (`loaded_for`).
         found.extend(
@@ -727,7 +722,7 @@ mod tests;
 crate::units::codec::structs! {
     Lazy {
         on, check_all, native_executor, modules, subclasses, user_record, generic_any,
-        record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, float_write, dyn_held,
+        record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, dyn_held,
         dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable, module_hooks,
         units_live_memo,
     }

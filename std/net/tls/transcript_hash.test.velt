@@ -1,0 +1,59 @@
+// velt/net (tests): `TranscriptHash` (transcript_hash.velt) gives the SHA-256 and SHA-384 hash of
+// the whole transcript at every ask, as it grows, with both hashes asked for in turn, after a
+// `reset`, and when the transcript was replaced by a shorter one without a reset (it starts
+// again rather than hash a stale prefix).
+import { hexEncode } from "velt/encoding/hex";
+import { describe, expect, it } from "velt/test";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384 } from "velt/crypto/sha512";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
+
+function bytes(n: usize, seed: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(((i * 31 + seed) & 0xff) as u8);
+  }
+  return out;
+}
+
+function both(th: TranscriptHash, t: u8[]): string {
+  return `${hexEncode(th.of(t, false))} ${hexEncode(th.of(t, true))}`;
+}
+
+function want(t: u8[]): string {
+  return `${hexEncode(sha256(t))} ${hexEncode(sha384(t))}`;
+}
+
+describe("TranscriptHash", () => {
+  it("hashes the transcript as it grows, both hashes in turn", () => {
+    const th = new TranscriptHash();
+    const t: u8[] = [];
+    expect(both(th, t)).toBe(want(t));
+    for (const n of [1, 63, 64, 65, 200, 1000] as usize[]) {
+      for (const b of bytes(n, n)) {
+        t.push(b);
+      }
+      expect(`${t.length} ${both(th, t)}`).toBe(`${t.length} ${want(t)}`);
+      // Asked again with nothing added: the same.
+      expect(both(th, t)).toBe(want(t));
+    }
+  });
+
+  it("starts again after a reset", () => {
+    const th = new TranscriptHash();
+    const t = bytes(300, 1);
+    th.of(t, false);
+    th.of(t, true);
+    th.reset();
+    const other = bytes(400, 2);
+    expect(both(th, other)).toBe(want(other));
+  });
+
+  it("starts again when the transcript is shorter than what it hashed", () => {
+    const th = new TranscriptHash();
+    th.of(bytes(500, 3), false);
+    th.of(bytes(500, 3), true);
+    const shorter = bytes(100, 4);
+    expect(both(th, shorter)).toBe(want(shorter));
+  });
+});

@@ -18,6 +18,7 @@ import * as x from "./sched_node_ext";
 import * as al from "./sched_share_alias";
 import * as sh from "./sched_share";
 import * as shh from "./sched_share_hand";
+import * as ls from "./sched_share_listed";
 import * as lt from "./sched_task_lost";
 
 /** A node's flag: its owner handed it to another task, which claims its result. */
@@ -61,6 +62,10 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
     return false;
   }
   const n = nd.nodeOf(f);
+  if ((m.load32(n + nd.N_FLAGS) & ls.WAITS) !== 0) {
+    // Listed while it waits in a hub: it leaves the list before it leaves the task.
+    ls.leaveWaiting(n);
+  }
   if ((m.or32(n + nd.N_FLAGS, HANDED_OVER) & HANDED_OVER) === 0) {
     // The first hand-over: its glue is the node's from now on (the word is read only with the
     // flag set, so a node never handed over pays no store for it).

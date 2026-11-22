@@ -117,6 +117,21 @@ export declare unsafe function ptrFromAddress<T>(address: usize): Ptr<T>;
 export declare function ptrToAddress<T>(p: Ptr<T> | null): usize;
 
 /**
+ * The `S` at `p`'s address plus `index` times `S`'s size (velt/ffi's `Ptr.read`): `S` a number
+ * type, `bool`, a C pointer or a C struct. A pointer in it declared non-null that is `NULL`
+ * stops the program. Unsafe: an `S` must be there.
+ */
+@intrinsic
+export declare unsafe function ptrRead<S>(p: Ptr<S>, index: usize): S;
+
+/**
+ * Writes `s` where `ptrRead` reads (velt/ffi's `Ptr.write`). Unsafe: the memory must be
+ * writable and hold an `S` nothing else reads or writes meanwhile.
+ */
+@intrinsic
+export declare unsafe function ptrWrite<S>(p: Ptr<S>, index: usize, s: Copied<S>): void;
+
+/**
  * The address of the C function of `f`, a function decorated `@export("c_name")` (velt/ffi), for
  * a C API that takes a function pointer (`pthread_create`'s start routine, a callback). Unsafe:
  * C calls it with whatever arguments it has, which the exported function's C signature must
