@@ -21,6 +21,33 @@ impl FnCx<'_, '_> {
             );
         }
         let tn = self.cx.display(t);
+        if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+            let k = self.cx.ty.kind(t).clone();
+            let adt = match &k {
+                TyKind::Adt(d, _) => {
+                    let a = self.cx.adt(*d);
+                    let info = match self.cx.info.get(d.0 as usize) {
+                        Some(i) => format!("{:?}", std::mem::discriminant(i)),
+                        None => format!("out of range (len {})", self.cx.info.len()),
+                    };
+                    let def = match self.cx.defs.get(d.0 as usize) {
+                        Some(Some(_)) => "def",
+                        Some(None) => "taken",
+                        None => "none",
+                    };
+                    format!(
+                        "def {} fields {:?} base {:?} unit_base {} info {info} {def} span {:?}",
+                        d.0,
+                        a.map(|a| a.fields.len()),
+                        a.map(|a| a.base.is_some()),
+                        self.cx.unit_base,
+                        self.cx.def_spans.get(d.0 as usize)
+                    )
+                }
+                _ => String::new(),
+            };
+            eprintln!("dbg-trap: no_field {} on {tn}: {k:?} {adt}", prop.name);
+        }
         let mut d = Diagnostic::error(
             format!(
                 "no field `{}` on type `{tn}`",

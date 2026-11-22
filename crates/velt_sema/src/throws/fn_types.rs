@@ -532,6 +532,13 @@ impl Ctx<'_> {
         self.fn_sites.found.proxy_sites.contains(&span)
     }
 
+    /// The struct or class defined at `span`, if any.
+    fn adt_at(&self, span: Span) -> Option<DefId> {
+        (0..self.def_spans.len())
+            .find(|&i| self.def_spans.get(i) == Some(&span) && self.adt(DefId(i as u32)).is_some())
+            .map(|i| DefId(i as u32))
+    }
+
     /// Is `t` the type of one of std's function-type throws sites?
     pub(crate) fn is_std_trap_type(&self, t: TyId) -> bool {
         let std = &self.fn_sites.found.proxy_sites;
@@ -785,10 +792,27 @@ impl Ctx<'_> {
                 if self.def_spans.get(d.0 as usize) != Some(span) {
                     return None;
                 }
+                // The rounds of a check by units number the app's definitions anew, and another
+                // definition may share the type's span (its constructor): the type is the one
+                // made there.
+                let was = *d;
+                let d = match self.adt(*d) {
+                    Some(_) => *d,
+                    None => self.adt_at(*span)?,
+                };
+                if std::env::var_os("VELT_DBG_TRAPS").is_some() {
+                    eprintln!(
+                        "dbg-trap: unport def {} -> {} (stage {:?}, defs {})",
+                        was.0,
+                        d.0,
+                        self.units_stage,
+                        self.info.len()
+                    );
+                }
                 let args = (args.iter())
                     .map(|a| self.unport(a))
                     .collect::<Option<Vec<_>>>()?;
-                TyKind::Adt(*d, args)
+                TyKind::Adt(d, args)
             }
             Portable::Dyn(d, span, args) => {
                 if self.def_spans.get(d.0 as usize) != Some(span) {
