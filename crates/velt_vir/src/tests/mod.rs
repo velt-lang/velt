@@ -42,6 +42,7 @@ mod m3_edges;
 mod m3_io;
 mod m3_state;
 mod m3_tasks;
+mod member_slots;
 mod native_init;
 mod numeric;
 mod param_attrs;
