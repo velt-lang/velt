@@ -1,0 +1,36 @@
+// Building and writing trees: 3 rounds of 20k records of 6 members (one an array of 2) built
+// with `set` / `push`, read back with `get` / `at`, cloned with every fourth record edited
+// copy-on-write, and both trees written.
+function main() {
+  const n: i64 = 20000;
+  let total: i64 = 0;
+  for (let round = 0; round < 3; round++) {
+    const rows = JsonValue.array();
+    for (let i: i64 = 0; i < n; i++) {
+      const r = JsonValue.object();
+      r.set("id", JsonValue.of(i as f64));
+      r.set("name", JsonValue.of(`user ${i}`));
+      r.set("score", JsonValue.of((i % 1000) as f64 + 0.5));
+      r.set("active", JsonValue.of(i % 2 == 0));
+      const tags = JsonValue.array();
+      tags.push(JsonValue.of(`t${i % 7}`));
+      tags.push(JsonValue.of("x"));
+      r.set("tags", tags);
+      r.set("note", JsonValue.of(null));
+      rows.push(r);
+    }
+    let sum: f64 = 0;
+    for (let i: i64 = 0; i < n; i++) {
+      const r = rows.at(i)!;
+      sum += (r.get("id")!.asNumber() ?? 0) + (r.get("tags")!.at(0)!.len() as f64);
+    }
+    const copy = rows.clone();
+    for (let i: i64 = 0; i < n; i += 4) {
+      const r = copy.at(i)!;
+      r.set("score", JsonValue.of(0));
+      copy.setAt(i, r);
+    }
+    total += (rows.stringify().length as i64) + (copy.stringify().length as i64) + (sum as i64);
+  }
+  console.log(total);
+}

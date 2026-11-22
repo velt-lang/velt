@@ -92,12 +92,30 @@ Objects with more than 16 keys get a hash index on their first lookup.
 instead of copying it.
 
 **Representation.** A `JsonValue` (`std/prelude/json/json_value.velt`) has two forms: a position
-on a tape (what parsing makes; children share the tape, `clone()` is O(1)), or a tree of
-reference-counted runtime nodes (what `JsonValue.object()`, `set` and the other builders make,
-and what a database driver's rows give). An edit turns that one value into a tree first, so it
-never shows through the tape, a clone or a child. This is STJ's split between
-`JsonDocument`/`JsonElement` (read-only, flat) and `JsonNode` (mutable), with one type in front
-of both.
+on a tape (what parsing makes, and what a database driver's rows give; children share the tape,
+`clone()` is O(1)), or a tree of nodes (`std/encoding/json/tree.velt`: what `JsonValue.object()`,
+`set` and the other builders make).
+- **Copy-on-write.** Values share nodes (a clone, a parent and the child `get` returned): an edit
+  changes a node in place only while no other reference reaches it (the std-only intrinsic
+  `isUnique`, as Rust's `Arc::get_mut`), and copies it first otherwise, the copy sharing the
+  children.
+- **A tree stays shallow.** A child may be a container left on a tape: an edit of a parsed value
+  makes only its own node (its containers stay on the tape until they are edited), and a parsed
+  value stored in a tree stays on its tape. A subtree as high as 512 nodes is stored as a tape
+  before it goes in (`tree_freeze.velt`), made from its values, so numbers keep their bits (NaN,
+  the infinities, -0). A tape is frozen and crosses to another task through its atomic count, so
+  a tree sent there (a deep copy, where the sender keeps a reference) is copied at most 512 nodes
+  deep: the copy recurses once per level.
+- **Freezing costs O(n log n).** A child already on a tape is copied onto the new tape only while
+  its tape is smaller than twice the new one; a larger one stays a node the new tape links to
+  (`T_LINK`, resolved by the tree's readers). So a value is copied O(log n) times however deep a
+  tree grows, and a chain of links stays O(log n) long.
+- **Objects** (`tree_object.velt`) keep JavaScript's order (index keys first, apart and sorted,
+  made only when the first one goes in), are found by key through a hash index past 16 members,
+  and are deleted in O(1) amortized by leaving holes, with a Fenwick tree of the live slots for
+  positional access while there are holes in the middle (`tree_positions.velt`).
+- **Text.** A tree is written into a byte buffer handed to the builder in chunks, as a tape is.
+  `console.log` prints either form through `JsonValue[JSON_INSPECT]` (`value_inspect.velt`).
 
 ### Numbers
 
@@ -151,13 +169,14 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | Tape | `std/encoding/json/tape*.velt` |
 | Node's syntax-error messages (computed only after a failure) | `std/encoding/json/node_syntax.velt` |
 | `JSON.stringify(value, keys, space)` | `std/encoding/json/relayout.velt` |
+| Tree of a built or edited `JsonValue`, and what `console.log` prints for one | `std/encoding/json/tree*.velt`, `value_inspect.velt` |
 | Numbers | `std/lang/number/`, `std/lang/hooks/number_parse.velt` |
 
 Some JSON code remains in the runtime (`crates/velt_rt/src/json/`, ABI in
 [rt_abi_async.md §12](../contracts/rt_abi_async.md)): the reader of a database driver's rows
-(with the Rust copy of Node's messages its reader of nested JSON cells gives), which goes with
-the native-package ABI (#2563); the tree behind edited `JsonValue`s; and the shortest-digits
-printer for doubles. Each goes when its Velt replacement exists.
+(with the Rust copy of Node's messages its reader of nested JSON cells gives, and the tree of a
+`JsonValue` it reads, which std turns into a tape), which goes with
+the native-package ABI (#2563), and the shortest-digits printer for doubles.
 
 ## Compatibility
 
@@ -194,7 +213,7 @@ program that does compiles one decoder or writer per type it parses or writes, a
 and writer are compiled into it, so debug builds (`velt run`, the JIT) run an unoptimized engine.
 Changes to the engine are measured by instructions retired, base against head, on
 `bench/json/run.sh` (`parse_typed`, `parse_union`, `stringify`, `parse_value`, `navigate`,
-`edit`) and on the corpora of `bench/json/corpora/` (`twitter.json`, `citm_catalog.json`,
+`edit`, `build_write`) and on the corpora of `bench/json/corpora/` (`twitter.json`, `citm_catalog.json`,
 `canada.json`, fetched by `fetch.sh` with pinned SHA-256s; dynamic parse and write against
 serde_json, sonic-rs, simd-json and Node), together with build time and IR size. Results are in
 `bench/RESULTS.md`.

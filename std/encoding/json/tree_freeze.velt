@@ -1,0 +1,250 @@
+// velt/encoding/json (internal): a tree (tree.velt) frozen to a tape (tape.velt), as a subtree
+// that reaches `TREE_MAX_HEIGHT` is before it is stored in another value: frozen, it crosses to
+// another task through its atomic count, so a tree sent there is copied at most that deep.
+//
+// The tape is built from the tree's values, never through JSON text, so every number keeps its
+// bits (NaN, the infinities and -0, which JSON text can't hold). Its strings are all in `decoded`.
+//
+// A child already on a tape (`TREE_TAPE`, a frozen subtree below or a parsed value) is copied in
+// only while its tape is smaller than twice the tape being made; a larger one stays a node the new
+// tape links to (`T_LINK`, an index into the frozen node's `links`). Copying a value moves it to a
+// tape over half again as large as the one it was on, so a value is copied O(log n) times however
+// the tree grows, and a chain of links is O(log n) long: building a tree n levels deep costs
+// O(n log n), and a crossing copies O(log n) links, each through its atomic count.
+
+import {
+  JsonTree,
+  TREE_ARRAY,
+  TREE_BOOL,
+  TREE_NULL,
+  TREE_NUMBER,
+  TREE_OBJECT,
+  TREE_STRING,
+  TREE_TAPE,
+} from "velt/encoding/json/tree";
+import {
+  ESCAPED,
+  ESCAPED_KEY,
+  LINKED,
+  T_ARRAY,
+  T_LINK,
+  T_NUMBER,
+  T_OBJECT,
+  T_STRING,
+  T_TRUE,
+  T_FALSE,
+  T_NULL,
+  Tape,
+} from "velt/encoding/json/tape";
+import { TapeRef } from "velt/encoding/json/tape_ref";
+import { noInline } from "velt/lang/intrinsics";
+
+/** `tree` (a container) as a node on a tape of its own. Out of line: rare, and large. */
+@noInline
+export function frozenTree(tree: JsonTree): JsonTree {
+  const f = new Freezer();
+  const root = f.node(0);
+  f.fromTree(tree, root);
+  f.drain();
+  f.settle();
+  const tape: Tape = { src: "", words: f.words, kids: f.kids, decoded: f.decoded };
+  const links = f.links.length > 0 ? f.links : null;
+  return JsonTree.ofTape(new TapeRef(shared(tape)), 0, links);
+}
+
+// A tape being made from a tree: `Tape`'s arrays, each value's parent (to flag the containers above
+// a link `LINKED`), the values still to fill (from a tree node, or from a value of another tape),
+// and the children on other tapes not yet copied or linked.
+class Freezer {
+  words: u64[] = [];
+  kids: u32[] = [];
+  decoded: string[] = [];
+  parent: u32[] = [];
+  links: JsonTree[] = [];
+  treeNodes: JsonTree[] = [];
+  treeAt: u32[] = [];
+  tapes: TapeRef[] = [];
+  tapeLinks: (JsonTree[] | null)[] = [];
+  tapeValues: u32[] = [];
+  tapeAt: u32[] = [];
+  later: JsonTree[] = [];
+  laterAt: u32[] = [];
+
+  // A new value under `parent`, to fill.
+  node(parent: u32): u32 {
+    const v = (this.words.length / 2) as u32;
+    this.words.push(0);
+    this.words.push(0);
+    this.parent.push(parent);
+    return v;
+  }
+
+  // Value `v` a string.
+  string(v: u32, s: string): void {
+    this.words[2 * (v as usize)] = T_STRING | ESCAPED | ((s.length as u64) << 32);
+    this.words[2 * (v as usize) + 1] = this.decoded.length as u64;
+    this.decoded.push(s);
+  }
+
+  // Container `v`: its first word, and `n` places in `kids` (from the returned position).
+  container(v: u32, head: u64, n: usize): usize {
+    const first = this.kids.length;
+    this.words[2 * (v as usize)] = head | ((n as u64) << 32);
+    this.words[2 * (v as usize) + 1] = first as u64;
+    for (let i: usize = 0; i < n; i++) {
+      this.kids.push(0);
+    }
+    return first;
+  }
+
+  // Value `v` from tree node `t` (its members queued).
+  fromTree(t: JsonTree, v: u32): void {
+    const k = t.kind;
+    if (k == TREE_ARRAY) {
+      const items = t.items!;
+      const first = this.container(v, T_ARRAY, items.length);
+      for (let i: usize = 0; i < items.length; i++) {
+        const c = this.node(v);
+        this.kids[first + i] = c;
+        this.treeNodes.push(items[i]);
+        this.treeAt.push(c);
+      }
+    } else if (k == TREE_OBJECT) {
+      const o = t.obj!;
+      const first = this.container(v, T_OBJECT | ESCAPED_KEY, o.len());
+      let i: usize = 0;
+      for (let r = o.nextRaw(0); r < o.rawEnd(); r = o.nextRaw(r + 1)) {
+        // A member is its key, its value right after it.
+        const key = this.node(v);
+        this.string(key, o.keyRaw(r));
+        const c = this.node(v);
+        this.kids[first + i] = key;
+        i++;
+        this.treeNodes.push(o.valueRaw(r));
+        this.treeAt.push(c);
+      }
+    } else if (k == TREE_TAPE) {
+      this.later.push(t);
+      this.laterAt.push(v);
+    } else if (k == TREE_STRING) {
+      this.string(v, t.text);
+    } else if (k == TREE_NUMBER) {
+      this.words[2 * (v as usize)] = T_NUMBER;
+      this.words[2 * (v as usize) + 1] = t.num.toBits();
+    } else if (k == TREE_BOOL) {
+      this.words[2 * (v as usize)] = t.num != 0 ? T_TRUE : T_FALSE;
+    } else {
+      this.words[2 * (v as usize)] = T_NULL;
+    }
+  }
+
+  // Value `v` from value `s` of tape `t` (whose links are `links`; its members queued).
+  fromTape(t: TapeRef, links: JsonTree[] | null, s: u32, v: u32): void {
+    const k = t.kind(s);
+    if (k == T_ARRAY) {
+      const n = t.count(s) as usize;
+      const first = this.container(v, T_ARRAY, n);
+      for (let i: usize = 0; i < n; i++) {
+        const c = this.node(v);
+        this.kids[first + i] = c;
+        this.queueTape(t, links, t.child(s, i as i64) as u32, c);
+      }
+    } else if (k == T_OBJECT) {
+      const n = t.count(s) as usize;
+      const first = this.container(v, T_OBJECT | ESCAPED_KEY, n);
+      for (let i: usize = 0; i < n; i++) {
+        // Members in order, a repeated key once: its key, its value right after it.
+        const ks = t.member(s, i as i64) as u32;
+        const key = this.node(v);
+        this.string(key, t.text(ks));
+        const c = this.node(v);
+        this.kids[first + i] = key;
+        this.queueTape(t, links, ks + 1, c);
+      }
+    } else if (k == T_LINK) {
+      this.later.push(links![t.payload(s) as usize]);
+      this.laterAt.push(v);
+    } else if (k == T_STRING) {
+      this.string(v, t.text(s));
+    } else {
+      // A number keeps its bits; a literal has no second word.
+      this.words[2 * (v as usize)] = k;
+      this.words[2 * (v as usize) + 1] = k == T_NUMBER ? t.payload(s) : 0;
+    }
+  }
+
+  queueTape(t: TapeRef, links: JsonTree[] | null, s: u32, v: u32): void {
+    this.tapes.push(t);
+    this.tapeLinks.push(links);
+    this.tapeValues.push(s);
+    this.tapeAt.push(v);
+  }
+
+  // Fills every queued value.
+  drain(): void {
+    while (true) {
+      const nt = this.treeNodes.length;
+      if (nt > 0) {
+        const tn = this.treeNodes[nt - 1];
+        const at = this.treeAt[nt - 1];
+        this.treeNodes.pop();
+        this.treeAt.pop();
+        this.fromTree(tn, at);
+        continue;
+      }
+      const np = this.tapes.length;
+      if (np == 0) {
+        return;
+      }
+      const t = this.tapes[np - 1];
+      const links = this.tapeLinks[np - 1];
+      const s = this.tapeValues[np - 1];
+      const at = this.tapeAt[np - 1];
+      this.tapes.pop();
+      this.tapeLinks.pop();
+      this.tapeValues.pop();
+      this.tapeAt.pop();
+      this.fromTape(t, links, s, at);
+    }
+  }
+
+  // Copies in the children on other tapes smaller than twice this tape (again while copying one
+  // makes it large enough for another), then links the rest.
+  settle(): void {
+    let copied = true;
+    while (copied) {
+      copied = false;
+      const nodes = this.later;
+      const ats = this.laterAt;
+      this.later = [];
+      this.laterAt = [];
+      for (let i: usize = 0; i < nodes.length; i++) {
+        const o = nodes[i].obj!;
+        const t = o.tape!;
+        if (t.size() < this.words.length) {
+          this.queueTape(t, o.links, o.node, ats[i]);
+          this.drain();
+          copied = true;
+        } else {
+          this.later.push(nodes[i]);
+          this.laterAt.push(ats[i]);
+        }
+      }
+    }
+    for (let i: usize = 0; i < this.later.length; i++) {
+      const v = this.laterAt[i];
+      this.words[2 * (v as usize)] = T_LINK;
+      this.words[2 * (v as usize) + 1] = this.links.length as u64;
+      this.links.push(this.later[i]);
+      // The containers above it, up to the first already flagged.
+      let p = this.parent[v as usize];
+      while ((this.words[2 * (p as usize)] & LINKED) == 0) {
+        this.words[2 * (p as usize)] = this.words[2 * (p as usize)] | LINKED;
+        if (p == 0) {
+          break;
+        }
+        p = this.parent[p as usize];
+      }
+    }
+  }
+}
