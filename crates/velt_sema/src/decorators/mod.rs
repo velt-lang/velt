@@ -23,7 +23,7 @@ use crate::hir::{self, ConstTree, DecoratorTarget, DefId};
 
 pub(crate) use consts::path_of;
 pub(crate) use export::throws as export_throws;
-pub(crate) use known::{intrinsics, Inline};
+pub(crate) use known::{intrinsics, Inline, Variant, VariantTest};
 pub(crate) use scope::Scopes;
 
 /// The result types of a `declare decorator function`: where it may be used, with the bit each
@@ -129,6 +129,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
                     function_uses(cx, d, module, kind, property, sig);
                     let is_abstract = properties.is_abstract(cx, d, sig);
                     known::function_hints(cx, roles, d, sig, is_abstract);
+                    known::variant(cx, roles, d, sig);
                     export::check(cx, export_role, d, sig);
                 }
             }

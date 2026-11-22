@@ -151,15 +151,16 @@ impl CliLoader {
 }
 
 impl ProgramLoader for CliLoader {
-    fn load(
+    fn load_preloaded(
         &self,
         root: &Path,
         overlay: &HashMap<PathBuf, String>,
+        preload: &[String],
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String> {
         let graph = self.graph_of(root);
-        let opts = load_options(root, overlay, graph.as_deref());
+        let opts = load_options(root, overlay, graph.as_deref(), preload);
         let loaded = loader::load_program(sm, root, opts, diags)?;
         let more: Box<dyn std::any::Any + Send> = Box::new(loaded.state);
         Ok(LoadedProgram {
@@ -181,7 +182,7 @@ impl ProgramLoader for CliLoader {
     ) -> Option<velt_sema::StdBatch> {
         let state = state.downcast_mut::<loader::LoadState>()?;
         let graph = self.graph_of(root);
-        let opts = load_options(root, overlay, graph.as_deref());
+        let opts = load_options(root, overlay, graph.as_deref(), &[]);
         Some(loader::load_more(sm, state, base, demanded, &opts, diags))
     }
 

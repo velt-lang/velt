@@ -32,6 +32,8 @@ pub(super) fn load_options<'a>(
         // demand still (`StdLoad::serve`). `velt check --std` and `VELT_CHECK_ALL_STD`, which check
         // with laziness off (no live set demands the executor), load them up front too.
         demand_executor: !scope.eager_std && std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
+        preload: &scope.preload,
+        refuse_out_of_rule: true,
     }
 }
 
@@ -45,6 +47,10 @@ pub(crate) struct StdLoad<'a> {
     scope: &'a CheckScope,
     /// The files of the modules served.
     pub(super) files: Vec<velt_common::FileId>,
+    /// The demanded modules that could not be served in place (velt_loader
+    /// `LoadOptions::refuse_out_of_rule`): the driver checks the program again with them loaded
+    /// up front (`sema_stage`).
+    pub(super) refused: Vec<String>,
     /// The prebuilt hook modules' objects the build may link instead of loading the modules
     /// (`std_cache::prebuilt`, `velt_sema::Loads::prebuilt`).
     pub(crate) prebuilt: Option<&'a super::std_cache::Finder>,
@@ -64,6 +70,7 @@ impl<'a> StdLoad<'a> {
             opts,
             scope,
             files: vec![],
+            refused: vec![],
             prebuilt,
         }
     }
@@ -93,9 +100,19 @@ impl<'a> StdLoad<'a> {
                 &executor_only[..]
             }
         };
+        // After a refusal this check is thrown away: what it demands next is not served (the
+        // load's state holds the refused modules, which the check does not).
+        if !self.refused.is_empty() {
+            self.refused.extend(demanded.iter().cloned());
+            return velt_sema::StdBatch::default();
+        }
         let load = load_options(self.generator_build, self.opts, self.scope);
         let (sm, diags) = (&mut sess.sm, &mut sess.diagnostics);
         let batch = loader::load_more(sm, self.state, self.base, demanded, &load, diags);
+        if !batch.refused.is_empty() {
+            self.refused.extend(demanded.iter().cloned());
+            return velt_sema::StdBatch::default();
+        }
         self.files.extend(batch.modules.iter().map(|m| m.file));
         batch
     }

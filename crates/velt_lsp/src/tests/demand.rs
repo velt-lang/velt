@@ -38,7 +38,8 @@ fn options_for<'a>(
     }
 }
 
-/// The real loader, as `veltc`'s `CliLoader` drives it.
+/// The real loader, as `veltc`'s `CliLoader` drives it: a module that can't be served in the
+/// middle of a check is refused, for the analysis to load it up front and check again.
 struct RealLoader(PathBuf);
 
 impl ProgramLoader for RealLoader {
@@ -49,7 +50,23 @@ impl ProgramLoader for RealLoader {
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String> {
-        let l = load_program(sm, root, options(&self.0, overlay), diags)?;
+        self.load_preloaded(root, overlay, &[], sm, diags)
+    }
+
+    fn load_preloaded(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        preload: &[String],
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Result<LoadedProgram, String> {
+        let opts = LoadOptions {
+            preload,
+            refuse_out_of_rule: true,
+            ..options(&self.0, overlay)
+        };
+        let l = load_program(sm, root, opts, diags)?;
         Ok(LoadedProgram {
             modules: l.modules,
             root: l.root,
@@ -68,14 +85,11 @@ impl ProgramLoader for RealLoader {
         diags: &mut Diagnostics,
     ) -> Option<velt_sema::StdBatch> {
         let state = state.downcast_mut::<LoadState>()?;
-        Some(load_more(
-            sm,
-            state,
-            base,
-            demanded,
-            &options(&self.0, overlay),
-            diags,
-        ))
+        let opts = LoadOptions {
+            refuse_out_of_rule: true,
+            ..options(&self.0, overlay)
+        };
+        Some(load_more(sm, state, base, demanded, &opts, diags))
     }
 }
 
@@ -387,5 +401,33 @@ fn the_start_up_check_loads_no_printing_module_on_any_target() {
             [velt_common::std_module!(lang_hooks_cpu)],
             "{target}: the start-up check demands more than itself"
         );
+    }
+}
+
+/// A document whose live code connects with TLS: the TLS client (std/net/tls/fd_client.velt)
+/// can't be served in the middle of the check (velt_loader's (a1) rule), so the analysis loads it
+/// up front and checks again, as `velt check` does, and reports nothing; one that can't connect
+/// with TLS loads none of it.
+#[test]
+fn the_editor_checks_again_with_the_tls_client_up_front() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("main.velt");
+    let client = "std/net/tls/fd_client";
+    for (src, loads) in [
+        (
+            "import { connectTls } from \"velt/net\";\nasync function main() {\n  const s = await connectTls(\"localhost:443\");\n  s.close();\n}\n",
+            true,
+        ),
+        (
+            "import { connect } from \"velt/net\";\nasync function main() {\n  const s = await connect(\"localhost:80\");\n  s.close();\n}\n",
+            false,
+        ),
+    ] {
+        let overlay = HashMap::from([(root.clone(), src.to_string())]);
+        let mut folders = Default::default();
+        let a = crate::analysis::analyze(&RealLoader(real_std()), &root, &overlay, &mut folders);
+        let found = errors(&a.diagnostics, &a.sm);
+        assert!(found.is_empty(), "{src}: {found:?}");
+        assert_eq!(a.modules.iter().any(|m| m.path == client), loads, "{src}");
     }
 }

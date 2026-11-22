@@ -78,14 +78,33 @@ pub struct LoadedProgram {
 pub trait ProgramLoader: Send + Sync {
     /// Load `root` and its imports into `sm`. `overlay` holds the unsaved text of open documents
     /// (keyed by the paths the server derived from their URIs) and wins over the disk. Import and
-    /// syntax problems go into `diags`; `Err` means the root itself could not be read.
+    /// syntax problems go into `diags`; `Err` means the root itself could not be read. A loader
+    /// implements this or [`Self::load_preloaded`]; each defaults to the other.
     fn load(
         &self,
         root: &Path,
         overlay: &HashMap<PathBuf, String>,
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
-    ) -> Result<LoadedProgram, String>;
+    ) -> Result<LoadedProgram, String> {
+        self.load_preloaded(root, overlay, &[], sm, diags)
+    }
+
+    /// [`Self::load`] with the std modules `preload` (canonical paths) loaded up front: those a
+    /// check of the document demanded that could not be served in the middle of it
+    /// (`velt_sema::StdBatch::refused`), as `velt check` loads them for the check it starts
+    /// again. The default ignores them, for a loader that takes everything up front.
+    fn load_preloaded(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        preload: &[String],
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Result<LoadedProgram, String> {
+        let _ = preload;
+        self.load(root, overlay, sm, diags)
+    }
 
     /// The std modules `demanded` (canonical paths) that the check of the document at `root` found
     /// it needs, and what they import that the load has not loaded yet: what `velt check` does in

@@ -34,6 +34,9 @@ pub struct StdBatch {
     /// Imports it resolved in modules loaded earlier (a re-export skipped until a name of it was
     /// asked for): module path, specifier, target path.
     pub imports: Vec<(String, String, String)>,
+    /// Why the demand can't be served in place (velt_loader `LoadOptions::refuse_out_of_rule`):
+    /// the driver loads it up front and checks again; empty when it was served.
+    pub refused: Vec<String>,
 }
 
 /// How the driver loads during a check: given canonical std module paths, those modules and what
@@ -159,6 +162,7 @@ fn rewrite(b: StdBatch) -> Batch {
     let StdBatch {
         mut modules,
         imports,
+        refused: _,
     } = b;
     let mut diags = vec![];
     diags.extend(crate::call_sigs::check(&modules));

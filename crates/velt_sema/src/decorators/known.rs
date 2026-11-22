@@ -12,6 +12,9 @@
 //!   ([`function_hints`]), which lowering carries to `vir::Function::inline` (lowering finds the
 //!   uses in `Program::decorators` by the same roles) and `body::inline_markers` checks.
 //!   `@inline` takes how: `"hint"` (the default) or `"always"`; std writes `"always"`.
+//! - `@variant("plain", arg, when)` on a top-level function sets its `FnInfo::variant` ([`variant`]):
+//!   a call whose argument `arg` shows what `when` asks takes the function `plain` of the same
+//!   module instead (`body::expr::call`, docs/internals/design/call-variants.md).
 
 use velt_common::{std_hook, Diagnostic, Span};
 use velt_syntax::ast;
@@ -49,6 +52,55 @@ pub(super) struct Roles {
     inline: Option<DefId>,
     no_inline: Option<DefId>,
     intrinsic: Option<DefId>,
+    variant: Option<DefId>,
+}
+
+/// A function's `@variant`: the function its calls take when argument `arg` passes `test`.
+#[derive(Clone, Debug)]
+pub(crate) struct Variant {
+    pub plain: DefId,
+    pub arg: usize,
+    pub test: VariantTest,
+}
+
+/// What shows that a call can take a function's variant.
+#[derive(Clone, Debug)]
+pub(crate) enum VariantTest {
+    /// A string literal (or a template literal's text before its first hole) starting with it,
+    /// ASCII letters in either case.
+    StartsWith(String),
+    /// An object literal without this property and without a spread, or no argument.
+    Lacks(String),
+}
+
+impl VariantTest {
+    /// Does argument `arg` (`None`: left out) pass?
+    pub(crate) fn passes(&self, arg: Option<&ast::Expr>) -> bool {
+        match (self, arg.map(|a| &a.kind)) {
+            (VariantTest::StartsWith(p), Some(ast::ExprKind::Lit(ast::Lit::Str(s)))) => {
+                starts_with_ci(s, p)
+            }
+            (VariantTest::StartsWith(p), Some(ast::ExprKind::Template { quasis, .. })) => {
+                quasis.first().is_some_and(|q| starts_with_ci(q, p))
+            }
+            (VariantTest::Lacks(_), None) => true,
+            (VariantTest::Lacks(name), Some(ast::ExprKind::Object(props))) => {
+                props.iter().all(|p| match p {
+                    ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k) => {
+                        k.name != *name
+                    }
+                    ast::ObjectProp::Method(f) => f.sig.name.name != *name,
+                    ast::ObjectProp::Spread(_) => false,
+                })
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Does `s` start with `prefix`, ASCII letters in either case?
+fn starts_with_ci(s: &str, prefix: &str) -> bool {
+    s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
 impl Roles {
@@ -57,6 +109,7 @@ impl Roles {
             inline: role(cx, std_hook!(decorator_inline)),
             no_inline: role(cx, std_hook!(decorator_no_inline)),
             intrinsic: role(cx, std_hook!(decorator_intrinsic)),
+            variant: role(cx, std_hook!(decorator_variant)),
         }
     }
 
@@ -205,4 +258,87 @@ pub(super) fn function_hints(
         return;
     }
     cx.fn_info_mut(d).inline_marker = Some((hint, span));
+}
+
+/// Records `@variant("plain", arg, when)` on function `d` (signature `sig`): `plain` is a top-level
+/// function of the same module with as many parameters and type parameters as `d`, which is a
+/// top-level function and not a generator; `arg` names one of the parameters, and `when` has one
+/// of `startsWith` and `lacks` (a non-empty string). The call that takes `plain` is checked
+/// against `plain`'s own signature.
+pub(super) fn variant(cx: &mut Ctx, roles: Roles, d: DefId, sig: &ast::FnSig) {
+    let Some(role) = roles.variant else {
+        return;
+    };
+    let Some(uses) = cx.decorator_uses.get(&DecoratorTarget::Def(d)) else {
+        return;
+    };
+    let Some(u) = uses.iter().find(|u| u.def == role).cloned() else {
+        return;
+    };
+    let fail = |cx: &mut Ctx, msg: String| cx.err(msg, u.span);
+    let (kind, module, n, generics) = {
+        let f = cx.fn_info(d);
+        (f.kind, f.module, f.params.len(), f.generics.len())
+    };
+    if kind != FnKind::Free || sig.is_generator {
+        return fail(
+            cx,
+            "`@variant` applies to a top-level function that is not a generator".into(),
+        );
+    }
+    let (Some(ConstTree::Str(plain)), Some(ConstTree::Int(arg)), Some(ConstTree::Object(when))) =
+        (u.args.first(), u.args.get(1), u.args.get(2))
+    else {
+        return fail(
+            cx,
+            "`@variant` takes the plain function's name, an argument's index and what shows it"
+                .into(),
+        );
+    };
+    let test = match &when[..] {
+        [(k, ConstTree::Str(p))] if k == "startsWith" && !p.is_empty() => {
+            VariantTest::StartsWith(p.clone())
+        }
+        [(k, ConstTree::Str(p))] if k == "lacks" && !p.is_empty() => VariantTest::Lacks(p.clone()),
+        _ => {
+            return fail(
+                cx,
+                "`@variant`'s last argument is `{ startsWith: \"…\" }` or `{ lacks: \"…\" }`"
+                    .into(),
+            );
+        }
+    };
+    let arg = match usize::try_from(*arg) {
+        Ok(a) if a < n => a,
+        _ => {
+            return fail(
+                cx,
+                format!(
+                    "`@variant`'s argument index {arg} is not one of the function's {n} parameters"
+                ),
+            )
+        }
+    };
+    let target = match cx.scopes[module].items.get(plain.as_str()).copied() {
+        Some(Item::Def(p)) if p != d && matches!(cx.info[p.0 as usize], DefInfo::Fn(_)) => p,
+        _ => {
+            return fail(
+                cx,
+                format!("`@variant` names `{plain}`, which is no function of this module"),
+            );
+        }
+    };
+    let t = cx.fn_info(target);
+    if t.kind != FnKind::Free
+        || t.params.len() != n
+        || t.generics.len() != generics
+        || t.variant.is_some()
+    {
+        return fail(cx, format!("`@variant`'s `{plain}` must be a top-level function with the same parameters and type parameters"));
+    }
+    cx.fn_info_mut(d).variant = Some(Variant {
+        plain: target,
+        arg,
+        test,
+    });
 }

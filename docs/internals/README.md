@@ -264,6 +264,8 @@ whether it is implemented, partly implemented, accepted or proposed.
 - [Standard library layout](design/std-layout.md): `velt/<area>` imports and the rules
   `std-lint` enforces.
 - [Standard library checked and loaded on demand](design/lazy-std.md).
+- [Call variants](design/call-variants.md): `@variant`, a call whose literal argument shows it
+  needs less taking a plainer function (`fetch("http://…")` without the TLS client).
 - [Compiling std's Velt code once](design/std-object.md).
 - [Printing typed values](design/inspect-shapes.md).
 - [Source generators](design/source-generators.md): Velt code that generates Velt code at

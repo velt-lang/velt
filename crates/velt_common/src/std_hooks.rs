@@ -363,6 +363,12 @@ with_module_hooks! {
     sched_io_supported => lang_hooks_sched_io, "supported", sig(() -> bool);
     /// The `std-scheduler` variant of `#net-dns`'s resolver (std/net/dns/lookup_sched.velt).
     sched_dns_lookup => net_dns_lookup_sched, "velt_rt_dns_lookup", sig(async (move string) -> IoResult([string]));
+    // The TLS server and client (std/net/tls/fd_server.velt, fd_client.velt), which `listenTls`,
+    // `connectTls` and `fetch`'s `https:` call by role: loaded only where live code reaches them,
+    // with a check again (veltc `sema_stage`: they can't be served in place, velt_loader (a1)).
+    sched_tls_listen => net_tls_fd_server, "velt_rt_tls_listen", sig(async (move string, move string, move string, move string, u64) -> IoResult(u64));
+    sched_tls_connect => net_tls_fd_client, "velt_rt_tls_connect", sig(async (move string, move string, move string, move string) -> IoResult(u64));
+    sched_tls_handshake => net_tls_fd_client, "velt_rt_tls_handshake", sig(async (u64, move string, move string, move string, i64, move or_null(AbortSignal)) -> IoResult(u64));
     // The child processes on the executor's reactor (std/process/child/child_reactor.velt), which
     // the `std-scheduler` variant of `#child-rt` calls by role, each the twin of the runtime's
     // function of its name (std/process/child/rt.velt).
@@ -757,6 +763,10 @@ with_module_hooks! {
     decorator_inline => lang_intrinsics_decorators, "inline", decorator;
     /// `@noInline`: calls stay calls (`vir::Inline::Never`).
     decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
+    /// `@variant("plain", arg, { startsWith })` / `{ lacks }` on a function (any module;
+    /// velt/compiler re-exports it): a call whose argument shows what it needs calls `plain`
+    /// instead (`velt_sema` `decorators::known`, `body::expr::call`).
+    decorator_variant => lang_intrinsics_decorators, "variant", decorator;
     /// `@intrinsic declare function`: the declaration of a compiler intrinsic
     /// (`velt_sema` `intrinsic_decls.rs`).
     decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;

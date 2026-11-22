@@ -272,6 +272,9 @@ pub(crate) struct FnInfo<'m> {
     /// std's inlining decorator, `@inline` or `@noInline`, with its span (set where decorators
     /// are checked, `decorators::known`; `body::inline_markers` checks `@inline`'s callees).
     pub inline_marker: Option<(crate::decorators::Inline, Span)>,
+    /// `@variant`: the function its calls take when the argument shows it
+    /// (`decorators::known::variant`, `body::expr::call`).
+    pub variant: Option<crate::decorators::Variant>,
     /// An override without a written result of a method returning `this`: it returns `this`
     /// too (TypeScript infers `this` from `return this;`; anything else is its TS2416).
     pub inherits_this: bool,

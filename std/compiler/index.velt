@@ -31,6 +31,11 @@ export { inline } from "velt/lang/intrinsics/decorators";
 /** Calls of a function stay calls. */
 export { noInline } from "velt/lang/intrinsics/decorators";
 /**
+ * A call whose argument shows at compile time that it needs less calls a plainer function of the
+ * same module: `@variant("fetchPlain", 0, { startsWith: "http:" })`.
+ */
+export { variant } from "velt/lang/intrinsics/decorators";
+/**
  * The function is compiled for CPU features; every call sits behind velt/arch's checks of them
  * (`if (Sha.isSupported()) { … }`) or in a function gated on features that cover them.
  */

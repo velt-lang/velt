@@ -63,6 +63,7 @@ fn warm_inner(
 ) -> Result<Option<vir::Program>, BuildError> {
     {
         let scope = CheckScope {
+            preload: vec![],
             require_main: true,
             extra_roots: vec![],
             eager_std: false,

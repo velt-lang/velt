@@ -3,6 +3,7 @@
 // (http1/connection.velt, and HTTP/2 in h2/). Nothing on the request path is module state (#1487).
 
 import { IoError } from "velt/io";
+import { variant } from "velt/compiler";
 import { listen, listenTls, TcpListener } from "velt/net";
 import { AbortController, AbortSignal, TaskScope, taskScope } from "velt/task";
 import { drained, joinStop } from "velt/dev";
@@ -26,12 +27,44 @@ const MAX_HEADERS: number = 100;
  * the background: an `async` handler answers each request through `res` (`res.send(...)`). A
  * handler that throws, or returns without sending, gets a 500 or an empty 200.
  */
+@variant("serveHttpPlain", 0, { lacks: "tls" })
 export async function serveHttp<E>(
   opts: HttpServeOptions,
   handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
 ): Promise<HttpServer> {
-  const addr = `${opts.host ?? DEFAULT_HOST}:${opts.port}`;
+  const addr = addressOf(opts);
   const tls = opts.tls;
+  if (tls == null) {
+    return await serveOn(opts, handler, await listen(addr), false);
+  }
+  // HTTP/2 first when the client offers it (ALPN), unless the options chose the protocols.
+  const alpn = tls.alpn ?? ((opts.http2 ?? true) ? ["h2", "http/1.1"] : ["http/1.1"]);
+  return await serveOn(opts, handler, await listenTls(addr, { ...tls, alpn: alpn }), true);
+}
+
+/**
+ * `serveHttp` with options written without `tls` (`@variant` makes such a call this one): a
+ * program that serves only so neither loads nor builds the TLS server (velt/net's `listenTls`).
+ */
+export async function serveHttpPlain<E>(
+  opts: HttpServeOptions,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+): Promise<HttpServer> {
+  return await serveOn(opts, handler, await listen(addressOf(opts)), false);
+}
+
+/** Where `serveHttp` binds: `host:port`, the host 127.0.0.1 by default. */
+function addressOf(opts: HttpServeOptions): string {
+  return `${opts.host ?? DEFAULT_HOST}:${opts.port}`;
+}
+
+// `serveHttp` on `listener`, bound for it (`secure`: with TLS).
+async function serveOn<E>(
+  opts: HttpServeOptions,
+  handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,
+  listener: TcpListener,
+  secure: bool,
+): Promise<HttpServer> {
   const maxHead = (opts.maxHeadSize ?? MAX_HEAD) as i64;
   const maxBody = (opts.maxBodySize ?? MAX_BODY) as i64;
   let h2: H2Options | null = null;
@@ -44,14 +77,6 @@ export async function serveHttp<E>(
     );
     o.maxConcurrentStreams = (opts.maxConcurrentStreams ?? 128) as i64;
     h2 = o;
-  }
-  let listener: TcpListener;
-  if (tls != null) {
-    // HTTP/2 first when the client offers it (ALPN), unless the options chose the protocols.
-    const alpn = tls.alpn ?? (h2 != null ? ["h2", "http/1.1"] : ["http/1.1"]);
-    listener = await listenTls(addr, { ...tls, alpn: alpn });
-  } else {
-    listener = await listen(addr);
   }
   const maxHeaders = (opts.maxHeaders ?? MAX_HEADERS) as i64;
   const idle = (opts.idleTimeout ?? IDLE_MS) as i64;
@@ -69,7 +94,6 @@ export async function serveHttp<E>(
     const closing = spawn(closeWhen(stopped, listener));
   }
   const reload = dev != null;
-  const secure = tls != null;
   // Spread over the workers when there are several, in a program with module state too (its
   // handlers that touch it take the module lock for each poll); with one, every connection is a
   // promise of one task (`acceptAll`).

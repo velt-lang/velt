@@ -26,7 +26,10 @@ A std body is checked once it is *live*, or once a checked call asks for its res
 a walk over checked code that checks each definition as it enters the set:
 
 - the program's own definitions, and every module slot, whose initializer lowering runs whether
-  or not code reads it;
+  or not code reads it. A dependency package's definitions are live, as std's, once live code
+  names them (they are checked whole either way), except the functions C calls (`@export`), which
+  lowering builds whatever the program calls: what a package can do and the program never asks
+  of it demands nothing (`http-server`'s TLS server, for options written without `tls`);
 - what lowering looks up by name ([Roots](#roots));
 - closed over: every definition live code names (a call, a function value, a closure, a constant);
 - the methods, static methods and constructors of each class or struct a live type mentions, with
@@ -128,6 +131,18 @@ the module (`Ctx::demand_std`, `crates/velt_sema/src/std_load.rs`):
   starts from the program's modules and takes the kept batches in the order they were served. A
   round that assumes definitions demands some earlier, so it finds them by name, and a hint by
   `DefId` holds only where its span matches.
+
+A module that breaks the rule is not added in the middle of the check. With the driver's
+`LoadOptions::refuse_out_of_rule` the loader refuses it (`StdBatch::refused`) instead of
+reporting an internal error; the check goes on without it, every later demand is refused too,
+and the driver then throws that check away and loads the program again with the refused modules
+up front (`LoadOptions::preload`, veltc's `sema_stage`; `velt check`'s recovering check and the
+language server do the same). That second check is an ordinary one: a module loaded up front
+may extend what it likes. The TLS client and server (`std/net/tls/fd_client.velt`,
+`fd_server.velt`, with the TLS engine, the certificate checks and the crypto under them) are
+served so (#2392): velt/net's `listenTls` and `connectTls` and `fetch`'s `https:` call them by
+role (`sched_tls_listen`, `sched_tls_connect`, `sched_tls_handshake`), so only a program whose
+live code can listen or connect with TLS loads them, and pays one more check for it.
 
 std code may also call a function hook by its role, `hookCall("role", args…)`
 (`std/lang/intrinsics/hook_call.velt`), instead of importing the hook's module. Checking the call
@@ -252,6 +267,10 @@ uses. `crates/veltc/tests/bench_programs.rs` `all_of_std_checks_without_diagnost
 and requires no diagnostics, and the nightly benchmark `compile/check_all_std` measures it.
 
 ## Not yet implemented
+
+- **A cheaper second check.** A module that can't be served in place costs a whole check again
+  (the first stops at nothing: it runs to its end with the module missing). The build cache could
+  remember which modules a program's last build loaded up front.
 
 - **Global modules loaded on demand.** The global modules with a `load for:` predicate, such as
   `std/prelude/global/host_async.velt`, move from the loader's syntactic trigger to a demand made

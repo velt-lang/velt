@@ -11,15 +11,20 @@ use crate::hir::{self, DefId, TyId, TyKind};
 
 /// The roots: the program's own definitions (its root module's, whether or not in std), and the
 /// free functions lowering looks up by name ([`seed_std`]). Methods are lowering's only where it
-/// has a value of their type: live with it.
+/// has a value of their type: live with it. A dependency package's definitions are live, as std's,
+/// once live code reaches them (they are checked whole either way), but for the functions C calls
+/// (`@export`), which lowering builds whatever the program calls: so what a package can do and
+/// the program never asks of it (`http-server`'s TLS server for options without `tls`) loads no
+/// std module.
 pub(super) fn seed(cx: &mut Ctx) {
     let from = std::mem::replace(&mut cx.lazy.live.seeded, cx.info.len());
     // Generated code may add methods.
     cx.lazy.live.methods = None;
     // The root module is the program's even in std (a source generator's).
     let program: Vec<bool> = (cx.modules.iter().enumerate())
-        .map(|(m, sm)| !sm.is_std || m == cx.root)
+        .map(|(m, sm)| (!sm.is_std && !sm.is_dependency) || m == cx.root)
         .collect();
+    let exported: FxHashSet<DefId> = cx.c_exports.iter().map(|e| e.def).collect();
     let any_live_type = !cx.lazy.live.adts.is_empty();
     for i in from..cx.info.len() {
         let (module, owner, slot) = match &cx.info[i] {
@@ -29,8 +34,9 @@ pub(super) fn seed(cx: &mut Ctx) {
             _ => continue,
         };
         let of_live = any_live_type && owner.is_some_and(|o| cx.lazy.live.adts.contains(&o));
-        if program[module] || of_live || slot {
-            mark(cx, DefId(i as u32));
+        let d = DefId(i as u32);
+        if program[module] || of_live || slot || exported.contains(&d) {
+            mark(cx, d);
         }
     }
     seed_std(cx, from);
@@ -61,8 +67,13 @@ pub(super) fn seed_units(cx: &mut Ctx, base: usize, loaded: &[bool]) {
             DefInfo::Global(g) => g.module,
             _ => continue,
         };
-        if !cx.modules[module].is_std || module == cx.root {
-            mark(cx, DefId(i as u32));
+        let m = &cx.modules[module];
+        let d = DefId(i as u32);
+        if (!m.is_std && !m.is_dependency)
+            || module == cx.root
+            || cx.c_exports.iter().any(|e| e.def == d)
+        {
+            mark(cx, d);
         }
     }
     seed_units_named(cx, base, loaded);

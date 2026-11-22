@@ -377,9 +377,9 @@ async function main() {
     );
 }
 
-/// A program that names no TLS option (`cert`) doesn't load the TLS server in Velt, nor the TLS
-/// operations its streams would check for (std/prelude/global/tls_reactor.velt): a plain TCP
-/// echo builds neither, and still runs.
+/// A program that can't listen or connect with TLS doesn't load the TLS server in Velt, nor the
+/// TLS operations its streams would check for (std/net/tls/fd_hook.velt): a plain TCP echo builds
+/// neither, and still runs.
 #[test]
 fn a_program_without_tls_options_builds_no_tls_server() {
     runtime_support::build_native_runtime(manifest());
@@ -420,4 +420,102 @@ async function main() {
             String::from_utf8_lossy(marker)
         );
     }
+}
+
+/// What only the TLS client or server in Velt holds: their modules' symbols.
+const TLS_MARKERS: &[&[u8]] = &[
+    b"fd__client",
+    b"client__handshake",
+    b"fd__server",
+    b"server__handshake",
+];
+
+/// Panics if the binary `exe` holds the TLS client or server (`what` says which program it is).
+fn assert_no_tls(exe: &Path, what: &str) {
+    let bin = std::fs::read(exe).unwrap();
+    for marker in TLS_MARKERS {
+        assert!(
+            !contains(&bin, marker),
+            "{}: {what} has the TLS code (#2392: loaded by reachability)",
+            String::from_utf8_lossy(marker)
+        );
+    }
+}
+
+/// A `fetch` of an `http:` literal (and of a template literal that starts with one) takes
+/// `fetchPlain` (`@variant`, std/net/http/fetch/fetch.velt), which has no TLS client: the program
+/// loads and builds none of the TLS code, and still fetches.
+#[test]
+fn an_http_only_fetch_builds_no_tls_client() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    std::fs::write(
+        dir.path().join("fetch_http.velt"),
+        r#"import { listen } from "velt/net";
+
+async function main() {
+  const l = await listen("127.0.0.1:0");
+  const s = spawn(async () => {
+    const c = await l.accept();
+    await c.read();
+    await c.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok");
+    c.close();
+  });
+  const res = await fetch(`http://127.0.0.1:${l.port}/`);
+  console.log(res.status, await res.text());
+  await s;
+  l.close();
+}
+"#,
+    )
+    .unwrap();
+    let exe = build(dir.path(), "fetch_http");
+    assert_eq!(run(&exe, 1), "200 ok\n");
+    assert_no_tls(&exe, "an http:-only fetch");
+}
+
+/// `serve` with options written without `tls` takes `servePlain` (`@variant`,
+/// packages/http-server/src/standard.velt), which never calls `listenTls`: a plain server builds
+/// none of the TLS code, and still serves.
+#[test]
+fn a_plain_serve_builds_no_tls_server() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let server = manifest().join("../../packages/http-server");
+    let at = server.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        dir.path().join("package.velt"),
+        format!(
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"plain-serve\",\n  version: \"0.0.0\",\n  dependencies: {{ \"http-server\": {{ path: \"{at}\" }} }},\n}};\n"
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src/main.velt"),
+        r#"import { serve } from "http-server";
+
+async function main() {
+  const server = await serve({ port: 0 }, (req: Request) => new Response("hi"));
+  const res = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await res.text());
+  server.close();
+}
+"#,
+    )
+    .unwrap();
+    let exe = dir.path().join(format!(
+        "plain-serve{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(run(&exe, 1), "hi\n");
+    assert_no_tls(&exe, "a plain serve");
 }

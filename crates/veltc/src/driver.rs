@@ -23,9 +23,11 @@ mod output;
 pub(crate) mod outside;
 mod pipeline;
 mod recover;
+mod sema_stage;
 mod std_load;
 mod std_summary;
 mod units_key;
+use sema_stage::sema_stage;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
 mod warm;
@@ -162,6 +164,9 @@ pub struct CheckScope {
     /// it, instead of loading the module (`std_cache::prebuilt`): builds that link, and `velt
     /// check`.
     pub prebuilt: bool,
+    /// std modules loaded up front (velt_loader `LoadOptions::preload`): those an earlier check
+    /// of the program demanded that could not be served in the middle of it ([`sema_stage`]).
+    pub preload: Vec<String>,
 }
 
 /// What a successful build produced.
@@ -412,87 +417,6 @@ fn prebuilt_finder(
         .flatten()
 }
 
-/// Type-check the loaded program (and the native declarations against their libraries).
-fn sema_stage(
-    sess: &mut Session,
-    opts: &BuildOptions,
-    scope: &CheckScope,
-    loaded: &mut loader::Loaded,
-) -> Result<hir::Program, BuildError> {
-    let t = Instant::now();
-    let sema_opts = velt_sema::CheckOptions {
-        require_main: scope.require_main,
-        eager_std: scope.eager_std,
-        units: scope.units,
-        std_key: units_key::units_std_key(sess, scope, loaded),
-        native_executor: native_executor(opts),
-    };
-    let packages = opts.packages.as_ref();
-    sess.no_generators |= opts.no_generators;
-    // With `VELT_EAGER_STD` the executor's modules are still served on demand
-    // (`StdLoad::serve`); `velt check --std` loads everything up front.
-    let demands = !scope.eager_std;
-    let generator_build = sess.generator_build;
-    let finder = prebuilt_finder(sess, opts, scope);
-    let mut more = demands.then(|| {
-        StdLoad::new(
-            (&mut loaded.state, &loaded.modules),
-            generator_build,
-            (opts, scope),
-            finder.as_ref(),
-        )
-    });
-    let mut hir = crate::generate::check(
-        sess,
-        &loaded.modules,
-        loaded.root,
-        sema_opts,
-        packages,
-        more.as_mut(),
-    );
-    sess.std_files = StdLoad::std_files(more, &loaded.modules);
-    if let Some(finder) = finder {
-        sess.prebuilt = std_cache::prebuilt_found(finder, &mut sess.generator_inputs);
-    }
-    sess.native = crate::native::check_trust(
-        &loaded.modules,
-        &sess.sm,
-        opts.packages.as_ref(),
-        &opts.target(),
-        &mut sess.diagnostics,
-    );
-    if let Some(hir) = &mut hir {
-        let std_root = loader::std_root();
-        let std_files = sess.std_files.iter().copied().collect();
-        sess.c_constants = crate::native::read_c_constants(
-            hir,
-            &sess.sm,
-            opts.packages.as_ref(),
-            &std_files,
-            &opts.target(),
-            &mut sess.generator_inputs,
-            &mut sess.diagnostics,
-        );
-        sess.c_checked = crate::native::check_declares(
-            hir,
-            &sess.sm,
-            std_root.as_deref().filter(|_| opts.std_c_headers),
-            std_root.as_deref(),
-            opts.packages.as_ref(),
-            &std_files,
-            &opts.target(),
-            &mut sess.diagnostics,
-        );
-        crate::native::note_checked(&mut sess.native, opts.packages.as_ref(), &sess.c_checked);
-        crate::native::c_stamp_inputs(&sess.c_checked, &mut sess.generator_inputs);
-        sess.c_libs = crate::native::c_links(hir, &sess.sm, opts.packages.as_ref(), &opts.target());
-        std_summary::write(hir, &opts.input.display().to_string());
-    }
-    let _ = t;
-    sess.stop_if_errors()?;
-    hir.ok_or_else(|| BuildError::Ice("sema returned no program but reported no errors".into()))
-}
-
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
     compile_to_vir_linking(sess, opts, VirFor::Other)
@@ -517,6 +441,7 @@ fn compile_to_vir_linking(
     dest: VirFor,
 ) -> Result<vir::Program, BuildError> {
     let scope = CheckScope {
+        preload: vec![],
         require_main: true,
         extra_roots: vec![],
         eager_std: false,

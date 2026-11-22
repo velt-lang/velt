@@ -344,6 +344,11 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        // `@variant`: the argument shows the call can take the plainer function.
+        let d = match &self.cx.fn_info(d).variant {
+            Some(v) if v.test.passes(args.get(v.arg)) => v.plain,
+            _ => d,
+        };
         if let Some(decl) = self.cx.fn_info(d).intrinsic {
             return self.intrinsic_call(d, decl, type_args, args, exp, span);
         }

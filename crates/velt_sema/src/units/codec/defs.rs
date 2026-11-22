@@ -8,7 +8,7 @@ use velt_syntax::ast::GeneratorSpec;
 
 use super::{enums, structs};
 use crate::body::LocalKind;
-use crate::decorators::Inline;
+use crate::decorators::{Inline, Variant, VariantTest};
 use crate::defs::*;
 use crate::intrinsic_decls::DeclaredIntrinsic;
 
@@ -22,7 +22,7 @@ structs! {
         name, name_span, span, module, kind, generics, this, params, ret, ret_span, ret_source,
         fixed_modes, source, state, throw_srcs, declared_throws, throws, local_kinds, owner,
         is_async, host, c, intrinsic, unsafe_intrinsic, rest, sig_unsafe, generator,
-        extern_sig, is_generator, is_async_gen, soft_moves, is_private, is_getter, inline_marker,
+        extern_sig, is_generator, is_async_gen, soft_moves, is_private, is_getter, inline_marker, variant,
         inherits_this, escaping, keeps_fn_params, soft_params, modified_params,
         modified_captures, mutated_captures, mutated_through, assigns_capture,
     }
@@ -45,6 +45,7 @@ structs! {
     GlobalSrc<'_> { ann, init, span, owner, is_private, c_const, c_global }
     AliasInfo<'_> { module, decl, expanding, used, outer }
     Extension { generics, target, methods, implements }
+    Variant { plain, arg, test }
 }
 
 enums! {
@@ -106,5 +107,9 @@ enums! {
         0 => Always,
         1 => Never,
         2 => Hint,
+    }
+    @fielded VariantTest {
+        0 => StartsWith(a),
+        1 => Lacks(a),
     }
 }
