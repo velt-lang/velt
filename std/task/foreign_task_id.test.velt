@@ -37,8 +37,8 @@ function sameCall(): u64 {
   return taskId();
 }
 
-// Runs `foreignThread` on a new C thread and returns the two ids it saw.
-async function idsOfACall(): Promise<[u64, u64]> {
+// Starts `foreignThread` on a new C thread, on three words it returns.
+function startCall(): usize {
   const at = rawAlloc(24);
   // SAFETY: three words the test just allocated.
   unsafe {
@@ -48,6 +48,11 @@ async function idsOfACall(): Promise<[u64, u64]> {
   }
   // SAFETY: `foreignThread` has the C signature of a thread's start routine.
   expect(th.startDetached(unsafe { exportedAddress(foreignThread) }, at)).toBe(true);
+  return at;
+}
+
+// Waits for the call started on `at` (`startCall`) to finish, and returns the two ids it saw.
+async function idsOf(at: usize): Promise<[u64, u64]> {
   let done: u64 = 0;
   for (let i = 0; i < 400 && done === 0; i++) {
     // timing: a bound on a wait for another thread's work, not a delay the test relies on.
@@ -57,13 +62,14 @@ async function idsOfACall(): Promise<[u64, u64]> {
   }
   expect(done).toBe(1);
   // SAFETY: the thread wrote both before `done`; nothing else uses the words.
-  const ids: [u64, u64] =
-    unsafe { [addressAtomicLoad<u64>(at, "seqcst"), addressAtomicLoad<u64>(at + 8, "seqcst")] };
+  const first = unsafe { addressAtomicLoad<u64>(at, "seqcst") };
+  // SAFETY: as above.
+  const again = unsafe { addressAtomicLoad<u64>(at + 8, "seqcst") };
   // SAFETY: read; the thread is done with them.
   unsafe {
     rawFree(at, 24);
   }
-  return ids;
+  return [first, again];
 }
 
 describe("a C library's thread calling an exported function", () => {
@@ -71,8 +77,8 @@ describe("a C library's thread calling an exported function", () => {
     if (!th.SUPPORTED) {
       return;
     }
-    const [a, aAgain] = await idsOfACall();
-    const [b, bAgain] = await idsOfACall();
+    const [a, aAgain] = await idsOf(startCall());
+    const [b, bAgain] = await idsOf(startCall());
     expect(a === 0).toBe(false);
     expect(aAgain).toBe(a);
     expect(b === 0).toBe(false);
@@ -81,5 +87,24 @@ describe("a C library's thread calling an exported function", () => {
     const mine = taskId();
     expect(a === mine).toBe(false);
     expect(b === mine).toBe(false);
+  });
+
+  it("has an id no other call has while calls run at once", async () => {
+    if (!th.SUPPORTED) {
+      return;
+    }
+    // All started before any is waited for, so their calls can overlap.
+    const words: usize[] = [];
+    for (let i = 0; i < 4; i++) {
+      words.push(startCall());
+    }
+    const ids: u64[] = [];
+    for (const at of words) {
+      const [id, again] = await idsOf(at);
+      expect(id === 0).toBe(false);
+      expect(again).toBe(id);
+      expect(ids.includes(id)).toBe(false);
+      ids.push(id);
+    }
   });
 });
