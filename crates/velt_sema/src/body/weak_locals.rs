@@ -2,8 +2,9 @@
 //! `let parent: weak Node | null = node.parent` in a function body. The variable holds its
 //! target's slot; its reads are `Intrinsic::WeakRead` (`local_expr`), its initializer and the
 //! values assigned to it are borrowed, as a weak field's are, and a test does not narrow it
-//! (`refuse_fact`): the target may be gone between two reads. A closure capturing one is not
-//! lowered yet.
+//! (`refuse_fact`): the target may be gone between two reads. A closure's capture of one is a
+//! `weak` local too (`lookup_local`); `crate::weak_threads` refuses one crossing to another task
+//! or a lock.
 
 use velt_common::Span;
 use velt_syntax::ast;
