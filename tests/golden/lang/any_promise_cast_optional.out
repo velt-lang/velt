@@ -1,0 +1,12 @@
+cast then 6
+cast catch c1
+cast finally 5 true
+cast read function
+generic 2
+no promise undefined undefined
+optional call 3
+optional catch 2
+optional missing undefined
+optional own own 6
+skipped undefined 0
+evaluated 2 present

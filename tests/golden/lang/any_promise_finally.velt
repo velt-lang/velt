@@ -17,6 +17,13 @@ async function slow(log: string[]): Promise<void> {
   log.push("slow done");
 }
 
+async function deep(log: string[]): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await later(i);
+  }
+  log.push("deep done");
+}
+
 async function main(): Promise<void> {
   const log: string[] = [];
   const p: any = later(7);
@@ -35,6 +42,12 @@ async function main(): Promise<void> {
 
   const waited = await p.finally((): any => slow(log));
   console.log("waited", waited, log[log.length - 1]);
+
+  // The callback's promise takes five ticks: the result waits for all of them.
+  const order: string[] = [];
+  const after = await p.finally((): any => deep(order));
+  order.push("after finally");
+  console.log("order", after, order.join(", "));
 
   try {
     await p.finally((): any => fails("from finally"));

@@ -34,7 +34,7 @@ impl FnCx<'_, '_> {
     /// `Some(None)` for a computed key, `None` for a call of `obj` itself): `Ok(any type)` for an `any` (and a `Function`
     /// called), `Err(obj)` for anything else. An `unknown`, an `object` and a member of a
     /// `Function` report their error and give `Ok(None)`.
-    fn dynamic_receiver(
+    pub(super) fn dynamic_receiver(
         &mut self,
         obj: hir::Expr,
         member: Option<Option<&str>>,

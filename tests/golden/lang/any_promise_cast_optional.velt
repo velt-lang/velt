@@ -1,0 +1,47 @@
+// `then`, `catch` and `finally` through a cast to `any` and through an optional call (#924 step
+// 2), as in Node: a typed promise cast inline, a value of a type parameter cast in a generic
+// function, a cast of a value that can't be a promise, and `v.then?.(f)` on a promise, on an
+// object without a `then` and on one with its own, its arguments evaluated only when called.
+async function later(n: number): Promise<number> {
+  return n;
+}
+
+async function fails(m: string): Promise<number> {
+  throw new Error(m);
+}
+
+async function viaGeneric<T>(x: T): Promise<any> {
+  return await (x as any).then((v: any) => v + 1);
+}
+
+async function main(): Promise<void> {
+  const typed = later(5);
+  console.log("cast then", await (typed as any).then((v: any) => v + 1));
+  console.log("cast catch", await (fails("c1") as any).catch((e: any) => e.message));
+  let ran = false;
+  const fin = await (typed as any).finally(() => {
+    ran = true;
+  });
+  console.log("cast finally", fin, ran);
+  console.log("cast read", typeof (typed as any).then);
+  console.log("generic", await viaGeneric(later(1)));
+  console.log("no promise", typeof (5 as any).then, typeof ("s" as any).then);
+
+  const p: any = later(2);
+  console.log("optional call", await p.then?.((v: any) => v + 1));
+  console.log("optional catch", await p.catch?.((e: any) => "no"));
+  const plain: any = { n: 1 };
+  console.log("optional missing", plain.then?.((v: any) => v));
+  const own: any = { then: (f: any) => "own " + f(3) };
+  console.log("optional own", own.then?.((v: any) => v * 2));
+
+  // A missing member skips the arguments; a present one evaluates them once.
+  const seen: string[] = [];
+  const mark = (s: string): any => {
+    seen.push(s);
+    return (v: any) => v;
+  };
+  console.log("skipped", plain.then?.(mark("missing")), seen.length);
+  console.log("evaluated", await p.then?.(mark("present")), seen.join(","));
+}
+main();

@@ -1,4 +1,5 @@
 kept 7 finally ran
 still rejects first
 waited 7 slow done
+order 7 deep done, after finally
 returned rejection from finally

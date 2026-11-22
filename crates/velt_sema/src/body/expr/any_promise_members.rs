@@ -7,8 +7,11 @@
 
 use velt_common::Span;
 
+use velt_syntax::ast;
+
+use super::setters;
 use crate::any::Dynamic;
-use crate::body::{FnCx, LocalKind};
+use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, TyId, TyKind, UseMode};
 use crate::hook_calls::{self as hooks, ty, HookTy};
 
@@ -17,9 +20,9 @@ pub(super) const PROMISE_MEMBERS: [&str; 3] = ["then", "catch", "finally"];
 
 impl FnCx<'_, '_> {
     /// Does a member `name` read or called here on `recv`, as the code gives it, go through the
-    /// promise test? Only on an `any` or `unknown` value: not on a typed value read through
-    /// `any` (a brand, a narrowed or generic receiver), nor on a cast of a typed one (`(r as
-    /// any).then`, whose type sema knows: `thenable_test.rs`).
+    /// promise test? Only on an `any` or `unknown` value, not on a typed value read through
+    /// `any` (a brand, a narrowed or generic receiver). A cast to `any` (`(p as any).then`,
+    /// `(x as any).then` of a `T`) is such a value, unless its type can't hold a promise.
     pub(super) fn promise_member_named(&self, name: &str, recv: &hir::Expr) -> bool {
         PROMISE_MEMBERS.contains(&name)
             && !self.cx.scopes[self.module].is_std
@@ -27,13 +30,37 @@ impl FnCx<'_, '_> {
                 self.cx.dynamic(recv.ty),
                 Some(Dynamic::Any | Dynamic::Unknown)
             )
-            && !matches!(recv.kind, H::ToDyn { .. })
+            && !self.cast_of_no_promise(recv)
+    }
+
+    /// Is `recv` a cast to `any` of a value whose type can't be a promise (a primitive, an array,
+    /// a map, a tuple, a function)? Its `AnyIsPromise` would be false.
+    fn cast_of_no_promise(&self, recv: &hir::Expr) -> bool {
+        let H::ToDyn { expr, .. } = &recv.kind else {
+            return false;
+        };
+        matches!(
+            self.cx.ty.kind(expr.ty),
+            TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Str
+                | TyKind::Unit
+                | TyKind::Literal(_)
+                | TyKind::Symbol
+                | TyKind::Simd(_)
+                | TyKind::Array(_)
+                | TyKind::Map(..)
+                | TyKind::Tuple(_)
+                | TyKind::FnPtr { .. }
+                | TyKind::Closure(_)
+        )
     }
 
     /// `obj.name` (`name` one of [`PROMISE_MEMBERS`]) on the `any` `obj`, the read being `get`:
     /// `{ let t = obj; AnyIsPromise(t) ? anyPromiseMethod(name) : get(t) }`. The promise's is
-    /// one shared function per name, whose `this` is the receiver (`p.then === p.then`, and
-    /// `const t = v.then; t.call(v, f)` works, as in Node).
+    /// one shared function per name, so `p.then === p.then` as in Node. It is read without its
+    /// receiver: called later (`const t = v.then; t.call(v, f)`), it stops with a TypeError.
     pub(super) fn promise_member_get(
         &mut self,
         obj: hir::Expr,
@@ -133,6 +160,93 @@ impl FnCx<'_, '_> {
             span,
         );
         self.block_with(lets, pick, any, span)
+    }
+
+    /// `recv.name?.(args)` (`name` one of [`PROMISE_MEMBERS`]) where `recv` is a path to an
+    /// `any` / `unknown`: on a promise the call `recv.name(args)` (its member is never missing),
+    /// on anything else the member read, then `undefined` if it is `null` / `undefined`, else
+    /// called as before (`AnyApply`). `None` for any other optional call.
+    pub(super) fn promise_member_optional_call(
+        &mut self,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Member {
+            object,
+            prop,
+            optional: false,
+        } = &callee.kind
+        else {
+            return None;
+        };
+        if !PROMISE_MEMBERS.contains(&prop.name.as_str()) || self.cx.scopes[self.module].is_std {
+            return None;
+        }
+        let t = self.peek_ty(object)?;
+        if !matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown)) {
+            return None;
+        }
+        let recv = self.receiver_expr(object);
+        let (recv, any) = match self.dynamic_receiver(recv, Some(Some(&prop.name))) {
+            Ok((recv, Some(any))) => (recv, any),
+            Ok((_, None)) => {
+                // Reported by `dynamic_receiver` (an `unknown` not narrowed).
+                self.check_args_loose(args);
+                return Some(self.error_expr(span));
+            }
+            Err(_) => panic!(
+                "ICE: `{}` peeked as dynamic but checked as typed",
+                prop.name
+            ),
+        };
+        // In Node's order: the receiver, its member, the test for `null` / `undefined`, and only
+        // then the arguments and the call.
+        let str_ = self.cx.ty.str_;
+        let text = format!("{}.{}", self.callee_text(&recv), prop.name);
+        let recv = self.share_if_place(recv);
+        let t = self.new_local("<held>", any, false, span, LocalKind::Temp);
+        let held = |s: &mut Self| s.mk(H::Local(t, UseMode::Borrow), any, span);
+        let get = move |s: &mut Self, h: hir::Expr| {
+            let key = s.key_lit_any(&prop.name, span);
+            s.any_op(Intrinsic::AnyGet, vec![h, key], any, span)
+        };
+        let h = held(self);
+        let member = self.promise_member_get(h, &prop.name, any, span, get);
+        let m = self.new_local("<member>", any, false, span, LocalKind::Temp);
+        let read = |s: &mut Self| s.mk(H::Local(m, UseMode::Borrow), any, span);
+        let r = read(self);
+        let missing = self.dynamic_null_compare(r, "null", false, true, span);
+        let undefined = setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
+        let undefined = self.expr(&undefined, Some(any), Want::Move);
+        let Some(boxed) = self.dynamic_args(args, any, false) else {
+            return Some(self.error_expr(span));
+        };
+        self.note_any_call();
+        let apply = move |s: &mut Self, _held: hir::Expr, boxed: Vec<hir::Expr>| {
+            let text = s.mk(H::Lit(Lit::Str(text)), str_, span);
+            let mut all = vec![read(s), text];
+            all.extend(boxed);
+            s.intrinsic(Intrinsic::AnyApply, all, any, span)
+        };
+        let h = held(self);
+        let present = self.promise_member_call(h, &prop.name, boxed, any, span, apply);
+        let pick = self.mk(
+            H::If {
+                cond: Box::new(missing),
+                then: Box::new(undefined),
+                els: Box::new(present),
+            },
+            any,
+            span,
+        );
+        Some(self.block_with(vec![(t, recv), (m, member)], pick, any, span))
+    }
+
+    /// The string literal `name`.
+    fn key_lit_any(&mut self, name: &str, span: Span) -> hir::Expr {
+        let str_ = self.cx.ty.str_;
+        self.mk(H::Lit(Lit::Str(name.to_string())), str_, span)
     }
 
     /// Loads std/lang/hooks/any_promise.velt, the hooks' module, which no program loads by default
