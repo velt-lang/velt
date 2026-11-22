@@ -67,8 +67,9 @@ function hasEscapedBreak(s: string, a: u64, b: u64): bool {
 
 /**
  * The text of the quoted string at bytes `a..b` of `s` (quotes included), as velt_rt's
- * `push_inspect_string` escaped it: `\n`, `\t`, `\b`, `\f`, `\r`, `\xHH`, and a backslash before
- * any other byte, which stands for that byte.
+ * `push_inspect_string` escaped it: `\n`, `\t`, `\b`, `\f`, `\r`, `\xHH` (a control character),
+ * `\uXXXX` (a lone surrogate, in WTF-8), and a backslash before any other byte, which stands for
+ * that byte.
  */
 function unescapeString(s: string, a: u64, b: u64): string {
   // Built as bytes and made a string once: a character's bytes appended one by one would be
@@ -107,6 +108,24 @@ function unescapeString(s: string, a: u64, b: u64): string {
           out.push((0x80 | (code & 0x3f)) as u8);
         }
         i += 2;
+      }
+    } else if (next == 0x75 && i + 4 <= end) {
+      // A lone surrogate, which the printer escapes: its three WTF-8 bytes.
+      let code: i64 = 0;
+      let ok = true;
+      for (let k: u64 = 0; k < 4; k++) {
+        const h = hexValue(strByteAt(s, i + k));
+        ok = ok && h >= 0;
+        code = code * 16 + h;
+      }
+      if (ok) {
+        const c = code as u64;
+        out.push((0xe0 | (c >> 12)) as u8);
+        out.push((0x80 | ((c >> 6) & 0x3f)) as u8);
+        out.push((0x80 | (c & 0x3f)) as u8);
+        i += 4;
+      } else {
+        out.push(next);
       }
     } else {
       out.push(next);
