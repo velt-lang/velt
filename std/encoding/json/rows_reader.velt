@@ -2,12 +2,11 @@
 // (reader.velt) made by `Reader.overCursor` asks, for velt/db's `decodeRows<T>` when `T` is not
 // read by column (velt/encoding/json/generate/read.velt). It answers every call as the text
 // reader would for the JSON the rows stand for (`[{"col":value,...},...]`, or with `single` one
-// row's object), so the generated decoders need not know: a blob is the array of its bytes, and a
-// nested value (a JSON column) is read by a text `Reader` over its JSON text.
+// row's object), so the generated decoders need not know: a blob is the array of its bytes. A
+// nested value (a JSON column) is read by the `Reader` itself, as text (rows_ops.velt).
 //
 // Like the text reader, the first failure is sticky until `reset`. The only failures are a value
-// of another kind than the decoder asked for and a rejected unknown key: a nested value's own
-// failure is the first of these too. The rows are well-formed by construction (the driver's
+// of another kind than the decoder asked for and a rejected unknown key. The rows are well-formed by construction (the driver's
 // cursor), so nothing here fails for their sake.
 //
 // Port of the runtime's rows_reader.rs (#3318), with the same answers and messages.
@@ -17,7 +16,6 @@ import {
   CELL_BOOL,
   CELL_FLOAT,
   CELL_INT,
-  CELL_JSON,
   CELL_NONE,
   CELL_NULL,
   CELL_TEXT,
@@ -27,7 +25,6 @@ import {
   FLAG_REJECT_UNKNOWN,
   MISMATCH,
   NONE,
-  Reader,
   STEP_END,
   STEP_ERROR,
   STEP_MORE,
@@ -43,17 +40,11 @@ import {
   TOKEN_STRING,
   TOKEN_TRUE,
   UNKNOWN,
-  readerArrayNext,
-  readerMark,
-  readerNextKey,
-  readerOpenArray,
-  readerOpenObject,
-  readerPeek,
 } from "velt/encoding/json/reader";
-import { readerTextReset, shortPath } from "velt/encoding/json/reader_ops";
-import { inline, noInline } from "velt/lang/intrinsics";
-import { nestedText, restartReader, rowsJsonText } from "velt/encoding/json/rows_text";
+import { shortPath } from "velt/encoding/json/reader_ops";
+import { rowsJsonText } from "velt/encoding/json/rows_text";
 import { RowsMark } from "velt/encoding/json/rows_mark";
+import { TreeWriter } from "velt/encoding/json/tree_text";
 import { rowsSkipValue } from "velt/encoding/json/rows_reads";
 
 declare function velt_rt_strbuf_new(cap: u64, out: string);
@@ -91,19 +82,15 @@ export class RowsReader {
   error: u8 = NONE;
   rejectUnknown: bool;
   flags: u32;
-  /** Positions `mark` saved, with the nested reader's own mark when one was reading. */
+  /** Positions `mark` saved. */
   marks: RowsMark[] = [];
   /**
    * How many marks there were when the array of rows was opened: a decoder looks ahead within
    * one value, so the next row forgets the marks made in the last one.
    */
   rowMarks: usize = 0;
-  /** Reads the column value that is a nested value's JSON text, while it does. */
-  nested: Reader | null = null;
-  /** The last nested reader, kept to read the next nested value with. */
-  spare: Reader | null = null;
-  /** The last `nextKey` gave a nested value's key: the nested reader holds it. */
-  nestedKey: bool = false;
+  /** The byte buffer a value read whole is written with (rows_text.velt), kept for the next. */
+  writer: TreeWriter | null = null;
   /** What the last read gave: a key, a string or a value's JSON text; a number; a boolean. */
   text: string = "";
   num: f64 = 0;
@@ -127,53 +114,6 @@ export class RowsReader {
       this.error = MISMATCH;
     }
     return false;
-  }
-
-  /** The reader of the pending value when it is a nested value's JSON text (made on first use). */
-  @inline("always")
-  nest(): Reader | null {
-    if (this.nested == null && this.kind == CELL_JSON && this.at == AT_VAL) {
-      this.startNested();
-    }
-    return this.nested;
-  }
-
-  // Starts reading the pending nested value (out of line: the rare case).
-  @noInline
-  private startNested(): void {
-    if (this.error != NONE) {
-      return;
-    }
-    this.cells.jsonAt(this.col);
-    const r = this.spare;
-    if (r != null) {
-      restartReader(r, this.cells.text);
-      this.nested = r;
-    } else {
-      this.nested = new Reader(this.cells.text, this.flags & FLAG_REJECT_UNKNOWN, 0);
-    }
-  }
-
-  /**
-   * After a call the nested reader took: its failure is this reader's; once its value is read,
-   * the column is.
-   */
-  nestedDone(): void {
-    const r = this.nested;
-    if (r == null) {
-      return;
-    }
-    if (r.failed == UNKNOWN) {
-      if (this.error == NONE) {
-        this.error = UNKNOWN;
-      }
-    } else if (r.failed != NONE) {
-      this.mismatch();
-    } else if (r.depth == 0) {
-      this.spare = r;
-      this.nested = null;
-      this.advance();
-    }
   }
 
   /** The kind of the pending column value, or `CELL_NONE` (failed: not at a value, or none). */
@@ -200,10 +140,6 @@ export class RowsReader {
 
   /** The kind of the next value (`TOKEN_*`). */
   peek(): u32 {
-    const r = this.nest();
-    if (r != null) {
-      return readerPeek(r);
-    }
     if (this.error != NONE) {
       return TOKEN_ERROR;
     }
@@ -244,12 +180,6 @@ export class RowsReader {
 
   /** Consumes `{` (123) or `[` (91). */
   open(bracket: u8): bool {
-    const r = this.nest();
-    if (r != null) {
-      const v = bracket == 123 ? readerOpenObject(r) : readerOpenArray(r);
-      this.nestedDone();
-      return v;
-    }
     if (this.error != NONE) {
       return false;
     }
@@ -284,12 +214,6 @@ export class RowsReader {
 
   /** `STEP_MORE` if another array element follows, `STEP_END` after the closing `]`. */
   arrayNext(): u8 {
-    const r = this.nest();
-    if (r != null) {
-      const v = readerArrayNext(r);
-      this.nestedDone();
-      return v;
-    }
     if (this.error != NONE) {
       return STEP_ERROR;
     }
@@ -314,19 +238,8 @@ export class RowsReader {
     return STEP_ERROR;
   }
 
-  /**
-   * The next column's name (`text` after `STEP_MORE`), or `STEP_END` after the last. A key of a
-   * nested value is the nested reader's (`nestedKey`: its `key()`), not copied into `text`.
-   */
+  /** The next column's name (`text` after `STEP_MORE`), or `STEP_END` after the last. */
   nextKey(): u8 {
-    const r = this.nest();
-    if (r != null) {
-      const step = readerNextKey(r);
-      this.nestedKey = step == STEP_MORE;
-      this.nestedDone();
-      return step;
-    }
-    this.nestedKey = false;
     if (this.error != NONE) {
       return STEP_ERROR;
     }
@@ -353,11 +266,6 @@ export class RowsReader {
       this.cells.copy();
     }
     const m = new RowsMark(this.at, this.col, this.kind, this.blob, this.blobAt, this.cells.row);
-    const r = this.nested;
-    if (r != null) {
-      m.nested = true;
-      m.inner = readerMark(r);
-    }
     this.marks.push(m);
     return (this.marks.length - 1) as u64;
   }
@@ -375,15 +283,6 @@ export class RowsReader {
     this.blobAt = m.blobAt;
     this.cells.row = m.row;
     this.error = NONE;
-    // Inside a nested value: its reader again, at its own mark (a fresh one over the same text
-    // when it had finished since); before one: none.
-    this.nested = null;
-    if (m.nested) {
-      const r = this.nest();
-      if (r != null) {
-        readerTextReset(r, m.inner);
-      }
-    }
   }
 
   /**
@@ -391,13 +290,6 @@ export class RowsReader {
    * it as a `JsonValue`).
    */
   value(): bool {
-    const r = this.nested;
-    if (r != null) {
-      const ok = nestedText(r);
-      this.text = r.decoded;
-      this.nestedDone();
-      return ok;
-    }
     if (this.error != NONE) {
       return false;
     }
