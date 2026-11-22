@@ -7,7 +7,7 @@
 // starts and nothing is counted but those rare events.
 
 import { Ptr, export as cExport } from "velt/ffi";
-import { exportedAddress } from "velt/lang/intrinsics";
+import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
 import * as os from "#sched-os";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
@@ -90,11 +90,20 @@ export function handlePauseSetup(): void {
   }
 }
 
-/** 50 ms with the core given away, when the handle pause is on for window `which`. */
+/**
+ * 50 ms with the core given away, when the handle pause is on for window `which`: one relaxed
+ * load where it is called, the pause out of line.
+ */
+@inline("always")
 export function handlePause(which: u64): void {
-  if (HANDLE_PAUSE.load("relaxed") !== which) {
-    return;
+  if (HANDLE_PAUSE.load("relaxed") === which) {
+    handlePaused();
   }
+}
+
+/** `handlePause`'s 50 ms. */
+@noInline
+function handlePaused(): void {
   const t0 = sl();
   while (sl() - t0 < 50000000) {
     m.yieldCore();
