@@ -1,0 +1,132 @@
+// velt/lang/hooks (tests): the measures of `console.log`'s line breaking (inspect_layout_width.velt,
+// inspect_layout_columns.velt) against Node 22: UTF-16 units, display columns as Node's
+// `getStringWidth(text, false)` counts them, and the column plans of `groupArrayElements`, read
+// from Node's output for arrays of strings of those widths. Run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { strByteLen } from "velt/lang/intrinsics";
+import { codePointWidth, displayWidth, utf16Units } from "velt/lang/hooks/inspect_layout_width";
+import { planColumns } from "velt/lang/hooks/inspect_layout_columns";
+
+function units(s: string): u64 {
+  return utf16Units(s, 0, strByteLen(s) as u64);
+}
+
+function width(s: string): u64 {
+  return displayWidth(s, 0, strByteLen(s) as u64);
+}
+
+describe("utf16Units", () => {
+  it("counts UTF-16 units of whole characters", () => {
+    expect(units("")).toBe(0);
+    expect(units("abc")).toBe(3);
+    expect(units("é")).toBe(1);
+    expect(units("漢字")).toBe(2);
+    expect(units("🦀")).toBe(2);
+    expect(units("a😀b")).toBe(4);
+  });
+
+  it("counts a byte range", () => {
+    // "x漢y": x at 0, 漢 at 1..4, y at 4.
+    expect(utf16Units("x漢y", 1, 4)).toBe(1);
+    expect(utf16Units("x漢y", 0, 1)).toBe(1);
+  });
+});
+
+describe("displayWidth", () => {
+  it("matches Node's getStringWidth", () => {
+    // Each expected value is Node 22's `getStringWidth(s, false)`.
+    expect(width("abc")).toBe(3);
+    expect(width("a\tb")).toBe(2);
+    expect(width("\x7f")).toBe(0);
+    expect(width("漢字")).toBe(4);
+    expect(width("한국어")).toBe(6);
+    expect(width("é")).toBe(1);
+    expect(width("́")).toBe(0);
+    expect(width("✓")).toBe(1);
+    expect(width("­")).toBe(1);
+    expect(width("‍")).toBe(0);
+    expect(width("😀")).toBe(2);
+    expect(width("🦀")).toBe(2);
+    expect(width("🚀🦀")).toBe(4);
+    expect(width("👍🏽")).toBe(4);
+    expect(width("'日本語'")).toBe(8);
+  });
+
+  it("counts a byte range", () => {
+    expect(displayWidth("x漢y", 1, 4)).toBe(2);
+    expect(displayWidth("x漢y", 4, 5)).toBe(1);
+  });
+
+  it("reads widths from the table", () => {
+    expect(codePointWidth(0x80)).toBe(0);
+    expect(codePointWidth(0xe9)).toBe(1);
+    expect(codePointWidth(0x1100)).toBe(2);
+    expect(codePointWidth(0x1d160)).toBe(3);
+    expect(codePointWidth(0x1f980)).toBe(2);
+    expect(codePointWidth(0x10ffff)).toBe(1);
+    expect(codePointWidth(0xd800)).toBe(1);
+  });
+});
+
+/** The plan for `widths` (of `entries` entries in all) at indentation 0. */
+function plan(widths: u64[], entries: u64): u64[] {
+  const widest: u64[] = [];
+  const count = planColumns(widths, entries, 0, widest);
+  const out: u64[] = [count];
+  for (const w of widest) {
+    out.push(w);
+  }
+  return out;
+}
+
+function repeat(n: u64, f: (i: u64) => u64): u64[] {
+  const xs: u64[] = [];
+  for (let i: u64 = 0; i < n; i++) {
+    xs.push(f(i));
+  }
+  return xs;
+}
+
+describe("planColumns", () => {
+  // Each expected plan is Node 22's: the column count, then each column's width, read from
+  // `util.inspect` of an array of strings whose quoted widths are `widths`.
+  it("groups short entries", () => {
+    expect(plan([3, 3, 3, 3, 3, 3, 3], 7)).toEqual([3, 3, 3, 3]);
+    expect(plan(repeat(16, (i) => 3), 16)).toEqual([4, 3, 3, 3, 3]);
+    expect(plan(repeat(30, (i) => (i % 2 == 0 ? 4 : 6)), 30)).toEqual([4, 4, 6, 4, 6]);
+    expect(plan(repeat(26, (i) => (i % 3 == 0 ? 7 : 3)), 26)).toEqual([4, 7, 7, 7, 7]);
+    expect(plan(repeat(40, (i) => 3 + (i % 5)), 40)).toEqual([5, 3, 4, 5, 6, 7]);
+    expect(plan([3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 10)).toEqual([2, 11, 12]);
+  });
+
+  it("counts `... n more items` only in the average", () => {
+    expect(plan(repeat(100, (i) => 3), 101)).toEqual([12, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]);
+    expect(plan(repeat(99, (i) => (i < 10 ? 3 : 4)), 99)).toEqual([
+      10,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+    ]);
+  });
+
+  it("does not group an array with a wide entry", () => {
+    expect(plan([32, 3, 3, 3, 3, 3, 3, 3], 8)).toEqual([0]);
+    expect(plan([24, 3, 3, 3, 3, 3, 3, 3], 8)).toEqual([0]);
+  });
+
+  it("fits fewer columns deeper in", () => {
+    // Node's rows for 30 entries of `'x'` nested 0, 30, 32 and 33 arrays deep (`depth: Infinity`).
+    const widest: u64[] = [];
+    expect(planColumns(repeat(30, (i) => 3), 30, 0, widest)).toBe(6);
+    expect(planColumns(repeat(30, (i) => 3), 30, 60, widest)).toBe(4);
+    expect(planColumns(repeat(30, (i) => 3), 30, 64, widest)).toBe(3);
+    expect(planColumns(repeat(30, (i) => 3), 30, 66, widest)).toBe(0);
+  });
+});
