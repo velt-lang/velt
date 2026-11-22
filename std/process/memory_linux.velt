@@ -10,7 +10,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 
 declare c("c") function open$memory(path: Ptr<u8>, oflag: i32, ...args: CVarArgs): i32;
-declare c("c") function read$memory(fd: i32, buf: Ptr<void>, nbyte: usize): isize;
+declare c("c") function read$memory(fd: i32, buf: Ptr<void> | null, nbyte: usize): isize;
 declare c("c") function close$memory(fd: i32): i32;
 declare c("c") function sysconf$memory(name: i32): i64;
 declare c("c") function calloc$memory(n: usize, size: usize): Ptr<u8> | null;
@@ -32,14 +32,15 @@ const OPEN_FLAGS: i32 = 0x80000;
 const SC_PAGESIZE: i32 = 30;
 
 /**
- * Field `which` of `/proc/self/statm` (1: resident, 2: shared) in bytes, minus field `minus`'s
- * when that is not 0; 0 when the file can't be read.
+ * `[rss, heapUsed]` in bytes from one read of `/proc/self/statm`: its second field (resident
+ * pages), and that minus its third (resident pages backed by a file or shared memory). Both come
+ * from the same moment, so `heapUsed` never exceeds `rss`. `[0, 0]` when the file can't be read.
  */
-function statm(which: usize, minus: usize): i64 {
+export function memoryFigures(): [i64, i64] {
   // SAFETY: calloc has no precondition; its result is checked.
   const block = unsafe { calloc$memory(1, TEXT_AT + ROOM) };
   if (block === null) {
-    return 0;
+    return [0, 0];
   }
   const p = Ptr.addressOf(block);
   let n: isize = -1;
@@ -50,31 +51,28 @@ function statm(which: usize, minus: usize): i64 {
     addressStore<u64>(p + 8, PATH1);
     const fd = open$memory(block, OPEN_FLAGS);
     if (fd >= 0) {
-      n = read$memory(fd, Ptr.at<void>(p + TEXT_AT), ROOM);
+      n = read$memory(fd, Ptr.orNull<void>(p + TEXT_AT), ROOM);
       close$memory(fd);
     }
   }
   let field: usize = 0;
   let value: i64 = 0;
-  let wanted: i64 = 0;
-  let subtracted: i64 = 0;
-  for (let i: isize = 0; i <= n; i++) {
+  let resident: i64 = 0;
+  let shared: i64 = 0;
+  for (let i: isize = 0; i <= n && field < 3; i++) {
     // SAFETY: inside the text `read` wrote (a space after it ends the last field).
     const c = i < n ? unsafe { addressLoad<u8>(p + TEXT_AT + (i as usize)) } : 32;
     if (c >= 48 && c <= 57) {
       value = value * 10 + ((c - 48) as i64);
       continue;
     }
-    if (field === which) {
-      wanted = value;
-    } else if (minus !== 0 && field === minus) {
-      subtracted = value;
+    if (field === 1) {
+      resident = value;
+    } else if (field === 2) {
+      shared = value;
     }
     field++;
     value = 0;
-    if (field > which && field > minus) {
-      break;
-    }
   }
   // SAFETY: the block from calloc above, freed once, after its last read.
   unsafe {
@@ -82,18 +80,8 @@ function statm(which: usize, minus: usize): i64 {
   }
   // SAFETY: no precondition.
   const page = unsafe { sysconf$memory(SC_PAGESIZE) };
-  if (n <= 0 || page <= 0 || wanted <= subtracted) {
-    return 0;
+  if (n <= 0 || page <= 0) {
+    return [0, 0];
   }
-  return (wanted - subtracted) * page;
-}
-
-/** The resident set size in bytes (0 if the OS does not say). */
-export function residentBytes(): i64 {
-  return statm(1, 0);
-}
-
-/** The process' own resident memory in bytes: resident pages not backed by a file. */
-export function heapBytes(): i64 {
-  return statm(1, 2);
+  return [resident * page, resident > shared ? (resident - shared) * page : 0];
 }

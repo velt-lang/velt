@@ -43,13 +43,20 @@ import {
   exchangeSecret,
   groupSupported,
 } from "velt/net/tls/key_exchange";
-import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import {
+  expandLabelWith,
+  finishedMac,
+  handshakeSecret,
+  masterSecretWith,
+  prepareSecret,
+} from "velt/net/tls/key_schedule";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey } from "velt/net/tls/server_key";
 import { chooseScheme, schemeNames, signWith } from "velt/net/tls/server_signer";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 import { u8x16 } from "velt/simd";
 
 /** ecdsa_secp256r1_sha256, the signature scheme of the server's CertificateVerify. */
@@ -87,6 +94,8 @@ export class ServerHandshake {
   private protocols: string[];
   private state: i32 = WAIT_HELLO;
   private transcript: u8[] = [];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   /** The transcript's hash through the server's Finished, which the client's Finished covers. */
   private flightHash: u8[] | null = null;
   private group: usize = 0;
@@ -119,6 +128,11 @@ export class ServerHandshake {
   /** TLS 1.2: the server random and the ECDHE private key to use instead of new ones (tests). */
   fixedRandom: u8[] | null = null;
   fixedKey: u8[] | null = null;
+  /**
+   * Answer as a server that has no TLS 1.3 (tests): TLS 1.2 also for a client that offers
+   * TLS 1.3, and no downgrade mark in the server random.
+   */
+  only12: bool = false;
 
   /** A handshake that presents `key` and chooses among `protocols` with ALPN (none: no ALPN). */
   constructor(key: ServerKey, protocols: string[]) {
@@ -192,7 +206,7 @@ export class ServerHandshake {
         );
       }
       this.alpn = this.chooseAlpn(offer.alpn);
-      if (!offer.tls13) {
+      if (!offer.tls13 || this.only12) {
         // A TLS 1.2 client (parseClientHello refuses older ones).
         const t = new ServerHandshake12(
           this.key,
@@ -202,6 +216,7 @@ export class ServerHandshake {
           u8x16.hasAes(),
           this.fixedRandom,
           this.fixedKey,
+          !this.only12,
         );
         this.tls12 = t;
         this.suite = t.suite;
@@ -253,9 +268,10 @@ export class ServerHandshake {
     this.add(hello);
     this.hello = hello;
     const hs = handshakeSecret(secret, hashLength(this.suite));
-    const h1 = this.hashOf(this.transcript);
-    this.clientHandshake = expandLabel(hs, "c hs traffic", h1, h1.length);
-    this.serverHandshake = expandLabel(hs, "s hs traffic", h1, h1.length);
+    const h1 = this.transcriptHash();
+    const prepared = prepareSecret(hs);
+    this.clientHandshake = expandLabelWith(prepared, "c hs traffic", h1, h1.length);
+    this.serverHandshake = expandLabelWith(prepared, "s hs traffic", h1, h1.length);
     const w = new ByteWriter();
     // EncryptedExtensions: ALPN's choice, if any.
     const ee = new ByteWriter();
@@ -298,14 +314,13 @@ export class ServerHandshake {
     for (let i = 0; i < 64; i++) {
       signed.push(0x20);
     }
-    // By index: a `for...of` over these arrays leaks them in a release build where `u8[]` is
-    // counted (#2455).
+    // By index: a `for...of` over these arrays leaks them (#2455).
     const context = utf8Encode("TLS 1.3, server CertificateVerify");
     for (let i: usize = 0; i < context.length; i++) {
       signed.push(context[i]);
     }
     signed.push(0);
-    const th = this.hashOf(this.transcript);
+    const th = this.transcriptHash();
     for (let i: usize = 0; i < th.length; i++) {
       signed.push(th[i]);
     }
@@ -324,16 +339,16 @@ export class ServerHandshake {
     const fin = new ByteWriter();
     fin.u8(FINISHED);
     const fb = fin.begin(3);
-    fin.put(finishedMac(this.serverHandshake!, this.hashOf(this.transcript)));
+    fin.put(finishedMac(this.serverHandshake!, this.transcriptHash()));
     fin.end(fb, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);
     this.flight = w.bytes;
-    const master = masterSecret(hs);
-    const h2 = this.hashOf(this.transcript);
+    const master = prepareSecret(masterSecretWith(prepared));
+    const h2 = this.transcriptHash();
     this.flightHash = h2;
-    this.clientApplication = expandLabel(master, "c ap traffic", h2, h2.length);
-    this.serverApplication = expandLabel(master, "s ap traffic", h2, h2.length);
+    this.clientApplication = expandLabelWith(master, "c ap traffic", h2, h2.length);
+    this.serverApplication = expandLabelWith(master, "s ap traffic", h2, h2.length);
     this.state = WAIT_FINISHED;
     return S_SEND_FLIGHT;
   }
@@ -354,10 +369,10 @@ export class ServerHandshake {
       );
     }
     this.group = group;
-    // The transcript restarts with message_hash(ClientHello1) (§4.4.1), with the chosen
-    // suite's hash.
+    // The transcript restarts with message_hash(ClientHello1) (§4.4.1), in the suite's hash.
     const first = this.hashOf(m);
     this.transcript = [254, 0, 0, first.length as u8];
+    this.th.reset();
     this.add(first);
     const w = new ByteWriter();
     w.u8(SERVER_HELLO);
@@ -384,6 +399,11 @@ export class ServerHandshake {
     return S_SEND_RETRY;
   }
 
+  // The transcript's hash with the chosen suite's hash.
+  private transcriptHash(): u8[] {
+    return this.th.of(this.transcript, this.suite == AES_256_GCM_SHA384);
+  }
+
   // The hash of `bytes` with the chosen suite's hash.
   private hashOf(bytes: u8[]): u8[] {
     return this.suite == AES_256_GCM_SHA384 ? sha384(bytes) : sha256(bytes);
@@ -402,6 +422,7 @@ export class ServerHandshake {
     }
     this.state = DONE;
     this.transcript = [];
+    this.th.reset();
     return S_DONE;
   }
 

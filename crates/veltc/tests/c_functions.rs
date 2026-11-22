@@ -566,14 +566,15 @@ fn pointer_types_and_strings_are_checked() {
 }
 
 /// A `declare c type` exists only behind a `Ptr`: `new` on it is an error, in its package and
-/// in a program importing it; pointers to different C types never convert implicitly; a
-/// read-only array passed for a buffer C writes names the C function.
+/// in a program importing it; pointers to different C types never convert implicitly (a
+/// nullable one where a non-null one is expected is the ordinary mismatch); a read-only array
+/// passed for a buffer C writes names the C function.
 #[test]
 fn c_types_are_only_behind_pointers() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "import { Ptr } from \"velt/ffi\";\n\nexport declare c type FILE;\n\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8>;\n\nconst FIXED: readonly u8[] = [1, 2];\n\nexport function f(): void {\n  const mine = new FILE();\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n    memset(FIXED, 0, 2);\n  }\n}\n",
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c type FILE;\n\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8>;\n\nconst FIXED: readonly u8[] = [1, 2];\n\nexport function f(): void {\n  const mine = new FILE();\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n    const maybe: Ptr<FILE> | null = null;\n    fclose(maybe);\n    memset(FIXED, 0, 2);\n  }\n}\n",
         "import { f, FILE } from \"cmath\";\n\nfunction main() {\n  const theirs = new FILE();\n  f();\n}\n",
     );
     let out = check(dir.path());
@@ -585,6 +586,9 @@ fn c_types_are_only_behind_pointers() {
     );
     assert!(out.contains("a `Ptr<u8>` is not a `Ptr<FILE>`"), "{out}");
     assert!(out.contains("`Ptr.at<FILE>(Ptr.addressOf(p))`"), "{out}");
+    // `Ptr<FILE> | null` for a `Ptr<FILE>`: the same pointee, so the error is about the `null`.
+    assert!(!out.contains("a `Ptr<FILE>` is not a `Ptr<FILE>`"), "{out}");
+    assert!(out.contains("Ptr<FILE> | null"), "{out}");
     assert!(out.contains("a buffer the C function writes"), "{out}");
 }
 
@@ -618,7 +622,7 @@ fn empty_arrays_are_never_null_and_a_null_ptr_result_is_caught() {
 
 const RAW: &str = include_str!("c_functions/raw.velt");
 
-/// `CString` (refused with a NUL inside), `Out<T>` and `OutPtr<T>` written by C, and C memory
+/// `CString` (refused with a NUL inside), `Out<T>` of a number and of a pointer written by C, and C memory
 /// read back with `readCString`, `readUtf8` and `readBytes`, in debug and release builds.
 #[test]
 fn c_strings_out_parameters_and_reads() {
@@ -675,22 +679,21 @@ fn a_proxied_c_string_is_refused() {
 }
 
 /// A pointer C can hold points at a C type, a number, `bool`, `void` or another pointer:
-/// `Ptr<string>` and `OutPtr<string>` mean nothing in C.
+/// `Ptr<string>` means nothing in C, wherever it is written (#3094), and `Out<T>` of a non-null
+/// pointer can't hold the NULL C may write.
 #[test]
 fn pointers_point_at_c_types_and_numbers() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "import { OutPtr, Ptr } from \"velt/ffi\";\n\ndeclare c(\"c\") function f(p: Ptr<string>): void;\ndeclare c(\"c\") function g(p: OutPtr<string>): void;\ndeclare c(\"c\") function h(p: Ptr<Ptr<u8>>, q: Ptr<void> | null): Ptr<f64>;\n\nexport const x = 1;\n",
+        "import { Out, Ptr } from \"velt/ffi\";\n\ndeclare c(\"c\") function f(p: Ptr<string>): void;\ndeclare c(\"c\") function g(p: Out<Ptr<u8>>): void;\ndeclare c(\"c\") function h(p: Ptr<Ptr<u8>>, q: Ptr<void> | null, r: Out<Ptr<u8> | null>): Ptr<f64>;\n\nexport const x = 1;\n",
         "import { x } from \"cmath\";\n\nfunction main() {\n  console.log(x);\n}\n",
     );
     let out = check(dir.path());
+    assert!(out.contains("a C pointer can't point at `string`"), "{out}");
     assert!(
-        out.contains("parameter `p` of C function `f` has type `Ptr<string>`"),
-        "{out}"
-    );
-    assert!(
-        out.contains("parameter `p` of C function `g` has type `OutPtr<string>`"),
+        out.contains("parameter `p` of C function `g` has type `Out<Ptr<u8>>`")
+            && out.contains("C may write `NULL` into an `Out` of a pointer"),
         "{out}"
     );
     assert!(!out.contains("C function `h`"), "{out}");

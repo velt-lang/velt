@@ -23,14 +23,12 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
             },
             readonly,
         },
-        CTy::Out => Shape::Out(match first_arg(p, t) {
-            Some(a) => scalar_of(p, a).unwrap_or(Scalar::Bool),
-            None => Scalar::Bool,
-        }),
-        CTy::OutPtr => Shape::OutPtr(match first_arg(p, t) {
-            Some(a) => pointee(p, a),
-            None => Pointee::Void,
-        }),
+        // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094).
+        CTy::Out => match first_arg(p, t) {
+            Some(a) if ptr_target(p, a).is_some() => Shape::OutPtr(pointee_of_ptr(p, a)),
+            Some(a) => Shape::Out(scalar_of(p, a).unwrap_or(Scalar::Bool)),
+            None => Shape::Out(Scalar::Bool),
+        },
     }
 }
 
@@ -62,17 +60,26 @@ fn scalar_of(p: &hir::Program, t: TyId) -> Option<Scalar> {
     }
 }
 
+/// The type argument of `Out<T>` `t`.
 fn first_arg(p: &hir::Program, t: TyId) -> Option<TyId> {
     match p.types.kind(t) {
-        TyKind::Option(inner, _) => first_arg(p, *inner),
         TyKind::Adt(_, args) => args.first().copied(),
+        _ => None,
+    }
+}
+
+/// The `T` of `Ptr<T>` or `Ptr<T> | null` `t`, if it is one.
+fn ptr_target(p: &hir::Program, t: TyId) -> Option<TyId> {
+    match p.types.kind(t) {
+        TyKind::Option(inner, _) => ptr_target(p, *inner),
+        TyKind::Ptr(a) => Some(*a),
         _ => None,
     }
 }
 
 /// The pointee of `Ptr<T>` (or `Ptr<T> | null`) `t`.
 fn pointee_of_ptr(p: &hir::Program, t: TyId) -> Pointee {
-    match first_arg(p, t) {
+    match ptr_target(p, t) {
         Some(a) => pointee(p, a),
         None => Pointee::Void,
     }
@@ -85,10 +92,8 @@ fn pointee(p: &hir::Program, t: TyId) -> Pointee {
     }
     match p.types.kind(t) {
         TyKind::Unit => Pointee::Void,
+        TyKind::Ptr(_) => Pointee::Ptr(Box::new(pointee_of_ptr(p, t))),
         TyKind::Adt(d, _) => match p.def(*d) {
-            Def::Adt(a) if a.name == velt_common::std_item!(ffi_ptr, "Ptr") => {
-                Pointee::Ptr(Box::new(pointee_of_ptr(p, t)))
-            }
             Def::Adt(a) => Pointee::CType(a.name.rsplit("::").next().unwrap_or(&a.name).into()),
             _ => Pointee::Void,
         },

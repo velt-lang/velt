@@ -51,7 +51,7 @@ async function open(pool: PoolHandle): Promise<Conn> throws PgError {
   return conn;
 }
 
-// velt/net's direct TLS (`verify-ca`, `verify-full`) decrypts only while someone waits on the
+// velt/net's direct TLS (the checked modes with `sslnegotiation=direct`) decrypts only while someone waits on the
 // socket: a wait that ends after one look (its signal is already aborted, so no timer is made) lets
 // it take what has come (a FATAL, the end of the stream) before `stillAlive` reads. Only these
 // connections pay for it.

@@ -145,6 +145,8 @@ impl FnCx<'_, '_> {
         let private_to = self.fn_private_to(m.def);
         self.check_private(private_to, &prop.name, prop.span);
         let def = self.static_def_for(m.def, this_class);
+        // velt/arch's instructions run only where the CPU has their feature.
+        self.check_gated_call(def, &format!("{cname}.{}", prop.name), span);
         let mut c = self.fn_callable(def, format!("`{cname}.{}`", prop.name), span);
         let n = c.slot_names.len();
         let own = n - owner_generics;

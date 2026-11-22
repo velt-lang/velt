@@ -1,0 +1,200 @@
+// velt/net (internal): why a certificate path is refused, as rustls's webpki names it, and the
+// order in which webpki prefers one reason to another when several paths were tried.
+
+import {
+  REFUSED_ALGORITHM_MISMATCH,
+  REFUSED_CRITICAL_EXTENSION,
+  REFUSED_TRAILING_DATA,
+  REFUSED_VERSION,
+} from "velt/net/tls/x509/refused";
+
+/** The path is valid. */
+export const VALID: i32 = 0;
+/** No certificate or trust anchor has the issuer's name (also the answer when nothing else is known). */
+export const UNKNOWN_ISSUER: i32 = 1;
+export const CERT_EXPIRED: i32 = 2;
+export const CERT_NOT_VALID_YET: i32 = 3;
+/** notBefore is after notAfter. */
+export const INVALID_VALIDITY: i32 = 4;
+export const CA_USED_AS_END_ENTITY: i32 = 5;
+export const END_ENTITY_USED_AS_CA: i32 = 6;
+export const PATH_LEN_VIOLATED: i32 = 7;
+/** extKeyUsage is there without serverAuth. */
+export const EKU_NOT_FOUND: i32 = 8;
+/** The signature does not verify. */
+export const INVALID_SIGNATURE: i32 = 9;
+export const UNSUPPORTED_SIGNATURE_ALGORITHM: i32 = 10;
+/** The signature algorithm is known, and the issuer's key is of another kind. */
+export const UNSUPPORTED_SIGNATURE_FOR_KEY: i32 = 11;
+export const NAME_CONSTRAINT_VIOLATED: i32 = 12;
+export const MALFORMED_NAME: i32 = 13;
+export const MALFORMED_NAME_CONSTRAINT: i32 = 14;
+export const INVALID_NETWORK_MASK: i32 = 15;
+/** More than six intermediate certificates. */
+export const PATH_TOO_DEEP: i32 = 16;
+/** A certificate that does not parse (malformed, not v3, an unknown critical extension). */
+export const BAD_ENCODING: i32 = 17;
+/** The three budgets: reaching one ends the search. */
+export const TOO_MANY_SIGNATURES: i32 = 18;
+export const TOO_MANY_PATHS: i32 = 19;
+export const TOO_MANY_NAME_COMPARISONS: i32 = 20;
+/** The path is valid and the certificate is not for the server's name. */
+export const NOT_VALID_FOR_NAME: i32 = 21;
+/** A certificate sent is not v3. */
+export const UNSUPPORTED_VERSION: i32 = 22;
+/** A certificate sent has a critical extension that is not known. */
+export const UNSUPPORTED_CRITICAL_EXTENSION: i32 = 23;
+/** A certificate sent names one signature algorithm outside its signed part and another inside. */
+export const SIGNATURE_ALGORITHM_MISMATCH: i32 = 24;
+/** extKeyUsage is there and empty. */
+export const EMPTY_EKU: i32 = 25;
+/** A certificate sent has bytes after it, or after the fields of one of its parts. */
+export const TRAILING_DATA: i32 = 26;
+
+/** Whether `e` ends the search for a path at once. */
+export function isFatal(e: i32): bool {
+  return e == TOO_MANY_SIGNATURES || e == TOO_MANY_PATHS || e == TOO_MANY_NAME_COMPARISONS;
+}
+
+// How specific an error is (webpki's `Error::rank`): the higher, the more useful to report.
+function rank(e: i32): i32 {
+  if (e == CERT_EXPIRED || e == CERT_NOT_VALID_YET) {
+    return 290;
+  }
+  if (e == NOT_VALID_FOR_NAME) {
+    return 280;
+  }
+  if (e == INVALID_SIGNATURE) {
+    return 260;
+  }
+  if (e == SIGNATURE_ALGORITHM_MISMATCH) {
+    return 250;
+  }
+  if (e == EMPTY_EKU) {
+    return 245;
+  }
+  if (e == EKU_NOT_FOUND) {
+    return 240;
+  }
+  if (e == NAME_CONSTRAINT_VIOLATED) {
+    return 230;
+  }
+  if (e == PATH_LEN_VIOLATED) {
+    return 220;
+  }
+  if (e == CA_USED_AS_END_ENTITY || e == END_ENTITY_USED_AS_CA) {
+    return 210;
+  }
+  if (e == INVALID_VALIDITY) {
+    return 190;
+  }
+  if (e == INVALID_NETWORK_MASK) {
+    return 180;
+  }
+  if (e == UNSUPPORTED_SIGNATURE_FOR_KEY) {
+    return 150;
+  }
+  if (e == UNSUPPORTED_SIGNATURE_ALGORITHM) {
+    return 140;
+  }
+  if (e == UNSUPPORTED_CRITICAL_EXTENSION || e == UNSUPPORTED_VERSION) {
+    return 130;
+  }
+  if (e == PATH_TOO_DEEP) {
+    return 61;
+  }
+  if (e == MALFORMED_NAME) {
+    return 60;
+  }
+  if (e == MALFORMED_NAME_CONSTRAINT) {
+    return 50;
+  }
+  if (e == TRAILING_DATA) {
+    return 40;
+  }
+  if (e == BAD_ENCODING) {
+    return 10;
+  }
+  return 0;
+}
+
+/** The error for a certificate the parser refused for `reason` (refused.velt's `REFUSED_*`). */
+export function refusedError(reason: i32): i32 {
+  if (reason == REFUSED_VERSION) {
+    return UNSUPPORTED_VERSION;
+  }
+  if (reason == REFUSED_CRITICAL_EXTENSION) {
+    return UNSUPPORTED_CRITICAL_EXTENSION;
+  }
+  if (reason == REFUSED_ALGORITHM_MISMATCH) {
+    return SIGNATURE_ALGORITHM_MISMATCH;
+  }
+  return reason == REFUSED_TRAILING_DATA ? TRAILING_DATA : BAD_ENCODING;
+}
+
+/** The more specific of the error so far, `a`, and a new one, `b`; `a` at a tie. */
+export function mostSpecific(a: i32, b: i32): i32 {
+  return rank(a) >= rank(b) ? a : b;
+}
+
+/** A sentence for `e`, for a failure's message. */
+export function describeError(e: i32): string {
+  if (e == UNKNOWN_ISSUER) {
+    return "unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)";
+  }
+  if (e == CERT_EXPIRED) {
+    return "certificate has expired (CERT_HAS_EXPIRED)";
+  }
+  if (e == CERT_NOT_VALID_YET) {
+    return "certificate is not yet valid (CERT_NOT_YET_VALID)";
+  }
+  if (e == INVALID_VALIDITY) {
+    return "a certificate's validity ends before it starts";
+  }
+  if (e == CA_USED_AS_END_ENTITY) {
+    return "the server's certificate is a CA certificate";
+  }
+  if (e == END_ENTITY_USED_AS_CA) {
+    return "a certificate was issued by one that is not a CA";
+  }
+  if (e == PATH_LEN_VIOLATED) {
+    return "path length constraint exceeded (PATH_LENGTH_EXCEEDED)";
+  }
+  if (e == EKU_NOT_FOUND || e == EMPTY_EKU) {
+    return "unsuitable certificate purpose (INVALID_PURPOSE)";
+  }
+  if (e == UNSUPPORTED_VERSION) {
+    return "a certificate in the chain is not an X.509 v3 certificate";
+  }
+  if (e == UNSUPPORTED_CRITICAL_EXTENSION) {
+    return "unhandled critical extension (UNHANDLED_CRITICAL_EXTENSION)";
+  }
+  if (e == SIGNATURE_ALGORITHM_MISMATCH) {
+    return "a certificate names two different signature algorithms";
+  }
+  if (e == INVALID_SIGNATURE) {
+    return "certificate signature failure (CERT_SIGNATURE_FAILURE)";
+  }
+  if (e == UNSUPPORTED_SIGNATURE_ALGORITHM || e == UNSUPPORTED_SIGNATURE_FOR_KEY) {
+    return "a certificate is signed with an algorithm that is not supported";
+  }
+  if (e == NAME_CONSTRAINT_VIOLATED) {
+    return "a certificate's name is outside its issuer's name constraints";
+  }
+  if (e == MALFORMED_NAME || e == MALFORMED_NAME_CONSTRAINT || e == INVALID_NETWORK_MASK) {
+    return "a malformed name or name constraint in a certificate";
+  }
+  if (e == PATH_TOO_DEEP) {
+    return "certificate chain too long (CERT_CHAIN_TOO_LONG)";
+  }
+  if (e == BAD_ENCODING || e == TRAILING_DATA) {
+    return "a certificate in the chain is malformed";
+  }
+  if (isFatal(e)) {
+    return "the certificate chain takes too much work to verify";
+  }
+  if (e == NOT_VALID_FOR_NAME) {
+    return "the certificate is not for this server's name (ERR_TLS_CERT_ALTNAME_INVALID)";
+  }
+  return "certificate verification failed";
+}

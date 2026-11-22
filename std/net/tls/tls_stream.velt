@@ -17,8 +17,8 @@ import { Turns } from "velt/net/tls/turns";
  * It holds keys and sequence numbers, so it is never copied: passing it to another task is a
  * compile error while it is still used here, and a panic where the compiler cannot see that.
  *
- * With `verify: false`, required for now, the server is not authenticated: this protects against
- * passive observers only, and anyone who can intercept the connection can impersonate the server.
+ * With `verify: false` the server is not authenticated: this protects against passive observers
+ * only, and anyone who can intercept the connection can impersonate the server.
  */
 export class TlsStream implements ByteStream {
   private e: TlsEngine;
@@ -115,6 +115,29 @@ export class TlsStream implements ByteStream {
    */
   hasBuffered(): bool {
     return this.e.hasBuffered();
+  }
+
+  /**
+   * Gives the stream `bytes[start..end]` that were read from its transport outside it, in the
+   * order they came: the next `read` or `tryRead` finds them as if the stream had read them
+   * itself. For a look at an idle connection that reads one byte of the socket without waiting
+   * (cheaper than a read through TLS, which nearly always finds nothing) and must not lose the
+   * byte when one is there. Not during `read` or `readInto`. Throws `EINVAL` for more than a
+   * TLS record's worth at once.
+   */
+  takeIn(bytes: u8[], start: number = 0, end?: number) {
+    const len = bytes.length as number;
+    const from = toIndex(start);
+    const to = end === undefined ? len : toIndex(end);
+    if (!(from >= 0 && from <= to && to <= len)) {
+      throw new RangeError(`takeIn: the range ${from}..${to} is outside 0..${len}`);
+    }
+    if (this.reads.busy) {
+      throw new IoError("EBUSY", "TLS stream: a read is in progress");
+    }
+    if (!this.e.r.takeIn(bytes, from as usize, to as usize)) {
+      throw new IoError("EINVAL", "TLS stream: too many bytes to take in at once");
+    }
   }
 
   /** Resolves once `data` (as UTF-8) is written. */

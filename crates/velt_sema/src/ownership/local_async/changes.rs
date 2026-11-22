@@ -84,6 +84,7 @@ const READERS: &[(&str, &[&str])] = &[
 /// Report the changes the recorded crossing callbacks make to what they captured (module
 /// docs). Runs after `infer_modes`.
 pub(crate) fn check_crossing_changes(cx: &mut Ctx) {
+    crate::body::lazy_std::prepare_walk(cx);
     let list = std::mem::take(&mut cx.crossing_callbacks);
     if list.is_empty() {
         return;

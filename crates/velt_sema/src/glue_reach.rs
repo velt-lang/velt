@@ -14,7 +14,7 @@ use crate::dispatch::{class_chain, Target};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 use crate::hooks;
 use crate::struct_tuples::is_generic;
-use crate::types::children;
+use crate::types::contents;
 
 /// The method names glue calls.
 const HOOKS: [&str; 5] = [
@@ -63,7 +63,7 @@ impl Reach {
             self.methods(cx, *d, args, false, &mut out);
         }
         // A type argument never holds the type itself, so this ends.
-        for c in children(&kind) {
+        for c in contents(&kind) {
             for x in self.hooks(cx, c) {
                 out.push(x);
             }
@@ -116,7 +116,7 @@ impl Reach {
             if let Some(ms) = cx.union_members(t) {
                 stack.extend(ms);
             }
-            stack.extend(children(&kind));
+            stack.extend(contents(&kind));
         }
         held.methods = methods.list;
         self.dynamic.insert(t, held.clone());

@@ -1,0 +1,35 @@
+// velt/crypto's random bytes on WebAssembly (wasm_goldens.rs): draws around the JS host's limit
+// of 65,536 bytes a `crypto.getRandomValues` call and WASI's 256 bytes a `getentropy` call. Each
+// 64 KiB part of a draw holds about 256 zero bytes; a part never written holds 65,536.
+import { randomBytes } from "velt/crypto";
+
+function check(n: usize): string {
+  const b = randomBytes(n);
+  if (b.length as usize != n) {
+    return `${n}: length ${b.length}`;
+  }
+  let at: usize = 0;
+  while (at < n) {
+    const end = at + 65536 < n ? at + 65536 : n;
+    let zeros: usize = 0;
+    for (let i = at; i < end; i++) {
+      if (b[i] == 0) {
+        zeros++;
+      }
+    }
+    // A random part of k bytes has about k / 256 zeros; a quarter of the part has a chance far
+    // below 2^-100, an unwritten part all of them. Parts under 64 bytes aren't judged.
+    if (end - at >= 64 && zeros * 4 > end - at) {
+      return `${n}: ${zeros} zeros in bytes ${at}..${end}`;
+    }
+    at = end;
+  }
+  return `${n}: ok`;
+}
+
+function main() {
+  const sizes: usize[] = [16, 256, 257, 65536, 65537, 200000];
+  for (const n of sizes) {
+    console.log(check(n));
+  }
+}

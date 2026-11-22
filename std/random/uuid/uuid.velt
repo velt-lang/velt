@@ -1,11 +1,8 @@
 // velt/random/uuid (internal): making (v4, v7), parsing, formatting and validating UUIDs.
 
 import { UuidError } from "velt/random/uuid/errors";
-import {
-  velt_rt_bytes_from_str,
-  velt_rt_bytes_to_str,
-  velt_rt_random_bytes,
-} from "velt/random/uuid/rt";
+import { velt_rt_bytes_from_str, velt_rt_bytes_to_str } from "velt/random/uuid/rt";
+import { osRandomBytes } from "velt/lang/random/os";
 import { arrayWithCapacity } from "velt/lang/intrinsics";
 
 /** The all-zero UUID (RFC 9562 §5.9). */
@@ -21,7 +18,7 @@ const DASH: u8 = 45;
 
 /** A random (version 4) UUID. */
 export function uuidv4(): string {
-  const b = velt_rt_random_bytes(16);
+  const b = osRandomBytes(16);
   b[6] = (b[6] & 0x0f) | 0x40;
   b[8] = (b[8] & 0x3f) | 0x80;
   return format(b);
@@ -29,7 +26,7 @@ export function uuidv4(): string {
 
 /** A time-ordered (version 7) UUID: 48-bit Unix milliseconds, then 74 random bits. */
 export function uuidv7(): string {
-  const b = velt_rt_random_bytes(16);
+  const b = osRandomBytes(16);
   const ms = Date.now() as u64;
   for (let i: usize = 0; i < 6; i++) {
     b[i] = ((ms >> ((40 - i * 8) as u64)) & 0xff) as u8;

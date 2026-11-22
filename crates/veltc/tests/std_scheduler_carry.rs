@@ -14,6 +14,7 @@ use sched_workers_support::{has_threads, manifest};
 mod no_window;
 mod runtime_support;
 mod sched_workers_support;
+mod std_unix;
 mod test_dir;
 
 const PROGRAM: &str = r#"import { currentWorker } from "velt/task";
@@ -173,4 +174,21 @@ fn sleeps_move_with_their_task_and_fire_once() {
         }
     }
     assert!(moved > 0, "no sleeper moved in any run");
+}
+
+/// Requests for a sleep a retiring spare carried home, white-box
+/// (std_unix/lang/hooks/sched_sleep_move.test.velt): on worker blocks, sleeps and a task built by
+/// hand, a drop or a poll that reaches the spare after `carryHome` (or waited on its list before)
+/// stays there until worker 0 adopts the sleep, then goes on to worker 0, which serves it from its
+/// block (the sleep is carried, not pending on the spare: served there, it would be unlinked from
+/// a block it is not in and freed before worker 0 adopts it); and a request on the list when a
+/// spin ends is served before the park returns.
+#[cfg(unix)]
+#[test]
+fn sched_sleep_move_white_box_tests_pass() {
+    runtime_support::build_native_runtime(manifest());
+    std_unix::velt_test_in_std_copy(
+        "lang/hooks/sched_sleep_move.test.velt",
+        include_str!("std_unix/lang/hooks/sched_sleep_move.test.velt"),
+    );
 }

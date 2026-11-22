@@ -22,4 +22,140 @@ export class Bmi1 {
   static isSupported(): bool {
     return velt_simd_has_bmi1_x86() || (velt_simd_on_x86() && cpuHas(BMI1_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * `~left & right`.
+   *
+   * `_andn_u32` (`andn`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static andNotU32(left: u32, right: u32): u32 {
+    return velt_arch_bmi1_and_not_u32(left, right);
+  }
+
+  /**
+   * `~left & right`.
+   *
+   * `_andn_u64` (`andn`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static andNotU64(left: u64, right: u64): u64 {
+    return velt_arch_bmi1_and_not_u64(left, right);
+  }
+
+  /**
+   * The number of zero bits below the lowest bit set in `value` (32 for 0).
+   *
+   * `_tzcnt_u32` (`tzcnt`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static trailingZeroCountU32(value: u32): u32 {
+    return velt_arch_bmi1_trailing_zero_count_u32(value);
+  }
+
+  /**
+   * The number of zero bits below the lowest bit set in `value` (64 for 0).
+   *
+   * `_tzcnt_u64` (`tzcnt`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static trailingZeroCountU64(value: u64): u64 {
+    return velt_arch_bmi1_trailing_zero_count_u64(value);
+  }
+
+  /**
+   * The lowest bit set in `value` alone (0 for 0).
+   *
+   * `_blsi_u32` (`blsi`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static extractLowestSetBitU32(value: u32): u32 {
+    return velt_arch_bmi1_extract_lowest_set_bit_u32(value);
+  }
+
+  /**
+   * The lowest bit set in `value` alone (0 for 0).
+   *
+   * `_blsi_u64` (`blsi`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static extractLowestSetBitU64(value: u64): u64 {
+    return velt_arch_bmi1_extract_lowest_set_bit_u64(value);
+  }
+
+  /**
+   * `value` without its lowest bit set.
+   *
+   * `_blsr_u32` (`blsr`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static resetLowestSetBitU32(value: u32): u32 {
+    return velt_arch_bmi1_reset_lowest_set_bit_u32(value);
+  }
+
+  /**
+   * `value` without its lowest bit set.
+   *
+   * `_blsr_u64` (`blsr`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`, or
+   * in a function gated on `bmi1-x86`.
+   */
+  static resetLowestSetBitU64(value: u64): u64 {
+    return velt_arch_bmi1_reset_lowest_set_bit_u64(value);
+  }
+
+  /**
+   * The bits up to and including the lowest bit set in `value` (all of them for 0).
+   *
+   * `_blsmsk_u32` (`blsmsk`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`,
+   * or in a function gated on `bmi1-x86`.
+   */
+  static getMaskUpToLowestSetBitU32(value: u32): u32 {
+    return velt_arch_bmi1_get_mask_up_to_lowest_set_bit_u32(value);
+  }
+
+  /**
+   * The bits up to and including the lowest bit set in `value` (all of them for 0).
+   *
+   * `_blsmsk_u64` (`blsmsk`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`,
+   * or in a function gated on `bmi1-x86`.
+   */
+  static getMaskUpToLowestSetBitU64(value: u64): u64 {
+    return velt_arch_bmi1_get_mask_up_to_lowest_set_bit_u64(value);
+  }
+
+  /**
+   * The bits of `value` from bit `control & 0xff`, `(control >> 8) & 0xff` of them, at the bottom.
+   *
+   * `_bextr2_u32` (`bextr`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`,
+   * or in a function gated on `bmi1-x86`.
+   */
+  static bitFieldExtractU32(value: u32, control: u32): u32 {
+    return velt_arch_bmi1_bit_field_extract_u32(value, control);
+  }
+
+  /**
+   * The bits of `value` from bit `control & 0xff`, `(control >> 8) & 0xff` of them, at the bottom.
+   *
+   * `_bextr2_u64` (`bextr`). Runs only where the CPU has it: call it behind `Bmi1.isSupported()`,
+   * or in a function gated on `bmi1-x86`.
+   */
+  static bitFieldExtractU64(value: u64, control: u64): u64 {
+    return velt_arch_bmi1_bit_field_extract_u64(value, control);
+  }
 }
+
+declare function velt_arch_bmi1_and_not_u32(left: u32, right: u32): u32;
+declare function velt_arch_bmi1_and_not_u64(left: u64, right: u64): u64;
+declare function velt_arch_bmi1_trailing_zero_count_u32(value: u32): u32;
+declare function velt_arch_bmi1_trailing_zero_count_u64(value: u64): u64;
+declare function velt_arch_bmi1_extract_lowest_set_bit_u32(value: u32): u32;
+declare function velt_arch_bmi1_extract_lowest_set_bit_u64(value: u64): u64;
+declare function velt_arch_bmi1_reset_lowest_set_bit_u32(value: u32): u32;
+declare function velt_arch_bmi1_reset_lowest_set_bit_u64(value: u64): u64;
+declare function velt_arch_bmi1_get_mask_up_to_lowest_set_bit_u32(value: u32): u32;
+declare function velt_arch_bmi1_get_mask_up_to_lowest_set_bit_u64(value: u64): u64;
+declare function velt_arch_bmi1_bit_field_extract_u32(value: u32, control: u32): u32;
+declare function velt_arch_bmi1_bit_field_extract_u64(value: u64, control: u64): u64;

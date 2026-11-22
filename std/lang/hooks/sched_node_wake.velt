@@ -45,6 +45,33 @@ export function nodeDropRef(w: usize): void {
   nd.release(w);
 }
 
+/**
+ * Gives started node `n` to its task with the caller's reference: among its task's woken nodes,
+ * the reference the stack's from then on (a node that is there already just loses it), finished
+ * or not. The caller keeps the task alive meanwhile and wakes it (sched_node_lost.velt
+ * `droppedAway`).
+ */
+export function give(n: usize): void {
+  let fl = m.load32(n + nd.N_FLAGS);
+  while (true) {
+    if ((fl & nd.QUEUED) !== 0) {
+      nd.release(n);
+      return;
+    }
+    const was = m.cas32(n + nd.N_FLAGS, fl, fl | nd.QUEUED);
+    if (was === fl) {
+      break;
+    }
+    fl = was;
+  }
+  const task = m.ld(n + nd.N_TASK);
+  m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);
+  if (m.load32(task + t.T_STATE) === t.DONE) {
+    // Pushed too late, as in `wake`.
+    wn.giveBackWoken(task);
+  }
+}
+
 /** Wakes node `n`: once among its task's woken nodes (holding a reference), its task woken. */
 function wake(n: usize): void {
   let fl = m.load32(n + nd.N_FLAGS);

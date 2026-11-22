@@ -31,8 +31,8 @@ export const VIEW_EMPTY_TEXT = Symbol("viewEmptyText");
 /** Buffer views: the bytes `Buffer.from` makes of one. */
 export const VIEW_BYTES = Symbol("viewBytes");
 
-/** `JsonValue`: a runtime handle of its own to the value (`console.log` prints its tree). */
-export const JSON_RUNTIME_HANDLE = Symbol("jsonRuntimeHandle");
+/** `JsonValue`: appends what `console.log` prints for the value to a string builder. */
+export const JSON_INSPECT = Symbol("jsonInspect");
 /** `JsonValue`: appends the value's JSON text to a string builder. */
 export const JSON_WRITE = Symbol("jsonWrite");
 /** `JsonValue` (static): one value read by a JSON reader, as decoders read a `JsonValue`. */
@@ -155,6 +155,12 @@ export const RECORD_DEFINE_ACCESSOR = Symbol("recordDefineAccessor");
 export const RECORD_DEFINE_GETTER = Symbol("recordDefineGetter");
 /** `Record`: what `defineSetter` does for the compiler. */
 export const RECORD_DEFINE_SETTER = Symbol("recordDefineSetter");
+/** `Record`: what `defineData` does for the compiler. */
+export const RECORD_DEFINE_DATA = Symbol("recordDefineData");
+/** `Record`: what `symbolBag` does for the compiler. */
+export const RECORD_SYMBOL_BAG = Symbol("recordSymbolBag");
+/** `Record`: what `defineEntry` does for the compiler. */
+export const RECORD_DEFINE_ENTRY = Symbol("recordDefineEntry");
 /** `Record`: what `deleteKeyed` does for the compiler. */
 export const RECORD_DELETE_KEYED = Symbol("recordDeleteKeyed");
 /** `Record`: what `deleteSym` does for the compiler. */

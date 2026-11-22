@@ -24,7 +24,8 @@ use crate::hir::LocalId;
 #[derive(Clone)]
 pub(crate) struct Refused {
     pub note: String,
-    pub at: Span,
+    /// The assignment in a closure that refused the fact (none for a `weak` field).
+    pub at: Option<Span>,
 }
 
 /// The names `assigned_by_closures` found, owned (for `Frame::closure_assigned`).
@@ -56,6 +57,19 @@ impl FnCx<'_, '_> {
             Fact::NonNull(l) | Fact::Members(l, _) | Fact::Excludes(l, _) => (*l, None),
             Fact::Class(l, t) => (*l, Some(*t)),
         };
+        if let Some((root, path)) = self.token_path(l) {
+            let path = path.to_vec();
+            if self.through_weak_field(root, &path) {
+                let name = self.f.locals[root.0 as usize].name.clone();
+                let what = format!("{name}.{}", path.join("."));
+                let note = weak_refusal_note(&what, path.last().map_or("current", |p| p));
+                let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+                if !scope.refused.iter().any(|(x, _)| *x == l) {
+                    scope.refused.push((l, Refused { note, at: None }));
+                }
+                return true;
+            }
+        }
         let (root, path) = match self.token_path(l) {
             None => (l, String::new()),
             // A narrowed nullable field is checked again where it is read.
@@ -75,9 +89,32 @@ impl FnCx<'_, '_> {
         let note = self.refusal_note(fact, &name, &format!("{name}{path}"));
         let scope = self.f.scopes.last_mut().expect("ICE: no scope");
         if !scope.refused.iter().any(|(x, _)| *x == l) {
-            scope.refused.push((l, Refused { note, at }));
+            scope.refused.push((l, Refused { note, at: Some(at) }));
         }
         true
+    }
+
+    /// Does the field path `path` from local `root` go through a `weak` field
+    /// (`hir::FieldDef::weak`)? Its target may be gone between two reads, so no fact about it
+    /// holds.
+    fn through_weak_field(&mut self, root: LocalId, path: &[String]) -> bool {
+        let mut ty = self.local_ty(root);
+        for name in path {
+            let t = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+            let Some((index, fty)) = self.cx.field_seen_from(t, name, self.owner) else {
+                return false;
+            };
+            if let crate::hir::TyKind::Adt(d, _) = self.cx.ty.kind(t).clone() {
+                let weak = (self.cx.adt(d))
+                    .and_then(|a| a.fields.get(index as usize))
+                    .is_some_and(|f| f.weak);
+                if weak {
+                    return true;
+                }
+            }
+            ty = fty;
+        }
+        false
     }
 
     /// A read of local `l` (of nullable type `ty`, which a closure assigns) that a null check
@@ -173,7 +210,9 @@ impl FnCx<'_, '_> {
             return;
         };
         let note = self.refusal_note(&fact, name, name);
-        self.f.scopes[0].refused.push((inner, Refused { note, at }));
+        self.f.scopes[0]
+            .refused
+            .push((inner, Refused { note, at: Some(at) }));
     }
 
     /// The note for errors at reads of `what` (`x`, `k.ro`), a variable `name` or a field path
@@ -256,15 +295,26 @@ impl FnCx<'_, '_> {
                 .find(|(r, _)| r.file == p.file && p.lo <= r.hi + 2 && p.hi >= r.lo);
             if let Some((_, r)) = hit {
                 if !d.notes.contains(&r.note) {
-                    d.labels.push(Label {
-                        span: r.at,
-                        message: "assigned in a closure here".to_string(),
-                    });
+                    if let Some(at) = r.at {
+                        d.labels.push(Label {
+                            span: at,
+                            message: "assigned in a closure here".to_string(),
+                        });
+                    }
                     d.notes.push(r.note.clone());
                 }
             }
         }
     }
+}
+
+/// The note for errors at reads of `what` (`n.parent`), a field path through a `weak` field,
+/// that a test would have narrowed; `field` names the copy.
+fn weak_refusal_note(what: &str, field: &str) -> String {
+    let copy = copy_name(field, "");
+    format!(
+        "`{what}` goes through a `weak` field, whose target may be gone between two reads, so a test does not narrow it: test a `const` copy instead: `const {copy} = {what}; if ({copy} !== null) {{ … }}`"
+    )
 }
 
 /// A name for the `const` copy of `name`: `hint` with a lowercase first letter (`Sub` → `sub`),

@@ -106,6 +106,7 @@ fn with_error_params(cx: &mut Ctx, t: TyId, at: &mut Target, depth: u32) -> TyId
         TyKind::Tuple(xs) => TyKind::Tuple(each(cx, &xs, at)),
         TyKind::Array(x) => TyKind::Array(with_error_params(cx, x, at, depth + 1)),
         TyKind::Shared(x) => TyKind::Shared(with_error_params(cx, x, at, depth + 1)),
+        TyKind::Ptr(x) => TyKind::Ptr(with_error_params(cx, x, at, depth + 1)),
         TyKind::Option(x, m) => TyKind::Option(with_error_params(cx, x, at, depth + 1), m),
         TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
             let ab = each(cx, &[a, b], at);

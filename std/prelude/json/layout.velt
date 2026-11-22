@@ -2,16 +2,15 @@
 // is `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
 // the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
 
-import { JSON_CALLBACK_DEPTH, jsonCallbackTooDeep } from "velt/encoding/json/value_ops";
+import {
+  JSON_CALLBACK_DEPTH,
+  jsonCallbackTooDeep,
+  pushRevived,
+  setRevived,
+} from "velt/encoding/json/value_ops";
 import { JSON } from "velt/prelude/json/json";
 import { JsonValue } from "velt/prelude/json/json_value";
-
-declare function velt_rt_json_relayout(
-  text: string,
-  keys: string,
-  flags: u8,
-  indent: string,
-): string;
+import { propertyList, relayout } from "velt/encoding/json/relayout";
 
 // `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
 // `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
@@ -63,7 +62,7 @@ function jsonReplaced(
     const n = r.len();
     for (let i: i64 = 0; i < n; i++) {
       const e = jsonReplaced(String(i), r.at(i)!, replacer, depth + 1);
-      out.push(e ?? JsonValue.of(null));
+      pushRevived(out, e);
     }
     return out;
   }
@@ -71,9 +70,7 @@ function jsonReplaced(
     const out = JsonValue.object();
     for (const k of r.keys()) {
       const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
-      if (e != undefined) {
-        out.set(k, e);
-      }
+      setRevived(out, k, e);
     }
     return out;
   }
@@ -84,7 +81,7 @@ function jsonRelayout(text: string, keys: string, filter: bool, gap: string): st
   if (!filter && gap.length == 0) {
     return text;
   }
-  return velt_rt_json_relayout(text, keys, jsonLayoutFlags(filter, gap.length > 0), gap);
+  return relayout(text, filter ? propertyList(keys) : null, gap.length > 0, gap);
 }
 
 // The same for a number `space`: as in V8, any `space > 0` breaks lines, so one below 1 gives
@@ -93,22 +90,10 @@ function jsonRelayoutNumber(text: string, keys: string, filter: bool, space: f64
   if (!(space > 0)) {
     return jsonRelayout(text, keys, filter, "");
   }
-  return velt_rt_json_relayout(text, keys, jsonLayoutFlags(filter, true), jsonGapOfNumber(space));
+  return relayout(text, filter ? propertyList(keys) : null, true, jsonGapOfNumber(space));
 }
 
-// `velt_rt_json_relayout`'s flags: bit 0 filters by `keys`, bit 1 breaks lines.
-function jsonLayoutFlags(filter: bool, pretty: bool): u8 {
-  let flags: u8 = 0;
-  if (filter) {
-    flags = flags + 1;
-  }
-  if (pretty) {
-    flags = flags + 2;
-  }
-  return flags;
-}
-
-// A replacer array of strings as the runtime reads it.
+// A replacer array of strings as `propertyList` reads it.
 function jsonKeys(keys: string[]): string {
   return JSON.stringify(keys);
 }

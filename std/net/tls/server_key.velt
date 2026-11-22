@@ -5,8 +5,8 @@
 // it.
 
 import { RsaSigner } from "velt/crypto/rsa_sign";
-import { base64Decode } from "velt/encoding/base64";
 import { IoError } from "velt/io/error";
+import { pemBlocks } from "velt/net/tls/pem";
 import { fromPkcs1, fromPkcs8, fromSec1, PrivateKey } from "velt/net/tls/private_key";
 import { KEY_P256, KEY_RSA } from "velt/net/tls/x509/algorithms";
 import { Certificate } from "velt/net/tls/x509/certificate";
@@ -26,55 +26,9 @@ export struct ServerKey {
   rsa?: RsaSigner;
 }
 
-/** One PEM block: its label ("CERTIFICATE") and its DER bytes. */
-struct PemBlock {
-  label: string;
-  der: u8[];
-}
-
 // The runtime's messages (crates/velt_rt/src/tls.rs), so both servers fail alike.
 function invalid(message: string): IoError {
   return new IoError("EINVAL", message);
-}
-
-/**
- * The PEM blocks of `text`, in order. Throws `EINVAL` for a block that is not valid PEM, naming
- * `what` ("certificate", "key").
- */
-function pemBlocks(text: string, what: string): PemBlock[] {
-  const out: PemBlock[] = [];
-  let at = 0;
-  while (true) {
-    const begin = text.indexOf("-----BEGIN ", at);
-    if (begin < 0) {
-      return out;
-    }
-    const labelEnd = text.indexOf("-----", begin + 11);
-    if (labelEnd < 0) {
-      throw invalid(`invalid ${what} PEM: a BEGIN line without its end`);
-    }
-    const label = text.slice(begin + 11, labelEnd);
-    const endLine = `-----END ${label}-----`;
-    const end = text.indexOf(endLine, labelEnd + 5);
-    if (end < 0) {
-      throw invalid(`invalid ${what} PEM: "${label}" without its END line`);
-    }
-    let b64 = "";
-    for (const line of text.slice(labelEnd + 5, end).split("\n")) {
-      b64 += line.trim();
-    }
-    let der: u8[] = [];
-    try {
-      der = base64Decode(b64);
-    } catch (e) {
-      throw invalid(`invalid ${what} PEM: "${label}" is not valid base64`);
-    }
-    if (der.length == 0) {
-      throw invalid(`invalid ${what} PEM: "${label}" is empty`);
-    }
-    out.push({ label: label, der: der });
-    at = end + (endLine.length as i64);
-  }
 }
 
 /**

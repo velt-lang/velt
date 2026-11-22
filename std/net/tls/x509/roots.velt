@@ -1,0 +1,75 @@
+// velt/net (internal): the built-in trust anchors of the TLS client in Velt, from
+// roots_table.velt: Mozilla's roots for TLS servers, compiled into the program, so that what a
+// program trusts does not depend on the machine it runs on. The system's store is not read.
+
+import {
+  ROOT_BYTES,
+  ROOT_BYTES_LENGTH,
+  ROOT_COUNT,
+  ROOT_ENDS,
+} from "velt/net/tls/x509/roots_table";
+import { TrustAnchor } from "velt/net/tls/x509/trust_anchor";
+
+// The bytes `start..end` of the table.
+function tableBytes(start: usize, end: usize): u8[] {
+  const out = Buffer.alloc(end - start);
+  for (let i = start; i < end; i++) {
+    out[i - start] = ((ROOT_BYTES[i >> 3] >> ((8 * (i & 7)) as u64)) & 0xff) as u8;
+  }
+  return out;
+}
+
+/** The built-in anchors, in the table's order. */
+export function builtinAnchors(): TrustAnchor[] {
+  const out: TrustAnchor[] = [];
+  let at: usize = 0;
+  for (let i: usize = 0; i < ROOT_COUNT; i++) {
+    const subjectEnd = ROOT_ENDS[3 * i] as usize;
+    const keyEnd = ROOT_ENDS[3 * i + 1] as usize;
+    const end = ROOT_ENDS[3 * i + 2] as usize;
+    out.push(
+      new TrustAnchor(
+        tableBytes(at, subjectEnd),
+        tableBytes(subjectEnd, keyEnd),
+        tableBytes(keyEnd, end),
+      ),
+    );
+    at = end;
+  }
+  return out;
+}
+
+/**
+ * The built-in anchors whose subject is `name[start..end]` (a Name's contents), in the table's
+ * order: what path validation asks for at each step, without making the others.
+ */
+export function builtinAnchorsNamed(name: u8[], start: usize, end: usize): TrustAnchor[] {
+  const out: TrustAnchor[] = [];
+  let at: usize = 0;
+  for (let i: usize = 0; i < ROOT_COUNT; i++) {
+    const subjectEnd = ROOT_ENDS[3 * i] as usize;
+    const last = ROOT_ENDS[3 * i + 2] as usize;
+    let same = subjectEnd - at == end - start;
+    for (let k: usize = 0; same && k < end - start; k++) {
+      const j = at + k;
+      same = (((ROOT_BYTES[j >> 3] >> ((8 * (j & 7)) as u64)) & 0xff) as u8) == name[start + k];
+    }
+    if (same) {
+      const keyEnd = ROOT_ENDS[3 * i + 1] as usize;
+      out.push(
+        new TrustAnchor(
+          tableBytes(at, subjectEnd),
+          tableBytes(subjectEnd, keyEnd),
+          tableBytes(keyEnd, last),
+        ),
+      );
+    }
+    at = last;
+  }
+  return out;
+}
+
+/** The table's size in bytes, for a test of the whole of it. */
+export function builtinAnchorBytes(): u8[] {
+  return tableBytes(0, ROOT_BYTES_LENGTH);
+}

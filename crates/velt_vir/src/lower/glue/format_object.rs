@@ -192,6 +192,14 @@ impl FnLower<'_, '_> {
             pending.clear();
             match self.accessor_label(ty, *index) {
                 Some(label) => self.push_text(buf, label),
+                // A weak field shows its target, or `null` once it is gone (weak_fields.rs).
+                None if self.cx.weak_field(ty, *index).is_some() => {
+                    let fp = self.field_place(place, ty, *index);
+                    let v = self.weak_value(fp, *t);
+                    let vp = self.place_of(v, *t);
+                    self.format_nested(buf, &vp, *t, child);
+                    self.drop_glue(vp, *t);
+                }
                 None => {
                     let fp = self.field_place(place, ty, *index);
                     self.format_nested(buf, &fp, *t, child);

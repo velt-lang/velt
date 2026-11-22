@@ -1,0 +1,34 @@
+// velt/text (tests): white-box tests of the pattern compiler, run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { Compiler } from "velt/text/regex/compiler";
+import { parsePattern } from "velt/text/regex/parse_pattern";
+import { Parser } from "velt/text/regex/parser";
+
+function ops(source: string): u32[] {
+  const p = new Parser(source, "");
+  const tree = parsePattern(p);
+  const c = new Compiler(p);
+  c.compile(tree);
+  const out: u32[] = [];
+  for (let i: usize = 0; i < c.prog.code.length; i += 3) {
+    out.push(c.prog.code[i] & 0xff);
+  }
+  return out;
+}
+
+describe("Compiler", () => {
+  it("emits splits and loops", () => {
+    expect(ops("ab")).toEqual([5, 1, 1, 5, 0]);
+    expect(ops("ab|c")).toEqual([5, 3, 1, 1, 4, 1, 5, 0]);
+    // Alternatives of one character each are a class.
+    expect(ops("a|b")).toEqual([5, 2, 5, 0]);
+    expect(ops("a*")).toEqual([5, 11, 5, 0]);
+    expect(ops("[ab]+c")).toEqual([5, 2, 11, 1, 5, 0]);
+    expect(ops("(?:ab)*")).toEqual([5, 3, 1, 1, 4, 5, 0]);
+    expect(ops("a*?")).toEqual([5, 3, 1, 4, 5, 0]);
+    // A group's captures are cleared per iteration, unless the body is the group itself.
+    expect(ops("(a){2}")).toEqual([5, 5, 1, 5, 5, 1, 5, 5, 0]);
+    expect(ops("(?:(a)b){2}")).toEqual([5, 5, 1, 5, 1, 7, 5, 1, 5, 1, 5, 0]);
+    expect(ops("a{1,2}")).toEqual([5, 1, 3, 1, 5, 0]);
+  });
+});

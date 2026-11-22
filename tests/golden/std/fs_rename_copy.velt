@@ -1,0 +1,81 @@
+// rename, renameSync, copyFile and copyFileSync, and Node's errors for them (`ENOENT: no such
+// file or directory, rename 'a' -> 'b'`). The expected output is Node's, from a twin of this
+// program over node:fs (fs_rename_copy.mjs in the pull request that added it, #2196).
+import {
+  copyFile,
+  copyFileSync,
+  existsSync,
+  mkdir,
+  readFile,
+  remove,
+  rename,
+  renameSync,
+  writeFile,
+} from "velt/fs";
+
+async function tryIt(label: string, f: () => Promise<void>) {
+  try {
+    await f();
+    console.log(label, "ok");
+  } catch (e) {
+    console.log(label, e.code, e.message);
+  }
+}
+
+async function main() {
+  const d = "velt_fs_rename_copy_tmp";
+  if (existsSync(d)) {
+    await remove(d, { recursive: true }); // left by an interrupted run
+  }
+  await mkdir(`${d}/dir`, { recursive: true });
+  // Not empty: btrfs gives an empty directory the size 0, which libuv (and Node) copies as an
+  // empty file.
+  await writeFile(`${d}/dir/inner.txt`, "inner");
+  await writeFile(`${d}/a.txt`, "alpha");
+
+  // Copies: a new file, over a longer one (truncated first), onto itself (nothing happens).
+  await copyFile(`${d}/a.txt`, `${d}/b.txt`);
+  copyFileSync(`${d}/a.txt`, `${d}/c.txt`);
+  console.log(await readFile(`${d}/b.txt`), await readFile(`${d}/c.txt`));
+  await writeFile(`${d}/long.txt`, "0123456789".repeat(10));
+  await copyFile(`${d}/a.txt`, `${d}/long.txt`);
+  console.log("over a longer file:", await readFile(`${d}/long.txt`));
+  copyFileSync(`${d}/a.txt`, `${d}/a.txt`);
+  console.log("onto itself:", await readFile(`${d}/a.txt`));
+  // A large file, past any single read or copy chunk.
+  await writeFile(`${d}/big.txt`, "x".repeat(200000) + "end");
+  await copyFile(`${d}/big.txt`, `${d}/big2.txt`);
+  const big = await readFile(`${d}/big2.txt`);
+  console.log("big:", big.length, big.endsWith("xend"));
+
+  await tryIt("copy missing", () => copyFile(`${d}/nope`, `${d}/x.txt`));
+  await tryIt("copy into missing dir", () => copyFile(`${d}/a.txt`, `${d}/no/x.txt`));
+  try {
+    copyFileSync(`${d}/nope`, `${d}/x.txt`);
+  } catch (e) {
+    console.log("copySync missing", e.code, e.message);
+  }
+  // A directory is no file to copy (the code differs by system); nothing is left behind.
+  try {
+    await copyFile(`${d}/dir`, `${d}/fromdir`);
+    console.log("copy dir: ok");
+  } catch (e) {
+    console.log("copy dir: refused, left behind:", existsSync(`${d}/fromdir`));
+  }
+
+  // Renames: a file, onto an existing file (replaced), a directory, and a missing one.
+  await rename(`${d}/b.txt`, `${d}/b2.txt`);
+  renameSync(`${d}/c.txt`, `${d}/b2.txt`);
+  console.log(existsSync(`${d}/b.txt`), existsSync(`${d}/c.txt`), await readFile(`${d}/b2.txt`));
+  await rename(`${d}/dir`, `${d}/dir2`);
+  console.log("dir renamed:", existsSync(`${d}/dir`), existsSync(`${d}/dir2`));
+  await tryIt("rename missing", () => rename(`${d}/nope`, `${d}/x`));
+  try {
+    renameSync(`${d}/nope`, `${d}/x`);
+  } catch (e) {
+    console.log("renameSync missing", e.code, e.message);
+  }
+  await tryIt("rename into missing dir", () => rename(`${d}/b2.txt`, `${d}/no/x`));
+
+  await remove(d, { recursive: true });
+}

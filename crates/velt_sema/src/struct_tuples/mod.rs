@@ -163,7 +163,7 @@ fn stored_types(cx: &mut Ctx, ty: TyId, w: &mut Walk, out: &mut Vec<TyId>, depth
             }
         }
     }
-    for c in children(&kind) {
+    for c in crate::types::contents(&kind) {
         stored_types(cx, c, w, out, depth + 1);
     }
 }
