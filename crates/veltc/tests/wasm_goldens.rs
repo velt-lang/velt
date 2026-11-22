@@ -483,6 +483,36 @@ fn a_c_pointer_past_32_bits_stops_on_wasm32() {
     }
 }
 
+/// On wasm32 C's pointers are 4 bytes and Velt's `Ptr<T>` 8, so a C struct holding one isn't C's
+/// layout there: struct_fields.velt's `Ptr.read` and `Ptr.write` of its `Node` (nine calls) and of
+/// a pointer are compile errors naming the target, while those of a `bool` and a `u8` aren't
+/// (#3094). A check needs no runtime or runner.
+#[test]
+fn ptr_read_of_a_pointer_field_struct_is_refused_on_wasm32() {
+    let root = root();
+    let fixture = root.join("tests/golden/lang/c_pointers");
+    let work = work_dir::work_dir(&root, "golden-work-fields").join(std::process::id().to_string());
+    let _ = std::fs::remove_dir_all(&work);
+    copy_dir(&fixture, &work);
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "--target", "wasm32-wasip1"])
+        .arg(work.join("struct_fields.velt"))
+        .current_dir(&work)
+        .output()
+        .expect("run velt");
+    let _ = std::fs::remove_dir_all(&work);
+    let err = String::from_utf8_lossy(&o.stderr);
+    let refused = err
+        .matches("of a `Node` aren't available on wasm32")
+        .count();
+    let others = err.matches("aren't available on wasm32").count() - refused;
+    assert!(
+        !o.status.success() && refused == 9 && others == 2 && err.contains("of a `Ptr<u8>`"),
+        "exit {:?}, {refused} refusals\n{err}",
+        o.status
+    );
+}
+
 /// `Math.random()`'s seed on WebAssembly: WASI's `random_get` through wasi-libc, and the JS
 /// host's `crypto.getRandomValues` (`velt:random`). Two runs of tests/wasm_random/main.velt print
 /// different numbers on each target, which a constant seed (a `fill` that does nothing, a
