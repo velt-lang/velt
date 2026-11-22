@@ -132,7 +132,7 @@ pub fn from_wtf8(bytes: &[u8]) -> Vec<u8> {
 pub fn to_wtf8(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
-    while let Some(at) = memchr::memchr(0xED, &bytes[i..]) {
+    while let Some(at) = bytes[i..].iter().position(|&b| b == 0xED) {
         out.extend_from_slice(&bytes[i..i + at]);
         i += at;
         if matches!(bytes[i..], [0xED, 0xA0..=0xAF, _, 0xED, 0xB0..=0xBF, _, ..]) {

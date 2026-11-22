@@ -5,12 +5,7 @@
 declare function velt_rt_memory_rss(): i64;
 declare function velt_rt_memory_heap(): i64;
 
-/** The linear memory's size in bytes. */
-export function residentBytes(): i64 {
-  return velt_rt_memory_rss();
-}
-
-/** The linear memory's size in bytes. */
-export function heapBytes(): i64 {
-  return velt_rt_memory_heap();
+/** `[rss, heapUsed]`: the linear memory's size in bytes, twice. */
+export function memoryFigures(): [i64, i64] {
+  return [velt_rt_memory_rss(), velt_rt_memory_heap()];
 }

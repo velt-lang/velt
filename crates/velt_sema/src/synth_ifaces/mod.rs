@@ -607,6 +607,7 @@ impl Ctx<'_> {
             default: None,
             default_throws: vec![],
             private_to: None,
+            weak: false,
         }
     }
 
