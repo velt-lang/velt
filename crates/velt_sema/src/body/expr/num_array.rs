@@ -33,10 +33,19 @@ impl FnCx<'_, '_> {
         // The elements' values while each is a number literal of the element type, then (from
         // the first that is not: a negated literal, an error) the expressions.
         let file = span.file;
+        let fast = self.num_elem_kind(elem);
         let mut values = Vec::with_capacity(n.elems.len());
         let mut hs: Option<Vec<hir::Expr>> = None;
         let mut id = n.first_id;
         for e in &n.elems {
+            // A plain literal that fits: its value as `lit` and `coerce` would make it (#3457).
+            if hs.is_none() {
+                if let Some(v) = fast.and_then(|k| self.num_elem_fast(e, k, file)) {
+                    values.push(v);
+                    id.0 += e.id_count();
+                    continue;
+                }
+            }
             let h = match e.negative() {
                 false => {
                     crate::check_work::add_expr_check();
@@ -69,6 +78,60 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// How [`Self::num_elem_fast`] checks a literal of element type `elem`: against an integer
+    /// type's range, or as a value of `f32`/`f64` (`true` for `f64`, whose integer literals
+    /// `literal_locals` notes). `None` for any other type (`f16`, `bf16`: their literals round
+    /// and have a range of their own), which takes `lit`.
+    fn num_elem_kind(&self, elem: TyId) -> Option<FastElem> {
+        let ty = &self.cx.ty;
+        if ty.is_storage_float(elem) {
+            return None;
+        }
+        match ty.kind(elem) {
+            TyKind::Int(it) => Some(FastElem::Int(*it)),
+            TyKind::Float(_) if ty.is_float(elem) => Some(FastElem::Float(elem == ty.f64)),
+            _ => None,
+        }
+    }
+
+    /// The element `e` (not negated) as `lit` then `coerce` would check it against the element
+    /// type, without making its expression: a literal that fits an integer type, or any literal
+    /// of a float type. `None` for every other case (a negated or out-of-range literal, a float
+    /// literal for an integer type), which `lit` checks and reports as it does elsewhere.
+    fn num_elem_fast(
+        &mut self,
+        e: &ast::NumElem,
+        k: FastElem,
+        file: velt_common::FileId,
+    ) -> Option<hir::ConstElem> {
+        if e.negative() {
+            return None;
+        }
+        let span = e.span(file);
+        let (bits, float) = match k {
+            FastElem::Int(it) => {
+                let fits = !e.float && u128::from(e.bits) <= crate::types::int_max(it, false);
+                fits.then_some((e.bits, false))?
+            }
+            FastElem::Float(f64_elem) => match e.float {
+                true => (e.bits, true),
+                false => {
+                    if f64_elem {
+                        self.literal_number_lit(span);
+                    }
+                    ((e.bits as f64).to_bits(), true)
+                }
+            },
+        };
+        crate::check_work::add_expr_check();
+        Some(hir::ConstElem {
+            bits,
+            float,
+            lo: span.lo,
+            hi: span.hi,
+        })
+    }
+
     /// The element type of an array literal checked against `exp` (from `array_expected`) when
     /// `array_lit_in` checks its literal elements as literals of it: a number type, known from
     /// the context, and not in the editor's analysis.
@@ -82,4 +145,12 @@ impl FnCx<'_, '_> {
         let number = matches!(self.cx.ty.kind(elem), TyKind::Int(_) | TyKind::Float(_));
         (number && !self.cx.ty.has_error(elem) && !self.cx.recording()).then_some(elem)
     }
+}
+
+/// How a packed element is checked without its expression ([`FnCx::num_elem_kind`]).
+#[derive(Clone, Copy)]
+enum FastElem {
+    Int(hir::IntTy),
+    /// A float type; `true` for `f64`.
+    Float(bool),
 }

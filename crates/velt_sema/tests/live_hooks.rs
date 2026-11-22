@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::programs::ok_src;
+use common::programs::{ok_src, ok_src_prebuilt};
 use velt_common::std_hooks::{hook_index, HOOKS};
 use velt_sema::hir::{Def, Program};
 
@@ -183,19 +183,21 @@ fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
     }
 }
 
-/// `console.log` of a float checks its writers (`numberWrite` and `wholeNumberWrite`, velt_common
-/// `ON_DEMAND_WRITE`), but demands no integer hook and checks no integer printing: neither the
-/// integer writer, which `numberWrite` doesn't hold (numrep calls it for a whole number only where
-/// the program has it), nor the text hooks. A program that prints no float leaves the float
-/// writers unchecked (`velt_lsp`'s `demand` test: nor does it load their module).
+/// `console.log` of a float checks its writers (`numberWrite` and `wholeNumberWrite`, demanded by
+/// `WriteFloat`), and they hold no integer printing: numrep calls the integer writer for a whole
+/// number only where the program has it. With std's float printing, which they reach by role
+/// (`number_shortest`), linked prebuilt (a warm build cache), the program checks none of the
+/// float text hooks and no integer hook; without it, that printing is std code checked like any
+/// other, whose table lookups demand the integer hooks. A program that prints no float leaves the
+/// float writers unchecked (`velt_lsp`'s `demand` test: nor does it load their module).
 #[test]
-fn a_float_printed_checks_its_writer_and_no_integer_hook() {
+fn a_float_printed_checks_its_writers() {
     let number_write = hook_index::number_write;
     for body in [
         "  const x: f64 = 0.5;\n  console.log(x);",
         "  const x: f32 = 0.5;\n  console.error(\"x\", x);",
     ] {
-        let p = main_of(body);
+        let p = ok_src_prebuilt(&format!("function main() {{\n{body}\n}}\n"));
         assert_eq!(demanded(&p), Vec::<&str>::new(), "{body}");
         assert!(
             checked(&p, number_write),
@@ -205,16 +207,24 @@ fn a_float_printed_checks_its_writer_and_no_integer_hook() {
             checked(&p, hook_index::whole_number_write),
             "wholeNumberWrite is not checked:\n{body}"
         );
-        for i in [
-            hook_index::int_write,
-            hook_index::uint_write,
-            hook_index::int_text,
-            hook_index::uint_text,
-            hook_index::int_push,
-        ] {
+        let text = [
+            hook_index::number_text,
+            hook_index::number_push,
+            hook_index::number_inspect_push,
+        ];
+        for i in text.into_iter().chain(INT) {
             assert!(!checked(&p, i), "{} is checked:\n{body}", HOOKS[i].name);
         }
+        // Without the prebuilt object the writers are checked too.
+        let p = main_of(body);
+        assert!(checked(&p, number_write), "{body}");
     }
+    // A float in a line the formatting glue writes is appended by `numberInspectPush`.
+    let p = main_of("  const x: f64 = 0.5;\n  console.log([\"a\"], x);");
+    assert!(
+        checked(&p, hook_index::number_inspect_push),
+        "numberInspectPush is not checked"
+    );
     let p = main_of("  const n: i64 = 7;\n  console.log(n);");
     assert!(
         !checked(&p, number_write),

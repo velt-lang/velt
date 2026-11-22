@@ -481,7 +481,10 @@ impl FnLower<'_, '_> {
                     self.ret_status(ST_UNSUPPORTED);
                 } else if self.cx.any_boxable(fty) {
                     let fp = self.field_place(&vp, ty, i as u32);
-                    let v = self.share_value(Operand::Copy(fp), fty);
+                    let v = match self.cx.weak_field(ty, i as u32) {
+                        Some(_) => self.weak_value(fp, fty), // the target (weak_fields.rs)
+                        None => self.share_value(Operand::Copy(fp), fty),
+                    };
                     self.any_box_with(v, fty, &outp, optional);
                     self.ret_status(ST_OK);
                 } else if self.union_like(fty) {

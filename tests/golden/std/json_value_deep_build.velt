@@ -1,0 +1,83 @@
+// A built `JsonValue` 1,000,000 levels deep, as an array chain and an object chain: a tree stays
+// at most 512 nodes high, so each 512 levels go onto a frozen tape, which links to the larger
+// tapes below instead of copying them (building costs O(n log n), not O(n²)). The tapes are made
+// from the values, not from JSON text, so NaN, the infinities and -0 read back as themselves at
+// any depth (their JSON text is `null` and `0`). The chain then goes to a task and back.
+import { Channel, ChannelClosed, channel } from "velt/sync";
+
+function leaves(): JsonValue {
+  const a = JsonValue.array();
+  for (const x of [NaN, Infinity, -Infinity, -0, 1.5]) {
+    a.push(JsonValue.of(x));
+  }
+  return a;
+}
+
+// The leaves at the bottom of a chain, as `Object.is` tells them from their JSON text.
+function bottom(v: JsonValue): string {
+  let x = v;
+  let levels = 0;
+  while (x.isArray() && x.len() == 1) {
+    x = x.at(0)!;
+    levels++;
+  }
+  while (x.isObject()) {
+    x = x.get("c")!;
+    levels++;
+  }
+  const parts: string[] = [];
+  for (let i: i64 = 0; i < x.len(); i++) {
+    const n = x.at(i)!.asNumber()!;
+    parts.push(Object.is(n, -0) ? "-0" : `${n}`);
+  }
+  return `${levels} ${parts.join(",")}`;
+}
+
+function arrays(depth: i64): JsonValue {
+  let v = leaves();
+  for (let i: i64 = 0; i < depth; i++) {
+    const outer = JsonValue.array();
+    outer.push(v);
+    v = outer;
+  }
+  return v;
+}
+
+function objects(depth: i64): JsonValue {
+  let v = leaves();
+  for (let i: i64 = 0; i < depth; i++) {
+    const outer = JsonValue.object();
+    outer.set("c", v);
+    v = outer;
+  }
+  return v;
+}
+
+async function bounce(
+  inbox: Channel<JsonValue>,
+  outbox: Channel<JsonValue>,
+): Promise<void> throws ChannelClosed {
+  const v = (await inbox.receive())!;
+  v.set("seen", JsonValue.of(true));
+  await outbox.send(v);
+}
+
+async function main() {
+  for (const depth of [600, 1500] as i64[]) {
+    const holder = JsonValue.object();
+    holder.set("a", arrays(depth));
+    holder.set("o", objects(depth));
+    console.log(bottom(holder.get("a")!), "|", bottom(holder.get("o")!));
+  }
+  const a = arrays(1000000);
+  const o = objects(1000000);
+  console.log(bottom(a), a.stringify().length);
+  console.log(bottom(o), o.stringify().length);
+  const inbox = channel<JsonValue>(1);
+  const outbox = channel<JsonValue>(1);
+  const t = spawn(bounce(inbox, outbox));
+  await inbox.send(o.clone());
+  const back = (await outbox.receive())!;
+  await t;
+  console.log(back.has("seen"), o.has("seen"), bottom(back));
+}

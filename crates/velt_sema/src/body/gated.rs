@@ -75,6 +75,9 @@ impl FnCx<'_, '_> {
     /// every call, so a function without decorators costs one map lookup. A function the
     /// decorator can't gate ([`FnCx::ungateable`], reported at its body) is not gated.
     pub(crate) fn fn_target(&self, d: DefId) -> Option<CpuTargets> {
+        if let Some(t) = self.arch_instruction(d) {
+            return Some(CpuTargets::NONE.with(t));
+        }
         let u = self.target_use(d)?;
         if self.cx.fn_info(d).kind != FnKind::Free || self.ungateable(d).is_some() {
             return None;
@@ -88,6 +91,22 @@ impl FnCx<'_, '_> {
             _ => set,
         });
         (!set.is_empty()).then_some(set)
+    }
+
+    /// The feature velt/arch's instruction `d` needs (#3222 step 4): a static method of a class of
+    /// `velt/arch/x86` or `velt/arch/arm` other than `isSupported` (`Sse42.crc32U64`) is gated
+    /// on that class's feature, as if it had its `@targetFeature`.
+    fn arch_instruction(&self, d: DefId) -> Option<CpuTarget> {
+        let f = self.cx.try_fn(d)?;
+        if f.kind != FnKind::Static || !self.cx.scopes[f.module].is_std {
+            return None;
+        }
+        let (module, item) = f.name.rsplit_once("::")?;
+        let (class, method) = item.split_once('.')?;
+        if method == "isSupported" {
+            return None;
+        }
+        hir::arch_check(&format!("{module}::{class}.isSupported"))
     }
 
     /// Why `@targetFeature` can't gate function `d`, as (what it is, a note), when it can't.

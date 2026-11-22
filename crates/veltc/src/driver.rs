@@ -412,6 +412,11 @@ fn prebuilt_finder(
         .flatten()
 }
 
+/// Is the build's target wasm32 (`velt_sema::CheckOptions::wasm32`)?
+pub(crate) fn wasm32(opts: &BuildOptions) -> bool {
+    (opts.target.as_deref()).is_some_and(|t| t.trim().starts_with("wasm32"))
+}
+
 /// Type-check the loaded program (and the native declarations against their libraries).
 fn sema_stage(
     sess: &mut Session,
@@ -426,6 +431,7 @@ fn sema_stage(
         units: scope.units,
         std_key: units_key::units_std_key(sess, scope, loaded),
         native_executor: native_executor(opts),
+        wasm32: wasm32(opts),
     };
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;

@@ -71,6 +71,7 @@ impl Ctx<'_> {
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),
+            TyKind::Ptr(p) => format!("Ptr<{}>", self.display_in(*p, names)),
             TyKind::Simd(s) => s.name().into(),
             TyKind::Unit => "void".into(),
             TyKind::Never => "never".into(),

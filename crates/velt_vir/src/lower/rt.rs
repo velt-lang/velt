@@ -10,7 +10,6 @@ use crate::vir::Ty;
 pub(super) enum Rt {
     StrConcat,
     StrAppend,
-    StrFromF64,
     StrFromBool,
     StrClone,
     StrDrop,
@@ -19,7 +18,6 @@ pub(super) enum Rt {
     StrCharCodeAt,
     WriteStr,
     TlaAt,
-    WriteF64,
     WriteBool,
     WriteByte,
     Panic,
@@ -29,7 +27,6 @@ pub(super) enum Rt {
     /// Source location bookkeeping for uncaught-error reports (`lower_with` only).
     SetThrowLoc,
     ThrowLoc,
-    PowI64,
     Alloc,
     Realloc,
     Free,
@@ -156,19 +153,13 @@ pub(super) enum Rt {
     StrbufInspectAtom,
     StrbufLen,
     StrbufInspectLayout,
-    StrbufPushF64,
-    StrbufPushInspectF64,
-    StrbufPushJsonF64,
     StrbufPushBool,
     StrbufPushByte,
     StrbufPushJsonStr,
     StrbufPushInspectStr,
     StrbufPushInspectKey,
-    StrbufPushInspectJson,
     StrbufFinish,
     StrbufDrop,
-    /// `velt_rt_json_value_free(h)`: a `JsonValue` runtime handle the glue made for printing.
-    JsonValueFree,
 }
 
 impl Rt {
@@ -182,7 +173,6 @@ impl Rt {
         match self {
             Rt::StrConcat => ("velt_rt_str_concat", vec![Ptr, Ptr, Ptr], Unit, false),
             Rt::StrAppend => ("velt_rt_str_append", vec![Ptr, Ptr], Unit, false),
-            Rt::StrFromF64 => ("velt_rt_str_from_f64", vec![F64, Ptr], Unit, false),
             Rt::StrFromBool => ("velt_rt_str_from_bool", vec![Bool, Ptr], Unit, false),
             Rt::StrClone => ("velt_rt_str_clone", vec![Ptr, Ptr], Unit, false),
             Rt::StrDrop => ("velt_rt_str_drop", vec![Ptr], Unit, false),
@@ -190,7 +180,6 @@ impl Rt {
             Rt::StrCharCodeAt => ("velt_rt_str_char_code_at", vec![Ptr, I64], I64, false),
             Rt::WriteStr => ("velt_rt_write_str", vec![U32, Ptr], Unit, false),
             Rt::TlaAt => ("velt_rt_tla_at", vec![Ptr], Unit, false),
-            Rt::WriteF64 => ("velt_rt_write_f64", vec![U32, F64], Unit, false),
             Rt::WriteBool => ("velt_rt_write_bool", vec![U32, Bool], Unit, false),
             Rt::WriteByte => ("velt_rt_write_byte", vec![U32, U8], Unit, false),
             Rt::Panic => ("velt_rt_panic", vec![Ptr], Unit, true),
@@ -198,7 +187,6 @@ impl Rt {
             Rt::UncaughtReport => ("velt_rt_uncaught_report", vec![], Unit, false),
             Rt::SetThrowLoc => ("velt_rt_set_throw_loc", vec![Ptr], Unit, false),
             Rt::ThrowLoc => ("velt_rt_throw_loc", vec![], Ptr, false),
-            Rt::PowI64 => math(MathOp::PowI64),
             Rt::Alloc => ("velt_rt_alloc", vec![U64, U64], Ptr, false),
             Rt::Realloc => ("velt_rt_realloc", vec![Ptr, U64, U64, U64], Ptr, false),
             Rt::Free => ("velt_rt_free", vec![Ptr, U64, U64], Unit, false),
@@ -340,22 +328,13 @@ impl Rt {
             Rt::StrbufInspectAtom => f("velt_rt_strbuf_inspect_atom", vec![Ptr, U64], Unit),
             Rt::StrbufLen => f("velt_rt_strbuf_len", vec![Ptr], U64),
             Rt::StrbufInspectLayout => f("velt_rt_strbuf_inspect_layout", vec![Ptr, U64], Unit),
-            Rt::StrbufPushF64 => f("velt_rt_strbuf_push_f64", vec![Ptr, F64], Unit),
-            Rt::StrbufPushInspectF64 => f("velt_rt_strbuf_push_inspect_f64", vec![Ptr, F64], Unit),
-            Rt::StrbufPushJsonF64 => f("velt_rt_strbuf_push_json_f64", vec![Ptr, F64], Unit),
             Rt::StrbufPushBool => f("velt_rt_strbuf_push_bool", vec![Ptr, Bool], Unit),
             Rt::StrbufPushByte => f("velt_rt_strbuf_push_byte", vec![Ptr, U8], Unit),
             Rt::StrbufPushJsonStr => f("velt_rt_strbuf_push_json_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectStr => f("velt_rt_strbuf_push_inspect_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectKey => f("velt_rt_strbuf_push_inspect_key", vec![Ptr, Ptr], Unit),
-            Rt::StrbufPushInspectJson => f(
-                "velt_rt_strbuf_push_inspect_json",
-                vec![Ptr, Ptr, U8, U32],
-                Unit,
-            ),
             Rt::StrbufFinish => f("velt_rt_strbuf_finish", vec![Ptr, Ptr], Unit),
             Rt::StrbufDrop => f("velt_rt_strbuf_drop", vec![Ptr], Unit),
-            Rt::JsonValueFree => f("velt_rt_json_value_free", vec![U64], Unit),
             other => crate::lower::ice(format_args!("no signature for {other:?}")),
         }
     }

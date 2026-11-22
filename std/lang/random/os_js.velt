@@ -1,0 +1,25 @@
+// velt/lang/random (internal): random numbers under a JS host (the browser, workers;
+// `#os-random`, os.velt): `crypto.getRandomValues` in the glue's `velt:random` module
+// (velt_web.mjs `randomHost`), which fills a whole array, copied to the caller's memory.
+
+import { addressStore } from "velt/lang/intrinsics/address";
+
+declare host("velt:random") function fill(buf: u8[]): void;
+
+/**
+ * Fills the `n` bytes at `base` with the host's random bytes. Unsafe: the memory must be there
+ * and writable, and nothing else use it meanwhile.
+ */
+export unsafe function fillRandomAt(base: usize, n: usize): void {
+  if (n == 0) {
+    return;
+  }
+  const b: u8[] = Buffer.alloc(n);
+  fill(b);
+  for (let i: usize = 0; i < n; i++) {
+    // SAFETY: byte `i` of the caller's `n`.
+    unsafe {
+      addressStore<u8>(base + i, b[i]);
+    }
+  }
+}

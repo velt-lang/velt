@@ -3,7 +3,8 @@
 // schemes, ALPN), what it echoes (the legacy session id), and for TLS 1.2 (RFC 5246 §7.4.1.2) the
 // client random, extended_master_secret, renegotiation_info and ec_point_formats.
 
-import { utf8Decode, utf8DecodeLossy, utf8Valid } from "velt/encoding/utf8";
+import { utf8Decode, utf8DecodeLossy } from "velt/encoding/utf8";
+import { utf8Valid } from "velt/encoding/utf8_valid";
 import {
   DECODE_ERROR,
   HANDSHAKE_FAILURE,
