@@ -93,8 +93,7 @@ function readZone(): u8 {
   }
   const at = Ptr.addressOf(block);
   // SAFETY: `at` holds a zeroed DYNAMIC_TIME_ZONE_INFORMATION, which the call fills.
-  const id =
-    unsafe { GetDynamicTimeZoneInformation(Ptr.orNull<_TIME_DYNAMIC_ZONE_INFORMATION>(at)) };
+  const id = unsafe { GetDynamicTimeZoneInformation(Ptr.orNull(at)) };
   if (id === TIME_ZONE_ID_INVALID) {
     // SAFETY: the block calloc gave above, which nothing else has seen.
     unsafe {

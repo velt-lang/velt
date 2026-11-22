@@ -151,8 +151,8 @@ function readPipe(h: usize, p: usize, n: usize, w: usize): Chunk {
   // SAFETY: `h` is standard input's handle.
   const file = unsafe { Ptr.orNull<void>(h) };
   // SAFETY: `p` has room for `count` bytes, `w` for the DWORD the call writes.
-  const ok =
-    unsafe { ReadFile(file, Ptr.orNull<u8>(p), count as u32, Ptr.orNull<u32>(w), null) } !== 0;
+  const got = unsafe { ReadFile(file, Ptr.orNull(p), count as u32, Ptr.orNull(w), null) };
+  const ok = got !== 0;
   if (!ok) {
     // SAFETY: no precondition.
     const e = unsafe { GetLastError$stdin() };
@@ -235,8 +235,7 @@ function readConsole(h: usize, p: usize, n: usize, w: usize): Chunk {
     }
     if (total > 0) {
       // SAFETY: `total` units at `units`, room for `n` bytes at `p`.
-      const bytes =
-        unsafe { utf8Of(Ptr.orNull<u16>(units), total as i32, Ptr.orNull<u8>(p), n as i32) };
+      const bytes = unsafe { utf8Of(Ptr.orNull(units), total as i32, Ptr.orNull(p), n as i32) };
       out = bytes > 0 ? { count: bytes as usize, error: null } : failed();
     }
   }
