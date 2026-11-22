@@ -71,9 +71,11 @@ struct Word {
 
 describe("@repr(\"transparent\")", () => {
   it("passes a struct of one number to C as the number", () => {
-    // SAFETY: `sqrt`, `cbrtf` and `llabs` take any value (`llabs` any but LLONG_MIN).
+    // SAFETY: `sqrt` takes any double.
     const root = unsafe { sqrt({ m: 2.25 }) };
+    // SAFETY: `cbrtf` takes any float.
     const cube = unsafe { cbrtf({ r: 27 }) };
+    // SAFETY: `llabs` takes any value but LLONG_MIN.
     const abs = unsafe { llabs({ n: -42 }) };
     expect(root.m).toBe(1.5);
     expect(cube.r).toBe(3);
@@ -87,9 +89,8 @@ describe("@repr(\"transparent\")", () => {
   });
 
   it("passes twenty transparent structs nested as the innermost field", () => {
-    // SAFETY: `sqrt` takes any double.
-    const d =
-      unsafe { sqrt$deep({
+    const x: Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Wrap<Meters>>>>>>>>>>>>>>>>>>>> = {
+      v: {
         v: {
           v: {
             v: {
@@ -100,11 +101,7 @@ describe("@repr(\"transparent\")", () => {
                       v: {
                         v: {
                           v: {
-                            v: {
-                              v: {
-                                v: { v: { v: { v: { v: { v: { v: { v: { m: 2.25 } } } } } } } },
-                              },
-                            },
+                            v: { v: { v: { v: { v: { v: { v: { v: { v: { m: 2.25 } } } } } } } } },
                           },
                         },
                       },
@@ -115,19 +112,23 @@ describe("@repr(\"transparent\")", () => {
             },
           },
         },
-      }) };
+      },
+    };
+    // SAFETY: `sqrt` takes any double.
+    const d = unsafe { sqrt$deep(x) };
     expect(d.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.v.m).toBe(1.5);
   });
 
   it("passes a struct of a pointer as the pointer", () => {
-    // SAFETY: the block is 16 bytes from `malloc`, written within them, and freed once.
+    // SAFETY: `malloc` returns 16 bytes or NULL.
     const b = unsafe { malloc(16) };
+    // SAFETY: the block from `malloc` has 16 bytes (the test passes only if it isn't NULL).
     const same = unsafe { memset(b, 7, 16) };
     expect(Ptr.addressOf(same.p)).toBe(Ptr.addressOf(b.p));
+    // SAFETY: the block came from `malloc` and is freed once.
     unsafe {
       free(b);
     }
-    ;
   });
 });
 
