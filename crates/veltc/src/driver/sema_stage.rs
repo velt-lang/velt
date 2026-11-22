@@ -65,6 +65,7 @@ fn sema_once(
         units: scope.units,
         std_key: units_key::units_std_key(sess, scope, loaded),
         native_executor: native_executor(opts),
+        wasm32: super::wasm32(opts),
     };
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;

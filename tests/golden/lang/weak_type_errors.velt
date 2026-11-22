@@ -1,7 +1,8 @@
 // `weak T` (docs/internals/design/cycles.md "`weak T`") is checked where it is written: at the
 // top of the type of a class field, an object type or interface member, or a variable, as
-// `weak T | null` with `T` an object with an identity. Its lowering is not implemented yet (#3119), so a
-// well-formed one is reported too.
+// `weak T | null` with `T` an object with an identity. Its lowering handles a class's own field
+// referring to a class; the other well-formed places and targets are reported as not implemented
+// yet (#3119).
 
 class Node {
   parent: weak Node | null = null;

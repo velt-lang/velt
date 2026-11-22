@@ -13,7 +13,7 @@ import { CVarArgs } from "velt/ffi/c_var_args";
 import { errno, setErrno } from "velt/ffi/errno";
 import { Ptr } from "velt/ffi/ptr";
 import { readBytes } from "velt/ffi/read";
-import { addressArray, addressLoad } from "velt/lang/intrinsics";
+import { addressArray, addressLoad, ptrFromAddress } from "velt/lang/intrinsics";
 import { lastOsError } from "velt/os/rt";
 import { checkPath } from "velt/fs/fd/guards";
 import { closeFd } from "velt/fs/fd/posix";
@@ -34,7 +34,7 @@ declare c("c", { errno: true }) function openat(
 ): i32;
 declare c("c", { errno: true }) function unlinkat(fd: i32, path: readonly u8[], flag: i32): i32;
 declare c("c", { errno: true }) function rmdir(path: readonly u8[]): i32;
-declare c("c") function strlen(s: Ptr<u8>): usize;
+declare c("c") function strlen(s: Ptr<u8> | null): usize;
 
 /** What the directory functions need to know of a target. */
 export struct DirSystem {
@@ -96,8 +96,9 @@ function next(dir: Ptr<DIR>, sys: DirSystem): Entry {
     // at `nameAt`, both inside it on this target (the variant's offsets, checked against the
     // headers and bounded above).
     const type = unsafe { addressLoad<u8>(at + sys.typeAt) };
-    // SAFETY: `d_name` is NUL-terminated inside the entry, so `strlen` stops there.
-    const len = unsafe { strlen(Ptr.at<u8>(nameAt)) };
+    // SAFETY: `d_name` is NUL-terminated inside the entry, so `strlen` stops there; `nameAt` is
+    // inside the entry `readdir` returned, so not 0.
+    const len = unsafe { strlen(ptrFromAddress<u8>(nameAt)) };
     // SAFETY: the name's first byte, or the NUL of an empty one, is inside the entry.
     const first = unsafe { addressLoad<u8>(nameAt) };
     let second: u8 = 0;
@@ -114,9 +115,9 @@ function next(dir: Ptr<DIR>, sys: DirSystem): Entry {
 
 /** A copy of the name of `e` (an entry `next` just returned), and a 0 after it. */
 function nameBytes(e: Entry): u8[] {
-  // SAFETY: `e.nameAt` points at the `e.len` bytes of the entry's name, which stay there until
-  // the next `readdir` of its directory (after this copy).
-  const name = unsafe { readBytes(Ptr.at<u8>(e.nameAt), e.len) };
+  // SAFETY: `e.nameAt` (not 0) points at the `e.len` bytes of the entry's name, which stay there
+  // until the next `readdir` of its directory (after this copy).
+  const name = unsafe { readBytes(ptrFromAddress<u8>(e.nameAt), e.len) };
   name.push(0);
   return name;
 }

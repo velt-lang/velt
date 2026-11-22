@@ -1,0 +1,30 @@
+// A closure kept in a field captures a class with a `weak` field, and its object is cloned: the
+// copy of the environment reaches the clone glue of the holder, which panics (velt_vir
+// glue/clone.rs): sema cannot see into a function value.
+class T {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class H {
+  t: weak T | null = null;
+}
+
+class C {
+  f: () => i64;
+  constructor(f: () => i64) {
+    this.f = f;
+  }
+}
+
+function main() {
+  const t = new T(7);
+  const h = new H();
+  h.t = t;
+  const c = new C(() => h.t?.n ?? 0);
+  console.log("before");
+  const d = c.clone();
+  console.log(d.f(), t.n);
+}

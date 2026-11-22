@@ -110,8 +110,9 @@ impl Cx<'_> {
             TyKind::Dyn(..) | TyKind::Promise(..) => true,
             // A class with subclasses drops through its vtable: any subclass's fields.
             TyKind::Adt(d, _) if self.is_class(t) && self.has_header(d) => true,
+            // A weak field drops no object (weak_fields.rs).
             TyKind::Adt(..) if self.is_class(t) => {
-                let tys = self.adt_field_tys(t);
+                let tys = self.adt_edge_tys(t);
                 tys.into_iter().any(|f| self.leads_to(f, target, fns, seen))
             }
             TyKind::Adt(..) | TyKind::Tuple(_) | TyKind::Result(..) => {

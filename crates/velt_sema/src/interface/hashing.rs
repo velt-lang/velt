@@ -82,7 +82,7 @@ impl<'p> Hashing<'p> {
                 self.name(*d).hash(&mut s);
                 self.tys_into(args, &mut s);
             }
-            TyKind::Array(x) | TyKind::Shared(x) => self.ty(*x).hash(&mut s),
+            TyKind::Array(x) | TyKind::Shared(x) | TyKind::Ptr(x) => self.ty(*x).hash(&mut s),
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
                 (self.ty(*a), self.ty(*b)).hash(&mut s)
             }
@@ -194,8 +194,9 @@ impl<'p> Hashing<'p> {
                     presence,
                     hidden,
                     cell,
+                    weak,
                 } = f;
-                let flags = (optional, private, presence, hidden, cell);
+                let flags = (optional, private, presence, hidden, cell, weak);
                 finish((name, self.ty(*ty), default.is_some(), flags))
             })
             .collect()

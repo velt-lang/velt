@@ -1,0 +1,96 @@
+// velt/text (internal): the names of a pattern's groups (`(?<year>…)`, `\k<year>`), which are
+// JavaScript identifiers, and the `\u` escapes a name and a pattern share.
+
+import { Parser } from "velt/text/regex/parser";
+import { propertySet } from "velt/text/regex/unicode_props";
+
+/** The value of the hex digit `c`, or -1. */
+function hexValue(c: i64): i64 {
+  if (c >= 0x30 && c <= 0x39) {
+    return c - 0x30;
+  }
+  const l = c | 0x20;
+  return l >= 0x61 && l <= 0x66 ? l - 0x61 + 10 : -1;
+}
+
+/** Reads `n` hex digits when all are there: their value, or -1 with nothing read. */
+export function hex(p: Parser, n: usize): i64 {
+  let v: i64 = 0;
+  for (let k: usize = 0; k < n; k++) {
+    const d = hexValue(p.peekAt(k));
+    if (d < 0) {
+      return -1;
+    }
+    v = v * 16 + d;
+  }
+  p.at += n;
+  return v;
+}
+
+/** After `\u`: the code unit of `XXXX`, or when `points` (the `u` flag; always in a group's
+ * name) the code point of `{…}` or of an escaped surrogate pair; -1 with nothing read when it
+ * is not well-formed. */
+export function unicodeEscape(p: Parser, points: bool): i64 {
+  if (points && p.peek() == 0x7b) {
+    let k: usize = 1;
+    let v: i64 = 0;
+    while (hexValue(p.peekAt(k)) >= 0 && v <= 0x10ffff) {
+      v = v * 16 + hexValue(p.peekAt(k));
+      k++;
+    }
+    if (k == 1 || v > 0x10ffff || p.peekAt(k) != 0x7d) {
+      return -1;
+    }
+    p.at += k + 1;
+    return v;
+  }
+  const v = hex(p, 4);
+  if (points && v >= 0xd800 && v < 0xdc00 && p.peek() == 0x5c && p.peekAt(1) == 0x75) {
+    const start = p.at;
+    p.at += 2;
+    const lo = hex(p, 4);
+    if (lo >= 0xdc00 && lo <= 0xdfff) {
+      return 0x10000 + ((v - 0xd800) << 10) + (lo - 0xdc00);
+    }
+    p.at = start;
+  }
+  return v;
+}
+
+/** May `c` start a group name (`first`) or continue one? JavaScript's identifier characters. */
+function isNameChar(c: i64, first: bool): bool {
+  if (c < 0x80) {
+    const l = c | 0x20;
+    return (l >= 0x61 && l <= 0x7a) || c == 0x24 || c == 0x5f || (!first && c >= 0x30 && c <= 0x39);
+  }
+  if (!first && (c == 0x200c || c == 0x200d)) {
+    return true;
+  }
+  const set = propertySet(first ? "ID_Start" : "ID_Continue", "", false);
+  return set != null && set.contains(c as u32);
+}
+
+/** The name of a group after its `(?<`, up to and including the `>`. */
+export function groupName(p: Parser): string {
+  let name = "";
+  while (true) {
+    let c = p.peek();
+    p.at++;
+    if (c == 0x3e && name != "") {
+      return name;
+    }
+    if (c == 0x5c && p.eat(0x75)) {
+      c = unicodeEscape(p, true);
+    }
+    // The two code units of one character, without the `u` flag.
+    const low = p.peek();
+    if (c >= 0xd800 && c < 0xdc00 && low >= 0xdc00 && low <= 0xdfff) {
+      c = 0x10000 + ((c - 0xd800) << 10) + (low - 0xdc00);
+      p.at++;
+    }
+    if (c < 0 || !isNameChar(c, name == "")) {
+      p.fail("Invalid capture group name");
+    }
+    name += String.fromCodePoint(c as f64);
+  }
+}

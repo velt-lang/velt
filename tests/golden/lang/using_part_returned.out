@@ -1,0 +1,31 @@
+dispose a (3 bytes)
+0,2,4
+dispose b (4 bytes)
+0,2,4,6
+dispose c (5 bytes)
+5
+dispose d (1 bytes)
+d
+dispose e (2 bytes)
+2 true 0,2
+0,2,4,99
+f
+dispose f (3 bytes)
+0,2,4
+dispose g (6 bytes)
+6
+dispose h (2 bytes)
+0,2
+dispose i (3 bytes)
+0,2,4
+k 4
+dispose k (4 bytes)
+4
+dispose l (2 bytes)
+0,2
+dispose m (3 bytes)
+6
+dispose n (5 bytes)
+5
+dispose o (4 bytes)
+4

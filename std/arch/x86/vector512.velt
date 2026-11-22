@@ -1,0 +1,172 @@
+// velt/arch/x86 (internal): `Vector512<T>`, 512 bits of lanes `T` (#3222 step 5,
+// docs/internals/design/package-machine-code.md §4), generated from velt_vir's table
+// (crates/velt_vir/src/arch/render.rs) by `cargo xtask gen-arch`: edit the generator.
+//
+// Building one, taking it apart, loading and storing it is plain code that runs on any
+// CPU; velt/arch/x86's AVX2 and AVX-512 methods take it as one register, behind their
+// class's check.
+
+import "velt/simd/bytes";
+import "velt/simd/floats";
+import "velt/simd/words";
+import { Vector256 } from "velt/arch/x86/vector256";
+
+/**
+ * 512 bits of lanes `T`: the bytes of its 128-bit parts (`q0`, `q1`, `q2`, `q3`), low lanes first.
+ */
+export struct Vector512<T> {
+  readonly q0: u8x16;
+  readonly q1: u8x16;
+  readonly q2: u8x16;
+  readonly q3: u8x16;
+
+  /** The same 512 bits as lanes of type `U`. */
+  reinterpret<U>(): Vector512<U> {
+    return { q0: this.q0, q1: this.q1, q2: this.q2, q3: this.q3 };
+  }
+
+  /** The vector whose low 256 bits are `lo` and high 256 bits `hi`. */
+  static join<T>(lo: Vector256<T>, hi: Vector256<T>): Vector512<T> {
+    return { q0: lo.lo, q1: lo.hi, q2: hi.lo, q3: hi.hi };
+  }
+
+  /** Its low 256 bits. */
+  lower(): Vector256<T> {
+    return { lo: this.q0, hi: this.q1 };
+  }
+
+  /** Its high 256 bits. */
+  upper(): Vector256<T> {
+    return { lo: this.q2, hi: this.q3 };
+  }
+
+  /** The 64 lanes of `from` from `at` on. */
+  static loadU8(from: u8[], at: usize = 0): Vector512<u8> {
+    return Vector512.join(Vector256.loadU8(from, at), Vector256.loadU8(from, at + 32));
+  }
+
+  /** The 64 lanes of `from` from `at` on. */
+  static loadI8(from: i8[], at: usize = 0): Vector512<i8> {
+    return Vector512.join(Vector256.loadI8(from, at), Vector256.loadI8(from, at + 32));
+  }
+
+  /** The 32 lanes of `from` from `at` on. */
+  static loadU16(from: u16[], at: usize = 0): Vector512<u16> {
+    return Vector512.join(Vector256.loadU16(from, at), Vector256.loadU16(from, at + 16));
+  }
+
+  /** The 32 lanes of `from` from `at` on. */
+  static loadI16(from: i16[], at: usize = 0): Vector512<i16> {
+    return Vector512.join(Vector256.loadI16(from, at), Vector256.loadI16(from, at + 16));
+  }
+
+  /** The 16 lanes of `from` from `at` on. */
+  static loadU32(from: u32[], at: usize = 0): Vector512<u32> {
+    return Vector512.join(Vector256.loadU32(from, at), Vector256.loadU32(from, at + 8));
+  }
+
+  /** The 16 lanes of `from` from `at` on. */
+  static loadI32(from: i32[], at: usize = 0): Vector512<i32> {
+    return Vector512.join(Vector256.loadI32(from, at), Vector256.loadI32(from, at + 8));
+  }
+
+  /** The 8 lanes of `from` from `at` on. */
+  static loadU64(from: u64[], at: usize = 0): Vector512<u64> {
+    return Vector512.join(Vector256.loadU64(from, at), Vector256.loadU64(from, at + 4));
+  }
+
+  /** The 8 lanes of `from` from `at` on. */
+  static loadI64(from: i64[], at: usize = 0): Vector512<i64> {
+    return Vector512.join(Vector256.loadI64(from, at), Vector256.loadI64(from, at + 4));
+  }
+
+  /** The 16 lanes of `from` from `at` on. */
+  static loadF32(from: f32[], at: usize = 0): Vector512<f32> {
+    return Vector512.join(Vector256.loadF32(from, at), Vector256.loadF32(from, at + 8));
+  }
+
+  /** The 8 lanes of `from` from `at` on. */
+  static loadF64(from: f64[], at: usize = 0): Vector512<f64> {
+    return Vector512.join(Vector256.loadF64(from, at), Vector256.loadF64(from, at + 4));
+  }
+}
+
+extend Vector512<u8> {
+  /** Stores its 64 lanes in `to` from `at` on. */
+  store(to: u8[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 32);
+  }
+}
+
+extend Vector512<i8> {
+  /** Stores its 64 lanes in `to` from `at` on. */
+  store(to: i8[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 32);
+  }
+}
+
+extend Vector512<u16> {
+  /** Stores its 32 lanes in `to` from `at` on. */
+  store(to: u16[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 16);
+  }
+}
+
+extend Vector512<i16> {
+  /** Stores its 32 lanes in `to` from `at` on. */
+  store(to: i16[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 16);
+  }
+}
+
+extend Vector512<u32> {
+  /** Stores its 16 lanes in `to` from `at` on. */
+  store(to: u32[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 8);
+  }
+}
+
+extend Vector512<i32> {
+  /** Stores its 16 lanes in `to` from `at` on. */
+  store(to: i32[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 8);
+  }
+}
+
+extend Vector512<u64> {
+  /** Stores its 8 lanes in `to` from `at` on. */
+  store(to: u64[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 4);
+  }
+}
+
+extend Vector512<i64> {
+  /** Stores its 8 lanes in `to` from `at` on. */
+  store(to: i64[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 4);
+  }
+}
+
+extend Vector512<f32> {
+  /** Stores its 16 lanes in `to` from `at` on. */
+  store(to: f32[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 8);
+  }
+}
+
+extend Vector512<f64> {
+  /** Stores its 8 lanes in `to` from `at` on. */
+  store(to: f64[], at: usize = 0) {
+    this.lower().store(to, at);
+    this.upper().store(to, at + 4);
+  }
+}

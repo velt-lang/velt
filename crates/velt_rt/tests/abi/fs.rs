@@ -1,9 +1,7 @@
-//! `std/fs` roundtrips in a temp directory: the `*_sync` variants (what a native build runs on the
-//! executor's blocking pool), and the file streams' leaves awaited in a task.
+//! `std/fs` roundtrips in a temp directory: the file streams' leaves awaited in a task.
 
-use super::fake::{arg, block_on_fut, err, ok, take_string};
+use super::fake::{arg, block_on_fut, err, ok};
 use crate::bytes::{velt_rt_bytes_drop, VeltBytes};
-use crate::fs::sync::*;
 use crate::result::{code, IoResult};
 use std::mem::MaybeUninit;
 use std::path::PathBuf;
@@ -22,74 +20,6 @@ fn sync<T>(f: impl FnOnce(*mut IoResult<T>)) -> IoResult<T> {
     let mut out = MaybeUninit::<IoResult<T>>::uninit();
     f(out.as_mut_ptr());
     unsafe { out.assume_init() }
-}
-
-#[test]
-fn sync_roundtrip() {
-    let dir = temp_dir("fs_sync");
-    let (d, a, b) = (
-        path(&dir, "n"),
-        path(&dir, "n/a.txt"),
-        path(&dir, "n/b.txt"),
-    );
-    std::fs::create_dir_all(&d).unwrap();
-    unsafe {
-        std::fs::write(&a, "one+two").unwrap();
-        ok(sync(|o| velt_rt_fs_copy_file_sync(&arg(&a), &arg(&b), o)));
-        assert_eq!(std::fs::read_to_string(&b).unwrap(), "one+two");
-        ok(sync(|o| {
-            velt_rt_fs_rename_sync(&arg(&b), &arg(&path(&dir, "n/c.txt")), o)
-        }));
-        let mut names: Vec<String> = std::fs::read_dir(&d)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        assert_eq!(names, ["a.txt", "c.txt"]);
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Symlinks need Developer Mode or administrator rights on Windows: without them this test
-/// checks nothing (the `fs_symlinks` golden is skipped there too).
-#[test]
-fn symlinks() {
-    let dir = temp_dir("fs_links");
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("f.txt"), "hello").unwrap();
-    let (f, link) = (path(&dir, "f.txt"), path(&dir, "link"));
-    unsafe {
-        let made = sync(|o| velt_rt_fs_symlink_sync(&arg("f.txt"), &arg(&link), o));
-        if made.err.code == code::PERMISSION_DENIED && cfg!(windows) {
-            let _ = std::fs::remove_dir_all(&dir);
-            return;
-        }
-        ok(made);
-        assert!(std::fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        let target = ok(sync(|o| velt_rt_fs_readlink_sync(&arg(&link), o)));
-        assert_eq!(take_string(target), "f.txt");
-        err(
-            sync(|o| velt_rt_fs_readlink_sync(&arg(&f), o)),
-            code::INVALID_INPUT,
-        );
-        // realpath resolves the link to the file's absolute path, without Windows' `\\?\`.
-        let real = take_string(ok(sync(|o| velt_rt_fs_realpath_sync(&arg(&link), o))));
-        let expected = take_string(ok(sync(|o| velt_rt_fs_realpath_sync(&arg(&f), o))));
-        assert_eq!(real, expected);
-        assert!(
-            real.ends_with("f.txt") && !real.starts_with(r"\\?\"),
-            "{real}"
-        );
-        assert!(std::path::Path::new(&real).is_absolute(), "{real}");
-        err(
-            sync(|o| velt_rt_fs_realpath_sync(&arg(&path(&dir, "none")), o)),
-            code::NOT_FOUND,
-        );
-    }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `openRead(path, { start, end })`: both ends included, an end past the file stops at its end,

@@ -60,6 +60,11 @@ fn all_freed(err: &str) -> bool {
 /// Builds `src` and runs it `runs` times at 4 and at 8 workers, counted: exit 0, `want` printed,
 /// every block freed.
 fn check(name: &str, src: &str, want: &str, runs: usize) {
+    check_at(name, src, want, runs, &["4", "8"]);
+}
+
+/// [`check`] at the worker counts `workers` (a program that pins no task runs at 1 worker too).
+fn check_at(name: &str, src: &str, want: &str, runs: usize, workers: &[&str]) {
     if !has_threads() {
         return;
     }
@@ -67,7 +72,7 @@ fn check(name: &str, src: &str, want: &str, runs: usize) {
     let dir = test_dir::TestDir::new();
     let exe = build_std(dir.path(), name, src);
     let mut bad = Vec::new();
-    for threads in ["4", "8"] {
+    for threads in workers {
         for i in 0..runs {
             let o = command(&exe)
                 .env("VELT_THREADS", threads)
@@ -160,6 +165,175 @@ fn hand_overs_racing_their_tasks_polls_leave_nothing() {
 fn a_task_with_yields_freed_by_a_hand_over_frees_its_yield_block() {
     check("ended_yields", ENDED_YIELDS, "dropped 20 on worker 2\n", 3);
 }
+
+/// A holder of a shared promise nobody settles, handed to a task on worker 2 and dropped there
+/// after the task it was shared on ended (#3439): the hand-over made a proxy, a node of that task
+/// whose waker waits on the promise (sched_share_hand.velt `newProxy`). Its owner gone, the proxy
+/// is given up with its role, and the promise and the task go. Before, the proxy waited for ever
+/// and kept them: 13 blocks a round, 130 a run.
+#[test]
+fn a_handed_holders_proxy_dropped_on_another_worker_is_given_up() {
+    check("proxy_dropped", PROXY_DROPPED, "done 10\n", 3);
+}
+
+/// The proxy test's program with no task pinned, at 1 and 2 workers: with one thread at the
+/// executor the handed holder is dropped in the poll of the task it was handed to, which is the
+/// own side too. The proxy is given up in its own task's poll all the same (sched_node_lost.velt
+/// `dropPending`); before, it was given up in that task's, and its role reached the hub from it:
+/// an `ICE:` on every run at 1 worker.
+#[test]
+fn a_proxy_dropped_by_an_unpinned_task_is_given_up_on_its_own_task() {
+    check_at(
+        "unpinned_proxy",
+        UNPINNED_PROXY,
+        "done 10\n",
+        3,
+        &["1", "2"],
+    );
+}
+
+/// A holder handed to an unpinned task, awaited there once and then dropped, at 1 and 2 workers
+/// (the same `ICE:` at 1 worker before).
+#[test]
+fn a_holder_awaited_and_dropped_by_an_unpinned_task_frees_everything() {
+    check_at(
+        "unpinned_awaited",
+        UNPINNED_AWAITED,
+        "sum 30, 10 awaited\n",
+        3,
+        &["1", "2"],
+    );
+}
+
+/// The program of [`a_proxy_dropped_by_an_unpinned_task_is_given_up_on_its_own_task`].
+const UNPINNED_PROXY: &str = r#"// #3461 review: the proxy test with no task pinned: the holder is handed to an unpinned task,
+// which drops it (at 1 worker, in its own poll, the own side too).
+// The task shares a promise nobody settles, hands the holder on and ends; the other task drops it
+// after that.
+
+const GO = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function dropLater(h: Holder): Promise<void> {
+  while (GO.load() === 0) {
+    await yieldNow();
+  }
+  DONE.add(1);
+}
+
+async function maker(): Promise<number> {
+  const h = new Holder(dead());
+  const q = h.p;
+  void spawn(dropLater(h));
+  return 1;
+}
+
+async function main() {
+  for (let r = 0; r < 10; r++) {
+    GO.store(0);
+    await spawn(maker());
+    GO.store(1);
+    while (DONE.load() <= r) {
+      await yieldNow();
+    }
+  }
+  console.log(`done ${DONE.load()}`);
+}
+"#;
+
+/// The program of [`a_holder_awaited_and_dropped_by_an_unpinned_task_frees_everything`].
+const UNPINNED_AWAITED: &str = r#"// #3461 review: a holder handed to an unpinned task, awaited there once, then dropped.
+const DONE = new Atomic<i64>(0);
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 3;
+}
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+async function user(h: Holder, g: Holder): Promise<number> {
+  const v = await h.p;
+  DONE.add(1);
+  return v;
+}
+async function maker(): Promise<number> {
+  const h = new Holder(soon());
+  const q = h.p;
+  const g = new Holder(dead());
+  const r = g.p;
+  return await spawn(user(h, g));
+}
+async function main() {
+  let s = 0;
+  for (let i = 0; i < 10; i++) {
+    s += await spawn(maker());
+  }
+  console.log(`sum ${s}, ${DONE.load()} awaited`);
+}
+"#;
+
+/// The program of [`a_handed_holders_proxy_dropped_on_another_worker_is_given_up`].
+const PROXY_DROPPED: &str = r#"// #3439, a proxy's owner dropped: the task shares a promise nobody settles (a second holder
+// reads it), hands the holder to a task on worker 2 and ends without awaiting it; worker 2 drops
+// the holder after the task ended.
+
+const GO = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function dropLater(h: Holder): Promise<void> {
+  while (GO.load() === 0) {
+    await yieldNow();
+  }
+  DONE.add(1);
+}
+
+async function maker(): Promise<number> {
+  const h = new Holder(dead());
+  const q = h.p;
+  void spawn(dropLater(h), { worker: 2 });
+  return 1;
+}
+
+async function main() {
+  for (let r = 0; r < 10; r++) {
+    GO.store(0);
+    await spawn(maker(), { worker: 1 });
+    GO.store(1);
+    while (DONE.load() <= r) {
+      await yieldNow();
+    }
+  }
+  console.log(`done ${DONE.load()}`);
+}
+"#;
 
 /// The program of [`a_task_with_yields_freed_by_a_hand_over_frees_its_yield_block`].
 const ENDED_YIELDS: &str = r#"// #3323 with #3241's yield lists: the task on worker 1 starts a promise that yields a few turns

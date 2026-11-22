@@ -189,11 +189,12 @@ fn an_installed_toolchain_s_hook_objects_are_linked() {
         (digits_object(&o), err)
     };
 
-    // The build cache off: the toolchain's object, every time.
+    // The build cache off: the toolchain's objects, every time.
     for _ in 0..2 {
         let (from, err) = run(&off);
         assert_eq!(from, "shipped", "{err}");
-        assert!(err.contains("prebuilt hooks: 1 objects linked"), "{err}");
+        // number_digits for toPrecision, and number_shortest, which std's number printing uses.
+        assert!(err.contains("prebuilt hooks: 2 objects linked"), "{err}");
     }
     // The cache on (the default, under the home directory): the toolchain's once, then the
     // cache's own copy.

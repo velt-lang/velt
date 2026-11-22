@@ -199,7 +199,7 @@ fn gate(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> Vec<Gate> {
             k if kind_bit(k) & GATE_KINDS != 0 => kinds.push(Gate::Kind(kind_bit(k))),
             _ => {}
         }
-        todo.extend(crate::types::children(kind));
+        todo.extend(crate::types::contents(kind));
     }
     let module = &cx.modules[f.module].path;
     if module.starts_with(velt_common::std_module!(sync_epoch)) {

@@ -6,6 +6,7 @@
 //! readers of an `RwLock` share: their count operations go through `velt_rt_lk_*`, which leave
 //! the shared ones alone in a `read` callback (the `_of` variants, given the object's type).
 
+use super::boxing::ShareKind;
 use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
@@ -24,6 +25,61 @@ pub(super) const STORED: i128 = 1 << 61;
 const COUNT_MASK: i128 = LOCAL - 1;
 
 impl FnLower<'_, '_> {
+    /// `isUnique(x)` (hir `Intrinsic::IsUnique`): whether `x`, a class instance, array or boxed
+    /// object, is reached by no other reference. Its whole count word is compared with 1, so an
+    /// object with a flag in it (a lock-set object's `LOCAL` or `STORED`, the cycle collector's
+    /// `BUFFERED`, an immortal count) is never taken as unique: copy-on-write then copies, which
+    /// is always safe. A reference type the program never counts has one owner per value, so
+    /// true; a lock-set type, whose count readers of an `RwLock` share, false; any other kind of
+    /// value (`shared<T>`, strings, functions, interface values, plain values), false.
+    ///
+    /// `x` is read in place, never through a share of it (which would count it twice): a place
+    /// is read as it is, and `o.f!` (sema's `match o.f { Some(b) => b, _ => panic }`) reads the
+    /// option's payload in place, a null being not unique.
+    pub(super) fn is_unique(&mut self, x: &velt_sema::hir::Expr) -> Operand {
+        let no = || Operand::Const(crate::vir::Const::Bool(false), Ty::Bool);
+        let t = self.sub(x.ty);
+        let kind = self.cx.share_kind(t);
+        let counted = kind == ShareKind::Object && self.cx.counted(t);
+        if kind != ShareKind::Object || self.cx.lock_counted(t) || !counted {
+            // Evaluated for its effects only.
+            let _ = self.expr(x);
+            return match kind == ShareKind::Object && !counted && !self.cx.lock_counted(t) {
+                true => Operand::Const(crate::vir::Const::Bool(true), Ty::Bool),
+                false => no(),
+            };
+        }
+        let (place, opt) = match asserted_option(x) {
+            Some(o) => (self.place_expr(o), Some(self.sub(o.ty))),
+            None => (self.place_expr(x), None),
+        };
+        if self.dead() {
+            return no();
+        }
+        let out = Place::local(self.temp(Ty::Bool));
+        self.assign(out.clone(), Rvalue::Use(no()));
+        let done = self.new_block();
+        let ptr = match opt {
+            Some(o) => {
+                let some = self.option_is_some(&place, o);
+                let yes = self.new_block();
+                self.branch(some, yes, done);
+                self.switch_to(yes);
+                self.some_payload(&place, o)
+            }
+            None => place,
+        };
+        let p = self.count_ptr(Operand::Copy(ptr), t);
+        let c = self.count_place(p);
+        self.assign(
+            out.clone(),
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(c), cint(1, Ty::U64)),
+        );
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(out)
+    }
+
     /// The count word of the (non-null) counted object `p`.
     pub(super) fn count_place(&mut self, p: Operand) -> Place {
         let c = self.rvalue_temp(
@@ -141,6 +197,9 @@ impl FnLower<'_, '_> {
         last: impl FnOnce(&mut Self),
     ) {
         if !self.cx.lock_counted(ty) {
+            if weak && self.cx.is_class(ty) && self.cx.slot_target(ty) {
+                return self.release_weak(p, true, last);
+            }
             return self.release_as(p, weak, last);
         }
         let deferred = self.mode == LkMode::Deferred && !weak;
@@ -358,12 +417,14 @@ impl FnLower<'_, '_> {
 
     /// [`release`](Self::release) of an object of a type that is weak-capable when `weak`
     /// (boxing/weak.rs): its count word may carry `RC_WEAK`, the sign bit, so the shared path
-    /// tests `c as i64 > 1`, `c == 1` is the unique path, and anything else (weakly held) calls
-    /// std's `weakRelease` (std/lang/hooks/weak.velt), which removes the object from every weak map and `WeakRef` when
-    /// this was its last reference (then `last` runs, as on the unique path).
+    /// tests `c as i64 > 1`, `c == 1` is the unique path, and anything else is weakly held. A
+    /// weakly held object without `RC_GATED` (bit 62: no weak map key, rt_abi.md "Weak
+    /// references") whose count stays above 0 is decremented inline; else std's `weakRelease`
+    /// (std/lang/hooks/weak.velt) is called, which removes the object from every weak map and
+    /// `WeakRef` when this was its last reference (then `last` runs, as on the unique path).
     pub(super) fn release_as(&mut self, p: Operand, weak: bool, last: impl FnOnce(&mut Self)) {
         if weak {
-            return self.release_weak(p, last);
+            return self.release_weak(p, false, last);
         }
         let c = self.count_place(p);
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
@@ -383,7 +444,9 @@ impl FnLower<'_, '_> {
         self.switch_to(join);
     }
 
-    fn release_weak(&mut self, p: Operand, last: impl FnOnce(&mut Self)) {
+    /// The weak-capable release; `slot`: the object may be weakly held by `weak` fields alone
+    /// (weak_fields.rs `slot_target`), so a weakly held one without a gate is decremented inline.
+    fn release_weak(&mut self, p: Operand, slot: bool, last: impl FnOnce(&mut Self)) {
         let c = self.count_place(p.clone());
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
         let s = self.rvalue_temp(Ty::I64, Rvalue::Cast(n.clone(), Ty::I64));
@@ -398,9 +461,28 @@ impl FnLower<'_, '_> {
         self.assign(c, Rvalue::Use(m));
         self.goto(join);
         self.switch_to(other);
-        let one = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, n, cint(1, Ty::U64)));
+        let one = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, n.clone(), cint(1, Ty::U64)),
+        );
         let (last_bb, cold) = (self.new_block(), self.new_block());
-        self.branch(one, last_bb, cold);
+        match slot {
+            false => self.branch(one, last_bb, cold),
+            true => {
+                // Weakly held without a release gate (`RC_GATED` clear) and not the last
+                // reference: a plain decrement, as `weakRelease` would make it. `c << 1` drops
+                // `RC_WEAK` and puts `RC_GATED` in the sign bit: `(c << 1) as i64 > 2` is both.
+                let gated = self.new_block();
+                self.branch(one, last_bb, gated);
+                self.switch_to(gated);
+                let x = Rvalue::Binary(BinOp::Shl, n, cint(1, Ty::U64));
+                let x = self.rvalue_temp(Ty::U64, x);
+                let x = self.rvalue_temp(Ty::I64, Rvalue::Cast(x, Ty::I64));
+                let plain = Rvalue::Binary(BinOp::Gt, x, cint(2, Ty::I64));
+                let plain = self.rvalue_temp(Ty::Bool, plain);
+                self.branch(plain, dec_bb, cold);
+            }
+        }
         self.switch_to(cold);
         let obj = ty::USize::arg(self.as_usize(p));
         let gone = hooks::weak_release(self, Construct::Weak, obj)
@@ -457,5 +539,24 @@ impl FnLower<'_, '_> {
             ],
             None,
         );
+    }
+}
+
+/// The option `o` of `o!` (sema's `match o { Some(b) => b, _ => … }`), else None.
+fn asserted_option(x: &velt_sema::hir::Expr) -> Option<&velt_sema::hir::Expr> {
+    use velt_sema::hir::{ExprKind, PatKind};
+    let ExprKind::Match { scrutinee, arms } = &x.kind else {
+        return None;
+    };
+    let first = arms.first()?;
+    let PatKind::Some(inner) = &first.pat.kind else {
+        return None;
+    };
+    let PatKind::Binding(b, _) = &inner.kind else {
+        return None;
+    };
+    match (&first.guard, &first.body.kind) {
+        (None, ExprKind::Local(l, _)) if l == b && arms.len() == 2 => Some(scrutinee),
+        _ => None,
     }
 }

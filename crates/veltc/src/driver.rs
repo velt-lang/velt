@@ -417,6 +417,11 @@ fn prebuilt_finder(
         .flatten()
 }
 
+/// Is the build's target wasm32 (`velt_sema::CheckOptions::wasm32`)?
+pub(crate) fn wasm32(opts: &BuildOptions) -> bool {
+    (opts.target.as_deref()).is_some_and(|t| t.trim().starts_with("wasm32"))
+}
+
 /// Front half of the pipeline: source file → verified VIR. Stops after the first stage with errors.
 pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Program, BuildError> {
     compile_to_vir_linking(sess, opts, VirFor::Other)

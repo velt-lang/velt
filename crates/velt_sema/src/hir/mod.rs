@@ -128,6 +128,10 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
+    /// `Ptr<T>` (velt/ffi, #3094): a C pointer to a `T`, Copy, never counted, compared by
+    /// address. One machine word, never `NULL`: `Ptr<T> | null` is the same word with 0 as `null`
+    /// (lowering's null niche). The pointee is checked where it is concrete (`c_sig::c_pointee`).
+    Ptr(TyId),
     /// A SIMD vector or mask: Copy, 16 bytes.
     Simd(SimdTy),
     /// A type operator that can't be evaluated yet because an argument it inspects is still a

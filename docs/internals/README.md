@@ -270,8 +270,9 @@ whether it is implemented, partly implemented, accepted or proposed.
 - [Printing typed values](design/inspect-shapes.md).
 - [Source generators](design/source-generators.md): Velt code that generates Velt code at
   build time.
-- [The JSON engine](design/json-engine.md), [a SQLite engine in Velt](design/sqlite-engine.md)
-  and [HTTP/2](design/http2.md).
+- [The JSON engine](design/json-engine.md),
+  [the regular expression engine](design/regex-engine.md),
+  [a SQLite engine in Velt](design/sqlite-engine.md) and [HTTP/2](design/http2.md).
 - [Velt on Cloudflare Workers](design/cloudflare-workers.md).
 
 **Packages and tooling**

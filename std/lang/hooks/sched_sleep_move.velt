@@ -12,9 +12,10 @@
 // The rules that keep this safe:
 // - A worker writes a sleep only while it holds it: `S_HOME` is that worker and the state is
 //   pending, due, fired or carried. `S_HOME` and the state are read state first (`release`); a request that finds another worker holding the sleep goes on to that worker.
-// - A sleep an offered task carries (sched_sleep_carry.velt) is on no worker's list: the request
-//   waits on the list of the worker it reached until the task is polled (which is soon: an
-//   offered task is queued) and the sleep is in a block again.
+// - A sleep an offered task carries, or one a retiring spare carried home with its task
+//   (sched_sleep_carry.velt `carry`, `carryHome`), is on no worker's list: the request waits on
+//   the list of the worker it reached until the task is polled (which is soon: the task is
+//   queued) and the sleep is in a block again; a retired spare serves its list on every pass.
 // - The requests under way for a sleep are counted in it (`S_ASKS`): a drop while any is under
 //   way is a request itself, and the sleep is freed by whoever ends the last one. So a request
 //   never names freed memory, in whatever order two workers serve them.

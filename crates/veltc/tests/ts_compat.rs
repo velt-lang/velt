@@ -154,7 +154,7 @@ fn every_rejected_sample_passes_velt_check() {
         };
         // Samples of Velt syntax whose meaning is not built yet: refused with their issue until
         // then (a sample Velt accepts must leave this list).
-        let pending = [("decorator", "#2204"), ("weak-type", "#3119")];
+        let pending = [("decorator", "#2204")];
         let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         if let Some((_, issue)) = pending.iter().find(|(name, _)| *name == stem) {
             assert!(

@@ -4,7 +4,8 @@
 //! (std/fs/tree/, #2196), so velt_rt no longer compiles them; they moved here from velt_rt's
 //! fs/ops.rs and fs/sync.rs unchanged.
 
-use super::ops::{at, name_text, path_arg, unit};
+use super::ops::path_arg;
+use super::{at, name_text, unit};
 use crate::bytes::VeltBytes;
 use crate::result::IoResult;
 use crate::str::VeltStr;

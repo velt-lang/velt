@@ -70,6 +70,7 @@ impl Cx<'_> {
             TyKind::Option(e, n) => TyKind::Option(w(self, e), n),
             TyKind::Result(a, b) => TyKind::Result(w(self, a), w(self, b)),
             TyKind::Shared(e) => TyKind::Shared(w(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(w(self, e)),
             _ => return t,
         };
         self.intern(k)

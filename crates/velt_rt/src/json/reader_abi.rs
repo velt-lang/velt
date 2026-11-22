@@ -292,17 +292,3 @@ pub unsafe extern "C" fn velt_rt_json_error(
         (*r).message(&expected, &path).into_bytes(),
     ));
 }
-
-/// Node's own message for text that is not JSON (`JSON.parse`'s `SyntaxError`), into `*out`:
-/// 1 if `src` is not JSON, 0 (`out` untouched) if it is. The Velt reader (std/encoding/json/reader.velt)
-/// asks only after a failure.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_json_node_syntax(src: *const VeltStr, out: *mut VeltStr) -> u8 {
-    match super::node_syntax::node_syntax_message((*src).as_bytes()) {
-        Some(m) => {
-            out.write(VeltStr::from_vec(m.into_bytes()));
-            1
-        }
-        None => 0,
-    }
-}

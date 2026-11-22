@@ -1,0 +1,253 @@
+// velt/text (internal): the grammar of a pattern (alternatives, groups, quantifiers), as
+// JavaScript's, with V8's error texts. Lookaround and back references are refused: the engine
+// matches in time linear in the subject, which they do not allow.
+
+import { arrayRemove } from "velt/lang/intrinsics";
+import { CharSet } from "velt/text/regex/char_set";
+import { dotSet } from "velt/text/regex/classes";
+import {
+  ALT,
+  ASSERT,
+  AT_END,
+  AT_LINE_END,
+  AT_LINE_START,
+  AT_START,
+  CAT,
+  CHAR,
+  EMPTY,
+  GROUP,
+  listNode,
+  Node,
+  REPEAT,
+  SET,
+  setNode,
+  UNBOUNDED,
+} from "velt/text/regex/node";
+import { parseSetClass } from "velt/text/regex/parse_class_set";
+import { atomEscape, charNode, parseClass, refuse } from "velt/text/regex/parse_escape";
+import { groupName } from "velt/text/regex/parse_name";
+import { Parser } from "velt/text/regex/parser";
+
+/** How deep groups may nest. */
+const MAX_DEPTH: u32 = 250;
+/** The highest count a `{n,m}` keeps. */
+const MAX_COUNT: u32 = 0x7fffffff;
+
+/** The tree of the parser's pattern. */
+export function parsePattern(p: Parser): Node {
+  const tree = disjunction(p);
+  if (!p.done()) {
+    p.fail("Unmatched ')'");
+  }
+  for (const name of p.references) {
+    if (!p.names.includes(name)) {
+      p.fail("Invalid named capture referenced");
+    }
+  }
+  if (p.refused != "") {
+    p.fail(p.refused);
+  }
+  return tree;
+}
+
+function disjunction(p: Parser): Node {
+  const first = alternative(p);
+  if (p.peek() != 0x7c) {
+    return first;
+  }
+  const kids: Node[] = [first];
+  let single = true;
+  while (p.eat(0x7c)) {
+    kids.push(alternative(p));
+  }
+  // Alternatives that are one character each are one class: `a|b|[cd]` is `[a-d]`.
+  const set = new CharSet();
+  for (const kid of kids) {
+    if (kid.kind == CHAR) {
+      set.add(kid.a, kid.a);
+    } else if (kid.kind == SET && kid.set != null) {
+      set.addSet(kid.set);
+    } else {
+      single = false;
+    }
+  }
+  if (single) {
+    set.normalize();
+    return setNode(set);
+  }
+  return listNode(ALT, kids);
+}
+
+function alternative(p: Parser): Node {
+  const kids: Node[] = [];
+  while (!p.done() && p.peek() != 0x7c && p.peek() != 0x29) {
+    kids.push(term(p));
+  }
+  if (kids.length == 0) {
+    return new Node(EMPTY);
+  }
+  return kids.length == 1 ? arrayRemove(kids, 0) : listNode(CAT, kids);
+}
+
+function term(p: Parser): Node {
+  const c = p.peek();
+  p.at++;
+  if (c == 0x5e) {
+    return new Node(ASSERT, p.multiline ? AT_LINE_START : AT_START);
+  }
+  if (c == 0x24) {
+    return new Node(ASSERT, p.multiline ? AT_LINE_END : AT_END);
+  }
+  if (c == 0x28) {
+    const inner = group(p);
+    // A lookbehind takes no quantifier, and a lookahead none with the `u` flag.
+    if (p.lookaround == 2 || (p.lookaround == 1 && p.unicode)) {
+      const q = p.peek();
+      if (q == 0x2a || q == 0x2b || q == 0x3f || (q == 0x7b && braces(p))) {
+        p.fail("Invalid quantifier");
+      }
+    }
+    return quantified(p, inner);
+  }
+  if (c == 0x2e) {
+    return quantified(p, setNode(dotSet(p)));
+  }
+  if (c == 0x5b) {
+    const set = p.sets ? parseSetClass(p) : parseClass(p);
+    return quantified(p, set);
+  }
+  if (c == 0x5c) {
+    const atom = atomEscape(p);
+    return atom.kind == ASSERT ? atom : quantified(p, atom);
+  }
+  if (c == 0x2a || c == 0x2b || c == 0x3f) {
+    p.fail("Nothing to repeat");
+  }
+  if (c == 0x7b) {
+    p.at--;
+    if (braces(p)) {
+      p.fail("Nothing to repeat");
+    }
+    p.at++;
+  }
+  if (p.unicode && (c == 0x7b || c == 0x7d || c == 0x5d)) {
+    p.fail("Lone quantifier brackets");
+  }
+  return quantified(p, charNode(p, c));
+}
+
+/** `atom` with the quantifier that follows it, if one does. */
+function quantified(p: Parser, atom: Node): Node {
+  const c = p.peek();
+  let min: u32 = 0;
+  let max = UNBOUNDED;
+  if (c == 0x2a || c == 0x2b || c == 0x3f) {
+    p.at++;
+    min = c == 0x2b ? 1 : 0;
+    max = c == 0x3f ? 1 : UNBOUNDED;
+  } else if (c == 0x7b && braces(p)) {
+    min = p.min;
+    max = p.max;
+    if (min > max) {
+      p.fail("numbers out of order in {} quantifier");
+    }
+  } else {
+    if (c == 0x7b && p.unicode) {
+      p.fail("Incomplete quantifier");
+    }
+    return atom;
+  }
+  const r = new Node(REPEAT, min);
+  r.b = max;
+  r.greedy = !p.eat(0x3f);
+  r.kids.push(atom);
+  return r;
+}
+
+/** Reads `{n}`, `{n,}` or `{n,m}` at the `{` that is next, into the parser's `min` and `max`;
+ * false, with nothing read, when it is none (Annex B: the `{` is then a character). */
+function braces(p: Parser): bool {
+  let k: usize = 1;
+  let n: usize = 0;
+  p.min = 0;
+  while (p.peekAt(k) >= 0x30 && p.peekAt(k) <= 0x39) {
+    p.min = count(p.min, p.peekAt(k));
+    k++;
+    n++;
+  }
+  p.max = p.min;
+  if (n > 0 && p.peekAt(k) == 0x2c) {
+    k++;
+    p.max = UNBOUNDED;
+    if (p.peekAt(k) >= 0x30 && p.peekAt(k) <= 0x39) {
+      p.max = 0;
+    }
+    while (p.peekAt(k) >= 0x30 && p.peekAt(k) <= 0x39) {
+      p.max = count(p.max, p.peekAt(k));
+      k++;
+    }
+  }
+  if (n == 0 || p.peekAt(k) != 0x7d) {
+    return false;
+  }
+  p.at += k + 1;
+  return true;
+}
+
+/** `n` with the decimal digit `digit` appended, at most `MAX_COUNT`. */
+function count(n: u32, digit: i64): u32 {
+  const v = (n as u64) * 10 + ((digit - 0x30) as u64);
+  return v > (MAX_COUNT as u64) ? MAX_COUNT : v as u32;
+}
+
+/** The group after its `(`, up to and including its `)`. */
+function group(p: Parser): Node {
+  let name = "";
+  let capture = true;
+  let look: u32 = 0;
+  if (p.eat(0x3f)) {
+    const c = p.peek();
+    const after = p.peekAt(1);
+    const behind = c == 0x3c && (after == 0x3d || after == 0x21);
+    if (c == 0x3d || c == 0x21 || behind) {
+      // Read as a group, and refused at the end of the pattern.
+      refuse(p, "Lookaround assertions are not supported");
+      look = behind ? 2 : 1;
+      capture = false;
+      p.at += behind ? 1 : 0;
+    } else if (c == 0x3a) {
+      capture = false;
+    } else if (c != 0x3c) {
+      p.fail("Invalid group");
+    }
+    p.at++;
+    if (capture) {
+      name = groupName(p);
+    }
+  }
+  p.depth++;
+  if (p.depth > MAX_DEPTH) {
+    p.fail("Regular expression too large");
+  }
+  let index: u32 = 0;
+  if (capture) {
+    if (name != "" && p.names.includes(name)) {
+      p.fail("Duplicate capture group name");
+    }
+    p.groups++;
+    index = p.groups;
+    p.names.push(name);
+  }
+  const inner = disjunction(p);
+  if (!p.eat(0x29)) {
+    p.fail("Unterminated group");
+  }
+  p.depth--;
+  p.lookaround = look;
+  if (!capture) {
+    return inner;
+  }
+  const g = new Node(GROUP, index);
+  g.kids.push(inner);
+  return g;
+}

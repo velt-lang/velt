@@ -196,15 +196,13 @@ fn step(cx: &Cx, bi: usize, si: usize, l: Local) -> Option<(usize, By)> {
     if !t.proj.is_empty() || t.local == l {
         return None;
     }
-    let (at, rv) = stmts[..si]
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, s)| match s {
-            Stmt::Assign(d, rv) if d.local == t.local || d.local == l => Some((i, d, rv)),
-            _ => None,
-        })
-        .and_then(|(i, d, rv)| (d.local == t.local && d.proj.is_empty()).then_some((i, rv)))?;
+    let at = cx.last_assign(t.local, l, bi, si)?;
+    let Stmt::Assign(d, rv) = &stmts[at] else {
+        return None;
+    };
+    if d.local != t.local || !d.proj.is_empty() {
+        return None;
+    }
     Some((at, step_rvalue(rv, |op| reads(cx, bi, at, op, l))?))
 }
 
@@ -215,6 +213,8 @@ pub(super) struct Cx<'f> {
     func: &'f Function,
     cfg: std::cell::OnceCell<(Vec<Vec<usize>>, Dominators)>,
     defs: std::cell::OnceCell<DefIndex>,
+    /// Assignments looked at by [`Cx::last_assign`] (for tests of its cost).
+    looked: std::cell::Cell<u64>,
 }
 
 /// Where each local is set.
@@ -231,6 +231,7 @@ impl<'f> Cx<'f> {
             func,
             cfg: std::cell::OnceCell::new(),
             defs: std::cell::OnceCell::new(),
+            looked: std::cell::Cell::new(0),
         }
     }
 
@@ -251,6 +252,24 @@ impl<'f> Cx<'f> {
             }
             DefIndex { assigns, call_dest }
         })
+    }
+
+    /// The last statement of block `bi` before statement `at` that assigns `a` or `b` (or a
+    /// place in one). Looked up in the sorted assignments of each, not by a scan back through
+    /// the block: once per local, that scan made a long block quadratic.
+    fn last_assign(&self, a: Local, b: Local, bi: usize, at: usize) -> Option<usize> {
+        let index = self.defs();
+        let last = |l: Local| {
+            let assigns = &index.assigns[l.0 as usize];
+            // A binary search looks at about log2(len + 1) of them.
+            let probes = (usize::BITS - assigns.len().leading_zeros()) as u64;
+            self.looked.set(self.looked.get() + probes.max(1));
+            let i = assigns.partition_point(|&p| p < (bi, at));
+            i.checked_sub(1)
+                .map(|i| assigns[i])
+                .and_then(|(b, s)| (b == bi).then_some(s))
+        };
+        last(a).max(last(b))
     }
 
     fn cfg(&self) -> &(Vec<Vec<usize>>, Dominators) {
@@ -279,15 +298,11 @@ fn reads(cx: &Cx, bi: usize, at: usize, op: &Operand, l: Local) -> bool {
         matches!(rv, Rvalue::Use(Operand::Copy(q))
             if d.local == p.local && d.proj.is_empty() && q.local == l && q.proj.is_empty())
     };
-    let last = func.blocks[bi].stmts[..at]
-        .iter()
-        .rev()
-        .find_map(|s| match s {
-            Stmt::Assign(d, rv) if d.local == p.local || d.local == l => Some(copies(d, rv)),
-            _ => None,
-        });
-    if let Some(copy) = last {
-        return copy;
+    if let Some(i) = cx.last_assign(p.local, l, bi, at) {
+        return match &func.blocks[bi].stmts[i] {
+            Stmt::Assign(d, rv) => copies(d, rv),
+            _ => false,
+        };
     }
     // The only definition of `p`, a copy of `l`.
     let index = cx.defs();

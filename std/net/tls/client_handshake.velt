@@ -7,8 +7,6 @@
 // unchecked. The server's Finished is always checked. When the server
 // chooses TLS 1.2, `ClientHandshake12` takes the handshake over after the ServerHello.
 
-import { sha256 } from "velt/crypto/sha256";
-import { sha384 } from "velt/crypto/sha512";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
@@ -23,11 +21,18 @@ import { clientHello, EXT_ALPN, HelloInput, SCHEMES, X25519 } from "velt/net/tls
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { exchangeKey, exchangePublic, exchangeSecret } from "velt/net/tls/key_exchange";
-import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import {
+  expandLabelWith,
+  finishedMac,
+  handshakeSecret,
+  masterSecretWith,
+  prepareSecret,
+} from "velt/net/tls/key_schedule";
 import { ClientHandshake12, DONE12 } from "velt/net/tls/client_handshake12";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { groupName, parseServerHello } from "velt/net/tls/server_hello";
 import { CertificateVerifier } from "velt/net/tls/verifier";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 
 // Handshake message types.
 
@@ -75,6 +80,8 @@ export class ClientHandshake {
   /** The group of the key share sent last. */
   private group: usize;
   private transcript: u8[];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   private state: i32;
   private retried: bool;
   private certRequestContext: u8[] | null;
@@ -147,10 +154,7 @@ export class ClientHandshake {
 
   // The transcript's hash with the suite's hash (SHA-256 until the server chose).
   private hash(): u8[] {
-    if (this.suite == AES_256_GCM_SHA384) {
-      return sha384(this.transcript);
-    }
-    return sha256(this.transcript);
+    return this.th.of(this.transcript, this.suite == AES_256_GCM_SHA384);
   }
 
   /**
@@ -251,6 +255,7 @@ export class ClientHandshake {
       // hash of the suite the HelloRetryRequest chose.
       const first = this.hash();
       this.transcript = [254, 0, 0, first.length as u8];
+      this.th.reset();
       this.add(first);
       this.add(m);
       let publicKey = this.input.publicKey;
@@ -311,9 +316,11 @@ export class ClientHandshake {
     }
     const hs = handshakeSecret(shared, hashLength(this.suite));
     const h = this.hash();
-    this.clientHandshake = expandLabel(hs, "c hs traffic", h, h.length);
-    this.serverHandshake = expandLabel(hs, "s hs traffic", h, h.length);
-    this.master = masterSecret(hs);
+    // One prepared handshake secret for both traffic secrets and the master secret's salt.
+    const prepared = prepareSecret(hs);
+    this.clientHandshake = expandLabelWith(prepared, "c hs traffic", h, h.length);
+    this.serverHandshake = expandLabelWith(prepared, "s hs traffic", h, h.length);
+    this.master = masterSecretWith(prepared);
     this.state = WAIT_ENCRYPTED_EXTENSIONS;
     return HANDSHAKE_KEYS;
   }
@@ -358,7 +365,8 @@ export class ClientHandshake {
   }
 
   private finished(m: u8[], body: u8[]): i32 {
-    const expected = finishedMac(this.serverHandshake, this.hash());
+    const transcript = this.hash();
+    const expected = finishedMac(this.serverHandshake, transcript);
     const n = expected.length;
     let diff: u8 = body.length == n ? 0 : 1;
     for (let i: usize = 0; i < n && i < body.length; i++) {
@@ -369,8 +377,9 @@ export class ClientHandshake {
     }
     this.add(m);
     const h = this.hash();
-    this.clientApplication = expandLabel(this.master, "c ap traffic", h, h.length);
-    this.serverApplication = expandLabel(this.master, "s ap traffic", h, h.length);
+    const master = prepareSecret(this.master);
+    this.clientApplication = expandLabelWith(master, "c ap traffic", h, h.length);
+    this.serverApplication = expandLabelWith(master, "s ap traffic", h, h.length);
     const w = new ByteWriter();
     const context = this.certRequestContext;
     if (context != null) {
@@ -390,7 +399,8 @@ export class ClientHandshake {
     fin.u8(FINISHED);
     const f = fin.begin(3);
     // The transcript only grew when a Certificate was sent; otherwise `h` is still its hash.
-    fin.put(finishedMac(this.clientHandshake, context != null ? this.hash() : h));
+    const sent = context != null ? this.hash() : h;
+    fin.put(finishedMac(this.clientHandshake, sent));
     fin.end(f, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);

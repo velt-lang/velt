@@ -116,6 +116,52 @@ fn a_parent_pointer_closes_a_cycle() {
 }
 
 #[test]
+fn a_weak_back_reference_does_not_close_a_cycle() {
+    // A connection holding its streams, each stream referring back to it: a cycle, unless the
+    // back reference is `weak` (a weak field is no edge, velt_vir `weak_fields`). A type that
+    // holds values of its own type (a tree's `children: Node[]`) stays cycle-capable whatever its
+    // parent pointer is: a counted node can be put among its own children.
+    let src = |back: &str| {
+        format!(
+            "class Stream {{
+               conn: {back} = null;
+               id: number;
+               constructor(id: number) {{ this.id = id; }}
+             }}
+             class Conn {{
+               streams: Stream[] = [];
+               open(id: number): Stream {{
+                 const s = new Stream(id);
+                 s.conn = this;
+                 this.streams.push(s);
+                 return s;
+               }}
+             }}
+             function main() {{
+               const c = new Conn();
+               const s = c.open(1);
+               const back = s.conn;
+               console.log(c.streams.length, back === c);
+             }}"
+        )
+    };
+    let strong = cycle_capable(&src("Conn | null"));
+    assert!(
+        has(&strong, "class Conn") && has(&strong, "class Stream"),
+        "{strong}"
+    );
+    let out = debug_out(&src("weak Conn | null"));
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("");
+    let line = line.trim();
+    assert!(
+        !has(line, "class Conn") && !has(line, "class Stream"),
+        "{out}"
+    );
+}
+
+#[test]
 fn counted_types_that_cannot_reach_themselves_are_not_cycle_capable() {
     let c = cycle_capable(
         "class Leaf { n: number = 1; }

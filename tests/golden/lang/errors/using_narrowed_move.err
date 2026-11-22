@@ -1,0 +1,6 @@
+using_narrowed_move.velt:15:12: error: cannot move `r` out of its `using` declaration
+  = note: `r` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_narrowed_move.velt:22:10: error: cannot move `r` out of its `using` declaration
+  = note: `r` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_narrowed_move.velt:27:17: error: cannot move `r` out of its `using` declaration
+  = note: `r` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over

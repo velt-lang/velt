@@ -13,6 +13,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::{ensure_body, FnCx, Want};
+use crate::any::Dynamic;
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, RetSource, RetWant};
 use crate::hir::{self, DefId, ExprKind as H, Nothing, StmtKind as S, TyId, TyKind};
@@ -367,6 +368,11 @@ impl FnCx<'_, '_> {
             }
             None => (h.ty, false),
         };
+        // An `any` or `unknown` an async body returns may hold a promise to adopt (#924,
+        // `CoerceReturns`).
+        if self.f.is_async && matches!(self.cx.dynamic(ty), Some(Dynamic::Any | Dynamic::Unknown)) {
+            self.f.returns.promises = true;
+        }
         let wide = self.cx.widened(ty);
         // A literal or a literal union (`x` narrowed to `"b"`, or to `"b" | "c"`) returns its
         // base type: converted here, where `x`'s narrowing still holds, so every `return`
@@ -592,6 +598,18 @@ impl VisitMut for CoerceReturns<'_, '_, '_> {
             let stored = self.fcx.inferred_promise_return(h, self.to);
             self.fcx.f.adopt_stmt = false;
             s.kind = S::Expr(stored);
+            return;
+        }
+        // An `any` or `unknown` returned from an async body whose inferred result is one: the
+        // promise it may hold is adopted (#924), as with a written result (`async_returned`).
+        let dynamic =
+            |f: &FnCx, t| matches!(f.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown));
+        let gen = self.fcx.f.yield_ty.is_some();
+        if self.fcx.f.is_async && !gen && dynamic(self.fcx, e.ty) && dynamic(self.fcx, self.to) {
+            let (placeholder, span) =
+                (self.fcx.mk(H::Lit(hir::Lit::Unit), self.to, e.span), e.span);
+            let h = std::mem::replace(e, placeholder);
+            *e = self.fcx.adopt_dynamic(h, self.to, span);
             return;
         }
         if e.ty != self.to {

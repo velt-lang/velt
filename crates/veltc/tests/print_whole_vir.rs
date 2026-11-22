@@ -32,7 +32,7 @@ fn calls(vir: &str, name: &str) -> usize {
 }
 
 /// The body of `velt_main` in `vir`, where the writers' calls are once inlined (the writers'
-/// own bodies call the runtime's printer too).
+/// own bodies call std's float printing too).
 fn main_body(vir: &str) -> &str {
     let start = vir
         .find("export velt_main(")
@@ -64,7 +64,7 @@ const BOTH: &str = "function main() {
 fn a_whole_number_takes_the_integer_writer_where_the_program_has_it() {
     let vir = vir_of(BOTH);
     let main = main_body(&vir);
-    assert_eq!(calls(main, "velt_rt_write_f64"), 0, "{vir}");
+    assert_eq!(calls(main, "writeText("), 0, "{vir}");
     assert_eq!(calls(&vir, "wholeNumberWrite("), 0, "{vir}");
     assert_eq!(calls(main, "digitsWrite("), 2, "{vir}");
 }
@@ -73,7 +73,7 @@ fn a_whole_number_takes_the_integer_writer_where_the_program_has_it() {
 fn the_js_loop_alone_takes_the_whole_number_writer() {
     let vir = vir_of(LOOP);
     let main = main_body(&vir);
-    assert_eq!(calls(main, "velt_rt_write_f64"), 0, "{vir}");
+    assert_eq!(calls(main, "writeText("), 0, "{vir}");
     assert_eq!(calls(main, "wholeNumberWrite("), 1, "{vir}");
     assert_eq!(calls(&vir, "digitsWrite("), 0, "{vir}");
 }

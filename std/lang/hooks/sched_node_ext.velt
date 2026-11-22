@@ -7,7 +7,8 @@
 // It is made on the task that owns the node (its first hand-over, its conversion) and only read
 // after: the pointer is stored before the EXT flag is set (one atomic or), and a reader tests the
 // flag first, so a reader on another worker sees the block or no block, never a torn pointer.
-// The block: the transfer glue, and an alias's holder, quiet result drop and hub.
+// The block: the transfer glue, an alias's holder, quiet result drop and hub, and the hub a listed
+// promise waits in.
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
@@ -24,7 +25,9 @@ export const X_TRANSFER: usize = 0;
 export const X_ALIAS: usize = 8;
 export const X_QUIET: usize = 16;
 export const X_HUB: usize = 24;
-const X_BYTES: usize = 32;
+/** The hub a promise listed while it waits there keeps its waker in (sched_share_listed.velt). */
+export const X_WAITS: usize = 32;
+const X_BYTES: usize = 40;
 
 /** Node `n`'s side block, or 0 when it has none. */
 @inline("always")
