@@ -108,6 +108,7 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod lent_variant;
 mod lower_profile;
 mod moved_args;
 mod ptr_memory;

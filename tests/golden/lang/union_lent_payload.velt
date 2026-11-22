@@ -1,0 +1,56 @@
+// A local lent to a union parameter that only reads it (#3537): the union holds a borrowed copy
+// of the local, so nothing is retained or dropped for it, and the local is as it was after the
+// call. A callee that keeps the value (in an object) or changes the union, and a later argument
+// that assigns the local, still work on values of their own. The leak check counts every block.
+class Foo {
+  n: number = 1;
+}
+
+class Keeper {
+  kept: (u8[] | Foo)[] = [];
+
+  keep(x: u8[] | Foo) {
+    this.kept.push(x);
+  }
+}
+
+function size(x: u8[] | Foo, k: number): number {
+  return x instanceof Foo ? x.n + k : (x.length as number) + k;
+}
+
+function swap(x: u8[] | Foo): number {
+  x = new Foo();
+  return x instanceof Foo ? x.n : 0;
+}
+
+function label(x: string | Foo): string {
+  return x instanceof Foo ? "foo" : x;
+}
+
+function main() {
+  const b = Buffer.alloc(8);
+  const f = new Foo();
+  const s = "text";
+  let total = 0;
+  for (let i = 0; i < 1000; i++) {
+    total += size(b, i % 3) + size(f, 1);
+  }
+  console.log(total, b.length, f.n, label(s), label(f), s);
+
+  // The callee keeps what it was lent: its own reference, so the local can go.
+  const keeper = new Keeper();
+  {
+    const c = Buffer.alloc(3);
+    c[0] = 42;
+    keeper.keep(c);
+    keeper.keep(f);
+  }
+  const first = keeper.kept[0];
+  console.log(keeper.kept.length, first instanceof Foo ? 0 : first[0]);
+
+  // A callee that assigns its union parameter, and an argument after the union that assigns
+  // the local the union was made from.
+  console.log(swap(b), b.length);
+  let d = Buffer.alloc(5);
+  console.log(size(d, (d = Buffer.alloc(2)).length), d.length);
+}
