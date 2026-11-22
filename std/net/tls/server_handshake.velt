@@ -1,10 +1,11 @@
-// velt/net (internal): `ServerHandshake`, the TLS 1.3 server's handshake logic (RFC 8446 §4, full
-// handshake without PSK, #2392 step 4): the ClientHello's choices (suite, group, ALPN), a
-// HelloRetryRequest when the client sent no usable key share, the server's flight
-// (ServerHello, EncryptedExtensions, Certificate, CertificateVerify signed with ECDSA P-256,
-// Finished), and the client's Finished checked. It does no I/O: `TlsEngine` feeds it messages and
-// sends what it says. No client certificates are asked for, no tickets are issued, and early data
-// is never accepted (a client only sends it when resuming with a ticket).
+// velt/net (internal): `ServerHandshake`, the TLS 1.3 server's handshake logic (RFC 8446 §4, #2392
+// step 4): the ClientHello's choices (suite, group, ALPN), a HelloRetryRequest when the client sent
+// no usable key share, the server's flight (ServerHello, EncryptedExtensions, Certificate and
+// CertificateVerify, Finished), and the client's Finished checked. With the listener's tickets
+// (`tickets`) a client's ticket resumes its session (psk_dhe_ke: no Certificate or signature) and
+// every handshake ends with a new ticket (std/net/tls/server_resume.velt). It does no I/O:
+// `TlsEngine` feeds it messages and sends what it says. No client certificates are asked for, and
+// early data is never accepted.
 
 import { randomBytes } from "velt/crypto/random";
 import { sha256 } from "velt/crypto/sha256";
@@ -21,8 +22,6 @@ import {
 } from "velt/net/tls/alert";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import {
-  CERTIFICATE,
-  CERTIFICATE_VERIFY,
   CLIENT_HELLO,
   ENCRYPTED_EXTENSIONS,
   FINISHED,
@@ -44,12 +43,16 @@ import {
   groupSupported,
 } from "velt/net/tls/key_exchange";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import { handshakeSecretAfter, resumptionMaster } from "velt/net/tls/key_schedule_psk";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
+import { certificateMessage, certificateVerify } from "velt/net/tls/server_certificate";
 import { ServerKey } from "velt/net/tls/server_key";
-import { chooseScheme, schemeNames, signWith } from "velt/net/tls/server_signer";
+import { newTicket, resumeFrom } from "velt/net/tls/server_resume";
+import { chooseScheme, schemeNames } from "velt/net/tls/server_signer";
+import { TicketStore } from "velt/net/tls/ticket_store";
 import { u8x16 } from "velt/simd";
 
 /** ecdsa_secp256r1_sha256, the signature scheme of the server's CertificateVerify. */
@@ -114,6 +117,14 @@ export class ServerHandshake {
   clientApplication: u8[] | null = null;
   /** The rest of the handshake when the client has only TLS 1.2, else null. */
   tls12: ServerHandshake12 | null = null;
+  /** The listener's tickets: resumption is on (null: off, no tickets issued). */
+  tickets: shared<Mutex<TicketStore>> | null = null;
+  /** Whether this handshake resumed a session with a ticket. */
+  resumed: bool = false;
+  /** The NewSessionTicket to send after `S_DONE`, or null. */
+  ticket: u8[] | null = null;
+  // The master secret, kept for the next ticket when resumption is on.
+  private master: u8[] | null = null;
   /** TLS 1.2: the write keys, after `S_DONE12`. */
   writeCipher: RecordCipher | null = null;
   /** TLS 1.2: the server random and the ECDHE private key to use instead of new ones (tests). */
@@ -255,10 +266,24 @@ export class ServerHandshake {
     } catch (e) {
       throw new TlsFailure(ILLEGAL_PARAMETER, "the client's key share is not a valid point");
     }
-    const hello = serverHello13(randomBytes(32), offer.sessionId, this.suite, group, ours);
+    // A ticket of this listener's resumes (not after a HelloRetryRequest: a full handshake then).
+    const store = this.tickets;
+    const early = store != null && !retried ? resumeFrom(store, offer, m, this.suite) : null;
+    this.resumed = early != null;
+    const hello = serverHello13(
+      randomBytes(32),
+      offer.sessionId,
+      this.suite,
+      group,
+      ours,
+      early != null ? 0 : -1,
+    );
     this.add(hello);
     this.hello = hello;
-    const hs = handshakeSecret(secret, hashLength(this.suite));
+    const hs =
+      early != null
+        ? handshakeSecretAfter(early, secret)
+        : handshakeSecret(secret, hashLength(this.suite));
     const h1 = this.hashOf(this.transcript);
     this.clientHandshake = expandLabel(hs, "c hs traffic", h1, h1.length);
     this.serverHandshake = expandLabel(hs, "s hs traffic", h1, h1.length);
@@ -283,49 +308,15 @@ export class ServerHandshake {
     ee.end(eb, 3);
     this.add(ee.bytes);
     w.put(ee.bytes);
-    // Certificate: the chain, no request context, no extensions per entry.
-    const cert = new ByteWriter();
-    cert.u8(CERTIFICATE);
-    const cb = cert.begin(3);
-    cert.u8(0);
-    const list = cert.begin(3);
-    for (const der of this.key.chain) {
-      const one = cert.begin(3);
-      cert.put(der);
-      cert.end(one, 3);
-      cert.u16(0);
+    // Certificate and CertificateVerify, unless the PSK of a resumption authenticates the server.
+    if (early == null) {
+      const cert = certificateMessage(this.key);
+      this.add(cert);
+      w.put(cert);
+      const cv = certificateVerify(this.key, this.scheme, this.hashOf(this.transcript));
+      this.add(cv);
+      w.put(cv);
     }
-    cert.end(list, 3);
-    cert.end(cb, 3);
-    this.add(cert.bytes);
-    w.put(cert.bytes);
-    // CertificateVerify: the transcript so far, signed (§4.4.3).
-    const signed: u8[] = [];
-    for (let i = 0; i < 64; i++) {
-      signed.push(0x20);
-    }
-    // By index: a `for...of` over these arrays leaks them in a release build where `u8[]` is
-    // counted (#2455).
-    const context = utf8Encode("TLS 1.3, server CertificateVerify");
-    for (let i: usize = 0; i < context.length; i++) {
-      signed.push(context[i]);
-    }
-    signed.push(0);
-    const th = this.hashOf(this.transcript);
-    for (let i: usize = 0; i < th.length; i++) {
-      signed.push(th[i]);
-    }
-    const sig = signWith(this.key, this.scheme, signed);
-    const cv = new ByteWriter();
-    cv.u8(CERTIFICATE_VERIFY);
-    const vb = cv.begin(3);
-    cv.u16(this.scheme);
-    const s = cv.begin(2);
-    cv.put(sig);
-    cv.end(s, 2);
-    cv.end(vb, 3);
-    this.add(cv.bytes);
-    w.put(cv.bytes);
     // Finished.
     const fin = new ByteWriter();
     fin.u8(FINISHED);
@@ -336,6 +327,9 @@ export class ServerHandshake {
     w.put(fin.bytes);
     this.flight = w.bytes;
     const master = masterSecret(hs);
+    if (store != null) {
+      this.master = master;
+    }
     const h2 = this.hashOf(this.transcript);
     this.flightHash = h2;
     this.clientApplication = expandLabel(master, "c ap traffic", h2, h2.length);
@@ -407,6 +401,14 @@ export class ServerHandshake {
       throw new TlsFailure(DECRYPT_ERROR, "the client's Finished does not match the handshake");
     }
     this.state = DONE;
+    // The next ticket, from the transcript through the client's Finished (§4.6.1, §7.1).
+    const store = this.tickets;
+    const master = this.master;
+    if (store != null && master != null) {
+      this.add(m);
+      const rms = resumptionMaster(master, this.hashOf(this.transcript));
+      this.ticket = newTicket(store, this.suite, this.serverName, rms);
+    }
     this.transcript = [];
     return S_DONE;
   }

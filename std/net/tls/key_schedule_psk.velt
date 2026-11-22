@@ -1,0 +1,39 @@
+// velt/net (internal): the parts of TLS 1.3's key schedule (RFC 8446 §7.1) that a pre-shared key
+// adds, for session resumption on the server (`ServerHandshake`, std/net/tls/server_resume.velt):
+// the early secret from the PSK, the binder key, the handshake secret after it, and the secrets
+// that make the next ticket's PSK. Every secret is as long as the suite's hash (32 or 48 bytes).
+
+import { hkdfExtractSha256, hkdfExtractSha384 } from "velt/crypto/hkdf";
+import { derived, emptyHash, expandLabel, SHA384_LEN } from "velt/net/tls/key_schedule";
+
+/** The early secret: HKDF-Extract with a zero salt over the PSK. */
+export function earlySecret(psk: u8[]): u8[] {
+  const zeros = Buffer.alloc(psk.length);
+  return psk.length == SHA384_LEN ? hkdfExtractSha384(zeros, psk) : hkdfExtractSha256(zeros, psk);
+}
+
+/** The binder key of a resumption PSK: Derive-Secret(early, "res binder", ""). */
+export function binderKey(early: u8[]): u8[] {
+  return expandLabel(early, "res binder", emptyHash(early.length), early.length);
+}
+
+/** The handshake secret after the early secret `early`, from the (EC)DHE shared secret. */
+export function handshakeSecretAfter(early: u8[], shared: u8[]): u8[] {
+  const salt = derived(early);
+  return early.length == SHA384_LEN
+    ? hkdfExtractSha384(salt, shared)
+    : hkdfExtractSha256(salt, shared);
+}
+
+/**
+ * The resumption master secret: Derive-Secret(master, "res master", hash) with the transcript
+ * hash through the client's Finished.
+ */
+export function resumptionMaster(master: u8[], hash: u8[]): u8[] {
+  return expandLabel(master, "res master", hash, master.length);
+}
+
+/** The PSK of the ticket with `nonce` (RFC 8446 §4.6.1). */
+export function ticketPsk(resumption: u8[], nonce: u8[]): u8[] {
+  return expandLabel(resumption, "resumption", nonce, resumption.length);
+}

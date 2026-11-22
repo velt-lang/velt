@@ -1,0 +1,155 @@
+// velt/net (tests): TLS 1.3 session resumption on the server (server_resume.velt,
+// key_schedule_psk.velt, ticket_store.velt): the PSK parts of the key schedule against RFC 8448 §4
+// ("Resumed 0-RTT Handshake"), that trace's ClientHello parsed, and the server resuming with its
+// ticket (no Certificate or CertificateVerify), refusing a wrong binder, falling back to a full
+// handshake for an unknown or used ticket. Run by `velt test std/`.
+import { sha256 } from "velt/crypto/sha256";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import { parseClientHello } from "velt/net/tls/client_hello_parse";
+import { expandLabel, finishedMac } from "velt/net/tls/key_schedule";
+import { binderKey, earlySecret, resumptionMaster, ticketPsk } from "velt/net/tls/key_schedule_psk";
+import { S_SEND_FLIGHT, ServerHandshake } from "velt/net/tls/server_handshake";
+import { serverKey } from "velt/net/tls/server_key";
+import { Ticket, TicketStore } from "velt/net/tls/ticket_store";
+import { describe, expect, it } from "velt/test";
+import * as v from "./server_keys_vectors.test";
+
+// RFC 8448 §3: "tls13 res master" from its PRK and the transcript hash, and §3's ticket PSK
+// ("tls13 resumption", nonce 00 00).
+const RES_PRK = "18df06843d13a08bf2a449844c5f8a478001bc4d4c627984d5a41da8d0402919";
+const RES_HASH = "209145a96ee8e2a122ff810047cc952684658d6049e86429426db87c54ad143d";
+const RES_MASTER = "7df235f2031d2a051287d02b0241b0bfdaf86cc856231f2d5aba46c434ec196c";
+const PSK = "4ecd0eb6ec3b4d87f5d6028f922ca4c5851a277fd41311c9e62d2c9492e1c4f3";
+// RFC 8448 §4: the early secret, the binder key, the hash of the ClientHello up to its binders,
+// and the binder.
+const EARLY = "9b2188e9b2fc6d64d71dc329900e20bb41915000f678aa839cbb797cb7d8332c";
+const BINDER_KEY = "69fe131a3bbad5d63c64eebcc30e395b9d8107726a13d074e389dbc8a4e47256";
+const BINDER_HASH = "63224b2e4573f2d3454ca84b9d009a04f6be9e05711a8396473aefa01e924a14";
+const BINDER = "3add4fb2d8fdf822a0ca3cf7678ef5e88dae990141c5924d57bb6fa31b9e5f9d";
+
+// RFC 8448 §4's ClientHello (512 bytes), with its PSK identity (the ticket, 178 bytes).
+const CLIENT_HELLO =
+  "010001fc03031bc3ceb6bbe39cff938355b5a50adb6db21b7a6af649d7b4bc419d7876487d9500000613011303130201" +
+  "0001cd0000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400" +
+  "3300260024001d0020e4ffb68ac05f8d96c99da26698346c6be16482badddafe051a66b4f18d668f0b002a0000002b00" +
+  "03020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c" +
+  "000240010015005700000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "2900dd00b800b22c035d829359ee5ff7af4ec900000000262a6494dc486d2c8a34cb33fa90bf1b0070ad3c498883c936" +
+  "7c09a2be785abc55cd226097a3a982117283f82a03a143efd3ff5dd36d64e861be7fd61d2827db279cce145077d454a3" +
+  "664d4e6da4d29ee03725a6a4dafcd0fc67d2aea70529513e3da2677fa5906c5b3f7d8f92f228bda40dda721470f9fbf2" +
+  "97b5aea617646fac5c03272e970727c621a79141ef5f7de6505e5bfbc388e93343694093934ae4d357fad6aacb002120" +
+  "3add4fb2d8fdf822a0ca3cf7678ef5e88dae990141c5924d57bb6fa31b9e5f9d";
+const IDENTITY =
+  "2c035d829359ee5ff7af4ec900000000262a6494dc486d2c8a34cb33fa90bf1b0070ad3c498883c9367c09a2be785abc" +
+  "55cd226097a3a982117283f82a03a143efd3ff5dd36d64e861be7fd61d2827db279cce145077d454a3664d4e6da4d29e" +
+  "e03725a6a4dafcd0fc67d2aea70529513e3da2677fa5906c5b3f7d8f92f228bda40dda721470f9fbf297b5aea617646f" +
+  "ac5c03272e970727c621a79141ef5f7de6505e5bfbc388e93343694093934ae4d357";
+
+// A server whose tickets hold `tickets` (identity, PSK) for SNI "server" and AES-128-GCM.
+function server(tickets: string[][]): ServerHandshake {
+  const key = serverKey(v.P256_CERT, v.P256_PKCS8, true);
+  if (key == null) {
+    throw new Error("the test key");
+  }
+  const store = new TicketStore();
+  for (const t of tickets) {
+    store.put(hexDecode(t[0]), new Ticket(hexDecode(t[1]), 0x1301, "server", Date.now() as number, 0));
+  }
+  const h = new ServerHandshake(key, []);
+  h.tickets = shared(new Mutex<TicketStore>(store));
+  return h;
+}
+
+// The types of the handshake messages in `flight`, in order.
+function types(flight: u8[]): u8[] {
+  const out: u8[] = [];
+  let at: usize = 0;
+  while (at + 4 <= flight.length) {
+    out.push(flight[at]);
+    const n = ((flight[at + 1] as usize) << 16) | ((flight[at + 2] as usize) << 8) | (flight[at + 3] as usize);
+    at += 4 + n;
+  }
+  return out;
+}
+
+describe("TLS 1.3 resumption's key schedule, RFC 8448", () => {
+  it("makes the ticket's PSK from the resumption master secret", () => {
+    const rms = resumptionMaster(hexDecode(RES_PRK), hexDecode(RES_HASH));
+    expect(hexEncode(rms)).toBe(RES_MASTER);
+    expect(hexEncode(ticketPsk(rms, [0, 0]))).toBe(PSK);
+  });
+
+  it("makes the early secret, the binder key and the binder from the PSK", () => {
+    const early = earlySecret(hexDecode(PSK));
+    expect(hexEncode(early)).toBe(EARLY);
+    const bk = binderKey(early);
+    expect(hexEncode(bk)).toBe(BINDER_KEY);
+    expect(hexEncode(finishedMac(bk, hexDecode(BINDER_HASH)))).toBe(BINDER);
+    expect(hexEncode(expandLabel(bk, "finished", [], 32)).length).toBe(64);
+  });
+});
+
+describe("a ClientHello's pre_shared_key", () => {
+  it("has the identity, the binder and where the binders start", () => {
+    const m = hexDecode(CLIENT_HELLO);
+    const offer = parseClientHello(m.slice(4));
+    expect(offer.pskDheKe).toBe(true);
+    expect(offer.pskIds.length).toBe(1);
+    expect(hexEncode(offer.pskIds[0])).toBe(IDENTITY);
+    expect(hexEncode(offer.binders[0])).toBe(BINDER);
+    // RFC 8448's "ClientHello prefix" is 477 bytes, its hash the binder hash.
+    expect(offer.bindersAt).toBe(473);
+    expect(hexEncode(sha256(m.slice(0, 477)))).toBe(BINDER_HASH);
+  });
+});
+
+describe("the TLS 1.3 server with tickets", () => {
+  it("resumes with a ticket it issued: no Certificate, no CertificateVerify", () => {
+    const h = server([[IDENTITY, PSK]]);
+    expect(h.onMessage(hexDecode(CLIENT_HELLO))).toBe(S_SEND_FLIGHT);
+    expect(h.resumed).toBe(true);
+    // EncryptedExtensions, Finished.
+    expect(types(h.flight!)).toEqual([8, 20]);
+  });
+
+  it("refuses a binder that does not match the ClientHello", () => {
+    const h = server([[IDENTITY, PSK]]);
+    const m = hexDecode(CLIENT_HELLO);
+    m[m.length - 1] ^= 1;
+    let got = "";
+    try {
+      h.onMessage(m);
+    } catch (e) {
+      got = e instanceof TlsFailure ? e.message : `${e}`;
+    }
+    expect(got).toContain("PSK binder");
+  });
+
+  it("runs a full handshake for a ticket it does not know, and for one used already", () => {
+    const unknown = server([]);
+    expect(unknown.onMessage(hexDecode(CLIENT_HELLO))).toBe(S_SEND_FLIGHT);
+    expect(unknown.resumed).toBe(false);
+    // EncryptedExtensions, Certificate, CertificateVerify, Finished.
+    expect(types(unknown.flight!)).toEqual([8, 11, 15, 20]);
+    const store = new TicketStore();
+    store.put(hexDecode(IDENTITY), new Ticket(hexDecode(PSK), 0x1301, "server", Date.now() as number, 0));
+    expect(store.take(hexDecode(IDENTITY)) != null).toBe(true);
+    expect(store.take(hexDecode(IDENTITY)) == null).toBe(true);
+  });
+
+  it("does not resume for another server name or an expired ticket", () => {
+    const key = serverKey(v.P256_CERT, v.P256_PKCS8, true)!;
+    const names = ["other", "server"];
+    const issued: number[] = [Date.now() as number, 0];
+    for (let i: usize = 0; i < 2; i++) {
+      const store = new TicketStore();
+      store.put(hexDecode(IDENTITY), new Ticket(hexDecode(PSK), 0x1301, names[i], issued[i], 0));
+      const h = new ServerHandshake(key, []);
+      h.tickets = shared(new Mutex<TicketStore>(store));
+      h.onMessage(hexDecode(CLIENT_HELLO));
+      expect(h.resumed).toBe(false);
+    }
+  });
+});

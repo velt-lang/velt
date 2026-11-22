@@ -30,7 +30,11 @@ import {
 import { RENEGOTIATION_SCSV } from "velt/net/tls/suites12";
 
 /** The extension pre_shared_key, which must come last (RFC 8446 §4.2.11). */
-const EXT_PRE_SHARED_KEY: usize = 41;
+export const EXT_PRE_SHARED_KEY: usize = 41;
+/** The extension psk_key_exchange_modes (RFC 8446 §4.2.9). */
+const EXT_PSK_KEY_EXCHANGE_MODES: usize = 45;
+/** psk_dhe_ke: a PSK with an (EC)DHE exchange, the only mode this server resumes with. */
+const PSK_DHE_KE: u8 = 1;
 
 /** What a ClientHello offers. */
 export class ClientOffer {
@@ -66,6 +70,17 @@ export class ClientOffer {
   serverName: string = "";
   /** Whether the hello has a cookie (only a second one, after a HelloRetryRequest that sent one). */
   cookie: bool = false;
+  /** Whether psk_key_exchange_modes has psk_dhe_ke. */
+  pskDheKe: bool = false;
+  /** pre_shared_key's identities (tickets), their obfuscated ages, and their binders. */
+  pskIds: u8[][] = [];
+  pskAges: u64[] = [];
+  binders: u8[][] = [];
+  /**
+   * Where in the message body pre_shared_key's binders start (their list's length): a binder
+   * covers the ClientHello up to there (§4.2.11.2). 0 without the extension.
+   */
+  bindersAt: usize = 0;
 }
 
 /** The ClientHello in `body` (the message without its 4-byte header). */
@@ -175,10 +190,15 @@ export function parseClientHello(body: u8[]): ClientOffer {
     } else if (type == EXT_COOKIE) {
       offer.cookie = true;
       e.skip(e.left());
-    } else {
-      if (type == EXT_PRE_SHARED_KEY && exts.left() > 0) {
+    } else if (type == EXT_PSK_KEY_EXCHANGE_MODES) {
+      const list = e.vector(1);
+      offer.pskDheKe = list.bytes(list.left()).includes(PSK_DHE_KE);
+    } else if (type == EXT_PRE_SHARED_KEY) {
+      if (exts.left() > 0) {
         throw new TlsFailure(ILLEGAL_PARAMETER, "pre_shared_key is not the last extension");
       }
+      readPsk(e, offer);
+    } else {
       e.skip(e.left());
     }
     e.finish();
@@ -241,5 +261,31 @@ function readShares(list: ByteReader, offer: ClientOffer) {
       }
       offer.p384Share = bytes;
     }
+  }
+}
+
+// pre_shared_key's OfferedPsks (§4.2.11): identities with their obfuscated ages, then binders,
+// one per identity.
+function readPsk(e: ByteReader, offer: ClientOffer) {
+  const ids = e.vector(2);
+  while (ids.left() > 0) {
+    const id = ids.vector(2);
+    if (id.left() == 0) {
+      throw new TlsFailure(DECODE_ERROR, "an empty PSK identity");
+    }
+    offer.pskIds.push(id.bytes(id.left()));
+    const hi = ids.u16() as u64;
+    offer.pskAges.push((hi << 16) | (ids.u16() as u64));
+  }
+  ids.finish();
+  offer.bindersAt = e.pos;
+  const list = e.vector(2);
+  while (list.left() > 0) {
+    const b = list.vector(1);
+    offer.binders.push(b.bytes(b.left()));
+  }
+  list.finish();
+  if (offer.pskIds.length == 0 || offer.binders.length != offer.pskIds.length) {
+    throw new TlsFailure(ILLEGAL_PARAMETER, "pre_shared_key's binders do not match its identities");
   }
 }

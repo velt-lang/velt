@@ -211,6 +211,11 @@ export class TlsEngine {
           r.cipher = new RecordCipher(h.suite, this.readSecret!);
           r.handshaking = false;
           this.alpn = h.alpn;
+          // The session ticket, under the application keys, before the first response.
+          const ticket = h.ticket;
+          if (ticket != null) {
+            out.queue(HANDSHAKE, ticket, false);
+          }
         }
       }
     } catch (e) {
