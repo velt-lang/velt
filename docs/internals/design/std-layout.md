@@ -172,6 +172,7 @@ name export the same API (`crates/velt_loader/src/variants.rs`, run by `velt che
 | Names | Files and folders `snake_case`; `*Sync` for blocking twins; Node's name where Node has the function. |
 | No duplicate exports | Rule 6 of §2, across all `index.velt` files. |
 | Tests | Every module has tests: an end-to-end test that imports it (`tests/golden`, `tests/std`) or white-box tests in its folder (§9). |
+| Unsafe code | Each `unsafe { … }` and each unsafe function or method has a comment saying `SAFETY:` in the comment lines directly above it (an unsafe function: or an `Unsafe:` paragraph in its doc comment), the rule c-ffi.md "`unsafe` blocks and functions" sets for packages. |
 
 The size limit only detects a problem; files are split by responsibility, never by line count:
 
@@ -192,8 +193,10 @@ folder's `index.velt` only re-exports).
 ### 7. Enforcement
 
 `scripts/std-lint/main.velt`, written in Velt, checks the rules of §2 and §6 and the module tests
-(`tested.velt`). `cargo xtask precheck` (the pre-push hook) runs it on the changed std files and
-the gate on all of std. Each message says what to do, not only what is wrong:
+(`tested.velt`), and the `// SAFETY:` rule (`safety.velt`, found by text; veltc's
+`native::unsafe_sites` std test checks it over the parsed modules too, and on std both find
+the same sites). `cargo xtask precheck` (the pre-push hook) runs it on the changed std files and the gate
+on all of std. Each message says what to do, not only what is wrong:
 
 | Rule | Message (example) |
 |---|---|
@@ -206,6 +209,7 @@ the gate on all of std. Each message says what to do, not only what is wrong:
 | `defaultExport` | `std modules have named exports only` |
 | `header` | ``the first line must start with `// velt/…` (run `velt run scripts/std-lint/main.velt --fix-headers`)`` |
 | `duplicateExport` | `` `Headers` is exported by velt/… too: every public name has one import path `` |
+| `safety` | ``line 32: unsafe code without a `// SAFETY:` comment directly before it (…); a call that `velt fmt` wraps past 100 columns moves `unsafe {` below its comment: bind the call's arguments to locals first`` |
 
 Existing violations are listed in `scripts/std-lint/allow.velt`. The list only shrinks: with
 `--base`, the lint rejects entries the base revision did not have, and without files it reports

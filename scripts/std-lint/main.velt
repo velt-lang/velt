@@ -14,6 +14,7 @@ import { execSync } from "velt/process/child";
 import { readFileSync, writeFileSync } from "velt/fs";
 import { args, exit } from "velt/process";
 import { allow } from "./allow";
+import { missingSafety } from "./safety";
 import { untestedModules } from "./tested";
 
 const MAX_LINES = 400;
@@ -382,6 +383,15 @@ function lint(std: Std): Problem[] {
           ),
         );
       }
+    }
+    for (const line of missingSafety(text)) {
+      problems.push(
+        new Problem(
+          file,
+          "safety",
+          `line ${line}: unsafe code without a \`// SAFETY:\` comment directly before it (an unsafe function: or an \`Unsafe:\` paragraph in its doc comment); a call that \`velt fmt\` wraps past 100 columns moves \`unsafe {\` below its comment: bind the call's arguments to locals first`,
+        ),
+      );
     }
     const header = expectedHeader(std, file);
     if (owned && header !== null && !text.startsWith(header)) {
