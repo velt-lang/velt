@@ -1,5 +1,5 @@
 // Patterns without the `u` flag that name surrogates over a subject with surrogate pairs: the
-// subject is searched as code units (crates/velt_rt/src/regex/units.rs). An exec loop, a sticky
+// subject is searched as code units (std/text/regex/decode.velt). An exec loop, a sticky
 // test loop and repeated tests over one long string must stay linear in its length:
 // `velt build --release bench/regex/units.velt -o units && time ./units 20000` (the argument is
 // the number of "ab😀" pieces; doubling it should double the time).

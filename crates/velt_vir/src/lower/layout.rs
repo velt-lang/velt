@@ -174,7 +174,11 @@ impl Cx<'_> {
                 // Fields, then presence flags (`Cx::presence_slot`).
                 let tys = self.part_types(t);
                 let tys = self.stored_tys(tys);
-                self.new_agg(name, &tys)
+                let a = self.new_agg(name, &tys);
+                if self.c_struct(t) {
+                    self.assert_c_layout(t, a);
+                }
+                a
             }
             TyKind::Tuple(es) => {
                 let tys = self.stored_tys(es);

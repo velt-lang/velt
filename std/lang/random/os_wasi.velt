@@ -4,7 +4,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 
-declare c("c") function getentropy(buf: Ptr<u8>, len: usize): i32;
+declare c("c") function getentropy(buf: Ptr<u8> | null, len: usize): i32;
 
 /** The most `getentropy` gives in one call. */
 const MAX_CALL: usize = 256;
@@ -18,7 +18,7 @@ export unsafe function fillRandomAt(base: usize, n: usize): void {
   while (done < n) {
     const k = n - done < MAX_CALL ? n - done : MAX_CALL;
     // SAFETY: bytes `done..done + k` of the caller's memory, at most 256.
-    const rc = unsafe { getentropy(Ptr.at<u8>(base + done), k) };
+    const rc = unsafe { getentropy(Ptr.orNull<u8>(base + done), k) };
     // random_get is a host call and may fail; going on would hand out zeros. A panic, not a
     // throw: `Math.random()` throws nothing, and neither may its callers because of it.
     if (rc != 0) {

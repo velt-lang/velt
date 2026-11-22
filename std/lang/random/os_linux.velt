@@ -7,7 +7,7 @@ import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics/address";
 import { noInline } from "velt/lang/intrinsics/decorators";
 
-declare c("c") function getrandom(buf: Ptr<u8>, n: usize, flags: u32): isize;
+declare c("c") function getrandom(buf: Ptr<u8> | null, n: usize, flags: u32): isize;
 /**
  * Where this thread's `errno` is, with glibc and musl alike (as std/ffi/errno_linux.velt): read
  * here directly, so a program whose only use is `Math.random()` doesn't compile velt/ffi's.
@@ -25,7 +25,7 @@ export unsafe function fillRandomAt(base: usize, n: usize): void {
   let done: usize = 0;
   while (done < n) {
     // SAFETY: bytes `done..n` of the caller's memory, which the loop has not filled yet.
-    const got = unsafe { getrandom(Ptr.at<u8>(base + done), n - done, 0) };
+    const got = unsafe { getrandom(Ptr.orNull<u8>(base + done), n - done, 0) };
     if (got > 0) {
       // A read past 256 bytes may be cut short by a signal.
       done += got as usize;

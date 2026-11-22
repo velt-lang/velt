@@ -117,6 +117,7 @@ pub(crate) struct Ctx<'m> {
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
     /// their functions from here ([`Ctx::unit_fns`]). 0 in a whole-program check.
     pub unit_base: u32,
+    pub wasm32: bool, // the target is wasm32 (`CheckOptions::wasm32`)
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -605,6 +606,7 @@ impl<'m> Ctx<'m> {
             unit_base: 0,
             unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
+            wasm32: false,
             scopes,
             prelude: FxHashMap::default(),
             prelude_type_keys: false,

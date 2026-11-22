@@ -190,7 +190,7 @@ export function wait(r: usize, timeoutMs: i64): usize {
   const kq = m.ld(r + R_KQ) as i32;
   const events = m.ptrTo<kevent>(r + R_EVENTS);
   // No timeout (0): wait until an event.
-  const until = m.ptrOrNull<timespec>(ts);
+  const until = m.ptrTo<timespec>(ts);
   // SAFETY: the block has room for MAX_EVENTS events and the timespec.
   const n = unsafe { kevent$io(kq, null, 0, events, MAX_EVENTS as i32, until) };
   return n < 0 ? 0 : n as usize;
@@ -308,8 +308,8 @@ export function wake(r: usize): void {
  * and `len` are 0 (`NULL`) when the peer's address isn't wanted.
  */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
-  const a = m.ptrOrNull<sockaddr>(addr);
-  const l = m.ptrOrNull<u32>(len);
+  const a = m.ptrTo<sockaddr>(addr);
+  const l = m.ptrTo<u32>(len);
   // SAFETY: `addr` holds the `socklen_t` at `len` bytes, or both are NULL.
   const s = unsafe { accept$io(fd, a, l) };
   if (s >= 0 && prepare(s) !== 0) {

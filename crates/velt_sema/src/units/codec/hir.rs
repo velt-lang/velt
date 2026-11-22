@@ -585,6 +585,8 @@ enums! {
         218 => PtrFromAddress,
         219 => PtrToAddress,
         220 => IsUnique,
+        221 => PtrRead,
+        222 => PtrWrite,
     }
 }
 

@@ -100,4 +100,16 @@ export function show(): void {
   const w2: W<i64> = [2, null];
   unused<string>(null);
   console.log(x, z, y, c, r1, r2, w1, w2);
+  // SAFETY: never run: the program doesn't build.
+  unsafe { Ptr.read(Ptr.at<void>(8), 0) };
+  // SAFETY: as above.
+  console.log(unsafe { Ptr.read(d, 0) }, readFirst(d));
 }
+
+/** Reads `T` through a type parameter: `Ptr.read`'s rule is checked where `T` is instantiated. */
+function readFirst<T>(p: Ptr<T>): T {
+  // SAFETY: never run.
+  return unsafe { Ptr.read(p, 0) };
+}
+
+declare c struct Loose { p: Ptr<u8> | null | undefined; }

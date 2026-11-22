@@ -1,0 +1,98 @@
+// velt/text (internal): the sets of Unicode property escapes (`\p{L}`, `\p{Script=Greek}`),
+// read from the generated tables (unicode_tables.velt) when a pattern names one.
+
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { CharSet } from "velt/text/regex/char_set";
+import {
+  BINARY_COUNT,
+  BINARY_NAMES,
+  GC_COUNT,
+  GC_NAMES,
+  SCRIPT_COUNT,
+  SCRIPT_NAMES,
+  TABLES,
+} from "velt/text/regex/unicode_tables";
+
+/** Reads the number at byte `at[0]` of `data` (unicode_tables.velt says how one is written)
+ * and moves `at[0]` past it. */
+export function readNumber(data: string, at: usize[]): u32 {
+  let v: u32 = 0;
+  let shift: u32 = 0;
+  let i = at[0];
+  while (true) {
+    const c = strByteAt(data, i as u64) as u32;
+    i++;
+    if (c >= 0x5d) {
+      at[0] = i;
+      return v | ((c - 0x5d) << shift);
+    }
+    v |= (c - 0x23) << shift;
+    shift += 5;
+  }
+}
+
+/** Which value of `names` (`,` between values, `|` between a value's names) has the name
+ * `name`, or -1. */
+function indexOfName(names: string, name: string): i64 {
+  const values = names.split(",");
+  for (let i: usize = 0; i < values.length; i++) {
+    if (values[i].split("|").includes(name)) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** Adds the ranges of table `index` of `TABLES` to `set`; true when the table says it only
+ * holds what another lacks (a leading `+`). */
+function addTable(index: usize, set: CharSet): bool {
+  const data = TABLES;
+  let i: usize = 0;
+  for (let k: usize = 0; k < index; k++) {
+    i = data.indexOf("!", i as i64) as usize + 1;
+  }
+  const extra = strByteAt(data, i as u64) == 0x2b;
+  const at: usize[] = [extra ? i + 1 : i];
+  let next: u32 = 0;
+  while (at[0] < strByteLen(data) && strByteAt(data, at[0] as u64) != 0x21) {
+    const lo = next + readNumber(data, at);
+    const hi = lo + readNumber(data, at);
+    set.add(lo, hi);
+    next = hi + 1;
+  }
+  return extra;
+}
+
+/** The characters with property `name` (of value `value` when `hasValue`: `\p{sc=Grek}`), or
+ * null when JavaScript knows no such property. */
+export function propertySet(name: string, value: string, hasValue: bool): CharSet | null {
+  const set = new CharSet();
+  if (!hasValue) {
+    const gc = indexOfName(GC_NAMES, name);
+    const binary = gc < 0 ? indexOfName(BINARY_NAMES, name) : -1;
+    if (gc < 0 && binary < 0) {
+      return null;
+    }
+    addTable(gc >= 0 ? gc as usize : GC_COUNT + (binary as usize), set);
+    return set;
+  }
+  if (name == "General_Category" || name == "gc") {
+    const gc = indexOfName(GC_NAMES, value);
+    if (gc < 0) {
+      return null;
+    }
+    addTable(gc as usize, set);
+    return set;
+  }
+  const extensions = name == "Script_Extensions" || name == "scx";
+  const script =
+    extensions || name == "Script" || name == "sc" ? indexOfName(SCRIPT_NAMES, value) : -1;
+  if (script < 0) {
+    return null;
+  }
+  const own = GC_COUNT + BINARY_COUNT + (script as usize);
+  if (!extensions || addTable(own + SCRIPT_COUNT, set)) {
+    addTable(own, set);
+  }
+  return set;
+}

@@ -7,7 +7,7 @@ import { noInline } from "velt/lang/intrinsics/decorators";
 
 declare c("c") function BCryptGenRandom(
   algorithm: Ptr<void> | null,
-  buf: Ptr<u8>,
+  buf: Ptr<u8> | null,
   n: u32,
   flags: u32,
 ): i32;
@@ -30,7 +30,7 @@ export unsafe function fillRandomAt(base: usize, n: usize): void {
     // SAFETY: bytes `done..done + k` of the caller's memory; no algorithm handle with
     // SYSTEM_PREFERRED.
     unsafe {
-      status = BCryptGenRandom(null, Ptr.at<u8>(base + done), k as u32, SYSTEM_PREFERRED);
+      status = BCryptGenRandom(null, Ptr.orNull<u8>(base + done), k as u32, SYSTEM_PREFERRED);
     }
     if (status != 0) {
       stop();

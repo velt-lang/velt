@@ -375,8 +375,8 @@ export function wake(r: usize): void {
 
 /** Accepts a connection of listener `fd`, non-blocking and not inherited: its socket, or -1. */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
-  const a = m.ptrOrNull<u8>(addr);
-  const l = m.ptrOrNull<u8>(len);
+  const a = m.ptrTo<u8>(addr);
+  const l = m.ptrTo<u8>(len);
   // SAFETY: `addr` holds the `int` length at `len` (both may be NULL).
   const s = unsafe { accept$afd(fd as usize, a, l) };
   if (s > 0x7fffffff) {
