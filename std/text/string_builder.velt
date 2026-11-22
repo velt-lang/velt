@@ -9,12 +9,12 @@
 // it that is a call: such an argument would make the compiler read `buf` into a copy first, to
 // keep its value, and the append would go to the copy.
 
+import { hookCall } from "velt/lang/intrinsics";
 import { isWhole, pushI64 } from "velt/lang/number/integer";
 
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_byte(buf: string, byte: u8);
-declare function velt_rt_strbuf_push_f64(buf: string, v: f64);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 /** A string built by appending: `toString()` and `take()` return it without a copy. */
@@ -49,15 +49,16 @@ export class StringBuilder {
 
   /**
    * Appends `x` as `String(x)` writes it (`1e+21`, `NaN`, `-0` as `0`): a whole number through
-   * std's integer printing, any other through the runtime's printer (std's float printer is not
-   * loaded for a `StringBuilder`).
+   * std's integer printing, any other through std's float printing, by role (`number_shortest`:
+   * it is not compiled into every program that has a `StringBuilder`).
    */
   appendNumber(x: f64): void {
     if (isWhole(x)) {
       pushI64(this.buf, x as i64);
       return;
     }
-    velt_rt_strbuf_push_f64(this.buf, x);
+    const text: string = hookCall("number_shortest", x);
+    velt_rt_strbuf_push_str(this.buf, text);
   }
 
   /** The length of the text so far, in UTF-16 code units (as `toString().length`). */

@@ -1,0 +1,31 @@
+// Floats as text where std's code prints them (#2196): `JSON.stringify` of doubles with 16 or 17
+// digits (past the JSON writer's short path), `StringBuilder.appendNumber`, and `console.log` of
+// an array of floats (the formatting glue: 2,000 lines of 100), 200k values each, plus a
+// template's `${x}`. Run with stdout to /dev/null; the last line is the total length.
+function main() {
+  const xs: number[] = [];
+  for (let i = 0; i < 200000; i++) {
+    xs.push((i * 7 + 1) / 3.7 + i / 1e9);
+  }
+  let total = 0;
+  total += JSON.stringify(xs).length;
+  const sb = new StringBuilder();
+  for (const x of xs) {
+    sb.appendNumber(x);
+    sb.append(",");
+  }
+  total += sb.toString().length;
+  let text = 0;
+  for (let i = 0; i < 2000; i++) {
+    text += `${xs[i * 100]}`.length;
+  }
+  total += text;
+  const row: number[] = [];
+  for (let i = 0; i < 100; i++) {
+    row.push(xs[i] / 7);
+  }
+  for (let i = 0; i < 2000; i++) {
+    console.log(row);
+  }
+  console.log(total);
+}

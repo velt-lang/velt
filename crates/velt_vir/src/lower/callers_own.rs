@@ -16,6 +16,15 @@ use crate::vir::{Operand, Place, Rvalue, Ty};
 const DEPTH: u32 = 8;
 
 impl FnLower<'_, '_> {
+    /// Is `ty` a function value's type, or an option of one (`(() => T) | null`)?
+    pub(super) fn fn_value_type(&mut self, ty: TyId) -> bool {
+        let t = match self.cx.kind(ty) {
+            TyKind::Option(e, _) => e,
+            _ => ty,
+        };
+        matches!(self.cx.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_))
+    }
+
     /// Does the caller count a value of type `ty` as any object, its parts counted by it: a
     /// counted object outside the lock set, or a function value, that reaches the lock set? (A
     /// lock-set object of the caller's the reader holds uncounted: its store counts it.)
@@ -23,7 +32,7 @@ impl FnLower<'_, '_> {
         if !self.cx.reaches_lock_set(ty) {
             return false;
         }
-        if matches!(self.cx.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_)) {
+        if self.fn_value_type(ty) {
             return true;
         }
         let t = match self.cx.kind(ty) {
