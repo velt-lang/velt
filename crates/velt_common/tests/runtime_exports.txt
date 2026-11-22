@@ -154,7 +154,6 @@ velt_rt velt_rt_rows_columns
 velt_rt velt_rt_rows_end
 velt_rt velt_rt_rows_exact_i64
 velt_rt velt_rt_rows_f64
-velt_rt velt_rt_rows_fail
 velt_rt velt_rt_rows_field
 velt_rt velt_rt_rows_field_map
 velt_rt velt_rt_rows_header
