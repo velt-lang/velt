@@ -46,7 +46,7 @@ pub(super) fn walk_type<'a>(t: &'a ast::TypeExpr, v: &mut dyn Visit<'a>) {
             sigs.iter().for_each(|s| walk_sig_types(&s.sig, v));
             walk_type(members, v);
         }
-        T::KeyOf(inner) => walk_type(inner, v),
+        T::KeyOf(inner) | T::Weak(inner) => walk_type(inner, v),
         T::Conditional(c) => {
             walk_type(&c.check, v);
             walk_type(&c.extends, v);

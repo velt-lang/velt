@@ -63,6 +63,9 @@ impl Cx<'_> {
     /// reference type, or of a value holding one, asks the next pass to count it (`close_share`).
     /// Interface values qualify: every vtable's share entry is built whether or not it is used.
     pub(in crate::lower) fn shares_as_counted(&mut self, t: TyId) -> bool {
+        // A shape question: a placeholder's answer is its representative's (the shape key
+        // holds it, shape/key.rs `bits`).
+        let t = self.ph_rep(t);
         match self.share_kind(t) {
             ShareKind::Object => self.counted(t),
             ShareKind::Value => {

@@ -31,6 +31,7 @@ pub(super) fn writer(cx: &Ctx, d: DefId) -> bool {
 /// Put every closure and class `clone()` that changes what it holds in `Ctx::changes_held` (module
 /// docs).
 pub(crate) fn record_changed_captures(cx: &mut Ctx) {
+    crate::body::lazy_std::prepare_walk(cx);
     // In a check by units (`crate::units`) a unit's closures get the flag whatever the program
     // shares (D2: a finished unit's facts can't depend on a later unit), and only the unit's
     // closures are looked at; a whole-program check looks only when it shares a function.

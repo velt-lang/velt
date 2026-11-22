@@ -1,0 +1,13 @@
+// A write to a data property `Object.defineProperty` made read-only on a record is Node's
+// `TypeError`. No `try` catches it yet (#1637), so the process ends with it, after the output
+// before it.
+const r: Record<string, number> = { a: 1 };
+Object.defineProperty(r, "fixed", {
+  value: 2,
+  enumerable: false,
+  writable: false,
+  configurable: true,
+});
+console.log(r.fixed, Object.keys(r));
+r.fixed = 3;
+console.log("not reached");

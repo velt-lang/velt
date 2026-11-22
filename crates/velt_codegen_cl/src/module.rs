@@ -123,6 +123,14 @@ pub(crate) fn build_module_cached<M: Module>(
     validate_aggregates(program)?;
     let (mut decls, defs) = declare_all(module, program, naming)?;
     let target = Target::of(isa, module);
+    // The code that runs before std's start-up check of the CPU (`vir::Function::baseline`):
+    // translated and compiled for the baseline CPU, whatever `--cpu` says.
+    let base_isa = baseline_isa(isa, program, naming)?;
+    let base_target = base_isa.as_deref().map(|i| Target::of(i, module));
+    let target_of = |func: &vir::Function| match (func.baseline, &base_target) {
+        (true, Some(base)) => base,
+        _ => &target,
+    };
     let declared = start.elapsed();
 
     // Workers translate and compile against `target`, a copy of the declarations, while this
@@ -141,7 +149,15 @@ pub(crate) fn build_module_cached<M: Module>(
         .collect();
     let compile = |builder_ctx: &mut FunctionBuilderContext, i: usize| {
         let (id, func) = defined[i];
-        compile_function(&target, program, &decls, id, func, builder_ctx, cache)
+        compile_function(
+            target_of(func),
+            program,
+            &decls,
+            id,
+            func,
+            builder_ctx,
+            cache,
+        )
     };
     let mut own_builder_ctx = FunctionBuilderContext::new();
     let define = |i: usize, outcome: CodegenResult<Outcome>| -> CodegenResult<()> {
@@ -157,6 +173,9 @@ pub(crate) fn build_module_cached<M: Module>(
                 let id = module
                     .declare_function(lib.name(), Linkage::Import, &sig)
                     .map_err(|e| format!("codegen: declaring `{}`: {e}", lib.name()))?;
+                if let Some(base) = &base_target {
+                    base.add_lib(lib, id, sig.clone());
+                }
                 target.add_lib(lib, id, sig);
             }
             outcome = compile(&mut own_builder_ctx, i)?;
@@ -165,9 +184,9 @@ pub(crate) fn build_module_cached<M: Module>(
             unreachable!("ICE: a function still needs a C library function");
         };
         let start = Instant::now();
-        define_compiled(module, id, &compiled.ctx, &func.symbol)?;
+        define_code(module, id, &compiled.code, &compiled.ctx.func, &func.symbol)?;
         // Its cleanup pads: an LSDA (and the personality, once).
-        if let Some(code) = compiled.ctx.compiled_code().filter(|_| decls.unwinds) {
+        if let Some(code) = decls.unwinds.then_some(&compiled.code) {
             let sites = crate::eh::sites(code, false);
             if !sites.is_empty() {
                 crate::eh::add_lsda(module, decls.call_conv, &mut eh, id, &sites, &mut unwind)?;
@@ -209,9 +228,34 @@ pub(crate) fn build_module_cached<M: Module>(
     })
 }
 
+/// The ISA of the start-up code (`vir::Function::baseline`): `isa`'s target and settings for the
+/// baseline CPU of its architecture. `None` when the program has none, for WebAssembly, and for a
+/// `velt dev` version, which runs on the machine that compiles it.
+fn baseline_isa(
+    isa: &dyn TargetIsa,
+    program: &vir::Program,
+    naming: &Naming,
+) -> CodegenResult<Option<cranelift_codegen::isa::OwnedTargetIsa>> {
+    use target_lexicon::Architecture;
+    let arch = isa.triple().architecture;
+    let native_arch = matches!(arch, Architecture::X86_64 | Architecture::Aarch64(_));
+    if matches!(naming, Naming::Dev(..))
+        || !native_arch
+        || !program.funcs.iter().any(|f| f.baseline)
+    {
+        return Ok(None);
+    }
+    let optimize = isa.flags().opt_level() != cranelift_codegen::settings::OptLevel::None;
+    let jit = !isa.flags().is_pic();
+    let triple = isa.triple().to_string();
+    crate::isa::make_isa(&triple, Some("baseline"), optimize, jit).map(Some)
+}
+
 /// A function translated and compiled by a worker, ready to define.
 struct Compiled {
     ctx: Context,
+    /// Its machine code (`cache::compile_cached` gives it rather than leaving it in `ctx`).
+    code: cranelift_codegen::CompiledCode,
     /// Its code came from the cache.
     hit: bool,
     unwind: Option<FunctionUnwind>,
@@ -243,7 +287,15 @@ fn compile_function(
         Translation::Done(srclocs) => srclocs,
         Translation::NeedsLib(lib) => return Ok(Outcome::NeedsLib(lib)),
     };
-    let hit = compile_one(target.isa(), &mut ctx, &func.symbol, cache)?;
+    let (code, hit) = match cache {
+        Some(cache) => crate::cache::compile_cached(target.isa(), &mut ctx, &func.symbol, cache)?,
+        None => {
+            compile_one(target.isa(), &mut ctx, &func.symbol)?;
+            let code = (ctx.take_compiled_code())
+                .ok_or_else(|| format!("ICE: function `{}` was not compiled", func.symbol))?;
+            (code, false)
+        }
+    };
     // A function C calls has none, so an unwind can't pass it (`Function::stops_unwind`); on
     // Windows it keeps it, as the unwinder takes a function without one for a leaf and would
     // misread the stack past it; on x64 a language handler stops a Velt panic there instead
@@ -252,14 +304,15 @@ fn compile_function(
         target.isa().triple().operating_system == target_lexicon::OperatingSystem::Windows;
     let unwind = match func.stops_unwind && !windows {
         true => None,
-        false => unwind_info(target.isa(), id, &ctx, &func.symbol)?,
+        false => unwind_of(target.isa(), id, &code, &func.symbol)?,
     };
     let lines = match program.files.is_empty() {
         true => None,
-        false => FunctionLines::new(id, func, &ctx, &srclocs),
+        false => FunctionLines::new(id, func, &code, &srclocs),
     };
     Ok(Outcome::Compiled(Box::new(Compiled {
         ctx,
+        code,
         hit,
         unwind,
         lines,
@@ -289,7 +342,30 @@ pub(crate) fn declare_all<M: Module>(
     let (mut eh, mut eh_try, mut eh_unwind) = (None, None, vec![]);
     let mut eh_catches = None;
     let mut unwind_resume = None;
+    // `velt_simd_cpuid` and `velt_simd_xgetbv` on x86-64: functions this module defines (cpuid.rs).
+    let mut asks: [Option<FuncId>; 2] = [None, None];
     for e in &program.externs {
+        let asked = velt_vir::simd::SimdCall::of_symbol(&e.symbol)
+            .and_then(|call| crate::cpuid::kind(module, &call).map(|k| (k, call)));
+        if let Some((is_cpuid, call)) = asked {
+            let (params, ret) = call.signature();
+            if e.params != params || e.ret != ret {
+                bail!("ICE: `{}` declared with another signature", e.symbol);
+            }
+            let slot = &mut asks[usize::from(is_cpuid)];
+            let id = match *slot {
+                Some(id) => id,
+                None => {
+                    let link = crate::cpuid::LINKAGE;
+                    let id = declare_function(module, call_conv, &e.symbol, &params, ret, link)?;
+                    crate::cpuid::define(module, call_conv, id, is_cpuid)?;
+                    *slot = Some(id);
+                    id
+                }
+            };
+            externs.push(Some(id));
+            continue;
+        }
         // Catching a Velt panic: a function this module defines (eh.rs).
         if velt_vir::eh::is_try(&e.symbol) {
             let id = match eh_try {
@@ -627,7 +703,7 @@ pub(crate) fn define<M: Module>(
     ctx: &mut Context,
     symbol: &str,
 ) -> CodegenResult<()> {
-    compile_one(module.isa(), ctx, symbol, None)?;
+    compile_one(module.isa(), ctx, symbol)?;
     define_compiled(module, id, ctx, symbol)
 }
 
@@ -641,11 +717,22 @@ fn define_compiled<M: Module>(
     let code = ctx
         .compiled_code()
         .ok_or_else(|| format!("ICE: function `{symbol}` was not compiled"))?;
+    define_code(module, id, code, &ctx.func, symbol)
+}
+
+/// Define `id` in `module` with `code`, compiled from `func`.
+fn define_code<M: Module>(
+    module: &mut M,
+    id: FuncId,
+    code: &cranelift_codegen::CompiledCode,
+    func: &cranelift_codegen::ir::Function,
+    symbol: &str,
+) -> CodegenResult<()> {
     let relocs: Vec<ModuleReloc> = code
         .buffer
         .relocs()
         .iter()
-        .map(|reloc| ModuleReloc::from_mach_reloc(reloc, &ctx.func, id))
+        .map(|reloc| ModuleReloc::from_mach_reloc(reloc, func, id))
         .collect();
     let alignment = u64::from(code.buffer.alignment);
     module
@@ -662,6 +749,16 @@ pub(crate) fn unwind_info(
     let Some(code) = ctx.compiled_code() else {
         return Ok(None);
     };
+    unwind_of(isa, id, code, symbol)
+}
+
+/// [`unwind_info`] of `code`.
+fn unwind_of(
+    isa: &dyn TargetIsa,
+    id: FuncId,
+    code: &cranelift_codegen::CompiledCode,
+    symbol: &str,
+) -> CodegenResult<Option<FunctionUnwind>> {
     let info = crate::unwind::function_unwind(code, isa)
         .map_err(|e| format!("codegen: unwind info for `{symbol}`: {e}"))?;
     Ok(info.map(|info| (id, code.code_info().total_size, info)))

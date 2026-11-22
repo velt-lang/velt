@@ -12,11 +12,13 @@
 //!
 //! Refused (no object, and builds load the module as before): an entry point whose signature is
 //! not what `prebuilt.rs` says crosses, and code with state a program shares with it, which a
-//! copy in the object would split in two: module state (`velt_rt_module_state` and the
-//! executor's module hooks), thread-local values (`velt_tls_*`), static atomics (process statics
-//! such as `STR_EPOCH` among them) and named statics. The exception is state of the module's own:
-//! the thread-local values and static atomics declared in its private modules (`prebuilt.rs`
-//! "State"), which no program that links the object loads ([`own_state`]).
+//! copy in the object would split in two: module state (`velt_rt_module_state`, the executor's
+//! module hooks and the blocks of module_blocks.velt: [`holds_no_module_state`]), thread-local
+//! values (`velt_tls_*`), static atomics (process statics such as `STR_EPOCH` among them) and
+//! named statics. The exception is state of the module's own: the thread-local values and static
+//! atomics declared in its private modules (`prebuilt.rs` "State"), which no program that links
+//! the object loads ([`own_state`]), and the blocks of module state in module_blocks.velt's own
+//! object.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -109,6 +111,7 @@ pub(super) fn build(
         program.funcs.push(main);
     }
     shares_nothing(&program, &own)?;
+    holds_no_module_state(&program, prebuilt::private(module_entry))?;
     let tls = thread_locals(&program);
     velt_vir::verify(&program).map_err(|errs| errs.join("; "))?;
     let cg = velt_codegen_cl::CodegenOptions {
@@ -257,16 +260,40 @@ fn shares_nothing(program: &vir::Program, own: &HashSet<u64>) -> Result<(), Stri
     {
         return Err(format!("its code reaches `{}`", e.symbol));
     }
-    if let Some(f) =
-        (program.funcs.iter()).find(|f| f.symbol.contains("schedModule") && !f.blocks.is_empty())
-    {
-        return Err(format!("its code reaches module state (`{}`)", f.symbol));
-    }
     let shared_static = |s: &vir::StaticData| {
         s.linkage != Linkage::Internal || s.mutable.is_some_and(|id| !own.contains(&id))
     };
     if statics.iter().any(|&s| shared_static(&program.statics[s])) {
         return Err("its code reaches a static atomic or a named static".into());
+    }
+    Ok(())
+}
+
+/// The module that keeps the blocks of module state (std/lang/hooks/module_blocks.velt): its
+/// canonical path, and what its functions' symbols hold of it (its name, mangled).
+const BLOCKS_MODULE: &str = "std/lang/hooks/module_blocks";
+const BLOCKS_CODE: &str = "module__blocks";
+
+/// `Err` where the object's code is module state's own, or reaches module state: the executor's
+/// module hooks (its lock), module_blocks.velt's functions (the blocks and their table, which a
+/// copy in the object would split in two), or a call of that module's entry points
+/// (`velt_hook_module_*`, whose object only a program that reaches module state itself links).
+/// The exception is the object of module_blocks.velt itself (`private` names it, `prebuilt.rs`
+/// "State"): the blocks are its own state, which every program reaches through its entry points
+/// alone.
+fn holds_no_module_state(program: &vir::Program, private: &[&str]) -> Result<(), String> {
+    let own = private.contains(&BLOCKS_MODULE);
+    let module_code = |s: &str| s.contains("schedModule") || (!own && s.contains(BLOCKS_CODE));
+    if let Some(f) = (program.funcs.iter()).find(|f| module_code(&f.symbol) && !f.blocks.is_empty())
+    {
+        return Err(format!("its code reaches module state (`{}`)", f.symbol));
+    }
+    let entry = format!("{}module_", prebuilt::PREFIX);
+    let (externs, _) = reached(program);
+    if let Some(e) =
+        (externs.iter().map(|&e| &program.externs[e])).find(|e| e.symbol.starts_with(&entry))
+    {
+        return Err(format!("its code reaches module state (`{}`)", e.symbol));
     }
     Ok(())
 }

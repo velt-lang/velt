@@ -1,0 +1,6 @@
+// X25519 key generation (the fixed-base multiplication) and agreement, as a program using X25519
+// calls them.
+import { randomBytes, x25519, x25519PublicKey } from "velt/crypto";
+
+const key = randomBytes(32);
+console.log(x25519(key, x25519PublicKey(randomBytes(32))).length);

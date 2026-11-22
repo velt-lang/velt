@@ -17,6 +17,7 @@ import {
   OID,
   SEQUENCE,
 } from "velt/net/tls/x509/der";
+import { REFUSED_CRITICAL_EXTENSION } from "velt/net/tls/x509/refused";
 import { Tlv } from "velt/net/tls/x509/tlv";
 import {
   CE_AUTHORITY_KEY_ID,
@@ -45,14 +46,14 @@ export function readExtension(
   // id-ce (2.5.29) extensions are 0x55 0x1d n.
   if (id.end - id.start != 3 || b[id.start] != 0x55 || b[id.start + 1] != 0x1d) {
     if (critical) {
-      r.fail("an unsupported critical extension");
+      r.fail("an unsupported critical extension", REFUSED_CRITICAL_EXTENSION);
     }
     return seen;
   }
   const n = b[id.start + 2];
   if (n >= 64) {
     if (critical) {
-      r.fail("an unsupported critical extension");
+      r.fail("an unsupported critical extension", REFUSED_CRITICAL_EXTENSION);
     }
     return seen;
   }
@@ -99,17 +100,15 @@ export function readExtension(
   } else if (n == CE_CRL_DISTRIBUTION_POINTS) {
     r.next(SEQUENCE, end);
   } else if (n == CE_EXT_KEY_USAGE) {
+    // An empty list parses, as in webpki: path validation refuses it where it checks purposes.
     const s = r.enter(SEQUENCE, end);
-    if (s.end == s.start) {
-      r.fail("empty extKeyUsage");
-    }
     while (r.pos < s.end) {
       r.next(OID, s.end);
     }
     c.extKeyUsage = s;
   } else {
     if (critical) {
-      r.fail(`an unsupported critical extension 2.5.29.${n}`);
+      r.fail(`an unsupported critical extension 2.5.29.${n}`, REFUSED_CRITICAL_EXTENSION);
     }
     r.pos = end;
     return seen;

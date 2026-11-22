@@ -1,0 +1,57 @@
+// Spreads of a value of a type parameter that stay refused (#943): only a call's rest parameter
+// of `unknown` or `any` values takes one, built per instantiation. An array literal's length,
+// or fixed parameters' arity, would be known only per instantiation, and a type parameter
+// without an array bound may not be iterable at all. tsc refuses those two as well (TS2556,
+// TS2488) and accepts the array literals, which Velt does not support yet.
+function show(...xs: unknown[]): number {
+  return xs.length;
+}
+
+function pair(a: unknown, b: unknown): number {
+  return 2;
+}
+
+function literal<A extends unknown[]>(args: A): unknown[] {
+  return [...args];
+}
+
+function fixed<A extends unknown[]>(args: A): number {
+  return pair(...args);
+}
+
+function unbounded<T>(args: T): number {
+  return show(...args);
+}
+
+// A rest of `object` takes no primitive, which an element of `A` may be (tsc: TS2345).
+function objects(...xs: object[]): number {
+  return xs.length;
+}
+
+function intoObjects<A extends unknown[]>(args: A): number {
+  return objects(...args);
+}
+
+// An array literal that is the only rest argument is still an array literal.
+function lists(...xs: unknown[][]): number {
+  return xs.length;
+}
+
+function nested<A extends unknown[]>(args: A): number {
+  return lists([...args]);
+}
+
+// A deferred type is taken only when every branch is a tuple or array type: `Pick1<T>` may be
+// `T` itself (tsc accepts this one: Velt's limitation), and `keyof T` is a key (tsc: TS2488).
+type Pick1<T> = T extends string ? T : [T];
+
+function fwd<T>(args: Pick1<T>): number {
+  return show(...args);
+}
+
+function keys<T>(k: keyof T): number {
+  return show(...k);
+}
+
+console.log(literal([1]), fixed([1, 2]), unbounded([1]), intoObjects([{}]), nested([1]));
+console.log(fwd<"abc">("abc"), keys<{ a: number }>("a"));

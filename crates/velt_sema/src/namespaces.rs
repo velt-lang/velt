@@ -675,6 +675,7 @@ impl Rewrite<'_> {
             }
             K::Array(e)
             | K::KeyOf(e)
+            | K::Weak(e)
             | K::Construct { ty: e, .. }
             | K::TupleRest(e)
             | K::TupleOptional(e) => self.ty(e),

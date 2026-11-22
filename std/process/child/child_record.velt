@@ -17,8 +17,8 @@ import * as fs from "velt/net/fd_socket";
 import * as sp from "velt/process/child/spawn_posix";
 import { CommandSpec } from "velt/process/child/spec";
 
-declare c("c") function waitpid(pid: i32, status: Ptr<i32>, options: i32): i32;
-declare c("c") function write$child(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function waitpid(pid: i32, status: Ptr<i32> | null, options: i32): i32;
+declare c("c") function write$child(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
 /** The address of a byte array's elements (a copy of nothing returns its destination). */
 declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
 

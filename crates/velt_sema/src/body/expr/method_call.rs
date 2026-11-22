@@ -80,7 +80,14 @@ impl FnCx<'_, '_> {
         self.literal_use_number(&recv);
         // `s.replace(/a/g, "b")`: std/regex's method for a regex argument (`regex_args`).
         if recv.ty == self.cx.ty.str_ {
-            if let Some((hook, args)) = self.regex_string_call(prop, args) {
+            // `s.replace("a", (m, offset) => …)`: a function as the replacement of a string
+            // pattern is std's hook too, called with the same arguments.
+            let regex = self.regex_string_call(prop, args);
+            let call = regex.or_else(|| {
+                let hook = self.string_replacer_call(prop, args)?;
+                Some((hook, args.to_vec()))
+            });
+            if let Some((hook, args)) = call {
                 return self.with_temp("<string>", recv, span, span, |lw, s| {
                     let call = ast::ExprKind::Call {
                         callee: Box::new(synth(
@@ -183,7 +190,10 @@ impl FnCx<'_, '_> {
         }
         let writes_list = matches!(prop.name.as_str(), "join" | "toString")
             && matches!(self.cx.ty.kind(recv.ty), TyKind::Array(_));
-        if writes_list && self.reject_js_list(recv.ty, &format!("`{}`", prop.name), prop.span) {
+        if writes_list
+            && (self.reject_ptr_text(&recv)
+                || self.reject_js_list(recv.ty, &format!("`{}`", prop.name), prop.span))
+        {
             self.check_args_loose(args);
             return self.error_expr(span);
         }

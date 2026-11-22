@@ -1,0 +1,347 @@
+// velt/fs (internal): removing a file, a link or a directory tree on Windows
+// (std/fs/tree/win32.velt's `removeAt`), on handles and never by a path walk.
+//
+// What the path names is opened once, as itself (a link is never followed), and deleted on that
+// handle. A tree is removed as Rust's `remove_dir_all` removes one, so that a directory swapped
+// for a junction or a symlink while the tree is removed is never entered (CVE-2022-21658):
+// - A directory is listed from its handle (`GetFileInformationByHandleEx`,
+//   `FileIdBothDirectoryInfo`).
+// - Each entry is opened by its name relative to that handle (ntdll's `NtCreateFile` with a root
+//   directory), as itself (`FILE_OPEN_REPARSE_POINT`), with `OBJ_DONT_REPARSE` where Windows has
+//   it: a name that became a link after the listing opens as the link, which lists as empty.
+// - Each entry is deleted on its handle (`SetFileInformationByHandle`), with POSIX semantics and
+//   read-only files included where the file system has them (`FileDispositionInfoEx`); elsewhere
+//   with `FileDispositionInfo`, after clearing the read-only attribute if it refuses.
+// A file another process holds without sharing and a directory whose entries are still going
+// are tried again for a short while, as `remove_dir_all` does.
+
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import {
+  close,
+  deleteDirOn,
+  deleteOn,
+  DIR,
+  FILE,
+  isLink,
+  kindOf,
+  lastWin32,
+  openPath,
+  SHARE_ALL,
+  TO_DELETE,
+  TO_WRITE_ATTRIBUTES,
+  TRIES,
+  UNKNOWN,
+  yieldNow,
+} from "velt/fs/tree/win_handle";
+import { arrayDataAddress, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+/** C's `OBJECT_ATTRIBUTES`, `IO_STATUS_BLOCK` and `LARGE_INTEGER`, which `NtCreateFile` takes. */
+declare c type _OBJECT_ATTRIBUTES;
+declare c type _IO_STATUS_BLOCK;
+declare c type LARGE_INTEGER;
+
+declare c("c") function NtCreateFile$tree(
+  handle: Out<Ptr<void> | null>,
+  access: u32,
+  attributes: Ptr<_OBJECT_ATTRIBUTES>,
+  status: Ptr<_IO_STATUS_BLOCK>,
+  size: Ptr<LARGE_INTEGER> | null,
+  fileAttributes: u32,
+  share: u32,
+  disposition: u32,
+  options: u32,
+  ea: Ptr<void> | null,
+  eaLength: u32,
+): i32;
+declare c("c") function RtlNtStatusToDosError(status: i32): u32;
+declare c("c") function GetFileInformationByHandleEx$tree(
+  handle: Ptr<void>,
+  infoClass: i32,
+  info: u64[],
+  size: u32,
+): i32;
+declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
+
+const FILE_LIST_DIRECTORY: u32 = 0x1;
+/** `NtCreateFile`'s disposition and options: an existing file, opened as itself (a link is not
+ * followed: FILE_OPEN_REPARSE_POINT), a directory too (FILE_OPEN_FOR_BACKUP_INTENT), for
+ * synchronous calls (FILE_SYNCHRONOUS_IO_NONALERT). */
+const FILE_OPEN: u32 = 1;
+const NT_OPTIONS: u32 = 0x00200000 | 0x00004000 | 0x00000020;
+/** `OBJ_DONT_REPARSE`: the open fails if resolving the name meets a link. */
+const OBJ_DONT_REPARSE: u64 = 0x1000;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+/** `FILE_INFO_BY_HANDLE_CLASS`: a directory's entries, from where the last call stopped and
+ * from the start. */
+const ID_BOTH_DIRECTORY_INFO: i32 = 10;
+const ID_BOTH_DIRECTORY_RESTART_INFO: i32 = 11;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_PATH_NOT_FOUND: u32 = 3;
+const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_NO_MORE_FILES: u32 = 18;
+const ERROR_SHARING_VIOLATION: u32 = 32;
+/** `NTSTATUS`es of an entry that is gone: no such name, no such path, a delete under way. */
+const STATUS_OBJECT_NAME_NOT_FOUND: i32 = -1073741772;
+const STATUS_OBJECT_PATH_NOT_FOUND: i32 = -1073741766;
+const STATUS_DELETE_PENDING: i32 = -1073741738;
+/** What a Windows without `OBJ_DONT_REPARSE` answers it with. */
+const STATUS_INVALID_PARAMETER: i32 = -1073741811;
+
+/** The listing's buffer: 2,048 `u64`s, so every entry in it is aligned as C's. */
+const LIST_WORDS: usize = 2048;
+const LIST_BYTES: u32 = 16384;
+/** `FILE_ID_BOTH_DIR_INFO`'s byte offsets: the next entry's distance (0 for the last), the
+ * attributes, the name's length in bytes, the reparse tag (`EaSize`, for a reparse point) and
+ * the name. */
+const E_NEXT: usize = 0;
+const E_ATTRIBUTES: usize = 56;
+const E_NAME_BYTES: usize = 60;
+const E_TAG: usize = 64;
+const E_NAME: usize = 104;
+
+/** The words of the block `openIn` builds its call in: `OBJECT_ATTRIBUTES` at 0-5 (its length,
+ * the root directory, the name, the attributes), `UNICODE_STRING` at 6-7 (the lengths, the
+ * units' address), `IO_STATUS_BLOCK` at 8-9, and at 10 the object attributes to open with
+ * (`OBJ_DONT_REPARSE` until Windows refuses it). */
+const S_ROOT: usize = 1;
+const S_NAME: usize = 2;
+const S_ATTRIBUTES: usize = 3;
+const S_UNITS: usize = 6;
+const S_UNITS_AT: usize = 7;
+const S_OBJ: usize = 10;
+
+/** What failed: `code` is the Win32 error and `call` the call Node names (`lstat`, `unlink`,
+ * `rmdir`, `rm`); `code` 0 is success. */
+export type Removed = { code: u32; call: string };
+
+/** The `u32` at byte `at` (a multiple of 4) of `words`. */
+function u32At(words: readonly u64[], at: usize): u32 {
+  return ((words[at >> 3] >> (((at & 7) * 8) as u64)) & 0xffffffff) as u32;
+}
+
+/** The `u16` at byte `at` (a multiple of 2) of `words`. */
+function u16At(words: readonly u64[], at: usize): u32 {
+  return ((words[at >> 3] >> (((at & 7) * 8) as u64)) & 0xffff) as u32;
+}
+
+/**
+ * The entry named by the `bytes` bytes of UTF-16 at `units`, opened relative to the directory
+ * `parent`, as itself: the handle; or null with `failed[0]` the Win32 error, 0 for an entry that
+ * is gone. Unsafe: `units` must be the address of `bytes` readable bytes that stay for the call.
+ */
+unsafe function openIn(
+  parent: Ptr<void>,
+  units: usize,
+  bytes: u32,
+  access: u32,
+  s: u64[],
+  failed: u32[],
+): Ptr<void> | null {
+  const at = arrayDataAddress(s);
+  s[0] = 48;
+  s[S_ROOT] = Ptr.addressOf(parent) as u64;
+  s[S_NAME] = (at + 8 * S_UNITS) as u64;
+  // UNICODE_STRING: the length and the room in bytes (two USHORTs), then the units.
+  s[S_UNITS] = (bytes as u64) | ((bytes as u64) << 16);
+  s[S_UNITS_AT] = units as u64;
+  while (true) {
+    s[S_ATTRIBUTES] = s[S_OBJ];
+    const out = new Out<Ptr<void> | null>(null);
+    const status = NtCreateFile$tree(
+      out,
+      access,
+      Ptr.at<_OBJECT_ATTRIBUTES>(at),
+      Ptr.at<_IO_STATUS_BLOCK>(at + 64),
+      null,
+      0,
+      SHARE_ALL,
+      FILE_OPEN,
+      NT_OPTIONS,
+      null,
+      0,
+    );
+    if (status >= 0) {
+      failed[0] = 0;
+      return out.value;
+    }
+    if (status === STATUS_INVALID_PARAMETER && s[S_OBJ] !== 0) {
+      // A Windows without OBJ_DONT_REPARSE: the name is one component, opened as itself.
+      s[S_OBJ] = 0;
+      continue;
+    }
+    const gone =
+      status === STATUS_OBJECT_NAME_NOT_FOUND ||
+      status === STATUS_OBJECT_PATH_NOT_FOUND ||
+      status === STATUS_DELETE_PENDING;
+    failed[0] = gone ? 0 : RtlNtStatusToDosError(status);
+    return null;
+  }
+}
+
+/** `openIn` to delete the entry, with `more` access too; the right to write attributes is asked
+ * for and done without when refused, as `openPath`. Unsafe: as `openIn`. */
+unsafe function openEntry(
+  parent: Ptr<void>,
+  units: usize,
+  bytes: u32,
+  more: u32,
+  s: u64[],
+  failed: u32[],
+): Ptr<void> | null {
+  const h = openIn(parent, units, bytes, TO_DELETE | more | TO_WRITE_ATTRIBUTES, s, failed);
+  if (h !== null || failed[0] !== ERROR_ACCESS_DENIED) {
+    return h;
+  }
+  return openIn(parent, units, bytes, TO_DELETE | more, s, failed);
+}
+
+/**
+ * Deletes the entry of `parent` that is no directory to enter (a file, or a link of any kind),
+ * trying again while another process holds it without sharing: 0, also for an entry that is
+ * gone, or the Win32 error. Unsafe: as `openIn`.
+ */
+unsafe function deleteEntry(parent: Ptr<void>, units: usize, bytes: u32, s: u64[]): u32 {
+  const failed: u32[] = [0];
+  let i: i32 = 1;
+  while (true) {
+    const h = openEntry(parent, units, bytes, 0, s, failed);
+    if (h !== null) {
+      const code = deleteOn(h);
+      close(h);
+      return code;
+    }
+    if (failed[0] !== ERROR_SHARING_VIOLATION || i >= TRIES) {
+      return failed[0];
+    }
+    i++;
+    yieldNow();
+  }
+}
+
+/**
+ * Removes the directory `root` is open on (to list and to delete) and everything in it, and
+ * closes `root`: 0, or the Win32 error of what failed. Directories still open are a stack, the
+ * innermost last; one that had a directory in it is listed again from its start once that one is
+ * gone.
+ */
+function removeTree(root: Ptr<void>): u32 {
+  const list = arrayWithCapacity<u64>(LIST_WORDS);
+  arraySetLen(list, LIST_WORDS);
+  const s: u64[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, OBJ_DONT_REPARSE];
+  // SAFETY: `list` is never grown, so its buffer stays where it is while this function runs.
+  const listAt = unsafe { arrayDataAddress(list) };
+  const failed: u32[] = [0];
+  const open: Ptr<void>[] = [root];
+  let restart = true;
+  let error: u32 = 0;
+  while (error === 0 && open.length > 0) {
+    const dir = open[open.length - 1];
+    const infoClass = restart ? ID_BOTH_DIRECTORY_RESTART_INFO : ID_BOTH_DIRECTORY_INFO;
+    restart = false;
+    // SAFETY: `dir` is an open directory and `list` holds the LIST_BYTES bytes passed.
+    const more = unsafe { GetFileInformationByHandleEx$tree(dir, infoClass, list, LIST_BYTES) };
+    if (more === 0) {
+      const code = lastWin32();
+      // Nothing left in it: the directory itself goes, and the one around it starts again.
+      error = code === ERROR_NO_MORE_FILES ? deleteDirOn(dir) : code;
+      close(dir);
+      open.pop();
+      restart = true;
+      continue;
+    }
+    let at: usize = 0;
+    while (error === 0) {
+      const next = u32At(list, at + E_NEXT) as usize;
+      const bytes = u32At(list, at + E_NAME_BYTES);
+      const first = u16At(list, at + E_NAME);
+      const dots =
+        first === 46 && (bytes === 2 || (bytes === 4 && u16At(list, at + E_NAME + 2) === 46));
+      if (!dots) {
+        const attributes = u32At(list, at + E_ATTRIBUTES);
+        const enter =
+          (attributes & FILE_ATTRIBUTE_DIRECTORY) !== 0 &&
+          !isLink(attributes, u32At(list, at + E_TAG));
+        const units = listAt + at + E_NAME;
+        if (enter) {
+          // SAFETY: the entry's name is `bytes` bytes at `units`, inside `list`.
+          const child = unsafe { openEntry(dir, units, bytes, FILE_LIST_DIRECTORY, s, failed) };
+          if (child !== null) {
+            // Its listing takes the buffer (a new handle lists from its start): this
+            // directory is listed again, from its start, once that one is gone.
+            open.push(child);
+            break;
+          }
+          error = failed[0];
+        } else {
+          // SAFETY: as above.
+          error = unsafe { deleteEntry(dir, units, bytes, s) };
+        }
+      }
+      if (next === 0) {
+        break;
+      }
+      at += next;
+    }
+  }
+  for (const left of open) {
+    close(left);
+  }
+  return error;
+}
+
+/** The call Node names when what is at `w` could not be opened to delete it (`code`). */
+function refusal(w: readonly u16[], code: u32, recursive: bool): Removed {
+  // SAFETY: `w` is NUL-terminated.
+  const a = unsafe { GetFileAttributesW(w) };
+  if (a === INVALID_FILE_ATTRIBUTES) {
+    return { code: lastWin32(), call: "lstat" };
+  }
+  if ((a & FILE_ATTRIBUTE_DIRECTORY) === 0) {
+    return { code, call: "unlink" };
+  }
+  const link = (a & FILE_ATTRIBUTE_REPARSE_POINT) !== 0;
+  return { code, call: recursive && !link ? "rm" : "rmdir" };
+}
+
+/**
+ * Removes what the wide path `w` names: a file, a link (never what it points to) or an empty
+ * directory, with `recursive` a directory and everything in it.
+ */
+export function removePath(w: readonly u16[], recursive: bool): Removed {
+  const h = openPath(w, 0);
+  if (h === null) {
+    const code = lastWin32();
+    const missing = code !== ERROR_ACCESS_DENIED && code !== ERROR_SHARING_VIOLATION;
+    return missing ? { code, call: "lstat" } : refusal(w, code, recursive);
+  }
+  const kind = kindOf(h);
+  if (kind === UNKNOWN) {
+    const code = lastWin32();
+    close(h);
+    return { code, call: "lstat" };
+  }
+  if (kind !== DIR || !recursive) {
+    const code = deleteOn(h);
+    close(h);
+    return { code, call: kind === FILE ? "unlink" : "rmdir" };
+  }
+  close(h);
+  // A directory: opened again to list it too. What is there now decides, on the handle: a link
+  // that took the directory's place is removed as the link, never listed.
+  const dir = openPath(w, FILE_LIST_DIRECTORY);
+  if (dir === null) {
+    const code = lastWin32();
+    // Gone meanwhile, or a directory above it: removed, by someone else.
+    const gone = code === ERROR_FILE_NOT_FOUND || code === ERROR_PATH_NOT_FOUND;
+    return { code: gone ? 0 : code, call: "rm" };
+  }
+  if (kindOf(dir) !== DIR) {
+    const code = deleteOn(dir);
+    close(dir);
+    return { code, call: "rm" };
+  }
+  return { code: removeTree(dir), call: "rm" };
+}

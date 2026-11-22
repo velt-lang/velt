@@ -90,6 +90,9 @@ keys! {
     record_define_accessor => "RECORD_DEFINE_ACCESSOR", "recordDefineAccessor";
     record_define_getter => "RECORD_DEFINE_GETTER", "recordDefineGetter";
     record_define_setter => "RECORD_DEFINE_SETTER", "recordDefineSetter";
+    record_define_data => "RECORD_DEFINE_DATA", "recordDefineData";
+    record_symbol_bag => "RECORD_SYMBOL_BAG", "recordSymbolBag";
+    record_define_entry => "RECORD_DEFINE_ENTRY", "recordDefineEntry";
     record_delete_keyed => "RECORD_DELETE_KEYED", "recordDeleteKeyed";
     record_delete_sym => "RECORD_DELETE_SYM", "recordDeleteSym";
     record_get_keyed => "RECORD_GET_KEYED", "recordGetKeyed";

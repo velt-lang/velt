@@ -126,9 +126,16 @@ impl<'m> Ctx<'m> {
         b
     }
 
+    /// Is `module` the program's root, whose names are not qualified? std's unit
+    /// (`crate::units`) has no program: its context's root (module 0) is a std module, named
+    /// as in any other check (passes know std's methods by their `std/` names).
+    pub(crate) fn names_unqualified(&self, module: usize) -> bool {
+        module == self.root && self.units_stage != crate::units::Stage::Std
+    }
+
     /// Fully qualified name of a module-level item.
     pub fn qualify(&self, module: usize, name: &str) -> String {
-        if module == self.root {
+        if self.names_unqualified(module) {
             name.to_string()
         } else {
             format!("{}::{}", self.modules[module].path, name)

@@ -1,0 +1,142 @@
+// velt/fs (internal): what `MappedFile.open` is asked for and what its `#mapped-source` variant
+// gives back, for both variants.
+
+import {
+  addressAtomicRmw,
+  addressLoad,
+  addressStore,
+  arrayCopyBytes,
+  arraySetLen,
+  arrayWithCapacity,
+} from "velt/lang/intrinsics";
+import { Ptr } from "velt/ffi/ptr";
+
+// The owner block is the C library's, as the mapping is the system's: a pinned mapping keeps its
+// block for the rest of the program, which the debug runtime's count of its own blocks must not
+// read as a leak (std/process/stdin_buffer.velt keeps its block the same way).
+declare c("c") function calloc$mapped(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$mapped(p: Ptr<u8> | null): void;
+
+/** Which part of a file `MappedFile.open` maps: `length` bytes from byte `offset`. */
+export type MapOptions = { offset?: number; length?: number };
+
+/**
+ * A file's bytes in memory: `bytes`, which start at `address` (0 for no bytes) and at byte
+ * `from` of the file. `owner` is the mapping's owner block (`newOwner`), which every array over
+ * the mapping holds; 0 where there is no mapping to give back.
+ */
+export type Mapping = { address: usize; from: usize; bytes: shared<u8[]>; owner: usize };
+
+/** The part of a file of `size` bytes that `options` asks for. */
+export type Part = { offset: number; length: number };
+
+/** The part `options` names of the `size` bytes of `path`; `null` when it is not inside them. */
+export function partOf(size: number, options: MapOptions | undefined): Part | null {
+  const offset = options?.offset ?? 0;
+  const length = options?.length ?? size - offset;
+  if (
+    !Number.isInteger(offset) ||
+    !Number.isInteger(length) ||
+    offset < 0 ||
+    length < 0 ||
+    offset + length > size
+  ) {
+    return null;
+  }
+  return { offset, length };
+}
+
+/** The error of a part that is not inside the file. */
+export function outsideFile(
+  path: string,
+  size: number,
+  options: MapOptions | undefined,
+): RangeError {
+  const offset = options?.offset ?? 0;
+  const length = options?.length ?? size - offset;
+  return new RangeError(
+    `MappedFile.open: offset ${offset}, length ${length} is not inside the ${size} bytes of ${path}`,
+  );
+}
+
+/**
+ * A copy of the `count` values of `T` from byte `at` of `bytes`, which the array owns: what a
+ * typed method gives where there is no mapping to give an array over.
+ */
+export function copyOf<T extends Numeric>(bytes: shared<u8[]>, at: usize, count: usize): T[] {
+  const out: T[] = arrayWithCapacity<T>(count);
+  arraySetLen(out, count);
+  arrayCopyBytes(out, 0, bytes, at, count);
+  return out;
+}
+
+// A mapping's owner: a block every array over the mapping holds (`addressArrayOwned`), so the
+// memory is given back when the last of them is dropped, on whichever thread that is. Its
+// words: the function an array's drop calls (the variant's, which unmaps), how many arrays
+// hold it, the mapping's address and length, and whether a typed array pinned it (`pinOwner`).
+
+/** A new owner of the `len` mapped bytes at `base`, held once; `release` is its function. */
+export function newOwner(release: usize, base: usize, len: usize): usize {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$mapped(1, 40) };
+  if (block === null) {
+    panic("velt/fs: no memory for a mapping's owner block");
+  }
+  const owner = Ptr.addressOf(block);
+  // SAFETY: the block has the five words written here (the pin flag is zeroed by calloc).
+  unsafe {
+    addressStore<usize>(owner, release);
+    addressStore<u64>(owner + 8, 1);
+    addressStore<usize>(owner + 16, base);
+    addressStore<usize>(owner + 24, len);
+  }
+  return owner;
+}
+
+/** `owner`, held once more: for the next array made over its mapping. */
+export function heldAgain(owner: usize): usize {
+  // SAFETY: the caller holds `owner` (through an array over the mapping), so the block is there.
+  unsafe {
+    addressAtomicRmw<u64>(owner + 8, "add", 1, "relaxed");
+  }
+  return owner;
+}
+
+/** A mapping in memory: `len` bytes from `base`, as the system gave them. */
+export type Region = { base: usize; len: usize };
+
+/**
+ * Gives up one hold of `owner`. When it was the last, returns the mapping for the caller to
+ * unmap, and frees the block; otherwise `null`. Unsafe: the caller is the drop of an array
+ * that held `owner`.
+ */
+export unsafe function letGo(owner: usize): Region | null {
+  // SAFETY: the block is there until its last hold is given up, which is at the earliest now.
+  unsafe {
+    if (addressAtomicRmw<u64>(owner + 8, "sub", 1, "acqrel") != 1) {
+      return null;
+    }
+    const base = addressLoad<usize>(owner + 16);
+    const len = addressLoad<usize>(owner + 24);
+    // `Ptr.orNull`, as `free` takes NULL: an array's drop reports no caller's location (#3094).
+    free$mapped(Ptr.orNull<u8>(owner));
+    return { base, len };
+  }
+}
+
+/**
+ * Holds `owner` once more for good, the first time only: the mapping then stays for the rest of
+ * the program. The flag is in the block rather than in the `MappedFile`, whose fields then stay
+ * as unchanging as before, which a loop over its getters is faster for.
+ */
+export function pinOwner(owner: usize) {
+  // SAFETY: the caller holds `owner`, so the block is there. Two tasks reading typed arrays of
+  // one shared `MappedFile` at once may both take the hold: a second hold never given back,
+  // which pinned means anyway.
+  unsafe {
+    if (addressLoad<u64>(owner + 32) == 0) {
+      addressStore<u64>(owner + 32, 1);
+      addressAtomicRmw<u64>(owner + 8, "add", 1, "relaxed");
+    }
+  }
+}

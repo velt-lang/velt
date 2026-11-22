@@ -3,8 +3,8 @@
 # Windows SDK, no Visual C++ runtime) builds and runs hello and examples/http_hello.velt in debug
 # and release mode with the bundled linker, and `velt doctor` reports it; a debug build of
 # scripts\smoke-prebuilt.velt links the toolchain's prebuilt hook objects (lib\hooks\); hello also builds for
-# wasm32-unknown-unknown. Runs under Windows
-# PowerShell 5.1 (what Server Core has).
+# wasm32-unknown-unknown; tests\golden\std\fs_dirents.velt lists a directory with its entries'
+# types. Runs under Windows PowerShell 5.1 (what Server Core has).
 #
 # Usage: powershell -File scripts/smoke-clean.ps1 <path to velt.exe>
 param([Parameter(Mandatory)][string]$Velt)
@@ -68,6 +68,16 @@ foreach ($Module in @("number_digits", "number_parse", "weak")) {
 $Out = & $Prebuilt
 if ($LASTEXITCODE -ne 0 -or $Out -ne "1234.57 356 7") { throw "smoke-prebuilt printed '$Out' (exit $LASTEXITCODE)" }
 Write-Host "ok: shipped objects linked"
+Step "directory entries"
+$Dirents = Join-Path $Work "dirents.exe"
+Velt build (Join-Path $Repo "tests\golden\std\fs_dirents.velt") -o $Dirents
+Push-Location $Work
+$Out = (& $Dirents | Out-String) -replace "`r`n", "`n"
+$Code = $LASTEXITCODE
+Pop-Location
+$Want = ([IO.File]::ReadAllText((Join-Path $Repo "tests\golden\std\fs_dirents.out"))) -replace "`r`n", "`n"
+if ($Code -ne 0 -or $Out -ne $Want) { throw "fs_dirents printed '$Out' (exit $Code), not tests\golden\std\fs_dirents.out" }
+Write-Host "ok: directory entries"
 Step "debug build (shared runtime)"
 RunBoth "debug" @()
 Step "release build"

@@ -1,0 +1,2 @@
+spread_type_param_instance.velt:10:18: error: cannot spread a value of type `f64[] | [string, string]` into a call's arguments
+  = note: what a generic rest is spread from must be a tuple or an array at every instantiation

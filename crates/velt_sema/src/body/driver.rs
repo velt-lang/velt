@@ -220,7 +220,10 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         let at = g.span;
         fcx.cx.note_written_type(at, w.span);
     }
-    let ann = ann.map(|t| fcx.cx.resolve_type(t, &TyEnv::new(module, &[])));
+    let ann = ann.map(|t| {
+        let env = TyEnv::new(module, &[]);
+        (fcx.cx).resolve_weak_annotation(t, &env, &mut |cx, t, env| cx.resolve_type(t, env))
+    });
     if let (Some(t), DefInfo::Global(g)) = (ann, &mut fcx.cx.info[d.0 as usize]) {
         g.ty = t;
     }

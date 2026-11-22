@@ -505,7 +505,7 @@ impl FnLower<'_, '_> {
         self.write_pinned(
             pin,
             p,
-            |this, p| this.store_assigned(place, p, v, ty, shared, drops),
+            |this, p| this.store_assigned_absent(value, place, p, v, ty, shared, drops),
             |this| this.drop_unstored(&unstored, ty),
         );
         unit()
