@@ -479,6 +479,7 @@ mod aes;
 mod atomics;
 mod bfdot;
 mod c_export;
+mod field;
 mod half;
 mod inlining;
 mod placement;
