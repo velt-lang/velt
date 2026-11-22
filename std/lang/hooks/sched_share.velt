@@ -34,7 +34,7 @@
 // so for every holder `f - 8` holds its hub (for the original, the node's `N_HUB` word); a handle
 // handed to another task has a hub word of 0 and its proxy in its forward word.
 
-import { fnAddress, futDrop, futPoll, statePoll } from "velt/lang/intrinsics";
+import { fnAddress, futDrop, futPoll, inline, statePoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nc from "./sched_node_catch";
@@ -106,19 +106,23 @@ export const FRONT: usize = 32;
  * of this executor is shared here; the runtime's futures (a leaf, a join handle, a race) are
  * shared by the runtime's hub.
  */
-export function schedShare(f: usize, size: u64, share: usize, rdrop: usize): usize {
-  if (f === 0) {
+@inline("always")
+export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usize {
+  if (p === 0) {
     return 0;
   }
   const task = m.ld(t.exec() + t.E_CURRENT);
-  if (m.ld(f) === fnAddress(holderPoll)) {
+  // A loop, not a call of itself: a function that can call itself is not inlined (#3097), and
+  // this one is every share's entry point.
+  let f = p;
+  while (m.ld(f) === fnAddress(holderPoll)) {
     const fwd = forwardOf(f);
-    if (fwd !== 0) {
-      // Handed to this task and shared again here: its proxy, which delivers this task's own
-      // copy, becomes the promise shared on this task (`f` goes on forwarding to it).
-      return schedShare(fwd, size, share, rdrop);
+    if (fwd === 0) {
+      return newHandle(m.ld(f - 8));
     }
-    return newHandle(m.ld(f - 8));
+    // Handed to this task and shared again here: its proxy, which delivers this task's own
+    // copy, becomes the promise shared on this task (`f` goes on forwarding to it).
+    f = fwd;
   }
   if (m.ld(f) !== fnAddress(nd.nodePoll) || task === 0) {
     // The runtime's futures, and any promise shared outside a task: the runtime's hub.
