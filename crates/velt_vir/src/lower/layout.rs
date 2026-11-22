@@ -3,9 +3,11 @@
 //!
 //! - A struct declared `@align(n)` has alignment `n` where that is more than its own, and its
 //!   size is a multiple of it (`Cx::align_of`; docs/internals/design/package-machine-code.md §5).
-//!   Stack slots and heap blocks take a layout's alignment in both backends, except that
-//!   Cranelift aligns a stack slot to at most 16 bytes from the frame's start, which no Velt code
-//!   can see: nothing takes a local's address.
+//!   Every home of a value keeps it (the list: that note's §5 "As built in step 6"): heap blocks
+//!   with the layout's alignment, counted boxes and generator objects with a header or lead in
+//!   front, std's task blocks and module blocks rounded up, std slots copied through an
+//!   8-aligned view (slot.rs). Cranelift aligns a stack slot to at most 16 bytes from the
+//!   frame's start, which no Velt code can see: nothing takes a local's address.
 //!
 //! - `void` fields (`IoResult<void>`) are zero-sized: they have no VIR field, so HIR field `i`
 //!   is VIR field [`vir_field`](Cx::vir_field)`(t, i)` (the non-`void` fields before it).

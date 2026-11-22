@@ -25,14 +25,17 @@ describe("aligned blocks", () => {
     expect(alignedRoot(4104, 1)).toBe(4104);
   });
 
-  it("a module block starts at a multiple of its alignment, past a word, within the larger block", () => {
-    for (const align of [32, 64, 128, 4096] as usize[]) {
-      for (let raw: usize = 65536; raw < 65536 + 512; raw += 16) {
-        const p = alignedBlock(raw, align);
-        expect(p % align).toBe(0);
-        expect(p >= raw + 8).toBe(true);
-        expect(p - raw <= align).toBe(true);
+  it(
+    "a module block starts at a multiple of its alignment, past a word, within the larger block",
+    () => {
+      for (const align of [32, 64, 128, 4096] as usize[]) {
+        for (let raw: usize = 65536; raw < 65536 + 512; raw += 16) {
+          const p = alignedBlock(raw, align);
+          expect(p % align).toBe(0);
+          expect(p >= raw + 8).toBe(true);
+          expect(p - raw <= align).toBe(true);
+        }
       }
-    }
-  });
+    },
+  );
 });
