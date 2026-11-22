@@ -248,6 +248,11 @@ fn numeric(ty: Ty) -> bool {
 /// (`arrays`), and everything flowing into them or compared with them; then the booleans
 /// comparing any of these.
 fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
+    tracked_counted(env, func, groups).0
+}
+
+/// `tracked`, with the work its walk did (the locals it looked at), for tests of its cost.
+fn tracked_counted(env: &Env, func: &Function, groups: &arrays::Groups) -> (Vec<Local>, u64) {
     let usage = Usage::of(func);
     let n = func.locals.len();
     let reg = |l: Local| usage.is_register(l) && numeric(func.locals[l.0 as usize].ty);
@@ -312,8 +317,19 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
             }
         }
     }
+    // Per local, the locals it is compared with, so a local reached by the walk visits only its
+    // own comparisons (a scan of all of them per local is quadratic: every bounds-checked array
+    // read compares its index with the length).
+    let mut partners: Vec<Vec<Local>> = vec![vec![]; n];
+    for &(_, a, b) in &compared {
+        partners[a.0 as usize].push(b);
+        if a != b {
+            partners[b.0 as usize].push(a);
+        }
+    }
     let mut in_slice = vec![false; n];
     let mut work: Vec<Local> = seeds.into_iter().filter(|&l| reg(l)).collect();
+    let mut walked = 0u64;
     let mut counters_seen = false;
     let counter_cx = counter::Cx::new(func);
     loop {
@@ -321,19 +337,9 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
             if std::mem::replace(&mut in_slice[l.0 as usize], true) {
                 continue;
             }
-            work.extend(inputs[l.0 as usize].iter().copied().filter(|&x| reg(x)));
-            for &(_, a, b) in &compared {
-                let other = if a == l {
-                    b
-                } else if b == l {
-                    a
-                } else {
-                    continue;
-                };
-                if reg(other) {
-                    work.push(other);
-                }
-            }
+            let (ins, cmp) = (&inputs[l.0 as usize], &partners[l.0 as usize]);
+            walked += (ins.len() + cmp.len()) as u64;
+            work.extend(ins.iter().chain(cmp).copied().filter(|&x| reg(x)));
         }
         // A counter's cap needs the trip counts of the loops around it: track what their exit
         // tests compare too (`i < s.length` with an `i64` `i`). Also for an integer counter
@@ -349,6 +355,7 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
             break;
         }
         counters_seen = true;
+        walked += compared.len() as u64;
         for &(_, a, b) in &compared {
             work.extend([a, b].into_iter().filter(|&x| reg(x)));
         }
@@ -359,10 +366,11 @@ fn tracked(env: &Env, func: &Function, groups: &arrays::Groups) -> Vec<Local> {
             in_slice[c.0 as usize] = true;
         }
     }
-    (0..n as u32)
+    let tracked = (0..n as u32)
         .map(Local)
         .filter(|l| in_slice[l.0 as usize])
-        .collect()
+        .collect();
+    (tracked, walked)
 }
 
 /// Narrowing for `program`'s functions, for tests of the whole pass.
@@ -385,3 +393,5 @@ pub(crate) fn run_program(program: &mut velt_vir::vir::Program) -> bool {
 mod arrays_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tracked_tests;

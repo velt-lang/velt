@@ -8,7 +8,12 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 
-declare c("c") function task_info(task: u32, flavor: u32, info: Ptr<i32>, count: Ptr<u32>): i32;
+declare c("c") function task_info(
+  task: u32,
+  flavor: u32,
+  info: Ptr<i32> | null,
+  count: Ptr<u32> | null,
+): i32;
 
 /** This task's port (`mach_task_self()` reads it). */
 declare c("c") let mach_task_self_: u32;
@@ -32,35 +37,38 @@ const RESIDENT_AT: usize = 16;
 /** `phys_footprint`'s offset in `struct task_vm_info`. */
 const FOOTPRINT_AT: usize = 144;
 
-/** The 64-bit field at offset `at` of this task's `struct task_vm_info`, or 0 when unread. */
-function field(at: usize): i64 {
+/**
+ * `[rss, heapUsed]` in bytes from one `task_info` call: `resident_size` and `phys_footprint`
+ * (each 0 when the kernel's answer is too short to hold it, `[0, 0]` when the call fails).
+ */
+export function memoryFigures(): [i64, i64] {
   const size = INFO_AT + (REV1_COUNT as usize) * 4;
   // SAFETY: calloc has no precondition; its result is checked.
   const block = unsafe { calloc$memory(1, size) };
   if (block === null) {
-    return 0;
+    return [0, 0];
   }
   const p = Ptr.addressOf(block);
-  let value: i64 = 0;
+  let resident: i64 = 0;
+  let footprint: i64 = 0;
   // SAFETY: the block holds the count, which says the room after it, and `REV1_COUNT`
   // `integer_t`s; this task's own port; the block is freed once, after the reads.
   unsafe {
     addressStore<u32>(p, REV1_COUNT);
-    const r = task_info(mach_task_self_, TASK_VM_INFO, Ptr.at<i32>(p + INFO_AT), Ptr.at<u32>(p));
-    if (r === 0 && (addressLoad<u32>(p) as usize) * 4 >= at + 8) {
-      value = addressLoad<i64>(p + INFO_AT + at);
+    const r = task_info(
+      mach_task_self_,
+      TASK_VM_INFO,
+      Ptr.orNull<i32>(p + INFO_AT),
+      Ptr.orNull<u32>(p),
+    );
+    const filled = (addressLoad<u32>(p) as usize) * 4;
+    if (r === 0 && filled >= RESIDENT_AT + 8) {
+      resident = addressLoad<i64>(p + INFO_AT + RESIDENT_AT);
+    }
+    if (r === 0 && filled >= FOOTPRINT_AT + 8) {
+      footprint = addressLoad<i64>(p + INFO_AT + FOOTPRINT_AT);
     }
     free$memory(block);
   }
-  return value;
-}
-
-/** The resident set size in bytes (0 if the OS does not say). */
-export function residentBytes(): i64 {
-  return field(RESIDENT_AT);
-}
-
-/** The process' physical footprint in bytes (0 if the OS does not say). */
-export function heapBytes(): i64 {
-  return field(FOOTPRINT_AT);
+  return [resident, footprint];
 }

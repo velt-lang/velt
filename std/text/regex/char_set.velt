@@ -1,0 +1,135 @@
+// velt/text (internal): `CharSet`, the characters a class of a regular expression matches
+// (`[a-z\d]`, `\w`, `.`, `\p{L}`): code points, or UTF-16 code units for a pattern without the
+// `u` flag, as sorted ranges.
+
+import { arrayTruncate } from "velt/lang/intrinsics";
+
+/** A set of characters: inclusive ranges, sorted and merged once `normalize` has run. */
+export class CharSet {
+  /** `lo0, hi0, lo1, hi1, …`. */
+  ranges: u32[] = [];
+
+  /** Adds `lo..=hi`. */
+  add(lo: u32, hi: u32): void {
+    this.ranges.push(lo);
+    this.ranges.push(hi);
+  }
+
+  /** Adds every member of `other`. */
+  addSet(other: CharSet): void {
+    for (let i: usize = 0; i < other.ranges.length; i++) {
+      this.ranges.push(other.ranges[i]);
+    }
+  }
+
+  /** Sorts the ranges and merges those that overlap or touch. */
+  normalize(): void {
+    const r = this.ranges;
+    const n = r.length;
+    // An insertion sort of the pairs: tables come sorted, classes are short.
+    for (let i: usize = 2; i < n; i += 2) {
+      const lo = r[i];
+      const hi = r[i + 1];
+      let j = i;
+      while (j > 0 && r[j - 2] > lo) {
+        r[j] = r[j - 2];
+        r[j + 1] = r[j - 1];
+        j -= 2;
+      }
+      r[j] = lo;
+      r[j + 1] = hi;
+    }
+    let out: usize = 0;
+    for (let i: usize = 0; i < n; i += 2) {
+      if (out > 0 && r[i] <= r[out - 1] + 1 && r[out - 1] != 0xffffffff) {
+        if (r[i + 1] > r[out - 1]) {
+          r[out - 1] = r[i + 1];
+        }
+      } else {
+        r[out] = r[i];
+        r[out + 1] = r[i + 1];
+        out += 2;
+      }
+    }
+    arrayTruncate(r, out);
+  }
+
+  /** Replaces the (normalized) set with the characters of `0..=max` it does not hold. */
+  negate(max: u32): void {
+    const r = this.ranges;
+    const out: u32[] = [];
+    let next: u32 = 0;
+    let open = true;
+    for (let i: usize = 0; i < r.length && open; i += 2) {
+      if (r[i] > next) {
+        out.push(next);
+        out.push(r[i] - 1);
+      }
+      if (r[i + 1] >= max) {
+        open = false;
+      } else {
+        next = r[i + 1] + 1;
+      }
+    }
+    if (open) {
+      out.push(next);
+      out.push(max);
+    }
+    this.ranges = out;
+  }
+
+  /** Keeps only the members that are also in `other` (both normalized). */
+  intersect(other: CharSet): void {
+    const a = this.ranges;
+    const b = other.ranges;
+    const out: u32[] = [];
+    let i: usize = 0;
+    let j: usize = 0;
+    while (i < a.length && j < b.length) {
+      const lo = a[i] > b[j] ? a[i] : b[j];
+      const hi = a[i + 1] < b[j + 1] ? a[i + 1] : b[j + 1];
+      if (lo <= hi) {
+        out.push(lo);
+        out.push(hi);
+      }
+      if (a[i + 1] < b[j + 1]) {
+        i += 2;
+      } else {
+        j += 2;
+      }
+    }
+    this.ranges = out;
+  }
+
+  /** Is `c` a member (of a normalized set)? */
+  contains(c: u32): bool {
+    const r = this.ranges;
+    let lo: usize = 0;
+    let hi: usize = r.length >> 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (r[2 * mid + 1] < c) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo < (r.length >> 1) && r[2 * lo] <= c;
+  }
+
+  /** How many characters a normalized set holds, counted up to `limit`. */
+  count(limit: usize): usize {
+    let n: usize = 0;
+    for (let i: usize = 0; i < this.ranges.length && n < limit; i += 2) {
+      n += (this.ranges[i + 1] - this.ranges[i]) as usize + 1;
+    }
+    return n;
+  }
+
+  /** A copy. */
+  copy(): CharSet {
+    const out = new CharSet();
+    out.addSet(this);
+    return out;
+  }
+}

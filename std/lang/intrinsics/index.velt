@@ -18,12 +18,17 @@ export {
   addressLoad,
   addressStore,
   exportedAddress,
+  ptrFromAddress,
+  ptrToAddress,
 } from "velt/lang/intrinsics/address";
 export {
   anyDelete,
   anyIsList,
+  anyIsPromise,
   anyMethodCalled,
+  anyPromise,
   anyToPrimitive,
+  holdsDynamic,
   noteStdUse,
   proxyArrayCall,
   proxyArrayHole,
@@ -91,7 +96,7 @@ export {
 } from "velt/lang/intrinsics/generator";
 export { inline, intrinsic, noInline, targetFeature } from "velt/lang/intrinsics/decorators";
 export { abs, ceil, floor, round, sqrt, trunc } from "velt/lang/intrinsics/math";
-export { share, transfer } from "velt/lang/intrinsics/ownership";
+export { isUnique, share, transfer } from "velt/lang/intrinsics/ownership";
 export {
   anyReflectCount,
   anyReflectHook,

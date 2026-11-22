@@ -21,7 +21,7 @@ fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 #[no_mangle] pub extern "C" fn velt_rt_write_str(_s: u32, v: *const VeltStr) { out(unsafe { bytes(v) }) }
 #[no_mangle] pub extern "C" fn velt_test_write_i64(_s: u32, v: i64) { out(v.to_string().as_bytes()) }
 #[no_mangle] pub extern "C" fn velt_test_write_u64(_s: u32, v: u64) { out(v.to_string().as_bytes()) }
-#[no_mangle] pub extern "C" fn velt_rt_write_f64(_s: u32, v: f64) { out(v.to_string().as_bytes()) }
+#[no_mangle] pub extern "C" fn velt_test_write_f64(_s: u32, v: f64) { out(v.to_string().as_bytes()) }
 #[no_mangle] pub extern "C" fn velt_rt_write_bool(_s: u32, v: u8) { out(if v == 1 { b"true" } else { b"false" }) }
 #[no_mangle] pub extern "C" fn velt_rt_write_byte(_s: u32, v: u8) { out(&[v]) }
 #[no_mangle] pub extern "C" fn velt_rt_flush() {
@@ -49,7 +49,6 @@ fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 // Defined here for programs that import them (`imported_functions_are_called_in_another_object`).
 #[no_mangle] pub extern "C" fn velt_test_imported(a: i64, b: u8, c: f64) -> i64 { a * 100 + b as i64 * 10 + c as i64 }
 #[no_mangle] pub extern "C" fn velt_test_kept(x: i64) -> i64 { x + 1 }
-#[no_mangle] pub extern "C" fn velt_rt_pow_i64(a: i64, b: i64) -> i64 { a.wrapping_pow(b as u32) }
 // The backend emits these as instructions; a call reaching them would print NaN.
 #[no_mangle] pub extern "C" fn velt_rt_math_sqrt(_x: f64) -> f64 { f64::NAN }
 #[no_mangle] pub extern "C" fn velt_rt_math_floor(_x: f64) -> f64 { f64::NAN }

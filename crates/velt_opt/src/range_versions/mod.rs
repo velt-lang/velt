@@ -433,6 +433,7 @@ fn simd_only(call: &Option<SimdCall>) -> bool {
             SimdCall::Wide(..)
             | SimdCall::Mask(..)
             | SimdCall::Inst(_)
+            | SimdCall::Arch(_)
             | SimdCall::Has(_)
             | SimdCall::OnArch(_)
             | SimdCall::CpuWord

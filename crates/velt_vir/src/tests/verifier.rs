@@ -331,7 +331,7 @@ fn verify_rejects_math_externs_with_another_signature() {
     assert_eq!(crate::verify(&ok), Ok(()));
     let wrong_param = with_extern("velt_rt_math_clz64", vec![Ty::I64], Ty::U64);
     expect_err(&wrong_param, "signature differs from the math operation's");
-    let wrong_ret = with_extern("velt_rt_pow_i64", vec![Ty::I64, Ty::I64], Ty::F64);
+    let wrong_ret = with_extern("velt_rt_math_umulh", vec![Ty::U64, Ty::U64], Ty::F64);
     expect_err(&wrong_ret, "signature differs from the math operation's");
     let mut noreturn = with_extern("velt_rt_math_sqrt", vec![Ty::F64], Ty::F64);
     noreturn.externs.last_mut().expect("the extern").noreturn = true;
@@ -381,18 +381,22 @@ fn verify_checks_intrinsics() {
 
 #[test]
 fn verify_rejects_a_direct_call_of_a_math_operation() {
-    // t: x = velt_rt_pow_i64(2, 10) as a call: math operations are statements.
+    // t: h = velt_rt_math_umulh(2, 10) as a call: math operations are statements.
+    let h = Local(2);
+    let two_ten = || {
+        vec![
+            Operand::Const(Const::Int(2), Ty::U64),
+            Operand::Const(Const::Int(10), Ty::U64),
+        ]
+    };
     let call = |p: &vir::Program| {
-        let pow = ExternId(p.externs.len() as u32 - 1);
+        let umulh = ExternId(p.externs.len() as u32 - 1);
         block(
             vec![],
             Terminator::Call {
-                callee: Callee::Extern(pow),
-                args: vec![
-                    Operand::Const(Const::Int(2), Ty::I64),
-                    Operand::Const(Const::Int(10), Ty::I64),
-                ],
-                dest: Some(Place::local(Local(1))),
+                callee: Callee::Extern(umulh),
+                args: two_ten(),
+                dest: Some(Place::local(h)),
                 next: BlockId(1),
                 unwind: None,
             },
@@ -400,28 +404,27 @@ fn verify_rejects_a_direct_call_of_a_math_operation() {
     };
     let mut p = with_test_fn(vec![]);
     p.externs.push(ExternFn {
-        symbol: "velt_rt_pow_i64".into(),
-        params: vec![Ty::I64, Ty::I64],
-        ret: Ty::I64,
+        symbol: "velt_rt_math_umulh".into(),
+        params: vec![Ty::U64, Ty::U64],
+        ret: Ty::U64,
         noreturn: false,
         host: None,
         c_decl: None,
         variadic: false,
     });
     let t = p.funcs.len() - 1;
+    p.funcs[t]
+        .locals
+        .push(LocalDecl::new(Ty::U64, Some("h".into())));
     p.funcs[t].blocks = vec![call(&p), block(vec![], ret_x())];
     expect_err(
         &p,
-        "a call of `velt_rt_pow_i64`: math operations are statements",
+        "a call of `velt_rt_math_umulh`: math operations are statements",
     );
     // The same operation as a statement is accepted.
-    let pow = Intrinsic::Math(crate::math::MathOp::PowI64);
-    let args = vec![
-        Operand::Const(Const::Int(2), Ty::I64),
-        Operand::Const(Const::Int(10), Ty::I64),
-    ];
-    let stmt = Stmt::Assign(Place::local(Local(1)), Rvalue::Intrinsic(pow, args));
-    p.funcs[t].blocks = vec![block(vec![stmt], ret_x())];
+    let umulh = Intrinsic::Math(crate::math::MathOp::Umulh);
+    let stmt = Stmt::Assign(Place::local(h), Rvalue::Intrinsic(umulh, two_ten()));
+    p.funcs[t].blocks = vec![block(vec![stmt, set_x(0)], ret_x())];
     assert_eq!(crate::verify(&p), Ok(()));
 }
 
@@ -473,4 +476,53 @@ fn variadic_calls_pass_promoted_further_arguments() {
         &call(false, Operand::Const(Const::Int(1), Ty::I32)),
         "call passes 3 args, callee takes 2",
     );
+}
+
+/// velt/arch's instructions run only in a function gated on their feature (#3222 step 4): the
+/// same call is accepted where the function's target covers it, implications included.
+#[test]
+fn verify_rejects_a_velt_arch_instruction_outside_its_gate() {
+    let call = |target: crate::simd::ExtSet| {
+        let mut p = with_test_fn(vec![]);
+        let ext = ExternId(p.externs.len() as u32);
+        p.externs.push(ExternFn {
+            symbol: "velt_arch_sse42_crc32_u64".into(),
+            params: vec![Ty::U64, Ty::U64],
+            ret: Ty::U64,
+            noreturn: false,
+            host: None,
+            c_decl: None,
+            variadic: false,
+        });
+        let f = p.funcs.last_mut().expect("test fn");
+        f.target = target;
+        f.locals.push(LocalDecl::new(Ty::U64, None));
+        let u64_ = |v| Operand::Const(Const::Int(v), Ty::U64);
+        f.blocks = vec![
+            block(
+                vec![set_x(0)],
+                Terminator::Call {
+                    callee: Callee::Extern(ext),
+                    args: vec![u64_(0), u64_(1)],
+                    dest: Some(Place::local(Local(2))),
+                    next: BlockId(1),
+                    unwind: None,
+                },
+            ),
+            block(vec![], ret_x()),
+        ];
+        p
+    };
+    use crate::simd::{Ext, ExtSet};
+    expect_err(
+        &call(ExtSet::NONE),
+        "a call of `velt_arch_sse42_crc32_u64` in a function not gated on `sse4.2-x86`",
+    );
+    expect_err(
+        &call(ExtSet::of(Ext::PopcntX86)),
+        "not gated on `sse4.2-x86`",
+    );
+    crate::verify(&call(ExtSet::of(Ext::Sse42X86))).unwrap();
+    // AVX2 implies SSE4.2.
+    crate::verify(&call(ExtSet::of(Ext::Avx2X86))).unwrap();
 }

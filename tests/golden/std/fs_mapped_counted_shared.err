@@ -1,0 +1,2 @@
+fs_mapped_counted_shared.velt:9:15: error: this call may modify its argument, a `MappedFile` read out of a `shared` value
+  = note: a shared value is read-only, since other tasks read it at the same time: pass a copy, or share a `Mutex`

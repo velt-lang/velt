@@ -1,0 +1,56 @@
+// velt/net (internal): `TranscriptHash`, the hash of a handshake's transcript kept as the
+// transcript grows (RFC 8446 §4.4.1; RFC 5246 §7.4.9 for TLS 1.2's Finished and RFC 7627's
+// session hash). The handshakes keep the transcript's bytes, which a HelloRetryRequest restarts
+// and the TLS 1.2 handshake takes over, and ask for its hash several times; each ask feeds the
+// hasher only the bytes added since the last, so each byte is hashed once where hashing the
+// whole transcript again hashed the ClientHello and the certificates at every ask.
+
+import { Sha256 } from "velt/crypto/sha256_hasher";
+import { Sha512 } from "velt/crypto/sha512";
+
+/** The running SHA-256 and SHA-384 hashes of one transcript; `reset` when it restarts. */
+export class TranscriptHash {
+  private s256: Sha256 | null = null;
+  private s384: Sha512 | null = null;
+  // How many of the transcript's bytes each hasher has taken.
+  private n256: usize = 0;
+  private n384: usize = 0;
+
+  /** Forgets everything hashed: the transcript was replaced, not extended. */
+  reset() {
+    this.s256 = null;
+    this.s384 = null;
+    this.n256 = 0;
+    this.n384 = 0;
+  }
+
+  /**
+   * The SHA-384 (when `sha384`) or SHA-256 hash of `transcript`, which must be what this hash
+   * was last given with bytes appended (or the same).
+   */
+  of(transcript: u8[], sha384: bool): u8[] {
+    const n = transcript.length;
+    if (sha384) {
+      if (this.s384 == null || n < this.n384) {
+        this.s384 = Sha512.sha384();
+        this.n384 = 0;
+      }
+      const s = this.s384!;
+      if (n > this.n384) {
+        s.update(transcript.slice(this.n384 as i64, n as i64));
+        this.n384 = n;
+      }
+      return s.digest();
+    }
+    if (this.s256 == null || n < this.n256) {
+      this.s256 = new Sha256();
+      this.n256 = 0;
+    }
+    const s = this.s256!;
+    if (n > this.n256) {
+      s.update(transcript, this.n256, n);
+      this.n256 = n;
+    }
+    return s.digest();
+  }
+}

@@ -11,7 +11,7 @@
 
 import { StrBytes } from "velt/ffi/str_bytes";
 import { Ptr } from "velt/ffi/ptr";
-import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import { addressLoad, addressStore, ptrFromAddress } from "velt/lang/intrinsics";
 import * as m from "velt/lang/hooks/sched_mem";
 
 const INVALID: usize = 0xffffffffffffffff;
@@ -41,60 +41,68 @@ export declare c type addrinfo;
 declare c("c") function socket$win(af: i32, kind: i32, protocol: i32): usize;
 declare c("c") function WSASetLastError$win(e: i32): void;
 declare c("c") function WSAGetLastError$win(): i32;
-declare c("c") function connect$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
-declare c("c") function bind$win(s: usize, addr: Ptr<sockaddr>, len: i32): i32;
+declare c("c") function connect$win(s: usize, addr: Ptr<sockaddr> | null, len: i32): i32;
+declare c("c") function bind$win(s: usize, addr: Ptr<sockaddr> | null, len: i32): i32;
 declare c("c") function listen$win(s: usize, backlog: i32): i32;
 declare c("c") function getsockopt$win(
   s: usize,
   level: i32,
   name: i32,
-  value: Ptr<u8>,
-  len: Ptr<i32>,
+  value: Ptr<u8> | null,
+  len: Ptr<i32> | null,
 ): i32;
 declare c("c") function setsockopt$win(
   s: usize,
   level: i32,
   name: i32,
-  value: Ptr<u8>,
+  value: Ptr<u8> | null,
   len: i32,
 ): i32;
-declare c("c") function getsockname$win(s: usize, addr: Ptr<sockaddr>, len: Ptr<i32>): i32;
-declare c("c") function getpeername$win(s: usize, addr: Ptr<sockaddr>, len: Ptr<i32>): i32;
+declare c("c") function getsockname$win(
+  s: usize,
+  addr: Ptr<sockaddr> | null,
+  len: Ptr<i32> | null,
+): i32;
+declare c("c") function getpeername$win(
+  s: usize,
+  addr: Ptr<sockaddr> | null,
+  len: Ptr<i32> | null,
+): i32;
 declare c("c") function closesocket$win(s: usize): i32;
-declare c("c") function recv$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
-declare c("c") function send$win(s: usize, buf: Ptr<u8>, len: i32, flags: i32): i32;
+declare c("c") function recv$win(s: usize, buf: Ptr<u8> | null, len: i32, flags: i32): i32;
+declare c("c") function send$win(s: usize, buf: Ptr<u8> | null, len: i32, flags: i32): i32;
 declare c("c") function recvfrom$win(
   s: usize,
-  buf: Ptr<u8>,
+  buf: Ptr<u8> | null,
   len: i32,
   flags: i32,
-  from: Ptr<sockaddr>,
-  fromlen: Ptr<i32>,
+  from: Ptr<sockaddr> | null,
+  fromlen: Ptr<i32> | null,
 ): i32;
 declare c("c") function sendto$win(
   s: usize,
-  buf: Ptr<u8>,
+  buf: Ptr<u8> | null,
   len: i32,
   flags: i32,
-  to: Ptr<sockaddr>,
+  to: Ptr<sockaddr> | null,
   tolen: i32,
 ): i32;
 declare c("c") function shutdown$win(s: usize, how: i32): i32;
 declare c("c") function inet_ntop$win(
   family: i32,
-  src: Ptr<u8>,
-  dst: Ptr<u8>,
+  src: Ptr<u8> | null,
+  dst: Ptr<u8> | null,
   size: usize,
 ): Ptr<u8> | null;
-declare c("c") function memmove$text(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function memmove$text(dst: Ptr<u8> | null, src: StrBytes, n: usize): Ptr<u8> | null;
 declare c("c") function FormatMessageA(
   flags: u32,
-  source: Ptr<u8>,
+  source: Ptr<u8> | null,
   id: u32,
   language: u32,
-  buf: Ptr<u8>,
+  buf: Ptr<u8> | null,
   size: u32,
-  args: Ptr<u8>,
+  args: Ptr<u8> | null,
 ): u32;
 
 export function socket(family: i32, kind: i32, protocol: i32): i32 {
@@ -116,12 +124,12 @@ export function socket(family: i32, kind: i32, protocol: i32): i32 {
   return s as i32;
 }
 
-export function connect$net(fd: i32, addr: Ptr<sockaddr>, len: u32): i32 {
+export function connect$net(fd: i32, addr: Ptr<sockaddr> | null, len: u32): i32 {
   // SAFETY: the caller's address and length.
   return unsafe { connect$win(fd as usize, addr, len as i32) };
 }
 
-export function bind(fd: i32, addr: Ptr<sockaddr>, len: u32): i32 {
+export function bind(fd: i32, addr: Ptr<sockaddr> | null, len: u32): i32 {
   // SAFETY: the caller's address and length.
   return unsafe { bind$win(fd as usize, addr, len as i32) };
 }
@@ -131,22 +139,28 @@ export function listen(fd: i32, backlog: i32): i32 {
   return unsafe { listen$win(fd as usize, backlog) };
 }
 
-export function getsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: Ptr<u32>): i32 {
+export function getsockopt(
+  fd: i32,
+  level: i32,
+  name: i32,
+  value: Ptr<u8> | null,
+  len: Ptr<u32> | null,
+): i32 {
   // SAFETY: the caller's option room and its length, which Winsock reads and writes as an `int`.
   return unsafe { getsockopt$win(fd as usize, level, name, value, asInt(len)) };
 }
 
-export function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8>, len: u32): i32 {
+export function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8> | null, len: u32): i32 {
   // SAFETY: the caller's option and its length.
   return unsafe { setsockopt$win(fd as usize, level, name, value, len as i32) };
 }
 
-export function getsockname(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>): i32 {
+export function getsockname(fd: i32, addr: Ptr<sockaddr> | null, len: Ptr<u32> | null): i32 {
   // SAFETY: the caller's address room and its length, an `int` to Winsock.
   return unsafe { getsockname$win(fd as usize, addr, asInt(len)) };
 }
 
-export function getpeername(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>): i32 {
+export function getpeername(fd: i32, addr: Ptr<sockaddr> | null, len: Ptr<u32> | null): i32 {
   // SAFETY: the caller's address room and its length, an `int` to Winsock.
   return unsafe { getpeername$win(fd as usize, addr, asInt(len)) };
 }
@@ -155,7 +169,7 @@ export function getpeername(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>): i32 {
  * A `socklen_t *` (velt/net's) as the `int *` Winsock reads and writes: the lengths are small
  * (an address or an option), the same bits either way.
  */
-function asInt(len: Ptr<u32>): Ptr<i32> {
+function asInt(len: Ptr<u32> | null): Ptr<i32> | null {
   return m.ptrTo<i32>(Ptr.addressOf(len));
 }
 
@@ -169,7 +183,7 @@ export function strerror(e: i32): Ptr<u8> {
   let got: u32 = 0;
   // SAFETY: TEXT bytes at `buf`; no inserts are read.
   unsafe {
-    got = FormatMessageA(FROM_SYSTEM, m.ptr(0), e as u32, 0, m.ptr(buf), TEXT as u32, m.ptr(0));
+    got = FormatMessageA(FROM_SYSTEM, null, e as u32, 0, m.ptr(buf), TEXT as u32, null);
   }
   let n = got as usize;
   // The line break (and any space) at its end goes, as Rust trims it.
@@ -180,7 +194,8 @@ export function strerror(e: i32): Ptr<u8> {
     }
     addressStore<u8>(buf + n, 0);
   }
-  return m.ptr(buf);
+  // SAFETY: `buf` is this thread's message buffer, never 0, holding the NUL-terminated text.
+  return unsafe { ptrFromAddress<u8>(buf) };
 }
 
 export function close$net(fd: i32): i32 {
@@ -193,13 +208,13 @@ export function close$io(fd: i32): i32 {
   return unsafe { closesocket$win(fd as usize) };
 }
 
-export function recv$net(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
+export function recv$net(fd: i32, buf: Ptr<u8> | null, n: usize, flags: i32): isize {
   const len = n > MOST ? MOST : n;
   // SAFETY: `buf` holds `n` bytes.
   return unsafe { recv$win(fd as usize, buf, len as i32, flags) } as isize;
 }
 
-export function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
+export function send$io(fd: i32, buf: Ptr<u8> | null, n: usize, flags: i32): isize {
   const len = n > MOST ? MOST : n;
   // SAFETY: `buf` holds `n` bytes.
   return unsafe { send$win(fd as usize, buf, len as i32, flags) } as isize;
@@ -214,11 +229,11 @@ export function send$io(fd: i32, buf: Ptr<u8>, n: usize, flags: i32): isize {
  */
 export function recvfrom$net(
   fd: i32,
-  buf: Ptr<u8>,
+  buf: Ptr<u8> | null,
   n: usize,
   flags: i32,
-  addr: Ptr<sockaddr>,
-  len: Ptr<u32>,
+  addr: Ptr<sockaddr> | null,
+  len: Ptr<u32> | null,
 ): isize {
   const most = n > MOST ? MOST : n;
   // The caller's address room, which a failed receive may have shortened.
@@ -248,10 +263,10 @@ export function recvfrom$net(
 /** A datagram's send (one larger than an `int` fails, as one over 64 KiB does). */
 export function sendto$net(
   fd: i32,
-  buf: Ptr<u8>,
+  buf: Ptr<u8> | null,
   n: usize,
   flags: i32,
-  addr: Ptr<sockaddr>,
+  addr: Ptr<sockaddr> | null,
   len: u32,
 ): isize {
   const most = n > MOST ? MOST : n;
@@ -270,19 +285,19 @@ export function shutdown$io(fd: i32, how: i32): i32 {
 }
 
 /** No pipe is read here (a child's pipes are read on the blocking pool on Windows): -1. */
-export function read$net(fd: i32, buf: Ptr<u8>, n: usize): isize {
+export function read$net(fd: i32, buf: Ptr<u8> | null, n: usize): isize {
   return -1;
 }
 
 /** Copies a string's bytes to an address. */
-export function bcopy$text(src: StrBytes, dst: Ptr<u8>, n: usize): void {
+export function bcopy$text(src: StrBytes, dst: Ptr<u8> | null, n: usize): void {
   // SAFETY: the caller's destination holds `n` bytes, the string as many.
   unsafe {
     memmove$text(dst, src, n);
   }
 }
 
-export declare c("c") function freeaddrinfo(ai: Ptr<addrinfo>): void;
+export declare c("c") function freeaddrinfo(ai: Ptr<addrinfo> | null): void;
 
 /**
  * Is `getaddrinfo`'s failure an OS error, worded as one ("… (os error N)")? Yes: a Winsock error,
@@ -295,7 +310,12 @@ export function gai_strerror(e: i32): Ptr<u8> {
   return strerror(e);
 }
 
-export function inet_ntop(family: i32, src: Ptr<u8>, dst: Ptr<u8>, size: u32): Ptr<u8> | null {
+export function inet_ntop(
+  family: i32,
+  src: Ptr<u8> | null,
+  dst: Ptr<u8> | null,
+  size: u32,
+): Ptr<u8> | null {
   // SAFETY: the caller's address bytes and `size` bytes of text room.
   return unsafe { inet_ntop$win(family, src, dst, size as usize) };
 }

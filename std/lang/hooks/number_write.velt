@@ -1,24 +1,24 @@
 // velt/lang/hooks (internal): the compiler's hooks for a float written by `console.log` or
 // `console.error` with the space or newline after it (velt_vir `console.rs`). Out of
 // velt/lang/hooks/number_text, and holding none of its integer printing, so that a program that
-// prints a float checks no integer hook: they wait for live code that prints a float (velt_common
-// `ON_DEMAND_WRITE`), and lowering calls the runtime's printer while they are unchecked. Loaded
-// then (`ON_DEMAND_MODULES`). A whole number has a writer of its own here, `wholeNumberWrite`,
-// which `velt_opt` numrep calls (with `x as i64`) in `numberWrite`'s place where it knows `x` is
-// one, unless the program has the integer writer `intWrite`, which it calls then.
+// prints a float checks no integer hook: sema checks them where live code has a `WriteFloat`
+// construct (velt_common `hook_demand.rs`), and loads them then (`ON_DEMAND_MODULES`). What is
+// not a whole number takes std's float printing by role (`number_shortest`, prebuilt). A whole
+// number has a writer of its own here, `wholeNumberWrite`, which `velt_opt` numrep calls (with
+// `x as i64`) in `numberWrite`'s place where it knows `x` is one, unless the program has the
+// integer writer `intWrite`, which it calls then.
 
-import { inline, noInline, strAsciiWords, trunc } from "velt/lang/intrinsics";
+import { hookCall, inline, noInline, strAsciiWords, trunc } from "velt/lang/intrinsics";
 
-declare function velt_rt_write_f64(stream: u32, x: f64);
 declare function velt_rt_write_byte(stream: u32, b: u8);
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_math_ctz64(x: u64): u64;
 
 /**
  * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53
- * other than `-0` by `wholeNumberWrite`, anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the
- * runtime's printer. Out of line (`@noInline`): one call at each `console.log` of a float, not
- * its tests and both writers' calls.
+ * other than `-0` by `wholeNumberWrite`, anything else (`-0`, `0.5`, `1e+21`, `NaN`) by std's
+ * float printing (`writeText`). Out of line (`@noInline`): one call at each `console.log` of a
+ * float, not its tests and both writers' calls.
  */
 @noInline
 export function numberWrite(stream: u32, x: f64, end: u8): void {
@@ -31,7 +31,18 @@ export function numberWrite(stream: u32, x: f64, end: u8): void {
     wholeNumberWrite(stream, x as i64, end);
     return;
   }
-  velt_rt_write_f64(stream, x);
+  writeText(stream, x, end);
+}
+
+/** Writes `x` as `console.log` prints it (`-0` is `-0`) and `end`, by std's float printing. */
+@noInline
+function writeText(stream: u32, x: f64, end: u8): void {
+  if (x == 0) {
+    velt_rt_write_str(stream, strAsciiWords(0x302d | ((end as u64) << 16), 0, 0, 3));
+    return;
+  }
+  const text: string = hookCall("number_shortest", x);
+  velt_rt_write_str(stream, text);
   velt_rt_write_byte(stream, end);
 }
 
@@ -39,8 +50,8 @@ export function numberWrite(stream: u32, x: f64, end: u8): void {
  * Writes `v`, a whole number below 2^53 in magnitude (`x as i64` of a float that is one, other
  * than `-0`), and `end` to `stream`, as `numberWrite` writes the float: up to 8 digits, the minus
  * and `end` built in at most two words and written at once, with no allocation, by digits of its
- * own (eight at a time), so that it needs none of std's integer printing; larger numbers by the
- * runtime's printer. It takes the integer, as numrep passes it, so that no float is converted in
+ * own (eight at a time), so that it needs none of std's integer printing; larger numbers by std's
+ * float printing. It takes the integer, as numrep passes it, so that no float is converted in
  * it (x86-64 has no conversion of a float to `u64`). Out of line (`@noInline`), so that each call
  * site is a call and the std cache serves its object.
  */
@@ -49,9 +60,8 @@ export function wholeNumberWrite(stream: u32, v: i64, end: u8): void {
   const neg = v < 0;
   const a = neg ? ~(v as u64) + 1 : v as u64;
   if (a >= 100000000) {
-    // 10^8 and up: rare, and the runtime's text is the same (`v` is below 2^53, so exact).
-    velt_rt_write_f64(stream, v as f64);
-    velt_rt_write_byte(stream, end);
+    // 10^8 and up: rare, and the float's text is the same (`v` is below 2^53, so exact).
+    writeText(stream, v as f64, end);
     return;
   }
   // All eight digits with their leading zeros, then the zeros shifted out.

@@ -169,6 +169,11 @@ impl FnLower<'_, '_> {
     ) {
         let v = self.consume_detached(def);
         let p = self.field_place(obj, ty, i as u32);
+        if self.cx.weak_field(ty, i as u32).is_some() {
+            // Its slot (weak_fields.rs); a fresh object's field holds 0, which gives up nothing.
+            self.weak_store(p, v, fty);
+            return;
+        }
         if fresh || !self.cx.needs_drop(fty) {
             self.store(p, v);
         } else {

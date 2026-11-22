@@ -1,7 +1,9 @@
-// A thenable test through `any` in a program that declares a member named `then` stays an error
-// (#379): a function with properties that has a `then` (here `Thenish`, given where the plain
-// `ViewFn` is expected) is a function member with a `then`, which Node's test sees and an
-// `instanceof Promise` would not. tsc accepts the program; Node prints `true t`.
+// A thenable test through `any` in a program that declares a member named `then` (#379): a
+// function with properties that has a `then` (here `Thenish`, given where the plain `ViewFn` is
+// expected) is a function member with a `then`, which Node's test sees and an
+// `instanceof Promise` would not. The union with a promise is held as `any` (#924), but reading
+// `then` of the function through `any` stops with a `TypeError`, Velt's limitation recorded
+// here. tsc accepts the program; Node prints `true t`.
 type ViewFn = () => string;
 
 interface Thenish {
