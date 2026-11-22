@@ -188,6 +188,21 @@ mod tests {
         assert_eq!(global_name("a\"b\n"), "@\"a\\22b\\0A\"");
     }
 
+    /// Every byte value against the text LLVM reads back: printable ASCII but `"` and `\` as
+    /// it is, every other byte `\XX` in uppercase hex.
+    #[test]
+    fn escape_bytes_writes_every_byte() {
+        let all: Vec<u8> = (0..=255).collect();
+        let want: String = all
+            .iter()
+            .map(|&b| match b {
+                0x20..=0x7e if b != b'"' && b != b'\\' => (b as char).to_string(),
+                _ => format!("\\{b:02X}"),
+            })
+            .collect();
+        assert_eq!(escape_bytes(&all), want);
+    }
+
     #[test]
     fn alignment_at_offsets() {
         assert_eq!(offset_align(8, 0), 8);

@@ -180,18 +180,20 @@ const I64S: i64[] = [
   0x112233445566770b,
   0x112233445566770c,
 ];
+// Values whose f32 rounding shows (16777217 is 16777216, 1e-46 is 0, the last is Infinity), and
+// no negated element, which would leave the table unpacked.
 const F32S: f32[] = [
   0,
   1,
   1.5,
   0.25,
-  -0,
+  16777217,
   65504,
   0.1,
   3.4028234663852886e38,
-  0.5,
-  1.5,
-  2.5,
+  1.1754942e-38,
+  1e-46,
+  3.4028235677973366e38,
   3.5,
   4.5,
   5.5,
