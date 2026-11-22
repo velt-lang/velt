@@ -173,8 +173,11 @@ function fulfillFrom<T, E>(
   guard: shared<Mutex<AbandonGuard<T, E>>>,
   value: T,
 ): u64 {
-  const v = transfer(value);
-  return guard.with((g) => slot.with((s) => s.settle({ status: "fulfilled", value: v })));
+  // Moved into the outcome, never copied after `transfer`: a copy of a promise handed over here
+  // would share it on this task again (sched_share.velt `schedShare`), and the copy is what the
+  // awaiter gets (#3389).
+  const out: Settlement<T, E>[] = [{ status: "fulfilled", value: transfer(value) }];
+  return guard.with((g) => slot.with((s) => s.settle(out.pop() ?? { status: "pending" })));
 }
 
 // `fulfillFrom` for a rejection.
@@ -183,8 +186,9 @@ function rejectFrom<T, E>(
   guard: shared<Mutex<AbandonGuard<T, E>>>,
   reason: E,
 ): u64 {
-  const r = transfer(reason);
-  return guard.with((g) => slot.with((s) => s.settle({ status: "rejected", reason: r })));
+  // Moved into the outcome, as `fulfillFrom` does.
+  const out: Settlement<T, E>[] = [{ status: "rejected", reason: transfer(reason) }];
+  return guard.with((g) => slot.with((s) => s.settle(out.pop() ?? { status: "pending" })));
 }
 
 // `fulfillLater` for a rejection.
