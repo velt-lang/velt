@@ -54,7 +54,6 @@ velt_rt velt_rt_fnprop_len
 velt_rt velt_rt_fnprop_set
 velt_rt velt_rt_free
 velt_rt velt_rt_free_after_reads
-velt_rt velt_rt_fs_copy_file_sync
 velt_rt velt_rt_fs_open_read
 velt_rt velt_rt_fs_open_read_range
 velt_rt velt_rt_fs_open_write
@@ -63,10 +62,6 @@ velt_rt velt_rt_fs_reader_opened_stats
 velt_rt velt_rt_fs_reader_read
 velt_rt velt_rt_fs_reader_read_line
 velt_rt velt_rt_fs_reader_read_string
-velt_rt velt_rt_fs_readlink_sync
-velt_rt velt_rt_fs_realpath_sync
-velt_rt velt_rt_fs_rename_sync
-velt_rt velt_rt_fs_symlink_sync
 velt_rt velt_rt_fs_writer_close
 velt_rt velt_rt_fs_writer_flush
 velt_rt velt_rt_fs_writer_free
@@ -186,8 +181,6 @@ velt_rt velt_rt_process_args
 velt_rt velt_rt_process_node_argv
 velt_rt velt_rt_proxy_array_call
 velt_rt velt_rt_proxy_array_hole
-velt_rt velt_rt_random_bytes
-velt_rt velt_rt_random_u64
 velt_rt velt_rt_rc_dec
 velt_rt velt_rt_rc_inc
 velt_rt velt_rt_realloc
@@ -374,6 +367,7 @@ velt_rt_wasm velt_rt_free_after_reads
 velt_rt_wasm velt_rt_fs_append_file
 velt_rt_wasm velt_rt_fs_append_file_sync
 velt_rt_wasm velt_rt_fs_copy_file
+velt_rt_wasm velt_rt_fs_copy_file_sync
 velt_rt_wasm velt_rt_fs_exists
 velt_rt_wasm velt_rt_fs_exists_sync
 velt_rt_wasm velt_rt_fs_lstat
@@ -387,13 +381,17 @@ velt_rt_wasm velt_rt_fs_read_dir_typed_sync
 velt_rt_wasm velt_rt_fs_read_file_bytes
 velt_rt_wasm velt_rt_fs_read_file_bytes_sync
 velt_rt_wasm velt_rt_fs_readlink
+velt_rt_wasm velt_rt_fs_readlink_sync
 velt_rt_wasm velt_rt_fs_realpath
+velt_rt_wasm velt_rt_fs_realpath_sync
 velt_rt_wasm velt_rt_fs_remove
 velt_rt_wasm velt_rt_fs_remove_sync
 velt_rt_wasm velt_rt_fs_rename
+velt_rt_wasm velt_rt_fs_rename_sync
 velt_rt_wasm velt_rt_fs_stat
 velt_rt_wasm velt_rt_fs_stat_sync
 velt_rt_wasm velt_rt_fs_symlink
+velt_rt_wasm velt_rt_fs_symlink_sync
 velt_rt_wasm velt_rt_fs_write_file
 velt_rt_wasm velt_rt_fs_write_file_sync
 velt_rt_wasm velt_rt_fut_alias

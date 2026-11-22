@@ -624,13 +624,20 @@ velt_rt_wasm has, for WebAssembly builds, with their async twins:
 `velt_rt_fs_mkdir_sync(path, recursive, out)` and `velt_rt_fs_remove_sync(path, recursive, out)`
 (`IoResult<()>`).
 
-| Sync (`..., out)`, returns nothing) | Result type |
-|---|---|
-| `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink |
-| `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it |
-| `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) |
-| `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
+Renaming, copying and the links (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`) are
+std code in a native build too (`#fs-paths`: std/fs/paths/posix.velt over the C library's
+`rename`, `symlink`, `readlink` and `realpath`, with `copyFile` done as libuv's
+`uv_fs_copyfile`, `st_size` bytes of data: a read and write loop on macOS (paths/darwin.velt;
+`ENOTSUP` for a source of another kind, as libuv's `sendfile` there) and `copy_file_range` or
+the loop on Linux (paths/linux.velt); paths/win32.velt over
+`MoveFileExW`, `CopyFileW`, `CreateSymbolicLinkW`, the reparse point `DeviceIoControl` reads
+and `GetFinalPathNameByHandleW`, as libuv uses them), with Node's messages. velt_rt has none
+of these. velt_rt_wasm has, for WebAssembly builds, with their async twins:
+`velt_rt_fs_readlink_sync(path, out)` and `velt_rt_fs_realpath_sync(path, out)`
+(`IoResult<VeltStr>`; `readlink` is `EINVAL` for something that is not a link, `realpath` as
+WASI reports it), and `velt_rt_fs_symlink_sync(target, path, out)` (always `ENOTSUP`: WASI's
+link call is not stable in Rust), `velt_rt_fs_rename_sync(from, to, out)` and
+`velt_rt_fs_copy_file_sync(from, to, out)` (`IoResult<()>`).
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Error messages are Node's: `<CODE>:
 <description>, <syscall> '<path>'` (plus ` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g.
@@ -1260,10 +1267,12 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 
 ### 14.1 Randomness and local time
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
-| `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
+**[non-additive, #2196]** The operating system's random numbers are std code (`#os-random`:
+std/lang/random/os.velt over `getrandom` on Linux, `getentropy` on macOS and under WASI,
+`BCryptGenRandom` with the system's preferred generator on Windows, the JS host's
+`crypto.getRandomValues`). velt/crypto's `randomBytes` and `randomInt`, UUIDs and the seed of
+`Math.random()` draw through it; a failing generator stops the program (a panic).
+`velt_rt_random_bytes` and `velt_rt_random_u64` no longer exist.
 
 **[non-additive, #2196]** The local time zone's offset is std code (`#localtime`:
 std/time/localtime_posix.velt over the C library's `localtime_r` and `tm_gmtoff`,
@@ -1394,7 +1403,7 @@ and client are Velt code (§7).
 
 ### 14.11 Fast random numbers
 
-`Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`), seeded with
-`velt_rt_random_u64` (§14.1) natively. Under WASI, std calls wasi-libc's `getentropy`
-([wasi-libc.md](../design/wasi-libc.md)); under a JS host, the glue's `velt:random`.`fill`
-(`crypto.getRandomValues`). No runtime function is involved on WebAssembly. Not for secrets.
+`Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`), seeded from the
+operating system's random numbers (§14.1): under WASI wasi-libc's `getentropy`
+([wasi-libc.md](../design/wasi-libc.md)), under a JS host the glue's `velt:random`.`fill`
+(`crypto.getRandomValues`). No runtime function is involved on any target. Not for secrets.

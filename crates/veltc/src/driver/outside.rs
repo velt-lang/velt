@@ -100,7 +100,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("memory", "the environment"),
     ("worker", "the environment"),
     ("current", "the environment"),
-    ("random", "random numbers"),
     ("native", NATIVE_SUPPORT),
 ];
 
@@ -339,6 +338,11 @@ const CLOCKS: [&str; 5] = [
     "__wasi_clock_time_get",
 ];
 
+/// The C functions std draws the operating system's random numbers through (velt/crypto, UUIDs,
+/// `Math.random()`'s seed: std/lang/random/os_*.velt), each OS's (`getentropy` is macOS's and
+/// wasi-libc's).
+const RANDOM: [&str; 3] = ["getrandom", "getentropy", "BCryptGenRandom"];
+
 /// mimalloc's functions std's allocator hooks call, and the C library's `calloc`, which std's
 /// per-thread buffers come from (the clocks'): memory, not the outside world.
 const MIMALLOC: [&str; 6] = [
@@ -361,6 +365,9 @@ fn reason(symbol: &str) -> Option<String> {
     }
     if CLOCKS.contains(&symbol) {
         return Some("the clock".into());
+    }
+    if RANDOM.contains(&symbol) {
+        return Some("random numbers".into());
     }
     let Some(rest) = symbol.strip_prefix("velt_") else {
         if PURE_C.contains(&symbol) {
@@ -470,7 +477,7 @@ mod tests {
         let program = Program {
             aggs: vec![],
             funcs: vec![r0, r2, main],
-            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_rename_sync")],
+            externs: vec![ext("clock_gettime"), ext("velt_rt_fs_open_read")],
             statics: vec![],
             files: vec![],
             debug_types: vec![],
@@ -595,11 +602,13 @@ mod tests {
     #[test]
     fn only_what_is_known_to_be_pure_is_inside() {
         let outside = |s: &str| reason(s).unwrap_or_else(|| panic!("{s} counted as inside"));
-        assert_eq!(outside("velt_rt_fs_rename_sync"), "the file system");
+        assert_eq!(outside("velt_rt_fs_open_read"), "the file system");
         assert_eq!(outside("velt_rt_tcp_connect"), "the network");
         assert_eq!(outside("clock_gettime"), "the clock");
         assert_eq!(outside("QueryPerformanceCounter"), "the clock");
-        assert_eq!(outside("velt_rt_random_u64"), "random numbers");
+        assert_eq!(outside("getrandom"), "random numbers");
+        assert_eq!(outside("getentropy"), "random numbers");
+        assert_eq!(outside("BCryptGenRandom"), "random numbers");
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");
         assert_eq!(outside("velt_rt_worker_count"), "the environment");

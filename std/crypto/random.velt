@@ -1,12 +1,12 @@
 // velt/crypto (internal): secure random bytes and integers from the OS generator.
 
 import { CryptoError } from "velt/crypto/errors";
-import { velt_rt_random_bytes, velt_rt_random_u64 } from "velt/crypto/rt";
+import { osRandomBytes, osRandomU64 } from "velt/lang/random/os";
 import { received } from "velt/lang/bytes/text";
 
 /** `n` cryptographically secure random bytes (OS generator). */
 export function randomBytes(n: usize): u8[] {
-  return velt_rt_random_bytes(n as u64);
+  return osRandomBytes(n);
 }
 
 // The largest integer a JS number holds exactly (`Number.MAX_SAFE_INTEGER`).
@@ -37,7 +37,7 @@ export function randomInt(min: i64, max: i64): i64 {
   // 2^64 mod range: draws below it would make the low residues more likely.
   const reject = (0 - range) % range;
   while (true) {
-    const r = velt_rt_random_u64();
+    const r = osRandomU64();
     if (r >= reject) {
       return min + ((r % range) as i64);
     }

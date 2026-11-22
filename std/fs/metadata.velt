@@ -1,18 +1,16 @@
 // velt/fs (internal): metadata and symbolic links (`stat`, `lstat`, `readlink`, `realpath`,
 // `symlink` and their `*Sync` twins).
 
-import { unwrapIo } from "velt/native/result";
-import { checkIo } from "velt/native/status";
 import { Stats } from "velt/fs/stats";
 import {
-  velt_rt_fs_readlink,
-  velt_rt_fs_readlink_sync,
-  velt_rt_fs_realpath,
-  velt_rt_fs_realpath_sync,
+  readlink as readlinkAt,
+  readlinkSync as readlinkAtSync,
+  realpath as realpathAt,
+  realpathSync as realpathAtSync,
   stat as statPath,
   statSync as statPathSync,
-  velt_rt_fs_symlink,
-  velt_rt_fs_symlink_sync,
+  symlink as symlinkAt,
+  symlinkSync as symlinkAtSync,
 } from "#fs-rt";
 import { checkPathArg } from "velt/fs/path_arg";
 
@@ -30,7 +28,7 @@ export async function lstat(path: string): Promise<Stats> {
 export async function readlink(path: string): Promise<string> {
   // Node's `fs.promises.readlink` names its argument `oldPath` (its `readlinkSync`, `path`).
   checkPathArg(path, "oldPath");
-  return unwrapIo(await velt_rt_fs_readlink(path));
+  return await readlinkAt(path);
 }
 
 /**
@@ -40,18 +38,18 @@ export async function readlink(path: string): Promise<string> {
  */
 export async function realpath(path: string): Promise<string> {
   checkPathArg(path);
-  return unwrapIo(await velt_rt_fs_realpath(path));
+  return await realpathAt(path);
 }
 
 /**
  * Creates a symlink at `path` pointing to `target` (relative to the link's directory). On
  * Windows the link is a directory link when `target` is a directory, as in Node, and creating
- * one needs Developer Mode or administrator rights (`EACCES` otherwise).
+ * one needs Developer Mode or administrator rights (`EPERM` otherwise, as in Node).
  */
 export async function symlink(target: string, path: string): Promise<void> {
   checkPathArg(target, "target");
   checkPathArg(path);
-  checkIo(await velt_rt_fs_symlink(target, path));
+  await symlinkAt(target, path);
 }
 
 /** `stat`, blocking the calling thread. */
@@ -67,18 +65,18 @@ export function lstatSync(path: string): Stats {
 /** `readlink`, blocking the calling thread. */
 export function readlinkSync(path: string): string {
   checkPathArg(path);
-  return unwrapIo(velt_rt_fs_readlink_sync(path));
+  return readlinkAtSync(path);
 }
 
 /** `realpath`, blocking the calling thread. */
 export function realpathSync(path: string): string {
   checkPathArg(path);
-  return unwrapIo(velt_rt_fs_realpath_sync(path));
+  return realpathAtSync(path);
 }
 
 /** `symlink`, blocking the calling thread. */
 export function symlinkSync(target: string, path: string) {
   checkPathArg(target, "target");
   checkPathArg(path);
-  checkIo(velt_rt_fs_symlink_sync(target, path));
+  symlinkAtSync(target, path);
 }
