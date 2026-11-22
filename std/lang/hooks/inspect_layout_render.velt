@@ -1,0 +1,344 @@
+// velt/lang/hooks (internal): writes a parsed value (inspect_layout_parse.velt) the way Node's
+// `util.inspect` lays it out (`reduceToSingleString`, `isBelowBreakLength`, `groupArrayElements`
+// in lib/internal/util/inspect.js): a container on one line while it fits in 80 columns, else
+// one entry per line with 2-space indentation, or an array's short entries in columns.
+//
+// In two passes. `measure`, bottom up: each entry's length as laid out (UTF-16 units for the
+// line limit, display columns for the column widths, and whether it spans lines), and from those
+// each container's layout. An entry's layout depends only on its indentation, never on whether
+// its container breaks, so each is decided once. `write`, top down: the text, once, each
+// unchanged run copied from the source.
+
+import { BREAK_LENGTH, planColumns } from "velt/lang/hooks/inspect_layout_columns";
+import { LayoutValue, SEG_NODE, SEG_STR, SEG_TEXT } from "velt/lang/hooks/inspect_layout_parse";
+import {
+  allNumbers,
+  isMore,
+  newline,
+  pushRange,
+  pushTextAt,
+  spaces,
+} from "velt/lang/hooks/inspect_layout_pieces";
+import { splitString } from "velt/lang/hooks/inspect_layout_string";
+import { displayWidth, utf16Units } from "velt/lang/hooks/inspect_layout_width";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+/** A container on one line, one entry per line, or its entries in columns. */
+const ONE_LINE: u8 = 0;
+const BROKEN: u8 = 1;
+const GROUPED: u8 = 2;
+
+/** Lays out `v`, a value parsed from its source, into the bytes of `out`. */
+export function renderLayout(v: LayoutValue, out: u8[]): void {
+  const r = new Render(v);
+  r.measureEntry(v.topStart, v.topEnd, 0);
+  r.writeEntry(v.topStart, v.topEnd, 0, out);
+}
+
+class Render {
+  v: LayoutValue;
+  /** Per piece: a split string's text, else "" (`SEG_STR` only). */
+  split: string[] = [];
+  /** Per container: its layout, columns and their widths (at `nodeWidestAt` in `widest`). */
+  mode: u8[] = [];
+  columns: u64[] = [];
+  nodeWidestAt: u64[] = [];
+  widest: u64[] = [];
+  /** Per entry: UTF-16 units, display width, and whether it spans lines, as laid out. */
+  entUnits: u64[] = [];
+  entWidth: u64[] = [];
+  entLines: bool[] = [];
+  /** Per container, as laid out. */
+  nodeUnits: u64[] = [];
+  nodeWidth: u64[] = [];
+  /** The last `measureEntry`'s results. */
+  units: u64 = 0;
+  width: u64 = 0;
+  lines: bool = false;
+
+  constructor(v: LayoutValue) {
+    this.v = v;
+    const segs = v.segKind.length;
+    for (let k = 0; k < segs; k++) {
+      this.split.push("");
+    }
+    const nodes = v.nodeClose.length;
+    for (let k = 0; k < nodes; k++) {
+      this.mode.push(ONE_LINE);
+      this.columns.push(0);
+      this.nodeWidestAt.push(0);
+      this.nodeUnits.push(0);
+      this.nodeWidth.push(0);
+    }
+    const ents = v.entStart.length;
+    for (let k = 0; k < ents; k++) {
+      this.entUnits.push(0);
+      this.entWidth.push(0);
+      this.entLines.push(false);
+    }
+  }
+
+  /** Measures the entry made of pieces `a..b`, its values at indentation `indent`. */
+  measureEntry(a: u64, b: u64, indent: u64): void {
+    const v = this.v;
+    let units: u64 = 0;
+    let width: u64 = 0;
+    let lines = false;
+    for (let k = a; k < b; k++) {
+      const kind = v.segKind[k];
+      if (kind == SEG_NODE) {
+        const n = v.segA[k];
+        this.measureNode(n, indent);
+        units += this.nodeUnits[n];
+        width += this.nodeWidth[n];
+        // A container on one line has no line break in it (its entries have none).
+        lines = lines || this.mode[n] != ONE_LINE;
+        continue;
+      }
+      if (kind == SEG_STR) {
+        const s = splitString(v.src, v.segA[k], v.segB[k], indent);
+        if (strByteLen(s) != 0) {
+          const n = strByteLen(s) as u64;
+          units += utf16Units(s, 0, n);
+          width += displayWidth(s, 0, n);
+          lines = true;
+          this.split[k] = s;
+          continue;
+        }
+      }
+      // Text as it is. Only a custom inspect's text (an atom) can hold a line break: Node indents
+      // its lines after the first by the value's indentation.
+      const sa = v.segA[k];
+      const sb = v.segB[k];
+      units += utf16Units(v.src, sa, sb);
+      width += displayWidth(v.src, sa, sb);
+      if (kind == SEG_TEXT) {
+        let breaks: u64 = 0;
+        for (let j = sa; j < sb; j++) {
+          if (strByteAt(v.src, j) == 0x0a) {
+            breaks += 1;
+          }
+        }
+        if (breaks > 0) {
+          lines = true;
+          units += breaks * indent;
+          width += breaks * indent;
+        }
+      }
+    }
+    this.units = units;
+    this.width = width;
+    this.lines = lines;
+  }
+
+  /** Measures container `n` at indentation `indent` and decides its layout. */
+  measureNode(n: u64, indent: u64): void {
+    const v = this.v;
+    const e0 = v.nodeEntStart[n];
+    const e1 = v.nodeEntEnd[n];
+    const count = e1 - e0;
+    let sumUnits: u64 = 0;
+    let sumWidth: u64 = 0;
+    let anyLines = false;
+    for (let e = e0; e < e1; e++) {
+      this.measureEntry(v.entStart[e], v.entEnd[e], indent + 2);
+      this.entUnits[e] = this.units;
+      this.entWidth[e] = this.width;
+      this.entLines[e] = this.lines;
+      sumUnits += this.units;
+      sumWidth += this.width;
+      anyLines = anyLines || this.lines;
+    }
+    const oa = v.nodeOpenStart[n];
+    const ob = v.nodeOpenEnd[n];
+    const openUnits = utf16Units(v.src, oa, ob);
+    const openWidth = displayWidth(v.src, oa, ob);
+    const isArray = v.nodeClose[n] == 0x5d;
+    // Node groups an array's entries without its `... n more items`, which follows the rows.
+    const more: u64 = isArray && isMore(this.v, e1 - 1) ? 1 : 0;
+    const shown = count - more;
+    if (isArray && count > 6) {
+      const widths: u64[] = [];
+      for (let e = e0; e < e0 + shown; e++) {
+        widths.push(this.entWidth[e]);
+      }
+      const columns: u64[] = [];
+      const c = planColumns(widths, count, indent, columns);
+      if (c > 0) {
+        this.mode[n] = GROUPED;
+        this.columns[n] = c;
+        this.nodeWidestAt[n] = this.widest.length as u64;
+        for (const w of columns) {
+          this.widest.push(w);
+        }
+        this.measureGrouped(n, indent, openUnits, openWidth, shown, more);
+        return;
+      }
+    }
+    const start = count + indent + v.nodeOpenLen[n] + 10;
+    if (!anyLines && this.belowBreakLength(e0, e1, start)) {
+      this.mode[n] = ONE_LINE;
+      // `open entry, entry close`.
+      this.nodeUnits[n] = openUnits + 1 + sumUnits + 2 * (count - 1) + 2;
+      this.nodeWidth[n] = openWidth + 1 + sumWidth + 2 * (count - 1) + 2;
+      return;
+    }
+    this.mode[n] = BROKEN;
+    const pad = indent + 2;
+    // `open\n<pad>entry,\n<pad>entry\n<indent>close`: a line break counts one unit, no column.
+    this.nodeUnits[n] = openUnits + 1 + pad + sumUnits + (count - 1) * (2 + pad) + 1 + indent + 1;
+    this.nodeWidth[n] = openWidth + pad + sumWidth + (count - 1) * (1 + pad) + indent + 1;
+  }
+
+  /** The length of grouped container `n`, as `writeGrouped` writes it. */
+  measureGrouped(n: u64, indent: u64, openUnits: u64, openWidth: u64, shown: u64, more: u64): void {
+    const v = this.v;
+    const e0 = v.nodeEntStart[n];
+    const cols = this.columns[n];
+    const at = this.nodeWidestAt[n];
+    const numbers = allNumbers(this.v, e0, e0 + shown);
+    const pad = indent + 2;
+    let units = openUnits + 1 + pad;
+    let width = openWidth + pad;
+    for (let j: u64 = 0; j < shown; j++) {
+      const e = e0 + j;
+      const column = j % cols;
+      const lastInRow = column + 1 == cols || j + 1 == shown;
+      if (j > 0 && column == 0) {
+        units += 2 + pad;
+        width += 1 + pad;
+      }
+      const fill = this.widest[at + column] - this.entWidth[e];
+      units += this.entUnits[e];
+      width += this.entWidth[e];
+      if (numbers) {
+        units += fill;
+        width += fill;
+      }
+      if (!lastInRow) {
+        units += 2;
+        width += 2;
+        if (!numbers) {
+          units += fill;
+          width += fill;
+        }
+      }
+    }
+    if (more == 1) {
+      const e = e0 + shown;
+      units += 2 + pad + this.entUnits[e];
+      width += 1 + pad + this.entWidth[e];
+    }
+    this.nodeUnits[n] = units + 1 + indent + 1;
+    this.nodeWidth[n] = width + indent + 1;
+  }
+
+  /** Node's `isBelowBreakLength` for entries `e0..e1` (measured), starting at `start`. */
+  belowBreakLength(e0: u64, e1: u64, start: u64): bool {
+    let total = e1 - e0 + start;
+    if (total + (e1 - e0) > BREAK_LENGTH) {
+      return false;
+    }
+    for (let e = e0; e < e1; e++) {
+      total += this.entUnits[e];
+      if (total > BREAK_LENGTH) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Writes the entry made of pieces `a..b`, its values at indentation `indent`. */
+  writeEntry(a: u64, b: u64, indent: u64, out: u8[]): void {
+    const v = this.v;
+    for (let k = a; k < b; k++) {
+      const kind = v.segKind[k];
+      if (kind == SEG_NODE) {
+        this.writeNode(v.segA[k], indent, out);
+      } else if (kind == SEG_STR && strByteLen(this.split[k]) != 0) {
+        const s = this.split[k];
+        pushRange(out, s, 0, strByteLen(s) as u64);
+      } else if (kind == SEG_TEXT) {
+        pushTextAt(out, v.src, v.segA[k], v.segB[k], indent);
+      } else {
+        pushRange(out, v.src, v.segA[k], v.segB[k]);
+      }
+    }
+  }
+
+  /** Writes container `n` at indentation `indent`, as `measureNode` decided. */
+  writeNode(n: u64, indent: u64, out: u8[]): void {
+    const v = this.v;
+    const e0 = v.nodeEntStart[n];
+    const e1 = v.nodeEntEnd[n];
+    pushRange(out, v.src, v.nodeOpenStart[n], v.nodeOpenEnd[n]);
+    const mode = this.mode[n];
+    if (mode == ONE_LINE) {
+      out.push(0x20);
+      for (let e = e0; e < e1; e++) {
+        if (e > e0) {
+          out.push(0x2c);
+          out.push(0x20);
+        }
+        this.writeEntry(v.entStart[e], v.entEnd[e], indent + 2, out);
+      }
+      out.push(0x20);
+      out.push(v.nodeClose[n]);
+      return;
+    }
+    const pad = indent + 2;
+    newline(out, pad);
+    if (mode == GROUPED) {
+      this.writeGrouped(n, pad, out);
+    } else {
+      for (let e = e0; e < e1; e++) {
+        if (e > e0) {
+          out.push(0x2c);
+          newline(out, pad);
+        }
+        this.writeEntry(v.entStart[e], v.entEnd[e], pad, out);
+      }
+    }
+    newline(out, indent);
+    out.push(v.nodeClose[n]);
+  }
+
+  /** Writes grouped container `n`'s entries in rows, at indentation `pad`. */
+  writeGrouped(n: u64, pad: u64, out: u8[]): void {
+    const v = this.v;
+    const e0 = v.nodeEntStart[n];
+    const e1 = v.nodeEntEnd[n];
+    const more: u64 = isMore(this.v, e1 - 1) ? 1 : 0;
+    const shown = e1 - e0 - more;
+    const cols = this.columns[n];
+    const at = this.nodeWidestAt[n];
+    const numbers = allNumbers(this.v, e0, e0 + shown);
+    for (let j: u64 = 0; j < shown; j++) {
+      const e = e0 + j;
+      const column = j % cols;
+      const lastInRow = column + 1 == cols || j + 1 == shown;
+      if (j > 0 && column == 0) {
+        out.push(0x2c);
+        newline(out, pad);
+      }
+      const fill = this.widest[at + column] - this.entWidth[e];
+      if (numbers) {
+        spaces(out, fill);
+      }
+      this.writeEntry(v.entStart[e], v.entEnd[e], pad, out);
+      if (!lastInRow) {
+        out.push(0x2c);
+        out.push(0x20);
+        if (!numbers) {
+          spaces(out, fill);
+        }
+      }
+    }
+    if (more == 1) {
+      out.push(0x2c);
+      newline(out, pad);
+      const e = e0 + shown;
+      this.writeEntry(v.entStart[e], v.entEnd[e], pad, out);
+    }
+  }
+}

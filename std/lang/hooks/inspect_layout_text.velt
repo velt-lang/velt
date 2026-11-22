@@ -1,0 +1,87 @@
+// velt/lang/hooks (internal): `console.log`'s line breaking. The printer writes a value on one
+// line into the line's builder; this re-reads that text from where the value starts and lays it
+// out again the way Node's `util.inspect` breaks it (inspect_layout_parse.velt,
+// inspect_layout_render.velt), only when it may need breaking: a short value costs a length
+// check and a scan of at most 71 bytes. Node's `depth` and `maxArrayLength` limits are the
+// printer's, applied as it writes the value.
+
+import { parseLayout } from "velt/lang/hooks/inspect_layout_parse";
+import { renderLayout } from "velt/lang/hooks/inspect_layout_render";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+
+/**
+ * A value whose one-line text is at most this long needs no breaking unless it has an array of
+ * more than six entries: Node keeps a container on one line while its text plus 9 columns fits in
+ * 80, and splits a string only when it is longer than 76.
+ */
+export const FITS: u64 = 71;
+
+/** Units unknown to `velt_rt_strbuf_push_u8s`: the runtime counts them. */
+const UNITS_UNKNOWN: u64 = 0xffffffffffffffff;
+
+/**
+ * Is the value at bytes `start..` of `text` short enough to stay as it is: at most `FITS` bytes,
+ * fewer than six commas and no line break? (A custom inspect's multi-line text is laid out at any
+ * length, to be indented where it is nested.)
+ */
+export function fitsAsIs(text: string, start: u64): bool {
+  const end = strByteLen(text) as u64;
+  if (end - start > FITS) {
+    return false;
+  }
+  let commas: u64 = 0;
+  for (let i = start; i < end; i++) {
+    const c = strByteAt(text, i);
+    if (c == 0x2c) {
+      commas += 1;
+    } else if (c == 0x0a) {
+      return false;
+    }
+  }
+  return commas < 6;
+}
+
+/**
+ * The value at bytes `start..` of `text` laid out as Node breaks it, or "" when it stays as it
+ * is: short, laid out the same, or not the printer's text. `atoms` holds pairs of byte offsets in
+ * `text`, the ranges custom inspects wrote, which are kept as they are.
+ */
+export function layoutText(text: string, start: u64, atoms: u64[]): string {
+  if (fitsAsIs(text, start)) {
+    return "";
+  }
+  const end = strByteLen(text) as u64;
+  // A `<ref *N> ` inserted after a custom inspect wrote its text moves that text: an atom past
+  // the end is ignored.
+  const kept: u64[] = [];
+  for (let j: u64 = 0; j + 1 < (atoms.length as u64); j += 2) {
+    if (atoms[j] >= start && atoms[j + 1] <= end) {
+      kept.push(atoms[j]);
+      kept.push(atoms[j + 1]);
+    }
+  }
+  const v = parseLayout(text, start, end, kept);
+  if (v == null) {
+    return "";
+  }
+  const out: u8[] = [];
+  renderLayout(v, out);
+  const n = out.length as u64;
+  if (n == end - start) {
+    let same = true;
+    for (let j: u64 = 0; j < n; j++) {
+      if (out[j] != strByteAt(text, start + j)) {
+        same = false;
+        break;
+      }
+    }
+    if (same) {
+      return "";
+    }
+  }
+  let s: string = "";
+  velt_rt_strbuf_push_u8s(s, out, n, UNITS_UNKNOWN);
+  return s;
+}

@@ -1,0 +1,119 @@
+// velt/lang/hooks (internal): what `console.log`'s layout (inspect_layout_render.velt) asks of an
+// entry of a parsed value (inspect_layout_parse.velt), whether it is Node's `... n more items` or
+// a number, and the byte writers it lays the text out with.
+
+import { LayoutValue, SEG_TEXT } from "velt/lang/hooks/inspect_layout_parse";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+/** The single text piece entry `e` of `v` is made of, or -1. */
+function onlyText(v: LayoutValue, e: u64): i64 {
+  const a = v.entStart[e];
+  if (v.entEnd[e] != a + 1 || v.segKind[a] != SEG_TEXT) {
+    return -1;
+  }
+  return a as i64;
+}
+
+/** Is entry `e` Node's `... n more items` (the printer's only unquoted text starting so)? */
+export function isMore(v: LayoutValue, e: u64): bool {
+  const k = onlyText(v, e);
+  if (k < 0) {
+    return false;
+  }
+  const a = v.segA[k as u64];
+  return (
+    v.segB[k as u64] >= a + 4 &&
+    strByteAt(v.src, a) == 0x2e &&
+    strByteAt(v.src, a + 1) == 0x2e &&
+    strByteAt(v.src, a + 2) == 0x2e &&
+    strByteAt(v.src, a + 3) == 0x20
+  );
+}
+
+/** Are entries `e0..e1` numbers (`typeof value[i] === 'number'`, which Node right-aligns)? */
+export function allNumbers(v: LayoutValue, e0: u64, e1: u64): bool {
+  for (let e = e0; e < e1; e++) {
+    if (!isNumber(v, e)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Is entry `e` a number as the printer writes one (`-1.5`, `1e+21`, `NaN`, `-Infinity`, `3n`)? */
+function isNumber(v: LayoutValue, e: u64): bool {
+  const k = onlyText(v, e);
+  if (k < 0) {
+    return false;
+  }
+  let a = v.segA[k as u64];
+  let b = v.segB[k as u64];
+  if (a < b && strByteAt(v.src, a) == 0x2d) {
+    a += 1;
+  }
+  if (a < b && strByteAt(v.src, b - 1) == 0x6e) {
+    b -= 1;
+  }
+  if (isWord(v.src, a, b, "NaN") || isWord(v.src, a, b, "Infinity")) {
+    return true;
+  }
+  if (a >= b || !isDigit(strByteAt(v.src, a))) {
+    return false;
+  }
+  for (let j = a; j < b; j++) {
+    const c = strByteAt(v.src, j);
+    if (!isDigit(c) && c != 0x2e && c != 0x65 && c != 0x2b && c != 0x2d) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isDigit(c: u8): bool {
+  return c >= 0x30 && c <= 0x39;
+}
+
+/** Are bytes `a..b` of `s` the ASCII word `w`? */
+function isWord(s: string, a: u64, b: u64, w: string): bool {
+  const n = strByteLen(w) as u64;
+  if (b - a != n) {
+    return false;
+  }
+  for (let j: u64 = 0; j < n; j++) {
+    if (strByteAt(s, a + j) != strByteAt(w, j)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Appends bytes `a..b` of `s`. */
+export function pushRange(out: u8[], s: string, a: u64, b: u64): void {
+  for (let j = a; j < b; j++) {
+    out.push(strByteAt(s, j));
+  }
+}
+
+/** Appends bytes `a..b` of `s`, each line after the first indented by `indent` spaces. */
+export function pushTextAt(out: u8[], s: string, a: u64, b: u64, indent: u64): void {
+  for (let j = a; j < b; j++) {
+    const c = strByteAt(s, j);
+    out.push(c);
+    if (c == 0x0a) {
+      spaces(out, indent);
+    }
+  }
+}
+
+/** Appends `n` spaces. */
+export function spaces(out: u8[], n: u64): void {
+  for (let j: u64 = 0; j < n; j++) {
+    out.push(0x20);
+  }
+}
+
+/** Appends a line break and `n` spaces of indentation. */
+export function newline(out: u8[], n: u64): void {
+  out.push(0x0a);
+  spaces(out, n);
+}
