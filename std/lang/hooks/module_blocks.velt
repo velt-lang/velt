@@ -99,9 +99,10 @@ function zeroed(n: usize): usize {
 
 /** Frees what `zeroed` gave. */
 function release(p: usize): void {
-  // SAFETY: `p` came from calloc and is not used after.
+  // SAFETY: `p` came from calloc and is not used after. `Ptr.orNull`, as `free` takes NULL:
+  // `Ptr.at` stops on 0, so this would report its callers' locations (#3094).
   unsafe {
-    free$blocks(Ptr.at<u8>(p));
+    free$blocks(Ptr.orNull<u8>(p));
   }
 }
 

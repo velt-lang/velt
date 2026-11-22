@@ -109,6 +109,7 @@ impl Cx<'_> {
             TyKind::Array(e) => TyKind::Array(r(e)?),
             TyKind::Option(e, n) => TyKind::Option(r(e)?, *n),
             TyKind::Shared(e) => TyKind::Shared(r(e)?),
+            TyKind::Ptr(e) => TyKind::Ptr(r(e)?),
             TyKind::Map(a, b) => TyKind::Map(r(a)?, r(b)?),
             TyKind::Result(a, b) => TyKind::Result(r(a)?, r(b)?),
             TyKind::Promise(a, b) => TyKind::Promise(r(a)?, r(b)?),
@@ -228,6 +229,11 @@ impl Cx<'_> {
             self.array_view(t),
             self.holds_atomic(t, &mut FxHashSet::default()),
             self.shares_as_counted(t),
+            // A C pointer answers every other question as `symbol` does (a non-null word, no
+            // drop), but prints and compares as itself (#3094). No shared instance sees one yet:
+            // only the array-view helpers are shared (`SHARED`), and sema refuses the view of a
+            // pointer array (`any as Ptr<T>[]`); this keeps the two apart once more is shared.
+            self.c_pointer(t),
         ];
         answers
             .iter()
@@ -264,6 +270,7 @@ impl Cx<'_> {
             TyKind::Array(e) => TyKind::Array(r(self, e)),
             TyKind::Option(e, n) => TyKind::Option(r(self, e), n),
             TyKind::Shared(e) => TyKind::Shared(r(self, e)),
+            TyKind::Ptr(e) => TyKind::Ptr(r(self, e)),
             TyKind::Map(a, b) => TyKind::Map(r(self, a), r(self, b)),
             TyKind::Result(a, b) => TyKind::Result(r(self, a), r(self, b)),
             TyKind::Promise(a, b) => TyKind::Promise(r(self, a), r(self, b)),
