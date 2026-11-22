@@ -1,0 +1,116 @@
+// velt/fs (tests): `MappedFile`'s counted methods: their arrays keep the mapping only while they
+// live, from any task, and a typed method's array still pins it. Linux shows whether a mapping
+// is there in /proc/self/maps; elsewhere only the values are checked.
+import { MappedFile, readFileSync, rmSync, writeFileSync } from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+import { describe, expect, it } from "velt/test";
+
+const LINUX = platform() == "linux";
+
+/** A new file of 16 known bytes ("0123456789abcdef") whose path ends in `tag`. */
+function file(tag: string): string {
+  const path = `${tmpdir()}/velt-counted-${Date.now()}-${Math.floor(Math.random() * 1e9)}-${tag}`;
+  writeFileSync(path, "0123456789abcdef");
+  return path;
+}
+
+/** Whether a mapping of `path` is in this process's memory map (Linux), else `expected`. */
+function mapped(path: string, expected: bool): bool {
+  if (!LINUX) {
+    return expected;
+  }
+  return readFileSync("/proc/self/maps").includes(path);
+}
+
+function remove(path: string) {
+  try {
+    rmSync(path);
+  } catch (e) {
+    // Windows may refuse to remove a file that is mapped.
+  }
+}
+
+/** Sums the counted view it is given, and drops it, in a task of its own. */
+async function sumAndDrop(view: shared<u32[]>): Promise<number> {
+  let sum = 0;
+  for (const x of view) {
+    sum += x;
+  }
+  return sum;
+}
+
+describe("MappedFile counted methods", () => {
+  it("give arrays that keep the mapping only while they live", () => {
+    const path = file("only");
+    const m = MappedFile.open(path);
+    let words: shared<u32[]> | null = m.countedU32s(4, 2);
+    m[Symbol.dispose]();
+    expect(mapped(path, true)).toBe(true);
+    expect(words![1]).toBe(0x62613938);
+    words = null;
+    expect(mapped(path, false)).toBe(false);
+    remove(path);
+  });
+
+  it("check their range and alignment as the typed methods do", () => {
+    const path = file("checks");
+    const m = MappedFile.open(path);
+    expect(m.countedI8s(15, 1)[0]).toBe(102);
+    expect(m.countedU16s(14, 1)[0]).toBe(0x6665);
+    expect(m.countedF64s(0, 0).length).toBe(0);
+    expect(() => m.countedU32s(2, 1)).toThrow(
+      "countedU32s(2, 1): byte 2 of the file is not a multiple of 4",
+    );
+    expect(() => m.countedU64s(8, 2)).toThrow(
+      "is not a range of 8-byte integers inside the 16 mapped bytes",
+    );
+    m[Symbol.dispose]();
+    expect(mapped(path, false)).toBe(false);
+    remove(path);
+  });
+
+  it("keep the mapping no longer than a typed array pinned it", () => {
+    for (const counted of [true, false]) {
+      const path = file(counted ? "counted-first" : "pinned-first");
+      const m = MappedFile.open(path);
+      let first: shared<u32[]> | null = counted ? m.countedU32s(0, 1) : m.u32s(0, 1);
+      let second: shared<u32[]> | null = counted ? m.u32s(4, 1) : m.countedU32s(4, 1);
+      expect(first![0] + second![0]).toBe(0x33323130 + 0x37363534);
+      m[Symbol.dispose]();
+      first = null;
+      second = null;
+      // Pinned for the rest of the program.
+      expect(mapped(path, true)).toBe(true);
+      remove(path);
+    }
+  });
+
+  it("are dropped in another task, which may give the mapping back", async () => {
+    const path = file("task");
+    const m = MappedFile.open(path);
+    const job = spawn(sumAndDrop(m.countedU32s(0, 4)));
+    m[Symbol.dispose]();
+    expect(await job).toBe(0x33323130 + 0x37363534 + 0x62613938 + 0x66656463);
+    // The task's array was the last hold, and the join comes after its drop.
+    expect(mapped(path, false)).toBe(false);
+    remove(path);
+  });
+
+  it("reserve more holds when a MappedFile makes more arrays than it reserved", () => {
+    const path = file("reserve");
+    const m = MappedFile.open(path);
+    let sum = 0;
+    // More than one reserve (65,536) of arrays, each dropped at once.
+    for (let i = 0; i < 140000; i++) {
+      sum += m.countedI8s(i % 16, 1)[0];
+    }
+    let kept: shared<i8[]> | null = m.countedI8s(0, 16);
+    m[Symbol.dispose]();
+    expect(sum > 0).toBe(true);
+    expect(mapped(path, true)).toBe(true);
+    expect(kept![15]).toBe(102);
+    kept = null;
+    expect(mapped(path, false)).toBe(false);
+    remove(path);
+  });
+});

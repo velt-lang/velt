@@ -47,6 +47,7 @@ mod atomic_copies;
 mod augment_scope;
 mod body;
 mod brands;
+mod c_memory;
 mod call_sigs;
 mod callables;
 mod check_work;
@@ -112,6 +113,7 @@ mod kept_consts;
 mod kept_reload;
 mod key_groups;
 mod known;
+mod known_weak;
 mod layout_merge;
 mod linked;
 mod literals;
@@ -407,6 +409,7 @@ fn check_timed(
             cx.lazy.on = false;
         }
         cx.units = opts.units;
+        cx.wasm32 = opts.wasm32;
         cx.lazy.native_executor = opts.native_executor;
         cx.loads = loads;
         generating::install(cx, gen, generator.as_ref());

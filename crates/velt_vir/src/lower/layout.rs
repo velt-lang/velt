@@ -189,7 +189,10 @@ impl Cx<'_> {
                 let tys = self.part_types(t);
                 let tys = self.stored_tys(tys);
                 let a = self.new_agg(name, &tys);
-                if let Some(n) = self.align_of(d) {
+                // A C struct's layout is C's: sema refuses `@align` on one.
+                if self.c_struct(t) {
+                    self.assert_c_layout(t, a);
+                } else if let Some(n) = self.align_of(d) {
                     self.raise_align(a, n);
                 }
                 a

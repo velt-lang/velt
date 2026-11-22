@@ -14,7 +14,7 @@
 // task that owns its target, one thread at a time, as the target is: its count changes without
 // the lock (`slotDrop`).
 
-import { R_SLOT, node } from "./weak_records";
+import { R_SLOT, node, slotCounted } from "./weak_records";
 import { alloc, free, ld, st } from "./weak_mem";
 
 /** A slot: its references, then its target's address (0 once the target was freed). */
@@ -28,6 +28,7 @@ export function slotFor(h: usize, obj: usize): usize {
   let s = ld(rec + R_SLOT);
   if (s === 0) {
     s = alloc(SLOT);
+    slotCounted(1);
     // The record's reference.
     st(s + S_COUNT, 1);
     st(s + S_TARGET, obj);
@@ -42,6 +43,7 @@ export function slotDrop(s: usize): void {
   const c = ld(s + S_COUNT) - 1;
   if (c === 0) {
     free(s);
+    slotCounted(-1);
     return;
   }
   st(s + S_COUNT, c);

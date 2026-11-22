@@ -151,7 +151,7 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   (`weak Node | null` is a union of `Weak(Node)` and `null`); `weak` stays a name everywhere else.
   Its meaning is sema's (`velt_sema` `weak_types`): only at the top of the type of a field or a
   variable, as the read type `T | null`. The AST encoding's version (`AST_FORMAT`) is `0x11` with
-  it (variant 25).
+  it (variant 25). A lowered `weak` class field is `FieldDef::weak` in HIR (hir_encodings.md).
 
 ## Host functions (additive AST, HIR and VIR extension, #1735)
 - Decorators (`ast.rs`, https://github.com/velt-lang/velt/issues/2203): `Decorator { expr, span }`
@@ -198,6 +198,11 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `T **`, `CTy::Out`); the `std_hooks` rows `ffi_ptr_of`, `ffi_ptr_or_null`, `ffi_ptr_address`
   and `ffi_ptr_address_or_zero` are removed; `Intrinsic::PtrAtomic*` are `AddressAtomic*`,
   taking an address, and `PtrFromAddress` / `PtrToAddress` are added. VIR types are unchanged.
+  A C struct's field may be a pointer (#3094 pull request 3), its aggregate C's layout on the
+  64-bit targets (lowering checks it); `Intrinsic::PtrRead` / `PtrWrite` (additive) are
+  velt/ffi's `Ptr.read` and `Ptr.write`, a read checking the element's non-null pointers.
+  `CheckOptions::wasm32` (additive) tells sema the target is wasm32, where they refuse a type
+  holding a pointer, `usize` or `isize`.
 - Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
   `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:
   CVarArgs`; its `CImport::params` and `ExternFnDef::params` are the fixed parameters, and a
@@ -215,7 +220,8 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `_errno()`, and `GetLastError()` for another library).
 - std's own host functions (#1785): the import modules `velt:fetch`
   (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, and
-  `velt:random` (std/lang/random/seed_js.velt), `Math.random()`'s seed, and `velt:clock`
+  `velt:random` (std/lang/random/os_js.velt), the random bytes of `Math.random()`'s seed,
+  velt/crypto and UUIDs, and `velt:clock`
   (std/lang/hooks/clock_js.velt), `Date.now()`'s and `performance.now()`'s clocks, which the glue
   provides itself (rt_abi.md "Host values").
 

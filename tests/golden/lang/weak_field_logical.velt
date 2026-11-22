@@ -1,0 +1,75 @@
+// check: no leaks
+// `??=`, `||=` and `&&=` on a `weak` field (docs/internals/design/cycles.md "`weak T`") are
+// `a ?? (a = b)` and the like, as in JavaScript: the value is borrowed as `a = b` borrows it,
+// so a local at its last use keeps its object for the rest of its scope.
+class A {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class H {
+  a: weak A | null = null;
+}
+
+function name(a: A | null): string {
+  return a === null ? "null" : `${a.n}`;
+}
+
+function plain(): void {
+  const h = new H();
+  const a1 = new A(1);
+  h.a = a1;
+  console.log("=", name(h.a));
+}
+
+function nullish(): void {
+  const h = new H();
+  const a2 = new A(2);
+  h.a ??= a2;
+  console.log("??=", name(h.a));
+}
+
+function orAssign(): void {
+  const h = new H();
+  const a3 = new A(3);
+  h.a ||= a3;
+  console.log("||=", name(h.a));
+}
+
+function andAssign(): void {
+  const h = new H();
+  const a4 = new A(4);
+  const a0 = new A(0);
+  h.a = a0;
+  h.a &&= a4;
+  console.log("&&=", name(h.a), a0.n);
+}
+
+// Short-circuited: a set field keeps its target, and `&&=` on an empty one writes nothing.
+function kept(): void {
+  const h = new H();
+  const first = new A(5);
+  const second = new A(6);
+  h.a = first;
+  h.a ??= second;
+  h.a ||= second;
+  const e = new H();
+  e.a &&= second;
+  console.log("kept", name(h.a), name(e.a), second.n);
+}
+
+function asValue(): void {
+  const h = new H();
+  const a7 = new A(7);
+  const got = (h.a ??= a7);
+  console.log("value", name(got), name(h.a));
+}
+
+plain();
+nullish();
+orAssign();
+andAssign();
+kept();
+asValue();

@@ -1,16 +1,15 @@
 // velt/fs (internal): removing, renaming, copying and probing entries (`remove`, `rename`,
 // `copyFile`, `exists` and their `*Sync` twins).
 
-import { checkIo } from "velt/native/status";
 import {
-  velt_rt_fs_copy_file,
-  velt_rt_fs_copy_file_sync,
+  copyFile as copyAt,
+  copyFileSync as copyAtSync,
   exists as existsAt,
   existsSync as existsAtSync,
   remove as removeAt,
   removeSync as removeAtSync,
-  velt_rt_fs_rename,
-  velt_rt_fs_rename_sync,
+  rename as renameAt,
+  renameSync as renameAtSync,
 } from "#fs-rt";
 import { checkPathArg } from "velt/fs/path_arg";
 
@@ -29,14 +28,14 @@ export async function remove(path: string, opts: RemoveOptions = {}): Promise<vo
 export async function rename(from: string, to: string): Promise<void> {
   checkPathArg(from, "oldPath");
   checkPathArg(to, "newPath");
-  checkIo(await velt_rt_fs_rename(from, to));
+  await renameAt(from, to);
 }
 
 /** Copies the file `from` to `to`, replacing a file at `to`. */
 export async function copyFile(from: string, to: string): Promise<void> {
   checkPathArg(from, "src");
   checkPathArg(to, "dest");
-  checkIo(await velt_rt_fs_copy_file(from, to));
+  await copyAt(from, to);
 }
 
 /** Never throws: any failure to reach `path` reads as `false`. */
@@ -56,14 +55,14 @@ export function removeSync(path: string, opts: RemoveOptions = {}) {
 export function renameSync(from: string, to: string) {
   checkPathArg(from, "oldPath");
   checkPathArg(to, "newPath");
-  checkIo(velt_rt_fs_rename_sync(from, to));
+  renameAtSync(from, to);
 }
 
 /** `copyFile`, blocking the calling thread. */
 export function copyFileSync(from: string, to: string) {
   checkPathArg(from, "src");
   checkPathArg(to, "dest");
-  checkIo(velt_rt_fs_copy_file_sync(from, to));
+  copyAtSync(from, to);
 }
 
 /** `exists`, blocking the calling thread. */

@@ -211,7 +211,7 @@ impl Cx<'_> {
                     false => self.hierarchy_classes(b, t),
                 };
                 for c in classes {
-                    for f in self.adt_field_tys(c) {
+                    for f in self.adt_edge_tys(c) {
                         self.refs_inline(b, f, out, seen);
                     }
                 }
@@ -249,7 +249,7 @@ impl Cx<'_> {
         let mut out = vec![];
         let mut seen = FxHashSet::default();
         let mut parts = match self.kind(t) {
-            TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
+            TyKind::Adt(..) if self.is_class(t) => self.adt_edge_tys(t),
             TyKind::Array(e) => vec![e],
             _ => self.part_types(t),
         };

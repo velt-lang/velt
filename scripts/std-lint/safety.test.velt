@@ -1,0 +1,98 @@
+// scripts/std-lint (tests): the `// SAFETY:` rule (safety.velt), run by veltc's
+// tests/std_lint.rs (`velt test scripts/std-lint`).
+import { describe, expect, it } from "velt/test";
+import { missingSafety } from "./safety";
+
+describe("missingSafety", () => {
+  it("passes a comment directly above, with more comment lines between", () => {
+    const src = "// SAFETY: fine.\n// more\nconst x = unsafe { f() };\n";
+    expect(missingSafety(src).length).toBe(0);
+  });
+
+  it("reports a comment one line too high (a blank line between)", () => {
+    const src = "// SAFETY: fine.\n\nconst x = unsafe { f() };\n";
+    expect(missingSafety(src).join(",")).toBe("3");
+  });
+
+  it("reports `unsafe {` that velt fmt moved below its comment's line", () => {
+    const src = [
+      "  // SAFETY: `buf` holds the bytes passed.",
+      "  const ok =",
+      "    unsafe { DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, null, 0, buf, size, got, null) };",
+      "",
+    ].join("\n");
+    expect(missingSafety(src).join(",")).toBe("3");
+  });
+
+  it("reports a block statement and an unsafe function without a comment", () => {
+    const src = [
+      "function f() {",
+      "  unsafe {",
+      "    g();",
+      "  }",
+      "}",
+      "export unsafe function h(p: usize): void {}",
+      "",
+    ].join("\n");
+    expect(missingSafety(src).join(",")).toBe("2,6");
+  });
+
+  it("takes an `Unsafe:` paragraph for an unsafe function or method, not for a block", () => {
+    const src = [
+      "/**",
+      " * Reads it. Unsafe: `p` must point at a live value.",
+      " */",
+      "export unsafe function read(p: usize): u8 {}",
+      "class C {",
+      "  /** Unsafe: as `read`. */",
+      "  static unsafe at<T>(address: usize): T {}",
+      "}",
+      "/** Unsafe: not for a block. */",
+      "unsafe {}",
+      "",
+    ].join("\n");
+    expect(missingSafety(src).join(",")).toBe("10");
+  });
+
+  it("leaves out declarations, comments and strings that mention unsafe code", () => {
+    const src = [
+      "@intrinsic",
+      "export declare unsafe function intrinsicAt(address: usize): u8;",
+      "// unsafe { as a comment }",
+      " * unsafe function in a doc comment",
+      'panic("unsafe { is no code here");',
+      "const s = `unsafe { ${x} }`; // unsafe {",
+      "const unsafeCount = 1;",
+      "",
+    ].join("\n");
+    expect(missingSafety(src).length).toBe(0);
+  });
+
+  it(
+    "leaves out overload signatures, properties and code in multi-line strings and comments",
+    () => {
+      const src = [
+        "export unsafe function f(a: i64): i64;",
+        "// SAFETY: fine.",
+        "export unsafe function f(a: i64, b: i64 = 0): i64 {}",
+        "const v = config.unsafe",
+        "  .map((x) => x);",
+        "const t = `",
+        "  unsafe { f() }",
+        "`;",
+        "/*",
+        "  unsafe function g() {}",
+        "*/",
+        "f(); /* unsafe { or not */",
+        "",
+      ].join("\n");
+      expect(missingSafety(src).length).toBe(0);
+    },
+  );
+
+  it("reads a CRLF file and a tab as the parser does", () => {
+    const src =
+      "// SAFETY: fine.\r\nconst a = unsafe\t{ f() };\r\n\r\nconst b = unsafe\r\n  { g() };\r\n";
+    expect(missingSafety(src).join(",")).toBe("4");
+  });
+});

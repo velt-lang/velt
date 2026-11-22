@@ -1,0 +1,70 @@
+// velt/text (internal): `Search`, the working memory of the matchers for one call of a `RegExp`
+// method: made once, used for every match the call finds.
+
+import { Dfa } from "velt/text/regex/dfa";
+import { DfaTables } from "velt/text/regex/dfa_tables";
+import { Lists } from "velt/text/regex/lists";
+
+/** What a search over one subject keeps between matches. */
+export class Search {
+  /** The capture slots of the last match, as byte offsets: `start, end` per group, -1 for a
+   * group that did not take part. */
+  slots: i64[] = [];
+  /** The slots of every match `findAll` found, one match after another. */
+  found: i64[] = [];
+  /** Where the scan for literals looks from (prefilter.velt). */
+  floor: usize = 0;
+  /** The backtracker's visited states, a bit per join instruction and position; the first
+   * position, and how many there are. */
+  visited: u64[] = [];
+  origin: usize = 0;
+  span: usize = 0;
+  /** The steps the backtracker may still take without a memory. */
+  fuel: i64 = 0;
+  /** The backtracker's pending alternatives. */
+  stack: u64[] = [];
+  /** The Pike machine's arrays, once it ran (`listsOf`). */
+  lists: Lists | null = null;
+
+  /** The automatons of the program searched for, once a search needed them: the one that
+   * finds where a match ends, and the one that finds where it starts. */
+  ends: Dfa | null = null;
+  starts: Dfa | null = null;
+  /** What earlier calls of the regex worked out of them (dfa_tables.velt): an automaton the
+   * search needs starts from a copy. */
+  endsKept: shared<DfaTables> | null = null;
+  startsKept: shared<DfaTables> | null = null;
+  /** An automaton filled up and was dropped: what was kept of it is dropped too. */
+  endsFull: bool = false;
+  startsFull: bool = false;
+  /** Which call of its regex this search is (1: the first; 0: none, a search of its own): a
+   * regex used more than once is worth its automatons on a short subject too (find.velt). */
+  uses: u32 = 0;
+  /** Where the byte every match has (`Program.required`) was looked for last in this subject,
+   * and where it was found (-1: nowhere after); `reqFrom` past every position when it was not
+   * looked for (`forget`). */
+  reqFrom: usize = 0xffffffffffffffff;
+  reqAt: i64 = -1;
+
+  /** Forgets what this memory knew of the last subject (a new one comes). */
+  forget(): void {
+    this.reqFrom = 0xffffffffffffffff;
+  }
+
+  /** A search that keeps `slots` capture slots (0: none, 2: the match's ends). */
+  constructor(slots: usize) {
+    for (let i: usize = 0; i < slots; i++) {
+      this.slots.push(-1);
+    }
+  }
+}
+
+/** The Pike machine's arrays of `m`, made the first time. */
+export function listsOf(m: Search): Lists {
+  const made = m.lists;
+  const w = made ?? new Lists();
+  if (made == null) {
+    m.lists = w;
+  }
+  return w;
+}

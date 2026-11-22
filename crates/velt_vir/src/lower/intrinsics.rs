@@ -60,6 +60,8 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(ty);
                 self.array_value(ty, data, len, cap)
             }
+            (I::PtrRead, [p, i]) => self.ptr_read(p, i, ty),
+            (I::PtrWrite, [p, i, v]) => self.ptr_write(p, i, v),
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),
@@ -375,6 +377,7 @@ impl FnLower<'_, '_> {
             (I::NeedsDrop, [a]) => {
                 Operand::Const(crate::vir::Const::Bool(self.needs_drop(a.ty)), Ty::Bool)
             }
+            (I::IsUnique, [a]) => self.is_unique(a),
             (I::MayAlias, [a]) => {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
@@ -493,6 +496,8 @@ impl FnLower<'_, '_> {
             (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
+            // A weak field's read is a reference of its own already (weak_fields.rs).
+            (I::Share, [a]) if self.weak_read_expr(a) => self.expr(a),
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);

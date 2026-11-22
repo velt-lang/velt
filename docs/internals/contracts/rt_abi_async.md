@@ -542,7 +542,7 @@ declarations (std/fs/fd/posix.velt), with the guards a C call needs in Velt besi
 ### 3.2 Object handles
 
 Runtime objects that Velt code holds (`VeltListener`, `VeltStream`, `VeltServer`, `VeltReq`,
-`VeltResp`, `VeltRegex`, `VeltChild`, `VeltFileReader`,
+`VeltResp`, `VeltChild`, `VeltFileReader`,
 `VeltFileWriter`, `VeltJson`) are **`uint64_t` handles**, 0 = none. Velt has no
 pointer type, so `std` stores them in `u64` fields and passes `u64` arguments; the runtime takes
 and returns the same `u64`, in argument lists, results and result slots alike.
@@ -554,7 +554,7 @@ and returns the same `u64`, in argument lists, results and result slots alike.
   exit code -1, empty address), and releasing again is a no-op; a stale handle never reaches a newer
   object. In-flight operations hold their own `Arc`, so the object lives until they finish.
 - The others are the object's address (`velt_rt::handle::Handle<T>`, `repr(transparent)`): an
-  `Arc` (regexes, JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
+  `Arc` (JSON nodes) owned by a class whose `dispose()` releases it exactly once. std
   keeps every handle in a `private` field (the standard library may use the private members of
   its own types), so user code can neither build nor read one.
 
@@ -573,8 +573,6 @@ their own forms); functions taking one never accept the other.
 | `velt_rt_bytes_drop` | `(VeltBytes* b)` — frees if `cap > 0`, zeroes. Never given an array whose `cap` has bit 63 set (an owner, `rt_abi.md` "Array length limit") |
 | `velt_rt_bytes_from_str` | `(const VeltStr* s, VeltBytes* out)` — copy |
 | `velt_rt_bytes_to_str` | `(const VeltBytes* b, IoResult<VeltStr>* out)` — copy, `EILSEQ` if invalid |
-| `velt_rt_bytes_to_str_lossy` | `(const VeltBytes* b, VeltStr* out)` — copy, an invalid sequence as U+FFFD (WHATWG, as `utf8DecodeLossy`) |
-| `velt_rt_bytes_is_utf8` | `(const VeltBytes* b) -> u8` — whether `b` is valid UTF-8 |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` — drops elements + buffer, zeroes |
 
 ## 5. std/fs
@@ -624,13 +622,20 @@ velt_rt_wasm has, for WebAssembly builds, with their async twins:
 `velt_rt_fs_mkdir_sync(path, recursive, out)` and `velt_rt_fs_remove_sync(path, recursive, out)`
 (`IoResult<()>`).
 
-| Sync (`..., out)`, returns nothing) | Result type |
-|---|---|
-| `velt_rt_fs_readlink_sync(path, out)` | `IoResult<VeltStr>`; `EINVAL` if not a symlink |
-| `velt_rt_fs_realpath_sync(path, out)` | `IoResult<VeltStr>`: the absolute path with every symlink, `.` and `..` resolved; `ENOENT` if it (or a link's target) doesn't exist; Windows: without the `\\?\` prefix unless the path needs it (`C:\dir\f`, `\\server\share\f`). WebAssembly: as WASI reports it |
-| `velt_rt_fs_symlink_sync(target, path, out)` | `IoResult<()>`; Windows: a directory link if `target` is a directory, a relative target stored with `\` separators (as Node) |
-| `velt_rt_fs_rename_sync(from, to, out)` | `IoResult<()>` |
-| `velt_rt_fs_copy_file_sync(from, to, out)` | `IoResult<()>` |
+Renaming, copying and the links (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`) are
+std code in a native build too (`#fs-paths`: std/fs/paths/posix.velt over the C library's
+`rename`, `symlink`, `readlink` and `realpath`, with `copyFile` done as libuv's
+`uv_fs_copyfile`, `st_size` bytes of data: a read and write loop on macOS (paths/darwin.velt;
+`ENOTSUP` for a source of another kind, as libuv's `sendfile` there) and `copy_file_range` or
+the loop on Linux (paths/linux.velt); paths/win32.velt over
+`MoveFileExW`, `CopyFileW`, `CreateSymbolicLinkW`, the reparse point `DeviceIoControl` reads
+and `GetFinalPathNameByHandleW`, as libuv uses them), with Node's messages. velt_rt has none
+of these. velt_rt_wasm has, for WebAssembly builds, with their async twins:
+`velt_rt_fs_readlink_sync(path, out)` and `velt_rt_fs_realpath_sync(path, out)`
+(`IoResult<VeltStr>`; `readlink` is `EINVAL` for something that is not a link, `realpath` as
+WASI reports it), and `velt_rt_fs_symlink_sync(target, path, out)` (always `ENOTSUP`: WASI's
+link call is not stable in Rust), `velt_rt_fs_rename_sync(from, to, out)` and
+`velt_rt_fs_copy_file_sync(from, to, out)` (`IoResult<()>`).
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Error messages are Node's: `<CODE>:
 <description>, <syscall> '<path>'` (plus ` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g.
@@ -730,8 +735,9 @@ Neither runtime has clock functions.
 | `velt_rt_rc_dec` | `(u64* rc) -> u8` | Release; returns 1 (after an Acquire fence) when it reached zero: caller drops + frees |
 | `velt_rt_thread_yield` | `()` | `velt/sync`'s `Backoff.snooze` once spinning stops: let another thread run (`sched_yield`); nothing on wasm |
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
-| `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
-| `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking |
+| `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | WebAssembly only (velt_rt_wasm): `m.with(f)` = lock; call f; unlock. On a native target the lock and unlock are std's (std/lang/hooks/mutex.velt): a compare-and-swap of the word's first 32 bits (bit 0 held, bit 1 threads parked), and the two slow paths below. Blocks the thread; bodies must not await. |
+| `velt_rt_mutex_lock_slow` / `velt_rt_mutex_unlock_slow` | `(u64* lock)` | native: std's lock found the word held (spin, then park until it is free or handed over), or its unlock found threads parked (wake one, or hand the lock to it) |
+| `velt_rt_mutex_lock_checked` | `(u64* lock)` | the lock from code that may run in read mode (§9.1): there it stops the program before locking; its unlock is std's (native) or `velt_rt_mutex_unlock` |
 | `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.velt`; §9.2) |
 | `velt_rt_rwlock_read` | `(u64* lock, u64 reader) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back. `reader` is `how & ~7` of an earlier `read` or `write` in the same call of the calling function (never across an `await`: the task may continue on another thread), else 0 |
 | `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) |
@@ -773,7 +779,7 @@ counts and writes lock-set objects by these rules, inline (velt_vir `rc.rs`):
 - a reader writes only `LOCAL` objects: anything else calls `velt_rt_lk_write`, which stops the
   program (sema rejects the writes it can see);
 - a reader takes no lock exclusively: `velt_rt_rwlock_write` and `velt_rt_mutex_lock_checked`
-  (which code not known to run outside read mode calls instead of `velt_rt_mutex_lock`) stop the
+  (which code not known to run outside read mode calls instead of a plain lock) stop the
   program in read mode, since the inner callback could not tell the store's uncounted objects
   from what it changes (sema rejects the ones written in a `read` callback's body);
 - a reader starts no promise or task (`velt_rt_fut_start*`, `velt_rt_spawn*` stop the program in
@@ -959,10 +965,6 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
 | `velt_rt_strbuf_push_words` | `(VeltStrBuf* b, u64 w0, u64 w1, u64 w2, u64 n)` | the first `n` (at most 24) bytes of the three words, ASCII, byte `i` in bits `8 * (i % 8)` of word `i / 8`: the slow path of `strbufPushAsciiWords`, by value so the caller needs no stack for the words (#1982) |
 | `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/encoding/json/writer.velt); `units == len`: ASCII, not scanned; otherwise counted |
-| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/encoding/json/tape.velt) prints a double there |
-| `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`). An integer has no runtime form: std's `intPush` / `uintPush` append it (velt/lang/hooks/number_text). A float that is not a whole number: `StringBuilder.appendNumber` and the JSON writer (`writeF64`) call it (a whole number goes through std's `pushI64`, a short decimal in JSON through `writeDecimal`); so do std's `numberPush` where std's float printer is not loaded (velt/lang/hooks/number_text), generated glue (float literals), and lowering where std's float hooks are unchecked. Templates with the float printer loaded take std's `floatPush` |
-| `velt_rt_strbuf_push_inspect_f64` | `(VeltStrBuf* b, f64 v)` | what `console.log` prints, as `velt_rt_write_f64` (`-0` is `-0`) |
-| `velt_rt_strbuf_push_json_f64` | `(VeltStrBuf* b, f64 v)` | like `JSON.stringify`: JS format, `null` for NaN/±Infinity |
 | `velt_rt_strbuf_push_inspect_str` | `(VeltStrBuf* b, const VeltStr* s)` | a string as `console.log` shows it inside a container (node `util.inspect` quoting and escaping) |
 | `velt_rt_strbuf_push_inspect_key` | `(VeltStrBuf* b, const VeltStr* s)` | an object key as `console.log` shows it: bare if it matches `[A-Za-z_][A-Za-z0-9_]*` (node quotes `$`), else quoted like `push_inspect_str` |
 | `velt_rt_strbuf_push_bool` | `(VeltStrBuf* b, u8 v)` | `true`/`false` |
@@ -1259,10 +1261,12 @@ of a Copy element type, built from a Rust `Vec<T>` (same allocator), like `VeltS
 
 ### 14.1 Randomness and local time
 
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_random_bytes` | `(u64 n, VeltBytes* out)` | `n` bytes from the OS CSPRNG (`getrandom`); failure of the OS generator is fatal |
-| `velt_rt_random_u64` | `() -> u64` | uniform, OS CSPRNG |
+**[non-additive, #2196]** The operating system's random numbers are std code (`#os-random`:
+std/lang/random/os.velt over `getrandom` on Linux, `getentropy` on macOS and under WASI,
+`BCryptGenRandom` with the system's preferred generator on Windows, the JS host's
+`crypto.getRandomValues`). velt/crypto's `randomBytes` and `randomInt`, UUIDs and the seed of
+`Math.random()` draw through it; a failing generator stops the program (a panic).
+`velt_rt_random_bytes` and `velt_rt_random_u64` no longer exist.
 
 **[non-additive, #2196]** The local time zone's offset is std code (`#localtime`:
 std/time/localtime_posix.velt over the C library's `localtime_r` and `tm_gmtoff`,
@@ -1272,26 +1276,11 @@ localtime_win32.velt over `TZ` when it names UTC or a fixed offset, else Win32's
 
 ### 14.2 Regular expressions (`velt/text`)
 
-`VeltRegex` is an `Arc` of a compiled Rust `regex::bytes::Regex`; a JS pattern is rewritten
-first (ASCII `\d \w \b`, JS class literals; `crates/velt_rt/src/regex/syntax.rs`). Matching runs
-on the subject's WTF-8 bytes; the offsets taken (`from`) and returned are UTF-16 code units, like
-every string position: a `from` between the halves of a pair starts after the
-pair, and the offsets of a match are translated once per match.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_regex_new` | `(const VeltStr* pattern, const VeltStr* flags, IoResult<VeltRegex>* out)` | flags from `dgimsuvy`, each once (`g y d u v` don't change matching); bad pattern/flags ⇒ `EINVAL` with a JS-style message (`Invalid regular expression: /p/f: …`) |
-| `velt_rt_regex_free` | `(VeltRegex re)` | |
-| `velt_rt_regex_last_index` | `(VeltRegex re) -> f64` | JS `lastIndex`, kept with the handle (0 when compiled) |
-| `velt_rt_regex_set_last_index` | `(VeltRegex re, f64 value)` | sets it (atomic: a handle may be shared between tasks) |
-| `velt_rt_regex_group_count` | `(VeltRegex re) -> u64` | groups including group 0 |
-| `velt_rt_regex_group_names` | `(VeltRegex re, VeltStrArray* out)` | names of groups 1.. (`""` = unnamed) |
-| `velt_rt_regex_test` | `(VeltRegex re, const VeltStr* s, u64 from) -> u8` | a match at or after `from` |
-| `velt_rt_regex_exec` | `(VeltRegex re, const VeltStr* s, u64 from, VeltArray<i64>* out) -> u8` | 1 ⇒ `out` = start/end per group (`-1` = did not take part); 0 ⇒ no match, `out` untouched |
-| `velt_rt_regex_exec_all` | `(VeltRegex re, const VeltStr* s, VeltArray<i64>* out)` | all non-overlapping matches, `2 * group_count` offsets each |
-| `velt_rt_regex_replace` | `(VeltRegex re, const VeltStr* s, const VeltStr* replacement, u8 all, VeltStr* out)` | JS `GetSubstitution` patterns `$$ $& $\` $' $n $nn $<name>` |
-| `velt_rt_regex_split` | `(VeltRegex re, const VeltStr* s, u64 limit, VeltStrArray* out)` | JS `split` (captures spliced in, `""` for unmatched ones); `limit` 0 = none |
-| `velt_rt_regex_escape` | `(const VeltStr* s, VeltStr* out)` | metacharacters backslash-escaped |
+**[non-additive, #2196]** Regular expressions are std code
+([the regular expression engine](../design/regex-engine.md), `std/text/regex/`): a pattern is
+parsed, compiled and matched in Velt, on the subject's own bytes. The twelve `velt_rt_regex_*`
+functions and the `VeltRegex` handle no longer exist in either runtime. std's `replace` builds its
+result with the string builder (§12.1) and `velt_rt_str_byte_slice`.
 
 ### 14.3 Child processes (`velt/process/child`)
 
@@ -1320,7 +1309,8 @@ pool on Windows). Exit codes: the process's code, or `128 + signal` when killed 
 
 Standard input is std code: one process-wide read-ahead buffer
 (std/process/stdin_buffer.velt) over `#stdin-sys` (`read` on fd 0 on macOS, Linux and WASI;
-`ReadConsoleW` or `ReadFile` on Windows; none under a JS host), locked with `velt_rt_mutex_lock`;
+`ReadConsoleW` or `ReadFile` on Windows; none under a JS host), locked with a `Mutex`'s lock
+(`#thread-lock`: std's on a native target, `velt_rt_mutex_lock` elsewhere);
 an async read is the sync one on the executor's blocking pool (std/process/rt_sched.velt), and
 text is decoded lossily. Neither runtime has stdin functions (the fs readers' `LineRead` is in
 §14.7).
@@ -1392,7 +1382,7 @@ and client are Velt code (§7).
 
 ### 14.11 Fast random numbers
 
-`Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`), seeded with
-`velt_rt_random_u64` (§14.1) natively. Under WASI, std calls wasi-libc's `getentropy`
-([wasi-libc.md](../design/wasi-libc.md)); under a JS host, the glue's `velt:random`.`fill`
-(`crypto.getRandomValues`). No runtime function is involved on WebAssembly. Not for secrets.
+`Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`), seeded from the
+operating system's random numbers (§14.1): under WASI wasi-libc's `getentropy`
+([wasi-libc.md](../design/wasi-libc.md)), under a JS host the glue's `velt:random`.`fill`
+(`crypto.getRandomValues`). No runtime function is involved on any target. Not for secrets.

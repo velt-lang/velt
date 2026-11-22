@@ -212,6 +212,8 @@ pub unsafe extern "C" fn velt_rt_fs_reader_read_line(r: ReaderHandle) -> *mut Ve
 fn buffered_line(obj: &ReaderObj) -> Option<LineRead> {
     let mut g = obj.inner.try_lock().ok()?;
     let buf = g.0.buffer();
+    // The runtime's last memchr use: a byte loop costs +513% on long lines, so it stays until the
+    // fs line reads move to std with the scan in Velt (#2196).
     let end = memchr::memchr(b'\n', buf)?;
     let line = &buf[..end];
     let line = decode(line.strip_suffix(b"\r").unwrap_or(line));

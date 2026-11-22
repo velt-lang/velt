@@ -21,7 +21,7 @@ use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit, before the checksum of
 /// the rest ([`checksum`]).
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x06";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x07";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
 /// caller's, what every check installs again), `memo` (built again on demand: one built over a
@@ -105,7 +105,7 @@ unit_fields! {
     special: [sigq, type_level],
     skip: [
         // The caller's (`decode_unit`), or set again by every check that uses the unit.
-        modules, root, gen, units, import_targets, loads,
+        modules, root, gen, units, wasm32, import_targets, loads,
         loads_added, unit_base, units_stage,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
