@@ -284,8 +284,8 @@ The runtime sees unboxed layouts (`crates/velt_vir/src/lower/foreign.rs`). A top
 argument is passed as its pointer (`&T`); an argument or result whose layout contains boxed parts
 crosses as an unboxed view (arguments) or is boxed after the call (results, `adopt_foreign`).
 A synchronous extern given a boxed array whose elements need no conversion gets the box's own
-header, so an extern that replaces the buffer (an out parameter such as
-`velt_rt_regex_exec`'s offsets) changes the array itself. Arrays of boxed elements in extern
+header, so an extern that writes it (`velt_rt_bytes_copy`'s destination) changes the array
+itself. Arrays of boxed elements in extern
 signatures are not supported.
 
 ### Closures and captured variables

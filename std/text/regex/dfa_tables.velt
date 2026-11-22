@@ -1,0 +1,66 @@
+// velt/text (internal): `DfaTables`, what an automaton (dfa.velt) has worked out, as a value
+// that never changes: a `RegExp` keeps the last one in an `Atomic` (regexp.velt), each call
+// starts its automaton from a copy, and a call that worked out more states puts a new one
+// there. No lock is held: calls on several threads at once copy what is there, and the last
+// to finish keeps its tables.
+
+import { Dfa } from "velt/text/regex/dfa";
+import { Program } from "velt/text/regex/program";
+
+/** The states and transitions of an automaton, as `Dfa` holds them. */
+export class DfaTables {
+  readonly threads: u32[];
+  readonly bounds: usize[];
+  readonly flags: u8[];
+  readonly next: u32[];
+  readonly armed: bool;
+  readonly skipping: bool;
+  readonly scans: usize;
+  readonly skipped: usize;
+  readonly anywhere: u32;
+  readonly fixed: u32;
+  readonly fixedAtEnd: u32;
+  readonly learned: usize;
+
+  /** The tables of `d`, copied. */
+  constructor(d: Dfa) {
+    this.threads = d.threads.clone();
+    this.bounds = d.bounds.clone();
+    this.flags = d.flags.clone();
+    this.next = d.next.clone();
+    this.armed = d.armed;
+    this.skipping = d.skipping;
+    this.scans = d.scans;
+    this.skipped = d.skipped;
+    this.anywhere = d.anywhere;
+    this.fixed = d.fixed;
+    this.fixedAtEnd = d.fixedAtEnd;
+    this.learned = d.learned;
+  }
+}
+
+/** An automaton of `prog` (`longest`: the backward one) that starts from `t`, read in place
+ * until it changes it. */
+export function thaw(prog: Program, longest: bool, t: shared<DfaTables>): Dfa {
+  const d = new Dfa(prog, longest);
+  d.kept = t;
+  d.armed = t.armed;
+  d.skipping = t.skipping;
+  d.scans = t.scans;
+  d.skipped = t.skipped;
+  d.anywhere = t.anywhere;
+  d.fixed = t.fixed;
+  d.fixedAtEnd = t.fixedAtEnd;
+  d.learned = t.learned;
+  return d;
+}
+
+/** Has `d` worked out more than `t` holds (or is there no `t`)? */
+export function grew(d: Dfa, t: shared<DfaTables> | null): bool {
+  // Still reading `t` (or other kept tables) in place: nothing new.
+  if (d.kept != null) {
+    return t == null || d.skipping != t.skipping;
+  }
+  // A transition to a state it had is worked out as much as a new state.
+  return t == null || d.learned > t.learned || d.skipping != t.skipping;
+}
