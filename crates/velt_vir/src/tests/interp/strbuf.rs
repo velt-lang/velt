@@ -100,12 +100,6 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &[0; 24]);
             }
             "velt_rt_str_eq" => return Some((self.str_bytes(a[0]) == self.str_bytes(a[1])) as u64),
-            // The start of a printed value: only line breaking reads its pieces, and the
-            // interpreter does not break lines.
-            "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_atom" => {}
-            // Line breaking (velt_rt's inspect_layout): the programs run here print short values.
-            "velt_rt_strbuf_len" => return Some(self.str_bytes(a[0]).len() as u64),
-            "velt_rt_strbuf_inspect_layout" => {}
             _ => return None,
         }
         Some(0)

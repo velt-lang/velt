@@ -1,0 +1,113 @@
+// velt/lang/hooks (internal): the text custom inspects wrote into the value being printed, which
+// `console.log`'s line breaking keeps as one piece (Node inserts the string a custom inspect
+// returns as it is). Lowering reports each piece (`inspectAtom`, inspect_layout_text.velt) as a
+// byte range of the line's builder.
+//
+// The pieces are a stack with a floor. A layout reads only the pieces above the floor. Lowering
+// raises the floor around each custom inspect call (`atomsSave` / `atomsRestore`), so a value the
+// custom inspect prints, in a builder of its own, sees only its own pieces, and the outer value's
+// come back after it. The start of a top-level value drops the pieces above the floor, which a
+// panic in the middle of a value may have left.
+//
+// The state is this thread's: a value is printed on one thread, with no await in between. The
+// pieces are in a block of words `[capacity, start, end, start, end, …]`, allocated for the first
+// piece and given back whenever the stack is empty, so the leak counters stay even. Only
+// inspect_layout_text.velt imports this module (its private state when it is prebuilt).
+
+import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
+
+/** The block of pieces, 0 for none. */
+const BLOCK = new ThreadLocal<u64>(0);
+/** How many pieces the stack holds. */
+const COUNT = new ThreadLocal<u64>(0);
+/** How many of them are below the floor (an outer value's, while a custom inspect runs). */
+const FLOOR = new ThreadLocal<u64>(0);
+
+/** The word at `a`, in this module's block. */
+function load(a: usize): usize {
+  // SAFETY: `a` is a word of the block `rawAlloc` gave this module and not yet freed.
+  return unsafe { addressLoad<usize>(a) };
+}
+
+function store(a: usize, v: usize): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
+}
+
+/** Leaves `n` pieces on the stack, giving the block back when none is left. */
+function truncateTo(n: u64): void {
+  COUNT.set(n);
+  const p = BLOCK.get() as usize;
+  if (n == 0 && p != 0) {
+    const bytes = (load(p) * 2 + 1) * 8;
+    // SAFETY: `p` came from `rawAlloc(bytes)` in `atomPush` and nothing uses it after.
+    unsafe {
+      rawFree(p, bytes);
+    }
+    BLOCK.set(0);
+  }
+}
+
+/** Pushes the piece at bytes `start..end` of the builder. */
+export function atomPush(start: u64, end: u64): void {
+  let p = BLOCK.get() as usize;
+  const n = COUNT.get() as usize;
+  const cap: usize = p == 0 ? 0 : load(p);
+  if (n == cap) {
+    const next: usize = cap == 0 ? 8 : cap * 2;
+    const q = rawAlloc((next * 2 + 1) * 8);
+    store(q, next);
+    for (let i: usize = 0; i < n * 2; i++) {
+      store(q + 8 + i * 8, load(p + 8 + i * 8));
+    }
+    if (p != 0) {
+      // SAFETY: `p` came from `rawAlloc` for `cap` pieces, and the copy above was its last use.
+      unsafe {
+        rawFree(p, (cap * 2 + 1) * 8);
+      }
+    }
+    p = q;
+    BLOCK.set(p as u64);
+  }
+  store(p + 8 + n * 16, start as usize);
+  store(p + 16 + n * 16, end as usize);
+  COUNT.set((n + 1) as u64);
+}
+
+/**
+ * The pieces above the floor, as pairs of byte offsets, and drops them: the value they belong to
+ * is being laid out.
+ */
+export function atomsTake(): u64[] {
+  const floor = FLOOR.get();
+  const n = COUNT.get();
+  const out: u64[] = [];
+  const p = BLOCK.get() as usize;
+  for (let i = floor; i < n; i++) {
+    out.push(load(p + 8 + (i as usize) * 16) as u64);
+    out.push(load(p + 16 + (i as usize) * 16) as u64);
+  }
+  truncateTo(floor);
+  return out;
+}
+
+/** The start of a top-level value: the pieces above the floor are dropped. */
+export function atomsBegin(): void {
+  truncateTo(FLOOR.get());
+}
+
+/** Before a custom inspect runs: the floor, saved for `atomsRestore`, raised to the top. */
+export function atomsSave(): u64 {
+  const saved = (COUNT.get() << 32) | FLOOR.get();
+  FLOOR.set(COUNT.get());
+  return saved;
+}
+
+/** After a custom inspect: its pieces dropped, the floor `atomsSave` saved back. */
+export function atomsRestore(saved: u64): void {
+  const count = saved >> 32;
+  truncateTo(count < COUNT.get() ? count : COUNT.get());
+  FLOOR.set(saved & 0xffffffff);
+}

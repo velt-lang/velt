@@ -25,6 +25,11 @@ pub const INSPECT_SHAPES: &[&str] = &[
     "inspect_enter",
     "inspect_leave",
     "inspect_circular",
+    "inspect_layout",
+    "inspect_atom",
+    "inspect_atoms_begin",
+    "inspect_atoms_save",
+    "inspect_atoms_restore",
 ];
 
 /// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands
@@ -40,6 +45,9 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/unwind",
     "std/lang/hooks/inspect",
     "std/lang/hooks/inspect_cycles",
+    // `console.log`'s line breaking (#3508), where a value that isn't scalar is printed.
+    "std/lang/hooks/inspect_layout",
+    "std/lang/hooks/inspect_layout_text",
     "std/lang/hooks/pow",
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
