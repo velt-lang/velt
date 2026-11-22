@@ -167,7 +167,9 @@ impl FnLower<'_, '_> {
                 // `@repr("transparent")` struct of one passes it.
                 CTy::Ptr { .. } => {
                     let v = self.expr(a);
-                    self.unwrap_transparent(v, a.ty).0
+                    // Read now, as the other arms: a later argument may reassign the variable.
+                    let (v, ty) = self.unwrap_transparent(v, a.ty);
+                    self.freeze(v, ty)
                 }
                 CTy::Null => {
                     self.expr(a);
