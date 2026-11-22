@@ -8,7 +8,7 @@ use velt_syntax::ast::GeneratorSpec;
 
 use super::{enums, structs};
 use crate::body::LocalKind;
-use crate::decorators::{Inline, Variant, VariantTest};
+use crate::decorators::{Inline, Variant, VariantCond, VariantTest};
 use crate::defs::*;
 use crate::intrinsic_decls::DeclaredIntrinsic;
 
@@ -45,7 +45,8 @@ structs! {
     GlobalSrc<'_> { ann, init, span, owner, is_private, c_const, c_global }
     AliasInfo<'_> { module, decl, expanding, used, outer }
     Extension { generics, target, methods, implements }
-    Variant { plain, arg, test }
+    Variant { plain, when }
+    VariantCond { arg, test }
 }
 
 enums! {
@@ -111,5 +112,6 @@ enums! {
     @fielded VariantTest {
         0 => StartsWith(a),
         1 => Lacks(a),
+        2 => FieldIn(a, b),
     }
 }

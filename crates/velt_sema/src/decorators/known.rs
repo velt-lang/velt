@@ -55,12 +55,25 @@ pub(super) struct Roles {
     variant: Option<DefId>,
 }
 
-/// A function's `@variant`: the function its calls take when argument `arg` passes `test`.
+/// A function's `@variant`: the function its calls take when every condition holds.
 #[derive(Clone, Debug)]
 pub(crate) struct Variant {
     pub plain: DefId,
+    pub when: Vec<VariantCond>,
+}
+
+/// One condition of a `@variant`: argument `arg` passes `test`.
+#[derive(Clone, Debug)]
+pub(crate) struct VariantCond {
     pub arg: usize,
     pub test: VariantTest,
+}
+
+impl Variant {
+    /// Does a call with `args` take the plain function?
+    pub(crate) fn passes(&self, args: &[ast::Expr]) -> bool {
+        self.when.iter().all(|c| c.test.passes(args.get(c.arg)))
+    }
 }
 
 /// What shows that a call can take a function's variant.
@@ -71,6 +84,8 @@ pub(crate) enum VariantTest {
     StartsWith(String),
     /// An object literal without this property and without a spread, or no argument.
     Lacks(String),
+    /// An object literal without a spread whose property `.0` is one of the string literals `.1`.
+    FieldIn(String, Vec<String>),
 }
 
 impl VariantTest {
@@ -84,6 +99,19 @@ impl VariantTest {
                 quasis.first().is_some_and(|q| starts_with_ci(q, p))
             }
             (VariantTest::Lacks(_), None) => true,
+            (VariantTest::FieldIn(name, values), Some(ast::ExprKind::Object(props))) => {
+                let spread = props
+                    .iter()
+                    .any(|p| matches!(p, ast::ObjectProp::Spread(_)));
+                !spread
+                    && props.iter().any(|p| match p {
+                        ast::ObjectProp::KeyValue(k, v) if k.name == *name => matches!(
+                            &v.kind,
+                            ast::ExprKind::Lit(ast::Lit::Str(s)) if values.contains(s)
+                        ),
+                        _ => false,
+                    })
+            }
             (VariantTest::Lacks(name), Some(ast::ExprKind::Object(props))) => {
                 props.iter().all(|p| match p {
                     ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k) => {
@@ -260,10 +288,10 @@ pub(super) fn function_hints(
     cx.fn_info_mut(d).inline_marker = Some((hint, span));
 }
 
-/// Records `@variant("plain", arg, when)` on function `d` (signature `sig`): `plain` is a top-level
+/// Records `@variant("plain", ...when)` on function `d` (signature `sig`): `plain` is a top-level
 /// function of the same module with as many parameters and type parameters as `d`, which is a
-/// top-level function and not a generator; `arg` names one of the parameters, and `when` has one
-/// of `startsWith` and `lacks` (a non-empty string). The call that takes `plain` is checked
+/// top-level function and not a generator; each condition names a parameter (`arg`) and one test
+/// (`startsWith`, `lacks`, or `field` with `oneOf`). The call that takes `plain` is checked
 /// against `plain`'s own signature.
 pub(super) fn variant(cx: &mut Ctx, roles: Roles, d: DefId, sig: &ast::FnSig) {
     let Some(role) = roles.variant else {
@@ -286,39 +314,63 @@ pub(super) fn variant(cx: &mut Ctx, roles: Roles, d: DefId, sig: &ast::FnSig) {
             "`@variant` applies to a top-level function that is not a generator".into(),
         );
     }
-    let (Some(ConstTree::Str(plain)), Some(ConstTree::Int(arg)), Some(ConstTree::Object(when))) =
-        (u.args.first(), u.args.get(1), u.args.get(2))
+    let (Some(ConstTree::Str(plain)), Some(ConstTree::Array(conds))) =
+        (u.args.first(), u.args.get(1))
     else {
         return fail(
             cx,
-            "`@variant` takes the plain function's name, an argument's index and what shows it"
-                .into(),
+            "`@variant` takes the plain function's name and its conditions".into(),
         );
     };
-    let test = match &when[..] {
-        [(k, ConstTree::Str(p))] if k == "startsWith" && !p.is_empty() => {
-            VariantTest::StartsWith(p.clone())
-        }
-        [(k, ConstTree::Str(p))] if k == "lacks" && !p.is_empty() => VariantTest::Lacks(p.clone()),
-        _ => {
-            return fail(
-                cx,
-                "`@variant`'s last argument is `{ startsWith: \"…\" }` or `{ lacks: \"…\" }`"
-                    .into(),
-            );
-        }
-    };
-    let arg = match usize::try_from(*arg) {
-        Ok(a) if a < n => a,
-        _ => {
-            return fail(
-                cx,
-                format!(
-                    "`@variant`'s argument index {arg} is not one of the function's {n} parameters"
-                ),
-            )
-        }
-    };
+    if conds.is_empty() {
+        return fail(cx, "`@variant` needs a condition".into());
+    }
+    let mut when = vec![];
+    for c in conds {
+        let ConstTree::Object(fields) = c else {
+            return fail(cx, "a `@variant` condition is an object literal".into());
+        };
+        let get = |k: &str| fields.iter().find(|(n, _)| n == k).map(|(_, v)| v);
+        let arg = match get("arg") {
+            Some(ConstTree::Int(a)) => match usize::try_from(*a) {
+                Ok(a) if a < n => a,
+                _ => {
+                    return fail(cx, format!("`@variant`'s argument index {a} is not one of the function's {n} parameters"));
+                }
+            },
+            _ => {
+                return fail(
+                    cx,
+                    "a `@variant` condition names its argument (`arg`)".into(),
+                )
+            }
+        };
+        let test = match (get("startsWith"), get("lacks"), get("field"), get("oneOf")) {
+            (Some(ConstTree::Str(p)), None, None, None) if !p.is_empty() => {
+                VariantTest::StartsWith(p.clone())
+            }
+            (None, Some(ConstTree::Str(p)), None, None) if !p.is_empty() => {
+                VariantTest::Lacks(p.clone())
+            }
+            (None, None, Some(ConstTree::Str(f)), Some(ConstTree::Array(vs))) if !f.is_empty() => {
+                let mut values = vec![];
+                for v in vs {
+                    match v {
+                        ConstTree::Str(v) => values.push(v.clone()),
+                        _ => return fail(cx, "`@variant`'s `oneOf` lists strings".into()),
+                    }
+                }
+                VariantTest::FieldIn(f.clone(), values)
+            }
+            _ => {
+                return fail(
+                    cx,
+                    "a `@variant` condition has one test: `startsWith`, `lacks`, or `field` with `oneOf`".into(),
+                );
+            }
+        };
+        when.push(VariantCond { arg, test });
+    }
     let target = match cx.scopes[module].items.get(plain.as_str()).copied() {
         Some(Item::Def(p)) if p != d && matches!(cx.info[p.0 as usize], DefInfo::Fn(_)) => p,
         _ => {
@@ -338,7 +390,6 @@ pub(super) fn variant(cx: &mut Ctx, roles: Roles, d: DefId, sig: &ast::FnSig) {
     }
     cx.fn_info_mut(d).variant = Some(Variant {
         plain: target,
-        arg,
-        test,
+        when,
     });
 }

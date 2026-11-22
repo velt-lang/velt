@@ -346,7 +346,7 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         // `@variant`: the argument shows the call can take the plainer function.
         let d = match &self.cx.fn_info(d).variant {
-            Some(v) if v.test.passes(args.get(v.arg)) => v.plain,
+            Some(v) if v.passes(args) => v.plain,
             _ => d,
         };
         if let Some(decl) = self.cx.fn_info(d).intrinsic {

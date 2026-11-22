@@ -31,7 +31,7 @@ import { ServeInfo } from "./serve_info";
  * that reads it later stops the program, so read what the body needs before returning. Its own
  * body stays readable until the response was written, so `new Response(req.body)` echoes it.
  */
-@variant("servePlain", 0, { lacks: "tls" })
+@variant("servePlain", { arg: 0, lacks: "tls" })
 export async function serve<E, F>(
   opts: HttpServeOptions,
   handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,

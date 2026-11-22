@@ -35,14 +35,17 @@ export declare decorator function noInline(): FunctionDecorator | MethodDecorato
 
 /**
  * On a function (not a method) of std, a package or the program (velt/compiler re-exports it;
- * docs/internals/design/call-variants.md): a call whose argument `arg` (0 for the first) shows at
- * compile time that it needs less calls `plain` instead, a function of the same module that takes
- * the same arguments and gives the same result for them. `when` is what shows it:
+ * docs/internals/design/call-variants.md): a call whose arguments show at compile time that it
+ * needs less calls `plain` instead, a function of the same module that takes the same arguments
+ * and gives the same result for them. Every condition must hold; each names an argument (`arg`,
+ * 0 for the first) and one test:
  *
- * - `{ startsWith: "http:" }`: the argument is a string literal, or a template literal whose text
+ * - `startsWith: "http:"`: the argument is a string literal, or a template literal whose text
  *   before its first `${…}`, starting with that text (ASCII letters in either case);
- * - `{ lacks: "tls" }`: the argument is an object literal without that property and without a
- *   spread, or it is left out.
+ * - `lacks: "tls"`: the argument is an object literal without that property and without a
+ *   spread, or it is left out;
+ * - `field: "redirect", oneOf: ["manual", "error"]`: the argument is an object literal without a
+ *   spread whose property is one of those string literals.
  *
  * Every other call, and the function used as a value, is the function itself. For an entry point
  * with a costly part only some arguments need (`fetch`'s TLS client for `https:`): a program whose
@@ -51,8 +54,7 @@ export declare decorator function noInline(): FunctionDecorator | MethodDecorato
  */
 export declare decorator function variant(
   plain: string,
-  arg: number,
-  when: { startsWith?: string; lacks?: string },
+  ...when: { arg: number; startsWith?: string; lacks?: string; field?: string; oneOf?: string[] }[],
 ): FunctionDecorator;
 
 /**

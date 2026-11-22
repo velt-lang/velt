@@ -442,16 +442,16 @@ fn assert_no_tls(exe: &Path, what: &str) {
     }
 }
 
-/// A `fetch` of an `http:` literal (and of a template literal that starts with one) takes
-/// `fetchPlain` (`@variant`, std/net/http/fetch/fetch.velt), which has no TLS client: the program
-/// loads and builds none of the TLS code, and still fetches.
+/// A `fetch` of an `http:` literal (or a template literal that starts with one) that cannot follow
+/// a redirect (`redirect: "manual"` or `"error"`) takes `fetchPlain` (`@variant`,
+/// std/net/http/fetch/fetch.velt), which has no TLS client: the program loads and builds none of
+/// the TLS code, and still fetches. Without the option it can be redirected to `https:`, as in
+/// Node, so the same program keeps the client.
 #[test]
-fn an_http_only_fetch_builds_no_tls_client() {
+fn an_http_only_fetch_without_redirects_builds_no_tls_client() {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    std::fs::write(
-        dir.path().join("fetch_http.velt"),
-        r#"import { listen } from "velt/net";
+    let src = r#"import { listen } from "velt/net";
 
 async function main() {
   const l = await listen("127.0.0.1:0");
@@ -461,17 +461,26 @@ async function main() {
     await c.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok");
     c.close();
   });
-  const res = await fetch(`http://127.0.0.1:${l.port}/`);
+  const res = await fetch(`http://127.0.0.1:${l.port}/`, { redirect: "manual" });
   console.log(res.status, await res.text());
   await s;
   l.close();
 }
-"#,
-    )
-    .unwrap();
+"#;
+    std::fs::write(dir.path().join("fetch_http.velt"), src).unwrap();
     let exe = build(dir.path(), "fetch_http");
     assert_eq!(run(&exe, 1), "200 ok\n");
-    assert_no_tls(&exe, "an http:-only fetch");
+    assert_no_tls(&exe, "an http:-only fetch with redirect: \"manual\"");
+    // Following redirects (the default) keeps the client: the markers are what it builds.
+    let follows = src.replace(", { redirect: \"manual\" }", "");
+    std::fs::write(dir.path().join("fetch_follow.velt"), follows).unwrap();
+    let exe = build(dir.path(), "fetch_follow");
+    assert_eq!(run(&exe, 1), "200 ok\n");
+    let bin = std::fs::read(&exe).unwrap();
+    assert!(
+        contains(&bin, b"fd__client"),
+        "an http: fetch that follows redirects must keep the TLS client"
+    );
 }
 
 /// `serve` with options written without `tls` takes `servePlain` (`@variant`,
@@ -497,7 +506,7 @@ fn a_plain_serve_builds_no_tls_server() {
 
 async function main() {
   const server = await serve({ port: 0 }, (req: Request) => new Response("hi"));
-  const res = await fetch(`http://127.0.0.1:${server.port}/`);
+  const res = await fetch(`http://127.0.0.1:${server.port}/`, { redirect: "manual" });
   console.log(await res.text());
   server.close();
 }
@@ -518,4 +527,72 @@ async function main() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(run(&exe, 1), "hi\n");
     assert_no_tls(&exe, "a plain serve");
+}
+
+/// A WebSocket echo over a plain connection: the server end is a `WebSocket` made over the
+/// accepted stream (`webSocketOver`), the client end comes from `connectWebSocket(URL)`.
+fn ws_program(url: &str) -> String {
+    format!(
+        r#"import {{ listen }} from "velt/net";
+import {{ connectWebSocket, webSocketAccept, webSocketOver }} from "velt/net/websocket";
+import {{ utf8Decode }} from "velt/encoding";
+
+async function main() {{
+  const l = await listen("127.0.0.1:0");
+  const s = spawn(async () => {{
+    const c = await l.accept();
+    const head = utf8Decode(await c.read());
+    let key = "";
+    for (const line of head.split("\r\n")) {{
+      if (line.toLowerCase().startsWith("sec-websocket-key:")) {{
+        key = line.slice(18).trim();
+      }}
+    }}
+    await c.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${{webSocketAccept(key)}}\r\n\r\n`);
+    const ws = webSocketOver(c, true);
+    const m = await ws.receive();
+    await ws.send(`echo ${{m == null ? "" : m.text}}`);
+    await ws.close();
+  }});
+  if (l.port > 0) {{
+    const ws = await connectWebSocket({url});
+    await ws.send("hi");
+    const m = await ws.receive();
+    console.log(m == null ? "none" : m.text);
+    await ws.close();
+  }}
+  await s;
+  l.close();
+}}
+"#
+    )
+}
+
+/// `connectWebSocket` of a `ws:` literal takes `connectWebSocketPlain` (`@variant`,
+/// std/net/websocket/connect.velt), which never calls `connectTls`, and the `WebSocket` of the
+/// server end needs none: a `ws:`-only program builds none of the TLS code, and still talks. A
+/// `wss:` literal in the same program keeps the client (the markers are what it builds).
+#[test]
+fn a_ws_only_websocket_program_builds_no_tls_client() {
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let plain = ws_program("`ws://127.0.0.1:${l.port}/`");
+    std::fs::write(dir.path().join("ws_plain.velt"), &plain).unwrap();
+    let exe = build(dir.path(), "ws_plain");
+    assert_eq!(run(&exe, 1), "echo hi\n");
+    assert_no_tls(&exe, "a ws:-only connectWebSocket and WebSocket");
+    // `wss:` is never dialled here (the port check), but the client is built for it.
+    let secure = plain.replace(
+        "    await ws.close();\n  }\n  await s;",
+        "    await ws.close();\n  }\n  if (l.port == 0) {\n    await connectWebSocket(\"wss://localhost/\");\n  }\n  await s;",
+    );
+    assert_ne!(secure, plain);
+    std::fs::write(dir.path().join("ws_secure.velt"), &secure).unwrap();
+    let exe = build(dir.path(), "ws_secure");
+    assert_eq!(run(&exe, 1), "echo hi\n");
+    let bin = std::fs::read(&exe).unwrap();
+    assert!(
+        contains(&bin, b"fd__client"),
+        "a wss: connectWebSocket must build the TLS client"
+    );
 }

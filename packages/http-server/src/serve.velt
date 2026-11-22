@@ -27,7 +27,7 @@ const MAX_HEADERS: number = 100;
  * the background: an `async` handler answers each request through `res` (`res.send(...)`). A
  * handler that throws, or returns without sending, gets a 500 or an empty 200.
  */
-@variant("serveHttpPlain", 0, { lacks: "tls" })
+@variant("serveHttpPlain", { arg: 0, lacks: "tls" })
 export async function serveHttp<E>(
   opts: HttpServeOptions,
   handler: (req: HttpRequest, res: HttpResponse) => Promise<void, E> throws E,

@@ -275,16 +275,13 @@ export async function dial(
 }
 
 /**
- * The TLS client of `t`'s request (`Target.tls`); `ENOTSUP` for a program that fetches only
- * `http:` URLs (`fetchPlain`, fetch.velt), which has none, when a redirect leads to `https:`.
+ * The TLS client of `t`'s request (`Target.tls`). Only `fetchPlain` (fetch.velt) has none, for
+ * an `http:` URL that follows no redirect, so never reaches `https:`: an internal error.
  */
 function tlsOf(t: Target, addr: string): TlsOn throws IoError {
   const tls = t.tls;
   if (tls == null) {
-    throw new IoError(
-      "ENOTSUP",
-      `fetch failed: ${addr} redirected to https:, and this program has no TLS client (every URL it fetches is an http: literal)`,
-    );
+    throw new IoError("ENOTSUP", `ICE: fetch reached https: (${addr}) without a TLS client`);
   }
   return tls;
 }

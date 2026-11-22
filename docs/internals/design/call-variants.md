@@ -1,20 +1,24 @@
 # Call variants
 
-Status: proposed. Issue: [#3515](https://github.com/velt-lang/velt/issues/3515).
+Status: accepted (implemented). Issue: [#3515](https://github.com/velt-lang/velt/issues/3515).
 
 ## Summary
 
-`@variant("plain", arg, when)` on a function says that a call whose argument `arg` shows, at
-compile time, that it needs less of the function calls `plain` instead: another function of the
-same module that takes the same arguments. `when` names what shows it: a string literal that
-starts with some text (`{ startsWith: "http:" }`), or an object literal without some property
-(`{ lacks: "tls" }`). Every other call is the function itself.
+`@variant("plain", ...when)` on a function says that a call whose arguments show, at compile
+time, that it needs less of the function calls `plain` instead: another function of the same
+module that takes the same arguments. Each condition in `when` names an argument and what shows
+it: a string literal that starts with some text (`{ arg: 0, startsWith: "http:" }`), an object
+literal without some property (`{ arg: 0, lacks: "tls" }`), or an object literal whose property is
+one of some string literals (`{ arg: 1, field: "redirect", oneOf: ["manual", "error"] }`). A call
+takes `plain` when every condition holds; every other call is the function itself.
 
 A program reaches what only the function's full form calls through the calls that may need it.
 Since the checker loads and checks a std module only once live code reaches it
 ([lazy std](lazy-std.md)), a costly part that some arguments never need is neither loaded,
-checked nor built for a program whose calls all show they don't: `fetch("http://…")` has no TLS
-client, and `serve({ port: 8080 }, …)` no TLS server.
+checked nor built for a program whose calls all show they don't: `fetch("http://…", { redirect:
+"manual" })` has no TLS client, `connectWebSocket("ws://…")` neither, and `serve({ port: 8080 }, …)`
+no TLS server. A plain `fetch("http://…")` keeps the client: it follows redirects, and one may lead
+to `https:`, as in Node.
 
 ## Motivation
 
@@ -24,7 +28,7 @@ client, and `serve({ port: 8080 }, …)` no TLS server.
 ever writes
 
 ```ts
-const res = await fetch(`http://127.0.0.1:${port}/health`);
+const res = await fetch(`http://127.0.0.1:${port}/health`, { redirect: "manual" });
 ```
 
 can never take that path, but the checker sees one `fetch` function, and the call of the TLS
@@ -47,7 +51,11 @@ The decorator is exported by `velt/compiler`:
 ```ts
 import { variant } from "velt/compiler";
 
-@variant("fetchPlain", 0, { startsWith: "http:" })
+@variant(
+  "fetchPlain",
+  { arg: 0, startsWith: "http:" },
+  { arg: 1, field: "redirect", oneOf: ["manual", "error"] },
+)
 export async function fetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
   return await fetchWith(input, init, tlsOn);
 }
@@ -59,15 +67,16 @@ async function fetchPlain(input: string | URL | Request, init: RequestInit = {})
 
 - `plain` names a top-level function of the decorated function's module, exported or not, with
   as many parameters and type parameters. It must give the same result as the decorated function
-  for every argument that passes `when`: the decorator changes which code a program builds, never
-  what a call does.
-- `arg` is the index of the parameter whose argument decides (0 for the first).
-- `when` has one property:
+  for every call whose arguments pass `when`: the decorator changes which code a program builds,
+  never what a call does.
+- `when` is one condition or more; a call takes `plain` when all hold. Each names the index of
+  the parameter whose argument it tests (`arg`, 0 for the first) and one test:
 
-| `when` | A call takes `plain` when argument `arg` is |
+| Test | Argument `arg` passes when it is |
 |---|---|
-| `{ startsWith: s }` | a string literal starting with `s`, or a template literal whose text before its first `${…}` starts with `s` (ASCII letters in either case, as URL schemes compare) |
-| `{ lacks: p }` | an object literal with no property `p` and no spread, or left out |
+| `startsWith: s` | a string literal starting with `s`, or a template literal whose text before its first `${…}` starts with `s` (ASCII letters in either case, as URL schemes compare) |
+| `lacks: p` | an object literal with no property `p` and no spread, or left out |
+| `field: p, oneOf: [v…]` | an object literal without a spread whose property `p` is a string literal among the `v` |
 
 - The decorated function is a top-level function, not a generator. Its value (`const f = fetch`)
   is the function itself, and so is every call whose argument does not pass: a variable, a
@@ -86,8 +95,8 @@ async function fetchPlain(input: string | URL | Request, init: RequestInit = {})
 ## Runtime cost
 
 None: a call is a call of one of two functions. At compile time it can only remove work: the
-`http:`-only `fetch` program and the plain `serve` program above load, check and build none of the
-TLS code.
+`http:` `fetch` program that follows no redirect, the `ws:` WebSocket client and the plain `serve`
+program above load, check and build none of the TLS code.
 
 ## Diagnostics
 
@@ -96,14 +105,20 @@ On the decorated function, at the decorator:
 - `` `@variant` applies to a top-level function that is not a generator ``
 - `` `@variant` names `fetchPlan`, which is no function of this module ``
 - `` `@variant`'s `fetchPlain` must be a top-level function with the same parameters and type parameters ``
+- `` `@variant` takes the plain function's name and its conditions ``
+- `` `@variant` needs a condition ``
+- `` a `@variant` condition is an object literal ``
+- `` a `@variant` condition names its argument (`arg`) ``
 - `` `@variant`'s argument index 2 is not one of the function's 2 parameters ``
-- `` `@variant`'s last argument is `{ startsWith: "…" }` or `{ lacks: "…" }` ``
+- `` a `@variant` condition has one test: `startsWith`, `lacks`, or `field` with `oneOf` ``
+- `` `@variant`'s `oneOf` lists strings ``
 
 ## Compatibility
 
 TypeScript has no decorators on functions; `velt/compiler`'s decorators are Velt's own, and a
-program that uses none runs as in Node. `fetch("http://…")` behaves as Node's, but for a redirect
-to `https:`: `fetchPlain` has no TLS client and rejects with an `IoError` `ENOTSUP` that says so.
+program that uses none runs as in Node. Each variant in std gives what Node gives: `fetch` takes
+`fetchPlain` only when it cannot follow a redirect (`redirect: "manual"` or `"error"`), so an
+`http:` URL redirected to `https:` is fetched as in Node.
 
 ## Alternatives considered
 
@@ -121,7 +136,7 @@ lowering.
 
 ## Limitations
 
-- Only the call's own syntax decides: `const URL = "http://…"; fetch(URL)` takes the function
-  itself.
+- Only the call's own syntax decides: `const URL = "http://…"; fetch(URL, { redirect: "manual" })`
+  takes the function itself.
 - `plain`'s equivalence with the decorated function is the author's promise; the compiler checks
   only the shape of its signature.

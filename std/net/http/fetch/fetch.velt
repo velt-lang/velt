@@ -48,7 +48,11 @@ function redirectMode(r: RequestRedirect): i64 {
  * `AbortError` (`TimeoutError` for `AbortSignal.timeout`) when it is aborted. An HTTP error
  * status is a response, not an error: check `res.ok`.
  */
-@variant("fetchPlain", 0, { startsWith: "http:" })
+@variant(
+  "fetchPlain",
+  { arg: 0, startsWith: "http:" },
+  { arg: 1, field: "redirect", oneOf: ["manual", "error"] },
+)
 export async function fetch(
   input: string | URL | Request,
   init: RequestInit = {},
@@ -57,9 +61,10 @@ export async function fetch(
 }
 
 /**
- * `fetch` of a URL written as an `http:` literal (`@variant` makes such a call this one): the same
- * without the TLS client, so a program whose every `fetch` is of an `http:` literal neither loads
- * nor builds it (#2392). A redirect to `https:` fails with `ENOTSUP`.
+ * `fetch` of a URL written as an `http:` literal whose options follow no redirect (`redirect` is
+ * `"manual"` or `"error"`; `@variant` makes such a call this one): the same without the TLS
+ * client, which no such request can reach, so a program whose every `fetch` is one neither loads
+ * nor builds it (#2392). A `fetch` that may follow a redirect may meet `https:`, and keeps it.
  */
 async function fetchPlain(
   input: string | URL | Request,

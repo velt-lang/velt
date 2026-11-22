@@ -104,16 +104,24 @@ impl<'a> StdLoad<'a> {
         // load's state holds the refused modules, which the check does not).
         if !self.refused.is_empty() {
             self.refused.extend(demanded.iter().cloned());
-            return velt_sema::StdBatch::default();
+            return refusal(demanded);
         }
         let load = load_options(self.generator_build, self.opts, self.scope);
         let (sm, diags) = (&mut sess.sm, &mut sess.diagnostics);
         let batch = loader::load_more(sm, self.state, self.base, demanded, &load, diags);
         if !batch.refused.is_empty() {
             self.refused.extend(demanded.iter().cloned());
-            return velt_sema::StdBatch::default();
+            return refusal(demanded);
         }
         self.files.extend(batch.modules.iter().map(|m| m.file));
         batch
+    }
+}
+
+/// The answer to a refused demand: it tells the check to stop (velt_sema `StdLoads::refused`).
+fn refusal(demanded: &[String]) -> velt_sema::StdBatch {
+    velt_sema::StdBatch {
+        refused: demanded.to_vec(),
+        ..Default::default()
     }
 }

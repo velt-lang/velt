@@ -164,9 +164,14 @@ fn run_sema(analysis: &mut Analysis, more: Option<MoreLoads>) -> Vec<String> {
     let shared = std::sync::Mutex::new((&mut analysis.sm, more, vec![], vec![]));
     let serve = |demanded: &[String]| {
         let mut out = refused.lock().ok()?;
+        // A refusal stops the check (velt_sema `StdLoads::refused`): it is thrown away.
+        let refusal = || velt_sema::StdBatch {
+            refused: demanded.to_vec(),
+            ..Default::default()
+        };
         if !out.is_empty() {
             out.extend(demanded.iter().cloned());
-            return None;
+            return Some(refusal());
         }
         let mut guard = shared.lock().ok()?;
         let (sm, more, added, diags) = &mut *guard;
@@ -174,7 +179,7 @@ fn run_sema(analysis: &mut Analysis, more: Option<MoreLoads>) -> Vec<String> {
         let batch = loader.load_more(path, overlay, &mut **state, &base, demanded, sm, diags)?;
         if !batch.refused.is_empty() {
             out.extend(demanded.iter().cloned());
-            return None;
+            return Some(refusal());
         }
         added.extend(batch.modules.iter().map(copy_module));
         Some(batch)
