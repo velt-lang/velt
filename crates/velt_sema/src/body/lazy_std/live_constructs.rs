@@ -434,7 +434,8 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `Clock`,
+/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `PowInt`, its
+/// integer `powI64`, `Clock`,
 /// `Weak`: it demands the weak core, which only a program with weak collections needs, and which
 /// prints nothing, and `Mutex`, std's inline lock. `TextFloat` is its own too, which `Dynamic`
 /// implies: a numeric key read through `any` is a float's text. A program that converts, formats or
@@ -445,6 +446,7 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
     let alone = Construct::CatchUnwind.bit()
         | Construct::PowFloat.bit()
+        | Construct::PowInt.bit()
         | Construct::Clock.bit()
         | Construct::Weak.bit()
         | Construct::Mutex.bit();
@@ -461,8 +463,8 @@ pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
     integer | float | (present & alone)
 }
 
-/// [`Construct::PowFloat`] if `e` is `**` (or `**=`) on floats, else nothing: `**` on integers
-/// is the runtime's.
+/// [`Construct::PowFloat`] if `e` is `**` (or `**=`) on floats, [`Construct::PowInt`] if it is
+/// on integers, else nothing.
 pub(super) fn pow_bit(ty: &crate::types::Types, e: &hir::ExprKind) -> ConstructSet {
     use hir::{BinOp::Pow, ExprKind as E};
     let (E::Binary {
@@ -476,6 +478,7 @@ pub(super) fn pow_bit(ty: &crate::types::Types, e: &hir::ExprKind) -> ConstructS
     };
     match ty.kind(x.ty) {
         TyKind::Float(_) => Construct::PowFloat.bit(),
+        _ if ty.is_int(x.ty) => Construct::PowInt.bit(),
         _ => 0,
     }
 }

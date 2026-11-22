@@ -1,0 +1,22 @@
+// `return u` from an async function, `u` an `unknown` holding a class instance with a `then`
+// method: JavaScript adopts the thenable, and Velt doesn't yet (#3412), so it stops with a
+// TypeError rather than settling with the instance. An instance without one is the value.
+class Plain {
+  n = 2;
+}
+
+class Later {
+  then(f: (v: number) => void): void {
+    f(5);
+  }
+}
+
+async function give(v: unknown): Promise<unknown> {
+  return v;
+}
+
+async function main(): Promise<void> {
+  console.log(await give(new Plain()));
+  console.log("not reached", await give(new Later()));
+}
+main();

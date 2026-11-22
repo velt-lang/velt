@@ -1,0 +1,78 @@
+// console.log's column grouping (node's groupArrayElements): arrays of more than six short
+// entries in aligned columns, numbers right-aligned and everything else left-aligned, the column
+// count from the entries' average and widest width, `... n more items` after the rows, and no
+// grouping where an entry is too wide or there are six entries or fewer. Output from node 22.
+
+function range(n: number, f: (i: number) => number): number[] {
+  const xs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(f(i));
+  }
+  return xs;
+}
+
+function words(n: number, f: (i: number) => string): string[] {
+  const xs: string[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(f(i));
+  }
+  return xs;
+}
+
+function main() {
+  // Six entries never group; seven do.
+  console.log(range(6, (i) => i * 1111111));
+  console.log(range(7, (i) => i * 1111111));
+  console.log(range(7, (i) => i));
+  // Column counts from 2 to the cap of 16 (and node's 15), by entry width.
+  for (const width of [1, 2, 3, 5, 8, 13]) {
+    console.log(range(26, (i) => (i % 3 == 0 ? Math.pow(10, width - 1) : i)));
+  }
+  console.log(range(99, (i) => i));
+  console.log(range(100, (i) => i % 10));
+  // `... n more items` follows the rows, outside the columns.
+  console.log(range(101, (i) => i));
+  console.log(range(150, (i) => i * 37));
+  // Negative numbers, floats and mixed widths, right-aligned.
+  console.log(range(17, (i) => (i % 2 == 0 ? -i : i * 1000.5)));
+  console.log(range(12, (i) => (i - 6) / 4));
+  console.log([NaN, Infinity, -Infinity, 0, -0, 1e21, 1e-7, 2, 3]);
+  // Strings are left-aligned, quotes included in the width.
+  console.log(words(10, (i) => "x".repeat(i)));
+  console.log(words(30, (i) => "ab".repeat((i * 7) % 5)));
+  console.log(words(8, (i) => (i == 3 ? "it's" : "plain")));
+  // Too wide to group: one entry per line.
+  console.log(words(7, (i) => "a fairly long string number " + i));
+  console.log(words(8, (i) => (i == 0 ? "x".repeat(30) : "y")));
+  // Mixed numbers and strings: left-aligned.
+  const mixed: (number | string)[] = [];
+  for (let i = 0; i < 14; i++) {
+    if (i % 3 == 0) {
+      mixed.push("s" + i);
+    } else {
+      mixed.push(i * 11);
+    }
+  }
+  console.log(mixed);
+  // Booleans and nulls group too.
+  const flags: (boolean | null)[] = [];
+  for (let i = 0; i < 20; i++) {
+    flags.push(i % 5 == 0 ? null : i % 2 == 0);
+  }
+  console.log(flags);
+  // Grouped arrays nested in objects and arrays, at deeper indentation.
+  console.log({ data: range(30, (i) => i * 3), label: "nested" });
+  console.log([range(9, (i) => i), range(12, (i) => i * 100)]);
+  console.log({ a: { b: range(40, (i) => i * i) } });
+  // Arrays of short arrays and objects group when each entry is short.
+  const pairs: number[][] = [];
+  for (let i = 0; i < 10; i++) {
+    pairs.push([i, i + 1]);
+  }
+  console.log(pairs);
+  const points: { x: number }[] = [];
+  for (let i = 0; i < 9; i++) {
+    points.push({ x: i });
+  }
+  console.log(points);
+}

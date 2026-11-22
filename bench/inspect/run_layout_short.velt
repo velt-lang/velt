@@ -1,0 +1,18 @@
+// Line breaking's short path: a value whose one-line text fits (at most 71 bytes, fewer than six
+// commas), so the layout only checks its length and commas and leaves it as it is.
+class Item {
+  id: number;
+  name: string;
+  tags: string[];
+  constructor(id: number, name: string, tags: string[]) {
+    this.id = id;
+    this.name = name;
+    this.tags = tags;
+  }
+}
+
+function main(): void {
+  for (let i = 0; i < 20000; i++) {
+    console.log(new Item(i, "item number", ["red", "large"]));
+  }
+}

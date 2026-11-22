@@ -113,6 +113,7 @@ table! {
     lang_hooks_number_text => "lang/hooks/number_text",
     lang_hooks_number_write => "lang/hooks/number_write",
     lang_hooks_pow => "lang/hooks/pow",
+    lang_hooks_pow_int => "lang/hooks/pow_int",
     lang_hooks_prebuilt_probe => "lang/hooks/prebuilt_probe",
     lang_hooks_process => "lang/hooks/process",
     lang_hooks_process_statics => "lang/hooks/process_statics",

@@ -278,7 +278,7 @@ impl FnCx<'_, '_> {
             // literal type (issue #1241).
             TyKind::Param(_) => {}
             TyKind::Never | TyKind::Error => return Err(h),
-            TyKind::Promise(..) => return Err(h),
+            // A promise is boxed as it is; an `await` of the `any` awaits it (#924).
             _ => {}
         }
         let Some(imp) = self.cx.any_impl() else {
@@ -582,6 +582,11 @@ impl FnCx<'_, '_> {
                 }
             }
             TyKind::FnPtr { rest: false, .. } => return self.fn_member_test(x, owned, m, span),
+            // The promise member: the value's table is a promise's (#924).
+            TyKind::Promise(..) => {
+                let x = read(self);
+                self.intrinsic(Intrinsic::AnyIsPromise, vec![x], b, span)
+            }
             _ => {
                 let (class, _) = self.cx.class_of(m)?;
                 let arms = vec![

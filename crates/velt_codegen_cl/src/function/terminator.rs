@@ -375,7 +375,8 @@ impl Translator<'_, '_> {
     /// The runtime math operations that are exactly one Cranelift instruction
     /// (rt_abi_async.md §9, `Math.clz32`, `Math.umulh`, JS's int32 multiply) or a short sequence
     /// (the rounding functions, `rounding.rs`) are emitted inline instead of called; `None` for
-    /// the others (`pow`), which stay calls.
+    /// the others, which stay calls (ToInt32 and the int32 add are inlined by the caller, with
+    /// the runtime call on their cold path).
     fn inline_math(&mut self, op: MathOp, args: &[ir::Value]) -> Option<ir::Value> {
         if let Some(how) = op.rounding() {
             return Some(self.round_f64(args[0], how));
@@ -421,7 +422,6 @@ impl Translator<'_, '_> {
             | MathOp::BitsBf16 => unreachable!("ICE: half conversions are handled above"),
             MathOp::ToInt32
             | MathOp::AddInt32
-            | MathOp::PowI64
             | MathOp::Floor
             | MathOp::Ceil
             | MathOp::Trunc

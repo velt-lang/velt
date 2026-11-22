@@ -449,13 +449,13 @@ it.
 ## Math operations
 
 The scalar math functions `velt_rt_math_*` (`sqrt floor ceil round trunc fabs f64_bits bits_f64
-umulh to_int32 mul_int32 add_int32 clz32 clz64 ctz64 popcount64`) and `velt_rt_pow_i64` (`**` on
-integers; on floats it is std's `powF64` hook, std/lang/hooks/pow.velt, which calls `pow` of
-std/lang/math/pow.velt) are runtime functions
+umulh to_int32 mul_int32 add_int32 clz32 clz64 ctz64 popcount64`) are runtime functions
 (velt_rt's `math.rs`, the reference for what each computes) that compiled code treats as
 operations: `velt_vir::math::MathOp` gives each symbol's operation and VIR signature, the
-verifier rejects one of these externs with another signature, and backends emit all but `pow`
-inline (an instruction, or a helper whose slow path calls the runtime).
+verifier rejects one of these externs with another signature, and backends emit all of them
+inline (an instruction, or a helper whose slow path calls the runtime). `**` is no math
+operation: lowering calls std's hooks, `powI64` on integers (std/lang/hooks/pow_int.velt) and
+`powF64` on floats (std/lang/hooks/pow.velt, which calls `pow` of std/lang/math/pow.velt).
 `velt_vir::math::effects` is the one list of what a runtime function may do to memory (none for
 every math operation; read-only, read-caching or cold for some string and array functions),
 which LLVM's declarations and `velt_opt` both read. `velt_opt` folds a call whose arguments are
@@ -463,7 +463,7 @@ constants (`MathOp::eval`, which a test of veltc checks against the runtime's fu
 a double operation with a NaN argument or result, whose bits the hardware chooses. Lowering
 emits a math operation as `Rvalue::Intrinsic(Intrinsic::Math(op), …)` (vir.rs invariant 12), a
 statement that means the same as the call, and never as a direct call (the verifier rejects
-one); the extern stays declared, and backends call it for `pow` and on ToInt32's cold path.
+one); the extern stays declared, and backends call it on ToInt32's cold path.
 
 The math operations named `velt_math_*` have **no runtime function**: like the SIMD externs,
 std declares them and every backend emits them inline, so no runtime defines them and nothing
@@ -1191,7 +1191,6 @@ message). Allocation sites are not recorded. The first violation prints `velt de
 | `velt_rt_uncaught_report` | `(void)` | called before an `Uncaught …` report is written (the report then ends the process): returns on the first thread to report (and on it again); any other thread waits until the process ends, so one report is printed |
 | `velt_rt_set_throw_loc` | `(const VeltStr* loc)` | per-thread slot: where the error being thrown comes from (static ` at <path>:<line>:<col>` string, or null) |
 | `velt_rt_throw_loc` | `(void) -> const VeltStr*` | the slot's value (null if never set); appended to `Uncaught …` reports |
-| `velt_rt_pow_i64` | `(int64_t a, int64_t b) -> int64_t` | wrapping; negative exponent → 0 (1 if a == 1) |
 
 Division by zero: lowering emits a check that calls `velt_rt_panic` with message `division by zero`.
 With source locations (`lower_with`), compiler-emitted panic messages end in

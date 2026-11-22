@@ -54,6 +54,10 @@ function main() {
   console.log(all<Row>(0).length);
   const first = one<Row>();
   console.log(first.id, first.name, first.note);
+  // Rows read as `JsonValue`s (the runtime's row reader, through the JSON decoder).
+  const values = all<JsonValue>(2);
+  console.log(JSON.stringify(values), values[1].get("note")!.asString());
+  console.log(one<JsonValue>());
   try {
     all<Tagged>(1);
   } catch (e) {
@@ -101,6 +105,8 @@ const EXPECTED: &str = "1 row 1 1.5 null
 3 row 3 4.5 null
 0
 1 row 1 null
+[{\"id\":1,\"name\":\"row 1\",\"score\":1.5,\"note\":null},{\"id\":2,\"name\":\"row 2\",\"score\":3,\"note\":\"even\"}] even
+{ id: 1, name: 'row 1', score: 1.5, note: null }
 true expected field \"tags\" at $[0]
 true expected string at $[0].id
 object id= int 7 name= text ada data= blob [1, 2] ok= true gone= null
