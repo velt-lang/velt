@@ -50,6 +50,7 @@ import { HRR_RANDOM } from "velt/net/tls/server_hello";
 import { chooseSuite, serverHello13 } from "velt/net/tls/server_hello13";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey } from "velt/net/tls/server_key";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 import { u8x16 } from "velt/simd";
 
 /** ecdsa_secp256r1_sha256, the signature scheme of the server's CertificateVerify. */
@@ -87,6 +88,8 @@ export class ServerHandshake {
   private protocols: string[];
   private state: i32 = WAIT_HELLO;
   private transcript: u8[] = [];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   /** The transcript's hash through the server's Finished, which the client's Finished covers. */
   private flightHash: u8[] | null = null;
   private group: usize = 0;
@@ -252,7 +255,7 @@ export class ServerHandshake {
     this.add(hello);
     this.hello = hello;
     const hs = handshakeSecret(secret, hashLength(this.suite));
-    const h1 = this.hashOf(this.transcript);
+    const h1 = this.transcriptHash();
     this.clientHandshake = expandLabel(hs, "c hs traffic", h1, h1.length);
     this.serverHandshake = expandLabel(hs, "s hs traffic", h1, h1.length);
     const w = new ByteWriter();
@@ -304,7 +307,7 @@ export class ServerHandshake {
       signed.push(context[i]);
     }
     signed.push(0);
-    const th = this.hashOf(this.transcript);
+    const th = this.transcriptHash();
     for (let i: usize = 0; i < th.length; i++) {
       signed.push(th[i]);
     }
@@ -323,13 +326,13 @@ export class ServerHandshake {
     const fin = new ByteWriter();
     fin.u8(FINISHED);
     const fb = fin.begin(3);
-    fin.put(finishedMac(this.serverHandshake!, this.hashOf(this.transcript)));
+    fin.put(finishedMac(this.serverHandshake!, this.transcriptHash()));
     fin.end(fb, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);
     this.flight = w.bytes;
     const master = masterSecret(hs);
-    const h2 = this.hashOf(this.transcript);
+    const h2 = this.transcriptHash();
     this.flightHash = h2;
     this.clientApplication = expandLabel(master, "c ap traffic", h2, h2.length);
     this.serverApplication = expandLabel(master, "s ap traffic", h2, h2.length);
@@ -357,6 +360,7 @@ export class ServerHandshake {
     // suite's hash.
     const first = this.hashOf(m);
     this.transcript = [254, 0, 0, first.length as u8];
+    this.th.reset();
     this.add(first);
     const w = new ByteWriter();
     w.u8(SERVER_HELLO);
@@ -383,6 +387,11 @@ export class ServerHandshake {
     return S_SEND_RETRY;
   }
 
+  // The transcript's hash with the chosen suite's hash.
+  private transcriptHash(): u8[] {
+    return this.th.of(this.transcript, this.suite == AES_256_GCM_SHA384);
+  }
+
   // The hash of `bytes` with the chosen suite's hash.
   private hashOf(bytes: u8[]): u8[] {
     return this.suite == AES_256_GCM_SHA384 ? sha384(bytes) : sha256(bytes);
@@ -401,6 +410,7 @@ export class ServerHandshake {
     }
     this.state = DONE;
     this.transcript = [];
+    this.th.reset();
     return S_DONE;
   }
 
