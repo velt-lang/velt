@@ -1,0 +1,5 @@
+600 NaN,Infinity,-Infinity,-0,1.5 | 600 NaN,Infinity,-Infinity,-0,1.5
+1500 NaN,Infinity,-Infinity,-0,1.5 | 1500 NaN,Infinity,-Infinity,-0,1.5
+1000000 NaN,Infinity,-Infinity,-0,1.5 2000022
+1000000 NaN,Infinity,-Infinity,-0,1.5 6000022
+true false 1000000 NaN,Infinity,-Infinity,-0,1.5

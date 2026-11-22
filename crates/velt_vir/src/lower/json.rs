@@ -1,6 +1,6 @@
 //! What lowering still knows of JSON and records (the decoders and writers are std's, written by
-//! source generators: velt/encoding/json/generate): the prelude's `JsonValue` (printed from the
-//! runtime tree its `[JSON_RUNTIME_HANDLE]()` makes, glue/format.rs) and `JsonError` (an uncaught
+//! source generators: velt/encoding/json/generate): the prelude's `JsonValue` (printed by its
+//! `[JSON_INSPECT]` method, glue/format.rs) and `JsonError` (an uncaught
 //! one, entry.rs), and the key order of a `Record`'s entries (glue/format_map.rs).
 
 use rustc_hash::FxHashMap;

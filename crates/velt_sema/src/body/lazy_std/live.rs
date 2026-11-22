@@ -155,8 +155,8 @@ struct Walk {
     generators: [bool; 2],
     /// An async host function: lowering awaits its call's `HostSettled` (`velt_vir` `host.rs`).
     async_host: bool,
-    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`), a clock
-    /// (`Clock`), a weak collection's intrinsic (`Weak`).
+    /// A call of `catchUnwind` ([`Construct::CatchUnwind`]), `**` on floats (`PowFloat`) or on
+    /// integers (`PowInt`), a clock (`Clock`), a weak collection's intrinsic (`Weak`).
     constructs: ConstructSet,
     /// Code that runs on the executor: an async function or closure, or one of the externs the
     /// executor in Velt serves ([`super::sched_hooks`]).

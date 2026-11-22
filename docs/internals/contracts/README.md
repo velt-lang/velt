@@ -333,6 +333,15 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - The LLVM backend marks `Always` `alwaysinline` and `Never` `noinline` (not `cold`); a
   function that never returns stays `cold noinline` whatever its marker. Cranelift ignores the
   field.
+- `vir::Function::rare: bool`: the decorator `@cold` (`std_hooks` `decorator_cold`): calls of the
+  function are rare, though they return. It is not `Function::cold`, which says no call returns
+  normally and lets `velt_opt` end a call of it with `Unreachable`; nothing may assume that of a
+  `rare` one. Sema rejects `@cold` with `@inline`, and where it rejects `@inline` (a `declare
+  function`, an abstract method, a generator, an async function); `@cold @noInline` is allowed.
+  `velt_opt`'s inliner inlines a `rare` function only where it is trivial; the LLVM backend marks
+  it `cold` (`cold noinline` with `Never`, or where it would be `noinline` for its size).
+  Cranelift ignores it. `Function::new` sets `false`; lowering sets it from the decorators;
+  `velt_opt` keeps it on clones.
 
 ## Debug variables (additive VIR extension)
 - `vir::Program::debug_types: Vec<DebugTy>` and `vir::LocalDecl::debug: Option<LocalDebug>`

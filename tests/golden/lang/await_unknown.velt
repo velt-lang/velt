@@ -1,0 +1,67 @@
+// A promise held as `unknown` or `any`, and `await` of such a value (#924): the promise is boxed
+// as it is (`typeof` is "object", the same object), `await` waits for it with no turn more than
+// awaiting the promise itself, a value that is no promise is awaited as itself after one turn,
+// and a rejection is thrown as an `unknown`. Node prints the same.
+async function later(n: number): Promise<number> {
+  await Promise.resolve();
+  return n * 2;
+}
+
+async function fails(why: string): Promise<number> {
+  await Promise.resolve();
+  throw new Error(why);
+}
+
+function box<T>(x: T): unknown {
+  return x;
+}
+
+async function order(): Promise<void> {
+  const steps: string[] = [];
+  const p = Promise.resolve(1);
+  const u: unknown = p;
+  const direct = (async (): Promise<void> => {
+    await p;
+    steps.push("direct");
+  })();
+  const boxed = (async (): Promise<void> => {
+    await u;
+    steps.push("boxed");
+  })();
+  const plain = (async (): Promise<void> => {
+    await (5 as unknown);
+    steps.push("plain");
+  })();
+  steps.push("sync");
+  await direct;
+  await boxed;
+  await plain;
+  console.log(steps.join(" "));
+}
+
+async function main(): Promise<void> {
+  const p = later(21);
+  const u: unknown = p;
+  console.log(typeof u, u === p);
+  console.log(u instanceof Promise, ("x" as unknown) instanceof Promise, (u as object) instanceof Promise);
+  const back = later(3) as unknown as Promise<number> | string;
+  console.log(typeof back === "string" ? back : await back);
+  console.log(await u);
+  const a: any = later(5);
+  const v = await a;
+  console.log(v + 1);
+  console.log(await (box(later(2)) as unknown));
+  console.log(await ("text" as unknown), await (null as unknown));
+  const settled: unknown = await (box(Promise.resolve("ready")) as unknown);
+  console.log(settled);
+  try {
+    await (fails("no") as unknown);
+    console.log("not reached");
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  const voided: unknown = (async (): Promise<void> => {})();
+  console.log(await voided);
+  await order();
+}
+main();
