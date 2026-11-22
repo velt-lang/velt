@@ -16,15 +16,9 @@ import { AbortController, AbortError, AbortSignal } from "velt/task";
 import { Target } from "velt/net/http/fetch/client/target";
 import { setBytes } from "velt/lang/bytes/copy";
 import { stdUsed } from "velt/lang/intrinsics";
-import { dialPlain, dialTls, reactorUp } from "#fetch-dial";
+import { dialPlain, dialTls, reactorUp, tlsOn } from "#fetch-dial";
 
 declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
-declare async function velt_rt_tcp_connect_tls(
-  addr: string,
-  serverName: string,
-  ca: string,
-  alpn: string,
-): Promise<IoResult<u64>>;
 
 /** How long connecting may take (milliseconds) before `ETIMEDOUT`, as undici's default. */
 const CONNECT_MS: i64 = 10000;
@@ -248,10 +242,11 @@ export async function dial(
       : await dialPlain(addr, signal);
   }
   const stop = new AbortController();
+  const start = Date.now() as i64;
   // The runtime's connect itself races the limits: when it loses, it is dropped, which stops
-  // connecting (a function around it would go on and make a connection nobody closes).
-  const connecting =
-    t.https ? velt_rt_tcp_connect_tls(addr, bare(t.hostname), ca, alpn) : velt_rt_tcp_connect(addr);
+  // connecting (a function around it would go on and make a connection nobody closes). For
+  // `https:` the TLS client in Velt then runs over the runtime's socket (`tlsOn`).
+  const connecting = velt_rt_tcp_connect(addr);
   const racers: Promise<IoResult<u64>>[] = [connecting, expire(stop.signal)];
   if (signal != null) {
     racers.push(aborted(signal, stop.signal));
@@ -264,11 +259,17 @@ export async function dial(
     }
     throw new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`);
   }
+  let fd: u64 = 0;
   try {
-    return TcpStream.ofHandle(unwrapIo(r));
+    fd = unwrapIo(r);
   } catch (e) {
     throw failed(e);
   }
+  if (!t.https) {
+    return TcpStream.ofHandle(fd);
+  }
+  const left = CONNECT_MS - ((Date.now() as i64) - start);
+  return await tlsOn(fd, addr, bare(t.hostname), ca, alpn, left, signal);
 }
 
 /** What `expire` and `aborted` give when they win the race. */

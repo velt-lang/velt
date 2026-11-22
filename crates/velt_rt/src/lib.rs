@@ -61,7 +61,6 @@ pub mod str_array;
 pub mod str_ops;
 pub mod strbuf;
 pub mod task;
-pub mod tls;
 pub mod top_level_await;
 pub mod transfer_map;
 pub mod view;
