@@ -43,7 +43,6 @@ pub mod wtf8;
 
 pub use abi::*;
 pub use crumbs::BytePos;
-#[cfg(test)]
 pub(crate) use crumbs::STRIDE;
 pub use order::cmp_utf16;
 pub use wtf8::{Summary, Wtf8};

@@ -12,8 +12,7 @@
 //! `out` points at an all-zero value of the type written; `col` is below the column count.
 
 use crate::bytes::VeltBytes;
-use crate::str::{Summary, VeltStr};
-use velt_text::json_escape::push_json_string;
+use crate::str::{VeltStr, STRIDE};
 use velt_text::rows::{header_end, name_at, NAMES};
 use velt_text::rows_cursor::{Cell, RawCursor};
 
@@ -34,6 +33,8 @@ pub struct RowsState {
     /// both the same (a statement run again) reuses it.
     header: Vec<u8>,
     names: Vec<u8>,
+    /// Text that is not UTF-8 made valid (`velt_rt_rows_text_view`), lent until the next.
+    scratch: String,
 }
 
 thread_local! {
@@ -72,6 +73,7 @@ pub unsafe extern "C" fn velt_rt_rows_begin_named(cursor: u64, names: *const Vel
             fields: Vec::new(),
             header: Vec::new(),
             names: Vec::new(),
+            scratch: String::new(),
         }),
     };
     if state.names != names || state.header != header {
@@ -250,37 +252,50 @@ pub unsafe extern "C" fn velt_rt_rows_str(st: u64, col: u64, out: *mut VeltStr) 
     OK
 }
 
-/// A text cell appended to the string builder `buf` as a JSON string literal, quoted and escaped
-/// as `JSON.stringify` does (text that is not UTF-8 gets U+FFFD): what std's rows reader
-/// (std/encoding/json/rows_text.velt) writes a `JsonValue`'s text with, without making a string
-/// of the cell first. Nothing is appended for a null or another kind.
+/// A text cell as a string to read at once (not UTF-8: U+FFFD), for std's rows reader writing a
+/// `JsonValue`'s text (std/encoding/json/rows_text.velt): ASCII, and other UTF-8 of at most
+/// [`STRIDE`] units, borrows the cursor's bytes (no allocation or copy), and text that is not
+/// UTF-8 borrows the rows state's scratch text it is made valid in: so the string is good only
+/// until the cursor steps or the next call, and std keeps none of it. Longer non-ASCII text
+/// (whose positions the runtime remembers by address) is copied, as `velt_rt_rows_str` copies it.
 ///
 /// # Safety
-/// As the module says; `buf` is a live string builder (`velt_rt_strbuf_new`).
+/// As the module says; `out` is writable.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_rows_push_text_json(st: u64, col: u64, buf: *mut VeltStr) -> u8 {
+pub unsafe extern "C" fn velt_rt_rows_text_view(st: u64, col: u64, out: *mut VeltStr) -> u8 {
     let t = match cell(st, col) {
         Cell::Text(t) | Cell::Ascii(t) => t,
         Cell::Null => return NULL,
         _ => return MISMATCH,
     };
     if t.is_ascii() {
-        // Escaped ASCII is ASCII.
-        (*buf).push_with_ascii(|b| push_json_string(b, t));
+        // SAFETY: ASCII is UTF-8 with one unit per byte, valid while the cursor is on this row.
+        out.write(VeltStr::borrowed_text(t.as_ptr(), t.len(), t.len()));
         return OK;
     }
-    let text = String::from_utf8_lossy(t);
-    // Only ASCII is escaped, into ASCII: the output has the text's units plus one per added byte.
-    let (len, units) = (text.len(), text.encode_utf16().count());
-    (*buf).push_with_summary(
-        |b| push_json_string(b, text.as_bytes()),
-        |out| {
-            Some(Summary {
-                units: units + (out - len),
-                lone: 0,
-            })
-        },
-    );
+    let text = match std::str::from_utf8(t) {
+        Ok(text) => text,
+        Err(_) => {
+            let scratch = &mut state(st).scratch;
+            scratch.clear();
+            // `String::from_utf8_lossy`'s U+FFFD per bad sequence, without its allocation.
+            for chunk in t.utf8_chunks() {
+                scratch.push_str(chunk.valid());
+                if !chunk.invalid().is_empty() {
+                    scratch.push('\u{FFFD}');
+                }
+            }
+            scratch.as_str()
+        }
+    };
+    let units = text.encode_utf16().count();
+    out.write(if units <= STRIDE {
+        // SAFETY: UTF-8 of `units` units, valid until the cursor steps or the scratch is reused,
+        // and short enough that no position of it is remembered.
+        VeltStr::borrowed_text(text.as_ptr(), text.len(), units)
+    } else {
+        VeltStr::from_text_counted(text, units)
+    });
     OK
 }
 

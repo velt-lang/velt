@@ -434,31 +434,15 @@ fn concatenation_matches_the_model_on_every_alphabet() {
     });
 }
 
-/// The operations that build text without positions in the model's sense (case mapping,
-/// trimming, JSON escaping): every result is checked for canonical form by [`units`], and
-/// `JSON.stringify` against a model of it.
+/// The operations that build text without positions in the model's sense (case mapping): every
+/// result is checked for canonical form by [`units`].
 fn check_text_ops(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
     use crate::str_ops::case::*;
-    use crate::strbuf::velt_rt_strbuf_push_json_str;
     let s = gen_string(rng, alphabets);
     let rs = to_rt(rng, &s);
     unsafe {
         units(&Rt(out_str_rt(|o| velt_rt_str_to_upper(&rs.0, o))).0);
         units(&Rt(out_str_rt(|o| velt_rt_str_to_lower(&rs.0, o))).0);
-        let mut buf = MaybeUninit::<VeltStr>::uninit();
-        velt_rt_strbuf_new(rng.below(40) as u64, buf.as_mut_ptr());
-        let mut buf = Rt(buf.assume_init());
-        velt_rt_strbuf_push_json_str(&mut buf.0, &rs.0);
-        let got = units(&buf.0);
-        let want = json_stringify(&s);
-        if got != want {
-            return Err(format!(
-                "JSON.stringify({}): runtime {}, model {}",
-                show(&s),
-                show(&got),
-                show(&want)
-            ));
-        }
     }
     Ok(())
 }
@@ -467,30 +451,6 @@ fn out_str_rt(f: impl FnOnce(*mut VeltStr)) -> VeltStr {
     let mut out = MaybeUninit::<VeltStr>::uninit();
     f(out.as_mut_ptr());
     unsafe { out.assume_init() }
-}
-
-/// `JSON.stringify(s)` of the model (ES2019 well-formed: lone surrogates as `\udxxx`).
-fn json_stringify(s: &[u16]) -> Vec<u16> {
-    let mut out = vec![b'"' as u16];
-    let push = |out: &mut Vec<u16>, t: &str| out.extend(t.bytes().map(u16::from));
-    for (i, &u) in s.iter().enumerate() {
-        let paired = (model::is_high(u) && s.get(i + 1).is_some_and(|&n| model::is_low(n)))
-            || (model::is_low(u) && i > 0 && model::is_high(s[i - 1]));
-        match u {
-            0x22 => push(&mut out, "\\\""),
-            0x5C => push(&mut out, "\\\\"),
-            0x08 => push(&mut out, "\\b"),
-            0x0C => push(&mut out, "\\f"),
-            0x0A => push(&mut out, "\\n"),
-            0x0D => push(&mut out, "\\r"),
-            0x09 => push(&mut out, "\\t"),
-            0..=0x1F => push(&mut out, &format!("\\u{u:04x}")),
-            0xD800..=0xDFFF if !paired => push(&mut out, &format!("\\u{u:04x}")),
-            _ => out.push(u),
-        }
-    }
-    out.push(b'"' as u16);
-    out
 }
 
 /// The byte position of unit `u` in the model string `s` (see [`BytePos`]).

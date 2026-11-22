@@ -160,8 +160,8 @@ velt_rt velt_rt_rows_i64
 velt_rt velt_rt_rows_json
 velt_rt velt_rt_rows_kind
 velt_rt velt_rt_rows_next
-velt_rt velt_rt_rows_push_text_json
 velt_rt velt_rt_rows_str
+velt_rt velt_rt_rows_text_view
 velt_rt velt_rt_rwlock_init
 velt_rt velt_rt_rwlock_read
 velt_rt velt_rt_rwlock_read_unlock
@@ -213,7 +213,6 @@ velt_rt velt_rt_strbuf_push_byte
 velt_rt velt_rt_strbuf_push_bytes
 velt_rt velt_rt_strbuf_push_inspect_key
 velt_rt velt_rt_strbuf_push_inspect_str
-velt_rt velt_rt_strbuf_push_json_str
 velt_rt velt_rt_strbuf_push_str
 velt_rt velt_rt_strbuf_push_u8s
 velt_rt velt_rt_strbuf_push_words

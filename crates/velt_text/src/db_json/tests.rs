@@ -214,7 +214,7 @@ fn text_is_escaped_and_invalid_utf8_replaced() {
 
 #[test]
 fn binary_rows_stand_for_the_same_json() {
-    let mut b = velt_text::rows::BinRows::new(["id", "name", "score", "ok", "data", "nöte"], false);
+    let mut b = crate::rows::BinRows::new(["id", "name", "score", "ok", "data", "nöte"], false);
     b.int(7);
     b.text(b"ada \"x\"");
     b.float(1.5);
@@ -247,7 +247,7 @@ fn binary_rows_stand_for_the_same_json() {
     w.text("é".as_bytes());
     w.end_row();
     assert_eq!(
-        velt_text::rows::to_json(&b.finish()).unwrap(),
+        crate::rows::to_json(&b.finish()).unwrap(),
         w.into_array()
     );
 }
