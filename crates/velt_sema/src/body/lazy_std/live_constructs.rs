@@ -127,7 +127,7 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
                 }
                 _ => {}
             }
-            todo.extend(crate::types::children(kind));
+            todo.extend(crate::types::contents(kind));
         }
     }
     classes.sort();
@@ -415,14 +415,15 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
 /// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
 /// `CatchUnwind` is its own bit: it demands std's panic path, which only a program that catches
-/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `Clock`, and
+/// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `Clock`,
 /// `Weak`: it demands the weak core, which only a program with weak collections needs, and which
-/// prints nothing.
+/// prints nothing, and `Mutex`, std's inline lock.
 pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
     let own = Construct::CatchUnwind.bit()
         | Construct::PowFloat.bit()
         | Construct::Clock.bit()
-        | Construct::Weak.bit();
+        | Construct::Weak.bit()
+        | Construct::Mutex.bit();
     let integer = match present & !own {
         0 => 0,
         _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()) & !own,
@@ -513,7 +514,7 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
         | TyKind::Result(..)
         | TyKind::Promise(..)
         | TyKind::Shared(_) => {
-            (crate::types::children(&kind).into_iter()).any(|c| may_print_int(cx, c))
+            (crate::types::contents(&kind).into_iter()).any(|c| may_print_int(cx, c))
         }
         _ => true,
     };

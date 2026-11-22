@@ -22,4 +22,21 @@ export class Avx512CD {
   static isSupported(): bool {
     return velt_simd_has_avx512cd_x86() || (velt_simd_on_x86() && cpuHas(AVX512CD_X86));
   }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The number of zero bits above the highest bit set in each lane (32 for 0).
+   *
+   * `_mm512_lzcnt_epi32` (`vplzcntd`). Runs only where the CPU has it: call it behind
+   * `Avx512CD.isSupported()`, or in a function gated on `avx512cd-x86`.
+   */
+  static leadingZeroCountU32(value: Vector512<u32>): Vector512<u32> {
+    return velt_arch_avx512cd_leading_zero_count_u32(value);
+  }
 }
+
+import { Vector512 } from "velt/arch/x86/vector512";
+
+declare function velt_arch_avx512cd_leading_zero_count_u32(value: Vector512<u32>): Vector512<u32>;

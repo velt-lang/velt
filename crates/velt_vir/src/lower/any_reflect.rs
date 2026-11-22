@@ -675,6 +675,14 @@ impl FnLower<'_, '_> {
             self.switch_to(done);
             return;
         }
+        // A weak field: its target (weak_fields.rs), shared again by the box and released here.
+        if self.cx.weak_field(ty, f).is_some() {
+            let v = self.weak_value(fp, fty);
+            let vp = self.place_of(v, fty);
+            self.reflect_box(Operand::Copy(vp.clone()), fty, out, optional);
+            self.drop_glue(vp, fty);
+            return;
+        }
         self.reflect_box(Operand::Copy(fp), fty, out, optional);
     }
 }

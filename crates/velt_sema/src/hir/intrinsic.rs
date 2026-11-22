@@ -175,8 +175,7 @@ pub enum Intrinsic {
     /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
-    /// by sema around a value a `Mutex.with` callback stores across the lock
-    /// (ownership/locked).
+    /// by sema around a value a `Mutex.with` callback stores across the lock (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
     /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
@@ -194,11 +193,13 @@ pub enum Intrinsic {
     /// spreads a server's connections over the workers only without it (#2744), until #2726
     /// replaces the module lock.
     ModuleStateUsed,
-    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a
-    /// constant: can a value of type `T` that a call borrows be reached through another
-    /// reference while the call runs (lowering counts the type, or borrows values of it inside
-    /// counted objects)? Only then can a callback change it. The value is not evaluated.
+    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a constant:
+    /// can a value of type `T` that a call borrows be reached through another reference while
+    /// the call runs (lowering counts the type, or borrows values of it inside counted objects)?
+    /// Only then can a callback change it. The value is not evaluated.
     MayAlias,
+    /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
+    IsUnique,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
@@ -407,24 +408,23 @@ pub enum Intrinsic {
     /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
     /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
     /// being the call's type. Sema turns the declaration's string literal orderings into the
-    /// `Atomic*` intrinsics' integer literals.
-    ///
-    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
-    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
+    /// `Atomic*` intrinsics' integer literals. Changed (#3094), for all five `AddressAtomic*`:
+    /// renamed from `PtrAtomic*`; the first operand is a `usize` address, not a `Ptr<T>`. Not
+    /// additive.
     AddressAtomicLoad,
-    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
-    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, order: u8)`: `AtomicStore` at `address` (`T`: `v`'s).
     AddressAtomicStore,
-    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
-    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
-    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: `AtomicRmw` at `address` (the
+    /// declaration's `(address, op, v, order)` reordered by sema, `op` numbered as `AtomicRmw`'s).
     AddressAtomicRmw,
-    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
-    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: `AtomicCas`.
     AddressAtomicCas,
-    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
-    /// type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously; `T`: `expected`'s).
     AddressAtomicCasWeak,
+    /// std only (`Ptr.at`, `Ptr.orNull`, #3094): `ptrFromAddress<T>(a: usize) -> Ptr<T>`. Additive.
+    PtrFromAddress,
+    /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
+    PtrToAddress,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
     /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
     /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.

@@ -345,6 +345,11 @@ impl FnLower<'_, '_> {
         chain: Option<&super::drop_chain::Chain>,
     ) {
         let fp = self.field_place(obj, ty, f);
+        if self.cx.weak_field(ty, f).is_some() {
+            // Gives up its slot (weak_fields.rs): the target is not the object's to drop.
+            self.weak_field_drop(fp, t);
+            return;
+        }
         let reenters = self.cx.field_drop_reenters(ty, f, t, chain);
         if reenters {
             self.drop_field_bracketed(fp, t);

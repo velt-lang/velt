@@ -246,6 +246,11 @@ impl Builder {
                 m.kind = "shared";
                 m.args = vec![self.id(x)];
             }
+            // A C pointer (velt/ffi's `Ptr<T>`, #3094), with its pointee.
+            TyKind::Ptr(x) => {
+                m.kind = "ptr";
+                m.args = vec![self.id(x)];
+            }
             TyKind::Simd(_)
             | TyKind::Error
             | TyKind::Result(..)

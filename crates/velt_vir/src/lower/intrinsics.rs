@@ -216,6 +216,18 @@ impl FnLower<'_, '_> {
                 let f = self.cx.c_export_address(index as u32);
                 self.rvalue_temp(Ty::U64, Rvalue::Cast(f, Ty::U64))
             }
+            // A C pointer and its address are the same word (#3094).
+            (I::PtrFromAddress, [a]) => {
+                let a = self.expr(a);
+                if super::c_call::wasm32(&self.cx.target) {
+                    self.stop_if_past_32_bits(a.clone());
+                }
+                self.rvalue_temp(Ty::Ptr, Rvalue::Cast(a, Ty::Ptr))
+            }
+            (I::PtrToAddress, [p]) => {
+                let p = self.expr(p);
+                self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64))
+            }
             (I::AddressLoad, [a]) => {
                 let addr = self.expr(a);
                 let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
@@ -363,6 +375,7 @@ impl FnLower<'_, '_> {
             (I::NeedsDrop, [a]) => {
                 Operand::Const(crate::vir::Const::Bool(self.needs_drop(a.ty)), Ty::Bool)
             }
+            (I::IsUnique, [a]) => self.is_unique(a),
             (I::MayAlias, [a]) => {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
@@ -481,6 +494,8 @@ impl FnLower<'_, '_> {
             (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
+            // A weak field's read is a reference of its own already (weak_fields.rs).
+            (I::Share, [a]) if self.weak_read_expr(a) => self.expr(a),
             (I::Share, [a]) => {
                 let v = self.expr(a);
                 let t = self.sub(a.ty);

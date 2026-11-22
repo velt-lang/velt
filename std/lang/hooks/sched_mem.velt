@@ -27,29 +27,36 @@ import * as os from "#sched-os";
 // ffi's `memcpy`): one C symbol has one signature in a program, and a pointer is `Ptr` there.
 declare c("c") function calloc$sched(n: usize, size: usize): Ptr<u8> | null;
 declare c("c") function free$sched(p: Ptr<u8> | null): void;
-declare c("c") function memcpy$sched(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
-declare c("c") function memset$sched(dst: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+declare c("c") function memcpy$sched(dst: Ptr<u8> | null, src: Ptr<u8> | null, n: usize): Ptr<u8>;
+declare c("c") function memset$sched(dst: Ptr<u8> | null, c: i32, n: usize): Ptr<u8>;
 
-/** Address `a` as a C pointer argument; 0 passes `NULL`. */
+/**
+ * Address `a` as a C pointer argument; 0 passes `NULL` (#3094: std's own addresses, which only C
+ * reads, so no check: `Ptr.at`'s would make every caller track its call site).
+ */
 @inline("always")
-export function ptr(a: usize): Ptr<u8> {
+export function ptr(a: usize): Ptr<u8> | null {
   // SAFETY: only passed to a C function, whose call site states what is at `a`.
-  return unsafe { Ptr.at<u8>(a) };
+  return unsafe { Ptr.orNull<u8>(a) };
 }
 
-/** Address `a` as a C pointer argument to a `T` (`declare c type`, or a number type). */
+/** As `ptr`, a pointer to a `T` (`declare c type`, or a number type). */
 @inline("always")
-export function ptrTo<T>(a: usize): Ptr<T> {
+export function ptrTo<T>(a: usize): Ptr<T> | null {
   // SAFETY: as `ptr`'s.
-  return unsafe { Ptr.at<T>(a) };
+  return unsafe { Ptr.orNull<T>(a) };
+}
+
+/** Address `a` as a C pointer argument to a `T` that may be `NULL`: 0 passes `NULL`. */
+@inline("always")
+export function ptrOrNull<T>(a: usize): Ptr<T> | null {
+  // SAFETY: as `ptr`'s.
+  return unsafe { Ptr.orNull<T>(a) };
 }
 
 /** The address a C function returned; 0 for `NULL`. */
 @inline("always")
 export function addr(p: Ptr<u8> | null): usize {
-  if (p === null) {
-    return 0;
-  }
   return Ptr.addressOf(p);
 }
 
@@ -121,7 +128,12 @@ export function lastingRelease(p: usize): void {
   }
 }
 
-/** Copies `n` bytes from `src` to `dst` (which do not overlap). */
+/**
+ * Copies `n` bytes from `src` to `dst` (which do not overlap). Inlined: every async call copies
+ * its initial state with it (sched_node.velt `boxed`), a constant size at the call, so the copy
+ * is a few moves there; a program split into codegen units keeps it so only when marked (#3097).
+ */
+@inline("always")
 export function copy(dst: usize, src: usize, n: usize): void {
   // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.
   unsafe {

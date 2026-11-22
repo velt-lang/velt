@@ -10,8 +10,8 @@ declare c("c") function sched_yield$sched(): i32;
 /** C's `struct timespec`, which `clock_gettime` fills. */
 declare c type timespec;
 
-declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<timespec>): i32;
-declare c("c") function write$os(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<timespec> | null): i32;
+declare c("c") function write$os(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
 
 /** Gives the core to another thread that is ready to run, if any. */
 export function yieldCore(): void {

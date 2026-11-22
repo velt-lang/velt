@@ -383,7 +383,7 @@ docs/internals/design/iteration.md §4)
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
   A host or C function (`ExternFnDef::host`, `ExternFnDef::c`) writes every buffer parameter
-  not written `readonly` (and a C function its `Out`/`OutPtr` parameters): callers pass those
+  not written `readonly` (and a C function its `Out` parameters): callers pass those
   `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
   of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`:
@@ -733,6 +733,19 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   the call runs (lowering counts the type or borrows values of it inside counted objects, so
   params of it are never `noalias`). The array callback methods re-check the length after a
   callback only then.
+  `Intrinsic::IsUnique(value)` (std only, std/lang/intrinsics/ownership.velt, additive: units
+  codec tag 220; value borrowed and evaluated): a `bool`, whether `value` is reached by no other
+  reference, so a change in place shows nowhere else (copy-on-write: velt/encoding/json's tree).
+  By kind: a counted object, array or box compares its whole count word with 1, so any flag in
+  it (an immortal count, a lock-set object's `LOCAL`/`STORED`, the cycle collector's
+  `BUFFERED` on a value it may trace) makes it `false`; a reference type the program never counts
+  is `true` (each value has one owner); a lock-set type (readers of an `RwLock` share its counts)
+  is `false` without reading a count; any other kind (`shared<T>`, strings, functions,
+  interface values, plain values) is `false`. A borrow (a parameter, a captured variable) is the
+  reference it borrows: `true` there means a change in place shows in the lender's variable, as
+  in JavaScript; a function that must leave its caller's value unchanged takes it owned, or
+  copies it. A wrong `true` would be a lost write or a race, so every doubtful case answers
+  `false`, which only costs a copy.
   `Intrinsic::Truthy(x)` (compiler-internal, `x` a place of a type parameter's type,
   borrowed): a `bool`, JS truthiness of `x` (`!x`, `if (x)` in generic code), lowered per
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,
@@ -778,6 +791,13 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   presence flag, below) and shows a class's optional field holding `undefined`, as Node does. A
   `null` (a present one of `a?: T | null`, or a `T | null` field that is not optional) is
   written as `null`.
+- `FieldDef::weak` (additive, #3119): a class's field declared `weak T | null` with `T` a class
+  (docs/internals/design/cycles.md "`weak T`"). `ty` is the read type, `T | null`; the field holds
+  its target's slot in the weak core (rt_abi.md "Weak references"), not a counted reference.
+  Lowering reads it as the target, retained, or `null` once the target is freed, writes it by
+  taking the value's slot (the value is borrowed: sema checks it as a borrow), and leaves it out of
+  the ownership graph (trace glue, the cycle and weak-capable analyses, drop chains). Sema narrows
+  nothing through it and rejects destructuring it and transferring or cloning a value with one.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type: decoding does not run the constructor (the decoder's
   generator reports it, std/encoding/json/generate/parse_check.velt).

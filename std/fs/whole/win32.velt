@@ -32,31 +32,31 @@ declare c("c") function CreateFileW(
   template: Ptr<void> | null,
 ): Ptr<void> | null;
 declare c("c") function ReadFile(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   buf: u8[],
   count: u32,
   read: u32[],
   overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function WriteFile(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   buf: readonly u8[],
   count: u32,
   written: u32[],
   overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function GetFileInformationByHandle(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   info: Ptr<_BY_HANDLE_FILE_INFORMATION>,
 ): i32;
 declare c("c") function GetFileInformationByHandleEx(
-  handle: Ptr<void>,
+  handle: Ptr<void> | null,
   infoClass: i32,
   info: u32[],
   size: u32,
 ): i32;
 declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
-declare c("c") function CloseHandle(handle: Ptr<void>): i32;
+declare c("c") function CloseHandle(handle: Ptr<void> | null): i32;
 declare c("c") function GetLastError(): u32;
 declare c("c") function malloc(size: usize): Ptr<void> | null;
 declare c("c") function free(p: Ptr<void> | null): void;

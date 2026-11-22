@@ -2,7 +2,7 @@
 // would hand one out. Here the package is the program itself, and a program's own `declare c`
 // leaves its classes' JSON alone (tests/golden/std/json_private_fields_declare_c), so this checks
 // what holds even then: decoding fails for every type with a private field, and encoding for the
-// types that hold a `Ptr` (std's, whose address is private). To a program that depends on the
+// types that hold a `Ptr` (a C pointer, which has no JSON form). To a program that depends on the
 // package, every class of it with a private field has no JSON form
 // (tests/golden/lang/errors/json_handles_declare_c).
 import { Database, Statement, Transaction } from "../../src/lib";

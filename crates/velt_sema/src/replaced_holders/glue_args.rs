@@ -88,6 +88,8 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AddressAtomicRmw
         | I::AddressAtomicCas
         | I::AddressAtomicCasWeak
+        | I::PtrFromAddress
+        | I::PtrToAddress
         | I::ExportedAddress
         | I::Exit
         | I::Panic
@@ -136,6 +138,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::NeedsDrop
         | I::ModuleStateUsed
         | I::MayAlias
+        | I::IsUnique
         | I::HoldsNull
         | I::NullAs
         | I::Truthy

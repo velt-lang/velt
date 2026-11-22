@@ -1,12 +1,14 @@
 //! `weak T` in written types (docs/internals/design/cycles.md "`weak T`", velt_sema
-//! `weak_types`): where it may go and what it may refer to. Its lowering is not implemented yet,
-//! so a well-formed one is reported as such: each test counts the diagnostics a shape gives.
+//! `weak_types`): where it may go and what it may refer to. Lowering handles a class's own field
+//! referring to a class; the other well-formed places and targets are reported as not
+//! implemented yet. Each test counts the diagnostics a shape gives.
 
 mod common;
 
-use common::programs::err_src;
+use common::programs::{err_src, ok_src};
 
-const NOT_YET: &str = "`weak` references are not implemented yet (#3119)";
+const OUTSIDE: &str = "`weak` outside a class's own field is not implemented yet (#3119)";
+const NOT_A_CLASS: &str = "`weak` to anything but a class instance is not implemented yet (#3119)";
 const MISPLACED: &str = "`weak` is allowed only at the top of the type of a field or a variable";
 
 /// The diagnostics of `src`, one per `error:` line.
@@ -18,13 +20,16 @@ fn errors(src: &str) -> Vec<String> {
 }
 
 #[test]
-fn a_parameter_property_is_a_field() {
-    // One diagnostic, the field's: its parameter takes the type without `weak`.
-    let e = errors(
-        "class Node { constructor(public owner: weak Node | null) {} }\n\
-         console.log(new Node(null).owner);",
+fn a_class_field_and_a_parameter_property_are_lowered() {
+    // A parameter property is a field: its parameter takes the type without `weak`.
+    ok_src(
+        "class Node {\n\
+           parent: weak Node | null = null;\n\
+           constructor(public owner: weak Node | null) {}\n\
+         }\n\
+         const n = new Node(null);\n\
+         console.log(n.owner, n.parent);",
     );
-    assert_eq!(e, [NOT_YET], "{e:?}");
 }
 
 #[test]
@@ -34,7 +39,7 @@ fn interface_values_are_targets() {
          class Button { view: weak View | null = null; }\n\
          console.log(new Button().view);",
     );
-    assert_eq!(e, [NOT_YET], "{e:?}");
+    assert_eq!(e, [NOT_A_CLASS], "{e:?}");
 }
 
 #[test]
@@ -63,7 +68,7 @@ fn var_is_a_variable() {
          function f(): void { var l: weak Node | null = null; console.log(l); }\n\
          f(); console.log(g);",
     );
-    assert_eq!(e, [NOT_YET, NOT_YET], "{e:?}");
+    assert_eq!(e, [OUTSIDE, OUTSIDE], "{e:?}");
 }
 
 #[test]
@@ -76,7 +81,7 @@ fn undefined_without_null_keeps_undefined() {
     );
     assert_eq!(e.len(), 2, "{e:?}");
     assert!(e[0].starts_with("a `weak` reference reads `null`"), "{e:?}");
-    assert_eq!(e[1], NOT_YET, "{e:?}");
+    assert_eq!(e[1], OUTSIDE, "{e:?}");
 }
 
 #[test]
@@ -114,5 +119,6 @@ fn an_abstract_property_is_a_field() {
          abstract class A {\n  abstract a: weak Node | null;\n  abstract readonly r: weak Node | null;\n}\n\
          console.log(1);",
     );
-    assert_eq!(e, [NOT_YET, NOT_YET], "{e:?}");
+    let abs = "`weak` on an abstract property is not implemented yet (#3119)";
+    assert_eq!(e, [abs, abs], "{e:?}");
 }

@@ -5,6 +5,7 @@ use velt_syntax::ast;
 
 use super::FnCx;
 use crate::hir;
+use crate::weak_types::WeakPlace;
 
 impl FnCx<'_, '_> {
     pub fn resolve(&mut self, t: &ast::TypeExpr) -> hir::TyId {
@@ -29,9 +30,13 @@ impl FnCx<'_, '_> {
             }
         }
         let ty = match var {
-            true => self
-                .cx
-                .resolve_weak_annotation(t, &env, &mut |cx, t, env| cx.resolve_type(t, env)),
+            true => {
+                self.cx
+                    .resolve_weak_annotation(t, &env, WeakPlace::Other, &mut |cx, t, env| {
+                        cx.resolve_type(t, env)
+                    })
+                    .0
+            }
             false => self.cx.resolve_type(t, &env),
         };
         self.cx.query_locals.truncate(base);

@@ -1,0 +1,80 @@
+// check: no leaks
+// A closure a `read` callback makes and hands out as a value, not as a literal stored in place,
+// keeps sharing the caller's variables it captured, as in JavaScript: one a helper closure in the
+// callback returns and the callback stores, and one the `read` returns. Sema refuses such a
+// closure that captured the lock's value or a part of it, so it holds none of the lock's objects,
+// and it stays on this thread (#3126). The program also keeps the array's type in a `Map`.
+
+class Box {
+  items: number[][] = [[1, 2], [3]];
+}
+
+function fresh(): number[][][] {
+  return [[[1]], [[2]], [[3]]];
+}
+
+function main() {
+  const a = new RwLock(new Box());
+  const groups = new Map<string, number[][][]>();
+  groups.set("z", [[[0]]]);
+  let n = 0;
+
+  // A helper's result stored in a variable of the caller's, called after each `read`.
+  const o1 = fresh();
+  let l1: (() => number) | null = null;
+  for (let r = 0; r < 3; r++) {
+    a.read((x) => {
+      const mk = () => () => o1.pop()!.length;
+      l1 = mk();
+      o1.push([[r, x.items.length]]);
+    });
+    n += l1!();
+  }
+  console.log("helper", n, o1.length, JSON.stringify(o1));
+
+  // A helper's results kept in an array of the caller's.
+  const o2 = fresh();
+  const fs: (() => number)[] = [];
+  a.read((x) => {
+    const take = () => () => o2.shift()!.length;
+    const put = (k: number) => () => {
+      o2.push([[k]]);
+      return o2.length;
+    };
+    fs.push(take(), put(7), take());
+  });
+  for (const f of fs) {
+    n += f();
+  }
+  console.log("helpers", n, o2.length, JSON.stringify(o2));
+
+  // A closure the `read` returns.
+  const o3 = fresh();
+  for (let r = 0; r < 2; r++) {
+    const h = a.read(
+      (x) => () => {
+        o3.pop();
+        return o3.length;
+      },
+    );
+    n += h();
+  }
+  console.log("result", n, o3.length, JSON.stringify(o3));
+
+  // One that also holds an array the reader made.
+  const o4 = fresh();
+  for (let r = 0; r < 3; r++) {
+    const h = a.read((x) => {
+      const mine = structuredClone(x.items.slice());
+      return () => {
+        o4.push(mine);
+        mine.push([r]);
+        return o4.length + mine.length;
+      };
+    });
+    n += h();
+  }
+  o4[3][0].push(9);
+  console.log("result-made", n, o4.length, JSON.stringify(o4[3]), JSON.stringify(o4[5]));
+  console.log(a.read((x) => JSON.stringify(x.items)), groups.size);
+}

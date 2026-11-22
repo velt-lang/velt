@@ -1,0 +1,113 @@
+// velt/fs (internal): the `#fs-paths` variant of Linux (std/imports.velt): posix.velt's renaming,
+// linking and copying, with Linux's `fchmod` (a 32-bit `mode_t`) and its data copy:
+// `copy_file_range`, which the kernel does without the bytes passing through the program (and
+// clones on a file system that can), and where it can't (another file system on an older
+// kernel, one it doesn't support), posix.velt's read and write loop, as libuv's `sendfile`
+// emulation does.
+
+import { Done } from "velt/fs/whole/done";
+import {
+  copyLoop,
+  copyWith,
+  readlinkAt as posixReadlink,
+  realpathAt as posixRealpath,
+  renameAt as posixRename,
+  symlinkAt as posixSymlink,
+} from "velt/fs/paths/posix";
+import { EINTR } from "velt/fs/fd/system";
+import { Ptr } from "velt/ffi/ptr";
+import { lastOsError } from "velt/os/rt";
+
+/** `mode_t` is 32 bits on Linux. */
+declare c("c", { errno: true }) function fchmod(fd: i32, mode: u32): i32;
+declare c("c", { errno: true }) function copy_file_range(
+  fdIn: i32,
+  offIn: Ptr<i64> | null,
+  fdOut: i32,
+  offOut: Ptr<i64> | null,
+  len: usize,
+  flags: u32,
+): isize;
+
+/** `copy_file_range`'s errors that mean "not between these files": the loop copies instead. */
+const EPERM: i32 = 1;
+const EXDEV: i32 = 18;
+const EINVAL: i32 = 22;
+const ENOSYS: i32 = 38;
+const EOPNOTSUPP: i32 = 95;
+/** The most `copy_file_range` is asked for at once. */
+const CHUNK: usize = 1 << 30;
+
+/** Renames `cf` (`from`) to `ct` (`to`), replacing a file there. */
+export function renameAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+): Done<bool> {
+  return posixRename(cf, from, ct, to);
+}
+
+/** Makes a link at `cp` (`path`) to `target` (`ct`, stored as it is). */
+export function symlinkAt(
+  ct: readonly u8[],
+  target: string,
+  cp: readonly u8[],
+  path: string,
+): Done<bool> {
+  return posixSymlink(ct, target, cp, path);
+}
+
+/** The target stored in the link at `c`. */
+export function readlinkAt(c: readonly u8[], path: string): Done<string> {
+  return posixReadlink(c, path);
+}
+
+/** The absolute path of `c` with every link, `.` and `..` resolved. */
+export function realpathAt(c: readonly u8[], path: string): Done<string> {
+  return posixRealpath(c, path);
+}
+
+/** Copies the file `cf` (`from`) to `ct` (`to`), replacing a file there. */
+export function copyAt(cf: readonly u8[], from: string, ct: readonly u8[], to: string): Done<bool> {
+  return copyWith(cf, from, ct, to, {
+    chmod: (fd, mode) => {
+      // SAFETY: `fd` is the destination `copyWith` opened and still holds.
+      return unsafe { fchmod(fd, mode) };
+    },
+    data: (src, dst, mode, size) => copyData(src, dst, size),
+  });
+}
+
+/** Copies `size` bytes of `src` to `dst`, from both files' positions: 0, or the errno. */
+function copyData(src: i32, dst: i32, size: i64): i32 {
+  let left = size;
+  while (left > 0) {
+    const want: usize = left < (CHUNK as i64) ? left as usize : CHUNK;
+    // SAFETY: `src` and `dst` are open descriptors `copyWith` holds; with no offsets C moves
+    // the files' own positions, and it keeps no pointer.
+    const n = unsafe { copy_file_range(src, null, dst, null, want, 0) };
+    if (n > 0) {
+      left -= n as i64;
+      continue;
+    }
+    if (n == 0) {
+      // The source ended early (it shrank), or, before any byte, a file system that reports 0
+      // across file systems (some kernels from 5.3 to 5.18): the loop tries.
+      return left == size ? copyLoop(src, dst, left) : 0;
+    }
+    const e = lastOsError();
+    if (e == EINTR) {
+      continue;
+    }
+    // Not possible between these two files: the loop copies the rest (from where the kernel
+    // stopped, since it moved the positions). After a part was copied only `EXDEV` and
+    // `EINVAL` (a kernel that changed its mind) mean that; anything else is the copy's error.
+    const unsupported = e == EXDEV || e == EINVAL || e == ENOSYS || e == EOPNOTSUPP || e == EPERM;
+    if (!unsupported || (left != size && e != EXDEV && e != EINVAL)) {
+      return e;
+    }
+    return copyLoop(src, dst, left);
+  }
+  return 0;
+}

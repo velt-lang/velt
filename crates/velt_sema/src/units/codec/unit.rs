@@ -21,7 +21,7 @@ use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit, before the checksum of
 /// the rest ([`checksum`]).
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x06";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x07";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
 /// caller's, what every check installs again), `memo` (built again on demand: one built over a
@@ -234,12 +234,17 @@ mod special {
         }
     }
 
-    /// The deferred types and what is known of them; not the state of an expansion in progress,
-    /// nor the memo of property-name kinds.
+    /// The deferred types and what is known of them, and the C pointees refused (so a later
+    /// unit neither reports one again nor refuses a C signature for it); not the state of an
+    /// expansion in progress, nor the memo of property-name kinds.
     impl Part for type_level::State {
         fn enc_part(&self, w: &mut Writer) {
             let type_level::State {
                 alias_site: _,
+                ptr_site: _,
+                ptr_refused,
+                ptr_refusals,
+                ptr_refused_types,
                 use_site: _,
                 key_kinds: _,
                 deferring: _,
@@ -266,6 +271,9 @@ mod special {
             inline.enc(w);
             alias_canon.enc(w);
             alias_shapes.enc(w);
+            ptr_refused.enc(w);
+            ptr_refusals.enc(w);
+            ptr_refused_types.enc(w);
         }
         fn dec_part(&mut self, r: &mut Reader) {
             self.op_sites = Codec::dec(r);
@@ -278,6 +286,9 @@ mod special {
             self.inline = Codec::dec(r);
             self.alias_canon = Codec::dec(r);
             self.alias_shapes = Codec::dec(r);
+            self.ptr_refused = Codec::dec(r);
+            self.ptr_refusals = Codec::dec(r);
+            self.ptr_refused_types = Codec::dec(r);
         }
     }
 }

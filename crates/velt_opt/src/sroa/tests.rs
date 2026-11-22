@@ -236,3 +236,26 @@ fn a_wide_vector_stays_whole() {
         assert_valid(&p);
     }
 }
+
+#[test]
+fn a_512_bit_vector_stays_whole_and_three_vectors_do_not() {
+    // { v128 × 4 } is velt/arch's `Vector512<T>`, kept whole as `f32x8` is; three vectors are
+    // no vector type and are split.
+    for (n, splits) in [(4u32, false), (3, true)] {
+        let mut pb = ProgramBuilder::new();
+        let fields: Vec<(Ty, u32)> = (0..n).map(|i| (Ty::V128, 16 * i)).collect();
+        let quad = pb.agg("quad", 16 * n, 16, &fields);
+        let mut fb = FuncBuilder::export("main", &[], Ty::I64);
+        let (a, b) = (fb.local(Ty::Agg(quad)), fb.local(Ty::Agg(quad)));
+        let blk = fb.block();
+        let parts = vec![zero(Ty::V128); n as usize];
+        fb.assign(blk, a, Rvalue::Aggregate(quad, parts));
+        fb.assign(blk, b, Rvalue::Use(copy_local(a)));
+        fb.ret(blk, int(0, Ty::I64));
+        pb.add(fb.finish());
+        let mut p = pb.finish();
+        let aggs = p.aggs.clone();
+        assert_eq!(run(&aggs, &mut p.funcs[0]), splits, "{p}");
+        assert_valid(&p);
+    }
+}

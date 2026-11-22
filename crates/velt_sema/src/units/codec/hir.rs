@@ -26,7 +26,7 @@ structs! {
         name, kind, generics, fields, is_copy, declared_struct, c_struct, private_fields, opaque,
         base, inherited_inits, ctor, dispose, to_string, to_json, inspect, vtable, span,
     }
-    FieldDef { name, ty, default, optional, private, presence, hidden, cell }
+    FieldDef { name, ty, default, optional, private, presence, hidden, cell, weak }
     FieldInit { field, depth, at, init }
     EnumDef { name, generics, variants, is_copy, is_union, span }
     VariantDef { name, payload, discriminant, str_value }
@@ -95,7 +95,7 @@ enums! {
         7 => Buf { readonly },
         8 => CString,
         9 => Out,
-        10 => OutPtr,
+        // 10 was `OutPtr` (#3094): not reused.
         11 => Void,
     }
     @fielded HostTy {
@@ -242,6 +242,7 @@ enums! {
         20 => Symbol,
         21 => Simd(a),
         22 => Op(a, b),
+        23 => Ptr(a),
     }
     @fielded LitValue {
         0 => Str(a),
@@ -581,6 +582,9 @@ enums! {
         213 => AddressArrayOwned,
         214 => StrAt,
         215 => SpreadParam,
+        218 => PtrFromAddress,
+        219 => PtrToAddress,
+        220 => IsUnique,
     }
 }
 

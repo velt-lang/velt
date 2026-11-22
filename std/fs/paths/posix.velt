@@ -1,0 +1,242 @@
+// velt/fs (internal): renaming, linking and copying on macOS and Linux, what both C library
+// variants of `#fs-paths` share (darwin.velt, linux.velt; std/imports.velt): the C library's
+// `rename`, `symlink`, `readlink` and `realpath`, declared with `declare c("c")` (checked against
+// each target's headers: `velt native headers --std`), and `copyFile` as libuv's generic
+// `uv_fs_copyfile` does it (each variant brings its data step). The errors are Node's (`ENOENT:
+// no such file or directory, rename 'a' -> 'b'`). Each function takes its paths as C bytes
+// (checked by the caller) and as the text its error names, and returns a `Done`, so it can run on
+// the executor's blocking pool.
+
+import { Ptr } from "velt/ffi/ptr";
+import { readBytes } from "velt/ffi/read";
+import { lastOsError } from "velt/os/rt";
+import { EINTR, isMac } from "velt/fs/fd/system";
+import { checkPath } from "velt/fs/fd/guards";
+import {
+  closeFd,
+  fstatFd,
+  lastError,
+  openPath,
+  readInto,
+  truncateFd,
+  unlinkPath,
+  writeFrom,
+} from "#fd-system";
+import { osError } from "velt/fs/errors";
+import { Done } from "velt/fs/whole/done";
+
+declare c("c", { errno: true }) function rename(from: readonly u8[], to: readonly u8[]): i32;
+declare c("c", { errno: true }) function symlink(target: readonly u8[], path: readonly u8[]): i32;
+declare c("c", { errno: true }) function readlink(
+  path: readonly u8[],
+  buf: u8[],
+  size: usize,
+): isize;
+declare c("c", { errno: true }) function realpath(
+  path: readonly u8[],
+  resolved: Ptr<u8> | null,
+): Ptr<u8> | null;
+declare c("c") function strlen(s: Ptr<u8>): usize;
+declare c("c") function free$paths(p: Ptr<u8>): void;
+
+/** What a target gives `copyWith`: `fchmod` (whose `mode_t` differs) and the data copy. */
+export struct CopySystem {
+  /** `fchmod(fd, mode)`: 0, or -1 with the error for `lastOsError()`. */
+  chmod: (fd: i32, mode: u32) => i32;
+  /**
+   * Copies the `size` bytes `fstat` gave for `src` (whose `st_mode` is `mode`) to `dst`, as
+   * libuv sends `st_size` bytes: 0, or the errno.
+   */
+  data: (src: i32, dst: i32, mode: u32, size: i64) => i32;
+}
+
+function failed<T>(e: i32, syscall: string, path: string, dest: string | null = null): Done<T> {
+  return { value: null, error: osError(e, syscall, path, dest) };
+}
+
+/** Renames `cf` (`from`) to `ct` (`to`), replacing a file there. */
+export function renameAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+): Done<bool> {
+  checkPath("rename", cf);
+  checkPath("rename", ct);
+  // SAFETY: both paths end with their only 0 byte (checked above); C keeps neither.
+  if (unsafe { rename(cf, ct) } != 0) {
+    return failed(lastOsError(), "rename", from, to);
+  }
+  return { value: true, error: null };
+}
+
+/** Makes a link at `cp` (`path`) to `target` (`ct`, stored as it is). */
+export function symlinkAt(
+  ct: readonly u8[],
+  target: string,
+  cp: readonly u8[],
+  path: string,
+): Done<bool> {
+  checkPath("symlink", ct);
+  checkPath("symlink", cp);
+  // SAFETY: as `rename`'s.
+  if (unsafe { symlink(ct, cp) } != 0) {
+    return failed(lastOsError(), "symlink", target, path);
+  }
+  return { value: true, error: null };
+}
+
+/** The target stored in the link at `c` (`EINVAL` for something that is not a link). */
+export function readlinkAt(c: readonly u8[], path: string): Done<string> {
+  checkPath("readlink", c);
+  // `readlink` says only how much it wrote: a target that fills the buffer may be longer, so it
+  // is read again into one twice the size.
+  let size: usize = 256;
+  while (true) {
+    const buf: u8[] = Buffer.alloc(size);
+    // SAFETY: `c` ends with its only 0 byte; `buf` holds `size` bytes, the count C gets, and C
+    // keeps no pointer to it.
+    const n = unsafe { readlink(c, buf, size) };
+    if (n < 0) {
+      return failed(lastOsError(), "readlink", path);
+    }
+    if ((n as usize) < size) {
+      return { value: buf.slice(0, n as i64).utf8Slice(), error: null };
+    }
+    size *= 2;
+  }
+}
+
+/** The absolute path of `c` with every link, `.` and `..` resolved (`ENOENT` if it is missing). */
+export function realpathAt(c: readonly u8[], path: string): Done<string> {
+  checkPath("realpath", c);
+  // SAFETY: `c` ends with its only 0 byte; with no buffer given, `realpath` returns one of its
+  // own from malloc (or null with `errno`), which is freed below.
+  const p = unsafe { realpath(c, null) };
+  if (p === null) {
+    return failed(lastOsError(), "realpath", path);
+  }
+  // SAFETY: `p` is a NUL-terminated string of `strlen(p)` bytes, read before it is freed once.
+  const bytes = unsafe { readBytes(p, strlen(p)) };
+  // SAFETY: `p` came from `realpath`'s malloc and nothing else holds it.
+  unsafe {
+    free$paths(p);
+  }
+  return { value: bytes.utf8Slice(), error: null };
+}
+
+/**
+ * Copies the file `cf` (`from`) to `ct` (`to`) as libuv's `uv_fs_copyfile` does, so the errors
+ * and what is left behind are Node's: the source is opened and `fstat`ed, the destination opened
+ * (created with the source's mode), and if both are the same file nothing more happens.
+ * Otherwise the destination is truncated, given the source's mode and filled with its data; if
+ * any of that fails, the destination is removed, one that was there before too. Every error
+ * names both paths (`copyfile 'a' -> 'b'`).
+ */
+export function copyWith(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+  sys: CopySystem,
+): Done<bool> {
+  const mac = isMac();
+  const cloexec: i32 = mac ? 0x1000000 : 0x80000;
+  const src = openPath(cf, cloexec, 0);
+  if (src < 0) {
+    return failed(lastError(), "copyfile", from, to);
+  }
+  const st = fstatFd(src);
+  if (st === null) {
+    const e = lastError();
+    closeFd(src);
+    return failed(e, "copyfile", from, to);
+  }
+  // `O_WRONLY | O_CREAT | O_CLOEXEC`, created with the source's permissions.
+  const creat: i32 = mac ? 0x200 : 0x40;
+  const dst = openPath(ct, 1 | creat | cloexec, st.st_mode & 0o7777);
+  if (dst < 0) {
+    const e = lastError();
+    closeFd(src);
+    return failed(e, "copyfile", from, to);
+  }
+  let e = fill(src, dst, st.st_dev, st.st_ino, st.st_mode, st.st_size, sys);
+  closeFd(src);
+  // A file system may report a write's failure only when the file is closed (NFS): libuv's
+  // copy fails then too.
+  if (closeFd(dst) != 0 && e == 0) {
+    e = lastError();
+  }
+  if (e < 0) {
+    // The destination is the source: there is nothing to copy.
+    return { value: true, error: null };
+  }
+  if (e != 0) {
+    unlinkPath(ct);
+    return failed(e, "copyfile", from, to);
+  }
+  return { value: true, error: null };
+}
+
+/** The steps of `copyWith` once both files are open: 0, -1 for the same file, or the errno. */
+function fill(src: i32, dst: i32, dev: u64, ino: u64, mode: u32, size: i64, sys: CopySystem): i32 {
+  const dt = fstatFd(dst);
+  if (dt === null) {
+    return lastError();
+  }
+  if (dt.st_dev == dev && dt.st_ino == ino) {
+    return -1;
+  }
+  if (truncateFd(dst, 0) != 0) {
+    return lastError();
+  }
+  if (sys.chmod(dst, mode & 0o7777) != 0) {
+    return lastOsError();
+  }
+  if (size <= 0) {
+    // libuv sends nothing: a device or a FIFO is copied as an empty file.
+    return 0;
+  }
+  return sys.data(src, dst, mode, size);
+}
+
+/** The buffer of `copyLoop`. */
+const BUFFER: usize = 64 * 1024;
+
+/**
+ * Reads `src` and writes it to `dst`, from both files' positions, until `size` bytes are copied or
+ * `src` ends, as libuv's `sendfile` emulation does where the kernel can't copy between the two:
+ * 0, or the errno.
+ */
+export function copyLoop(src: i32, dst: i32, size: i64): i32 {
+  const buf: u8[] = Buffer.alloc(BUFFER);
+  let left = size;
+  while (left > 0) {
+    const want: usize = left < (BUFFER as i64) ? left as usize : BUFFER;
+    const n = readInto(src, buf, 0, want, -1);
+    if (n == 0) {
+      return 0;
+    }
+    if (n < 0) {
+      const e = lastError();
+      if (e == EINTR) {
+        continue;
+      }
+      return e;
+    }
+    let done: usize = 0;
+    while (done < (n as usize)) {
+      const w = writeFrom(dst, buf, done, n as usize, -1);
+      if (w < 0) {
+        const e = lastError();
+        if (e == EINTR) {
+          continue;
+        }
+        return e;
+      }
+      done += w as usize;
+    }
+    left -= n as i64;
+  }
+  return 0;
+}

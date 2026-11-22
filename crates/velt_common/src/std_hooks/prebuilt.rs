@@ -206,6 +206,7 @@ mod tests {
             Sig::Class,
             Sig::Decorator,
             Sig::ProcessStatic,
+            Sig::TypeKind,
         ];
         for s in refused {
             assert!(!scalar(&s), "{s}");

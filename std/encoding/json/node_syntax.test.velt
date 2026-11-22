@@ -1,0 +1,86 @@
+// velt/encoding/json (tests): white-box tests, run by `velt test std/`.
+//
+// White-box tests of `nodeSyntaxMessage`: the `SyntaxError` texts and positions Node 22 gives
+// `JSON.parse` (each message read from Node), and no message for valid JSON.
+import { describe, expect, it } from "velt/test";
+import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
+
+describe("nodeSyntaxMessage", () => {
+  it("names a lone surrogate token as V8 does, not as U+FFFD", () => {
+    // V8 shows the UTF-16 unit at the error: the high half of an emoji, or a lone surrogate the
+    // text holds (built with `fromCharCode`: a literal can't hold one). Messages read from Node 22.
+    const hi = String.fromCharCode(0xd83d);
+    expect(nodeSyntaxMessage("[😀]")).toBe(`Unexpected token '${hi}', "[😀]" is not valid JSON`);
+    const lone = String.fromCharCode(0xd800);
+    const m = nodeSyntaxMessage(`[${lone}]`)!;
+    expect(m).toBe(`Unexpected token '${lone}', "[${lone}]" is not valid JSON`);
+    expect(m.charCodeAt(18)).toBe(0xd800);
+    const low = String.fromCharCode(0xdc00);
+    expect(nodeSyntaxMessage(`["x", ${low}, 1]`)).toBe(
+      `Unexpected token '${low}', "["x", ${low}, 1]" is not valid JSON`,
+    );
+  });
+
+  it("gives no message for valid JSON", () => {
+    for (const ok of ["1", " [1, 2e-3, -0.5E+2] ", `{"a":{"b":[]},"c":null}`, `"\\u00e9"`]) {
+      expect(nodeSyntaxMessage(ok) == null).toBe(true);
+    }
+  });
+
+  it("gives Node's messages", () => {
+    const cases: string[][] = [
+      ["{bad", "Expected property name or '}' in JSON at position 1 (line 1 column 2)"],
+      ["", "Unexpected end of JSON input"],
+      ["[1,", "Unexpected end of JSON input"],
+      ["[1 2]", "Expected ',' or ']' after array element in JSON at position 3 (line 1 column 4)"],
+      [`{"a" 1}`, "Expected ':' after property name in JSON at position 5 (line 1 column 6)"],
+      [`{"a":1,}`, "Expected double-quoted property name in JSON at position 7 (line 1 column 8)"],
+      [
+        `{"a":1 2}`,
+        "Expected ',' or '}' after property value in JSON at position 7 (line 1 column 8)",
+      ],
+      [`"abc`, "Unterminated string in JSON at position 4 (line 1 column 5)"],
+      ["1e", "Exponent part is missing a number in JSON at position 2 (line 1 column 3)"],
+      ["-a", "No number after minus sign in JSON at position 1 (line 1 column 2)"],
+      ["-01", "Unexpected number in JSON at position 2 (line 1 column 3)"],
+      ["1.", "Unterminated fractional number in JSON at position 2 (line 1 column 3)"],
+      ["[1]x", "Unexpected non-whitespace character after JSON at position 3 (line 1 column 4)"],
+      [`"\\q"`, "Bad escaped character in JSON at position 2 (line 1 column 3)"],
+      [
+        "\"a\tb\"",
+        "Bad control character in string literal in JSON at position 2 (line 1 column 3)",
+      ],
+      [`"\\u12"`, "Bad Unicode escape in JSON at position 5 (line 1 column 6)"],
+      [
+        `["a" "b"]`,
+        "Expected ',' or ']' after array element in JSON at position 5 (line 1 column 6)",
+      ],
+      [`[1, "a]`, "Unterminated string in JSON at position 7 (line 1 column 8)"],
+      ["NaN", `"NaN" is not valid JSON`],
+      ["tru", "Unexpected end of JSON input"],
+      ["[tru]", `Unexpected token ']', "[tru]" is not valid JSON`],
+      [
+        `{"abcdefghijklmnopqrstuvwxyz": x}`,
+        `Unexpected token 'x', ..."tuvwxyz": x}" is not valid JSON`,
+      ],
+      [
+        "x123456789012345678901234567890",
+        `Unexpected token 'x', "x123456789"... is not valid JSON`,
+      ],
+      ["\n\n  {bad", "Expected property name or '}' in JSON at position 5 (line 3 column 4)"],
+      ["\r\n{bad", "Expected property name or '}' in JSON at position 3 (line 2 column 2)"],
+      [`["é😀", x]`, `Unexpected token 'x', "["é😀", x]" is not valid JSON`],
+      [
+        `{"key": "value", "other": nope, "more": 1}`,
+        `Unexpected token 'o', ...""other": nope, "more"... is not valid JSON`,
+      ],
+      [
+        `{"a":1}\n\nx`,
+        "Unexpected non-whitespace character after JSON at position 9 (line 3 column 1)",
+      ],
+    ];
+    for (const c of cases) {
+      expect(nodeSyntaxMessage(c[0]) ?? "(valid)").toBe(c[1]);
+    }
+  });
+});

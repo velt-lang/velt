@@ -25,8 +25,16 @@ export const W: usize = 8;
 /** Count word: the object is weakly held and has a record (rt_abi.md "Weak references"). */
 export const RC_WEAK: u64 = 0x8000_0000_0000_0000;
 
+/**
+ * Count word: the object's record has a release gate (weak_records.velt `R_GATE`), which only a
+ * weak map key and an object on an entry's path back to its key get. Without it a release that
+ * leaves the count above 0 is a plain decrement, which `weakRelease` makes without the lock: an
+ * object that only `weak T` references and `WeakRef`s refer to takes the lock only when freed.
+ */
+export const RC_GATED: u64 = 0x4000_0000_0000_0000;
+
 /** Count word: the count proper. */
-export const RC_COUNT: u64 = 0x7fff_ffff_ffff_ffff;
+export const RC_COUNT: u64 = 0x3fff_ffff_ffff_ffff;
 
 /** The address-sized field at `a`. */
 @inline("always")

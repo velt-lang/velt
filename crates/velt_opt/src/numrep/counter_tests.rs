@@ -387,3 +387,47 @@ fn an_integer_counter_read_as_a_double_is_capped_by_an_integer_loop() {
     let p = pb.finish();
     assert_eq!(cap_of(&p, q), Some(Fact::int(0, 9)));
 }
+
+/// `f(x)`: `v1 = x + 1; ...; vn = x + n; return vn`, all in one block, as straight-line code
+/// with many locals is: each `vi` is checked as a counter start, which asks which of `x` and
+/// `vi` the block assigned last before it.
+fn straight_line(n: usize) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::F64], Ty::F64);
+    let x = fb.param(0);
+    let b = fb.block();
+    let mut last = x;
+    for i in 0..n {
+        last = fb.local(Ty::F64);
+        fb.assign(
+            b,
+            last,
+            bin(BinOp::Add, copy_local(x), float(i as f64 + 1.0, Ty::F64)),
+        );
+    }
+    fb.ret(b, copy_local(last));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+/// What checking every local of `p`'s function as a counter looked at.
+fn counter_work(p: &Program) -> u64 {
+    let f = &p.funcs[0];
+    let cx = Cx::new(f);
+    for l in 0..f.locals.len() as u32 {
+        maybe(&cx, Local(l), true);
+    }
+    cx.looked.get()
+}
+
+#[test]
+fn the_counter_checks_of_a_long_block_grow_linearly() {
+    let small = counter_work(&straight_line(500));
+    let large = counter_work(&straight_line(4000));
+    // A scan back through the block per local costs the square of its length (#3400's
+    // follow-up); the lookups cost about log2 of the assignments of the two locals each.
+    assert!(
+        large <= small * 10,
+        "8 times the block costs {large} against {small}: more than linear"
+    );
+}

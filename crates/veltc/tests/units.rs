@@ -325,6 +325,34 @@ fn the_async_closures_analysis_reads_the_std_code_the_program_has() {
     }
 }
 
+/// A whole-program check checks the program's bodies with std's modes as declared, and only its
+/// passes after the bodies judge what a call of std changes. std's unit keeps the declared modes
+/// for the app's bodies and the raised ones for its passes (`units::modes`). So a spawned closure
+/// calling `Map.set` on a captured map, `Headers.get` (which fills a cache) on captured headers,
+/// or `next` on a captured `Iterator` (an interface slot, the join over its implementations), is
+/// not refused at the call, and the http handlers' changes through std's methods are
+/// reported with the call that makes them. Each checks with `VELT_UNITS=2` as by a
+/// whole-program check.
+#[test]
+fn the_app_s_bodies_see_std_s_modes_as_declared() {
+    for src in [
+        "async function main() {\n  const seen = new Map<string, number>();\n  await spawn((async () => {\n    seen.set(\"a\", 1);\n  })());\n}\n",
+        "async function main() {\n  const h = new Headers({ \"x-a\": \"1\" });\n  await spawn((async () => {\n    console.log(h.get(\"x-a\") ?? \"\");\n  })());\n}\n",
+        // Through an interface slot, whose modes are the join over its implementations.
+        "function* numbers(): Generator<number> {\n  yield 1;\n}\n\nasync function main() {\n  const it: Iterator<number> = numbers();\n  await spawn((async () => {\n    console.log(it.next().value ?? 0);\n  })());\n}\n",
+    ] {
+        let whole = check_in(None, src);
+        let two = check_in(Some("2"), src);
+        assert_eq!(whole.status.code(), two.status.code(), "{src}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{src}");
+    }
+    let path = "lang/errors/http_server/http_handler_changes_through_call.velt";
+    let whole = check_golden_two(path, false);
+    let two = check_golden_two(path, true);
+    assert_eq!(whole.status.code(), two.status.code(), "{path}");
+    assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+}
+
 /// Questions about the whole program are answered from the std code it has
 /// (`lazy_std::units_live_set`), not from all of std's unit: whether it reads a `shared` value
 /// (`units::app_reads_shared`; a `read` callback passing the store's object to a function value
