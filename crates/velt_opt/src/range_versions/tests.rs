@@ -11,6 +11,7 @@ use velt_vir::vir::{AggId, BlockId, Callee, ExternFn, Linkage, Program, Proj, Rv
 
 mod guards;
 mod shapes;
+mod skips;
 
 /// `fits` and `fits_both` from the headers the arguments point to; a header read through a null
 /// pointer traps, as the machine would. Counts the tests made.

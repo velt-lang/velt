@@ -177,3 +177,28 @@ fn the_check_in_front_is_exact_for_every_form_of_the_counter_test() {
         );
     }
 }
+
+/// Whether `f` holds the check in front of a copied loop: a comparison with `2^62`.
+fn has_check(p: &Program) -> bool {
+    let limit = Operand::Const(Const::Int(BOUND_LIMIT.into()), Ty::U64);
+    (p.funcs[0].blocks.iter().flat_map(|b| &b.stmts))
+        .any(|s| matches!(s, Stmt::Assign(_, Rvalue::Binary(BinOp::Le, _, n)) if *n == limit))
+}
+
+#[test]
+fn the_pipeline_copies_a_loop_of_comparisons_in_a_program_without_fits() {
+    // Element checks only, and no `fits` extern declared at all: a scalar loop, or `f32x8`
+    // (whose `fits` is comparisons), in a program with no 128-bit vector load.
+    let mut p = Shape {
+        twist: Twist::Compares,
+        ..Shape::new(Lanes::F32)
+    }
+    .program();
+    p.externs.clear();
+    assert_valid(&p);
+    let mut q = p.clone();
+    crate::optimize(&mut q, crate::OptLevel::Speed);
+    assert_valid(&q);
+    assert!(has_check(&q), "{:?}", q.funcs[0]);
+    agree(&p, &q, &edges(4, 16));
+}
