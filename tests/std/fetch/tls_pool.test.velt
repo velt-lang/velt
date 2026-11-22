@@ -5,42 +5,41 @@ import { describe, expect, it } from "velt/test";
 import { listenTls, TcpListener, TcpStream } from "velt/net";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
 
-// Answers each request on `c` with "ok" until the client closes; with `once`, answers one and then
-// closes the connection itself (with close_notify).
-async function answer(c: TcpStream, once: bool) {
+// Answers `n` requests on `c` with "ok", then closes the connection itself (with close_notify),
+// or closes it when the client does first. The server ends each connection it keeps: the client's
+// pool keeps an idle one for as long as the process runs, and a read waiting on it would keep the
+// test process from ending (`VELT_RC_STATS=1` waits for what is still running, as Node does).
+async function answer(c: TcpStream, n: i64) {
   let buf = "";
-  while (true) {
+  let answered: i64 = 0;
+  while (answered < n) {
     const t = await c.readString();
     if (t == "") {
       break;
     }
     buf += t;
-    while (buf.indexOf("\r\n\r\n") >= 0) {
+    while (answered < n && buf.indexOf("\r\n\r\n") >= 0) {
       buf = buf.slice(buf.indexOf("\r\n\r\n") + 4);
       await c.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: keep-alive\r\n\r\nok");
-      if (once) {
-        c.shutdown();
-        c.close();
-        return;
-      }
+      answered++;
     }
   }
+  c.shutdown();
   c.close();
 }
 
-// Accepts `n` connections on `server`, answering each; resolves to how many there were.
-async function accept(server: TcpListener, n: i64): Promise<i64> {
-  for (let i = 0; i < n; i++) {
-    const c = await server.accept();
-    spawn(answer(c, false));
-  }
-  return n;
+// Accepts one connection on `server` and answers `n` requests on it; resolves to 1, the number of
+// connections.
+async function acceptOne(server: TcpListener, n: i64): Promise<i64> {
+  const c = await server.accept();
+  await answer(c, n);
+  return 1;
 }
 
 describe("fetch over https: the keep-alive pool", () => {
   it("sends sequential requests to one origin over one connection", async () => {
     const server = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
-    const accepting = spawn(accept(server, 1));
+    const accepting = spawn(acceptOne(server, 4));
     let body = "";
     for (let i = 0; i < 4; i++) {
       const r = await fetch(`https://localhost:${server.port}/${i}`, { ca: TEST_CA });
@@ -56,7 +55,7 @@ describe("fetch over https: the keep-alive pool", () => {
     // The first connection answers once and is closed by the server; the test goes on once it is.
     const first = spawn(
       (async () => {
-        await answer(await server.accept(), true);
+        await answer(await server.accept(), 1);
       })(),
     );
     const a = await (await fetch(`https://localhost:${server.port}/a`, { ca: TEST_CA })).text();
@@ -64,7 +63,7 @@ describe("fetch over https: the keep-alive pool", () => {
     // timing: the pool gives a POST only a connection idle for at least 5 ms (fd_pool.velt's
     // `SETTLED_NS`), so the closed one is offered to it.
     await sleep(20);
-    const accepting = spawn(accept(server, 1));
+    const accepting = spawn(acceptOne(server, 1));
     // A POST, which `fetch` never sends twice: it must not go to the closed connection.
     const b = await (await fetch(`https://localhost:${server.port}/b`, {
       ca: TEST_CA,
