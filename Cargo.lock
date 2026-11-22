@@ -1730,7 +1730,6 @@ dependencies = [
  "bytes",
  "cc",
  "futures-util",
- "getrandom 0.4.3",
  "libc",
  "libmimalloc-sys",
  "lock_api",
@@ -1756,7 +1755,6 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "futures-util",
- "getrandom 0.4.3",
  "libc",
  "libmimalloc-sys",
  "lock_api",
@@ -1782,7 +1780,6 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "futures-util",
- "getrandom 0.4.3",
  "libc",
  "libmimalloc-sys",
  "lock_api",
