@@ -1928,8 +1928,8 @@ or string; for `any` or `unknown`, the tree as written). An abstract property
 `DecoratorTarget::Def`. The map is a side table, so a program without decorators has an empty
 one and no other HIR type changes. Lowering reads only the decorators the compiler acts on, each
 found by its `def`'s qualified name from the hook table (`std_hooks`, `decorator_*`): `@inline`
-and `@noInline` on a `Def(f)` set `vir::Function::inline` (contracts README "Inlining
-decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error
+and `@noInline` on a `Def(f)` set `vir::Function::inline`, and `@cold` sets
+`vir::Function::rare` (contracts README "Inlining decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error
 (#2204), so it never gets here.
 
 `@export("c_name")` (velt/ffi, `std_hooks` `decorator_export`, #2203) is read through its
