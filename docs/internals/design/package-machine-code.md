@@ -100,6 +100,13 @@ followed by `Unreachable`, and `inline::never_returns` reads it. Setting it on a
 returns would be unsound. `@cold` needs its own VIR flag (a contract change: layout and LLVM
 `cold` without the no-return facts), so it moves to a later step with that change.
 
+**As built after step 6.** `@cold` (velt/compiler, `std_hooks` `decorator_cold`) sets a new flag,
+`vir::Function::rare`: calls of the function are rare, and they return. `velt_opt`'s inliner
+takes such a function in only where it is trivial (as LLVM treats a call of a `cold` function),
+LLVM gets `cold` (and `noinline` only with `@noInline` or for size), and nothing reads it as
+"does not return". Sema rejects it with `@inline` (they ask opposite things) and where it rejects
+`@inline`; `@cold @noInline` is allowed. Cranelift ignores it, as it ignores `inline`.
+
 ## 2. CPU features for packages (G2) — steps 2 and 3
 
 **`@targetFeature(...)` replaces the first-statement call**, and each instruction set is a class
@@ -450,7 +457,7 @@ generated from the table and checked against it.
    and `VELT_CPU_DISABLE` (D).
 5. **`Vector256` / `Vector512`, unaligned loads and stores (E), the AVX2 / AVX-512 batches.**
 6. **`@repr("transparent")` (checked against clang) and `@align(n)`**, then the aligned forms of
-   step 5's loads and stores; `@cold` with its own VIR flag.
+   step 5's loads and stores; `@cold` with its own VIR flag (built: §1 "As built after step 6").
 
 ## Cost
 

@@ -41,7 +41,9 @@
 //! first served would only as far as the estimate is right.
 //!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
-//! never inlined: their calls are cold.
+//! never inlined: their calls are cold. A `@cold` function (`Function::rare`), whose calls are
+//! rare but return, is inlined only where it is trivial (`TRIVIAL_COST`), as LLVM's inliner
+//! treats a call of a `cold` function.
 //!
 //! std's markers override the rules (`Function::inline`): a function marked `@noInline`
 //! (`Inline::Never`, #1884) is never inlined, and one marked `@inline` (`Inline::Always`) is
@@ -480,6 +482,10 @@ fn decide(
     let size = site.size;
     if size <= TRIVIAL_COST || (target.inline == Inline::Always && !recursive) {
         return Some(Decision::Free);
+    }
+    // `@cold`: its calls are rare, so a copy only grows the hot code around them.
+    if target.rare {
+        return None;
     }
     if site.caller_cost + size > CALLER_LIMIT {
         return None;

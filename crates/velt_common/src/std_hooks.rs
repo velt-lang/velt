@@ -767,6 +767,8 @@ with_module_hooks! {
     decorator_inline => lang_intrinsics_decorators, "inline", decorator;
     /// `@noInline`: calls stay calls (`vir::Inline::Never`).
     decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
+    /// `@cold`: its calls are rare, though they return (`vir::Function::rare`).
+    decorator_cold => lang_intrinsics_decorators, "cold", decorator;
     /// `@intrinsic declare function`: the declaration of a compiler intrinsic
     /// (`velt_sema` `intrinsic_decls.rs`).
     decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
