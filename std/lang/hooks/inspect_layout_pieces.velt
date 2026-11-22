@@ -2,8 +2,19 @@
 // entry of a parsed value (inspect_layout_parse.velt), whether it is Node's `... n more items` or
 // a number, and the byte writers it lays the text out with.
 
+import { Ptr } from "velt/ffi/ptr";
 import { LayoutValue, SEG_TEXT } from "velt/lang/hooks/inspect_layout_parse";
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import {
+  addressLoad,
+  arrayBytesWritten,
+  arrayDataAddress,
+  arraySetLen,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+
+declare c("c") function memcpy$layout(dst: Ptr<void>, src: Ptr<void>, n: usize): Ptr<void>;
 
 /** The single text piece entry `e` of `v` is made of, or -1. */
 function onlyText(v: LayoutValue, e: u64): i64 {
@@ -87,11 +98,30 @@ function isWord(s: string, a: u64, b: u64, w: string): bool {
   return true;
 }
 
-/** Appends bytes `a..b` of `s`. */
+/** Appends bytes `a..b` of `s`: a short run byte by byte, a longer one with one copy. */
 export function pushRange(out: u8[], s: string, a: u64, b: u64): void {
-  for (let j = a; j < b; j++) {
-    out.push(strByteAt(s, j));
+  const n = b - a;
+  if (n < 16) {
+    const base = strDataAddress(s);
+    for (let j = a; j < b; j++) {
+      // SAFETY: `s`, a parameter, holds bytes `a..b` at its data address while this runs.
+      out.push(unsafe { addressLoad<u8>(base + (j as usize)) });
+    }
+    return;
   }
+  const at = out.length as usize;
+  out.reserve(n as usize);
+  arraySetLen(out, at + (n as usize));
+  // SAFETY: `out` has room for `n` more bytes at `at` (reserved, then its length set), and
+  // `s`, a parameter, holds bytes `a..b` at its data address while this runs.
+  unsafe {
+    memcpy$layout(
+      Ptr.at<void>(arrayDataAddress(out) + at),
+      Ptr.at<void>(strDataAddress(s) + (a as usize)),
+      n as usize,
+    );
+  }
+  arrayBytesWritten(out);
 }
 
 /** Appends bytes `a..b` of `s`, each line after the first indented by `indent` spaces. */

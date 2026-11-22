@@ -10,7 +10,7 @@
 // arrays and nothing per piece.
 
 import { utf16Units } from "velt/lang/hooks/inspect_layout_width";
-import { strByteAt } from "velt/lang/intrinsics";
+import { addressLoad, share, strByteAt, strDataAddress } from "velt/lang/intrinsics";
 
 /** A piece printed as it is: keys, numbers, `: `, ` => `, atoms. */
 export const SEG_TEXT: u8 = 0;
@@ -51,6 +51,11 @@ export class LayoutValue {
   /** The top-level entry's pieces. */
   topStart: u64 = 0;
   topEnd: u64 = 0;
+  /**
+   * Is the text printable ASCII, where a byte is a UTF-16 unit and a column, with no line break?
+   * Custom inspect text counts as not plain.
+   */
+  plain: bool = true;
 
   constructor(src: string) {
     this.src = src;
@@ -63,7 +68,9 @@ export class LayoutValue {
  * then printed as it is).
  */
 export function parseLayout(src: string, start: u64, end: u64, atoms: u64[]): LayoutValue | null {
-  const p = new Parser(src, start, end, atoms);
+  // The scanner reads the bytes through one address: `src`, this function's parameter, keeps
+  // them there, unchanged, while the parser runs.
+  const p = new Parser(share(src), strDataAddress(src), start, end, atoms);
   const top = p.entry(-1);
   if (top != END_EOF) {
     return null;
@@ -73,26 +80,28 @@ export function parseLayout(src: string, start: u64, end: u64, atoms: u64[]): La
   return p.v;
 }
 
-/** Is `b` a byte the scanner stops at (` ,:<'"\`{[()`)? Everything else is plain text. */
+/**
+ * The bytes below 0x80 the scanner stops at, as two masks (bit `b` for byte `b`, then bit `b - 64`):
+ * ` ,:<'"\`{[()`, and the control characters, which (with the bytes past ASCII) make the text not
+ * plain. Everything else is plain text.
+ */
+const SPECIAL_LOW: u64 = 0x14001385ffffffff;
+const SPECIAL_HIGH: u64 = 0x8800000108000000;
+
+/** Is `b` a byte the scanner stops at? */
 function special(b: u8): bool {
-  return (
-    b == 0x20 ||
-    b == 0x2c ||
-    b == 0x3a ||
-    b == 0x3c ||
-    b == 0x27 ||
-    b == 0x22 ||
-    b == 0x60 ||
-    b == 0x7b ||
-    b == 0x5b ||
-    b == 0x28 ||
-    b == 0x29
-  );
+  if (b >= 0x80) {
+    return true;
+  }
+  const bit = b as u64;
+  return ((bit < 64 ? SPECIAL_LOW >> bit : SPECIAL_HIGH >> (bit - 64)) & 1) != 0;
 }
 
 class Parser {
   v: LayoutValue;
   src: string;
+  /** The address of `src`'s bytes, which the scanner reads. */
+  data: usize;
   end: u64;
   atoms: u64[];
   i: u64;
@@ -107,17 +116,20 @@ class Parser {
   entryStart: u64 = 0;
   entryEnd: u64 = 0;
 
-  constructor(src: string, start: u64, end: u64, atoms: u64[]) {
-    this.v = new LayoutValue(src);
+  constructor(src: string, data: usize, start: u64, end: u64, atoms: u64[]) {
+    this.v = new LayoutValue(share(src));
     this.src = src;
+    this.data = data;
     this.end = end;
     this.atoms = atoms;
     this.i = start;
   }
 
-  /** Byte `k` of the text, 0 past its end. */
-  at(k: u64): u8 {
-    return k < this.end ? strByteAt(this.src, k) : 0;
+  /** Byte `k` of the text (below `end`). */
+  byte(k: u64): u8 {
+    // SAFETY: `data` is the address of the text's bytes, alive and unchanged while the parser
+    // runs (`parseLayout`), and `k` is below its end.
+    return unsafe { addressLoad<u8>(this.data + (k as usize)) };
   }
 
   /** Does the text at `k` start with `lit` (ASCII)? */
@@ -127,7 +139,7 @@ class Parser {
       return false;
     }
     for (let j: u64 = 0; j < n; j++) {
-      if (strByteAt(this.src, k + j) != strByteAt(lit, j)) {
+      if (this.byte(k + j) != strByteAt(lit, j)) {
         return false;
       }
     }
@@ -170,7 +182,7 @@ class Parser {
     let parens: u64 = 0;
     let how = END_FAIL;
     while (true) {
-      while (this.i < this.end && !special(strByteAt(this.src, this.i))) {
+      while (this.i < this.end && !special(this.byte(this.i))) {
         this.i += 1;
       }
       const i = this.i;
@@ -178,6 +190,7 @@ class Parser {
       if (atomEnd != 0) {
         // Custom inspect text: plain text, whatever it looks like.
         this.i = atomEnd;
+        this.v.plain = false;
         continue;
       }
       if (i >= this.end) {
@@ -187,8 +200,8 @@ class Parser {
         how = END_EOF;
         break;
       }
-      const c = strByteAt(this.src, i);
-      const next = (i + 1 < this.end ? strByteAt(this.src, i + 1) : 0) as i64;
+      const c = this.byte(i);
+      const next = (i + 1 < this.end ? this.byte(i + 1) : 0) as i64;
       const separates = parens == 0 && close >= 0;
       if (c == 0x20 && separates && next == close) {
         this.i += 2;
@@ -241,6 +254,9 @@ class Parser {
         parens -= 1;
         this.i += 1;
       } else {
+        if (c < 0x20 || c >= 0x7f) {
+          this.v.plain = false;
+        }
         this.i += 1;
       }
     }
@@ -267,7 +283,7 @@ class Parser {
 
   /** A container whose prefix starts at `open` and whose brace is at `this.i`; its index, or -1. */
   container(open: u64): i64 {
-    const brace = strByteAt(this.src, this.i);
+    const brace = this.byte(this.i);
     const openEnd = this.i + 1;
     this.i += 2;
     const close: u8 = brace == 0x7b ? 0x7d : 0x5d;
@@ -318,18 +334,21 @@ class Parser {
 
   /** Skips the quoted string at `this.i` (a backslash escapes the next byte); false if open. */
   skipQuoted(): bool {
-    const quote = strByteAt(this.src, this.i);
+    const quote = this.byte(this.i);
     let j = this.i + 1;
     while (true) {
       if (j >= this.end) {
         return false;
       }
-      const c = strByteAt(this.src, j);
+      const c = this.byte(j);
       if (c == 0x5c) {
         j += 2;
       } else if (c == quote) {
         break;
       } else {
+        if (c < 0x20 || c >= 0x7f) {
+          this.v.plain = false;
+        }
         j += 1;
       }
     }
@@ -341,7 +360,10 @@ class Parser {
   skipBracketed(): bool {
     let depth: u64 = 0;
     for (let j = this.i; j < this.end; j++) {
-      const c = strByteAt(this.src, j);
+      const c = this.byte(j);
+      if (c < 0x20 || c >= 0x7f) {
+        this.v.plain = false;
+      }
       if (c == 0x5b) {
         depth += 1;
       } else if (c == 0x5d) {

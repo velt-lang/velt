@@ -30,15 +30,20 @@ const GROUPED: u8 = 2;
 
 /** Lays out `v`, a value parsed from its source, into the bytes of `out`. */
 export function renderLayout(v: LayoutValue, out: u8[]): void {
-  const r = new Render(v);
+  const r = new Render(v, v.plain);
   r.measureEntry(v.topStart, v.topEnd, 0);
   r.writeEntry(v.topStart, v.topEnd, 0, out);
 }
 
 class Render {
   v: LayoutValue;
-  /** Per piece: a split string's text, else "" (`SEG_STR` only). */
-  split: string[] = [];
+  /** Is the value's text printable ASCII, where a byte is a unit and a column, with no line break? */
+  plain: bool;
+  /** The pieces of split strings, and their text. */
+  splitSeg: u64[] = [];
+  splitText: string[] = [];
+  /** Per container: are its shown entries numbers (a grouped array's, right-aligned)? */
+  numbers: bool[] = [];
   /** Per container: its layout, columns and their widths (at `nodeWidestAt` in `widest`). */
   mode: u8[] = [];
   columns: u64[] = [];
@@ -56,14 +61,12 @@ class Render {
   width: u64 = 0;
   lines: bool = false;
 
-  constructor(v: LayoutValue) {
+  constructor(v: LayoutValue, plain: bool) {
     this.v = v;
-    const segs = v.segKind.length;
-    for (let k = 0; k < segs; k++) {
-      this.split.push("");
-    }
+    this.plain = plain;
     const nodes = v.nodeClose.length;
     for (let k = 0; k < nodes; k++) {
+      this.numbers.push(false);
       this.mode.push(ONE_LINE);
       this.columns.push(0);
       this.nodeWidestAt.push(0);
@@ -95,21 +98,30 @@ class Render {
         lines = lines || this.mode[n] != ONE_LINE;
         continue;
       }
-      if (kind == SEG_STR) {
-        const s = splitString(v.src, v.segA[k], v.segB[k], indent);
+      const sa = v.segA[k];
+      const sb = v.segB[k];
+      // A string splits only past 16 units and the room on its line, and its units are at most
+      // its bytes: most strings are ruled out without reading them.
+      if (kind == SEG_STR && sb - sa > 18 && sb - sa + indent + 4 > BREAK_LENGTH) {
+        const s = splitString(v.src, sa, sb, indent);
         if (strByteLen(s) != 0) {
           const n = strByteLen(s) as u64;
           units += utf16Units(s, 0, n);
           width += displayWidth(s, 0, n);
           lines = true;
-          this.split[k] = s;
+          this.splitSeg.push(k);
+          this.splitText.push(s);
           continue;
         }
       }
-      // Text as it is. Only a custom inspect's text (an atom) can hold a line break: Node indents
-      // its lines after the first by the value's indentation.
-      const sa = v.segA[k];
-      const sb = v.segB[k];
+      // Text as it is. In printable ASCII a byte is a unit and a column.
+      if (this.plain) {
+        units += sb - sa;
+        width += sb - sa;
+        continue;
+      }
+      // Only a custom inspect's text (an atom) can hold a line break: Node indents its lines
+      // after the first by the value's indentation.
       units += utf16Units(v.src, sa, sb);
       width += displayWidth(v.src, sa, sb);
       if (kind == SEG_TEXT) {
@@ -197,6 +209,7 @@ class Render {
     const cols = this.columns[n];
     const at = this.nodeWidestAt[n];
     const numbers = allNumbers(this.v, e0, e0 + shown);
+    this.numbers[n] = numbers;
     const pad = indent + 2;
     let units = openUnits + 1 + pad;
     let width = openWidth + pad;
@@ -248,6 +261,16 @@ class Render {
     return true;
   }
 
+  /** Where piece `k` is among the split strings, or -1. */
+  splitIndex(k: u64): i64 {
+    for (let i = 0; i < this.splitSeg.length; i++) {
+      if (this.splitSeg[i] == k) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
   /** Writes the entry made of pieces `a..b`, its values at indentation `indent`. */
   writeEntry(a: u64, b: u64, indent: u64, out: u8[]): void {
     const v = this.v;
@@ -255,10 +278,10 @@ class Render {
       const kind = v.segKind[k];
       if (kind == SEG_NODE) {
         this.writeNode(v.segA[k], indent, out);
-      } else if (kind == SEG_STR && strByteLen(this.split[k]) != 0) {
-        const s = this.split[k];
+      } else if (kind == SEG_STR && this.splitIndex(k) >= 0) {
+        const s = this.splitText[this.splitIndex(k) as u64];
         pushRange(out, s, 0, strByteLen(s) as u64);
-      } else if (kind == SEG_TEXT) {
+      } else if (kind == SEG_TEXT && !this.plain) {
         pushTextAt(out, v.src, v.segA[k], v.segB[k], indent);
       } else {
         pushRange(out, v.src, v.segA[k], v.segB[k]);
@@ -312,7 +335,7 @@ class Render {
     const shown = e1 - e0 - more;
     const cols = this.columns[n];
     const at = this.nodeWidestAt[n];
-    const numbers = allNumbers(this.v, e0, e0 + shown);
+    const numbers = this.numbers[n];
     for (let j: u64 = 0; j < shown; j++) {
       const e = e0 + j;
       const column = j % cols;

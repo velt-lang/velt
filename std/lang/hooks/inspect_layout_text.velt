@@ -118,7 +118,9 @@ function layoutLong(text: string, start: u64, atoms: u64[]): string {
   if (v == null) {
     return "";
   }
+  // Room for the text and its indentation, so the output rarely grows.
   const out: u8[] = [];
+  out.reserve(((end - start) * 2 + 64) as usize);
   renderLayout(v, out);
   const n = out.length as u64;
   if (n == end - start) {
