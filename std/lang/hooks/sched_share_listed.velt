@@ -27,11 +27,18 @@ import * as lost from "./sched_node_lost";
 import * as sh from "./sched_share";
 import * as wt from "./sched_share_wait";
 import * as t from "./sched_task";
+import * as tr from "./sched_node_transfer";
+import * as x from "./sched_node_ext";
 import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
 
 /** An entry's waker word: its task's own waker, held without a reference (`list`). */
 export const UNCOUNTED: usize = 1;
+/**
+ * A node's flag: listed by `waiting`, its waker held uncounted in the hub in its side block
+ * (`X_WAITS`). Cleared as it leaves the list, whichever way (sched_task_lost.velt `unlist`).
+ */
+export const WAITS: u32 = 1048576;
 
 /** The waker of the entry at `at`, without its flag. */
 @inline("always")
@@ -73,6 +80,12 @@ export function list(task: usize, n: usize): void {
   const is = nd.STARTED | sh.HUB_HERE;
   const busy =
     nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED | nd.CATCHES | nd.PANICKED | nd.ADOPTED;
+  if ((fl & (is | busy | lt.LISTED)) === (is | lt.LISTED) && m.ld(n + nd.N_TASK) === task) {
+    // Listed already, maybe in a wait of a promise of the task while it ran: that promise's
+    // entry, idle now, can be taken as it would have been then (`waiting`).
+    sweep(task, m.ld(n + sh.N_HUB));
+    return;
+  }
   if ((fl & (is | busy | lt.LISTED)) !== is || m.load(n + nd.N_REFS) !== 2) {
     return;
   }
@@ -94,8 +107,49 @@ export function list(task: usize, n: usize): void {
       m.st(at + 8, w | UNCOUNTED);
       // Not the last: the node holds one.
       wk.release(task);
+    } else if (nd.ownNode(task, w)) {
+      waiting(task, h, at, w);
     }
   }
+}
+
+/** The entries of hub `h`, whose node is listed on task `task`, for its waiting promises. */
+function sweep(task: usize, h: usize): void {
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const at = wt.entry(h, i);
+    const w = m.ld(at + 8);
+    if ((w & UNCOUNTED) === 0 && w !== task && nd.ownNode(task, w)) {
+      waiting(task, h, at, w);
+    }
+  }
+}
+
+/**
+ * The entry at `at` of a hub whose node `list` just listed holds the waker of `w`, a promise of
+ * the same task `task` waiting there (#3487): when that is the only waker it has (its owner's,
+ * its task's and this entry's its references) and it is idle, nothing else can run it either, so
+ * the entry holds it without a reference and `w` is listed owner-only as well. A promise running,
+ * or waiting in two places, keeps its entry counted (it stays unlisted). Unlisting the hub's node
+ * gives the reference back and takes `w` off the list (`unlisted`).
+ */
+@noInline
+function waiting(task: usize, h: usize, at: usize, w: usize): void {
+  const fl = m.load32(w + nd.N_FLAGS);
+  const busy =
+    nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED | nd.CATCHES | nd.PANICKED | nd.ADOPTED;
+  // Not a promise handed to another task (a proxy too): its owner may drop it there; nor a shared
+  // one, whose own hub `list` takes care of.
+  const out = tr.HANDED_OVER | sh.HUB_HERE;
+  if ((fl & (nd.STARTED | busy | out | lt.LISTED)) !== nd.STARTED || m.load(w + nd.N_REFS) !== 3) {
+    return;
+  }
+  m.st(at + 8, w | UNCOUNTED);
+  // Not the last: its owner's and its task's are left.
+  m.dec(w + nd.N_REFS);
+  m.st(x.make(w) + x.X_WAITS, h);
+  nd.setFlags(w, lt.LISTED | WAITS);
+  lt.list(task, w);
 }
 
 /**
@@ -147,9 +201,83 @@ export function unlisted(task: usize, n: usize, fl: u32): void {
     const at = wt.entry(h, i);
     const w = m.ld(at + 8);
     if ((w & UNCOUNTED) !== 0) {
-      m.st(at + 8, m.wakerClone(w & ~UNCOUNTED));
+      const p = w & ~UNCOUNTED;
+      m.st(at + 8, m.wakerClone(p));
+      if (p !== task) {
+        // A promise of the task waiting here, listed with it (`waiting`), or listed again since as
+        // a shared promise (#3487 review): with a counted waker it can be woken, so not listed.
+        const pf = m.load32(p + nd.N_FLAGS);
+        if ((pf & (lt.LISTED | nd.FINISHED)) === lt.LISTED) {
+          offList(task, p, pf);
+        }
+      }
     }
   }
+}
+
+/**
+ * Node `n`, listed by `waiting` (flag `WAITS`), leaves its task by its owner's hand: handed to
+ * another task (sched_node_transfer.velt `transfer`), on its task's thread. Its owner may be
+ * running, unlike that of a promise listed at its owner's poll, which waits on it. Its entry in
+ * the hub it waits in takes its reference back and it leaves the list (#3487 review).
+ */
+@noInline
+export function leaveWaiting(n: usize): void {
+  counted(n);
+  offList(m.ld(n + nd.N_TASK), n, m.load32(n + nd.N_FLAGS));
+}
+
+/**
+ * Node `n` (flags `fl`) leaves its task's list another way (sched_task_lost.velt `unlist`): no
+ * longer `WAITS`. Its entry in the hub it waits in stays uncounted while that hub's node is
+ * listed, as every such entry does; unlisting that node counts it again (`unlisted`).
+ */
+export function leftList(n: usize, fl: u32): void {
+  if ((fl & WAITS) !== 0) {
+    m.and32(n + nd.N_FLAGS, ~WAITS);
+  }
+}
+
+/** The entry of node `n` (flag `WAITS`) in the hub it waits in holds a reference again. */
+function counted(n: usize): void {
+  const h = m.ld(x.get(n) + x.X_WAITS);
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const at = wt.entry(h, i);
+    if (m.ld(at + 8) === (n | UNCOUNTED)) {
+      m.st(at + 8, m.wakerClone(n));
+      return;
+    }
+  }
+}
+
+/**
+ * A hub entry's uncounted waker `old` is replaced by another (sched_share_wait.velt `wait`): a
+ * promise listed waiting there (`waiting`, flag `WAITS`) no longer waits in that hub, as its
+ * owner's adoption poll waits in its place, and keeps no pointer to it.
+ */
+export function replaced(old: usize): void {
+  const p = old & ~UNCOUNTED;
+  if (m.ld(p) === t.main() + t.E_NODE_VT && (m.load32(p + nd.N_FLAGS) & WAITS) !== 0) {
+    m.and32(p + nd.N_FLAGS, ~WAITS);
+  }
+}
+
+/**
+ * Promise `n` of task `task` (flags `fl`), listed by `waiting`, leaves the list as
+ * sched_task_lost.velt `unlist` takes one: inline, as `unlist` (always inlined) cannot call back
+ * into `unlisted`, which calls this.
+ */
+function offList(task: usize, n: usize, fl: u32): void {
+  m.and32(n + nd.N_FLAGS, ~(lt.LISTED | lt.NLINKED | WAITS));
+  if ((fl & lt.NLINKED) !== 0) {
+    lt.unlinkCounted(task, n);
+  }
+  if ((fl & sh.HUB_HERE) !== 0) {
+    // Shared since it was listed (it stays listed as `list` would have listed it): its own hub.
+    unlisted(task, n, fl);
+  }
+  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
 }
 
 /**
@@ -210,7 +338,11 @@ export function checkHub(k: usize, n: usize, fl: u32): void {
   const len = m.ld(h + sh.H_WLEN);
   for (let i: usize = 0; i < len; i++) {
     const w = m.ld(wt.entry(h, i) + 8);
-    if (w === k || ((w & UNCOUNTED) !== 0 && (w & ~UNCOUNTED) !== k)) {
+    const p = w & ~UNCOUNTED;
+    // Uncounted: the task's own waker, or a promise of the task listed waiting here (`waiting`).
+    const listedHere =
+      p === k || (nd.ownNode(k, p) && (m.load32(p + nd.N_FLAGS) & lt.LISTED) !== 0);
+    if (w === k || ((w & UNCOUNTED) !== 0 && !listedHere)) {
       panic("ICE: a listed shared promise's hub holds a waker its task's park did not count");
     }
   }
