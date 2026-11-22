@@ -53,9 +53,9 @@ mod weak_hooks;
 mod string_hooks;
 #[macro_use]
 mod module_hooks;
-pub use module_hooks::BLOCKS_MODULE_ENTRY;
 #[macro_use]
 mod decorator_hooks;
+pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
 // The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
 // (`module_hooks.rs`), the string methods' (`string_hooks.rs`) and the weak core's
@@ -74,6 +74,11 @@ with_decorator_hooks! {
     /// glibc's algorithm in Velt (std/lang/math/pow.velt, #1676).
     pow_f64 => lang_hooks_pow, "powF64", sig((f64, f64) -> f64), lowered, constructs(PowFloat),
         replaces("velt_rt_pow_f64"), bench("pow");
+    // pow_int.velt: `**` on integers.
+    /// `a ** b` on integers (`velt_vir` `lower/ops.rs`), operands widened to `i64`: wrapping,
+    /// a negative exponent gives 0 (1 for the base 1).
+    pow_i64 => lang_hooks_pow_int, "powI64", sig((i64, i64) -> i64), lowered, constructs(PowInt),
+        replaces("velt_rt_pow_i64"), bench("pow_int");
 
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).

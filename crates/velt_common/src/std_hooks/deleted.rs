@@ -57,6 +57,8 @@ pub const DELETED: &[&str] = &[
     "velt_rt_prng_range",
     // #2196: `**` on floats (std/lang/math/pow, #1676).
     "velt_rt_pow_f64",
+    // #2196: `**` on integers (std/lang/hooks/pow_int).
+    "velt_rt_pow_i64",
     // #2196: collation (std/lang/string/collate).
     "velt_rt_str_locale_compare",
     // #2196: FNV-1a (std/hash/fnv), which only std called, so no hook replaces it.

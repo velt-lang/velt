@@ -133,16 +133,5 @@ fn folding_computes_what_the_runtime_computes() {
         check(MathOp::Clz64, &[a], rt::velt_rt_math_clz64(a));
         check(MathOp::Ctz64, &[a], rt::velt_rt_math_ctz64(a));
         check(MathOp::Popcount64, &[a], rt::velt_rt_math_popcount64(a));
-        let e = b % 70;
-        check(
-            MathOp::PowI64,
-            &[a, e],
-            rt::velt_rt_pow_i64(a as i64, e as i64) as u64,
-        );
-        check(
-            MathOp::PowI64,
-            &[a, b],
-            rt::velt_rt_pow_i64(a as i64, b as i64) as u64,
-        );
     }
 }
