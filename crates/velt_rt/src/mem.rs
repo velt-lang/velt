@@ -134,6 +134,34 @@ mod raw {
     }
 }
 
+/// A block for the runtime's own use (a string's buffer), from the allocator entry points under
+/// `velt_rt_alloc`: plain `mi_malloc` for an alignment of 8 or less, where Rust's `alloc` would
+/// take mimalloc's aligned path. Null when the request cannot be satisfied; `size` > 0 and
+/// `align` a power of two. Freed with [`block_free`] (or `velt_rt_free`, or Rust's `dealloc`:
+/// one allocator under all of them).
+#[inline]
+pub(crate) fn block_alloc(size: usize, align: usize) -> *mut u8 {
+    raw::alloc(size, align)
+}
+
+/// Resize a block from [`block_alloc`]; null when the request cannot be satisfied.
+///
+/// # Safety
+/// `p` is a live block of `old` bytes allocated with alignment `align`; `new` > 0.
+#[inline]
+pub(crate) unsafe fn block_realloc(p: *mut u8, old: usize, align: usize, new: usize) -> *mut u8 {
+    raw::realloc(p, old, align, new)
+}
+
+/// Free a block from [`block_alloc`].
+///
+/// # Safety
+/// `p` is a live block of `size` bytes allocated with alignment `align`.
+#[inline]
+pub(crate) unsafe fn block_free(p: *mut u8, size: usize, align: usize) {
+    raw::free(p, size, align)
+}
+
 #[no_mangle]
 pub extern "C" fn velt_rt_alloc(size: u64, align: u64) -> *mut u8 {
     let a = check_align(align);
