@@ -52,16 +52,24 @@ function backKept(
     return found;
   }
   const base = strDataAddress(s);
+  // SAFETY: `t` never changes and this call holds it; the address is only read through.
   const next = unsafe { arrayReadAddress(t.next) };
+  // SAFETY: the program never changes once compiled, and this call borrows it; the address is
+  // only read through.
   const kinds = unsafe { arrayReadAddress(back.asciiClass) };
   let row = st * width;
   let pos = end;
   while (pos > floor) {
+    // SAFETY: `floor < pos <= end <= len`: the byte before `pos` is the subject's.
     const b = unsafe { addressLoad<u8>(base + pos - 1) } as usize;
     if (b >= 0x80) {
       return UNSURE;
     }
+    // SAFETY: `b < 0x80`, and `asciiClass` has 256 entries.
     const kind = unsafe { addressLoad<u8>(kinds + b) } as usize;
+    // SAFETY: the tables are rows of `classes + 1` transitions, one per state; `row` is the
+    // start of one (a start state's, or a transition's that was not `UNKNOWN`, masked by
+    // `ROW`), and `kind` is at most `classes`.
     const to = unsafe { addressLoad<u32>(next + 4 * (row + kind)) };
     if (to == UNKNOWN) {
       return UNSURE;
@@ -148,7 +156,10 @@ export function quickTest(prog: Program, t: shared<DfaTables> | null, s: string,
   const len = strByteLen(s);
   const width = prog.classStarts.length + 1;
   const base = strDataAddress(s);
+  // SAFETY: `t` never changes and this call holds it; the address is only read through.
   const next = unsafe { arrayReadAddress(t.next) };
+  // SAFETY: the program never changes once compiled, and this call borrows it; the address is
+  // only read through.
   const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
   let row = ((t.anywhere as usize) - 1) * width;
   let pos = from;
@@ -170,14 +181,17 @@ export function quickTest(prog: Program, t: shared<DfaTables> | null, s: string,
     }
     // Through the transitions that are known, to one that is slow or to a match.
     while (pos < len) {
+      // SAFETY: `pos < len`: a byte of the subject, which this call borrows.
       const b = unsafe { addressLoad<u8>(base + pos) } as usize;
       if (b >= 0x80) {
         return UNSURE;
       }
-      const to =
-        unsafe { addressLoad<u32>(
-          next + 4 * (row + (unsafe { addressLoad<u8>(kinds + b) } as usize)),
-        ) };
+      // SAFETY: `b < 0x80`, and `asciiClass` has 256 entries.
+      const kind = unsafe { addressLoad<u8>(kinds + b) } as usize;
+      // SAFETY: the tables are rows of `classes + 1` transitions, one per state; `row` is the
+      // start of one (the start state's, or a transition's that was not `UNKNOWN`, masked by
+      // `ROW`), and `kind` is at most `classes`.
+      const to = unsafe { addressLoad<u32>(next + 4 * (row + kind)) };
       if (to == UNKNOWN) {
         return UNSURE;
       }

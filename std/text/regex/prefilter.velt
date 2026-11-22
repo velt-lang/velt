@@ -38,11 +38,17 @@ function literalAt(prog: Program, s: string, p: usize, len: usize): i64 {
     room >= 16 ? strLoadU8x16(s, p as u64) : strLoadPartialU8x16(s, p as u64, room as u64);
   const word = velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(bytes), 0);
   // The masks and words where they are: this runs for every place the grams stop at.
+  // SAFETY: `prog` is borrowed for the call and its `litWord` never changes once compiled; the
+  // address is only read through, below.
   const words = unsafe { arrayReadAddress(prog.litWord) };
   const count = lits.length;
   for (let k: usize = 0; k < count; k++) {
+    // SAFETY: `litWord` holds two `u64`s per literal (literals.velt `literalWords`), a mask and a
+    // word, and `k` is below the number of literals: both loads are inside it.
     const mask = unsafe { addressLoad<u64>(words + 16 * k) };
-    if ((word & mask) != unsafe { addressLoad<u64>(words + 16 * k + 8) }) {
+    // SAFETY: as `mask`: the second `u64` of literal `k`.
+    const want = unsafe { addressLoad<u64>(words + 16 * k + 8) };
+    if ((word & mask) != want) {
       continue;
     }
     const n = strByteLen(lits[k]);

@@ -155,7 +155,12 @@ export function replaceMatches(
         const piece = textOf(s, last, start);
         velt_rt_strbuf_push_str(buf, piece);
       } else {
-        const piece: u8[] = unsafe { addressArray<u8>(strDataAddress(s) + last, start - last) };
+        const at = strDataAddress(s) + last;
+        const size = start - last;
+        // SAFETY: `last < start <= len` are offsets of `s`, which this call borrows and nothing
+        // changes until it returns; the view is only read, by the append below, into `buf`,
+        // which is not `s`.
+        const piece: u8[] = unsafe { addressArray<u8>(at, size) };
         velt_rt_strbuf_push_u8s(buf, piece, n, ascii ? n : UNCOUNTED);
       }
     }
@@ -185,7 +190,12 @@ export function replaceMatches(
         const piece = textOf(s, a, b);
         velt_rt_strbuf_push_str(buf, piece);
       } else {
-        const piece: u8[] = unsafe { addressArray<u8>(strDataAddress(s) + a, b - a) };
+        const at = strDataAddress(s) + a;
+        const size = b - a;
+        // SAFETY: `a < b <= len` are offsets of `s` (a group's or the match's ends, or its
+        // start or end), which this call borrows unchanged; the view is only read, by the
+        // append below, into `buf`, which is not `s`.
+        const piece: u8[] = unsafe { addressArray<u8>(at, size) };
         const count = (b - a) as u64;
         velt_rt_strbuf_push_u8s(buf, piece, count, ascii ? count : UNCOUNTED);
       }

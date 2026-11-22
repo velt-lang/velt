@@ -33,12 +33,20 @@ export function backward(d: Dfa, s: string, end: usize, floor: usize): i64 {
     }
     // As `forward`, towards the start.
     const next = d.edges();
+    // SAFETY: the program never changes once compiled, and `d` holds it; the address is only
+    // read through, below.
     const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
     let row = (st as usize) * width;
     found = (d.flagOf(st as usize) & MATCH) != 0 ? pos as i64 : found;
     while (pos > floor) {
-      const kind =
-        unsafe { addressLoad<u8>(kinds + (unsafe { addressLoad<u8>(base + pos - 1) } as usize)) };
+      // SAFETY: `floor < pos <= end <= len`: the byte before `pos` is the subject's, which this
+      // call borrows.
+      const byte = unsafe { addressLoad<u8>(base + pos - 1) } as usize;
+      // SAFETY: `asciiClass` has 256 entries (classify.velt), one for every byte.
+      const kind = unsafe { addressLoad<u8>(kinds + byte) };
+      // SAFETY: the tables are rows of `classes + 1` transitions, one per state; `row` is the
+      // start of one (the state's above, or a transition's without `SLOW`, which `UNKNOWN`
+      // has), and `kind` is at most `classes`.
       const known = unsafe { addressLoad<u32>(next + 4 * (row + (kind as usize))) };
       if ((known & SLOW) != 0) {
         break;

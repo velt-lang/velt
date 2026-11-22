@@ -18,7 +18,7 @@ import {
   strByteLen,
   strDataAddress,
 } from "velt/lang/intrinsics";
-import { before, byteAt, charAt } from "velt/text/regex/decode";
+import { before, byteAt, charAt, kindAt } from "velt/text/regex/decode";
 import { add, pikeReset } from "velt/text/regex/pike";
 import { candidate } from "velt/text/regex/prefilter";
 import {
@@ -61,12 +61,6 @@ export const HIT: u32 = 0x40000000;
  * skipped fewer than `SKIP_GAIN` bytes a scan: it costs more than reading those bytes. */
 const SKIP_TRIES: usize = 4;
 const SKIP_GAIN: usize = 8;
-
-/** The class of the byte at address `at`, from the table of classes at `kinds`. */
-@inline("always")
-function kindAt(kinds: usize, at: usize): usize {
-  return unsafe { addressLoad<u8>(kinds + (unsafe { addressLoad<u8>(at) } as usize)) } as usize;
-}
 
 /** An automaton of one program, for one search. */
 export class Dfa {
@@ -142,8 +136,12 @@ export class Dfa {
     return k != null ? k.next[i] : this.next[i];
   }
 
+  /** Where the transitions are: valid while the automaton works out nothing (its tables are
+   * not changed or copied), which the loops that read through it ensure by calling nothing. */
   edges(): usize {
     const k = this.kept;
+    // SAFETY: the kept tables are held by `this.kept` and never change; the automaton's own
+    // live in `this`; the address is only read through, as this method's comment says.
     return k != null ? unsafe { arrayReadAddress(k.next) } : unsafe { arrayReadAddress(this.next) };
   }
 
@@ -394,32 +392,41 @@ export class Dfa {
       // Then through transitions that are known, to states where nothing has to be looked
       // at: the tables are read where they are, and nothing is called.
       const next = this.edges();
+      // SAFETY: the program never changes once compiled, and the automaton holds it; the
+      // address is only read through, by `kindAt` below.
       const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
       let row = (st as usize) * width;
       end = (this.flagOf(st as usize) & MATCH) != 0 ? pos as i64 : end;
       // Until a match is seen, four characters a step: a transition that is unknown, slow or
       // to a match ends the steps, and the slow way takes it.
       while (end < 0 && pos + 4 <= len) {
+        // SAFETY: the tables are rows of `classes + 1` transitions, one per state, `row` is the start of
+        // one (a state's, or a transition's without `SLOW`, which `UNKNOWN` has), and a class is
+        // at most `classes`: the load is inside them. `pos + 3 < len`: the bytes are the
+        // subject's.
         const r0 = unsafe { addressLoad<u32>(next + 4 * (row + kindAt(kinds, base + pos))) };
         if ((r0 & (SLOW | HIT)) != 0) {
           break;
         }
-        const r1 =
-          unsafe { addressLoad<u32>(next + 4 * ((r0 as usize) + kindAt(kinds, base + pos + 1))) };
+        const at1 = (r0 as usize) + kindAt(kinds, base + pos + 1);
+        // SAFETY: `r0` has neither `SLOW` nor `HIT`, so it is a row's start (as `r0`'s load).
+        const r1 = unsafe { addressLoad<u32>(next + 4 * at1) };
         if ((r1 & (SLOW | HIT)) != 0) {
           row = r0 as usize;
           pos += 1;
           break;
         }
-        const r2 =
-          unsafe { addressLoad<u32>(next + 4 * ((r1 as usize) + kindAt(kinds, base + pos + 2))) };
+        const at2 = (r1 as usize) + kindAt(kinds, base + pos + 2);
+        // SAFETY: `r1` has neither `SLOW` nor `HIT`, so it is a row's start (as `r0`'s load).
+        const r2 = unsafe { addressLoad<u32>(next + 4 * at2) };
         if ((r2 & (SLOW | HIT)) != 0) {
           row = r1 as usize;
           pos += 2;
           break;
         }
-        const r3 =
-          unsafe { addressLoad<u32>(next + 4 * ((r2 as usize) + kindAt(kinds, base + pos + 3))) };
+        const at3 = (r2 as usize) + kindAt(kinds, base + pos + 3);
+        // SAFETY: `r2` has neither `SLOW` nor `HIT`, so it is a row's start (as `r0`'s load).
+        const r3 = unsafe { addressLoad<u32>(next + 4 * at3) };
         if ((r3 & (SLOW | HIT)) != 0) {
           row = r2 as usize;
           pos += 3;
@@ -429,6 +436,8 @@ export class Dfa {
         pos += 4;
       }
       while (pos < len) {
+        // SAFETY: `row` is a row's start: the state's above, or a transition's that had none of
+        // `stop`, which includes `SLOW`; `pos < len`. As `r0`'s load.
         const known = unsafe { addressLoad<u32>(next + 4 * (row + kindAt(kinds, base + pos))) };
         if ((known & stop) != 0) {
           break;

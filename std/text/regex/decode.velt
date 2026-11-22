@@ -25,10 +25,22 @@ import {
 /** What `charAt` gives where a pattern finds no character. */
 export const NO_CHAR: u32 = 0xffffff;
 
-/** Byte `i` of the text at `base`. */
+/** Byte `i` of the text at `base`: the data address of a string that is alive, and an offset
+ * inside its bytes, as every caller in the matchers passes (a position before the subject's
+ * length, or a byte of a character that starts before it). */
 @inline("always")
 export function byteAt(base: usize, i: usize): u32 {
+  // SAFETY: by this function's contract, `base + i` is a byte of a live string.
   return unsafe { addressLoad<u8>(base + i) } as u32;
+}
+
+/** The class of the byte at address `at`, from the table of classes at `kinds`: `at` is a byte
+ * of a live subject before its end, and `kinds` a program's `asciiClass`. */
+@inline("always")
+export function kindAt(kinds: usize, at: usize): usize {
+  // SAFETY: `at` is a byte of a live subject (the caller's contract), and `asciiClass` has 256
+  // entries (classify.velt), one for every value of that byte.
+  return unsafe { addressLoad<u8>(kinds + (unsafe { addressLoad<u8>(at) } as usize)) } as usize;
 }
 
 /** The character at byte `i` of the text at `base` with its length in bytes: `c | length <<
