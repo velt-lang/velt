@@ -94,7 +94,7 @@ declare c("c") function inet_ntop$win(
   dst: Ptr<u8> | null,
   size: usize,
 ): Ptr<u8> | null;
-declare c("c") function memmove$text(dst: Ptr<u8> | null, src: StrBytes, n: usize): Ptr<u8>;
+declare c("c") function memmove$text(dst: Ptr<u8> | null, src: StrBytes, n: usize): Ptr<u8> | null;
 declare c("c") function FormatMessageA(
   flags: u32,
   source: Ptr<u8> | null,

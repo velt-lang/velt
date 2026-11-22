@@ -3,7 +3,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 
-declare c("c") function strlen(s: Ptr<u8> | null): usize;
+declare c("c") function strlen(s: Ptr<u8>): usize;
 declare c("c") function memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>;
 
 /**

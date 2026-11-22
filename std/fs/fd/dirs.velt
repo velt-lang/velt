@@ -96,8 +96,9 @@ function next(dir: Ptr<DIR>, sys: DirSystem): Entry {
     // at `nameAt`, both inside it on this target (the variant's offsets, checked against the
     // headers and bounded above).
     const type = unsafe { addressLoad<u8>(at + sys.typeAt) };
-    // SAFETY: `d_name` is NUL-terminated inside the entry, so `strlen` stops there.
-    const len = unsafe { strlen(Ptr.orNull<u8>(nameAt)) };
+    // SAFETY: `d_name` is NUL-terminated inside the entry, so `strlen` stops there; `nameAt` is
+    // inside the entry `readdir` returned, so not 0.
+    const len = unsafe { strlen(ptrFromAddress<u8>(nameAt)) };
     // SAFETY: the name's first byte, or the NUL of an empty one, is inside the entry.
     const first = unsafe { addressLoad<u8>(nameAt) };
     let second: u8 = 0;
