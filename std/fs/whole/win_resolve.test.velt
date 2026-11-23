@@ -1,0 +1,80 @@
+// velt/fs (tests): white-box tests, run by `velt test std/`.
+//
+// How std resolves a path on Windows before handing it to Windows (std/fs/whole/win_resolve.velt),
+// against Node 22's `path.win32.resolve` and `path.toNamespacedPath` with the working directory
+// `C:\work\dir`: the expected strings are Node's. Pure string code, so it runs on every system.
+import { Dirs, namespaced, resolveWin32, shownPath } from "velt/fs/whole/win_resolve";
+import { describe, expect, it } from "velt/test";
+
+/** `C:\work\dir`, and `E:\other\place` the working directory on `E:`. */
+function fixed(): Dirs {
+  return new Dirs(
+    () => "C:\\work\\dir",
+    (name) => (name === "=E:" ? "E:\\other\\place" : undefined),
+  );
+}
+
+/** Each path, then Node's `path.win32.resolve` and `path.toNamespacedPath` of it. */
+function cases(): string[][] {
+  return [
+    ["a", "C:\\work\\dir\\a", "\\\\?\\C:\\work\\dir\\a"],
+    ["a.", "C:\\work\\dir\\a.", "\\\\?\\C:\\work\\dir\\a."],
+    ["a.txt.", "C:\\work\\dir\\a.txt.", "\\\\?\\C:\\work\\dir\\a.txt."],
+    ["NUL", "C:\\work\\dir\\NUL", "\\\\?\\C:\\work\\dir\\NUL"],
+    ["nul.txt", "C:\\work\\dir\\nul.txt", "\\\\?\\C:\\work\\dir\\nul.txt"],
+    ["", "C:\\work\\dir", ""],
+    [".", "C:\\work\\dir", "\\\\?\\C:\\work\\dir"],
+    ["..", "C:\\work", "\\\\?\\C:\\work"],
+    ["C:", "C:\\work\\dir", "\\\\?\\C:\\work\\dir"],
+    ["c:x", "c:\\work\\dir\\x", "\\\\?\\c:\\work\\dir\\x"],
+    ["D:x", "D:\\x", "\\\\?\\D:\\x"],
+    ["e:..\\y", "e:\\y", "\\\\?\\e:\\y"],
+    ["C:\\", "C:\\", "\\\\?\\C:\\"],
+    ["C:/a//b/", "C:\\a\\b", "\\\\?\\C:\\a\\b"],
+    ["\\", "C:\\", "\\\\?\\C:\\"],
+    ["/x", "C:\\x", "\\\\?\\C:\\x"],
+    ["\\\\?\\C:\\x\\..\\y", "\\\\?\\C:\\y", "\\\\?\\C:\\y"],
+    ["\\\\.\\NUL", "\\\\.\\NUL", "\\\\.\\NUL"],
+    ["\\\\.\\C:\\a\\..\\b", "\\\\.\\C:\\b", "\\\\.\\C:\\b"],
+    ["//?/C:/x/../y", "\\\\?\\C:\\y", "\\\\?\\C:\\y"],
+    ["\\\\server\\share", "\\\\server\\share\\", "\\\\?\\UNC\\server\\share\\"],
+    ["\\\\server\\share\\x\\..\\..\\y", "\\\\server\\share\\y", "\\\\?\\UNC\\server\\share\\y"],
+    ["\\\\server", "C:\\server", "\\\\?\\C:\\server"],
+    ["\\\\server\\", "C:\\server", "\\\\?\\C:\\server"],
+    ["//server/share/", "\\\\server\\share\\", "\\\\?\\UNC\\server\\share\\"],
+    ["a/../../..", "C:\\", "\\\\?\\C:\\"],
+    ["\\\\?\\UNC\\s\\h\\x", "\\\\?\\UNC\\s\\h\\x", "\\\\?\\UNC\\s\\h\\x"],
+    ["x\\\\y\\.\\z", "C:\\work\\dir\\x\\y\\z", "\\\\?\\C:\\work\\dir\\x\\y\\z"],
+    ["d/f/", "C:\\work\\dir\\d\\f", "\\\\?\\C:\\work\\dir\\d\\f"],
+    ["d\\...\\x", "C:\\work\\dir\\d\\...\\x", "\\\\?\\C:\\work\\dir\\d\\...\\x"],
+    ["..\\..\\..\\..\\x", "C:\\x", "\\\\?\\C:\\x"],
+    ["a b. \\c", "C:\\work\\dir\\a b. \\c", "\\\\?\\C:\\work\\dir\\a b. \\c"],
+  ];
+}
+
+describe("a path as Node gives it to Windows", () => {
+  it("resolves as path.win32.resolve does", () => {
+    for (const c of cases()) {
+      expect(resolveWin32(c[0], fixed())).toBe(c[1]);
+    }
+  });
+
+  it("is namespaced as path.toNamespacedPath does", () => {
+    for (const c of cases()) {
+      expect(namespaced(c[0], fixed())).toBe(c[2]);
+    }
+  });
+
+  it("resolves a drive's relative path from that drive's directory", () => {
+    expect(resolveWin32("E:x", fixed())).toBe("E:\\other\\place\\x");
+    expect(resolveWin32("E:", fixed())).toBe("E:\\other\\place");
+  });
+
+  it("names a path in an error without the prefix", () => {
+    expect(shownPath("a.txt", fixed())).toBe("C:\\work\\dir\\a.txt");
+    expect(shownPath("d/../NUL", fixed())).toBe("C:\\work\\dir\\NUL");
+    expect(shownPath("//server/share/x", fixed())).toBe("\\\\server\\share\\x");
+    expect(shownPath("\\\\.\\NUL", fixed())).toBe("\\\\.\\NUL");
+    expect(shownPath("", fixed())).toBe("");
+  });
+});

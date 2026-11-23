@@ -1,0 +1,205 @@
+// velt/fs (internal): a path as Node hands it to Windows (std/fs/whole/win_path.velt) and names it
+// in an error. Node resolves every path an fs call takes (`path.win32.resolve`: against the
+// working directory, or a drive's own for `D:x`; `.` and `..` taken out lexically, `/` made `\`,
+// repeated and trailing separators dropped) and gives Windows the result with the `\\?\` prefix
+// (`path.toNamespacedPath`), so that Windows takes the name as it is: `a.txt.` is not `a.txt`, and
+// `NUL` in a directory is a file there, not the device. Its errors name that path without the
+// prefix (`open 'C:\work\a.txt'`). Pure string code: the working directories come from `Dirs`
+// (Win32's in win_path.velt, fixed ones in the tests).
+
+import { IoError } from "velt/io/error";
+
+/** Where a relative path is resolved from. */
+export class Dirs {
+  /** The working directory. */
+  cwd: () => string throws IoError;
+  /** An environment variable (`=D:`, the working directory on the drive `D:`), or undefined. */
+  env: (name: string) => string | undefined;
+
+  constructor(cwd: () => string throws IoError, env: (name: string) => string | undefined) {
+    this.cwd = cwd;
+    this.env = env;
+  }
+}
+
+/** Whether the code unit `u` separates a path's parts. */
+function isSep(u: u16): bool {
+  return u === 92 || u === 47;
+}
+
+function sepAt(p: string, i: i64): bool {
+  return i < (p.length as i64) && isSep(p.charCodeAt(i) as u16);
+}
+
+function letterAt(p: string, i: i64): bool {
+  const u = p.charCodeAt(i) as u16;
+  return (u >= 65 && u <= 90) || (u >= 97 && u <= 122);
+}
+
+/** How `path.win32.resolve` reads the start of a path. */
+class Root {
+  /** `C:`, `\\server\share`, `\\?` or `\\.`; "" for none. */
+  device: string;
+  /** Where the part after the root starts. */
+  end: i64;
+  /** Whether the path starts at a root (`C:\x`, `\x`, `\\server\share`; not `C:x` or `x`). */
+  absolute: bool;
+
+  constructor(device: string, end: i64, absolute: bool) {
+    this.device = device;
+    this.end = end;
+    this.absolute = absolute;
+  }
+}
+
+/** The root of `p` (not empty), as Node's `path.win32.resolve` reads it. */
+function rootOf(p: string): Root {
+  const len = p.length as i64;
+  if (!isSep(p.charCodeAt(0) as u16)) {
+    if (len >= 2 && letterAt(p, 0) && p.charCodeAt(1) === 58) {
+      return sepAt(p, 2) ? new Root(p.slice(0, 2), 3, true) : new Root(p.slice(0, 2), 2, false);
+    }
+    return new Root("", 0, false);
+  }
+  if (len === 1 || !sepAt(p, 1)) {
+    return new Root("", 1, true);
+  }
+  // Two separators: `\\server\share`, or `\\?\` and `\\.\` (the device is then `\\?`, `\\.`).
+  let j: i64 = 2;
+  while (j < len && !sepAt(p, j)) {
+    j++;
+  }
+  if (j < len && j !== 2) {
+    const first = p.slice(2, j);
+    while (j < len && sepAt(p, j)) {
+      j++;
+    }
+    if (j < len) {
+      const last = j;
+      while (j < len && !sepAt(p, j)) {
+        j++;
+      }
+      if (first !== "." && first !== "?") {
+        return new Root(`\\\\${first}\\${p.slice(last, j)}`, j, true);
+      }
+      return new Root(`\\\\${first}`, 4, true);
+    }
+  }
+  return new Root("", 0, true);
+}
+
+/**
+ * The parts of `tail` (separated by `\` or `/`) without empty ones and `.`, a `..` taking the
+ * part before it away (or kept, before the first, when `aboveRoot`), joined with `\`.
+ */
+function normalTail(tail: string, aboveRoot: bool): string {
+  const out: string[] = [];
+  let start: i64 = 0;
+  const len = tail.length as i64;
+  for (let i: i64 = 0; i <= len; i++) {
+    if (i < len && !isSep(tail.charCodeAt(i) as u16)) {
+      continue;
+    }
+    const part = tail.slice(start, i);
+    start = i + 1;
+    if (part.length === 0 || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      if (out.length > 0 && out[out.length - 1] !== "..") {
+        out.pop();
+        continue;
+      }
+      if (!aboveRoot) {
+        continue;
+      }
+    }
+    out.push(part);
+  }
+  return out.join("\\");
+}
+
+/** The working directory Node resolves a path on `device` (`D:`) against. */
+function dirOn(device: string, dirs: Dirs): string {
+  const own = dirs.env(`=${device}`);
+  const dir = own === undefined || own.length === 0 ? dirs.cwd() : own;
+  const other = dir.slice(0, 2).toLowerCase() !== device.toLowerCase();
+  return other && dir.length > 2 && dir.charCodeAt(2) === 92 ? `${device}\\` : dir;
+}
+
+/** `path` made absolute as Node's `path.win32.resolve(path)` makes it. */
+export function resolveWin32(path: string, dirs: Dirs): string {
+  let device = "";
+  let tail = "";
+  let absolute = false;
+  for (let step = 0; step < 2; step++) {
+    let p = path;
+    if (step === 1) {
+      p = device.length === 0 ? dirs.cwd() : dirOn(device, dirs);
+    }
+    if (p.length === 0) {
+      continue;
+    }
+    const root = rootOf(p);
+    if (root.device.length > 0) {
+      if (device.length === 0) {
+        device = root.device;
+      } else if (root.device.toLowerCase() !== device.toLowerCase()) {
+        continue;
+      }
+    }
+    if (!absolute) {
+      tail = `${p.slice(root.end)}\\${tail}`;
+      absolute = root.absolute;
+    }
+    if (absolute && device.length > 0) {
+      break;
+    }
+  }
+  tail = normalTail(tail, !absolute);
+  if (absolute) {
+    return `${device}\\${tail}`;
+  }
+  const relative = `${device}${tail}`;
+  return relative.length === 0 ? "." : relative;
+}
+
+/**
+ * `path` as Node gives it to Windows (`path.toNamespacedPath`): resolved, with the `\\?\` prefix
+ * on a drive's path (`\\?\C:\x`) and `\\?\UNC\` on a share's (`\\?\UNC\server\share\x`). A path
+ * that resolves to something else (`\\.\NUL`, `\\?\…`) is the resolved one; "" stays "".
+ */
+export function namespaced(path: string, dirs: Dirs): string {
+  if (path.length === 0) {
+    return path;
+  }
+  const r = resolveWin32(path, dirs);
+  if ((r.length as i64) <= 2) {
+    return path;
+  }
+  if (r.charCodeAt(0) === 92) {
+    if (r.charCodeAt(1) === 92 && r.charCodeAt(2) !== 63 && r.charCodeAt(2) !== 46) {
+      return `\\\\?\\UNC\\${r.slice(2)}`;
+    }
+    return r;
+  }
+  if (letterAt(r, 0) && r.charCodeAt(1) === 58 && r.charCodeAt(2) === 92) {
+    return `\\\\?\\${r}`;
+  }
+  return r;
+}
+
+/**
+ * `path` as Node's fs errors name it on Windows: as it is given to Windows (`namespaced`), without
+ * the `\\?\` prefix (`C:\work\a.txt`; `\\server\share\x` for `\\?\UNC\server\share\x`).
+ */
+export function shownPath(path: string, dirs: Dirs): string {
+  const n = namespaced(path, dirs);
+  if (n.startsWith("\\\\?\\UNC\\")) {
+    return `\\\\${n.slice(8)}`;
+  }
+  if (n.startsWith("\\\\?\\")) {
+    return n.slice(4);
+  }
+  return n;
+}
