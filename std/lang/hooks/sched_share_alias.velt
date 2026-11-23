@@ -17,8 +17,8 @@ import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
 import * as nd from "./sched_node";
 import * as x from "./sched_node_ext";
-import * as off from "./sched_off";
 import * as sh from "./sched_share";
+import * as lf from "./sched_share_leaf";
 import * as t from "./sched_task";
 
 /** A node's flag: it is a converted promise standing for another (its side block's alias). */
@@ -34,12 +34,16 @@ export function schedFutAlias(w: usize, inner: usize, quiet: usize): void {
     return;
   }
   if (m.ld(w) !== fnAddress(nd.nodePoll)) {
-    off.alias(w, inner, quiet);
+    // A converted promise is always boxed as a node (`schedBox`, on any thread).
     return;
   }
   // The holder `inner` is, or the one a converted `inner` keeps.
   let of: usize = 0;
-  if (m.ld(inner) === fnAddress(sh.holderPoll)) {
+  if (lf.isLeaf(inner)) {
+    // A shared leaf's holder (sched_share_leaf.velt): the role it forwards to, unless handed over.
+    const g = lf.roleOf(inner);
+    of = sh.forwardOf(g) === 0 ? g : 0;
+  } else if (m.ld(inner) === fnAddress(sh.holderPoll)) {
     // Handed over from another task: its proxy here is its own promise.
     of = sh.forwardOf(inner) === 0 ? inner : 0;
   } else if (m.ld(inner) === fnAddress(nd.nodePoll)) {

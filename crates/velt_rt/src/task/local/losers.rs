@@ -34,11 +34,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_detach(
 ) {
     let tcx = CURRENT.with(Cell::get);
     let mut fresh = false;
-    if (node::is_lazy(f) || node::is_started(f)) && node::is_aliased(f) {
-        // Handled by whoever gives it up; it stands for nothing any more.
-        node::alias_claimed(f);
-        node::drop_alias(f);
-    }
     if node::is_lazy(f) && !tcx.is_null() {
         let tcx = &*tcx;
         if (*tcx.set).is_null() {

@@ -18,6 +18,7 @@ import * as x from "./sched_node_ext";
 import * as al from "./sched_share_alias";
 import * as sh from "./sched_share";
 import * as shh from "./sched_share_hand";
+import * as lf from "./sched_share_leaf";
 import * as ls from "./sched_share_listed";
 import * as lt from "./sched_task_lost";
 
@@ -36,6 +37,9 @@ export function schedTransfer(f: usize, glue: usize): void {
   if (m.ld(f) === fnAddress(sh.holderPoll)) {
     // A holder of a shared promise (sched_share_hand.velt).
     shh.handOver(f, glue);
+  } else if (lf.isLeaf(f)) {
+    // A shared leaf's holder (sched_share_leaf.velt): its role, which it forwards to, is.
+    shh.handOver(lf.roleOf(f), glue);
   } else if (rc.isRace(f)) {
     // A race: the winner's result is a child's (the runtime's `pass_transfer`).
     const n = rc.childCount(f);
