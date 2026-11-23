@@ -1,5 +1,39 @@
 // velt/text (internal): `RegExpMatch`, one match of a `RegExp` (JS's match array).
 
+import { INSPECT } from "velt/lang/hooks/keys";
+import { inspectNested } from "velt/lang/intrinsics/report";
+
+/** A text as `console.log` shows it inside the match (`'a'`), or `undefined` for null. */
+function shown(c: string | null): string {
+  if (c == null) {
+    return "undefined";
+  }
+  let out = "";
+  inspectNested(out, c, 1);
+  return out;
+}
+
+/**
+ * `entries` between `open` and `close` in Node's `console.log` layout at indentation `lvl`
+ * (`reduceToSingleString`): on one line when they fit in its 80 columns (`isBelowBreakLength`)
+ * and none spans lines, else one per line, indented.
+ */
+function laidOut(entries: string[], open: string, close: string, lvl: i64): string {
+  const n = entries.length as i64;
+  const start = n + lvl + (open.length as i64) + 10;
+  let total = n + start;
+  let oneLine = total + n <= 80;
+  for (const e of entries) {
+    total += e.length as i64;
+    oneLine = oneLine && !e.includes("\n");
+  }
+  if (oneLine && total <= 80) {
+    return open + " " + entries.join(", ") + " " + close;
+  }
+  const ind = " ".repeat(lvl);
+  return open + "\n" + ind + "  " + entries.join(",\n" + ind + "  ") + "\n" + ind + close;
+}
+
 /** One match: the matched text, where it is, and its capture groups. */
 export class RegExpMatch {
   /** Position of the match in the subject (code units). */
@@ -12,6 +46,8 @@ export class RegExpMatch {
   captures: (string | null)[];
   /** Name of each group in `captures` ("" when unnamed). */
   names: string[];
+  /** The subject the match was found in (JS `m.input`). */
+  input: string;
 
   constructor(
     index: number,
@@ -19,17 +55,44 @@ export class RegExpMatch {
     value: string,
     captures: (string | null)[],
     names: string[],
+    input: string,
   ) {
     this.index = index;
     this.end = end;
     this.value = value;
     this.captures = captures;
     this.names = names;
+    this.input = input;
   }
 
-  /** `m[n]`: group `n` (0 = the whole match), "" if it did not take part or does not exist. */
+  /** `m.length`: the number of groups plus one, as JS's match array has. */
+  get length(): number {
+    return (this.captures.length + 1) as number;
+  }
+
+  /**
+   * `m[n]`: group `n` (0 = the whole match), "" if it did not take part or does not exist.
+   * `m[n] === undefined`, `m[n] == null` and `m[n] ?? d` test whether the group took part, as
+   * in JS (velt_sema `never_null.rs`), and a read through `any` is `undefined`.
+   */
   [Symbol.index](n: usize): string {
     return this.group(n) ?? "";
+  }
+
+  /**
+   * `m.at(n)`: group `n` (0 = the whole match, a negative `n` counted from the end), `undefined`
+   * if it did not take part or does not exist, as JS's `Array.prototype.at`. A read `m[n]`
+   * through `any` reads this (velt_vir `any_index_match.rs`).
+   */
+  at(n: number): string | undefined {
+    const len = (this.captures.length + 1) as number;
+    // JS's `ToIntegerOrInfinity`: NaN is 0, the rest truncated, before a negative is counted back.
+    const r = n != n ? 0 : Math.trunc(n);
+    const k = r < 0 ? r + len : r;
+    if (!(k >= 0 && k < len)) {
+      return undefined;
+    }
+    return this.group(k as usize) ?? undefined;
   }
 
   /** Group `n` (0 = the whole match); null if it did not take part or does not exist. */
@@ -100,6 +163,42 @@ export class RegExpMatch {
       }
       i = at + used;
     }
+  }
+
+  /** `JSON.stringify(m)`: JS's match array, a group that did not take part as `null`. */
+  toJSON(): (string | null)[] {
+    const out: (string | null)[] = [this.value.clone()];
+    for (const c of this.captures) {
+      out.push(c.clone());
+    }
+    return out;
+  }
+
+  /**
+   * How `console.log` shows a match, as Node does: `[ 'b', undefined, index: 1, input: 'ab',
+   * groups: undefined ]`, a group that did not take part as `undefined`. (Node's columns for a
+   * match of many short groups are not made, and lines are measured as at the top level.)
+   */
+  [INSPECT](): string {
+    const entries: string[] = [shown(this.value)];
+    for (const c of this.captures) {
+      entries.push(shown(c));
+    }
+    entries.push("index: " + this.index);
+    entries.push("input: " + shown(this.input));
+    if (!this.names.some((n) => n != "")) {
+      entries.push("groups: undefined");
+      return laidOut(entries, "[", "]", 0);
+    }
+    const named: string[] = [];
+    for (let i: usize = 0; i < this.names.length; i++) {
+      if (this.names[i] != "") {
+        named.push(this.names[i] + ": " + shown(this.captures[i]));
+      }
+    }
+    // Inside the match, at Node's indentation 2.
+    entries.push("groups: " + laidOut(named, "[Object: null prototype] {", "}", 2));
+    return laidOut(entries, "[", "]", 0);
   }
 
   /** The named group `(?<name>…)`; null if it did not take part or does not exist. */

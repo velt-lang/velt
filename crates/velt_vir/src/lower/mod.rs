@@ -39,6 +39,7 @@ mod any_glue;
 mod any_has;
 mod any_has_builtin;
 mod any_iface;
+mod any_index_match;
 mod any_keys;
 mod any_member;
 mod any_not_fn;

@@ -1,0 +1,80 @@
+exec b true false true none
+exec true - empty 2
+exec taken ab false true false a
+exec taken true - a 2
+matchAll 0 true none 2
+matchAll 2 false a 2
+empty group false  falsy
+index 0 false y
+index 1 true u
+index 2 false y
+index 3 true u
+at y undefined y y undefined undefined 3
+any b 1 undefined 1 1
+any groups true b undefined undefined undefined 3
+replace any [undefined]
+replace unknown [undefined]
+replace optional [undefined]
+replace taken [a]
+replace $1 <>
+["b",null,"b"]
+{"m":["ab","a","b"]}
+[ 'b', undefined, 'b', index: 1, input: 'xb', groups: undefined ] b's
+[ [ 'b', index: 1, input: 'ab', groups: undefined ] ] { m: [ 'x', undefined, index: 0, input: 'x', groups: undefined ] }
+[
+  'b',
+  undefined,
+  'b',
+  undefined,
+  index: 0,
+  input: "b's",
+  groups: [Object: null prototype] { first: undefined, second: 'b' }
+]
+[ 'ab', 'a', index: 0, input: 'ab b', groups: undefined ]
+[ 'b', undefined, index: 3, input: 'ab b', groups: undefined ]
+[ "it's", index: 0, input: `it's "q"\n`, groups: undefined ]
+[
+  'aaaabbbbcccc',
+  'aaaa',
+  'bbbb',
+  'cccc',
+  index: 0,
+  input: 'aaaabbbbcccc',
+  groups: [Object: null prototype] {
+    first: 'aaaa',
+    second: 'bbbb',
+    third: 'cccc'
+  }
+]
+[
+  [
+    'aaaabbbbcccc',
+    'aaaa',
+    'bbbb',
+    'cccc',
+    index: 0,
+    input: 'aaaabbbbcccc',
+    groups: [Object: null prototype] {
+      first: 'aaaa',
+      second: 'bbbb',
+      third: 'cccc'
+    }
+  ]
+]
+[
+  'a',
+  'a',
+  index: 0,
+  input: 'a',
+  groups: [Object: null prototype] { x: 'a' }
+] [
+  'abcd',
+  'a',
+  'b',
+  'c',
+  'd',
+  index: 0,
+  input: 'abcd',
+  groups: undefined
+]
+ab b ab b b undefined undefined

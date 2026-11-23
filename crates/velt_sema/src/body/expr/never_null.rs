@@ -195,11 +195,55 @@ impl FnCx<'_, '_> {
             },
             sp,
         );
-        let cond = bin(
+        let mut cond = bin(
             B::And,
             bin(B::GtEq, k.clone(), zero),
             bin(B::Lt, k.clone(), len),
         );
+        // A match's group that did not take part reads `undefined` too (std's `RegExpMatch`,
+        // whose `m[k]` is "" there): `… && a.group(k as usize) != null`.
+        let regexp_match = velt_common::std_item!(text_regex_regexp_match, "RegExpMatch");
+        if self.is_std_class(base.ty, regexp_match) {
+            let usize_ty = ast::TypeExpr {
+                kind: ast::TypeExprKind::Named {
+                    path: vec![ast::Ident {
+                        name: "usize".into(),
+                        span: sp,
+                    }],
+                    args: vec![],
+                },
+                span: sp,
+            };
+            let n = mk(
+                E::Cast {
+                    expr: Box::new(k.clone()),
+                    ty: usize_ty,
+                },
+                sp,
+            );
+            let group = mk(
+                E::Member {
+                    object: Box::new(arr.clone()),
+                    prop: ast::Ident {
+                        name: "group".into(),
+                        span: sp,
+                    },
+                    optional: false,
+                },
+                sp,
+            );
+            let call = mk(
+                E::Call {
+                    callee: Box::new(group),
+                    type_args: vec![],
+                    args: vec![n],
+                    optional: false,
+                },
+                sp,
+            );
+            let null = mk(E::Lit(ast::Lit::Null), sp);
+            cond = bin(B::And, cond, bin(B::NotEq, call, null));
+        }
         let read = mk(
             E::Index {
                 object: Box::new(arr),
