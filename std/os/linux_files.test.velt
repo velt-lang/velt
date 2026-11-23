@@ -250,6 +250,20 @@ describe("cgroup CPU quota, read as libuv 1.51 (Node 22) reads it", () => {
     expect(cpuQuotaOf("0::/a\n", fileOrNull(tree))).toBe(80000);
   });
 
+  it("cuts paths at 255 characters, as libuv's buffers do", () => {
+    // A 230-character cgroup: its cpu.max path (253) fits, its cgroup.controllers path (264)
+    // is cut, and libuv looks for that file at the cut path.
+    const dir = `a/${"x".repeat(228)}`;
+    const tree = v2Tree([]);
+    const controllers = `/sys/fs/cgroup/${dir}/cgroup.controllers`;
+    tree.set(controllers.slice(0, 255), "cpu\n");
+    tree.set(`/sys/fs/cgroup/${dir}/cpu.max`, "300000 100000\n");
+    expect(cpuQuotaOf(`0::/${dir}\n`, fileOrNull(tree))).toBe(3);
+    tree.delete(controllers.slice(0, 255));
+    tree.set(controllers, "cpu\n");
+    expect(cpuQuotaOf(`0::/${dir}\n`, fileOrNull(tree))).toBe(0);
+  });
+
   it("gives 0 without the cgroup's cgroup.controllers", () => {
     const tree = v2Tree([]);
     tree.set("/sys/fs/cgroup/a/cpu.max", "200000 100000\n");
@@ -304,6 +318,9 @@ describe("cgroup CPU quota, read as libuv 1.51 (Node 22) reads it", () => {
     expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(0);
     tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_quota_us", "-300000\n");
     expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(-3);
+    // `%lld` past the range reads LLONG_MAX, as strtoll gives.
+    tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_quota_us", "99999999999999999999999\n");
+    expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(92233720368547);
     tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_period_us", "0\n");
     expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(0);
   });

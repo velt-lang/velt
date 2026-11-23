@@ -1,7 +1,8 @@
 // velt/os (internal): the CPU quota of this process' cgroup on Linux, which caps
-// `availableParallelism()` (sys_linux.velt). It follows libuv 1.51 exactly, as Node 22 does
-// (`uv__get_constrained_cpu` and `uv_available_parallelism`, src/unix/linux.c and core.c), so
-// Velt gives Node's answer, which is not always the limit the kernel enforces:
+// `availableParallelism()` (sys_linux.velt). It follows libuv 1.51 exactly, as in Node 22.23
+// (`uv__get_constrained_cpu`, new in libuv 1.49, and `uv_available_parallelism`, src/unix/linux.c
+// and core.c; earlier Node 22 releases bundle other libuv versions), so Velt gives Node's
+// answer, which is not always the limit the kernel enforces:
 //
 // - With limits at several levels, the outermost one counts, not the smallest (4 for a parent
 //   at 4 CPUs over a child at 2).
@@ -21,7 +22,10 @@
 //   ":cpu," and gives none either.
 // - The quota is quota / period, rounded toward 0: 0 under one CPU and for v1's -1. It caps the
 //   CPU count only when it is above 0 and below it (`parallelismOf`). Files are read as libuv
-//   reads them (1023 bytes, `cpu.max` 15), paths cut at 255 bytes.
+//   reads them (1023 bytes, `cpu.max` 15), paths cut at 255 bytes. Velt counts these lengths
+//   in UTF-16 code units of the UTF-8-decoded text where libuv counts bytes, so a non-ASCII
+//   cgroup name over about 128 bytes is cut elsewhere and invalid UTF-8 doesn't round-trip
+//   (rare: systemd escapes such names).
 //
 // `cpuQuotaOf` takes the files it reads as a function, so tests can give it a tree of their own.
 
