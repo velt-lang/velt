@@ -318,3 +318,63 @@ function storeEscapes(e: Esc, c: Counter2, d: Counter2, b: boolean) {
   return [r.name, a.name, typeof s, typeof t];
 }
 console.log(storeEscapes(esc, new Counter2(), new Counter2(), true).join(" "));
+
+// A method that reads `this`, stored under another property's name: read directly (from an
+// interface value or a class instance), through a variable, or beside the literal's own method
+// of that name; and a value of a type parameter or of `any` under such a method's name.
+interface Gr3 {
+  name: string;
+  greet3(): string;
+}
+interface Runner {
+  name: string;
+  run(): string;
+}
+const gr3: Gr3 = {
+  name: "o",
+  greet3() {
+    return "hi " + this.name;
+  },
+};
+class K3 {
+  name = "k";
+  shout3(): string {
+    return "hi " + this.name;
+  }
+}
+function renamedRead(g: Gr3): Runner {
+  return { name: "w", run: g.greet3 };
+}
+function renamedClassRead(k: K3): Runner {
+  return { name: "w", run: k.shout3 };
+}
+function renamedVar(g: Gr3): Runner {
+  const f = g.greet3;
+  return { name: "w", run: f };
+}
+function renamedBesideOwn(g: Gr3) {
+  return {
+    name: "w",
+    run: g.greet3,
+    greet3() {
+      return "own " + this.name;
+    },
+  };
+}
+function generic<T>(f: T): { name: string; greet3: T } {
+  return { name: "w", greet3: f };
+}
+function viaAny(): Gr3 {
+  const x: any = gr3.greet3;
+  return { name: "w", greet3: x };
+}
+console.log(renamedRead(gr3).run(), renamedClassRead(new K3()).run(), renamedVar(gr3).run());
+console.log(renamedBesideOwn(gr3).run(), typeof generic(gr3.greet3), viaAny().greet3());
+
+// The same inside a cast to a discriminated union, whose literal is rebuilt from temporaries.
+type Job = { kind: "a"; run: () => string } | { kind: "b"; run: () => string; extra: number };
+function castRenamed(g: Gr3): Job {
+  const f = g.greet3;
+  return { kind: "a", run: f } as Job;
+}
+console.log(typeof castRenamed(gr3));

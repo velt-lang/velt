@@ -177,7 +177,19 @@ impl FnCx<'_, '_> {
     /// there (an arrow, a function expression, a method) is the literal's own.
     pub(super) fn stored_value(&mut self, name: &ast::Ident, v: Option<&ast::Expr>, h: &hir::Expr) {
         // Std's literals are its own: a program's method names say nothing about them.
-        if v.is_some_and(fresh_fn) || !self.fn_valued(h.ty) || self.cx.scopes[self.module].is_std {
+        let dynamic = self.may_be_any_fn(h.ty);
+        // `null` / `undefined` for a function that may be absent is no function.
+        let nothing = v.map(super::method_value::strip_parens).is_some_and(|e| {
+            matches!(
+                e.kind,
+                ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+            )
+        });
+        if nothing
+            || v.is_some_and(fresh_fn)
+            || !(dynamic || self.fn_valued(h.ty))
+            || self.cx.scopes[self.module].is_std
+        {
             return;
         }
         // A function declared by name (`{ go: run }`, `{ run }`) has no `this` of its own here.
@@ -188,7 +200,10 @@ impl FnCx<'_, '_> {
                 _ => None,
             },
         };
-        if ident.is_some_and(|id| self.is_fn_item(id) || self.arrow_const(&id.name)) {
+        // A compiler's temporary holds a value checked where it was made (`discriminated_cast`).
+        if ident.is_some_and(|id| {
+            id.name.starts_with('#') || self.is_fn_item(id) || self.arrow_const(&id.name)
+        }) {
             return;
         }
         let read = match v {
@@ -196,10 +211,31 @@ impl FnCx<'_, '_> {
             None => Some(name.name.clone()),
         };
         let span = v.map_or(name.span, |v| v.span);
+        // The methods read directly (`{ run: g.greet }`), checked by their own names too.
+        let mut methods = vec![];
+        if let Some(v) = v {
+            read_methods(v, &mut methods);
+        }
+        // A function field read (`b.f`) is checked by name only: a method value that went
+        // through a field isn't followed (#746's provenance follow-up), and its type alone
+        // would refuse every function field of a `this`-reading method's type.
+        // A direct read of a method (`g.greet`, also in `?:` / `||`) is checked by that method's
+        // name, which says exactly what is read; the type is for a method renamed through a
+        // variable or a parameter.
+        let field = matches!(h.kind, hir::ExprKind::Field { .. });
+        let direct = v.is_some_and(only_member_reads);
+        let sig = if field || direct {
+            None
+        } else {
+            self.fn_sig(h.ty)
+        };
         let r = crate::iface_method_values::StoredRead {
             name: name.name.clone(),
             read,
             span,
+            methods,
+            sig,
+            dynamic,
         };
         self.cx.object_impls.method_values.reads.push(r);
     }
@@ -222,6 +258,28 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// Is a value of type `t` an `any` or a type parameter's, which may hold a function?
+    fn may_be_any_fn(&self, t: TyId) -> bool {
+        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        self.cx.dynamic(t) == Some(crate::any::Dynamic::Any)
+            || matches!(self.cx.ty.kind(t), TyKind::Param(_))
+    }
+
+    /// The parameter and result types of a function value of type `t` (or `t | undefined`).
+    fn fn_sig(&self, t: TyId) -> Option<(Vec<TyId>, TyId)> {
+        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        match self.cx.ty.kind(t) {
+            TyKind::FnPtr { params, ret, .. } => Some((params.clone(), *ret)),
+            &TyKind::Closure(d) => match &self.cx.info[d.0 as usize] {
+                crate::defs::DefInfo::Fn(f) => {
+                    Some((f.params.iter().map(|p| p.ty).collect(), f.ret))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Is a value of type `t` a function, or may it be one (`F | undefined`)?
     fn fn_valued(&self, t: TyId) -> bool {
         let t = self.cx.ty.opt_payload(t).unwrap_or(t);
@@ -232,19 +290,91 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// Why a function stored as an object-literal property is refused (`crate::iface_method_values`):
+/// a method of that name may read `this` (the property's name, or the method the value reads),
+/// or one of that function type does.
+pub(crate) enum StoredWhy<'n> {
+    Named(&'n str),
+    Typed(&'n str),
+}
+
 /// The error for property `name` of an object literal, whose value (`read`, when that is a path)
-/// is a function not written in the literal, while a method named `name` may read `this`.
-pub(crate) fn stored_method_error(name: &str, read: Option<&str>, span: Span) -> Diagnostic {
+/// is a function not written in the literal, where a method that may read `this` may be (`why`).
+pub(crate) fn stored_method_error(
+    name: &str,
+    why: StoredWhy,
+    read: Option<&str>,
+    span: Span,
+) -> Diagnostic {
     let fix = match read {
         Some(read) => format!("write the function in the literal: `{name}: (...args) => {read}(...args)`, or a method `{name}(...) {{ ... }}`"),
         None => format!("write the function in the literal: `{name}: (...args) => ...`, or a method `{name}(...) {{ ... }}`"),
     };
+    let why = match why {
+        StoredWhy::Named(m) => format!("a method named `{m}` may use `this`"),
+        StoredWhy::Typed(m) => format!("it has the type of method `{m}`, which may use `this`"),
+    };
     Diagnostic::error(
-        format!("the value of property `{name}` is a function not written in the literal, and a method named `{name}` may use `this`, so it is not supported yet"),
+        format!("the value of property `{name}` is a function not written in the literal, and {why}, so it is not supported yet"),
         span,
     )
     .with_note(format!("Node calls it with the literal as `this` (`o.{name}()`), while Velt keeps the object a method read as a value was read from"))
     .with_note(fix)
+}
+
+/// The names of the methods `v` reads directly as its value (`g.greet`), also inside a wrapper
+/// that keeps the value: parentheses, `as`, `satisfies`, `!`, either arm of `?:`, either
+/// operand of `||` and `??`, and the right one of `&&`.
+fn read_methods(v: &ast::Expr, out: &mut Vec<String>) {
+    match &v.kind {
+        ast::ExprKind::Paren(x) | ast::ExprKind::NonNull(x) => read_methods(x, out),
+        ast::ExprKind::Cast { expr, .. } => read_methods(expr, out),
+        ast::ExprKind::Cond { then, els, .. } => {
+            read_methods(then, out);
+            read_methods(els, out);
+        }
+        ast::ExprKind::Binary { op, lhs, rhs } => match op {
+            ast::BinaryOp::Or | ast::BinaryOp::Nullish => {
+                read_methods(lhs, out);
+                read_methods(rhs, out);
+            }
+            ast::BinaryOp::And => read_methods(rhs, out),
+            _ => {}
+        },
+        ast::ExprKind::Call { callee, args, .. }
+            if args.len() == 1
+                && matches!(&callee.kind, ast::ExprKind::Ident(f) if f.name == velt_common::std_hook!(satisfies)) =>
+        {
+            read_methods(&args[0], out)
+        }
+        ast::ExprKind::Member { prop, .. } => out.push(prop.name.clone()),
+        _ => {}
+    }
+}
+
+/// Is each value `v` may give a member read (`g.greet`), through the wrappers `read_methods`
+/// looks through?
+fn only_member_reads(v: &ast::Expr) -> bool {
+    match &v.kind {
+        ast::ExprKind::Paren(x) | ast::ExprKind::NonNull(x) => only_member_reads(x),
+        ast::ExprKind::Cast { expr, .. } => only_member_reads(expr),
+        ast::ExprKind::Cond { then, els, .. } => only_member_reads(then) && only_member_reads(els),
+        ast::ExprKind::Binary { op, lhs, rhs } => match op {
+            ast::BinaryOp::Or | ast::BinaryOp::Nullish => {
+                only_member_reads(lhs) && only_member_reads(rhs)
+            }
+            ast::BinaryOp::And => only_member_reads(rhs),
+            _ => false,
+        },
+        ast::ExprKind::Call { callee, args, .. }
+            if args.len() == 1
+                && matches!(&callee.kind, ast::ExprKind::Ident(f) if f.name == velt_common::std_hook!(satisfies)) =>
+        {
+            only_member_reads(&args[0])
+        }
+        ast::ExprKind::Member { .. } => true,
+        _ => false,
+    }
 }
 
 /// Is `v` a function written in place: an arrow or a function expression?
