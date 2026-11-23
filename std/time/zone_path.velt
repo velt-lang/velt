@@ -1,5 +1,6 @@
-// velt/time (internal): the zone id in a path to a zone file, for `Date`'s zone name
-// (zone_name.velt, zone_id_posix.velt): `/usr/share/zoneinfo/Europe/Berlin` is `Europe/Berlin`.
+// velt/time (internal): the zone id in the path `/etc/localtime` links to, for `Date`'s zone name
+// (zone_id_posix.velt): `/usr/share/zoneinfo/Europe/Berlin` is `Europe/Berlin`. `TZ` is no path
+// to ICU (zone_name.velt's `tzZoneId`).
 
 /**
  * The zone id in `path`, after its last `zoneinfo/` and, as ICU reads it, a `posix/` or `right/`

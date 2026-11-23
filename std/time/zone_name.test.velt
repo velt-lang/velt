@@ -4,8 +4,15 @@
 // zone of the machine that runs them: each case is Node's `toString()` name at an instant with
 // `TZ` set to the zone, and its offset at the instant's equivalent time (from Node too).
 import { describe, expect, it } from "velt/test";
-import { equivalentTime, nameAt, offsetName, zoneRecord } from "velt/time/zone_name";
-import { ZONE_IDS, ZONE_RECORD } from "velt/time/zone_names_table";
+import {
+  entry,
+  equivalentTime,
+  nameAt,
+  offsetName,
+  tzZoneId,
+  zoneRecord,
+} from "velt/time/zone_name";
+import { ZONE_IDS, ZONE_RECORD, ZONE_RECORD_WIDTH } from "velt/time/zone_names_table";
 import { zoneinfoId } from "velt/time/zone_path";
 
 /** `[zone, t, offset in seconds at equivalentTime(t), Node's name]`. */
@@ -73,11 +80,25 @@ describe("velt/time's zone names", () => {
     expect(offsetName(-2205)).toBe("GMT-00:36:45");
   });
 
+  it("reads TZ's forms as ICU does", () => {
+    // Named by Node 22: a `:`, a `posix/` or `right/` before the id.
+    expect(tzZoneId("posix/Asia/Kolkata")).toBe("Asia/Kolkata");
+    expect(tzZoneId("right/UTC")).toBe("UTC");
+    expect(tzZoneId(":posix/Europe/Paris")).toBe("Europe/Paris");
+    expect(tzZoneId(":Europe/Berlin")).toBe("Europe/Berlin");
+    expect(zoneRecord(tzZoneId("right/Europe/Berlin"))).toBe(zoneRecord("Europe/Berlin"));
+    // The offset form in Node 22: a path is no id.
+    expect(zoneRecord(tzZoneId("/usr/share/zoneinfo/Europe/Berlin"))).toBe(-1);
+    expect(zoneRecord(tzZoneId(":/usr/share/zoneinfo/Europe/Berlin"))).toBe(-1);
+  });
+
   it("finds every id's record", () => {
     const ids = ZONE_IDS.slice(1, (ZONE_IDS.length as i64) - 1).split("\n");
-    expect(ids.length).toBe(ZONE_RECORD.length);
+    expect(ids.length as i64).toBe((ZONE_RECORD.length as i64) / ZONE_RECORD_WIDTH);
     for (const [i, id] of ids.entries()) {
-      expect(`${id}: ${zoneRecord(id)}`).toBe(`${id}: ${ZONE_RECORD[i]}`);
+      expect(`${id}: ${zoneRecord(id)}`).toBe(
+        `${id}: ${entry(ZONE_RECORD, ZONE_RECORD_WIDTH, i as i64)}`,
+      );
     }
   });
 

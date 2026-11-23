@@ -16,19 +16,25 @@ import { processEnv } from "velt/lang/hooks/process";
 import { daysFromCivil, floorDiv, floorMod, isLeapYear, MS_PER_DAY, partsOf } from "./civil";
 import { pad } from "./format";
 import { localOffset } from "./local";
-import { zoneinfoId } from "./zone_path";
 import {
   NAME_AT,
+  NAME_AT_WIDTH,
   NAME_SLOTS,
   NAMES,
   OFFSET_BIAS,
   PAIRS,
+  PAIRS_WIDTH,
   RECORD_RUNS,
+  RECORD_RUNS_WIDTH,
   RUN_PAIRS,
+  RUN_PAIRS_WIDTH,
   RUN_START,
+  RUN_START_WIDTH,
   ZONE_AT,
+  ZONE_AT_WIDTH,
   ZONE_IDS,
   ZONE_RECORD,
+  ZONE_RECORD_WIDTH,
 } from "./zone_names_table";
 
 /** V8's last instant it asks the zone about as it is (`kMaxEpochTimeInMs`, 2038-01-19). */
@@ -57,11 +63,14 @@ function systemRecord(): i32 {
   return record;
 }
 
-/** The record of the zone `TZ` names (an empty or POSIX `TZ` is one the table doesn't know). */
-function tzRecord(tz: string): i32 {
-  // POSIX allows a leading `:`; a path names the zone after its `zoneinfo/`.
+/**
+ * The zone id in `TZ`, as ICU reads it: after an optional `:` (POSIX's), and after a `posix/` or
+ * `right/` (tzdata's copies of each zone). A path is no id (`TZ=/usr/share/zoneinfo/…`), nor is
+ * an empty or POSIX `TZ`: the table doesn't know them.
+ */
+export function tzZoneId(tz: string): string {
   const zone = tz.startsWith(":") ? tz.slice(1) : tz;
-  return zoneRecord(zoneinfoId(zone) ?? zone) as i32;
+  return zone.startsWith("posix/") || zone.startsWith("right/") ? zone.slice(6) : zone;
 }
 
 /** The record of the zone local time is in now: `TZ`'s where local time follows it, else the system's. */
@@ -73,11 +82,25 @@ function processRecord(): i32 {
     }
   }
   const tz = processEnv("TZ");
-  const record = tz !== undefined && tzHonoured(tz) ? tzRecord(tz) : systemRecord();
+  const record =
+    tz !== undefined && tzHonoured(tz) ? zoneRecord(tzZoneId(tz)) as i32 : systemRecord();
   if (tzReadOnce()) {
     FIRST.store(record, "relaxed");
   }
   return record;
+}
+
+/**
+ * Entry `i` of a table of numbers (zone_names_table.velt): `width` digits of six bits from
+ * `i * width` on, digit `d` the character `35 + d`, one more from `\` (92) on.
+ */
+export function entry(table: string, width: i64, i: i64): i64 {
+  let v: i64 = 0;
+  for (let k: i64 = 0; k < width; k++) {
+    const c = table.charCodeAt(i * width + k);
+    v = v * 64 + (c - 35 - (c > 92 ? 1 : 0));
+  }
+  return v;
 }
 
 /** The table's record of zone `id`, or -1 for a zone it doesn't know. */
@@ -91,16 +114,16 @@ export function zoneRecord(id: string): i64 {
   }
   // The id's index: the one whose `\n` is at `at`.
   let lo: i64 = 0;
-  let hi: i64 = ZONE_AT.length as i64;
+  let hi: i64 = (ZONE_AT.length as i64) / ZONE_AT_WIDTH;
   while (hi - lo > 1) {
     const mid = (lo + hi) / 2;
-    if ((ZONE_AT[mid] as i64) <= at) {
+    if (entry(ZONE_AT, ZONE_AT_WIDTH, mid) <= at) {
       lo = mid;
     } else {
       hi = mid;
     }
   }
-  return ZONE_RECORD[lo] as i64;
+  return entry(ZONE_RECORD, ZONE_RECORD_WIDTH, lo);
 }
 
 /**
@@ -137,17 +160,17 @@ export function nameAt(record: i64, e: i64, offset: i64): string {
     return offsetName(offset);
   }
   const secs = floorDiv(e, 1000);
-  let run = RECORD_RUNS[record] as i64;
-  const end = RECORD_RUNS[record + 1] as i64;
-  while (run + 1 < end && (RUN_START[run + 1] as i64) <= secs) {
+  let run = entry(RECORD_RUNS, RECORD_RUNS_WIDTH, record);
+  const end = entry(RECORD_RUNS, RECORD_RUNS_WIDTH, record + 1);
+  while (run + 1 < end && entry(RUN_START, RUN_START_WIDTH, run + 1) <= secs) {
     run += 1;
   }
-  const last = RUN_PAIRS[run + 1] as i64;
-  for (let i = RUN_PAIRS[run] as i64; i < last; i++) {
-    const word = PAIRS[i] as i64;
+  const last = entry(RUN_PAIRS, RUN_PAIRS_WIDTH, run + 1);
+  for (let i = entry(RUN_PAIRS, RUN_PAIRS_WIDTH, run); i < last; i++) {
+    const word = entry(PAIRS, PAIRS_WIDTH, i);
     if (word / NAME_SLOTS - OFFSET_BIAS == offset) {
       const n = word % NAME_SLOTS;
-      return NAMES.slice(NAME_AT[n] as i64, NAME_AT[n + 1] as i64);
+      return NAMES.slice(entry(NAME_AT, NAME_AT_WIDTH, n), entry(NAME_AT, NAME_AT_WIDTH, n + 1));
     }
   }
   return offsetName(offset);

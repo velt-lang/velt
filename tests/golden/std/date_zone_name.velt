@@ -6,7 +6,8 @@
 // tells the zone it runs in by its offsets in January and July 2026 and checks the names against
 // Node's for that zone: UTC (CI's runners, and Windows, where local time follows only a fixed
 // `TZ`, so the run with TZ=Europe/Berlin is the system zone's there too) and Central European
-// Time (that run on macOS and Linux), with a name of zero offset also "GMT+00:00", what Node
+// Time (that run on macOS and Linux; from 1970 to 2038 summer or standard time as the offset the
+// OS gives the instant), with a name of zero offset also "GMT+00:00", what Node
 // prints for a zone it can't name (`TZ=""`, `TZ=Foo/Bar`). In any other zone it checks only the
 // names' form. Last, it sets `TZ` and checks that the name follows the new zone. The
 // output is the same in every zone; the expected output is Node's, from a twin of this program
@@ -43,7 +44,8 @@ function main() {
   const utc = winter == 0 && summer == 0;
   const std = "Central European Standard Time";
   const dst = "Central European Summer Time";
-  // Node's names in Central European Time, instant by instant.
+  // Node's names in Central European Time, instant by instant, outside 1970..2038: there V8 asks
+  // about the equivalent year's day, whose offset every OS has from today's rules.
   const central = [std, dst, std, dst, std, dst, dst, dst];
   const first = nameIn(new Date(ts[0]).toString());
   for (const [i, t] of ts.entries()) {
@@ -51,7 +53,12 @@ function main() {
     const s = d.toString();
     const name = nameIn(s);
     let asNode = name.length > 0;
-    if (cet) {
+    if (cet && t >= 0 && t <= 2147483647000) {
+      // Inside 1970..2038 the name follows the instant's own offset, which the OS's rules give:
+      // Windows applies today's daylight-saving rules to 1975, +02:00 in July, where Node's
+      // tzdata has +01:00. Summer time is +02:00 either way.
+      asNode = name == (d.getTimezoneOffset() == -120 ? dst : std);
+    } else if (cet) {
       asNode = name == central[i];
     } else if (utc) {
       // `Etc/UTC` and its aliases are "Coordinated Universal Time", `GMT` and its aliases

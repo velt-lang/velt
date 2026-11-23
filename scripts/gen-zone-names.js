@@ -28,6 +28,13 @@
 // `(GMT-03:00)`). The worker checks the table against `toString()` inside the range and, through
 // the equivalent time, at instants from the year 1000 to 9999.
 //
+// `toString()` runs the zone ICU detects from `TZ`, which depends on the OS: Node on Linux runs
+// `TZ=Eire` at +01:00 all year. So each sample's offset is checked against
+// `Intl.DateTimeFormat`'s for the id, which is the same everywhere; a zone where they differ
+// takes the record of the zone Intl resolves its id to (`Eire` takes `Europe/Dublin`'s, which on
+// macOS is the record `Eire` has itself), and the table is the same on every OS. The numbers are
+// written as strings of digits (`digits`), cheaper to compile than array literals.
+//
 // The zone ids are Node's own (`Intl.supportedValuesOf("timeZone")`) and every alias of CLDR's
 // bcp47/timezone.xml Node accepts (`US/Eastern`, `GMT0`, `EST5EDT`); Windows' registry keys map
 // to ids through CLDR's windowsZones.xml (territory 001). Both come from the CLDR release Node's
@@ -121,6 +128,24 @@ function sample(t) {
 
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 
+/**
+ * The offset in seconds `Intl.DateTimeFormat` gives zone `TZ` at `t`: ICU's zone of that id,
+ * the same on every OS, where `toString()` runs the zone ICU detected from `TZ`, which isn't
+ * (Node on Linux runs `TZ=Eire` at +01:00 all year).
+ */
+let intlFormat = null;
+function intlOffset(t) {
+  intlFormat ??= new Intl.DateTimeFormat("en-US", { timeZone: ZONE_TZ, timeZoneName: "longOffset" });
+  const s = intlFormat.formatToParts(t).find((p) => p.type === "timeZoneName").value;
+  const m = /^GMT(?:([+-])(\d\d):(\d\d)(?::(\d\d))?)?$/.exec(s);
+  if (!m) throw new Error(`unexpected offset ${s}`);
+  const secs = m[1] ? +m[2] * 3600 + +m[3] * 60 + +(m[4] ?? 0) : 0;
+  return m[1] === "-" ? -secs : secs;
+}
+
+/** Whether every sample's `toString()` offset was `intlOffset`'s. */
+let agrees = true;
+
 /** Worker: the segments of this process' zone, `[start ms, offset, name]`, the first from FROM. */
 function segmentsHere() {
   let prevT = FROM;
@@ -129,6 +154,7 @@ function segmentsHere() {
   for (let t = FROM + STEP; prevT < TO; t += STEP) {
     if (t > TO) t = TO;
     const cur = sample(t);
+    agrees &&= cur[0] === intlOffset(t);
     if (same(cur, prev)) {
       prevT = t;
       continue;
@@ -213,7 +239,8 @@ if (process.argv[2] === "--worker") {
   const segs = segmentsHere();
   const runs = runsOf(segs);
   check(runs, segs);
-  process.stdout.write(JSON.stringify({ zone: Intl.DateTimeFormat().resolvedOptions().timeZone, runs }));
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  process.stdout.write(JSON.stringify({ zone, runs, agrees }));
   process.exit(0);
 }
 
@@ -273,7 +300,7 @@ function zoneRuns(id) {
       if (r.zone !== zone && !/^[+-]\d\d:\d\d$/.test(r.zone)) {
         return reject(new Error(`${id}: Node runs it as ${r.zone}, not ${zone}`));
       }
-      resolve(r.runs);
+      resolve({ runs: r.runs, agrees: r.agrees, canonical: zone });
     });
   });
 }
@@ -290,6 +317,22 @@ async function main() {
       }
     }),
   );
+
+  // A zone whose `toString()` offsets aren't Intl's for its id ran as another zone ICU detected
+  // from `TZ`, which depends on the OS: it takes the record of the zone Intl resolves the id to,
+  // which must have agreed itself. So the table is the same on every OS.
+  const runsOfId = new Map(ids.map((id, i) => [id, results[i]]));
+  for (const [i, r] of results.entries()) {
+    if (r.agrees) continue;
+    const canonical = runsOfId.get(r.canonical);
+    if (!canonical || !canonical.agrees) {
+      throw new Error(`${ids[i]}: its offsets aren't Intl's, nor are ${r.canonical}'s`);
+    }
+    console.log(`${ids[i]}: toString()'s offsets aren't Intl's; it takes ${r.canonical}'s names`);
+  }
+  for (const [i, r] of results.entries()) {
+    results[i] = r.agrees ? r.runs : runsOfId.get(r.canonical).runs;
+  }
 
   // Names, records (a zone's runs; zones with the same runs share one) and their indexes.
   const names = [];
@@ -342,13 +385,13 @@ async function main() {
   writeWindows(cldr.windows);
   const bytes =
     names.join("").length +
-    2 * nameAt.length +
-    ids.join("\n").length +
-    4 * zoneRecord.length +
-    4 * recordRuns.length +
-    4 * runStart.length +
-    4 * runPairs.length +
-    4 * pairs.length;
+    3 * nameAt.length +
+    ids.join("\n").length + 3 * ids.length +
+    2 * zoneRecord.length +
+    2 * recordRuns.length +
+    6 * runStart.length +
+    2 * runPairs.length +
+    5 * pairs.length;
   console.log(
     `${ids.length} zone ids, ${records.length} records, ${runStart.length} runs, ` +
       `${pairs.length} pairs, ${names.length} names: about ${bytes} bytes of data`,
@@ -359,8 +402,6 @@ async function main() {
 const OFFSET_BIAS = 86400;
 const NAME_SLOTS = 1024;
 
-/** `items` as lines of a Velt array literal, one a line, as `velt fmt` writes them. */
-const arrayLines = (items) => items.map((n) => `  ${n},`);
 
 /** A string literal of `text` split over lines (`+`), each at most about 90 characters. */
 function stringLines(text) {
@@ -389,58 +430,74 @@ function zoneAt(ids) {
     at.push(p);
     p += id.length + 1;
   }
-  if (p >= 65536) throw new Error("ZONE_IDS outgrew u16 positions");
+  if (p >= 64 ** 3) throw new Error("ZONE_IDS outgrew three digits of position");
   return at;
+}
+
+/**
+ * `values` as one string of `width` digits each, six bits a digit, most significant first: digit
+ * `d` is the character `35 + d`, one more from `\` (92) on, so no digit needs an escape (zone_name.velt's
+ * `entry` reads them). A string literal is one token for the compiler, where an array literal of
+ * as many numbers is that many expressions to parse, check and lower.
+ */
+function digits(values, width) {
+  let s = "";
+  for (const v of values) {
+    if (!Number.isInteger(v) || v < 0 || v >= 64 ** width) throw new Error(`${v} needs more than ${width} digits`);
+    for (let k = width - 1; k >= 0; k--) {
+      const d = Math.floor(v / 64 ** k) % 64;
+      const c = 35 + d;
+      s += String.fromCharCode(c >= 92 ? c + 1 : c);
+    }
+  }
+  return s;
+}
+
+/** An exported table of numbers: its digits' width and its string. */
+function numbers(name, doc, values, width) {
+  return [
+    `/** ${doc} */`,
+    `export const ${name}_WIDTH: i64 = ${width};`,
+    `export const ${name}: string =`,
+    ...stringLines(digits(values, width)),
+    "",
+  ];
 }
 
 function writeTable(ids, zoneRecord, recordRuns, runStart, runPairs, pairs, names, nameAt) {
   const lines = header("the long zone names of `Date`'s `toString()`", "zone_name.velt");
   lines.push(
+    "// The tables of numbers are strings of digits, each entry `_WIDTH` of them: six bits a digit,",
+    "// most significant first, digit `d` the character `35 + d`, one more from `\\` (92) on.",
+    "",
     "/** Every zone id `TZ` can name, sorted, each between two `\\n`s. */",
     "export const ZONE_IDS: string =",
     ...stringLines(`\n${ids.join("\n")}\n`),
     "",
-    "/** Per zone id, in `ZONE_IDS`' order: where its `\\n` before it is in `ZONE_IDS`. */",
-    "export const ZONE_AT: u16[] = [",
-    ...arrayLines(zoneAt(ids)),
-    "];",
-    "",
-    "/** Per zone id, in `ZONE_IDS`' order: its record. */",
-    "export const ZONE_RECORD: u16[] = [",
-    ...arrayLines(zoneRecord),
-    "];",
-    "",
-    "/** Per record: its first run in `RUN_START`; one more entry, the end. */",
-    "export const RECORD_RUNS: u32[] = [",
-    ...arrayLines(recordRuns),
-    "];",
-    "",
-    "/** Per run: the second it starts at (a record's first run: 0, 1970-01-01). */",
-    "export const RUN_START: u32[] = [",
-    ...arrayLines(runStart),
-    "];",
-    "",
-    "/** Per run: its first pair in `PAIRS`; one more entry, the end. */",
-    "export const RUN_PAIRS: u32[] = [",
-    ...arrayLines(runPairs),
-    "];",
-    "",
-    `/** The pairs: (offset in seconds + ${OFFSET_BIAS}) * ${NAME_SLOTS} + the name's index. */`,
+    ...numbers("ZONE_AT", "Per zone id, in `ZONE_IDS`' order: where the `\\n` before it is.", zoneAt(ids), 3),
+    ...numbers("ZONE_RECORD", "Per zone id, in `ZONE_IDS`' order: its record.", zoneRecord, 2),
+    ...numbers(
+      "RECORD_RUNS",
+      "Per record: its first run in `RUN_START`; one more entry, the end.",
+      recordRuns,
+      2,
+    ),
+    ...numbers(
+      "RUN_START",
+      "Per run: the second it starts at (a record's first run: 0, 1970-01-01).",
+      runStart,
+      6,
+    ),
+    ...numbers("RUN_PAIRS", "Per run: its first pair in `PAIRS`; one more entry, the end.", runPairs, 2),
+    `/** The pairs: (offset in seconds + OFFSET_BIAS) * NAME_SLOTS + the name's index. */`,
     `export const OFFSET_BIAS: i64 = ${OFFSET_BIAS};`,
     `export const NAME_SLOTS: i64 = ${NAME_SLOTS};`,
-    "export const PAIRS: u32[] = [",
-    ...arrayLines(pairs),
-    "];",
-    "",
-    "/** The names, one after another; name `i` is `NAMES.slice(NAME_AT[i], NAME_AT[i + 1])`. */",
+    ...numbers("PAIRS", "The pairs, run by run.", pairs, 5),
+    "/** The names, one after another; name `i` runs from `NAME_AT`'s entry `i` to entry `i + 1`. */",
     "export const NAMES: string =",
     ...stringLines(names.join("")),
     "",
-    "/** Where each name starts in `NAMES`; one more entry, the end. */",
-    "export const NAME_AT: u16[] = [",
-    ...arrayLines(nameAt),
-    "];",
-    "",
+    ...numbers("NAME_AT", "Where each name starts in `NAMES`; one more entry, the end.", nameAt, 3),
   );
   const out = path.join(ROOT, "std", "time", "zone_names_table.velt");
   fs.writeFileSync(out, lines.join("\n"));
