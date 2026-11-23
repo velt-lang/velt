@@ -444,6 +444,7 @@ pub(crate) fn declare_all<M: Module>(
             velt_vir::math::MathOp::of_extern(e).is_some_and(|op| !op.has_runtime_function());
         if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some()
             || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
+            || velt_vir::field::FieldOp::of_symbol(&e.symbol).is_some()
             || inline_math
         {
             externs.push(None);

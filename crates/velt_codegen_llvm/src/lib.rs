@@ -40,6 +40,8 @@ mod clang_run;
 mod clang_search;
 mod debug;
 mod eh;
+mod field;
+mod field25519;
 mod function;
 mod half;
 mod inlining;

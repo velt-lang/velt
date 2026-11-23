@@ -31,10 +31,30 @@ fn check_simd_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     }
 }
 
-/// Whether a symbol names an operation backends emit inline (SIMD, atomics): no function
-/// exists behind it, so it is only ever called directly.
+/// Whether a symbol names an operation backends emit inline (SIMD, atomics, field arithmetic): no
+/// function exists behind it, so it is only ever called directly.
 pub(crate) fn inline_extern(symbol: &str) -> bool {
-    symbol.starts_with("velt_atomic_") || symbol.starts_with("velt_simd_")
+    symbol.starts_with("velt_atomic_")
+        || symbol.starts_with("velt_simd_")
+        || symbol.starts_with("velt_field_")
+}
+
+/// A `velt_field_*` extern likewise (`crate::field`): an operation with that operation's
+/// signature.
+fn check_field_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
+    if !e.symbol.starts_with("velt_field_") {
+        return;
+    }
+    match crate::field::FieldOp::of_symbol(&e.symbol) {
+        None => errs.push(format!("extern#{i} {}: not a field operation", e.symbol)),
+        Some(op) if op.signature() != (e.params.clone(), e.ret) || e.noreturn => {
+            errs.push(format!(
+                "extern#{i} {}: signature differs from the field operation's",
+                e.symbol
+            ))
+        }
+        Some(_) => {}
+    }
 }
 
 /// A `velt_atomic_*` extern likewise (`crate::atomic`): an operation backends emit inline.
@@ -89,6 +109,7 @@ fn verify_program_on(p: &Program, jobs: usize) -> Result<(), Vec<String>> {
         }
         check_simd_extern(i, e, &mut errs);
         check_atomic_extern(i, e, &mut errs);
+        check_field_extern(i, e, &mut errs);
         check_math_extern(i, e, &mut errs);
     }
     check_symbols(p, &mut errs);
@@ -131,6 +152,7 @@ pub(crate) fn verify_changed(p: &Program, changed: &[usize]) -> Result<(), Vec<S
         }
         check_simd_extern(i, e, &mut errs);
         check_atomic_extern(i, e, &mut errs);
+        check_field_extern(i, e, &mut errs);
         check_math_extern(i, e, &mut errs);
     }
     check_symbols(p, &mut errs);

@@ -171,6 +171,7 @@ pub mod arch;
 pub mod atomic;
 pub mod c_abi;
 pub mod eh;
+pub mod field;
 pub mod fingerprint;
 pub mod heap;
 mod lower;
