@@ -3,9 +3,10 @@
 //! `std/<module>/<name>.test.velt` files (docs/internals/design/std-layout.md §9). Each file runs
 //! with `velt test <file>` in a debug build that also checks that its process frees every block
 //! it allocates (`VELT_RC_STATS=1`, as the goldens' `// check: no leaks`) and uses the checking
-//! allocator (`VELT_RT_DEBUG_ALLOC=1`, as the goldens' debug runs), and in a release build. Each
-//! run has a temporary directory of its own for its build output. A file where no test ran fails
-//! too. The files are split into [`SHARDS`] tests (`std_modules_pass_their_tests_shard_<k>`).
+//! allocator (`VELT_RT_DEBUG_ALLOC=1`, as the goldens' debug runs), and in a release build, with
+//! `--no-cache` (every test runs). The runs of one shard in one mode share a temporary directory
+//! for their build output (see [`Work`]). A file where no test ran fails too. The files are split
+//! into [`SHARDS`] tests (`std_modules_pass_their_tests_shard_<k>`).
 //! CONTRIBUTING.md "Golden or `velt test`?" says which tests go here.
 //!
 //! Filter with `VELT_STD_TESTS=<module>` (several separated by `,`; `std` names the white-box
@@ -58,13 +59,50 @@ fn declares_tests(file: &Path) -> bool {
     })
 }
 
+/// Where the `velt test` runs of one shard work. A run puts its runner (the program that starts
+/// each test file's process, the same for every file) and its harnesses in the `target/` of the
+/// package of the file, or else of its working directory, and builds nothing again that its
+/// build stamp says is unchanged. So the runs of a shard share a working directory per mode: the
+/// white-box tests build the runner once per shard and mode instead of once per file, which
+/// cost about half of each file's release run (#3635). The modes don't share one, so a file's
+/// debug and release runs, which may run at once, never share a working directory.
+///
+/// `VELT_HOME` is part of what the build stamp compares, so every run uses the same one: the
+/// runner of `tests/std`'s package, which goes in `tests/std/target/`, is then built once for all
+/// shards instead of once per run (with `--no-cache`, a run still runs every test).
+struct Work {
+    dir: test_dir::TestDir,
+    home: PathBuf,
+}
+
+impl Work {
+    fn new() -> Work {
+        let dir = test_dir::TestDir::new();
+        for mode in ["debug", "release"] {
+            std::fs::create_dir(dir.path().join(mode)).expect("work dir");
+        }
+        let home = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std_tests_home");
+        std::fs::create_dir_all(&home).expect("VELT_HOME");
+        Work { dir, home }
+    }
+
+    /// The working directory of the runs in debug or `release`.
+    fn dir(&self, release: bool) -> PathBuf {
+        let mode = if release { "release" } else { "debug" };
+        self.dir.path().join(mode)
+    }
+
+    fn home(&self) -> &Path {
+        &self.home
+    }
+}
+
 /// `velt test` of `dir`, a test file or a directory (`--release`, or a debug build counting
 /// blocks): `None` if all its tests passed and it ran at least one (or none, for a test file
 /// that declares none, [`declares_tests`]), else the report.
-fn run_tests(dir: &Path, release: bool) -> Option<String> {
-    let tmp = test_dir::TestDir::new();
+fn run_tests(dir: &Path, release: bool, work: &Work) -> Option<String> {
     let mut command = no_window::command(env!("CARGO_BIN_EXE_velt"));
-    command.arg("test").arg(dir);
+    command.arg("test").arg(dir).arg("--no-cache");
     if release {
         // No block counters there: an exported `VELT_RC_STATS=1` would fail every file.
         command.arg("--release").env_remove("VELT_RC_STATS");
@@ -77,9 +115,9 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
         }
     }
     let out = command
-        .current_dir(tmp.path())
-        .env("VELT_HOME", tmp.path().join("home"))
-        .env("VELT_REGISTRY", tmp.path().join("home").join("registry"))
+        .current_dir(work.dir(release))
+        .env("VELT_HOME", work.home())
+        .env("VELT_REGISTRY", work.home().join("registry"))
         .env_remove("CLICOLOR_FORCE")
         .env("NO_COLOR", "1")
         .output()
@@ -211,6 +249,7 @@ fn std_shard(shard: usize) {
         .into_iter()
         .flat_map(|f| [false, true].map(|release| (f.clone(), release)))
         .collect();
+    let work = Work::new();
     let next = std::sync::atomic::AtomicUsize::new(0);
     let failures = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|s| {
@@ -220,7 +259,7 @@ fn std_shard(shard: usize) {
                 let Some((file, release)) = runs.get(i) else {
                     break;
                 };
-                if let Some(report) = run_tests(file, *release) {
+                if let Some(report) = run_tests(file, *release, &work) {
                     failures.lock().unwrap().push(report);
                 }
             });
