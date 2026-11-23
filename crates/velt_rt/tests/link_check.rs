@@ -27,7 +27,6 @@ void* velt_rt_alloc(uint64_t, uint64_t);
 void velt_rt_free(void*, uint64_t, uint64_t);
 void velt_rt_panic(const VeltStr*);
 void velt_rt_exit(int32_t);
-int64_t velt_rt_pow_i64(int64_t, int64_t);
 // An ASCII literal: `w1` packs the UTF-16 length (high half) and the byte length (low half).
 #define LIT(s) { (uint8_t*)(s), ((uint64_t)(sizeof(s) - 1) << 32) | (sizeof(s) - 1), 0 }
 // An integer's decimal digits through `velt_rt_write_str`, as std's `intWrite` writes them (the
@@ -55,8 +54,7 @@ int32_t velt_main(void) {
     write_i64(1, -42); velt_rt_write_byte(1, ' ');
     write_u64(1, 18446744073709551615ull); velt_rt_write_byte(1, ' ');
     velt_rt_write_str(1, &f);
-    velt_rt_write_bool(1, 1); velt_rt_write_byte(1, ' ');
-    write_i64(1, velt_rt_pow_i64(2, 62)); velt_rt_write_byte(1, '\n');
+    velt_rt_write_bool(1, 1); velt_rt_write_byte(1, '\n');
     VeltStr g = LIT("1.5e-7");
     velt_rt_write_str(1, &g); velt_rt_write_byte(1, '\n');
     void* p = velt_rt_alloc(1024, 16);
@@ -258,7 +256,7 @@ fn staticlib_links_and_runs() {
     let out = run(&exe);
     assert_eq!(
         text(&out.stdout),
-        "Hello, worldworld\n-42 18446744073709551615 0.30000000000000004 1e+21 true 4611686018427387904\n1.5e-7\n"
+        "Hello, worldworld\n-42 18446744073709551615 0.30000000000000004 1e+21 true\n1.5e-7\n"
     );
     assert_eq!(text(&out.stderr), "to stderr\n");
     assert_eq!(out.status.code(), Some(3));

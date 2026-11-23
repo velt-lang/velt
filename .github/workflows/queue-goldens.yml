@@ -209,7 +209,8 @@ jobs:
         shard: ${{ fromJSON(inputs.wasm_shards) }}
     runs-on: ${{ inputs.os }}
     # About 12 minutes on Windows (two of the test's 8 parts of about 330 s, side by side), plus
-    # setup; macOS runs four parts per shard on 3 vCPUs.
+    # setup; macOS runs two parts per shard on 3 vCPUs too (with four, its test runs took 25
+    # minutes and the slower job reached this limit, 2026-11-22).
     timeout-minutes: 40
     permissions:
       contents: read

@@ -1,0 +1,24 @@
+// `return a`, `a` an `any` holding a promise, from an async function whose result is
+// `Promise<void>`: JavaScript adopts it (the function rejects with the promise's reason), and
+// Velt doesn't yet (#3475), so it stops with a TypeError rather than dropping the promise. A
+// value that is no promise is dropped, as `return` of it does in Node.
+async function fails(): Promise<number> {
+  throw new Error("void-rejects");
+}
+
+async function f(held: boolean): Promise<void> {
+  const a: any = held ? fails() : 5;
+  return a;
+}
+
+async function main(): Promise<void> {
+  await f(false);
+  console.log("resolved");
+  try {
+    await f(true);
+    console.log("not reached");
+  } catch (e) {
+    console.log("caught", e instanceof Error ? e.message : e);
+  }
+}
+main();

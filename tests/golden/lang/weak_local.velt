@@ -1,0 +1,71 @@
+// check: no leaks
+// `weak` local variables (docs/internals/design/cycles.md "`weak T`"): a read gives the target,
+// or `null` once it was freed; the variable keeps nothing alive, so a temporary is gone at once; a
+// loop's variable, `let` without a value, `??=` and a variable across an `await`.
+class N {
+  d: i64;
+  parent: N | null = null;
+  constructor(d: i64) {
+    this.d = d;
+  }
+}
+
+function name(n: N | null): string {
+  return n === null ? "null" : `${n.d}`;
+}
+
+function basic(): void {
+  const a = new N(1);
+  const w: weak N | null = a;
+  console.log("basic", name(w), w?.d);
+}
+
+function gone(): N | null {
+  let w: weak N | null = null;
+  {
+    const t = new N(2);
+    w = t;
+    console.log("set", name(w));
+  }
+  console.log("after", name(w));
+  return w;
+}
+
+function temp(): void {
+  const w: weak N | null = new N(3);
+  console.log("temp", name(w));
+}
+
+function loop(): i64 {
+  const nodes = [new N(1), new N(2), new N(3)];
+  let sum: i64 = 0;
+  for (const n of nodes) {
+    const w: weak N | null = n;
+    sum += w?.d ?? 0;
+  }
+  return sum;
+}
+
+function uninit(): void {
+  let w: weak N | null;
+  console.log("uninit", name(w));
+  const b = new N(4);
+  w ??= b;
+  console.log("??=", name(w));
+}
+
+async function later(): Promise<string> {
+  const a = new N(5);
+  const w: weak N | null = a;
+  await Promise.resolve(0);
+  return name(w);
+}
+
+async function main() {
+  basic();
+  console.log("returned", name(gone()));
+  temp();
+  console.log("loop", loop());
+  uninit();
+  console.log("async", await later());
+}

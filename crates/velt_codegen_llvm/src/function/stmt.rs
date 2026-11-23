@@ -73,7 +73,8 @@ impl Emitter<'_> {
                     let (v, ty) = self.scalar(o)?;
                     args.push(format!("{} {v}", abi_type(ty)?));
                 }
-                // The runtime function for `pow` (declared: the verifier checks).
+                // An operation with no inline form would call its runtime function (declared:
+                // the verifier checks); every operation has one today.
                 let target = (self.math_target(*op)).unwrap_or_else(|| global_name(op.symbol()));
                 let ret = abi_ret(op.signature().1)?;
                 Val::Scalar(self.inst(format!("call {ret} {target}({})", args.join(", "))))

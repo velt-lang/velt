@@ -1,0 +1,25 @@
+// Promise types in a program that runs no async code (#924): no promise exists, so an `any`
+// converted to an optional promise is its nothing (or a TypeError for anything else), an
+// optional promise boxed is its nothing, and a union's promise member is never the one held.
+// Without the executor the promise's table can't be built; none of these needs it.
+type View = () => string;
+
+const none: any = null;
+const p = none as Promise<number> | null;
+console.log(p === null);
+
+function box<T>(x: T): unknown {
+  return x;
+}
+const unset: Promise<number> | undefined = undefined;
+console.log(box(unset) === undefined);
+
+function make(): View | Promise<View> {
+  return () => "made";
+}
+const held: unknown = make();
+console.log(held instanceof Promise, typeof held);
+const back = held as View | Promise<View>;
+if (typeof back === "function") {
+  console.log(back());
+}

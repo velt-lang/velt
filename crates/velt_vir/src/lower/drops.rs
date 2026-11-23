@@ -241,6 +241,10 @@ impl FnLower<'_, '_> {
         if self.info[id.0 as usize].cell {
             return self.release_cell(id);
         }
+        if let Some(read) = self.info[id.0 as usize].weak {
+            let place = self.local_place(id);
+            return self.weak_field_drop(place, read);
+        }
         let info = &self.info[id.0 as usize];
         let (ty, flag, state) = (info.ty, info.flag, info.state);
         let moved = info.moved_fields.clone();

@@ -1,0 +1,8 @@
+// An array replacer of `JSON.stringify` lists keys as strings or numbers (any number type, or a
+// union of both, #3328); an array of anything else is refused at compile time, as is a union
+// with another member.
+const o = { a: 1 };
+const flags: boolean[] = [true];
+console.log(JSON.stringify(o, flags));
+const some: (string | boolean)[] = ["a", false];
+console.log(JSON.stringify(o, some));
