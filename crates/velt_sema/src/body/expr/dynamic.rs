@@ -476,7 +476,7 @@ impl FnCx<'_, '_> {
         // object, where JavaScript keeps the one value (`utility_partial.rs`).
         if let Some(iface) = self.cx.partial_target(exp) {
             let f = self.cx.display(h.ty);
-            let d = self.cx.partial_limit_error(&f, iface, span);
+            let d = self.cx.partial_limit_error(&f, exp, iface, span);
             self.cx.error(d);
             return self.error_expr(span);
         }

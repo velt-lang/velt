@@ -173,16 +173,66 @@ impl Ctx<'_> {
         })
     }
 
-    /// The error for a value shown as `found` converted to `Partial<iface>` (module docs).
+    /// Type `t` as written, each `Partial<I>` made for an interface with methods shown so
+    /// (`Partial<Ctx>[]`, `() => Partial<Ctx>`, `Partial<Ctx> | undefined`), not as its object type.
+    pub(crate) fn partial_shown(&mut self, t: TyId, depth: u32) -> String {
+        if depth > 16 {
+            return self.display(t);
+        }
+        if let Some(&i) = self.objects.partial_types.get(&t) {
+            return format!("Partial<{}>", self.display(i));
+        }
+        if let Some(payload) = self.ty.opt_payload(t) {
+            if self.partial_target(payload).is_some() {
+                return format!("{} | undefined", self.partial_shown(payload, depth + 1));
+            }
+        }
+        if self.ty.is_readonly_array(t) {
+            let m = self.ty.mutable_twin(t);
+            if let Some(e) = self.ty.array_elem(m) {
+                return format!("readonly {}[]", self.partial_shown(e, depth + 1));
+            }
+        }
+        match self.ty.kind(t).clone() {
+            TyKind::Array(e) => format!("{}[]", self.partial_shown(e, depth + 1)),
+            TyKind::FnPtr { params, ret, .. } => {
+                let ps: Vec<String> = params.iter().map(|&p| self.display(p)).collect();
+                format!(
+                    "({}) => {}",
+                    ps.join(", "),
+                    self.partial_shown(ret, depth + 1)
+                )
+            }
+            _ => match self.union_members(t) {
+                Some(ms)
+                    if ms
+                        .iter()
+                        .any(|m| self.objects.partial_types.contains_key(m)) =>
+                {
+                    let shown: Vec<String> = ms
+                        .iter()
+                        .map(|&m| self.partial_shown(m, depth + 1))
+                        .collect();
+                    shown.join(" | ")
+                }
+                _ => self.display(t),
+            },
+        }
+    }
+
+    /// The error for a value shown as `found` converted to `expected`, which holds
+    /// `Partial<iface>` (module docs).
     pub(crate) fn partial_limit_error(
         &mut self,
         found: &str,
+        expected: TyId,
         iface: TyId,
         span: Span,
     ) -> Diagnostic {
         let i = self.display(iface);
+        let e = self.partial_shown(expected, 0);
         Diagnostic::error(
-            format!("a value of type `{found}` cannot convert to `Partial<{i}>` yet"),
+            format!("a value of type `{found}` cannot convert to `{e}` yet"),
             span,
         )
         .with_note(format!(

@@ -299,7 +299,7 @@ impl FnCx<'_, '_> {
             return false;
         };
         let f = self.cx.display(found);
-        let d = self.cx.partial_limit_error(&f, iface, span);
+        let d = self.cx.partial_limit_error(&f, expected, iface, span);
         self.cx.error(d);
         true
     }
