@@ -163,18 +163,35 @@ pub(super) fn note_texts(cx: &mut Ctx, texts: &[TyId]) {
             if !seen.insert(t) {
                 continue;
             }
-            let kind = cx.ty.kind(t);
-            match kind {
+            let kind = cx.ty.kind(t).clone();
+            match &kind {
                 TyKind::Param(_) | TyKind::Op(..) => cx.lazy.live.texts_generic = true,
-                TyKind::Adt(d, _) => found.extend(to_string_of(cx, *d)),
+                TyKind::Adt(d, args) => {
+                    found.extend(to_string_of(cx, *d));
+                    // A union's members, and an enum's payloads: the text glue writes the
+                    // active member (`for_each_variant`), a class through its `toString()`.
+                    todo.extend(variant_payloads(cx, *d, args));
+                }
                 _ => {}
             }
-            todo.extend(crate::types::contents(kind));
+            todo.extend(crate::types::contents(&kind));
         }
     }
     for m in found {
         mark(cx, m);
     }
+}
+
+/// The payload types of the variants of enum `d<args>` (a union's members); none for any other
+/// definition.
+fn variant_payloads(cx: &mut Ctx, d: DefId, args: &[TyId]) -> Vec<TyId> {
+    let Some(e) = cx.enum_info(d) else {
+        return vec![];
+    };
+    let payloads: Vec<TyId> = (e.variants.iter())
+        .flat_map(|v| v.payload.iter().copied())
+        .collect();
+    payloads.into_iter().map(|p| cx.subst(p, args)).collect()
 }
 
 /// The `toString()` method of class `d`: its own, or the nearest base class's.

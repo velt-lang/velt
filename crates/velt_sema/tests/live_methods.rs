@@ -96,6 +96,38 @@ fn to_string_is_checked_only_where_a_value_of_the_class_becomes_text() {
     }
 }
 
+/// The text glue writes a union's active member, a class through its `toString()`: the walk
+/// reads the members, which are the union's variant payloads, not its type arguments.
+#[test]
+fn a_union_member_as_text_makes_its_to_string_live() {
+    let pick = "function pick(b: boolean): Date | string {\n  return b ? new Date(0) : \"s\";\n}";
+    for body in [
+        "  console.log(String(pick(true)));",
+        "  const xs = [pick(true)];\n  console.log(String(xs));",
+        "  const d: Date | string | null = pick(true);\n  console.log(`${d}`);",
+    ] {
+        let p = program(pick, body);
+        assert!(live(&p, &date("toString")), "{body}");
+    }
+    let p = program(
+        "function pick(b: boolean): Date | URL {\n  \
+           return b ? new Date(0) : new URL(\"https://x.com\");\n}",
+        "  console.log(`${pick(false)}`);",
+    );
+    assert!(live(&p, &date("toString")));
+    assert!(live(&p, "std/net/url/url::URL.toString"));
+}
+
+#[test]
+fn a_caught_union_as_text_makes_its_to_string_live() {
+    let p = program(
+        "function f(b: boolean): void throws Date | TypeError {\n  \
+           if (b) throw new Date(0);\n  throw new TypeError(\"t\");\n}",
+        "  try {\n    f(true);\n  } catch (e) {\n    console.log(`caught ${e}`);\n  }",
+    );
+    assert!(live(&p, &date("toString")));
+}
+
 #[test]
 fn a_subclass_value_as_text_makes_the_inherited_to_string_live() {
     let p = program(
