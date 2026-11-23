@@ -131,8 +131,6 @@ velt_rt velt_rt_math_to_int32
 velt_rt velt_rt_math_trunc
 velt_rt velt_rt_math_umulh
 velt_rt velt_rt_microtask
-velt_rt velt_rt_module_with
-velt_rt velt_rt_module_with_end
 velt_rt velt_rt_mutex_init
 velt_rt velt_rt_mutex_lock_checked
 velt_rt velt_rt_mutex_lock_slow
@@ -381,8 +379,6 @@ velt_rt_wasm velt_rt_microtask
 velt_rt_wasm velt_rt_module_block
 velt_rt_wasm velt_rt_module_ready
 velt_rt_wasm velt_rt_module_state
-velt_rt_wasm velt_rt_module_with
-velt_rt_wasm velt_rt_module_with_end
 velt_rt_wasm velt_rt_mutex_init
 velt_rt_wasm velt_rt_mutex_lock
 velt_rt_wasm velt_rt_mutex_lock_checked

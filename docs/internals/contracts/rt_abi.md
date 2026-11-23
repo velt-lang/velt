@@ -251,7 +251,9 @@ cell *guarded*, and from then on every use must hold the module lock; one that d
 ``velt debug-cells: captured variable `<name>` is shared through module state, and task …
 used it without the module lock`` and aborts. Release builds emit none of these calls and the
 cell layout is the same; the release runtime keeps the symbols as empty functions (and so does
-the WebAssembly runtime, which has one thread). Implemented in `velt_rt` `cell_owner.rs`.
+the WebAssembly runtime, which has one thread). Implemented in std/lang/hooks/sched_cells.velt
+under the executor in Velt, and in `velt_rt` `cell_owner.rs` for the runtime's own tasks, which
+have no module lock (no cell is guarded there).
 
 | Symbol | Signature | Emitted |
 |---|---|---|
@@ -797,23 +799,23 @@ gets a block of its own, which `rest` (when not null) completes after `init`, as
 The call takes the process-wide *module lock* unless the thread holds it: inside a task until
 the end of the poll, and every later poll of that task takes it at its start; outside a task (a
 synchronous `main`) until `main`'s root starts (std's `schedBlockOn`, `velt_rt_block_on` on
-WebAssembly) or until `main` returns. A program that never
-calls it pays nothing per task (a process-wide flag the first call sets). A `Mutex`'s lock
-keeps the module lock while it blocks; sema rejects module state in a `with` callback. Waiting
-for the module lock while the thread holds an `RwLock` stops with an `ICE:` panic; a held `Mutex`
-is not counted for that check on a native target (its lock is std's, which counts nothing). On
-WebAssembly (one thread) there is no lock.
+WebAssembly) or until `main` returns. The lock is std's, the executor's
+(std/lang/hooks/sched_module.velt): a program without the executor has one thread and no lock,
+and neither has WebAssembly. A program that never reaches module state pays nothing per task.
+A `Mutex`'s lock keeps the module lock while it blocks; sema rejects module state in a `with`
+callback.
 
-`uint8_t velt_rt_module_with(void)` and `void velt_rt_module_with_end(uint8_t took)`: the first
-takes the module lock unless the thread holds it and answers whether it took it (1); the second,
-called after the `Mutex` or `RwLock` unlock with that answer, gives it back (unless the callback
-reached module state: the poll, or the code outside a task, keeps it then). A program that gives
-functions properties through `any` calls them around each `with`, `read` and `write` whose callback
-may reach a declared function's properties (below), which are module state: every callback sema does
-not list in `Program::lock_free_callbacks` (hir_encodings.md "Module state"). Such a callback holds
-the module lock already, so no thread waits for it while holding a `Mutex`; the other callbacks
-never reach module state, so a thread holding the module lock that waits for their `Mutex` only
-waits for them to finish.
+A program that gives functions properties through `any` takes the module lock around each
+`with`, `read` and `write` whose callback may reach a declared function's properties (below),
+which are module state: every callback sema does not list in `Program::lock_free_callbacks`
+(hir_encodings.md "Module state"). Lowering calls std's `schedModuleWith` before the `Mutex` or
+`RwLock` lock, which takes the module lock unless the thread holds it and answers whether it took
+it (1), and `schedModuleWithEnd` with that answer after the unlock, which gives it back (unless
+the callback reached module state: the poll, or the code outside a task, keeps it then). Such a
+callback holds the module lock already, so no thread waits for it while holding a `Mutex`; the
+other callbacks never reach module state, so a thread holding the module lock that waits for
+their `Mutex` only waits for them to finish. A catching poll that a panic ends gives back what a
+callback took (std/task/catch_sched.velt).
 
 Within one call of a compiled function (until the poll ends, or until `main`'s root starts or
 `main` returns), a successful `velt_rt_module_state(desc, s)` stays valid for every slot `<= s`:
@@ -1055,11 +1057,12 @@ same without making one (null when there is none). A value converted to `any` ge
 `===`, `Map` keys and properties see one function. An identity's entries change no count (its
 drop does nothing, its clone and transfer answer the same environment), so every thread may hold
 it, and a value holding one takes it along to another task: the function there is the same one.
-Its properties are module state (above), since their values are not atomic: `get`, `set`,
-`delete`, `len` and `key` on an identity take the module lock first, as an access of a
-module-level `let` does, and the task keeps it in its polls from then on; a program that may
-give functions properties calls `velt_rt_module_with` before each `Mutex` and `RwLock` lock
-whose callback may reach them, so such a callback holds it already. The `set` on an identity
+Its properties are module state (above), since their values are not atomic: generated code
+calls std's `schedModuleTouch` before `get`, `set`, `delete` and `len` (and the `key`s after
+it), on any function, which takes the module lock as an access of a module-level `let` does, and
+the task keeps it in its polls from then on; a program that may give functions properties calls
+`schedModuleWith` before each `Mutex` and `RwLock` lock whose callback may reach them, so such a
+callback holds it already. The `set` on an identity
 keeps its entries. The table keeps identities to the end; with the leak counters on
 (`VELT_RC_STATS=1`), they are freed at exit with their properties, as module state is.
 

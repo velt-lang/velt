@@ -31,6 +31,13 @@ pub(super) enum Access {
     Block,
     /// `(state: ptr, n: u64)`: slots up to `n` may be read from now on.
     Ready,
+    /// `()`: the module lock, before a function's properties held as `any` are reached.
+    Touch,
+    /// `() -> u8`: the module lock before a `with`, `read` or `write` callback that may reach
+    /// them; whether it was taken (1).
+    With,
+    /// `(took: u8)`: after that callback's unlock, the lock `With` took goes.
+    WithEnd,
 }
 
 /// The item of hook `qualified` when it is one of the executor in Velt's task or timer hooks
@@ -240,6 +247,17 @@ impl FnLower<'_, '_> {
             false,
         );
         Operand::Copy(Place::local(p))
+    }
+
+    /// A call of module lock access `a` (`Touch`, `With`, `WithEnd`) on a native target: its
+    /// function decides once the program is built (`Work::ModuleAccess`), as module state's
+    /// accesses do. WebAssembly has one thread and no lock: callers make no call there.
+    pub(super) fn module_lock(&mut self, a: Access, args: Vec<Operand>, dest: Option<Place>) {
+        if !self.std_sched() {
+            super::ice("a module lock call on a target without the executor in Velt");
+        }
+        let f = self.cx.func(Work::ModuleAccess(a));
+        self.call(vir::Callee::Func(f), args, dest, false);
     }
 
     /// The place of module state slot `slot` of the current task.
@@ -529,6 +547,32 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.ready_through(st, n);
                 lw.terminate(Terminator::Return(super::unit()));
                 ("_Gmodule_ready", vec![Ty::Ptr, Ty::U64], Ty::Unit)
+            }
+            // The module lock is the executor's (sched_module.velt); a program without it has
+            // one thread, and its blocks no lock (module_blocks.velt): nothing to take.
+            Access::Touch => {
+                if lw.cx.module_sched() {
+                    hooks::sched_module_touch(&mut lw).emit(&mut lw);
+                }
+                lw.terminate(Terminator::Return(super::unit()));
+                ("_Gmodlock_touch", vec![], Ty::Unit)
+            }
+            Access::With => {
+                let took = match lw.cx.module_sched() {
+                    true => hooks::sched_module_with(&mut lw).emit(&mut lw).op(),
+                    false => cint(0, Ty::U8),
+                };
+                lw.terminate(Terminator::Return(took));
+                ("_Gmodlock_with", vec![], Ty::U8)
+            }
+            Access::WithEnd => {
+                let took = lw.new_local(Ty::U8, Some("took".into()));
+                if lw.cx.module_sched() {
+                    let t = ty::U8::arg(Operand::Copy(Place::local(took)));
+                    hooks::sched_module_with_end(&mut lw, t).emit(&mut lw);
+                }
+                lw.terminate(Terminator::Return(super::unit()));
+                ("_Gmodlock_with_end", vec![Ty::U8], Ty::Unit)
             }
         };
         lw.scopes.clear();

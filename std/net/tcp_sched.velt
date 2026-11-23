@@ -92,8 +92,8 @@ export function listenerWorkers(l: u64): u64 {
 /**
  * May a server spread its connections over the workers (velt/net `spreadsConnections`)? Not in a
  * program whose tasks stay on their worker (std/lang/hooks/sched.velt `schedStays`): one that may
- * give a declared function properties through `any`, which the runtime keeps under a lock only
- * worker 0 holds, so a connection served on another worker that reaches them never answers.
+ * give a declared function properties through `any`, placed as when the runtime's module lock,
+ * which only worker 0 held, guarded them.
  */
 export function connectionsSpread(): bool {
   return !schedStays();

@@ -463,16 +463,9 @@ unsafe extern "C-unwind" fn proxy_drop(state: *mut u8) {
 /// Stop the program when the promise of `h` is used on another task than the one it is shared
 /// on without being handed over (`hand_over`): its original future runs on that task, and its
 /// result would be used from two threads. Outside a task (a synchronous `main`, or the runtime
-/// dropping what is left at exit) anything goes.
-///
-/// So it does for a thread holding the module lock, and that is all this tests. It is sound
-/// because the task the promise is shared on holds the lock whenever it runs too: a holder
-/// reaches module state (an in-flight `Map<string, Promise<T>>`) only through code holding the
-/// lock, so that task put it there or first used it from there and is a touched task from then
-/// on, whose every poll takes the lock (local/module_state.rs); the outside home, where code
-/// outside a task hands holders over, is a touched task in every program with module state
-/// (`local::in_outside_home`). So the tasks using the holder, its result and what that reaches
-/// never run at once.
+/// dropping what is left at exit) anything goes. Under the executor in Velt, whose tasks hold
+/// its module lock, std keeps its own check; the runtime's own tasks (code off the executor's
+/// workers) have no module lock.
 fn on_its_task(h: &Hub) {
     let now = super::local::task_key();
     if now == 0 {
@@ -484,7 +477,6 @@ fn on_its_task(h: &Hub) {
     {
         Ok(_) => {}
         Err(t) if t == now => {}
-        Err(_) if super::local::module_held() => {}
         Err(_) => crate::panic::fatal(
             "a promise shared on one task was used on another without being handed over (#212)",
         ),

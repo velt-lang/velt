@@ -411,6 +411,14 @@ with_decorator_hooks! {
     sched_module_state => lang_hooks_sched, "schedModuleState", sig((usize, u64) -> usize), lowered;
     sched_module_block => lang_hooks_sched, "schedModuleBlock", sig((usize) -> usize), lowered;
     sched_module_ready => lang_hooks_sched, "schedModuleReady", sig((usize, u64) -> void), lowered;
+    /// The module lock before a function's properties held as `any` are reached (workers).
+    sched_module_touch => lang_hooks_sched, "schedModuleTouch", sig(() -> void), lowered;
+    /// The module lock around a `with`, `read` or `write` callback that may reach them: taken
+    /// before the lock (whether it was) and given back after the unlock (workers).
+    sched_module_with => lang_hooks_sched, "schedModuleWith", sig(() -> u8), lowered,
+        replaces("velt_rt_module_with");
+    sched_module_with_end => lang_hooks_sched, "schedModuleWithEnd", sig((u8) -> void), lowered,
+        replaces("velt_rt_module_with_end");
 
     // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.

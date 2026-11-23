@@ -335,8 +335,8 @@ reaches it through one of the places above, never through a runtime hook of its 
 - **Module state** is not a boundary: a closure stored in a module-level variable is called by
   tasks on several workers and shares its captured cells with the task that stored it, as in
   Node. Every task that reaches module state holds the module lock for the whole of each poll
-  from its first access on (`crates/velt_rt/src/task/local/module_state.rs`), so those uses never
-  overlap; the debug runtime's cell check (`cell_owner.rs`) aborts on a use of a guarded cell
+  from its first access on (`std/lang/hooks/sched_module.velt`), so those uses never overlap;
+  the debug cell check (`std/lang/hooks/sched_cells.velt`) aborts on a use of a guarded cell
   without the lock.
 - **Which closures cross.** A closure passed to an unknown callee (a function value, an interface
   method, an overridden method) crosses when a value that crosses holds its function type

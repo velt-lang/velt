@@ -14,12 +14,10 @@ use std::mem::MaybeUninit;
 /// Drop fn of a state that runs to completion (never cancelled).
 unsafe extern "C-unwind" fn never_dropped(_: *mut u8) {}
 
-/// Start the compiled future `(poll, state)` as a task on the runtime's host, with the module
-/// state handed over to the tasks, as `async main` started before programs ran on the executor in
-/// Velt. `state` stays owned by the caller and must outlive the task; its result is at offset 0
-/// once the returned handle is joined.
+/// Start the compiled future `(poll, state)` as a task on the runtime's host, as `async main`
+/// started before programs ran on the executor in Velt. `state` stays owned by the caller and
+/// must outlive the task; its result is at offset 0 once the returned handle is joined.
 pub unsafe fn spawn_state(poll: PollFn, state: *mut u8) -> JoinHandle<()> {
-    crate::task::local::module_release_outside();
     spawn(Compiled::from_store(
         poll,
         never_dropped,
