@@ -4,9 +4,9 @@
 // they carried one runtime call before #3318) and stay small for the text they read.
 //
 // The rows side is an interface: its one implementation (`RowsOps`, rows_ops.velt) is made only by
-// `Reader.overCursor`, which only velt/db's generated row decoders call, so a program that never
-// decodes a driver's rows compiles none of the rows reader and needs none of the runtime's rows
-// functions (velt_rt_wasm has none).
+// rows_ops.velt's `readerOverCursor`, which velt/db hands to the generated row decoders. So a
+// program that never decodes a driver's rows neither loads nor compiles the rows reader, and
+// needs none of the runtime's rows functions (velt_rt_wasm has none).
 
 import { Reader } from "velt/encoding/json/reader";
 import { noInline } from "velt/lang/intrinsics";
@@ -62,7 +62,7 @@ export function rowsNextKey(r: Reader): u8 {
   return r.rows!.nextKey(r);
 }
 
-/** The row's next column, after `r` read a nested value as text (`readerNextKey` calls it). */
+/** The row's next column, after `r` read a nested value as text (`Reader.nextKey` calls it). */
 @noInline
 export function rowsNestedKey(r: Reader): u8 {
   return r.rows!.nestedKey(r);

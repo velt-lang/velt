@@ -1,13 +1,13 @@
 // velt/encoding/json (internal): the pull reader over a native driver's rows: what a `Reader`
-// (reader.velt) made by `Reader.overCursor` asks, for velt/db's `decodeRows<T>` when `T` is not
-// read by column (velt/encoding/json/generate/read.velt). It answers every call as the text
-// reader would for the JSON the rows stand for (`[{"col":value,...},...]`, or with `single` one
-// row's object), so the generated decoders need not know: a blob is the array of its bytes. A
+// (reader.velt) made by `readerOverCursor` (rows_ops.velt) asks, for velt/db's `decodeRows<T>` when
+// `T` is not read by column (velt/encoding/json/generate/read.velt). It answers every call as the
+// text reader would for the JSON the rows stand for (`[{"col":value,...},...]`, or with `single`
+// one row's object), so the generated decoders need not know: a blob is the array of its bytes. A
 // nested value (a JSON column) is read by the `Reader` itself, as text (rows_ops.velt).
 //
-// Like the text reader, the first failure is sticky until `reset`. The only failures are a value
-// of another kind than the decoder asked for and a rejected unknown key. The rows are well-formed by construction (the driver's
-// cursor), so nothing here fails for their sake.
+// Like the text reader, the first failure is sticky until `reset`. The only failures are a value of
+// another kind than the decoder asked for and a rejected unknown key. The rows are well-formed by
+// construction (the driver's cursor), so nothing here fails for their sake.
 //
 // Port of the runtime's rows_reader.rs (#3318), with the same answers and messages.
 

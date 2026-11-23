@@ -3,7 +3,7 @@
 
 import { TOO_DEEP, TRAILING } from "velt/encoding/json/scan";
 import { utf8Substring } from "velt/encoding";
-import { inline, strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 import {
   MARK_DEPTH_BITS,
   MISMATCH,
@@ -141,12 +141,6 @@ export function readerReset(r: Reader, mark: u64) {
     rowsReset(r, mark);
     return;
   }
-  readerTextReset(r, mark);
-}
-
-/** `readerReset` of a text reader (what a nested value of a driver's rows is read with). */
-@inline("always")
-export function readerTextReset(r: Reader, mark: u64) {
   r.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
   r.depth = ((mark >> 1) & ((1 << MARK_DEPTH_BITS) - 1)) as usize;
   r.afterOpen = (mark & 1) == 1;
@@ -158,14 +152,8 @@ export function readerTextReset(r: Reader, mark: u64) {
  * true (the glue reinterprets them). A driver's rows give `i64`s, so there it is `[0, 2^63)`.
  */
 export function readerReadU64(r: Reader): bool {
-  return r.failed == ROWS ? rowsI64(r, true) : readerTextU64(r);
-}
-
-/** `readerReadU64` of a text reader (what a nested value of a driver's rows is read with). */
-@inline("always")
-export function readerTextU64(r: Reader): bool {
   if (!readerNumberStart(r)) {
-    return false;
+    return r.failed == ROWS && rowsI64(r, true);
   }
   const v = numberU64(r.src, r.start, r.end, r.integer);
   if (v == null) {
@@ -178,14 +166,8 @@ export function readerTextU64(r: Reader): bool {
 
 /** A number value that is an integer exactly representable as `i64`: `int` after true. */
 export function readerReadI64(r: Reader): bool {
-  return r.failed == ROWS ? rowsI64(r, false) : readerTextI64(r);
-}
-
-/** `readerReadI64` of a text reader (what a nested value of a driver's rows is read with). */
-@inline("always")
-export function readerTextI64(r: Reader): bool {
   if (!readerNumberStart(r)) {
-    return false;
+    return r.failed == ROWS && rowsI64(r, false);
   }
   if (r.small) {
     const m = r.digitsValue as i64;
@@ -239,14 +221,8 @@ export function shortPath(path: string): string {
 
 /** `true` or `false`: `int` is 1 or 0 after true. */
 export function readerReadBool(r: Reader): bool {
-  return r.failed == ROWS ? rowsBool(r) : readerTextBool(r);
-}
-
-/** `readerReadBool` of a text reader (what a nested value of a driver's rows is read with). */
-@inline("always")
-export function readerTextBool(r: Reader): bool {
   if (!readerValueStart(r, 116, 102)) {
-    return false;
+    return r.failed == ROWS && rowsBool(r);
   }
   const t = strByteAt(r.src, r.pos as u64) == 116;
   if (!r.literal(t ? "true" : "false")) {

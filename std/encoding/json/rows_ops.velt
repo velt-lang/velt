@@ -1,5 +1,5 @@
 // velt/encoding/json (internal): the rows side of a `Reader` (reader.velt) over a native driver's
-// rows: `RowsOps`, which `Reader.overCursor` alone makes, answers each `Reader` method from the
+// rows: `RowsOps`, which `readerOverCursor` alone makes, answers each `Reader` method from the
 // `RowsReader` (rows_reader.velt) when the reader's failure branch forwards it (rows_side.velt).
 //
 // A nested value (a JSON column) is read by the `Reader` itself: the first read of one turns it
@@ -9,23 +9,11 @@
 // while it reads the value is reported as the rows reader reports one (`nestedMessage`), and a
 // reset to a mark of the rows (tagged `ROWS_MARK`) goes back to the rows.
 
+import { NONE, ROWS, Reader, STEP_MORE, UNKNOWN } from "velt/encoding/json/reader";
 import {
-  NONE,
-  ROWS,
-  Reader,
-  STEP_MORE,
-  UNKNOWN,
-  readerOpenArray,
-  readerOpenObject,
-  readerPeek,
-  readerReadF64,
-  readerReadNull,
-  readerReadString,
-} from "velt/encoding/json/reader";
-import {
-  readerTextBool,
-  readerTextI64,
-  readerTextU64,
+  readerReadBool,
+  readerReadI64,
+  readerReadU64,
   shortPath,
 } from "velt/encoding/json/reader_ops";
 import { AT_VAL, RowsReader } from "velt/encoding/json/rows_reader";
@@ -42,6 +30,19 @@ import {
   rowsSkipUnknownValue,
   rowsSkipValue,
 } from "velt/encoding/json/rows_reads";
+
+/**
+ * A reader over the rows of the native driver's row cursor at address `cursor` (velt/db's
+ * `decodeRows`), with `FLAG_*` options: its `close` ends the rows state (the cursor stays the
+ * driver's). velt/db hands it to the generated `parseJsonCursor`, so only a program that decodes
+ * rows loads this module.
+ */
+export function readerOverCursor(cursor: u64, flags: u32, maxDepth: u32): Reader {
+  const r = Reader.of("", flags, maxDepth);
+  r.rows = new RowsOps(cursor, flags);
+  r.failed = ROWS;
+  return r;
+}
 
 /** The rows side of a `Reader` over a driver's rows (`Reader.overCursor`): the rows reader. */
 export class RowsOps implements RowsSide {
@@ -87,13 +88,13 @@ export class RowsOps implements RowsSide {
   }
 
   peek(r: Reader): u32 {
-    return this.enteredNested(r) ? readerPeek(r) : this.rows.peek();
+    return this.enteredNested(r) ? r.peek() : this.rows.peek();
   }
 
   /** Consumes `{` (123) or `[` (91). */
   open(r: Reader, bracket: u8): bool {
     if (this.enteredNested(r)) {
-      return bracket == 123 ? readerOpenObject(r) : readerOpenArray(r);
+      return bracket == 123 ? r.openObject() : r.openArray();
     }
     return this.rows.open(bracket);
   }
@@ -114,7 +115,7 @@ export class RowsOps implements RowsSide {
   }
 
   /**
-   * The row's next column, back on the rows, after `r` read a nested value: `readerNextKey` calls
+   * The row's next column, back on the rows, after `r` read a nested value: `Reader.nextKey` calls
    * this when it finds the value's text ended at depth 0, on its failure branch (so it costs a text
    * reader nothing).
    */
@@ -126,7 +127,7 @@ export class RowsOps implements RowsSide {
   /** A string value: `r.decoded` after true (counted as escaped). */
   readString(r: Reader): bool {
     if (this.enteredNested(r)) {
-      return readerReadString(r);
+      return r.readString();
     }
     const rows = this.rows;
     const ok = rowsReadString(rows);
@@ -138,7 +139,7 @@ export class RowsOps implements RowsSide {
   /** A number value: `r.num` after true. */
   readF64(r: Reader): bool {
     if (this.enteredNested(r)) {
-      return readerReadF64(r);
+      return r.readF64();
     }
     const rows = this.rows;
     const ok = rowsReadF64(rows);
@@ -152,7 +153,7 @@ export class RowsOps implements RowsSide {
    */
   readI64(r: Reader, unsigned: bool): bool {
     if (this.enteredNested(r)) {
-      return unsigned ? readerTextU64(r) : readerTextI64(r);
+      return unsigned ? readerReadU64(r) : readerReadI64(r);
     }
     const rows = this.rows;
     const ok = rowsReadI64(rows) && (!unsigned || rows.int >= 0);
@@ -163,7 +164,7 @@ export class RowsOps implements RowsSide {
   /** `true` or `false`: `r.int` is 1 or 0 after true. */
   readBool(r: Reader): bool {
     if (this.enteredNested(r)) {
-      return readerTextBool(r);
+      return readerReadBool(r);
     }
     const rows = this.rows;
     const ok = rowsReadBool(rows);
@@ -172,7 +173,7 @@ export class RowsOps implements RowsSide {
   }
 
   readNull(r: Reader): bool {
-    return this.enteredNested(r) ? readerReadNull(r) : rowsReadNull(this.rows);
+    return this.enteredNested(r) ? r.readNull() : rowsReadNull(this.rows);
   }
 
   skip(r: Reader): bool {

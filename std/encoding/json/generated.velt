@@ -107,6 +107,7 @@ export declare generated("velt/encoding/json/generate/read") function parseJsonC
   cursor: u64,
   flags: i64,
   maxDepth: i64,
+  overCursor: (cursor: u64, flags: u32, maxDepth: u32) => Reader,
 ): T throws JsonError;
 
 /**

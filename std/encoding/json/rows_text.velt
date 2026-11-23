@@ -76,7 +76,8 @@ export function rowsJsonText(rr: RowsReader, buf: string): bool {
   return ok;
 }
 
-// Puts the current row of `cells` as a JSON object into `w` (the builder `buf` takes what overflows).
+// Puts the current row of `cells` as a JSON object into `w` (the builder `buf` takes what
+// overflows).
 function putRow(cells: RowCells, w: TreeWriter, buf: string): void {
   const names = cells.names;
   if (w.n > OUT_CAP) {

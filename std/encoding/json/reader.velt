@@ -6,9 +6,10 @@
 // `nextKey` / `arrayNext`: the reader only needs to know whether the last token it consumed
 // was an opening bracket.
 //
-// A driver's rows (std/db) are read through a rows side (rows_side.velt), which only `overCursor`
-// makes: such a reader starts out failed (`ROWS`), so every method takes its failure branch,
-// which forwards to it; reading text pays nothing for it, nor compiles the rows reader.
+// A driver's rows (std/db) are read through a rows side (rows_side.velt), which only velt/db's
+// decoders make (rows_ops.velt's `readerOverCursor`): such a reader starts out failed (`ROWS`),
+// so every method takes its failure branch, which forwards to it. Reading text pays nothing for
+// it, and a program that reads only text neither loads nor compiles the rows reader.
 //
 // Port of the runtime's json/reader.rs and error.rs (#1668), with the same results and
 // messages.
@@ -22,7 +23,7 @@ import {
   Scanner,
 } from "velt/encoding/json/scan";
 import { utf8Substring } from "velt/encoding";
-import { inline, strByteLen } from "velt/lang/intrinsics";
+import { strByteLen } from "velt/lang/intrinsics";
 import {
   readerDepthLeft,
   readerNumberStart,
@@ -33,7 +34,6 @@ import {
   readerValueStart,
   readerWalk,
 } from "velt/encoding/json/reader_steps";
-import { RowsOps } from "velt/encoding/json/rows_ops";
 import {
   rowsArrayNext,
   rowsF64,
@@ -102,7 +102,7 @@ export class Reader extends Scanner {
   depth: usize = 0;
   /** Where each array or object `skipLookahead` walked ends, by the offset of its bracket. */
   ends: Map<usize, usize> | null = null;
-  /** The rows side, when reading a driver's rows (made only by `overCursor`). */
+  /** The rows side, when reading a driver's rows (rows_ops.velt's `readerOverCursor` sets it). */
   rows: RowsSide | null = null;
   /** Reading a driver's rows, whether this reads a nested value's JSON text now (rows_ops.velt). */
   rowsNested: bool = false;
@@ -143,17 +143,6 @@ export class Reader extends Scanner {
     return new Reader(src, flags, maxDepth);
   }
 
-  /**
-   * A reader over the rows of the native driver's row cursor at address `cursor` (velt/db's
-   * `decodeRows`), with `FLAG_*` options: `close` ends it (the cursor stays the driver's).
-   */
-  static overCursor(cursor: u64, flags: u32, maxDepth: u32): Reader {
-    const r = new Reader("", flags, maxDepth);
-    r.rows = new RowsOps(cursor, flags);
-    r.failed = ROWS;
-    return r;
-  }
-
   /** Ends the rows reader, if any. */
   close() {
     const rows = this.rows;
@@ -185,17 +174,54 @@ export class Reader extends Scanner {
 
   /** The kind of the next value (`TOKEN_*`); consumes only whitespace. */
   peek(): u32 {
-    return this.failed == ROWS ? rowsPeek(this) : readerPeek(this);
+    if (this.failed != NONE) {
+      return this.failed == ROWS ? rowsPeek(this) : TOKEN_ERROR;
+    }
+    const b = this.peekNonWs();
+    if (b == 34) {
+      return TOKEN_STRING;
+    }
+    if (b == 45 || (b >= 48 && b <= 57)) {
+      return TOKEN_NUMBER;
+    }
+    if (b == 110) {
+      return TOKEN_NULL;
+    }
+    if (b == 116) {
+      return TOKEN_TRUE;
+    }
+    if (b == 102) {
+      return TOKEN_FALSE;
+    }
+    if (b == 91) {
+      return TOKEN_ARRAY_START;
+    }
+    if (b == 93) {
+      return TOKEN_ARRAY_END;
+    }
+    if (b == 123) {
+      return TOKEN_OBJECT_START;
+    }
+    if (b == 125) {
+      return TOKEN_OBJECT_END;
+    }
+    return b < 0 ? TOKEN_EOF : TOKEN_ERROR;
   }
 
   /** Consumes `{`. */
   openObject(): bool {
-    return this.failed == ROWS ? rowsOpen(this, 123) : readerOpenObject(this);
+    if (!readerValueStart(this, 123, 123)) {
+      return this.failed == ROWS && rowsOpen(this, 123);
+    }
+    return readerOpen(this);
   }
 
   /** Consumes `[`. */
   openArray(): bool {
-    return this.failed == ROWS ? rowsOpen(this, 91) : readerOpenArray(this);
+    if (!readerValueStart(this, 91, 91)) {
+      return this.failed == ROWS && rowsOpen(this, 91);
+    }
+    return readerOpen(this);
   }
 
   /**
@@ -204,7 +230,38 @@ export class Reader extends Scanner {
    * reader's key counts as escaped (`keyDecoded`).
    */
   nextKey(): u8 {
-    return this.failed == ROWS ? rowsNextKey(this) : readerNextKey(this);
+    if (this.failed != NONE) {
+      return this.failed == ROWS ? rowsNextKey(this) : STEP_ERROR;
+    }
+    const step = readerStep(this, 125, EXPECTED_COMMA_BRACE);
+    if (step != STEP_MORE) {
+      // Past a nested value of a driver's rows (its text ends here): the row's next column.
+      return step == STEP_ERROR && this.rowsNested && this.depth == 0 ? rowsNestedKey(this) : step;
+    }
+    if (this.peekNonWs() != 34) {
+      this.fail(EXPECTED_KEY);
+      readerSyntaxFailed(this);
+      return STEP_ERROR;
+    }
+    if (!this.string(true)) {
+      this.failed = SYNTAX;
+      return STEP_ERROR;
+    }
+    this.keyStart = this.start;
+    this.keyEnd = this.end;
+    this.keyEscaped = this.escaped;
+    this.keyLen = this.end - this.start;
+    if (this.escaped) {
+      this.keyDecoded = this.decoded;
+      this.keyLen = strByteLen(this.decoded);
+    }
+    if (this.peekNonWs() != 58) {
+      this.fail(EXPECTED_COLON);
+      readerSyntaxFailed(this);
+      return STEP_ERROR;
+    }
+    this.pos++;
+    return STEP_MORE;
   }
 
   /** The last key, as a string. */
@@ -240,184 +297,61 @@ export class Reader extends Scanner {
 
   /** `STEP_MORE` if another array element follows, `STEP_END` after the closing `]`. */
   arrayNext(): u8 {
-    return this.failed == ROWS ? rowsArrayNext(this) : readerArrayNext(this);
+    if (this.failed != NONE) {
+      return this.failed == ROWS ? rowsArrayNext(this) : STEP_ERROR;
+    }
+    return readerStep(this, 93, EXPECTED_COMMA_BRACKET);
   }
 
   /** A string value (decoded): `text()` after true. A row reader's counts as escaped. */
   readString(): bool {
-    return this.failed == ROWS ? rowsString(this) : readerReadString(this);
+    if (!readerValueStart(this, 34, 34)) {
+      return this.failed == ROWS && rowsString(this);
+    }
+    if (!this.string(true)) {
+      this.failed = SYNTAX;
+      return false;
+    }
+    return true;
   }
 
   /** A number value: `num` after true. */
   readF64(): bool {
-    return this.failed == ROWS ? rowsF64(this) : readerReadF64(this);
+    if (!readerNumberStart(this)) {
+      return this.failed == ROWS && rowsF64(this);
+    }
+    this.num = this.numberValue();
+    return true;
   }
 
   /** `null`. */
   readNull(): bool {
-    return this.failed == ROWS ? rowsNull(this) : readerReadNull(this);
+    if (!readerValueStart(this, 110, 110)) {
+      return this.failed == ROWS && rowsNull(this);
+    }
+    return this.literal("null") || readerSyntaxFailed(this);
   }
 
   /** Skips one complete value of any kind, checking it. */
   skipValue(): bool {
-    return this.failed == ROWS ? rowsSkip(this) : readerSkipValue(this);
+    if (!readerValueStart(this, 0, 0)) {
+      return this.failed == ROWS && rowsSkip(this);
+    }
+    return readerWalk(this, readerDepthLeft(this), false) || readerSyntaxFailed(this);
   }
 
   /** The current position, to come back to with `reset` (a decoder looking ahead). */
   mark(): u64 {
-    return this.failed == ROWS ? rowsMark(this) : readerMark(this);
+    if (this.failed == ROWS) {
+      return rowsMark(this);
+    }
+    const max: u64 = (1 << MARK_DEPTH_BITS) - 1;
+    const depth = this.depth as u64 < max ? this.depth as u64 : max;
+    return ((this.pos as u64) << (MARK_DEPTH_BITS + 1)) | (depth << 1) | (this.afterOpen ? 1 : 0);
   }
 
   /** `parseWith` failed on the value `valueLimit` started: the reader fails as a syntax error. */
   valueFailed(): void {
     readerSyntaxFailed(this);
   }
-}
-
-// The text reader's side of each `Reader` method that a rows reader forwards (rows_ops.velt): what
-// a nested value of the rows is read with there, so that no call path leads from a `Reader` method
-// back to itself (a method that can reach itself is not inlined).
-
-/** `Reader.peek` of a text reader. */
-@inline("always")
-export function readerPeek(r: Reader): u32 {
-  if (r.failed != NONE) {
-    return TOKEN_ERROR;
-  }
-  const b = r.peekNonWs();
-  if (b == 34) {
-    return TOKEN_STRING;
-  }
-  if (b == 45 || (b >= 48 && b <= 57)) {
-    return TOKEN_NUMBER;
-  }
-  if (b == 110) {
-    return TOKEN_NULL;
-  }
-  if (b == 116) {
-    return TOKEN_TRUE;
-  }
-  if (b == 102) {
-    return TOKEN_FALSE;
-  }
-  if (b == 91) {
-    return TOKEN_ARRAY_START;
-  }
-  if (b == 93) {
-    return TOKEN_ARRAY_END;
-  }
-  if (b == 123) {
-    return TOKEN_OBJECT_START;
-  }
-  if (b == 125) {
-    return TOKEN_OBJECT_END;
-  }
-  return b < 0 ? TOKEN_EOF : TOKEN_ERROR;
-}
-
-/** `Reader.nextKey` of a text reader. */
-@inline("always")
-export function readerNextKey(r: Reader): u8 {
-  if (r.failed != NONE) {
-    return STEP_ERROR;
-  }
-  const step = readerStep(r, 125, EXPECTED_COMMA_BRACE);
-  if (step != STEP_MORE) {
-    // Past a nested value of a driver's rows (its text ends here): the row's next column.
-    return step == STEP_ERROR && r.rowsNested && r.depth == 0 ? rowsNestedKey(r) : step;
-  }
-  if (r.peekNonWs() != 34) {
-    r.fail(EXPECTED_KEY);
-    readerSyntaxFailed(r);
-    return STEP_ERROR;
-  }
-  if (!r.string(true)) {
-    r.failed = SYNTAX;
-    return STEP_ERROR;
-  }
-  r.keyStart = r.start;
-  r.keyEnd = r.end;
-  r.keyEscaped = r.escaped;
-  r.keyLen = r.end - r.start;
-  if (r.escaped) {
-    r.keyDecoded = r.decoded;
-    r.keyLen = strByteLen(r.decoded);
-  }
-  if (r.peekNonWs() != 58) {
-    r.fail(EXPECTED_COLON);
-    readerSyntaxFailed(r);
-    return STEP_ERROR;
-  }
-  r.pos++;
-  return STEP_MORE;
-}
-
-/** `Reader.openObject` of a text reader. */
-@inline("always")
-export function readerOpenObject(r: Reader): bool {
-  return readerValueStart(r, 123, 123) && readerOpen(r);
-}
-
-/** `Reader.openArray` of a text reader. */
-@inline("always")
-export function readerOpenArray(r: Reader): bool {
-  return readerValueStart(r, 91, 91) && readerOpen(r);
-}
-
-/** `Reader.arrayNext` of a text reader. */
-@inline("always")
-export function readerArrayNext(r: Reader): u8 {
-  if (r.failed != NONE) {
-    return STEP_ERROR;
-  }
-  return readerStep(r, 93, EXPECTED_COMMA_BRACKET);
-}
-
-/** `Reader.readString` of a text reader. */
-@inline("always")
-export function readerReadString(r: Reader): bool {
-  if (!readerValueStart(r, 34, 34)) {
-    return false;
-  }
-  if (!r.string(true)) {
-    r.failed = SYNTAX;
-    return false;
-  }
-  return true;
-}
-
-/** `Reader.readF64` of a text reader. */
-@inline("always")
-export function readerReadF64(r: Reader): bool {
-  if (!readerNumberStart(r)) {
-    return false;
-  }
-  r.num = r.numberValue();
-  return true;
-}
-
-/** `Reader.readNull` of a text reader. */
-@inline("always")
-export function readerReadNull(r: Reader): bool {
-  if (!readerValueStart(r, 110, 110)) {
-    return false;
-  }
-  return (r.literal("null") || readerSyntaxFailed(r));
-}
-
-/** `Reader.skipValue` of a text reader. */
-@inline("always")
-export function readerSkipValue(r: Reader): bool {
-  if (!readerValueStart(r, 0, 0)) {
-    return false;
-  }
-  return (readerWalk(r, readerDepthLeft(r), false) || readerSyntaxFailed(r));
-}
-
-/** `Reader.mark` of a text reader. */
-@inline("always")
-export function readerMark(r: Reader): u64 {
-  const max: u64 = (1 << MARK_DEPTH_BITS) - 1;
-  const depth = r.depth as u64 < max ? r.depth as u64 : max;
-  return ((r.pos as u64) << (MARK_DEPTH_BITS + 1)) | (depth << 1) | (r.afterOpen ? 1 : 0);
 }
