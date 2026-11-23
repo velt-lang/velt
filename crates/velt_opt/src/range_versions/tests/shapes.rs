@@ -122,6 +122,18 @@ fn comparisons_with_the_bound_first_run_without_them_and_agree_at_every_edge() {
 }
 
 #[test]
+fn differences_against_the_lane_count_run_without_them_and_agree_at_every_edge() {
+    // `la - x >= n` and `n - 1 < lb - x`: wrong where `x` passes the length (the subtraction
+    // wraps) or where either is read one element too wide.
+    for lanes in [Lanes::F32, Lanes::I8, Lanes::F64] {
+        copies_and_agrees(&Shape {
+            twist: Twist::Differences,
+            ..Shape::new(lanes)
+        });
+    }
+}
+
+#[test]
 fn a_comparison_the_head_implies_is_left_to_llvm() {
     let shape = Shape {
         twist: Twist::HeadImplied,
@@ -176,4 +188,53 @@ fn the_check_in_front_is_exact_for_every_form_of_the_counter_test() {
             "{head:?}: one element short runs the original"
         );
     }
+}
+
+/// Whether `f` holds the check in front of a copied loop: a comparison with `2^62`.
+fn has_check(p: &Program) -> bool {
+    let limit = Operand::Const(Const::Int(BOUND_LIMIT.into()), Ty::U64);
+    (p.funcs[0].blocks.iter().flat_map(|b| &b.stmts))
+        .any(|s| matches!(s, Stmt::Assign(_, Rvalue::Binary(BinOp::Le, _, n)) if *n == limit))
+}
+
+#[test]
+fn the_pipeline_copies_a_loop_of_comparisons_in_a_program_without_fits() {
+    // Element checks only, and no `fits` extern declared at all: a scalar loop, or `f32x8`
+    // (whose `fits` is comparisons), in a program with no 128-bit vector load.
+    let mut p = Shape {
+        twist: Twist::Compares,
+        ..Shape::new(Lanes::F32)
+    }
+    .program();
+    p.externs.clear();
+    assert_valid(&p);
+    let mut q = p.clone();
+    crate::optimize(&mut q, crate::OptLevel::Speed);
+    assert_valid(&q);
+    assert!(has_check(&q), "{:?}", q.funcs[0]);
+    agree(&p, &q, &edges(4, 16));
+}
+
+#[test]
+fn differences_are_decided_exactly_at_the_end_of_each_array() {
+    // `f32`, a step of 16, `a` read to `at + i + 16` (`la - (at + i + 12) >= 4`) and `b` to `i + 16`
+    // (`3 < lb - (i + 12)`, strict). One element short of either, the original fails a test the
+    // copy must not decide.
+    let shape = Shape {
+        twist: Twist::Differences,
+        ..Shape::new(Lanes::F32)
+    };
+    let p = shape.program();
+    let (q, changed) = versioned(&p);
+    assert!(changed);
+    let (at, dim) = (5, 64);
+    let last = dim - 16;
+    let (la, lb) = (at + last + 16, last + 16);
+    let points = [
+        [la, lb, at, dim, 0, 0],
+        [la - 1, lb, at, dim, 0, 0],
+        [la, lb - 1, at, dim, 0, 0],
+        [la + 1, lb + 1, at, dim, 0, 0],
+    ];
+    agree(&p, &q, &points);
 }
