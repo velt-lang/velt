@@ -13,6 +13,8 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
         CTy::F64 => Shape::Scalar(Scalar::F64),
         CTy::Bool => Shape::Scalar(Scalar::Bool),
         CTy::Void => Shape::Void,
+        // A C struct by value (#2187 layer 3): compared by the definition it names.
+        CTy::Struct => field_shape(p, t),
         CTy::Null => Shape::Null,
         CTy::StrBytes | CTy::CString => Shape::Text,
         CTy::Ptr { .. } => Shape::Ptr(pointee_of_ptr(p, t)),
