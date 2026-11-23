@@ -99,8 +99,9 @@ the text after it.
 
 What runs is std code, compiled once into a prebuilt object (below). A prebuilt entry point may
 not take its caller's location, so nothing in the layout calls a function that panics with one:
-it pops its stack with `arrayTruncate`, copies with `arrayMove` and `memcpy` through
-`ptrFromAddress`, never `truncate()` or `Ptr.at`.
+it pops its stack with `arrayTruncate` and copies with `arrayMove` (from an `addressArray` view
+of the text), never `truncate()` or `Ptr.at`. Nor does it call a C function: every program that
+prints reaches the layout, and the JavaScript host's WebAssembly target has no C library.
 
 Widths are Node's: the 80-column limit counts UTF-16 units, an array's columns count display
 columns (`inspect_layout_width.velt`), with each code point's width from Node 22's own
