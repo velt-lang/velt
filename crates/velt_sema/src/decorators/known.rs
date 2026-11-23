@@ -124,7 +124,7 @@ pub(crate) fn intrinsics<'m>(cx: &mut Ctx<'m>, from: u32) {
 
 /// The `declare decorator function` decorator `dec` (written in module `m`) names, if it names
 /// one; what is wrong with it is reported where its uses are checked.
-fn written_def(cx: &Ctx, m: usize, dec: &ast::Decorator) -> Option<DefId> {
+pub(super) fn written_def(cx: &Ctx, m: usize, dec: &ast::Decorator) -> Option<DefId> {
     let callee = match &dec.expr.kind {
         ast::ExprKind::Call { callee, .. } => callee,
         _ => &dec.expr,
