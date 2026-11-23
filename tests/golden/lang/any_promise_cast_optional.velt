@@ -60,5 +60,22 @@ async function main(): Promise<void> {
   console.log("chain", await box?.p.then?.(inc), none?.p.then?.(inc), none?.p.then?.(mark("x")));
   console.log("chain skipped", seen.join(","));
   console.log("optional read own", own?.then?.((v: any) => v * 2));
+
+  // A chain that goes on after the optional call: skipped with it when the member is missing.
+  const tens = (v: any) => v * 10;
+  console.log("continued", await p.then?.(inc).then(tens));
+  console.log("catch continued", await getP().catch?.((e: any) => 0).then(inc));
+  console.log("missing continued", plain.then?.(inc).then(inc), plain.then?.(mark("y")).then(inc));
+  console.log("twice", await p.then?.(inc).then?.(inc).then(tens));
+  console.log("inner link continued", await box?.p.then?.(inc).then(tens), none?.p.then?.(inc).then(inc));
+  console.log("continued skipped", seen.join(","));
+  const ticks: string[] = [];
+  const typed2 = later(0);
+  const held2: any = later(0);
+  const a1 = typed2.then(() => ticks.push("typed 1")).then(() => ticks.push("typed 2"));
+  const b1 = held2.then?.(() => ticks.push("any 1")).then(() => ticks.push("any 2"));
+  await a1;
+  await b1;
+  console.log(ticks.join(", "));
 }
 main();

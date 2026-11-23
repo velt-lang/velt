@@ -174,6 +174,36 @@ impl FnCx<'_, '_> {
         args: &[ast::Expr],
         span: Span,
     ) -> Option<hir::Expr> {
+        self.promise_member_optional_then(callee, args, span, |_, called| called)
+    }
+
+    /// Is `callee`, called as `callee?.(…)`, `recv.name` or `recv?.name` with `name` one of
+    /// [`PROMISE_MEMBERS`] and `recv` an `any` / `unknown`, in the program's own code? `recv`
+    /// is typed on trial (nothing kept) to choose, and checked for real where it is used.
+    pub(super) fn promise_optional_callee(&mut self, callee: &ast::Expr) -> bool {
+        let ast::ExprKind::Member { object, prop, .. } = &callee.kind else {
+            return false;
+        };
+        if !PROMISE_MEMBERS.contains(&prop.name.as_str()) || self.cx.scopes[self.module].is_std {
+            return false;
+        }
+        self.trial_type(object)
+            .is_some_and(|t| matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown)))
+    }
+
+    /// [`Self::promise_member_optional_call`] with `rest` applied to the call's value: the rest of
+    /// an optional chain the call is a link of (`p.then?.(f).then(g)`, `chain.rs`), skipped
+    /// with the call when the member is missing. `rest`'s value is the result's type.
+    pub(super) fn promise_member_optional_then(
+        &mut self,
+        callee: &ast::Expr,
+        args: &[ast::Expr],
+        span: Span,
+        rest: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
+    ) -> Option<hir::Expr> {
+        if !self.promise_optional_callee(callee) {
+            return None;
+        }
         let ast::ExprKind::Member {
             object,
             prop,
@@ -182,14 +212,6 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        if !PROMISE_MEMBERS.contains(&prop.name.as_str()) || self.cx.scopes[self.module].is_std {
-            return None;
-        }
-        // Typed on trial (nothing kept) to choose; checked for real below.
-        let t = self.trial_type(object)?;
-        if !matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown)) {
-            return None;
-        }
         // `a?.b.then?.(f)`: short-circuited at `a?.`, the rest (`<a>.b.then?.(f)`) back here.
         let call = setters::synth(
             ast::ExprKind::Call {
@@ -244,25 +266,22 @@ impl FnCx<'_, '_> {
             s.intrinsic(Intrinsic::AnyApply, all, any, span)
         };
         let h = held(self);
-        let present = self.promise_member_call(h, &prop.name, boxed, any, span, apply);
-        let pick = self.pick_undefined(missing, present, any, span);
-        let mut value = self.block_with(vec![(m, member)], pick, any, span);
+        let called = self.promise_member_call(h, &prop.name, boxed, any, span, apply);
+        let present = rest(self, called);
+        let ty = present.ty;
+        let pick = self.pick_undefined(missing, present, span);
+        let mut value = self.block_with(vec![(m, member)], pick, ty, span);
         if *read_optional {
             let h = held(self);
             let nothing = self.dynamic_null_compare(h, "null", false, true, span);
-            value = self.pick_undefined(nothing, value, any, span);
+            value = self.pick_undefined(nothing, value, span);
         }
-        Some(self.block_with(vec![(t, recv)], value, any, span))
+        Some(self.block_with(vec![(t, recv)], value, ty, span))
     }
 
-    /// `missing ? undefined : present`, of type `any`.
-    fn pick_undefined(
-        &mut self,
-        missing: hir::Expr,
-        present: hir::Expr,
-        any: TyId,
-        span: Span,
-    ) -> hir::Expr {
+    /// `missing ? undefined : present`, of `present`'s type.
+    fn pick_undefined(&mut self, missing: hir::Expr, present: hir::Expr, span: Span) -> hir::Expr {
+        let any = present.ty;
         let undefined = setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
         let undefined = self.expr(&undefined, Some(any), Want::Move);
         self.mk(
@@ -300,7 +319,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `{ let l1 = e1; …; value }`.
-    fn block_with(
+    pub(super) fn block_with(
         &mut self,
         lets: Vec<(hir::LocalId, hir::Expr)>,
         value: hir::Expr,

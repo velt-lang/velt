@@ -37,6 +37,48 @@ impl FnCx<'_, '_> {
         self.short_circuit_at(e, link, exp, Want::Move)
     }
 
+    /// `e` whose link `link` is `recv.then?.(args)` (or `catch` / `finally`) on an `any`
+    /// (`p.then?.(f).then(g)`): the call routed as `any_promise_members.rs` does, the rest of the
+    /// chain checked on its value (bound to a synthetic local the rewritten rest names), both
+    /// skipped when the member is missing. A `?.` link below `recv` is short-circuited first.
+    fn promise_call_link(
+        &mut self,
+        e: &ast::Expr,
+        link: &ast::Expr,
+        exp: Option<TyId>,
+        want: Want,
+    ) -> Option<hir::Expr> {
+        let ast::ExprKind::Call {
+            callee,
+            args,
+            optional: true,
+            ..
+        } = &link.kind
+        else {
+            return None;
+        };
+        if !self.promise_optional_callee(callee) {
+            return None;
+        }
+        if let Some(inner) = nearest_link(chain_object(callee)?) {
+            return self.short_circuit_at(e, inner, exp, want);
+        }
+        let name = format!("<call@{}>", link.span.lo);
+        let rest = replace_link(e, link.span, &name);
+        self.promise_member_optional_then(callee, args, link.span, |s, called| {
+            let (ty, at) = (called.ty, called.span);
+            let l = s.new_local(&name, ty, false, at, crate::body::LocalKind::Bind);
+            s.push_scope();
+            if let Some(scope) = s.f.scopes.last_mut() {
+                scope.names.insert(name, l);
+            }
+            let r = s.expr(&rest, exp, want);
+            s.pop_scope();
+            let (rty, span) = (r.ty, r.span);
+            s.block_with(vec![(l, called)], r, rty, span)
+        })
+    }
+
     /// `e` short-circuited at its chain's `?.` link `link`.
     fn short_circuit_at(
         &mut self,
@@ -45,6 +87,9 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         want: Want,
     ) -> Option<hir::Expr> {
+        if let Some(h) = self.promise_call_link(e, link, exp, want) {
+            return Some(h);
+        }
         let object = chain_object(link)?;
         let name = format!("<chain@{}>", link.span.lo);
         let rest = rewrite(e, link.span, &name, object.span);
@@ -187,6 +232,33 @@ fn is_optional(e: &ast::Expr) -> bool {
             | ast::ExprKind::Index { optional: true, .. }
             | ast::ExprKind::Call { optional: true, .. }
     )
+}
+
+/// `e` with its chain's element at `link` (an optional call) replaced by the local `name`.
+fn replace_link(e: &ast::Expr, link: Span, name: &str) -> ast::Expr {
+    let mut out = e.clone();
+    let mut cur = &mut out;
+    while !(cur.span == link && is_optional(cur)) {
+        cur = match &mut cur.kind {
+            ast::ExprKind::Member { object, .. } | ast::ExprKind::Index { object, .. } => object,
+            ast::ExprKind::Call { callee, .. } => callee,
+            _ => unreachable!("ICE: optional call link not found"),
+        };
+    }
+    let at = Span {
+        lo: link.hi,
+        hi: link.hi,
+        ..link
+    };
+    *cur = ast::Expr {
+        id: ast::NodeId(u32::MAX),
+        kind: ast::ExprKind::Ident(ast::Ident {
+            name: name.to_string(),
+            span: at,
+        }),
+        span: at,
+    };
+    out
 }
 
 /// The object (or callee) a chain element applies to.

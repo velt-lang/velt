@@ -20,3 +20,10 @@ call result catch 2
 chain 3 undefined undefined
 chain skipped present
 optional read own own 6
+continued 30
+catch continued 3
+missing continued undefined undefined
+twice 40
+inner link continued 30 undefined
+continued skipped present
+typed 1, any 1, typed 2, any 2
