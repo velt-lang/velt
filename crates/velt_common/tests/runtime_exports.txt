@@ -224,13 +224,10 @@ velt_rt velt_rt_task_gate_free
 velt_rt velt_rt_task_gate_wait
 velt_rt velt_rt_tcp_abort
 velt_rt velt_rt_tcp_accept
-velt_rt velt_rt_tcp_alpn
 velt_rt velt_rt_tcp_close
 velt_rt velt_rt_tcp_connect
-velt_rt velt_rt_tcp_connect_tls
 velt_rt velt_rt_tcp_drained
 velt_rt velt_rt_tcp_listen
-velt_rt velt_rt_tcp_listen_tls
 velt_rt velt_rt_tcp_listener_close
 velt_rt velt_rt_tcp_listener_port
 velt_rt velt_rt_tcp_park
@@ -419,7 +416,6 @@ velt_rt_wasm velt_rt_task_id
 velt_rt_wasm velt_rt_tcp_abort
 velt_rt_wasm velt_rt_tcp_close
 velt_rt_wasm velt_rt_tcp_connect
-velt_rt_wasm velt_rt_tcp_connect_tls
 velt_rt_wasm velt_rt_tcp_park
 velt_rt_wasm velt_rt_tcp_readable
 velt_rt_wasm velt_rt_tcp_readable_within
