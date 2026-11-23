@@ -2,13 +2,16 @@
 //
 // TLS, as libpq has it:
 // - `disable`: plain text.
-// - `prefer` and `require`: `SSLRequest` on a plain socket. `S` upgrades that socket with velt/net's
-//   `startTls`, encrypted but with no certificate check (unchecked_tls.velt). `N` means the server has no
-//   TLS: plain text under `prefer`, a failure under `require`. Any other answer is a failure. Plain
-//   text comes only from an `N`, never from a failed handshake.
-// - `verify-ca` and `verify-full`: PostgreSQL 17's direct TLS (ALPN "postgresql") with the
-//   certificate checked, through velt/net's `connectTls`; `startTls` can't check one yet (#2392).
-//   `connectTls` checks the host name under both, so `verify-ca` is as strict as `verify-full`.
+// - Every other mode sends `SSLRequest` on a plain socket (libpq's `sslnegotiation=postgres`, its
+//   default, which every server version answers). `S` upgrades that socket with velt/net's
+//   `startTls` (upgraded_tls.velt): under `prefer` and `require` encrypted but with no certificate
+//   check; under `verify-ca` with the certificate's chain checked against `sslrootcert` alone
+//   (which it needs); under `verify-full` with the chain checked against `sslrootcert` and
+//   Mozilla's roots, and the host name checked. `N` means the
+//   server has no TLS: plain text under `prefer`, a failure under the others. Any other answer is a
+//   failure. Plain text comes only from an `N`, never from a failed handshake.
+// - `verify-ca` and `verify-full` with `sslnegotiation=direct`: PostgreSQL 17's direct TLS (ALPN
+//   "postgresql") through velt/net's `connectTls`, which checks the host name under both.
 //
 // The answer to `SSLRequest` is read one byte at a time, so nothing the server sent in plain text
 // after it is taken for part of the TLS stream (libpq's CVE-2021-23222). Every handshake ends by the
@@ -17,12 +20,19 @@
 import { IoError } from "velt/io";
 import { connect as tcpConnect, connectTls, TcpStream, TlsConnectOptions } from "velt/net";
 import { timeout, TimeoutError } from "velt/task";
-import { PgConfig, SSL_DISABLE, SSL_PREFER, SSL_REQUIRE } from "./config";
+import {
+  PgConfig,
+  SSL_DISABLE,
+  SSL_PREFER,
+  SSL_REQUIRE,
+  SSL_VERIFY_CA,
+  SSL_VERIFY_FULL,
+} from "./config";
 import { errorOf, PgError } from "./errors";
 import { connectionClosed, Failure, failure } from "./failure";
 import { Out, sslRequest } from "./frontend";
 import { directStream, PgStream, plainStream } from "./transport";
-import { uncheckedTls } from "./unchecked_tls";
+import { upgradedTls } from "./upgraded_tls";
 
 // The ALPN protocol direct TLS needs.
 const POSTGRES_ALPN = "postgresql";
@@ -35,14 +45,14 @@ function tlsFailure(host: string, why: string): Failure {
   return failure("ETLS", `TLS to ${host} failed: ${why}`);
 }
 
-// What a checked TLS connection needs, in a failure's message.
+// What a direct TLS connection needs, in a failure's message.
 const CHECKED_NEEDS =
-  "verify-ca and verify-full use direct TLS, so the server needs PostgreSQL 17 or later and a certificate that sslrootcert or Mozilla's roots verify for the host name, under verify-ca too";
+  "sslnegotiation=direct needs PostgreSQL 17 or later and a certificate that sslrootcert or Mozilla's roots verify for the host name, under verify-ca too";
 
 // Why a handshake that failed for another reason than the certificate did: the server (before
 // PostgreSQL 17, or a proxy) doesn't take direct TLS, and reads the ClientHello as a bad start-up.
 const NO_DIRECT_TLS =
-  "the server did not take a direct TLS connection. verify-ca and verify-full need PostgreSQL 17 or later: they use its direct TLS until velt-lang/velt#2392 lets them check the certificate after SSLRequest. With an older server, or a proxy without direct TLS, sslmode=require encrypts without the check";
+  "the server did not take a direct TLS connection, which sslnegotiation=direct asks for and PostgreSQL 17 or later has. Without sslnegotiation=direct, verify-ca and verify-full ask with SSLRequest first, which every server version answers";
 
 /** `host:port`, an IPv6 host in brackets. */
 export function addressOf(host: string, port: i64): string {
@@ -155,12 +165,20 @@ async function sslAnswer(s: TcpStream, deadline: f64): Promise<u8> throws PgErro
   }
 }
 
+// The mode as its option reads.
+function modeName(c: PgConfig): string {
+  if (c.sslMode <= SSL_REQUIRE) {
+    return "sslmode=require";
+  }
+  return c.sslMode == SSL_VERIFY_FULL ? "sslmode=verify-full" : "sslmode=verify-ca";
+}
+
 // What an answer to `SSLRequest` other than `S` or `N` is called in a message.
 function answerText(b: u8): string {
   return b >= 32 && b < 127 ? `"${String.fromCharCode(b as number)}"` : `byte ${b}`;
 }
 
-// `SSLRequest`, then TLS without a certificate check after `S`, plain text after `N` under `prefer`.
+// `SSLRequest`, then TLS after `S` (checked as the mode says), plain text after `N` under `prefer`.
 async function negotiated(
   c: PgConfig,
   plain: TcpStream,
@@ -180,7 +198,7 @@ async function negotiated(
     }
     closeNow(plain);
     throw errorOf(
-      tlsFailure(name, "the server does not support TLS, and sslmode=require asks for it"),
+      tlsFailure(name, `the server does not support TLS, and ${modeName(c)} asks for it`),
     );
   }
   if (answer != TLS_YES) {
@@ -190,7 +208,17 @@ async function negotiated(
     );
   }
   try {
-    return await uncheckedTls(plain, name, POSTGRES_ALPN, leftOf(deadline));
+    const checked = c.sslMode > SSL_REQUIRE;
+    const full = c.sslMode == SSL_VERIFY_FULL;
+    return await upgradedTls(
+      plain,
+      name,
+      POSTGRES_ALPN,
+      leftOf(deadline),
+      checked,
+      full,
+      c.rootCert,
+    );
   } catch (e) {
     if (e instanceof TimeoutError) {
       throw timedOut();
@@ -206,8 +234,18 @@ export async function socket(
   name: string,
   deadline: f64,
 ): Promise<PgStream> throws PgError {
-  if (c.sslMode > SSL_REQUIRE) {
+  if (c.sslMode > SSL_REQUIRE && c.negotiate == "direct") {
     return directStream(await checkedTls(c, address, name, deadline));
+  }
+  if (c.sslMode == SSL_VERIFY_CA && c.rootCert == "") {
+    // As libpq, which trusts no certificate without the file: verify-ca does not check the
+    // name, so a certificate under a public root would prove nothing.
+    throw errorOf(
+      failure(
+        "ETLS",
+        "sslmode=verify-ca needs sslrootcert: it trusts the certificates of that file alone. Either provide the file, or use sslmode=verify-full to trust the public roots as well, with the host name checked",
+      ),
+    );
   }
   const plain = await plainSocket(address, deadline);
   if (c.sslMode == SSL_DISABLE) {

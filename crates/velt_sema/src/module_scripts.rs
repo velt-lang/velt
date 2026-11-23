@@ -109,6 +109,7 @@ fn declare_one(cx: &mut Ctx, m: usize, script: &ast::FnDecl) {
         };
         let name = "<top-level statements>".to_string();
         let global = GlobalInfo {
+            weak: false,
             qual_name: cx.qualify(m, &name),
             name,
             module: m,

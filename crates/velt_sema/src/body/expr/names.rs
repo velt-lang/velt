@@ -18,6 +18,10 @@ impl FnCx<'_, '_> {
             self.note_trusted_read(l, span);
         }
         let ty = self.local_ty(l);
+        // A `weak` local reads its target, never narrowed (`body::weak_locals`).
+        if self.is_weak_local(l) {
+            return self.weak_local_read(l, ty, span);
+        }
         if want != Want::BorrowMut && self.narrowed_to_nothing(l) {
             // No member is left (e.g. in the `default` of an exhaustive `switch`): the read
             // has type `never`, as in TS (`const _x: never = s;`).
@@ -493,6 +497,9 @@ impl FnCx<'_, '_> {
         }
         let g = self.cx.global(d).expect("ICE: global");
         let (ty, mutable) = (g.ty, g.stored);
+        if g.weak {
+            return self.weak_global_read(d, ty, span);
+        }
         // A constant whose value is taken over is the one object Node evaluates once.
         let taken = want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_;
         let shared_fn = taken && crate::body::pure_init::shares_on_move(self.cx, d);

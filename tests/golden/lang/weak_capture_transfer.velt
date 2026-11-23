@@ -1,0 +1,26 @@
+// A function value in a variable (not a closure literal at the crossing, so sema cannot see what
+// it captured) capturing a `weak` variable, passed to a spawned task: its environment's transfer
+// panics (velt_vir glue/transfer_env.rs), as a value with a `weak` field's does: the slot belongs
+// to this task's weak core (#3119).
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function nameOf(n: Node | null): string {
+  return n === null ? "null" : n.name;
+}
+
+async function callIt(f: () => string): Promise<string> {
+  return f();
+}
+
+async function main() {
+  const a = new Node("a");
+  const w: weak Node | null = a;
+  const f = () => nameOf(w);
+  console.log(f());
+  console.log(await spawn(callIt(f)));
+}

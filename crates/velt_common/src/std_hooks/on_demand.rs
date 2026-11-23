@@ -41,6 +41,7 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/inspect",
     "std/lang/hooks/inspect_cycles",
     "std/lang/hooks/pow",
+    "std/lang/hooks/pow_int",
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
@@ -59,6 +60,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/string/split",
     "std/lang/string/replace",
     "std/lang/string/case",
+    // A byte range as a string, which the prelude's `utf8Slice` calls by role (#2196).
+    "std/lang/bytes/range_text",
     // The CPU's features (#3222 step 3): every program with an entry demands it (`velt_main`
     // calls `cpuStart` first thing; velt_sema `lazy_std` `cpu_hook`).
     "std/lang/hooks/cpu",

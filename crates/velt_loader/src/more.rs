@@ -206,6 +206,10 @@ pub fn load_more(
     for m in &mut loader.modules[start..] {
         let kept = skeleton(m, true);
         for why in std_index::violations(&m.ast) {
+            if opts.refuse_out_of_rule {
+                out.refused.push(format!("`{}` {why}", m.path));
+                continue;
+            }
             loader.diags.push(Diagnostic::error(
                 format!(
                     "ICE: std module `{}` was demanded during the check, and it cannot be served in place: {why}",
@@ -219,6 +223,26 @@ pub fn load_more(
     *state = loader.into_state();
     state.base = first_base;
     out
+}
+
+/// [`LoadOptions::preload`]: those std modules, after everything else (a std root without one
+/// leaves it out, as a demand would find it missing).
+pub(crate) fn preload(loader: &mut Loader, queue: &mut VecDeque<usize>) {
+    let Some(std) = loader.opts.std_root.clone() else {
+        return;
+    };
+    let Some(importer) = loader.modules.iter().position(|m| m.is_std) else {
+        return;
+    };
+    for path in loader.opts.preload {
+        let Some(spec) = specifier(path) else {
+            continue;
+        };
+        if exists(&std, path) {
+            loader.import(importer, &spec, Span::DUMMY, false, queue);
+        }
+    }
+    loader.resolve_all(queue);
 }
 
 /// Without [`LoadOptions::demand_std`]: every module a demand could ask for, after everything
@@ -268,6 +292,22 @@ const EXECUTOR_MODULES: &[&str] = &[
     velt_common::std_module!(process_child_reactor),
     velt_common::std_module!(net_dns_lookup_sched),
 ];
+
+/// The modules of the TLS client and server, which `hookCall`s of `sched_tls_listen`,
+/// `sched_tls_connect` and `sched_tls_handshake` demand (velt_common `std_hooks.rs`, #2392).
+/// Not loaded up front with the rest (`load_up_front`): a program that can't connect or listen
+/// with TLS never has them, and one that can has them loaded for the check again that a refused
+/// demand of them starts (`LoadOptions::refuse_out_of_rule`, `preload`).
+const TLS_MODULES: &[&str] = &[
+    velt_common::std_module!(net_tls_fd_client),
+    velt_common::std_module!(net_tls_fd_server),
+];
+
+/// Is `path` (a canonical std module path) the TLS client's or server's module, which a caller
+/// with std up front (`VELT_EAGER_STD`) still lets a check demand, as without it?
+pub fn tls_module(path: &str) -> bool {
+    TLS_MODULES.contains(&path)
+}
 
 /// Is `path` (a canonical std module path) one of the executor in Velt's modules, which a caller
 /// with std up front may still serve on demand (`LoadOptions::demand_executor`)?

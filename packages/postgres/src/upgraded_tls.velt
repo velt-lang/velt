@@ -1,0 +1,63 @@
+// postgres (internal): TLS on the plain socket that `SSLRequest` was answered `S` on, through
+// velt/net's `startTls`: without a certificate check for `prefer` and `require`, with the chain
+// checked for `verify-ca`, and with the chain and the host name checked for `verify-full`.
+
+import { startTls, TcpStream, TlsStartOptions, TlsStream } from "velt/net";
+import { timeout } from "velt/task";
+import { PgStream } from "./transport";
+
+/**
+ * The handshake over `plain` with the server `name`, bounded by `ms`. With `checked` the
+ * server's certificate must chain to a root of `rootCert` (PEM); with `full` also to one of
+ * Mozilla's (`rootCert` may then be ""), and it must be for `name` too (a host name or an IP
+ * address). A failure
+ * closes `plain` and throws what the handshake threw (a `TimeoutError` for `ms`).
+ */
+export async function upgradedTls(
+  plain: TcpStream,
+  name: string,
+  alpn: string,
+  ms: i64,
+  checked: bool,
+  full: bool,
+  rootCert: string,
+): Promise<PgStream> {
+  let opts: TlsStartOptions = { serverName: serverNameOf(name), verify: false, alpn: [alpn] };
+  if (checked) {
+    // The name as it is: an address is checked against the certificate's addresses, and is not
+    // sent as a server name.
+    // Without the name (verify-ca) only the root certificate given is trusted: a certificate
+    // that any public CA issued to anyone would pass otherwise.
+    opts = {
+      serverName: name,
+      ca: rootCert,
+      checkServerName: full,
+      builtinRoots: full,
+      alpn: [alpn],
+    };
+  }
+  let tls: TlsStream;
+  try {
+    tls = await timeout(startTls(plain, opts), ms);
+  } catch (e) {
+    // A handshake that lost to the deadline is waiting on `plain`: this ends it.
+    plain.abort();
+    plain.close();
+    throw e;
+  }
+  return { tcp: plain, tls: shared(new Mutex<TlsStream>(tls)), direct: false };
+}
+
+// SNI takes a name, not an address.
+function serverNameOf(host: string): string {
+  if (host.includes(":")) {
+    return "";
+  }
+  for (let i: i64 = 0; i < (host.length as i64); i++) {
+    const c = host.charCodeAt(i) as i64;
+    if (c != 46 && (c < 48 || c > 57)) {
+      return host;
+    }
+  }
+  return "";
+}

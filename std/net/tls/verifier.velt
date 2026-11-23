@@ -1,0 +1,375 @@
+// velt/net (internal): `CertificateVerifier`, what the TLS client does with the server's
+// certificates when it verifies them, as rustls with webpki does: a path from the server's
+// certificate to a trust anchor (velt/net/tls/x509/path), then the certificate's names against
+// the server's name (velt/net/tls/x509/names), then the server's signature over the handshake
+// with the certificate's key. A failure is a `TlsFailure` with the alert rustls sends for it.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { IoError } from "velt/io/error";
+import {
+  BAD_CERTIFICATE,
+  CERTIFICATE_EXPIRED,
+  CERTIFICATE_UNKNOWN,
+  DECRYPT_ERROR,
+  ILLEGAL_PARAMETER,
+  TlsFailure,
+  UNKNOWN_CA,
+  UNSUPPORTED_CERTIFICATE,
+} from "velt/net/tls/alert";
+import { pemBlocks } from "velt/net/tls/pem";
+import {
+  KEY_P256,
+  KEY_P384,
+  SIG_ECDSA_SHA256,
+  SIG_ECDSA_SHA384,
+  SIG_ED25519,
+  SIG_RSA_PKCS1_SHA256,
+  SIG_RSA_PSS_SHA256,
+} from "velt/net/tls/x509/algorithms";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { certificateHasDnsName, certificateHasIpAddress } from "velt/net/tls/x509/names";
+import { PathBuilder } from "velt/net/tls/x509/path";
+import { verifySignature } from "velt/net/tls/x509/signed";
+import { nameMismatchMessage, unknownIssuerMessage } from "velt/net/tls/verify_message";
+import { TrustAnchor } from "velt/net/tls/x509/trust_anchor";
+import * as e from "velt/net/tls/x509/verify_error";
+
+// "TLS 1.3, server CertificateVerify" (RFC 8446 §4.4.3).
+const CONTEXT: u8[] = [
+  0x54,
+  0x4c,
+  0x53,
+  0x20,
+  0x31,
+  0x2e,
+  0x33,
+  0x2c,
+  0x20,
+  0x73,
+  0x65,
+  0x72,
+  0x76,
+  0x65,
+  0x72,
+  0x20,
+  0x43,
+  0x65,
+  0x72,
+  0x74,
+  0x69,
+  0x66,
+  0x69,
+  0x63,
+  0x61,
+  0x74,
+  0x65,
+  0x56,
+  0x65,
+  0x72,
+  0x69,
+  0x66,
+  0x79,
+];
+
+/**
+ * The anchors a client trusts on top of the built-in roots: the certificates of `caPem` (PEM
+ * text, "" for none), each trusted as a root. Throws `IoError` `EINVAL` for text that is not PEM, PEM
+ * without a certificate, or a certificate that does not parse.
+ */
+export function trustAnchors(caPem: string): TrustAnchor[] throws IoError {
+  const anchors: TrustAnchor[] = [];
+  if (caPem == "") {
+    return anchors;
+  }
+  let found = false;
+  for (const block of pemBlocks(caPem, "CA")) {
+    if (block.label != "CERTIFICATE") {
+      continue;
+    }
+    found = true;
+    try {
+      anchors.push(TrustAnchor.fromCertificate(block.der));
+    } catch (err) {
+      throw new IoError("EINVAL", `invalid CA certificate in the CA PEM: ${err}`);
+    }
+  }
+  if (!found) {
+    throw new IoError("EINVAL", "no certificate found in the CA PEM");
+  }
+  return anchors;
+}
+
+/**
+ * The 4 or 16 bytes of the IP address `text` (dotted decimal without leading zeros; IPv6 in
+ * RFC 4291 §2.2's forms, with brackets or without), or null when it is not one.
+ */
+export function ipAddressBytes(text: string): u8[] | null {
+  let s = text;
+  if (s.startsWith("[") && s.endsWith("]")) {
+    s = s.slice(1, (s.length as i64) - 1);
+  }
+  if (!s.includes(":")) {
+    return ipv4(s);
+  }
+  // The groups before and after "::" (at most one), the last possibly an IPv4 address.
+  const halves = s.split("::");
+  if (halves.length > 2) {
+    return null;
+  }
+  const head = groups(halves[0]);
+  const tail = halves.length == 2 ? groups(halves[1]) : [];
+  if (head == null || tail == null) {
+    return null;
+  }
+  const given = head.length + tail.length;
+  if (halves.length == 1 ? given != 16 : given > 14) {
+    return null;
+  }
+  const out = Buffer.alloc(16);
+  for (let i: usize = 0; i < head.length; i++) {
+    out[i] = head[i];
+  }
+  for (let i: usize = 0; i < tail.length; i++) {
+    out[16 - tail.length + i] = tail[i];
+  }
+  return out;
+}
+
+// The bytes of the colon-separated groups `s` ("" for none), or null when one is malformed.
+function groups(s: string): u8[] | null {
+  const out: u8[] = [];
+  if (s == "") {
+    return out;
+  }
+  const parts = s.split(":");
+  for (let i: usize = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part.includes(".")) {
+      const v4 = i + 1 == parts.length ? ipv4(part) : null;
+      if (v4 == null) {
+        return null;
+      }
+      for (const b of v4) {
+        out.push(b);
+      }
+      continue;
+    }
+    if (part.length == 0 || part.length > 4) {
+      return null;
+    }
+    let value = 0;
+    for (const c of utf8Encode(part)) {
+      const digit = hexDigit(c);
+      if (digit < 0) {
+        return null;
+      }
+      value = value * 16 + digit;
+    }
+    out.push((value >> 8) as u8);
+    out.push((value & 0xff) as u8);
+  }
+  return out;
+}
+
+function hexDigit(c: u8): i32 {
+  if (c >= 0x30 && c <= 0x39) {
+    return (c - 0x30) as i32;
+  }
+  const lower = c | 0x20;
+  return lower >= 0x61 && lower <= 0x66 ? ((lower - 0x61) as i32) + 10 : -1;
+}
+
+// The four bytes of the dotted-decimal `s`, or null.
+function ipv4(s: string): u8[] | null {
+  const parts = s.split(".");
+  if (parts.length != 4) {
+    return null;
+  }
+  const out: u8[] = [];
+  for (const part of parts) {
+    const digits = utf8Encode(part);
+    if (digits.length == 0 || digits.length > 3 || (digits.length > 1 && digits[0] == 0x30)) {
+      return null;
+    }
+    let value = 0;
+    for (const c of digits) {
+      if (c < 0x30 || c > 0x39) {
+        return null;
+      }
+      value = value * 10 + ((c - 0x30) as i32);
+    }
+    if (value > 255) {
+      return null;
+    }
+    out.push(value as u8);
+  }
+  return out;
+}
+
+// The failure for the path error `code`, with the alert rustls sends for it.
+function pathFailure(code: i32): TlsFailure {
+  let alert = CERTIFICATE_UNKNOWN;
+  if (code == e.CERT_EXPIRED || code == e.CERT_NOT_VALID_YET) {
+    alert = CERTIFICATE_EXPIRED;
+  } else if (code == e.UNKNOWN_ISSUER) {
+    alert = UNKNOWN_CA;
+  } else if (
+    code == e.INVALID_SIGNATURE ||
+    code == e.UNSUPPORTED_SIGNATURE_ALGORITHM ||
+    code == e.UNSUPPORTED_SIGNATURE_FOR_KEY
+  ) {
+    alert = DECRYPT_ERROR;
+  } else if (code == e.EKU_NOT_FOUND) {
+    alert = UNSUPPORTED_CERTIFICATE;
+  } else if (code == e.BAD_ENCODING || code == e.TRAILING_DATA || code == e.NOT_VALID_FOR_NAME) {
+    alert = BAD_CERTIFICATE;
+  }
+  return new TlsFailure(alert, e.describeError(code));
+}
+
+/** The server's own certificate and at most 16 more: what a chain is searched in. */
+const MAX_CERTIFICATES: usize = 17;
+
+/** What one handshake verifies the server with. */
+export class CertificateVerifier {
+  private anchors: TrustAnchor[];
+  private builtin: bool;
+  private serverName: string;
+  private checkName: bool;
+  private now: i64;
+  // The server's certificate, once its chain was verified.
+  private leaf: Certificate | null;
+
+  /**
+   * A verifier against `anchors`, and the built-in roots with `builtin`, at the time `now`
+   * (seconds since the Unix epoch) for the server `serverName` (a DNS name or an IP address).
+   * Without `checkName` the chain alone is checked, not whom the certificate is for.
+   */
+  constructor(
+    anchors: TrustAnchor[],
+    serverName: string,
+    checkName: bool,
+    now: i64,
+    builtin: bool = false,
+  ) {
+    this.anchors = anchors;
+    this.builtin = builtin;
+    this.serverName = serverName;
+    this.checkName = checkName;
+    this.now = now;
+    this.leaf = null;
+  }
+
+  /**
+   * Verifies `chain` (the server's certificates as sent, DER, its own first): a path to an
+   * anchor, then the name. Throws the `TlsFailure` for what is wrong.
+   */
+  verifyChain(chain: u8[][]) {
+    if (chain.length == 0) {
+      throw new TlsFailure(BAD_CERTIFICATE, "the server sent no certificate");
+    }
+    // More certificates than any real chain has are not looked through: path validation's work
+    // grows with their number (the handshake buffer bounds their bytes).
+    if (chain.length > MAX_CERTIFICATES) {
+      throw new TlsFailure(
+        BAD_CERTIFICATE,
+        `the server sent ${chain.length} certificates (at most ${MAX_CERTIFICATES} are looked at)`,
+      );
+    }
+    const leaf = new Certificate(chain[0]);
+    const sent = chain.slice(1);
+    const builder = new PathBuilder(this.anchors, sent, this.now, this.builtin);
+    const result = builder.verify(leaf);
+    if (result == e.UNKNOWN_ISSUER) {
+      throw new TlsFailure(UNKNOWN_CA, unknownIssuerMessage(leaf, sent));
+    }
+    if (result != e.VALID) {
+      throw pathFailure(result);
+    }
+    if (this.checkName) {
+      const ip = ipAddressBytes(this.serverName);
+      const named =
+        ip != null
+          ? certificateHasIpAddress(leaf, ip)
+          : certificateHasDnsName(leaf, utf8Encode(this.serverName));
+      if (!named) {
+        throw new TlsFailure(
+          BAD_CERTIFICATE,
+          nameMismatchMessage(leaf, this.serverName, ip != null),
+        );
+      }
+    }
+    this.leaf = leaf;
+  }
+
+  /**
+   * Checks TLS 1.3's CertificateVerify (RFC 8446 §4.4.3): `scheme` and `signature` over the
+   * transcript's hash `hash`, by the verified certificate's key. ECDSA's curve is the scheme's,
+   * and RSA is PSS.
+   */
+  verifyHandshake13(scheme: usize, hash: u8[], signature: u8[]) {
+    const message: u8[] = [];
+    for (let i = 0; i < 64; i++) {
+      message.push(0x20);
+    }
+    for (const b of CONTEXT) {
+      message.push(b);
+    }
+    message.push(0);
+    for (const b of hash) {
+      message.push(b);
+    }
+    const key = this.leaf!.keyAlgorithm;
+    let algorithm = 0;
+    if (scheme == 0x0403 && key == KEY_P256) {
+      algorithm = SIG_ECDSA_SHA256;
+    } else if (scheme == 0x0503 && key == KEY_P384) {
+      algorithm = SIG_ECDSA_SHA384;
+    } else if (scheme == 0x0807) {
+      algorithm = SIG_ED25519;
+    } else if (scheme >= 0x0804 && scheme <= 0x0806) {
+      algorithm = SIG_RSA_PSS_SHA256 + ((scheme - 0x0804) as i32);
+    }
+    this.check(scheme, algorithm, message, signature);
+  }
+
+  /**
+   * Checks TLS 1.2's ServerKeyExchange signature (RFC 5246 §7.4.3): `scheme` and `signature`
+   * over `signed` (the two randoms and the ECDH parameters), by the verified certificate's key.
+   * ECDSA takes either curve with either hash, and RSA is PSS or PKCS#1 v1.5.
+   */
+  verifyHandshake12(scheme: usize, signed: u8[], signature: u8[]) {
+    let algorithm = 0;
+    if (scheme == 0x0403) {
+      algorithm = SIG_ECDSA_SHA256;
+    } else if (scheme == 0x0503) {
+      algorithm = SIG_ECDSA_SHA384;
+    } else if (scheme == 0x0807) {
+      algorithm = SIG_ED25519;
+    } else if (scheme >= 0x0804 && scheme <= 0x0806) {
+      algorithm = SIG_RSA_PSS_SHA256 + ((scheme - 0x0804) as i32);
+    } else if (scheme == 0x0401 || scheme == 0x0501 || scheme == 0x0601) {
+      algorithm = SIG_RSA_PKCS1_SHA256 + (((scheme >> 8) - 4) as i32);
+    }
+    this.check(scheme, algorithm, signed, signature);
+  }
+
+  private check(scheme: usize, algorithm: i32, message: u8[], signature: u8[]) {
+    const leaf = this.leaf!;
+    const key = leaf.der.slice(leaf.publicKey.start as i64, leaf.publicKey.end as i64);
+    const result =
+      algorithm == 0
+        ? e.UNSUPPORTED_SIGNATURE_ALGORITHM
+        : verifySignature(algorithm, leaf.keyAlgorithm, key, message, signature);
+    if (result == e.VALID) {
+      return;
+    }
+    if (result == e.INVALID_SIGNATURE) {
+      throw new TlsFailure(DECRYPT_ERROR, "the server's signature does not verify");
+    }
+    throw new TlsFailure(
+      ILLEGAL_PARAMETER,
+      `the server signed with scheme 0x${scheme.toString(16)}, which its certificate's key or this version of TLS does not take`,
+    );
+  }
+}

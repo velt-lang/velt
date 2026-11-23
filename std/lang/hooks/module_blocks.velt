@@ -240,7 +240,7 @@ function dropAll(): void {
     unsafe {
       addressCall(ld(desc + DESC_DROP), p);
     }
-    freeBlock(p);
+    freeBlock(desc, p);
   }
   if (table !== 0) {
     release(table);
@@ -335,24 +335,40 @@ function alignOf(desc: usize): usize {
 }
 
 /**
- * A zeroed block of `desc`'s size, from the C library, as the runtime took its blocks from its
- * own allocator: outside the leak counters' blocks, which count what the program's values hold
- * (a block a program leaves without dropping, as one stopped by an uncaught error in an
- * initializer, is no leak of its values). Aligned to 16: every descriptor's alignment is at most
- * 8 (a value's alignment in memory, a SIMD vector's too, rt_abi.md "SIMD"), as a task's state's
- * is (sched_spawn.velt).
+ * A zeroed block of `desc`'s size and alignment, from the C library, as the runtime took its
+ * blocks from its own allocator: outside the leak counters' blocks, which count what the
+ * program's values hold (a block a program leaves without dropping, as one stopped by an uncaught
+ * error in an initializer, is no leak of its values). The C library aligns to 16; a block aligned
+ * beyond that (a module variable of an `@align(32)` struct) starts at the next multiple of its
+ * alignment in a larger one, whose address is kept in the word before it for `freeBlock`.
  */
 function allocBlock(desc: usize): usize {
-  if (alignOf(desc) > 8) {
-    stop("ICE: a module state block aligned to more than 8 bytes\n");
+  const align = alignOf(desc);
+  if (align <= C_ALIGN) {
+    return zeroed(bytesOf(desc));
   }
-  return zeroed(bytesOf(desc));
+  const raw = zeroed(bytesOf(desc) + align);
+  const p = alignedBlock(raw, align);
+  st(p - 8, raw);
+  return p;
 }
 
-/** Gives back block `p`, which `allocBlock` made and nothing uses any more. */
-function freeBlock(p: usize): void {
-  release(p);
+/**
+ * Where a block aligned to `align` (beyond the C library's 16) starts in the larger block at `raw`
+ * (16-aligned, `align` bytes longer): past a word for `raw`'s address, at the next multiple of
+ * `align`, so it ends within the larger block.
+ */
+export function alignedBlock(raw: usize, align: usize): usize {
+  return (raw + 8 + align - 1) & ~(align - 1);
 }
+
+/** Gives back block `p` of `desc`, which `allocBlock` made and nothing uses any more. */
+function freeBlock(desc: usize, p: usize): void {
+  release(alignOf(desc) <= C_ALIGN ? p : ld(p - 8));
+}
+
+/** The alignment of the C library's blocks (`calloc`). */
+const C_ALIGN: usize = 16;
 
 /**
  * The block of `desc`, which no thread made yet, made as the runtime made it (module docs): zeroed,

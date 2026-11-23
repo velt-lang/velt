@@ -10,15 +10,13 @@
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt/time/civil";
+import { DateParts, partsOf, monthShort, weekdayShort } from "velt/time/civil";
 import { pad, offsetString, isoString, httpString } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { dateNow } from "velt/lang/hooks/clock";
 import { localOffset, localToUtc } from "velt/time/local";
-
-// The largest distance from the epoch a JS date can be (100,000,000 days).
-const MAX_TIME: f64 = 8640000000000000.0;
+import { fromFields, fullYear, isLocalForm, timeClip } from "velt/time/date_value";
 
 /**
  * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
@@ -70,7 +68,7 @@ export class Date implements Comparable<Date> {
   static parse(s: string): number {
     const iso = parseIso(s);
     if (iso != null) {
-      return isLocalForm(s) ? localToUtc(iso) as f64 : timeClip(iso as f64);
+      return timeClip(isLocalForm(s) ? localToUtc(iso) as f64 : iso as f64);
     }
     const http = parseHttp(s);
     if (http != null) {
@@ -510,48 +508,4 @@ export class Date implements Comparable<Date> {
     this.t = fromFields(utc, fields);
     return this.t;
   }
-}
-
-// JS's TimeClip: NaN outside ±8.64e15 ms, else the time truncated to whole milliseconds.
-function timeClip(t: f64): f64 {
-  if (!(t >= -MAX_TIME && t <= MAX_TIME)) {
-    return 0.0 / 0.0;
-  }
-  return Math.trunc(t) + 0.0;
-}
-
-// The epoch time of calendar fields `[year, month 0-11, day, hours, minutes, seconds, ms]`, UTC
-// or local; NaN if one is not finite. The year is taken as given (see `fullYear`).
-function fromFields(utc: bool, fields: f64[]): f64 {
-  const n: i64[] = [];
-  for (const f of fields) {
-    if (!(f - f == 0.0)) {
-      return 0.0 / 0.0;
-    }
-    n.push(Math.trunc(f) as i64);
-  }
-  const t = epochMsOf(n[0], n[1] + 1, n[2], n[3], n[4], n[5], n[6]);
-  return timeClip((utc ? t : localToUtc(t)) as f64);
-}
-
-// JS's MakeFullYear: a year of 0-99 means 1900-1999. Only the constructor and `Date.UTC` apply
-// it; the setters take the year as given.
-function fullYear(y: f64): f64 {
-  const whole = Math.trunc(y);
-  return whole >= 0.0 && whole <= 99.0 ? whole + 1900.0 : y;
-}
-
-// Is `s` a date-time without an offset (`2024-01-15T10:30`), which JS reads as local time?
-function isLocalForm(s: string): bool {
-  const text = s.trim();
-  if (text.length <= 10) {
-    return false;
-  }
-  const rest = text.slice(10);
-  const sep = rest.charAt(0);
-  if (sep != "T" && sep != "t" && sep != " ") {
-    return false;
-  }
-  const time = rest.slice(1);
-  return !(time.endsWith("Z") || time.endsWith("z") || time.includes("+") || time.includes("-"));
 }

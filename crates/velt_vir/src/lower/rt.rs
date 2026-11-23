@@ -27,7 +27,6 @@ pub(super) enum Rt {
     /// Source location bookkeeping for uncaught-error reports (`lower_with` only).
     SetThrowLoc,
     ThrowLoc,
-    PowI64,
     Alloc,
     Realloc,
     Free,
@@ -159,11 +158,8 @@ pub(super) enum Rt {
     StrbufPushJsonStr,
     StrbufPushInspectStr,
     StrbufPushInspectKey,
-    StrbufPushInspectJson,
     StrbufFinish,
     StrbufDrop,
-    /// `velt_rt_json_value_free(h)`: a `JsonValue` runtime handle the glue made for printing.
-    JsonValueFree,
 }
 
 impl Rt {
@@ -191,7 +187,6 @@ impl Rt {
             Rt::UncaughtReport => ("velt_rt_uncaught_report", vec![], Unit, false),
             Rt::SetThrowLoc => ("velt_rt_set_throw_loc", vec![Ptr], Unit, false),
             Rt::ThrowLoc => ("velt_rt_throw_loc", vec![], Ptr, false),
-            Rt::PowI64 => math(MathOp::PowI64),
             Rt::Alloc => ("velt_rt_alloc", vec![U64, U64], Ptr, false),
             Rt::Realloc => ("velt_rt_realloc", vec![Ptr, U64, U64, U64], Ptr, false),
             Rt::Free => ("velt_rt_free", vec![Ptr, U64, U64], Unit, false),
@@ -338,14 +333,8 @@ impl Rt {
             Rt::StrbufPushJsonStr => f("velt_rt_strbuf_push_json_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectStr => f("velt_rt_strbuf_push_inspect_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectKey => f("velt_rt_strbuf_push_inspect_key", vec![Ptr, Ptr], Unit),
-            Rt::StrbufPushInspectJson => f(
-                "velt_rt_strbuf_push_inspect_json",
-                vec![Ptr, Ptr, U8, U32],
-                Unit,
-            ),
             Rt::StrbufFinish => f("velt_rt_strbuf_finish", vec![Ptr, Ptr], Unit),
             Rt::StrbufDrop => f("velt_rt_strbuf_drop", vec![Ptr], Unit),
-            Rt::JsonValueFree => f("velt_rt_json_value_free", vec![U64], Unit),
             other => crate::lower::ice(format_args!("no signature for {other:?}")),
         }
     }

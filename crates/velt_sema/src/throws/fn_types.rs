@@ -79,7 +79,7 @@ pub(crate) struct FnTypeSeeds {
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
-    proxy_sites: FxHashSet<Span>,
+    pub(super) proxy_sites: FxHashSet<Span>,
     /// Check without any variable, also for the traps (`FnSites::doubted`).
     exact: bool,
 }

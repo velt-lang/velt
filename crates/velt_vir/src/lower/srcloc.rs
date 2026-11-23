@@ -56,23 +56,39 @@ impl LocMap {
         let mut line_starts = vec![];
         let mut std_files = vec![];
         let mut shown = vec![];
+        // The loader names a file a conditional import picks (`#name`, std/imports.velt) by its
+        // canonical path, which a std root spelled another way (`crates/x/../../std`, a symlink)
+        // doesn't prefix: such a file is compared canonically too. Only then: a root that is
+        // canonical already prefixes it as it is, and costs no call per file.
+        let canonical_root = std_root
+            .and_then(|r| std::fs::canonicalize(r).ok())
+            .filter(|c| Some(c.as_path()) != std_root);
         for (_, f) in sm.files() {
             let path = f.path.display().to_string().replace('\\', "/");
-            let in_std = std_root.and_then(|r| f.path.strip_prefix(r).ok());
+            let in_std = std_root
+                .and_then(|r| {
+                    f.path
+                        .strip_prefix(r)
+                        .ok()
+                        .map(std::path::Path::to_path_buf)
+                })
+                .or_else(|| {
+                    let root = canonical_root.as_ref()?;
+                    let file = std::fs::canonicalize(&f.path).ok()?;
+                    file.strip_prefix(root)
+                        .ok()
+                        .map(std::path::Path::to_path_buf)
+                });
             let generated_std = path.starts_with(GENERATED_STD);
-            shown.push(match in_std {
+            shown.push(match &in_std {
                 Some(rel) => format!("std/{}", rel.display().to_string().replace('\\', "/")),
                 None => path.clone(),
             });
             files.push(path);
+            // `match_indices` of a `char` searches with memchr: a large generated file (a table,
+            // #3457) costs a fraction of a byte-at-a-time scan.
             let starts = std::iter::once(0)
-                .chain(
-                    f.src
-                        .bytes()
-                        .enumerate()
-                        .filter(|(_, b)| *b == b'\n')
-                        .map(|(i, _)| i as u32 + 1),
-                )
+                .chain(f.src.match_indices('\n').map(|(i, _)| i as u32 + 1))
                 .collect();
             line_starts.push(starts);
             // Code a std generator wrote for a std module (`<generated>/std/…`, veltc's

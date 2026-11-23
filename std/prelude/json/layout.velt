@@ -2,7 +2,12 @@
 // is `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
 // the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
 
-import { JSON_CALLBACK_DEPTH, jsonCallbackTooDeep } from "velt/encoding/json/value_ops";
+import {
+  JSON_CALLBACK_DEPTH,
+  jsonCallbackTooDeep,
+  pushRevived,
+  setRevived,
+} from "velt/encoding/json/value_ops";
 import { JSON } from "velt/prelude/json/json";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { propertyList, relayout } from "velt/encoding/json/relayout";
@@ -57,7 +62,7 @@ function jsonReplaced(
     const n = r.len();
     for (let i: i64 = 0; i < n; i++) {
       const e = jsonReplaced(String(i), r.at(i)!, replacer, depth + 1);
-      out.push(e ?? JsonValue.of(null));
+      pushRevived(out, e);
     }
     return out;
   }
@@ -65,9 +70,7 @@ function jsonReplaced(
     const out = JsonValue.object();
     for (const k of r.keys()) {
       const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
-      if (e != undefined) {
-        out.set(k, e);
-      }
+      setRevived(out, k, e);
     }
     return out;
   }
@@ -75,10 +78,12 @@ function jsonReplaced(
 }
 
 function jsonRelayout(text: string, keys: string, filter: bool, gap: string): string {
-  if (!filter && gap.length == 0) {
+  // No keys (`""`, from `jsonAnyKeys`): the replacer filters nothing.
+  const filtered = filter && keys.length > 0;
+  if (!filtered && gap.length == 0) {
     return text;
   }
-  return relayout(text, filter ? propertyList(keys) : null, gap.length > 0, gap);
+  return relayout(text, filtered ? propertyList(keys) : null, gap.length > 0, gap);
 }
 
 // The same for a number `space`: as in V8, any `space > 0` breaks lines, so one below 1 gives
@@ -87,7 +92,8 @@ function jsonRelayoutNumber(text: string, keys: string, filter: bool, space: f64
   if (!(space > 0)) {
     return jsonRelayout(text, keys, filter, "");
   }
-  return relayout(text, filter ? propertyList(keys) : null, true, jsonGapOfNumber(space));
+  const filtered = filter && keys.length > 0;
+  return relayout(text, filtered ? propertyList(keys) : null, true, jsonGapOfNumber(space));
 }
 
 // A replacer array of strings as `propertyList` reads it.
@@ -98,6 +104,33 @@ function jsonKeys(keys: string[]): string {
 // A replacer array of numbers: JS lists each as `String(n)`.
 function jsonNumberKeys(keys: f64[]): string {
   return JSON.stringify(keys.map((k) => `${k}`));
+}
+
+// A replacer only known at run time, or an array of mixed or other number types, as an `any`:
+// Node's property list of an array (a string entry as it is, a number as `String(n)`, any other
+// entry ignored), or `""` (no filter) for anything else that is not a function. A function
+// behind an `any` can't be called as a replacer: a `TypeError`.
+function jsonAnyKeys(replacer: any): string {
+  if (typeof replacer == "function") {
+    throw new TypeError(
+      "JSON.stringify: a replacer function must be typed `JsonReplacer`, not passed as `any`",
+    );
+  }
+  if (!Array.isArray(replacer)) {
+    return "";
+  }
+  // Indexed through the `any`: an array of any element type.
+  const keys: string[] = [];
+  const n = replacer.length as f64;
+  for (let i = 0; i < n; i++) {
+    const k = replacer[i];
+    if (typeof k == "string") {
+      keys.push(k as string);
+    } else if (typeof k == "number") {
+      keys.push(String(k));
+    }
+  }
+  return JSON.stringify(keys);
 }
 
 // JS's gap for a number `space`: `min(10, trunc(space))` spaces, empty below 1 (or for NaN).

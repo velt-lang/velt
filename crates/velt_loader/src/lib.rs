@@ -80,7 +80,7 @@ use velt_syntax::ast;
 
 use locate::Origin;
 pub use locate::{module_path, PackageImports, PackageResolver};
-pub use more::{demand_std_on, executor_module, load_more, LoadState};
+pub use more::{demand_std_on, executor_module, load_more, tls_module, LoadState};
 use paths::{file_key, is_std_path, shown_in_package, shown_path};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
@@ -131,6 +131,14 @@ pub struct LoadOptions<'a> {
     /// Without [`Self::demand_std`]: leave the executor's modules ([`executor_module`]) to
     /// [`load_more`] still (`VELT_EAGER_STD`): a program loads some only when it calls them (#2649).
     pub demand_executor: bool,
+    /// std modules (canonical paths) loaded up front, after everything else: what an earlier check
+    /// of the program demanded that could not be served in place ([`Self::refuse_out_of_rule`]),
+    /// which the driver loads for the check it starts again.
+    pub preload: &'a [String],
+    /// A module [`load_more`] would serve against the (a1) rule ([`std_index`]) is refused
+    /// (`StdBatch::refused`) instead of reported as an internal error: the driver checks the
+    /// program again with it in [`Self::preload`].
+    pub refuse_out_of_rule: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -226,6 +234,7 @@ pub fn load_program(
     if !opts.demand_std {
         more::load_up_front(&mut loader, &mut queue);
     }
+    more::preload(&mut loader, &mut queue);
     loader.check_variants();
     loader.check_ambients();
     loader.declare_global_types();

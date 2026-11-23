@@ -337,6 +337,7 @@ impl FnCx<'_, '_> {
             }
         };
         let info = GlobalInfo {
+            weak: false,
             name: format!("{qual}#ctor{n}"),
             qual_name: format!("{qual}#ctor{n}"),
             module,

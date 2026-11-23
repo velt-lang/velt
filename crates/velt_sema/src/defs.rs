@@ -272,6 +272,9 @@ pub(crate) struct FnInfo<'m> {
     /// std's inlining decorator, `@inline` or `@noInline`, with its span (set where decorators
     /// are checked, `decorators::known`; `body::inline_markers` checks `@inline`'s callees).
     pub inline_marker: Option<(crate::decorators::Inline, Span)>,
+    /// `@variant`: the function its calls take when the argument shows it
+    /// (`decorators::known::variant`, `body::expr::call`).
+    pub variant: Option<crate::decorators::Variant>,
     /// An override without a written result of a method returning `this`: it returns `this`
     /// too (TypeScript infers `this` from `return this;`; anything else is its TS2416).
     pub inherits_this: bool,
@@ -528,6 +531,9 @@ pub(crate) struct GlobalInfo<'m> {
     /// whose value is not a constant (`new Map()`, a call with effects) or whose identity shows
     /// (a function from a call, #802).
     pub stored: bool,
+    /// A module-level `let` declared `weak T | null` (`hir::GlobalDef::weak`,
+    /// body/weak_globals.rs), once its type is checked.
+    pub weak: bool,
     /// `declare c const`: what it crosses as, once its type is checked.
     pub c_const: Option<crate::hir::CTy>,
     /// `declare c("<library>") let` (or `const`): the C variable, once its type is checked.

@@ -1,0 +1,19 @@
+// check: no leaks
+// A `weak` module `let` exported and read through an import (velt_vir weak_globals.rs): the
+// importer reads the exporting module's slot, set through its exported function, and sees `null`
+// once the target went (#3119).
+import { View, current, show, title } from "./_weak_global_lib/state";
+
+function main() {
+  const a = new View("a");
+  show(a);
+  console.log("set", current?.title ?? "null", title());
+  {
+    const t = new View("t");
+    show(t);
+    console.log("temp", current?.title ?? "null");
+  }
+  console.log("gone", current?.title ?? "null", title());
+  show(null);
+  console.log("cleared", current === null, a.title);
+}

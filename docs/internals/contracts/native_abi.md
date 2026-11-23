@@ -344,8 +344,8 @@ text, so the binding never depends on which way the parameters went.
 Two crates of this repository help a native library and are shared with the runtime:
 `velt_text` (string encoding, number formatting, JSON, database rows, row cursors and parameter
 sinks; its `sdk` feature writes into Velt strings) and `velt_tls` (one rustls client setup per
-process: the `ring` provider, Mozilla's roots plus extra PEM CAs, cached per CA text; the
-runtime's `fetch` and WebSockets use it too). `packages/postgres/native/` is built on them.
+process: the `ring` provider, Mozilla's roots plus extra PEM CAs, cached per CA text; the runtime
+does not use it: TLS in programs is Velt's, std/net/tls/). `packages/postgres/native/` is built on them.
 
 ## Start-up
 

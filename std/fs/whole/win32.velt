@@ -2,9 +2,10 @@
 // variant, std/imports.velt), through Win32's wide-path functions, with Node's messages and
 // libuv's names for Win32's errors (std/os/win_error.velt). A path of 248 units or more is made
 // absolute and given the `\\?\` prefix, as Rust's std does, so that it is not cut at MAX_PATH;
-// errors name the path as it was given, as Node's do. A directory refuses to open as a file with
-// "access denied", which is `EISDIR` here, as everywhere else. A file named with separators
-// after it (`dir\file\`) is read, described and found as the file, as Node does (`asFile`).
+// errors name the path as it was given, as Node's do. A directory refuses to open as a file
+// ("access denied", or another code when named with a separator after it), which is `EISDIR`
+// here, as everywhere else. A file named with separators after it (`dir\file\`) is read,
+// described and found as the file, as Node does (`asFile`).
 
 import { Ptr } from "velt/ffi/ptr";
 import { osError } from "velt/fs/errors";
@@ -176,7 +177,9 @@ export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
   const h = open(w, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
   if (h === null) {
     const code = lastWin32();
-    if (code === ERROR_ACCESS_DENIED && isDirectory(w)) {
+    // A directory refuses to open as a file: with "access denied", or, named with a separator
+    // after it (`dir\`), with another code. Node reads either as EISDIR.
+    if (isDirectory(w)) {
       return { value: null, error: osError(EISDIR, "read") };
     }
     return { value: null, error: osError(errnoOfWin32(code), "open", path) };

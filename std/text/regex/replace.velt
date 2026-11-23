@@ -2,8 +2,9 @@
 // matches of a program (find.velt).
 
 import {
-  addressArray,
   arrayTruncate,
+  inline,
+  ptrFromAddress,
   strByteAt,
   strByteLen,
   strDataAddress,
@@ -17,7 +18,7 @@ import {
   velt_rt_str_byte_slice,
   velt_rt_strbuf_finish,
   velt_rt_strbuf_new,
-  velt_rt_strbuf_push_u8s,
+  velt_rt_strbuf_push_bytes,
   velt_rt_strbuf_push_str,
 } from "velt/text/regex/rt";
 import { Search } from "velt/text/regex/search";
@@ -112,8 +113,14 @@ function parts(replacement: string, names: string[], kinds: i64[], texts: string
 
 /** The most bytes of a subject appended to a builder where they are. */
 const MAX_PIECE: usize = 1 << 30;
-/** What tells the builder to count a piece's code units itself. */
-const UNCOUNTED: u64 = 0xffffffffffffffff;
+
+/** The length word of a piece of `n` bytes for `velt_rt_strbuf_push_bytes`: the bytes in the
+ * low half, and in the high half its UTF-16 code units when the subject is ASCII (as many), 0
+ * for the builder to count them. */
+@inline("always")
+function counted(n: u64, ascii: bool): u64 {
+  return ascii ? n | (n << 32) : n;
+}
 
 /** `s` with the first match of `prog` (every match when `all`) replaced by `replacement`,
  * expanded as `substitution` does. The result is built in one buffer, the text between two
@@ -144,6 +151,10 @@ export function replaceMatches(
   if (!plain) {
     parts(replacement, names, kinds, texts);
   }
+  // A plain replacement is appended from where its bytes are, as the pieces of the subject are.
+  const textAt = strDataAddress(replacement);
+  const textBytes = strByteLen(replacement);
+  const textSize = counted(textBytes as u64, strLen(replacement) == textBytes);
   let buf = "";
   velt_rt_strbuf_new(len as u64, buf);
   let last: usize = 0;
@@ -151,21 +162,28 @@ export function replaceMatches(
     const start = found[at] as usize;
     if (start > last) {
       const n = (start - last) as u64;
-      if (start - last > MAX_PIECE || inPair(s, last, len) || inPair(s, start, len)) {
+      // An all-ASCII subject has no pair to be inside of.
+      const split = !ascii && (inPair(s, last, len) || inPair(s, start, len));
+      if (start - last > MAX_PIECE || split) {
         const piece = textOf(s, last, start);
         velt_rt_strbuf_push_str(buf, piece);
       } else {
         const at = strDataAddress(s) + last;
-        const size = start - last;
+        const size = counted(n, ascii);
         // SAFETY: `last < start <= len` are offsets of `s`, which this call borrows and nothing
-        // changes until it returns; the view is only read, by the append below, into `buf`,
-        // which is not `s`.
-        const piece: u8[] = unsafe { addressArray<u8>(at, size) };
-        velt_rt_strbuf_push_u8s(buf, piece, n, ascii ? n : UNCOUNTED);
+        // changes until it returns; the bytes are only read, by the append below, into `buf`,
+        // which is not `s`, and they are whole characters (`split` above).
+        const bytes = unsafe { ptrFromAddress<u8>(at) };
+        velt_rt_strbuf_push_bytes(buf, bytes, size);
       }
     }
-    if (plain) {
+    if (plain && textBytes > MAX_PIECE) {
       velt_rt_strbuf_push_str(buf, replacement);
+    } else if (plain && textBytes != 0) {
+      // SAFETY: `replacement` is borrowed for the call and not changed; its bytes are whole
+      // characters, only read by the append, into `buf`, which is not `replacement`.
+      const bytes = unsafe { ptrFromAddress<u8>(textAt) };
+      velt_rt_strbuf_push_bytes(buf, bytes, textSize);
     }
     for (let k: usize = 0; k < kinds.length; k++) {
       const kind = kinds[k];
@@ -186,18 +204,18 @@ export function replaceMatches(
       }
       const a = from as usize;
       const b = to as usize;
-      if (b - a > MAX_PIECE || inPair(s, a, len) || inPair(s, b, len)) {
+      const split = !ascii && (inPair(s, a, len) || inPair(s, b, len));
+      if (b - a > MAX_PIECE || split) {
         const piece = textOf(s, a, b);
         velt_rt_strbuf_push_str(buf, piece);
       } else {
         const at = strDataAddress(s) + a;
-        const size = b - a;
+        const size = counted((b - a) as u64, ascii);
         // SAFETY: `a < b <= len` are offsets of `s` (a group's or the match's ends, or its
-        // start or end), which this call borrows unchanged; the view is only read, by the
-        // append below, into `buf`, which is not `s`.
-        const piece: u8[] = unsafe { addressArray<u8>(at, size) };
-        const count = (b - a) as u64;
-        velt_rt_strbuf_push_u8s(buf, piece, count, ascii ? count : UNCOUNTED);
+        // start or end), which this call borrows unchanged; the bytes are only read, by the
+        // append below, into `buf`, which is not `s`, and they are whole characters (`split`).
+        const bytes = unsafe { ptrFromAddress<u8>(at) };
+        velt_rt_strbuf_push_bytes(buf, bytes, size);
       }
     }
     last = found[at + 1] as usize;

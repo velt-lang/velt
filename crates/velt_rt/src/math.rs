@@ -1,5 +1,5 @@
-//! `velt_rt_pow_i64` (`**` on integers) and the `Math.*` f64 primitives that backends do not emit
-//! inline (`velt_rt_math_*`). `**` on floats is std's (std/lang/math/pow.velt).
+//! The `Math.*` f64 primitives that backends do not emit inline (`velt_rt_math_*`). `**` is std's:
+//! std/lang/math/pow.velt on floats, std/lang/hooks/pow_int.velt on integers.
 
 /// `Math.sqrt`.
 #[no_mangle]
@@ -132,25 +132,6 @@ pub extern "C" fn velt_rt_math_popcount64(x: u64) -> u64 {
     x.count_ones() as u64
 }
 
-/// Wrapping integer power; a negative exponent yields 0, except `1 ** negative == 1`.
-#[no_mangle]
-pub extern "C" fn velt_rt_pow_i64(a: i64, b: i64) -> i64 {
-    if b < 0 {
-        return if a == 1 { 1 } else { 0 };
-    }
-    let (mut base, mut exp, mut acc) = (a, b as u64, 1i64);
-    while exp > 0 {
-        if exp & 1 == 1 {
-            acc = acc.wrapping_mul(base);
-        }
-        exp >>= 1;
-        if exp > 0 {
-            base = base.wrapping_mul(base);
-        }
-    }
-    acc
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,25 +183,6 @@ mod tests {
     fn umulh() {
         assert_eq!(velt_rt_math_umulh(u64::MAX, u64::MAX), u64::MAX - 1);
         assert_eq!(velt_rt_math_umulh(1 << 32, 1 << 32), 1);
-    }
-
-    #[test]
-    fn pow_i64() {
-        assert_eq!(velt_rt_pow_i64(2, 10), 1024);
-        assert_eq!(velt_rt_pow_i64(0, 0), 1);
-        assert_eq!(velt_rt_pow_i64(5, 0), 1);
-        assert_eq!(velt_rt_pow_i64(0, 5), 0);
-        assert_eq!(velt_rt_pow_i64(-3, 3), -27);
-        assert_eq!(velt_rt_pow_i64(-2, 63), i64::MIN);
-        assert_eq!(velt_rt_pow_i64(2, 63), i64::MIN); // wraps
-        assert_eq!(velt_rt_pow_i64(2, 64), 0);
-        assert_eq!(velt_rt_pow_i64(3, 40), 3i64.wrapping_pow(40));
-        assert_eq!(velt_rt_pow_i64(7, 1_000_003), 7i64.wrapping_pow(1_000_003));
-        assert_eq!(velt_rt_pow_i64(2, -1), 0);
-        assert_eq!(velt_rt_pow_i64(1, -5), 1);
-        assert_eq!(velt_rt_pow_i64(-1, -5), 0);
-        assert_eq!(velt_rt_pow_i64(1, i64::MAX), 1);
-        assert_eq!(velt_rt_pow_i64(-1, i64::MAX), -1);
     }
 
     #[test]
