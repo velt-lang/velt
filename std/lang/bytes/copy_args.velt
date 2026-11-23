@@ -1,0 +1,26 @@
+// velt/lang/bytes (internal): the positions of Node's `buf.copy(target, targetStart,
+// sourceStart, sourceEnd)` read and checked as Node does, for `u8[]`'s `copy` (std/prelude/
+// bytes.velt) and `MappedFile.copy` (std/fs/mapped_bytes.velt).
+
+import { received } from "velt/lang/bytes/text";
+
+/**
+ * A position of `copy` as Node reads it (its `toInteger`): a whole number as it is, a fraction
+ * rounded down, `NaN` and a number beyond the safe integers 0.
+ */
+export function copyPosition(n: number): number {
+  if (Number.isInteger(n)) {
+    return n;
+  }
+  if (Number.isNaN(n) || n < -9007199254740991 || n > 9007199254740991) {
+    return 0;
+  }
+  return Math.floor(n);
+}
+
+/** `copy`'s position `name` out of range (cold): Node's `ERR_OUT_OF_RANGE` message. */
+export function copyOutOfRange(name: string, must: string, n: number): never {
+  throw new RangeError(
+    `The value of "${name}" is out of range. It must be ${must}. Received ${received(n)}`,
+  );
+}
