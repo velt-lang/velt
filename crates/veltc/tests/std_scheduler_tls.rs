@@ -42,6 +42,25 @@ fn build(dir: &Path, name: &str) -> std::path::PathBuf {
     exe
 }
 
+/// The VIR of the program built in `dir` (`velt build [file] --emit vir`; `file` None: the
+/// package in `dir`). What a program links is checked here, not in its binary: a Windows .exe
+/// keeps no function names (they are in the .pdb), so a search of its bytes finds none there.
+fn vir(dir: &Path, file: Option<&str>) -> String {
+    let mut cmd = command(env!("CARGO_BIN_EXE_velt"));
+    cmd.arg("build");
+    if let Some(f) = file {
+        cmd.arg(dir.join(format!("{f}.velt")));
+    }
+    let o = cmd
+        .arg("--emit")
+        .arg("vir")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
 /// `exe` run with `threads` workers: its stdout.
 fn run(exe: &Path, threads: u32) -> String {
     let mut child = command(exe)
@@ -407,37 +426,40 @@ async function main() {
     .unwrap();
     let exe = build(dir.path(), "plain");
     assert_eq!(run(&exe, 1), "hi\n");
-    let bin = std::fs::read(&exe).unwrap();
+    assert!(
+        !contains(&std::fs::read(&exe).unwrap(), SERVER_MARKER),
+        "the TLS server's message: built without TLS options"
+    );
+    let program = vir(dir.path(), Some("plain"));
     for marker in [
-        SERVER_MARKER,
-        b"tryServerHandshake",
-        b"fd__ops",
-        b"fd__server",
+        "std/net/tls/fd_ops::",
+        "std/net/tls/fd_server::",
+        "std/net/tls/server_handshake::",
     ] {
         assert!(
-            !contains(&bin, marker),
-            "{}: built without TLS options",
-            String::from_utf8_lossy(marker)
+            !program.contains(marker),
+            "{marker}: built without TLS options"
         );
     }
 }
 
-/// What only the TLS client or server in Velt holds: their modules' symbols.
-const TLS_MARKERS: &[&[u8]] = &[
-    b"fd__client",
-    b"client__handshake",
-    b"fd__server",
-    b"server__handshake",
+/// What only the TLS client or server in Velt holds: their modules' definitions in the VIR.
+const TLS_MARKERS: &[&str] = &[
+    "std/net/tls/fd_client::",
+    "std/net/tls/client_handshake::",
+    "std/net/tls/fd_server::",
+    "std/net/tls/server_handshake::",
 ];
 
-/// Panics if the binary `exe` holds the TLS client or server (`what` says which program it is).
-fn assert_no_tls(exe: &Path, what: &str) {
-    let bin = std::fs::read(exe).unwrap();
+/// The TLS client's mark in a program's VIR.
+const CLIENT_MARKER: &str = "std/net/tls/fd_client::";
+
+/// Panics if VIR `program` holds the TLS client or server (`what` says which program it is).
+fn assert_no_tls(program: &str, what: &str) {
     for marker in TLS_MARKERS {
         assert!(
-            !contains(&bin, marker),
-            "{}: {what} has the TLS code (#2392: loaded by reachability)",
-            String::from_utf8_lossy(marker)
+            !program.contains(marker),
+            "{marker}: {what} has the TLS code (#2392: loaded by reachability)"
         );
     }
 }
@@ -470,15 +492,17 @@ async function main() {
     std::fs::write(dir.path().join("fetch_http.velt"), src).unwrap();
     let exe = build(dir.path(), "fetch_http");
     assert_eq!(run(&exe, 1), "200 ok\n");
-    assert_no_tls(&exe, "an http:-only fetch with redirect: \"manual\"");
+    assert_no_tls(
+        &vir(dir.path(), Some("fetch_http")),
+        "an http:-only fetch with redirect: \"manual\"",
+    );
     // Following redirects (the default) keeps the client: the markers are what it builds.
     let follows = src.replace(", { redirect: \"manual\" }", "");
     std::fs::write(dir.path().join("fetch_follow.velt"), follows).unwrap();
     let exe = build(dir.path(), "fetch_follow");
     assert_eq!(run(&exe, 1), "200 ok\n");
-    let bin = std::fs::read(&exe).unwrap();
     assert!(
-        contains(&bin, b"fd__client"),
+        vir(dir.path(), Some("fetch_follow")).contains(CLIENT_MARKER),
         "an http: fetch that follows redirects must keep the TLS client"
     );
 }
@@ -526,7 +550,7 @@ async function main() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(run(&exe, 1), "hi\n");
-    assert_no_tls(&exe, "a plain serve");
+    assert_no_tls(&vir(dir.path(), None), "a plain serve");
 }
 
 /// A WebSocket echo over a plain connection: the server end is a `WebSocket` made over the
@@ -580,7 +604,10 @@ fn a_ws_only_websocket_program_builds_no_tls_client() {
     std::fs::write(dir.path().join("ws_plain.velt"), &plain).unwrap();
     let exe = build(dir.path(), "ws_plain");
     assert_eq!(run(&exe, 1), "echo hi\n");
-    assert_no_tls(&exe, "a ws:-only connectWebSocket and WebSocket");
+    assert_no_tls(
+        &vir(dir.path(), Some("ws_plain")),
+        "a ws:-only connectWebSocket and WebSocket",
+    );
     // `wss:` is never dialled here (the port check), but the client is built for it.
     let secure = plain.replace(
         "    await ws.close();\n  }\n  await s;",
@@ -590,9 +617,8 @@ fn a_ws_only_websocket_program_builds_no_tls_client() {
     std::fs::write(dir.path().join("ws_secure.velt"), &secure).unwrap();
     let exe = build(dir.path(), "ws_secure");
     assert_eq!(run(&exe, 1), "echo hi\n");
-    let bin = std::fs::read(&exe).unwrap();
     assert!(
-        contains(&bin, b"fd__client"),
+        vir(dir.path(), Some("ws_secure")).contains(CLIENT_MARKER),
         "a wss: connectWebSocket must build the TLS client"
     );
 }
