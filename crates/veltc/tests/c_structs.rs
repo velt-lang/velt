@@ -238,23 +238,67 @@ function main() {
     }
 }
 
+/// A C struct crosses to C by value where lowering has the target's C calling convention (x86-64
+/// System V, #2187 layer 3; tests/c_struct_by_value.rs calls such functions), and is an error at
+/// the declaration on the other targets until theirs come.
 #[test]
-fn a_c_struct_crosses_to_c_by_value_only_in_a_later_layer() {
+fn a_c_struct_by_value_is_an_error_where_the_target_has_no_convention_yet() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "export declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function give(): P;\n\nexport const x = 1;\n",
-        "import { x } from \"geom\";\n\nfunction main() {\n  console.log(x);\n}\n",
+        "export declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function give(): P;\n\nexport function run(): f64 {\n  // SAFETY: a test of the build only; never run.\n  unsafe { take(give()); }\n  return 1;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  console.log(run());\n}\n",
     );
     let o = velt(dir.path(), &["check"]);
     let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}");
+    let o = velt(
+        dir.path(),
+        &[
+            "build",
+            "--target",
+            "aarch64-unknown-linux-gnu",
+            "--emit",
+            "vir",
+        ],
+    );
+    let out = String::from_utf8_lossy(&o.stderr).to_string();
     assert!(!o.status.success(), "{out}");
     for want in [
-        "C function `take` can't take or return C struct `P` by value yet",
-        "C function `give` can't take or return C struct `P` by value yet",
+        "C function `take` takes or returns a C struct by value, which is not supported on aarch64-unknown-linux-gnu yet",
+        "C function `give` takes or returns a C struct by value, which is not supported on aarch64-unknown-linux-gnu yet",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
+}
+
+/// A C function declared once with a struct by value and once without it is two calling
+/// conventions for one symbol, a clash, even where their VIR types agree: a 24-byte struct goes
+/// on the stack as a pointer to a copy, as a `Ptr<P>` parameter is a pointer (#2187 layer 3).
+#[test]
+fn a_struct_by_value_and_a_pointer_declaration_of_one_symbol_clash() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c struct P { a: i64; b: i64; c: i64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function take$ptr(p: Ptr<P>): void;\n\nexport function run(): void {\n  const p: P = { a: 1, b: 2, c: 3 };\n  // SAFETY: a test of the build only; never run.\n  unsafe {\n    take(p);\n    take$ptr(Ptr.at<P>(16));\n  }\n  ;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  run();\n}\n",
+    );
+    let o = velt(
+        dir.path(),
+        &[
+            "build",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--emit",
+            "vir",
+        ],
+    );
+    let out = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(!o.status.success(), "{out}");
+    assert!(
+        out.contains("C function `take` has two signatures"),
+        "{out}"
+    );
 }
 
 /// `any`, `Set<any>`, `Map<any>` and `includes` compare a C struct's content as the struct's

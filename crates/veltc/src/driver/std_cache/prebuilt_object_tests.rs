@@ -48,6 +48,7 @@ fn extern_fn(symbol: &str) -> ExternFn {
         host: None,
         c_decl: None,
         variadic: false,
+        c_abi: None,
     }
 }
 
