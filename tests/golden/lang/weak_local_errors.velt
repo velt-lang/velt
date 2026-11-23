@@ -1,17 +1,10 @@
-// What a `weak` local variable (docs/internals/design/cycles.md "`weak T`") does not do yet, or at
-// all: a test does not narrow it (the target may be gone between two reads), and a module's
-// variable that functions use is not lowered yet (#3119).
+// What a `weak` local variable (docs/internals/design/cycles.md "`weak T`") does not do: a test
+// does not narrow it, since the target may be gone between two reads (#3119).
 class Node {
   name: string;
   constructor(name: string) {
     this.name = name;
   }
-}
-
-let moduleLevel: weak Node | null = null;
-
-function readModule(): string {
-  return moduleLevel?.name ?? "null";
 }
 
 function narrowed(n: Node): string {
@@ -22,4 +15,4 @@ function narrowed(n: Node): string {
   return "";
 }
 
-console.log(narrowed(new Node("a")), readModule());
+console.log(narrowed(new Node("a")));

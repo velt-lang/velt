@@ -53,6 +53,10 @@ pub(super) fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 return false;
             }
             note_ty(ty, g.ty, w);
+            // A `weak` module `let`'s initializer, reads and drop call the slot hooks.
+            if g.weak {
+                w.constructs |= Construct::Weak.bit();
+            }
             // A stored global, or a constant of the program's, kept later (kept_consts.rs).
             w.module_state |= g.stored || !cx.modules[g.module].is_std;
             if let Some(e) = &g.init {

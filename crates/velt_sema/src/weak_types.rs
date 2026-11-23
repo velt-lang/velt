@@ -117,6 +117,11 @@ pub(crate) enum WeakPlace {
     ClassField,
     /// A `let`, `const` or `var` in a function body, or a script's that no function uses.
     Local,
+    /// A module-level `let` or `var` that a function uses, or that another module imports: a slot
+    /// of the module state (`hir::GlobalDef::weak`).
+    ModuleLet,
+    /// A module-level `const` that a function uses: evaluated at each use, or kept.
+    ModuleConst,
     /// An abstract property (`abstract a: weak T | null`, given as abstract accessors).
     AbstractProperty,
     /// An interface's or an object type's member, a variable, a static field.
@@ -195,11 +200,10 @@ impl Ctx<'_> {
         place: WeakPlace,
     ) -> Option<&'static str> {
         match place {
-            WeakPlace::ClassField | WeakPlace::Local => {}
+            WeakPlace::ClassField | WeakPlace::Local | WeakPlace::ModuleLet => {}
             WeakPlace::AbstractProperty => return Some("on an abstract property"),
-            WeakPlace::Other => {
-                return Some("outside a class's own field or a function's variable")
-            }
+            WeakPlace::ModuleConst => return Some("on a module's `const` (declare it with `let`)"),
+            WeakPlace::Other => return Some("outside a class's own field or a variable"),
         }
         if nothing != Nothing::Null {
             return Some("with `undefined`");
@@ -288,9 +292,12 @@ impl Ctx<'_> {
 impl crate::body::FnCx<'_, '_> {
     /// Is the place `place` a `weak` field (`hir::FieldDef::weak`)?
     pub(crate) fn weak_field_place(&mut self, place: &crate::hir::Expr) -> bool {
-        // A `weak` local (`hir::LocalDef::weak`) is written as a weak field is.
-        if let crate::hir::ExprKind::Local(l, _) = place.kind {
-            return self.f.locals[l.0 as usize].weak;
+        // A `weak` local (`hir::LocalDef::weak`) or module `let` (`hir::GlobalDef::weak`) is
+        // written as a weak field is.
+        match place.kind {
+            crate::hir::ExprKind::Local(l, _) => return self.f.locals[l.0 as usize].weak,
+            crate::hir::ExprKind::Global(d) => return self.cx.global(d).is_some_and(|g| g.weak),
+            _ => {}
         }
         let crate::hir::ExprKind::Field { base, index, .. } = &place.kind else {
             return false;

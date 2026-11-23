@@ -22,8 +22,8 @@ function exec(): usize {
 }
 
 /**
- * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes, aligned to at most 8 as
- * every value the compiler lays out, which the task's block is; moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
+ * `spawn(f(...))`: a task from the initial state at `state` (`size` bytes aligned to `align`, which
+ * the task's copy of it is too; moved in), scheduled now; its join handle, a heap future whose slot gets `rsize` bytes. A
  * result the handle never claims is dropped with `rdrop` (0: nothing to drop).
  */
 export function schedSpawn(
@@ -36,15 +36,12 @@ export function schedSpawn(
   rdrop: usize,
   transfer: usize,
 ): usize {
-  if (align > 8) {
-    panic("ICE: a task's state aligned to more than 8 bytes");
-  }
   // This thread's worker block (0 off the workers), read once (the queueing).
   const w = t.here();
   if (w === 0) {
     return spawnFirst(poll, drop, state, size, align, rsize, rdrop, transfer);
   }
-  return spawnOn(w, w, poll, drop, state, size, rsize, rdrop, transfer);
+  return spawnOn(w, w, poll, drop, state, size, align, rsize, rdrop, transfer);
 }
 
 /**
@@ -64,10 +61,10 @@ function spawnFirst(
   transfer: usize,
 ): usize {
   if (!pt.isProgramThread()) {
-    return fg.spawn(poll, drop, state, size, rsize, rdrop, transfer);
+    return fg.spawn(poll, drop, state, size, align, rsize, rdrop, transfer);
   }
   const e = exec();
-  return spawnOn(e, t.here(), poll, drop, state, size, rsize, rdrop, transfer);
+  return spawnOn(e, t.here(), poll, drop, state, size, align, rsize, rdrop, transfer);
 }
 
 /** `schedSpawn`'s task, from worker block `e` (`w`: this thread's). */
@@ -79,12 +76,13 @@ function spawnOn(
   drop: usize,
   state: usize,
   size: u64,
+  align: u64,
   rsize: u64,
   rdrop: usize,
   transfer: usize,
 ): usize {
   // The executor's reference and the handle's.
-  const k = mk.task(e, poll, drop, rsize, rdrop, size, 2);
+  const k = mk.task(e, poll, drop, rsize, rdrop, size, 2, align);
   m.st(k + t.T_TRANSFER, transfer);
   m.copy(m.ld(k + t.T_ROOT), state, size as usize);
   m.st(k + t.T_JOIN_STATE, t.J_HANDLE as usize);

@@ -84,6 +84,8 @@ export class Program {
   /** Of an `exact` program: per literal, the mask of the first eight bytes it has, then those
    * bytes as a word (the first byte lowest). */
   litWord: u64[] = [];
+  /** Of an `exact` program: each literal's length in bytes. */
+  litBytes: usize[] = [];
   /** How the search finds where a match may start (prefilter.velt): `SCAN_…`. */
   scan: u32 = 0;
   /** `SCAN_GRAMS`: every match has one of the byte tuples of `grams` (`gramSize` bytes each;
@@ -123,6 +125,9 @@ export class Program {
   /** `endsAtEnd` or `suffix`, and not anchored: a call may search by the backward
    * automaton's kept tables alone (quick.velt). */
   quick: bool = false;
+  /** Every choice is made by the next character and no span gives back: a place is matched in
+   * one pass (one_pass.velt). */
+  onePass: bool = false;
 
   /** Per instruction, which hint a split has, plus one (0: none), and the hints: 128 bytes
    * each, per ASCII character whether the split's first way can start with it (1), its second

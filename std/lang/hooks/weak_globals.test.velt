@@ -1,0 +1,61 @@
+// velt/lang/hooks (tests): the slots of `weak` module `let`s, compiled as a program has them
+// (velt_vir `weak_globals`): the module state's slot holds a reference to its target's slot,
+// given back by an assignment, which the leak counters cannot see (the weak core's blocks are the
+// C library's); run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { weakSlotsLive } from "velt/lang/hooks/weak";
+
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+let current: weak Node | null = null;
+
+function nameOf(n: Node | null): string {
+  return n === null ? "null" : n.name;
+}
+
+function set(n: Node | null): void {
+  current = n;
+}
+
+function read(): string {
+  return nameOf(current);
+}
+
+describe("weak module lets", () => {
+  it("keep the slot after the target went, and give it back when assigned null", () => {
+    const before = weakSlotsLive();
+    {
+      const t = new Node("t");
+      set(t);
+      expect(read()).toBe("t");
+      expect(weakSlotsLive()).toBe(before + 1);
+    }
+    expect(read()).toBe("null");
+    // Only the module state's slot holds it now.
+    expect(weakSlotsLive()).toBe(before + 1);
+    set(null);
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("give back the old slot when assigned another target", () => {
+    const before = weakSlotsLive();
+    const b = new Node("b");
+    {
+      const a = new Node("a");
+      set(a);
+      set(b);
+      expect(read()).toBe("b");
+      // `a`'s record and `b`'s.
+      expect(weakSlotsLive()).toBe(before + 2);
+    }
+    // `a` went, and nothing else held its slot.
+    expect(weakSlotsLive()).toBe(before + 1);
+    expect(b.name).toBe("b");
+    set(null);
+  });
+});

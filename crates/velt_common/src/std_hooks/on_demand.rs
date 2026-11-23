@@ -62,6 +62,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/string/case",
     // `Date`'s zone name and its table, which the prelude's `toTimeString` calls by role (#3152).
     "std/lang/hooks/date_zone_name",
+    // A byte range as a string, which the prelude's `utf8Slice` calls by role (#2196).
+    "std/lang/bytes/range_text",
     // The CPU's features (#3222 step 3): every program with an entry demands it (`velt_main`
     // calls `cpuStart` first thing; velt_sema `lazy_std` `cpu_hook`).
     "std/lang/hooks/cpu",

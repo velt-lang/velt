@@ -41,7 +41,7 @@ structs! {
     EnumInfo<'_> { name, qual_name, span, generics, variants, is_union, decl }
     IfaceMethod { name, span, params, ret, mut_this, default, is_getter, generics, throws }
     IfaceInfo<'_> { name, qual_name, module, span, generics, fields, methods, parents, decl }
-    GlobalInfo<'_> { name, qual_name, module, span, ty, init, state, src, mutable, stored, c_const, c_global }
+    GlobalInfo<'_> { name, qual_name, module, span, ty, init, state, src, mutable, stored, weak, c_const, c_global }
     GlobalSrc<'_> { ann, init, span, owner, is_private, c_const, c_global }
     AliasInfo<'_> { module, decl, expanding, used, pointees_checked, outer }
     Extension { generics, target, methods, implements }

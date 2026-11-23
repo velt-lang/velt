@@ -1,0 +1,175 @@
+// velt/lang/bytes (internal): white-box tests of range_text.velt (#2196), run by `velt test std/`:
+// `rangeText` (`utf8Slice`) against a byte-at-a-time decoder written from the WHATWG UTF-8
+// decoder (U+FFFD per maximal invalid subpart, as Node), on random bytes drawn mostly from the
+// edges of Unicode Table 3-7 (overlong forms, surrogates, F4 90, lone leads and continuations)
+// in ranges of every length up to 300 at every offset modulo 16, so the sixteen-byte blocks, the
+// word and vector ASCII paths and the scalar steps between them meet every kind of byte at every
+// position. The bytes outside a range are the same kind of bytes, so a decoder that reads one
+// gives a wrong answer.
+import { describe, expect, it } from "velt/test";
+import { rangeText } from "velt/lang/bytes/range_text";
+
+/** `b[from..to)` decoded a byte at a time: the WHATWG UTF-8 decoder. */
+function reference(b: u8[], from: usize, to: usize): string {
+  let out = "";
+  let i = from;
+  while (i < to) {
+    const c = b[i];
+    if (c < 0x80) {
+      out += String.fromCharCode(c as number);
+      i += 1;
+      continue;
+    }
+    let need: usize = 0;
+    let lo: u8 = 0x80;
+    let hi: u8 = 0xbf;
+    let cp: u32 = 0;
+    if (c >= 0xc2 && c <= 0xdf) {
+      need = 1;
+      cp = (c & 0x1f) as u32;
+    } else if (c >= 0xe0 && c <= 0xef) {
+      need = 2;
+      cp = (c & 0x0f) as u32;
+      lo = c == 0xe0 ? 0xa0 : 0x80;
+      hi = c == 0xed ? 0x9f : 0xbf;
+    } else if (c >= 0xf0 && c <= 0xf4) {
+      need = 3;
+      cp = (c & 0x07) as u32;
+      lo = c == 0xf0 ? 0x90 : 0x80;
+      hi = c == 0xf4 ? 0x8f : 0xbf;
+    } else {
+      out += "�";
+      i += 1;
+      continue;
+    }
+    let k: usize = 1;
+    let whole = true;
+    while (k <= need) {
+      if (i + k >= to || b[i + k] < lo || b[i + k] > hi) {
+        whole = false;
+        break;
+      }
+      cp = (cp << 6) | ((b[i + k] & 0x3f) as u32);
+      lo = 0x80;
+      hi = 0xbf;
+      k += 1;
+    }
+    if (whole) {
+      out += String.fromCodePoint(cp as number);
+      i += need + 1;
+    } else {
+      // The lead and the continuations that fitted: one maximal invalid subpart.
+      out += "�";
+      i += k;
+    }
+  }
+  return out;
+}
+
+/** The pieces the random bytes are drawn from: 13 whole characters, then edge bytes. */
+function pieces(): u8[][] {
+  return [
+    [0x61],
+    [0x20],
+    [0x7f],
+    [0xc3, 0xa9],
+    [0xc2, 0x80],
+    [0xdf, 0xbf],
+    [0xe2, 0x82, 0xac],
+    [0xe0, 0xa0, 0x80],
+    [0xed, 0x9f, 0xbf],
+    [0xef, 0xbf, 0xbd],
+    [0xf0, 0x90, 0x80, 0x80],
+    [0xf0, 0x9f, 0x98, 0x80],
+    [0xf4, 0x8f, 0xbf, 0xbf],
+    [0x80],
+    [0xbf],
+    [0xc0],
+    [0xc1],
+    [0xc2],
+    [0xe0],
+    [0xe0, 0x80],
+    [0xe0, 0x9f, 0x80],
+    [0xed, 0xa0, 0x80],
+    [0xf0],
+    [0xf0, 0x80, 0x80, 0x80],
+    [0xf0, 0x90, 0x80],
+    [0xf4, 0x90, 0x80, 0x80],
+    [0xf5],
+    [0xff],
+  ];
+}
+
+/** A deterministic generator (a 64-bit LCG): the same bytes on every run. */
+class Lcg {
+  state: u64;
+  constructor(seed: u64) {
+    this.state = seed;
+  }
+  next(n: usize): usize {
+    this.state = this.state * 6364136223846793005 + 1442695040888963407;
+    return ((this.state >> 33) % (n as u64)) as usize;
+  }
+}
+
+/**
+ * `n` random bytes: runs of ASCII and of whole characters (so blocks are often valid), with
+ * edge bytes `edgy` times in a thousand.
+ */
+function randomBytes(g: Lcg, all: u8[][], n: usize, edgy: usize): u8[] {
+  const out: u8[] = [];
+  while (out.length < n) {
+    const roll = g.next(1000);
+    const kind = roll < edgy ? 13 + g.next(all.length - 13) : roll < 600 ? 0 : g.next(13);
+    const piece = all[kind];
+    const run = kind == 0 ? 1 + g.next(40) : 1;
+    for (let r: usize = 0; r < run; r++) {
+      for (const x of piece) {
+        out.push(x);
+      }
+    }
+  }
+  return out;
+}
+
+/** Checks `rangeText` against the reference on `b[from..to)`; the range in a failure message. */
+function agrees(b: u8[], from: usize, to: usize) {
+  const got = rangeText(b, from, to);
+  const want = reference(b, from, to);
+  if (got != want || got.length != want.length) {
+    expect(`${from}..${to}: ${JSON.stringify(got)} (${got.length})`).toBe(
+      `${from}..${to}: ${JSON.stringify(want)} (${want.length})`,
+    );
+  }
+}
+
+describe("rangeText", () => {
+  it("agrees with a byte-at-a-time decoder on random text, at every length and offset", () => {
+    const g = new Lcg(2196);
+    const all = pieces();
+    const edgies: usize[] = [0, 5, 40, 300];
+    for (const edgy of edgies) {
+      const b = randomBytes(g, all, 700, edgy);
+      for (let n: usize = 0; n <= 300; n++) {
+        for (let off: usize = 0; off < 16; off++) {
+          const from = 40 + off + g.next(200);
+          agrees(b, from, from + n);
+        }
+      }
+    }
+  });
+
+  it("decodes whole arrays, and ranges at both ends of an array", () => {
+    const g = new Lcg(7);
+    const all = pieces();
+    for (let n: usize = 0; n <= 130; n++) {
+      const b = randomBytes(g, all, n, 50);
+      const len = b.length;
+      agrees(b, 0, len);
+      for (let k: usize = 0; k <= len && k <= 24; k++) {
+        agrees(b, 0, k);
+        agrees(b, len - k, len);
+      }
+    }
+  });
+});
