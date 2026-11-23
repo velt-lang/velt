@@ -59,9 +59,8 @@ mod module_hooks;
 mod decorator_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
-// (`module_hooks.rs`), the string methods' (`string_hooks.rs`), the weak core's
-// (`weak_hooks.rs`) and the transfer map's (`transfer_hooks.rs`), given to `hooks!` together.
+// The table: these rows, then the decorators', module state's, the string methods', the weak
+// core's and the transfer map's (`<area>_hooks.rs`), given to `hooks!` together.
 with_decorator_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).

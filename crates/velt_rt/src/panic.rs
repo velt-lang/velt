@@ -431,7 +431,10 @@ mod catch_tests {
         unsafe { crate::statics::adopt_transfer_map(&table) };
         let _c = Catching::enter();
         assert_eq!(catch(|| 5u32).ok(), Some(5));
-        assert!(FORGOT.with(|f| f.borrow().is_empty()), "nothing to end without a panic");
+        assert!(
+            FORGOT.with(|f| f.borrow().is_empty()),
+            "nothing to end without a panic"
+        );
         let caught = catch(|| -> u32 { unwind(b"boom".to_vec().into_boxed_slice()) });
         assert!(caught.is_err());
         assert_eq!(MARKS.with(Cell::get), 2, "each poll takes a mark first");

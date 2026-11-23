@@ -200,7 +200,9 @@ impl super::Cx<'_> {
                 continue;
             };
             let f = self.func(Work::Fn(def, vec![]));
-            self.statics[table.0 as usize].relocs.push((at, Const::Func(f)));
+            self.statics[table.0 as usize]
+                .relocs
+                .push((at, Const::Func(f)));
         }
         true
     }
