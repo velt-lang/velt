@@ -5,7 +5,7 @@
 // record allocate nothing; each transport read allocates its view of the buffer (3 blocks, all
 // freed).
 
-import "velt/lang/typed_array/bytes_view";
+import { u8View } from "velt/lang/typed_array/u8_view";
 import { ByteStream, TryStream } from "velt/net/byte_stream";
 import {
   alertName,
@@ -290,7 +290,8 @@ export class RecordReader {
   // Reads more of the transport behind the unread records: false at its end.
   private async readMore(): Promise<bool> {
     this.makeRoom();
-    const got = await this.t.readInto(this.buf.subarray(this.rend as number, BUFFER as number));
+    // `u8View`, not `subarray`, whose `extend` of `Array` can't load in the middle of a check.
+    const got = await this.t.readInto(u8View(this.buf, this.rend, BUFFER - this.rend));
     if (got == null) {
       return false;
     }

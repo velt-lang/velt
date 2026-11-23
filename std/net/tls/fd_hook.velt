@@ -1,15 +1,24 @@
 // velt/net (internal): how std/net/tcp_sched.velt reaches the TLS streams and listeners of the
-// reactor (#2649) without loading the TLS code. `TlsServer` has the operations of `ReactorTls`;
-// here they are stubs (no TLS handles). The real ones, std/net/tls/fd_reactor.velt, are a more
-// specific `extend` of `TlsServer`, which the TLS server and client (std/net/tls/fd_server.velt,
-// fd_client.velt) load. tcp_sched and `fetch` call those by role (velt_common `std_hooks.rs`
-// `sched_tls_listen`, `sched_tls_connect`, `sched_tls_handshake`), so a program loads them, and
-// fd_reactor.velt with them, only when live code can listen or connect with TLS (#2392). Any other
-// program loads, checks and builds none of them.
+// reactor (#2649) without loading the TLS code: through `ReactorFns`, the operations as function
+// values, which the TLS server and client (std/net/tls/fd_reactor.velt) install when they make
+// their first handle (`setReactorOps`). tcp_sched and `fetch` call those by role (velt_common
+// `std_hooks.rs` `sched_tls_listen`, `sched_tls_connect`, `sched_tls_handshake`), so a program
+// loads them only when live code can listen or connect with TLS (#2392). A call of a function
+// value is checked against its type alone, and tcp_sched's calls are dead code until the server or
+// client is loaded (`stdUsed("reactorTls")`): any other program checks and builds none of the TLS
+// code.
+//
+// The TLS code is loaded in the middle of the program's check (#3634), which a module that
+// subclasses another module's class can't be (velt_loader's (a1) rule): its error classes are
+// loaded up front here instead.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import * as tb from "velt/lang/hooks/sched_io_table";
+// The TLS code's error classes, up front (module docs).
+import "velt/crypto/errors";
+import "velt/net/tls/alert";
+import "velt/net/tls/x509/refused";
 
 /**
  * Is `h` the handle of a TLS stream or listener of the reactor's? The top bit set, as every
@@ -20,91 +29,218 @@ export function isTls(h: u64): bool {
   return (h & 0xffffffff) === 0 && tb.ours(h);
 }
 
+/** An operation on bytes `start` to `end` of `data` for TLS stream `s`. */
+type Range<R> = (s: u64, data: u8[], start: u64, end: u64) => R;
+
 /**
  * The TLS operations of std/net/tcp_sched.velt on the reactor's TLS handles: the names and
  * results of its own (failures as codes, never thrown).
  */
-export interface ReactorTls {
-  listenerFd(l: u64): u64;
-  closeListener(l: u64): void;
-  accept(l: u64): Promise<IoResult<u64>>;
-  read(s: u64, max: u64): Promise<IoResult<u8[]>>;
-  readString(s: u64, max: u64): Promise<IoResult<string>>;
-  tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64>;
+export struct ReactorFns {
+  listenerFd: (l: u64) => u64;
+  closeListener: (l: u64) => void;
+  accept: (l: u64) => Promise<IoResult<u64>>;
+  read: (s: u64, max: u64) => Promise<IoResult<u8[]>>;
+  readString: (s: u64, max: u64) => Promise<IoResult<string>>;
+  tryReadInto: Range<IoResult<i64>>;
   /** 0 when a read finds something without the socket, else the socket to wait on. */
-  readyOrFd(s: u64): IoResult<u64>;
-  fdOf(s: u64): u64;
-  readable(s: u64): Promise<IoStatus>;
-  writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64>;
-  tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64;
-  drained(s: u64, max: u64): Promise<IoStatus>;
-  writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus>;
-  shutdown(s: u64): IoStatus;
-  alpn(s: u64): Promise<IoResult<string>>;
+  readyOrFd: (s: u64) => IoResult<u64>;
+  fdOf: (s: u64) => u64;
+  readable: (s: u64) => Promise<IoStatus>;
+  writeLaterRange: Range<IoResult<u64>>;
+  tryWriteRange: Range<u64>;
+  drained: (s: u64, max: u64) => Promise<IoStatus>;
+  writeRange: Range<Promise<IoStatus>>;
+  shutdown: (s: u64) => IoStatus;
+  alpn: (s: u64) => Promise<IoResult<string>>;
   /** Whether idle stream `s` (parked by `fetch`) can carry another request. */
-  idleOpen(s: u64): bool;
-  close(s: u64): void;
+  idleOpen: (s: u64) => bool;
+  close: (s: u64) => void;
 }
 
-/** What has the `ReactorTls` operations: the stubs below, or the server's. */
-export struct TlsServer {}
+// Each operation, set by the TLS server or client (std/net/tls/fd_reactor.velt `installReactorOps`)
+// before its first handle: static atomics (their words are in the program's data), each a shared
+// function, which a call reads with no lock.
+const LISTENER_FD = new Atomic<shared<(l: u64) => u64> | null>(null);
+const CLOSE_LISTENER = new Atomic<shared<(l: u64) => void> | null>(null);
+const ACCEPT = new Atomic<shared<(l: u64) => Promise<IoResult<u64>>> | null>(null);
+const READ = new Atomic<shared<(s: u64, max: u64) => Promise<IoResult<u8[]>>> | null>(null);
+const READ_STRING = new Atomic<shared<(s: u64, max: u64) => Promise<IoResult<string>>> | null>(
+  null,
+);
+const TRY_READ_INTO = new Atomic<shared<Range<IoResult<i64>>> | null>(null);
+const READY_OR_FD = new Atomic<shared<(s: u64) => IoResult<u64>> | null>(null);
+const FD_OF = new Atomic<shared<(s: u64) => u64> | null>(null);
+const READABLE = new Atomic<shared<(s: u64) => Promise<IoStatus>> | null>(null);
+const WRITE_LATER_RANGE = new Atomic<shared<Range<IoResult<u64>>> | null>(null);
+const TRY_WRITE_RANGE = new Atomic<shared<Range<u64>> | null>(null);
+const DRAINED = new Atomic<shared<(s: u64, max: u64) => Promise<IoStatus>> | null>(null);
+const WRITE_RANGE = new Atomic<shared<Range<Promise<IoStatus>>> | null>(null);
+const SHUTDOWN = new Atomic<shared<(s: u64) => IoStatus> | null>(null);
+const ALPN = new Atomic<shared<(s: u64) => Promise<IoResult<string>>> | null>(null);
+const IDLE_OPEN = new Atomic<shared<(s: u64) => bool> | null>(null);
+const CLOSE = new Atomic<shared<(s: u64) => void> | null>(null);
 
-/** The types the stubs are for. */
-export interface TlsStubbed {}
-
-extend TlsServer implements TlsStubbed {}
-
-function closed(): IoStatus {
-  return { code: 16, message: "handle is closed" };
+/** Sets the operations of the TLS streams and listeners, once (std/net/tls/fd_reactor.velt). */
+export function setReactorOps(fns: ReactorFns): void {
+  LISTENER_FD.compareExchange(null, shared(fns.listenerFd), "acqrel");
+  CLOSE_LISTENER.compareExchange(null, shared(fns.closeListener), "acqrel");
+  ACCEPT.compareExchange(null, shared(fns.accept), "acqrel");
+  READ.compareExchange(null, shared(fns.read), "acqrel");
+  READ_STRING.compareExchange(null, shared(fns.readString), "acqrel");
+  TRY_READ_INTO.compareExchange(null, shared(fns.tryReadInto), "acqrel");
+  READY_OR_FD.compareExchange(null, shared(fns.readyOrFd), "acqrel");
+  FD_OF.compareExchange(null, shared(fns.fdOf), "acqrel");
+  READABLE.compareExchange(null, shared(fns.readable), "acqrel");
+  WRITE_LATER_RANGE.compareExchange(null, shared(fns.writeLaterRange), "acqrel");
+  TRY_WRITE_RANGE.compareExchange(null, shared(fns.tryWriteRange), "acqrel");
+  DRAINED.compareExchange(null, shared(fns.drained), "acqrel");
+  WRITE_RANGE.compareExchange(null, shared(fns.writeRange), "acqrel");
+  SHUTDOWN.compareExchange(null, shared(fns.shutdown), "acqrel");
+  ALPN.compareExchange(null, shared(fns.alpn), "acqrel");
+  IDLE_OPEN.compareExchange(null, shared(fns.idleOpen), "acqrel");
+  CLOSE.compareExchange(null, shared(fns.close), "acqrel");
 }
 
-/** No TLS server or client loaded: no TLS handle, so nothing reaches these. */
-extend<T extends TlsStubbed> T implements ReactorTls {
-  listenerFd(l: u64): u64 {
-    return 0;
+function missing(): never {
+  panic("ICE: a TLS handle exists before the TLS operations are installed");
+}
+
+// tcp_sched's calls of the operations, one per operation; only a holder of a TLS handle calls
+// them, which the TLS server or client made after installing them.
+
+export function listenerFd(l: u64): u64 {
+  const f = LISTENER_FD.load("acquire");
+  if (f == null) {
+    missing();
   }
-  closeListener(l: u64) {}
-  async accept(l: u64): Promise<IoResult<u64>> {
-    return { code: 16, message: "handle is closed", value: 0 };
+  return f(l);
+}
+
+export function closeListener(l: u64): void {
+  const f = CLOSE_LISTENER.load("acquire");
+  if (f == null) {
+    missing();
   }
-  async read(s: u64, max: u64): Promise<IoResult<u8[]>> {
-    return { code: 16, message: "handle is closed", value: [] };
+  f(l);
+}
+
+export function accept(l: u64): Promise<IoResult<u64>> {
+  const f = ACCEPT.load("acquire");
+  if (f == null) {
+    missing();
   }
-  async readString(s: u64, max: u64): Promise<IoResult<string>> {
-    return { code: 16, message: "handle is closed", value: "" };
+  return f(l);
+}
+
+export function read(s: u64, max: u64): Promise<IoResult<u8[]>> {
+  const f = READ.load("acquire");
+  if (f == null) {
+    missing();
   }
-  tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
-    return { code: 16, message: "handle is closed", value: 0 };
+  return f(s, max);
+}
+
+export function readString(s: u64, max: u64): Promise<IoResult<string>> {
+  const f = READ_STRING.load("acquire");
+  if (f == null) {
+    missing();
   }
-  readyOrFd(s: u64): IoResult<u64> {
-    return { code: 16, message: "handle is closed", value: 0 };
+  return f(s, max);
+}
+
+export function tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+  const f = TRY_READ_INTO.load("acquire");
+  if (f == null) {
+    missing();
   }
-  fdOf(s: u64): u64 {
-    return 0;
+  return f(s, data, start, end);
+}
+
+export function readyOrFd(s: u64): IoResult<u64> {
+  const f = READY_OR_FD.load("acquire");
+  if (f == null) {
+    missing();
   }
-  async readable(s: u64): Promise<IoStatus> {
-    return closed();
+  return f(s);
+}
+
+export function fdOf(s: u64): u64 {
+  const f = FD_OF.load("acquire");
+  if (f == null) {
+    missing();
   }
-  writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
-    return { code: 16, message: "handle is closed", value: 0 };
+  return f(s);
+}
+
+export function readable(s: u64): Promise<IoStatus> {
+  const f = READABLE.load("acquire");
+  if (f == null) {
+    missing();
   }
-  tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
-    return 0;
+  return f(s);
+}
+
+export function writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+  const f = WRITE_LATER_RANGE.load("acquire");
+  if (f == null) {
+    missing();
   }
-  async drained(s: u64, max: u64): Promise<IoStatus> {
-    return closed();
+  return f(s, data, start, end);
+}
+
+export function tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
+  const f = TRY_WRITE_RANGE.load("acquire");
+  if (f == null) {
+    missing();
   }
-  async writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
-    return closed();
+  return f(s, data, start, end);
+}
+
+export function drained(s: u64, max: u64): Promise<IoStatus> {
+  const f = DRAINED.load("acquire");
+  if (f == null) {
+    missing();
   }
-  shutdown(s: u64): IoStatus {
-    return closed();
+  return f(s, max);
+}
+
+export function writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+  const f = WRITE_RANGE.load("acquire");
+  if (f == null) {
+    missing();
   }
-  async alpn(s: u64): Promise<IoResult<string>> {
-    return { code: 16, message: "handle is closed", value: "" };
+  return f(s, data, start, end);
+}
+
+export function shutdown(s: u64): IoStatus {
+  const f = SHUTDOWN.load("acquire");
+  if (f == null) {
+    missing();
   }
-  idleOpen(s: u64): bool {
-    return false;
+  return f(s);
+}
+
+export function alpn(s: u64): Promise<IoResult<string>> {
+  const f = ALPN.load("acquire");
+  if (f == null) {
+    missing();
   }
-  close(s: u64) {}
+  return f(s);
+}
+
+export function idleOpen(s: u64): bool {
+  const f = IDLE_OPEN.load("acquire");
+  if (f == null) {
+    missing();
+  }
+  return f(s);
+}
+
+export function close(s: u64): void {
+  const f = CLOSE.load("acquire");
+  if (f == null) {
+    missing();
+  }
+  f(s);
 }

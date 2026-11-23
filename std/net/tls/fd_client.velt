@@ -15,7 +15,7 @@ import { velt_rt_tcp_close, velt_rt_tcp_connect } from "#net-tcp";
 import * as fs from "velt/net/fd_socket";
 import { TcpStream } from "velt/net/tcp_stream";
 import { FdTlsConn } from "velt/net/tls/fd_conn";
-import { status } from "velt/net/tls/fd_reactor";
+import { installReactorOps, status } from "velt/net/tls/fd_reactor";
 import { TlsSession } from "velt/net/tls/fd_session";
 import { addConn, Conn } from "velt/net/tls/fd_table";
 import { clientHandshake } from "velt/net/tls/start_tls";
@@ -156,6 +156,7 @@ export async function velt_rt_tls_connect(
 ): Promise<IoResult<u64>> {
   // The program reads and writes TLS streams of the reactor's: tcp_sched checks for them.
   noteStdUse("reactorTls");
+  installReactorOps();
   try {
     return await connectTls(addr, serverName, ca, alpn);
   } catch (e) {
@@ -200,6 +201,7 @@ export async function handshakeOn(
 ): Promise<u64, IoError | AbortError> {
   // The program reads and writes TLS streams of the reactor's: tcp_sched checks for them.
   noteStdUse("reactorTls");
+  installReactorOps();
   let engine: TlsEngine | null = null;
   try {
     engine = await handshakeWithin(fd, serverName, ca, alpn, "fetch", limitMs, signal);
