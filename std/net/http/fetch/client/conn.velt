@@ -3,8 +3,8 @@
 // abort stops the request at once (the stream is then closed, never pooled). Between requests a
 // keep-alive connection is parked in the process's pool under its origin (`TcpStream.park`), which
 // every task takes connections from: the runtime's (crates/velt_rt/src/net/park.rs), or under the
-// executor in Velt, for its plain-TCP connections on the reactor, Velt's (std/net/fd_pool.velt;
-// which connections those are: `#fetch-dial`, dial_sched.velt).
+// executor in Velt, for its connections on the reactor (plain and TLS), Velt's
+// (std/net/fd_pool.velt; which connections those are: `#fetch-dial`, dial_sched.velt).
 //
 // Reads go straight into the buffer (`tryRead`, nothing copied on the way for plain TCP). I/O
 // errors become `fetch failed: …` with the code of the error, as Node words them.
@@ -16,7 +16,7 @@ import { AbortController, AbortError, AbortSignal } from "velt/task";
 import { Target } from "velt/net/http/fetch/client/target";
 import { setBytes } from "velt/lang/bytes/copy";
 import { stdUsed } from "velt/lang/intrinsics";
-import { dialPlain, reactorUp } from "#fetch-dial";
+import { dialPlain, dialTls, reactorUp } from "#fetch-dial";
 
 declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
 declare async function velt_rt_tcp_connect_tls(
@@ -239,11 +239,13 @@ export async function dial(
   alpn: string = "http/1.1",
 ): Promise<TcpStream, IoError | AbortError> {
   const addr = `${t.hostname}:${t.port}`;
-  // `http:` where the executor in Velt's pool keeps sockets of its reactor (std/net/tcp_sched.velt
-  // notes it): a socket on the reactor (dial_sched.velt). A constant: a build without it lowers
-  // only the runtime's connect below.
-  if (stdUsed("fetch-pool-reactor") && !t.https && reactorUp()) {
-    return await dialPlain(addr, signal);
+  // Where the executor in Velt's pool keeps streams of its reactor (std/net/tcp_sched.velt notes
+  // it): a socket on the reactor, with the TLS client in Velt over it for `https:`
+  // (dial_sched.velt). A constant: a build without it lowers only the runtime's connect below.
+  if (stdUsed("fetch-pool-reactor") && reactorUp()) {
+    return t.https
+      ? await dialTls(addr, bare(t.hostname), ca, alpn, signal)
+      : await dialPlain(addr, signal);
   }
   const stop = new AbortController();
   // The runtime's connect itself races the limits: when it loses, it is dropped, which stops
