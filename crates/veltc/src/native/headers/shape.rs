@@ -101,3 +101,23 @@ fn pointee(p: &hir::Program, t: TyId) -> Pointee {
         _ => Pointee::Void,
     }
 }
+
+/// What a field of type `t` of a C struct holds: a number, `bool`, a pointer or another C
+/// struct (sema allowed only these).
+pub(super) fn field_shape(p: &hir::Program, t: TyId) -> Shape {
+    if let Some(s) = scalar_of(p, t) {
+        return Shape::Scalar(s);
+    }
+    match p.types.kind(t) {
+        TyKind::Adt(d, _) => match p.def(*d) {
+            Def::Adt(a) => Shape::Struct(short_name(&a.name)),
+            _ => Shape::Void,
+        },
+        _ => Shape::Ptr(pointee_of_ptr(p, t)),
+    }
+}
+
+/// A declaration's name without its module (`app::geom::Point` → `Point`): C's name.
+pub(super) fn short_name(name: &str) -> String {
+    name.rsplit("::").next().unwrap_or(name).to_string()
+}
