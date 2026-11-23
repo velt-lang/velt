@@ -105,6 +105,7 @@ pub(super) fn adapter_stub(cx: &mut Ctx, p: &AdapterParts, s: &SlotSig, own: u32
                 ty: p.self_ty,
                 mutable: false,
                 boxed: false,
+                weak: false,
                 span,
             }],
             block: hir::Block {

@@ -1,0 +1,4 @@
+`weak` on a module's `const` (declare it with `let`) is not implemented yet (#3119)
+`weak` outside a class's own field or a variable is not implemented yet (#3119)
+value of type `View | null` may be null
+`current` is a `weak` variable, whose target may be gone between two reads, so a test does not narrow it: test a `const` copy instead: `const target = current; if (target !== null) { … }`

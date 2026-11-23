@@ -1,0 +1,1 @@
+panic: a function value that captured the `weak` variable `w` cannot go to another thread (`spawn`, a channel, `shared(...)` or a `Mutex`'s value): a `weak` variable belongs to the task that set it

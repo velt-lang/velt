@@ -2,8 +2,8 @@
 // #2649 step 3). With `VELT_THREADS=1` and the rescue on, worker 0 starts lazy (sched_task.velt
 // `E_LAZY`: no lock, no count, no publish per poll); the monitor's rescue of a stalled poll makes
 // its queue shared, turns the latch and join locks on (sched_lock.velt) and hands tasks to spares
-// (sched_monitor_lazy.velt). Once the spares are idle again, with worker 0 not stalled, for
-// `CALM_TICKS` ticks, the monitor takes that back:
+// (sched_monitor_lazy.velt). Once the spares are idle again, with worker 0 not stalled in a
+// poll (`stuck`), for `CALM_TICKS` ticks, the monitor takes that back:
 //
 // 1. It asks each spare to retire (`E_RETIRED` `R_ASKED`, and a wake). A spare answers at its
 //    park. Its pending sleeps go with their tasks to worker 0 when the tasks may move
@@ -38,11 +38,15 @@ import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as sc from "./sched_sleep_carry";
 import * as mv from "./sched_sleep_move";
+import * as st from "./sched_stats";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
-/** Ticks the spares stay idle, worker 0 not stalled, before the monitor takes the rescue back. */
+/**
+ * Ticks the spares stay idle, worker 0 not stalled in a poll, before the monitor takes the rescue
+ * back.
+ */
 export const CALM_TICKS: usize = 10;
 
 /**
@@ -65,14 +69,15 @@ export function relaxDuties(g: usize, now: usize): bool {
     return true;
   }
   if (relax === t.RELAX_ASKED) {
-    if (!mon.stalled(g, now)) {
+    if (!stuck(g, now)) {
       return true;
     }
-    // Stalled before it relaxed: the request is taken back, and the spares come back for the
-    // rescue (unless worker 0 began meanwhile).
+    // Stalled in a poll before it relaxed: the request is taken back, and the spares come back
+    // for the rescue (unless worker 0 began meanwhile).
     if (m.cas32(g + t.E_RELAX, t.RELAX_ASKED, 0) !== t.RELAX_ASKED) {
       return true;
     }
+    st.tookBack(sl.clock());
     unretireAll(g);
     m.st(g + t.E_CALM, 0);
     return false;
@@ -90,6 +95,7 @@ export function relaxDuties(g: usize, now: usize): bool {
   }
   if (retired === n - 1) {
     m.or32(g + t.E_RELAX, t.RELAX_ASKED);
+    st.askedToRelax(sl.clock());
     return true;
   }
   const ticks = m.ld(g + t.E_CALM) + 1;
@@ -98,6 +104,17 @@ export function relaxDuties(g: usize, now: usize): bool {
     ask(g, n);
   }
   return false;
+}
+
+/**
+ * Worker 0 (`g`) stalled at tick `now` in a poll, which a spare may have to rescue. Awake in no
+ * poll, it relaxes before it starts one (sched_loop.velt `turnShared`), however long the OS takes
+ * to run its thread: one woken from its park (by a carried sleep, or its own timer) and not run
+ * yet was taken for stalled two ticks after the wake, and the request was taken back just before
+ * it relaxed. Worker 0 then ran on shared, and the spares were woken over and over (#3134).
+ */
+function stuck(g: usize, now: usize): bool {
+  return mon.stalled(g, now) && m.load(g + t.E_CURRENT) !== 0;
 }
 
 /** Asks the spares (of `n` started workers) that have not answered yet to retire. */
@@ -146,6 +163,7 @@ export function idleDuties(g: usize): bool {
   }
   if (retired === n - 1) {
     m.or32(g + t.E_RELAX, t.RELAX_ASKED);
+    st.askedToRelax(sl.clock());
     return false;
   }
   if (open > 0) {
@@ -155,8 +173,9 @@ export function idleDuties(g: usize): bool {
 }
 
 /**
- * Nothing for a spare to do, and worker 0 (`g`) not stalled at tick `now`: every spare (`n`
- * started workers) asleep with nothing queued, no task between two workers, nothing offered.
+ * Nothing for a spare to do, and worker 0 (`g`) not stalled in a poll at tick `now` (`stuck`):
+ * every spare (`n` started workers) asleep with nothing queued, no task between two workers,
+ * nothing offered.
  * A spare asked to retire, or retired, and in no poll counts as asleep while awake: the ask's
  * own wake (`ask`) gets it up to answer (`retiredLook`), and a retired one hands on what reaches
  * it. Taken for busy, the request was taken back before the answer whenever the OS was slow to
@@ -164,7 +183,7 @@ export function idleDuties(g: usize): bool {
  * worker 0 stayed shared, its workers woken over and over (#3500).
  */
 function calm(g: usize, n: usize, now: usize): bool {
-  if (mon.stalled(g, now) || m.load(g + t.E_MOVING) !== 0) {
+  if (stuck(g, now) || m.load(g + t.E_MOVING) !== 0) {
     return false;
   }
   for (let i: usize = 1; i < n; i++) {

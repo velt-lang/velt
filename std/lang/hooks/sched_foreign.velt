@@ -348,12 +348,13 @@ export function spawn(
   drop: usize,
   state: usize,
   size: u64,
+  align: u64,
   rsize: u64,
   rdrop: usize,
   transfer: usize,
 ): usize {
   const g = workers.pending();
-  const k = mk.task(g, poll, drop, rsize, rdrop, size, 2);
+  const k = mk.task(g, poll, drop, rsize, rdrop, size, 2, align);
   m.st(k + t.T_TRANSFER, transfer);
   m.copy(m.ld(k + t.T_ROOT), state, size as usize);
   return handOver(g, k);

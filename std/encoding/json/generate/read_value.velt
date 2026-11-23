@@ -85,7 +85,8 @@ export function readInto(out: Output, model: Model, id: i64, name: string): void
   } else if (k == "literal" || k == "enum" || (k == "union" && choices(model, t).length > 0)) {
     readChoice(out, model, t, name);
   } else if (isJsonValue(t)) {
-    // A tape over the reader's text, or a driver's runtime tree; null when the reader failed.
+    // A tape over the reader's text, or a rows driver's value parsed from its row text; null when
+    // the reader failed.
     const v = out.fresh("v");
     out.line(`const ${v} = jsonValueFromReader(r);`);
     out.line(`if (${v} == null) { throw jsonFailed("value"); }`);

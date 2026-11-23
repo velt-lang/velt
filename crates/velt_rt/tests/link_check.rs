@@ -283,11 +283,11 @@ fn staticlib_links_and_runs() {
     let out = run(&exe);
     assert_eq!(
         text(&out.stdout),
-        "{\"name\":\"ann\",\"age\":30}\nexpected string at $.name\n2\n{\"a\":[1,2.5,{\"b\":null}],\"c\":true}\n"
+        "{\"name\":\"ann\",\"age\":30}\nexpected string at $.name\n"
     );
 }
 
-/// String builder, JSON reader error path and `json.Value` from C, like generated code for
+/// String builder and the JSON reader's error path from C, like generated code for
 /// tests/golden/m4/json.velt.
 const JSON: &str = r#"
 typedef struct Reader Reader;
@@ -303,16 +303,9 @@ uint8_t velt_rt_json_reader_expect_object_start(Reader*);
 uint8_t velt_rt_json_reader_next_key(Reader*, VeltStr*);
 uint8_t velt_rt_json_reader_read_string(Reader*, VeltStr*);
 void velt_rt_json_error(const Reader*, const VeltStr*, const VeltStr*, VeltStr*);
-uint8_t velt_rt_json_parse_value(const VeltStr*, uint64_t*, VeltStr*);
-uint64_t velt_rt_json_value_get(uint64_t, const VeltStr*);
-uint32_t velt_rt_json_value_kind(uint64_t);
-void velt_rt_json_value_stringify(uint64_t, VeltStr*);
-void velt_rt_json_value_free(uint64_t);
 int32_t velt_main(void) {
     VeltStr b, s, k, e, name = LIT("ann"), p1 = LIT("{\"name\":"), p2 = LIT(",\"age\":");
     VeltStr doc = LIT("{\"name\": 1}"), want = LIT("name"), ex = LIT("string"), path = LIT("$.name");
-    VeltStr src = LIT("{\"a\":[1,2.5,{\"b\":null}],\"c\":true}"), c = LIT("c"), err;
-    uint64_t v, cv;
     Reader* r;
     velt_rt_strbuf_new(0, &b);
     velt_rt_strbuf_push_str(&b, &p1);
@@ -332,14 +325,6 @@ int32_t velt_main(void) {
     }
     velt_rt_str_drop(&k);
     velt_rt_json_reader_free(r);
-    if (!velt_rt_json_parse_value(&src, &v, &err)) return 1;
-    cv = velt_rt_json_value_get(v, &c);
-    write_i64(1, velt_rt_json_value_kind(cv)); velt_rt_write_byte(1, '\n');
-    velt_rt_json_value_free(cv);
-    velt_rt_json_value_stringify(v, &s);
-    velt_rt_json_value_free(v);
-    velt_rt_write_str(1, &s); velt_rt_write_byte(1, '\n');
-    velt_rt_str_drop(&s);
     return 0;
 }
 "#;

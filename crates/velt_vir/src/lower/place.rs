@@ -468,6 +468,9 @@ impl FnLower<'_, '_> {
                 return done;
             }
         }
+        if let Some(done) = self.weak_local_assign(place, value) {
+            return done;
+        }
         if let Some(done) = self.str_append(place, value) {
             return done;
         }

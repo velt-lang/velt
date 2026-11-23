@@ -201,7 +201,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // drop entry, and sharing an env with a drop entry retains it as a heap env, so a kept
         // copy would point into this frame.
         let owns = f.captures.iter().any(|c| c.mode == PassMode::Owned)
-            || !self.cell_captures(def).is_empty();
+            || !self.cell_captures(def).is_empty()
+            || !self.weak_env_captures(def).is_empty();
         let heap = !in_frame && (owns || !borrowed) && self.cx.closure_env_is_heap(def);
         let (env, drop_fn, clone_fn) = if heap {
             let p = self.counted_alloc(Ty::Agg(ea));
@@ -222,7 +223,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 .value_captures(def)
                 .iter()
                 .any(|c| c.1 == PassMode::Owned)
-                || !self.cell_captures(def).is_empty();
+                || !self.cell_captures(def).is_empty()
+                || !self.weak_env_captures(def).is_empty();
             let d = match owned {
                 true => cfunc(self.cx.func(Work::EnvDropFrame(def, targs))),
                 false => cint(0, Ty::Ptr),
@@ -331,6 +333,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 self.assign(slot, Rvalue::Use(p));
                 continue;
             }
+            // A `weak` variable by value: the slot, with a reference of the env's own
+            // (weak_captures.rs); the variable keeps its own.
+            let weak = self.info[c.outer.0 as usize].weak;
+            if let (Some(read), PassMode::Copy | PassMode::Owned) = (weak, c.mode) {
+                self.capture_weak(outer, slot, read);
+                continue;
+            }
             let v = match c.mode {
                 PassMode::Borrow | PassMode::BorrowMut => self.addr(outer),
                 // A frozen value is not counted or taken over: the env gets a copy (frozen.rs).
@@ -401,6 +410,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // the cell itself (`fill_env`).
             li.cell = cell && !matches!(c.mode, PassMode::Borrow | PassMode::BorrowMut);
             li.in_cell = cell;
+            // A `weak` variable's capture holds its slot word (weak_captures.rs).
+            li.weak = f.body.locals[c.inner.0 as usize].weak.then_some(ty);
             info[c.inner.0 as usize] = Some(li);
         }
     }
@@ -422,12 +433,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Value captures of closure `def` with their env field index and concrete type (shared
-    /// cells are `cell_captures`).
+    /// cells are `cell_captures`, `weak` variables `weak_env_captures`).
     pub(super) fn value_captures(&mut self, def: DefId) -> Vec<(u32, PassMode, TyId)> {
         let f = self.cx.fn_def(def);
         let header = self.cx.env_header(def);
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
+            if f.body.locals[c.inner.0 as usize].weak {
+                continue;
+            }
             let cell = f.body.locals[c.inner.0 as usize].boxed;
             let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
             if matches!(c.mode, PassMode::Copy | PassMode::Owned)
@@ -473,6 +487,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let p = Operand::Copy(proj(&base, Proj::Field(field)));
                 lw.release_cell_ptr(p, ty);
             }
+            lw.drop_weak_captures(&base, def);
             lw.counted_free(Operand::Copy(Place::local(env)), Ty::Agg(ea));
         };
         let weak = lw.cx.boxing.weak_envs;
@@ -508,6 +523,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let p = Operand::Copy(proj(&base, Proj::Field(field)));
             lw.release_cell_ptr(p, ty);
         }
+        lw.drop_weak_captures(&base, def);
         lw.terminate(Terminator::Return(super::unit()));
         let sym = format!(
             "_Genv_drop_frame_{}",
@@ -569,6 +585,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         for (field, _) in lw.cell_captures(def) {
             lw.retain_cell(Operand::Copy(proj(&dst, Proj::Field(field))));
         }
+        lw.clone_weak_captures(&dst, def);
         lw.terminate(Terminator::Return(new));
         let sym = format!(
             "_Genv_clone_{}",
@@ -586,8 +603,8 @@ impl FnLower<'_, '_> {
         let header = self.cx.env_header(def);
         let mut out = vec![];
         for (k, c) in f.captures.iter().enumerate() {
-            let cell = f.body.locals[c.inner.0 as usize].boxed;
-            if cell && matches!(c.mode, PassMode::Copy | PassMode::Owned) {
+            let l = &f.body.locals[c.inner.0 as usize];
+            if l.boxed && !l.weak && matches!(c.mode, PassMode::Copy | PassMode::Owned) {
                 let ty = self.sub(f.body.locals[c.inner.0 as usize].ty);
                 out.push((header + k as u32, ty));
             }

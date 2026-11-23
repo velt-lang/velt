@@ -28,6 +28,10 @@ declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8> | null): void;
 declare c("c") function memcpy(dst: Ptr<u8> | null, src: CString, n: usize): Ptr<u8> | null;
 declare c("c") function memset(p: Ptr<u8> | null, c: i32, n: usize): Ptr<u8> | null;
+// The same, on pointers that are never null: passed as they are, with no conversion on the way.
+declare c("c") function malloc$plain(n: usize): Ptr<u8>;
+declare c("c") function memset$plain(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
+declare c("c") function free$plain(p: Ptr<u8>): void;
 declare c("c") function frexp(x: f64, exp: Out<i32>): f64;
 
 describe("velt/ffi pointers", () => {
@@ -64,6 +68,40 @@ describe("velt/ffi pointers", () => {
       expect(Ptr.at<FILE>(48) === Ptr.at<FILE>(56)).toBe(false);
       const none: Ptr<FILE> | null = null;
       expect(Ptr.orNull<FILE>(0) === none).toBe(true);
+    }
+  });
+
+  it("a pointer argument is read before the later arguments run", () => {
+    // SAFETY: `malloc` returns 4 bytes (or NULL, which `memset` below would fault on: a test
+    // failure); both blocks are written within them and freed once.
+    const one = unsafe { malloc$plain(4) };
+    // SAFETY: as above.
+    const two = unsafe { malloc$plain(4) };
+    // SAFETY: each block has 4 bytes.
+    unsafe {
+      memset$plain(one, 0, 4);
+      memset$plain(two, 0, 4);
+    }
+    let a = one;
+    // SAFETY: `a` is one of the two blocks, which have 4 bytes each.
+    unsafe {
+      memset$plain(
+        a,
+        ((): i32 => {
+          a = two;
+          return 9;
+        })(),
+        4,
+      );
+    }
+    // SAFETY: each block has 4 bytes, written above.
+    expect(unsafe { readBytes(one, 4) }.join(",")).toBe("9,9,9,9");
+    // SAFETY: as above.
+    expect(unsafe { readBytes(two, 4) }.join(",")).toBe("0,0,0,0");
+    // SAFETY: both blocks came from `malloc` and are freed once.
+    unsafe {
+      free$plain(one);
+      free$plain(two);
     }
   });
 

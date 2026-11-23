@@ -199,6 +199,46 @@ impl Ctx<'_> {
         p
     }
 
+    /// In the app's stage of a check by units, what this round's seeds give std trap variable
+    /// `v`'s site: std's unit keeps the variables its traps had in std's check, where a
+    /// whole-program check's later rounds resolve the traps' types from their seeds.
+    fn seeded_trap(&mut self, v: u32) -> Option<TyId> {
+        if self.units_stage != crate::units::Stage::App || !self.fn_sites.trap_vars.contains(&v) {
+            return None;
+        }
+        let span = *self.fn_sites.vars.get(v as usize)?;
+        let members = self.fn_sites.seeds.sites.get(&span)?.clone();
+        let ms: Vec<TyId> = members.iter().filter_map(|p| self.unport(p)).collect();
+        self.error_union(&ms)
+    }
+
+    /// `t` as a value of it is converted as written (`coerce_as_written`): [`Self::plain_type`],
+    /// but in the app's stage of a check by units std's trap variables are what this round's
+    /// seeds give their sites, as a whole-program check has the trap's error in the type there.
+    /// Not cached: it depends on the round's seeds.
+    pub(crate) fn plain_seeded(&mut self, t: TyId) -> TyId {
+        if self.units_stage != crate::units::Stage::App {
+            return self.plain_type(t);
+        }
+        if let Some(v) = self.err_var(t) {
+            return self.seeded_trap(v).unwrap_or(self.ty.never);
+        }
+        if !self.mentions_err_var(t) {
+            return t;
+        }
+        if let Some(orig) = self.union_members(t) {
+            let ms: Vec<TyId> = orig.iter().map(|m| self.plain_seeded(*m)).collect();
+            return self.solved_union(&orig, &ms);
+        }
+        if self.anon_of(t).is_some() {
+            return self.plain_type(t);
+        }
+        let k = self.ty.kind(t).clone();
+        let k = crate::types::map_children(&k, &mut |x| self.plain_seeded(x));
+        let out = self.ty.intern(k);
+        self.ty.keep_readonly(t, out)
+    }
+
     /// `t`'s anonymous object def and type arguments, when it is an anonymous object type whose
     /// fields the comparisons see ([`Ctx::seen_anon`]).
     fn anon_of(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {

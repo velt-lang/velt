@@ -256,6 +256,13 @@ export const imports: Imports = {
     darwin: "./fs/paths/darwin.velt",
     default: "./fs/paths/linux.velt",
   },
+  // `fs.constants`: Node's keys and values on each OS (std/fs/constants/), Linux's for any other
+  // build (WebAssembly).
+  "#fs-constants": {
+    win32: "./fs/constants/win32.velt",
+    darwin: "./fs/constants/darwin.velt",
+    default: "./fs/constants/linux.velt",
+  },
   // This process's id (`process.pid`): the C library's `getpid` on macOS and Linux, Win32's
   // `GetCurrentProcessId` on Windows, 1 elsewhere. Modules that import nothing: the hook module
   // of the builtin `process`, which every program loads, imports the variant.

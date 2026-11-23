@@ -17,7 +17,7 @@ use velt_sema::hir::{self, ExprKind as E, StmtKind as S};
 use super::cint;
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
-use super::{Cx, FnLower, Glue, ScopeKind, Work};
+use super::{Cx, FnLower, ScopeKind, Work};
 use crate::vir::{
     self, Const, Function, Operand, Place, Proj, Rvalue, StaticData, StaticId, Terminator, Ty,
 };
@@ -119,7 +119,7 @@ impl Cx<'_> {
         };
         let (deferred, len) = (ms.deferred, ms.slots.len() as u32);
         let init = self.func(Work::ModuleInit(0, deferred));
-        let drop = self.func(Work::Glue(Glue::Drop, ty));
+        let drop = self.module_drop_func(ty);
         let names = self.static_bytes(names, 1);
         let mut bytes = vec![0u8; 48];
         bytes[0..8].copy_from_slice(&(size as u64).to_le_bytes());
@@ -317,10 +317,19 @@ impl FnLower<'_, '_> {
             // An imported module's top-level statements are a call of a throwing function
             // (sema `module_scripts`), like any initializer that may throw.
             let v = lw.consume(&g.init);
-            let v = lw.detach(v, g.ty);
+            // A `weak` module `let`'s slot takes its value's slot (weak_globals.rs); the block
+            // starts zeroed, a null slot.
+            let weak = lw.cx.weak_global(d);
+            let v = match weak {
+                Some(_) => v,
+                None => lw.detach(v, g.ty),
+            };
             if !lw.dead() {
                 let p = lw.slot_in(Operand::Copy(Place::local(state)), i as u32);
-                lw.store(p, v);
+                match weak {
+                    Some(read) => lw.weak_store(p, v, read),
+                    None => lw.store(p, v),
+                }
                 // Slots up to this one may be read from now on.
                 let n = cint(ready_count(i + 1, len), Ty::U64);
                 if lw.std_sched() {

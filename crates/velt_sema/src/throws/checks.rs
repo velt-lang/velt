@@ -149,6 +149,19 @@ fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clau
         let site = cx.closure_site_for(d, used_as);
         let matched =
             own_final(cx, d).is_some_and(|own| cx.seed_fn_sites(used_as, own, site, None));
+        // A std trap's type in the app's stage of a check by units keeps the error type std's
+        // unit resolved it to; this round's seeds for its site already hold what the closure
+        // throws, which is the round a whole-program check drops this report in.
+        if let Some(seeded) = cx.app_trap_error(site.or_else(|| cx.var_site(used_as))) {
+            let own = own_final(cx, d);
+            // The closure's own errors as written: a variable it throws into counts as nothing,
+            // as in a diagnostic (`vars`).
+            let own = own.map(|o| cx.plain_type(o));
+            let (seeded, own) = (cx.canon_error(Some(seeded)), cx.canon_error(own));
+            if cx.error_outside(seeded, own).is_none() {
+                return;
+            }
+        }
         let inferred = cx.ty.inferred_fns.contains(&used_as);
         // As written: error-set variables (`vars`) allow nothing.
         let never = cx.ty.never;
@@ -323,6 +336,15 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
     if cx.fn_sites.use_vars {
         fin = solved(cx, fin);
         obs = solved(cx, obs);
+    } else if cx.units {
+        // A check by units: std's unit keeps the variables its traps had in std's check, also
+        // in the app's rounds without variables, where a whole-program check has none: compared
+        // as written, a trap's variable counts as nothing (what the round's seeds give its site
+        // is in the types already).
+        let plain_fin = fin.map(|t| cx.plain_type(t));
+        fin = cx.canon_error(plain_fin);
+        let plain_obs = obs.map(|t| cx.plain_type(t));
+        obs = cx.canon_error(plain_obs);
     }
     let ok = if c.exact {
         fin == obs

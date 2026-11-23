@@ -9,6 +9,7 @@ import { Done } from "velt/fs/whole/done";
 import {
   copyLoop,
   copyWith,
+  NOT_CLONED,
   readlinkAt as posixReadlink,
   realpathAt as posixRealpath,
   renameAt as posixRename,
@@ -21,6 +22,7 @@ declare c("c", { errno: true }) function fchmod(fd: i32, mode: u16): i32;
 const S_IFMT: u32 = 0o170000;
 const S_IFREG: u32 = 0o100000;
 const ENOTSUP: i32 = 45;
+const ENOSYS: i32 = 78;
 
 /** Renames `cf` (`from`) to `ct` (`to`), replacing a file there. */
 export function renameAt(
@@ -52,13 +54,25 @@ export function realpathAt(c: readonly u8[], path: string): Done<string> {
   return posixRealpath(c, path);
 }
 
-/** Copies the file `cf` (`from`) to `ct` (`to`), replacing a file there. */
-export function copyAt(cf: readonly u8[], from: string, ct: readonly u8[], to: string): Done<bool> {
-  return copyWith(cf, from, ct, to, {
-    chmod: (fd, mode) => {
+/**
+ * Copies the file `cf` (`from`) to `ct` (`to`), replacing a file there unless `mode` has
+ * `COPYFILE_EXCL`. libuv has no clone on macOS: `COPYFILE_FICLONE` copies, and
+ * `COPYFILE_FICLONE_FORCE` fails with `ENOSYS` once the destination is open, so the destination
+ * is removed, as in Node.
+ */
+export function copyAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+  mode: u32,
+): Done<bool> {
+  return copyWith(cf, from, ct, to, mode, {
+    chmod: (fd, perm) => {
       // SAFETY: `fd` is the destination `copyWith` opened and still holds.
-      return unsafe { fchmod(fd, mode as u16) };
+      return unsafe { fchmod(fd, perm as u16) };
     },
+    cloneFile: (src, dst, force) => (force ? ENOSYS : NOT_CLONED),
     data: (src, dst, mode, size) =>
       ((mode & S_IFMT) == S_IFREG ? copyLoop(src, dst, size) : ENOTSUP),
   });

@@ -176,6 +176,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.retain_cell(p.clone());
             return Some(p);
         }
+        if f.body.locals[c.inner.0 as usize].weak
+            && matches!(c.mode, PassMode::Copy | PassMode::Owned)
+        {
+            // A `weak` variable: its slot, with a reference of the state's own.
+            return Some(self.take_weak_capture(slot, ty));
+        }
         Some(match c.mode {
             PassMode::Borrow | PassMode::BorrowMut => match vt {
                 Ty::Agg(_) => Operand::Copy(slot),

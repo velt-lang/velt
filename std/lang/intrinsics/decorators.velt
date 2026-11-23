@@ -62,6 +62,26 @@ export declare decorator function targetFeature(
 ): FunctionDecorator;
 
 /**
+ * On a `struct` of std, a package or the program (velt/compiler re-exports it;
+ * docs/internals/design/package-machine-code.md §5): the struct is passed exactly as its one
+ * field is, in registers between Velt functions and in each target's C calling convention, so a
+ * C function declared with it (`declare c`, `@export`) takes and returns the field's C type: a
+ * `struct Meters { readonly m: f64; }` crosses as C's `double`. The struct has exactly one field,
+ * which is neither optional nor `void`, and is not a `declare c struct`: sema reports the rest.
+ */
+export declare decorator function repr(how: "transparent"): TypeDecorator;
+
+/**
+ * On a `struct` of std, a package or the program (velt/compiler re-exports it;
+ * docs/internals/design/package-machine-code.md §5): its values are aligned to `bytes`, a power
+ * of two from 1 to 4096, and its size is a multiple of it, so each element of an array starts on
+ * such a boundary (`@align(64)` gives every element a cache line of its own). It never lowers the
+ * natural alignment, which stays where it is larger. Not on a `declare c struct`, whose layout is
+ * C's.
+ */
+export declare decorator function align(bytes: u32): TypeDecorator;
+
+/**
  * On a `declare function` of std/lang/intrinsics: an operation the compiler emits itself, which
  * no Velt code can express (std-layout.md §10). The declaration is the signature calls are checked
  * against (modes.velt says how arguments are passed); velt_sema's table (`intrinsic_decls.rs`)
