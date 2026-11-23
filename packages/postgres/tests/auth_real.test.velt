@@ -1,9 +1,14 @@
 // The password exchanges and TLS against a real server, when a URL for each is set:
 // VELT_TEST_PG_MD5_URL, VELT_TEST_PG_SCRAM_URL, VELT_TEST_PG_PASSWORD_URL (cleartext),
-// VELT_TEST_PG_TLS_URL (direct TLS, with `sslmode` and `sslrootcert` in it),
+// VELT_TEST_PG_TLS_URL (a server whose certificate verifies, with `sslmode=verify-full` and
+// `sslrootcert` in it),
 // VELT_TEST_PG_TLS_UNTRUSTED_URL (a server with TLS whose certificate nothing verifies, without
 // `sslmode`), VELT_TEST_PG_PLAIN_URL (a server without TLS, without `sslmode`).
 import { connect, createPool } from "../src/lib";
+import { writeFileSync } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { CA } from "./support/tls_certs";
 
 class One {
   n: i64;
@@ -63,7 +68,7 @@ export async function test_cleartext() {
   }
 }
 
-export async function test_direct_tls() {
+export async function test_checked_tls() {
   const url = urlFrom(process.env.VELT_TEST_PG_TLS_URL);
   if (url != null) {
     await worksWith(url);
@@ -142,12 +147,40 @@ export async function test_a_server_without_tls() {
     assertEq(await outcome(withMode(url, "prefer")), "plain");
     assertEq(await outcome(withMode(url, "disable")), "plain");
     assertEq(await outcome(withMode(url, "require")), "ETLS");
-    // It takes no direct TLS either, whatever its version: the checked modes say what they need.
+    // verify-ca needs a root certificate to start at all; then the server's "N" is what fails.
+    const root = `${tmpdir()}/velt-pg-plain-root-${uuidv4()}.pem`;
+    writeFileSync(root, CA);
     for (const mode of ["verify-ca", "verify-full"]) {
-      const m = await failureOf(withMode(url, mode));
-      assert(m.startsWith("ETLS ") && m.includes("did not take a direct TLS connection"), m);
-      assert(m.includes("need PostgreSQL 17 or later"), m);
+      const m = await failureOf(`${withMode(url, mode)}&sslrootcert=${root}`);
+      assert(m.startsWith("ETLS ") && m.includes("the server does not support TLS"), m);
+      assert(m.includes(`sslmode=${mode} asks for it`), m);
+      // It takes no direct TLS either, whatever its version.
+      const direct = await failureOf(`${withMode(url, mode)}&sslnegotiation=direct`);
+      assert(direct.includes("did not take a direct TLS connection"), direct);
     }
+  }
+}
+
+// The checked modes on a server whose certificate verifies: after `SSLRequest` on any version,
+// and directly on PostgreSQL 17 or later, which an older server answers by closing.
+export async function test_checked_modes_ask_first_or_go_direct() {
+  const url = urlFrom(process.env.VELT_TEST_PG_TLS_URL);
+  if (url != null) {
+    assertEq(await outcome(url), "tls");
+    assertEq(await outcome(url.replace("sslmode=verify-full", "sslmode=verify-ca")), "tls");
+    // Without its `sslrootcert` nothing verifies a test server's certificate.
+    const unrooted = url.replace(/&sslrootcert=[^&]*/, "");
+    if (unrooted != url) {
+      const m = await failureOf(unrooted);
+      // Which of Node's codes depends on what the server sends with its certificate.
+      const untrusted = m.includes("(UNABLE_TO_") || m.includes("SELF_SIGNED_CERT");
+      assert(m.startsWith("ETLS ") && untrusted, m);
+    }
+    const direct = await failureOf(`${url}&sslnegotiation=direct`);
+    assert(
+      direct == "connected" || direct.includes("did not take a direct TLS connection"),
+      direct,
+    );
   }
 }
 

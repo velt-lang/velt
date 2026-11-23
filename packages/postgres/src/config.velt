@@ -38,7 +38,7 @@ export class PgConfig {
   rootCertPath: string | null = null;
   /** `channel_binding=require`, which this driver can't honor: connecting fails. */
   requireBinding: bool = false;
-  /** `sslnegotiation=postgres`, which velt/net can't do: see README.md. */
+  /** `sslnegotiation`: "direct" for PostgreSQL 17's direct TLS under the checked modes, else "". */
   negotiate: string = "";
 }
 

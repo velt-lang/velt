@@ -344,18 +344,17 @@ export class Line {
   /**
    * An idle connection's socket, read without waiting and without its `Input`: `PEEK_QUIET`,
    * `PEEK_ENDED`, or `PEEK_CLOSER` when bytes came, which `handPeeked` gives the `Input` to look at.
-   * On TLS the socket's own bytes are read, a cheap read where TLS's would cost more than the
-   * query: anything there (the server's FATAL, a notification) ends the connection, since its TLS
-   * stream can't go on without those bytes. What TLS already holds is the `Input`'s to read.
+   * On TLS over `startTls` one byte of the socket is read, and a byte that came is given to the
+   * TLS stream (`PgStream.peekInto`): a notification goes to the `Input` as it does in plain
+   * text, and part of a record stays with the stream for the next read.
    */
   peek(): i64 {
-    const s = this.stream;
     try {
-      const n = s.tcp.tryRead(this.peeked, 0, s.tls == null ? PEEK : 1);
-      if (n == null || (n > 0 && s.tls != null)) {
+      const n = this.stream.peekInto(this.peeked, PEEK);
+      if (n < 0) {
         return PEEK_ENDED;
       }
-      this.peekedLen = n as i64;
+      this.peekedLen = n;
       return n == 0 ? PEEK_QUIET : PEEK_CLOSER;
     } catch (e) {
       return PEEK_ENDED;
