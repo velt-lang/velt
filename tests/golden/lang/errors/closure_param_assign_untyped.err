@@ -1,0 +1,1 @@
+closure_param_assign_untyped.velt:3:12: error: type annotations needed for parameter `x`
