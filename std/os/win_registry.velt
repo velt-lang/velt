@@ -1,0 +1,78 @@
+// velt/os (internal): values of the registry's `HKEY_LOCAL_MACHINE` on Windows, for the CPUs'
+// names and clocks (machine_win32.velt) and the version of Windows (names_win32.velt), read with
+// `RegGetValueW` as libuv reads them for Node. 64-bit keys are read (`RRF_SUBKEY_WOW6464KEY`, as
+// libuv's `KEY_WOW64_64KEY`): every Velt build for Windows is 64-bit, so it changes nothing there.
+
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf, wideText } from "velt/ffi/wide";
+
+declare c("c") function RegGetValueW$dword(
+  key: Ptr<void> | null,
+  subKey: readonly u16[],
+  value: readonly u16[],
+  flags: u32,
+  type: Ptr<void> | null,
+  data: u32[],
+  bytes: Out<u32>,
+): i32;
+declare c("c") function RegGetValueW$text(
+  key: Ptr<void> | null,
+  subKey: readonly u16[],
+  value: readonly u16[],
+  flags: u32,
+  type: Ptr<void> | null,
+  data: u16[],
+  bytes: Out<u32>,
+): i32;
+
+/** `HKEY_LOCAL_MACHINE`: `(HKEY)(LONG)0x80000002`, sign-extended to a pointer. */
+const LOCAL_MACHINE: usize = 0xffffffff80000002;
+/** `RRF_RT_REG_SZ`. */
+const RRF_RT_REG_SZ: u32 = 0x2;
+/** `RRF_RT_REG_DWORD`. */
+const RRF_RT_REG_DWORD: u32 = 0x10;
+/** `RRF_SUBKEY_WOW6464KEY`. */
+const RRF_SUBKEY_WOW6464KEY: u32 = 0x10000;
+/** Room for a value's text, in UTF-16 code units (libuv's room for a product name). */
+const TEXT_UNITS: i64 = 256;
+
+/** The `DWORD` value `name` of `HKEY_LOCAL_MACHINE\<subKey>`, or null when it can't be read. */
+export function registryNumber(subKey: string, name: string): i64 | null {
+  const key = wideOf(subKey);
+  const value = wideOf(name);
+  if (key === null || value === null) {
+    return null;
+  }
+  const data: u32[] = [0];
+  const bytes = new Out<u32>(4);
+  const flags = RRF_RT_REG_DWORD | RRF_SUBKEY_WOW6464KEY;
+  let r: i32 = -1;
+  // SAFETY: a predefined key, NUL-terminated names and room for one `DWORD`, which `bytes` says.
+  unsafe {
+    r = RegGetValueW$dword(Ptr.orNull<void>(LOCAL_MACHINE), key, value, flags, null, data, bytes);
+  }
+  return r === 0 ? data[0] as i64 : null;
+}
+
+/**
+ * The text value `name` of `HKEY_LOCAL_MACHINE\<subKey>`, spaces around it aside, or "" when it
+ * can't be read (or is longer than 255 code units).
+ */
+export function registryText(subKey: string, name: string): string {
+  const key = wideOf(subKey);
+  const value = wideOf(name);
+  if (key === null || value === null) {
+    return "";
+  }
+  const data: u16[] = new Array<u16>(TEXT_UNITS).fill(0);
+  const bytes = new Out<u32>((TEXT_UNITS * 2) as u32);
+  const flags = RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY;
+  let r: i32 = -1;
+  // SAFETY: a predefined key, NUL-terminated names and room for `TEXT_UNITS` code units, which
+  // `bytes` says in bytes; `RRF_RT_REG_SZ` makes the call end the text with a NUL.
+  unsafe {
+    r = RegGetValueW$text(Ptr.orNull<void>(LOCAL_MACHINE), key, value, flags, null, data, bytes);
+  }
+  return r === 0 ? wideText(data).trim() : "";
+}

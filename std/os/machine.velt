@@ -66,6 +66,41 @@ export function uptime(): f64 {
 }
 
 /**
+ * The operating system's name, as `uname -s` gives it (Node's `os.type()`): "Linux", "Darwin",
+ * "Windows_NT"; "" on WebAssembly.
+ */
+export function type(): string {
+  return sys.systemNames()[0];
+}
+
+/**
+ * The operating system's release (Node's `os.release()`): the kernel's on Linux and macOS
+ * ("6.8.0-45-generic", "24.1.0"), "<major>.<minor>.<build>" on Windows ("10.0.22631"); "" on
+ * WebAssembly or when the OS can't say.
+ */
+export function release(): string {
+  return sys.systemNames()[1];
+}
+
+/**
+ * The operating system's version (Node's `os.version()`): the kernel's build on Linux and macOS
+ * ("#1 SMP PREEMPT_DYNAMIC …", "Darwin Kernel Version 24.1.0: …"), the product's name on Windows
+ * ("Windows 11 Pro"); "" on WebAssembly or when the OS can't say.
+ */
+export function version(): string {
+  return sys.systemNames()[2];
+}
+
+/**
+ * The processor's name as the OS gives it, as `uname -m` would (Node's `os.machine()`):
+ * "x86_64" on x86-64, "aarch64" on arm64 Linux, "arm64" on macOS and Windows; "wasm32" on
+ * WebAssembly. `arch()` names the build's processor instead, the same on every OS.
+ */
+export function machine(): string {
+  return sys.systemNames()[3];
+}
+
+/**
  * The byte order of the processor (Node's `os.endianness()`): "LE", as for every target Velt
  * builds for (x86-64, arm64, WebAssembly).
  */

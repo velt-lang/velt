@@ -11,9 +11,13 @@ export {
   freemem,
   hostname,
   loadavg,
+  machine,
   platform,
+  release,
   tmpdir,
   totalmem,
+  type,
   uptime,
+  version,
 } from "velt/os/machine";
 export { lastOsError } from "velt/os/rt";

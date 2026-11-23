@@ -25,7 +25,8 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// On Windows `<winternl.h>` has ntdll's `NtCreateFile` and `RtlNtStatusToDosError`
 /// (std/fs/tree/win_remove.velt). `<sys/random.h>` has the OS generator's calls (`getrandom` on
 /// Linux, `getentropy` on macOS: std/lang/random/os_linux.velt, os_darwin.velt), `<bcrypt.h>`
-/// Windows' `BCryptGenRandom` (os_win32.velt).
+/// Windows' `BCryptGenRandom` (os_win32.velt). `<sys/utsname.h>` and `<sys/resource.h>` have
+/// velt/os' `uname` and velt/process' `getrusage` (std/os/posix.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
         return vec![
@@ -54,8 +55,10 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<strings.h>",
         "<sys/mman.h>",
         "<sys/random.h>",
+        "<sys/resource.h>",
         "<sys/socket.h>",
         "<sys/stat.h>",
+        "<sys/utsname.h>",
         "<sys/wait.h>",
         "<time.h>",
         "<unistd.h>",
@@ -143,9 +146,11 @@ const CHECKED: &[&str] = &[
     "net/udp/udp_sched.velt",
     "os/machine_darwin.velt",
     "os/machine_win32.velt",
+    "os/names_win32.velt",
     "os/posix.velt",
     "os/sys_darwin.velt",
     "os/sys_linux.velt",
+    "os/win_registry.velt",
     "process/child/child_win32.velt",
     "process/child/command_line_win32.velt",
     "process/child/exit_win32.velt",

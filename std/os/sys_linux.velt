@@ -8,7 +8,7 @@ import { cgroupMemoryLeft, cgroupMemoryLimit } from "./cgroup_memory";
 import type { CpuInfo } from "./cpu_info";
 import { linuxCpus } from "./cpus_linux";
 import { linuxFreeMemory, linuxLoadAverage, linuxTotalMemory, linuxUptime } from "./meminfo_linux";
-import { hostname as posixHostname } from "./posix";
+import { cpuUsage, hostname as posixHostname, names } from "./posix";
 import { posixTmpdir } from "./tmpdir";
 
 /** C's `cpu_set_t`: a mask of 1024 CPUs. */
@@ -125,4 +125,14 @@ export function constrainedMemory(): i64 {
 export function availableMemory(): i64 {
   const left = cgroupMemoryLeft(linuxTotalMemory());
   return left < 0 ? linuxFreeMemory() : left;
+}
+
+/** `[type, release, version, machine]`: the OS's names, as `uname` gives them. */
+export function systemNames(): string[] {
+  return names(65);
+}
+
+/** `[user, system]`: this process' CPU time in microseconds. */
+export function processCpuUsage(): [i64, i64] {
+  return cpuUsage();
 }

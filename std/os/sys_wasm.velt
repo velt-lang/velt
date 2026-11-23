@@ -56,3 +56,13 @@ export function constrainedMemory(): i64 {
 export function availableMemory(): i64 {
   return 0;
 }
+
+/** The OS's names: none known, and the build's processor, "wasm32". */
+export function systemNames(): string[] {
+  return ["", "", "", "wasm32"];
+}
+
+/** The process' CPU time: `[0, 0]` (unknown). */
+export function processCpuUsage(): [i64, i64] {
+  return [0, 0];
+}

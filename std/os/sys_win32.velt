@@ -5,6 +5,7 @@ import { Out } from "velt/ffi/out";
 import { wideText } from "velt/ffi/wide";
 import type { CpuInfo } from "./cpu_info";
 import { windowsCpus, windowsMemory, windowsUptime } from "./machine_win32";
+import { windowsCpuUsage, windowsNames } from "./names_win32";
 import { windowsTmpdir } from "./tmpdir";
 import { startWinsock } from "./winsock_win32";
 
@@ -110,4 +111,14 @@ export function constrainedMemory(): i64 {
 /** The memory this process may still get: the available physical memory. */
 export function availableMemory(): i64 {
   return windowsMemory()[1];
+}
+
+/** `[type, release, version, machine]`: "Windows_NT" and the installed Windows' names. */
+export function systemNames(): string[] {
+  return windowsNames();
+}
+
+/** `[user, system]`: this process' CPU time in microseconds. */
+export function processCpuUsage(): [i64, i64] {
+  return windowsCpuUsage();
 }

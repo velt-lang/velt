@@ -12,7 +12,7 @@ import {
   darwinTotalMemory,
   darwinUptime,
 } from "./machine_darwin";
-import { hostname as posixHostname } from "./posix";
+import { cpuUsage, hostname as posixHostname, names } from "./posix";
 import { posixTmpdir } from "./tmpdir";
 
 declare c("c") function sysctlbyname(
@@ -99,4 +99,14 @@ export function constrainedMemory(): i64 {
 /** The memory this process may still get: the free memory. */
 export function availableMemory(): i64 {
   return darwinFreeMemory();
+}
+
+/** `[type, release, version, machine]`: the OS's names, as `uname` gives them. */
+export function systemNames(): string[] {
+  return names(256);
+}
+
+/** `[user, system]`: this process' CPU time in microseconds. */
+export function processCpuUsage(): [i64, i64] {
+  return cpuUsage();
 }

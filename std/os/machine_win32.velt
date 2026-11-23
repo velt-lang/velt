@@ -9,9 +9,9 @@
 
 import { Out } from "velt/ffi/out";
 import { Ptr } from "velt/ffi/ptr";
-import { wideOf, wideText } from "velt/ffi/wide";
 import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
 import type { CpuInfo } from "./cpu_info";
+import { registryNumber, registryText } from "./win_registry";
 
 /** Win32's `SYSTEM_INFO` (its tag, as the headers declare the function with it). */
 declare c type _SYSTEM_INFO;
@@ -25,30 +25,12 @@ declare c("c") function NtQuerySystemInformation(
   length: u32,
   returned: Out<u32>,
 ): i32;
-declare c("c") function RegGetValueW$dword(
-  key: Ptr<void> | null,
-  subKey: readonly u16[],
-  value: readonly u16[],
-  flags: u32,
-  type: Ptr<void> | null,
-  data: u32[],
-  bytes: Out<u32>,
-): i32;
-declare c("c") function RegGetValueW$text(
-  key: Ptr<void> | null,
-  subKey: readonly u16[],
-  value: readonly u16[],
-  flags: u32,
-  type: Ptr<void> | null,
-  data: u16[],
-  bytes: Out<u32>,
-): i32;
 declare c("c") function GlobalMemoryStatusEx(status: Ptr<_MEMORYSTATUSEX> | null): i32;
 declare c("c") function GetTickCount64(): u64;
 
 /** `sizeof(SYSTEM_INFO)` on 64-bit Windows. */
 const SYSTEM_INFO_SIZE: usize = 48;
-/** `dwNumberOfProcessors`' offset in `SYSTEM_INFO`. */
+/** `dwNumberOfProcessors`' offset in `SYSTEM_INFO` (`wProcessorArchitecture` is at 0). */
 const PROCESSORS_AT: usize = 32;
 /** `SystemProcessorPerformanceInformation`. */
 const PROCESSOR_PERFORMANCE: i32 = 8;
@@ -57,80 +39,32 @@ const PROCESSOR_PERFORMANCE: i32 = 8;
  * DPC and interrupt times in 100 ns units, then a count.
  */
 const PERFORMANCE_WORDS: i64 = 6;
-/** `HKEY_LOCAL_MACHINE`: `(HKEY)(LONG)0x80000002`, sign-extended to a pointer. */
-const LOCAL_MACHINE: usize = 0xffffffff80000002;
-/** `RRF_RT_REG_SZ`. */
-const RRF_RT_REG_SZ: u32 = 0x2;
-/** `RRF_RT_REG_DWORD`. */
-const RRF_RT_REG_DWORD: u32 = 0x10;
-/** Room for a processor's name, in UTF-16 code units. */
-const NAME_UNITS: i64 = 256;
 /** `sizeof(MEMORYSTATUSEX)`. */
 const MEMORY_STATUS_SIZE: usize = 64;
 
-/** The logical processors of the calling thread's processor group (`dwNumberOfProcessors`). */
-function processorCount(): i64 {
+/**
+ * `GetSystemInfo`'s `[dwNumberOfProcessors, wProcessorArchitecture]`: the logical processors of
+ * the calling thread's processor group, and the processor's architecture
+ * (`PROCESSOR_ARCHITECTURE_*`).
+ */
+export function systemInfo(): [i64, i64] {
   const p = rawAlloc(SYSTEM_INFO_SIZE);
   let n: u32 = 0;
+  let arch: u16 = 0;
   // SAFETY: `p` holds a `SYSTEM_INFO`, which the call fills; the block is freed once, after the
-  // read.
+  // reads.
   unsafe {
     GetSystemInfo(Ptr.orNull<_SYSTEM_INFO>(p));
     n = addressLoad<u32>(p + PROCESSORS_AT);
+    arch = addressLoad<u16>(p);
     rawFree(p, SYSTEM_INFO_SIZE);
   }
-  return n as i64;
+  return [n as i64, arch as i64];
 }
 
-/** Processor `cpu`'s registry value `name` as a `DWORD`, or 0 when it can't be read. */
-function registryNumber(cpu: i64, name: string): i64 {
-  const key = wideOf(`HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\${cpu}`);
-  const value = wideOf(name);
-  if (key === null || value === null) {
-    return 0;
-  }
-  const data: u32[] = [0];
-  const bytes = new Out<u32>(4);
-  let r: i32 = -1;
-  // SAFETY: a predefined key, NUL-terminated names and room for one `DWORD`, which `bytes` says.
-  unsafe {
-    r = RegGetValueW$dword(
-      Ptr.orNull<void>(LOCAL_MACHINE),
-      key,
-      value,
-      RRF_RT_REG_DWORD,
-      null,
-      data,
-      bytes,
-    );
-  }
-  return r === 0 ? data[0] as i64 : 0;
-}
-
-/** Processor `cpu`'s registry value `name` as text, or "" when it can't be read. */
-function registryText(cpu: i64, name: string): string {
-  const key = wideOf(`HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\${cpu}`);
-  const value = wideOf(name);
-  if (key === null || value === null) {
-    return "";
-  }
-  const data: u16[] = new Array<u16>(NAME_UNITS).fill(0);
-  const bytes = new Out<u32>((NAME_UNITS * 2) as u32);
-  let r: i32 = -1;
-  // SAFETY: a predefined key, NUL-terminated names and room for `NAME_UNITS` code units, which
-  // `bytes` says in bytes; `RRF_RT_REG_SZ` makes the call end the text with a NUL.
-  unsafe {
-    r = RegGetValueW$text(
-      Ptr.orNull<void>(LOCAL_MACHINE),
-      key,
-      value,
-      RRF_RT_REG_SZ,
-      null,
-      data,
-      bytes,
-    );
-  }
-  return r === 0 ? wideText(data).trim() : "";
+/** The registry key of processor `cpu`. */
+function processorKey(cpu: i64): string {
+  return `HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\${cpu}`;
 }
 
 /**
@@ -138,7 +72,7 @@ function registryText(cpu: i64, name: string): string {
  * less idle (`sys`), idle and interrupt; Windows has no `nice`.
  */
 export function windowsCpus(): CpuInfo[] {
-  const n = processorCount();
+  const n = systemInfo()[0];
   const out: CpuInfo[] = [];
   if (n <= 0) {
     return out;
@@ -161,10 +95,11 @@ export function windowsCpus(): CpuInfo[] {
   const filled = (returned.value as i64) / (PERFORMANCE_WORDS * 8);
   for (let i: i64 = 0; i < n && i < filled; i++) {
     const at = i * PERFORMANCE_WORDS;
-    const model = registryText(i, "ProcessorNameString");
+    const model = registryText(processorKey(i), "ProcessorNameString");
+    const mhz = registryNumber(processorKey(i), "~MHz");
     out.push({
       model: model.length === 0 ? "unknown" : model,
-      speed: registryNumber(i, "~MHz"),
+      speed: mhz === null ? 0 : mhz,
       times: {
         user: perf[at + 2] / 10000,
         nice: 0,
