@@ -3,7 +3,10 @@
 // task that goes away, and the connection's end.
 import { connect, Client, PgError } from "../src/lib";
 import { timeout } from "velt/task";
+import { writeFileSync } from "velt/fs";
 import { listen } from "velt/net";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
 import { channel } from "velt/sync";
 import { ReadBuffer } from "../src/read_buffer";
 import {
@@ -23,6 +26,7 @@ import {
   serverError,
   ascii,
 } from "./support/fake";
+import { CA } from "./support/tls_certs";
 
 const INT4: i64 = 23;
 const TEXT: i64 = 25;
@@ -417,33 +421,41 @@ export async function test_prefer_stays_on_the_socket_when_the_server_has_no_tls
   assertEq(seenBy(probes), "ssl,startup");
 }
 
-// `require` asks with `SSLRequest` as `prefer` does; the checked modes use direct TLS.
+// `require` and the checked modes ask with `SSLRequest` as `prefer` does, and none of them goes on
+// in plain text when the handshake fails.
 export async function test_stricter_modes_never_fall_back() {
-  for (const mode of ["require", "verify-ca", "verify-full"]) {
+  // verify-ca needs a root certificate to start at all.
+  const root = `${tmpdir()}/velt-pg-fake-root-${uuidv4()}.pem`;
+  writeFileSync(root, CA);
+  for (const mode of ["require", "verify-full", `verify-ca&sslrootcert=${root}`]) {
     const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
     const port = await serveTlsProbes(probes, "S", 1);
     assertEq(await connectAs(port, mode), "ETLS");
-    assertEq(seenBy(probes), mode == "require" ? "ssl,tls" : "tls");
+    assertEq(seenBy(probes), "ssl,tls");
   }
 }
 
-// A server that closes on a direct TLS ClientHello, as one before PostgreSQL 17 does: the checked
-// modes say they need its direct TLS, not just that the handshake failed.
-export async function test_checked_modes_say_they_need_direct_tls() {
+// A server that closes on a direct TLS ClientHello, as one before PostgreSQL 17 does: with
+// `sslnegotiation=direct` the checked modes send nothing before it, and say what a direct
+// connection needs, not just that the handshake failed.
+export async function test_direct_negotiation_says_what_it_needs() {
   for (const mode of ["verify-ca", "verify-full"]) {
     const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
     const port = await serveTlsProbes(probes, "S", 1);
     let message = "connected";
     try {
-      const db = await connect(`postgres://fake@127.0.0.1:${port}/db?sslmode=${mode}`);
+      const db = await connect(
+        `postgres://fake@127.0.0.1:${port}/db?sslmode=${mode}&sslnegotiation=direct`,
+      );
       db.close();
     } catch (e) {
       message = `${e.code} ${e.message}`;
     }
     assert(message.startsWith("ETLS TLS to 127.0.0.1 failed: "), message);
     assert(message.includes("did not take a direct TLS connection"), message);
-    assert(message.includes("need PostgreSQL 17 or later"), message);
-    assert(message.includes("velt-lang/velt#2392"), message);
+    assert(message.includes("PostgreSQL 17 or later"), message);
+    assert(message.includes("ask with SSLRequest first"), message);
+    assertEq(seenBy(probes), "tls");
   }
 }
 

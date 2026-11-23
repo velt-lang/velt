@@ -1,0 +1,90 @@
+// verify-ca and verify-full against a server that has TLS as PostgreSQL has it (`SSLRequest`,
+// "S", then the handshake), with a certificate for the name "localhost" under a test CA: what
+// each mode trusts and whether it checks the name. No PostgreSQL is needed.
+import { connect } from "../src/lib";
+import { writeFileSync } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { serveTls } from "./support/fake";
+import {
+  CA,
+  LOOKALIKE_CERT,
+  LOOKALIKE_KEY,
+  OTHER_CA,
+  SERVER_CERT,
+  SERVER_KEY,
+} from "./support/tls_certs";
+
+// The path of a new file with `pem` in it.
+function rootFile(pem: string): string {
+  const path = `${tmpdir()}/velt-pg-root-${uuidv4()}.pem`;
+  writeFileSync(path, pem);
+  return path;
+}
+
+// "connected", or the failure's code and message.
+async function outcome(host: string, port: number, options: string): Promise<string> {
+  try {
+    const db = await connect(`postgres://fake@${host}:${port}/db?${options}`);
+    db.close();
+    return "connected";
+  } catch (e) {
+    return `${e.code}: ${e.message}`;
+  }
+}
+
+// verify-full checks the chain and the name; verify-ca checks the chain alone. The server's
+// certificate is for "localhost", not for 127.0.0.1.
+export async function test_verify_full_checks_the_name_and_verify_ca_does_not() {
+  const port = await serveTls(SERVER_CERT, SERVER_KEY, 4);
+  const root = rootFile(CA);
+  assertEq(
+    await outcome("localhost", port, `sslmode=verify-full&sslrootcert=${root}`),
+    "connected",
+  );
+  assertEq(await outcome("localhost", port, `sslmode=verify-ca&sslrootcert=${root}`), "connected");
+  assertEq(await outcome("127.0.0.1", port, `sslmode=verify-ca&sslrootcert=${root}`), "connected");
+  const refused = await outcome("127.0.0.1", port, `sslmode=verify-full&sslrootcert=${root}`);
+  assert(refused.startsWith("ETLS: "), refused);
+  assert(refused.includes("IP: 127.0.0.1 is not in the cert's list"), refused);
+  assert(refused.includes("(ERR_TLS_CERT_ALTNAME_INVALID)"), refused);
+}
+
+// Both modes refuse a certificate under a CA that is not the one given, and `require` with a
+// root certificate is verify-ca, as in libpq.
+export async function test_both_modes_check_the_chain() {
+  const port = await serveTls(SERVER_CERT, SERVER_KEY, 3);
+  const other = rootFile(OTHER_CA);
+  for (const mode of ["verify-ca", "verify-full", "require"]) {
+    const refused = await outcome("localhost", port, `sslmode=${mode}&sslrootcert=${other}`);
+    assert(refused.startsWith("ETLS: "), refused);
+    assert(refused.includes("(UNABLE_TO_VERIFY_LEAF_SIGNATURE)"), refused);
+  }
+}
+
+// verify-ca trusts the certificates of sslrootcert alone, so it is refused without one before
+// anything is sent; verify-full without one trusts the public roots, which this server is not
+// under.
+export async function test_verify_ca_needs_a_root_certificate() {
+  const port = await serveTls(SERVER_CERT, SERVER_KEY, 1);
+  const without = await outcome("localhost", port, "sslmode=verify-ca");
+  assert(without.startsWith("ETLS: "), without);
+  assert(without.includes("sslmode=verify-ca needs sslrootcert"), without);
+  const full = await outcome("localhost", port, "sslmode=verify-full");
+  assert(full.startsWith("ETLS: "), full);
+  assert(full.includes("(UNABLE_TO_VERIFY_LEAF_SIGNATURE)"), full);
+}
+
+// verify-ca trusts the certificates of sslrootcert and no others. The server's certificate
+// names a built-in root as its issuer: under verify-full that root is found (and the signature,
+// by another key, then fails); under verify-ca it must not be looked for at all, so the issuer
+// is simply unknown.
+export async function test_verify_ca_does_not_trust_the_built_in_roots() {
+  const port = await serveTls(LOOKALIKE_CERT, LOOKALIKE_KEY, 2);
+  const root = rootFile(CA);
+  const ca = await outcome("localhost", port, `sslmode=verify-ca&sslrootcert=${root}`);
+  assert(ca.includes("(UNABLE_TO_VERIFY_LEAF_SIGNATURE)"), ca);
+  const full = await outcome("localhost", port, `sslmode=verify-full&sslrootcert=${root}`);
+  assert(full.startsWith("ETLS: "), full);
+  assert(!full.includes("UNABLE_TO_"), full);
+}

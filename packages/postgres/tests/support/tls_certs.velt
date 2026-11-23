@@ -1,0 +1,68 @@
+// A test CA, a server certificate under it for the name "localhost" only (no IP address), the
+// server's P-256 key, and another CA that signed nothing: made with OpenSSL 3.0.13.
+
+export const CA =
+  "-----BEGIN CERTIFICATE-----\n" +
+  "MIIBljCCATugAwIBAgIUa2CkIzhM5WRd9TdEgC2LfZzjG9MwCgYIKoZIzj0EAwIw\n" +
+  "IDEeMBwGA1UEAwwVdmVsdCB0ZXN0IGRhdGFiYXNlIENBMB4XDTI2MTEyMDE2MTYx\n" +
+  "OFoXDTM2MTExNzE2MTYxOFowIDEeMBwGA1UEAwwVdmVsdCB0ZXN0IGRhdGFiYXNl\n" +
+  "IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAvjaRUsEdHEW0cd4YkzvQcip\n" +
+  "QrRE9jRY4PgVMr4DijCQzxTDTol++zmenh5wxRu0d7sW/X0wu43kJdGQXMCEH6NT\n" +
+  "MFEwHQYDVR0OBBYEFMLHJQuFYFiJaf1KyKMmYa955RojMB8GA1UdIwQYMBaAFMLH\n" +
+  "JQuFYFiJaf1KyKMmYa955RojMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwID\n" +
+  "SQAwRgIhAMhzfGnSGEdaUEg+e09N+kQVrM0lfewTnVDY+JLuz9n6AiEAzXnJ7Z7e\n" +
+  "Z3GLwMjOK7pNCZJJQ3lSvH0hFyMC1rqaEp4=\n" +
+  "-----END CERTIFICATE-----\n";
+export const SERVER_CERT =
+  "-----BEGIN CERTIFICATE-----\n" +
+  "MIIBgjCCASigAwIBAgIBBzAKBggqhkjOPQQDAjAgMR4wHAYDVQQDDBV2ZWx0IHRl\n" +
+  "c3QgZGF0YWJhc2UgQ0EwHhcNMjYxMTIwMTYxNjE4WhcNMzYxMTE3MTYxNjE4WjAN\n" +
+  "MQswCQYDVQQDDAJkYjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABBmZTJ5pBhAa\n" +
+  "UEOrA6ixXRHr3+suK2mX9rOHL3zCufigXINVF27n8IyNewzNqDypgoJO0SyIoz4j\n" +
+  "7zhuXH7GWsWjZjBkMBQGA1UdEQQNMAuCCWxvY2FsaG9zdDAMBgNVHRMBAf8EAjAA\n" +
+  "MB0GA1UdDgQWBBT0YTgSEWQSkj4b7/8xcOxgI/8UdTAfBgNVHSMEGDAWgBTCxyUL\n" +
+  "hWBYiWn9SsijJmGveeUaIzAKBggqhkjOPQQDAgNIADBFAiA6eFESHGWCbYXDQdFe\n" +
+  "EepW3VNHHSMNLklXKrTLB3OlawIhAI5jsXEZcEx0Y7+wqox+wikfN8OrHxy+IQGc\n" +
+  "PHDS4c/I\n" +
+  "-----END CERTIFICATE-----\n";
+export const SERVER_KEY =
+  "-----BEGIN PRIVATE KEY-----\n" +
+  "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgdS2CrvlMsnBP/anN\n" +
+  "R0A1hiDs0siah2VkVGeYlr7RGRehRANCAAQZmUyeaQYQGlBDqwOosV0R69/rLitp\n" +
+  "l/azhy98wrn4oFyDVRdu5/CMjXsMzag8qYKCTtEsiKM+I+84blx+xlrF\n" +
+  "-----END PRIVATE KEY-----\n";
+export const OTHER_CA =
+  "-----BEGIN CERTIFICATE-----\n" +
+  "MIIBfzCCASWgAwIBAgIUFoPxyVVM54v+D2NEDsT7hu1JX8wwCgYIKoZIzj0EAwIw\n" +
+  "FTETMBEGA1UEAwwKYW5vdGhlciBDQTAeFw0yNjExMjAxNjE2MThaFw0zNjExMTcx\n" +
+  "NjE2MThaMBUxEzARBgNVBAMMCmFub3RoZXIgQ0EwWTATBgcqhkjOPQIBBggqhkjO\n" +
+  "PQMBBwNCAAQ99RVYEMtwpn/ITOjixiA1cyk5oTfbRlEL6u+BZ0KOgKJJtZZjouTv\n" +
+  "R+xn5SJfNpyFGsGm2UgJqaMF9ofS7bnco1MwUTAdBgNVHQ4EFgQUKi3AyQxnkMhJ\n" +
+  "MeUGFqTQxOOMQ0YwHwYDVR0jBBgwFoAUKi3AyQxnkMhJMeUGFqTQxOOMQ0YwDwYD\n" +
+  "VR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNIADBFAiBlbUN3OsyUmTxmU3+FXpCJ\n" +
+  "L/Y40y0krIj6ls1kptyPigIhAK+7Wy02v9nK5NMXCtrVrQSkr0NSikCAgIxwe00h\n" +
+  "eF2G\n" +
+  "-----END CERTIFICATE-----\n";
+
+// A certificate for "localhost" whose issuer's name is, byte for byte, the subject of a built-in
+// root (ISRG Root X1), signed by a key of this test's: with the built-in roots trusted its
+// issuer is found among them and its signature then fails; without them its issuer is unknown.
+export const LOOKALIKE_CERT =
+  "-----BEGIN CERTIFICATE-----\n" +
+  "MIIBsTCCAVegAwIBAgIBCTAKBggqhkjOPQQDAjBPMQswCQYDVQQGEwJVUzEpMCcG\n" +
+  "A1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMT\n" +
+  "DElTUkcgUm9vdCBYMTAeFw0yNjExMjAxNzM1MjFaFw0zNjExMTcxNzM1MjFaMA0x\n" +
+  "CzAJBgNVBAMMAmRiMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhhU7lWDisFRK\n" +
+  "wiJC9WOnniESwhOyBpl4vHQrqzCDOpafVDoQsl0S5LML1avd6/32etLzO/obdzQK\n" +
+  "OIPc40XNrKNmMGQwFAYDVR0RBA0wC4IJbG9jYWxob3N0MAwGA1UdEwEB/wQCMAAw\n" +
+  "HQYDVR0OBBYEFCjWStb3DilJskPymCcTsUeJlcZQMB8GA1UdIwQYMBaAFG5CKqBO\n" +
+  "t6bcz5gHkeiBeqyx1BRVMAoGCCqGSM49BAMCA0gAMEUCIA7opmba8uIaEWp5epOj\n" +
+  "+O/zfEKMKNOkwS3OlCt0kIvGAiEAhIExPXyZeO25O4lXD6fj/nerlEJS6hZ5kpkp\n" +
+  "oFklDAk=\n" +
+  "-----END CERTIFICATE-----\n";
+export const LOOKALIKE_KEY =
+  "-----BEGIN PRIVATE KEY-----\n" +
+  "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgIE5Kz6ynbwtEDOM1\n" +
+  "OYRlL+jG4mzjfEqmANnzXqwRAV6hRANCAASGFTuVYOKwVErCIkL1Y6eeIRLCE7IG\n" +
+  "mXi8dCurMIM6lp9UOhCyXRLkswvVq93r/fZ60vM7+ht3NAo4g9zjRc2s\n" +
+  "-----END PRIVATE KEY-----\n";
