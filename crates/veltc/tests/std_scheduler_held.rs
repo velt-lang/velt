@@ -133,10 +133,20 @@ fn a_finished_promise_kept_in_module_state_is_freed_off_its_task() {
 /// A promise that finished, and let go of its task, is shared after: its owner reads it
 /// through a holder and hands another holder to worker 3, which reads it too. Its hub takes
 /// it for another task's and settles at the first holder's poll. Before, every run left
-/// 340 blocks.
+/// 340 blocks. It guards the let-go itself; how the hub takes the node (`AWAY`, or
+/// `HUB_HERE` as for a node of the sharing task) makes no difference to it, as a finished
+/// node held by its hub is never listed (its count is 1).
 #[test]
 fn a_finished_promise_shared_after_it_let_go_of_its_task_is_read() {
     check("share_finished", SHARE_FINISHED, "parked 40, read 40\n", 3);
+}
+
+/// As the one above, with the holders kept in module state and dropped one at a time by
+/// `main`, off the task and under the module lock (sched_share_listed.velt `relist` looks at
+/// each drop). Before, every run left 320 blocks.
+#[test]
+fn a_finished_promise_shared_into_module_state_is_dropped_off_its_task() {
+    check("share_kept", SHARE_KEPT, "parked 20\n", 3);
 }
 
 /// The program of [`a_task_holding_a_promise_that_finished_unawaited_is_found_parked_for_ever`].
@@ -416,5 +426,65 @@ async function main() {
   }
   KEPT.length = 0;
   console.log(`parked ${PARKED.load()}, read ${READ.load()}`);
+}
+"#;
+
+/// The program of [`a_finished_promise_shared_into_module_state_is_dropped_off_its_task`].
+const SHARE_KEPT: &str = r#"// #3498 review: a promise that finished, and so let go of its task, is shared into two holders
+// kept in module state, which `main` drops one at a time, off the task and under the module lock.
+// Its hub is not taken for a hub on the task (it has none), so no drop tries to list it there,
+// and every task is found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const SHARED: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 3;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const f = soon();
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  const h = new Holder(f);
+  SHARED.push(h);
+  SHARED.push(new Holder(h.p));
+  PARKED.add(1);
+  return await d.p;
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  while (SHARED.length > 0) {
+    SHARED.pop();
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
 }
 "#;

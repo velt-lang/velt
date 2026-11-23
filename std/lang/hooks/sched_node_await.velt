@@ -48,7 +48,10 @@ export function awaitNode(n: usize, cx: usize): u32 {
 @inline("always")
 export function awaitWith(n: usize, cw: usize): u32 {
   const w = m.wakerClone(cw);
-  if (lk.mode() === lk.LK_NONE || wk.taskOf(cw) === m.ld(n + nd.N_TASK)) {
+  // A nonzero task: `taskOf` is 0 for wakers of no task, and so is a node that let go of its own
+  // (sched_node_done.velt).
+  const nt = m.ld(n + nd.N_TASK);
+  if (lk.mode() === lk.LK_NONE || (nt !== 0 && wk.taskOf(cw) === nt)) {
     // The owner runs on the node's task (module docs).
     const old = m.ld(n + N_AWAITER);
     m.st(n + N_AWAITER, w);
@@ -108,15 +111,19 @@ export function takePlain(n: usize): usize {
  * meanwhile (module docs)?
  */
 @inline("always")
-export function ownSide(n: usize): bool {
+export function ownSide(n: usize, fl: u32): bool {
   const e = t.here();
   if (lk.mode() === lk.LK_NONE) {
     // One worker, but the owner may be a thread that isn't one (sched_foreign.velt `start`).
     return e !== 0;
   }
   const nt = m.ld(n + nd.N_TASK);
-  // Task 0: finished, it let go of its task (sched_node_done.velt): no finish left to race.
-  return nt === 0 || (e !== 0 && m.ld(e + t.E_CURRENT) === nt);
+  if (nt === 0) {
+    // It let go of its task as it finished (sched_node_done.velt): no finish left to race, when
+    // the caller's flags `fl`, read before this, say so; stale ones take the other path.
+    return (fl & nd.FINISHED) !== 0;
+  }
+  return e !== 0 && m.ld(e + t.E_CURRENT) === nt;
 }
 
 /**
