@@ -29,14 +29,27 @@ a walk over checked code that checks each definition as it enters the set:
   or not code reads it;
 - what lowering looks up by name ([Roots](#roots));
 - closed over: every definition live code names (a call, a function value, a closure, a constant);
-- the methods, static methods and constructors of each class or struct a live type mentions, with
-  its fields' types, its base classes and its subclasses, transitively. A live type is the type of
+- the methods lowering builds for each class or struct a live type mentions, with its fields'
+  types, its base classes and its subclasses, transitively
+  (`crates/velt_sema/src/body/lazy_std/live_methods.rs`): its constructor, the methods with a slot
+  in its table (lowering fills every slot of a class's table), its getters and setters, the
+  methods of its interface implementations, the methods glue calls by name (`toJSON`, `clone`, and
+  the protocols sema's desugarings call) or by a symbol key (`[INSPECT]()`, std's keyed methods),
+  and what sema made for it. Its `toString()` (own or inherited) is live where live code converts
+  a value whose type holds the class to text (`String(x)`, a template, `+` with a string), every
+  class's where such a value's type holds a type parameter, and an `Error`'s always: the text glue
+  is its only caller. A method or static method with a plain name that no glue calls is live only
+  where live code names it (a call, a function value), so a program that uses `Date` but never
+  calls `toLocaleString` doesn't check it or load what it needs. Once the
+  program reads, calls or writes a member of an `any`, the `any` tables call every class's methods
+  by name (`Program::dyn_members`), and every method of a live class is live;
+  `VELT_LIVE_ALL_METHODS=1` asks for that in any program. A live type is the type of
   an expression, local or result in live code, or a type argument of one of its calls
   (`probe<Gadget>()`, whose body monomorphization builds with `Gadget`'s methods). Subclasses count
   because lowering's glue for a class value (printing, `JSON.stringify`, a member of `any`)
   dispatches over every class in the program that extends the value's class, constructed or not
-  (`velt_vir` `any_subclass_dispatch`, `json_descendants`): printing an `Error` checks the methods
-  of every `Error` subclass the program loads;
+  (`velt_vir` `any_subclass_dispatch`, `json_descendants`): printing an `Error` checks those
+  methods of every `Error` subclass the program loads;
 - the interface implementations of a live interface for a live type: lowering calls them through
   a bound or a table without checked code naming them. Every interface counts as live once live
   code holds an `any`, whose tables reach them;

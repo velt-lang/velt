@@ -11,7 +11,8 @@ use crate::hir::{self, DefId, TyId, TyKind};
 
 /// The roots: the program's own definitions (its root module's, whether or not in std), and the
 /// free functions lowering looks up by name ([`seed_std`]). Methods are lowering's only where it
-/// has a value of their type: live with it.
+/// has a value of their type: live with it, those that only a call reaches where one is
+/// ([`super::class_methods`]).
 pub(super) fn seed(cx: &mut Ctx) {
     let from = std::mem::replace(&mut cx.lazy.live.seeded, cx.info.len());
     // Generated code may add methods.
@@ -29,6 +30,9 @@ pub(super) fn seed(cx: &mut Ctx) {
             _ => continue,
         };
         let of_live = any_live_type && owner.is_some_and(|o| cx.lazy.live.adts.contains(&o));
+        // A method made for a live class is live with it, unless only a call names it.
+        let of_live = of_live
+            && owner.is_some_and(|o| super::class_methods::live_with(cx, o, DefId(i as u32)));
         if program[module] || of_live || slot {
             mark(cx, DefId(i as u32));
         }

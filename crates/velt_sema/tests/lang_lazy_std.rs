@@ -194,7 +194,11 @@ export class SpecialError extends Error {
   [INSPECT](): string { return \"S\"; }
 }
 export class Base { constructor() {} }
-export class Special extends Base { constructor() { super(); } describe(): string { return \"special\"; } }
+export class Special extends Base {
+  constructor() { super(); }
+  describe(): string { return \"special\"; }
+  toJSON(): string { return \"special\"; }
+}
 ";
 
 #[test]
@@ -240,7 +244,8 @@ fn the_subclasses_of_a_used_class_have_their_methods_checked() {
 
 #[test]
 fn a_user_subclass_makes_the_std_subclasses_of_its_base_checked() {
-    // `JSON.stringify` of a `Base` value dispatches over `Special` too.
+    // `JSON.stringify` of a `Base` value dispatches over `Special` too, whose glue calls its
+    // `toJSON()`; nothing calls `describe` (#3580).
     let p = with_probe_std(
         PROBE_IMPL,
         "import { Base } from \"velt/zzprobe\";\n\
@@ -249,7 +254,11 @@ fn a_user_subclass_makes_the_std_subclasses_of_its_base_checked() {
     );
     let names = unchecked(&p);
     assert!(
-        !names.contains(&"std/zzprobe/impl::Special.describe".to_string()),
+        !names.contains(&"std/zzprobe/impl::Special.toJSON".to_string()),
+        "{names:?}"
+    );
+    assert!(
+        names.contains(&"std/zzprobe/impl::Special.describe".to_string()),
         "{names:?}"
     );
 }
