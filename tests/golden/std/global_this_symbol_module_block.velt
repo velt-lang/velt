@@ -7,6 +7,6 @@
     }
   }
   const K = Symbol.for("k");
-  (globalThis as Record<string, number | undefined>)[K] = 1;
-  console.log((globalThis as Record<string, number | undefined>)["k"]);
+  (globalThis as Record<string, any>)[K] = 1;
+  console.log((globalThis as Record<string, any>)["k"]);
 }

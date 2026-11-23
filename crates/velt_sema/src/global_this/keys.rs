@@ -115,6 +115,10 @@ pub(super) fn binds_anywhere(module: &ast::Module, name: &str) -> bool {
                     for p in params {
                         self.ident(&p.name);
                         p.pattern.iter().for_each(|pat| self.pattern(pat));
+                        // `velt_syntax`'s walk doesn't go into an arrow's defaults.
+                        if let Some(d) = &p.default {
+                            visit::walk_expr(d, self);
+                        }
                     }
                 }
                 E::Function(d) => {
