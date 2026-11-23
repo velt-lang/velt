@@ -66,7 +66,10 @@ export function velt_rt_tcp_listener_port(l: u64): u32 {
   if (!tb.ours(l)) {
     return rt.velt_rt_tcp_listener_port(l);
   }
-  return fs.portOf(stdUsed("reactorTls") && isTls(l) ? TLS.listenerFd(l) : l);
+  // A TLS listener's socket is the reactor's, or the runtime's (`velt dev`, no reactor).
+  return stdUsed("reactorTls") && isTls(l)
+    ? velt_rt_tcp_listener_port(TLS.listenerFd(l))
+    : fs.portOf(l);
 }
 
 export function velt_rt_tcp_listener_close(l: u64) {
@@ -321,12 +324,14 @@ export function velt_rt_tcp_peer_addr(s: u64): string {
   if (!tb.ours(s)) {
     return rt.velt_rt_tcp_peer_addr(s);
   }
-  return fs.peerOf(stdUsed("reactorTls") && isTls(s) ? TLS.fdOf(s) : s);
+  return stdUsed("reactorTls") && isTls(s) ? velt_rt_tcp_peer_addr(TLS.fdOf(s)) : fs.peerOf(s);
 }
 
 export function velt_rt_tcp_abort(s: u64) {
-  if (tb.ours(s)) {
-    fio.abort(stdUsed("reactorTls") && isTls(s) ? TLS.fdOf(s) : s);
+  if (stdUsed("reactorTls") && isTls(s)) {
+    velt_rt_tcp_abort(TLS.fdOf(s));
+  } else if (tb.ours(s)) {
+    fio.abort(s);
   } else {
     if (stdUsed("rt-later")) {
       lat.abort(s);
@@ -356,9 +361,22 @@ export async function velt_rt_tcp_listen_tls(
   key: string,
   alpn: string,
 ): Promise<IoResult<u64>> {
-  // Under `velt dev` the supervisor keeps the listener, as for `listen`: the runtime's.
   if (io.supported() && !devHandover()) {
-    const ours = await TLS.listen(addr, cert, key, alpn);
+    const ours = await TLS.listen(addr, cert, key, alpn, 0);
+    if (ours != null) {
+      return ours;
+    }
+  } else {
+    // Under `velt dev` the supervisor keeps the listener, as for `listen`: the runtime's plain
+    // listener (also where there is no reactor), with the TLS server in Velt on its streams.
+    const plain = await rt.velt_rt_tcp_listen(addr);
+    if (plain.code !== 0) {
+      return plain;
+    }
+    const ours = await TLS.listen(addr, cert, key, alpn, plain.value);
+    if (ours == null || ours.code !== 0) {
+      rt.velt_rt_tcp_listener_close(plain.value);
+    }
     if (ours != null) {
       return ours;
     }
@@ -389,11 +407,10 @@ export async function velt_rt_tcp_connect_tls(
   ca: string,
   alpn: string,
 ): Promise<IoResult<u64>> {
-  if (io.supported()) {
-    const ours = await TLS.connect(addr, serverName, ca, alpn);
-    if (ours != null) {
-      return ours;
-    }
+  // The client in Velt over a socket of the reactor's, or of the runtime's where there is none.
+  const ours = await TLS.connect(addr, serverName, ca, alpn);
+  if (ours != null) {
+    return ours;
   }
   return await rt.velt_rt_tcp_connect_tls(addr, serverName, ca, alpn);
 }
