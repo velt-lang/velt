@@ -137,10 +137,13 @@ impl Cx<'_> {
         a
     }
 
-    /// The class id word of the `any` table of `ty`, when it is a function type (`FN_VALUE_ID`).
+    /// The class id word of the `any` table of `ty`, when it is a function type (`FN_VALUE_ID`):
+    /// in a program with wrappers, or with record views, whose table keys a function value by
+    /// its identity and any other object by its address (record_view.rs `record_view_key`).
     pub(in crate::lower) fn fn_value_id(&self, ty: TyId) -> Option<u64> {
         let f = matches!(self.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_));
-        (self.boxing.fn_wrappers && f).then_some(FN_VALUE_ID)
+        let marked = self.boxing.fn_wrappers || !self.boxing.record_views.is_empty();
+        (marked && f).then_some(FN_VALUE_ID)
     }
 }
 
@@ -495,6 +498,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let fa = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ia, f.clone()));
         let fb = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, ib, f));
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, fa, fb))
+    }
+
+    /// Does the `any` table `desc` say its value is a function value (`FN_VALUE_ID`)?
+    pub(in crate::lower) fn any_is_fn_value(&mut self, desc: Operand) -> Operand {
+        let f = cint(FN_VALUE_ID as i128, Ty::U64);
+        let id = self.vtable_class_id(desc);
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, id, f))
     }
 
     /// `===` of the function values at the data pointers `da` and `db` of two `any`s: the
