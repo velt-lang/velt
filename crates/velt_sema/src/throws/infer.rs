@@ -30,7 +30,10 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
         if let Some(b) = &g.bound {
             for &m in &g.members {
                 let t = super::groups::member_bound(cx, b, m);
-                cx.fn_info_mut(m).throws = t;
+                // A std member, in a later unit, already has it: nothing to write.
+                if cx.fn_info(m).throws != t {
+                    cx.fn_info_mut(m).throws = t;
+                }
             }
         }
     }
