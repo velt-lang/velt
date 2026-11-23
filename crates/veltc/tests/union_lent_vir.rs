@@ -1,8 +1,10 @@
-//! A union made from a local only to be lent to a call (`size(b)` for `size(x: u8[] | Foo)`,
-//! #3537) holds a borrowed copy of the local: no retain before the call and no union drop after
-//! it, also for a callee that changes the array it was lent. Where the union must own its payload
-//! it still does: a later argument that assigns the local, a closure that can assign it, a callee
-//! that reassigns the union, a payload that is not a local. What each program prints is checked by the golden `lang/union_lent_payload`.
+//! A union made from a local only to be lent to a call that reads it (`size(b)` for
+//! `size(x: u8[] | Foo)`, #3537) holds a borrowed copy of the local: no retain before the call
+//! and no union drop after it. Where the union must own its payload it still does: a callee that
+//! changes it (an array it grows may move, and only the union would see the new one), a later
+//! argument that assigns the local, a closure that can assign it, a callee that reassigns the
+//! union, a payload that is not a local. What each program prints is checked by the golden
+//! `lang/union_lent_payload`.
 
 mod no_window;
 mod test_dir;
@@ -72,28 +74,24 @@ function main() {
 }
 
 #[test]
-fn a_local_lent_to_a_union_param_that_changes_its_array_is_not_retained() {
-    // `poke` changes the array (`BorrowMut`): the caller's own, so the borrowed copy is enough.
-    let vir = vir("function poke(x: u8[] | Foo): number {
+fn a_union_param_the_callee_changes_keeps_the_union_owning() {
+    // `grow` changes what it is lent (`BorrowMut`): a push may move the array, and only the union
+    // would see the new one (the golden's `growNumbers`), so the union owns its payload.
+    let vir = vir("function grow(x: u8[] | Foo): number {
   if (x instanceof Foo) {
     return 0;
   }
-  x[0] = 5;
-  return x[0];
+  x.push(1 as u8);
+  return x.length as number;
 }
 function main() {
-  const b = Buffer.alloc(8);
-  console.log(poke(b), b[0]);
+  const a = Buffer.alloc(2);
+  console.log(grow(a), a.length);
 }
 ");
     assert!(
-        !drops_union(&vir),
-        "the lent union is dropped:\n{}",
-        main_of(&vir)
-    );
-    assert!(
-        !retains(&vir),
-        "`b` is retained for the union:\n{}",
+        drops_union(&vir),
+        "the union does not own its payload:\n{}",
         main_of(&vir)
     );
 }

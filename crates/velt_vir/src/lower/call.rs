@@ -417,10 +417,12 @@ impl FnLower<'_, '_> {
                     });
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
-                    // A union made for a borrow holds a borrowed payload (#3537).
-                    if let Some(v) = self.lent_variant(a, later) {
-                        argv.push(self.operand_addr(v, t));
-                        continue;
+                    // A union made for a read-only borrow holds a borrowed payload (#3537).
+                    if *mode == PassMode::Borrow && !(i < 64 && changed >> i & 1 == 1) {
+                        if let Some(v) = self.lent_variant(a, later) {
+                            argv.push(self.operand_addr(v, t));
+                            continue;
+                        }
                     }
                     let v = match how {
                         Stabilize::Share | Stabilize::Direct(_) => {
