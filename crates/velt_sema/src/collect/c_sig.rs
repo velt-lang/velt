@@ -336,9 +336,17 @@ fn written_ref(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<bool> {
         ast::TypeExprKind::Named { path, args } if args.len() == 1 => {
             names_ffi_item(cx, module, path, ("Ref", REF_MODULE)).then_some(false)
         }
-        ast::TypeExprKind::Union(parts) if parts.len() == 2 => (parts.iter())
-            .any(|p| written_ref(cx, module, p) == Some(false))
-            .then_some(true),
+        // Exactly `Ref<S> | null`, in either order: any other union isn't a `Ref`, and is
+        // checked as the type it is.
+        ast::TypeExprKind::Union(parts) => match parts.as_slice() {
+            [a, b] | [b, a]
+                if written_ref(cx, module, a) == Some(false)
+                    && matches!(b.kind, ast::TypeExprKind::Null) =>
+            {
+                Some(true)
+            }
+            _ => None,
+        },
         _ => None,
     }
 }

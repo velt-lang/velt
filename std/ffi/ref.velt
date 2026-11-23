@@ -1,5 +1,6 @@
 // velt/ffi (internal): `Ref<S>`, a C struct a C function reads through a `const S *`: the call
-// passes the address of a copy, borrowed for the call (crates/velt_vir/src/lower/c_call.rs).
+// passes the address of a copy, borrowed for the call (crates/velt_vir/src/lower/c_struct_call.rs
+// `ref_arg`).
 
 /**
  * A C struct a C function reads through a pointer parameter (`const S *`): the declaration of a
