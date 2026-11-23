@@ -30,7 +30,7 @@ structs! {
     FieldInit { field, depth, at, init }
     EnumDef { name, generics, variants, is_copy, is_union, span }
     VariantDef { name, payload, discriminant, str_value }
-    GlobalDef { name, ty, init, span, is_slot, c_const, c_global }
+    GlobalDef { name, ty, init, span, is_slot, c_const, c_global, weak }
     CConst { ty, value }
     CGlobal { library, symbol, ty, writable }
     InterfaceDef { name, generics, fields, methods, span }

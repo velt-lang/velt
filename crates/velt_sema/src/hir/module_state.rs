@@ -39,6 +39,12 @@ pub struct GlobalDef {
     /// variables"): `init` is a placeholder, and lowering reads (and assigns) the C library's
     /// variable in place, through its link symbol. Additive.
     pub c_global: Option<CGlobal>,
+    /// A module-level `let` or `var` declared `weak T | null` with `T` a class (#3119,
+    /// docs/internals/design/cycles.md "`weak T`"): `ty` is the read type, and the slot holds the
+    /// target's slot in the weak core, as a `weak` local does (`LocalDef::weak`). Every read is
+    /// `Intrinsic::WeakRead` of the bare `Global(d)`, so a bare one is only that operand, an
+    /// `Assign`'s place or the initializer's target. Additive.
+    pub weak: bool,
 }
 
 /// A variable of a C library: `Global(d)` reads it from memory at each use, and an assignment

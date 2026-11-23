@@ -14,7 +14,6 @@ pub mod abi_symbols;
 pub mod array;
 pub mod build_profile;
 pub mod bytes;
-pub mod bytes_ops;
 pub mod cell_owner;
 pub mod child;
 pub mod db_handles;

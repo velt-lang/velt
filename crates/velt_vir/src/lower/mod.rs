@@ -202,6 +202,7 @@ mod view_unswitch_plain;
 mod weak;
 mod weak_captures;
 mod weak_fields;
+mod weak_globals;
 mod weak_object;
 mod weak_view;
 mod widen;

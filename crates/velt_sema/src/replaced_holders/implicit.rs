@@ -480,8 +480,8 @@ pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
         /// The class types made with `new` that are a weak map or extend one.
         made: Vec<TyId>,
     }
-    impl crate::visit::VisitMut for Find<'_, '_> {
-        fn expr(&mut self, e: &mut Expr) {
+    impl crate::visit_ref::Visit for Find<'_, '_> {
+        fn expr(&mut self, e: &Expr) {
             if let E::New { def, .. } = &e.kind {
                 if self.cx.class_extends(*def, self.map) && !self.made.contains(&e.ty) {
                     self.made.push(e.ty);
@@ -492,20 +492,21 @@ pub(crate) fn weak_entries(cx: &mut Ctx) -> Vec<(Option<TyId>, TyId)> {
     let Some(map) = cx.prelude_adt("WeakMap") else {
         return vec![];
     };
-    let mut made = vec![];
-    for i in 0..cx.defs.len() {
-        let Some(Def::Fn(mut fd)) = cx.defs[i].take() else {
-            continue;
-        };
+    // Read in place (`crate::visit_ref`): a check by units reads a finished unit's bodies and
+    // never writes them (`crate::units`).
+    let made = {
         let mut f = Find {
             cx,
             map,
-            made: std::mem::take(&mut made),
+            made: vec![],
         };
-        crate::visit::block(&mut fd.body.block, &mut f);
-        made = f.made;
-        cx.defs[i] = Some(Def::Fn(fd));
-    }
+        for i in 0..cx.defs.len() {
+            if let Some(Def::Fn(fd)) = cx.defs.get(i).and_then(|d| d.as_ref()) {
+                crate::visit_ref::block(&fd.body.block, &mut f);
+            }
+        }
+        f.made
+    };
     let mut out = vec![];
     for t in made {
         let Some((root, _)) = cx.weak_root(t) else {

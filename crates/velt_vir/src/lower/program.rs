@@ -284,6 +284,7 @@ impl<'h> Cx<'h> {
                 | Work::Deferred(_)
                 | Work::Main
                 | Work::ModuleInit(..)
+                | Work::ModuleDrop
                 | Work::StaticsDrop
                 | Work::CExport(_)
                 | Work::ArrayGrow

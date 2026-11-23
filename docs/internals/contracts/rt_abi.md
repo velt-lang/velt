@@ -908,10 +908,12 @@ RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and 
 2^52 - 1 bytes` (exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an
 array's `len` to be at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed
 array's byte length is below 2^52 for the same reason (its buffer is a `u8[]`).
-`velt_rt_bytes_zeroed(n)` and `velt_rt_bytes_uninit(n)` check `n` against the limit too. A buffer
-within the limit that the target cannot allocate is out of memory (`velt_rt_alloc` above), never a
-smaller block: on wasm32 a byte size past 2^31 - 1 stops the program there, in `velt_rt_realloc`, in
-`velt_rt_bytes_zeroed` and in `velt_rt_bytes_uninit` (which `u8[]`'s `concat` allocates with).
+`Buffer.alloc(n)` and `allocUnsafe(n)` (std/lang/bytes/raw.velt) allocate through generated code's
+array allocation, which checks `n` against the limit too, or, for `Buffer.alloc` of 1 MiB or more,
+`velt_rt_bytes_zeroed(n)`, which does. A buffer within the limit that the target cannot allocate is
+out of memory (`velt_rt_alloc` above), never a smaller block: on wasm32 a byte size past 2^31 - 1
+stops the program there, in `velt_rt_realloc` or in `velt_rt_bytes_zeroed` (and std checks it
+before allocating, `#bytes-limit`).
 
 `cap` read as an `i64` says whose the buffer is: positive, a capacity in elements of a buffer the
 array owns; 0, no buffer or memory the array does not own (a constant table, std's `addressArray`);
@@ -1210,24 +1212,20 @@ mutex, hashing, the other string and byte-array functions).
 ## Byte arrays, number formatting, binary stdio
 Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.md, handles are
 `u64`), checked against the runtime by `crates/velt_rt/tests/std_externs.rs`:
-- `u8[]` (`std/prelude/bytes.velt`, `std/lang/bytes/copy.velt`):
-  `velt_rt_bytes_zeroed(n: u64): u8[]`,
-  `velt_rt_bytes_uninit(n: u64): u8[]` (contents not set: `Buffer.allocUnsafe`),
-  `velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool` (false: out of range),
-  `velt_rt_bytes_copy(dst: u8[], src: u8[], targetStart: i64, sourceStart: i64,
-  sourceEnd: i64): i64` (Node's `src.copy(dst, …)`: the bytes copied, −1 for a position out of
-  range), `velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64)`,
-  `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`. Searching (`indexOf`,
+- `u8[]`: `velt_rt_bytes_zeroed(n: u64): u8[]` (`Buffer.alloc` of 1 MiB or more: calloc, as
+  memory fresh from the system needs no memset). Smaller allocations, `allocUnsafe`, `set`,
+  `copy`, `copyWithin` and `slice` are Velt code (`std/lang/bytes/raw.velt`: the runtime's array
+  allocation and the C library's `memmove`/`memset`), and so are searching (`indexOf`,
   `lastIndexOf`, `includes`), filling and concatenating (`std/lang/bytes/search.velt`,
-  `copy.velt`) and XOR masking (`xorMask`) are Velt code on SIMD vectors, and UTF-8 validation
-  (`utf8Valid`, `validPrefix`) is in `std/encoding/utf8.velt`.
-- On a range `[start, end)` (relative indices) so no slice is made:
-  `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (`u8[]`'s
-  `utf8Slice` in `std/prelude/bytes.velt`; an invalid sequence as U+FFFD, one per maximal
-  invalid subpart): making a string is the runtime's. The runtime also exports
-  `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>`
-  (`INVALID_DATA` if not UTF-8), which no std file declares: the WebSocket reader
-  (`std/net/websocket/text.velt`) validates with `validPrefix` and then calls `utf8Slice`.
+  `copy.velt`) and XOR masking (`xorMask`) on SIMD vectors; UTF-8 validation (`utf8Valid`,
+  `validPrefix`) is in `std/encoding/utf8.velt`.
+- A range `[start, end)` as a string, so no slice is made (`u8[]`'s `utf8Slice`, an invalid
+  sequence as U+FFFD, one per maximal invalid subpart) is Velt code
+  (`std/lang/bytes/range_text.velt`, which the prelude calls by role, `bytes_range_text`, so it
+  loads only where live code calls it): ASCII of up to 23 bytes as an inline string
+  (`StrAsciiWords`), longer text checked in Velt (`std/encoding/utf8_run.velt`) with its UTF-16
+  length counted and copied into the runtime's builder (`velt_rt_strbuf_new`, written in place and
+  `velt_rt_strbuf_commit`, or `velt_rt_strbuf_push_u8s` with the length), which is the string.
   Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
   string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
   After `const n = strByteLen(s)` with a local `s`, in a function that is not async, a generator,
