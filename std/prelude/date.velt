@@ -5,7 +5,8 @@
 // The calendar arithmetic is velt/time/datetime's; prefer its `DateTime` (UTC-first, months 1-12) in
 // new code.
 //
-// Differences from JS: `toString()` has no time zone name in parentheses, and the `toLocale…`
+// `toString()` and `toTimeString()` end with the zone's long name as Node prints it, `(Central
+// European Standard Time)` (std/time/zone_name.velt). Differences from JS: the `toLocale…`
 // methods always use the `en-US` format.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
@@ -15,8 +16,17 @@ import { pad, offsetString, isoString, httpString } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { dateNow } from "velt/lang/hooks/clock";
+import { hookCall } from "velt/lang/intrinsics";
 import { localOffset, localToUtc } from "velt/time/local";
 import { fromFields, fullYear, isLocalForm, timeClip } from "velt/time/date_value";
+
+// The local fields of `t` at offset `offset` (seconds): with the whole offset, seconds included
+// (a local mean time has them), and the zone's minutes as `offsetMinutes` (`toTimeString()`'s
+// `GMT+0521`), as V8.
+function localParts(t: i64, offset: i64): DateParts {
+  const minutes = offset / 60;
+  return partsOf(t + (offset - minutes * 60) * 1000, minutes);
+}
 
 /**
  * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
@@ -400,7 +410,7 @@ export class Date implements Comparable<Date> {
     return this.t != this.t ? "Invalid Date" : httpString(this.t as i64);
   }
 
-  /** `Mon Jan 15 2024 10:30:00 GMT+0100` (local time). */
+  /** `Mon Jan 15 2024 10:30:00 GMT+0100 (Central European Standard Time)` (local time). */
   toString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -417,14 +427,17 @@ export class Date implements Comparable<Date> {
     return `${weekdayShort(p.dayOfWeek)} ${monthShort(p.month)} ${pad(p.day, 2)} ${pad(p.year, 4)}`;
   }
 
-  /** `10:30:00 GMT+0100` (local time). */
+  /** `10:30:00 GMT+0100 (Central European Standard Time)` (local time). */
   toTimeString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
     }
-    const p = this.parts(false);
+    const offset = localOffset(this.t as i64);
+    const p = localParts(this.t as i64, offset);
     const zone = offsetString(p.offsetMinutes, false);
-    return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone}`;
+    // By role: the table of names (velt/time/zone_name) loads only where live code calls this.
+    const name: string = hookCall("date_zone_name", this.t, offset);
+    return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone} (${name})`;
   }
 
   /** `1/15/2024` (local time, en-US). */
@@ -466,11 +479,7 @@ export class Date implements Comparable<Date> {
     if (utc) {
       return partsOf(t, 0);
     }
-    // The fields with the whole offset, seconds included (a local mean time has them), and the
-    // zone's minutes as `offsetMinutes` (`toTimeString()`'s `GMT+0521`), as V8.
-    const offset = localOffset(t);
-    const minutes = offset / 60;
-    return partsOf(t + (offset - minutes * 60) * 1000, minutes);
+    return localParts(t, localOffset(t));
   }
 
   // Field `k` of `[year, month 0-11, day, hours, minutes, seconds, ms, weekday]`, or NaN.
