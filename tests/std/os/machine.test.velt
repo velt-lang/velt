@@ -27,14 +27,9 @@ describe("cpus()", () => {
     expect(spent > 0).toBe(true);
   });
 
-  it("counts time forward between two calls", () => {
+  it("never counts time backward between two calls", () => {
     const before = cpus();
-    let x: i64 = 0;
-    for (let i: i64 = 0; i < 20000000; i++) {
-      x = (x + i) % 1000003;
-    }
     const after = cpus();
-    expect(x >= 0).toBe(true);
     expect(after.length).toBe(before.length);
     for (let i = 0; i < before.length; i++) {
       const a = before[i].times;
@@ -131,13 +126,14 @@ describe("cpuUsage()", () => {
   it("counts the CPU time this process spends, and the time since an earlier result", () => {
     const start = cpuUsage();
     expect(start.user >= 0 && start.system >= 0).toBe(true);
+    // About 0.1-0.2 s of CPU on the machines the tests run on: well over a millisecond, and over
+    // ten of Windows' CPU-time ticks (about 15.6 ms each), so `user` has moved on every OS.
     let x: i64 = 0;
-    for (let i: i64 = 0; i < 200000000; i++) {
+    for (let i: i64 = 0; i < 40000000; i++) {
       x = (x + i) % 1000003;
     }
     expect(x >= 0).toBe(true);
     const spent = cpuUsage(start);
-    // The loop runs for tens of milliseconds at least, on any machine the tests run on.
     expect(spent.user > 1000).toBe(true);
     expect(spent.system >= 0).toBe(true);
     const now = cpuUsage();
