@@ -20,6 +20,7 @@ import { EINTR } from "velt/fs/fd/system";
 import { Ptr } from "velt/ffi/ptr";
 import { CVarArgs } from "velt/ffi/c_var_args";
 import { lastOsError } from "velt/os/rt";
+import { ARCH } from "#os-arch";
 
 /** `mode_t` is 32 bits on Linux. */
 declare c("c", { errno: true }) function fchmod(fd: i32, mode: u32): i32;
@@ -32,10 +33,18 @@ declare c("c", { errno: true }) function copy_file_range(
   flags: u32,
 ): isize;
 
-declare c("c", { errno: true }) function ioctl(fd: i32, request: u64, ...args: CVarArgs): i32;
+// The clone is the `ioctl` system call, made through `syscall`: glibc declares `ioctl`'s request
+// an `unsigned long`, musl an `int`, while both declare `syscall` alike. `syscall` is variadic:
+// each call passes the arguments its system call reads, as C's `...`.
+declare c("c", { errno: true }) function syscall$paths(n: i64, ...args: CVarArgs): i64;
 
 /** `_IOW(0x94, 9, int)`, the same on every Linux architecture. */
-const FICLONE: u64 = 0x40049409;
+const FICLONE: i64 = 0x40049409;
+
+/** The `ioctl` system call's number on this architecture. */
+function ioctlNumber(): i64 {
+  return ARCH === "arm64" ? 29 : 16;
+}
 
 /** `copy_file_range`'s errors that mean "not between these files": the loop copies instead. */
 const EPERM: i32 = 1;
@@ -96,8 +105,9 @@ export function copyAt(
     },
     cloneFile: (src, dst, force) => {
       // SAFETY: both are descriptors `copyWith` holds; `FICLONE` reads the source's descriptor
-      // from the int argument and keeps nothing.
-      if (unsafe { ioctl(dst, FICLONE, src) } == 0) {
+      // from its third argument and keeps nothing.
+      const r = unsafe { syscall$paths(ioctlNumber(), dst as i64, FICLONE, src as i64) };
+      if (r == 0) {
         return CLONED;
       }
       return force ? lastOsError() : NOT_CLONED;
