@@ -243,16 +243,22 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// `crypto`, `crypto_random_int` and `uuid` (the OS's random bytes are WASI's too,
 /// std/lang/random/os_wasi.velt), `clock_reads` (the clocks are WASI's too),
 /// `fs_mapped_file_portable` and `fs_mapped_counted_portable` (a `MappedFile` is memory of its
-/// own there), and two ephemeron caches, whose trials call between std's weak core and the
+/// own there), `fs_rename_copy`, `fs_links_errors`, `fs_symlinks` and `fs_copy_mode` (renaming,
+/// copying with Node's modes, and links are wasi-libc's calls, std/fs/paths/wasi.velt, with
+/// Node's errors from WASI's errno numbers), and two ephemeron caches, whose trials call between std's weak core and the
 /// compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
     "crypto",
     "crypto_random_int",
+    "fs_copy_mode",
+    "fs_links_errors",
     "fs_mapped_counted_portable",
     "fs_mapped_file_getters",
     "fs_mapped_file_portable",
+    "fs_rename_copy",
+    "fs_symlinks",
     "half_dot",
     "half_dot_bf16_lengths",
     "half_dot_bf16_lengths_short",

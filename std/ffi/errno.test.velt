@@ -20,8 +20,9 @@ describe("velt/ffi errno", () => {
 
   it("reads what the C library set", () => {
     let got: i32 = 0;
-    // SAFETY: strtol reads a NUL-terminated string and sets errno to ERANGE (34 with every C
-    // library Velt links) for a number a `long` can't hold; `end` may be NULL.
+    // SAFETY: strtol reads a NUL-terminated string and sets errno to ERANGE for a number a `long`
+    // can't hold (34 as `errno()` reads it: every native C library's number, and the Linux
+    // number `errno()` gives for WASI's 68); `end` may be NULL.
     unsafe {
       setErrno(0);
       strtol(new CString("999999999999999999999999999"), null, 10);
