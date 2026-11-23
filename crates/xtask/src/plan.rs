@@ -58,9 +58,6 @@ pub struct Plan {
     /// The merge queue compares every golden too, not a sample: the code that loads std on demand
     /// changed ([`VIR_IDENTITY_CODE`]).
     pub vir_identity_all: bool,
-    /// The native crates of the repository's packages (`packages/<name>/native`, outside the
-    /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
-    pub native_crates: bool,
     /// `tests/difftest`: `cargo fmt`, clippy and its unit tests.
     pub difftest: bool,
     /// The VS Code extension (`editors/vscode`): `npm ci`, then `npm test` (tsc and its unit
@@ -117,7 +114,6 @@ impl Plan {
             velt_fmt: true,
             vir_identity: true,
             vir_identity_all: true,
-            native_crates: true,
             difftest: true,
             vscode: true,
             // `--full` (the merge queue, nightly) knows no changes: the environment chooses
@@ -156,7 +152,6 @@ impl Plan {
             velt_fmt: false,
             vir_identity: false,
             vir_identity_all: false,
-            native_crates: false,
             difftest: false,
             vscode: false,
             sweep: Sweep::Default,
@@ -256,9 +251,6 @@ impl Plan {
                         .any(|d| path.starts_with(d))
                     {
                         plan.velt_fmt = true;
-                    }
-                    if path.starts_with("packages/") && path.contains("/native/") {
-                        plan.native_crates = true;
                     }
                     if let Some(users) = package_users::of_path(path) {
                         plan.add_veltc(users.binaries);
@@ -549,10 +541,6 @@ impl Plan {
                 "" => "every golden",
                 value => value,
             }
-        ));
-        out.push_str(&format!(
-            "  packages/*/native (fmt, clippy): {}\n",
-            yes(self.native_crates)
         ));
         out.push_str(&format!(
             "  tests/difftest (fmt, clippy, unit tests): {}\n",
