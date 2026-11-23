@@ -9,7 +9,7 @@
 // `Buffer.alloc(n)` makes a zeroed array in one allocation and one memset. Positions follow JS:
 // negative ones count from the end.
 
-import { inline, noInline, strByteLen } from "velt/lang/intrinsics";
+import { hookCall, inline, noInline, strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
 import { received, textEquals } from "velt/lang/bytes/text";
 import { byteLengthIn, textBytes, utf8Bytes } from "velt/lang/bytes/encodings";
@@ -26,7 +26,6 @@ import { VIEW_BYTES } from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-declare function velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string;
 declare function velt_simd_mask8x16_first(m: mask8x16): u64;
 
 // Position `i` in an array of `n` elements as JS reads it: a negative one counts from the end,
@@ -346,7 +345,8 @@ extend Array<u8> {
     const n = this.length;
     const from = clamped(start, n);
     const to = clamped(end, n);
-    return velt_rt_bytes_range_to_str_lossy(this, from as i64, (to > from ? to : from) as i64);
+    // By role: the decoder (velt/lang/bytes/range_text) loads only where live code calls this.
+    return hookCall("bytes_range_text", this, from, to > from ? to : from);
   }
 
   /**
