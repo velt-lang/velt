@@ -26,5 +26,13 @@ export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput
     stdio: spec.stdio,
     clearEnv: spec.clearEnv,
   };
-  return velt_rt_child_output_sync(found, input);
+  const ran = velt_rt_child_output_sync(found, input);
+  const prefix = `spawn ${program}: `;
+  if (ran.code !== 0 && ran.message.startsWith(prefix)) {
+    // Worded as the program given (`spawn fake: …`), not the file found, as `spawn` and `exec`
+    // word it: `SpawnError` reads that (spawn_error.velt).
+    const text = ran.message.slice(prefix.length as i64);
+    return { code: ran.code, message: `spawn ${spec.program}: ${text}`, value: ran.value };
+  }
+  return ran;
 }

@@ -102,6 +102,13 @@ export const imports: Imports = {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
   },
+  // Whether a child that is a script without a `#!` line (ENOEXEC) runs through `/bin/sh`, as Node
+  // runs it on Linux with glibc (its `execvp`; musl's has no such rule, and Velt has no musl
+  // condition), not on macOS (libuv's `posix_spawn`): spawn_posix.velt and exec_sync.velt.
+  "#script-shell": {
+    linux: "./process/child/script_shell_linux.velt",
+    default: "./process/child/script_shell_none.velt",
+  },
   // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
   // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
   // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.

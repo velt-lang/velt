@@ -62,7 +62,7 @@ async function parent() {
     const missing = await exec("velt-no-such-program", [], { env: noPath });
     console.log(missing.code);
   } catch (err) {
-    console.log(err.code, err.message.startsWith("spawn velt-no-such-program: "));
+    console.log(err.code, err.message == "spawn velt-no-such-program ENOENT");
   }
 
   const idle = spawn(self, ["lines"], { stdin: "pipe", stdout: "ignore" });
