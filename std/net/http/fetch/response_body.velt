@@ -13,7 +13,7 @@ import { tee } from "velt/net/http/fetch/tee";
 import { Response } from "velt/net/http/fetch/response";
 import { BodyCell } from "velt/net/http/fetch/response_cell";
 
-/** Where a response's body is (`Response.bodySource`); the first four are a `BodyKind` (parts.velt). */
+/** Where a response's body is (`BodyCell.source`, response_cell.velt); the first four are a `BodyKind` (parts.velt). */
 export const NONE: i64 = 0;
 export const TEXT: i64 = 1;
 export const BYTES: i64 = 2;
