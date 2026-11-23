@@ -133,12 +133,11 @@ impl FnLower<'_, '_> {
         !self.cx.proxiable(bty) && self.cx.weak_field(bty, *index).is_some()
     }
 
-    /// `Intrinsic::WeakRead` of the `weak` local `a` (read type `read`): its target, retained.
+    /// `Intrinsic::WeakRead` of the `weak` local or module `let` `a` (read type `read`): its
+    /// target, retained.
     pub(super) fn weak_local_read(&mut self, a: &hir::Expr, read: TyId) -> Operand {
-        let hir::ExprKind::Local(id, _) = a.kind else {
-            super::ice("`WeakRead` of something other than a local")
-        };
-        let place = self.local_place(id);
+        let (place, _) = (self.weak_place(a))
+            .unwrap_or_else(|| super::ice("`WeakRead` of something other than a `weak` variable"));
         self.weak_read(place, read)
     }
 
@@ -167,19 +166,24 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `l = value` of the `weak` local `l` (`None` for another target): `value`'s slot in it.
+    /// `x = value` of the `weak` local or module `let` `x` (`None` for another target):
+    /// `value`'s slot in it.
     pub(super) fn weak_local_assign(
         &mut self,
         place: &hir::Expr,
         value: &hir::Expr,
     ) -> Option<Operand> {
-        let hir::ExprKind::Local(id, _) = place.kind else {
-            return None;
+        let weak = match place.kind {
+            hir::ExprKind::Local(id, _) => self.info[id.0 as usize].weak.is_some(),
+            hir::ExprKind::Global(d) => self.cx.weak_global(d).is_some(),
+            _ => false,
         };
-        let read = self.info[id.0 as usize].weak?;
+        if !weak {
+            return None;
+        }
         let v = self.consume(value);
         if !self.dead() {
-            let p = self.local_place(id);
+            let (p, read) = (self.weak_place(place)).unwrap_or_else(|| super::ice("weak place"));
             self.weak_store(p, v, read);
         }
         Some(unit())

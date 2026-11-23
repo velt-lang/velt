@@ -156,6 +156,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
             Work::GenTrace(def, targs) => Self::build_gen_trace(cx, *def, targs),
             Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
+            Work::ModuleDrop => Self::build_module_drop(cx),
             Work::StaticsDrop => Self::build_statics_drop(cx),
             Work::ModuleAccess(a) => Self::build_module_access(cx, *a),
             Work::CExport(i) => Self::build_c_export(cx, *i),
