@@ -7,8 +7,10 @@
 
 import { Done } from "velt/fs/whole/done";
 import {
+  CLONED,
   copyLoop,
   copyWith,
+  NOT_CLONED,
   readlinkAt as posixReadlink,
   realpathAt as posixRealpath,
   renameAt as posixRename,
@@ -16,6 +18,7 @@ import {
 } from "velt/fs/paths/posix";
 import { EINTR } from "velt/fs/fd/system";
 import { Ptr } from "velt/ffi/ptr";
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { lastOsError } from "velt/os/rt";
 
 /** `mode_t` is 32 bits on Linux. */
@@ -28,6 +31,11 @@ declare c("c", { errno: true }) function copy_file_range(
   len: usize,
   flags: u32,
 ): isize;
+
+declare c("c", { errno: true }) function ioctl(fd: i32, request: u64, ...args: CVarArgs): i32;
+
+/** `_IOW(0x94, 9, int)`, the same on every Linux architecture. */
+const FICLONE: u64 = 0x40049409;
 
 /** `copy_file_range`'s errors that mean "not between these files": the loop copies instead. */
 const EPERM: i32 = 1;
@@ -68,12 +76,31 @@ export function realpathAt(c: readonly u8[], path: string): Done<string> {
   return posixRealpath(c, path);
 }
 
-/** Copies the file `cf` (`from`) to `ct` (`to`), replacing a file there. */
-export function copyAt(cf: readonly u8[], from: string, ct: readonly u8[], to: string): Done<bool> {
-  return copyWith(cf, from, ct, to, {
-    chmod: (fd, mode) => {
+/**
+ * Copies the file `cf` (`from`) to `ct` (`to`), replacing a file there unless `mode` has
+ * `COPYFILE_EXCL`. A `FICLONE` bit clones with the `FICLONE` ioctl, as libuv does: where it
+ * fails, `COPYFILE_FICLONE` copies and `COPYFILE_FICLONE_FORCE` fails with its errno
+ * (`EOPNOTSUPP` on a file system without clones, `EXDEV` across two).
+ */
+export function copyAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+  mode: u32,
+): Done<bool> {
+  return copyWith(cf, from, ct, to, mode, {
+    chmod: (fd, perm) => {
       // SAFETY: `fd` is the destination `copyWith` opened and still holds.
-      return unsafe { fchmod(fd, mode) };
+      return unsafe { fchmod(fd, perm) };
+    },
+    cloneFile: (src, dst, force) => {
+      // SAFETY: both are descriptors `copyWith` holds; `FICLONE` reads the source's descriptor
+      // from the int argument and keeps nothing.
+      if (unsafe { ioctl(dst, FICLONE, src) } == 0) {
+        return CLONED;
+      }
+      return force ? lastOsError() : NOT_CLONED;
     },
     data: (src, dst, mode, size) => copyData(src, dst, size),
   });

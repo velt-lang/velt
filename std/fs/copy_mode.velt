@@ -1,0 +1,44 @@
+// velt/fs (internal): `copyFile`'s `mode` as Node 22 checks it, and its bits (`fs.constants`'
+// `COPYFILE_*`).
+
+import { IoError } from "velt/io/error";
+import { noInline } from "velt/lang/intrinsics";
+
+/** Fail when the destination exists (`EEXIST`). */
+export const COPY_EXCL: u32 = 1;
+/** Clone the file where the file system can (Linux's `FICLONE`), copy it otherwise. */
+export const COPY_FICLONE: u32 = 2;
+/** Clone the file or fail: `ENOSYS` where libuv has no clone (macOS, Windows). */
+export const COPY_FICLONE_FORCE: u32 = 4;
+
+/**
+ * `mode` as Node's `copyFile` reads it: its integer part, from 0 to 7 (`1.5` is 1, `-0.5` is 0).
+ * Anything else is Node's `ERR_OUT_OF_RANGE`: "mode is out of range" for a value that isn't
+ * finite, "mode is out of range: >= 0 && <= 7" for one outside those bounds. Node's is a
+ * `RangeError`; here it is an `IoError` named `RangeError` with that `code`, as velt/fs/path_arg.velt's
+ * argument errors are, so that `copyFile` keeps throwing `IoError` alone.
+ */
+export function copyMode(mode: number): u32 {
+  if (!Number.isFinite(mode)) {
+    throw outOfRange("mode is out of range");
+  }
+  const m = Math.trunc(mode);
+  if (m < 0 || m > 7) {
+    throw outOfRange("mode is out of range: >= 0 && <= 7");
+  }
+  return m as u32;
+}
+
+/** Node's `ERR_OUT_OF_RANGE`, printed as Node prints it: `RangeError [ERR_OUT_OF_RANGE]: …`. */
+class RangeArgError extends IoError {
+  toString(): string {
+    return `${this.name} [${this.code}]: ${this.message}`;
+  }
+}
+
+@noInline
+function outOfRange(message: string): IoError {
+  const e = new RangeArgError("ERR_OUT_OF_RANGE", message);
+  e.name = "RangeError";
+  return e;
+}

@@ -11,6 +11,8 @@ import { IoStatus, checkIo } from "velt/native/status";
 import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { checkPathArg } from "velt/fs/path_arg";
+import { COPY_EXCL, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
+import { osError } from "velt/fs/errors";
 
 declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;
 declare async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus>;
@@ -199,12 +201,28 @@ export async function rename(from: string, to: string): Promise<void> {
   checkIo(await velt_rt_fs_rename(from, to));
 }
 
-export function copyFileSync(from: string, to: string) {
+/**
+ * `mode`: copy_mode.velt's bits, checked by the caller. The runtime's copy takes none, so the
+ * mode is applied here: `COPYFILE_FICLONE_FORCE` is `ENOSYS` (no clone), and
+ * `COPYFILE_EXCL` is `EEXIST` for a destination that exists before the copy starts.
+ */
+export function copyFileSync(from: string, to: string, mode: u32) {
+  copyModeCheck(from, to, mode, velt_rt_fs_exists_sync(to));
   checkIo(velt_rt_fs_copy_file_sync(from, to));
 }
 
-export async function copyFile(from: string, to: string): Promise<void> {
+export async function copyFile(from: string, to: string, mode: u32): Promise<void> {
+  copyModeCheck(from, to, mode, await velt_rt_fs_exists(to));
   checkIo(await velt_rt_fs_copy_file(from, to));
+}
+
+function copyModeCheck(from: string, to: string, mode: u32, exists: bool) {
+  if ((mode & COPY_FICLONE_FORCE) != 0) {
+    throw osError(38, "copyfile", from, to);
+  }
+  if ((mode & COPY_EXCL) != 0 && exists) {
+    throw osError(17, "copyfile", from, to);
+  }
 }
 
 export function symlinkSync(target: string, path: string) {
