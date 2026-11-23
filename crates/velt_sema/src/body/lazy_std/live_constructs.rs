@@ -34,6 +34,7 @@ pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
     }
     cx.lazy.live.present |= present;
     cx.lazy.live.prints_float |= w.prints_float;
+    cx.lazy.live.prints_containers |= w.prints_containers;
 }
 
 /// `TextFloat` where text or glue for a value of type `t` may print a float (none needed when
@@ -183,7 +184,23 @@ pub(super) fn gated(name: &str) -> bool {
     use velt_common::std_hooks::{hook_index, HOOKS};
     name == HOOKS[hook_index::inspect_array].name
         || CYCLE_HOOKS.iter().any(|&i| HOOKS[i].name == name)
+        || LAYOUT_HOOKS.iter().any(|&i| HOOKS[i].name == name)
 }
+
+/// The hooks of `console.log`'s line breaking (std/lang/hooks/inspect_layout.velt and the custom
+/// inspect pieces of inspect_layout_text.velt), checked only once live code prints a value that
+/// may hold containers at the top level ([`demand_gated`]): lowering calls them around each such
+/// value (velt_vir `glue/format.rs` `format_top_inspect`), and leaves it on one line where they
+/// are unchecked. `Format` alone is present for any class or array in live code, printed or not.
+const LAYOUT_HOOKS: [usize; 4] = {
+    use velt_common::std_hooks::hook_index as h;
+    [
+        h::inspect_layout,
+        h::inspect_atom,
+        h::inspect_atoms_save,
+        h::inspect_atoms_restore,
+    ]
+};
 
 /// Marks the [`gated`] hooks once their constructs are present and what they print is live: an
 /// array type for the array's, a type that can hold itself for the cycle hooks. Whether any was
@@ -196,6 +213,17 @@ pub(super) fn demand_gated(cx: &mut Ctx) -> bool {
     let arrays = cx.lazy.live.kinds & super::kind_bit(&TyKind::Array(TyId(0))) != 0;
     if arrays && demanded.contains(hook_index::inspect_array) && !cx.lazy.live.finishing {
         marked |= mark_hook(cx, hook_index::inspect_array);
+    }
+    let prints = cx.lazy.live.prints_containers;
+    if prints && demanded.contains(hook_index::inspect_layout) && !cx.lazy.live.finishing {
+        for i in LAYOUT_HOOKS {
+            // The pieces' hooks are prebuilt: declared where the build links their object, whose
+            // module is then not loaded (`hook_stubs::declared_lowered`).
+            let h = &velt_common::std_hooks::HOOKS[i];
+            if !super::super::hook_stubs::declared_lowered(cx, h) {
+                marked |= mark_hook(cx, i);
+            }
+        }
     }
     if cx.lazy.cycles || !demanded.contains(hook_index::inspect_enter) {
         return marked;

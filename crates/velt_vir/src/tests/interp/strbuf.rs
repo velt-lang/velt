@@ -55,6 +55,19 @@ impl Interp<'_> {
                 };
                 self.buf_push(a[0], &s);
             }
+            "velt_rt_strbuf_push_u8s" => {
+                // The first `len` bytes of a `u8[]` (`{ ptr, len, cap }`): std's line breaking
+                // builds its text this way.
+                let len = a[2] as usize;
+                let s = match len {
+                    0 => vec![],
+                    _ => {
+                        let data = self.read_u64(a[1]);
+                        self.read_bytes(data, len)
+                    }
+                };
+                self.buf_push(a[0], &s);
+            }
             "velt_test_strbuf_push_f64" => {
                 let text = js_num(f64::from_bits(a[1]));
                 self.buf_push(a[0], text.as_bytes());
@@ -100,12 +113,6 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &[0; 24]);
             }
             "velt_rt_str_eq" => return Some((self.str_bytes(a[0]) == self.str_bytes(a[1])) as u64),
-            // The start of a printed value: only line breaking reads its pieces, and the
-            // interpreter does not break lines.
-            "velt_rt_strbuf_inspect_begin" | "velt_rt_strbuf_inspect_atom" => {}
-            // Line breaking (velt_rt's inspect_layout): the programs run here print short values.
-            "velt_rt_strbuf_len" => return Some(self.str_bytes(a[0]).len() as u64),
-            "velt_rt_strbuf_inspect_layout" => {}
             _ => return None,
         }
         Some(0)

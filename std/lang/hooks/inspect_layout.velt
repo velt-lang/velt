@@ -1,0 +1,29 @@
+// velt/lang/hooks (internal): the hook lowering calls after each top-level value `console.log`,
+// `util.inspect`, `String(x)` or a template writes on one line (velt_vir `glue/format.rs`
+// `format_top_inspect`): the value broken across lines as Node's `util.inspect` breaks it. The
+// layout is inspect_layout_text.velt's, a prebuilt module reached by role, so the code a program
+// compiles for it is this function: one call, and a rare tail replacement.
+
+import { hookCall, noInline, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/** Lays out the value the builder `buf` holds from byte `start` on, as Node breaks it. */
+export function inspectLayout(buf: string, start: u64): void {
+  const text: string = hookCall("inspect_layout_text", buf, start);
+  if (strByteLen(text) != 0) {
+    replaceTail(buf, start, text);
+  }
+}
+
+/** The builder `buf` with its bytes from `start` on replaced by `text`. */
+@noInline
+function replaceTail(buf: string, start: u64, text: string): void {
+  let whole: string = "";
+  velt_rt_strbuf_finish(buf, whole);
+  const head = velt_rt_str_byte_slice(whole, 0, start);
+  velt_rt_strbuf_push_str(buf, head);
+  velt_rt_strbuf_push_str(buf, text);
+}
