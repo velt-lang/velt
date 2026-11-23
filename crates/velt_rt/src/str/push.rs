@@ -491,7 +491,10 @@ impl VeltStr {
         let s = if fits_inline(need, units) {
             VeltStr::inline_of(&pieces, units, sum.lone > 0 || self.may_have_lone())
         } else {
-            let cap = grown(need, need);
+            // A builder's first text (std's `utf8Slice` pushes all of it at once) gets a buffer
+            // of its size, as a string made from it would; text appended to other text gets
+            // twice the room, for the pushes that follow.
+            let cap = if len == 0 { need } else { grown(need, need) };
             let total = Summary {
                 units,
                 lone: self.lone().saturating_add(sum.lone),

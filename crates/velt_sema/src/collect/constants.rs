@@ -19,6 +19,7 @@ pub(super) fn declare_statics<'m>(cx: &mut Ctx<'m>, m: usize, owner: DefId, t: &
             .unwrap_or_default();
         let qual = format!("{owner_qual}.{}", f.name.name);
         let info = GlobalInfo {
+            weak: false,
             name: format!("{}.{}", t.name.name, f.name.name),
             qual_name: qual,
             module: m,
@@ -68,6 +69,7 @@ pub(super) fn global_info<'m>(
         return None;
     };
     let info = GlobalInfo {
+        weak: false,
         name: name.name.clone(),
         qual_name: cx.qualify(m, &name.name),
         module: m,

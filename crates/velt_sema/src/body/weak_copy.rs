@@ -31,55 +31,90 @@ pub(crate) fn weak_copy_error(
     weak_copy_error_as(cx, t, what, span, fields)
 }
 
-/// What a value holds that belongs to its task: weak collections, or `weak` fields only.
+/// What a value holds that belongs to its task: weak collections, `weak` fields only, or (a
+/// captured variable) a `weak` variable itself.
 pub(crate) struct Held {
-    fields: bool,
+    kind: HeldKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HeldKind {
+    Collections,
+    Fields,
+    Variable,
 }
 
 impl Held {
     pub(crate) fn new(fields: bool) -> Self {
-        Held { fields }
+        let kind = match fields {
+            true => HeldKind::Fields,
+            false => HeldKind::Collections,
+        };
+        Held { kind }
+    }
+
+    /// A captured `weak` variable (`LocalDef::weak`).
+    pub(crate) fn variable() -> Self {
+        Held {
+            kind: HeldKind::Variable,
+        }
     }
 
     /// Who the held thing belongs to, opening a note.
     fn owner(&self) -> &'static str {
-        match self.fields {
-            true => {
+        match self.kind {
+            HeldKind::Fields => {
                 "a `weak` field refers to its target through the weak core of the task that set it"
             }
-            false => "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it",
+            HeldKind::Variable => {
+                "a `weak` variable refers to its target through the weak core of the task that set it"
+            }
+            HeldKind::Collections => {
+                "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it"
+            }
         }
     }
 
     /// The captured variable `name` that holds it.
     pub(crate) fn named(&self, name: &str) -> String {
-        match self.fields {
-            true => format!("`{name}`, which holds a `weak` field"),
-            false => format!("the weak collection `{name}`"),
+        match self.kind {
+            HeldKind::Fields => format!("`{name}`, which holds a `weak` field"),
+            HeldKind::Variable => format!("the `weak` variable `{name}`"),
+            HeldKind::Collections => format!("the weak collection `{name}`"),
         }
     }
 
     /// What it is, as the subject of a suggestion.
     fn gives(&self) -> &'static str {
-        match self.fields {
-            true => "the value with the `weak` field",
-            false => "the weak collection",
+        match self.kind {
+            HeldKind::Fields => "the value with the `weak` field",
+            HeldKind::Variable => "the `weak` variable",
+            HeldKind::Collections => "the weak collection",
         }
     }
 
     /// [`named`](Self::named) in the middle of a sentence (`… {} cannot be passed …`).
     fn named_mid(&self, name: &str) -> String {
-        match self.fields {
-            true => format!("`{name}`, which holds a `weak` field,"),
-            false => format!("the weak collection `{name}`"),
+        match self.kind {
+            HeldKind::Fields => format!("`{name}`, which holds a `weak` field,"),
+            _ => self.named(name),
         }
     }
 
     /// How to keep it on its task.
     fn inside(&self, place: &str) -> String {
-        match self.fields {
-            true => format!("make the value with the `weak` field inside {place}"),
-            false => format!("make it inside {place}"),
+        match self.kind {
+            HeldKind::Fields => format!("make the value with the `weak` field inside {place}"),
+            HeldKind::Variable => format!("declare the `weak` variable inside {place}"),
+            HeldKind::Collections => format!("make it inside {place}"),
+        }
+    }
+
+    /// Why a function stored into a locked value cannot use it.
+    fn lock_fn_note(&self) -> String {
+        match self.kind {
+            HeldKind::Collections => "the locked value is used by other threads (under the lock), and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it: a function there that uses one would release or read it from another thread; store the weak collection's results instead".to_string(),
+            _ => format!("the locked value is used by other threads (under the lock), and {}: a function there that uses one would read it from another thread; store the values of its target instead", self.owner()),
         }
     }
 
@@ -145,28 +180,14 @@ pub(crate) fn weak_copy_error_as(
             format!("{it} cannot be passed to another task"),
             format!("{owner}, and values passed to a spawned task (or sent on a channel) are copied for it: {}", held.inside("the task")),
         ),
-        GenCopy::TaskFn(name) => (
-            format!("a function that uses {} cannot be passed to another task", held.named_mid(name)),
-            format!("{owner}, and a function passed to a spawned task (or sent on a channel) takes what it captures to that task's thread: {}", held.inside("the task")),
-        ),
+        GenCopy::TaskFn(_)
+        | GenCopy::Capture(_)
+        | GenCopy::LockCapture(_)
+        | GenCopy::LockFn(_)
+        | GenCopy::SharedFn(_) => capture_message(&held, what),
         GenCopy::Shared => (
             format!("{it} cannot be shared between threads"),
             format!("{owner}, and a `shared(...)` value may be used by several tasks at once"),
-        ),
-        GenCopy::Capture(name) => (
-            format!("an async closure cannot capture {}", held.named(name)),
-            format!("an async closure that may run as a task on another thread copies what it captures, and {owner}: {}, or pass it to an async function", held.inside("the closure")),
-        ),
-        GenCopy::LockCapture(name) => (
-            format!("the function passed to `with` cannot use {}", held.named(name)),
-            held.lock_note(),
-        ),
-        GenCopy::LockFn(name) => (
-            format!("a function stored into the locked value cannot capture {}", held.named(name)),
-            match fields {
-                true => format!("the locked value is used by other threads (under the lock), and {owner}: a function there that uses one would read it from another thread; store the values of its target instead"),
-                false => "the locked value is used by other threads (under the lock), and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it: a function there that uses one would release or read it from another thread; store the weak collection's results instead".to_string(),
-            },
         ),
         GenCopy::LockResult => (format!("{it} cannot be returned from `with`"), held.lock_note()),
         GenCopy::TaskResult => (
@@ -184,5 +205,42 @@ pub(crate) fn weak_copy_error_as(
             },
         ),
     };
+    Diagnostic::error(msg, span).with_note(note)
+}
+
+/// The message and note of a closure capturing what `held` names crossing as `what` (a
+/// capture's crossing: `TaskFn`, `Capture`, `LockCapture`, `LockFn`, `SharedFn`).
+fn capture_message(held: &Held, what: &GenCopy) -> (String, String) {
+    let owner = held.owner();
+    match what {
+        GenCopy::TaskFn(name) => (
+            format!("a function that uses {} cannot be passed to another task", held.named_mid(name)),
+            format!("{owner}, and a function passed to a spawned task (or sent on a channel) takes what it captures to that task's thread: {}", held.inside("the task")),
+        ),
+        GenCopy::Capture(name) => (
+            format!("an async closure cannot capture {}", held.named(name)),
+            format!("an async closure that may run as a task on another thread copies what it captures, and {owner}: {}, or pass it to an async function", held.inside("the closure")),
+        ),
+        GenCopy::LockCapture(name) => (
+            format!("the function passed to `with` cannot use {}", held.named(name)),
+            held.lock_note(),
+        ),
+        GenCopy::LockFn(name) => (
+            format!("a function stored into the locked value cannot capture {}", held.named(name)),
+            held.lock_fn_note(),
+        ),
+        GenCopy::SharedFn(name) => (
+            format!("a function in `shared(...)` or a lock cannot capture {}", held.named(name)),
+            format!("a `shared(...)` value and a `Mutex`'s or `RwLock`'s value may be used by several tasks at once, each on its own thread, and {owner}: {}", held.inside("the function")),
+        ),
+        _ => panic!("ICE: a capture message for a crossing that is not a capture's"),
+    }
+}
+
+/// The error for a closure capturing the `weak` variable `what` names crossing to another task
+/// or a lock (`crate::weak_threads`, `ownership::locked`): its slot belongs to this task's weak
+/// core (#3119).
+pub(crate) fn weak_capture_error(what: &GenCopy, span: Span) -> Diagnostic {
+    let (msg, note) = capture_message(&Held::variable(), what);
     Diagnostic::error(msg, span).with_note(note)
 }

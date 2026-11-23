@@ -24,6 +24,7 @@ import {
 } from "#fd-system";
 import { osError } from "velt/fs/errors";
 import { Done } from "velt/fs/whole/done";
+import { COPY_EXCL, COPY_FICLONE, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
 
 declare c("c", { errno: true }) function rename(from: readonly u8[], to: readonly u8[]): i32;
 declare c("c", { errno: true }) function symlink(target: readonly u8[], path: readonly u8[]): i32;
@@ -39,16 +40,28 @@ declare c("c", { errno: true }) function realpath(
 declare c("c") function strlen(s: Ptr<u8>): usize;
 declare c("c") function free$paths(p: Ptr<u8>): void;
 
-/** What a target gives `copyWith`: `fchmod` (whose `mode_t` differs) and the data copy. */
+/**
+ * What a target gives `copyWith`: `fchmod` (whose `mode_t` differs), the clone and the data
+ * copy.
+ */
 export struct CopySystem {
   /** `fchmod(fd, mode)`: 0, or -1 with the error for `lastOsError()`. */
   chmod: (fd: i32, mode: u32) => i32;
+  /**
+   * Clones `src` into `dst`, for `COPYFILE_FICLONE` (`force` false) or `COPYFILE_FICLONE_FORCE`:
+   * `CLONED`, `NOT_CLONED` (the data step copies), or the errno the copy fails with.
+   */
+  cloneFile: (src: i32, dst: i32, force: bool) => i32;
   /**
    * Copies the `size` bytes `fstat` gave for `src` (whose `st_mode` is `mode`) to `dst`, as
    * libuv sends `st_size` bytes: 0, or the errno.
    */
   data: (src: i32, dst: i32, mode: u32, size: i64) => i32;
 }
+
+/** `CopySystem.cloneFile`'s results besides an errno. */
+export const CLONED: i32 = 0;
+export const NOT_CLONED: i32 = -1;
 
 function failed<T>(e: i32, syscall: string, path: string, dest: string | null = null): Done<T> {
   return { value: null, error: osError(e, syscall, path, dest) };
@@ -131,13 +144,16 @@ export function realpathAt(c: readonly u8[], path: string): Done<string> {
  * (created with the source's mode), and if both are the same file nothing more happens.
  * Otherwise the destination is truncated, given the source's mode and filled with its data; if
  * any of that fails, the destination is removed, one that was there before too. Every error
- * names both paths (`copyfile 'a' -> 'b'`).
+ * names both paths (`copyfile 'a' -> 'b'`). `mode` is copy_mode.velt's: with `COPYFILE_EXCL`
+ * the destination is opened with `O_EXCL`, so one that exists fails with `EEXIST` and is left as
+ * it was; with either `FICLONE` bit the file is cloned after `fchmod`, as libuv does.
  */
 export function copyWith(
   cf: readonly u8[],
   from: string,
   ct: readonly u8[],
   to: string,
+  mode: u32,
   sys: CopySystem,
 ): Done<bool> {
   const mac = isMac();
@@ -152,15 +168,17 @@ export function copyWith(
     closeFd(src);
     return failed(e, "copyfile", from, to);
   }
-  // `O_WRONLY | O_CREAT | O_CLOEXEC`, created with the source's permissions.
+  // `O_WRONLY | O_CREAT | O_CLOEXEC` (and `O_EXCL` for `COPYFILE_EXCL`), created with the
+  // source's permissions.
   const creat: i32 = mac ? 0x200 : 0x40;
-  const dst = openPath(ct, 1 | creat | cloexec, st.st_mode & 0o7777);
+  const excl: i32 = (mode & COPY_EXCL) == 0 ? 0 : mac ? 0x800 : 0x80;
+  const dst = openPath(ct, 1 | creat | excl | cloexec, st.st_mode & 0o7777);
   if (dst < 0) {
     const e = lastError();
     closeFd(src);
     return failed(e, "copyfile", from, to);
   }
-  let e = fill(src, dst, st.st_dev, st.st_ino, st.st_mode, st.st_size, sys);
+  let e = fill(src, dst, st.st_dev, st.st_ino, st.st_mode, st.st_size, mode, sys);
   closeFd(src);
   // A file system may report a write's failure only when the file is closed (NFS): libuv's
   // copy fails then too.
@@ -178,8 +196,20 @@ export function copyWith(
   return { value: true, error: null };
 }
 
-/** The steps of `copyWith` once both files are open: 0, -1 for the same file, or the errno. */
-function fill(src: i32, dst: i32, dev: u64, ino: u64, mode: u32, size: i64, sys: CopySystem): i32 {
+/**
+ * The steps of `copyWith` once both files are open: 0, -1 for the same file, or the errno.
+ * `perm` is the source's `st_mode`, `copy` the copy's mode bits.
+ */
+function fill(
+  src: i32,
+  dst: i32,
+  dev: u64,
+  ino: u64,
+  perm: u32,
+  size: i64,
+  copy: u32,
+  sys: CopySystem,
+): i32 {
   const dt = fstatFd(dst);
   if (dt === null) {
     return lastError();
@@ -190,14 +220,20 @@ function fill(src: i32, dst: i32, dev: u64, ino: u64, mode: u32, size: i64, sys:
   if (truncateFd(dst, 0) != 0) {
     return lastError();
   }
-  if (sys.chmod(dst, mode & 0o7777) != 0) {
+  if (sys.chmod(dst, perm & 0o7777) != 0) {
     return lastOsError();
+  }
+  if ((copy & (COPY_FICLONE | COPY_FICLONE_FORCE)) != 0) {
+    const c = sys.cloneFile(src, dst, (copy & COPY_FICLONE_FORCE) != 0);
+    if (c != NOT_CLONED) {
+      return c;
+    }
   }
   if (size <= 0) {
     // libuv sends nothing: a device or a FIFO is copied as an empty file.
     return 0;
   }
-  return sys.data(src, dst, mode, size);
+  return sys.data(src, dst, perm, size);
 }
 
 /** The buffer of `copyLoop`. */

@@ -18,7 +18,7 @@ structs! {
     Param { local, ty, mode }
     Capture { outer, inner, mode, share }
     Body { locals, block }
-    LocalDef { name, ty, mutable, boxed, span }
+    LocalDef { name, ty, mutable, boxed, weak, span }
     ExternFnDef { name, symbol, params, ret, is_async, host, c, is_decorator, span }
     CImport { library, errno, params, ret, variadic }
     HostImport { module, params, ret }
@@ -30,7 +30,7 @@ structs! {
     FieldInit { field, depth, at, init }
     EnumDef { name, generics, variants, is_copy, is_union, span }
     VariantDef { name, payload, discriminant, str_value }
-    GlobalDef { name, ty, init, span, is_slot, c_const, c_global }
+    GlobalDef { name, ty, init, span, is_slot, c_const, c_global, weak }
     CConst { ty, value }
     CGlobal { library, symbol, ty, writable }
     InterfaceDef { name, generics, fields, methods, span }
@@ -589,6 +589,7 @@ enums! {
         220 => IsUnique,
         221 => PtrRead,
         222 => PtrWrite,
+        223 => WeakRead,
     }
 }
 

@@ -1,0 +1,18 @@
+// A module exporting a `weak` module `let` and the functions that set it (for
+// lang/weak_global_import and lang/errors/weak_global_imported_assign).
+export class View {
+  title: string;
+  constructor(title: string) {
+    this.title = title;
+  }
+}
+
+export let current: weak View | null = null;
+
+export function show(v: View | null): void {
+  current = v;
+}
+
+export function title(): string {
+  return current?.title ?? "null";
+}

@@ -11,6 +11,7 @@ import { osError } from "velt/fs/errors";
 import { Done } from "velt/fs/whole/done";
 import { asFile, winPath, withoutSeparators } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
+import { COPY_EXCL, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
 
 declare c type _SECURITY_ATTRIBUTES;
 declare c type _OVERLAPPED;
@@ -82,6 +83,8 @@ const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_SYMLINK_NOT_SUPPORTED: u32 = 1464;
 /** errno's `EBUSY`, which a copy onto the file itself fails with. */
 const EBUSY: i32 = 16;
+/** errno's `ENOSYS`, libuv's answer to `COPYFILE_FICLONE_FORCE` on Windows. */
+const ENOSYS: i32 = 38;
 
 function failed<T>(code: u32, syscall: string, path: string, dest: string | null = null): Done<T> {
   return { value: null, error: osError(errnoOfWin32(code), syscall, path, dest) };
@@ -143,17 +146,29 @@ function idOf(w: readonly u16[]): u32[] | null {
 }
 
 /**
- * Copies the file `from` to `to`, replacing a file there (libuv's `CopyFileW`). A copy onto the
- * file itself fails with a sharing violation, which libuv then finds is one file: done.
+ * Copies the file `from` to `to`, replacing a file there unless `mode` has `COPYFILE_EXCL`
+ * (libuv's `CopyFileW`, failing if it exists). A copy onto the file itself fails with a sharing
+ * violation, which libuv then finds is one file: done. libuv has no clone on Windows:
+ * `COPYFILE_FICLONE` copies, and `COPYFILE_FICLONE_FORCE` is `ENOSYS` before anything is opened.
  */
-export function copyAt(cf: readonly u8[], from: string, ct: readonly u8[], to: string): Done<bool> {
+export function copyAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+  mode: u32,
+): Done<bool> {
+  if ((mode & COPY_FICLONE_FORCE) != 0) {
+    return { value: null, error: osError(ENOSYS, "copyfile", from, to) };
+  }
   const wf = winPath(asFile(from));
   const wt = winPath(withoutSeparators(to));
   if (wf === null || wt === null) {
     return failed(ERROR_FILE_NOT_FOUND, "copyfile", from, to);
   }
+  const failIfExists: i32 = (mode & COPY_EXCL) != 0 ? 1 : 0;
   // SAFETY: both paths are NUL-terminated.
-  if (unsafe { CopyFileW(wf, wt, 0) } != 0) {
+  if (unsafe { CopyFileW(wf, wt, failIfExists) } != 0) {
     return { value: true, error: null };
   }
   const code = lastWin32();

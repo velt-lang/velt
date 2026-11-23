@@ -380,6 +380,12 @@ impl crate::body::FnCx<'_, '_> {
             );
             return Some(None);
         }
+        // A `weak` module `let` is assigned in its slot, which lowering swaps (body/weak_globals.rs),
+        // where it may be assigned at all (not as an import).
+        if let Some(ty) = self.cx.global(d).filter(|g| g.weak).map(|g| g.ty) {
+            let place = self.mk(hir::ExprKind::Global(d), ty, id.span);
+            return Some(self.require_mutable(&place, "assign to").then_some(place));
+        }
         let place = self.global_read(d, crate::body::Want::BorrowMut, id.span);
         Some(self.require_mutable(&place, "assign to").then_some(place))
     }

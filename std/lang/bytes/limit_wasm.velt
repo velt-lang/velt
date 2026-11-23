@@ -1,0 +1,14 @@
+// velt/lang/bytes (internal): the largest block of bytes a WebAssembly program can have, where a
+// pointer takes 4 bytes: `isize::MAX` of a 32-bit target, as the runtime's allocator checks
+// (`block_size`). `Buffer.alloc` of more stops the program as running out of memory does, before
+// it allocates: an allocation nothing reads may be optimized away, which would leave a buffer of
+// a length no memory holds. Elsewhere std/imports.velt picks limit_native.velt.
+
+/** The most bytes one allocation can have here. */
+export const MAX_BLOCK: u64 = 2147483647;
+
+/**
+ * The most bytes a string can have here: the runtime's string capacity (`MAX_CAP`), whose
+ * header must fit with it in `isize::MAX`.
+ */
+export const MAX_TEXT: usize = 2147483599;

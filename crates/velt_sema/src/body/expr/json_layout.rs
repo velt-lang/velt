@@ -1,13 +1,15 @@
 //! `JSON.stringify(value, replacer, space)`: `JSON.stringify(value)` (unchanged, generated for
 //! the value's type) laid out again by the prelude's `jsonRelayout` with JS's property list (an
-//! array replacer of strings or numbers, or `null`) and gap (`space`, a number or a string).
+//! array replacer of strings or numbers, or `null`; one only known at run time, an `any`, as Node
+//! reads it) and gap (`space`, a number or a string).
 //! `JSON.stringify(value)` alone never comes here.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
-use crate::ctx::Item;
+use crate::ctx::{Ctx, Item};
 use crate::hir::{self, Callee, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -127,6 +129,18 @@ impl FnCx<'_, '_> {
         if let Some(f) = helper {
             return (self.json_helper_call(f, vec![h], str_, span), true);
         }
+        // Keys of mixed or other number types, or a replacer only known at run time: read as
+        // Node reads them, from the value as an `any` (`jsonAnyKeys`).
+        let dynamic = matches!(self.cx.dynamic(h.ty), Some(Dynamic::Any | Dynamic::Unknown));
+        if dynamic || elem.is_some_and(|e| self.json_key_type(e)) {
+            if let Some(any) = self.cx.any_type() {
+                let h = self.coerce(h, any);
+                return (
+                    self.json_helper_call("jsonAnyKeys", vec![h], str_, span),
+                    true,
+                );
+            }
+        }
         if h.ty != self.cx.ty.error {
             let note = match self.cx.ty.kind(h.ty) {
                 TyKind::FnPtr { .. } | TyKind::Closure(_) => {
@@ -144,6 +158,19 @@ impl FnCx<'_, '_> {
             );
         }
         (self.error_expr(span), true)
+    }
+
+    /// Can an element of type `e` be a key of a replacer array: a string or a number of any type,
+    /// or a union of those (literal members widened)?
+    fn json_key_type(&mut self, e: TyId) -> bool {
+        let one = |cx: &mut Ctx, t: TyId| {
+            let t = cx.widened(t);
+            t == cx.ty.str_ || cx.ty.is_numeric(t)
+        };
+        match self.cx.union_members(e) {
+            Some(members) => !members.is_empty() && members.into_iter().all(|m| one(self.cx, m)),
+            None => one(self.cx, e),
+        }
     }
 
     /// The prelude helper that lays the text out for `space`, and its last argument: the gap of

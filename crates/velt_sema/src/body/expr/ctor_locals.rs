@@ -115,6 +115,7 @@ impl FnCx<'_, '_> {
                     ty: target,
                     mutable: false,
                     boxed: false,
+                    weak: false,
                     span,
                 });
                 f.kinds.push(LocalKind::Const);

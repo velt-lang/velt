@@ -58,6 +58,12 @@ macro_rules! with_string_hooks {
             /// `s.toLowerCase()`, as `string_to_upper`.
             string_to_lower => lang_string_case, "toLowerCase", sig((&string) -> string),
                 bench("string_methods"), prebuilt;
+
+            // velt/lang/bytes/range_text: a byte range as a string (#2196), which the prelude's
+            // `utf8Slice` calls by role, so a program loads the decoder only when live code calls it.
+            /// `b.utf8Slice(start, end)` with its positions clamped (`from <= to <= b.length`).
+            bytes_range_text => lang_bytes_range_text, "rangeText", sig((&[u8], usize, usize) -> string),
+                replaces("velt_rt_bytes_range_to_str_lossy"), bench("bytes_utf8");
             /// `s.repeat(count)` of a count the prelude's method has checked.
             string_repeat => lang_string_fill, "repeat", sig((&string, i64) -> string),
                 replaces("velt_rt_str_repeat"), bench("string_methods"), prebuilt;

@@ -528,6 +528,9 @@ pub(crate) struct GlobalInfo<'m> {
     /// whose value is not a constant (`new Map()`, a call with effects) or whose identity shows
     /// (a function from a call, #802).
     pub stored: bool,
+    /// A module-level `let` declared `weak T | null` (`hir::GlobalDef::weak`,
+    /// body/weak_globals.rs), once its type is checked.
+    pub weak: bool,
     /// `declare c const`: what it crosses as, once its type is checked.
     pub c_const: Option<crate::hir::CTy>,
     /// `declare c("<library>") let` (or `const`): the C variable, once its type is checked.

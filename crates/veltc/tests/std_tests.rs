@@ -1,11 +1,12 @@
-//! The standard library's tests: its black-box behaviour tests, `velt test` over each
-//! `tests/std/<module>/`, and its white-box tests next to the code, `velt test std/` (the
-//! `std/<module>/<name>.test.velt` files, docs/internals/design/std-layout.md §9). Each runs in a
-//! debug build that also checks that every test file's process frees every block it allocates
-//! (`VELT_RC_STATS=1`, as the goldens' `// check: no leaks`) and uses the checking allocator
-//! (`VELT_RT_DEBUG_ALLOC=1`, as the goldens' debug runs), and in a release build. Each run
-//! has a temporary directory of its own for its build output. A module where no test ran fails
-//! too. CONTRIBUTING.md "Golden or `velt test`?" says which tests go here.
+//! The standard library's tests: its black-box behaviour tests, the test files of each
+//! `tests/std/<module>/`, and its white-box tests next to the code, the
+//! `std/<module>/<name>.test.velt` files (docs/internals/design/std-layout.md §9). Each file runs
+//! with `velt test <file>` in a debug build that also checks that its process frees every block
+//! it allocates (`VELT_RC_STATS=1`, as the goldens' `// check: no leaks`) and uses the checking
+//! allocator (`VELT_RT_DEBUG_ALLOC=1`, as the goldens' debug runs), and in a release build. Each
+//! run has a temporary directory of its own for its build output. A file where no test ran fails
+//! too. The files are split into [`SHARDS`] tests (`std_modules_pass_their_tests_shard_<k>`).
+//! CONTRIBUTING.md "Golden or `velt test`?" says which tests go here.
 //!
 //! Filter with `VELT_STD_TESTS=<module>` (several separated by `,`; `std` names the white-box
 //! tests).
@@ -44,8 +45,22 @@ fn modules(root: &Path) -> Vec<PathBuf> {
     modules
 }
 
-/// `velt test` of `dir` (`--release`, or a debug build counting blocks): `None` if it ran at
-/// least one test and all passed, else the report.
+/// Does test file `file` declare a test: a `describe(` or `it(` block, or an exported `test_*`
+/// function? A few files only hold what others import (std/net/tls/x509/parts.test.velt's
+/// certificates), so they run none.
+fn declares_tests(file: &Path) -> bool {
+    let src = std::fs::read_to_string(file).unwrap_or_default();
+    src.lines().map(str::trim_start).any(|l| {
+        l.starts_with("describe(")
+            || l.starts_with("it(")
+            || l.starts_with("export function test_")
+            || l.starts_with("export async function test_")
+    })
+}
+
+/// `velt test` of `dir`, a test file or a directory (`--release`, or a debug build counting
+/// blocks): `None` if all its tests passed and it ran at least one (or none, for a test file
+/// that declares none, [`declares_tests`]), else the report.
 fn run_tests(dir: &Path, release: bool) -> Option<String> {
     let tmp = test_dir::TestDir::new();
     let mut command = no_window::command(env!("CARGO_BIN_EXE_velt"));
@@ -75,7 +90,8 @@ fn run_tests(dir: &Path, release: bool) -> Option<String> {
     }
     let why = if !out.status.success() {
         format!("`velt test` failed ({})", out.status)
-    } else if passed_tests(&stdout).is_none_or(|n| n == 0) {
+    } else if passed_tests(&stdout).is_none_or(|n| n == 0) && (dir.is_dir() || declares_tests(dir))
+    {
         "`velt test` ran no tests".into()
     } else {
         return None;
@@ -130,30 +146,141 @@ fn passed_tests(stdout: &str) -> Option<usize> {
     })
 }
 
-#[test]
-fn std_modules_pass_their_tests() {
+/// The shards the test files are split into (#3481): one test each, which nextest runs in
+/// parallel, so none of them nears the slow-test limit (all of them in one test took 19 minutes on
+/// the Windows runner), and a failure names a smaller set of files.
+const SHARDS: usize = 8;
+
+/// The `velt test` runs a shard keeps going at once.
+const RUNS_AT_ONCE: usize = 2;
+
+/// Is `p` a test file (`*.test.velt`, `.test.ts`, `.test.tsx`)?
+fn is_test_file(p: &Path) -> bool {
+    let name = p.file_name().unwrap_or_default().to_string_lossy();
+    [".test.velt", ".test.ts", ".test.tsx"]
+        .iter()
+        .any(|s| name.ends_with(s))
+}
+
+/// The test files under `dir`, outside build output (`target/`), appended to `out`.
+fn test_files_in(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for p in entries.flatten().map(|e| e.path()) {
+        if p.is_dir() {
+            if p.file_name().is_some_and(|n| n != "target") {
+                test_files_in(&p, out);
+            }
+        } else if is_test_file(&p) {
+            out.push(p);
+        }
+    }
+}
+
+/// Every test file of the modules [`modules`] gives, sorted.
+fn test_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for m in modules(root) {
+        test_files_in(&m, &mut files);
+    }
+    files.sort();
+    files
+}
+
+/// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so a module's files,
+/// which sort together, are spread over the shards and their times stay close.
+fn shard_of(files: &[PathBuf], shard: usize) -> Vec<PathBuf> {
+    (files.iter().enumerate())
+        .filter(|(i, _)| i % SHARDS == shard)
+        .map(|(_, f)| f.clone())
+        .collect()
+}
+
+/// Runs the test files of shard `shard`, each in a debug and a release build.
+fn std_shard(shard: usize) {
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let modules = modules(&root);
+    let files = test_files(&root);
     assert!(
-        !modules.is_empty(),
-        "no module with tests under tests/std or std (VELT_STD_TESTS={:?})",
+        !files.is_empty(),
+        "no test files under tests/std or std (VELT_STD_TESTS={:?})",
         std::env::var("VELT_STD_TESTS").unwrap_or_default()
     );
-    let failures: Vec<String> = std::thread::scope(|s| {
-        let runs: Vec<_> = modules
-            .iter()
-            .flat_map(|m| [false, true].map(|release| (m, release)))
-            .map(|(m, release)| s.spawn(move || run_tests(m, release)))
-            .collect();
-        runs.into_iter()
-            .filter_map(|r| {
-                r.join()
-                    .unwrap_or_else(|_| Some("a test thread panicked".into()))
-            })
-            .collect()
+    let runs: Vec<(PathBuf, bool)> = shard_of(&files, shard)
+        .into_iter()
+        .flat_map(|f| [false, true].map(|release| (f.clone(), release)))
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let failures = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..RUNS_AT_ONCE {
+            s.spawn(|| loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some((file, release)) = runs.get(i) else {
+                    break;
+                };
+                if let Some(report) = run_tests(file, *release) {
+                    failures.lock().unwrap().push(report);
+                }
+            });
+        }
     });
-    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    let failures = failures.into_inner().unwrap();
+    assert!(
+        failures.is_empty(),
+        "std tests, shard {shard} of {SHARDS}: {} failures\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
+macro_rules! std_shards {
+    ($($name:ident = $shard:literal),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                std_shard($shard);
+            }
+        )*
+        /// Every shard has a test function.
+        const SHARD_TESTS: &[usize] = &[$($shard),*];
+    };
+}
+
+std_shards! {
+    std_modules_pass_their_tests_shard_0 = 0,
+    std_modules_pass_their_tests_shard_1 = 1,
+    std_modules_pass_their_tests_shard_2 = 2,
+    std_modules_pass_their_tests_shard_3 = 3,
+    std_modules_pass_their_tests_shard_4 = 4,
+    std_modules_pass_their_tests_shard_5 = 5,
+    std_modules_pass_their_tests_shard_6 = 6,
+    std_modules_pass_their_tests_shard_7 = 7,
+}
+
+/// The shards together run every test file under tests/std and std exactly once: the list they
+/// split is every test file found by a walk of its own (without the `VELT_STD_TESTS` filter), and
+/// each file is in one shard.
+#[test]
+fn every_std_test_file_is_in_one_shard() {
+    let root = root();
+    assert_eq!(SHARD_TESTS, (0..SHARDS).collect::<Vec<_>>().as_slice());
+    let mut all = Vec::new();
+    test_files_in(&root.join("tests/std"), &mut all);
+    test_files_in(&root.join("std"), &mut all);
+    all.sort();
+    if std::env::var_os("VELT_STD_TESTS").is_none() {
+        assert_eq!(
+            test_files(&root),
+            all,
+            "the shards' list misses or adds test files"
+        );
+    }
+    let mut seen: Vec<PathBuf> = (0..SHARDS).flat_map(|k| shard_of(&all, k)).collect();
+    seen.sort();
+    assert_eq!(seen, all, "a test file is in no shard, or in two");
+    assert!(all.len() > 100, "only {} std test files found", all.len());
 }
 
 #[test]

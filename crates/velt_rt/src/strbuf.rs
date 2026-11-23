@@ -9,8 +9,6 @@
 //! immutable values: other copies never see the append).
 
 use crate::json::escape::{push_json_string, push_json_string_counted};
-use crate::json::text::{inspect_into, stringify_into};
-use crate::json::value::Value;
 use crate::str::{Summary, VeltStr};
 
 /// Identical to `VeltStr` (size 24, align 8).
@@ -215,41 +213,6 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_key(buf: *mut VeltStrBuf, s
     (*buf).push_with(|b| crate::inspect::push_inspect_key(b, (*s).as_bytes()));
 }
 
-/// Append `JSON.stringify(value)` for a `json.Value` handle (a null handle appends `null`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: u64) {
-    // The value's handle is its address, a `u64` in Velt (std/prelude/json/json_value.velt).
-    let h = h as usize as *const Value;
-    match h.as_ref() {
-        Some(v) => (*buf).push_with(|b| stringify_into(b, v)),
-        None => push_ascii(buf, b"null"),
-    }
-}
-
-/// Append what `console.log` prints for a `json.Value` handle: node's `util.inspect` of the
-/// parsed value (`{ a: 1, b: [ 2, 'x' ] }`); a string is raw when `top != 0` (a `console.log`
-/// argument) and quoted otherwise. `depth` is node's depth of the value (0 at the top level):
-/// containers nested deeper than 2 print as `[Array]` / `[Object]`. A null handle appends `null`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_json(
-    buf: *mut VeltStrBuf,
-    h: *const Value,
-    top: u8,
-    depth: u32,
-) {
-    match h.as_ref() {
-        Some(v) => {
-            let start = (*buf).len();
-            (*buf).push_with(|b| inspect_into(b, v, top != 0, depth));
-            // A top-level value is broken across lines like the glue's (a raw string is not).
-            if top != 0 && matches!(v, Value::Array(_) | Value::Object(_)) {
-                crate::inspect_layout::velt_rt_strbuf_inspect_layout(buf, start as u64);
-            }
-        }
-        None => push_ascii(buf, b"null"),
-    }
-}
-
 /// Move the built string to `*out` and leave `*buf` empty (still usable). A short result built
 /// in a heap buffer moves inline (the buffer is freed), so copying it later is free.
 #[no_mangle]
@@ -334,11 +297,10 @@ mod tests {
         let s = VeltStr::from_static("q\"uote\\\n\t\u{1}\u{1f}\u{7f}é\u{2028}".as_bytes());
         unsafe {
             velt_rt_strbuf_push_json_str(&mut b, &s);
-            velt_rt_strbuf_push_json_value(&mut b, 0);
         }
         assert_eq!(
             finish(b),
-            "\"q\\\"uote\\\\\\n\\t\\u0001\\u001f\u{7f}é\u{2028}\"null"
+            "\"q\\\"uote\\\\\\n\\t\\u0001\\u001f\u{7f}é\u{2028}\""
         );
     }
 
