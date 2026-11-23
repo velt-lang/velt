@@ -152,7 +152,7 @@ impl FnCx<'_, '_> {
         this: TyId,
     ) -> (hir::Expr, bool) {
         if !takes_this(e) {
-            return (self.stored_value(e, |s| s.slot_value(e, exp, slot)), false);
+            return (self.slot_value(e, exp, slot), false);
         }
         // A method reading `this` implements the slot: reading the method as a value elsewhere
         // would detach it (`crate::iface_method_values`).
@@ -168,187 +168,99 @@ impl FnCx<'_, '_> {
         (h, true)
     }
 
-    /// Object-literal property value `v`, checked by `check`. A method read off another object
-    /// whose body may use `this` (`{ m: c.m }`, `{ m: mk().m }`) is reported: Node calls it
-    /// with the literal as `this` (`o.m()`), while the value read keeps the object it was read
-    /// from. The read may sit in a wrapper that keeps its value (`stored_reads`: `c ? a.m :
-    /// b.m`, `a.m as F`). A static method is found by its class's name; another receiver's type
-    /// is the one it is checked with ([`Self::stored_method_read`], from `member`), so it is
-    /// checked once.
-    pub(super) fn stored_value(
-        &mut self,
-        v: &ast::Expr,
-        check: impl FnOnce(&mut Self) -> hir::Expr,
-    ) -> hir::Expr {
-        let mut reads = vec![];
-        stored_reads(v, &mut reads);
-        for read in &reads {
-            // A variable holding an interface's method (`bound_value`): checked as its read.
-            if let ast::ExprKind::Ident(id) = &read.kind {
-                self.stored_local(id);
-                continue;
-            }
-            let ast::ExprKind::Member { object, prop, .. } = &read.kind else {
-                continue;
-            };
-            if !self.static_namespace(object) {
-                continue;
-            }
-            // A static method that uses `this` runs on its class.
-            let uses = match self.class_of_name(object) {
-                Some(d) => match self.find_static(d, &prop.name) {
-                    Ok((m, ..)) => self.cx.static_this.contains_key(&m.def),
-                    Err(_) => false,
-                },
-                None => false,
-            };
-            if uses {
-                let text = super::method_value::path_text(read);
-                let what = format!("`{}`", text.clone().unwrap_or_else(|| prop.name.clone()));
-                self.report_stored_method(what, text, read.span);
-                return self.error_expr(v.span);
+    /// The value `v` of object-literal property `name` (`None`: the shorthand `{ name }`),
+    /// checked to `h`. A function value not written in the literal (a method read off another
+    /// object, a variable, a call's result) is recorded: Node calls it with the literal as
+    /// `this` (`o.name()`), while a method read as a value keeps the object it was read from
+    /// (#746). Once every body is checked, it is refused when a method of that name on any
+    /// interface or class may read `this` (`crate::iface_method_values`). A function written
+    /// there (an arrow, a function expression, a method) is the literal's own.
+    pub(super) fn stored_value(&mut self, name: &ast::Ident, v: Option<&ast::Expr>, h: &hir::Expr) {
+        // Std's literals are its own: a program's method names say nothing about them.
+        if v.is_some_and(fresh_fn) || !self.fn_valued(h.ty) || self.cx.scopes[self.module].is_std {
+            return;
+        }
+        // A function declared by name (`{ go: run }`, `{ run }`) has no `this` of its own here.
+        let ident = match v.map(super::method_value::strip_parens) {
+            None => Some(name),
+            Some(e) => match &e.kind {
+                ast::ExprKind::Ident(id) => Some(id),
+                _ => None,
+            },
+        };
+        if ident.is_some_and(|id| self.is_fn_item(id) || self.arrow_const(&id.name)) {
+            return;
+        }
+        let read = match v {
+            Some(v) => super::method_value::path_text(v),
+            None => Some(name.name.clone()),
+        };
+        let span = v.map_or(name.span, |v| v.span);
+        let r = crate::iface_method_values::StoredRead {
+            name: name.name.clone(),
+            read,
+            span,
+        };
+        self.cx.object_impls.method_values.reads.push(r);
+    }
+
+    /// Does `name` name a `const` initialized with an arrow, a local or the module's? Its function
+    /// has no `this` of its own.
+    fn arrow_const(&self, name: &str) -> bool {
+        let frames = std::iter::once(&self.f).chain(self.outer.iter().rev());
+        for f in frames {
+            if let Some(l) = crate::body::locals::frame_lookup(f, name) {
+                return f.arrow_consts.contains(&l);
             }
         }
-        reads.retain(|r| matches!(r.kind, ast::ExprKind::Member { .. }));
-        self.with_stored_reads(&reads, false, check)
-    }
-
-    /// The initializer `v` of variable `name` (`const f = g.m`, and `const { m } = g`, which
-    /// declares `m` from `g.m`), checked by `check`. A method read as a value stays bound to its
-    /// object (#746); the variable holding an interface's method is remembered with the read
-    /// (`method_locals`), so that storing it as an object-literal property's value is checked
-    /// as storing the read would be (`stored_value`).
-    pub(crate) fn bound_value<R>(
-        &mut self,
-        v: &ast::Expr,
-        name: &str,
-        check: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        let mut reads = vec![];
-        stored_reads(v, &mut reads);
-        reads.retain(|r| matches!(r.kind, ast::ExprKind::Member { .. }));
-        let outer = self.bound_read.take();
-        let h = self.with_stored_reads(&reads, true, check);
-        if let Some(r) = std::mem::replace(&mut self.bound_read, outer) {
-            if let Some(l) = self.declared_local(name) {
-                self.method_locals.insert(l, r);
-            }
-        }
-        h
-    }
-
-    /// Variable `id` stored as an object-literal property's value (`{ m: f }`, `{ m }`): when it
-    /// holds an interface's method (`bound_value`), the read is checked as if it were stored.
-    pub(super) fn stored_local(&mut self, id: &ast::Ident) {
-        let held = self.declared_local(&id.name);
-        if let Some(r) = held.and_then(|l| self.method_locals.get(&l)).cloned() {
-            let r = crate::iface_method_values::StoredRead { span: id.span, ..r };
-            self.cx.object_impls.method_values.reads.push(r);
-        }
-    }
-
-    /// `check`, with the member reads `reads` known as stored (`stored_props`).
-    fn with_stored_reads<R>(
-        &mut self,
-        reads: &[&ast::Expr],
-        bound: bool,
-        check: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        let n = self.stored_props.len();
-        self.stored_props
-            .extend(reads.iter().map(|r| (r.span, bound)));
-        let h = check(self);
-        self.stored_props.truncate(n);
-        h
-    }
-
-    /// For `member`: is `object.prop` (the property read at `span`, `object` checked to type
-    /// `t`) the value of an object-literal property (`stored_value`), and a method whose body
-    /// may use `this`? Reported. A variable's value (`bound_value`) is checked for an
-    /// interface's method only.
-    pub(super) fn stored_method_read(
-        &mut self,
-        object: &ast::Expr,
-        prop: &ast::Ident,
-        t: TyId,
-        span: Span,
-    ) -> bool {
-        let Some(at) = self.stored_props.iter().rposition(|(s, _)| *s == span) else {
+        let Some(&crate::ctx::Item::Def(d)) = self.cx.scopes[self.module].items.get(name) else {
             return false;
         };
-        let bound = self.stored_props[at].1;
-        let iface = matches!(self.cx.ty.kind(t), TyKind::Dyn(..)) && self.cx.dynamic(t).is_none();
-        // A literal's own method using `this` is reported where it is read
-        // (`detached_literal_method`).
-        if (bound && !iface)
-            || self.cx.ty.has_error(t)
-            || self.own_literal_iface(t)
-            || !self.method_of_reads_this(t, prop)
-        {
-            return false;
+        match self.cx.global(d) {
+            Some(g) => !g.mutable && g.src.init.is_some_and(is_arrow),
+            None => false,
         }
-        self.stored_props.remove(at);
-        let text = super::method_value::path_text(object).map(|o| format!("{o}.{}", prop.name));
-        let what = match &text {
-            Some(text) => format!("`{text}`"),
-            None => format!("`{}` of `{}`", prop.name, self.cx.display(t)),
-        };
-        // An interface's method: whether one of its implementations reads `this` is known once
-        // every body is checked (`crate::iface_method_values`).
-        if let (true, &TyKind::Dyn(d, _)) = (iface, self.cx.ty.kind(t)) {
-            let r = crate::iface_method_values::StoredRead {
-                iface: d,
-                name: prop.name.clone(),
-                what,
-                read: text,
-                span,
-            };
-            match bound {
-                true => self.bound_read = Some(r),
-                false => self.cx.object_impls.method_values.reads.push(r),
-            }
-            return false;
-        }
-        self.report_stored_method(what, text, span);
-        true
     }
 
-    /// The method `what` (as written in the message), read as `read` when that is a path.
-    fn report_stored_method(&mut self, what: String, read: Option<String>, span: Span) {
-        self.cx
-            .error(stored_method_error(&what, read.as_deref(), span));
+    /// Is a value of type `t` a function, or may it be one (`F | undefined`)?
+    fn fn_valued(&self, t: TyId) -> bool {
+        let t = self.cx.ty.opt_payload(t).unwrap_or(t);
+        matches!(
+            self.cx.ty.kind(t),
+            TyKind::FnPtr { .. } | TyKind::Closure(_)
+        )
     }
 }
 
-/// The error for method `what` (as written in the message), read as `read` when that is a path,
-/// stored as an object-literal property while it may use `this`.
-pub(crate) fn stored_method_error(what: &str, read: Option<&str>, span: Span) -> Diagnostic {
+/// The error for property `name` of an object literal, whose value (`read`, when that is a path)
+/// is a function not written in the literal, while a method named `name` may read `this`.
+pub(crate) fn stored_method_error(name: &str, read: Option<&str>, span: Span) -> Diagnostic {
     let fix = match read {
-        Some(read) => format!("call it from a method or an arrow function: `(...) => {read}(...)`, or write the method in the literal"),
-        None => "call it on its object from a method or an arrow function, or write the method in the literal".into(),
+        Some(read) => format!("write the function in the literal: `{name}: (...args) => {read}(...args)`, or a method `{name}(...) {{ ... }}`"),
+        None => format!("write the function in the literal: `{name}: (...args) => ...`, or a method `{name}(...) {{ ... }}`"),
     };
     Diagnostic::error(
-        format!("the method {what} may use `this`, so it cannot be the value of an object-literal property"),
+        format!("the value of property `{name}` is a function not written in the literal, and a method named `{name}` may use `this`, so it is not supported yet"),
         span,
     )
-    .with_note("TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from")
+    .with_note(format!("Node calls it with the literal as `this` (`o.{name}()`), while Velt keeps the object a method read as a value was read from"))
     .with_note(fix)
 }
 
-/// The member reads (`o.m`, not `o?.m`) and variables whose value is `v`'s: `v` itself, or one
-/// inside a wrapper that keeps the value: parentheses, `as`, `!`, and each arm of `?:`.
-fn stored_reads<'a>(v: &'a ast::Expr, out: &mut Vec<&'a ast::Expr>) {
+/// Is `v` a function written in place: an arrow or a function expression?
+fn fresh_fn(v: &ast::Expr) -> bool {
     match &v.kind {
-        ast::ExprKind::Paren(x) | ast::ExprKind::NonNull(x) => stored_reads(x, out),
-        ast::ExprKind::Cast { expr, .. } => stored_reads(expr, out),
-        ast::ExprKind::Cond { then, els, .. } => {
-            stored_reads(then, out);
-            stored_reads(els, out);
-        }
-        ast::ExprKind::Member {
-            optional: false, ..
-        }
-        | ast::ExprKind::Ident(_) => out.push(v),
-        _ => {}
+        ast::ExprKind::Paren(x) => fresh_fn(x),
+        ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_) => true,
+        _ => false,
+    }
+}
+
+/// Is `e` an arrow (in parentheses or not)?
+pub(crate) fn is_arrow(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(x) => is_arrow(x),
+        ast::ExprKind::Arrow { .. } => true,
+        _ => false,
     }
 }

@@ -83,12 +83,11 @@ impl FnCx<'_, '_> {
             return h;
         }
         let h = match value {
-            Some(v) => self.stored_value(v, |s| s.expr(v, exp, Want::Move)),
-            None => {
-                self.stored_local(name);
-                self.ident_expr(name, exp, Want::Move)
-            }
+            Some(v) => self.expr(v, exp, Want::Move),
+            None => self.ident_expr(name, exp, Want::Move),
         };
+        // A function not written here, stored as the property (`literal_this.rs`).
+        self.stored_value(name, value, &h);
         // A promise that rejects, stored into a field or record value whose `Promise<T>` is
         // written without an error type: that site takes its errors (`throws::promise_sites`).
         // The literal converts its values to the expected types after the site is no longer

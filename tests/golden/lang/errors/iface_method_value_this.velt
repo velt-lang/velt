@@ -204,3 +204,117 @@ function wrapLocal(g: Greeter2): Greeter2 {
 }
 console.log(wrapCond(g2).greet2(), wrapCast(g2).greet2());
 console.log(wrapDestructure(g2).greet2(), wrapLocal(g2).greet2());
+
+// More forms of the same kind: `satisfies`, `||`, a variable set from another, a `let` assigned,
+// a variable of the enclosing function or of the module, a `?:` initializer whose other arm
+// reads no `this`, and a class's method held in a variable.
+interface Forms {
+  name: string;
+  viaSatisfies(): string;
+  viaOr(): string;
+  viaAlias(): string;
+  viaLet(): string;
+  viaClosure(): string;
+  viaModule(): string;
+  viaCondVar(): string;
+}
+const forms: Forms = {
+  name: "forms",
+  viaSatisfies() {
+    return this.name;
+  },
+  viaOr() {
+    return this.name;
+  },
+  viaAlias() {
+    return this.name;
+  },
+  viaLet() {
+    return this.name;
+  },
+  viaClosure() {
+    return this.name;
+  },
+  viaModule() {
+    return this.name;
+  },
+  viaCondVar() {
+    return this.name;
+  },
+};
+const plain = (): string => "plain";
+interface Other {
+  other(): string;
+}
+const other: Other = { other: () => "other" };
+const heldAtModule = forms.viaModule;
+function storeForms(f: Forms, useForms: boolean) {
+  const alias = f.viaAlias;
+  const alias2 = alias;
+  let assigned = plain;
+  assigned = f.viaLet;
+  const captured = f.viaClosure;
+  const make = () => ({ name: "closure", viaClosure: captured });
+  const either = useForms ? f.viaCondVar : other.other;
+  const a = { name: "satisfies", viaSatisfies: f.viaSatisfies satisfies () => string };
+  const b = { name: "or", viaOr: f.viaOr || plain };
+  const c = { name: "alias", viaAlias: alias2 };
+  const d = { name: "let", viaLet: assigned };
+  const e = make();
+  const g = { name: "module", viaModule: heldAtModule };
+  const h = { name: "condvar", viaCondVar: either };
+  return [a.name, b.name, c.name, d.name, e.name, g.name, h.name];
+}
+console.log(storeForms(forms, true).join(" "));
+
+class Kept {
+  name = "kept";
+  shout(): string {
+    return this.name;
+  }
+}
+function storeClassMethod(k: Kept) {
+  const f = k.shout;
+  return { name: "class", shout: f };
+}
+console.log(storeClassMethod(new Kept()).shout());
+
+// A method value that escapes through a function's result or an array, a static method that
+// reads `this`, and a class's method in each arm of `?:`: refused by the name, wherever the
+// value came from.
+interface Esc {
+  name: string;
+  viaReturn(): string;
+  viaArray(): string;
+}
+const esc: Esc = {
+  name: "esc",
+  viaReturn() {
+    return this.name;
+  },
+  viaArray() {
+    return this.name;
+  },
+};
+function getReturn(e: Esc): () => string {
+  return e.viaReturn;
+}
+class Counter2 {
+  static count = 1;
+  static current(): number {
+    return this.count;
+  }
+  label = "c2";
+  tag(): string {
+    return this.label;
+  }
+}
+function storeEscapes(e: Esc, c: Counter2, d: Counter2, b: boolean) {
+  const held = [e.viaArray];
+  const r = { name: "return", viaReturn: getReturn(e) };
+  const a = { name: "array", viaArray: held[0] };
+  const s = { current: Counter2.current };
+  const t = { tag: b ? c.tag : d.tag };
+  return [r.name, a.name, typeof s, typeof t];
+}
+console.log(storeEscapes(esc, new Counter2(), new Counter2(), true).join(" "));

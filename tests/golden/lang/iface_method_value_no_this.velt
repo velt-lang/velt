@@ -60,3 +60,18 @@ function viaLocal(c: Counter): Counter {
   return { count: 5, tick: f };
 }
 console.log(viaCond(c1).tick(), viaCast(c1).tick(), viaDestructure(c1).tick(), viaLocal(c1).tick());
+
+// `||` and a `?:` initializer of a variable, for methods reading no `this`.
+interface Pair {
+  left(): string;
+  right(): string;
+}
+const pair: Pair = { left: () => "left", right: () => "right" };
+function viaOr(p: Pair): Pair {
+  return { left: p.left || (() => "none"), right: p.right };
+}
+function viaCondVar(p: Pair, b: boolean): Pair {
+  const f = b ? p.left : p.right;
+  return { left: f, right: p.right };
+}
+console.log(viaOr(pair).left(), viaCondVar(pair, true).left(), viaCondVar(pair, false).left());

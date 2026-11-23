@@ -295,15 +295,6 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object-literal method written at `.0` takes the object it is called on, of type
     /// `.1`, as its `this` parameter (`expr/literal_this.rs`).
     pub method_this: Option<(Span, TyId)>,
-    /// The property reads written at these spans are the value of an object-literal property,
-    /// or (`true`) of a variable (`expr/literal_this.rs` `stored_value`, `bound_value`).
-    pub stored_props: Vec<(Span, bool)>,
-    /// The variables holding an interface's method read as their value (`const f = g.m`,
-    /// `const { m } = g`), with the read: stored as an object-literal property's value, they are
-    /// checked as the read would be (`expr/literal_this.rs` `bound_value`).
-    pub method_locals: FxHashMap<LocalId, crate::iface_method_values::StoredRead>,
-    /// The interface method read as the value of the variable being declared (`bound_value`).
-    pub bound_read: Option<crate::iface_method_values::StoredRead>,
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
@@ -496,9 +487,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             promise_callback: false,
             literal_slot: None,
             method_this: None,
-            stored_props: Vec::new(),
-            method_locals: FxHashMap::default(),
-            bound_read: None,
             call_temps: vec![],
             held_recheck: Vec::new(),
             callee_effects: None,
