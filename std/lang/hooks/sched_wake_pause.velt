@@ -44,6 +44,18 @@ export function afterWake(): void {
   }
 }
 
+/**
+ * A wake by value of a node, from another thread, read the node's task and is about to take a
+ * reference to it (sched_node_wake.velt `wakeAway`): a finish of the node on its task in between
+ * must not have let go of the task while this waker's reference was out (sched_node_done.velt).
+ */
+@inline("always")
+export function beforeTaskRef(): void {
+  if (wk.counting()) {
+    pause();
+  }
+}
+
 @noInline
 function pause(): void {
   const n = PAUSE.load("relaxed");

@@ -11,6 +11,7 @@ import * as wn from "./sched_node_woken";
 import * as t from "./sched_task";
 import * as wa from "./sched_wake_away";
 import * as wk from "./sched_wake";
+import * as wp from "./sched_wake_pause";
 
 @cExport("std_sched_node_clone")
 export function nodeClone(w: usize): usize {
@@ -65,6 +66,11 @@ function wakeAway(task: usize, n: usize): void {
     // Nothing to wake, as `wake` finds.
     nd.release(n);
     return;
+  }
+  wp.beforeTaskRef();
+  if (wk.counting() && m.ld(n + nd.N_TASK) !== task) {
+    // Its finish let go of the task while this reference was out (sched_node_done.velt `letGo`).
+    panic("ICE: a promise let go of its task while a wake of it by value was under way");
   }
   // The node holds a reference to its task, and this one to the node: the task is alive.
   m.inc(task + t.T_REFS);
