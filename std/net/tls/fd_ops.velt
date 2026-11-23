@@ -9,7 +9,18 @@
 import { IoError } from "velt/io/error";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
-import * as fio from "velt/net/fd_io";
+// The socket operations of std/net/tcp_sched.velt, which tell a socket of the reactor's from one
+// of the runtime's: a TLS stream's socket may be either (the runtime's under `velt dev`, whose
+// supervisor hands the listener over, and in a build with no reactor).
+import {
+  velt_rt_tcp_accept,
+  velt_rt_tcp_close,
+  velt_rt_tcp_drained,
+  velt_rt_tcp_listener_close,
+  velt_rt_tcp_readable,
+  velt_rt_tcp_readable_within,
+  velt_rt_tcp_shutdown,
+} from "#net-tcp";
 import * as fs from "velt/net/fd_socket";
 import { READY, TlsSession } from "velt/net/tls/fd_session";
 import {
@@ -31,7 +42,7 @@ export function listenerFd(l: u64): u64 {
 export function closeListener(l: u64) {
   const entry = takeListener(l);
   if (entry != null) {
-    fs.closeListener(entry.with((x) => x.fd));
+    velt_rt_tcp_listener_close(entry.with((x) => x.fd));
   }
 }
 
@@ -41,7 +52,7 @@ export async function accept(l: u64): Promise<IoResult<u64>> {
   if (entry == null) {
     return fs.failed(fs.closed(), 0);
   }
-  const r = await fs.accept(entry.with((x) => x.fd));
+  const r = await velt_rt_tcp_accept(entry.with((x) => x.fd));
   if (r.code !== 0) {
     return r;
   }
@@ -55,7 +66,7 @@ export async function accept(l: u64): Promise<IoResult<u64>> {
 async function waitReadable(c: Conn): Promise<void> {
   const [fd, deadline] = c.with((x) => [x.socket(), x.deadline()] as [u64, number]);
   if (deadline == 0) {
-    const st = await fio.readable(fd);
+    const st = await velt_rt_tcp_readable(fd);
     if (st.code !== 0) {
       throw new IoError(st.code == 16 ? "EBADF" : "ECONNRESET", st.message);
     }
@@ -63,7 +74,7 @@ async function waitReadable(c: Conn): Promise<void> {
   }
   const left = deadline - (Date.now() as number);
   if (left > 0) {
-    const r = await fio.readableWithin(fd, left as i64);
+    const r = await velt_rt_tcp_readable_within(fd, left as i64, 0);
     if (r.code !== 0) {
       throw new IoError(r.code == 16 ? "EBADF" : "ECONNRESET", r.message);
     }
@@ -72,7 +83,7 @@ async function waitReadable(c: Conn): Promise<void> {
     }
   }
   const err = c.with((x) => x.fail(new IoError("ETIMEDOUT", "TLS: the handshake timed out")));
-  fio.close(fd);
+  velt_rt_tcp_close(fd);
   throw err;
 }
 
@@ -270,7 +281,7 @@ export async function drained(s: u64, max: u64): Promise<IoStatus> {
     return fs.closed();
   }
   await settle(c);
-  return await fio.drained(c.with((x) => x.socket()), max);
+  return await velt_rt_tcp_drained(c.with((x) => x.socket()), max);
 }
 
 /** Writes `data[start..end]` on TLS stream `s`; resolves once it is sent. */
@@ -292,7 +303,7 @@ export function shutdown(s: u64): IoStatus {
     x.shutdown();
     return x.socket();
   });
-  return fio.shutdown(fd);
+  return velt_rt_tcp_shutdown(fd);
 }
 
 /** The protocol ALPN chose on TLS stream `s` ("" for none), once its handshake is done. */
@@ -309,6 +320,6 @@ export async function alpn(s: u64): Promise<IoResult<string>> {
 export function close(s: u64) {
   const c = takeConn(s);
   if (c != null) {
-    fio.close(c.with((x) => x.socket()));
+    velt_rt_tcp_close(c.with((x) => x.socket()));
   }
 }
