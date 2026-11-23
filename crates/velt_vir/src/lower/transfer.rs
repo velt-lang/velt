@@ -14,7 +14,7 @@
 //! glue panics on the rest instead of releasing the resource twice.
 //!
 //! One transfer copies an object it reaches several times once, keeping `p.x === p.y` and
-//! copying a cycle as a cycle (velt_rt `transfer_map`, the `TransferRoot` glue): the clone and
+//! copying a cycle as a cycle (std's transfer map, the `TransferRoot` glue): the clone and
 //! transfer glue of counted objects look up and record copies while a transfer is under way;
 //! only counted types a transfer can reach (boxing/transfers.rs) get the lookup in their clone
 //! glue.
@@ -335,9 +335,9 @@ impl FnLower<'_, '_> {
             self.panic_uncopyable(ty);
             return v;
         }
-        // One transfer: an object reached twice is copied once (velt_rt `transfer_map`).
+        // One transfer: an object reached twice is copied once (std's transfer map).
         self.cx.note_transfer(ty);
-        self.call_rt(Rt::XferBegin, vec![], None);
+        self.xfer_begin();
         let copy = match self.cx.kind(ty) {
             // Another reference to the env (always counted), which the transfer then copies
             // knowing its captures' types: a resource without `clone()` among them panics.
@@ -346,28 +346,28 @@ impl FnLower<'_, '_> {
         };
         let vt = self.cx.ty(ty);
         if vt == Ty::Unit {
-            self.call_rt(Rt::XferEnd, vec![], None);
+            self.xfer_end();
             return copy;
         }
         // A copied closure still shares its captured variables' cells: transferring the fresh
         // copy gives it cells of its own.
         let t = Place::local(self.copy_to_temp(copy, vt));
         self.transfer_in_place(t.clone(), ty);
-        self.call_rt(Rt::XferEnd, vec![], None);
+        self.xfer_end();
         Operand::Copy(t)
     }
 
     /// A deep copy of `v` (type `ty`) that copies an object it reaches twice once, and a cycle
-    /// as a cycle, like a transfer (velt_rt `transfer_map`): an async closure's captures, which
+    /// as a cycle, like a transfer (std's transfer map): an async closure's captures, which
     /// each call (maybe on another task) gets a copy of.
     pub(super) fn clone_keeping_identity(&mut self, v: Operand, ty: TyId) -> Operand {
         if !self.cx.holds_counted(ty) {
             return self.clone_value(v, ty);
         }
         self.cx.note_transfer(ty);
-        self.call_rt(Rt::XferBegin, vec![], None);
+        self.xfer_begin();
         let copy = self.clone_value(v, ty);
-        self.call_rt(Rt::XferEnd, vec![], None);
+        self.xfer_end();
         copy
     }
 

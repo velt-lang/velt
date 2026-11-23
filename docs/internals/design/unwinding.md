@@ -142,9 +142,9 @@ return e;
 `spawn` that cannot go, a copy that failed) leaves the thread's transfer depth up, and every later
 transfer of the thread would nest in the stale one. `f` runs as user code, where the depth is 0
 (a transfer suspends around the user code it calls), so after a caught panic
-`velt_rt_xfer_suspend()` reads the depth the panic left; if it is above 0,
-`velt_rt_xfer_resume(depth)` takes the stale transfer back and `velt_rt_xfer_end()` once per level
-closes it. The last `end` clears its copies and releases the references it deferred: those
+std's `xferSuspend()` (std/lang/hooks/transfer.velt) reads the depth the panic left; if it is
+above 0, `xferResume(depth)` takes the stale transfer back and `xferEnd()` once per level closes
+it. The last `end` clears its copies and releases the references it deferred: those
 belonged to the transfer, not to the abandoned frames. Test: `std/task/unwind.test.velt` "closes
 a transfer the panic left open".
 
@@ -520,11 +520,11 @@ and cost nothing in programs that do not catch.
   unwinds out of it.
 - **A catch inside a transfer.** `caught()` closes every open transfer level, which assumes `f`
   started at depth 0; a `catchVeltPanic` run from a class's `clone()` during a transfer would
-  close the outer transfer too. A transfer the panicked code had suspended stays on the runtime's
-  stack of suspended transfers.
+  close the outer transfer too. A transfer the panicked code had suspended stays on std's list of
+  suspended transfers. (The runtime's catch closes exactly what its poll opened, with
+  `xferMark` and `xferForgetSince`.)
 - **Runtime function pointers that are still `extern "C"`.** A Velt exception through one of them
-  aborts instead of reaching the catch: `DropFn` in `crates/velt_rt/src/drop_depth.rs` and
-  `crates/velt_rt/src/transfer_map.rs`; `DataFn`, `TransferFn` and `DropFn` in
+  aborts instead of reaching the catch: `DropFn` in `crates/velt_rt/src/drop_depth.rs`; `DataFn`, `TransferFn` and `DropFn` in
   `crates/velt_rt/src/fn_props.rs`; `WorkFn` and `DropCtxFn` in `crates/velt_rt/src/native/mod.rs`.
 - **The payload is the message only.** No location and no value.
 

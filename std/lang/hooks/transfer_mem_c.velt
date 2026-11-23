@@ -1,0 +1,27 @@
+// velt/lang/hooks (internal): the memory of the transfer map (transfer.velt, `#xfer-mem`) on a
+// target with a C library (native, wasm32-wasip1): the C library's, outside the leak counters, as
+// the Rust map's was, since a thread keeps its transfer's block for the next transfer.
+
+import { Ptr } from "velt/ffi/ptr";
+import { outOfMemory } from "./heap";
+
+declare c("c") function calloc$xfer(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$xfer(p: Ptr<u8> | null): void;
+
+/** `n` bytes set to 0. */
+export function zeroed(n: usize): usize {
+  // SAFETY: calloc has no precondition; the result is checked.
+  const p = unsafe { calloc$xfer(1, n) };
+  if (p === null) {
+    outOfMemory(n as u64);
+  }
+  return Ptr.addressOf(p);
+}
+
+/** Gives back the block of `n` bytes `zeroed` made at `p` (0: none). */
+export function release(p: usize, n: usize): void {
+  // SAFETY: `p` came from `zeroed` and is not used after.
+  unsafe {
+    free$xfer(Ptr.orNull<u8>(p));
+  }
+}

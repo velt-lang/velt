@@ -89,6 +89,8 @@ impl<'h> Cx<'h> {
             module_hooks_declared: std::cell::OnceCell::new(),
             held: Some(vec![]),
             statics_table: None,
+            xfer_table: None,
+            xfer_used: false,
             value_ids: FxHashMap::default(),
             reassigned_slots: None,
             assigned_fields: None,

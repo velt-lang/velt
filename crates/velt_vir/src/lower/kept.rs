@@ -251,6 +251,9 @@ impl Cx<'_> {
         // and the release of the static atomics is registered when the code uses one holding a
         // reference (module_state.rs, static_atomic.rs): both decided once per program.
         let (sched, statics) = (self.module_sched(), self.statics_used());
+        // The transfer map's functions go in the statics table where the program transfers a
+        // value (static_atomic.rs `xfer_fill`), once per program too.
+        let xfer = self.xfer_used;
         let counted = self.boxing.clone();
         let facts = self.facts.clone();
         // What lowering memoized of an edited function's body, which callers in other files read
@@ -278,6 +281,9 @@ impl Cx<'_> {
         }
         if self.statics_used() != statics {
             return Err("the edit uses a static atomic holding a reference".into());
+        }
+        if self.xfer_used != xfer {
+            return Err("the edit transfers a value where the program transferred none".into());
         }
         self.same_answers(asked)?;
         self.build_fn_tables();

@@ -1,0 +1,413 @@
+// velt/lang/hooks (internal): the copies made during one transfer of a value to another thread
+// (#351, #352; rt_abi_async.md "Transfers"), which replaced velt_rt's `transfer_map.rs` (#3584).
+// A source-to-copy map, so an object reached twice in the copied graph is copied once (`p.x ===
+// p.y` still holds on the other side, as with structured clone) and a cycle is copied as a cycle
+// instead of recursing until the stack overflows.
+//
+// The compiler brackets the transfer of a value whose type can reach a counted object with
+// `xferBegin` / `xferEnd` (the `TransferRoot` glue, velt_vir `lower/transfer_map.rs`). The clone
+// glue of a counted object asks `xferFind` before copying an object referenced more than once and
+// `xferRecord`s its copy; the transfer glue asks `xferFind` before copying a still-shared object.
+// The sender's reference to an object that was replaced by its copy is released at the end
+// (`xferDefer`), not at once, so every source in the map stays alive (its address cannot be
+// reused) and keeps the count that made it a candidate for sharing until the transfer is done. A
+// copy maps to itself as well, so a graph that was just copied and is transferred next (a
+// function value's copy for a task) is not copied again. User code that runs during a transfer (a
+// class's own `clone()`) runs outside it (`xferSuspend` / `xferResume`): its own `.clone()` calls
+// copy as they would anywhere else. Outside a transfer every call returns after reading one
+// thread-local.
+//
+// The state is this thread's: a transfer runs on one thread, with no await in between. The
+// runtime reads it through the process statics table (rt_abi.md "Process statics"): `xferKeeps`
+// for read mode (velt_rt `read_mode.rs`), `xferMark` and `xferForgetSince` around the polls its
+// own catch runs (velt_rt `panic.rs`). A thread keeps its transfer's block for the next one; the
+// blocks are the C library's, outside the leak counters (`#xfer-mem`).
+
+import { addressLoad, addressStore, stateDrop } from "velt/lang/intrinsics";
+import { release, zeroed } from "#xfer-mem";
+
+/** What `xferFind` returns outside a transfer (never an object address: objects are aligned). */
+const NO_TRANSFER: usize = 1;
+
+/** Entries of the map, and deferred releases, a thread keeps room for between transfers. */
+const KEEP: usize = 1024;
+
+/** The bytes of a field: a word of 8 on every target (an address is 4 of them on wasm32). */
+const W: usize = 8;
+
+// A transfer's block: its fields, one word each.
+/** Entries the map has room for: 0 (no map yet) or a power of two. */
+const CAP: usize = 0;
+/** Entries in the map. */
+const LEN: usize = 8;
+/** The map: `CAP` pairs of words, a source (0: free) and its copy. */
+const TABLE: usize = 16;
+/** The deferred releases: `DEF_CAP` pairs of words, an object and its drop glue. */
+const DEF: usize = 24;
+const DEF_CAP: usize = 32;
+const DEF_LEN: usize = 40;
+/** What the outermost begin asked for: 0, `KEEPS_CALLERS` or `KEEPS_MADE` (`xferKeeps`). */
+const MODE: usize = 48;
+/** The transfer suspended before this one (`SUSPENDED`), or 0. */
+const NEXT: usize = 56;
+const BLOCK: usize = 64;
+
+/** Started by `xferKeepBegin`. */
+const KEEPS_CALLERS: usize = 1;
+/** Started by `xferShareBegin`. */
+const KEEPS_MADE: usize = 2;
+
+/** Nested begins: 0 outside a transfer (the fast check). */
+const DEPTH = new ThreadLocal<u32>(0);
+/** This thread's transfer block, made on first use and kept, or 0. */
+const CURRENT = new ThreadLocal<u64>(0);
+/** The transfers suspended while user code runs: the innermost's block, or 0. */
+const SUSPENDED = new ThreadLocal<u64>(0);
+/** How many are suspended. */
+const SUSPENDED_N = new ThreadLocal<u32>(0);
+
+/** The word at `a`, a field of a block of this module's. */
+function ld(a: usize): usize {
+  // SAFETY: `a` is a field of a block `zeroed` made and not yet released.
+  return unsafe { addressLoad<u64>(a) } as usize;
+}
+
+function st(a: usize, v: usize): void {
+  // SAFETY: as `ld`.
+  unsafe {
+    addressStore<u64>(a, v as u64);
+  }
+}
+
+/** This thread's transfer block, made on first use. */
+function current(): usize {
+  const t = CURRENT.get() as usize;
+  if (t != 0) {
+    return t;
+  }
+  const made = zeroed(BLOCK);
+  CURRENT.set(made as u64);
+  return made;
+}
+
+/** Where `key` (an object address, aligned) starts its search in a map of `cap` entries. */
+function home(key: usize, cap: usize): usize {
+  const h = ((key as u64) >> 3) * 0x9e37_79b9_7f4a_7c15;
+  return ((h >> 32) as usize) & (cap - 1);
+}
+
+/** The copy the map of block `t` has for `key`, or 0. */
+function lookup(t: usize, key: usize): usize {
+  const cap = ld(t + CAP);
+  if (cap == 0) {
+    return 0;
+  }
+  const table = ld(t + TABLE);
+  let i = home(key, cap);
+  while (true) {
+    const at = table + i * 2 * W;
+    const k = ld(at);
+    if (k == key) {
+      return ld(at + W);
+    }
+    if (k == 0) {
+      return 0;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+}
+
+/** Puts `key` -> `value` into `table` of `cap` entries; whether `key` is new there. */
+function place(table: usize, cap: usize, key: usize, value: usize): bool {
+  let i = home(key, cap);
+  while (true) {
+    const at = table + i * 2 * W;
+    const k = ld(at);
+    if (k == key || k == 0) {
+      st(at, key);
+      st(at + W, value);
+      return k == 0;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+}
+
+/** `key` -> `value` in the map of block `t`, which grows past three quarters full. */
+function insert(t: usize, key: usize, value: usize): void {
+  let cap = ld(t + CAP);
+  const len = ld(t + LEN);
+  if ((len + 1) * 4 > cap * 3) {
+    const bigger = cap == 0 ? 16 : cap * 2;
+    const table = zeroed(bigger * 2 * W);
+    const old = ld(t + TABLE);
+    for (let i: usize = 0; i < cap; i++) {
+      const k = ld(old + i * 2 * W);
+      if (k != 0) {
+        place(table, bigger, k, ld(old + i * 2 * W + W));
+      }
+    }
+    release(old, cap * 2 * W);
+    st(t + TABLE, table);
+    st(t + CAP, bigger);
+    cap = bigger;
+  }
+  if (place(ld(t + TABLE), cap, key, value)) {
+    st(t + LEN, len + 1);
+  }
+}
+
+/** Forgets the copies of block `t`, keeping room for `KEEP` entries. */
+function clearMap(t: usize): void {
+  if (ld(t + LEN) == 0) {
+    return;
+  }
+  st(t + LEN, 0);
+  const cap = ld(t + CAP);
+  const table = ld(t + TABLE);
+  if (cap > KEEP) {
+    release(table, cap * 2 * W);
+    st(t + TABLE, 0);
+    st(t + CAP, 0);
+    return;
+  }
+  for (let i: usize = 0; i < cap * 2; i++) {
+    st(table + i * W, 0);
+  }
+}
+
+/** Releases the references block `t` deferred, each through its drop glue. */
+function releaseDeferred(t: usize): void {
+  const n = ld(t + DEF_LEN);
+  if (n == 0) {
+    return;
+  }
+  // The drop glue runs with the list taken out of the block: it may transfer a value itself.
+  const list = ld(t + DEF);
+  const cap = ld(t + DEF_CAP);
+  st(t + DEF, 0);
+  st(t + DEF_CAP, 0);
+  st(t + DEF_LEN, 0);
+  for (let i: usize = 0; i < n; i++) {
+    // The pair's first word is a slot holding the object, as drop glue takes it.
+    const at = list + i * 2 * W;
+    // SAFETY: `xferDefer` stored the object and its drop glue, a reference the transfer owns.
+    unsafe {
+      stateDrop(ld(at + W), at);
+    }
+  }
+  if (cap <= KEEP && ld(t + DEF) == 0) {
+    st(t + DEF, list);
+    st(t + DEF_CAP, cap);
+  } else {
+    release(list, cap * 2 * W);
+  }
+}
+
+/** The end of the transfer of block `t`: its copies forgotten, its deferred references released. */
+function finish(t: usize): void {
+  st(t + MODE, 0);
+  clearMap(t);
+  releaseDeferred(t);
+}
+
+/** Gives back block `t` (0: none) and what it holds, its transfer over. */
+function discard(t: usize): void {
+  if (t == 0) {
+    return;
+  }
+  release(ld(t + TABLE), ld(t + CAP) * 2 * W);
+  release(ld(t + DEF), ld(t + DEF_CAP) * 2 * W);
+  release(t, BLOCK);
+}
+
+/** Starts transferring a value (nested calls nest). */
+export function xferBegin(): void {
+  DEPTH.set(DEPTH.get() + 1);
+}
+
+/**
+ * Starts transferring a value a `read` callback stores into its caller's containers (velt_vir
+ * caller_stores.rs): as `xferBegin`, and when it is the outermost one, the transfer glue keeps the
+ * objects the reader did not make (the caller's, counted once more) instead of copying them.
+ */
+export function xferKeepBegin(): void {
+  const outer = DEPTH.get();
+  DEPTH.set(outer + 1);
+  if (outer == 0) {
+    st(current() + MODE, KEEPS_CALLERS);
+  }
+}
+
+/**
+ * Starts transferring a value sema transferred out of a `read` callback into its caller's
+ * containers (velt_vir leave_levels.rs `transfer_stored`): as `xferBegin`, and when it is the
+ * outermost one, the transfer glue keeps the objects the reader made and still references instead
+ * of copying them, so the caller holds the same object.
+ */
+export function xferShareBegin(): void {
+  const outer = DEPTH.get();
+  DEPTH.set(outer + 1);
+  if (outer == 0) {
+    st(current() + MODE, KEEPS_MADE);
+  }
+}
+
+/** 1 inside a transfer `xferKeepBegin` started, 2 inside one `xferShareBegin` started, else 0. */
+export function xferKeeps(): u8 {
+  if (DEPTH.get() == 0) {
+    return 0;
+  }
+  const t = CURRENT.get() as usize;
+  return t == 0 ? 0 : ld(t + MODE) as u8;
+}
+
+/**
+ * Done transferring a value: the outermost end releases the deferred references and forgets the
+ * copies.
+ */
+export function xferEnd(): void {
+  const depth = DEPTH.get();
+  if (depth > 1) {
+    DEPTH.set(depth - 1);
+    return;
+  }
+  DEPTH.set(0);
+  const t = CURRENT.get() as usize;
+  if (t != 0) {
+    finish(t);
+  }
+}
+
+/**
+ * The copy made of `object` in this transfer; 0 if none yet (the caller copies it and
+ * `xferRecord`s the copy), or 1 outside a transfer (nothing to record).
+ */
+export function xferFind(object: usize): usize {
+  if (DEPTH.get() == 0) {
+    return NO_TRANSFER;
+  }
+  const t = CURRENT.get() as usize;
+  return t == 0 ? 0 : lookup(t, object);
+}
+
+/** `copy` is the copy of `object` in this transfer (and stays itself if it is reached again). */
+export function xferRecord(object: usize, copy: usize): void {
+  if (DEPTH.get() == 0) {
+    return;
+  }
+  const t = current();
+  insert(t, object, copy);
+  insert(t, copy, copy);
+}
+
+/**
+ * Releases the transfer's reference to `object` (with its drop glue at `drop`) when the transfer
+ * ends: 1, or 0 outside a transfer (the caller releases it now).
+ */
+export function xferDefer(object: usize, drop: usize): u8 {
+  if (DEPTH.get() == 0) {
+    return 0;
+  }
+  const t = current();
+  const n = ld(t + DEF_LEN);
+  let cap = ld(t + DEF_CAP);
+  if (n == cap) {
+    const bigger = cap == 0 ? 16 : cap * 2;
+    const list = zeroed(bigger * 2 * W);
+    const old = ld(t + DEF);
+    for (let i: usize = 0; i < n * 2; i++) {
+      st(list + i * W, ld(old + i * W));
+    }
+    release(old, cap * 2 * W);
+    st(t + DEF, list);
+    st(t + DEF_CAP, bigger);
+    cap = bigger;
+  }
+  const at = ld(t + DEF) + n * 2 * W;
+  st(at, object);
+  st(at + W, drop);
+  st(t + DEF_LEN, n + 1);
+  return 1;
+}
+
+/**
+ * Sets the transfer under way aside while user code runs (a class's own `clone()`): returns its
+ * depth for `xferResume`. In between, nothing is looked up or recorded in it, and a transfer the
+ * user code starts has a map of its own.
+ */
+export function xferSuspend(): u32 {
+  const depth = DEPTH.get();
+  if (depth == 0) {
+    return 0;
+  }
+  DEPTH.set(0);
+  const t = current();
+  st(t + NEXT, SUSPENDED.get() as usize);
+  SUSPENDED.set(t as u64);
+  SUSPENDED_N.set(SUSPENDED_N.get() + 1);
+  CURRENT.set(0);
+  return depth;
+}
+
+/** Continues the transfer set aside by the `xferSuspend` that returned `depth`. */
+export function xferResume(depth: u32): void {
+  if (depth == 0) {
+    return;
+  }
+  const saved = SUSPENDED.get() as usize;
+  if (saved != 0) {
+    SUSPENDED.set(ld(saved + NEXT) as u64);
+    SUSPENDED_N.set(SUSPENDED_N.get() - 1);
+    st(saved + NEXT, 0);
+    // The user code's own transfers are over: their block holds nothing any more.
+    discard(CURRENT.get() as usize);
+    CURRENT.set(saved as u64);
+  }
+  DEPTH.set(depth);
+}
+
+/**
+ * What is open on this thread now, for `xferForgetSince` when a poll that catches panics starts
+ * (velt_rt `panic.rs`): the depth in the high half, the number suspended in the low.
+ */
+export function xferMark(): u64 {
+  return ((DEPTH.get() as u64) << 32) | (SUSPENDED_N.get() as u64);
+}
+
+/**
+ * A panic was caught by the poll that took `mark` (`xferMark`): the transfers that poll opened
+ * end as `xferEnd` ends one, their copies forgotten and the references they deferred released
+ * (they were the transfer's, not the abandoned frames'), as std's own catch closes them
+ * (std/task/unwind.velt `caught`). Those open when the poll started go on: a class's own
+ * `clone()` may run such a poll, with a transfer suspended around it.
+ */
+export function xferForgetSince(mark: u64): void {
+  const depth = (mark >> 32) as u32;
+  const suspended = (mark & 0xffff_ffff) as u32;
+  DEPTH.set(0);
+  // The transfer open at the start, if it was suspended since: the first suspended after `mark`.
+  let outer: usize = 0;
+  while (SUSPENDED_N.get() > suspended) {
+    const s = SUSPENDED.get() as usize;
+    SUSPENDED.set(ld(s + NEXT) as u64);
+    SUSPENDED_N.set(SUSPENDED_N.get() - 1);
+    st(s + NEXT, 0);
+    if (depth > 0 && SUSPENDED_N.get() == suspended) {
+      outer = s;
+    } else {
+      finish(s);
+      discard(s);
+    }
+  }
+  if (depth == 0 || outer != 0) {
+    const t = CURRENT.get() as usize;
+    if (t != 0) {
+      finish(t);
+    }
+    if (outer != 0) {
+      discard(t);
+      CURRENT.set(outer as u64);
+    }
+  }
+  DEPTH.set(depth);
+}

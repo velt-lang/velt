@@ -544,7 +544,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let src = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
         // In a program with calls of a function in `shared(...)`, which copy its environment: an
         // environment reached twice in one copy is copied once, and one that holds itself (through
-        // an array of functions, say) ends (velt_rt `transfer_map`).
+        // an array of functions, say) ends (std's transfer map).
         let found = lw
             .cx
             .boxing

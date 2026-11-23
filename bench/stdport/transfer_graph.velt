@@ -1,0 +1,41 @@
+// The transfer map (std/lang/hooks/transfer.velt): a chain of 1,000 objects, each reached twice
+// from the one before it (two fields) and kept by the sender in an array, sent to 2,000 tasks.
+// Each send copies the whole graph once: per object a lookup of its copy (`xferFind`), the copy
+// recorded (`xferRecord`) and the sender's reference released at the end (`xferDefer`). The Rust
+// port copies the same graph with a `HashMap` from object to copy for each of 2,000 threads.
+class Node {
+  v: number = 0;
+  a: Node | null = null;
+  b: Node | null = null;
+}
+
+async function sum(head: Node | null): Promise<number> {
+  let s = 0;
+  let p = head;
+  while (p !== null) {
+    if (p.a !== p.b) {
+      return -1;
+    }
+    s += p.v;
+    p = p.a;
+  }
+  return s;
+}
+
+async function main() {
+  const nodes: Node[] = [];
+  let head: Node | null = null;
+  for (let i = 0; i < 1000; i++) {
+    const n = new Node();
+    n.v = i;
+    n.a = head;
+    n.b = head;
+    nodes.push(n);
+    head = n;
+  }
+  let total = 0;
+  for (let r = 0; r < 2000; r++) {
+    total += await spawn(sum(head));
+  }
+  console.log(total, nodes.length);
+}

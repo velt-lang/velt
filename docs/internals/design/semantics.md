@@ -374,7 +374,8 @@ reaches it through one of the places above, never through a runtime hook of its 
   copied: sema rejects a `spawn` argument or spawned capture that is still used afterwards, and
   one passed through a function value, vtable or interface (`ownership/boundary.rs`); a copy
   that only turns out to be needed at run time panics (`lower/glue/clone.rs`).
-- A caught panic ends the transfers it unwound out of (`crates/velt_rt/src/transfer_map.rs`).
+- A caught panic ends the transfers it unwound out of (std/lang/hooks/transfer.velt), releasing
+  what they deferred.
 
 ## Runtime cost
 

@@ -187,14 +187,14 @@ pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropG
     // Referenced only by where it goes, and not a part of an object the readers still
     // reference: nothing they hold can change it any more.
     let unique = *p & (STORED - 1) == 1 && KEPT_UNDER.with(Cell::get) == 0;
-    if unique || (depth <= 1 && crate::transfer_map::velt_rt_xfer_keeps() != 1) {
+    if unique || (depth <= 1 && crate::statics::xfer_keeps() != 1) {
         *p &= !LOCAL;
         return;
     }
     leave_after_reads(p, obj, drop);
 }
 
-/// A transfer keeping what the caller holds (`velt_rt_xfer_keep_begin`) moves the reader's own
+/// A transfer keeping what the caller holds (std's `xferKeepBegin`) moves the reader's own
 /// object whose count word is at `p`, which the reader may still reference: the caller's
 /// reference becomes its only one and the bit goes, since the reader no longer counts it. In a
 /// nested read storing into code outside every read ([`velt_rt_lk_leave`] keeps the bit until
@@ -211,7 +211,7 @@ pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
     }
 }
 
-/// A value sema transferred out of a `read` callback (`velt_rt_xfer_share_begin`) holds the
+/// A value sema transferred out of a `read` callback (std's `xferShareBegin`) holds the
 /// reader's own object `obj`, whose count word is at `p`, which the reader still references: it
 /// stays itself. Going to a frame still in read mode (an outer reader's variable) it stays that
 /// reader's own, counted. Going to code outside every read, at any depth, it is the caller's
@@ -298,7 +298,7 @@ pub extern "C" fn velt_rt_lk_kept_again(obj: *mut u8) -> u8 {
     })
 }
 
-/// A transfer started by `velt_rt_xfer_keep_begin` goes into (`enter` 1) or comes out of
+/// A transfer started by std's `xferKeepBegin` goes into (`enter` 1) or comes out of
 /// (`enter` 0) the parts of an object the readers still reference, kept as itself: those
 /// parts stay the readers' own until the reads end ([`velt_rt_lk_leave`]), since the readers
 /// may still change them through it.

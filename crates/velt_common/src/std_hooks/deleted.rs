@@ -34,6 +34,18 @@ pub const DELETED: &[&str] = &[
     "velt_rt_weakref_word",
     "velt_rt_weakref_deref",
     "velt_rt_weakref_drop",
+    // #3584: the transfer map (std/lang/hooks/transfer.velt): lowering's transfer hooks, and std's
+    // catch (std/task/unwind.velt).
+    "velt_rt_xfer_begin",
+    "velt_rt_xfer_keep_begin",
+    "velt_rt_xfer_share_begin",
+    "velt_rt_xfer_keeps",
+    "velt_rt_xfer_end",
+    "velt_rt_xfer_find",
+    "velt_rt_xfer_record",
+    "velt_rt_xfer_defer",
+    "velt_rt_xfer_suspend",
+    "velt_rt_xfer_resume",
     // #2196: velt/os's facts (std/os/sys_*.velt over the C library and Win32, the build's
     // `x64`/`arm64` condition for the architecture), which only std called.
     "velt_rt_os_platform",

@@ -48,6 +48,8 @@ pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 mod hook;
 pub use hook::Hook;
 #[macro_use]
+mod transfer_hooks;
+#[macro_use]
 mod weak_hooks;
 #[macro_use]
 mod string_hooks;
@@ -58,8 +60,8 @@ mod decorator_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
 // The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
-// (`module_hooks.rs`), the string methods' (`string_hooks.rs`) and the weak core's
-// (`weak_hooks.rs`), given to `hooks!` together.
+// (`module_hooks.rs`), the string methods' (`string_hooks.rs`), the weak core's
+// (`weak_hooks.rs`) and the transfer map's (`transfer_hooks.rs`), given to `hooks!` together.
 with_decorator_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).

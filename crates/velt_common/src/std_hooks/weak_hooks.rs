@@ -2,12 +2,12 @@
 //! design/weak-refs.md, rt_abi.md "Weak references"): the core under `WeakMap`, `WeakSet` and
 //! `WeakRef` and the cold path of a weakly held object's release, all lowered for
 //! `Construct::Weak` and prebuilt. Kept apart from the rest of the table ([`super`]), which
-//! [`with_weak_hooks`] gives to `hooks!` with these rows after it.
+//! [`with_weak_hooks`] gives to `with_transfer_hooks!` with these rows after it.
 
-/// `hooks!` over the rows given, then the weak core's.
+/// `with_transfer_hooks!` over the rows given, then the weak core's.
 macro_rules! with_weak_hooks {
     ($($rows:tt)*) => {
-        hooks! {
+        with_transfer_hooks! {
             $($rows)*
             // weak.velt: the weak core (#3145; design/weak-refs.md, rt_abi.md "Weak references").
             /// A weakly held object's cold release: `(obj)`, true when that was the last reference

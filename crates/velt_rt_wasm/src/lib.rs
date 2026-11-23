@@ -86,8 +86,6 @@ pub mod strbuf;
 pub mod task;
 #[path = "../../velt_rt/src/top_level_await.rs"]
 pub mod top_level_await;
-#[path = "../../velt_rt/src/transfer_map.rs"]
-pub mod transfer_map;
 #[path = "../../velt_rt/src/view.rs"]
 pub mod view;
 

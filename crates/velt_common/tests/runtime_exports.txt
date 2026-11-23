@@ -273,17 +273,7 @@ velt_rt velt_rt_worker_count
 velt_rt velt_rt_write_bool
 velt_rt velt_rt_write_byte
 velt_rt velt_rt_write_str
-velt_rt velt_rt_xfer_begin
-velt_rt velt_rt_xfer_defer
-velt_rt velt_rt_xfer_end
-velt_rt velt_rt_xfer_find
-velt_rt velt_rt_xfer_keep_begin
 velt_rt velt_rt_xfer_keep_shared
-velt_rt velt_rt_xfer_keeps
-velt_rt velt_rt_xfer_record
-velt_rt velt_rt_xfer_resume
-velt_rt velt_rt_xfer_share_begin
-velt_rt velt_rt_xfer_suspend
 velt_rt_wasm __main_void
 velt_rt_wasm velt_host_alloc
 velt_rt_wasm velt_host_bytes_new

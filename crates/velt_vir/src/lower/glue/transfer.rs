@@ -17,19 +17,18 @@ use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
-/// What velt_rt's `velt_rt_xfer_find` returns outside a transfer.
-pub(super) const NO_TRANSFER: i128 = 1;
+pub(super) use crate::lower::transfer_map::NO_TRANSFER;
 
 impl<'c, 'h> FnLower<'c, 'h> {
     /// A whole value's transfer (a `spawn` argument, a channel message, a task's result): one
-    /// transfer for velt_rt's `transfer_map`, so an object reached twice is copied once and a
+    /// transfer for std's transfer map, so an object reached twice is copied once and a
     /// cycle is copied as a cycle.
     pub(super) fn transfer_root_body(&mut self, p: vir::Local, ty: TyId) {
         self.cx.note_transfer(ty);
-        self.call_rt(Rt::XferBegin, vec![], None);
+        self.xfer_begin();
         let place = self.deref_param(p, ty);
         self.transfer_in_place(place, ty);
-        self.call_rt(Rt::XferEnd, vec![], None);
+        self.xfer_end();
         self.terminate(Terminator::Return(unit()));
     }
 
@@ -354,7 +353,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         new
     }
 
-    /// In a transfer `velt_rt_xfer_keep_begin` started (a `read` callback's value going into its
+    /// In a transfer `xferKeepBegin` started (a `read` callback's value going into its
     /// caller's containers, lower/caller_stores.rs), in read mode, the still-shared lock-set
     /// object `o` of type `ty` stays itself: one the reader did not make (the caller's) gets
     /// the reference the reader held uncounted (the transfer goes on at `done`); one it made
@@ -376,10 +375,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let keep = self.temp(Ty::U8);
         self.assign(Place::local(keep), Rvalue::Use(cint(0, Ty::U8)));
-        self.lk_split(
-            |_| {},
-            |lw| lw.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keep))),
-        );
+        self.lk_split(|_| {}, |lw| lw.xfer_keeps(Place::local(keep)));
         let k = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(
@@ -444,7 +440,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(Place::local(entered), Rvalue::Use(cint(1, Ty::U8)));
     }
 
-    /// In a transfer `velt_rt_xfer_keep_begin` started, in read mode, the still-shared object
+    /// In a transfer `xferKeepBegin` started, in read mode, the still-shared object
     /// `o` of type `ty`, which is not a lock-set type (so the reader counts it) but holds
     /// lock-set objects: the reader made it, so it holds nothing of the lock's value (sema
     /// refuses such stores) and stays itself, as in JavaScript, with the caller's reference, and
@@ -463,10 +459,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let keep = self.temp(Ty::U8);
         self.assign(Place::local(keep), Rvalue::Use(cint(0, Ty::U8)));
-        self.lk_split(
-            |_| {},
-            |lw| lw.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keep))),
-        );
+        self.lk_split(|_| {}, |lw| lw.xfer_keeps(Place::local(keep)));
         let k = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(
@@ -540,7 +533,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(first);
     }
 
-    /// In a transfer `velt_rt_xfer_share_begin` started (`keep` is 2: a value sema transferred
+    /// In a transfer `xferShareBegin` started (`keep` is 2: a value sema transferred
     /// out of a `read` callback into its caller's containers), in read mode, the still-shared
     /// object `o` the reader made stays itself, as in JavaScript: the caller's from then on, with
     /// its parts transferred in turn (at `unique`), so what the reader shares with the value
@@ -581,7 +574,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.branch(stored, done, fresh);
         self.switch_to(fresh);
         let found = self.temp(Ty::Ptr);
-        self.call_rt(Rt::XferFind, vec![o.clone()], Some(Place::local(found)));
+        self.xfer_find(o.clone(), Place::local(found));
         let again = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Eq, Operand::Copy(Place::local(found)), o.clone()),
@@ -597,11 +590,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let c = self.count_addr(o.clone());
         let glue = cfunc(self.cx.func(Work::Glue(Glue::Drop, ty)));
         self.call_rt(Rt::LkShareMade, vec![c, o.clone(), glue], None);
-        self.call_rt(Rt::XferRecord, vec![o.clone(), o], None);
+        self.xfer_record(o.clone(), o);
         self.goto(unique);
     }
 
-    /// The copy `new` of a `ty` object that a transfer `velt_rt_xfer_share_begin` started made in
+    /// The copy `new` of a `ty` object that a transfer `xferShareBegin` started made in
     /// read mode (`keep` is what `keep_callers` asked): made by the reader, so `LOCAL`, it is
     /// transferred in turn, so it and its parts are no longer the reader's own where the value
     /// goes (as a moved object is), and a later share of the same object (`share_made`) never
@@ -645,16 +638,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// Hand the reference to the counted `ty` object `v`, which the transfer under way replaced
-    /// by a copy, to velt_rt's `transfer_map`: it is released when the transfer ends, so the
+    /// by a copy, to std's transfer map: it is released when the transfer ends, so the
     /// object stays alive (and keeps its count) while copies are looked up by address. True if
     /// so; outside a transfer the caller releases it.
     fn defer_release(&mut self, v: Operand, ty: TyId) -> Operand {
         // Run when this transfer ends, on this thread: in this function's mode.
         let drop = cfunc(self.cx.func_direct(Work::Glue(Glue::Drop, ty), self.mode));
-        self.rt_u8(Rt::XferDefer, vec![v, drop])
+        self.xfer_defer(v, drop)
     }
 
-    /// During a transfer (velt_rt `transfer_map`), the copy already made of the counted object
+    /// During a transfer (std's transfer map), the copy already made of the counted object
     /// `p` (non-null) if it is referenced more than once: `hit` runs with that copy (retained)
     /// and must leave the block. Returns what the lookup found, for `record_copy`.
     pub(in crate::lower) fn find_copy(
@@ -669,7 +662,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let one = self.unique_of(p.clone(), ty);
         self.branch(one, go, look);
         self.switch_to(look);
-        self.call_rt(Rt::XferFind, vec![p], Some(found.clone()));
+        self.xfer_find(p, found.clone());
         let f = Operand::Copy(found);
         let n = self.cast_to(f.clone(), Ty::Ptr, Ty::U64);
         let is_copy = self.rvalue_temp(
@@ -690,7 +683,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let skip = self.new_block();
         let none = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, found, cint(0, Ty::Ptr)));
         self.when(none, skip);
-        self.call_rt(Rt::XferRecord, vec![p, new], None);
+        self.xfer_record(p, new);
         self.goto(skip);
         self.switch_to(skip);
     }

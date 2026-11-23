@@ -1,0 +1,152 @@
+// velt/lang/hooks (tests): the transfer map (transfer.velt, #3584), run by `velt test std/`. The
+// map is keyed by address and never reads the objects, so plain aligned numbers stand for them,
+// and a drop glue that adds up what it releases stands for theirs.
+import { describe, expect, it } from "velt/test";
+import { addressLoad, fnAddress } from "velt/lang/intrinsics";
+import {
+  xferBegin,
+  xferDefer,
+  xferEnd,
+  xferFind,
+  xferForgetSince,
+  xferKeepBegin,
+  xferKeeps,
+  xferMark,
+  xferRecord,
+  xferResume,
+  xferShareBegin,
+  xferSuspend,
+} from "velt/lang/hooks/transfer";
+
+/** The sum of the "objects" `countDrop` released on this thread. */
+const DROPPED = new ThreadLocal<u64>(0);
+
+/** A drop glue: called with a slot holding the object. */
+function countDrop(slot: usize): void {
+  // SAFETY: the transfer map calls it with the slot of a pair it holds.
+  DROPPED.set(DROPPED.get() + unsafe { addressLoad<u64>(slot) });
+}
+
+const A: usize = 0x1000;
+const A2: usize = 0x2000;
+const B: usize = 0x3000;
+const C: usize = 0x5000;
+
+describe("the transfer map", () => {
+  it("finds a copy only inside the transfer that recorded it", () => {
+    DROPPED.set(0);
+    const drop = fnAddress(countDrop);
+    expect(xferFind(A)).toBe(1);
+    xferRecord(A, A2);
+    expect(xferDefer(A, drop)).toBe(0);
+    xferBegin();
+    expect(xferFind(A)).toBe(0);
+    xferRecord(A, A2);
+    xferBegin();
+    expect(xferFind(A)).toBe(A2);
+    expect(xferFind(A2)).toBe(A2);
+    expect(xferFind(B)).toBe(0);
+    // User code runs outside the transfer, then it continues where it was.
+    const depth = xferSuspend();
+    expect(depth).toBe(2);
+    expect(xferFind(A)).toBe(1);
+    xferBegin();
+    expect(xferFind(A)).toBe(0);
+    xferEnd();
+    xferResume(depth);
+    expect(xferFind(A)).toBe(A2);
+    expect(xferDefer(B, drop)).toBe(1);
+    xferEnd();
+    expect(DROPPED.get()).toBe(0);
+    xferEnd();
+    expect(DROPPED.get()).toBe(B as u64);
+    expect(xferFind(A)).toBe(1);
+  });
+
+  it("grows past many copies and forgets them at the end", () => {
+    xferBegin();
+    for (let i: usize = 1; i <= 5000; i++) {
+      xferRecord(i * 16, i * 16 + 8);
+    }
+    let found = 0;
+    for (let i: usize = 1; i <= 5000; i++) {
+      if (xferFind(i * 16) == i * 16 + 8 && xferFind(i * 16 + 8) == i * 16 + 8) {
+        found++;
+      }
+    }
+    expect(found).toBe(5000);
+    xferEnd();
+    xferBegin();
+    expect(xferFind(16)).toBe(0);
+    xferEnd();
+  });
+
+  it("says which kind of transfer the outermost begin started", () => {
+    expect(xferKeeps()).toBe(0);
+    xferKeepBegin();
+    xferBegin();
+    expect(xferKeeps()).toBe(1);
+    xferEnd();
+    xferEnd();
+    expect(xferKeeps()).toBe(0);
+    xferShareBegin();
+    xferKeepBegin();
+    expect(xferKeeps()).toBe(2);
+    xferEnd();
+    xferEnd();
+    expect(xferKeeps()).toBe(0);
+  });
+
+  it("ends what a panicked poll opened, releasing what it deferred", () => {
+    DROPPED.set(0);
+    const drop = fnAddress(countDrop);
+    const mark = xferMark();
+    xferBegin();
+    xferBegin();
+    xferRecord(A, A2);
+    expect(xferDefer(B, drop)).toBe(1);
+    xferForgetSince(mark);
+    expect(DROPPED.get()).toBe(B as u64);
+    expect(xferFind(A)).toBe(1);
+  });
+
+  it("lets a transfer suspended around the poll go on", () => {
+    DROPPED.set(0);
+    const drop = fnAddress(countDrop);
+    xferBegin();
+    xferRecord(A, A2);
+    const depth = xferSuspend();
+    // A class's own clone() runs a poll that catches, which panics inside a transfer of its own,
+    // itself set aside around more user code.
+    const mark = xferMark();
+    xferBegin();
+    expect(xferDefer(C, drop)).toBe(1);
+    xferSuspend();
+    xferBegin();
+    expect(xferDefer(B, drop)).toBe(1);
+    xferForgetSince(mark);
+    expect(DROPPED.get()).toBe((B + C) as u64);
+    expect(xferFind(A)).toBe(1);
+    xferResume(depth);
+    expect(xferFind(A)).toBe(A2);
+    xferEnd();
+    expect(xferFind(A)).toBe(1);
+  });
+
+  it("puts back a transfer the poll suspended", () => {
+    DROPPED.set(0);
+    const drop = fnAddress(countDrop);
+    xferBegin();
+    xferRecord(A, A2);
+    // The poll starts inside the transfer, which its user code sets aside.
+    const mark = xferMark();
+    xferSuspend();
+    xferBegin();
+    expect(xferDefer(C, drop)).toBe(1);
+    xferForgetSince(mark);
+    expect(DROPPED.get()).toBe(C as u64);
+    expect(xferFind(A)).toBe(A2);
+    xferEnd();
+    expect(xferFind(A)).toBe(1);
+  });
+});

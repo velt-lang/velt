@@ -87,19 +87,27 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// First thing in `velt_main`: hands the runtime the table of the process statics
     /// (`velt_rt_statics`, rt_abi.md "Process statics", #2779). The table is read-only data:
     /// its size, the function releasing the references static atomics hold (null when the
-    /// program has none), and the address of each process static of std (velt_common
-    /// `std_hooks.rs`, `process_static`; null when the std root lacks it). No call when the table
-    /// would be empty. The release is filled in once the program is built (`Cx::statics_drop`):
-    /// only a static atomic the code uses needs it, whatever else std defines.
+    /// program has none), the address of each process static of std (velt_common
+    /// `std_hooks.rs`, `process_static`; null when the std root lacks it), and the transfer map's
+    /// functions the runtime calls (std/lang/hooks/transfer.velt, #3584: `xferKeeps`, `xferMark`,
+    /// `xferForgetSince`). No call when the table would be empty. The release and the transfer
+    /// map's functions are filled in once the program is built (`Cx::statics_drop`): only a
+    /// static atomic the code uses needs the release, and only a program that transfers a value
+    /// the map, whatever else std defines.
     pub(super) fn register_statics(&mut self) {
-        const SIZE: u64 = 24;
+        const SIZE: u64 = 48;
         let drop = !self.cx.reference_statics().is_empty();
         let epoch = self
             .cx
             .global_def(velt_common::std_hook!(str_epoch))
             .and_then(|d| self.static_atomic_data(d))
             .map(Const::Static);
-        if !drop && epoch.is_none() {
+        // The transfer map's slots are filled in once the program is built, where it transfers
+        // anything (`Cx::xfer_fill`); a program without std has none to fill.
+        let xfer = XFER_SLOTS
+            .iter()
+            .all(|(_, name)| self.cx.checked_hook(name).is_some());
+        if !drop && epoch.is_none() && !xfer {
             return;
         }
         let mut bytes = vec![0u8; SIZE as usize];
@@ -108,6 +116,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let id = StaticId(self.cx.statics.len() as u32);
         if drop {
             self.cx.statics_table = Some(id);
+        }
+        if xfer {
+            self.cx.xfer_table = Some(id);
         }
         self.cx.statics.push(StaticData {
             bytes,
@@ -148,22 +159,55 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 }
 
+/// The transfer map's functions in the statics table: each slot's offset and hook.
+const XFER_SLOTS: [(u32, &str); 3] = [
+    (24, velt_common::std_hook!(xfer_keeps)),
+    (32, velt_common::std_hook!(xfer_mark)),
+    (40, velt_common::std_hook!(xfer_forget_since)),
+];
+
 impl super::Cx<'_> {
     /// Once every other function is built: when the code uses a static atomic holding a
-    /// reference, the function releasing them, in the statics table (`register_statics`).
-    /// Whether it queued it.
+    /// reference, the function releasing them, and when it transfers a value, the transfer map's
+    /// functions, in the statics table (`register_statics`). Whether it queued any.
     pub(super) fn statics_drop(&mut self) -> bool {
+        let xfer = self.xfer_fill();
         let Some(table) = self.statics_table.take() else {
-            return false;
+            return xfer;
         };
         if !self.statics_used() {
-            return false;
+            return xfer;
         }
         let f = self.func(Work::StaticsDrop);
         self.statics[table.0 as usize]
             .relocs
             .insert(0, (8, Const::Func(f)));
         true
+    }
+
+    /// When the code called std's transfer map (transfer_map.rs), its functions the runtime
+    /// calls, in the statics table: the runtime asks them only while a transfer may be under
+    /// way, which a program that never transfers never has. Whether it queued them.
+    fn xfer_fill(&mut self) -> bool {
+        if !self.xfer_used {
+            return false;
+        }
+        let Some(table) = self.xfer_table.take() else {
+            return false;
+        };
+        for (at, name) in XFER_SLOTS {
+            let Some(def) = self.checked_hook(name) else {
+                continue;
+            };
+            let f = self.func(Work::Fn(def, vec![]));
+            self.statics[table.0 as usize].relocs.push((at, Const::Func(f)));
+        }
+        true
+    }
+
+    /// The definition of hook `name`, if std has it checked.
+    fn checked_hook(&self, name: &str) -> Option<hir::DefId> {
+        (self.prelude_def(name)).filter(|d| !self.hir.unchecked.contains(d))
     }
 
     /// Does the code use a static atomic holding a reference (`statics_drop`)?

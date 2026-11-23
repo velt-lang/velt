@@ -93,7 +93,8 @@ static STATICS_DROP: std::sync::atomic::AtomicPtr<()> =
 /// table of its process statics (`statics.rs`): the generated function that releases the
 /// references its static atomics hold (an `Atomic<shared<T> | null>` module constant made with
 /// `null`), which the runtime calls at exit when it drops the module state, for the leak
-/// counters; and std's `STR_EPOCH`, the epoch of the position cache.
+/// counters; std's `STR_EPOCH`, the epoch of the position cache; and the transfer map's
+/// functions the runtime calls (std/lang/hooks/transfer.velt).
 ///
 /// # Safety
 /// `t` points at a table laid out as [`crate::statics::Statics`], at least `size` bytes, whose
@@ -107,6 +108,7 @@ pub unsafe extern "C" fn velt_rt_statics(t: *const crate::statics::Statics) {
     if !epoch.is_null() {
         crate::str::use_epoch(epoch);
     }
+    crate::statics::adopt_transfer_map(t);
 }
 
 /// At exit, for the leak counters only: the static atomics' references, after the module state.

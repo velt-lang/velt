@@ -23,7 +23,8 @@
 //! - `uses_placement`, `sched_tasks` with the declared start and spawn runtime functions
 //!   (`reaches_tasks`), `sched_used` (`module_sched`: module state through the executor's
 //!   hooks), the static atomics the code uses (`statics_used`: the release `_Gstatics_drop`
-//!   registered in `velt_main`), `facts`, `boxing` (kept.rs `relower`): whether a task is pinned
+//!   registered in `velt_main`), `xfer_used` (the transfer map's functions in the same table),
+//!   `facts`, `boxing` (kept.rs `relower`): whether a task is pinned
 //!   or started, whether the program runs on the executor, what lowering learned of the program,
 //!   the counted types.
 //!
