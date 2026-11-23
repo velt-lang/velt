@@ -72,7 +72,8 @@ impl FnCx<'_, '_> {
             if let Some(scope) = s.f.scopes.last_mut() {
                 scope.names.insert(name, l);
             }
-            let r = s.expr(&rest, exp, want);
+            // On an `any`, as `short_circuit_at` checks a dynamic chain's rest: no expected type.
+            let r = s.expr(&rest, None, want);
             s.pop_scope();
             let (rty, span) = (r.ty, r.span);
             s.block_with(vec![(l, called)], r, rty, span)
