@@ -10,7 +10,7 @@ import { IoError } from "velt/io/error";
 import { noteStdUse } from "velt/lang/intrinsics";
 import { errorCodeName } from "velt/native/error";
 import { IoResult } from "velt/native/result";
-import * as fio from "velt/net/fd_io";
+import { velt_rt_tcp_close, velt_rt_tcp_connect } from "#net-tcp";
 import * as fs from "velt/net/fd_socket";
 import { TcpStream } from "velt/net/tcp_stream";
 import { FdTlsConn } from "velt/net/tls/fd_conn";
@@ -50,7 +50,7 @@ export async function connectTls(
   limitMs: i64 = HANDSHAKE_MS,
 ): Promise<IoResult<u64>, IoError> {
   const name = serverName == "" ? hostOf(addr) : serverName;
-  const d = await fs.connect(addr);
+  const d = await velt_rt_tcp_connect(addr);
   if (d.code !== 0) {
     return d;
   }
@@ -127,7 +127,7 @@ export async function handshakeWithin(
   stop.abort();
   if (!a.done) {
     // Closing the socket fails the handshake's wait, so its task ends.
-    fio.close(fd);
+    velt_rt_tcp_close(fd);
     await running;
     if (signal != null) {
       signal.throwIfAborted();
@@ -136,7 +136,7 @@ export async function handshakeWithin(
   }
   const failure = a.failure;
   if (failure != null) {
-    fio.close(fd);
+    velt_rt_tcp_close(fd);
     throw failure;
   }
   return a.engine!;

@@ -42,21 +42,24 @@ export class FdServerSessions implements TlsSessions {
 }
 
 /**
- * Binds a TLS listener on the reactor; null when the Velt server can't sign with the key (RSA, a
- * curve other than P-256, Ed25519: the runtime's listener takes those). Throws `IoError`
- * `EINVAL` for a certificate or key that is not valid PEM.
+ * A TLS listener served in Velt with any key kind the server signs with (P-256, P-384, Ed25519,
+ * RSA; #2392 step 6): on `addr`, bound on the reactor, or on `handed` when not 0 (the runtime's
+ * plain listener under `velt dev`, whose supervisor keeps the socket, or with no reactor). Null
+ * for a key of another kind. Throws `IoError` `EINVAL` for a certificate or key that is not valid
+ * PEM.
  */
 export async function listenTls(
   addr: string,
   cert: string,
   key: string,
   alpn: string,
+  handed: u64,
 ): Promise<IoResult<u64> | null, IoError> {
-  const sk = serverKey(cert, key);
+  const sk = serverKey(cert, key, true);
   if (sk == null) {
     return null;
   }
-  const l = await fs.listenOn(addr);
+  const l = handed != 0 ? fs.value(handed) : await fs.listenOn(addr);
   if (l.code !== 0) {
     return l;
   }
@@ -73,7 +76,8 @@ extend TlsListenSide implements ListenHook {
     cert: string,
     key: string,
     alpn: string,
+    handed: u64,
   ): Promise<IoResult<u64> | null> {
-    return await listenTls(addr, cert, key, alpn);
+    return await listenTls(addr, cert, key, alpn, handed);
   }
 }

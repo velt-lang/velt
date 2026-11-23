@@ -1,0 +1,51 @@
+// velt/net (tests): `listenTls` serves every key kind in Velt (#2392 step 6): P-256, P-384
+// (PKCS#8 and SEC 1), Ed25519 and RSA (PKCS#8 and PKCS#1). The client checks the chain (against a
+// test CA), the name localhost, and the handshake's signature with the certificate's key.
+import { describe, expect, it } from "velt/test";
+import { connectTls, listenTls } from "velt/net";
+import * as v from "./_listen_keys";
+
+// One request and its answer over a `connectTls` connection to a `listenTls` server with `cert`
+// and `key`.
+async function roundTrip(cert: string, key: string): Promise<string> {
+  const server = await listenTls("127.0.0.1:0", { cert: cert, key: key });
+  const serving = spawn(
+    (async () => {
+      const c = await server.accept();
+      const got = await c.readString();
+      await c.write(`echo ${got}`);
+      c.shutdown();
+      c.close();
+    })(),
+  );
+  const t = await connectTls(`localhost:${server.port}`, { ca: v.CA });
+  await t.write("hello");
+  let answer = "";
+  while (true) {
+    const chunk = await t.read();
+    if (chunk.length == 0) {
+      break;
+    }
+    answer += String.fromCharCode(...chunk);
+  }
+  t.close();
+  await serving;
+  server.close();
+  return answer;
+}
+
+describe("listenTls", () => {
+  it("serves P-256, P-384, Ed25519 and RSA keys", async () => {
+    const pairs: string[][] = [
+      ["P-256", v.P256_LEAF, v.P256_PKCS8],
+      ["P-384 PKCS#8", v.P384_LEAF, v.P384_PKCS8],
+      ["P-384 SEC 1", v.P384_LEAF, v.P384_SEC1],
+      ["Ed25519", v.ED_LEAF, v.ED_PKCS8],
+      ["RSA PKCS#8", v.RSA_LEAF, v.RSA_PKCS8],
+      ["RSA PKCS#1", v.RSA_LEAF, v.RSA_PKCS1],
+    ];
+    for (const p of pairs) {
+      expect(`${p[0]}: ${await roundTrip(p[1], p[2])}`).toBe(`${p[0]}: echo hello`);
+    }
+  });
+});
