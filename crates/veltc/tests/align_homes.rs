@@ -168,21 +168,11 @@ fn a_generator_object_and_a_channel_slot_are_laid_out_for_the_alignment() {
     // Each generator object: its block aligned to the state's 32 bytes, the object `lead` bytes
     // into it, so that the state at the generator class's offset is aligned; a counted object's
     // count in the word before it, inside the lead.
-    let placed = generator_placements(&vir);
-    assert!(!placed.is_empty(), "no aligned generator object in:\n{vir}");
-    for p in &placed {
-        assert_eq!(
-            (p.lead + p.state_off) % p.align,
-            0,
-            "{p:?}: the state is not aligned in:\n{vir}"
-        );
-        if p.counted {
-            assert!(p.lead >= 8, "{p:?}: no room for the count in:\n{vir}");
-        }
-    }
+    let placed = placed_generators(&vir);
+    // One generator object is shared, which makes the program's generator objects counted.
     assert!(
-        placed.iter().any(|p| p.counted),
-        "no counted generator object in:\n{vir}"
+        placed.iter().all(|p| p.counted),
+        "an uncounted generator object in:\n{vir}"
     );
     assert!(
         (vir.lines()).any(|l| l.contains("velt_rt_free(") && l.contains(", 32_u64)")),
@@ -256,4 +246,85 @@ fn generator_placements(vir: &str) -> Vec<Placement> {
         }
     }
     out
+}
+
+/// The generator objects of `vir` (at least one), each with its state aligned and, when counted,
+/// its count inside the lead.
+fn placed_generators(vir: &str) -> Vec<Placement> {
+    let placed = generator_placements(vir);
+    assert!(!placed.is_empty(), "no aligned generator object in:\n{vir}");
+    for p in &placed {
+        assert_eq!(
+            (p.lead + p.state_off) % p.align,
+            0,
+            "{p:?}: the state is not aligned in:\n{vir}"
+        );
+        if p.counted {
+            assert!(p.lead >= 8, "{p:?}: no room for the count in:\n{vir}");
+        }
+    }
+    placed
+}
+
+/// A program that shares no generator object, so its objects are uncounted.
+const UNCOUNTED: &str = r#"import { align } from "velt/compiler";
+
+@align(32)
+struct L {
+  a: u64;
+  b: u64;
+  c: u64;
+  d: u64;
+}
+
+function* steps(n: u64): Generator<u64> {
+  const l: L = { a: n, b: n * 2, c: n * 3, d: n * 4 };
+  yield l.a;
+  yield l.d;
+}
+
+function main() {
+  let total: u64 = 0;
+  for (let i: u64 = 0; i < 300; i++) {
+    const g = steps(i);
+    const r = g.next();
+    if (!r.done) {
+      total += r.value;
+    }
+    const s = g.next();
+    if (!s.done) {
+      total += s.value;
+    }
+  }
+  console.log(total);
+}
+"#;
+
+/// An uncounted generator object: no count word, so its lead is only what aligns the state
+/// (`gen_lead`'s other arm); the program prints 5 · (0 + … + 299).
+#[test]
+fn an_uncounted_generator_object_is_laid_out_for_the_alignment() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.velt"), UNCOUNTED).unwrap();
+    let o = velt(dir.path(), &["build", "main.velt", "--emit", "vir"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let vir = String::from_utf8_lossy(&o.stdout).to_string();
+    let placed = placed_generators(&vir);
+    assert!(
+        placed.iter().all(|p| !p.counted),
+        "a counted generator object in:\n{vir}"
+    );
+    for release in [false, true] {
+        let mut args = vec!["run", "main.velt"];
+        if release {
+            args.push("--release");
+        }
+        let o = velt(dir.path(), &args);
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "224250\n",
+            "release: {release}"
+        );
+    }
 }
