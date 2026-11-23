@@ -158,7 +158,7 @@ export function onePass(prog: Program, m: Search, s: string, len: usize, start: 
       pc++;
     } else if (op == OP_ASSERT) {
       // `$`, `readsInOnePass` says: where the subject ends.
-      if (pos != strByteLen(s)) {
+      if (pos != len) {
         return failed(m, fuel);
       }
       pc++;

@@ -138,15 +138,58 @@ describe("Every match by the scan and the reader", () => {
       "key1=22; k=x; z9=7;".repeat(20),
       "é<é>|é|<ü>",
       "acxx abx ax acx " + "aab acx".repeat(40),
+      // A match after one that captured a group the next does not.
+      "axy",
+      "axbyz",
     ];
-    for (const p of ["<[^>]*>", ">.*\n|\n", "\|[^|][^|]*\|", "(\w+)=(\d+);", "(ab|ac)x+"]) {
+    const patterns = [
+      "<[^>]*>",
+      ">.*\\n|\\n",
+      "\\|[^|][^|]*\\|",
+      "(\\w+)=(\\d+);",
+      "(ab|ac)x+",
+      "(a)x|y",
+      "(a)x|(b)y|z",
+    ];
+    for (const p of patterns) {
       const prog = program(p);
+      expect(prog.onePass).toBe(true);
       for (const s of subjects) {
         const m = new Search(2 * (prog.groups as usize) + 2);
         findAll(prog, m, s);
         expect(m.found).toEqual(allByPike(prog, s));
       }
     }
+  });
+});
+
+describe("A case-insensitive pattern with a letter that folds past ASCII", () => {
+  it("finds the letters after it in either case", () => {
+    // `k` is also the Kelvin sign and `s` the long s under `iu`: the literals after them are
+    // not all letters at one offset, which the scan cannot fold.
+    const cases: string[][] = [
+      ["ke", "KE"],
+      ["ke", "kE"],
+      ["ke", "KEX"],
+      ["ke", "Ke"],
+      ["k(e)", "KE"],
+      ["k[e]", "KE"],
+      ["ke|zz", "KE"],
+      ["ke\\d", "KE1"],
+      ["\\bke", "KE"],
+      ["ke$", "KE"],
+      ["ka", "KA"],
+      ["sa", "SA"],
+      ["xke", "XKE"],
+    ];
+    for (const c of cases) {
+      const prog = program(c[0], "iu");
+      const m = new Search(2 * (prog.groups as usize) + 2);
+      expect(find(prog, m, c[1], 0, false)).toBe(true);
+    }
+    const all = new Search(2);
+    findAll(program("key\\d", "iu"), all, "Key9 KEY7 key");
+    expect(all.found).toEqual([0, 4, 5, 9]);
   });
 });
 

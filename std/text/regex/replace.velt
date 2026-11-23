@@ -153,10 +153,8 @@ export function replaceMatches(
   }
   // A plain replacement is appended from where its bytes are, as the pieces of the subject are.
   const textAt = strDataAddress(replacement);
-  const textSize = counted(
-    strByteLen(replacement) as u64,
-    strLen(replacement) == strByteLen(replacement),
-  );
+  const textBytes = strByteLen(replacement);
+  const textSize = counted(textBytes as u64, strLen(replacement) == textBytes);
   let buf = "";
   velt_rt_strbuf_new(len as u64, buf);
   let last: usize = 0;
@@ -179,7 +177,9 @@ export function replaceMatches(
         velt_rt_strbuf_push_bytes(buf, bytes, size);
       }
     }
-    if (plain && textSize != 0) {
+    if (plain && textBytes > MAX_PIECE) {
+      velt_rt_strbuf_push_str(buf, replacement);
+    } else if (plain && textBytes != 0) {
       // SAFETY: `replacement` is borrowed for the call and not changed; its bytes are whole
       // characters, only read by the append, into `buf`, which is not `replacement`.
       const bytes = unsafe { ptrFromAddress<u8>(textAt) };

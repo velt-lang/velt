@@ -16,7 +16,7 @@ import {
   REPEAT,
   SET,
 } from "velt/text/regex/node";
-import { Program, SCAN_FIRST, SCAN_GRAMS } from "velt/text/regex/program";
+import { Program, SCAN_FIRST, SCAN_GRAMS, SCAN_NONE } from "velt/text/regex/program";
 
 /** The most strings a set of literals holds, and the most characters of a class that are
  * spelled out into them. */
@@ -301,17 +301,39 @@ function chooseGrams(prog: Program, lits: string[], min: usize): bool {
 
 /** Per offset of the grams, what the scan ORs into the subject's bytes there before it
  * compares them: 0x20 when the literals' letters are folded and every tuple has a lower case
- * letter at that offset (an upper case one then compares equal), else 0. */
-function foldGrams(prog: Program, folded: bool): void {
+ * letter at that offset (an upper case one then compares equal), else 0. False when the scan
+ * would miss matches: the letters are folded, and an offset has a lower case letter in one tuple
+ * and something else in another, so it cannot be folded (`/ke/iu`: `k` is also the Kelvin sign,
+ * whose second byte is beside the `e` of the other literals), and its letter's upper case would
+ * not compare equal. */
+function foldGrams(prog: Program, folded: bool): bool {
   const size = prog.gramSize;
   for (let j: usize = 0; j < size; j++) {
     let letters = folded;
-    for (let t = j; t < prog.grams.length && letters; t += size) {
-      letters = prog.grams[t] >= 0x61 && prog.grams[t] <= 0x7a;
+    let lower = false;
+    for (let t = j; t < prog.grams.length; t += size) {
+      const isLower = prog.grams[t] >= 0x61 && prog.grams[t] <= 0x7a;
+      letters = letters && isLower;
+      lower = lower || isLower;
+    }
+    if (folded && !letters && lower) {
+      return false;
     }
     prog.gramFold.push(letters ? 0x20 : 0);
     prog.gramFolded = prog.gramFolded || letters;
   }
+  return true;
+}
+
+/** Undoes what `chooseGrams` and `foldGrams` put in `prog`: it has no grams' scan. */
+function dropGrams(prog: Program): void {
+  prog.grams = [];
+  prog.gramAt = [];
+  prog.gramSize = 0;
+  prog.gramFold = [];
+  prog.gramFolded = false;
+  prog.minBytes = 0;
+  prog.scan = SCAN_NONE;
 }
 
 /** Stores the first eight bytes of each literal of an `exact` program as a word, after the
@@ -343,13 +365,15 @@ export function analyze(prog: Program, tree: Node): void {
   if (min > 0) {
     prog.literals = lits.list;
     if (chooseGrams(prog, lits.list, min)) {
-      foldGrams(prog, lits.folded);
-      // A folded letter is found whatever its case, and a matcher checks what was found.
-      prog.exact = whole && lits.exact && !lits.folded;
-      if (prog.exact) {
-        literalWords(prog);
+      if (foldGrams(prog, lits.folded)) {
+        // A folded letter is found whatever its case, and a matcher checks what was found.
+        prog.exact = whole && lits.exact && !lits.folded;
+        if (prog.exact) {
+          literalWords(prog);
+        }
+        return;
       }
-      return;
+      dropGrams(prog);
     }
   }
   const empty = firstBytes(tree, prog.first, prog.units);
@@ -367,6 +391,7 @@ export function analyze(prog: Program, tree: Node): void {
     return;
   }
   if (count > 0 && count == bytes.length && chooseGrams(prog, bytes, 1)) {
+    // Not folded: it never fails.
     foldGrams(prog, false);
     return;
   }
