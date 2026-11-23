@@ -616,7 +616,15 @@ fn speed_round(
         changed |= t.time("constfold", || constfold::run(&fold, func));
         changed |= t.time("copyprop", || copyprop::run(func));
         changed |= t.time("addr_forward", || addr_forward::run(aggs, func));
-        changed |= t.time("heap_sroa", || heap_sroa::run(aggs, allocator, func));
+        let sroa = t.time("heap_sroa", || heap_sroa::run(aggs, allocator, func));
+        if sroa.vtables {
+            // Their calls direct in this round, for the next one to inline.
+            t.time("vtable_loads", || {
+                vtable_loads::run(aggs, statics, allocator, func)
+            });
+            t.time("constfold", || constfold::run(&fold, func));
+        }
+        changed |= sroa.any();
         changed |= t.time("enum_sroa", || enum_sroa::run(aggs, func));
         changed |= t.time("sroa", || sroa::run(aggs, func));
         changed |= t.time("dce", || dce::run(aggs, func));

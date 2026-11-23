@@ -274,7 +274,7 @@ fn random_programs_keep_their_results() {
         let mut alone = original.clone();
         let aggs = alone.aggs.clone();
         let allocator = Allocator::find(&alone);
-        replaced += usize::from(run(&aggs, allocator, &mut alone.funcs[0]));
+        replaced += usize::from(run(&aggs, allocator, &mut alone.funcs[0]).replaced);
         assert_valid(&alone);
         let mut pipeline = original.clone();
         crate::optimize(&mut pipeline, crate::OptLevel::Speed);

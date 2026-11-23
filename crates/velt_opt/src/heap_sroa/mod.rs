@@ -43,6 +43,7 @@
 //! every object there.
 
 mod aliases;
+mod devirt;
 mod flow;
 mod rewrite;
 mod webs;
@@ -75,20 +76,37 @@ impl Allocator {
     }
 }
 
-/// Replace the non-escaping heap objects of `func`; returns whether anything changed.
-pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut Function) -> bool {
+/// What [`run`] did to a function.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub(crate) struct Done {
+    /// Objects were replaced.
+    pub replaced: bool,
+    /// Vtables of objects kept on the heap became known (`devirt`): `vtable_loads` and
+    /// `constfold` can make their calls direct now, for the next round to inline.
+    pub vtables: bool,
+}
+
+impl Done {
+    pub fn any(self) -> bool {
+        self.replaced || self.vtables
+    }
+}
+
+/// Replace the non-escaping heap objects of `func`.
+pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut Function) -> Done {
     let Some(allocator) = allocator else {
-        return false;
+        return Done::default();
     };
     let Some(mut webs) = webs::scan(aggs, allocator, func) else {
-        return false;
+        return Done::default();
     };
+    let vtables = devirt::run(allocator, func, &webs);
     let updates = flow::check(allocator, func, &mut webs);
-    if !webs.any() {
-        return false;
+    let replaced = webs.any();
+    if replaced {
+        rewrite::apply(aggs, allocator, func, &webs, &updates);
     }
-    rewrite::apply(aggs, allocator, func, &webs, &updates);
-    true
+    Done { replaced, vtables }
 }
 
 #[cfg(test)]

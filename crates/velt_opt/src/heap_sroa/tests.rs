@@ -148,7 +148,7 @@ fn check(original: Program, inputs: &[u64], expect_replaced: bool) -> Program {
     let aggs = p.aggs.clone();
     let allocator = Allocator::find(&p);
     let last = p.funcs.len() - 1;
-    let changed = run(&aggs, allocator, &mut p.funcs[last]);
+    let changed = run(&aggs, allocator, &mut p.funcs[last]).replaced;
     assert_eq!(changed, expect_replaced, "{p}");
     assert_valid(&p);
     for &n in inputs {
@@ -306,7 +306,7 @@ fn returned_objects_keep_the_heap() {
     let mut p = env.pb.finish();
     let aggs = p.aggs.clone();
     let allocator = Allocator::find(&p);
-    assert!(!run(&aggs, allocator, &mut p.funcs[0]));
+    assert!(!run(&aggs, allocator, &mut p.funcs[0]).any());
 }
 
 #[test]

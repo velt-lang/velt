@@ -3,8 +3,8 @@
 //! mention of its locals is one the rewrite understands.
 
 use velt_vir::vir::{
-    AggId, AggLayout, BinOp, Callee, Const, Function, Local, Operand, Place, Proj, Rvalue, Stmt,
-    Terminator, Ty,
+    AggId, AggLayout, BinOp, Callee, Const, Function, Local, Operand, Place, Proj, Rvalue,
+    StaticId, Stmt, Terminator, Ty,
 };
 
 use super::Allocator;
@@ -19,6 +19,9 @@ pub(super) struct Webs {
     objs: Vec<Option<AggId>>,
     /// Per web: whether its blocks hold a reference count in the 8 bytes before the object.
     counted: Vec<bool>,
+    /// Per local: the vtable of the objects it holds, when its group would be replaced but for
+    /// calls through that vtable that are given the object (`devirt`).
+    pub vtable_of: Vec<Option<StaticId>>,
 }
 
 impl Webs {
@@ -75,6 +78,12 @@ struct Facts {
     /// Where `(*w as u64)` is accessed: the count in front of a counted object.
     counts: Vec<i128>,
     sizes: Vec<Size>,
+    /// Indirect calls given the object alone (`call f(w)`): a drop or method through its vtable.
+    calls: bool,
+    /// What is stored in the object's first field (`Some` for a static's address).
+    firsts: Vec<Option<StaticId>>,
+    /// The whole object is stored at once (its first field with it).
+    stored_whole: bool,
 }
 
 /// Group the pointer locals of `func` and keep the groups whose objects can live in locals;
@@ -225,7 +234,10 @@ impl Scanner {
                 match self.whole(dst) {
                     Some(_) if self.whole_def(rv) => return,
                     Some(d) => self.bad(d),
-                    None => self.place(dst),
+                    None => {
+                        self.place(dst);
+                        self.first_store(dst, rv);
+                    }
                 }
                 self.rvalue(rv);
             }
@@ -253,6 +265,25 @@ impl Scanner {
             (_, Some((src, _))) => self.whole(src).is_some(),
             (Rvalue::Use(op), None) => is_null(op),
             _ => false,
+        }
+    }
+
+    /// A store into the object's first field (its vtable, in a class with one), or of the
+    /// whole object.
+    fn first_store(&mut self, dst: &Place, rv: &Rvalue) {
+        if !self.is_cand(dst.local) {
+            return;
+        }
+        match dst.proj.as_slice() {
+            [Proj::Deref(Ty::Agg(_)), Proj::Field(0)] => {
+                let first = match rv {
+                    Rvalue::Use(Operand::Const(Const::Static(id), Ty::Ptr)) => Some(*id),
+                    _ => None,
+                };
+                self.facts(dst.local).firsts.push(first);
+            }
+            [Proj::Deref(Ty::Agg(_))] => self.facts(dst.local).stored_whole = true,
+            _ => {}
         }
     }
 
@@ -304,6 +335,28 @@ impl Scanner {
 
     fn term(&mut self, t: &Terminator) {
         if let Terminator::Call {
+            callee: Callee::Ptr { target, .. },
+            args,
+            dest,
+            ..
+        } = t
+        {
+            if let [Operand::Copy(p)] = &args[..] {
+                if let Some(w) = self.whole(p) {
+                    // A drop, or a getter (`buffer`, `byteLength`) through the vtable.
+                    self.facts(w).calls = true;
+                    self.operand(target);
+                    if let Some(d) = dest {
+                        match self.whole(d) {
+                            Some(r) => self.bad(r),
+                            None => self.place(d),
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        if let Terminator::Call {
             callee: Callee::Extern(e),
             args,
             dest,
@@ -349,14 +402,20 @@ impl Scanner {
         let mut objs = Vec::new();
         let mut counted = Vec::new();
         let mut root_web: Vec<Option<u32>> = vec![None; n];
+        let mut vtable_of = vec![None; n];
         for (l, slot) in web_of.iter_mut().enumerate() {
             if !self.cand[l] {
                 continue;
             }
             let (root, _) = self.groups.find(l);
-            let Some(fit) = replaceable(aggs, &self.facts[root]) else {
+            let facts = &self.facts[root];
+            let Some(fit) = replaceable(aggs, facts) else {
                 continue;
             };
+            if facts.calls {
+                vtable_of[l] = vtable(aggs, fit.obj, facts);
+                continue;
+            }
             let web = *root_web[root].get_or_insert_with(|| {
                 objs.push(Some(fit.obj));
                 counted.push(fit.counted);
@@ -364,10 +423,12 @@ impl Scanner {
             });
             *slot = Some(web);
         }
-        (!objs.is_empty()).then_some(Webs {
+        let devirt = vtable_of.iter().any(Option::is_some);
+        (!objs.is_empty() || devirt).then_some(Webs {
             web_of,
             objs,
             counted,
+            vtable_of,
         })
     }
 }
@@ -413,4 +474,16 @@ fn replaceable(aggs: &[AggLayout], facts: &Facts) -> Option<Fit> {
     let counts_fit = facts.counts.iter().all(|&at| at == start);
     let splittable = (1..=MAX_FIELDS).contains(&layout.fields.len()) && fields_cover(aggs, layout);
     (sizes_fit && counts_fit && splittable).then_some(Fit { obj, counted })
+}
+
+/// The one vtable a group's objects get (a static's address stored in their first field, a
+/// pointer at offset 0, and nothing else ever stored there), if there is one.
+fn vtable(aggs: &[AggLayout], obj: AggId, facts: &Facts) -> Option<StaticId> {
+    let first = aggs.get(obj.0 as usize)?.fields.first();
+    if first != Some(&(Ty::Ptr, 0)) || facts.stored_whole {
+        return None;
+    }
+    let (&head, rest) = facts.firsts.split_first()?;
+    let id = head?;
+    rest.iter().all(|f| *f == Some(id)).then_some(id)
 }
