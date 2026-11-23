@@ -193,6 +193,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
   if (
     (fl & (RUNNING | QUEUED | YIELDING)) === 0 &&
     m.ld(e + t.E_ADOPTING) === 0 &&
+    task !== 0 &&
     wk.taskOf(m.ld(cx + 8)) === task
   ) {
     if ((fl & CATCHES) !== 0 || m.ld(e + nc.E_CATCHING) >= 2) {
@@ -255,7 +256,7 @@ export function nodeDrop(f: usize): void {
         stateDrop(m.ld(n + N_DROP), f + 16);
       }
     }
-  } else if (!aw.ownSide(n)) {
+  } else if (!aw.ownSide(n, fl)) {
     // The finish may run on another worker meanwhile (sched_node_await.velt): the one that comes
     // second drops the result. DELIVERED is the owner's own (this thread's).
     const prev = m.or32(n + N_FLAGS, DETACHED);
