@@ -8,7 +8,9 @@ import { localToUtc } from "velt/time/local";
 // The largest distance from the epoch a JS date can be (100,000,000 days).
 const MAX_TIME: f64 = 8640000000000000.0;
 
-// JS's TimeClip: NaN outside ±8.64e15 ms, else the time truncated to whole milliseconds.
+/**
+ * JS's TimeClip: NaN outside ±8.64e15 ms, else the time truncated to whole milliseconds.
+ */
 export function timeClip(t: f64): f64 {
   if (!(t >= -MAX_TIME && t <= MAX_TIME)) {
     return 0.0 / 0.0;
@@ -21,10 +23,12 @@ export function timeClip(t: f64): f64 {
 const MAX_YEAR: f64 = 1000000;
 const MAX_MONTH: f64 = 10000000;
 
-// The epoch time of calendar fields `[year, month 0-11, day, hours, minutes, seconds, ms]`, UTC
-// or local, as ECMA-262's MakeDay, MakeTime and MakeDate compute it in doubles: NaN if one is not
-// finite, if the year or month is past V8's bounds, or if the time is out of range (TimeClip), so
-// a huge field never wraps. The year is taken as given (see `fullYear`).
+/**
+ * The epoch time of calendar fields `[year, month 0-11, day, hours, minutes, seconds, ms]`, UTC
+ * or local, as ECMA-262's MakeDay, MakeTime and MakeDate compute it in doubles: NaN if one is not
+ * finite, if the year or month is past V8's bounds, or if the time is out of range (TimeClip), so
+ * a huge field never wraps. The year is taken as given (see `fullYear`).
+ */
 export function fromFields(utc: bool, fields: f64[]): f64 {
   for (const f of fields) {
     if (!(f - f == 0.0)) {
@@ -53,16 +57,20 @@ export function fromFields(utc: bool, fields: f64[]): f64 {
   return timeClip(utc ? t : localToUtc(t as i64) as f64);
 }
 
-// JS's MakeFullYear: a year of 0-99 means 1900-1999. Only the constructor and `Date.UTC` apply
-// it; the setters take the year as given.
+/**
+ * JS's MakeFullYear: a year of 0-99 means 1900-1999. Only the constructor and `Date.UTC` apply
+ * it; the setters take the year as given.
+ */
 export function fullYear(y: f64): f64 {
   const whole = Math.trunc(y);
   return whole >= 0.0 && whole <= 99.0 ? whole + 1900.0 : y;
 }
 
-// Is `s` a date-time without an offset (`2024-01-15T10:30`, `+275760-09-13T00:00`), which JS
-// reads as local time? The date is 10 characters, or 13 with an extended year (a sign and six
-// digits).
+/**
+ * Is `s` a date-time without an offset (`2024-01-15T10:30`, `+275760-09-13T00:00`), which JS
+ * reads as local time? The date is 10 characters, or 13 with an extended year (a sign and six
+ * digits).
+ */
 export function isLocalForm(s: string): bool {
   const text = s.trim();
   const date: usize = text.startsWith("+") || text.startsWith("-") ? 13 : 10;
