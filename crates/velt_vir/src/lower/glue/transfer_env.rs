@@ -139,6 +139,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
         );
         let caps = lw.value_captures(def);
         let cells = lw.cell_captures(def);
+        let sym = format!(
+            "_Genv_transfer_{}",
+            lw.cx.instance_symbol(&closure_name(lw.cx.hir, def), targs)
+        );
+        if let Some(name) = lw.weak_capture_name(def) {
+            // Its slot belongs to this task's weak core (weak_captures.rs). Sema rejects the
+            // visible cases (velt_sema weak_threads.rs); this is a function value it cannot see.
+            let msg = format!(
+                "a function value that captured the `weak` variable `{name}` cannot go to another thread (`spawn`, a channel, `shared(...)` or a `Mutex`'s value): a `weak` variable belongs to the task that set it"
+            );
+            lw.check_if_tagged(env, |lw, _| lw.walk_panic(&msg));
+            lw.panic_msg(&msg);
+            lw.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
+            return lw.finish(sym, vec![Ty::Ptr], Ty::Ptr);
+        }
         let uncopyable = caps
             .iter()
             .find(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.uncopyable(*ty))
@@ -254,10 +269,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
         }
         lw.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
-        let sym = format!(
-            "_Genv_transfer_{}",
-            lw.cx.instance_symbol(&closure_name(lw.cx.hir, def), targs)
-        );
         lw.finish(sym, vec![Ty::Ptr], Ty::Ptr)
     }
 
