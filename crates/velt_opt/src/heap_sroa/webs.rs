@@ -17,6 +17,8 @@ pub(super) struct Webs {
     web_of: Vec<Option<u32>>,
     /// Per web: the object aggregate its pointers point to, or `None` once disqualified.
     objs: Vec<Option<AggId>>,
+    /// Per web: whether its blocks hold a reference count in the 8 bytes before the object.
+    counted: Vec<bool>,
 }
 
 impl Webs {
@@ -24,6 +26,11 @@ impl Webs {
     pub fn obj(&self, l: Local) -> Option<AggId> {
         let web = (*self.web_of.get(l.0 as usize)?)?;
         self.objs[web as usize]
+    }
+
+    /// Whether `l`'s web holds counted objects (a `u64` count, then the object).
+    pub fn counted(&self, l: Local) -> bool {
+        self.web(l).is_some_and(|w| self.counted[w as usize])
     }
 
     /// The web of `l` (replaced or not).
@@ -44,20 +51,29 @@ impl Webs {
     }
 }
 
-/// A constant size (and alignment) a web's allocations, frees and fills use.
+/// A constant size (and alignment) a web's allocations, frees and fills use, with the offset
+/// (relative to the group's root, see [`Groups`]) of the pointer it is given.
 enum Size {
-    /// `velt_rt_alloc` / `velt_rt_free` arguments.
-    Block(i128, i128),
-    /// `memset` length.
-    Fill(i128),
+    /// `velt_rt_alloc` result / `velt_rt_free` argument and its size and alignment.
+    Block(i128, i128, i128),
+    /// `memset` start and length.
+    Fill(i128, i128),
 }
 
-/// What one group of copy-connected pointer locals is used for.
+/// What one group of copy-connected pointer locals is used for. Offsets are relative to the
+/// group's root.
 #[derive(Default)]
 struct Facts {
     bad: bool,
     allocated: bool,
     obj: Option<AggId>,
+    /// Where the object is accessed (`(*w as Obj)`), which must be one offset.
+    obj_at: Option<i128>,
+    /// Other aggregates the object is accessed as, at the same offset: kept only when their
+    /// layout is the object's.
+    alike: Vec<AggId>,
+    /// Where `(*w as u64)` is accessed: the count in front of a counted object.
+    counts: Vec<i128>,
     sizes: Vec<Size>,
 }
 
@@ -75,11 +91,16 @@ pub(super) fn scan(aggs: &[AggLayout], allocator: Allocator, func: &Function) ->
         .map(|i| i >= func.params.len() && func.locals[i].ty == Ty::Ptr)
         .collect();
     let mut groups = Groups::new(n);
+    let mut clash = Vec::new();
     for s in func.blocks.iter().flat_map(|b| &b.stmts) {
-        if let Stmt::Assign(dst, Rvalue::Use(Operand::Copy(src))) = s {
+        let Stmt::Assign(dst, rv) = s else { continue };
+        if let Some((src, by)) = moved(rv) {
             let whole = dst.proj.is_empty() && src.proj.is_empty();
             if whole && cand[dst.local.0 as usize] && cand[src.local.0 as usize] {
-                groups.union(dst.local.0 as usize, src.local.0 as usize);
+                let (d, s) = (dst.local.0 as usize, src.local.0 as usize);
+                if !groups.union(d, s, by) {
+                    clash.push(d);
+                }
             }
         }
     }
@@ -89,6 +110,9 @@ pub(super) fn scan(aggs: &[AggLayout], allocator: Allocator, func: &Function) ->
         facts: (0..n).map(|_| Facts::default()).collect(),
         groups,
     };
+    for d in clash {
+        scanner.bad(Local(d as u32));
+    }
     for block in &func.blocks {
         for s in &block.stmts {
             scanner.stmt(s);
@@ -98,29 +122,58 @@ pub(super) fn scan(aggs: &[AggLayout], allocator: Allocator, func: &Function) ->
     scanner.webs(aggs)
 }
 
-/// Union-find over locals.
+/// `src` and the constant it is moved by, for `d = src` (0) and `d = src + c`.
+pub(super) fn moved(rv: &Rvalue) -> Option<(&Place, i128)> {
+    match rv {
+        Rvalue::Use(Operand::Copy(src)) => Some((src, 0)),
+        Rvalue::Binary(BinOp::PtrAdd, Operand::Copy(src), by) => Some((src, constant(by)?)),
+        _ => None,
+    }
+}
+
+/// Union-find over locals, with each local's offset from its root in bytes (`d = s + c` puts
+/// `d` at `s`'s offset plus `c`).
 struct Groups {
     parent: Vec<usize>,
+    /// Offset from the parent.
+    by: Vec<i128>,
 }
 
 impl Groups {
     fn new(n: usize) -> Groups {
         Groups {
             parent: (0..n).collect(),
+            by: vec![0; n],
         }
     }
 
-    fn find(&mut self, mut x: usize) -> usize {
-        while self.parent[x] != x {
-            self.parent[x] = self.parent[self.parent[x]];
-            x = self.parent[x];
+    /// The root of `x` and `x`'s offset from it.
+    fn find(&mut self, x: usize) -> (usize, i128) {
+        let mut path = vec![];
+        let mut root = x;
+        while self.parent[root] != root {
+            path.push(root);
+            root = self.parent[root];
         }
-        x
+        // From the node nearest the root down, each offset becomes its offset from the root.
+        let mut up = 0;
+        for &node in path.iter().rev() {
+            up += self.by[node];
+            self.by[node] = up;
+            self.parent[node] = root;
+        }
+        (root, if x == root { 0 } else { self.by[x] })
     }
 
-    fn union(&mut self, a: usize, b: usize) {
-        let (a, b) = (self.find(a), self.find(b));
-        self.parent[a] = b;
+    /// Record `a = b + by`; false when the two were grouped already at other offsets.
+    fn union(&mut self, a: usize, b: usize, by: i128) -> bool {
+        let ((ra, oa), (rb, ob)) = (self.find(a), self.find(b));
+        if ra == rb {
+            return oa == ob + by;
+        }
+        self.parent[ra] = rb;
+        self.by[ra] = ob + by - oa;
+        true
     }
 }
 
@@ -153,8 +206,13 @@ impl Scanner {
     }
 
     fn facts(&mut self, l: Local) -> &mut Facts {
-        let root = self.groups.find(l.0 as usize);
-        &mut self.facts[root]
+        self.facts_at(l).0
+    }
+
+    /// `l`'s group facts and `l`'s offset from the group's root.
+    fn facts_at(&mut self, l: Local) -> (&mut Facts, i128) {
+        let (root, at) = self.groups.find(l.0 as usize);
+        (&mut self.facts[root], at)
     }
 
     fn bad(&mut self, l: Local) {
@@ -177,7 +235,10 @@ impl Scanner {
                     Operand::Const(..) => None,
                 };
                 match (fill, constant(len)) {
-                    (Some(w), Some(n)) => self.facts(w).sizes.push(Size::Fill(n)),
+                    (Some(w), Some(n)) => {
+                        let (facts, at) = self.facts_at(w);
+                        facts.sizes.push(Size::Fill(at, n));
+                    }
                     _ => stmt_operands(s, &mut |op| self.operand(op)),
                 }
             }
@@ -185,12 +246,12 @@ impl Scanner {
         }
     }
 
-    /// A whole assignment to a candidate keeps it in its web: a copy of another candidate
-    /// (grouped already) or null.
+    /// A whole assignment to a candidate keeps it in its web: a copy of another candidate, or
+    /// one moved by a constant (grouped already), or null.
     fn whole_def(&self, rv: &Rvalue) -> bool {
-        match rv {
-            Rvalue::Use(Operand::Copy(src)) => self.whole(src).is_some(),
-            Rvalue::Use(op) => is_null(op),
+        match (rv, moved(rv)) {
+            (_, Some((src, _))) => self.whole(src).is_some(),
+            (Rvalue::Use(op), None) => is_null(op),
             _ => false,
         }
     }
@@ -219,15 +280,24 @@ impl Scanner {
         }
     }
 
-    /// An access through a candidate must name its object aggregate first.
+    /// An access through a candidate must name its object aggregate first, or be the whole
+    /// `u64` count in front of it.
     fn place(&mut self, p: &Place) {
         if !self.is_cand(p.local) {
             return;
         }
-        let facts = self.facts(p.local);
-        match (p.proj.first(), facts.obj) {
-            (Some(Proj::Deref(Ty::Agg(id))), None) => facts.obj = Some(*id),
-            (Some(Proj::Deref(Ty::Agg(id))), Some(obj)) if *id == obj => {}
+        let (facts, at) = self.facts_at(p.local);
+        match p.proj.as_slice() {
+            [Proj::Deref(Ty::U64)] => facts.counts.push(at),
+            [Proj::Deref(Ty::Agg(id)), ..] => match (facts.obj, facts.obj_at) {
+                (None, _) => (facts.obj, facts.obj_at) = (Some(*id), Some(at)),
+                (Some(obj), Some(o)) if o == at => {
+                    if obj != *id && !facts.alike.contains(id) {
+                        facts.alike.push(*id);
+                    }
+                }
+                _ => facts.bad = true,
+            },
             _ => facts.bad = true,
         }
     }
@@ -245,9 +315,9 @@ impl Scanner {
                     (dest.as_ref().and_then(|d| self.whole(d)), &args[..])
                 {
                     if let (Some(size), Some(align)) = (constant(size), constant(align)) {
-                        let facts = self.facts(w);
+                        let (facts, at) = self.facts_at(w);
                         facts.allocated = true;
-                        facts.sizes.push(Size::Block(size, align));
+                        facts.sizes.push(Size::Block(at, size, align));
                         return;
                     }
                 }
@@ -256,7 +326,8 @@ impl Scanner {
                 if let [Operand::Copy(p), size, align] = &args[..] {
                     let sizes = (constant(size), constant(align));
                     if let (Some(w), (Some(size), Some(align))) = (self.whole(p), sizes) {
-                        self.facts(w).sizes.push(Size::Block(size, align));
+                        let (facts, at) = self.facts_at(w);
+                        facts.sizes.push(Size::Block(at, size, align));
                         return;
                     }
                 }
@@ -276,38 +347,70 @@ impl Scanner {
         let n = self.cand.len();
         let mut web_of = vec![None; n];
         let mut objs = Vec::new();
+        let mut counted = Vec::new();
         let mut root_web: Vec<Option<u32>> = vec![None; n];
         for (l, slot) in web_of.iter_mut().enumerate() {
             if !self.cand[l] {
                 continue;
             }
-            let root = self.groups.find(l);
-            let Some(obj) = replaceable(aggs, &self.facts[root]) else {
+            let (root, _) = self.groups.find(l);
+            let Some(fit) = replaceable(aggs, &self.facts[root]) else {
                 continue;
             };
             let web = *root_web[root].get_or_insert_with(|| {
-                objs.push(Some(obj));
+                objs.push(Some(fit.obj));
+                counted.push(fit.counted);
                 objs.len() as u32 - 1
             });
             *slot = Some(web);
         }
-        (!objs.is_empty()).then_some(Webs { web_of, objs })
+        (!objs.is_empty()).then_some(Webs {
+            web_of,
+            objs,
+            counted,
+        })
     }
 }
 
-/// The object aggregate of a group whose uses all fit, with sizes matching its layout and a
-/// layout `sroa` can split.
-fn replaceable(aggs: &[AggLayout], facts: &Facts) -> Option<AggId> {
+/// How a group's blocks hold its objects.
+struct Fit {
+    obj: AggId,
+    /// A `u64` count at the start of each block, the object 8 bytes after it.
+    counted: bool,
+}
+
+/// How a group whose uses all fit holds its objects: one object aggregate (or ones laid out as
+/// it), `sroa` can split, at the start of every block it allocates, or 8 bytes in, after a
+/// `u64` count accessed only as a whole; with every size and offset matching.
+fn replaceable(aggs: &[AggLayout], facts: &Facts) -> Option<Fit> {
     if facts.bad || !facts.allocated {
         return None;
     }
-    let obj = facts.obj?;
+    let (obj, obj_at) = (facts.obj?, facts.obj_at?);
     let layout = aggs.get(obj.0 as usize)?;
-    let (size, align) = (i128::from(layout.size), i128::from(layout.align));
+    let laid_out_alike = |a: &AggId| {
+        aggs.get(a.0 as usize).is_some_and(|other| {
+            (other.size, other.align, &other.fields) == (layout.size, layout.align, &layout.fields)
+        })
+    };
+    if !facts.alike.iter().all(laid_out_alike) {
+        return None;
+    }
+    let start = facts.sizes.iter().find_map(|s| match *s {
+        Size::Block(at, ..) => Some(at),
+        Size::Fill(..) => None,
+    })?;
+    let counted = obj_at - start == 8;
+    if !(counted || obj_at == start) || (!counted && !facts.counts.is_empty()) {
+        return None;
+    }
+    let block = i128::from(layout.size) + if counted { 8 } else { 0 };
+    let (align, obj_size) = (i128::from(layout.align), i128::from(layout.size));
     let sizes_fit = facts.sizes.iter().all(|s| match *s {
-        Size::Block(s, a) => s == size && a == align,
-        Size::Fill(s) => s == size,
+        Size::Block(at, s, a) => at == start && s == block && a == align,
+        Size::Fill(at, s) => at == obj_at && s == obj_size,
     });
+    let counts_fit = facts.counts.iter().all(|&at| at == start);
     let splittable = (1..=MAX_FIELDS).contains(&layout.fields.len()) && fields_cover(aggs, layout);
-    (sizes_fit && splittable).then_some(obj)
+    (sizes_fit && counts_fit && splittable).then_some(Fit { obj, counted })
 }
