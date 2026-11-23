@@ -149,6 +149,25 @@ fn a_finished_promise_shared_into_module_state_is_dropped_off_its_task() {
     check("share_kept", SHARE_KEPT, "parked 20\n", 3);
 }
 
+/// Promises handed to other workers while still pending: one awaits each through
+/// `Promise.all`, another drops others unawaited, each at about the moment it finishes and
+/// lets go of its task (sched_node_await.velt `awaitWith` and `ownSide`, sched_node.velt
+/// `pollNode`, which read the task: task 0 is no task to them). A guard: it passes on main
+/// too.
+#[test]
+fn promises_handed_over_pending_and_awaited_or_dropped_there_as_they_finish() {
+    check("handed_all", HANDED_ALL, "got 240, dropped 240\n", 3);
+}
+
+/// A promise handed to worker 2 and shared there (its hub is `AWAY`): the first holder to
+/// wait leaves in a race after the promise finished and let go of its task, and a
+/// `Promise.all` holder waiting behind it still gets the value. A guard: it passes on main
+/// too.
+#[test]
+fn a_shared_promise_whose_first_waiter_leaves_after_it_finished_still_wakes_the_next() {
+    check("away_first_leaves", AWAY_FIRST_LEAVES, "got 240\n", 3);
+}
+
 /// The program of [`a_task_holding_a_promise_that_finished_unawaited_is_found_parked_for_ever`].
 const HELD_PLAIN: &str = r#"// #3498: the root waits for ever on a shared promise nobody settles while its frame holds a
 // promise (`f`, not shared) that finished without being awaited: the finished one can never wake
@@ -486,5 +505,116 @@ async function main() {
   }
   KEPT.length = 0;
   console.log(`parked ${PARKED.load()}`);
+}
+"#;
+
+/// The program of [`promises_handed_over_pending_and_awaited_or_dropped_there_as_they_finish`].
+const HANDED_ALL: &str = r#"// #3498 review, item 1: promises of a task on worker 1, handed to tasks on other workers while
+// still pending: worker 2 awaits each through `Promise.all`, and worker 3 drops others unawaited,
+// each at about the moment it finishes (and lets go of its task). Every value arrives, and
+// nothing is left.
+
+const GOT = new Atomic<i64>(0);
+const DROPPED = new Atomic<i64>(0);
+
+async function soon(i: i64): Promise<number> {
+  for (let y: i64 = 0; y < i % 3; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function viaAll(p: Promise<number>): Promise<void> {
+  const rs = await Promise.all([p]);
+  GOT.add(rs[0] as i64);
+}
+
+async function dropper(p: Promise<number>, i: i64): Promise<void> {
+  for (let y: i64 = 0; y < i % 3; y++) {
+    await yieldNow();
+  }
+  DROPPED.add(1);
+}
+
+async function maker(k: i64): Promise<void> {
+  for (let i: i64 = 0; i < 30; i++) {
+    void spawn(viaAll(soon(i)), { worker: 2 });
+    void spawn(dropper(soon(i + k), i), { worker: 3 });
+  }
+}
+
+async function main() {
+  const n: i64 = 8;
+  for (let k: i64 = 0; k < n; k++) {
+    await spawn(maker(k), { worker: 1 });
+  }
+  while (GOT.load() < 30 * n || DROPPED.load() < 30 * n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 100; y++) {
+    await yieldNow();
+  }
+  console.log(`got ${GOT.load()}, dropped ${DROPPED.load()}`);
+}
+"#;
+
+/// The program of [`a_shared_promise_whose_first_waiter_leaves_after_it_finished_still_wakes_the_next`].
+const AWAY_FIRST_LEAVES: &str = r#"// #3498 review, item 1: a promise of a task on worker 1 is handed to a task on worker 2, which
+// shares it there (its hub is `AWAY`: the promise is another task's). The first holder to wait,
+// in a race against a quick promise, leaves the hub's waiters after the promise finished (and let
+// go of its task), with a `Promise.all` holder waiting behind it: that one still gets the value.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const GOT = new Atomic<i64>(0);
+
+async function soon(): Promise<number> {
+  for (let y = 0; y < 3; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function quick(): Promise<number> {
+  await yieldNow();
+  return 0;
+}
+
+async function behind(h: Holder): Promise<void> {
+  const rs = await Promise.all([h.p]);
+  GOT.add(rs[0] as i64);
+}
+
+async function sharer(p: Promise<number>): Promise<void> {
+  const h = new Holder(p);
+  const first = Promise.race([h.p, quick()]);
+  const b = behind(new Holder(h.p));
+  await first;
+  await b;
+}
+
+async function maker(): Promise<void> {
+  for (let i = 0; i < 30; i++) {
+    void spawn(sharer(soon()), { worker: 2 });
+  }
+}
+
+async function main() {
+  const n: i64 = 8;
+  for (let k: i64 = 0; k < n; k++) {
+    await spawn(maker(), { worker: 1 });
+  }
+  while (GOT.load() < 30 * n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 100; y++) {
+    await yieldNow();
+  }
+  console.log(`got ${GOT.load()}`);
 }
 "#;
