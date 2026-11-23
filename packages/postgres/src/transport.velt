@@ -41,6 +41,39 @@ export struct PgStream {
   }
 
   /**
+   * A look at an idle connection, without waiting: the bytes read into `buf[0..end]`, 0 when
+   * nothing has come, -1 at the end of the stream and -2 for a failure. On TLS over `startTls`
+   * it reads one byte of the socket, which nearly always finds nothing and costs what it costs
+   * on a plain connection; a byte that did come is given to the TLS stream, and what the stream
+   * can then read (a notification, the server's FATAL) is the answer.
+   */
+  peekInto(buf: u8[], end: number): i64 {
+    const t = this.tls;
+    if (t == null) {
+      const n = this.tcp.tryRead(buf, 0, end);
+      return n == null ? -1 : (n as i64);
+    }
+    // The socket's byte is read under the stream's lock too, so no TLS read can be between it and
+    // `takeIn`.
+    return t.with((s): i64 => {
+      try {
+        const raw = this.tcp.tryRead(buf, 0, 1);
+        if (raw == null) {
+          return -1;
+        }
+        if (raw == 0) {
+          return 0;
+        }
+        s.takeIn(buf, 0, 1);
+        const n = s.tryRead(buf, 0, end);
+        return n == null ? -1 : (n as i64);
+      } catch (e) {
+        return -2;
+      }
+    });
+  }
+
+  /**
    * On a TLS connection, `tryRead` and `buffered` after it, under one lock: what a reader keeps for
    * its next read, which then needs no lock to know whether to wait first.
    */
