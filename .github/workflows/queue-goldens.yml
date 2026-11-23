@@ -57,7 +57,8 @@ on:
         description: >-
           `VELT_VIR_IDENTITY` for the build and the shards: `sample` compares one golden in 8,
           `skip` none (`Plan::vir_identity_queue` in crates/xtask/src/plan.rs). Every golden
-          (`all`) runs only in the nightly gate on Linux.
+          (`all`) runs in the nightly gate on Linux and in the pull request of a change to the
+          code loading std on demand, not here.
         type: string
         default: skip
       fail-fast:

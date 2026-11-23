@@ -83,3 +83,30 @@ fn a_queue_change_to_the_std_hooks_selects_the_sample() {
     let text = crate::github_output_text(&p);
     assert!(text.contains("\nvir_identity=sample\n"), "{text}");
 }
+
+/// A pull request's own plan knows its changes: one under `std/lang/hooks/` compares every golden
+/// in its `golden` job (`vir_identity_pr`), while the queue compares the sample.
+#[test]
+fn a_pull_request_touching_the_std_hooks_compares_every_golden() {
+    let p = plan(&["std/lang/hooks/number_text.velt"]);
+    assert_eq!(p.vir_identity_pr(), "all");
+    assert_eq!(p.vir_identity_queue(), "sample");
+    let text = crate::github_output_text(&p);
+    assert!(text.contains("\nvir_identity_pr=all\n"), "{text}");
+    assert!(text.contains("\nvir_identity=sample\n"), "{text}");
+    // Any other change that reaches the comparison: the sample there too; none: skipped.
+    assert_eq!(plan(&["std/json/index.velt"]).vir_identity_pr(), "sample");
+    assert_eq!(
+        plan(&["crates/velt_sema/src/lib.rs"]).vir_identity_pr(),
+        "sample"
+    );
+    assert_eq!(
+        plan(&["docs/internals/README.md"]).vir_identity_pr(),
+        "skip"
+    );
+    // `ci:full` plans with `--full`, which knows no changes: the sample.
+    assert_eq!(Plan::everything("--full").vir_identity_pr(), "sample");
+    // Mixed with a lockfile (everything runs), the change is still known.
+    let mixed = plan(&["Cargo.lock", "crates/velt_loader/src/lib.rs"]);
+    assert_eq!(mixed.vir_identity_pr(), "all");
+}

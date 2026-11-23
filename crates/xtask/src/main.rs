@@ -437,7 +437,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`; the
 /// formatter's corpus: `fmt_corpus`, `fmt_corpus_files`), nor
 /// whether the WebAssembly goldens run (`wasm_goldens`: `skip` when they don't), nor how much of
-/// the VIR identity it compares (`vir_identity`, [`Plan::vir_identity_queue`]). The goldens and
+/// the VIR identity it compares (`vir_identity`, [`Plan::vir_identity_queue`]; a pull request's
+/// `golden` job: `vir_identity_pr`, [`Plan::vir_identity_pr`]). The goldens and
 /// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`). After a push to
 /// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
 /// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate. `c_headers` says
@@ -495,6 +496,7 @@ fn github_output_text(plan: &Plan) -> String {
     ));
     let wasm = if plan.wasm { "" } else { "skip" };
     text.push_str(&format!("vir_identity={}\n", plan.vir_identity_queue()));
+    text.push_str(&format!("vir_identity_pr={}\n", plan.vir_identity_pr()));
     text.push_str(&format!("wasm_goldens={wasm}\n"));
     text
 }

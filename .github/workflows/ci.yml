@@ -1,7 +1,7 @@
 # Pull requests run the checks their changes need (`cargo xtask check`, rules in
 # crates/xtask/src/plan.rs) on Linux, as three parallel jobs: lint (fmt, clippy), test (build,
 # unit and integration tests) and golden (end-to-end in debug mode, the WebAssembly goldens and
-# the VIR identity's sample when the change selects them). A change to OS-specific code
+# the VIR identity when the change selects them). A change to OS-specific code
 # (crates/xtask/src/os.rs) is also linted on Windows, where `cfg(windows)` code compiles
 # differently, and on macOS when it can really differ there: clippy's findings there otherwise
 # surface only in the merge queue. The test files a pull request adds or edits run 20 times at once under load
@@ -109,10 +109,13 @@ jobs:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # The golden job also runs the WebAssembly goldens when the change selects them (8 tests of
       # about 11 minutes each, which made the test job up to 2 hours long), and the VIR identity:
-      # it is shorter than the test job, as in the queue. Like every CI run but the nightly's, it
-      # compares the sample, one golden in 8 (crates/veltc/tests/eager_std_identity.rs).
+      # it is shorter than the test job, as in the queue. It compares every golden when the change
+      # touches the code loading std on demand, which only this plan knows (the queue's `--full`
+      # doesn't), and the sample, one golden in 8, otherwise (`vir_identity_pr`,
+      # `Plan::vir_identity_pr`; crates/veltc/tests/eager_std_identity.rs).
       - name: cargo xtask check --part ${{ matrix.part == 'golden' && 'golden,wasm' || matrix.part }}
         env:
+          VELT_VIR_IDENTITY: ${{ matrix.part == 'golden' && steps.plan.outputs.vir_identity_pr || '' }}
           # `--full` knows no changes, so it leaves the robustness sweep to the environment.
           VELT_ROBUSTNESS: >-
             ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && 'full' || '' }}
@@ -286,7 +289,8 @@ jobs:
       # `skip` unless the change touches WebAssembly code.
       wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
       # How much of the VIR identity runs: `sample` (one golden in 8) or `skip`; all of it runs
-      # only in the nightly gate on Linux (`Plan::vir_identity_queue`).
+      # in the nightly gate on Linux and in the pull request of a change to the code loading std
+      # on demand, never here (`Plan::vir_identity_queue`).
       vir_identity: ${{ steps.plan.outputs.vir_identity }}
       # `true` when the change touches what the header check checks (`c-headers`).
       c_headers: ${{ steps.plan.outputs.c_headers }}

@@ -220,15 +220,17 @@ not a reason for another round.
   hash of the golden's path, so a new golden moves no other in or out and every machine picks the
   same ones. It is part of the gate's `golden` part, beside the goldens, because the golden jobs
   and shards finish long before the test jobs (after the unit tests it would make the `check` jobs
-  20 to 41 minutes longer). A pull request's `golden` job, the queue and merge trains (each golden
-  shard its share) and the `main (windows/macos)` job after merging run the sample when the change
-  can reach the comparison, and nothing otherwise (`Plan::vir_identity_queue`,
-  `VELT_VIR_IDENTITY`). The nightly gate on Linux compares every golden (`VELT_VIR_IDENTITY=all`):
-  what it checks, the order std loads in, doesn't depend on the OS. Until 2026-11-23 the queue ran
-  all of it whenever the code loading std on demand changed, which a train of ten pull requests
-  nearly always did, and that took the Windows golden shards to their 55-minute limit. A change to
-  that code (`VIR_IDENTITY_CODE` in `crates/xtask/src/plan_rules.rs`; `cargo xtask affected` says
-  so) is compared on every golden by its author before pushing:
+  20 to 41 minutes longer). The queue and merge trains (each golden shard its share), the
+  `main (windows/macos)` job after merging and a local `cargo xtask check` run the sample when the
+  change can reach the comparison, and nothing otherwise (`Plan::vir_identity_queue`,
+  `VELT_VIR_IDENTITY`). A pull request's `golden` job (Linux) runs the sample too, except for a
+  change to the code loading std on demand (`VIR_IDENTITY_CODE` in
+  `crates/xtask/src/plan_rules.rs`), which its own plan knows: then every golden
+  (`Plan::vir_identity_pr`). The queue's `--full` plan knows no changes, and until 2026-11-23 it ran
+  all of it whenever that code changed anywhere in the train, which a train of ten pull requests
+  nearly always did; that took the Windows golden shards to their 55-minute limit. The nightly gate
+  on Linux compares every golden (`VELT_VIR_IDENTITY=all`): what it checks, the order std loads in,
+  doesn't depend on the OS. Locally, `cargo xtask affected` suggests every golden for such a change:
   `VELT_VIR_IDENTITY=all cargo xtask check --part golden`. What the sample misses shows up in the
   next nightly.
 - A check the selection missed shows up in the merge queue; tighten the rule in

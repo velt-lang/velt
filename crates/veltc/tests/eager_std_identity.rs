@@ -8,10 +8,10 @@
 //! Long: selected by `cargo xtask affected`, which runs it with `--ignored` next to the goldens
 //! (the gate's `golden` part, so in CI it runs beside the unit tests instead of after them). It
 //! compares the sample, one golden in [`SAMPLE_ONE_IN`] chosen by a hash of its name
-//! ([`in_sample`]), unless `VELT_VIR_IDENTITY=all` asks for every golden ([`every_golden`]): pull
-//! requests, the merge queue and the checks after merging run the sample, the nightly gate on Linux
-//! all of them (`Plan::vir_identity_queue` in crates/xtask/src/plan.rs). A change to the code
-//! loading std on demand runs it with `VELT_VIR_IDENTITY=all` before it is pushed.
+//! ([`in_sample`]), unless `VELT_VIR_IDENTITY=all` asks for every golden ([`every_golden`]). The
+//! merge queue, the checks after merging and a local run compare the sample; the nightly gate on
+//! Linux, and the pull request of a change to the code loading std on demand, every golden
+//! (`Plan::vir_identity_queue` and `Plan::vir_identity_pr` in crates/xtask/src/plan.rs).
 //! `VELT_GOLDEN_SHARD=<i>/<n>` compares every n-th of them only, as the goldens' shards do.
 
 mod no_window;
@@ -54,7 +54,7 @@ fn in_sample(name: &str) -> bool {
 }
 
 /// `VELT_VIR_IDENTITY=all`: every golden, not the sample (the nightly gate on Linux, and a change
-/// to the code loading std on demand, run by hand). Anything else (unset, `sample`) is the sample;
+/// to the code loading std on demand, in its pull request or by hand). Anything else (unset, `sample`) is the sample;
 /// xtask doesn't run the test at all for `skip`.
 fn every_golden() -> bool {
     std::env::var("VELT_VIR_IDENTITY").is_ok_and(|v| v == "all")

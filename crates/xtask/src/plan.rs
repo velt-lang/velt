@@ -55,9 +55,9 @@ pub struct Plan {
     /// (`veltc::eager_std_identity`, lazy-std.md "Loading on demand"): when what reads the
     /// sources, sema, the loader, lowering or std changes ([`VIR_IDENTITY_CRATES`]).
     pub vir_identity: bool,
-    /// The code that loads std on demand changed ([`VIR_IDENTITY_CODE`]): CI still compares the
-    /// sample ([`Self::vir_identity_queue`]), and the report asks for every golden by hand
-    /// (`VELT_VIR_IDENTITY=all`) before pushing.
+    /// The code that loads std on demand changed ([`VIR_IDENTITY_CODE`]): the pull request's
+    /// `golden` job compares every golden ([`Self::vir_identity_pr`]), the queue the sample
+    /// ([`Self::vir_identity_queue`]), and the report suggests every golden locally too.
     pub vir_identity_all: bool,
     /// The native crates of the repository's packages (`packages/<name>/native`, outside the
     /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
@@ -461,7 +461,8 @@ impl Plan {
     /// changes: the sample (`sample`, one golden in 8 chosen by a hash of its name,
     /// crates/veltc/tests/eager_std_identity.rs) whenever [`Self::vir_identity`], even for the code
     /// loading std on demand ([`Self::vir_identity_all`]), and nothing (`skip`) otherwise. Every
-    /// golden (`all`) only in the nightly gate on Linux, which sets it itself: a train of ten pull
+    /// golden (`all`) only in the nightly gate on Linux, which sets it itself, and in the pull
+    /// request of such a change ([`Self::vir_identity_pr`]): a train of ten pull
     /// requests nearly always touches `std/lang/hooks/` or the loader, and the whole comparison
     /// took 11 to 20 minutes of each Windows golden shard and 30 of the Windows job after merging
     /// (2026-11-23). It compares the order std loads in, which doesn't depend on the OS.
@@ -470,6 +471,18 @@ impl Plan {
             "sample"
         } else {
             "skip"
+        }
+    }
+
+    /// `VELT_VIR_IDENTITY` for a pull request's `golden` job, whose plan knows its changes and
+    /// which runs on Linux only: every golden (`all`) when the change touches the code loading std
+    /// on demand ([`Self::vir_identity_all`]), as the queue no longer does; otherwise as
+    /// [`Self::vir_identity_queue`].
+    pub fn vir_identity_pr(&self) -> &'static str {
+        if self.vir_identity && self.vir_identity_all {
+            "all"
+        } else {
+            self.vir_identity_queue()
         }
     }
 
@@ -553,8 +566,9 @@ impl Plan {
                 (false, _) => "no",
                 (true, false) => "yes, one golden in 8 (VELT_VIR_IDENTITY=all: every golden)",
                 (true, true) => {
-                    "yes, one golden in 8 here and in CI; the code loading std on demand \
-                     changed: run every golden before pushing (VELT_VIR_IDENTITY=all)"
+                    "yes, the code loading std on demand changed: every golden in the pull \
+                     request's golden job, one golden in 8 here and in the merge queue (run \
+                     every golden before pushing: VELT_VIR_IDENTITY=all)"
                 }
             }
         ));
