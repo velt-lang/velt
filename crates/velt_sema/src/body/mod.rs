@@ -73,7 +73,7 @@ mod type_guards;
 mod weak_copy;
 mod weak_locals;
 pub(crate) use generators::GenCopy;
-pub(crate) use weak_copy::{weak_copy_error, weak_copy_error_as, Held};
+pub(crate) use weak_copy::{weak_capture_error, weak_copy_error, weak_copy_error_as, Held};
 mod chain_facts;
 mod literal_patterns;
 mod locals;

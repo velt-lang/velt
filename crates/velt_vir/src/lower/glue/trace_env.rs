@@ -54,11 +54,12 @@ impl Cx<'_> {
     /// moved in, as its type and whether it is a captured variable's cell. These are the
     /// captures the environment's drop releases and its trace glue visits (`value_captures`
     /// and `cell_captures` with the same modes); a borrowed capture, cell or not, belongs to
-    /// the frame that made the closure.
+    /// the frame that made the closure. A `weak` variable's capture holds a slot, no edge.
     pub(in crate::lower) fn env_owned(&mut self, def: DefId, targs: &[TyId]) -> Vec<(TyId, bool)> {
         let f = self.fn_def(def);
         let caps: Vec<(TyId, bool)> = (f.captures.iter())
             .filter(|c| matches!(c.mode, PassMode::Copy | PassMode::Owned))
+            .filter(|c| !f.body.locals[c.inner.0 as usize].weak)
             .map(|c| {
                 let l = &f.body.locals[c.inner.0 as usize];
                 (l.ty, l.boxed)

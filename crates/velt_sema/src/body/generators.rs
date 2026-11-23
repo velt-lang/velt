@@ -413,6 +413,7 @@ impl FnCx<'_, '_> {
             | GenCopy::LockResult
             | GenCopy::TaskFn(_)
             | GenCopy::LockFn(_)
+            | GenCopy::SharedFn(_)
             | GenCopy::TaskResult
             | GenCopy::TaskError
             | GenCopy::TaskPromise => return,
@@ -448,6 +449,9 @@ pub(crate) enum GenCopy {
     TaskResult,
     /// The error a spawned task throws, handed back to the awaiting task's thread.
     TaskError,
+    /// A closure literal given to `shared(...)` or as a `Mutex`'s or `RwLock`'s value, which
+    /// several tasks may call, capturing (named) a weak collection or a `weak` variable.
+    SharedFn(String),
 }
 
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
@@ -464,5 +468,6 @@ crate::units::codec::enums! {
         8 => TaskResult,
         9 => TaskError,
         10 => TaskPromise,
+        11 => SharedFn(f0),
     }
 }
