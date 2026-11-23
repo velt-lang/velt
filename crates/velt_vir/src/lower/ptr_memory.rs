@@ -24,7 +24,7 @@ impl FnLower<'_, '_> {
         let base = self.rvalue_temp(Ty::U64, Rvalue::Cast(at, Ty::U64));
         self.normalize_bools(&held, ty, &base, 0);
         let s = self.cx.type_name(ty);
-        self.stop_on_null(&held, ty, &s, "");
+        self.stop_on_null(&held, ty, (&s, None), "");
         v
     }
 
@@ -88,8 +88,15 @@ impl FnLower<'_, '_> {
 
     /// Stops the program where a non-null pointer in the value at `place`, of type `ty`, is
     /// `NULL`: `ty` itself, or a field (of a field…) of C struct `s`, `path` being the fields
-    /// above it.
-    fn stop_on_null(&mut self, place: &Place, ty: TyId, s: &str, path: &str) {
+    /// above it. `returned` names the C function whose struct result it is (c_struct_call.rs);
+    /// `None` is `Ptr.read`'s.
+    pub(super) fn stop_on_null(
+        &mut self,
+        place: &Place,
+        ty: TyId,
+        (s, returned): (&str, Option<&str>),
+        path: &str,
+    ) {
         match self.kind(ty) {
             TyKind::Ptr(_) => {
                 let word =
@@ -99,9 +106,10 @@ impl FnLower<'_, '_> {
                 let (bad, ok) = (self.new_block(), self.new_block());
                 self.branch(null, bad, ok);
                 self.switch_to(bad);
-                let msg = match path.is_empty() {
-                    true => format!("Ptr.read: the `{s}` read is NULL, and a C pointer declared `Ptr<T>` is never NULL; read a `Ptr<T> | null` where C may leave it NULL"),
-                    false => format!("Ptr.read: field `{path}` of C struct `{s}` is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
+                let msg = match (returned, path.is_empty()) {
+                    (Some(f), _) => format!("C function `{f}`: field `{path}` of the `{s}` it returned is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
+                    (None, true) => format!("Ptr.read: the `{s}` read is NULL, and a C pointer declared `Ptr<T>` is never NULL; read a `Ptr<T> | null` where C may leave it NULL"),
+                    (None, false) => format!("Ptr.read: field `{path}` of C struct `{s}` is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
                 };
                 self.panic_msg(&msg);
                 self.terminate(vir::Terminator::Unreachable);
@@ -121,7 +129,7 @@ impl FnLower<'_, '_> {
                         true => name,
                         false => format!("{path}.{name}"),
                     };
-                    self.stop_on_null(&at, f, s, &path);
+                    self.stop_on_null(&at, f, (s, returned), &path);
                 }
             }
             _ => {}
