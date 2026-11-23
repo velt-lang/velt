@@ -212,9 +212,15 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         if identity {
             let test = archived(&manifest, |m| m.identity.clone(), "golden")?;
             let mut identity = vir_identity_test(root, &ws, test.as_deref());
+            let which = match std::env::var("VELT_VIR_IDENTITY").as_deref() {
+                Ok("all") => "every golden",
+                _ => "one golden in 8",
+            };
             let name = match std::env::var("VELT_GOLDEN_SHARD") {
-                Ok(shard) => format!("VIR identity (std up front, std on demand), shard {shard}"),
-                Err(_) => "VIR identity (std up front, std on demand)".to_string(),
+                Ok(shard) => {
+                    format!("VIR identity (std up front, std on demand), {which}, shard {shard}")
+                }
+                Err(_) => format!("VIR identity (std up front, std on demand), {which}"),
             };
             gate.step(&name, &mut identity)?;
         }
@@ -283,10 +289,10 @@ fn golden_test(root: &Path, ws: &[String], test: Option<&str>) -> Command {
 /// veltc's test of the VIR identity (crates/veltc/tests/eager_std_identity.rs).
 const IDENTITY_TEST: &str = "eager_std_identity";
 
-/// The VIR identity's long tests (every golden built with std loaded up front and on demand, and
-/// with and without error-set variables): through cargo, or the binary `test` (relative to
-/// `root`) from an archive. `VELT_VIR_IDENTITY` and `VELT_GOLDEN_SHARD` pass through from the
-/// environment.
+/// The VIR identity's long tests (the sample of the goldens, or every golden with
+/// `VELT_VIR_IDENTITY=all`, built with std loaded up front and on demand, and with and without
+/// error-set variables): through cargo, or the binary `test` (relative to `root`) from an archive.
+/// `VELT_VIR_IDENTITY` and `VELT_GOLDEN_SHARD` pass through from the environment.
 fn vir_identity_test(root: &Path, ws: &[String], test: Option<&str>) -> Command {
     let mut c = match test {
         Some(test) => Command::new(root.join(test)),

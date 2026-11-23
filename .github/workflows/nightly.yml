@@ -71,6 +71,10 @@ jobs:
       VELT_ROBUSTNESS: full
       # Every golden with variables described, not a sample (crates/veltc/tests/debug_vars.rs).
       VELT_DEBUG_VARS: all
+      # Every golden's VIR with std loaded up front and on demand, not the sample the queue and the
+      # checks after merging compare (crates/veltc/tests/eager_std_identity.rs). On Linux only: what
+      # it checks, the order std loads in, doesn't depend on the OS.
+      VELT_VIR_IDENTITY: all
     steps:
       # The whole gate fills the runner's disk (2026-11-05: "No space left on device", which kills
       # the runner itself and leaves no log). Remove what the image carries and this job never uses.
