@@ -1,0 +1,93 @@
+// velt/lang/hooks (tests): the slots of `weak` local variables, compiled as a program has them
+// (velt_vir `weak_fields`, `Intrinsic::WeakRead`): every slot a variable takes is given back by
+// its next assignment or the end of its scope, which the leak counters cannot see (the weak
+// core's blocks are the C library's); run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { weakSlotsLive, weakTracked } from "velt/lang/hooks/weak";
+
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function nameOf(n: Node | null): string {
+  return n === null ? "null" : n.name;
+}
+
+function* reading(n: Node): Generator<string> {
+  const w: weak Node | null = n;
+  yield nameOf(w);
+  yield nameOf(w);
+}
+
+describe("weak locals", () => {
+  it("are given back by a generator dropped while it is suspended", () => {
+    const before = weakSlotsLive();
+    {
+      const n = new Node("g");
+      const g = reading(n);
+      expect(g.next().value).toBe("g");
+      // `n`'s record and the generator's variable hold the one slot.
+      expect(weakSlotsLive()).toBe(before + 1);
+    }
+    // Freeing `n` let go of the record's hold, dropping `g` of the variable's.
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("give back their slot at the end of their scope", () => {
+    const before = weakSlotsLive();
+    const records = weakTracked();
+    {
+      const a = new Node("a");
+      const w: weak Node | null = a;
+      expect(nameOf(w)).toBe("a");
+      expect(weakSlotsLive()).toBe(before + 1);
+    }
+    expect(weakSlotsLive()).toBe(before);
+    expect(weakTracked()).toBe(records);
+  });
+
+  it("give back the old slot when assigned", () => {
+    const before = weakSlotsLive();
+    const a = new Node("a");
+    const b = new Node("b");
+    let w: weak Node | null = a;
+    w = b;
+    expect(nameOf(w)).toBe("b");
+    // `a` still holds its slot through its record, `b` has its own.
+    expect(weakSlotsLive()).toBe(before + 2);
+    w = null;
+    expect(nameOf(w)).toBe("null");
+    expect(weakSlotsLive()).toBe(before + 2);
+  });
+
+  it("read null once the target went, and free the slot with the last holder", () => {
+    const before = weakSlotsLive();
+    let w: weak Node | null = null;
+    {
+      const t = new Node("t");
+      w = t;
+      expect(nameOf(w)).toBe("t");
+    }
+    expect(nameOf(w)).toBe("null");
+    // The record let go of the slot when `t` was freed; `w` still holds it.
+    expect(weakSlotsLive()).toBe(before + 1);
+    w = null;
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("take a slot each time a loop declares one", () => {
+    const before = weakSlotsLive();
+    const nodes = [new Node("x"), new Node("y")];
+    let names = "";
+    for (const n of nodes) {
+      const w: weak Node | null = n;
+      names += nameOf(w);
+    }
+    expect(names).toBe("xy");
+    // Each node's record keeps its slot until the node is freed; no variable holds one.
+    expect(weakSlotsLive()).toBe(before + 2);
+  });
+});

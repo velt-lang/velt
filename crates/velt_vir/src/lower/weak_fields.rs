@@ -119,11 +119,64 @@ impl FnLower<'_, '_> {
     /// Is `e` a read of a weak field, whose value is a new reference (an `Intrinsic::Share` of it
     /// needs no other)?
     pub(super) fn weak_read_expr(&mut self, e: &hir::Expr) -> bool {
+        if let hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::WeakRead),
+            ..
+        } = &e.kind
+        {
+            return true;
+        }
         let hir::ExprKind::Field { base, index, .. } = &e.kind else {
             return false;
         };
         let bty = self.sub(base.ty);
         !self.cx.proxiable(bty) && self.cx.weak_field(bty, *index).is_some()
+    }
+
+    /// `Intrinsic::WeakRead` of the `weak` local `a` (read type `read`): its target, retained.
+    pub(super) fn weak_local_read(&mut self, a: &hir::Expr, read: TyId) -> Operand {
+        let hir::ExprKind::Local(id, _) = a.kind else {
+            super::ice("`WeakRead` of something other than a local")
+        };
+        let place = self.local_place(id);
+        self.weak_read(place, read)
+    }
+
+    /// `let l = init` of the `weak` local `l`: its slot 0, then `init`'s slot (`weak_store`).
+    pub(super) fn weak_let(&mut self, local: hir::LocalId, init: Option<&hir::Expr>) {
+        let (Some(read), Some(l)) = (
+            self.info[local.0 as usize].weak,
+            self.info[local.0 as usize].vir,
+        ) else {
+            return;
+        };
+        self.assign(Place::local(l), Rvalue::Use(cint(0, Ty::Ptr)));
+        if let Some(e) = init {
+            self.push_scope(super::ScopeKind::Temps);
+            let v = self.consume(e);
+            if !self.dead() {
+                self.weak_store(Place::local(l), v, read);
+            }
+            self.pop_scope();
+        }
+    }
+
+    /// `l = value` of the `weak` local `l` (`None` for another target): `value`'s slot in it.
+    pub(super) fn weak_local_assign(
+        &mut self,
+        place: &hir::Expr,
+        value: &hir::Expr,
+    ) -> Option<Operand> {
+        let hir::ExprKind::Local(id, _) = place.kind else {
+            return None;
+        };
+        let read = self.info[id.0 as usize].weak?;
+        let v = self.consume(value);
+        if !self.dead() {
+            let p = self.local_place(id);
+            self.weak_store(p, v, read);
+        }
+        Some(unit())
     }
 
     /// `base.f` for a weak field `f` of `bty` (`None` for another field): its target, retained,

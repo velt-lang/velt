@@ -7,7 +7,8 @@ mod common;
 
 use common::programs::{err_src, ok_src};
 
-const OUTSIDE: &str = "`weak` outside a class's own field is not implemented yet (#3119)";
+const OUTSIDE: &str =
+    "`weak` outside a class's own field or a function's variable is not implemented yet (#3119)";
 const NOT_A_CLASS: &str = "`weak` to anything but a class instance is not implemented yet (#3119)";
 const MISPLACED: &str = "`weak` is allowed only at the top of the type of a field or a variable";
 
@@ -62,13 +63,14 @@ fn values_without_an_identity_are_not() {
 
 #[test]
 fn var_is_a_variable() {
+    // A function's `var` is lowered (a `weak` local); a module's that a function uses is not yet.
     let e = errors(
         "class Node {}\n\
          var g: weak Node | null = null;\n\
-         function f(): void { var l: weak Node | null = null; console.log(l); }\n\
+         function f(): void { var l: weak Node | null = null; console.log(l, g); }\n\
          f(); console.log(g);",
     );
-    assert_eq!(e, [OUTSIDE, OUTSIDE], "{e:?}");
+    assert_eq!(e, [OUTSIDE], "{e:?}");
 }
 
 #[test]
@@ -81,7 +83,10 @@ fn undefined_without_null_keeps_undefined() {
     );
     assert_eq!(e.len(), 2, "{e:?}");
     assert!(e[0].starts_with("a `weak` reference reads `null`"), "{e:?}");
-    assert_eq!(e[1], OUTSIDE, "{e:?}");
+    assert_eq!(
+        e[1], "`weak` with `undefined` is not implemented yet (#3119)",
+        "{e:?}"
+    );
 }
 
 #[test]
