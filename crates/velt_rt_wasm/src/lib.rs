@@ -35,8 +35,6 @@ pub mod deep_eq;
 #[path = "../../velt_rt/src/drop_depth.rs"]
 pub mod drop_depth;
 pub mod entry;
-#[path = "../../velt_rt/src/fmt.rs"]
-pub mod fmt;
 #[path = "../../velt_rt/src/fn_props.rs"]
 pub mod fn_props;
 #[path = "../../velt_rt/src/freed.rs"]
