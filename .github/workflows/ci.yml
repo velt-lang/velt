@@ -638,17 +638,46 @@ jobs:
           VELT_ZIG_TESTS: "1"
         run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export --test c_struct_pointers --test c_struct_headers --test c_struct_by_value -- --nocapture
 
+  # The differential test of C structs by value (crates/veltc/tests/c_struct_by_value.rs) natively
+  # on arm64 Linux, whose convention (AAPCS64) the c-headers job's x86-64 machine can't run
+  # (#2187 decision 4); it runs with the c-headers job. The nightly adds macOS (Apple's arm64
+  # variant) and Windows (Win64), which the c-headers job checks against clang's signatures.
+  # scripts/abi-cross.sh runs the same under qemu on an x86-64 Linux machine.
+  c-struct-abi:
+    needs: [pr-plan, queue-plan]
+    if: always() && (needs.pr-plan.outputs.c_headers == 'true' || needs.queue-plan.outputs.c_headers == 'true')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      - name: the runtime
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo build -p velt_rt
+      - name: C structs by value, against C
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_ZIG_TESTS: "1"
+        run: cargo test --workspace --test c_struct_by_value -- --nocapture
+
   ci:
     # Not for a run started by another label: its result would replace the real run's.
     if: always() && !(github.event.action == 'labeled' && github.event.label.name != 'ci:approved' && github.event.label.name != 'ci:full')
-    needs: [pr, pr-plan, pr-lint-os, pr-windows, queue-plan, queue, queue-golden, c-headers]
+    needs: [pr, pr-plan, pr-lint-os, pr-windows, queue-plan, queue, queue-golden, c-headers, c-struct-abi]
     runs-on: ubuntu-latest
     steps:
       - name: every gate that ran passed
         run: |
           for r in "${{ needs.pr.result }}" "${{ needs.pr-plan.result }}" "${{ needs.pr-lint-os.result }}" \
             "${{ needs.pr-windows.result }}" "${{ needs.queue-plan.result }}" "${{ needs.queue.result }}" "${{ needs.queue-golden.result }}" \
-            "${{ needs.c-headers.result }}"; do
+            "${{ needs.c-headers.result }}" "${{ needs.c-struct-abi.result }}"; do
             case "$r" in success|skipped) ;; *) echo "a gate failed: $r"; exit 1 ;; esac
           done
       # Fail closed before approval: a pull request whose checks were skipped (no `ci:approved`
