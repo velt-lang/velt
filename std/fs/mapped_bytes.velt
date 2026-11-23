@@ -123,11 +123,13 @@ export class MappedBytes {
    * them (a fraction rounded down, `NaN` 0), and a negative one or a `sourceStart` past the end
    * throws a `RangeError` with Node's message. `target` is a `u8[]` (Node's `Buffer`), an array
    * of another number type, a typed array or a `DataView`, counted in bytes, as `readSync`'s
-   * buffer. One copy, nothing allocated: a record read out into a buffer that is used again.
+   * buffer. One copy: a record read out into a buffer that is used again. A `u8[]`, a typed
+   * array or a view allocates nothing; an array of another number type is viewed as bytes
+   * first. Where the last instructions count, `bytes.copy` on a `u8[]` target does less.
    *
-   * A `target` read out of a `shared` value, the mapping's own `bytes` and typed arrays among
-   * them, is passed as a copy of it, as to any function that writes its argument: the bytes go
-   * into that copy, never into the read-only mapping. On WebAssembly `bytes` is a copy of the
+   * A `target` read out of a `shared` value, the mapping's own `bytes` among them, is passed as
+   * a copy of it, as to any function that writes its argument: the bytes go into that copy,
+   * never into the read-only mapping. A typed array of a mapping is no target at all. On WebAssembly `bytes` is a copy of the
    * file, and so is what this copies from.
    */
   copy<T extends Numeric = u8>(
