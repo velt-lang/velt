@@ -156,6 +156,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Work::GenFree(def, targs) => Self::build_gen_free(cx, *def, targs),
             Work::GenTrace(def, targs) => Self::build_gen_trace(cx, *def, targs),
             Work::ModuleInit(from, to) => Self::build_module_init(cx, *from, *to),
+            Work::ModuleDrop => Self::build_module_drop(cx),
             Work::StaticsDrop => Self::build_statics_drop(cx),
             Work::ModuleAccess(a) => Self::build_module_access(cx, *a),
             Work::CExport(i) => Self::build_c_export(cx, *i),
@@ -284,10 +285,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // through its error, if at all: its calls are cold (`Function::cold`).
         let cold = lw.cx.is_never(ret);
         let inline = lw.cx.inline_of(def);
+        let rare = lw.cx.is_rare(def);
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
         func.cold = cold;
         func.inline = inline;
+        func.rare = rare;
         // `@targetFeature`'s set (sema and velt_vir share the features' table).
         func.target = hir_prog.cpu_targets.get(&def).copied().unwrap_or_default();
         func
@@ -446,7 +449,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Uninit);
                 li.cell = cell;
                 li.in_cell = cell;
-                li.fixed = !ld.mutable && !cell && !by_ref;
+                li.fixed = !ld.mutable && !cell && !by_ref && !ld.weak;
+                li.weak = ld.weak.then_some(ty);
                 info[i] = Some(li);
             }
         }
@@ -616,6 +620,7 @@ impl LInfo {
             in_cell: false,
             gen: None,
             fixed: false,
+            weak: None,
         }
     }
 }

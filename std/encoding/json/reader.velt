@@ -113,12 +113,12 @@ export class Reader extends Scanner {
   num: f64 = 0;
   int: i64 = 0;
   /**
-   * The value `valueLimit` read from a driver's rows: a runtime `JsonValue` handle. (A value
-   * read from text is the tape `JsonValue[JSON_FROM_READER]` parses: no field of the reader holds a
-   * tape, so a program that decodes no `JsonValue` does not carry the tape's drop and copy code.)
+   * The value `valueLimit` read from a driver's rows: its JSON text. (A value read from text is
+   * the tape `JsonValue[JSON_FROM_READER]` parses: no field of the reader holds a tape, so a
+   * program that decodes no `JsonValue` does not carry the tape's drop and copy code.)
    */
-  handle: u64 = 0;
-  /** `valueLimit` read a value from a driver's rows (`handle`; 0 is JSON null). */
+  rowsText: string = "";
+  /** `valueLimit` read a value from a driver's rows (`rowsText`). */
   rowsValue: bool = false;
   /**
    * The last key of `nextKey`: its raw bytes, or its text when it had escapes. Kept apart from
@@ -172,9 +172,9 @@ export class Reader extends Scanner {
     return this.int;
   }
 
-  /** The handle of the last `valueLimit` from rows. */
-  lastHandle(): u64 {
-    return this.handle;
+  /** The JSON text of the last `valueLimit` from rows. */
+  lastRowsText(): string {
+    return this.rowsText;
   }
 
   /** May a JSON `null` stand for an absent optional field whose type has no `null`? */

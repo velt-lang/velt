@@ -39,20 +39,20 @@ import { HandOff, parkAfterWake } from "velt/sync/hand_off";
 declare c type _OVERLAPPED;
 
 declare c("c") function ReadFile(
-  file: Ptr<void>,
+  file: Ptr<void> | null,
   buf: u8[],
   n: u32,
   read: Out<u32>,
   overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
 declare c("c") function WriteFile(
-  file: Ptr<void>,
-  buf: Ptr<void>,
+  file: Ptr<void> | null,
+  buf: Ptr<void> | null,
   n: u32,
   written: Out<u32>,
   overlapped: Ptr<_OVERLAPPED> | null,
 ): i32;
-declare c("c") function CloseHandle(h: Ptr<void>): i32;
+declare c("c") function CloseHandle(h: Ptr<void> | null): i32;
 declare c("c") function GetLastError(): u32;
 
 const ERROR_BROKEN_PIPE: u32 = 109;

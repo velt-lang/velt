@@ -32,6 +32,10 @@ export function writeFrom(fd: i32, bytes: readonly u8[], start: usize, end: usiz
   return -1;
 }
 
+export function lockRange(fd: i32, mode: i32, start: i64, len: i64): i32 {
+  return -1;
+}
+
 export function syncAll(fd: i32): i32 {
   return -1;
 }

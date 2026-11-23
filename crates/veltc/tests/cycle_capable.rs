@@ -21,6 +21,23 @@ fn debug_out(src: &str) -> String {
     stderr
 }
 
+/// The VIR lowering prints for `src` (`--emit vir`).
+fn vir_out(src: &str) -> String {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
+    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "main.velt", "--emit", "vir"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 /// The `velt: cycle-capable types:` line lowering prints for `src` (`VELT_DEBUG_COUNTED=1`).
 /// Type names may contain commas (object types), so the line is kept whole.
 fn cycle_capable(src: &str) -> String {
@@ -113,6 +130,127 @@ fn a_parent_pointer_closes_a_cycle() {
          }",
     );
     assert!(has(&c, "class TreeNode"), "{c}");
+}
+
+#[test]
+fn a_weak_back_reference_does_not_close_a_cycle() {
+    // A connection holding its streams, each stream referring back to it: a cycle, unless the
+    // back reference is `weak` (a weak field is no edge, velt_vir `weak_fields`). A type that
+    // holds values of its own type (a tree's `children: Node[]`) stays cycle-capable whatever its
+    // parent pointer is: a counted node can be put among its own children.
+    let src = |back: &str| {
+        format!(
+            "class Stream {{
+               conn: {back} = null;
+               id: number;
+               constructor(id: number) {{ this.id = id; }}
+             }}
+             class Conn {{
+               streams: Stream[] = [];
+               open(id: number): Stream {{
+                 const s = new Stream(id);
+                 s.conn = this;
+                 this.streams.push(s);
+                 return s;
+               }}
+             }}
+             function main() {{
+               const c = new Conn();
+               const s = c.open(1);
+               const back = s.conn;
+               console.log(c.streams.length, back === c);
+             }}"
+        )
+    };
+    let strong = cycle_capable(&src("Conn | null"));
+    assert!(
+        has(&strong, "class Conn") && has(&strong, "class Stream"),
+        "{strong}"
+    );
+    let out = debug_out(&src("weak Conn | null"));
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("");
+    let line = line.trim();
+    assert!(
+        !has(line, "class Conn") && !has(line, "class Stream"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_listener_capturing_its_view_weakly_does_not_close_a_cycle() {
+    // The listener of `a_listener_closure_capturing_its_view_closes_a_cycle`, capturing the view
+    // through a `weak` variable: the closure holds the variable's slot, no edge (velt_vir
+    // weak_captures.rs, `env_captures`).
+    let out = debug_out(
+        "class Button {
+           listeners: (() => void)[] = [];
+           onClick(f: () => void) { this.listeners.push(f); }
+           click() { for (const f of this.listeners) f(); }
+         }
+         class View { clicks = 0; button = new Button(); }
+         function main() {
+           const v = new View();
+           const b = v.button;
+           const me: weak View | null = v;
+           b.onClick(() => { const s = me; if (s !== null) { s.clicks += 1; } });
+           b.click();
+           console.log(v.clicks);
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(
+        !has(line, "class View") && !has(line, "class Button"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_weak_map_value_capturing_its_key_weakly_is_not_traced() {
+    // A weak map value whose closure refers to the key only through a `weak` variable cannot
+    // lead back to it, so the map has no value trace (`weakMapNew`'s last argument 0) and its
+    // entries are never examined (velt_vir weak_captures.rs, `env_owned`). With a strong
+    // capture of the key, the map traces its values.
+    let src = |decl: &str| {
+        format!(
+            "class Key {{ n: number; constructor(n: number) {{ this.n = n; }} }}
+             class Holder {{ f: () => number; constructor(f: () => number) {{ this.f = f; }} }}
+             function main() {{
+               const cache = new WeakMap<Key, Holder>();
+               const k = new Key(1);
+               const w: {decl} = k;
+               cache.set(k, new Holder(() => w?.n ?? 0));
+               console.log(cache.get(k)!.f(), k.n);
+             }}"
+        )
+    };
+    let traced = |vir: &str| {
+        let lines: Vec<&str> = vir.lines().collect();
+        let at = (lines.iter())
+            .position(|l| l.contains("weakMapNew("))
+            .unwrap_or_else(|| panic!("no weakMapNew call:\n{vir}"));
+        // `weakMapNew(keyTrace, retain, release, trace)`: the trace's operand, set just before
+        // the call in the same block.
+        let args = lines[at].split("weakMapNew(").nth(1).unwrap_or("");
+        let arg = args
+            .split(')')
+            .next()
+            .unwrap_or("")
+            .rsplit(", ")
+            .next()
+            .unwrap_or("");
+        let set = format!("{} = cast ", arg.trim());
+        let value = (lines[..at].iter().rev())
+            .find_map(|l| l.trim().strip_prefix(set.as_str()))
+            .unwrap_or_else(|| panic!("no value for {arg}:\n{vir}"));
+        !value.starts_with("0_ptr")
+    };
+    assert!(traced(&vir_out(&src("Key | null"))));
+    assert!(!traced(&vir_out(&src("weak Key | null"))));
 }
 
 #[test]

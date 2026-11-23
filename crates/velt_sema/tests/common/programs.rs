@@ -383,6 +383,34 @@ pub fn ok_src(src: &str) -> hir::Program {
     p.unwrap()
 }
 
+/// [`ok_src`] of a build that links the prebuilt object of std's float printing
+/// (`number_shortest`, velt_common `std_hooks/prebuilt.rs`), as a build with a warm cache does: a
+/// float printed calls it and checks none of that printing.
+pub fn ok_src_prebuilt(src: &str) -> hir::Program {
+    use velt_common::std_hooks::HOOKS;
+    let mut l = load_src(src);
+    // Its module is not loaded: the build links the object instead.
+    l.modules
+        .retain(|m| m.path != "std/lang/hooks/number_shortest");
+    let none = |_: &[String]| None;
+    let kept = velt_sema::StdLoads::default();
+    let linked = |i: usize| HOOKS[i].name == "number_shortest";
+    let loads = velt_sema::Loads {
+        run: &none,
+        kept: &kept,
+        prebuilt: Some(&linked),
+    };
+    let opts = velt_sema::CheckOptions::default();
+    let gen = Default::default();
+    let (p, d) =
+        velt_sema::check_generating(&l.modules, l.root, opts, &gen, &[], None, Some(loads));
+    assert!(!d.iter().any(|d| d.is_error()), "{}", l.render(&d));
+    match p {
+        Some(velt_sema::Checked::Program(p)) => *p,
+        _ => panic!("no program: {src}"),
+    }
+}
+
 /// Check an inline program and require failure; returns the rendered diagnostics.
 pub fn err_src(src: &str) -> String {
     let l = load_src(src);

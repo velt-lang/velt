@@ -186,12 +186,12 @@ work at a boundary. One lossy conversion maps each lone surrogate to exactly **o
 | `encodeURIComponent`, `decodeURIComponent` | a lone surrogate, or `%ED%A0%BD`, throws `URIError` |
 | string literals | escaped pairs (`"😀"`, `"\u{D83D}\u{DE00}"`) are one character |
 
-**Regex.** Matching runs on the WTF-8 bytes of the subject, and offsets are translated to code
-units at entry and exit (`crates/velt_rt/src/regex/mod.rs`). Unless the pattern names a
-surrogate, the engine never matches the bytes of a lone surrogate; a pattern without the `u` flag
-that names a surrogate searches the subject's units form, where each half of a pair is matched on
-its own, as in JavaScript. JavaScript's full regex syntax and semantics are
-[#401](https://github.com/velt-lang/velt/issues/401).
+**Regex.** Matching runs on the WTF-8 bytes of the subject, where they are, and offsets are
+translated to code units at entry and exit (`std/text/regex/offsets.velt`). With the `u` flag a
+character is a code point. Without it a character is a code unit, and a pair is two: its high
+surrogate at the first byte of its 4-byte sequence and its low surrogate at the second, so each
+half is matched on its own, as in JavaScript, with no copy of the subject
+([the regular expression engine](regex-engine.md)).
 
 ## Runtime cost
 

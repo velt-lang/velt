@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "allowNative": [
+    "clib"
+  ],
+  "packages": [
+    {
+      "name": "clib",
+      "version": "0.1.0",
+      "source": "path+_clib"
+    }
+  ]
+}

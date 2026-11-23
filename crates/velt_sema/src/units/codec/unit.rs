@@ -21,7 +21,7 @@ use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit, before the checksum of
 /// the rest ([`checksum`]).
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x05";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x08";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
 /// caller's, what every check installs again), `memo` (built again on demand: one built over a
@@ -83,7 +83,7 @@ macro_rules! unit_fields {
 
 unit_fields! {
     save: [
-        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys, json_needs,
+        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys, unit_sums,
         aliases, extensions, impls, iface_writes, part_ifaces, synth_ifaces, generic_fns,
         generic_called, union_views, any, ext_impls, ext_by_iface, anon, readonly_twins,
         array_twins,
@@ -105,7 +105,7 @@ unit_fields! {
     special: [sigq, type_level],
     skip: [
         // The caller's (`decode_unit`), or set again by every check that uses the unit.
-        modules, root, gen, units, import_targets, loads,
+        modules, root, gen, units, wasm32, import_targets, loads,
         loads_added, unit_base, units_stage,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
@@ -225,6 +225,7 @@ mod special {
                 erase_generics: _,
                 in_field: _,
                 field_erased: _,
+                param_props: _,
             } = self;
             readonly_params.enc(w);
         }
@@ -233,12 +234,17 @@ mod special {
         }
     }
 
-    /// The deferred types and what is known of them; not the state of an expansion in progress,
-    /// nor the memo of property-name kinds.
+    /// The deferred types and what is known of them, and the C pointees refused (so a later
+    /// unit neither reports one again nor refuses a C signature for it); not the state of an
+    /// expansion in progress, nor the memo of property-name kinds.
     impl Part for type_level::State {
         fn enc_part(&self, w: &mut Writer) {
             let type_level::State {
                 alias_site: _,
+                ptr_site: _,
+                ptr_refused,
+                ptr_refusals,
+                ptr_refused_types,
                 use_site: _,
                 key_kinds: _,
                 deferring: _,
@@ -265,6 +271,9 @@ mod special {
             inline.enc(w);
             alias_canon.enc(w);
             alias_shapes.enc(w);
+            ptr_refused.enc(w);
+            ptr_refusals.enc(w);
+            ptr_refused_types.enc(w);
         }
         fn dec_part(&mut self, r: &mut Reader) {
             self.op_sites = Codec::dec(r);
@@ -277,6 +286,9 @@ mod special {
             self.inline = Codec::dec(r);
             self.alias_canon = Codec::dec(r);
             self.alias_shapes = Codec::dec(r);
+            self.ptr_refused = Codec::dec(r);
+            self.ptr_refusals = Codec::dec(r);
+            self.ptr_refused_types = Codec::dec(r);
         }
     }
 }

@@ -1,0 +1,23 @@
+// check: no leaks
+// A weak field referring to a typed proxy (proxy_typed.rs): it gives back the proxy, whose
+// word's bit the field keeps in its slot pointer (velt_vir weak_fields.rs), and its target.
+class Node {
+  name: string;
+  parent: weak Node | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+const root = new Node("root");
+const p = new Proxy(root, {
+  get(t, k) {
+    return k === "name" ? "proxied" : Reflect.get(t, k);
+  },
+});
+const kid = new Node("kid");
+kid.parent = p;
+const back = kid.parent;
+console.log(back === p, back === root, back?.name);
+kid.parent = root;
+const r2 = kid.parent;
+console.log(r2 === root, r2?.name);

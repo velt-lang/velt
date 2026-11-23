@@ -152,6 +152,7 @@ enums! {
         22 => Undefined,
         23 => Void,
         24 => Predicate { param, ty, asserts },
+        25 => Weak(a),
     }
     VarKind {
         0 => Const,

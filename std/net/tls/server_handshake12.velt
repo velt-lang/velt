@@ -7,11 +7,8 @@
 // session id, so no resumption; no client certificates. It does no I/O.
 
 import { p256Sign } from "velt/crypto/ecdsa_p256_sign";
-import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { randomBytes } from "velt/crypto/random";
 import { sha256 } from "velt/crypto/sha256";
-import { sha384 } from "velt/crypto/sha512";
-import { x25519, x25519PublicKey } from "velt/crypto/x25519";
 import { utf8Encode } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
@@ -30,12 +27,20 @@ import {
   EXT_EXTENDED_MASTER_SECRET,
   EXT_RENEGOTIATION_INFO,
   SECP256R1,
+  SECP384R1,
   X25519,
 } from "velt/net/tls/client_hello";
 import { ClientOffer } from "velt/net/tls/client_hello_parse";
+import {
+  exchangeKey,
+  exchangePublic,
+  exchangeSecret,
+  pointFormOk,
+} from "velt/net/tls/key_exchange";
 import { KeyBlock12, keyBlock12, masterSecret12, verifyData12 } from "velt/net/tls/key_schedule12";
 import { hashLength, RecordCipher } from "velt/net/tls/record_cipher";
 import { ServerKey } from "velt/net/tls/server_key";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 import {
   chooseSuite12,
   DOWNGRADE_TLS12,
@@ -64,6 +69,8 @@ const DONE = 3;
 /** The server's side of a TLS 1.2 handshake, from the ClientHello on. */
 export class ServerHandshake12 {
   private transcript: u8[] = [];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   private state: i32 = WAIT_KEY_EXCHANGE;
   private hashLen: usize;
   private clientRandom: u8[];
@@ -112,17 +119,19 @@ export class ServerHandshake12 {
     // server doesn't refuse them first, so clients that don't check still connect.)
     this.suite = suite;
     this.hashLen = hashLength(suite);
-    // The server's order: X25519, then secp256r1; a client without supported_groups gets
+    // The server's order: X25519, secp256r1, then secp384r1; a client without supported_groups gets
     // secp256r1, which every ECDHE client has (RFC 8422 §4).
     let group: usize = 0;
     if (offer.groups.includes(X25519)) {
       group = X25519;
     } else if (offer.groups.includes(SECP256R1) || offer.groups.length == 0) {
       group = SECP256R1;
+    } else if (offer.groups.includes(SECP384R1)) {
+      group = SECP384R1;
     } else {
       throw new TlsFailure(
         HANDSHAKE_FAILURE,
-        "no key exchange group in common (the server has X25519 and secp256r1)",
+        "no key exchange group in common (the server has X25519, secp256r1 and secp384r1)",
       );
     }
     this.group = group;
@@ -135,9 +144,8 @@ export class ServerHandshake12 {
       sr[24 + i] = DOWNGRADE_TLS12[i];
     }
     this.serverRandom = sr;
-    this.privateKey = ecdhKey ?? (group == X25519 ? randomBytes(32) : p256PrivateKey());
-    const point =
-      group == X25519 ? x25519PublicKey(this.privateKey) : p256PublicKey(this.privateKey);
+    this.privateKey = ecdhKey ?? exchangeKey(group);
+    const point = exchangePublic(group, this.privateKey);
     this.add(m);
     const w = new ByteWriter();
     this.put(w, serverHello(sr, suite, offer, alpn));
@@ -198,7 +206,7 @@ export class ServerHandshake12 {
   }
 
   private hash(): u8[] {
-    return this.hashLen == 48 ? sha384(this.transcript) : sha256(this.transcript);
+    return this.th.of(this.transcript, this.hashLen == 48);
   }
 
   /**
@@ -227,6 +235,7 @@ export class ServerHandshake12 {
       const k = this.keys!;
       this.writeCipher = new RecordCipher(this.suite, k.serverKey, k.serverIv);
       this.transcript = [];
+      this.th.reset();
       this.state = DONE;
       return true;
     }
@@ -255,13 +264,12 @@ export class ServerHandshake12 {
     const v = r.vector(1);
     const point = v.bytes(v.left());
     r.finish();
-    if (this.group == X25519 ? point.length != 32 : point.length != 65 || point[0] != 4) {
+    if (!pointFormOk(this.group, point)) {
       throw new TlsFailure(ILLEGAL_PARAMETER, "a ClientKeyExchange point of the wrong form");
     }
     let shared: u8[];
     try {
-      shared =
-        this.group == X25519 ? x25519(this.privateKey, point) : p256Ecdh(this.privateKey, point);
+      shared = exchangeSecret(this.group, this.privateKey, point);
     } catch (e) {
       throw new TlsFailure(ILLEGAL_PARAMETER, "the client's key exchange is not a valid point");
     }

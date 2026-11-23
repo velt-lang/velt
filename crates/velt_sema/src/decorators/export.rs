@@ -4,8 +4,8 @@
 //! (`decorator_export`), never by the name a use is written with.
 //!
 //! What may be exported is what a `declare c` function may take and return by value
-//! (`collect::c_sig::value_ty`): integers, `f32`, `f64`, `bool`, `Ptr<T>` and `Ptr<T> | null`, and
-//! `void` as the result. The function is not generic, async, a generator, a method or nested in
+//! (`collect::c_sig::crossing_ty`): integers, `f32`, `f64`, `bool`, `Ptr<T>` and `Ptr<T> | null`,
+//! a `@repr("transparent")` struct of one of them, and `void` as the result. The function is not generic, async, a generator, a method or nested in
 //! another, and throws nothing ([`throws`], after inference): C has no exceptions. Its name is a C
 //! identifier outside what C and the runtimes reserve, given to one function of the program, and
 //! no C function the program declares has it. Each export is recorded in `Program::c_exports`,
@@ -306,7 +306,7 @@ fn crossing(cx: &mut Ctx, d: DefId, sig: &ast::FnSig) -> Option<(Vec<CTy>, CTy)>
             ok = false;
             continue;
         }
-        match crate::collect::c_sig::value_ty(cx, ty) {
+        match crate::collect::c_sig::crossing_ty(cx, ty) {
             Some(t) => params.push(t),
             None => {
                 let shown = cx.display(ty);
@@ -327,7 +327,7 @@ fn crossing(cx: &mut Ctx, d: DefId, sig: &ast::FnSig) -> Option<(Vec<CTy>, CTy)>
     let ret_ty = cx.fn_info(d).ret;
     let ret = match cx.ty.kind(ret_ty) {
         TyKind::Unit => Some(CTy::Void),
-        _ => crate::collect::c_sig::value_ty(cx, ret_ty),
+        _ => crate::collect::c_sig::crossing_ty(cx, ret_ty),
     };
     let ret = match ret {
         Some(r) => r,

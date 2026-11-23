@@ -44,6 +44,10 @@ pub(crate) struct SigQueries<'m> {
     /// Velt cannot give a field.
     pub in_field: bool,
     pub field_erased: bool,
+    /// The spans of the constructor parameters being resolved that are parameter properties
+    /// (`constructor(public owner: weak Node | null)`): their field reads the written type, so
+    /// the parameter takes it without `weak` (`crate::weak_types::without_weak`).
+    pub param_props: Vec<velt_common::Span>,
 }
 
 impl Ctx<'_> {
@@ -388,7 +392,7 @@ impl Ctx<'_> {
             TyKind::FnPtr { params, ret, .. } => params.iter().any(|p| m(*p)) || m(*ret),
             TyKind::Promise(v, _) => m(*v),
             TyKind::Adt(_, a) | TyKind::Dyn(_, a) | TyKind::Tuple(a) => a.iter().any(|x| m(*x)),
-            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => m(*x),
+            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) | TyKind::Ptr(x) => m(*x),
             TyKind::Map(a, b) | TyKind::Result(a, b) => m(*a) || m(*b),
             _ => false,
         }

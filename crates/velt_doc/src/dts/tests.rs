@@ -248,3 +248,16 @@ fn operator_keys_come_from_the_globals_file() {
     }
     assert!(!g.contains("declare global"), "{g}");
 }
+
+/// `weak T | null` is written as its read type, `T | null`: TypeScript has no `weak`.
+#[test]
+fn weak_fields_are_their_read_type() {
+    let inputs = [input(
+        "tree/index.velt",
+        "export class TreeNode {\n  parent: weak TreeNode | null = null;\n  children: TreeNode[] = [];\n}\n",
+    )];
+    let files: BTreeMap<String, String> = type_package(&inputs, "1.0.0").into_iter().collect();
+    let t = &files["tree/index.d.ts"];
+    assert!(t.contains("parent: TreeNode | null;"), "{t}");
+    assert!(!t.contains("weak"), "{t}");
+}

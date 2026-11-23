@@ -1,7 +1,7 @@
 //! Opaque object handles at the C ABI (rt_abi_async.md §3.2).
 //!
-//! The standard library holds runtime objects (sockets, regexes, child processes, HTTP requests,
-//! `json.Value` nodes …) as `u64` fields and passes them to the runtime as `u64` arguments: Velt
+//! The standard library holds runtime objects (sockets, child processes, HTTP requests …) as
+//! `u64` fields and passes them to the runtime as `u64` arguments: Velt
 //! has no pointer type, and a `u64` is the same width everywhere, so the `declare function` in
 //! `std/*.velt` and the definition here have the same signature even on wasm32, where
 //! WebAssembly links only exactly matching signatures. A handle carries the object's address
@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 /// A `u64` holding the address of a `T` (0 = none): an `Arc<T>` turned into a raw pointer
-/// (shared objects that in-flight operations keep alive: sockets, regexes, JSON nodes …) or a
+/// (shared objects that in-flight operations keep alive: sockets, JSON nodes …) or a
 /// `Box<T>` (objects with a single owner: HTTP requests and responses …).
 #[repr(transparent)]
 pub struct Handle<T>(u64, PhantomData<*const T>);

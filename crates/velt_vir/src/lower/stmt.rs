@@ -92,6 +92,10 @@ impl FnLower<'_, '_> {
         if self.init_local(local) {
             self.declare_init_local(local, init);
         }
+        if self.info[local.0 as usize].weak.is_some() {
+            self.weak_let(local, init);
+            return self.own_let(local, init);
+        }
         // A member only ever called: never made (frame_envs.rs).
         if self.self_env.is_some() && self.direct_siblings.contains_key(&local) {
             return;

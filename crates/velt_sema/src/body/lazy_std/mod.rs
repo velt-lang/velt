@@ -41,8 +41,8 @@ use record_conversions::holds_string_record;
 pub(crate) use hook_stubs::{declared as declared_hook, stub as hook_stub};
 
 pub(crate) use live::{
-    assume, demanded as hooks_demanded, finish as finish_live, live_defs, reach_again, too_late,
-    Assumed,
+    assume, demanded as hooks_demanded, finish as finish_live, live_defs, prepare_walk,
+    reach_again, too_late, walks, Assumed,
 };
 
 /// Is `d` live (for the passes after [`finish_live`])? Lowering builds only live definitions (a
@@ -206,12 +206,9 @@ pub(crate) struct Lazy {
     module_hooks: bool,
     /// [`cpu_hook`] has demanded std/lang/hooks/cpu.
     cpu_hook: bool,
-    /// The program's code converts a value that may hold a float to text: the float hooks are
-    /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
+    /// The program's code converts a value that may hold a float to text: std's float printing
+    /// is reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
-    /// Live code prints a float: `console.log`'s float writer is reached
-    /// (`velt_common::std_hooks::ON_DEMAND_WRITE`).
-    float_write: bool,
     /// The types of the values live code puts into an `any` or an interface value (`ToDyn`),
     /// and whether the program's own code puts a type parameter's value into one.
     dyn_held: FxHashSet<TyId>,
@@ -228,6 +225,9 @@ pub(crate) struct Lazy {
     live: live::Live,
     /// The stubs of the hooks `hookCall` names before their modules are loaded ([`hook_stubs`]).
     stubs: hook_stubs::Stubs,
+    /// In a check by units, the last [`units_live_set`] with the numbers of definitions and of
+    /// definition records it was found for: asked again with none added, it is the same.
+    pub(crate) units_live_memo: Option<(usize, usize, FxHashSet<DefId>)>,
 }
 
 impl Lazy {
@@ -252,7 +252,6 @@ impl Lazy {
             module_hooks: false,
             cpu_hook: false,
             float_text: false,
-            float_write: false,
             dyn_held: FxHashSet::default(),
             dyn_generic: false,
             cycle_closed: FxHashSet::default(),
@@ -261,6 +260,7 @@ impl Lazy {
             printable: FxHashMap::default(),
             live: live::Live::new(),
             stubs: hook_stubs::Stubs::default(),
+            units_live_memo: None,
         }
     }
 
@@ -310,6 +310,17 @@ pub(crate) fn plan(cx: &mut Ctx) {
 /// Is the std module at `path` one lowering calls into by name ([`BY_NAME`], [`HELPERS`])?
 pub(crate) fn called_by_name(path: &str) -> bool {
     (BY_NAME.iter().chain(HELPERS)).any(|p| in_module(path, p))
+}
+
+/// Which of std module `path`'s free functions lowering looks up by name (`units::reach`):
+/// `Some(true)`: all of them ([`BY_NAME`]); `Some(false)`: the compiler's helpers among them
+/// ([`HELPERS`], [`is_helper`]); `None`: none.
+pub(crate) fn named_module(path: &str) -> Option<bool> {
+    match () {
+        _ if BY_NAME.iter().any(|p| in_module(path, p)) => Some(true),
+        _ if HELPERS.iter().any(|p| in_module(path, p)) => Some(false),
+        _ => None,
+    }
 }
 
 /// Is `path` the std module or directory `p`, or inside it (`std/lang/sort` is not in
@@ -382,7 +393,8 @@ pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
 /// Work the live set out, with the definitions it adds checked, and the hooks that wait for what
 /// the program does, until nothing new is reached. Each definition is walked once.
 pub(crate) fn reach(cx: &mut Ctx) {
-    if cx.lazy.modules.is_empty() {
+    // A check by units walks without a module table (`live::walk_units_program`).
+    if cx.lazy.modules.is_empty() && !cx.lazy.live.units {
         return;
     }
     loop {
@@ -406,9 +418,13 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         number_text::reach_hooks(cx, texts, &mut found);
-        number_text::reach_writer(cx, &mut found);
-        // A std function C calls (`@export`) is live though no checked code refers to it.
-        found.extend(cx.c_exports.iter().map(|e| e.def));
+        // A std function C calls (`@export`) is live though no checked code refers to it; in a
+        // walk of std's unit, only once its module is loaded, as in lazy std (`loaded_for`).
+        found.extend(
+            (cx.c_exports.iter())
+                .map(|e| e.def)
+                .filter(|&d| live::loaded_for(cx, d, None)),
+        );
         sched_hooks(cx, &mut found);
         module_hooks(cx, &mut found);
         cpu_hook(cx, &mut found);
@@ -426,7 +442,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
 
 /// The executor in Velt's hooks (velt_common `std_hooks.rs`, `sched_*`), which lowering calls on a
 /// native target ([`sched_hooks`]).
-const SCHED_HOOKS: &[&str] = &[
+pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(program_thread),
     velt_common::std_hook!(sched_export_enter),
     velt_common::std_hook!(sched_export_exit),
@@ -484,6 +500,12 @@ const SCHED_CELL_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_cell_copy),
     velt_common::std_hook!(sched_cell_free),
 ];
+
+/// A check by units starts the hooks that wait for what the
+/// program does again: none is live yet.
+pub(super) fn units_restart(cx: &mut Ctx) {
+    (cx.lazy.record_hooks, cx.lazy.sched_hooks) = (false, false);
+}
 
 /// Adds [`SCHED_HOOKS`] to `found` the first time, on a native target (`Lazy::native_executor`)
 /// when live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
@@ -634,6 +656,7 @@ pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
                         ty: *ty,
                         mutable: false,
                         boxed: false,
+                        weak: false,
                         span: *span,
                     })
                     .collect();
@@ -699,8 +722,9 @@ mod tests;
 crate::units::codec::structs! {
     Lazy {
         on, check_all, native_executor, modules, subclasses, user_record, generic_any,
-        record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, float_write, dyn_held,
+        record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, dyn_held,
         dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable, module_hooks,
+        units_live_memo,
     }
     Mode {
         whole, named,

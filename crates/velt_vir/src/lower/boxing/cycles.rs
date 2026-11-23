@@ -359,7 +359,7 @@ impl Cx<'_> {
     }
 
     /// What the environments of each key capture: the types of their captured variables (a
-    /// cell holds a value of the variable's type), substituted.
+    /// cell holds a value of the variable's type), substituted; a `weak` variable is no edge.
     fn env_captures(&mut self) -> FxHashMap<Option<CycleKey>, Vec<TyId>> {
         let mut envs: Vec<_> = self.facts.closure_envs.iter().cloned().collect();
         envs.sort_by_key(|e| format!("{e:?}"));
@@ -367,7 +367,9 @@ impl Cx<'_> {
         for (key, def, targs) in envs {
             let f = self.fn_def(def);
             let caps: Vec<TyId> = (f.captures.iter())
-                .map(|c| f.body.locals[c.inner.0 as usize].ty)
+                .map(|c| &f.body.locals[c.inner.0 as usize])
+                .filter(|l| !l.weak)
+                .map(|l| l.ty)
                 .collect();
             let caps: Vec<TyId> = caps.into_iter().map(|t| self.subst(t, &targs)).collect();
             let to = out.entry(key).or_default();
@@ -476,7 +478,11 @@ impl Cx<'_> {
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => vec![a, b],
             TyKind::Tuple(es) => es,
             TyKind::Adt(d, args) => {
-                let mut tys = self.part_types(t);
+                // A class's weak fields are no edges (weak_fields.rs).
+                let mut tys = match self.is_class(t) {
+                    true => self.adt_edge_tys(t),
+                    false => self.part_types(t),
+                };
                 // What a standard-library container keeps behind its own pointers; but a weak
                 // collection's entries are the runtime's (the ephemeron edges stand for them),
                 // while its fields and a subclass's are its own.

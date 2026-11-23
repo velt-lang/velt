@@ -1,0 +1,60 @@
+// check: no leaks
+// A `weak` variable a closure captures is no edge, in a generator closure's state too: a weak map
+// value holding a generator made by such a closure and not started yet, whose capture refers to
+// the key, lets the key go with its last outside reference. The state's trace before the start
+// leaves the capture out (velt_vir gen_trace.rs `trace_start_case`): visiting its slot as an
+// object would read the slot's words as one. `other`, a strong `Raw` in the state, makes the map
+// trace its values (#3119).
+class Raw {
+  // A counted first field: tracing the slot as a `Raw` would follow the slot's count as one.
+  peer: Raw | null = null;
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+class Holder {
+  g: Generator<number>;
+  constructor(g: Generator<number>) {
+    this.g = g;
+  }
+}
+
+function valueOf(r: Raw | null): number {
+  return r === null ? -1 : r.n;
+}
+
+let held: Raw | null = null;
+
+function track(cache: WeakMap<Raw, Holder>, n: number): WeakRef<Raw> {
+  const raw = new Raw(n);
+  held = raw;
+  const w: weak Raw | null = raw;
+  const other = new Raw(10);
+  const make = function* (): Generator<number> {
+    while (true) {
+      // Read before the `yield`, so no strong temporary of the target lives across it.
+      const v = valueOf(w) + other.n;
+      yield v;
+    }
+  };
+  cache.set(raw, new Holder(make()));
+  // The generator has not started: this release traces its state's start case.
+  held = null;
+  const first = cache.get(raw)!.g.next().value ?? 0;
+  console.log("read", first);
+  return new WeakRef(raw);
+}
+
+function main() {
+  const cache = new WeakMap<Raw, Holder>();
+  console.log("key freed:", track(cache, 3).deref() == null);
+  const kept = new Raw(5);
+  const n = kept.n;
+  const gen = function* (): Generator<number> {
+    yield n;
+  };
+  cache.set(kept, new Holder(gen()));
+  console.log("map in use:", cache.has(kept), cache.has(new Raw(0)));
+}

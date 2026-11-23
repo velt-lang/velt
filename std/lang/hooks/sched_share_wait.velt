@@ -1,11 +1,13 @@
 // velt/lang/hooks (internal): the waiters of a shared promise's hub in the executor in Velt
 // (sched_share.velt): `(holder, waker, ticket)` entries, 24 bytes each, in the order the holders
 // started waiting, in a buffer the hub grows (its `H_WAITERS`, `H_WLEN` and `H_WCAP` words).
-// Each entry holds a reference to its waker; its ticket is the microtask entry it was queued as
-// when the promise settled (0: none).
+// Each entry holds a reference to its waker (but its task's own while its node is listed:
+// sched_share_listed.velt); its ticket is the microtask entry it was queued as when the promise
+// settled (0: none).
 
 import * as m from "./sched_mem";
 import * as sh from "./sched_share";
+import * as ls from "./sched_share_listed";
 
 /** Entry `i` of hub `h`. */
 export function entry(h: usize, i: usize): usize {
@@ -36,9 +38,13 @@ export function wait(h: usize, f: usize, cx: usize): void {
   if (i < len) {
     const at = entry(h, i);
     const old = m.ld(at + 8);
-    if (old !== w) {
-      m.st(at + 8, m.wakerClone(w));
-      m.wakerDrop(old);
+    if ((old & ~ls.UNCOUNTED) !== w) {
+      ls.storeWaker(h, at, w);
+      if ((old & ls.UNCOUNTED) === 0) {
+        m.wakerDrop(old);
+      } else {
+        ls.replaced(old);
+      }
     }
     return;
   }
@@ -55,7 +61,7 @@ export function wait(h: usize, f: usize, cx: usize): void {
   }
   const at = entry(h, len);
   m.st(at, f);
-  m.st(at + 8, m.wakerClone(w));
+  ls.storeWaker(h, at, w);
   m.st(at + 16, 0);
   m.st(h + sh.H_WLEN, len + 1);
 }
@@ -63,7 +69,7 @@ export function wait(h: usize, f: usize, cx: usize): void {
 /** Removes entry `i`, giving back its waker. */
 export function removeWaiter(h: usize, i: usize): void {
   const len = m.ld(h + sh.H_WLEN);
-  m.wakerDrop(m.ld(entry(h, i) + 8));
+  ls.dropWaker(entry(h, i));
   for (let j = i; j + 1 < len; j++) {
     m.copy(entry(h, j), entry(h, j + 1), 24);
   }

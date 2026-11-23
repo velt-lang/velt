@@ -1,0 +1,18 @@
+// `return a`, `a` an `any` holding a promise, from an async function whose result is a typed
+// `Promise<number>`: JavaScript adopts it, and Velt doesn't yet (#3475), so it stops with a
+// TypeError rather than converting the promise. A value that is no promise converts with a
+// check, as in await_unknown_adopt_typed.velt.
+async function later(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function typed(held: boolean): Promise<number> {
+  const a: any = held ? later(3) : 7;
+  return a;
+}
+
+async function main(): Promise<void> {
+  console.log(await typed(false));
+  console.log("not reached", await typed(true));
+}
+main();

@@ -484,11 +484,11 @@ describe("TLS 1.3 client, RFC 8448 §3", () => {
     expect(message).toBe("TLS: the connection closed during the handshake");
     const ccs = written.indexOf("140303000101");
     const second = written.slice(ccs + 12);
-    // supported_groups X25519 and secp256r1 in both; the key share is X25519's, then P-256's
+    // supported_groups X25519, secp256r1 and secp384r1 in both; the key share is X25519's, then P-256's
     // (an uncompressed point), and no cookie.
-    expect(written.slice(0, ccs).includes("000a00060004001d0017")).toBe(true);
+    expect(written.slice(0, ccs).includes("000a00080006001d00170018")).toBe(true);
     expect(written.slice(0, ccs).includes("00330026002400 1d0020".replace(" ", ""))).toBe(true);
-    expect(second.includes("000a00060004001d0017")).toBe(true);
+    expect(second.includes("000a00080006001d00170018")).toBe(true);
     const share = second.indexOf("003300470045001700 4104".replace(" ", ""));
     expect(share >= 0).toBe(true);
     // No cookie extension (0x002c). The share's 65-byte point is random, so its hex may hold

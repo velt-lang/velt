@@ -2,10 +2,10 @@
 //! "Exported functions"): for each `hir::CExport`, a function with the unmangled symbol `c_name`
 //! (`Linkage::Export`) and the C signature sema checked, built whether or not Velt code reaches
 //! it. Velt functions already use the target's C calling convention for scalars, so the function
-//! only converts what crosses as a `declare c` call does in the other direction (c_call.rs): an
-//! address to the `Ptr<T>` it is (std's `ptrOf` / `ptrOrNull`), a `Ptr` result to its address,
-//! and calls the exported function as any call does, with its own ABI (a `Ptr` in a register,
-//! a result through an out-pointer).
+//! only checks what crosses as a `declare c` call does in the other direction (c_call.rs): a
+//! `Ptr<T>` parameter C passes `NULL` for stops the program (C has no non-null pointer, and the
+//! word would read as `null`, #3094); pointers are the same word on both sides. It calls the
+//! exported function as any call does, with its own ABI (a result through an out-pointer).
 //!
 //! A panic that reaches it ends the process: nothing unwinds into C (owner decision (b) on
 //! #2649, until #2008). A panic ends the process anyway unless a `catchPanic` poll is up the
@@ -19,7 +19,7 @@
 
 use velt_sema::hir::{self, CTy, ExprKind as E, LocalId, UseMode};
 
-use super::c_call::{self, PTR_ADDRESS, PTR_ADDRESS_OR_ZERO, PTR_OF, PTR_OR_NULL};
+use super::c_call;
 use super::{unit, Cx, FnLower, LInfo, LState, Work};
 use crate::vir::{Const, Function, Linkage, Operand, Rvalue, Terminator, Ty};
 
@@ -97,9 +97,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let mut lw = FnLower::bare(cx, vec![]);
         lw.loc = None;
         let params: Vec<Ty> = e.params.iter().map(|t| c_call::c_vir(*t, false)).collect();
-        let usize_ty = lw.cx.intern(hir::TyKind::Int(hir::IntTy::USize));
-        // One HIR local per parameter, as the call's arguments read them: the value itself, or
-        // a pointer's address as a `usize`.
+        // One HIR local per parameter, as the call's arguments read them: the value itself.
         // The parameters are the function's first locals.
         let locals: Vec<_> = params.iter().map(|&t| lw.new_local(t, None)).collect();
         let mut info = vec![];
@@ -112,32 +110,31 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 ty,
                 span: at,
             };
-            match ct {
-                CTy::Ptr { nullable } => {
-                    let addr = lw.new_local(Ty::U64, None);
-                    let v = Operand::Copy(crate::vir::Place::local(local));
-                    lw.assign(crate::vir::Place::local(addr), Rvalue::Cast(v, Ty::U64));
-                    info.push(LInfo::new(Some(addr), usize_ty, false, false, LState::Init));
-                    let hook = if *nullable { PTR_OR_NULL } else { PTR_OF };
-                    let d = lw.ffi_hook(hook);
-                    let target = lw.ptr_target(p.ty);
-                    args.push(hir::Expr {
-                        kind: E::Call {
-                            callee: hir::Callee::Def(d, vec![target]),
-                            args: vec![read(usize_ty)],
-                        },
-                        ty: p.ty,
-                        span: at,
-                    });
-                }
-                _ => {
-                    info.push(LInfo::new(Some(local), p.ty, false, false, LState::Init));
-                    args.push(read(p.ty));
-                }
+            if let CTy::Ptr { nullable: false } = ct {
+                let v = Operand::Copy(crate::vir::Place::local(local));
+                lw.stop_if_null(v, &format!(
+                    "C passed NULL for parameter {} of `{}`, a `Ptr<T>`: declare it `Ptr<T> | null`",
+                    k + 1,
+                    e.name
+                ));
             }
+            info.push(LInfo::new(Some(local), p.ty, false, false, LState::Init));
+            args.push(read(p.ty));
         }
         lw.info = info;
-        let mut call = hir::Expr {
+        // A `@repr("transparent")` parameter: C passed its field, which the call's argument is
+        // built around (`collect::c_sig`), in a local of the struct's own.
+        for (k, p) in f.params.iter().enumerate() {
+            if lw.cx.transparent_field(p.ty).is_none() {
+                continue;
+            }
+            let field = Operand::Copy(crate::vir::Place::local(locals[k]));
+            let v = lw.wrap_transparent(field, p.ty);
+            let vt = lw.cx.ty(p.ty);
+            let own = lw.copy_to_temp(v, vt);
+            lw.info[k] = LInfo::new(Some(own), p.ty, false, false, LState::Init);
+        }
+        let call = hir::Expr {
             kind: E::Call {
                 callee: hir::Callee::Def(e.def, vec![]),
                 args,
@@ -145,23 +142,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ty: f.ret,
             span: f.span,
         };
-        if let CTy::Ptr { nullable } = e.ret {
-            let hook = if nullable {
-                PTR_ADDRESS_OR_ZERO
-            } else {
-                PTR_ADDRESS
-            };
-            let d = lw.ffi_hook(hook);
-            let target = lw.ptr_target(f.ret);
-            call = hir::Expr {
-                kind: E::Call {
-                    callee: hir::Callee::Def(d, vec![target]),
-                    args: vec![call],
-                },
-                ty: usize_ty,
-                span: f.span,
-            };
-        }
         lw.push_scope(super::ScopeKind::Block);
         // Around the call, the executor in Velt holds the tasks a C library's thread starts, so
         // the call's synchronous run comes first (sched.rs `sched_export_call`). Not for its own
@@ -171,10 +151,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.sched_export_call(true);
         }
         let v = lw.expr(&call);
+        // A `@repr("transparent")` result returns its field.
+        let v = lw.unwrap_transparent(v, f.ret).0;
         let ret = c_call::c_vir(e.ret, false);
         let v = match ret {
             Ty::Unit => unit(),
-            Ty::Ptr => lw.rvalue_temp(Ty::Ptr, Rvalue::Cast(v, Ty::Ptr)),
             _ => lw.rvalue_temp(ret, Rvalue::Use(v)),
         };
         if held {

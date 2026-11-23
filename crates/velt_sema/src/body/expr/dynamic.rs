@@ -40,6 +40,13 @@ impl FnCx<'_, '_> {
     ) -> Result<hir::Expr, hir::Expr> {
         let to = self.cx.dynamic(exp);
         let from = self.cx.dynamic(h.ty);
+        // A C pointer has no dynamic form (#3094): none converts to one, and none comes from one.
+        if to.is_some() && from.is_none() && self.reject_ptr_dynamic(&h, exp) {
+            return Ok(self.error_expr(h.span));
+        }
+        if from.is_some() && to.is_none() && self.reject_ptr_from_dynamic(&h, exp) {
+            return Ok(self.error_expr(h.span));
+        }
         if from.is_some() && exp == self.cx.ty.never {
             return Ok(self.dynamic_to_never(h));
         }
@@ -271,7 +278,7 @@ impl FnCx<'_, '_> {
             // literal type (issue #1241).
             TyKind::Param(_) => {}
             TyKind::Never | TyKind::Error => return Err(h),
-            TyKind::Promise(..) => return Err(h),
+            // A promise is boxed as it is; an `await` of the `any` awaits it (#924).
             _ => {}
         }
         let Some(imp) = self.cx.any_impl() else {
@@ -575,6 +582,11 @@ impl FnCx<'_, '_> {
                 }
             }
             TyKind::FnPtr { rest: false, .. } => return self.fn_member_test(x, owned, m, span),
+            // The promise member: the value's table is a promise's (#924).
+            TyKind::Promise(..) => {
+                let x = read(self);
+                self.intrinsic(Intrinsic::AnyIsPromise, vec![x], b, span)
+            }
             _ => {
                 let (class, _) = self.cx.class_of(m)?;
                 let arms = vec![
