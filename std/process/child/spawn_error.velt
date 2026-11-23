@@ -1,0 +1,193 @@
+// velt/process/child (internal): `SpawnError`, the error of a program that did not start, with
+// Node's message and fields (`spawn vprog ENOENT`), made from the failure the start reported.
+
+import { IoError } from "velt/io/error";
+import { errnoName } from "velt/fs/errors";
+import { errorCodeName, ioError } from "velt/native/error";
+import { IoResult } from "velt/native/result";
+import { platform } from "velt/os/machine";
+import { errnoOfWin32 } from "velt/os/win_error";
+
+/**
+ * A program that did not start: Node's spawn error. `spawn` and `exec` read as Node's `spawn`
+ * and `execFile` (`spawn vprog ENOENT`), `execSync` as its `spawnSync` and `execFileSync`
+ * (`spawnSync vprog ENOENT`).
+ */
+export class SpawnError extends IoError {
+  /** libuv's error number, negative: `-errno` on macOS and Linux (-2 for ENOENT). */
+  errno: number;
+  /** "spawn vprog" or "spawnSync vprog"; "spawn" alone where Node's `spawn` throws. */
+  syscall: string;
+  /** The program as given; null where `syscall` is "spawn" alone. */
+  path: string | null;
+  /** Its arguments; null where `syscall` is "spawn" alone. */
+  spawnargs: string[] | null;
+
+  constructor(
+    code: string,
+    errno: number,
+    syscall: string,
+    path: string | null,
+    spawnargs: string[] | null,
+  ) {
+    super(code, `${syscall} ${code}`);
+    this.errno = errno;
+    this.syscall = syscall;
+    this.path = path;
+    this.spawnargs = spawnargs;
+  }
+}
+
+/** The OS error number that ends a start failure's message ("… (os error 2)"), or -1. */
+export function osErrnoOf(message: string): i32 {
+  const tail = " (os error ";
+  const at = message.lastIndexOf(tail);
+  if (at < 0 || !message.endsWith(")")) {
+    return -1;
+  }
+  let n: i32 = 0;
+  const digits = message.slice(at + (tail.length as i64), (message.length as i64) - 1);
+  if (digits.length === 0 || digits.length > 9) {
+    return -1;
+  }
+  for (const c of digits) {
+    if (c < "0" || c > "9") {
+      return -1;
+    }
+    n = n * 10 + ((c.charCodeAt(0) - 48) as i32);
+  }
+  return n;
+}
+
+/** libuv's Windows error number of Node's error name `code` (uv-errno.h; UV_UNKNOWN else). */
+function uvWindowsErrno(code: string): number {
+  switch (code) {
+    case "E2BIG":
+      return -4093;
+    case "EACCES":
+      return -4092;
+    case "EADDRINUSE":
+      return -4091;
+    case "EAGAIN":
+      return -4088;
+    case "ECONNREFUSED":
+      return -4078;
+    case "ECONNRESET":
+      return -4077;
+    case "EFAULT":
+      return -4074;
+    case "EINTR":
+      return -4072;
+    case "EOF":
+      return -4095;
+    case "EXDEV":
+      return -4037;
+    case "EROFS":
+      return -4043;
+    case "ENOTEMPTY":
+      return -4051;
+    case "ETIMEDOUT":
+      return -4039;
+    case "ENXIO":
+      return -4033;
+    case "ETXTBSY":
+      return -4038;
+    case "EFBIG":
+      return -4036;
+    case "ESPIPE":
+      return -4041;
+    case "EBADF":
+      return -4083;
+    case "EBUSY":
+      return -4082;
+    case "EEXIST":
+      return -4075;
+    case "EINVAL":
+      return -4071;
+    case "EIO":
+      return -4070;
+    case "EISDIR":
+      return -4068;
+    case "ELOOP":
+      return -4067;
+    case "EMFILE":
+      return -4066;
+    case "ENAMETOOLONG":
+      return -4064;
+    case "ENFILE":
+      return -4061;
+    case "ENOENT":
+      return -4058;
+    case "ENOMEM":
+      return -4057;
+    case "ENOSPC":
+      return -4055;
+    case "ENOSYS":
+      return -4054;
+    case "ENOTDIR":
+      return -4052;
+    case "ENOTSUP":
+      return -4049;
+    case "EPERM":
+      return -4048;
+    case "EPIPE":
+      return -4047;
+    default:
+      return -4094; // UV_UNKNOWN
+  }
+}
+
+/**
+ * The error of a start of `program` with `args` that failed with `code` and `message` (`spawn
+ * vprog: <the OS's text> (os error N)`), as Node's: `execSync`'s (`sync`) as `spawnSync`'s,
+ * else as `spawn`'s, which throws without the program for errors other than those it reports
+ * on the child (EACCES, EAGAIN, EMFILE, ENFILE, ENOENT). A failure that is not the OS's (a NUL
+ * in an argument, a batch file on Windows) keeps its own message. A failure after the child
+ * started that the runtime words the same way (a read or wait of `execSync`'s) becomes one too,
+ * `spawnSync x CODE`, where Node reports such an error differently.
+ */
+export function startError(
+  code: i32,
+  message: string,
+  program: string,
+  args: string[],
+  sync: bool,
+): IoError {
+  const e = osErrnoOf(message);
+  if (e < 0 || !message.startsWith(`spawn ${program}: `)) {
+    return ioError(code, message);
+  }
+  const windows = platform() == "win32";
+  // Windows: the code std reports (as Rust maps the Win32 error); elsewhere the errno's name.
+  let name = windows ? errorCodeName(code) : errnoName(e);
+  if (name == "UNKNOWN") {
+    name = windows ? errnoName(errnoOfWin32(e as u32)) : errorCodeName(code);
+  }
+  const errno: number = windows ? uvWindowsErrno(name) : -(e as number);
+  if (sync) {
+    return new SpawnError(name, errno, `spawnSync ${program}`, program, args.clone());
+  }
+  const onChild =
+    name == "EACCES" ||
+    name == "EAGAIN" ||
+    name == "EMFILE" ||
+    name == "ENFILE" ||
+    name == "ENOENT";
+  if (!onChild) {
+    return new SpawnError(name, errno, "spawn", null, null);
+  }
+  return new SpawnError(name, errno, `spawn ${program}`, program, args.clone());
+}
+
+/** The value of start result `r`; throws its `startError` if it failed. */
+export function startedOr<T>(
+  r: IoResult<T>,
+  program: string,
+  args: string[],
+  sync: bool,
+): T throws IoError {
+  if (r.code != 0) {
+    throw startError(r.code, r.message, program, args, sync);
+  }
+  return r.value;
+}
