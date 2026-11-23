@@ -22,7 +22,8 @@ function show(label: string, f: () => void) {
     f();
     console.log(label, "ok");
   } catch (e) {
-    console.log(label, e.name, e.message);
+    // A path-free message only: Node on Windows names the paths absolute, with `\`.
+    console.log(label, e.name, e.code, e.message.includes("copyfile") ? "" : e.message);
   }
 }
 
@@ -55,7 +56,14 @@ async function main() {
   show("ficlone", () => copyFileSync(a, `${d}/f.txt`, constants.COPYFILE_FICLONE));
   console.log("  f:", content(`${d}/f.txt`));
   show("excl, missing source", () => copyFileSync(`${d}/nope`, b, constants.COPYFILE_EXCL));
-  show("excl, directory destination", () => copyFileSync(a, d, constants.COPYFILE_EXCL));
+  // A directory as the destination: EEXIST from `open`'s O_EXCL, EPERM from Windows' CopyFileW.
+  try {
+    copyFileSync(a, d, constants.COPYFILE_EXCL);
+    console.log("excl, directory destination ok");
+  } catch (e) {
+    const want = platform() == "win32" ? "EPERM" : "EEXIST";
+    console.log("excl, directory destination as Node:", e.code == want);
+  }
 
   for (const m of [8, -1, 2 ** 31, NaN, Infinity, -Infinity, 1.5, -0.5, 0.5]) {
     show(`mode ${m}`, () => copyFileSync(a, `${d}/m${m}.txt`, m));
@@ -66,7 +74,7 @@ async function main() {
     await copyFile(a, b, constants.COPYFILE_EXCL);
     console.log("async excl onto existing ok");
   } catch (e) {
-    console.log("async excl onto existing", e.code, e.message);
+    console.log("async excl onto existing", e.code);
   }
   console.log("  b:", content(b));
   try {

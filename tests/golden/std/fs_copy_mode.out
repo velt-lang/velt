@@ -1,6 +1,6 @@
-excl onto existing Error EEXIST: file already exists, copyfile 'velt_fs_copy_mode_tmp/a.txt' -> 'velt_fs_copy_mode_tmp/b.txt'
+excl onto existing Error EEXIST 
   b: "old"
-excl|ficlone onto existing Error EEXIST: file already exists, copyfile 'velt_fs_copy_mode_tmp/a.txt' -> 'velt_fs_copy_mode_tmp/b.txt'
+excl|ficlone onto existing Error EEXIST 
   b: "old"
 default onto existing ok
   b: "alpha"
@@ -8,18 +8,18 @@ excl onto new ok
   c: "alpha"
 ficlone ok
   f: "alpha"
-excl, missing source Error ENOENT: no such file or directory, copyfile 'velt_fs_copy_mode_tmp/nope' -> 'velt_fs_copy_mode_tmp/b.txt'
-excl, directory destination Error EEXIST: file already exists, copyfile 'velt_fs_copy_mode_tmp/a.txt' -> 'velt_fs_copy_mode_tmp'
-mode 8 RangeError mode is out of range: >= 0 && <= 7
-mode -1 RangeError mode is out of range: >= 0 && <= 7
-mode 2147483648 RangeError mode is out of range: >= 0 && <= 7
-mode NaN RangeError mode is out of range
-mode Infinity RangeError mode is out of range
-mode -Infinity RangeError mode is out of range
+excl, missing source Error ENOENT 
+excl, directory destination as Node: true
+mode 8 RangeError ERR_OUT_OF_RANGE mode is out of range: >= 0 && <= 7
+mode -1 RangeError ERR_OUT_OF_RANGE mode is out of range: >= 0 && <= 7
+mode 2147483648 RangeError ERR_OUT_OF_RANGE mode is out of range: >= 0 && <= 7
+mode NaN RangeError ERR_OUT_OF_RANGE mode is out of range
+mode Infinity RangeError ERR_OUT_OF_RANGE mode is out of range
+mode -Infinity RangeError ERR_OUT_OF_RANGE mode is out of range
 mode 1.5 ok
 mode -0.5 ok
 mode 0.5 ok
-async excl onto existing EEXIST EEXIST: file already exists, copyfile 'velt_fs_copy_mode_tmp/a.txt' -> 'velt_fs_copy_mode_tmp/b.txt'
+async excl onto existing EEXIST
   b: "old"
 async mode 8 RangeError mode is out of range: >= 0 && <= 7
 ficlone_force as Node: true
