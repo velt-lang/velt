@@ -1,0 +1,85 @@
+// check: no leaks
+// Promises that aren't async calls keep their identity when they are shared (#1682, #2196): a
+// spawned task's handle, a `sleep` and a `yieldNow()` kept as values, and a `Promise.race`. Every
+// copy is the same promise for `===` and `Set` / `Map` keys, also for a key taken before the first
+// copy, for a copy converted to `Promise<unknown>` and for a copy handed to another task; each
+// holder awaits the same result, and `console.log` prints a settled one.
+async function work(n: number): Promise<number> {
+  await sleep(2);
+  return n * 10;
+}
+
+async function fails(): Promise<number> {
+  await sleep(1);
+  throw new Error("boom");
+}
+
+async function waitFor(p: Promise<number>): Promise<number> {
+  return await p;
+}
+
+function asUnknown(p: Promise<number>): Promise<unknown> {
+  return p;
+}
+
+async function main() {
+  // A spawned task's handle: a key taken before the copy stays valid after it.
+  const h = spawn(work(1));
+  const keys = new Set<Promise<number>>();
+  keys.add(h);
+  const h2 = h;
+  console.log("handle", h === h2, keys.has(h2), keys.size);
+  keys.add(h2);
+  console.log("handle keys", keys.size);
+  const m = new Map<Promise<number>, string>();
+  m.set(h2, "h");
+  console.log("handle map", m.get(h), m.size);
+  const u = asUnknown(h);
+  console.log("converted", u === asUnknown(h2));
+  console.log("handle results", await h, await h2);
+  console.log(h2);
+
+  // A sleep kept as a value, copied into an array.
+  const s = sleep(3);
+  const arr = [s, s];
+  console.log("sleep", arr[0] === arr[1], arr[0] === s, arr.includes(s));
+  await arr[0];
+  await s;
+  console.log("sleep done");
+
+  // A stored yieldNow().
+  const y = yieldNow();
+  const y2 = y;
+  console.log("yield", y === y2);
+  await y2;
+  await y;
+
+  // A race kept as a value.
+  const r = Promise.race([work(2), work(3)]);
+  const r2 = r;
+  console.log("race", r === r2, await r, await r2);
+
+  // A copy handed to another task awaits the same result there.
+  const h3 = spawn(work(4));
+  const h4 = h3;
+  console.log("handed", await spawn(waitFor(h4)), await h3);
+
+  // A failing task's handle: every holder sees the rejection.
+  const f = spawn(fails());
+  const f2 = f;
+  try {
+    await f;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  try {
+    await f2;
+  } catch (e) {
+    console.log("caught again", (e as Error).message);
+  }
+
+  // Copies dropped unawaited: nothing leaks, the task still runs to its end.
+  const d = spawn(work(5));
+  const d2 = d;
+  console.log("dropped", d === d2);
+}

@@ -188,7 +188,8 @@ function makeTable(): usize {
 
 /** The first slot to probe for key `f` in a table of capacity `cap` (a power of two). */
 function home(f: usize, cap: usize): usize {
-  return (((f as u64) >> 4).wrappingMul(0x9e3779b97f4a7c15) >> 40) as usize & (cap - 1);
+  const h = ((f as u64) >> 4).wrappingMul(0x9e3779b97f4a7c15) >> 40;
+  return (h as usize) & (cap - 1);
 }
 
 /** The slot holding key `f` (the table locked), or 0. */

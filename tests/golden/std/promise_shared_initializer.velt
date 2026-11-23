@@ -1,0 +1,25 @@
+// check: no leaks
+// A module initializer creates a promise, shares it and compares the holders, before `main`
+// (#2196): the initializers run as a task of worker 0, so the promise is shared with the
+// executor's hub there, and the spawned call awaits a copy of it after `main`'s code, as in Node.
+async function make(n: number): Promise<number> {
+  await sleep(5);
+  return n;
+}
+async function use(s: string, p: Promise<number>): Promise<void> {
+  console.log(s, await p);
+}
+function setup(): number {
+  const p = make(3);
+  const q = p;
+  const s = new Set<Promise<number>>();
+  s.add(p);
+  s.add(q);
+  console.log("init same", p === q, s.size);
+  spawn(use("init", q));
+  return 1;
+}
+const READY = setup();
+function main() {
+  console.log("main", READY);
+}

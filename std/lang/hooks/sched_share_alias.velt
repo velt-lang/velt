@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): converted promises of the executor in Velt (`velt_rt_fut_alias`'s
-// and `velt_rt_fut_views`' jobs, #1682, #2854; the runtime's task/identity.rs for its executor).
+// and `velt_rt_fut_views`' jobs, #1682, #2854; natively the runtime keeps no converted promises).
 //
 // A converted promise (a `Promise<T>` used as a `Promise<unknown>` or with a wider error type) is
 // a new node wrapping a holder of the promise it converts (sched_share.velt). It is the same
