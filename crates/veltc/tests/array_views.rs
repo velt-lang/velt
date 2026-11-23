@@ -158,23 +158,38 @@ fn whole_header_copy(rhs: &str) -> bool {
 
 #[test]
 fn a_runtime_function_gets_an_array_of_a_view_type_in_place() {
-    // #1831: `u8[]` is a view type here, so its arrays are boxed. `Buffer.concat` passes its
-    // result array to `velt_rt_bytes_copy`, which writes its bytes: the extern gets the box's
-    // own header, not a copy of it in a temporary (whose writes would be lost), and the view's
-    // mirror is written back after the call.
+    // #1831: `u8[]` is a view type here, so its arrays are boxed. A TCP stream's `readInto`
+    // passes its buffer's bytes to `velt_rt_tcp_try_read_into`, which writes them: the extern
+    // gets the box's own header, not a copy of it in a temporary (whose writes would be lost),
+    // and the view's mirror is written back after the call. (The function that calls it is std's
+    // wrapper under the std scheduler, `TcpStream.readInto` otherwise: the one holding the call.)
+    const EXTERN: &str = "velt_rt_tcp_try_read_into(";
     let vir = vir_of(
-        "const ns: any = [1];\nconst bs = ns as u8[];\nconsole.log(bs.length, Buffer.concat([Buffer.from(\"ab\"), Buffer.from(\"c\")]).length);\n",
+        "import { connect } from \"velt/net\";\nconst ns: any = [1];\nconst bs = ns as u8[];\nasync function main() {\n  const s = await connect(\"127.0.0.1:1\");\n  const buf = new Uint8Array(8);\n  console.log(bs.length, await s.readInto(buf));\n}\n",
     );
-    let exec = fn_lines(&vir, "6BufferM6concat(");
+    let fns: Vec<&str> = vir
+        .split("\nfn#")
+        .filter(|f| {
+            f.lines()
+                .any(|l| l.contains("call extern#") && l.contains(EXTERN))
+        })
+        .collect();
+    assert_eq!(
+        fns.len(),
+        1,
+        "no single caller of `{EXTERN}` in the VIR:\n{vir}"
+    );
+    let exec: Vec<&str> = fns[0].lines().collect();
     let call = exec
         .iter()
-        .position(|l| l.contains("call extern#") && l.contains("velt_rt_bytes_copy("))
-        .unwrap_or_else(|| panic!("no call of `velt_rt_bytes_copy`:\n{}", exec.join("\n")));
+        .position(|l| l.contains("call extern#") && l.contains(EXTERN))
+        .unwrap();
+    // Its second argument is the array (`(handle, data, start, end, out)`).
     let arg = exec[call]
-        .split_once("velt_rt_bytes_copy(")
-        .and_then(|(_, a)| a.split_once(','))
-        .map(|(a, _)| a.trim())
-        .unwrap_or_else(|| panic!("cannot read the first argument of {}", exec[call]));
+        .split_once(EXTERN)
+        .and_then(|(_, a)| a.split(',').nth(1))
+        .map(str::trim)
+        .unwrap_or_else(|| panic!("cannot read the array argument of {}", exec[call]));
     let def = |local: &str| -> Vec<&str> {
         let lhs = format!("{local} = ");
         (exec.iter())
