@@ -6,3 +6,9 @@
 
 /** The most bytes one allocation can have here. */
 export const MAX_BLOCK: u64 = 2147483647;
+
+/**
+ * The most bytes a string can have here: the runtime's string capacity (`MAX_CAP`), whose
+ * header must fit with it in `isize::MAX`.
+ */
+export const MAX_TEXT: usize = 2147483599;

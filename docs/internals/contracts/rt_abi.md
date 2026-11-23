@@ -1198,16 +1198,17 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
 - `u8[]`: `velt_rt_bytes_zeroed(n: u64): u8[]` (`Buffer.alloc` of 1 MiB or more: calloc, as
   memory fresh from the system needs no memset). Smaller allocations, `allocUnsafe`, `set`,
   `copy`, `copyWithin` and `slice` are Velt code (`std/lang/bytes/raw.velt`: the runtime's array
-  allocation and the C library's `memmove`/`memset`), and so are searching (`indexOf`, `lastIndexOf`, `includes`), filling and
-  concatenating (`std/lang/bytes/search.velt`, `copy.velt`) and XOR masking (`xorMask`) on SIMD
-  vectors; UTF-8 validation (`utf8Valid`, `validPrefix`) is in `std/encoding/utf8.velt`.
-- On a range `[start, end)` (relative indices) so no slice is made:
-  `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (`u8[]`'s
-  `utf8Slice` in `std/prelude/bytes.velt`; an invalid sequence as U+FFFD, one per maximal
-  invalid subpart): making a string is the runtime's. The runtime also exports
-  `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>`
-  (`INVALID_DATA` if not UTF-8), which no std file declares: the WebSocket reader
-  (`std/net/websocket/text.velt`) validates with `validPrefix` and then calls `utf8Slice`.
+  allocation and the C library's `memmove`/`memset`), and so are searching (`indexOf`,
+  `lastIndexOf`, `includes`), filling and concatenating (`std/lang/bytes/search.velt`,
+  `copy.velt`) and XOR masking (`xorMask`) on SIMD vectors; UTF-8 validation (`utf8Valid`,
+  `validPrefix`) is in `std/encoding/utf8.velt`.
+- A range `[start, end)` as a string, so no slice is made (`u8[]`'s `utf8Slice`, an invalid
+  sequence as U+FFFD, one per maximal invalid subpart) is Velt code
+  (`std/lang/bytes/range_text.velt`, which the prelude calls by role, `bytes_range_text`, so it
+  loads only where live code calls it): ASCII of up to 23 bytes as an inline string
+  (`StrAsciiWords`), longer text checked in Velt (`std/encoding/utf8_run.velt`) with its UTF-16
+  length counted and copied into the runtime's builder (`velt_rt_strbuf_new`, written in place and
+  `velt_rt_strbuf_commit`, or `velt_rt_strbuf_push_u8s` with the length), which is the string.
   Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
   string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
   After `const n = strByteLen(s)` with a local `s`, in a function that is not async, a generator,
