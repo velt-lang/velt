@@ -1,0 +1,57 @@
+// velt/lang/bytes (internal): moving and zeroing bytes in memory (std/lang/bytes/raw.velt) on the
+// JS host, which has no C library: the `#bytes-move` variant of wasm32-unknown-unknown (native
+// targets and WASI use `memmove` and `memset`: std/lang/bytes/move_c.velt). Eight bytes per
+// step, then one; forward or backward, so that overlapping ranges move as `memmove` moves them.
+
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+/**
+ * Copies the `n` bytes at `src` to `dst`; the ranges may overlap. Unsafe: both ranges must be
+ * memory the caller owns for the call (inside arrays it holds).
+ */
+export unsafe function moveAt(dst: usize, src: usize, n: usize) {
+  if (n == 0 || dst == src) {
+    return;
+  }
+  // SAFETY: the caller's statement; every load and store is inside the two ranges, and a range
+  // that overlaps is read before the bytes it shares with the other are written.
+  unsafe {
+    if (dst < src || dst >= src + n) {
+      let i: usize = 0;
+      while (i + 8 <= n) {
+        addressStore<u64>(dst + i, addressLoad<u64>(src + i));
+        i += 8;
+      }
+      while (i < n) {
+        addressStore<u8>(dst + i, addressLoad<u8>(src + i));
+        i += 1;
+      }
+    } else {
+      let i = n;
+      while (i >= 8) {
+        i -= 8;
+        addressStore<u64>(dst + i, addressLoad<u64>(src + i));
+      }
+      while (i > 0) {
+        i -= 1;
+        addressStore<u8>(dst + i, addressLoad<u8>(src + i));
+      }
+    }
+  }
+}
+
+/** Sets the `n` bytes at `at` to 0. Unsafe: they must be memory the caller owns for the call. */
+export unsafe function zeroAt(at: usize, n: usize) {
+  // SAFETY: the caller's statement; every store is inside the range.
+  unsafe {
+    let i: usize = 0;
+    while (i + 8 <= n) {
+      addressStore<u64>(at + i, 0);
+      i += 8;
+    }
+    while (i < n) {
+      addressStore<u8>(at + i, 0);
+      i += 1;
+    }
+  }
+}

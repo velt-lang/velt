@@ -57,11 +57,12 @@ mod module_hooks;
 mod object_hooks;
 #[macro_use]
 mod decorator_hooks;
+#[macro_use]
+mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then `Object.*`'s (`object_hooks.rs`), the decorators'
-// (`decorator_hooks.rs`), module state's (`module_hooks.rs`), the string methods'
-// (`string_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
+// The table: these rows, then `Object.*`'s, TLS's, the decorators', module state's, the string
+// methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
 with_object_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).

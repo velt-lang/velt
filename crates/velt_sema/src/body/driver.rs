@@ -10,7 +10,6 @@ use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind, FnSource, RetSource};
 use crate::hir::{self, Def, DefId, ExprKind as H, TyId, TyKind};
 use crate::resolve::TyEnv;
-use crate::weak_types::WeakPlace;
 
 /// How many times a body is checked again for the types of its locals declared from literals
 /// (`literal_locals`): one decision may let another local be decided.
@@ -221,16 +220,11 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
         let at = g.span;
         fcx.cx.note_written_type(at, w.span);
     }
-    let ann = ann.map(|t| {
-        let env = TyEnv::new(module, &[]);
-        (fcx.cx)
-            .resolve_weak_annotation(t, &env, WeakPlace::Other, &mut |cx, t, env| {
-                cx.resolve_type(t, env)
-            })
-            .0
-    });
+    // A module `let` declared `weak` holds its target's slot (body/weak_globals.rs).
+    let (ann, weak) = fcx.global_annotation(ann, module, (mutable, owner.is_some()));
     if let (Some(t), DefInfo::Global(g)) = (ann, &mut fcx.cx.info[d.0 as usize]) {
         g.ty = t;
+        g.weak = weak;
     }
     let made = fcx.cx.made_init(d, ann);
     let init = match (init_expr, ann) {
@@ -241,7 +235,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
             let at = fcx.cx.global(d).map(|g| g.span);
             let site = at.and_then(|at| fcx.cx.decl_site(at, t));
             let outer = fcx.set_target(site);
-            let h = fcx.expr_coerce(e, t, Want::Move);
+            let h = fcx.expr_coerce(e, t, super::weak_globals::init_want(weak));
             fcx.set_target(outer);
             if matches!(h.kind, hir::ExprKind::Closure(_)) {
                 fcx.flow_into(&h, site);
@@ -252,6 +246,7 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
             self_typed(&mut fcx, d, e);
             Some(fcx.untyped_global_init(e, mutable))
         }
+        (None, Some(t)) if weak => Some(fcx.weak_global_null(t, decl_span)),
         // `let x: T | undefined;` starts as `undefined`, as in JavaScript.
         (None, Some(t))
             if mutable

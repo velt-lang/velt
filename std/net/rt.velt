@@ -1,4 +1,4 @@
-// velt/net (internal): the runtime's TCP and TLS functions that velt/net's streams and listeners
+// velt/net (internal): the runtime's TCP functions that velt/net's streams and listeners
 // call (docs/internals/contracts/rt_abi_async.md §6), through `#net-tcp` (std/imports.velt): this
 // file in every build but one compiled with the executor in Velt, whose variant
 // (std/net/tcp_sched.velt) exports the same names and hands the runtime's handles here.
@@ -51,21 +51,49 @@ export declare function velt_rt_tcp_shutdown(s: u64): IoStatus;
 export declare function velt_rt_tcp_peer_addr(s: u64): string;
 export declare function velt_rt_tcp_abort(s: u64);
 export declare function velt_rt_tcp_close(s: u64);
-export declare async function velt_rt_tcp_listen_tls(
+export declare function velt_rt_tcp_park(s: u64, key: string);
+export declare function velt_rt_tcp_unpark(key: string, settled: u32): u64;
+
+// TLS is the client and server in Velt (std/net/tls/), which run on the executor in Velt
+// (std/net/tcp_sched.velt), so this build (WebAssembly, which has no network either) has none: a
+// TLS listener or connection fails as its socket does, or else with `ENOTSUP`.
+
+export async function velt_rt_tcp_listen_tls(
   addr: string,
   cert: string,
   key: string,
   alpn: string,
-): Promise<IoResult<u64>>;
-export declare async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>>;
-export declare function velt_rt_tcp_park(s: u64, key: string);
-export declare function velt_rt_tcp_unpark(key: string, settled: u32): u64;
-export declare async function velt_rt_tcp_connect_tls(
+): Promise<IoResult<u64>> {
+  const r = await velt_rt_tcp_listen(addr);
+  if (r.code !== 0) {
+    return r;
+  }
+  velt_rt_tcp_listener_close(r.value);
+  return noTls("listenTls");
+}
+
+/** The protocol ALPN chose: none, as no stream of this build is TLS. */
+export async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>> {
+  return { code: 0, message: "", value: "" };
+}
+
+export async function velt_rt_tcp_connect_tls(
   addr: string,
   serverName: string,
   ca: string,
   alpn: string,
-): Promise<IoResult<u64>>;
+): Promise<IoResult<u64>> {
+  const r = await velt_rt_tcp_connect(addr);
+  if (r.code !== 0) {
+    return r;
+  }
+  velt_rt_tcp_close(r.value);
+  return noTls("connectTls");
+}
+
+function noTls(who: string): IoResult<u64> {
+  return { code: 12, message: `${who}: no TLS in this build`, value: 0 };
+}
 
 /**
  * The workers that can serve the connections listener `l` accepts (`TcpListener.workers`): the

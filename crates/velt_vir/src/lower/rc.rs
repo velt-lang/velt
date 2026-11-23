@@ -17,6 +17,14 @@ use velt_sema::hir::TyId;
 /// Size of the count word in front of a counted object (also the block alignment).
 const COUNT: i128 = 8;
 
+/// How many bytes a counted object's block has in front of a payload aligned to `align`: the
+/// count word, or for a payload aligned beyond it (an `@align(n)` struct) that alignment, so the
+/// payload starts at a multiple of it with the count in the word just before. The block is
+/// aligned to the same.
+fn counted_header(align: u32) -> i128 {
+    COUNT.max(i128::from(align))
+}
+
 /// The `LOCAL` bit of a lock-set object's count word (velt_rt `read_mode`), and its count
 /// without it.
 pub(super) const LOCAL: i128 = 1 << 62;
@@ -516,46 +524,80 @@ impl FnLower<'_, '_> {
     }
 
     /// A new counted object holding one `layout` value (uninitialized), count 1: the payload
-    /// pointer.
+    /// pointer. The count is the word just before the payload; the block starts
+    /// [`counted_header`] bytes before it, so a payload aligned beyond 8 (an `@align(n)` struct
+    /// in it) starts at a multiple of its alignment.
     pub(super) fn counted_alloc(&mut self, layout: Ty) -> Operand {
         let (size, align) = self.cx.size_align(layout);
-        if i128::from(align) > COUNT {
-            ice("counted object aligned beyond its count word");
+        let header = counted_header(align);
+        self.counted_alloc_with(size, header, header)
+    }
+
+    /// [`counted_alloc`](Self::counted_alloc) of `size` bytes with `header` bytes in front of
+    /// the payload (at least the count word, a multiple of 8), in a block aligned to `align`: a
+    /// payload whose alignment is needed at an offset into it (a generator's state) chooses its
+    /// own header. [`counted_free_with`](Self::counted_free_with) frees it.
+    pub(super) fn counted_alloc_with(&mut self, size: u32, header: i128, align: i128) -> Operand {
+        if header < COUNT || header % COUNT != 0 {
+            ice("a counted object's header is not whole words");
         }
         let block = self.temp(Ty::Ptr);
         self.call_rt(
             Rt::Alloc,
             vec![
-                cint(i128::from(size) + COUNT, Ty::U64),
-                cint(COUNT, Ty::U64),
+                cint(i128::from(size) + header, Ty::U64),
+                cint(align, Ty::U64),
             ],
             Some(Place::local(block)),
         );
-        let count = proj(&Place::local(block), Proj::Deref(Ty::U64));
-        self.assign(count, Rvalue::Use(cint(1, Ty::U64)));
-        self.rvalue_temp(
+        // The count is the word before the payload: the block's first for the usual 8-byte
+        // header (written before the payload pointer is made, as it always was), else the
+        // header's last.
+        if header == COUNT {
+            let count = proj(&Place::local(block), Proj::Deref(Ty::U64));
+            self.assign(count, Rvalue::Use(cint(1, Ty::U64)));
+        }
+        let payload = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Binary(
                 BinOp::PtrAdd,
                 Operand::Copy(Place::local(block)),
-                cint(COUNT, Ty::I64),
+                cint(header, Ty::I64),
             ),
-        )
+        );
+        if header != COUNT {
+            let at = Rvalue::Binary(BinOp::PtrAdd, payload.clone(), cint(-COUNT, Ty::I64));
+            let Operand::Copy(at) = self.rvalue_temp(Ty::Ptr, at) else {
+                ice("a temp is a place");
+            };
+            self.assign(
+                proj(&at, Proj::Deref(Ty::U64)),
+                Rvalue::Use(cint(1, Ty::U64)),
+            );
+        }
+        payload
     }
 
     /// Free the counted object `p` holding one `layout` value (its contents already dropped).
     pub(super) fn counted_free(&mut self, p: Operand, layout: Ty) {
-        let (size, _) = self.cx.size_align(layout);
+        let (size, align) = self.cx.size_align(layout);
+        let header = counted_header(align);
+        self.counted_free_with(p, size, header, header);
+    }
+
+    /// Free the counted object `p` that [`counted_alloc_with`](Self::counted_alloc_with) made
+    /// with the same `size`, `header` and `align`.
+    pub(super) fn counted_free_with(&mut self, p: Operand, size: u32, header: i128, align: i128) {
         let block = self.rvalue_temp(
             Ty::Ptr,
-            Rvalue::Binary(BinOp::PtrAdd, p, cint(-COUNT, Ty::I64)),
+            Rvalue::Binary(BinOp::PtrAdd, p, cint(-header, Ty::I64)),
         );
         self.call_rt(
             Rt::Free,
             vec![
                 block,
-                cint(i128::from(size) + COUNT, Ty::U64),
-                cint(COUNT, Ty::U64),
+                cint(i128::from(size) + header, Ty::U64),
+                cint(align, Ty::U64),
             ],
             None,
         );

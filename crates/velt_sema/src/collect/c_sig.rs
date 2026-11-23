@@ -1,6 +1,7 @@
 //! The signature of a C function (`declare c("lib") function`, docs/internals/design/c-ffi.md):
 //! what crosses to C. Integers, `f32`, `f64` and `bool` cross by value, and `void` as the
-//! result; pointers, buffers, strings and structs come with `velt/ffi`. Anything else is an
+//! result; pointers, buffers, strings and structs come with `velt/ffi`. A `@repr("transparent")`
+//! struct crosses as its one field ([`crossing_ty`]). Anything else is an
 //! error naming the parameter. Host functions' signatures are made here too (`host_sig`).
 
 use velt_common::Diagnostic;
@@ -12,7 +13,8 @@ use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
 
 /// What may cross, for the errors.
 const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
-                       `Ptr<T>` and `Ptr<T> | null` (velt/ffi), and for a parameter `null`, \
+                       `Ptr<T>` and `Ptr<T> | null` (velt/ffi), a `@repr(\"transparent\")` struct of \
+                       one of them, and for a parameter `null`, \
                        `StrBytes`, `CString`, `Out<T>` of a number, `bool` or `Ptr<T> | null` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
 
 /// The module of std's `StrBytes` (std/ffi/str_bytes.velt).
@@ -105,7 +107,7 @@ fn c_import(
         .collect();
     let ret_ty = match cx.ty.kind(ret) {
         TyKind::Unit => Some(CTy::Void),
-        _ => value_ty(cx, ret),
+        _ => crossing_ty(cx, ret),
     };
     let ret = ret_ty.unwrap_or_else(|| {
         let shown = cx.display(ret);
@@ -159,7 +161,7 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
         );
         return CTy::Void;
     }
-    if let Some(t) = value_ty(cx, ty) {
+    if let Some(t) = crossing_ty(cx, ty) {
         return t;
     }
     if is_null(cx, ty) {
@@ -278,6 +280,31 @@ impl Ctx<'_> {
         })
     }
 }
+
+/// What crosses for a parameter or result of a C function (`declare c`, `@export`) of type
+/// `ty`: what [`value_ty`] says, or for a `@repr("transparent")` struct what crosses for its one
+/// field (lowering passes the field: velt_vir `c_call.rs`, `c_export.rs`).
+pub(crate) fn crossing_ty(cx: &mut Ctx, mut ty: TyId) -> Option<CTy> {
+    // A transparent struct of a transparent struct of …, to any depth (`W<W<W<f64>>>`). A struct
+    // can't hold itself by value (reported elsewhere): a type met again stops an erroneous
+    // program, and the bound one whose generic arguments grow at each level.
+    let mut seen: Vec<TyId> = vec![];
+    while seen.len() < MAX_TRANSPARENT_DEPTH {
+        if let Some(t) = value_ty(cx, ty) {
+            return Some(t);
+        }
+        if seen.contains(&ty) {
+            return None;
+        }
+        seen.push(ty);
+        ty = crate::decorators::transparent_field(cx, ty)?;
+    }
+    None
+}
+
+/// How many transparent structs [`crossing_ty`] looks through: more than any type written by hand
+/// nests, few enough that a type that never ends costs nothing.
+const MAX_TRANSPARENT_DEPTH: usize = 1024;
 
 /// What crosses for a value of type `ty` (`None`: nothing can).
 pub(crate) fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {

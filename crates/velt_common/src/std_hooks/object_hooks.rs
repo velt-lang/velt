@@ -3,12 +3,12 @@
 //! object (std/lang/hooks/frozen.velt, #2623; `velt_sema` `freezable.rs`: a field write of a
 //! freezable type tests the object's frozen mark and calls one, an ordinary throw). Kept apart
 //! from the rest of the table ([`super`]), which [`with_object_hooks`] gives on, with these rows
-//! after it, to `with_decorator_hooks!`.
+//! after it, to `with_tls_hooks!`.
 
-/// `with_decorator_hooks!` over the rows given, then these.
+/// `with_tls_hooks!` over the rows given, then these.
 macro_rules! with_object_hooks {
     ($($rows:tt)*) => {
-        with_decorator_hooks! {
+        with_tls_hooks! {
             $($rows)*
             // any_object.velt: `Object.*`, spreads, prototypes and `delete` of an `any`.
             /// `{ ...o }` of an `any` in an object literal (`velt_sema` `record_literal.rs`).

@@ -9,7 +9,8 @@ import { BodyKind, Request, Response, responseParts, serverRequest } from "velt/
 import { Received } from "./received";
 import { HttpRequest } from "./request";
 import { HttpResponse } from "./response";
-import { serveHttp } from "./serve";
+import { variant } from "velt/compiler";
+import { serveHttp, serveHttpPlain } from "./serve";
 import { HttpServeOptions } from "./serve_options";
 import { HttpServer } from "./server";
 import { ServeInfo } from "./serve_info";
@@ -30,23 +31,47 @@ import { ServeInfo } from "./serve_info";
  * that reads it later stops the program, so read what the body needs before returning. Its own
  * body stays readable until the response was written, so `new Response(req.body)` echoes it.
  */
+@variant("servePlain", { arg: 0, lacks: "tls" })
 export async function serve<E, F>(
   opts: HttpServeOptions,
   handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
 ): Promise<HttpServer, IoError> {
   const secure = opts.tls != null;
   return await serveHttp(opts, async (hreq: HttpRequest, out: HttpResponse): Promise<void> => {
-    const received = new Received(hreq, out, secure);
-    let res: Response | null = null;
-    try {
-      res = await handler(serverRequest(received), new ServeInfo(received));
-    } catch (e) {
-      console.error("request handler failed:", e);
-    }
-    received.release();
-    await answer(res, out);
-    received.responded();
+    await serveOne(hreq, out, secure, handler);
   });
+}
+
+/**
+ * `serve` with options written without `tls` (`@variant` makes such a call this one): a program
+ * that serves only so neither loads nor builds the TLS server.
+ */
+async function servePlain<E, F>(
+  opts: HttpServeOptions,
+  handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
+): Promise<HttpServer, IoError> {
+  return await serveHttpPlain(opts, async (hreq: HttpRequest, out: HttpResponse): Promise<void> => {
+    await serveOne(hreq, out, false, handler);
+  });
+}
+
+/** Serves one request with the web-standard `handler` (`secure`: received over TLS). */
+async function serveOne<E, F>(
+  hreq: HttpRequest,
+  out: HttpResponse,
+  secure: bool,
+  handler: (req: Request, info: ServeInfo) => Response | Promise<Response, E> throws F,
+) {
+  const received = new Received(hreq, out, secure);
+  let res: Response | null = null;
+  try {
+    res = await handler(serverRequest(received), new ServeInfo(received));
+  } catch (e) {
+    console.error("request handler failed:", e);
+  }
+  received.release();
+  await answer(res, out);
+  received.responded();
 }
 
 /** Sends what the handler returned, `res`, or a 500 if it failed. */

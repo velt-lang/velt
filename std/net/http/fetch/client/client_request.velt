@@ -2,6 +2,7 @@
 // std/imports.velt): the Velt HTTP client natively (send.velt), the host's `fetch` on JS hosts
 // (transport/js.velt).
 
+import { TlsOn } from "velt/net/http/fetch/client/target";
 import { AbortSignal } from "velt/task";
 
 /** What `fetch` does with a redirect. */
@@ -22,6 +23,8 @@ export class ClientRequest {
   redirect: i64;
   signal: AbortSignal | null;
   ca: string;
+  /** The TLS client for `https:` (`TlsOn`), or null: `fetchPlain` takes only `http:` URLs. */
+  tls: TlsOn | null;
 
   constructor(
     method: string,
@@ -33,6 +36,7 @@ export class ClientRequest {
     redirect: i64,
     signal: AbortSignal | null,
     ca: string,
+    tls: TlsOn | null,
   ) {
     this.method = method;
     this.url = url;
@@ -43,5 +47,6 @@ export class ClientRequest {
     this.redirect = redirect;
     this.signal = signal;
     this.ca = ca;
+    this.tls = tls;
   }
 }

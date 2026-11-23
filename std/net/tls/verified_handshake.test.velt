@@ -1,0 +1,195 @@
+// velt/net (tests): the client's handshake with a `CertificateVerifier`, against the TLS server
+// in Velt in the same process, in TLS 1.3 and in TLS 1.2: a server with the certificate's key, a
+// server that has the certificate and signs with another key, and a chain to no trusted root.
+import { describe, expect, it } from "velt/test";
+import { randomBytes } from "velt/crypto/random";
+import { x25519PublicKey } from "velt/crypto/x25519";
+import { hexDecode } from "velt/encoding/hex";
+import { IoError } from "velt/io/error";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { ByteStream, TryStream } from "velt/net/byte_stream";
+import { preferredSuites } from "velt/net/tls/client_hello";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+import { CertificateVerifier } from "velt/net/tls/verifier";
+import { TrustAnchor } from "velt/net/tls/x509/trust_anchor";
+import * as v from "./verifier_vectors.test";
+
+// 2027-01-01, within every test certificate's validity.
+const NOW: i64 = 1798761600;
+
+// The server's end: what the client wrote is its input, and what it writes the client reads.
+class ServerEnd implements TryStream {
+  input: u8[] = [];
+  pos: usize = 0;
+  output: u8[] = [];
+
+  async readInto(buf: Uint8Array): Promise<number | null> {
+    throw new Error("the server reads without waiting");
+  }
+
+  async writeBytes(data: u8[] | Uint8Array, start: number = 0, end?: number): Promise<void> {
+    throw new Error("the server writes without waiting");
+  }
+
+  async halfClose(): Promise<void> {}
+
+  close() {}
+
+  tryStream(): TryStream | null {
+    return this;
+  }
+
+  tryRead(buf: u8[] | Uint8Array, start: number, end?: number): number | null {
+    if (buf instanceof Uint8Array) {
+      throw new Error("a test reads into arrays");
+    }
+    const to = end ?? (buf.length as number);
+    let n = this.input.length - this.pos;
+    const room = (to - start) as usize;
+    n = n < room ? n : room;
+    for (let i: usize = 0; i < n; i++) {
+      buf[(start as usize) + i] = this.input[this.pos + i];
+    }
+    this.pos += n;
+    return n as number;
+  }
+
+  tryWrite(data: u8[] | Uint8Array, start: number, end?: number): i64 {
+    return this.writeBytesLater(data, start, end);
+  }
+
+  writeBytesLater(data: u8[] | Uint8Array, start: number, end?: number): i64 {
+    if (data instanceof Uint8Array) {
+      throw new Error("a test writes arrays");
+    }
+    const to = end ?? (data.length as number);
+    for (let i = start as usize; i < (to as usize); i++) {
+      this.output.push(data[i]);
+    }
+    return (to - start) as i64;
+  }
+}
+
+// The client's end: a read with nothing waiting lets the server take what the client wrote and
+// answer; the stream ends when the server has nothing more to say.
+class ClientEnd implements ByteStream {
+  private server: TlsEngine;
+  private handshake: ServerHandshake;
+  private wire: ServerEnd;
+  private taken: usize = 0;
+  /** How the server's handshake ended, when it failed. */
+  serverError: string = "";
+
+  constructor(server: TlsEngine, handshake: ServerHandshake, wire: ServerEnd) {
+    this.server = server;
+    this.handshake = handshake;
+    this.wire = wire;
+  }
+
+  async readInto(buf: Uint8Array): Promise<number | null> {
+    if (this.taken == this.wire.output.length && this.serverError == "") {
+      try {
+        this.server.tryServerHandshake(this.handshake);
+      } catch (e) {
+        this.serverError = e instanceof IoError ? e.message : `${e}`;
+      }
+    }
+    let n = this.wire.output.length - this.taken;
+    if (n == 0) {
+      return null;
+    }
+    if (n > buf.len) {
+      n = buf.len;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      buf.buf.bytes[buf.off + i] = this.wire.output[this.taken + i];
+    }
+    this.taken += n;
+    return n as number;
+  }
+
+  async writeBytes(data: u8[] | Uint8Array, start: number = 0, end?: number): Promise<void> {
+    if (data instanceof Uint8Array) {
+      throw new Error("a test writes arrays");
+    }
+    const to = end ?? (data.length as number);
+    for (let i = start as usize; i < (to as usize); i++) {
+      this.wire.input.push(data[i]);
+    }
+  }
+
+  async halfClose(): Promise<void> {}
+
+  close() {}
+}
+
+// How the client's handshake ends ("ok", or the failure's message) against a server with the
+// P-256 certificate, its intermediate and the private key `serverKey`; the client trusts `ca`
+// (DER, "" for no verifier at all); with `tls12` the server has TLS 1.2 only.
+async function handshake(serverKey: string, ca: string, tls12: bool): Promise<string> {
+  const wire = new ServerEnd();
+  const sh = new ServerHandshake(
+    { chain: [hexDecode(v.P256_DER), hexDecode(v.INT_DER)], key: hexDecode(serverKey) },
+    [],
+  );
+  // A server without TLS 1.3 answers the same ClientHello in TLS 1.2.
+  sh.only12 = tls12;
+  const client = new ClientEnd(new TlsEngine(wire), sh, wire);
+  const engine = new TlsEngine(client);
+  const key = randomBytes(32);
+  let verifier: CertificateVerifier | null = null;
+  if (ca != "") {
+    const anchors = [TrustAnchor.fromCertificate(hexDecode(ca))];
+    verifier = new CertificateVerifier(anchors, "localhost", true, NOW);
+  }
+  try {
+    await engine.handshake(
+      {
+        random: randomBytes(32),
+        sessionId: [],
+        publicKey: x25519PublicKey(key),
+        serverName: "localhost",
+        alpn: [],
+        fixed: null,
+        fixedRetry: null,
+        suites: preferredSuites(),
+        retryKey: null,
+        verifier: verifier ?? undefined,
+      },
+      key,
+    );
+  } catch (e) {
+    return e instanceof IoError ? e.message : `${e}`;
+  }
+  return engine.tls12 == tls12 ? "ok" : "ok, in the other version of TLS";
+}
+
+const WRONG_KEY = "TLS: the server's signature does not verify";
+
+for (const tls12 of [false, true]) {
+  describe(`a verifying client's handshake in TLS ${tls12 ? "1.2" : "1.3"}`, () => {
+    it("takes a server with the certificate's key and a chain to a trusted CA", async () => {
+      expect(await handshake(v.P256_PRIVATE, v.CA_DER, tls12)).toBe("ok");
+      expect(await handshake(v.P256_PRIVATE, v.INT_DER, tls12)).toBe("ok");
+    });
+
+    it("refuses a server that has the certificate and signs with another key", async () => {
+      expect(await handshake(v.OTHER_PRIVATE, v.CA_DER, tls12)).toBe(WRONG_KEY);
+    });
+
+    it("refuses a chain to no trusted root, before it looks at the signature", async () => {
+      expect(await handshake(v.P256_PRIVATE, v.OTHER_DER, tls12)).toContain(
+        "TLS: certificate signature failure",
+      );
+      expect(await handshake(v.OTHER_PRIVATE, v.P384_DER, tls12)).toContain(
+        "TLS: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
+      );
+    });
+
+    it("takes either server without a verifier", async () => {
+      expect(await handshake(v.P256_PRIVATE, "", tls12)).toBe("ok");
+      expect(await handshake(v.OTHER_PRIVATE, "", tls12)).toBe("ok");
+    });
+  });
+}

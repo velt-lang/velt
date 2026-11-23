@@ -46,6 +46,30 @@ export declare decorator function cold(): FunctionDecorator | MethodDecorator;
 
 /**
  * On a function (not a method) of std, a package or the program (velt/compiler re-exports it;
+ * docs/internals/design/call-variants.md): a call whose arguments show at compile time that it
+ * needs less calls `plain` instead, a function of the same module that takes the same arguments
+ * and gives the same result for them. Every condition must hold; each names an argument (`arg`,
+ * 0 for the first) and one test:
+ *
+ * - `startsWith: "http:"`: the argument is a string literal, or a template literal whose text
+ *   before its first `${…}`, starting with that text (ASCII letters in either case);
+ * - `lacks: "tls"`: the argument is an object literal without that property and without a
+ *   spread, or it is left out;
+ * - `field: "redirect", oneOf: ["manual", "error"]`: the argument is an object literal without a
+ *   spread whose property is one of those string literals.
+ *
+ * Every other call, and the function used as a value, is the function itself. For an entry point
+ * with a costly part only some arguments need (`fetch`'s TLS client for `https:`): a program whose
+ * calls all take `plain` neither builds nor loads that part. Not on a method, a generator or an
+ * overloaded function.
+ */
+export declare decorator function variant(
+  plain: string,
+  ...when: { arg: number; startsWith?: string; lacks?: string; field?: string; oneOf?: string[] }[],
+): FunctionDecorator;
+
+/**
+ * On a function (not a method) of std, a package or the program (velt/compiler re-exports it;
  * docs/internals/design/package-machine-code.md §2): the function is compiled for the CPU
  * features `targets` (one or more, `"avx2-x86"`, `"bmi2-x86"`, `"crc-arm"`, …) and everything they
  * imply (AVX2 implies AVX, SSE4.2 and down), which backends may use anywhere in it. Every call of
@@ -60,6 +84,26 @@ export declare decorator function cold(): FunctionDecorator | MethodDecorator;
 export declare decorator function targetFeature(
   ...targets: ("sha-arm" | "sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm" | "sse3-x86" | "ssse3-x86" | "sse4.1-x86" | "sse4.2-x86" | "popcnt-x86" | "cmpxchg16b-x86" | "avx-x86" | "avx2-x86" | "bmi1-x86" | "bmi2-x86" | "lzcnt-x86" | "movbe-x86" | "f16c-x86" | "avx512f-x86" | "avx512bw-x86" | "avx512cd-x86" | "avx512dq-x86" | "avx512vl-x86" | "avx512vbmi-x86" | "avx512bitalg-x86" | "dotprod-arm" | "crc-arm" | "sha3-arm" | "fp16-arm" | "i8mm-arm")[],
 ): FunctionDecorator;
+
+/**
+ * On a `struct` of std, a package or the program (velt/compiler re-exports it;
+ * docs/internals/design/package-machine-code.md §5): the struct is passed exactly as its one
+ * field is, in registers between Velt functions and in each target's C calling convention, so a
+ * C function declared with it (`declare c`, `@export`) takes and returns the field's C type: a
+ * `struct Meters { readonly m: f64; }` crosses as C's `double`. The struct has exactly one field,
+ * which is neither optional nor `void`, and is not a `declare c struct`: sema reports the rest.
+ */
+export declare decorator function repr(how: "transparent"): TypeDecorator;
+
+/**
+ * On a `struct` of std, a package or the program (velt/compiler re-exports it;
+ * docs/internals/design/package-machine-code.md §5): its values are aligned to `bytes`, a power
+ * of two from 1 to 4096, and its size is a multiple of it, so each element of an array starts on
+ * such a boundary (`@align(64)` gives every element a cache line of its own). It never lowers the
+ * natural alignment, which stays where it is larger. Not on a `declare c struct`, whose layout is
+ * C's.
+ */
+export declare decorator function align(bytes: u32): TypeDecorator;
 
 /**
  * On a `declare function` of std/lang/intrinsics: an operation the compiler emits itself, which

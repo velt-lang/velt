@@ -1,0 +1,102 @@
+// velt/text (internal): what the grams' scans (prefilter.velt, wide_avx2.velt) make of a place
+// where the tuples are: where a match may start, or which literal of an `exact` program is
+// there.
+
+import {
+  addressLoad,
+  arrayReadAddress,
+  inline,
+  strLoadPartialU8x16,
+  strLoadU8x16,
+} from "velt/lang/intrinsics";
+import { sameBytes } from "velt/lang/string/byte_scan";
+import { Program } from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
+
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+
+/** Where a result of the scans keeps the literal found: above the position. */
+export const LITERAL_SHIFT: i64 = 48;
+export const POSITION: i64 = 0xffffffffffff;
+
+/** Which literal of the `exact` program `prog` is at byte `p` of the `len` of `s`: the first
+ * in the program's order, or -1. The eight bytes there, as one word (zeros past the end), are
+ * compared with each literal's first eight. */
+function literalAt(prog: Program, s: string, p: usize, len: usize): i64 {
+  const lits = prog.literals;
+  const room = len - p;
+  const bytes =
+    room >= 16 ? strLoadU8x16(s, p as u64) : strLoadPartialU8x16(s, p as u64, room as u64);
+  const word = velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(bytes), 0);
+  // The masks and words where they are: this runs for every place the grams stop at.
+  // SAFETY: `prog` is borrowed for the call and its `litWord` never changes once compiled; the
+  // address is only read through, below.
+  const words = unsafe { arrayReadAddress(prog.litWord) };
+  const count = lits.length;
+  for (let k: usize = 0; k < count; k++) {
+    // SAFETY: `litWord` holds two `u64`s per literal (literals.velt `literalWords`), a mask and a
+    // word, and `k` is below the number of literals: both loads are inside it.
+    const mask = unsafe { addressLoad<u64>(words + 16 * k) };
+    // SAFETY: as `mask`: the second `u64` of literal `k`.
+    const want = unsafe { addressLoad<u64>(words + 16 * k + 8) };
+    if ((word & mask) != want) {
+      continue;
+    }
+    const n = prog.litBytes[k];
+    if (n <= room && (n <= 8 || sameBytes(s, p + 8, lits[k], 8, n - 8))) {
+      return k as i64;
+    }
+  }
+  return -1;
+}
+
+/** What the scans look for: where a match may start; the first literal of an `exact`
+ * program; or all of its literals, which go to the search's `found`. */
+export const ANY: u32 = 0;
+export const FIRST: u32 = 1;
+export const ALL: u32 = 2;
+
+/** What a scan in mode `mode` makes of a hit at byte `p`, for a search whose `found` and
+ * `floor` these are (none for a look before a search memory is made: `ANY` mode): the result
+ * to return (`p`, in `FIRST` mode with the literal there above it), -1 to go on (nothing is
+ * there), or, in `ALL` mode, `-3 - end` when the literal there went to `found` and ends at
+ * `end`: the scan's search memory looks at nothing before it any more (its `floor`). The search
+ * memory itself is not passed, so the subject is not copied for the call: a string the memory
+ * reaches (its automatons' program has literals) could otherwise be the subject. */
+@inline("always")
+export function hit(
+  prog: Program,
+  found: i64[] | null,
+  floor: usize,
+  s: string,
+  p: usize,
+  len: usize,
+  mode: u32,
+): i64 {
+  if (mode == ANY || found == null) {
+    return p as i64;
+  }
+  if (p < floor) {
+    return -1;
+  }
+  const k = literalAt(prog, s, p, len);
+  if (k < 0 || mode == FIRST) {
+    return k < 0 ? -1 : (p as i64) | (k << LITERAL_SHIFT);
+  }
+  const end = p + prog.litBytes[k as usize];
+  found.push(p as i64);
+  found.push(end as i64);
+  return -3 - (end as i64);
+}
+
+/** `hit` for the search memory `m` (none in `ANY` mode): its `found` and `floor`, and the
+ * floor kept when a literal went to `found`. */
+@inline("always")
+export function hitIn(m: Search | null, result: i64): i64 {
+  if (result > -3 || m == null) {
+    return result;
+  }
+  m.floor = (-3 - result) as usize;
+  return -1;
+}

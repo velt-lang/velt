@@ -1,9 +1,9 @@
 // velt/net (internal): `ClientHandshake12`, the TLS 1.2 client's handshake after a ServerHello that
 // chose TLS 1.2 (RFC 5246 §7.3, ECDHE as in RFC 8422 §5): the server's Certificate,
 // ServerKeyExchange and ServerHelloDone; the client's ClientKeyExchange, ChangeCipherSpec and
-// Finished; then the server's ChangeCipherSpec and Finished. As for TLS 1.3, `verify: false` keeps
-// the certificate and the ServerKeyExchange's signature unchecked (#2392 step 3 adds
-// verification); the server's Finished is always checked. No resumption and no renegotiation; a
+// Finished; then the server's ChangeCipherSpec and Finished. As for TLS 1.3, a `verifier` checks
+// the chain, the name and the ServerKeyExchange's signature when that message arrives; without
+// one they are kept unchecked. The server's Finished is always checked. No resumption and no renegotiation; a
 // CertificateRequest is answered with an empty Certificate (RFC 5246 §7.4.6). It does no I/O.
 
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
@@ -17,6 +17,7 @@ import {
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { SCHEMES, X25519 } from "velt/net/tls/client_hello";
+import { CertificateVerifier } from "velt/net/tls/verifier";
 import {
   exchangeKey,
   exchangePublic,
@@ -83,6 +84,8 @@ export class ClientHandshake12 {
   signatureScheme: usize = 0;
   signed: u8[] | null = null;
   signature: u8[] | null = null;
+  /** What verifies the server's certificates; null to keep them unchecked. */
+  verifier: CertificateVerifier | null = null;
   /** After `SEND12`: the ClientKeyExchange (after an empty Certificate when asked for). */
   keyExchange: u8[] | null = null;
   /** After `SEND12`: the client's Finished, and the write keys it goes under. */
@@ -244,6 +247,11 @@ export class ClientHandshake12 {
       .concat(this.serverRandom)
       .concat(body.slice(0, paramsEnd as i64));
     this.signature = signature;
+    const v = this.verifier;
+    if (v != null) {
+      v.verifyChain(this.certificates);
+      v.verifyHandshake12(scheme, this.signed!, signature);
+    }
   }
 
   // The client's flight after ServerHelloDone, and the keys.

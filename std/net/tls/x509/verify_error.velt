@@ -161,7 +161,7 @@ export function describeError(e: i32): string {
     return "path length constraint exceeded (PATH_LENGTH_EXCEEDED)";
   }
   if (e == EKU_NOT_FOUND || e == EMPTY_EKU) {
-    return "unsupported certificate purpose (INVALID_PURPOSE)";
+    return "unsuitable certificate purpose (INVALID_PURPOSE)";
   }
   if (e == UNSUPPORTED_VERSION) {
     return "a certificate in the chain is not an X.509 v3 certificate";

@@ -1,0 +1,26 @@
+local end as Node: true
+an hour before the end as Node: true
+a day past the end: true
+local start as Node: true
+with Z: 8640000000000000
+with -05:00: 8640000000000000
+local fields at the end as Node: true
+Invalid Date
+NaN
+NaN
+NaN
+NaN
+NaN
+NaN 7827070780800000
+NaN -7951405219200000
+NaN -2165964105600000
+NaN 2041629580800000
+0
+8640000000000000 NaN
+-8640000000000000 NaN
+NaN NaN
+NaN NaN
+NaN NaN
+NaN NaN
+NaN NaN
+true true

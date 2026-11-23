@@ -55,6 +55,7 @@ pub mod ty {
     markers!(Symbol, Any, Unknown, Gen, Tuple, Union, Object, Func);
     // The std classes in the hooks' signatures.
     markers!(
+        AbortSignal,
         ArrayView,
         RecordViewSource,
         TupleElements,
