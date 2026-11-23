@@ -1,0 +1,17 @@
+// A write to a field of a freezable type's value reached through a call (`current().port = 81`)
+// is not supported yet: the write tests the object's frozen mark (#2623), which needs the object
+// held in a variable.
+interface Config {
+  name: string;
+  port: number;
+}
+
+const config: Config = { name: "app", port: 80 };
+function current(): Config {
+  return config;
+}
+
+config.port = 81;
+Object.freeze(config);
+current().port = 82;
+console.log(config.port);

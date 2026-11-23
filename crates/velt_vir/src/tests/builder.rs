@@ -241,6 +241,7 @@ impl PB {
             union_shapes: Default::default(),
             counted_objects: Vec::new(),
             assigned_objects: Default::default(),
+            freezable: Default::default(),
             changes_held: Default::default(),
             glue_bodies: Default::default(),
             null_proto_records: false,

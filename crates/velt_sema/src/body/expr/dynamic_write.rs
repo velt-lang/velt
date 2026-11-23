@@ -471,6 +471,7 @@ impl FnCx<'_, '_> {
                 name: name.to_string(),
                 span,
                 dynamic: true,
+                checkable: false,
             });
     }
 

@@ -67,6 +67,7 @@ impl FnCx<'_, '_> {
                     return Some(AssignTarget::Record(obj));
                 }
                 self.note_field_write(obj.ty, prop);
+                self.frozen_write_check(object, obj.ty, prop, target.span);
                 if let Some(ok) = self.iface_write_target(obj.ty, prop) {
                     return ok.then_some(AssignTarget::Setter(obj));
                 }
@@ -132,6 +133,7 @@ impl FnCx<'_, '_> {
                     };
                     // A field write for the copies of `crate::object_copies`, as for `o.k = v`.
                     self.note_field_write(obj.ty, &prop);
+                    self.frozen_write_check(object, obj.ty, &prop, target.span);
                     if let Some(ok) = self.iface_write_target(obj.ty, &prop) {
                         return ok.then_some(AssignTarget::Setter(obj));
                     }
@@ -266,9 +268,10 @@ impl FnCx<'_, '_> {
             op,
             None | Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
         );
-        let ((h, valued), temps) = self.with_asserted(rmw, span, |cx| {
+        let ((h, valued), mut temps) = self.with_asserted(rmw, span, |cx| {
             cx.target_scope(|cx| cx.assign_as_here(op, target, value, as_value, span))
         });
+        let h = self.frozen_after_value(target.span, h, &mut temps);
         (self.with_lets(temps, h), valued)
     }
 
