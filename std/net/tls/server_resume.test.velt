@@ -132,6 +132,11 @@ describe("the TLS 1.3 server with tickets", () => {
       got = e instanceof TlsFailure ? e.message : `${e}`;
     }
     expect(got).toContain("PSK binder");
+    // The identity travels in the clear: a wrong binder must not use up the owner's ticket.
+    const owner = new ServerHandshake(serverKey(v.P256_CERT, v.P256_PKCS8, true)!, []);
+    owner.tickets = h.tickets;
+    owner.onMessage(hexDecode(CLIENT_HELLO));
+    expect(owner.resumed).toBe(true);
   });
 
   it("runs a full handshake for a ticket it does not know, and for one used already", () => {

@@ -23,8 +23,9 @@ export const TICKET_LIFETIME_S: usize = 7200;
 /**
  * The early secret of the ticket the ClientHello `m` (parsed: `offer`) resumes with `suite`, its
  * binder checked; null when it offers none this listener can resume (unknown, used, expired,
- * another hash or another server name: the handshake is a full one then). Throws `decrypt_error`
- * for a known ticket with a wrong binder.
+ * another hash or another server name: the handshake is a full one then). The ticket is taken
+ * only once its binder checks out. Throws `decrypt_error` for a known ticket with a wrong binder
+ * (RFC 8446 §4.2.11), and leaves that ticket for its owner.
  */
 export function resumeFrom(
   store: shared<Mutex<TicketStore>>,
@@ -35,14 +36,19 @@ export function resumeFrom(
   if (!offer.pskDheKe || offer.pskIds.length == 0) {
     return null;
   }
+  // The ticket is only looked at until its binder checks out: the identity is sent in the clear,
+  // so taking it first would let anyone who saw it burn it with a wrong binder.
   const id = offer.pskIds[0].slice();
-  const t = store.with((s) => s.take(id));
+  const t = store.with((s) => s.get(id));
   if (t == null) {
     return null;
   }
   const now = Date.now() as number;
-  const fresh = now >= t.issued && now - t.issued < (TICKET_LIFETIME_S as number) * 1000;
-  if (!fresh || hashLength(t.suite) != hashLength(suite) || t.serverName != offer.serverName) {
+  if (now < t.issued || now - t.issued >= (TICKET_LIFETIME_S as number) * 1000) {
+    store.with((s) => s.take(id));
+    return null;
+  }
+  if (hashLength(t.suite) != hashLength(suite) || t.serverName != offer.serverName) {
     return null;
   }
   const early = earlySecret(t.psk);
@@ -56,6 +62,10 @@ export function resumeFrom(
   }
   if (diff != 0) {
     throw new TlsFailure(DECRYPT_ERROR, "the PSK binder does not match the ClientHello");
+  }
+  // Another connection may have resumed with it since: then this one is a full handshake.
+  if (store.with((s) => s.take(id)) == null) {
+    return null;
   }
   return early;
 }

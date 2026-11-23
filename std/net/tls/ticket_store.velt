@@ -1,7 +1,7 @@
 // velt/net (internal): `TicketStore`, the session tickets a TLS listener issued and has not seen
 // used yet (RFC 8446 §4.6.1, stateful tickets as rustls's default `ServerSessionMemoryCache`):
 // what each ticket's PSK resumes, keyed by the ticket, which is random and carries nothing. A
-// ticket is taken when a client offers it, so it resumes at most once; the oldest go first when
+// ticket is taken when a client resumes with it, so it resumes at most once; the oldest go first when
 // the store is full. One per listener, shared by its connections behind a mutex
 // (std/net/tls/fd_server.velt).
 
@@ -36,6 +36,11 @@ export class TicketStore {
     }
     this.tickets.set(key, t);
     this.order.push(key);
+  }
+
+  /** The ticket `id`, left in place, or null when unknown. */
+  get(id: u8[]): Ticket | null {
+    return this.tickets.get(hexEncode(id)) ?? null;
   }
 
   /** The ticket `id`, taken out (it resumes once), or null when unknown. */
