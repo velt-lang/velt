@@ -7,7 +7,6 @@
 // session id, so no resumption; no client certificates. It does no I/O.
 
 import { randomBytes } from "velt/crypto/random";
-import { sha256 } from "velt/crypto/sha256";
 import { utf8Encode } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {

@@ -401,5 +401,11 @@ export async function velt_rt_tcp_connect_tls(
   ca: string,
   alpn: string,
 ): Promise<IoResult<u64>> {
+  if (io.supported()) {
+    const ours = await TLS.connect(addr, serverName, ca, alpn);
+    if (ours != null) {
+      return ours;
+    }
+  }
   return await rt.velt_rt_tcp_connect_tls(addr, serverName, ca, alpn);
 }
