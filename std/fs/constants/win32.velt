@@ -1,0 +1,237 @@
+// velt/fs (internal): `fs.constants` on Windows (`#fs-constants`, std/imports.velt), as Node
+// 22.22.0 gives them on Windows x64 (`JSON.stringify(fs.constants)`, in the pull request that
+// added it, #3561).
+//
+// The variants share `FsConstants`: every key any OS has, in an order that agrees with each OS's
+// (std/fs/constants/linux.velt is the generated reference). A key every OS has is a `number`; one
+// only some have is `number | undefined`, and `undefined` here when Node has no such key, which
+// `JSON.stringify` and the print leave out, as Node's object has none.
+
+import { INSPECT } from "velt/lang/hooks/keys";
+
+/** `fs.constants`: the keys Node's has on any OS. */
+export struct FsConstants {
+  readonly UV_FS_SYMLINK_DIR: number;
+  readonly UV_FS_SYMLINK_JUNCTION: number;
+  readonly O_RDONLY: number;
+  readonly O_WRONLY: number;
+  readonly O_RDWR: number;
+  readonly UV_DIRENT_UNKNOWN: number;
+  readonly UV_DIRENT_FILE: number;
+  readonly UV_DIRENT_DIR: number;
+  readonly UV_DIRENT_LINK: number;
+  readonly UV_DIRENT_FIFO: number;
+  readonly UV_DIRENT_SOCKET: number;
+  readonly UV_DIRENT_CHAR: number;
+  readonly UV_DIRENT_BLOCK: number;
+  readonly S_IFMT: number;
+  readonly S_IFREG: number;
+  readonly S_IFDIR: number;
+  readonly S_IFCHR: number;
+  readonly S_IFBLK: number | undefined;
+  readonly S_IFIFO: number;
+  readonly S_IFLNK: number;
+  readonly S_IFSOCK: number | undefined;
+  readonly O_CREAT: number;
+  readonly O_EXCL: number;
+  readonly UV_FS_O_FILEMAP: number;
+  readonly O_NOCTTY: number | undefined;
+  readonly O_TRUNC: number;
+  readonly O_APPEND: number;
+  readonly O_DIRECTORY: number | undefined;
+  readonly O_NOATIME: number | undefined;
+  readonly O_NOFOLLOW: number | undefined;
+  readonly O_SYNC: number | undefined;
+  readonly O_DSYNC: number | undefined;
+  readonly O_SYMLINK: number | undefined;
+  readonly O_DIRECT: number | undefined;
+  readonly O_NONBLOCK: number | undefined;
+  readonly S_IRWXU: number | undefined;
+  readonly S_IRUSR: number;
+  readonly S_IWUSR: number;
+  readonly S_IXUSR: number | undefined;
+  readonly S_IRWXG: number | undefined;
+  readonly S_IRGRP: number | undefined;
+  readonly S_IWGRP: number | undefined;
+  readonly S_IXGRP: number | undefined;
+  readonly S_IRWXO: number | undefined;
+  readonly S_IROTH: number | undefined;
+  readonly S_IWOTH: number | undefined;
+  readonly S_IXOTH: number | undefined;
+  readonly F_OK: number;
+  readonly R_OK: number;
+  readonly W_OK: number;
+  readonly X_OK: number;
+  readonly UV_FS_COPYFILE_EXCL: number;
+  readonly COPYFILE_EXCL: number;
+  readonly UV_FS_COPYFILE_FICLONE: number;
+  readonly COPYFILE_FICLONE: number;
+  readonly UV_FS_COPYFILE_FICLONE_FORCE: number;
+  readonly COPYFILE_FICLONE_FORCE: number;
+
+  /** How `console.log` shows it, as Node does (`[Object: null prototype] { … }`). */
+  [INSPECT](): string {
+    const fields: string[] = [];
+    fields.push(`UV_FS_SYMLINK_DIR: ${this.UV_FS_SYMLINK_DIR}`);
+    fields.push(`UV_FS_SYMLINK_JUNCTION: ${this.UV_FS_SYMLINK_JUNCTION}`);
+    fields.push(`O_RDONLY: ${this.O_RDONLY}`);
+    fields.push(`O_WRONLY: ${this.O_WRONLY}`);
+    fields.push(`O_RDWR: ${this.O_RDWR}`);
+    fields.push(`UV_DIRENT_UNKNOWN: ${this.UV_DIRENT_UNKNOWN}`);
+    fields.push(`UV_DIRENT_FILE: ${this.UV_DIRENT_FILE}`);
+    fields.push(`UV_DIRENT_DIR: ${this.UV_DIRENT_DIR}`);
+    fields.push(`UV_DIRENT_LINK: ${this.UV_DIRENT_LINK}`);
+    fields.push(`UV_DIRENT_FIFO: ${this.UV_DIRENT_FIFO}`);
+    fields.push(`UV_DIRENT_SOCKET: ${this.UV_DIRENT_SOCKET}`);
+    fields.push(`UV_DIRENT_CHAR: ${this.UV_DIRENT_CHAR}`);
+    fields.push(`UV_DIRENT_BLOCK: ${this.UV_DIRENT_BLOCK}`);
+    fields.push(`S_IFMT: ${this.S_IFMT}`);
+    fields.push(`S_IFREG: ${this.S_IFREG}`);
+    fields.push(`S_IFDIR: ${this.S_IFDIR}`);
+    fields.push(`S_IFCHR: ${this.S_IFCHR}`);
+    if (this.S_IFBLK !== undefined) {
+      fields.push(`S_IFBLK: ${this.S_IFBLK}`);
+    }
+    fields.push(`S_IFIFO: ${this.S_IFIFO}`);
+    fields.push(`S_IFLNK: ${this.S_IFLNK}`);
+    if (this.S_IFSOCK !== undefined) {
+      fields.push(`S_IFSOCK: ${this.S_IFSOCK}`);
+    }
+    fields.push(`O_CREAT: ${this.O_CREAT}`);
+    fields.push(`O_EXCL: ${this.O_EXCL}`);
+    fields.push(`UV_FS_O_FILEMAP: ${this.UV_FS_O_FILEMAP}`);
+    if (this.O_NOCTTY !== undefined) {
+      fields.push(`O_NOCTTY: ${this.O_NOCTTY}`);
+    }
+    fields.push(`O_TRUNC: ${this.O_TRUNC}`);
+    fields.push(`O_APPEND: ${this.O_APPEND}`);
+    if (this.O_DIRECTORY !== undefined) {
+      fields.push(`O_DIRECTORY: ${this.O_DIRECTORY}`);
+    }
+    if (this.O_NOATIME !== undefined) {
+      fields.push(`O_NOATIME: ${this.O_NOATIME}`);
+    }
+    if (this.O_NOFOLLOW !== undefined) {
+      fields.push(`O_NOFOLLOW: ${this.O_NOFOLLOW}`);
+    }
+    if (this.O_SYNC !== undefined) {
+      fields.push(`O_SYNC: ${this.O_SYNC}`);
+    }
+    if (this.O_DSYNC !== undefined) {
+      fields.push(`O_DSYNC: ${this.O_DSYNC}`);
+    }
+    if (this.O_SYMLINK !== undefined) {
+      fields.push(`O_SYMLINK: ${this.O_SYMLINK}`);
+    }
+    if (this.O_DIRECT !== undefined) {
+      fields.push(`O_DIRECT: ${this.O_DIRECT}`);
+    }
+    if (this.O_NONBLOCK !== undefined) {
+      fields.push(`O_NONBLOCK: ${this.O_NONBLOCK}`);
+    }
+    if (this.S_IRWXU !== undefined) {
+      fields.push(`S_IRWXU: ${this.S_IRWXU}`);
+    }
+    fields.push(`S_IRUSR: ${this.S_IRUSR}`);
+    fields.push(`S_IWUSR: ${this.S_IWUSR}`);
+    if (this.S_IXUSR !== undefined) {
+      fields.push(`S_IXUSR: ${this.S_IXUSR}`);
+    }
+    if (this.S_IRWXG !== undefined) {
+      fields.push(`S_IRWXG: ${this.S_IRWXG}`);
+    }
+    if (this.S_IRGRP !== undefined) {
+      fields.push(`S_IRGRP: ${this.S_IRGRP}`);
+    }
+    if (this.S_IWGRP !== undefined) {
+      fields.push(`S_IWGRP: ${this.S_IWGRP}`);
+    }
+    if (this.S_IXGRP !== undefined) {
+      fields.push(`S_IXGRP: ${this.S_IXGRP}`);
+    }
+    if (this.S_IRWXO !== undefined) {
+      fields.push(`S_IRWXO: ${this.S_IRWXO}`);
+    }
+    if (this.S_IROTH !== undefined) {
+      fields.push(`S_IROTH: ${this.S_IROTH}`);
+    }
+    if (this.S_IWOTH !== undefined) {
+      fields.push(`S_IWOTH: ${this.S_IWOTH}`);
+    }
+    if (this.S_IXOTH !== undefined) {
+      fields.push(`S_IXOTH: ${this.S_IXOTH}`);
+    }
+    fields.push(`F_OK: ${this.F_OK}`);
+    fields.push(`R_OK: ${this.R_OK}`);
+    fields.push(`W_OK: ${this.W_OK}`);
+    fields.push(`X_OK: ${this.X_OK}`);
+    fields.push(`UV_FS_COPYFILE_EXCL: ${this.UV_FS_COPYFILE_EXCL}`);
+    fields.push(`COPYFILE_EXCL: ${this.COPYFILE_EXCL}`);
+    fields.push(`UV_FS_COPYFILE_FICLONE: ${this.UV_FS_COPYFILE_FICLONE}`);
+    fields.push(`COPYFILE_FICLONE: ${this.COPYFILE_FICLONE}`);
+    fields.push(`UV_FS_COPYFILE_FICLONE_FORCE: ${this.UV_FS_COPYFILE_FICLONE_FORCE}`);
+    fields.push(`COPYFILE_FICLONE_FORCE: ${this.COPYFILE_FICLONE_FORCE}`);
+    return `[Object: null prototype] {\n  ${fields.join(",\n  ")}\n}`;
+  }
+}
+
+/** Node's `fs.constants`. */
+export const constants: FsConstants = {
+  UV_FS_SYMLINK_DIR: 1,
+  UV_FS_SYMLINK_JUNCTION: 2,
+  O_RDONLY: 0,
+  O_WRONLY: 1,
+  O_RDWR: 2,
+  UV_DIRENT_UNKNOWN: 0,
+  UV_DIRENT_FILE: 1,
+  UV_DIRENT_DIR: 2,
+  UV_DIRENT_LINK: 3,
+  UV_DIRENT_FIFO: 4,
+  UV_DIRENT_SOCKET: 5,
+  UV_DIRENT_CHAR: 6,
+  UV_DIRENT_BLOCK: 7,
+  S_IFMT: 61440,
+  S_IFREG: 32768,
+  S_IFDIR: 16384,
+  S_IFCHR: 8192,
+  S_IFBLK: undefined,
+  S_IFIFO: 4096,
+  S_IFLNK: 40960,
+  S_IFSOCK: undefined,
+  O_CREAT: 256,
+  O_EXCL: 1024,
+  UV_FS_O_FILEMAP: 536870912,
+  O_NOCTTY: undefined,
+  O_TRUNC: 512,
+  O_APPEND: 8,
+  O_DIRECTORY: undefined,
+  O_NOATIME: undefined,
+  O_NOFOLLOW: undefined,
+  O_SYNC: undefined,
+  O_DSYNC: undefined,
+  O_SYMLINK: undefined,
+  O_DIRECT: undefined,
+  O_NONBLOCK: undefined,
+  S_IRWXU: undefined,
+  S_IRUSR: 256,
+  S_IWUSR: 128,
+  S_IXUSR: undefined,
+  S_IRWXG: undefined,
+  S_IRGRP: undefined,
+  S_IWGRP: undefined,
+  S_IXGRP: undefined,
+  S_IRWXO: undefined,
+  S_IROTH: undefined,
+  S_IWOTH: undefined,
+  S_IXOTH: undefined,
+  F_OK: 0,
+  R_OK: 4,
+  W_OK: 2,
+  X_OK: 1,
+  UV_FS_COPYFILE_EXCL: 1,
+  COPYFILE_EXCL: 1,
+  UV_FS_COPYFILE_FICLONE: 2,
+  COPYFILE_FICLONE: 2,
+  UV_FS_COPYFILE_FICLONE_FORCE: 4,
+  COPYFILE_FICLONE_FORCE: 4,
+};
