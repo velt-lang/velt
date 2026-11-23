@@ -4,7 +4,19 @@
 // inspect_layout_render.velt writes), only when it may need breaking: a short value costs a length
 // check and a scan of at most 71 bytes. Node's `depth` and `maxArrayLength` limits are the
 // printer's, applied as it writes the value.
+//
+// Lowering reaches this module through hooks (velt_common `std_hooks.rs`): the custom inspect
+// pieces it reports (`inspectAtom` and the rest, kept in inspect_layout_atoms.velt) and, through
+// inspect_layout.velt, `inspectLayoutText`. Its hooks take and return only strings and numbers, so
+// it is a prebuilt module, compiled once with the layout, its state in inspect_layout_atoms.velt.
 
+import {
+  atomPush,
+  atomsDrop,
+  atomsRestore,
+  atomsSave,
+  atomsTake,
+} from "velt/lang/hooks/inspect_layout_atoms";
 import { parseLayout } from "velt/lang/hooks/inspect_layout_parse";
 import { renderLayout } from "velt/lang/hooks/inspect_layout_render";
 import { addressLoad, strByteLen, strDataAddress } from "velt/lang/intrinsics";
@@ -84,6 +96,39 @@ export function layoutText(text: string, start: u64, atoms: u64[]): string {
   if (fitsAsIs(text, start)) {
     return "";
   }
+  return layoutLong(text, start, atoms);
+}
+
+/**
+ * The value at bytes `start..` of the builder `buf`, which the printer has just written on one
+ * line, laid out as Node breaks it, or "" when it stays as it is; the custom inspect pieces
+ * reported for it (`inspectAtom`) are used and dropped.
+ */
+export function inspectLayoutText(buf: string, start: u64): string {
+  if (fitsAsIs(buf, start)) {
+    atomsDrop();
+    return "";
+  }
+  return layoutLong(buf, start, atomsTake());
+}
+
+/** Text a custom inspect returned is at bytes `start..` of the builder `buf`: one piece. */
+export function inspectAtom(buf: string, start: u64): void {
+  atomPush(start, strByteLen(buf) as u64);
+}
+
+/** Before a custom inspect runs: the pieces so far, kept apart from what it prints. */
+export function inspectAtomsSave(): u64 {
+  return atomsSave();
+}
+
+/** After a custom inspect: the pieces before it, back. */
+export function inspectAtomsRestore(saved: u64): void {
+  atomsRestore(saved);
+}
+
+/** `layoutText` past the short check. */
+function layoutLong(text: string, start: u64, atoms: u64[]): string {
   const end = strByteLen(text) as u64;
   // A `<ref *N> ` inserted after a custom inspect wrote its text moves that text: an atom past
   // the end is ignored.

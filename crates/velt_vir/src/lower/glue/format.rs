@@ -10,7 +10,7 @@
 //! top-level style. The prelude `Map` prints like node's (format_map.rs), a `JsonValue` like
 //! node prints the parsed value (`{ a: 1, b: [ 2, 'x' ] }`, a string raw at the top level).
 //! A top-level value is written on one line and then broken across lines like node's when it
-//! is too long (velt_rt's `inspect_layout`).
+//! is too long (std's `inspectLayout`, std/lang/hooks/inspect_layout.velt).
 //!
 //! Node's default limits apply as the value is written, so a huge value costs only what is
 //! shown: a container nested deeper than [`DEPTH`] prints as `[Object]`, `[Array]`, `[Name]`,
@@ -126,12 +126,14 @@ impl FnLower<'_, '_> {
                 // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
                 // printed on one line, then broken across lines like node if too long.
                 let end = self.inspect_begin();
-                let start = self.temp(Ty::U64);
-                let len = Some(Place::local(start));
-                self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
+                let start = self.builder_len(buf);
                 self.format_nested(buf, place, ty, &top_depth());
-                let start = Operand::Copy(Place::local(start));
-                self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
+                // std's `inspectLayout` (std/lang/hooks/inspect_layout.velt), checked where live
+                // code prints such a value: unchecked only without std, where it stays on one line.
+                let (b, at) = (ty::Str::arg(buf.clone()), ty::U64::arg(start));
+                if let Some(layout) = hooks::inspect_layout(self, b, at) {
+                    _ = layout.emit(self);
+                }
                 if let Some(end) = end {
                     _ = end.emit(self);
                 }
@@ -474,9 +476,16 @@ impl FnLower<'_, '_> {
     /// inspect: a string result raw, any other value after the class name, at the object's depth
     /// (`Headers { a: '1' }`).
     fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
-        // The method is user code: what it prints is numbered on its own (std's `inspectSave`).
+        // The method is user code: what it prints is numbered on its own (std's `inspectSave`),
+        // with custom inspect pieces of its own (`inspectAtomsSave`).
         let saved = hooks::inspect_save(self).map(|save| save.emit(self).op());
+        let atoms = hooks::inspect_atoms_save(self).map(|save| save.emit(self).op());
         let (res, rty) = self.call_hook(m, obj, ty, None);
+        if let Some(restore) =
+            atoms.and_then(|s| hooks::inspect_atoms_restore(self, ty::U64::arg(s)))
+        {
+            _ = restore.emit(self);
+        }
         if let Some(restore) = saved.and_then(|s| hooks::inspect_restore(self, ty::U64::arg(s))) {
             _ = restore.emit(self);
         }
@@ -495,26 +504,22 @@ impl FnLower<'_, '_> {
             // typed array (`Uint8Array(3) [ 1, 2, 3 ]`), cut to `[Uint8Array]` past the depth
             // limit.
             self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
-                let start = lw.temp(Ty::U64);
-                lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-                let start = Operand::Copy(Place::local(start));
+                let start = lw.builder_len(buf);
                 let arr = lw.content(&res, rty);
                 let len = Operand::Copy(proj(&arr, Proj::Field(1)));
                 lw.push_text(buf, &format!("{name}("));
                 let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
                 lw.push_scalar(buf, len, u64_);
                 lw.push_text(buf, ") ");
-                lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+                lw.inspect_atom(buf, start);
                 lw.format_nested(buf, &res, rty, depth);
             });
         } else {
             // The string, or the name before the value, is kept as one piece when the value is
             // broken across lines: node inserts a custom inspect's text as it is.
-            let start = self.temp(Ty::U64);
-            self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-            let start = Operand::Copy(Place::local(start));
+            let start = self.builder_len(buf);
             self.push_text(buf, &format!("{name} "));
-            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            self.inspect_atom(buf, start);
             self.format_nested(buf, &res, rty, depth);
         }
         self.drop_glue(res, rty);
@@ -523,12 +528,30 @@ impl FnLower<'_, '_> {
     /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
     /// broken across lines: node inserts a custom inspect's text as it is.
     fn push_inspect_text(&mut self, buf: &Operand, text: &Place) {
-        let start = self.temp(Ty::U64);
-        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-        let start = Operand::Copy(Place::local(start));
+        let start = self.builder_len(buf);
         let a = self.addr(text.clone());
         self.push_str(buf, a);
-        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        self.inspect_atom(buf, start);
+    }
+
+    /// The text from byte `start` to the end of the builder `buf` is a custom inspect's: std's
+    /// `inspectAtom` (std/lang/hooks/inspect_layout_text.velt) keeps it as one piece when the
+    /// value is broken across lines. Unchecked where nothing is broken across lines.
+    pub(super) fn inspect_atom(&mut self, buf: &Operand, start: Operand) {
+        let (b, at) = (ty::Str::arg(buf.clone()), ty::U64::arg(start));
+        if let Some(atom) = hooks::inspect_atom(self, b, at) {
+            _ = atom.emit(self);
+        }
+    }
+
+    /// The byte length of the builder at address `buf` (no call): where the next value's text
+    /// starts.
+    pub(super) fn builder_len(&mut self, buf: &Operand) -> Operand {
+        let p = match buf {
+            Operand::Copy(p) => proj(p, Proj::Deref(Ty::Agg(vir::STR_AGG))),
+            _ => crate::lower::ice("a builder address that is not a place"),
+        };
+        self.str_bytes(&p)
     }
 
     /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.velt), the result of an `[INSPECT]()`
@@ -539,11 +562,9 @@ impl FnLower<'_, '_> {
     }
 
     /// The start of a top-level value: std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt)
-    /// starts the `<ref *N>` numbering over, and the runtime forgets the pieces of custom inspects
-    /// of the value before. Where std's is unchecked (no object can be printed), the runtime's
-    /// alone. The call of `inspectEnd` that gives back std's state after the value.
+    /// starts the `<ref *N>` numbering over, where it is checked. The call of `inspectEnd` that
+    /// gives back std's state after the value.
     fn inspect_begin(&mut self) -> Option<hooks::Call<ty::Void>> {
-        self.call_rt(Rt::StrbufInspectBegin, vec![], None);
         let begin = hooks::inspect_begin(self)?;
         _ = begin.emit(self);
         hooks::inspect_end(self)

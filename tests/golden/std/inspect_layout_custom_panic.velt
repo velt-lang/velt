@@ -1,0 +1,47 @@
+// A custom inspect that panics in the middle of a value abandons the print, caught at its promise.
+// Values printed after it keep their custom inspect pieces as one piece each, laid out right. The
+// leak counters are off: each panic leaks the abandoned print's builder, and the block of the outer
+// value's pieces is kept for the rest of the thread (#3558).
+import { catchPanic } from "velt/task";
+
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+class Tag {
+  [custom](): string {
+    return "Tag<a custom inspect's text, long enough to make the value break>";
+  }
+}
+
+class Bomb {
+  [custom](): string {
+    panic("bomb");
+    return "never";
+  }
+}
+
+class Loud {
+  [custom](): string {
+    console.log({ inside: new Tag(), list: [1, 2, 3], text: "breaks across lines as well" });
+    return "Loud";
+  }
+}
+
+async function boom(): Promise<number> {
+  await yieldNow();
+  console.log({ first: new Tag(), second: new Bomb(), third: "c" });
+  return 1;
+}
+
+async function main() {
+  for (let i = 0; i < 3; i++) {
+    try {
+      await catchPanic(() => boom());
+      console.log("returned");
+    } catch (e) {
+      console.log("caught");
+    }
+  }
+  console.log({ first: new Tag(), second: [1, 2, 3], third: new Tag() });
+  console.log({ outer: new Tag(), loud: new Loud(), after: new Tag() });
+  console.log([new Tag()]);
+}

@@ -104,6 +104,8 @@ table! {
     lang_hooks_json => "lang/hooks/json",
     lang_hooks_inspect => "lang/hooks/inspect",
     lang_hooks_inspect_cycles => "lang/hooks/inspect_cycles",
+    lang_hooks_inspect_layout => "lang/hooks/inspect_layout",
+    lang_hooks_inspect_layout_text => "lang/hooks/inspect_layout_text",
     lang_hooks_module_blocks => "lang/hooks/module_blocks",
     lang_hooks_number => "lang/hooks/number",
     lang_hooks_number_digits => "lang/hooks/number_digits",

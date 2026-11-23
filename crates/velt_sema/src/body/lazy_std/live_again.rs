@@ -30,6 +30,7 @@ pub(crate) fn reach_again(cx: &mut Ctx, defs: &[DefId]) -> bool {
                 l.present,
                 l.demanded,
                 l.prints_float,
+                l.prints_containers,
                 l.waiting.len(),
             ),
             (cx.info.len(), cx.loads_added, cx.lazy.record_hooks),

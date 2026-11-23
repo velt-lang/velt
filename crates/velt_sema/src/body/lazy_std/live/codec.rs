@@ -7,7 +7,7 @@ crate::units::codec::structs! {
     Live {
         check, seeded, live, todo, types, adts, methods, impls, kinds, ifaces, gated, opened,
         waiting, texts, dynamic_classes, finishing, present, assumed, late, demanded, int_text,
-        prints_float, tasks, module_state, units, units_loaded,
+        prints_float, prints_containers, tasks, module_state, units, units_loaded,
     }
 }
 crate::units::codec::enums! {

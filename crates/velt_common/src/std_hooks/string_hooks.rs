@@ -3,12 +3,12 @@
 //! the prelude's methods call by role (`hookCall`), so a program loads a method's module only
 //! when live code calls it; and `replace` with a function, which sema calls. Those that take and return only strings and numbers are `prebuilt`. Kept
 //! apart from the rest of the table ([`super`]), which [`with_string_hooks`] gives to
-//! `with_weak_hooks!` with these rows after it.
+//! `with_inspect_layout_hooks!` with these rows after it.
 
-/// `with_weak_hooks!` over the rows given, then the string methods'.
+/// `with_inspect_layout_hooks!` over the rows given, then the string methods'.
 macro_rules! with_string_hooks {
     ($($rows:tt)*) => {
-        with_weak_hooks! {
+        with_inspect_layout_hooks! {
             $($rows)*
             // velt/lang/string/search: the string searches (#2198), which the prelude's methods call by
             // role (`hookCall`), so a program loads them only when live code calls one.
