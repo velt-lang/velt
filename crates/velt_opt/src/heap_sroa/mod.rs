@@ -118,8 +118,14 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
         return Done::default();
     };
     let vtables = devirt::run(allocator, func, &webs);
+    let depths = cost::Depths::new(func, &webs);
+    if let Some(d) = &depths {
+        cost::check(allocator, func, d, &mut webs, &[]);
+    }
     let mut updates = flow::check(allocator, func, &mut webs);
-    cost::check(allocator, func, &mut webs, &updates);
+    if let Some(d) = &depths {
+        cost::check(allocator, func, d, &mut webs, &updates);
+    }
     updates.retain(|u| webs.obj(u.dst).is_some() && webs.obj(u.src).is_some());
     let replaced = webs.any();
     if replaced {
