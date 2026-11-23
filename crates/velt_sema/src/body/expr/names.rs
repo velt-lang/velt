@@ -18,6 +18,10 @@ impl FnCx<'_, '_> {
             self.note_trusted_read(l, span);
         }
         let ty = self.local_ty(l);
+        // A `weak` local reads its target, never narrowed (`body::weak_locals`).
+        if self.is_weak_local(l) {
+            return self.weak_local_read(l, ty, span);
+        }
         if want != Want::BorrowMut && self.narrowed_to_nothing(l) {
             // No member is left (e.g. in the `default` of an exhaustive `switch`): the read
             // has type `never`, as in TS (`const _x: never = s;`).

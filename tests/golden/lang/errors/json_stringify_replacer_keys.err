@@ -1,0 +1,4 @@
+json_stringify_replacer_keys.velt:6:31: error: the replacer of `JSON.stringify` cannot be a `boolean[]`
+pass an array of the keys to write (strings or numbers), or `null`
+json_stringify_replacer_keys.velt:8:31: error: the replacer of `JSON.stringify` cannot be a `(boolean | string)[]`
+pass an array of the keys to write (strings or numbers), or `null`

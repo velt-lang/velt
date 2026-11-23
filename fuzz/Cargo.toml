@@ -54,13 +54,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "json"
-path = "fuzz_targets/json.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "float_fmt"
 path = "fuzz_targets/float_fmt.rs"
 test = false

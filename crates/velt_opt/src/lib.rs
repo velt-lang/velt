@@ -500,24 +500,24 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
                 }
                 false
             });
+            // Every program: a loop's range tests are comparisons too (an element's check,
+            // `f32x8.fits`), not only `fits` externs.
             let externs = range_versions::Externs::of(&program.externs);
-            if externs.any() {
-                let signatures = t.time("signatures", || callgraph::signatures(program));
-                let fold = constfold::Program::of(&signatures);
-                let aggs = &program.aggs;
-                each_function(served.bodies(&mut program.funcs), t, |t, func| {
-                    if t.time("range_versions", || {
-                        range_versions::run(aggs, &externs, func)
-                    }) {
-                        // The copies' decided tests are `true`: their branches and panic paths go.
-                        t.time("constfold", || constfold::run(&fold, func));
-                        t.time("copyprop", || copyprop::run(func));
-                        t.time("dce", || dce::run(aggs, func));
-                        t.time("simplify_cfg", || simplify_cfg::run(func));
-                    }
-                    false
-                });
-            }
+            // The cleanup folds the copies' decided tests (`true`): their branches and panic
+            // paths go. Calls were devirtualized by the rounds before, so it needs no signatures.
+            let fold = constfold::Program::of(&[]);
+            let aggs = &program.aggs;
+            each_function(served.bodies(&mut program.funcs), t, |t, func| {
+                if t.time("range_versions", || {
+                    range_versions::run(aggs, &externs, func)
+                }) {
+                    t.time("constfold", || constfold::run(&fold, func));
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(aggs, func));
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+                false
+            });
             let no_return = cold_calls::NoReturn::find(program);
             let funcs = program.funcs.iter_mut().filter(|f| served.optimizes(f));
             each_function(funcs, t, |t, func| {
