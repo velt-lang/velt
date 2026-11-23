@@ -213,6 +213,7 @@ mod record_props;
 mod record_view;
 mod record_view_cast;
 mod regex_args;
+mod regexp_match_reads;
 mod rest_forms;
 mod rest_shapes;
 mod rest_tuple;
