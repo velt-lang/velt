@@ -2,8 +2,8 @@
 // #2649 step 3). With `VELT_THREADS=1` and the rescue on, worker 0 starts lazy (sched_task.velt
 // `E_LAZY`: no lock, no count, no publish per poll); the monitor's rescue of a stalled poll makes
 // its queue shared, turns the latch and join locks on (sched_lock.velt) and hands tasks to spares
-// (sched_monitor_lazy.velt). Once the spares are idle again, with worker 0 not stalled, for
-// `CALM_TICKS` ticks, the monitor takes that back:
+// (sched_monitor_lazy.velt). Once the spares are idle again, with worker 0 not stalled in a
+// poll (`stuck`), for `CALM_TICKS` ticks, the monitor takes that back:
 //
 // 1. It asks each spare to retire (`E_RETIRED` `R_ASKED`, and a wake). A spare answers at its
 //    park. Its pending sleeps go with their tasks to worker 0 when the tasks may move
@@ -38,11 +38,15 @@ import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as sc from "./sched_sleep_carry";
 import * as mv from "./sched_sleep_move";
+import * as st from "./sched_stats";
 import * as tq from "./sched_take";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
-/** Ticks the spares stay idle, worker 0 not stalled, before the monitor takes the rescue back. */
+/**
+ * Ticks the spares stay idle, worker 0 not stalled in a poll, before the monitor takes the rescue
+ * back.
+ */
 export const CALM_TICKS: usize = 10;
 
 /**
@@ -90,6 +94,7 @@ export function relaxDuties(g: usize, now: usize): bool {
   }
   if (retired === n - 1) {
     m.or32(g + t.E_RELAX, t.RELAX_ASKED);
+    st.askedToRelax(sl.clock());
     return true;
   }
   const ticks = m.ld(g + t.E_CALM) + 1;
@@ -157,6 +162,7 @@ export function idleDuties(g: usize): bool {
   }
   if (retired === n - 1) {
     m.or32(g + t.E_RELAX, t.RELAX_ASKED);
+    st.askedToRelax(sl.clock());
     return false;
   }
   if (open > 0) {

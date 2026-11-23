@@ -564,7 +564,7 @@ async function main() {
 /// mean worker 0 was lazy again, so its marks were set again (process.velt `setLazyWorker`).
 #[test]
 fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
-    flip_rounds(&flip_output(TIMER_WAIT));
+    flip_rounds(&flip_output(TIMER_WAIT), RUNS, &[], LAZY_ROUNDS_MIN);
 }
 
 /// [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again`] with `main` waiting
@@ -574,7 +574,7 @@ fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
 /// most runs).
 #[test]
 fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sleeps() {
-    flip_rounds(&flip_output("sleep(40)"));
+    flip_rounds(&flip_output("sleep(40)"), RUNS, &[], LAZY_ROUNDS_MIN);
 }
 
 /// Of five rounds that each start with a rescue of a lazy worker 0, how many must find it lazy
@@ -586,9 +586,27 @@ fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sl
 /// threads worker 0 was lazy again in one pause of four or none in most runs.
 const LAZY_ROUNDS_MIN: u64 = 2;
 
-/// Five rounds of `src` (a [`FLIP_OUTPUT`]): each run's lines in order, and worker 0 lazy again
-/// after a rescue in one pause of four at least ([`LAZY_ROUNDS_MIN`]).
-fn flip_rounds(src: &str) {
+/// [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sleeps`] with
+/// worker 0 held for 50 ms each time it wakes from its park ([`WAKE_HOLD`]). Woken by another
+/// thread (the carry of `main`'s sleep, the spares' hand-on), it was taken for stalled two ticks
+/// later, though it ran no poll, and the monitor took its requests to the spares to retire back
+/// (sched_relax.velt `calm`, #3134): worker 0 was lazy again in two pauses of four at most (1 on
+/// main, where the request to relax was taken back too). Now it is lazy again in all four; the
+/// check asks for three (`locks-on >= 4`), room for a loaded machine.
+#[test]
+fn worker_0_woken_but_not_run_yet_counts_as_calm() {
+    flip_rounds(&flip_output("sleep(40)"), 5, &[WAKE_HOLD], 4);
+}
+
+/// `VELT_SCHED_HANDLE_PAUSE=wake` (read only in counted runs, sched_debug.velt): a shared worker 0
+/// is held for 50 ms after each wake from its park, after the wake stored its park word and its
+/// progress: as a worker 0 woken by another thread (the waker stores both) that the OS has not
+/// run yet, or one preempted before its next poll.
+const WAKE_HOLD: (&str, &str) = ("VELT_SCHED_HANDLE_PAUSE", "wake");
+
+/// `runs` runs of five rounds of `src` (a [`FLIP_OUTPUT`]) with `env` set: each run's lines in
+/// order, and worker 0 lazy again after a rescue so that `min` rounds turned the locks on.
+fn flip_rounds(src: &str, runs: usize, env: &[(&str, &str)], min: u64) {
     if !has_threads() {
         return;
     }
@@ -601,12 +619,12 @@ fn flip_rounds(src: &str) {
             )
         })
         .collect();
-    for i in 0..RUNS {
-        let r = run(&exe, "1");
+    for i in 0..runs {
+        let r = run_with(&exe, "1", env);
         let what = format!("run {i}");
         check(&r, &what, &want, 0);
         assert!(
-            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= LAZY_ROUNDS_MIN),
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= min),
             "{what}: worker 0 was not lazy again after a rescue: {}",
             r.err
         );
@@ -827,6 +845,12 @@ async function main() {
 /// the task to worker 0 and retires, so worker 0 is lazy again (#3117): the next round's rescue
 /// turns the locks on a second time. Before, the spare declined while the sleep was pending
 /// (sched_relax.velt `keeps`), and worker 0 stayed shared (every run on macOS).
+///
+/// The check waits on that state, not on the clock: a run counts when the monitor asked worker 0
+/// to relax before the carried sleep was due (`asked-carrying`, sched_stats.velt), and then
+/// worker 0 relaxes before it polls the task again, however slow each step. A run whose spare
+/// answered after the 300 ms ran out declines with the sleep due, as it should, and proves nothing
+/// (a loaded runner); no run counting fails, so a scheduler that never carries fails too.
 #[test]
 fn a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep() {
     if !has_threads() {
@@ -836,45 +860,59 @@ fn a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep() {
 }
 
 /// [`a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep`] with worker 0 held
-/// for 50 ms each time it wakes from its park, before it can relax (`VELT_SCHED_HANDLE_PAUSE=wake`,
-/// which only a counted run reads, sched_debug.velt), as a loaded machine's OS may leave a woken
-/// thread unrun. Asked to relax while it slept, woken by its carried sleep's timer, it was taken for
-/// stalled two ticks later, though it ran no poll, and the monitor took the request back: worker 0
-/// ran the next round shared (#3134: a Windows runner, run 6 of 20; every run with the hold).
+/// for 50 ms each time it wakes from its park ([`WAKE_HOLD`]). Asked to relax while it slept, then
+/// woken, it was taken for stalled two ticks later, though it ran no poll, and the monitor took
+/// the request back: worker 0 ran the next round shared (#3134: a Windows runner, run 6 of 20;
+/// every run with the hold).
 #[test]
 fn worker_0_woken_but_not_run_yet_still_relaxes() {
     if !has_threads() {
         return;
     }
-    sleeper_rounds(5, &[("VELT_SCHED_HANDLE_PAUSE", "wake")]);
+    sleeper_rounds(5, &[WAKE_HOLD]);
 }
 
-/// `runs` runs of [`SLEEPER_ON_SPARE`] with `env` set: its lines, and worker 0 lazy again after
-/// the first round (the second round's rescue turns the locks on again).
+/// `runs` runs of [`SLEEPER_ON_SPARE`] with `env` set: its lines, and in each run where the monitor
+/// asked worker 0 to relax before the carried sleep was due (`asked-carrying`), worker 0 lazy
+/// again after the first round (the second round's rescue turns the locks on again); one such run
+/// at least.
 fn sleeper_rounds(runs: usize, env: &[(&str, &str)]) {
     let dir = test_dir::TestDir::new();
     let exe = build_std(dir.path(), "sleeper_on_spare", SLEEPER_ON_SPARE);
+    let mut counted = 0;
     for i in 0..runs {
         let r = run_with(&exe, "1", env);
         let what = format!("run {i}");
-        check(&r, &what, "slept 0\nround 0\nslept 1\nround 1\n", 0);
-        assert!(
-            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
-            "{what}: worker 0 was not lazy again after the first rescue: {}",
-            r.err
-        );
+        check(&r, &what, "slept 0\nround 0\nwoke 1\nround 1\n", 0);
+        if rescue_count(&r.err, "asked-carrying").is_some_and(|n| n >= 1) {
+            counted += 1;
+            assert!(
+                rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+                "{what}: worker 0 was not lazy again after the first rescue: {}",
+                r.err
+            );
+        }
     }
+    assert!(
+        counted > 0,
+        "no run of {runs} asked worker 0 to relax before the carried sleep was due"
+    );
 }
 
 /// The program of [`a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep`].
 const SLEEPER_ON_SPARE: &str = r#"const MOVED = new Atomic<i64>(0);
 
-// Moved to a spare by the rescue of `main`'s spin, it sleeps there: the spare is asked to retire
-// while that sleep is pending.
+// Moved to a spare by the rescue of `main`'s spin, it sleeps there in the first round: the spare
+// is asked to retire while that sleep is pending. The second round only needs the rescue (and no
+// sleep there may count as the first one's in `asked-carrying`).
 async function sleeper(r: i64): Promise<void> {
   MOVED.store(r + 1);
-  await sleep(300);
-  console.log(`slept ${r}`);
+  if (r == 0) {
+    await sleep(300);
+    console.log(`slept ${r}`);
+  } else {
+    console.log(`woke ${r}`);
+  }
 }
 
 async function main() {
