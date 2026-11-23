@@ -185,10 +185,17 @@ describe("cgroup memory limits, read as libuv reads them", () => {
   });
 });
 
-/** A reader of the files `tree` holds, null for any other (a file that can't be read). */
+/**
+ * A reader of the files `tree` holds, null for any other (a file that can't be read); "//" in a
+ * path reads as "/", as the kernel reads it.
+ */
 function fileOrNull(tree: Map<string, string>): (path: string) => string | null {
   return (path: string): string | null => {
-    const text = tree.get(path);
+    let p = path;
+    while (p.includes("//")) {
+      p = p.replaceAll("//", "/");
+    }
+    const text = tree.get(p);
     return text === undefined ? null : text;
   };
 }
@@ -264,6 +271,15 @@ describe("cgroup CPU quota, read as libuv 1.51 (Node 22) reads it", () => {
     expect(cpuQuotaOf(`0::/${dir}\n`, fileOrNull(tree))).toBe(0);
   });
 
+  it("reads a limit on /sys/fs/cgroup itself, a container's with --cpus", () => {
+    // The namespace root: libuv reads /sys/fs/cgroup//cpu.max, then /sys/fs/cgroup/cpu.max.
+    const tree = v2Tree(["a"]);
+    tree.set("/sys/fs/cgroup/cpu.max", "200000 100000\n");
+    expect(cpuQuotaOf("0::/\n", fileOrNull(tree))).toBe(2);
+    // A sub-cgroup of the container, with the limit only on the mount.
+    expect(cpuQuotaOf("0::/a\n", fileOrNull(tree))).toBe(2);
+  });
+
   it("gives 0 without the cgroup's cgroup.controllers", () => {
     const tree = v2Tree([]);
     tree.set("/sys/fs/cgroup/a/cpu.max", "200000 100000\n");
@@ -306,6 +322,9 @@ describe("cgroup CPU quota, read as libuv 1.51 (Node 22) reads it", () => {
     tree.set("/sys/fs/cgroup/cpu,cpuacct/a/cpu.cfs_period_us", "100000\n");
     tree.set("/sys/fs/cgroup/cpu/a/cpu.cfs_quota_us", "200000\n");
     tree.set("/sys/fs/cgroup/cpu/a/cpu.cfs_period_us", "100000\n");
+    // What a ":cpu" without the comma would find in "3:cpu:/a".
+    tree.set("/sys/fs/cgroup/:/a/cpu.cfs_quota_us", "200000\n");
+    tree.set("/sys/fs/cgroup/:/a/cpu.cfs_period_us", "100000\n");
     const v1 = "5:memory:/a\n4:cpu,cpuacct:/a\n";
     expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(0);
     expect(cpuQuotaOf("3:cpu:/a\n", fileOrNull(tree))).toBe(0);
