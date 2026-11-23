@@ -40,6 +40,29 @@ use super::{Cx, Family};
 use crate::srclocs::push_stmt;
 
 impl Cx<'_> {
+    /// The versioning plan of family `f` (`views_version.rs`): when it has exactly one
+    /// demotion, its member, the family's members, the blocks where it is live and the block the
+    /// demotion continues to.
+    pub(super) fn version_plan(&self, f: &Family) -> Option<super::views_version::Plan> {
+        let mut demotions = f.edits.iter().filter_map(|e| match e {
+            super::Edit::Demote { block, m, .. } => Some((*block, *m)),
+            _ => None,
+        });
+        let (block, m) = demotions.next()?;
+        if demotions.next().is_some() {
+            return None;
+        }
+        let Terminator::Call { next, .. } = &self.func.blocks[block].term else {
+            return None;
+        };
+        Some(super::views_version::Plan {
+            demoted: m,
+            members: f.members.iter().copied().collect(),
+            region: self.live_blocks(f),
+            next: next.0 as usize,
+        })
+    }
+
     /// Views mode: the result `d` of a read-only call (`callee`) that took a family value. No
     /// call returns a string itself (VIR keeps aggregates out of signatures: a string result is
     /// written through an out-pointer, which a call that only reads does not have). A Velt
@@ -81,7 +104,7 @@ impl Cx<'_> {
 /// Replace the clone `velt_rt_str_clone(src, &m)` ending block `bi` of `func` with a demotion:
 /// `*src`'s words with a zero form word when `*src` is a heap ASCII string (`w2 > 0` as `i64`:
 /// a plain heap string or a slice; units equal bytes), the clone otherwise.
-pub(super) fn demote(func: &mut Function, bi: usize, m: Local, src: Local) {
+pub(super) fn demote(func: &mut Function, bi: usize, m: Local, src: Local) -> BlockId {
     let Terminator::Call { next, .. } = &func.blocks[bi].term else {
         panic!("ICE: string views: a demotion's clone is gone");
     };
@@ -165,4 +188,5 @@ pub(super) fn demote(func: &mut Function, bi: usize, m: Local, src: Local) {
     for s in tests {
         push_stmt(func, bi, s, at);
     }
+    view
 }

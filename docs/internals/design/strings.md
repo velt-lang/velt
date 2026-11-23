@@ -147,6 +147,15 @@ view leaves the function: a family with a store to memory, a return or a call th
 read-only keeps its clone. Only ASCII is viewed, since the position translation takes a
 non-ASCII static string for a literal and remembers its positions for good.
 
+The view path then runs a copy of the region where the family is live
+(`crates/velt_opt/src/borrowed_copies/views_version/`): in the copy every member reads as a
+static ASCII string (form word 0, equal unit and byte counts), its drop is a zeroing and a clone of
+it a copy, so the form tests and the runtime paths fold away and the members stay in registers.
+The copy is kept only when every write to a member it can run keeps that true, which is why
+`sliceOf` tests for a static ASCII string before its other paths: a slice of one is always one;
+and only when folding removed a test or a call from it, so a function no copy pays for is left
+exactly as it was.
+
 ### How the operations compile
 
 | Operation | ASCII (`units == bytes`) | Non-ASCII |

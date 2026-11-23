@@ -38,18 +38,21 @@
 mod tests;
 #[cfg(test)]
 mod views_tests;
+#[cfg(test)]
+mod views_version_tests;
 
 pub(crate) mod counted;
 mod live;
 mod read_only;
 mod views;
+mod views_version;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_vir::math::effects;
 use velt_vir::vir::{
-    AggLayout, BinOp, Callee, ExternId, FuncId, Function, Local, Operand, Place, Program, Proj,
-    Rvalue, Stmt, Terminator, Ty, UnOp, STR_AGG,
+    AggLayout, BinOp, BlockId, Callee, ExternId, FuncId, Function, Local, Operand, Place, Program,
+    Proj, Rvalue, Stmt, Terminator, Ty, UnOp, STR_AGG,
 };
 
 use crate::locals::Usage;
@@ -157,6 +160,8 @@ fn run_mode(aggs: &[AggLayout], rt: &Runtime, func: &mut Function, views: bool) 
     // it is (its analysis assumed the other's clones stay).
     let mut claimed: FxHashSet<Local> = FxHashSet::default();
     let mut edits: Vec<Edit> = vec![];
+    // Views mode: each family with one demotion is versioned (`views_version.rs`).
+    let mut plans: Vec<views_version::Plan> = vec![];
     for bi in 0..func.blocks.len() {
         let Some(m) = cx.clone_into(bi) else { continue };
         if done.contains(&m) {
@@ -167,18 +172,29 @@ fn run_mode(aggs: &[AggLayout], rt: &Runtime, func: &mut Function, views: bool) 
         done.extend(family.members.iter().copied());
         if let Some(found) = family.filter(|f| !overlaps && cx.borrowable(f)) {
             claimed.extend(found.members.iter().copied());
+            if views {
+                plans.extend(cx.version_plan(&found));
+            }
             edits.extend(found.edits);
         }
     }
     if edits.is_empty() {
         return false;
     }
+    let mut views_of: FxHashMap<Local, BlockId> = FxHashMap::default();
     for e in edits {
         match e {
-            Edit::Demote { block, m, src } => views::demote(func, block, m, src),
+            Edit::Demote { block, m, src } => {
+                views_of.insert(m, views::demote(func, block, m, src));
+            }
             e => apply(func, e),
         }
     }
+    let planned: Vec<(views_version::Plan, BlockId)> = plans
+        .into_iter()
+        .filter_map(|p| views_of.get(&p.demoted).map(|&v| (p, v)))
+        .collect();
+    views_version::version_all(aggs, rt, func, &planned);
     true
 }
 

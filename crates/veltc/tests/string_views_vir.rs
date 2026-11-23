@@ -5,7 +5,9 @@
 //!
 //! A demotion is the block that gives the member the source's words with a zero form word,
 //! `m.0 = (*src as agg#0).0; m.1 = …; m.2 = 0_u64`, then jumps on (`velt_opt`'s
-//! `borrowed_copies/views.rs`).
+//! `borrowed_copies/views.rs`). A versioned loop (`borrowed_copies/views_version/`) is one whose
+//! demotion leads to code that reaches no runtime slice: the copy, where every slice of a view
+//! is inline.
 
 mod no_window;
 
@@ -42,10 +44,11 @@ fn body<'a>(vir: &'a str, symbol: &str) -> Vec<&'a str> {
     lines.take_while(|l| *l != "}").collect()
 }
 
-/// How many demotion blocks `body` has (the module doc).
+/// How many demotions `body` has: the three writes of the module doc in a row (cleanup may
+/// merge what follows them into their block).
 fn demotions(body: &[&str]) -> usize {
     let stmts: Vec<&str> = body.iter().map(|l| l.trim()).collect();
-    (0..stmts.len().saturating_sub(3))
+    (0..stmts.len().saturating_sub(2))
         .filter(|&i| {
             let first = stmts[i];
             let Some((member, src)) = first.split_once(".0 = (*") else {
@@ -54,7 +57,63 @@ fn demotions(body: &[&str]) -> usize {
             src.ends_with(" as agg#0).0")
                 && stmts[i + 1].starts_with(&format!("{member}.1 = "))
                 && stmts[i + 2] == format!("{member}.2 = 0_u64")
-                && stmts[i + 3].starts_with("goto ")
+        })
+        .count()
+}
+
+/// The blocks of `body`: name → its statement lines, the terminator last.
+fn blocks<'a>(body: &[&'a str]) -> Vec<(String, Vec<&'a str>)> {
+    let mut out: Vec<(String, Vec<&'a str>)> = vec![];
+    for line in body {
+        let t = line.trim();
+        if let Some(name) = t.strip_suffix(':').filter(|n| n.starts_with("bb")) {
+            out.push((name.to_string(), vec![]));
+        } else if let Some((_, lines)) = out.last_mut() {
+            lines.push(t);
+        }
+    }
+    out
+}
+
+/// The `bbN` names a terminator jumps to.
+fn successors(term: &str) -> Vec<String> {
+    term.split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| {
+            w.starts_with("bb") && w.len() > 2 && w[2..].chars().all(|c| c.is_ascii_digit())
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// How many of `body`'s demotions lead to code that reaches no runtime slice.
+fn versioned(body: &[&str]) -> usize {
+    let blocks = blocks(body);
+    let index: std::collections::HashMap<&str, usize> = (blocks.iter().enumerate())
+        .map(|(i, (n, _))| (n.as_str(), i))
+        .collect();
+    let is_view = |lines: &[&str]| demotions(lines) >= 1;
+    (blocks.iter())
+        .filter(|(_, lines)| is_view(lines))
+        .filter(|(name, _)| {
+            let mut seen = std::collections::HashSet::new();
+            let mut work = vec![index[name.as_str()]];
+            while let Some(b) = work.pop() {
+                if !seen.insert(b) {
+                    continue;
+                }
+                let lines = &blocks[b].1;
+                if lines.iter().any(|l| l.contains("velt_rt_str_slice(")) {
+                    return false;
+                }
+                if let Some(term) = lines.last() {
+                    work.extend(
+                        successors(term)
+                            .iter()
+                            .filter_map(|s| index.get(s.as_str())),
+                    );
+                }
+            }
+            true
         })
         .count()
 }
@@ -77,5 +136,14 @@ fn the_escape_and_suspension_goldens_take_no_views() {
         let vir = release_vir(golden);
         let lines: Vec<&str> = vir.lines().collect();
         assert_eq!(demotions(&lines), 0, "{golden} takes a view");
+    }
+}
+
+#[test]
+fn the_loops_of_the_versioned_golden_run_a_copy() {
+    let vir = release_vir("tests/golden/lang/string_views_versioned.velt");
+    for symbol in ["_V5exits", "_V7carried"] {
+        let n = versioned(&body(&vir, symbol));
+        assert!(n >= 1, "{symbol} runs no copy");
     }
 }
