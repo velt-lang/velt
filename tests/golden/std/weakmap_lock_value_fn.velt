@@ -1,0 +1,27 @@
+// A closure literal given as a `Mutex`'s value, or to `shared(...)`, may be called by several
+// tasks, each on its own thread: one capturing a weak collection is refused where it is written,
+// not only by the transfer glue's panic at run time (velt_sema weak_threads.rs `shared_fns`).
+class Key {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+function locked(): void {
+  const wm = new WeakMap<Key, number>();
+  const k = new Key(1);
+  wm.set(k, 2);
+  const lk = new Mutex(() => wm.has(k));
+  console.log(lk.with((f) => f()));
+}
+
+function inShared(): void {
+  const ws = new WeakSet<Key>();
+  const k = new Key(1);
+  ws.add(k);
+  shared(() => ws.has(k));
+}
+
+locked();
+inShared();

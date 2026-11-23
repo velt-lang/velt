@@ -1,0 +1,16 @@
+// `Promise.resolve(u)` with an `unknown` (#924): a value that is no promise settles the promise as
+// before; a promise held in the `unknown`, which JavaScript adopts, stops with a TypeError until
+// that is supported (#3425), rather than settling the new promise with the promise itself.
+async function later(n: number): Promise<number> {
+  await Promise.resolve();
+  return n * 2;
+}
+
+async function main(): Promise<void> {
+  const v: unknown = "plain";
+  console.log(await Promise.resolve(v));
+  const u: unknown = later(1);
+  console.log(await Promise.resolve(u));
+  console.log("not reached");
+}
+main();

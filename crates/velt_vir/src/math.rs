@@ -1,4 +1,4 @@
-//! The scalar math operations: what each `velt_rt_math_*`, `velt_rt_pow_*` and `velt_math_*`
+//! The scalar math operations: what each `velt_rt_math_*` and `velt_math_*`
 //! extern means (rt_abi.md "Math"), and what every runtime function may do to memory
 //! ([`Effects`]).
 //!
@@ -32,8 +32,6 @@ pub enum MathOp {
     Trunc,
     /// `(f64) -> f64`: `Math.abs`.
     Abs,
-    /// `(i64, i64) -> i64`: wrapping integer power (always a runtime call).
-    PowI64,
     /// `(f64) -> u64`: the IEEE 754 bits, `x.toBits()`.
     F64Bits,
     /// `(u64) -> f64`: the double with those bits, `f64.fromBits(b)`.
@@ -97,14 +95,13 @@ pub enum MathOp {
 
 impl MathOp {
     /// Every operation.
-    pub const ALL: [MathOp; 33] = [
+    pub const ALL: [MathOp; 32] = [
         MathOp::Sqrt,
         MathOp::Floor,
         MathOp::Ceil,
         MathOp::Round,
         MathOp::Trunc,
         MathOp::Abs,
-        MathOp::PowI64,
         MathOp::F64Bits,
         MathOp::BitsF64,
         MathOp::Umulh,
@@ -142,7 +139,6 @@ impl MathOp {
             MathOp::Round => "velt_rt_math_round",
             MathOp::Trunc => "velt_rt_math_trunc",
             MathOp::Abs => "velt_rt_math_fabs",
-            MathOp::PowI64 => "velt_rt_pow_i64",
             MathOp::F64Bits => "velt_rt_math_f64_bits",
             MathOp::BitsF64 => "velt_rt_math_bits_f64",
             MathOp::Umulh => "velt_rt_math_umulh",
@@ -179,7 +175,7 @@ impl MathOp {
     }
 
     /// The operation's name: the symbol without its `velt_rt_math_` / `velt_rt_` /
-    /// `velt_math_` prefix (`sqrt`, `pow_i64`, `f32_bits`).
+    /// `velt_math_` prefix (`sqrt`, `to_int32`, `f32_bits`).
     pub fn name(self) -> &'static str {
         let s = self.symbol();
         s.strip_prefix("velt_rt_math_")
@@ -212,7 +208,6 @@ impl MathOp {
             | MathOp::Round
             | MathOp::Trunc
             | MathOp::Abs => (&[F64], F64),
-            MathOp::PowI64 => (&[I64, I64], I64),
             MathOp::F64Bits => (&[F64], U64),
             MathOp::BitsF64 => (&[U64], F64),
             MathOp::Umulh => (&[U64, U64], U64),
@@ -282,7 +277,6 @@ impl MathOp {
                     _ => js_round(x),
                 })
             }
-            MathOp::PowI64 => Some(pow_i64(u(0)? as i64, u(1)? as i64) as u64),
             MathOp::F64Bits => u(0).filter(|&b| !f64::from_bits(b).is_nan()),
             MathOp::BitsF64 => double(f64::from_bits(u(0)?)),
             MathOp::Umulh => Some(((u128::from(u(0)?) * u128::from(u(1)?)) >> 64) as u64),
@@ -385,24 +379,6 @@ fn to_int32(x: f64) -> i32 {
     };
     let low = if x < 0.0 { low.wrapping_neg() } else { low };
     low as i32
-}
-
-/// Wrapping integer power (velt_rt's `velt_rt_pow_i64`).
-fn pow_i64(a: i64, b: i64) -> i64 {
-    if b < 0 {
-        return if a == 1 { 1 } else { 0 };
-    }
-    let (mut base, mut exp, mut acc) = (a, b as u64, 1i64);
-    while exp > 0 {
-        if exp & 1 == 1 {
-            acc = acc.wrapping_mul(base);
-        }
-        exp >>= 1;
-        if exp > 0 {
-            base = base.wrapping_mul(base);
-        }
-    }
-    acc
 }
 
 /// How `Math.floor`, `ceil`, `trunc` and `round` round a double to a whole one.
@@ -532,7 +508,7 @@ mod tests {
     #[test]
     fn runtime_functions() {
         assert!(MathOp::Sqrt.has_runtime_function());
-        assert!(MathOp::PowI64.has_runtime_function());
+        assert!(MathOp::ToInt32.has_runtime_function());
         assert!(!MathOp::F32Bits.has_runtime_function());
         assert!(!MathOp::BitsF32.has_runtime_function());
         assert_eq!(MathOp::F32Bits.name(), "f32_bits");

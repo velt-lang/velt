@@ -1,0 +1,81 @@
+// A promise held as `unknown` where JavaScript adopts it (#924): returned from an async
+// function, yielded from an async generator, and an element of a `for await` over an array.
+// Each also with a value that is no promise and a promise that rejects, and the order against an
+// interleaved `then` chain (adopting a returned promise takes Node two more steps than awaiting
+// it). Node prints the same.
+async function later(n: number): Promise<number> {
+  await Promise.resolve();
+  return n * 2;
+}
+
+async function fails(why: string): Promise<number> {
+  await Promise.resolve();
+  throw new Error(why);
+}
+
+async function give(u: unknown): Promise<unknown> {
+  return u;
+}
+
+async function* each(us: unknown[]): AsyncGenerator<unknown> {
+  for (const u of us) {
+    yield u;
+  }
+}
+
+async function ticks(log: string[], label: string, p: Promise<unknown>): Promise<void> {
+  const chain = Promise.resolve()
+    .then((): void => {
+      log.push("t1");
+    })
+    .then((): void => {
+      log.push("t2");
+    })
+    .then((): void => {
+      log.push("t3");
+    })
+    .then((): void => {
+      log.push("t4");
+    });
+  await p;
+  log.push(label);
+  await chain;
+}
+
+async function main(): Promise<void> {
+  console.log(await give(later(3)), await give("plain"), await give(undefined));
+  try {
+    await give(fails("returned"));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  const got: unknown[] = [];
+  for await (const v of each([later(1), "two", later(3)])) {
+    got.push(v);
+  }
+  console.log(got.join(" "));
+  try {
+    for await (const v of each([later(5), fails("yielded")])) {
+      console.log("yield", v);
+    }
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  const list: unknown[] = [later(4), 9, Promise.resolve("done")];
+  for await (const v of list) {
+    console.log("elem", v);
+  }
+  console.log(list.length);
+  try {
+    for await (const v of [later(6), fails("element")] as unknown[]) {
+      console.log("elem", v);
+    }
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  const log: string[] = [];
+  await ticks(log, "returned", give(Promise.resolve(1)));
+  await ticks(log, "plain", give(1));
+  console.log(log.join(" "));
+}
+main();

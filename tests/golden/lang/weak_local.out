@@ -1,0 +1,9 @@
+basic 1 1
+set 2
+after null
+returned null
+temp null
+loop 6
+uninit null
+??= 4
+async 5

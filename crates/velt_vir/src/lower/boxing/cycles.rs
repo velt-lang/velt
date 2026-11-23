@@ -359,7 +359,7 @@ impl Cx<'_> {
     }
 
     /// What the environments of each key capture: the types of their captured variables (a
-    /// cell holds a value of the variable's type), substituted.
+    /// cell holds a value of the variable's type), substituted; a `weak` variable is no edge.
     fn env_captures(&mut self) -> FxHashMap<Option<CycleKey>, Vec<TyId>> {
         let mut envs: Vec<_> = self.facts.closure_envs.iter().cloned().collect();
         envs.sort_by_key(|e| format!("{e:?}"));
@@ -367,7 +367,9 @@ impl Cx<'_> {
         for (key, def, targs) in envs {
             let f = self.fn_def(def);
             let caps: Vec<TyId> = (f.captures.iter())
-                .map(|c| f.body.locals[c.inner.0 as usize].ty)
+                .map(|c| &f.body.locals[c.inner.0 as usize])
+                .filter(|l| !l.weak)
+                .map(|l| l.ty)
                 .collect();
             let caps: Vec<TyId> = caps.into_iter().map(|t| self.subst(t, &targs)).collect();
             let to = out.entry(key).or_default();

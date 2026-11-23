@@ -28,6 +28,7 @@
 # behind a pointer), so the release object of toFixed's exact printer has another key.
 ../../../bench/stdport/to_fixed.velt
 ../../../bench/stdport/pow.velt
+../../../bench/stdport/pow_int.velt
 # The string methods in Velt (#2198): trim, repeat, pad, split, replace and the ASCII case mapping.
 ../../../bench/stdport/string_methods.velt
 #

@@ -1,0 +1,35 @@
+// A directory named with the system's separator after it (`dir\` on Windows, `dir/` elsewhere)
+// fails as a file the same way the plain name does, as in Node: a read and a mapping report
+// EISDIR, and a write reports the failed `open` with the path as given (#3386: on Windows the
+// open of `dir\` fails with another code than the plain name's "access denied"). Messages print
+// the separator as `/`, so the output is the same on every system.
+import { MappedFile, mkdirSync, readFileSync, removeSync, writeFileSync } from "velt/fs";
+import { IoError } from "velt/io";
+import { platform } from "velt/os";
+
+function report(e: unknown) {
+  const err = e as IoError;
+  console.log(err instanceof IoError, err.code, err.message.replaceAll("\\", "/"));
+}
+
+function main() {
+  const dir = "velt_fs_directory_separator_tmp";
+  const named = dir + (platform() == "win32" ? "\\" : "/");
+  mkdirSync(dir, { recursive: true });
+  try {
+    readFileSync(named);
+  } catch (e) {
+    report(e);
+  }
+  try {
+    writeFileSync(named, "x");
+  } catch (e) {
+    report(e);
+  }
+  try {
+    MappedFile.open(named);
+  } catch (e) {
+    report(e);
+  }
+  removeSync(dir, { recursive: true });
+}
