@@ -5,12 +5,12 @@
 // copy, for a copy converted to `Promise<unknown>` and for a copy handed to another task; each
 // holder awaits the same result, and `console.log` prints a settled one.
 async function work(n: number): Promise<number> {
-  await sleep(2);
+  await Promise.resolve();
   return n * 10;
 }
 
 async function fails(): Promise<number> {
-  await sleep(1);
+  await Promise.resolve();
   throw new Error("boom");
 }
 
@@ -40,7 +40,7 @@ async function main() {
   console.log(h2);
 
   // A sleep kept as a value, copied into an array.
-  const s = sleep(3);
+  const s = sleep(3); // timing: a sleep kept as a value is the promise this shares
   const arr = [s, s];
   console.log("sleep", arr[0] === arr[1], arr[0] === s, arr.includes(s));
   await arr[0];
