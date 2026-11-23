@@ -526,7 +526,7 @@ impl Cx<'_> {
 impl Cx<'_> {
     /// Does `t`, a type as a definition writes it, mention its type parameter `i`?
     fn mentions_param(&self, t: TyId, i: u32) -> bool {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Param(n) => *n == i,
             TyKind::Adt(_, ts) | TyKind::Dyn(_, ts) | TyKind::Tuple(ts) | TyKind::Op(_, ts) => {
                 ts.iter().any(|&x| self.mentions_param(x, i))
