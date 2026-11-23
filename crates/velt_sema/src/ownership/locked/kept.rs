@@ -9,7 +9,6 @@
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, FnKind};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
-use crate::visit;
 
 /// May calling a function value of type `ty` make a promise from what the function captured?
 pub(super) fn may_promise_captures(cx: &mut Ctx, ty: TyId) -> bool {
@@ -51,12 +50,13 @@ pub(super) fn may_promise_captures(cx: &mut Ctx, ty: TyId) -> bool {
 
 /// Does closure `d`'s body make a promise (other than one it spawns)?
 fn makes_promise(cx: &mut Ctx, d: DefId) -> bool {
-    let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+    // Read in place (a finished unit's closures, in a check by units, are never written).
+    let Some(Def::Fn(f)) = cx.defs.get(d.0 as usize).and_then(|x| x.as_ref()) else {
         return true;
     };
     let mut types = vec![];
     let mut spawned = vec![];
-    visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
+    crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| match &e.kind {
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::Spawn),
             args,
@@ -64,6 +64,5 @@ fn makes_promise(cx: &mut Ctx, d: DefId) -> bool {
         E::Call { .. } | E::New { .. } if !spawned.contains(&e.span) => types.push(e.ty),
         _ => {}
     });
-    cx.defs[d.0 as usize] = Some(Def::Fn(f));
     types.into_iter().any(|t| cx.holds_promise(t))
 }
