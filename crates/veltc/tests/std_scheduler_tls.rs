@@ -98,7 +98,7 @@ fn same_everywhere(name: &str, src: &str, want: &str) {
 }
 
 /// An echo server written as http-server reads and writes (`tryRead` into its own buffer,
-/// `readable` when nothing is there, `writeBytesLater`, `drained`), against four rustls clients
+/// `readable` when nothing is there, `writeBytesLater`, `drained`), against four `connectTls` clients
 /// at once that each read in one task while another writes, a Velt client (`startTls` over
 /// `connect`), and a client that doesn't speak TLS. ALPN picks the server's first protocol the
 /// client offers. A client that waits for each echo finds the server reading a little at a time,
@@ -156,7 +156,7 @@ async function readAll(conn: TcpStream): Promise<string> {
   }
 }
 
-async function rustlsClient(i: number, port: number): Promise<string> {
+async function connectTlsClient(i: number, port: number): Promise<string> {
   const c = await connectTls(`localhost:${port}`, { ca: TEST_CA, alpn: ["http/1.1"] });
   const reader = spawn(readAll(c));
   let sent = 0;
@@ -246,7 +246,7 @@ async function main() {
   });
   const clients: Promise<string>[] = [];
   for (let i = 0; i < 4; i++) {
-    clients.push(spawn(rustlsClient(i, l.port)));
+    clients.push(spawn(connectTlsClient(i, l.port)));
   }
   for (const c of clients) {
     console.log(await c);
@@ -267,10 +267,10 @@ async function main() {
     );
 }
 
-/// What a TLS server reports for a connection that ends badly, as the runtime's listener does: a
+/// What a TLS server reports for a connection that ends badly, as rustls's listener did: a
 /// plaintext request fails at its first bytes with decode_error (not after the handshake's time
 /// limit), a client that leaves during the handshake or after it without close_notify is an EOF,
-/// and a client's alert during the handshake (rustls refusing the server's certificate) is read,
+/// and a client's alert during the handshake (the client refusing the server's certificate) is read,
 /// though unprotected, and named as the client's.
 #[test]
 fn a_tls_server_reports_what_ended_a_connection() {
@@ -311,7 +311,7 @@ async function main() {
   // Gone during the handshake.
   const early = await connect(`127.0.0.1:${l.port}`);
   early.close();
-  // rustls, which doesn't trust the test certificate, alerts during the handshake.
+  // A client that doesn't trust the test certificate alerts during the handshake.
   try {
     await connectTls(`localhost:${l.port}`, {});
   } catch (e) {
