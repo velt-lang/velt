@@ -12,6 +12,8 @@
 // original's elements in order, up to the last one a read reaches, so the elements after it are
 // never converted. Nothing here is called in a program without views.
 
+import { inline, needsDrop } from "velt/lang/intrinsics";
+
 /** The state of one view: the original array and the mirror of its elements as `T`. */
 export class ArrayView<T> {
   target: any;
@@ -44,8 +46,7 @@ export function arrayViewSync<T>(v: ArrayView<T>) {
   for (let i = 0; i < n; i++) {
     const cur: any = t[i];
     if (i < seen.length) {
-      const had: any = seen[i];
-      if (had !== cur) {
+      if (!mirrorKeeps(seen[i], cur)) {
         seen[i] = cur as T;
       }
     } else {
@@ -77,7 +78,17 @@ export function arrayViewFlushFrom<T>(v: ArrayView<T>, from: usize) {
   for (let i: usize = from; i < n; i++) {
     const now: any = seen[i];
     const k = i as number;
-    if (k >= (t.length as number) || t[k] !== now) {
+    // Written back when it differs (`!==`), or, for a plain `T` (a number), when both are zeros
+    // and `now` is not the original's zero as the mirror holds it (the original's converted to
+    // `T`), as `Object.is` tells it: `-0` over `+0` and `+0` over `-0` go back from an `f64` or
+    // `f32` view (#3248), and an original `-0` a `u8` view left alone (its mirror holds `0`)
+    // stays `-0`.
+    let back = k >= (t.length as number) || t[k] !== now;
+    if (!back && !needsDrop(seen[i]) && now === 0) {
+      const held: any = t[k] as T;
+      back = !Object.is(now, held);
+    }
+    if (back) {
       t[k] = now;
     }
   }
@@ -142,8 +153,7 @@ export function arrayViewSyncAt<T>(v: ArrayView<T>, i: usize) {
   const m = seen.length;
   if (i < m) {
     const cur: any = t[k];
-    const had: any = seen[i];
-    if (had !== cur) {
+    if (!mirrorKeeps(seen[i], cur)) {
       seen[i] = cur as T;
     }
     return;
@@ -180,11 +190,32 @@ export function arrayViewFlushAt<T>(v: ArrayView<T>, i: usize) {
   if (i >= seen.length) {
     return;
   }
-  const now: any = seen[i];
   const k = i as number;
-  if (k >= (t.length as number) || t[k] !== now) {
-    t[k] = now;
+  // The element was just written, and goes back as it is: a plain one with no comparison (a
+  // write over an equal element changes nothing, one of the other zero changes the sign,
+  // #3248), one that owns something unless it is the same as `Object.is` tells it (`v[i].x = 1`
+  // writes into the element, not over it).
+  const now: any = seen[i];
+  if (needsDrop(seen[i]) && k < (t.length as number) && Object.is(t[k], now)) {
+    return;
   }
+  t[k] = now;
+}
+
+/**
+ * Whether the mirror's element `had` stays when the original's is `cur` (a read of the view). A
+ * plain `T` (a number, a `bool`) is converted again, which is exact (a zero's sign too, #3248)
+ * and costs less than a comparison. A `T` that owns something stays when `cur` is `===` to it,
+ * so a borrow of it stays valid; `===` doesn't tell `-0` from `0`, so a zero changed to the other
+ * one behind such a view isn't seen (#3610).
+ */
+@inline("always")
+function mirrorKeeps<T>(had: T, cur: any): bool {
+  if (!needsDrop(had)) {
+    return false;
+  }
+  const h: any = had;
+  return h === cur;
 }
 
 /**

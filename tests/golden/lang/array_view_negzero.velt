@@ -1,0 +1,50 @@
+// Array views and the sign of zero (#3248): a write through a view that only changes a zero's
+// sign reaches the original (`-0` over `0`, `0` over `-0`), the original's zero changed behind
+// the view is what the view reads, a write-back of every element through a `u8[]` view (which
+// has no `-0`) leaves an original `-0` alone, and whole-array writes through an
+// `f32[]` view (`fill`, `sort`, `reverse`) carry a zero's sign both ways. In TypeScript the
+// casts are no-ops, so the Node twin (array_view_negzero.mjs) writes the same arrays.
+function main() {
+  const e: any = [0, 5];
+  (e as f32[])[0] = -0;
+  console.log(`-0 over 0: ${Object.is(e[0], -0)}`);
+
+  const g: any = [-0, 1];
+  (g as f32[])[0] = 0;
+  console.log(`0 over -0: ${Object.is(g[0], -0)}`);
+
+  const h: any = [0, 2];
+  const hv = h as f32[];
+  console.log(`before: ${Object.is(hv[0], -0)}`);
+  h[0] = -0;
+  console.log(`behind the view: ${Object.is(hv[0], -0)}`);
+
+  const z: any = [-0, 3, 4];
+  const zv = z as u8[];
+  zv.fill(9, 1);
+  zv.sort((a: u8, b: u8) => 0);
+  console.log(`u8 view, -0 kept: ${Object.is(z[0], -0)} ${z[1]} ${z[2]}`);
+
+  const q: any = [0, 1];
+  const qv = q as f32[];
+  qv.fill(-0, 0, 1);
+  console.log(`fill -0 over 0: ${Object.is(q[0], -0)}`);
+
+  const a: any = [-0, 1];
+  const av = a as f32[];
+  av.fill(0);
+  console.log(`fill 0 over -0: ${Object.is(a[0], -0)}`);
+
+  const s: any = [0, -0, 1];
+  const negFirst = (x: f32, y: f32): number => (Object.is(x, -0) ? -1 : Object.is(y, -0) ? 1 : 0);
+  const sv = s as f32[];
+  sv.sort(negFirst);
+  console.log(`sort, zeros swap: ${Object.is(s[0], -0)} ${Object.is(s[1], -0)} ${s[2]}`);
+
+  const r: any = [-0, 0];
+  const rv = r as f32[];
+  rv.reverse();
+  console.log(`reverse: ${Object.is(r[0], -0)} ${Object.is(r[1], -0)}`);
+}
+
+main();
