@@ -1,0 +1,56 @@
+// velt/time (internal): the zone id of local time on Windows (`#zone-id`'s win32 variant,
+// std/imports.velt), for `Date`'s zone name (zone_name.velt). Local time follows `TZ` only where
+// it names UTC or a fixed offset (tz_fixed.velt, as localtime_win32.velt reads it); otherwise it
+// is the system zone, whose registry key (`GetDynamicTimeZoneInformation`'s `TimeZoneKeyName`,
+// "W. Europe Standard Time") maps to an IANA id through CLDR's windowsZones
+// (zone_names_windows_table.velt).
+//
+// Known gap: ICU picks the windowsZones mapping for the user's region (`GetUserGeoID` and
+// `GetGeoInfoW(GEO_ISO2)`) and falls back to territory 001; this always takes 001, which names
+// another zone where the region's differs (Peru, Ecuador and Panama under "SA Pacific Standard
+// Time", 001's America/Bogota), and so can print another name than Node there.
+
+import { systemZoneKey } from "#localtime";
+import { fixedOffset } from "./tz_fixed";
+import { WINDOWS_IDS, WINDOWS_KEYS } from "./zone_names_windows_table";
+
+/** Whether local time follows `tz`: when it names UTC or a fixed offset. */
+export function tzHonoured(tz: string): bool {
+  return fixedOffset(tz) !== null;
+}
+
+/** Whether local time reads `TZ` only once per process: yes, localtime_win32.velt does. */
+export function tzReadOnce(): bool {
+  return true;
+}
+
+/**
+ * The system zone's IANA id, or null when Windows reports none or CLDR doesn't map its key. The
+ * key is read by localtime_win32.velt, which declares the Win32 types: a second declaration in
+ * this on-demand module made the VIR of a program that never loads it differ when std is loaded
+ * up front (`any`'s tags count the opaque C types).
+ */
+export function systemZoneId(): string | null {
+  const key = systemZoneKey();
+  return key === null || key.includes("\n") ? null : ianaId(key);
+}
+
+/** The IANA id CLDR maps Windows key `key` to, or null. */
+function ianaId(key: string): string | null {
+  const at = WINDOWS_KEYS.indexOf(`\n${key}\n`);
+  if (at < 0) {
+    return null;
+  }
+  // The key's line: how many keys end before it; the id is on the same line of WINDOWS_IDS.
+  let line: i64 = 0;
+  for (let i: i64 = 0; i < at; i++) {
+    if (WINDOWS_KEYS.charCodeAt(i) == 10) {
+      line += 1;
+    }
+  }
+  let start: i64 = 0;
+  for (let k: i64 = 0; k <= line; k++) {
+    start = WINDOWS_IDS.indexOf("\n", start) + 1;
+  }
+  return WINDOWS_IDS.slice(start, WINDOWS_IDS.indexOf("\n", start));
+}
