@@ -208,11 +208,13 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - C structs by value (#2187 layer 3, docs/internals/design/c-ffi.md "C structs"): `hir::CTy::Struct`
   (additive) is a `declare c struct` parameter or result, the declaration's type naming which.
   `vir::ExternFn::c_abi` (additive, `None` for every other extern) is the target's C calling
-  convention's classification (`velt_vir::c_struct_abi`): a struct in registers is already one or
-  two `I64`/`F64` parameters; `CParam::ByVal` is a `Ptr` to a copy passed on the stack (LLVM
+  convention's classification (`velt_vir::c_struct_abi`): a struct in registers is already its
+  `I64`/`F64` eightbytes or an AAPCS64 HFA's `F32`/`F64` fields as parameters (after zeros
+  that use up the registers a struct on the AAPCS64 stack leaves), and a struct passed by
+  reference (Win64, AAPCS64 over 16 bytes) a plain `Ptr` parameter to a copy; `CParam::ByVal` is a `Ptr` to a copy passed on the stack (LLVM
   `byval`, Cranelift `StructArgument`), `CParam::Sret` the first parameter, a `Ptr` to the
   result's slot (`sret`, `StructReturn`), with `ret` `Unit`; `CRet::Words` makes `ret` an `Agg` of
-  one or two scalar words at 0 and 8, the only `Agg` an extern signature may have (invariant 2
+  one to four scalar words of one size, packed, the only `Agg` an extern signature may have (invariant 2
   otherwise), which the call's destination receives whole. The verifier checks each.
 - Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
   `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:

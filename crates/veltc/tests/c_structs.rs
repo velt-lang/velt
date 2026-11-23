@@ -239,8 +239,9 @@ function main() {
 }
 
 /// A C struct crosses to C by value where lowering has the target's C calling convention (x86-64
-/// System V, #2187 layer 3; tests/c_struct_by_value.rs calls such functions), and is an error at
-/// the declaration on the other targets until theirs come.
+/// System V and Win64, arm64 Linux and macOS, #2187 layer 3; tests/c_struct_by_value.rs calls
+/// such functions), and is an error at the declaration on the other targets (Windows on arm64)
+/// until theirs come.
 #[test]
 fn a_c_struct_by_value_is_an_error_where_the_target_has_no_convention_yet() {
     let dir = test_dir::TestDir::new();
@@ -257,7 +258,7 @@ fn a_c_struct_by_value_is_an_error_where_the_target_has_no_convention_yet() {
         &[
             "build",
             "--target",
-            "aarch64-unknown-linux-gnu",
+            "aarch64-pc-windows-msvc",
             "--emit",
             "vir",
         ],
@@ -265,8 +266,8 @@ fn a_c_struct_by_value_is_an_error_where_the_target_has_no_convention_yet() {
     let out = String::from_utf8_lossy(&o.stderr).to_string();
     assert!(!o.status.success(), "{out}");
     for want in [
-        "C function `take` takes or returns a C struct by value, which is not supported on aarch64-unknown-linux-gnu yet",
-        "C function `give` takes or returns a C struct by value, which is not supported on aarch64-unknown-linux-gnu yet",
+        "C function `take` takes or returns a C struct by value, which is not supported on aarch64-pc-windows-msvc yet",
+        "C function `give` takes or returns a C struct by value, which is not supported on aarch64-pc-windows-msvc yet",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
