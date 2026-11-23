@@ -557,3 +557,5 @@ u8 op= as values: 256 -1 255,0
 u8 ++/-- as values: 256 -1 255,0
 ends as values: 128 4294967296 -128 0
 32-bit wide products: 4292870144 2143289344
+computed index ++/--: 256 -1 0,255 idx 0,1
+op= with an element right side: 510 -255 0,1,254

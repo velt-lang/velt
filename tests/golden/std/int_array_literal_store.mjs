@@ -670,6 +670,13 @@ function literals() {
   console.log(g.join(","));
 }
 
+const idxs = [];
+
+function idx(i) {
+  idxs.push(i);
+  return i;
+}
+
 function more() {
   const a = new Uint8Array(7);
   a[0] = 1 << 9;
@@ -709,6 +716,15 @@ function more() {
   const n32 = Int32Array.from([2147483647]);
   n32[0] *= 4194305;
   console.log(`32-bit wide products: ${m32[0]} ${n32[0]}`);
+  const cv = Uint8Array.from([255, 0]);
+  const pi = ++cv[idx(0)];
+  const pd = --cv[idx(1)];
+  console.log(`computed index ++/--: ${pi} ${pd} ${cv.join(",")} idx ${idxs.join(",")}`);
+  const ov = Uint8Array.from([0, 0, 255]);
+  const o8 = Uint8Array.from([255]);
+  const rr = (ov[2] += o8[0]);
+  const ri = (ov[1] -= o8[0]);
+  console.log(`op= with an element right side: ${rr} ${ri} ${ov.join(",")}`);
 }
 
 

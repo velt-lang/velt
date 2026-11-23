@@ -660,8 +660,8 @@ impl FnCx<'_, '_> {
                 let rmw = Rmw::Update(op, prefix);
                 return self.asserted_place_rmw(place, rmw, as_value, span);
             }
-            Some(AssignTarget::Place(p)) if as_value && prefix && self.int_update(&p, target) => {
-                return self.element_update_value(op, p.ty, target, span);
+            Some(AssignTarget::Place(p)) if as_value && prefix && self.int_update(&p) => {
+                return self.element_update_value(op, target, span);
             }
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {

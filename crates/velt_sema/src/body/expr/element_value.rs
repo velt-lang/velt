@@ -85,20 +85,18 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block(outer, Some(e), span)), ty, span)
     }
 
-    /// Is `++b[i]` / `--b[i]` on `place` (a pure `target`) an update of an element that converts
-    /// a `number` ([`Self::element_update_value`])?
-    pub(crate) fn int_update(&self, place: &hir::Expr, target: &ast::Expr) -> bool {
-        self.logical_element_store(place)
-            && self.number_stores_into(place.ty)
-            && super::assign_paths::is_pure_place(target)
+    /// Is `++b[i]` / `--b[i]` on `place` an update of an element that converts a `number`
+    /// ([`Self::element_update_value`])?
+    pub(crate) fn int_update(&self, place: &hir::Expr) -> bool {
+        self.logical_element_store(place) && self.number_stores_into(place.ty)
     }
 
     /// `++b[i]` / `--b[i]` used as a value: `(b[i] += 1)` / `(b[i] -= 1)`, the number the element
-    /// becomes before the store converts it (`++b[1]` at 255 is 256, as in JavaScript).
+    /// becomes before the store converts it (`++b[1]` at 255 is 256, as in JavaScript), with a
+    /// computed index evaluated once (`assign_value` binds it).
     pub(crate) fn element_update_value(
         &mut self,
         op: ast::UpdateOp,
-        elem: TyId,
         target: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
@@ -113,7 +111,24 @@ impl FnCx<'_, '_> {
             ast::UpdateOp::Inc => ast::BinaryOp::Add,
             ast::UpdateOp::Dec => ast::BinaryOp::Sub,
         };
-        self.element_write_value(ElementWrite::Compound(bop), elem, target, &one, span)
+        self.assign_value(Some(bop), target, &one, None, span)
+    }
+
+    /// The right side `v` of `b[i] op= v` used as a value on an element of type `elem` that
+    /// converts a `number`: an integer of up to 32 bits as a `number`, so the value is
+    /// JavaScript's (`(b[2] += o[0])` at 255 + 255 is 510, the element 254); `v` as it is
+    /// otherwise.
+    fn as_number_operand(&mut self, v: hir::Expr, elem: TyId) -> hir::Expr {
+        use crate::hir::{IntTy, TyKind};
+        let small = matches!(
+            self.cx.ty.kind(v.ty),
+            TyKind::Int(IntTy::U8 | IntTy::I8 | IntTy::U16 | IntTy::I16 | IntTy::U32 | IntTy::I32)
+        );
+        if !small || !self.number_stores_into(elem) {
+            return v;
+        }
+        let (f64_, span) = (self.cx.ty.f64, v.span);
+        self.mk(H::Cast(Box::new(v)), f64_, span)
     }
 
     /// `v` as it is when it is an `any`, or a `number` an element of type `elem` converts
@@ -187,6 +202,7 @@ impl FnCx<'_, '_> {
             _ => self.value_hint(elem, Some(op), value),
         };
         let v = self.expr(value, Some(hint), Want::Borrow);
+        let v = self.as_number_operand(v, elem);
         let any = self.cx.dynamic(v.ty) == Some(Dynamic::Any);
         if !any && !self.number_value(&v, elem) {
             // The compound assignment as a statement, then the element read back.
