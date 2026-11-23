@@ -24,12 +24,7 @@ impl FnCx<'_, '_> {
         if traps && !(self.cx.only_trap_vars(h.ty) && self.cx.only_trap_vars(exp)) {
             return Err(h);
         }
-        // A check by units: std's trap variables as written are what the round's seeds give
-        // their sites (`Ctx::plain_seeded`).
-        let (from, to) = match traps && self.cx.units {
-            true => (self.cx.plain_seeded(h.ty), self.cx.plain_seeded(exp)),
-            false => (self.cx.plain_type(h.ty), self.cx.plain_type(exp)),
-        };
+        let (from, to) = (self.cx.plain_type(h.ty), self.cx.plain_type(exp));
         let ty = h.ty;
         let mut p = h;
         p.ty = from;
