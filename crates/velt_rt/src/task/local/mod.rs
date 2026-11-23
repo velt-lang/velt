@@ -511,7 +511,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
     node::peek(f) as u8
 }
 
-
 /// Is `f` a started promise (driven by its task's set)?
 pub(crate) unsafe fn is_started_node(f: *mut VeltFut) -> bool {
     node::is_started(f)
