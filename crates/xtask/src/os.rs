@@ -216,10 +216,13 @@ pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-late
 /// limit (2026-10). With 5 macOS runners for everything, more shards would let queue entries
 /// starve each other. Linux gets three: with two, a shard's goldens (about 38 minutes) and its
 /// half of the VIR identity (about 18) outgrew the job's limit on a ten-PR train (2026-11-20).
+/// Windows gets four: with three, a shard's goldens reached 31 to 33 minutes and, with the whole
+/// VIR identity's share, the job's 55-minute limit (2026-11-23); Windows runners are not the scarce
+/// ones.
 /// Every runner in [`QUEUE_OSES`] needs an entry: the workflow fails when an OS has no shards.
 pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
     ("ubuntu-latest", 3),
-    ("windows-latest", 3),
+    ("windows-latest", 4),
     ("macos-latest", 2),
 ];
 
@@ -312,7 +315,7 @@ mod tests {
         let total: usize = GOLDEN_SHARDS.iter().map(|(_, n)| n).sum();
         assert_eq!(all.matches('/').count(), total);
         assert!(
-            all.contains(r#""windows-latest":["1/3","2/3","3/3"]"#),
+            all.contains(r#""windows-latest":["1/4","2/4","3/4","4/4"]"#),
             "{all}"
         );
         assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");

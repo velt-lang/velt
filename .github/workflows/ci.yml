@@ -109,9 +109,13 @@ jobs:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # The golden job also runs the WebAssembly goldens when the change selects them (8 tests of
       # about 11 minutes each, which made the test job up to 2 hours long), and the VIR identity:
-      # it is shorter than the test job, as in the queue.
+      # it is shorter than the test job, as in the queue. It compares every golden when the change
+      # touches the code loading std on demand, which only this plan knows (the queue's `--full`
+      # doesn't), and the sample, one golden in 8, otherwise (`vir_identity_pr`,
+      # `Plan::vir_identity_pr`; crates/veltc/tests/eager_std_identity.rs).
       - name: cargo xtask check --part ${{ matrix.part == 'golden' && 'golden,wasm' || matrix.part }}
         env:
+          VELT_VIR_IDENTITY: ${{ matrix.part == 'golden' && steps.plan.outputs.vir_identity_pr || '' }}
           # `--full` knows no changes, so it leaves the robustness sweep to the environment.
           VELT_ROBUSTNESS: >-
             ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && 'full' || '' }}
@@ -284,7 +288,9 @@ jobs:
       debug_vars: ${{ steps.plan.outputs.debug_vars }}
       # `skip` unless the change touches WebAssembly code.
       wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
-      # How much of the VIR identity runs: empty for all of it, `sample`, or `skip`.
+      # How much of the VIR identity runs: `sample` (one golden in 8) or `skip`; all of it runs
+      # in the nightly gate on Linux and in the pull request of a change to the code loading std
+      # on demand, never here (`Plan::vir_identity_queue`).
       vir_identity: ${{ steps.plan.outputs.vir_identity }}
       # `true` when the change touches what the header check checks (`c-headers`).
       c_headers: ${{ steps.plan.outputs.c_headers }}
@@ -428,6 +434,8 @@ jobs:
       zig: true
       # The VIR identity runs in the golden shards, beside the goldens: they finish long before
       # this OS's `check` job, after whose unit tests it ran for 20 to 41 minutes until 2026-11.
+      # The sample only, also when a train touches the code loading std on demand: all of it took
+      # Windows shards to their time limit (2026-11-23).
       vir_identity: ${{ needs.queue-plan.outputs.vir_identity }}
       wasm_shards: >-
         ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && '[]'
@@ -577,7 +585,9 @@ jobs:
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
         # nightly.yml's wasm-goldens job runs the WebAssembly goldens on these OSes every night. In
         # this job they take most of an hour: with them, 7 of 20 runs from 2026-11-04 to 2026-11-07
-        # hit the time limit before finishing the goldens.
+        # hit the time limit before finishing the goldens. The VIR identity compares its sample here
+        # (crates/veltc/tests/eager_std_identity.rs): all of it took more than 30 minutes of this
+        # job on Windows (2026-11-23), and the nightly gate compares every golden on Linux.
         env:
           VELT_WASM_GOLDENS: skip
         run: cargo xtask check --full
