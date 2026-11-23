@@ -1,0 +1,8 @@
+/text first: hello true
+text again threw: Body is unusable: Body has already been read
+/text bodyUsed: true
+ok
+/buffer first: world true
+arrayBuffer threw: Body is unusable: Body has already been read
+/buffer bodyUsed: true
+ok

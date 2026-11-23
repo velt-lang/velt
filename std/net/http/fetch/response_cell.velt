@@ -18,6 +18,9 @@ export class BodyCell {
   stream: BodyStream | null = null;
   // A fetched response's head and body (also of a HEAD request's, whose source is NONE).
   fetched: Fetched | null = null;
+  // Chunks reading the body hold this cell too (`responseChunks`): the response's drop hook
+  // leaves the fetched body to them, and this cell's closes it when the last holder goes.
+  shared: bool = false;
 
   /**
    * Marks the body read; throws if it was already. A response without a body can be read any
@@ -38,6 +41,11 @@ export class BodyCell {
    * response nor chunks reading it hold it.
    */
   [Symbol.dispose]() {
+    this.close();
+  }
+
+  /** Closes the connection of a fetched body nobody finished reading. */
+  close() {
     const f = this.fetched;
     if (f != null) {
       f.close();

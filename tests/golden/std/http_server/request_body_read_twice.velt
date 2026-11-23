@@ -1,0 +1,33 @@
+// A received request's body read a second time throws, as in Node, also after the first read
+// took all of it: `bodyUsed` is checked before whether a body is left.
+import { IoError } from "velt/io";
+import { AbortError } from "velt/task";
+import { serve } from "http-server";
+
+async function second(label: string, read: () => Promise<string, IoError | AbortError>) {
+  try {
+    console.log(label, await read());
+  } catch (e) {
+    console.log(label, "threw:", e.message);
+  }
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    console.log(path, "first:", await req.text(), req.bodyUsed);
+    if (path == "/text") {
+      await second("text again", async () => await req.text());
+    } else {
+      await second("arrayBuffer", async () => `${(await req.arrayBuffer()).byteLength} bytes`);
+    }
+    console.log(path, "bodyUsed:", req.bodyUsed);
+    return new Response("ok");
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  console.log(await (await fetch(`${base}/text`, { method: "POST", body: "hello" })).text());
+  console.log(await (await fetch(`${base}/buffer`, { method: "POST", body: "world" })).text());
+  server.close();
+}
+
+await main();

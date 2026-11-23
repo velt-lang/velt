@@ -383,12 +383,13 @@ export class Request {
     return this.#received;
   }
 
+  // Before `hasBody()`: a received body that was read has none left, but is still used.
   private claim() throws IoError {
-    if (!this.hasBody()) {
-      return;
-    }
     if (this.bodyUsed) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    if (!this.hasBody()) {
+      return;
     }
     this.extra().used = true;
   }

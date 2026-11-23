@@ -67,11 +67,12 @@ export async function* requestChunks(
   e: Extra,
   received: RequestSource | null,
 ): AsyncIterator<u8[], IoError | AbortError> {
+  // `used` before whether a body is left: a received body that was read has none, but is used.
+  if (e.used) {
+    throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+  }
   const body = e.body;
   if (body == null ? received != null && received.hasBody() : true) {
-    if (e.used) {
-      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
-    }
     e.used = true;
   }
   if (body == null) {

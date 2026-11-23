@@ -337,6 +337,18 @@ export class Response {
     this.cell.claim();
   }
 
+  /**
+   * Drop hook: closes the connection of a fetched body nobody finished reading, also before the
+   * response is dropped (`using`). A stream reading the body keeps it open until that stream is
+   * done or dropped (`BodyCell`).
+   */
+  [Symbol.dispose]() {
+    const b = this.cell;
+    if (!b.shared) {
+      b.close();
+    }
+  }
+
   /** How `console.log` shows the response, like Node: its public state. */
   [INSPECT]() {
     return {

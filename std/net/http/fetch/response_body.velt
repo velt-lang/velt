@@ -120,7 +120,9 @@ export async function responseBytes(r: Response): Promise<u8[], IoError | AbortE
 
 /** The body of `r` chunk by chunk, for `BodyStream`; reading them uses the body up. */
 export function responseChunks(r: Response): AsyncIterator<u8[], IoError | AbortError> {
-  return new ResponseChunks(r.cell);
+  const b = r.cell;
+  b.shared = true;
+  return new ResponseChunks(b);
 }
 
 // `responseChunks`. A stream body's chunks are its own, so that ending them reaches its source
