@@ -2,9 +2,12 @@
 // A match's group that did not take part, as in Node (#3562): `m[n] === undefined`, `== null`,
 // `?? d` and `|| d` test whether it took part (in `exec` and `matchAll`, and for a group past
 // the last); `m.length`, `m.at(n)` and `m.input`; a match read through `any`; a replacer's group
-// parameter typed `any`; `JSON.stringify(m)` and `console.log(m)`. (A typed `m[n]` there is
-// still `""`, so `typeof m[1]` and `m[1].length` differ from Node, and `s.match(re)` without the
-// `g` flag gives a `string[]`.) Expected output from Node.
+// parameter typed `any`; `m?.[n]`; a type parameter bounded by the class; `m.groups`; `String(m)`;
+// `JSON.stringify(m)` and `console.log(m)`. (A typed `m[n]` there is still `""`, so `typeof
+// m[1]`, `m[1].length` and a copy of it (`const p = m[1]`) differ from Node, as does `m?.[i]`
+// with a computed `i`. `console.log` doesn't cut a match at Node's depth limit, `m.groups`
+// prints as a plain object, and `s.match(re)` without the `g` flag gives a `string[]`.)
+// Expected output from Node.
 import { RegExpMatch } from "velt/text";
 
 function show(label: string, m: RegExpMatch | null): void {
@@ -36,6 +39,30 @@ if (two) {
   }
   console.log("at", two.at(0), two.at(1), two.at(2), two.at(-1), two.at(3), two.at(-4), two.length);
 }
+
+// An optional read of a group: the usual one-line idiom.
+console.log("optional", /(\d+)?x/.exec("x")?.[1] ?? "none", /(\d+)?x/.exec("x")?.[1] === undefined);
+console.log("optional taken", /(\d+)?x/.exec("7x")?.[1] ?? "none", /(\d+)?x/.exec("q")?.[1] ?? "no match");
+console.log("optional past", /x/.exec("x")?.[3] === undefined, /x/.exec("x")?.[0] == null);
+
+// A type parameter bounded by the match class.
+function second<T extends RegExpMatch>(x: T): string {
+  return (x[1] === undefined) + " " + (x[1] ?? "d");
+}
+const bounded = /(a)?b/.exec("b");
+if (bounded) {
+  console.log("bounded", second(bounded));
+}
+
+// `groups`, and a match turned into a string.
+const date = /(?<y>\d{4})-(?<mo>\d\d)?/.exec("2024-");
+console.log("groups", date?.groups?.y, date?.groups?.mo ?? "nomo", date?.groups?.zz, /(b)/.exec("b")?.groups === undefined);
+const dg = date?.groups;
+if (dg) {
+  console.log(JSON.stringify(dg));
+}
+const s = /(a)?b/.exec("b");
+console.log("string", String(s), `${s}`, "" + s, s?.toString());
 
 // A match through `any`.
 const ma: any = /b/.exec("abc");

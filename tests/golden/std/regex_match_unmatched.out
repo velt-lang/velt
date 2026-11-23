@@ -10,6 +10,13 @@ index 1 true u
 index 2 false y
 index 3 true u
 at y undefined y y undefined undefined 3
+optional none true
+optional taken 7 no match
+optional past true false
+bounded true d
+groups 2024 nomo undefined true
+{"y":"2024"}
+string b, b, b, b,
 any b 1 undefined 1 1
 any groups true b undefined undefined undefined 3
 replace any [undefined]

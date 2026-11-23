@@ -71,6 +71,34 @@ export class RegExpMatch {
   }
 
   /**
+   * `m.groups`: the named groups that took part, by name; `undefined` when the pattern names
+   * none, as in JS. (A named group that did not take part is left out, where JS keeps its key
+   * with the value `undefined`: reading it gives `undefined` either way.)
+   */
+  get groups(): Record<string, string> | undefined {
+    if (!this.names.some((n) => n != "")) {
+      return undefined;
+    }
+    const out: Record<string, string> = {};
+    for (let i: usize = 0; i < this.names.length; i++) {
+      const c = this.captures[i];
+      if (this.names[i] != "" && c != null) {
+        out[this.names[i]] = c.clone();
+      }
+    }
+    return out;
+  }
+
+  /** `String(m)`: the groups joined with `,`, "" for one that did not take part, as JS's array. */
+  toString(): string {
+    let out = this.value.clone();
+    for (const c of this.captures) {
+      out += "," + (c ?? "");
+    }
+    return out;
+  }
+
+  /**
    * `m[n]`: group `n` (0 = the whole match), "" if it did not take part or does not exist.
    * `m[n] === undefined`, `m[n] == null` and `m[n] ?? d` test whether the group took part, as
    * in JS (velt_sema `never_null.rs`), and a read through `any` is `undefined`.

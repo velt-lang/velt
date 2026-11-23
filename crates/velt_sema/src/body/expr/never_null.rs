@@ -148,7 +148,9 @@ impl FnCx<'_, '_> {
         let key = self.expr(index, None, Want::Borrow).ty;
         self.cx.diags.truncate(mark);
         let key = self.cx.widened(key);
-        if !self.cx.ty.is_numeric(key) || !self.reads_past_end(base.ty) {
+        // A type parameter reads as its class bound (`T extends RegExpMatch`).
+        let bounded = self.class_bound(base.ty).unwrap_or(base.ty);
+        if !self.cx.ty.is_numeric(key) || !self.reads_past_end(bounded) {
             return None;
         }
         let mut stmts = vec![];
@@ -202,8 +204,7 @@ impl FnCx<'_, '_> {
         );
         // A match's group that did not take part reads `undefined` too (std's `RegExpMatch`,
         // whose `m[k]` is "" there): `… && a.group(k as usize) != null`.
-        let regexp_match = velt_common::std_item!(text_regex_regexp_match, "RegExpMatch");
-        if self.is_std_class(base.ty, regexp_match) {
+        if self.is_regexp_match(base.ty) {
             let usize_ty = ast::TypeExpr {
                 kind: ast::TypeExprKind::Named {
                     path: vec![ast::Ident {
