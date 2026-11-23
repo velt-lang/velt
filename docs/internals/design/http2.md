@@ -292,8 +292,7 @@ the HTTP/1.1 `Head` does, as bytes plus offsets).
 ### Public API it relies on
 
 - `TcpStream.alpnProtocol(): Promise<string | null>` (velt/net): the protocol the TLS handshake
-  chose (`velt_rt_tcp_alpn` for runtime streams, rt_abi_async.md; the Velt TLS stream in
-  `std/net/tls/` keeps it itself).
+  chose (the Velt TLS stream in `std/net/tls/` keeps it).
 - `u8[].copy(target, targetStart?, sourceStart?, sourceEnd?)` (prelude), Node's `buf.copy`:
   moving bytes between a protocol's buffers without a slice.
 - `streamPair` (velt/net): two connected in-memory stream ends, for extended CONNECT.
