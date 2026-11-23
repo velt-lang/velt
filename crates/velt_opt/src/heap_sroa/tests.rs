@@ -780,3 +780,40 @@ fn a_pointer_into_the_middle_of_a_counted_object_keeps_the_heap() {
     });
     check(p, &[0], false);
 }
+
+#[test]
+fn a_counted_object_copied_in_a_loop_it_is_not_made_in_keeps_the_heap() {
+    // `p = new(1, 2); for i < n { q = p; s += q.0 } release p`: in locals, each round would copy
+    // the whole object where the heap copies a pointer (`cost`).
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let n = fb.param(0);
+    let (p, q, i, s, c) = (
+        fb.local(Ptr),
+        fb.local(Ptr),
+        fb.local(I64),
+        fb.local(I64),
+        fb.local(Bool),
+    );
+    let b = fb.block();
+    fb.assign(b, p, Rvalue::Use(int(0, Ptr)));
+    fb.assign(b, q, Rvalue::Use(int(0, Ptr)));
+    fb.assign(b, i, Rvalue::Use(int(0, I64)));
+    fb.assign(b, s, Rvalue::Use(int(0, I64)));
+    let b = env.new_counted(&mut fb, b, p, int(1, I64), int(2, I64));
+    let head = fb.block();
+    fb.goto(b, head);
+    let (body, exit) = (fb.block(), fb.block());
+    fb.assign(head, c, bin(BinOp::Lt, copy_local(i), copy_local(n)));
+    fb.branch(head, c, body, exit);
+    fb.assign(body, q, Rvalue::Use(copy_local(p)));
+    let x = fb.local(I64);
+    fb.assign(body, x, Rvalue::Use(copy_place(env.field(q, 0))));
+    fb.assign(body, s, bin(BinOp::Add, copy_local(s), copy_local(x)));
+    fb.assign(body, i, bin(BinOp::Add, copy_local(i), int(1, I64)));
+    fb.goto(body, head);
+    let b = env.release(&mut fb, exit, p, 24);
+    fb.ret(b, copy_local(s));
+    env.pb.add(fb.finish());
+    check(env.pb.finish(), &[0, 3], false);
+}

@@ -43,6 +43,7 @@
 //! every object there.
 
 mod aliases;
+mod cost;
 mod devirt;
 mod flow;
 mod rewrite;
@@ -101,7 +102,9 @@ pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut F
         return Done::default();
     };
     let vtables = devirt::run(allocator, func, &webs);
-    let updates = flow::check(allocator, func, &mut webs);
+    let mut updates = flow::check(allocator, func, &mut webs);
+    cost::check(allocator, func, &mut webs, &updates);
+    updates.retain(|u| webs.obj(u.dst).is_some() && webs.obj(u.src).is_some());
     let replaced = webs.any();
     if replaced {
         rewrite::apply(aggs, allocator, func, &webs, &updates);

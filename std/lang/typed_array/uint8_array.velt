@@ -31,6 +31,7 @@ import {
   VIEW_SIZE,
 } from "velt/lang/hooks/keys";
 import { setBytes } from "velt/lang/bytes/copy";
+import { inline } from "velt/lang/intrinsics";
 
 /**
  * An array of 8-bit unsigned integers (bytes) in an `ArrayBuffer` (JS `Uint8Array`): `new Uint8Array(n)` (`n` zeros),
@@ -180,6 +181,7 @@ export class Uint8Array extends TypedArray implements Iterable<number> {
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
+  @inline("always")
   override get byteLength(): number {
     return this.count() * 1;
   }
