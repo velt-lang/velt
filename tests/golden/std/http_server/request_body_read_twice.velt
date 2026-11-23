@@ -1,5 +1,6 @@
 // A received request's body read a second time throws, as in Node, also after the first read
-// took all of it: `bodyUsed` is checked before whether a body is left.
+// took all of it: `bodyUsed` is checked before whether a body is left. So does a stream of it
+// taken before the read, and the body after the read is a used stream, not null.
 import { IoError } from "velt/io";
 import { AbortError } from "velt/task";
 import { serve } from "http-server";
@@ -12,12 +13,38 @@ async function second(label: string, read: () => Promise<string, IoError | Abort
   }
 }
 
+// Reads `body` to its end, printing how much it held or what its read threw.
+async function readAll(label: string, body: ReadableStream<Uint8Array> | null) {
+  if (body == null) {
+    console.log(label, "no body");
+    return;
+  }
+  try {
+    let n = 0;
+    for await (const chunk of body) {
+      n += chunk.length;
+    }
+    console.log(label, `${n} bytes`);
+  } catch (e) {
+    console.log(label, "threw:", e instanceof Error ? e.message : "?");
+  }
+}
+
 async function main() {
   const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
     const path = new URL(req.url).pathname;
+    const taken = path == "/stream" ? req.body : null;
     console.log(path, "first:", await req.text(), req.bodyUsed);
     if (path == "/text") {
       await second("text again", async () => await req.text());
+    } else if (path == "/stream") {
+      // A stream taken before the read: its own read finds the body used.
+      await readAll("stream taken first", taken);
+    } else if (path == "/after") {
+      // The body after the read is a used stream, not null.
+      const body = req.body;
+      console.log("body after the read is null:", body == null);
+      await readAll("stream after", body);
     } else {
       await second("arrayBuffer", async () => `${(await req.arrayBuffer()).byteLength} bytes`);
     }
@@ -27,6 +54,8 @@ async function main() {
   const base = `http://127.0.0.1:${server.port}`;
   console.log(await (await fetch(`${base}/text`, { method: "POST", body: "hello" })).text());
   console.log(await (await fetch(`${base}/buffer`, { method: "POST", body: "world" })).text());
+  console.log(await (await fetch(`${base}/stream`, { method: "POST", body: "again" })).text());
+  console.log(await (await fetch(`${base}/after`, { method: "POST", body: "later" })).text());
   server.close();
 }
 

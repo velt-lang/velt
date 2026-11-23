@@ -6,3 +6,12 @@ ok
 arrayBuffer threw: Body is unusable: Body has already been read
 /buffer bodyUsed: true
 ok
+/stream first: again true
+stream taken first threw: Body is unusable: Body has already been read
+/stream bodyUsed: true
+ok
+/after first: later true
+body after the read is null: false
+stream after threw: Invalid state: ReadableStream is locked
+/after bodyUsed: true
+ok
