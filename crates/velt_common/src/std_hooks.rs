@@ -96,20 +96,6 @@ with_decorator_hooks! {
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
-    // int_store.velt: a `number` stored into an element of an integer array, converted as a
-    // typed array stores it (#3182; `velt_sema` `element_store.rs` calls them).
-    /// `buf[i] = n` on a `u8[]` (ToUint8).
-    number_to_u8 => lang_hooks_int_store, "toUint8", sig((f64) -> u8);
-    /// `xs[i] = n` on an `i8[]` (ToInt8).
-    number_to_i8 => lang_hooks_int_store, "toInt8", sig((f64) -> i8);
-    /// `xs[i] = n` on a `u16[]` (ToUint16).
-    number_to_u16 => lang_hooks_int_store, "toUint16", sig((f64) -> u16);
-    /// `xs[i] = n` on an `i16[]` (ToInt16).
-    number_to_i16 => lang_hooks_int_store, "toInt16", sig((f64) -> i16);
-    /// `xs[i] = n` on a `u32[]` (ToUint32).
-    number_to_u32 => lang_hooks_int_store, "toUint32", sig((f64) -> u32);
-    /// `xs[i] = n` on an `i32[]` (ToInt32).
-    number_to_i32 => lang_hooks_int_store, "toInt32", sig((f64) -> i32);
     // number_digits.velt: numbers rounded to a number of digits, which std calls by role.
     /// `x.toExponential(digits)` (`digits` below 0: omitted; the prelude's method).
     number_to_exponential => lang_hooks_number_digits, "toExponentialText", sig((f64, i64) -> string),

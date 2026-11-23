@@ -15,9 +15,11 @@
 //! its element itself: there the `any` is converted with `ToNumber` and given to the setter.
 
 use crate::any::Dynamic;
-use crate::body::FnCx;
+use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::hir::{self, BinOp, ExprKind as H, IntTy, TyId, TyKind};
+use velt_common::Span;
+use velt_syntax::ast;
 
 use super::dynamic_arith::{Side, TAG_NUMBER};
 
@@ -102,6 +104,44 @@ impl FnCx<'_, '_> {
         value.ty == self.cx.ty.f64
             && self.cx.ty.array_elem(base.ty) == Some(place.ty)
             && store_hook(self.cx.ty.kind(place.ty)).is_some()
+    }
+
+    /// The value `v` of a store into an integer array's element of type `elem`: an `any`
+    /// ([`Self::converting_store`]) or a `number` ([`Self::number_store`]), converted as
+    /// JavaScript's store converts it.
+    pub(crate) fn element_value(&mut self, v: hir::Expr, elem: TyId) -> hir::Expr {
+        match v.ty == self.cx.ty.f64 {
+            true => self.number_store_value(v, elem),
+            false => self.any_element_value(v, elem),
+        }
+    }
+
+    /// `place op= v` on an integer array's element with a `number` `v` ([`Self::number_store`]):
+    /// computed as a number, as JavaScript does (the element read as one), and stored as a typed
+    /// array stores it (#3182). The index is evaluated once, before `v`.
+    pub(crate) fn number_element_rmw(
+        &mut self,
+        place: hir::Expr,
+        op: ast::BinaryOp,
+        v: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let (mut place, mut stmts) = (place, Vec::new());
+        self.hoist_indices(&mut place, &mut stmts);
+        let (f64_, elem, unit) = (self.cx.ty.f64, place.ty, self.cx.ty.unit);
+        let cur = self.place_read(&place, Want::Borrow);
+        let cur = self.mk(H::Cast(Box::new(cur)), f64_, span);
+        let Some(wide) = self.storage_op(cur, op, v, span) else {
+            return self.error_expr(span);
+        };
+        let wide = self.coerce(wide, f64_);
+        let stored = self.number_store_value(wide, elem);
+        let kind = H::Assign {
+            place: Box::new(place),
+            value: Box::new(stored),
+        };
+        let assign = self.mk(kind, unit, span);
+        self.with_temps(stmts, assign)
     }
 
     /// The `number` `v` as the element type `elem` (one of [`Self::number_store`]'s): a call of
