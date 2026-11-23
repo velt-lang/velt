@@ -44,6 +44,10 @@ pub(super) struct LInfo {
     /// false: no assignment anywhere, closures and nested functions included). A call passes
     /// its address to a `Copy` aggregate param instead of a copy (call.rs).
     pub(super) fixed: bool,
+    /// A `weak` local (`hir::LocalDef::weak`, weak_fields.rs): its read type `T | null`; `vir`
+    /// holds the target's slot, read by `Intrinsic::WeakRead`, written by `weak_store` and given
+    /// up at the end of its scope.
+    pub(super) weak: Option<TyId>,
 }
 
 /// A pending drop obligation.

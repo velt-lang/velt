@@ -22,9 +22,17 @@ fn await_needs_an_async_body_and_a_promise() {
         r.contains("`await` is only allowed inside async functions"),
         "{r}"
     );
-    // A value that is no promise is awaited as itself; an `any` may hold one (not yet).
-    let r = err_src("async function main() { const v: any = 1; const x = await v; }");
-    assert!(r.contains("`await` needs a promise, found `any`"), "{r}");
+    // A value that is no promise is awaited as itself, and an `any` or `unknown` too, whether it
+    // holds a promise or not (#924): no error; `await` still needs an async body.
+    let r = err_src(
+        "async function main() { const v: any = 1; const x = await v; }
+         function g(u: unknown) { const y = await u; }",
+    );
+    assert!(!r.contains("`await` needs a promise"), "{r}");
+    assert!(
+        r.contains("`await` is only allowed inside async functions"),
+        "{r}"
+    );
 }
 
 #[test]

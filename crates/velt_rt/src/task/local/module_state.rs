@@ -1,8 +1,9 @@
-//! Module state (module-level `let`s and stored constants, rt_abi.md "Module state"): one block
-//! per process, as in Node, allocated zeroed and initialized by the program's `init` before
-//! `main` runs.
+//! The module lock of what the runtime keeps per process for compiled code (a declared function's
+//! identity and its properties, fn_props.rs), as std's lock guards module state itself
+//! (module-level `let`s and stored constants, std/lang/hooks/sched_module.velt and
+//! module_blocks.velt, rt_abi.md "Module state"; #2196 9c moved the blocks to std).
 //!
-//! Every task sees the same block, and tasks run on several threads, so the block (and every
+//! Every task sees the same state, and tasks run on several threads, so the state (and every
 //! object reached through it, whose reference counts are not atomic) is guarded by one
 //! process-wide lock, the *module lock*. A task takes it on its first access and keeps it until
 //! the end of that poll, so a task's code between two `await`s runs alone with respect to every
@@ -25,35 +26,17 @@
 //! hands over to the tasks (`main`'s root starts, or `main` returned): tasks wait until then, as
 //! in Node, where nothing else runs before the synchronous code is done.
 
-use std::alloc::{alloc_zeroed, dealloc, Layout};
-use std::cell::{Cell, UnsafeCell};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::lock_api::RawMutex as _;
 use parking_lot::RawMutex;
 
-/// What the compiler emits once per program that has module state.
-#[repr(C)]
-pub struct ModuleDesc {
-    pub size: u64,
-    pub align: u64,
-    /// Evaluates the initializers in module order and writes every slot but the root file's,
-    /// which its `main` initializes, calling `velt_rt_module_ready` after each.
-    pub init: unsafe extern "C-unwind" fn(*mut u8),
-    /// Drops every slot (the state tuple's drop glue).
-    pub drop: unsafe extern "C-unwind" fn(*mut u8),
-    /// Each slot's name, NUL-terminated, in slot order.
-    pub names: *const u8,
-    /// Initializes the root file's slots, for a block of code swapped in (`velt dev`), whose
-    /// `main` does not run again; `None` when `init` writes every slot.
-    pub rest: Option<unsafe extern "C-unwind" fn(*mut u8)>,
-}
-
 /// The module lock.
 static LOCK: RawMutex = RawMutex::INIT;
 
-/// Some module state exists: set by the first `velt_rt_module_state` call, which runs before
-/// `main`. Until then no task can have touched module state.
+/// The module lock was taken for what the runtime keeps per process ([`touch`]). Until then no
+/// task can have touched it.
 static USED: AtomicBool = AtomicBool::new(false);
 
 /// Does the program use module state (has the block been asked for)?
@@ -61,24 +44,6 @@ static USED: AtomicBool = AtomicBool::new(false);
 pub(crate) fn used() -> bool {
     USED.load(Ordering::Relaxed)
 }
-
-/// One block: its descriptor, its memory, and how many of its slots are initialized (`u64::MAX`
-/// once the last one is).
-struct Block {
-    desc: *const ModuleDesc,
-    p: *mut u8,
-    ready: u64,
-}
-
-/// The blocks, by descriptor: normally one; code swapped in by `velt dev` with a state layout of
-/// its own adds one (its module-level `let`s start over, while old code keeps the old block).
-/// Only touched with [`LOCK`] held.
-struct Blocks(UnsafeCell<Vec<Block>>);
-
-// SAFETY: only used with `LOCK` held.
-unsafe impl Sync for Blocks {}
-
-static BLOCKS: Blocks = Blocks(UnsafeCell::new(Vec::new()));
 
 /// How this thread holds the lock.
 const NOT_HELD: u8 = 0;
@@ -170,7 +135,8 @@ pub(crate) fn release_outside() {
     }
 }
 
-/// This thread locked a `Mutex` (`velt_rt_mutex_lock`).
+/// This thread took an `RwLock` (`velt_rt_rwlock_read`, `velt_rt_rwlock_write`). A `Mutex`'s
+/// lock is std's on a native target, which counts nothing (std/lang/hooks/mutex.velt).
 #[inline]
 pub(crate) fn mutex_locked() {
     if used() {
@@ -178,7 +144,7 @@ pub(crate) fn mutex_locked() {
     }
 }
 
-/// This thread unlocked a `Mutex` (`velt_rt_mutex_unlock`).
+/// This thread gave an `RwLock` back.
 #[inline]
 pub(crate) fn mutex_unlocked() {
     if used() {
@@ -203,7 +169,7 @@ pub(crate) fn holds() -> Holds {
 }
 
 /// A panic was caught in a poll that started with `saved`: the code it abandoned never ran its
-/// unlocks (`velt_rt_mutex_unlock`, [`velt_rt_module_with_end`]), so the `Mutex` count goes back,
+/// unlocks (an `RwLock`'s, [`velt_rt_module_with_end`]), so the lock count goes back,
 /// and the module lock taken for its `with` is released. The program's `Mutex` itself stays
 /// locked (documented with `catchPanic`); the runtime's bookkeeping must not stay wrong, or a
 /// later module-state access would end in an ICE and other threads would wait for good.
@@ -262,124 +228,6 @@ fn no_mutex_held() {
     }
 }
 
-/// Drop the module state at exit when every task is done (the leak counters of the debug runtime
-/// see what it held as freed). The lock stays held: a task still running waits instead of
-/// reaching freed state.
-pub(crate) fn drop_at_exit() {
-    if !used() {
-        return;
-    }
-    if HELD.with(Cell::get) == NOT_HELD {
-        LOCK.lock();
-        HELD.with(|h| h.set(OUTSIDE));
-    }
-    // SAFETY: the lock is held.
-    let blocks = std::mem::take(unsafe { &mut *BLOCKS.0.get() });
-    for b in blocks {
-        // A program that stops before its root file's statements reached each declaration
-        // leaves slots that hold nothing to drop.
-        if b.ready != u64::MAX {
-            continue;
-        }
-        // SAFETY: allocated in `block` with this descriptor's layout and initialized by `init`.
-        unsafe {
-            let d = &*b.desc;
-            (d.drop)(b.p);
-            dealloc(b.p, layout(d));
-        }
-    }
-}
-
-/// The block of `desc`, allocated and initialized on first use, to reach slot `slot`. The lock
-/// must be held.
-#[inline]
-unsafe fn block(desc: *const ModuleDesc, slot: u64) -> *mut u8 {
-    // Short borrows only: `init` reaches here again.
-    let (p, ready) = match find(desc) {
-        Some(f) => f,
-        None => {
-            new_block(desc);
-            find(desc).unwrap_or_else(|| crate::panic::fatal("ICE: module state block lost"))
-        }
-    };
-    if slot >= ready {
-        not_ready(desc, slot);
-    }
-    p
-}
-
-/// The block of `desc` and its `ready` count, if it exists. The lock must be held.
-#[inline]
-unsafe fn find(desc: *const ModuleDesc) -> Option<(*mut u8, u64)> {
-    (*BLOCKS.0.get())
-        .iter()
-        .rev()
-        .find(|b| b.desc == desc)
-        .map(|b| (b.p, b.ready))
-}
-
-/// Allocate and initialize the block of `desc`.
-#[cold]
-unsafe fn new_block(desc: *const ModuleDesc) -> *mut u8 {
-    let d = &*desc;
-    let layout = layout(d);
-    let p = alloc_zeroed(layout);
-    if p.is_null() {
-        std::alloc::handle_alloc_error(layout);
-    }
-    // Recorded before `init` runs: the initializers read the slots written before them.
-    let swapped = !(*BLOCKS.0.get()).is_empty();
-    (*BLOCKS.0.get()).push(Block { desc, p, ready: 0 });
-    (d.init)(p);
-    if let Some(rest) = d.rest.filter(|_| swapped) {
-        rest(p);
-    }
-    p
-}
-
-/// Slot `slot` of `desc`'s block is reached before its initializer ran: what JavaScript reports
-/// as an uncaught `ReferenceError` (here it cannot be caught).
-#[cold]
-unsafe fn not_ready(desc: *const ModuleDesc, slot: u64) -> ! {
-    let mut name = String::new();
-    let mut s = (*desc).names;
-    if !s.is_null() {
-        for _ in 0..slot {
-            while *s != 0 {
-                s = s.add(1);
-            }
-            s = s.add(1);
-        }
-        name = std::ffi::CStr::from_ptr(s.cast())
-            .to_string_lossy()
-            .into_owned();
-    }
-    crate::io::try_flush_stdout();
-    eprintln!("Uncaught ReferenceError: Cannot access '{name}' before initialization");
-    std::process::exit(1)
-}
-
-fn layout(d: &ModuleDesc) -> Layout {
-    Layout::from_size_align((d.size as usize).max(1), (d.align as usize).max(1))
-        .unwrap_or_else(|_| crate::panic::fatal("ICE: module state layout"))
-}
-
-/// The program's module state, initialized on first access by `desc.init`, to reach slot
-/// `slot` (a slot whose initializer has not run yet is a `ReferenceError`). Takes the module
-/// lock unless this thread holds it: for the rest of the task's poll (and every later poll of
-/// the task), or outside a task until the code there is done.
-///
-/// # Safety
-/// `desc` must point to the program's module descriptor.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_module_state(
-    desc: *const ModuleDesc,
-    slot: u64,
-) -> *mut u8 {
-    lock_for_access();
-    block(desc, slot)
-}
-
 /// Take the module lock as an access of module state does: for what the runtime keeps per
 /// process for compiled code, whose counts are not atomic (a declared function's identity and
 /// its properties, fn_props.rs).
@@ -388,7 +236,7 @@ pub(crate) fn touch() {
     unsafe { lock_for_access() }
 }
 
-/// Take the module lock for an access unless this thread holds it ([`velt_rt_module_state`]).
+/// Take the module lock for an access unless this thread holds it ([`touch`]).
 #[inline]
 unsafe fn lock_for_access() {
     let tcx = super::CURRENT.with(Cell::get);
@@ -424,32 +272,6 @@ unsafe fn lock_for_access() {
             IN_WITH => h.set(OUTSIDE),
             _ => {}
         }),
-    }
-}
-
-/// The block of `desc` (allocated and initialized as by [`velt_rt_module_state`]) without
-/// checking that a slot is initialized: for the root file's `main`, which initializes its
-/// file's slots in it.
-///
-/// # Safety
-/// `desc` must point to the program's module descriptor.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_module_block(desc: *const ModuleDesc) -> *mut u8 {
-    lock_for_access();
-    if let Some((p, _)) = find(desc) {
-        return p;
-    }
-    new_block(desc)
-}
-
-/// The initializers of `state`'s slots below `n` have run: those slots may be read.
-///
-/// # Safety
-/// `state` must be a block being initialized (`ModuleDesc::init`), with the lock held.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_module_ready(state: *mut u8, n: u64) {
-    if let Some(b) = (*BLOCKS.0.get()).iter_mut().find(|b| b.p == state) {
-        b.ready = n;
     }
 }
 

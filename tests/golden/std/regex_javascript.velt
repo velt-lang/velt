@@ -1,0 +1,241 @@
+// check: no leaks
+// What JavaScript's regular expressions do and a translation to another engine's flavour does
+// not: code units without the `u` flag, captures that do not outlive an iteration, iterations
+// that must match something, case folding, V8's errors. Node prints the same.
+
+function units(s: string): string {
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    out.push(s.charCodeAt(i).toString(16));
+  }
+  return out.join(" ");
+}
+
+function message(pattern: string, flags: string): string {
+  try {
+    new RegExp(pattern, flags);
+    return "ok";
+  } catch (e) {
+    return e.message;
+  }
+}
+
+function codeUnits() {
+  console.log(/^.$/.test("😀"), /^.$/u.test("😀"), /^..$/.test("😀"), "😀".match(/./g)?.length);
+  console.log(units("😀".replace(/(?:)/g, "-")), units("😀".replace(/(?:)/gu, "-")));
+  console.log(units("a😀b".replace(/[^a]/g, "<$&>")), units("a😀b".replace(/[^a]/gu, "<$&>")));
+  console.log("😀😀".search(/\ude00\ud83d/), "😀😀".search(/\ude00\ud83d/u), /😀{2}/.test("😀😀"));
+  console.log(units("x😀y".split(/(?:)/).join("|")), units("x😀y".split(/(?:)/u).join("|")));
+  console.log("😀".replace(/\B/gu, "-").length, "a😀".search(/\B/u), "é😀é".search(/😀/));
+}
+
+function iterations() {
+  console.log("ab".replace(/(?:(a)|b)*/, "[$1]"), "ba".replace(/(?:(a)|b)*/, "[$1]"));
+  console.log(
+    "b".replace(/(a*)*/, "[$1]"),
+    "b".replace(/(a*)+/, "[$1]"),
+    "aab".replace(/(a*)*/, "[$1]"),
+  );
+  console.log(
+    "ab".replace(/(a?){1,2}b/, "[$1]"),
+    "b".replace(/(a?)?b/, "[$1]"),
+    "xBk".replace(/((.?){1,2})k/, "[$1|$2]"),
+  );
+  console.log(
+    "aaaa".replace(/a{2,3}?/g, "x"),
+    "aaaa".replace(/a{2,3}/g, "x"),
+    "abcabc".replace(/(?:a|ab)(?:c|bcd)?/g, "x"),
+  );
+  console.log(
+    "ab".match(/a|ab/g),
+    "ab".match(/ab|a/g),
+    "abab".match(/(?:ab)*?b/g),
+    "xyz".match(/\w*?/g),
+  );
+}
+
+function folding() {
+  console.log(
+    /\u212a/i.test("k"),
+    /\u212a/iu.test("k"),
+    /ſ/i.test("s"),
+    /ſ/iu.test("S"),
+    /[a-z]/iu.test("ſ"),
+  );
+  console.log(
+    /\w/iu.test("ſ"),
+    /\W/iu.test("ſ"),
+    /\w/i.test("ſ"),
+    /\bk/iu.test("\u212ak"),
+    /σ/i.test("ς"),
+  );
+  console.log(
+    /straße/i.test("STRASSE"),
+    /É/i.test("é"),
+    /[à-þ]/i.test("À"),
+    /ǆ/i.test("ǅ"),
+    /[^k]/iu.test("\u212a"),
+  );
+  console.log(
+    /\p{Lu}+/u.exec("abcDEf")?.index,
+    /\p{Script=Greek}/u.test("α"),
+    /\P{L}/u.test("é"),
+    /[\p{Nd}_]+$/u.test("٣_7"),
+  );
+  console.log(
+    /\p{L}/.test("p{L}"),
+    /\p{scx=Grek}/u.test("͂"),
+    /\p{sc=Grek}/u.test("͂"),
+    /\p{Lu}/iu.test("a"),
+  );
+}
+
+function lines() {
+  console.log(
+    units("a\u2028b".replace(/^/gm, ">")),
+    "a\u2029b".replace(/$/gm, "<").length,
+    /a.b/.test("a\u2028b"),
+  );
+  console.log(
+    "a\r\nb".split(/^/m).length,
+    /^b$/m.test("a\rb\n"),
+    /a$/.test("a\n"),
+    /\s/.test("\ufeff"),
+  );
+}
+
+function replacing() {
+  console.log(
+    "x1y".replace(/(?<é>\d)/, "é$<é>é<$<é>>"),
+    "ab".replace(/(?<a>a)(?<b>b)/, "é$<b>ü$<a>$<nope>$<a"),
+  );
+  console.log(
+    "é1é".replace(/(\d)/g, "[$1$&$`$'$$]"),
+    "😀a😀".replace(/a/g, "<$`|$'>"),
+    "aXb".replace(/x/i, "é$0$1"),
+  );
+  console.log(
+    units((String.fromCharCode(0xd83d) + "-" + String.fromCharCode(0xde00)).replace(/-/, "")),
+    units("a😀".replace(/\ud83d/, "$&$&")),
+    "a,b;c".split(/([,;])/, 4),
+  );
+}
+
+function folded() {
+  // A literal under `i` is found whatever the case of its letters, also in the last bytes,
+  // where no step of the scan fits.
+  const near = "key=valab, ".repeat(40);
+  console.log(
+    /value\d+/i.test(near),
+    (near + "VaLuE7").match(/value\d+/gi),
+    (near + "vALUE12 value3 VALUEx").match(/value\d+/gi),
+    "xxVALUExx".search(/value/i),
+    "aValue".replace(/value/gi, "[$&]"),
+    /k\w+/iu.test("\u212aey"),
+  );
+}
+
+function replacements() {
+  const groups = /(?<k>key)(\d)(\d)?(x)?(y)?(z)?(w)?(v)?(u)?(t)?(s)?/g;
+  console.log(
+    "key1=value2, key3".replace(/(key)(\d)/g, "$2$1"),
+    "ab".replace(/b/, "$$-$&-$`-$'-$0-$3"),
+    "key12".replace(groups, "<$11|$1|$10|$2|$<k>|$<no>|$<k|$>"),
+    "aXbXc".replace(/X/g, "$'"),
+    "aXbXc".replace(/X/g, "$`"),
+    "abc".replace(/(?:)/g, "-"),
+  );
+}
+
+function errors() {
+  for (const p of [
+    "(a",
+    "a)",
+    "a**",
+    "[b-a]",
+    "\\",
+    "(?<n",
+    "(?<n>a)(?<n>b)",
+    "a{2,1}",
+    "(?x)",
+    "x{1}{2}",
+  ]) {
+    console.log(message(p, ""));
+  }
+  for (const p of ["a{", "]", "\\_", "\\x4", "\\p{Nope}", "[\\d-a]", "\\01", "\\c"]) {
+    console.log(message(p, ""), "|", message(p, "u"));
+  }
+  console.log(message("a", "gg"), "|", message("a", "uv"), "|", message("a", "q"));
+}
+
+function indexes(re: RegExp, s: string, lastIndex: number): string {
+  re.lastIndex = lastIndex;
+  const out: number[] = [];
+  for (const m of s.matchAll(re)) {
+    out.push(m.index);
+  }
+  return out.join(",");
+}
+
+function loops() {
+  // An iteration that can match nothing: what a lazy body leaves to the next one.
+  console.log(
+    "aa".replace(/(a*?)*/, "[$1]"),
+    "abab".replace(/(?:a?b??)*/, "[$&]"),
+    "aab".replace(/(?:a*?|b)*/, "[$&]"),
+    "xxy".replace(/(x*?)*y/, "[$1]"),
+    "aa".replace(/(a*?)*?$/, "[$1]"),
+  );
+  // `matchAll` starts at `lastIndex` and steps over an empty match as the flags say.
+  console.log(
+    indexes(/(?:)/gu, "😀😀", 1),
+    indexes(/(?:)/g, "😀😀", 1),
+    indexes(/a?/gu, "😀😀b", 3),
+    indexes(/(?:)/gy, "😀a", 0),
+    indexes(/a*/gy, "aa😀", 0),
+    indexes(/(?:)/guy, "😀a", 0),
+  );
+  console.log(
+    /\P{Lu}/iu.test("A"),
+    /\P{Lu}/u.test("A"),
+    /[^\P{Lu}]/iu.test("a"),
+    /\p{Lu}/iu.test("a"),
+    /[\P{Ll}]/iu.test("a"),
+  );
+  // With the `v` flag the set is closed over case before its complement is taken.
+  console.log(
+    /\P{Lu}/iv.test("A"),
+    /\P{Lu}/iv.test("a"),
+    /[^\P{Lu}]/iv.test("a"),
+    /\P{Lt}/iv.test("\u01c5"),
+    /[\P{Lu}\P{Ll}]/iv.test("k"),
+    /[^\P{Lu}a]/iv.test("A"),
+  );
+  // Long subjects: the same answers from the matchers that take over there.
+  const as = "a".repeat(5000);
+  console.log(
+    new RegExp("a{50000}").test("a".repeat(50000)),
+    new RegExp("a{50000}").test("a".repeat(49999)),
+    /(a+)+b/.exec(as + "b")?.[1].length,
+    /(a|b)*c/.exec("ab".repeat(2000) + "c")?.[1],
+    /([^,]*,)*x/.exec("aa,".repeat(1000) + "x")?.[1],
+    /.*.*=.*/.exec("x".repeat(3000) + "=y")?.index,
+    ("ab".repeat(2000) + "c").replace(/(?:a|(b))*c/, "[$1]"),
+    new RegExp("(?:" + "[\u00e0-\u00e9]".repeat(1021) + "|x)[\u00f6-\u00f8]").test(
+      "x".repeat(300) + "\u00f6",
+    ),
+    /(?:[\u00e0-\u00e9]{1021}|x)[\u00f6-\u00f8]/.test("x".repeat(300) + "\u00f9"),
+  );
+}
+
+function main() {
+  codeUnits();
+  iterations();
+  folding();
+  lines();
+  replacing();
+  loops();
+  folded();
+  replacements();
+  errors();
+}

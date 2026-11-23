@@ -28,8 +28,13 @@ impl FnLower<'_, '_> {
     pub(super) fn print(&mut self, stream: i128, args: &[hir::Expr]) -> Operand {
         let mut vals = vec![];
         for (a, later) in args.iter().zip(self.later_each(args)) {
-            let v = self.expr_held(a, later);
             let t = self.sub(a.ty);
+            // What the format glue writes gets a copy if it is frozen (`formatted_input`).
+            let formatted = !self.writes_directly(t) && self.option_scalar(t).is_none();
+            let v = match formatted.then(|| self.formatted_input(a)).flatten() {
+                Some(copy) => copy,
+                None => self.expr_held(a, later),
+            };
             vals.push((v, t));
         }
         if stream == 1 {
@@ -76,7 +81,9 @@ impl FnLower<'_, '_> {
                 TyKind::Never => {}
                 TyKind::Unit => self.write_text(&stream, "undefined"),
                 TyKind::Literal(LitValue::Str(s)) => self.write_text(&stream, &s),
-                TyKind::Literal(LitValue::Int(_, n)) => self.write_text(&stream, &n.to_string()),
+                TyKind::Literal(LitValue::Int(it, n)) => {
+                    self.write_text(&stream, &super::glue::int_literal_text(it, n))
+                }
                 TyKind::Literal(LitValue::Bool(b)) => {
                     self.write_text(&stream, if b { "true" } else { "false" })
                 }
@@ -143,22 +150,15 @@ impl FnLower<'_, '_> {
     }
 
     /// A number in JS formatting and the byte after it, through std's writers
-    /// (std/lang/hooks/number_text.velt, number_write.velt). A float goes to the runtime's printer
-    /// while sema leaves the float writer unchecked (velt_common `ON_DEMAND_WRITE`).
+    /// (std/lang/hooks/number_text.velt, number_write.velt).
     fn write_number(&mut self, stream: Operand, v: Operand, t: TyId, end: u8) {
-        let (s, from) = (ty::U32::arg(stream.clone()), self.cx.ty(t));
+        let (s, from) = (ty::U32::arg(stream), self.cx.ty(t));
         let e = ty::U8::arg(cint(end as i128, Ty::U8));
         let c = Construct::Format;
         match self.cx.kind(t) {
             TyKind::Float(_) => {
-                let v = self.float_as_f64(v, t);
-                match hooks::number_write(self, s, ty::F64::arg(v.clone()), e) {
-                    Some(call) => _ = call.emit(self),
-                    None => {
-                        self.call_rt(Rt::WriteF64, vec![stream.clone(), v], None);
-                        self.write_byte(&stream, end);
-                    }
-                }
+                let v = ty::F64::arg(self.float_as_f64(v, t));
+                _ = hooks::number_write(self, Construct::WriteFloat, s, v, e).emit(self);
             }
             TyKind::Int(it) if !it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::U64);

@@ -1,0 +1,5 @@
+read 0 13
+key freed: true
+target alive: 14
+target gone: 9
+map in use: true false

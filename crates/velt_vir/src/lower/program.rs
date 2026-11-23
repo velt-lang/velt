@@ -39,6 +39,7 @@ impl<'h> Cx<'h> {
             view_fn: None,
             std_fns: std::cell::OnceCell::new(),
             prelude_defs: std::cell::OnceCell::new(),
+            weak_targets: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
             heap_hooks: false,
@@ -46,6 +47,8 @@ impl<'h> Cx<'h> {
             cpu_checks: Default::default(),
             unavailable: vec![],
             unreduced: vec![],
+            rest_closures: Default::default(),
+            spread_errors: vec![],
             c_clashes: vec![],
             c_symbols: Default::default(),
             c_globals: Default::default(),
@@ -81,6 +84,9 @@ impl<'h> Cx<'h> {
             fut_header: None,
             sched_tasks: false,
             sched_used: false,
+            sched_observers: Default::default(),
+            sched_steps: false,
+            module_hooks_declared: std::cell::OnceCell::new(),
             held: Some(vec![]),
             statics_table: None,
             value_ids: FxHashMap::default(),
@@ -276,6 +282,7 @@ impl<'h> Cx<'h> {
                 | Work::Deferred(_)
                 | Work::Main
                 | Work::ModuleInit(..)
+                | Work::ModuleDrop
                 | Work::StaticsDrop
                 | Work::CExport(_)
                 | Work::ArrayGrow

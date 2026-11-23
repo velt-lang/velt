@@ -21,22 +21,31 @@ use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit, before the checksum of
 /// the rest ([`checksum`]).
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x05";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x08";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
-/// caller's, memos, what every check installs again) and `empty` (state of one pass, or the
-/// app's alone: at a unit's end as `Ctx::over` makes it, which a test checks,
-/// [`empty_fields_differing`]). Generates the field walk of the encoder and decoder.
+/// caller's, what every check installs again), `memo` (built again on demand: one built over a
+/// unit's definitions alone is stale once a later unit's are added, [`clear_memos`]) and
+/// `empty` (state of one pass, or the app's alone: at a unit's end as `Ctx::over` makes it,
+/// which a test checks, [`empty_fields_differing`]). Generates the field walk of the encoder and
+/// decoder.
 macro_rules! unit_fields {
     (
         save: [$($p:ident),* $(,)?],
         special: [$($sp:ident),* $(,)?],
         skip: [$($s:ident),* $(,)?],
+        memo: [$($m:ident),* $(,)?],
         empty: [$($e:ident),* $(,)?] $(,)?
     ) => {
+        /// Drop the memos of `cx` (a finished unit's): a later unit's stage builds them again
+        /// over its own definitions too, as it does from a unit loaded from disk.
+        pub(crate) fn clear_memos(cx: &mut Ctx) {
+            $(cx.$m = Default::default();)*
+        }
+
         /// Encode the saved fields of `cx`, with the bytes each took.
         fn enc_fields(cx: &Ctx, w: &mut Writer, sizes: &mut Vec<(&'static str, usize)>) {
-            let Ctx { $($p,)* $($sp,)* $($s: _,)* $($e: _,)* } = cx;
+            let Ctx { $($p,)* $($sp,)* $($s: _,)* $($m: _,)* $($e: _,)* } = cx;
             $(
                 let at = w.out.len();
                 Codec::enc($p, w);
@@ -74,7 +83,7 @@ macro_rules! unit_fields {
 
 unit_fields! {
     save: [
-        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys, json_needs,
+        fn_shapes, ty, defs, info, def_spans, scopes, prelude, prelude_type_keys, unit_sums,
         aliases, extensions, impls, iface_writes, part_ifaces, synth_ifaces, generic_fns,
         generic_called, union_views, any, ext_impls, ext_by_iface, anon, readonly_twins,
         array_twins,
@@ -96,15 +105,10 @@ unit_fields! {
     special: [sigq, type_level],
     skip: [
         // The caller's (`decode_unit`), or set again by every check that uses the unit.
-        modules, root, gen, units, import_targets, loads,
+        modules, root, gen, units, wasm32, import_targets, loads,
         loads_added, unit_base, units_stage,
         stack_base, stack_budget, held_borrows, ide, body_records, source_facts, std_missed,
         kept_demand,
-        // Memos, built again on demand.
-        marked_aliases, extension_names, impl_index, ext_memo, ext_exists_memo, ext_memo_impls,
-        canon_memo, canon_errors, canon_keys, primitive_statics, classes_below, groups,
-        shared_memo, pure_fns, subclasses, native_libraries,
-        decorator_scopes, export_memo,
         // What the source rewrites found, installed again by every check.
         promoted_consts, asserted_rmw, global_props, generic_arrow_fns, generic_arrow_all,
         unsafe_arrow_fns, alias_blocked, kept_nested, closure_groups, group_names,
@@ -115,6 +119,12 @@ unit_fields! {
         // bodies, never by a later unit's (whose passes look at their unit's functions,
         // `Ctx::unit_fns`). A unit is saved once std is a check of its own, after those passes.
         thread_local_uses, throw_checks, loop_roots, closure_defs, rec,
+    ],
+    memo: [
+        marked_aliases, extension_names, impl_index, ext_memo, ext_exists_memo, ext_memo_impls,
+        canon_memo, canon_errors, canon_keys, primitive_statics, classes_below, groups,
+        shared_memo, pure_fns, subclasses, native_libraries,
+        decorator_scopes, export_memo,
     ],
     empty: [
         // State within one pass or one body's check, empty when a unit is finished.
@@ -215,6 +225,7 @@ mod special {
                 erase_generics: _,
                 in_field: _,
                 field_erased: _,
+                param_props: _,
             } = self;
             readonly_params.enc(w);
         }
@@ -223,12 +234,17 @@ mod special {
         }
     }
 
-    /// The deferred types and what is known of them; not the state of an expansion in progress,
-    /// nor the memo of property-name kinds.
+    /// The deferred types and what is known of them, and the C pointees refused (so a later
+    /// unit neither reports one again nor refuses a C signature for it); not the state of an
+    /// expansion in progress, nor the memo of property-name kinds.
     impl Part for type_level::State {
         fn enc_part(&self, w: &mut Writer) {
             let type_level::State {
                 alias_site: _,
+                ptr_site: _,
+                ptr_refused,
+                ptr_refusals,
+                ptr_refused_types,
                 use_site: _,
                 key_kinds: _,
                 deferring: _,
@@ -255,6 +271,9 @@ mod special {
             inline.enc(w);
             alias_canon.enc(w);
             alias_shapes.enc(w);
+            ptr_refused.enc(w);
+            ptr_refusals.enc(w);
+            ptr_refused_types.enc(w);
         }
         fn dec_part(&mut self, r: &mut Reader) {
             self.op_sites = Codec::dec(r);
@@ -267,6 +286,9 @@ mod special {
             self.inline = Codec::dec(r);
             self.alias_canon = Codec::dec(r);
             self.alias_shapes = Codec::dec(r);
+            self.ptr_refused = Codec::dec(r);
+            self.ptr_refusals = Codec::dec(r);
+            self.ptr_refused_types = Codec::dec(r);
         }
     }
 }

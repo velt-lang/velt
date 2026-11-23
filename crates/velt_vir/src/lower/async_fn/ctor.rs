@@ -79,8 +79,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             .collect();
         let mut incoming = vec![];
         let mut regs = vec![];
+        let mut rest_tuple = None;
         for p in &f.params {
             if caps.contains_key(&p.local) {
+                incoming.push(None);
+                continue;
+            }
+            if let Some(ts) = lw.rest_tuple_of(def, f, p) {
+                // Its elements come one parameter each (`rest_tuple_params.rs`); the tuple
+                // they make stands for the one a caller would pass by pointer.
+                let mut attrs = vec![];
+                let r = lw.rest_tuple_params(p, &ts, "rest", &mut params, &mut attrs);
+                rest_tuple = Some((incoming.len(), r));
                 incoming.push(None);
                 continue;
             }
@@ -108,6 +118,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             incoming.push(l.map(|l| (l, vt, ty, p.mode)));
         }
         let out = out.then(|| lw.new_local(Ty::Ptr, Some("ret.out".into())));
+        // The rest tuple, its elements shared, goes into the state by value: the state owns
+        // it (`declare_async_locals`), as a sync closure's frame does (`finish_rest_tuple`).
+        let rest_val = rest_tuple.map(|(k, r)| {
+            let t = lw.build_rest_tuple(r);
+            (k, t.map(|t| Operand::Copy(Place::local(t))))
+        });
         for (vs, reg) in regs {
             let p = lw.reg_incoming(&vs, &reg);
             for inc in incoming.iter_mut().flatten() {
@@ -117,7 +133,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
         }
         let mut vals = vec![];
-        for (p, inc) in f.params.iter().zip(incoming) {
+        for (k, (p, inc)) in f.params.iter().zip(incoming).enumerate() {
+            if let Some((rk, v)) = &rest_val {
+                if *rk == k {
+                    vals.push(v.clone());
+                    continue;
+                }
+            }
             vals.push(match (caps.get(&p.local), inc, env) {
                 (Some(&k), _, Some(env)) => lw.take_capture(def, env, k),
                 (None, Some((l, vt, ty, mode)), _) => {
@@ -153,6 +175,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let p = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(slot)));
             self.retain_cell(p.clone());
             return Some(p);
+        }
+        if f.body.locals[c.inner.0 as usize].weak
+            && matches!(c.mode, PassMode::Copy | PassMode::Owned)
+        {
+            // A `weak` variable: its slot, with a reference of the state's own.
+            return Some(self.take_weak_capture(slot, ty));
         }
         Some(match c.mode {
             PassMode::Borrow | PassMode::BorrowMut => match vt {

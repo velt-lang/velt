@@ -1,0 +1,70 @@
+// velt/arch/x86: one class per x86-64 CPU feature, each with `isSupported()`, the check that pairs
+// with `@targetFeature` (velt/compiler; docs/internals/design/package-machine-code.md §2).
+//
+//   import { targetFeature } from "velt/compiler";
+//   import { Sha } from "velt/arch/x86";
+//
+//   @targetFeature("sha-x86")
+//   function fast(xs: u64[]): u64 { … }
+//
+//   if (Sha.isSupported()) {  // once, outside any hot loop
+//     n = fast(xs);
+//   } else {
+//     n = portable(xs);
+//   }
+//
+// A call of a gated function must sit in the `then` branch of an `if` on these checks (or in a
+// function gated on features that cover it). Each check is true at compile time where the build
+// guarantees the feature (`--cpu`, or inside gated code) and otherwise the CPU's answer, read once
+// at start-up; false on another architecture, on WebAssembly and in debug (Cranelift) builds.
+
+/** The x86 AES round instructions (AES-NI), with the PCLMULQDQ every such CPU has: what AES-GCM needs (`aes-x86`). */
+export { Aes } from "velt/arch/x86/aes";
+/** AVX, with its register state saved by the operating system (`avx-x86`). */
+export { Avx } from "velt/arch/x86/avx";
+/** AVX2 (`avx2-x86`). */
+export { Avx2 } from "velt/arch/x86/avx2";
+/** AVX-512 bit algorithms (`avx512bitalg-x86`). */
+export { Avx512Bitalg } from "velt/arch/x86/avx512bitalg";
+/** AVX-512 byte and word instructions (`avx512bw-x86`). */
+export { Avx512BW } from "velt/arch/x86/avx512bw";
+/** AVX-512 conflict detection (`avx512cd-x86`). */
+export { Avx512CD } from "velt/arch/x86/avx512cd";
+/** AVX-512 doubleword and quadword instructions (`avx512dq-x86`). */
+export { Avx512DQ } from "velt/arch/x86/avx512dq";
+/** AVX-512 Foundation, with its register state saved by the operating system (`avx512f-x86`). */
+export { Avx512F } from "velt/arch/x86/avx512f";
+/** AVX-512 vector byte manipulation (`avx512vbmi-x86`). */
+export { Avx512Vbmi } from "velt/arch/x86/avx512vbmi";
+/** AVX-512 vector length extensions (the 128- and 256-bit forms); `avx512vl-x86`. */
+export { Avx512VL } from "velt/arch/x86/avx512vl";
+/** BMI1 (`bmi1-x86`). */
+export { Bmi1 } from "velt/arch/x86/bmi1";
+/** BMI2 (PDEP, PEXT, MULX, …); `bmi2-x86`. */
+export { Bmi2 } from "velt/arch/x86/bmi2";
+/** CMPXCHG16B (`cmpxchg16b-x86`). */
+export { Cmpxchg16b } from "velt/arch/x86/cmpxchg16b";
+/** F16C (half-precision conversions); `f16c-x86`. */
+export { F16c } from "velt/arch/x86/f16c";
+/** x86's fused multiply-add (FMA3), with the AVX it needs (`fma-x86`). */
+export { Fma } from "velt/arch/x86/fma";
+/** LZCNT (`lzcnt-x86`). */
+export { Lzcnt } from "velt/arch/x86/lzcnt";
+/** MOVBE (`movbe-x86`). */
+export { Movbe } from "velt/arch/x86/movbe";
+/** The x86 carry-less multiplication (PCLMULQDQ), with the SSE4.1 every such CPU has (`clmul-x86`). */
+export { Pclmulqdq } from "velt/arch/x86/pclmulqdq";
+/** POPCNT (`popcnt-x86`). */
+export { Popcnt } from "velt/arch/x86/popcnt";
+/** The x86 SHA extensions (SHA-NI), with the SSE4.1 every such CPU has (`sha-x86`). */
+export { Sha } from "velt/arch/x86/sha";
+/** SSE3 (`sse3-x86`). */
+export { Sse3 } from "velt/arch/x86/sse3";
+/** SSE4.1 (`sse4.1-x86`). */
+export { Sse41 } from "velt/arch/x86/sse41";
+/** SSE4.2 (with CRC32 and the string instructions); `sse4.2-x86`. */
+export { Sse42 } from "velt/arch/x86/sse42";
+/** SSSE3 (`ssse3-x86`). */
+export { Ssse3 } from "velt/arch/x86/ssse3";
+export { Vector256 } from "velt/arch/x86/vector256";
+export { Vector512 } from "velt/arch/x86/vector512";

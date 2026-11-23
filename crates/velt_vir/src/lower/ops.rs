@@ -190,7 +190,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `a ** b`, widening to 64 bits and casting back: std's `powF64` on floats (V8's
-    /// `Math.pow`, std/lang/math/pow.velt), `velt_rt_pow_i64` on integers.
+    /// `Math.pow`, std/lang/math/pow.velt), std's `powI64` on integers (std/lang/hooks/pow_int.velt).
     fn pow(&mut self, l: Operand, r: Operand, t: Ty) -> Operand {
         let wide = if t.is_float() { Ty::F64 } else { Ty::I64 };
         let a = self.cast_to(l, t, wide);
@@ -205,7 +205,13 @@ impl FnLower<'_, '_> {
             )
             .emit_to(self, Place::local(res));
         } else {
-            self.call_rt(Rt::PowI64, vec![a, b], Some(Place::local(res)));
+            hooks::pow_i64(
+                self,
+                hooks::Construct::PowInt,
+                ty::I64::arg(a),
+                ty::I64::arg(b),
+            )
+            .emit_to(self, Place::local(res));
         }
         self.cast_to(Operand::Copy(Place::local(res)), wide, t)
     }

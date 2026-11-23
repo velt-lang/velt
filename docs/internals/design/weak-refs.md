@@ -25,11 +25,17 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
 ([semantics.md](semantics.md) "Which types are counted"). The core adds:
 
 - **A flag in the count word.** Bit 63 (`RC_WEAK`, the sign bit) is set while the object is
-  weakly held: a weak-map key, a `WeakRef` target, or a member of an ephemeron cycle (below).
-  Counts never get near 2^63, so the bit costs no range, and retain stays `count += 1`.
+  weakly held: a weak-map key, a `WeakRef` target, the target of a `weak T` reference, or a member
+  of an ephemeron cycle (below). Bit 62 (`RC_GATED`) is set besides once the object's record has a
+  release gate (`R_GATE`, below: a weak map key, or an object on an entry's path back to one).
+  Without it a release that leaves the count above 0 is a plain decrement: the generated sequence
+  makes it inline for the classes `weak` fields refer to, so such a target takes the lock only
+  when it is freed, and `weakRelease` makes it for the rest.
+  Counts never get near 2^62, so the bits cost no range, and retain stays `count += 1`.
 - **One side table for the process**, behind a lock, from object address to a record: the maps
-  the object is a key of, the entries whose value graph refers to it, its `WeakRef` slots, and two
-  small counts used by the ephemeron rule (`hint`, `observed`). A weakly held object is used by
+  the object is a key of, the entries whose value graph refers to it, its `WeakRef` slots, the
+  slot of its `weak T` references, and two small counts used by the ephemeron rule (`hint`,
+  `observed`). A weakly held object is used by
   one task at a time (its count is not atomic), but not on one thread: an async task resumes on
   any worker after an `await`, and a `shared` `Mutex` hands its value to whichever task locks it.
   So map ids, `WeakRef` slots and records mean the same on every thread. The lock is taken only
@@ -40,6 +46,10 @@ A counted object is `[count: u64][value]`; the value pointer is the block addres
   release glue is 0 (`null`, `undefined`) or a counted object pointer: the compiler boxes strings
   and unions stored as such values. A `WeakSet` is a weak map whose values are plain words. A
   **`WeakRef`** is a slot holding the target's address, cleared when the target is freed.
+- **`weak T` slots** ([cycles.md](cycles.md) "`weak T`"; `weak_slots.velt`): a counted block
+  `[count][target]` per object, shared by every weak field and variable referring to it, so a read
+  needs no lock. The record holds one reference to it from the first weak reference until the
+  object is freed, which sets the target to 0.
 
 ### The core
 
@@ -132,10 +142,12 @@ the key's last outside reference goes by a decrement, never by the release that 
 the trace of an entry whose key goes by its only release, and the trials that releases of a value
 not examined yet would run (the value is not marked until then), and it sees a path the value gains
 between the insert and that decrement. It costs a second lookup of the entry at the decrement:
-against an examination at insert, `bench/weakmap_handlers.velt` (handlers over other objects) runs
-5.4% more instructions, `bench/weakmap_handlers_cycle.velt` 37.5% fewer, and
-`bench/weakmap_key_decrements.velt` (keys decremented a thousand times each while their entries
-live) 2.9% fewer.
+against an examination at insert, `bench/weakmap_handlers_cycle.velt` runs 37.5% fewer instructions
+and `bench/weakmap_key_decrements.velt` (keys decremented a thousand times each while their entries
+live) 2.9% fewer. In `bench/weakmap_handlers.velt` (handlers over other objects) a key's one
+release is its last, so no entry is traced: a call gets an argument where it is when the arguments
+after it assign no variable it reads (`new Handler(() => other.n)` creates a closure that assigns
+none; sequence.rs `writes_local`).
 
 **On a release** that leaves a recorded object's count at or below `max(hint, observed)`, every
 remaining reference may come from the cycle, so the cold path runs a **trial deletion** (Bacon
@@ -195,7 +207,9 @@ reaches it, and the trial uses the record's trace for such keys.
   of decrementing it.
 - **Weak handles belong to one task.** A `WeakMap`, `WeakSet` or `WeakRef` (a class instance with
   a plain count) stays with the task that made it (see "Threads and `shared`"). The task itself
-  may run on several threads in turn, which the process-wide table allows. A weakly held object
+  may run on several threads in turn, which the process-wide table allows. So does an object of
+  a class with a `weak` field, whose slots are this task's ([cycles.md](cycles.md) "`weak T`"):
+  its transfer glue panics as a `WeakRef`'s does. A weakly held object
   is never transferred in place either (its count word is never 1, so the transfer deep-copies
   it, and the copy is not weakly held). An object with `RC_WEAK` set and no record is an `ICE:`
   that `weakRelease` reports before it touches the count word.
@@ -228,11 +242,14 @@ For weak-capable types only, `release_as` (`lower/rc.rs`) changes the release's 
 c = *rc
 if c as i64 > 1 { *rc = c - 1 }                                              // shared path
 else if c == 1  { drop the fields; free }                                    // unique path
+else if (c << 1) as i64 > 2 { *rc = c - 1 }                                  // weakly held, no gate
 else            { if weakRelease(obj) { drop the fields; free } }           // RC_WEAK: cold
 ```
 
 A weakly held object's count word is negative as a signed number, so it leaves the shared path
-with the unique case and goes to the cold call, which removes the object from every map and
+with the unique case; for the classes `weak` fields refer to (velt_vir `weak_fields.rs`
+`slot_target`), one without a release gate whose count stays above 0 is decremented there and
+then (the other types leave that test out), and anything else goes to the cold call, which removes the object from every map and
 `WeakRef` before the generated code frees it. The sequence is used at every release (drop glue,
 boxed values, half-built objects, the queued drops of `drop_depth.rs`), at `drop_chain.rs`'s
 `take` and at `transfer.rs`'s release of the sender's reference after a deep copy.

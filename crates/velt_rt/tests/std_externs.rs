@@ -281,8 +281,11 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
         // backends (rt_abi.md "SIMD", "Math operations"): no runtime defines them. `velt_vir`'s
         // `simd` tests and the verifier (math) check their declarations. The `velt_eh_*` family
         // (`velt_eh_try`, `velt_eh_catches`, `velt_eh_personality`) is defined by the backend in
-        // each object (docs/internals/design/unwinding.md), never by a runtime.
+        // each object (docs/internals/design/unwinding.md), never by a runtime. velt/arch's
+        // instructions (`velt_arch_*`) are LLVM's too, one per row of `velt_vir::arch`'s table,
+        // whose tests check the declarations.
         if name.starts_with("velt_simd_")
+            || name.starts_with("velt_arch_")
             || name.starts_with("velt_math_")
             || name.starts_with("velt_eh_")
         {
@@ -315,13 +318,15 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 /// The std files whose declarations velt_rt may lack, bindings WebAssembly builds use:
 /// std/fs/rt.velt (`#fs-rt`), whose async leaves are velt_rt_wasm's alone (a native build
 /// imports only the file's `*_sync` twins and runs them on the executor's blocking pool), and
-/// std/process/tty_wasm.velt, env_wasm.velt and cwd_wasm.velt (`#tty`'s, `#env-sys`' and
-/// `#cwd-sys`' default variants: native builds ask the OS from std) (#2196).
+/// std/process/tty_wasm.velt, env_wasm.velt, cwd_wasm.velt and memory_wasm.velt (`#tty`'s,
+/// `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
+/// from std) (#2196).
 const WASM_ONLY_BINDINGS: &[&str] = &[
     "std/fs/rt.velt",
     "std/process/tty_wasm.velt",
     "std/process/env_wasm.velt",
     "std/process/cwd_wasm.velt",
+    "std/process/memory_wasm.velt",
 ];
 
 /// The externs std declares that only the executor in Velt serves on native targets (velt_common

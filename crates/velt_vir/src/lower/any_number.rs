@@ -10,22 +10,25 @@
 //! An `any` holding a number of another numeric type than the one it is converted to (an `i64`
 //! read back as a `number`, a `number` as an `i64`, a generic `P = i64` boxed and converted to
 //! `i64` where sema gave the box the `number` it is): JavaScript has one number, so the value
-//! converts as `as` converts its value, not a `TypeError`: a float truncates and saturates
-//! (`NaN` is 0), an integer wraps (`300 as u8` is 44), and a 64-bit integer is read as itself,
-//! exact past 2^53.
+//! converts, not a `TypeError`. To an integer type it converts as JavaScript's ToIntN and
+//! ToUintN do, the way a typed array stores a number: a float truncates and wraps modulo 2^N
+//! (`256` to a `u8` is 0, `-1` is 255, `300.7` is 44; `NaN` and the infinities are 0), an
+//! integer wraps (`300 as u8` is 44), and a 64-bit integer is read as itself, exact past 2^53.
+//! (`number as u8`, the language's cast, saturates; this is the conversion of a value whose
+//! type is not known.)
 //!
 //! A write through `any` to an integer type keeps the value it was given or stops: `x.a = 1.5`
 //! on an `i32` field, `x.b = 300` on a `u8` one (`Glue::AnyNumericExact`). A float narrowed
 //! rounds, as a typed write does: `0.1` on an `f32` field. A value of the field's own type never
 //! gets here.
 
-use velt_sema::hir::{self, FloatTy, IntTy, TyId, TyKind};
+use velt_sema::hir::{self, IntTy, TyId, TyKind};
 
 use super::any::{SLOT_NUMBER, TAG_NUMBER};
 use super::glue::{Glue, VtableKey, SLOT_DROP};
 use super::{cint, FnLower};
 use crate::vir::{
-    BinOp, BlockId, Callee, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty,
+    BinOp, BlockId, Callee, Const, Local, Operand, Place, Proj, Rvalue, Terminator, Ty, UnOp,
 };
 
 /// What `Glue::AnyNumeric` and its variants do with what isn't converted as it is.
@@ -218,30 +221,40 @@ impl FnLower<'_, '_> {
             (_, Ty::F64) => f.clone(),
             (_, Ty::F32) => self.rvalue_temp(vt, Rvalue::Cast(f.clone(), vt)),
             (None, _) => {
-                // A float casts as `as` casts it (truncating, saturating: `NaN` is 0); a
-                // narrower integer goes through `i64` (exact), so that it wraps as `300 as u8`.
-                let fl = self.new_block();
-                // An `f16`/`bf16` held is a float too (its number slot widens it, #2049).
-                for k in [FloatTy::F64, FloatTy::F32, FloatTy::F16, FloatTy::BF16] {
-                    let Some(t) = held(self, TyKind::Float(k)) else {
-                        continue;
-                    };
-                    let want = self.vtable_addr(VtableKey::Impl(imp, t));
-                    let is =
-                        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want));
-                    let next = self.new_block();
-                    self.branch(is, fl, next);
-                    self.switch_to(next);
-                }
+                // JavaScript's ToIntN (module docs). A number between the ends of an `i64`
+                // truncates to one, exactly, and that wraps to the type as `300 as u8` does.
+                let top = Operand::Const(Const::Float(9_223_372_036_854_775_808.0), Ty::F64);
+                let bottom = Operand::Const(Const::Float(-9_223_372_036_854_775_808.0), Ty::F64);
+                let under = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, f.clone(), top));
+                let over = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Gt, f.clone(), bottom));
+                let fits = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, under, over));
+                let (near, far) = (self.new_block(), self.new_block());
+                self.branch(fits, near, far);
+                self.switch_to(near);
                 let i = self.rvalue_temp(Ty::I64, Rvalue::Cast(f.clone(), Ty::I64));
-                let c = self.rvalue_temp(vt, Rvalue::Cast(i, vt));
+                let c = match vt {
+                    Ty::I64 => i,
+                    _ => self.rvalue_temp(vt, Rvalue::Cast(i, vt)),
+                };
                 if exact {
                     self.any_write_keeps_float(&f, &c, ty);
                 }
                 self.assign(dest.clone(), Rvalue::Use(c));
                 self.goto(yes);
-                self.switch_to(fl);
-                self.rvalue_temp(vt, Rvalue::Cast(f.clone(), vt))
+                // Past them, `NaN` and the infinities: the remainder of 2^64 (exact; `NaN` for
+                // those three, which casts to 0), whose size fits a `u64`, taken from 0 when
+                // it is negative. One of the two casts saturates to 0.
+                self.switch_to(far);
+                let modulus = Operand::Const(Const::Float(18_446_744_073_709_551_616.0), Ty::F64);
+                let t = self.rvalue_temp(Ty::F64, Rvalue::Binary(BinOp::Rem, f.clone(), modulus));
+                let up = self.rvalue_temp(Ty::U64, Rvalue::Cast(t.clone(), Ty::U64));
+                let minus = self.rvalue_temp(Ty::F64, Rvalue::Unary(UnOp::Neg, t));
+                let down = self.rvalue_temp(Ty::U64, Rvalue::Cast(minus, Ty::U64));
+                let r = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Sub, up, down));
+                match vt {
+                    Ty::U64 => r,
+                    _ => self.rvalue_temp(vt, Rvalue::Cast(r, vt)),
+                }
             }
         };
         if exact {

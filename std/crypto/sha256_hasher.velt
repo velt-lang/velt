@@ -1,0 +1,64 @@
+// velt/crypto (internal): SHA-256 of a message given in pieces (`Sha256`), for TLS's transcript
+// hash: each byte is hashed once however often the hash of everything so far is asked for.
+
+import { BLOCK, finalBlocks, wordsToBytes } from "velt/crypto/blocks";
+import { sha256Blocks } from "velt/crypto/sha256";
+import { H256 } from "velt/crypto/tables";
+
+/**
+ * SHA-256 of a message given in pieces: `update` with each piece in order, `digest` for the hash
+ * of everything so far. The hasher keeps going after a `digest`.
+ */
+export class Sha256 {
+  private h: u32[];
+  // The bytes of an unfinished block, `used` of them.
+  private buf: u8[];
+  private used: usize;
+  private total: usize;
+
+  constructor() {
+    this.h = H256.slice();
+    this.buf = Buffer.alloc(BLOCK);
+    this.used = 0;
+    this.total = 0;
+  }
+
+  /** Hashes `data[start..end]` (all of `data` by default) after everything given before. */
+  update(data: u8[], start: usize = 0, end: usize | undefined = data.length) {
+    if (start > end || end > data.length) {
+      return;
+    }
+    let at = start;
+    this.total += end - start;
+    if (this.used > 0) {
+      while (this.used < BLOCK && at < end) {
+        this.buf[this.used] = data[at];
+        this.used++;
+        at++;
+      }
+      if (this.used < BLOCK) {
+        return;
+      }
+      sha256Blocks(this.h, this.buf, 0, 1);
+      this.used = 0;
+    }
+    const count = (end - at) / BLOCK;
+    if (count > 0) {
+      sha256Blocks(this.h, data, at, count);
+      at += count * BLOCK;
+    }
+    while (at < end) {
+      this.buf[this.used] = data[at];
+      this.used++;
+      at++;
+    }
+  }
+
+  /** The 32-byte digest of everything given so far. */
+  digest(): u8[] {
+    const h = this.h.slice();
+    const tail = finalBlocks(this.buf.slice(0, this.used as i64), 0, this.total - this.used);
+    sha256Blocks(h, tail, 0, tail.length / BLOCK);
+    return wordsToBytes(h);
+  }
+}

@@ -1,0 +1,75 @@
+// velt/arch/arm (internal): `I8mm`, the check of `i8mm-arm` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { I8MM_ARM } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("i8mm-arm")`) and what such code calls.
+declare function velt_simd_has_i8mm_arm(): bool;
+// Whether this build runs arm64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_arm(): bool;
+
+/** The int8 matrix multiplications (FEAT_I8MM). The check of `@targetFeature("i8mm-arm")`. */
+export class I8mm {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=I8MM`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_i8mm_arm() || (velt_simd_on_arm() && cpuHas(I8MM_ARM));
+  }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * `addend` (a 2×2 matrix) plus `left` (2×8, by rows) times `right` (8×2, by columns).
+   *
+   * `vmmlaq_u32` (`ummla`). Runs only where the CPU has it: call it behind `I8mm.isSupported()`, or
+   * in a function gated on `i8mm-arm`.
+   */
+  static matrixMultiplyAccumulateU8(addend: u32x4, left: u8x16, right: u8x16): u32x4 {
+    return velt_arch_i8mm_matrix_multiply_accumulate_u8(addend, left, right);
+  }
+
+  /**
+   * `addend` (a 2×2 matrix) plus `left` (2×8, by rows) times `right` (8×2, by columns).
+   *
+   * `vmmlaq_s32` (`smmla`). Runs only where the CPU has it: call it behind `I8mm.isSupported()`, or
+   * in a function gated on `i8mm-arm`.
+   */
+  static matrixMultiplyAccumulateI8(addend: i32x4, left: i8x16, right: i8x16): i32x4 {
+    return velt_arch_i8mm_matrix_multiply_accumulate_i8(addend, left, right);
+  }
+
+  /**
+   * Lane `i` of `addend` plus the products of the unsigned bytes `4i` to `4i + 3` of `left` and the
+   * signed ones of `right`.
+   *
+   * `vusdotq_s32` (`usdot`). Runs only where the CPU has it: call it behind `I8mm.isSupported()`,
+   * or in a function gated on `i8mm-arm`.
+   */
+  static dotProductUnsignedSigned(addend: i32x4, left: u8x16, right: i8x16): i32x4 {
+    return velt_arch_i8mm_dot_product_unsigned_signed(addend, left, right);
+  }
+}
+
+declare function velt_arch_i8mm_matrix_multiply_accumulate_u8(
+  addend: u32x4,
+  left: u8x16,
+  right: u8x16,
+): u32x4;
+declare function velt_arch_i8mm_matrix_multiply_accumulate_i8(
+  addend: i32x4,
+  left: i8x16,
+  right: i8x16,
+): i32x4;
+declare function velt_arch_i8mm_dot_product_unsigned_signed(
+  addend: i32x4,
+  left: u8x16,
+  right: i8x16,
+): i32x4;

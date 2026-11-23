@@ -76,8 +76,45 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// std's `cpuStart` (std/lang/hooks/cpu.velt): the CPU's feature word and the start-up check
+    /// of the build's requirement, `velt_main`'s step before any other Velt code.
+    pub(super) fn cpu_start(&mut self) {
+        if self.sched_hook_live(velt_common::std_hook!(cpu_start)) {
+            hooks::cpu_start(self).emit(self);
+        }
+    }
+
     fn sched_hook_live(&self, name: &str) -> bool {
         (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
+    }
+
+    /// Does module state go to module_blocks.velt's hooks: a native program that sema found with
+    /// module state (velt_sema `lazy_std` `module_hooks`, #2196 9c) and without the executor (which
+    /// has its own, `module_sched`)? Else the runtime's entries (a wasm target's).
+    pub(super) fn module_hooks(&self) -> bool {
+        self.std_sched()
+            && !self.cx.module_sched()
+            && self.module_hook_live(velt_common::std_hook!(module_state))
+    }
+
+    /// Can lowering call module_blocks.velt's hook `name`: sema declared the hooks in the
+    /// module's object (prebuilt, the module not loaded; all of them or none), or checked it?
+    fn module_hook_live(&self, name: &str) -> bool {
+        let declared = *self.cx.module_hooks_declared.get_or_init(|| {
+            let index = velt_common::std_hooks::hook_index::module_state;
+            let hook = &velt_common::std_hooks::HOOKS[index];
+            self.cx.hook_declared(hook).is_some()
+        });
+        declared || self.sched_hook_live(name)
+    }
+
+    /// Does a synchronous `main` that starts no tasks end with module_blocks.velt's `moduleExit`
+    /// (the blocks go at a counted normal end)? Whenever sema loaded it (a native program with
+    /// module state): its blocks are module_blocks.velt's whether they were reached through its
+    /// own hooks or the executor's (sched_module.velt), and without tasks no `schedFinish` drops
+    /// them.
+    pub(super) fn module_exit_live(&self) -> bool {
+        self.std_sched() && self.module_hook_live(velt_common::std_hook!(module_exit))
     }
 
     /// The exit with 1 after an uncaught error's report: under the executor in Velt its hook
@@ -190,22 +227,6 @@ impl FnLower<'_, '_> {
         hooks::sched_yield(self, ty::USize::arg(cx)).emit(self);
     }
 
-    /// The end of `velt_main` with exit code `code` when its synchronous `main` reached no task
-    /// (nothing runs `sched_finish`): where sema loaded the executor (live code may run on it,
-    /// and module state may have gone through its hooks, whose blocks are std's), its hook drops
-    /// the blocks of module state at a normal end with the debug counters on. Nothing for a
-    /// program without module state or without the executor (the runtime's blocks, which the
-    /// runtime drops).
-    pub(super) fn sched_module_exit(&mut self, code: &Operand) {
-        let live = self.std_sched()
-            && self.cx.hir.module_state.is_some()
-            && self.sched_hook_live(velt_common::std_hook!(sched_module_exit));
-        if live {
-            let code = self.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
-            hooks::sched_module_exit(self, ty::I32::arg(code)).emit(self);
-        }
-    }
-
     /// `await yieldNow()`'s question when it resumes: 1 (a `u32`) to go on, 0 to stay suspended,
     /// when the poll it yielded in polls it again (#3241).
     pub(super) fn sched_yield_ready(&mut self, cx: Operand) -> Operand {
@@ -309,6 +330,13 @@ impl FnLower<'_, '_> {
         let ret = r.sig().2;
         if matches!(r, Rt::FutStart | Rt::FutStartRejecting | Rt::FutDetach) {
             self.cx.sched_tasks = true;
+        }
+        // What the runtime's function would have told await_order.rs by being declared (#3081).
+        if let Some(s) = observer_of(r) {
+            self.cx.sched_observers.insert(s);
+        }
+        if r == Rt::AwaitTick {
+            self.cx.sched_steps = true;
         }
         let v = match (r, <[Operand; 5]>::try_from(args.clone())) {
             (Rt::FutBox, Ok([poll, drop, state, size, align])) => {
@@ -502,6 +530,11 @@ impl FnLower<'_, '_> {
         ret: velt_sema::hir::TyId,
     ) -> Operand {
         let ops: Vec<Operand> = args.iter().map(|a| self.expr(a)).collect();
+        // `queueMicrotask` / a `then` callback's turn, and a `resolve` called later, observe
+        // `await` steps (await_order.rs `OBSERVERS`, #3081).
+        if let Some(s) = (super::async_fn::await_order::OBSERVERS.iter()).find(|s| **s == symbol) {
+            self.cx.sched_observers.insert(s);
+        }
         let arg = |i: usize| {
             ops.get(i)
                 .cloned()
@@ -566,4 +599,18 @@ impl FnLower<'_, '_> {
         let rt = self.sub(ret);
         self.owned_result(Some(d), rt)
     }
+}
+
+/// The runtime function (await_order.rs `OBSERVERS`) whose job the executor in Velt's hook for
+/// `r` does, when `r` is one that can make a task's await word non-0.
+fn observer_of(r: Rt) -> Option<&'static str> {
+    Some(match r {
+        Rt::FutStart => "velt_rt_fut_start",
+        Rt::FutStartRejecting => "velt_rt_fut_start_rejecting",
+        Rt::FutDetach => "velt_rt_fut_detach",
+        Rt::Race => "velt_rt_race",
+        Rt::RaceOk => "velt_rt_race_ok",
+        Rt::AllOrReject => "velt_rt_all_or_reject",
+        _ => return None,
+    })
 }

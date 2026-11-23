@@ -1,0 +1,164 @@
+// velt/crypto (tests): ECDSA signing on P-384 (`p384Sign`), run by `velt test std/`: RFC 6979
+// §A.2.6's deterministic signatures for SHA-384, signatures computed independently (Python: the
+// RFC's nonce with HMAC-SHA384 and affine arithmetic) for other digests and keys, and signatures
+// that `p384Verify` accepts.
+import { describe, expect, it } from "velt/test";
+import { hexDecode, hexEncode } from "velt/encoding";
+import { p384Verify } from "velt/crypto/ecdsa_p384";
+import { p384Sign } from "velt/crypto/ecdsa_p384_sign";
+import { p384PrivateKey, p384PublicKey } from "velt/crypto/p384_ecdh";
+import { sha384 } from "velt/crypto/sha512";
+import { utf8Encode } from "velt/encoding/utf8";
+
+// RFC 6979 §A.2.6: the key, its public key, and the SHA-384 signatures of "sample" and "test".
+const KEY =
+  "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5";
+const PUBLIC =
+  "04ec3a4e415b4e19a4568618029f427fa5da9a8bc4ae92e02e06aae5286b300c64def8f0ea9055866064a254515480bc" +
+  "138015d9b72d7d57244ea8ef9ac0c621896708a59367f9dfb9f54ca84b3f1c9db1288b231c3ae0d4fe7344fd25332647" +
+  "20";
+const SAMPLE_SIG =
+  "306602310094edbb92a5ecb8aad4736e56c691916b3f88140666ce9fa73d64c4ea95ad133c81a648152e44acf96e36dd" +
+  "1e80fabe4602310099ef4aeb15f178cea1fe40db2603138f130e740a19624526203b6351d0a3a94fa329c145786e679e" +
+  "7b82c71a38628ac8";
+const TEST_SIG =
+  "30660231008203b63d3c853e8d77227fb377bcf7b7b772e97892a80f36ab775d509d7a5feb0542a7f0812998da8f1dd3" +
+  "ca3cf023db023100ddd0760448d42d8a43af45af836fce4de8be06b485e9b61b827c2f13173923e06a739f040649a667" +
+  "bf3b828246baa5a5";
+
+// (key, digest or "-" for none, signature): the RFC's key with a SHA-256 and a SHA-512 digest
+// of "sample", digests of all ones, of no bytes, of n and of n - 1; the keys 1 and n - 1; and
+// random keys and digests; and two whose r or s is short.
+function computed(): string[][] {
+  return [
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf",
+      "3065023100e454a531a5674fd24dbf9503f732782c50e93ef0fd188a6fe41af1f30c9451330ff226d61e89cb0b11e62fdc501e76a402306243d35650cba065f0a4001ad0ca4ef03160665e9237815c1bb2a576150446e5622228984b84f41827db839b6be132ad",
+    ],
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "39a5e04aaff7455d9850c605364f514c11324ce64016960d23d5dc57d3ffd8f49a739468ab8049bf18eef820cdb1ad6c9015f838556bc7fad4138b23fdf986c7",
+      "306502301b583816897af65001e3cb3b39c34b6da1d1a20fda684068ca3dba4449464c79ca23154aaeff058356c82e3a3d42d417023100a3b9dc03e6df63cc551ebca6e8d63c27d7c411c8854e79947028e306e406a80727dd1e6f29be7ef0dcc1c1301e93fc06",
+    ],
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "3066023100d80ff7df60149e5cedb63fac36c3f0c16c47fbf93d40090804dbbaa45249ba8c11475f1b5844cdad9e2dd9528077dab8023100d3e3b8ed8c6bef24339475f39c4223a498647c34f90a5ef26f6f6739bd81a8f9b9acf711f6c2a887a18c64ca2bda854e",
+    ],
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "-",
+      "306402302d19392d60736ab6f511a7f4fe4db59b123b333bfb6a87b0b5abbe8bee6e177fbf42b91125671eb499c00a1e6be0c9b0023033e7f3906fa618b2c62eb8d638313f710f47b86a09d1a47fd38d1856c0dc2a1ca08a00e01a1b684ac13d5e3dbe31ce97",
+    ],
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973",
+      "306402302d19392d60736ab6f511a7f4fe4db59b123b333bfb6a87b0b5abbe8bee6e177fbf42b91125671eb499c00a1e6be0c9b0023033e7f3906fa618b2c62eb8d638313f710f47b86a09d1a47fd38d1856c0dc2a1ca08a00e01a1b684ac13d5e3dbe31ce97",
+    ],
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52972",
+      "30650231009343bbc6ca594091bfdc6ea2e8de41bd74c63c1d7ef3eac9131ab2afa5da6d95daec2099ac02bb88bd54825b0cac70a4023008cbc6f43f4975c42fcb5bb0154815287d6dc71b9561e882e090c15b9eb78450dee67663b6fbdddea0141a28192cf737",
+    ],
+    [
+      "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+      "5dbcbedb00d131a29e0593f976f2b43794293923919ad42766de817fec824a6262799fec8d04cb9b17c48e8eae912658",
+      "3065023100d86ed5494483a78f1b3ec48a9da1f47c5d8bc5a65e7194edddb2e64fef4dd3cfe1f414fce76b007c6ab78e4da9448da2023073f089a8e27d2bf3941796c5b6e8f4b0192f556cb46d7df4188e0dfb8a2c83e5b1a936d7f0875f9d7e1e93a1733564be",
+    ],
+    [
+      "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52972",
+      "6df443e777127d9b78c93bcdb607eaa6c429a460336d4676243e42bb1b76511a5ae81604a44d8f39e6520765998b9149",
+      "306402303e3bbf3a3ed8e41de73ccf8013acf17b78f27cc3f8fbfb53829bb0bc6ac893d6a16bdfdce1f8945c052d76438db65ead02304b1961c4d14796c7cb34fcc591fcf3b42d4d45ea8bf130ef9022f043019f90650a06e582692f1486bc0efe5f2bbb9871",
+    ],
+    [
+      "a26a7bfcf51a7b45065ccd08ef9cfe25c46f8780bdb24532883f678ac85d3e870c4705de623958a8d7e77b64a4ff0d2f",
+      "7467c35f4c1b423e06ce6870f4b6283f3aceb31f49d3edb290d3ee8e1ccd9a3b8b942a611cd609f27972ab48298a120e",
+      "306502301bfca406edc387dea32fc1f2721d486180c88e27f96eac55281a5e22ee6317baa615196bda378e74db9fe1e8aed9c507023100a40ccc22f3f864afe8073d7dfcd19ee7317b9a58c852d7a63253e5f17d68b3eaf5e415b22ad372dcc9797cd8b00dea39",
+    ],
+    [
+      "94f7b3f7b62f1e12bada78d09420ddf2b93d6dfcace2007248f85dcbd4d9c5252eb1616a726c1f5464d4af1422db91d1",
+      "076944a20cdc7c6ea6addeea26fd1a65d73ee4de036b6c7e5b36437c62b711e0515e2367ebcbdce779e30e6f38ff3d91",
+      "3065023100ae93d8f99eccaedebe37c3d6c95190a1f4cf9d909e2ae68b93ca5933c04a170a02b2bb15bc081ccb879dd34c09862157023011f7e3e68fac9f132a61d1fa7725b85961ecdfbde92b9302b921f7f702cf3884b82bb60d4422f6fe865dfaa4928e7adb",
+    ],
+    [
+      "7ff52902fba8a814f0efbca52febd01bf0b991c8bb99f33d4b5009f5332ba39f40e17ad5477b446567baf4d09af211b4",
+      "675f10e18a295e2d0959a572730cfb713aaa52e3649fa4cc623649b08f5f90c2216b013b2bfd1655e0fa329dc836c075",
+      "3065023072db4b8da1ceba40d4713b89dc608af3fd9c303fdea8e7762161867b749d04bf724ce1bdf55114ce19ce56df789d89ad023100ac9bb2161615a3022aef45c1f79d3ccfbb3bc9c0eacf0c3fc6872c114b90fa281925c50785b3ae5d716e90f0bf5289dd",
+    ],
+    [
+      "06577990b4e9148598d8ce68df7bb3739d20dba64c059ae00cf80bb1bc8d2a944ebb6703455b14d9902214f6655e23ae",
+      "57b79076dc44eae86fb897f8cc88c6410e4fc553908959e8897d3e2895dbf13c2b3f133b8b06fea218faabe41a7f4007",
+      "3065023100f76dfa5cd1bfe58fad2bf6cff3def6ba25827659498497e59406a3d4d5eec8c987c3f97599718253e7f69eb31362ac9702301354b95af5f114d3814a25d87958e3de2a7aa27785493be043beea57765daa16baebf0830c3630021386f945171f5553",
+    ],
+    [
+      "2976c6a0652dca851ea4613ac501ccd6436b80bcd9221441a153f4ed00ae170e142445f16ee59270f03ae2e0850b1f27",
+      "365eac56a88bc446d9c6e7f239ae37428307b25d11c8cc5c8b85772b600bbe7749ed4441f7b9c7d7dffc3934a4b944ba",
+      "3065023100e1da8a12257d36428edfe47927287318a4d8fdc8c569dbefcbd4a9d9e62b20ebb75ad8b9dfff4091446c78268866815902304ee48264ffe0e95fdd48dae850950b39fa2dd7b4541125ad38dc5bfd4f7847b0008fc92a5d08f4136b4ca47d12b80776",
+    ],
+    [
+      "33e8bea10fcf0cbe8371a17788eaff2b31ded8c3488ffa4bbc26299a03af42fc723a676cd2c4d2fb1cb71c653fa458e1",
+      "8fe328963a78901e2d15dc802c3c38b8121c55db5f8c973990e655537699fad5c6c0a8b500451d65e6ff1266bc781553",
+      "306402301d274e2da3f0a035a66c97c359692ad96c5c1c99c266a7a8f5e54a9a20478220e0e8ab929158975c657f5333a5c9fec90230136b449910839b43939dfc9ce5c125a45eec546e85b7883bb8b6fca33eca02a15cb2d316b90ebfc6e9ff49de5bb5cfda",
+    ],
+    // An r, and an s, with a leading zero byte.
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "3a77f383b905bd6a0e9d7f21e4693b7748efbbb85fdff3b01943a0f5d0f582fdc6adf0c9446b08164b61e227a6cf103d",
+      "30630230409e560da9c599548f5e90c1b5e68290bd6af6bcae4835e0869524bc2075debc1479cc8483949b24bc93af768f0a5fea022f6d28b307e91aaa4637cbee0720eecbab5be58886d06bc4e945bafd2924e997778417586b9c35d4a048a8b5918e8da0",
+    ],
+    [
+      "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5",
+      "206eff18124aa97d84d5cc3b8269164b5946922319c8ac089682596b31c37d101cb4900755491cc31c6cd90b45dcf45e",
+      "3064022f66aee40d15e5aaab9e72a5556e4782bcc1ea0642f1cc18db060c4055fc205d4cf053ed33e2f30c30d548892e3ce997023100a039f7d4c2d15e7280ce644c1c66bd6d03b7190fdf4e69864ce9e07ffbebef1f221175c5c87b7553f9ffd8dbb7e636fa",
+    ],
+  ];
+}
+
+describe("p384Sign", () => {
+  it("gives RFC 6979's signatures for SHA-384", () => {
+    const key = hexDecode(KEY);
+    expect(hexEncode(p384PublicKey(key))).toBe(PUBLIC);
+    expect(hexEncode(p384Sign(key, sha384(utf8Encode("sample"))))).toBe(SAMPLE_SIG);
+    expect(hexEncode(p384Sign(key, sha384(utf8Encode("test"))))).toBe(TEST_SIG);
+  });
+
+  it("gives the signatures computed independently, which verify", () => {
+    for (const c of computed()) {
+      const key = hexDecode(c[0]);
+      const digest = c[1] == "-" ? [] : hexDecode(c[1]);
+      const sig = p384Sign(key, digest);
+      expect(hexEncode(sig)).toBe(c[2]);
+      expect(p384Verify(p384PublicKey(key), digest, sig)).toBe(true);
+    }
+  });
+
+  it("signs what p384Verify accepts, and nothing else verifies", () => {
+    for (let i = 0; i < 6; i++) {
+      const key = p384PrivateKey();
+      const digest = sha384(utf8Encode(`message ${i}`));
+      const sig = p384Sign(key, digest);
+      expect(p384Verify(p384PublicKey(key), digest, sig)).toBe(true);
+      const other = sha384(utf8Encode(`message ${i + 1}`));
+      expect(p384Verify(p384PublicKey(key), other, sig)).toBe(false);
+      expect(p384Verify(p384PublicKey(p384PrivateKey()), digest, sig)).toBe(false);
+    }
+  });
+
+  it("uses the leftmost 384 bits of a longer digest", () => {
+    const key = hexDecode(KEY);
+    const digest = sha384(utf8Encode("sample"));
+    const longer = digest.concat([1, 2, 3, 4]);
+    expect(hexEncode(p384Sign(key, longer))).toBe(SAMPLE_SIG);
+  });
+
+  it("refuses a key out of range", () => {
+    const n =
+      "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
+    for (const k of ["00".repeat(48), n, "ff".repeat(48), "01".repeat(47), "01".repeat(49), ""]) {
+      expect(() => p384Sign(hexDecode(k), Buffer.alloc(48))).toThrow(
+        "P-384 needs a 48-byte private key between 1 and n - 1",
+      );
+    }
+  });
+});

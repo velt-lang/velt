@@ -1,0 +1,87 @@
+// check: no leaks
+// An argument is read before the arguments after it run. A later argument that creates a
+// closure a callee runs at once (`new Runner(() => { s = ... })`, an object literal whose method
+// a callee calls) may assign a variable read by an earlier argument (or an earlier part of a
+// template literal), so that one is held first,
+// as in JS, where the callee keeps the value it was passed. A `new` or a literal whose closures
+// assign nothing changes no variable, and the earlier argument is passed where it is.
+// Each case has classes of its own: a type another case shares would be reference counted in
+// every case.
+
+class Runner {
+  tag = "r";
+  constructor(f: () => void) {
+    f();
+  }
+}
+
+function showText(s: string, r: Runner): void {
+  console.log("text", s);
+}
+
+// A closure that assigns a variable it borrows (it does not escape).
+function borrowed(n: number): void {
+  let s = `before ${n}`;
+  showText(s, new Runner(() => { s = `after ${n}`; }));
+  console.log("now", s);
+}
+
+// The same in a template literal: its parts are read in order.
+function template(n: number): void {
+  let s = `before ${n}`;
+  const t = `${s} ${new Runner(() => { s = `after ${n}`; }).tag}`;
+  console.log(t, s);
+}
+
+class Box1 { constructor(public v: string) {} }
+class Keeper {
+  tag = "k";
+  f: () => void;
+  constructor(f: () => void) {
+    this.f = f;
+    f();
+  }
+}
+
+function showKept(b: Box1, k: Keeper): void {
+  console.log("kept", b.v);
+}
+
+// A variable in a cell (a closure made before the call assigns it), assigned through a closure
+// the `new` stores and runs.
+function inCell(): void {
+  let b = new Box1("old");
+  const reset = (): void => { b = new Box1("new"); };
+  showKept(b, new Keeper(() => reset()));
+  console.log("now", b.v);
+  reset();
+}
+
+// A variable in a cell, assigned by the closure the `new` stores: read through its cell, so held.
+function templateCell(n: number): void {
+  let s = `before ${n}`;
+  const t = `${s} ${new Keeper(() => { s = `after ${n}`; }).tag}`;
+  console.log(t, s);
+}
+
+class Box2 { constructor(public v: string) {} }
+type Hooks = { run: () => void };
+
+function showRun(b: Box2, h: Hooks): void {
+  h.run();
+  console.log("run", b.v);
+}
+
+// An object literal holding the closure; the callee runs it after the earlier argument is read.
+function literal(): void {
+  let b = new Box2("first");
+  const reset = (): void => { b = new Box2("second"); };
+  showRun(b, { run: () => reset() });
+  console.log("now", b.v);
+}
+
+borrowed(1);
+template(2);
+inCell();
+templateCell(4);
+literal();

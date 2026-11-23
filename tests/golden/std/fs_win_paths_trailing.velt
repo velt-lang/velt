@@ -1,0 +1,46 @@
+// requires: windows symlinks
+// rename, copyFile, symlink, readlink and realpath given a path with separators after it, as Node
+// takes them on Windows: a path read (rename's and copyFile's source, readlink's and realpath's
+// path) names the file; a path made (their destinations, symlink's link) is made without them.
+// The expected output is Node 22's on Windows (#3466's platform review: every case succeeds).
+import * as fs from "velt/fs";
+
+function attempt(what: string, f: () => string) {
+  try {
+    console.log(what, f());
+  } catch (e) {
+    console.log(what, e.code);
+  }
+}
+
+function main() {
+  const d = "velt_fs_win_paths_trailing_tmp";
+  fs.rmSync(d, { recursive: true, force: true });
+  fs.mkdirSync(d);
+  fs.writeFileSync(`${d}/f.txt`, "file");
+  fs.writeFileSync(`${d}/r.txt`, "to rename");
+  fs.symlinkSync("f.txt", `${d}/filelink`);
+
+  attempt(
+    "realpath f.txt/:",
+    () => (fs.realpathSync(`${d}/f.txt/`).endsWith("f.txt") ? "ok" : "?"),
+  );
+  attempt("readlink filelink/:", () => fs.readlinkSync(`${d}/filelink/`));
+  attempt("rename r.txt/:", () => {
+    fs.renameSync(`${d}/r.txt/`, `${d}/r2.txt`);
+    return fs.readFileSync(`${d}/r2.txt`);
+  });
+  attempt("copyFile from f.txt/:", () => {
+    fs.copyFileSync(`${d}/f.txt/`, `${d}/c1.txt`);
+    return fs.readFileSync(`${d}/c1.txt`);
+  });
+  attempt("copyFile to c2.txt/:", () => {
+    fs.copyFileSync(`${d}/f.txt`, `${d}/c2.txt/`);
+    return fs.readFileSync(`${d}/c2.txt`);
+  });
+  attempt("symlink to sl/:", () => {
+    fs.symlinkSync("f.txt", `${d}/sl/`);
+    return fs.readlinkSync(`${d}/sl`);
+  });
+  fs.rmSync(d, { recursive: true, force: true });
+}

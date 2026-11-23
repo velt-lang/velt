@@ -5,13 +5,28 @@
 // then, its node dropped as its owner drops it, unless the original handed to another task is
 // still held there (whichever of the two goes second frees it).
 
-import { fnAddress, stateDrop } from "velt/lang/intrinsics";
+import { fnAddress, inline, stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as sh from "./sched_share";
 import * as t from "./sched_task";
 import * as away from "./sched_share_away";
+import * as ls from "./sched_share_listed";
 import * as wt from "./sched_share_wait";
+
+/**
+ * Holder `f` of the promise of hub `h` is dropped (sched_share.velt `holderDrop`): its role goes,
+ * and the node may be left to its holders only now (sched_share_listed.velt `relist`).
+ */
+@inline("always")
+export function dropped(h: usize, f: usize): void {
+  const more = m.load(h + sh.H_ROLES) > 1;
+  release(h, f);
+  if (more) {
+    // The hub stays: another role holds it.
+    ls.relist(h);
+  }
+}
 
 /** Holder `f` of the promise of hub `h` gives up its role (dropped, or handed over). */
 export function release(h: usize, f: usize): void {
@@ -73,7 +88,7 @@ export function free(h: usize): void {
   m.st(f + 8, fnAddress(nd.nodeDrop));
   const len = m.ld(h + sh.H_WLEN);
   for (let i: usize = 0; i < len; i++) {
-    m.wakerDrop(m.ld(wt.entry(h, i) + 8));
+    ls.dropWaker(wt.entry(h, i));
   }
   const cap = m.ld(h + sh.H_WCAP);
   if (cap !== 0) {

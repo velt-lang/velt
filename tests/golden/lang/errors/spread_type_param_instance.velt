@@ -1,0 +1,15 @@
+// A spread of a value of a type parameter into a rest of `unknown` (#943), at an instantiation
+// where the value is a union of an array and a tuple type: lowering has no one shape to take
+// its elements by, so the instantiation is refused where the spread is written. tsc accepts it
+// (Node passes the elements the value has), so this is Velt's limitation.
+function show(...xs: unknown[]): number {
+  return xs.length;
+}
+
+function via<A extends unknown[]>(args: A): number {
+  return show(...args);
+}
+
+const pair: [string, string] = ["a", "b"];
+const pick: number[] | [string, string] = pair;
+console.log(via<[number]>([1]), via<number[] | [string, string]>(pick));

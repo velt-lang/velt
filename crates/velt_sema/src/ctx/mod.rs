@@ -109,15 +109,15 @@ pub(crate) struct Ctx<'m> {
     pub def_spans: DefTable<Span>,
     /// The check is by units (`CheckOptions::units`, `crate::units`).
     pub units: bool,
-    /// What each generic function of a finished unit needs of the types it is given, for `json`'s
-    /// check (converted, printed or read without a lock through a type parameter): that unit's
-    /// summary, which a later unit's check starts from (`crate::units`).
-    pub json_needs: crate::json::JsonNeeds,
+    /// What the passes after the bodies keep of a finished unit, which a later unit's check
+    /// starts from (`crate::units`).
+    pub unit_sums: crate::units::Summaries,
     /// Which part of a check by units this context checks (`crate::units`).
     pub units_stage: crate::units::Stage,
     /// Where the unit being checked starts (`crate::units`): the passes after the bodies take
     /// their functions from here ([`Ctx::unit_fns`]). 0 in a whole-program check.
     pub unit_base: u32,
+    pub wasm32: bool, // the target is wasm32 (`CheckOptions::wasm32`)
     pub scopes: Vec<ModuleScope>,
     /// Exports of `std/prelude/*` modules, visible everywhere.
     pub prelude: FxHashMap<String, Item>,
@@ -334,7 +334,7 @@ pub(crate) struct Ctx<'m> {
     /// ownership pass track `FnInfo::modified_params`.
     pub frozen_reads: bool,
     /// Gated functions found so far (`body::gated`), for `hir::Program::cpu_targets`.
-    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTarget>,
+    pub cpu_targets: FxHashMap<DefId, crate::hir::CpuTargets>,
     /// Dispatch groups for error types (`crate::throws`), built on first use.
     pub groups: Option<crate::throws::Groups>,
     /// Bodies that may hold object literals implementing interfaces (`body::literal_hosts`).
@@ -604,8 +604,9 @@ impl<'m> Ctx<'m> {
             def_spans: DefTable::default(),
             units: false,
             unit_base: 0,
-            json_needs: Default::default(),
+            unit_sums: Default::default(),
             units_stage: crate::units::Stage::Both,
+            wasm32: false,
             scopes,
             prelude: FxHashMap::default(),
             prelude_type_keys: false,

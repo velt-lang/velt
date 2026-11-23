@@ -303,6 +303,15 @@ fn an_operator_method_note_names_its_symbol() {
     );
 }
 
+/// `weak T` is reported wherever it is written; `weak` as a name is not.
+#[test]
+fn weak_type_is_reported() {
+    let src = "class Node {\n  parent: weak Node | null = null;\n  weak = 1;\n}\ntype weak = number;\nconst w: weak = 2;\nlet p: weak Node | null = null;\n";
+    let findings = lint_syntax(Path::new("weak.velt"), src);
+    let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["weak-type", "weak-type"]);
+}
+
 /// `unsafe` is valid Velt only in a native package, so it has no case file.
 #[test]
 fn unsafe_code_is_reported() {

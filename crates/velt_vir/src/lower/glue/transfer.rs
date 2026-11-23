@@ -149,6 +149,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.panic_msg(msg);
             return;
         }
+        if let Some(name) = self.cx.weak_holder(ty) {
+            // Its `weak` fields hold slots of this task's weak core, which neither a move nor a
+            // copy may take to another thread. Sema rejects the visible cases (velt_sema
+            // weak_threads.rs); this is one in a function value's environment, behind an
+            // `unknown`, or in a subclass object behind its base class's type.
+            let msg = format!(
+                "a `{name}`, which has a `weak` field, cannot go to another thread (`spawn`, a channel, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: its `weak` fields belong to the task that made them"
+            );
+            self.check_if_tagged(obj, |lw, _| lw.walk_panic(&msg));
+            self.panic_msg(&msg);
+            return;
+        }
         self.check_if_tagged(obj, |lw, o| {
             let op = lw.operand_place(o, Ty::Ptr);
             lw.panic_if_strict_object(&op, ty);

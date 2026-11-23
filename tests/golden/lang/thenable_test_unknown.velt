@@ -1,7 +1,7 @@
 // The thenable test's own refusals, in a program that declares no member named `then` (so no
-// other check refuses it first, #379): a union that may be `undefined` (whose `.then`
-// throws in Node), and a cast to `unknown` (tsc refuses `.then` of an `unknown`). tsc accepts the
-// first: that refusal is Velt's limitation, recorded here.
+// other check refuses it first, #379): `.then` of an `unknown`, which tsc refuses too. A union
+// that may be `undefined` cast to `any` is accepted now, as tsc accepts it: a promise can be held
+// as `any` (#924).
 function maybe(r: Promise<number> | (() => number) | undefined): boolean {
   return typeof (r as any).then === "function";
 }

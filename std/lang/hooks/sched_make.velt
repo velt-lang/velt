@@ -12,7 +12,7 @@ export { refuseInRead };
 
 /**
  * A new task of `poll` and `drop` with a result of `rsize` bytes (dropped with `rdrop`) and room
- * for a state of `size` bytes after it, holding `refs` references, scheduled but not queued; the
+ * for a state of `size` bytes (aligned to `align`) after it, holding `refs` references, scheduled but not queued; the
  * caller sets its join slot's word (`T_JOIN_STATE`) and transfer glue (`T_TRANSFER`).
  */
 @inline("always")
@@ -24,8 +24,12 @@ export function task(
   rdrop: usize,
   size: u64,
   refs: u64,
+  align: u64 = 8,
 ): usize {
-  const bytes = stateAt(rsize) + (size as usize);
+  // A state aligned beyond the block's 8 bytes (an `@align(32)` struct held across an `await`)
+  // starts at the next multiple of its alignment: room for that, and `T_ROOT` points there.
+  const pad: usize = align > 8 ? (align as usize) - 8 : 0;
+  const bytes = stateAt(rsize) + (size as usize) + pad;
   // A task started inside an `RwLock`'s `read` callback stops the program (sched_read.velt).
   refuseInRead();
   const k = m.alloc(bytes);
@@ -36,7 +40,7 @@ export function task(
   m.st(k + t.T_NEXT, 0);
   m.st(k + t.T_POLL, poll);
   m.st(k + t.T_DROP, drop);
-  m.st(k + t.T_ROOT, k + stateAt(rsize));
+  m.st(k + t.T_ROOT, alignedRoot(k + stateAt(rsize), align));
   m.st(k + t.T_RESULT_DROP, rdrop);
   m.st(k + t.T_RESULT_SIZE, rsize as usize);
   m.st(k + t.T_JOINER, 0);
@@ -50,12 +54,26 @@ export function task(
   m.st(k + t.T_UNHANDLED, 0);
   m.st(k + t.T_BYTES, bytes);
   m.st(k + t.T_TIMERS, 0);
+  m.st(k + t.T_YIELDS, 0);
   m.st(k + t.T_HOME, e);
   // No handle yet, and not a C thread's (`J_FOREIGN`, which a task's end reads): spawns set it.
   m.st(k + t.T_JOIN_STATE, 0);
   m.st(k + t.T_JOIN, m.ld(e + t.E_JOIN_VT));
   m.st(k + t.T_JOIN + 8, m.ld(e + t.E_JOIN_VT + 8));
   return k;
+}
+
+/**
+ * Where a state aligned to `align` starts in a task block: `at` (a multiple of 8, where an
+ * 8-aligned state starts) rounded up to that alignment, within the `align - 8` bytes `task` adds.
+ */
+@inline("always")
+export function alignedRoot(at: usize, align: u64): usize {
+  if (align <= 8) {
+    return at;
+  }
+  const mask = (align as usize) - 1;
+  return (at + mask) & ~mask;
 }
 
 /** Where a task's state starts, after a result slot of `rsize` bytes. */

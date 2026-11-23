@@ -38,6 +38,10 @@ extend<K, V> Record<K, V> {
     if (a != null) {
       const g = a[0];
       const s = a[1];
+      if (a[3] && g != null) {
+        const v: any = g();
+        return { value: v, writable: s != null, enumerable: false, configurable: a[2] };
+      }
       const get: any = g == null ? undefined : g;
       const set: any = s == null ? undefined : s;
       return { get: get, set: set, enumerable: false, configurable: a[2] };

@@ -8,7 +8,7 @@
 mod ext;
 pub mod wide;
 
-pub use ext::{Ext, ExtOp};
+pub use ext::{CpuArch, Ext, ExtOp, ExtSet};
 
 use crate::vir::Ty;
 
@@ -348,26 +348,55 @@ pub enum SimdCall {
     /// the caller runs only where the CPU has the extension (std/simd/sha.velt and clmul.velt check
     /// `Has` first).
     Inst(ExtOp),
-    /// `velt_simd_has_<ext>() -> bool`: whether the CPU has the extension (the runtime's flag;
-    /// `false` on another architecture, on wasm and under Cranelift).
+    /// `velt_simd_has_<feature>() -> bool`: whether the build guarantees the feature: code built
+    /// for a CPU that has it (`--cpu`), or gated on a set that covers it (`Function::target`).
+    /// `false` everywhere else, including under Cranelift: the run-time answer is std's
+    /// (std/lang/cpu, [`SimdCall::CpuWord`]).
     Has(Ext),
+    /// `velt_simd_on_x86() -> bool` / `velt_simd_on_arm() -> bool`: whether this build can run
+    /// that architecture's checks: true for LLVM code of it, false on the other architecture, on
+    /// wasm and under Cranelift (`LowerOptions::no_cpu_extensions`), so the run-time checks std
+    /// guards with it fold away where no gated code can run. Lowering knows the `false` cases
+    /// (`lower/cpu_checks.rs`).
+    OnArch(CpuArch),
+    /// `velt_simd_cpu_word() -> u64`: the CPU's feature word, which std's start-up hook computes
+    /// (std/lang/hooks/cpu.velt) before any other Velt code runs and which never changes after:
+    /// read as invariant, so the read leaves loops. The LLVM backend keeps it in `velt_cpu_word`,
+    /// one per program (a `linkonce_odr` global of every object that reads or sets it; rt_abi.md
+    /// "CPU check"). 0 under Cranelift and on wasm, where no gated code runs.
+    CpuWord,
+    /// `velt_simd_cpu_word_set(word)`: the start-up hook's store of the word [`SimdCall::CpuWord`]
+    /// reads, once, before any read. Nothing under Cranelift and on wasm.
+    CpuWordSet,
+    /// `velt_simd_cpu_required() -> u64`: the feature word bits code built for this CPU needs
+    /// (`--cpu`; x86's in the low half, arm64's in the high half, the order of the start-up check's
+    /// lists), which std's start-up check compares with the CPU's (rt_abi.md "CPU check").
+    CpuRequired,
     /// `velt_simd_cpuid(leaf, subleaf) -> u32x4`: x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to
-    /// 3), how velt/simd computes the AES check in Velt (#2401, #2241). Zeros on every other
-    /// architecture, on wasm and under Cranelift. Pure: its answers never change.
+    /// 3), how std's start-up hook detects the CPU's features (std/lang/cpu/detect_x86.velt). On
+    /// x86-64 under Cranelift too, as a function of fixed code the module defines; zeros on every
+    /// other architecture and on wasm. Pure: its answers never change.
     Cpuid,
     /// `velt_simd_xgetbv(xcr) -> u64`: x86's `XGETBV` (EDX:EAX), extended control register `xcr`;
-    /// XCR0 says which register states the OS saves, how std checks that the AVX state FMA needs
-    /// is enabled (std/lang/math/fma_check.velt). Only where CPUID says OSXSAVE. 0 on every other
-    /// architecture, on wasm and under Cranelift. Pure.
+    /// XCR0 says which register states the OS saves, how the start-up hook knows the AVX and
+    /// AVX-512 states are enabled. Only where CPUID says OSXSAVE. On x86-64 under Cranelift too,
+    /// as [`SimdCall::Cpuid`]; 0 on every other architecture and on wasm. Pure.
     Xgetbv,
     /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
     /// (`arrayPrefetch`); never faults. Nothing under Cranelift and on wasm.
     Prefetch,
+    /// `velt_arch_<class>_<method>(…)`: an instruction of velt/arch (#3222 step 4, [`crate::arch`]),
+    /// which only a function gated on its feature calls (the verifier checks it). Only LLVM
+    /// lowers one: Cranelift never runs gated code and gives a zero.
+    Arch(crate::arch::ArchOp),
 }
 
 impl SimdCall {
     /// The operation `symbol` names, if it is a SIMD extern for a supported combination.
     pub fn of_symbol(symbol: &str) -> Option<SimdCall> {
+        if symbol.starts_with("velt_arch_") {
+            return crate::arch::ArchOp::of_symbol(symbol).map(SimdCall::Arch);
+        }
         let rest = symbol.strip_prefix("velt_simd_")?;
         if rest == "prefetch" {
             return Some(SimdCall::Prefetch);
@@ -379,7 +408,15 @@ impl SimdCall {
             return Some(SimdCall::Xgetbv);
         }
         if let Some(ext) = rest.strip_prefix("has_") {
-            return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
+            return Ext::of_symbol_suffix(ext).map(SimdCall::Has);
+        }
+        match rest {
+            "on_x86" => return Some(SimdCall::OnArch(CpuArch::X86_64)),
+            "on_arm" => return Some(SimdCall::OnArch(CpuArch::Aarch64)),
+            "cpu_word" => return Some(SimdCall::CpuWord),
+            "cpu_word_set" => return Some(SimdCall::CpuWordSet),
+            "cpu_required" => return Some(SimdCall::CpuRequired),
+            _ => {}
         }
         let (ty, op) = rest.split_once('_')?;
         if matches!(ty, "u32x4" | "u64x2" | "u8x16" | "f32x4") {
@@ -410,10 +447,14 @@ impl SimdCall {
         use Ty::{Bool, Ptr, Unit, U32, U64, V128};
         match self {
             SimdCall::Wide(lanes, op) => wide::signature(SimdCall::Vector(lanes, op).signature()),
-            SimdCall::Has(_) => (vec![], Bool),
+            SimdCall::Has(_) | SimdCall::OnArch(_) => (vec![], Bool),
+            SimdCall::CpuWord => (vec![], U64),
+            SimdCall::CpuWordSet => (vec![U64], Unit),
+            SimdCall::CpuRequired => (vec![], U64),
             SimdCall::Prefetch => (vec![Ptr], Unit),
             SimdCall::Cpuid => (vec![U32, U32], V128),
             SimdCall::Xgetbv => (vec![U32], U64),
+            SimdCall::Arch(op) => op.signature(),
             SimdCall::Inst(ExtOp::Sha1H) => (vec![U32], U32),
             SimdCall::Inst(op) => {
                 let mut params = vec![V128; op.vector_operands()];

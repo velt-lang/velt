@@ -1,0 +1,25 @@
+// `Symbol()` on memory the allocator hands out again: dozens of ~4 KiB strings are made and
+// dropped first, then 300 symbols without a description (more than two 128-record chunks of
+// std/lang/symbol/record.velt). Each must read as `Symbol()` with no description, whatever the
+// reused memory held: in the browser it comes from the compiled code's allocator, not zeroed.
+function main() {
+  let kept = 0;
+  for (let round = 0; round < 3; round++) {
+    const junk: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      junk.push("z".repeat(4000 + i));
+    }
+    kept += junk.length;
+  }
+  let bad = 0;
+  const made: symbol[] = [];
+  for (let i = 0; i < 300; i++) {
+    const s = Symbol();
+    made.push(s);
+    if (s.toString() !== "Symbol()" || s.description !== undefined) {
+      bad++;
+    }
+  }
+  console.log(kept, made.length, "bad", bad);
+  console.log(made[0].toString(), made[299].description, String(made[150]));
+}

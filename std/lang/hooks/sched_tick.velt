@@ -11,6 +11,7 @@ import * as w from "./sched_io_write";
 import * as m from "./sched_mem";
 import * as pk from "./sched_park";
 import * as q from "./sched_queue";
+import * as mv from "./sched_sleep_move";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 
@@ -72,6 +73,14 @@ function looksFor(e: usize): bool {
  */
 @noInline
 function ioTick(e: usize, b: usize): void {
+  if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+    mv.serve(e);
+  }
+  const offered = m.load(e + t.E_OFFER);
+  if (offered !== 0) {
+    // Untaken while this worker is busy (sched_spread.velt `reclaim`).
+    sp.reclaim(e, offered);
+  }
   if (m.load(e + t.E_INBOX) !== 0) {
     const mode = m.ld32(e + t.E_MODE);
     q.lock(e, mode);

@@ -39,8 +39,7 @@
 //! **Which builds.** Executables built with the std cache on (`std_cache::wanted`, so not for
 //! WebAssembly, whose programs load the module as before, nor `VELT_STD_OBJECT=0`), and `velt
 //! check`, which looks the object up as a debug build would and links nothing. Not a source
-//! generator host, nor `velt dev`'s JIT, which links nothing. Not a debug build on arm64 Linux,
-//! whose link may lack the helpers the objects' atomics call ([`debug_link_takes`]).
+//! generator host, nor `velt dev`'s JIT, which links nothing.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -123,11 +122,9 @@ impl Finder {
             return None;
         }
         let target = opts.target();
-        // A debug build links objects for the target's default CPU, where those run, and where
-        // its link has what they call ([`debug_link_takes`]).
+        // A debug build links objects for the target's default CPU, where those run.
         let cpu = match opts.release && linking {
             true => opts.cpu.clone(),
-            false if !debug_link_takes(&target) => return None,
             false if super::serve::default_cpu_runs(opts, &target) => None,
             false => return None,
         };
@@ -279,8 +276,9 @@ impl Finder {
             return None;
         }
         let cached = cache.path_of(KIND, &object_key)?;
+        let swept = self.manifests.join(SWEPT);
         let (object, pinned) = match self.linking {
-            true => pin(&cached).map(|(dir, object)| (object, Some(Arc::new(dir))))?,
+            true => pin(&cached, &swept).map(|(dir, object)| (object, Some(Arc::new(dir))))?,
             false => (cached, None),
         };
         Some(Found {
@@ -353,12 +351,18 @@ impl Finder {
 
 /// The cached object `cached` taken out of the cache's reach for this build: a hard link to it
 /// (a copy where the file system has none) in a temporary directory of the build's own, removed
-/// with the directory. `None` when it is gone already.
-fn pin(cached: &Path) -> Option<(Pinned, PathBuf)> {
+/// with the directory. `None` when it is gone already. The first pin of a process sweeps the
+/// stale pin directories when the marker `swept` says that is due ([`sweep_due`]).
+fn pin(cached: &Path, swept: &Path) -> Option<(Pinned, PathBuf)> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     static SWEPT: std::sync::Once = std::sync::Once::new();
     let temp = std::env::temp_dir();
-    SWEPT.call_once(|| sweep_stale_pins(&temp, std::time::SystemTime::now()));
+    SWEPT.call_once(|| {
+        let now = std::time::SystemTime::now();
+        if sweep_due(swept, now) {
+            sweep_stale_pins(&temp, now);
+        }
+    });
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = temp.join(format!("{PIN_PREFIX}{}-{n}", std::process::id()));
     // A new directory only this user can write to: one that is there already (left by a killed
@@ -382,6 +386,28 @@ const PIN_PREFIX: &str = "velt-hook-";
 /// any build runs.
 const STALE_PIN: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
+/// The marker beside the manifests whose time is the last sweep of stale pin directories.
+const SWEPT: &str = "swept";
+
+/// How often the stale pin directories are swept: listing the temporary directory, which can
+/// hold thousands of entries, costs a build more than the rest of its prebuilt lookups.
+const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Is a sweep due at `now`: the marker `swept` is missing or older than [`SWEEP_EVERY`]? A due
+/// sweep renews the marker first (a marker that cannot be written sweeps at every build, as
+/// before the marker).
+fn sweep_due(swept: &Path, now: std::time::SystemTime) -> bool {
+    let at = std::fs::metadata(swept).and_then(|m| m.modified());
+    if at.is_ok_and(|t| now.duration_since(t).is_ok_and(|age| age < SWEEP_EVERY)) {
+        return false;
+    }
+    if let Some(dir) = swept.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::File::create(swept).and_then(|f| f.set_modified(now));
+    true
+}
+
 /// Remove the pin directories in `temp` last changed more than [`STALE_PIN`] before `now`: a build
 /// killed between its check and its end (`kill -9`, Ctrl-C) leaves its own, holding a hard link
 /// to an object (which keeps the cache's file alive) or a copy of one. Once per process, at its
@@ -391,7 +417,8 @@ fn sweep_stale_pins(temp: &Path, now: std::time::SystemTime) {
         return;
     };
     for e in entries.flatten() {
-        if !e.file_name().to_string_lossy().starts_with(PIN_PREFIX) {
+        let name = e.file_name();
+        if !name.as_encoded_bytes().starts_with(PIN_PREFIX.as_bytes()) {
             continue;
         }
         let changed = e.metadata().and_then(|m| m.modified());
@@ -405,16 +432,6 @@ fn sweep_stale_pins(temp: &Path, now: std::time::SystemTime) {
 /// `VELT_PREBUILT_HOOKS=0`: no prebuilt objects (every hook module loaded as before).
 fn prebuilt_off() -> bool {
     std::env::var("VELT_PREBUILT_HOOKS").is_ok_and(|v| v == "0")
-}
-
-/// Whether a debug build for `target` (and `velt check`, which looks up what one would) may link
-/// prebuilt objects. Not where LLVM's code calls the outline-atomics helpers (arm64 Linux): a
-/// debug link need not have them (the shared runtime does not export them, and the bundled
-/// linker has no libgcc archive), so such a build compiles the modules into the program. A
-/// release build links the static runtime, which has them. Until debug links get the helpers too
-/// (#3315).
-fn debug_link_takes(target: &str) -> bool {
-    !velt_codegen_llvm::calls_outline_atomics(target)
 }
 
 /// The object's key: the lookup key and the hashes of the files it was compiled from.

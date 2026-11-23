@@ -22,31 +22,9 @@ const EMITTERS: &[&str] = &[
 /// The places that still name a replaced extern: (file under `crates/`, extern, uses, why). A
 /// use is the extern's name as a string literal, or its `Rt` variant (velt_vir `lower/rt.rs`,
 /// where lowering names a runtime call). Several entries of one file and extern add up.
-#[rustfmt::skip]
-const ALLOWED: &[(&str, &str, usize, &str)] = &[
-    // The runtime calls lowering can emit (`Rt` and its symbols).
-    ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_f64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_f64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_write_f64", 3, DECLARED),
-    // The fallbacks when a float hook is missing or unchecked.
-    ("velt_vir/src/lower/stringify.rs", "velt_rt_str_from_f64", 1, FALLBACK),
-    ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_f64", 1, FALLBACK),
-    ("velt_vir/src/lower/console.rs", "velt_rt_write_f64", 1, FALLBACK),
-    // Emitters with no hook in between.
-    ("velt_vir/src/lower/glue/literals.rs", "velt_rt_strbuf_push_f64", 1, FLOAT_LITERAL),
-    ("velt_vir/src/lower/any_member.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
-    ("velt_vir/src/lower/any_has.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
-    ("velt_vir/src/lower/any_proxy.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
-    ("velt_vir/src/lower/proxy_throws.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
-    // The optimizer's knowledge of the externs, which goes with their last call.
-    ("velt_opt/src/borrowed_copies/counted/mod.rs", "velt_rt_strbuf_push_f64", 1, NO_FREE),
-];
-
-const DECLARED: &str = "the `Rt` call's declaration and its symbol";
-const FALLBACK: &str = "fallback when the float hook is unchecked: #2161";
-const FLOAT_LITERAL: &str = "`console.log` of a float literal, no hook yet: #2197 PR 4";
-const NUMERIC_KEY: &str = "a numeric key of an `any` as text, no hook yet: #2197 PR 4";
-const NO_FREE: &str = "the externs whose call frees nothing (borrowed copies)";
+// None left since the float printing moved to std (#2196): each later port that leaves a fallback
+// lists it here, as `(file, extern, uses, why)`.
+const ALLOWED: &[(&str, &str, usize, &str)] = &[];
 
 fn crates() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -298,10 +276,12 @@ fn a_deleted_extern_is_named_nowhere() {
     for path in files {
         if path.ends_with(Path::new("velt_common/src/std_hooks.rs"))
             || path.ends_with(Path::new("velt_common/src/std_hooks/weak_hooks.rs"))
+            || path.ends_with(Path::new("velt_common/src/std_hooks/string_hooks.rs"))
             || path.ends_with(Path::new("velt_common/src/std_hooks/deleted.rs"))
             || path.file_name() == Some(this)
         {
-            continue; // The table (with its weak rows) and this test name them as history.
+            // The table (with its weak and string rows) and this test name them as history.
+            continue;
         }
         let Ok(src) = std::fs::read_to_string(&path) else {
             continue;

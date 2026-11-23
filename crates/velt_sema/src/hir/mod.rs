@@ -59,7 +59,9 @@ pub use intrinsic::Intrinsic;
 pub use modes::{Conversion, PassMode, UseMode};
 pub use module_state::{CConst, CGlobal, CValue, GlobalDef, ModuleState};
 pub use nothing::Nothing;
-pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
+pub use numeric::{
+    arch_check, cpu_check, cpu_check_call, CpuTarget, CpuTargets, FloatTy, IntTy, SimdTy,
+};
 pub use ops::{BinOp, Lit, LogicOp, UnOp};
 pub use pattern::{Pat, PatKind};
 pub use stmt::{Block, Stmt, StmtKind};
@@ -126,6 +128,10 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
+    /// `Ptr<T>` (velt/ffi, #3094): a C pointer to a `T`, Copy, never counted, compared by
+    /// address. One machine word, never `NULL`: `Ptr<T> | null` is the same word with 0 as `null`
+    /// (lowering's null niche). The pointee is checked where it is concrete (`c_sig::c_pointee`).
+    Ptr(TyId),
     /// A SIMD vector or mask: Copy, 16 bytes.
     Simd(SimdTy),
     /// A type operator that can't be evaluated yet because an argument it inspects is still a
@@ -245,7 +251,7 @@ pub struct Program {
     pub upcast_impls: HashMap<u32, Vec<u32>>,
     /// Gated functions (`@targetFeature`) and the CPU extension each is compiled for
     /// (#1330): lowering gives the VIR function its target.
-    pub cpu_targets: HashMap<DefId, CpuTarget>,
+    pub cpu_targets: HashMap<DefId, CpuTargets>,
     /// Names of structural types for messages: aliases' and field-only interfaces'. Additive.
     pub type_names: HashMap<TyId, String>,
     /// The generic interface methods called with type arguments of their own through tables:
@@ -399,6 +405,11 @@ pub struct LocalDef {
     /// assigns it while another still sees it. Set on the enclosing local and on each capturing
     /// closure's capture local; the variable is never moved from.
     pub boxed: bool,
+    /// Declared `weak T | null` (docs/internals/design/cycles.md "`weak T`"): `ty` is the read
+    /// type, `T | null`, with `T` a class; the variable holds its target's slot in the weak core,
+    /// 0 for `null`. Its reads are `Intrinsic::WeakRead`; its `Let` initializer and assigned
+    /// values are borrowed. Additive (#3119).
+    pub weak: bool,
     pub span: Span,
 }
 

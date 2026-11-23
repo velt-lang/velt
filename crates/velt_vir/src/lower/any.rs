@@ -14,7 +14,7 @@
 //! | 9..11 | member writes and `in` (any_set.rs, any_has.rs), when the program has them |
 //! | 12 | the weak word (weak_object.rs), when `object` is a weak key |
 //! | 13 | `AnyKeys` (any_keys.rs), when the program lists the keys of an `any` |
-//! | 14 | (unused: was the JSON writer's, now velt/encoding/json/any.velt over reflection) |
+//! | 14 | the await slot of a promise's table (any_await.rs), with the executor loaded |
 //! | 15 | `AnyDelete` (any_delete.rs), when the prelude deletes a property through `any` |
 //! | 18 | `AnyReflect` (any_reflect.rs), when the program reflects on `any` values (velt/reflect) |
 //!
@@ -195,6 +195,7 @@ impl Cx<'_> {
             let f = Const::Func(self.func(Work::Glue(Glue::AnyReflect, ty)));
             e.push((super::any_reflect::SLOT_REFLECT, f));
         }
+        e.extend(self.any_await_entry(ty));
         e
     }
 }
@@ -594,7 +595,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Store the owned temporary `o` into `out`, which takes over its ownership.
-    fn move_into(&mut self, o: Operand, out: &Place) {
+    pub(super) fn move_into(&mut self, o: Operand, out: &Place) {
         if let Operand::Copy(p) = &o {
             self.take_temp(p);
         }
@@ -752,6 +753,13 @@ impl FnLower<'_, '_> {
                 self.goto(join);
                 self.switch_to(join);
                 Operand::Copy(r)
+            }
+            // A program running no async code holds no promise, and can't build the table of
+            // one (its glue is the executor's): the `any` is no promise, the test fails.
+            None if matches!(self.cx.kind(ty), TyKind::Promise(..))
+                && !self.cx.executor_loaded() =>
+            {
+                Operand::Const(Const::Bool(false), Ty::Bool)
             }
             None => {
                 let imp = self.cx.hir.any_impl.unwrap_or(0);

@@ -29,7 +29,9 @@ use velt_common::Span;
 use crate::body::GenCopy;
 use crate::ctx::Ctx;
 use crate::dispatch::{instantiate, Dispatch, Rounds};
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
+use crate::hir::{
+    Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind as S, TyId, TyKind,
+};
 use crate::inst_sites::carry_guard;
 use crate::types::collect_params;
 
@@ -51,14 +53,70 @@ struct Found<'a, 'm> {
     task_fns: Vec<(DefId, Span)>,
     /// Closure literals passed to `with`, captures checked after the walk.
     lock_fns: Vec<DefId>,
+    /// Closure literals given to `shared(...)` or as a lock's value, which several tasks may
+    /// call: captures checked after the walk.
+    shared_fns: Vec<(DefId, Span)>,
     /// Async closures made here.
     async_fns: Vec<DefId>,
     /// Spans of `this` upcast for a base constructor (`super(...)`): not a use of the subclass
     /// as its base.
     super_receivers: FxHashSet<Span>,
+    /// Locals declared from an async call's promise (`const p = run(h)`), with that call's
+    /// arguments: a later `spawn(p)` passes them to another task as `spawn(run(h))` would.
+    promises: FxHashMap<LocalId, Vec<(TyId, Span, Option<DefId>)>>,
+}
+
+impl Found<'_, '_> {
+    /// A `spawn` argument `a` (a call, a conditional or block of calls, or a local holding a
+    /// promise): what goes to the other task.
+    fn spawned(&mut self, p: &Expr) {
+        let mut calls = vec![];
+        crate::body::expr::tasks::spawned_calls(p, &mut calls);
+        for a in calls.into_iter().flatten() {
+            self.needs.push((a.ty, Need::Cross(GenCopy::Task, a.span)));
+            if let E::Closure(n) = peel(a).kind {
+                self.task_fns.push((n, a.span));
+            }
+        }
+        if let E::Local(l, _) = &peel(p).kind {
+            for &(t, at, closure) in self.promises.get(l).into_iter().flatten() {
+                self.needs.push((t, Need::Cross(GenCopy::TaskPromise, at)));
+                if let Some(n) = closure {
+                    self.task_fns.push((n, at));
+                }
+            }
+        }
+    }
 }
 
 impl crate::visit_ref::Visit for Found<'_, '_> {
+    fn stmt(&mut self, s: &Stmt) {
+        let S::Let {
+            local,
+            init: Some(init),
+        } = &s.kind
+        else {
+            return;
+        };
+        if !matches!(self.cx.ty.kind(init.ty), TyKind::Promise(..)) {
+            return;
+        }
+        let mut calls = vec![];
+        crate::body::expr::tasks::spawned_calls(init, &mut calls);
+        let args = (calls.into_iter().flatten())
+            .map(|a| {
+                let closure = match peel(a).kind {
+                    E::Closure(n) => Some(n),
+                    _ => None,
+                };
+                (a.ty, a.span, closure)
+            })
+            .collect::<Vec<_>>();
+        if !args.is_empty() {
+            self.promises.insert(*local, args);
+        }
+    }
+
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Call {
@@ -72,6 +130,20 @@ impl crate::visit_ref::Visit for Found<'_, '_> {
                     self.lock_fns.push(*n);
                 }
             }
+            // `x.clone()`: a weak collection or `weak` field its written type hides (through an
+            // interface value, a base class or `unknown`) cannot be copied either. A generic
+            // receiver is left to the clone glue's panic (velt_vir glue/clone.rs): following std's
+            // generic clones would instantiate every body of every program that clones.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Clone),
+                args,
+            } => {
+                if let [x] = args.as_slice() {
+                    if !is_generic(self.cx, x.ty) {
+                        self.needs.push((x.ty, Need::Cross(GenCopy::Clone, e.span)));
+                    }
+                }
+            }
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::SharedNew),
                 args,
@@ -79,21 +151,26 @@ impl crate::visit_ref::Visit for Found<'_, '_> {
                 if let [x] = args.as_slice() {
                     self.needs
                         .push((x.ty, Need::Cross(GenCopy::Shared, x.span)));
+                    if let E::Closure(n) = peel(x).kind {
+                        self.shared_fns.push((n, x.span));
+                    }
+                }
+            }
+            // A lock's value is used by the tasks that take the lock, each on its own thread.
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::MutexNew | Intrinsic::RwLockNew),
+                args,
+            } => {
+                if let Some(E::Closure(n)) = args.first().map(|x| &peel(x).kind) {
+                    self.shared_fns.push((*n, args[0].span));
                 }
             }
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::Spawn),
                 args,
             } => {
-                let mut calls = vec![];
                 if let Some(p) = args.first() {
-                    crate::body::expr::tasks::spawned_calls(p, &mut calls);
-                }
-                for a in calls.into_iter().flatten() {
-                    self.needs.push((a.ty, Need::Cross(GenCopy::Task, a.span)));
-                    if let E::Closure(n) = peel(a).kind {
-                        self.task_fns.push((n, a.span));
-                    }
+                    self.spawned(p);
                 }
                 // What the task's thread hands back: its result and the error it throws.
                 if let TyKind::Promise(t, err) = self.cx.ty.kind(e.ty) {
@@ -134,12 +211,22 @@ impl crate::visit_ref::Visit for Found<'_, '_> {
                     self.super_receivers.insert(recv.span);
                 }
             }
+            // An async closure may run as a task on another thread. A generator closure, async
+            // or not, makes generators, which never leave their thread (velt_vir
+            // glue/transfer.rs panics for one), so what it captures stays on this task.
             E::Closure(n) if !self.std && self.cx.fn_info(*n).is_async => {
                 self.async_fns.push(*n);
             }
             E::ToDyn { expr, impl_index } => {
                 if let Some(imp) = self.cx.impls.get(*impl_index as usize) {
                     self.needs.push((expr.ty, Need::Source(imp.iface)));
+                    // An `unknown` is made by the `any` table: what it may hold is recorded
+                    // under `unknown` too, which is what a crossing `unknown` names.
+                    if let TyKind::Dyn(d, _) = self.cx.ty.kind(e.ty) {
+                        if *d != imp.iface {
+                            self.needs.push((expr.ty, Need::Source(*d)));
+                        }
+                    }
                 }
             }
             E::Upcast(inner) if !self.super_receivers.contains(&e.span) => {
@@ -168,16 +255,35 @@ fn peel(mut e: &Expr) -> &Expr {
     }
 }
 
-/// The captures of closure `n`: type, name and where the captured variable is declared.
-pub(crate) fn captures(cx: &Ctx, n: DefId) -> Vec<(TyId, String, Span)> {
+/// The captures of closure `n`: type, name, where the captured variable is declared, and whether
+/// it is a `weak` variable (whose slot belongs to this task's weak core, whatever its type).
+pub(crate) fn captures(cx: &Ctx, n: DefId) -> Vec<(TyId, String, Span, bool)> {
     match &cx.defs[n.0 as usize] {
         Some(Def::Fn(f)) => f
             .captures
             .iter()
             .map(|c| &f.body.locals[c.inner.0 as usize])
-            .map(|l| (l.ty, l.name.clone(), l.span))
+            .map(|l| (l.ty, l.name.clone(), l.span, l.weak))
             .collect(),
         _ => vec![],
+    }
+}
+
+/// Record the crossing `what` makes of closure `n`'s capture of type `t` (at `at`); a `weak`
+/// variable's is reported at once.
+fn capture_crossing(
+    cx: &mut Ctx,
+    own: &mut Vec<(TyId, Need)>,
+    (t, weak): (TyId, bool),
+    what: GenCopy,
+    at: Span,
+) {
+    match weak {
+        true => {
+            let d = crate::body::weak_capture_error(&what, at);
+            cx.error(d);
+        }
+        false => own.push((t, Need::Cross(what, at))),
     }
 }
 
@@ -192,12 +298,20 @@ fn is_generic(cx: &Ctx, t: TyId) -> bool {
 fn checked_where_written(what: &GenCopy) -> bool {
     !matches!(
         what,
-        GenCopy::TaskFn(_) | GenCopy::LockFn(_) | GenCopy::TaskResult | GenCopy::TaskError
+        GenCopy::TaskFn(_)
+            | GenCopy::LockFn(_)
+            | GenCopy::SharedFn(_)
+            | GenCopy::TaskResult
+            | GenCopy::TaskError
+            | GenCopy::TaskPromise
     )
 }
 
 /// `recorded`: the crossings `ownership::check_locked` found.
 pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
+    // In a check by units, std's code the program has: a conversion of a weak-holding class in a
+    // std module the program never loads makes nothing it runs (`lazy_std::walks`).
+    crate::body::lazy_std::prepare_walk(cx);
     // Each function's crossings and conversions.
     let sends = cx.channel_sends();
     let mut own: FxHashMap<DefId, Vec<(TyId, Need)>> = FxHashMap::default();
@@ -205,9 +319,13 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
         own.entry(d).or_default().push((t, Need::Cross(what, at)));
     }
     let (mut lock_fns, mut task_fns, mut async_fns) = (vec![], vec![], vec![]);
+    let mut shared_fns = vec![];
     for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let def = DefId(i as u32);
+        if !crate::body::lazy_std::walks(cx, def) {
+            continue;
+        }
         let std = cx.try_fn(def).is_some_and(|fi| cx.scopes[fi.module].is_std);
         let mut found = Found {
             cx: &*cx,
@@ -216,33 +334,42 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
             needs: vec![],
             task_fns: vec![],
             lock_fns: vec![],
+            shared_fns: vec![],
             async_fns: vec![],
             super_receivers: FxHashSet::default(),
+            promises: FxHashMap::default(),
         };
         crate::visit_ref::block(&f.body.block, &mut found);
         lock_fns.extend(std::mem::take(&mut found.lock_fns));
         task_fns.extend(std::mem::take(&mut found.task_fns));
         async_fns.extend(std::mem::take(&mut found.async_fns));
+        shared_fns.extend(std::mem::take(&mut found.shared_fns));
         if !found.needs.is_empty() {
             own.entry(def).or_default().extend(found.needs);
         }
     }
     for n in lock_fns {
-        for (t, name, at) in captures(cx, n) {
+        for (t, name, at, weak) in captures(cx, n) {
             let what = GenCopy::LockCapture(name);
-            own.entry(n).or_default().push((t, Need::Cross(what, at)));
+            capture_crossing(cx, own.entry(n).or_default(), (t, weak), what, at);
         }
     }
     for (n, at) in task_fns {
-        for (t, name, _) in captures(cx, n) {
+        for (t, name, _, weak) in captures(cx, n) {
             let what = GenCopy::TaskFn(name);
-            own.entry(n).or_default().push((t, Need::Cross(what, at)));
+            capture_crossing(cx, own.entry(n).or_default(), (t, weak), what, at);
         }
     }
     for n in async_fns {
-        for (t, name, at) in captures(cx, n) {
+        for (t, name, at, weak) in captures(cx, n) {
             let what = GenCopy::Capture(name);
-            own.entry(n).or_default().push((t, Need::Cross(what, at)));
+            capture_crossing(cx, own.entry(n).or_default(), (t, weak), what, at);
+        }
+    }
+    for (n, at) in shared_fns {
+        for (t, name, _, weak) in captures(cx, n) {
+            let what = GenCopy::SharedFn(name);
+            capture_crossing(cx, own.entry(n).or_default(), (t, weak), what, at);
         }
     }
     let crosses = own
@@ -297,7 +424,15 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
         if written || !cx.holds_weak_with(t, &hiding) || !reported.insert(at) {
             continue;
         }
-        let mut d = crate::body::weak_copy_error(cx, t, &what, at);
+        // What the value hides, when it holds a weak collection only that way: the source
+        // converted to the interface or class says whether that is a `weak` field.
+        let source = hidden(cx, t, &hiding, &mut FxHashSet::default())
+            .and_then(|h| why.get(&h).map(|&src| (h, src)));
+        let fields = match source {
+            Some((_, src)) => cx.holds_weak_field_only(src),
+            None => cx.holds_weak_field_only(t),
+        };
+        let mut d = crate::body::weak_copy_error_as(cx, t, &what, at, fields);
         // The callback of a generic helper's `with` written in this call is reported itself
         // (`ownership::locked`): the same error once is enough.
         let inside = |s: Span| s.file == at.file && s.lo >= at.lo && s.hi <= at.hi;
@@ -318,18 +453,24 @@ pub(crate) fn check(cx: &mut Ctx, recorded: crate::ownership::WeakCrossings) {
                 cx.display(t)
             ));
         }
-        if let Some(h) = hidden(cx, t, &hiding, &mut FxHashSet::default()) {
-            if let Some(src) = why.get(&h).copied() {
-                let (hn, kind) = match (cx.iface(h), cx.adt(h)) {
-                    (Some(i), _) => (i.name.clone(), "an interface value"),
-                    (_, Some(a)) => (a.name.clone(), "a class value"),
-                    _ => (String::new(), "a value"),
-                };
-                let sn = cx.display(src);
-                d = d.with_note(format!(
-                    "a `{hn}` may be a `{sn}`, which holds a weak collection: {kind} may hold anything converted to it in the program"
-                ));
-            }
+        if let Some((h, src)) = source {
+            let (hn, kind) = match (cx.iface(h), cx.adt(h)) {
+                (Some(i), _) => (i.name.clone(), "an interface value"),
+                (_, Some(a)) => (a.name.clone(), "a class value"),
+                _ => (String::new(), "a value"),
+            };
+            let sn = cx.display(src);
+            let held = match fields {
+                true => "a `weak` field",
+                false => "a weak collection",
+            };
+            let a = match hn.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
+                true => "an",
+                false => "a",
+            };
+            d = d.with_note(format!(
+                "{a} `{hn}` may be a `{sn}`, which holds {held}: {kind} may hold anything converted to it in the program"
+            ));
         }
         cx.error(d);
     }
@@ -372,7 +513,7 @@ fn reachable(
                 };
                 todo.extend(tys.into_iter().map(|f| cx.subst(f, &args)));
             }
-            k => todo.extend(crate::types::children(&k)),
+            k => todo.extend(crate::types::contents(&k)),
         }
     }
     out
@@ -403,7 +544,7 @@ fn hidden(
             };
             tys.into_iter().map(|f| cx.subst(f, &args)).collect()
         }
-        k => crate::types::children(&k),
+        k => crate::types::contents(&k),
     };
     parts.into_iter().find_map(|p| hidden(cx, p, hiding, seen))
 }

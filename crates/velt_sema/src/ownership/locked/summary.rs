@@ -269,6 +269,7 @@ impl Walk<'_, '_, '_> {
                     | Intrinsic::NeedsDrop
                     | Intrinsic::ModuleStateUsed
                     | Intrinsic::MayAlias
+                    | Intrinsic::IsUnique
                     | Intrinsic::HoldsNull
                     | Intrinsic::MayHoldPrimitive
                     | Intrinsic::AnyMethodCalled

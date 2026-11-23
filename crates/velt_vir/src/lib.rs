@@ -62,7 +62,7 @@
 //!   `velt_rt_panic("division by zero")`); signed `x / -1` is lowered as wrapping negation and
 //!   `x % -1` as `0`, so backends never see the `MIN / -1` trap. Float `%` is emitted as
 //!   `BinOp::Rem` on floats with C `fmod` semantics (codegen calls libm `fmod`/`fmodf`).
-//! * `**` calls `velt_rt_pow_i64` on integers and std's `powF64` hook on floats (operands widened
+//! * `**` calls std's `powI64` hook on integers and its `powF64` hook on floats (operands widened
 //!   to 64 bits, result cast back).
 //! * String comparisons call `velt_rt_str_cmp` and compare its result with 0.
 //! * Drops: owned non-Copy locals are dropped at every scope exit unless moved. A local whose
@@ -132,8 +132,8 @@
 //!
 //! # JSON (`lower/json.rs`)
 //! `JSON.parse<T>` and `JSON.stringify` are Velt code source generators write per type
-//! (velt/encoding/json/generate); lowering only prints a `JsonValue` (from the runtime tree its
-//! `[JSON_RUNTIME_HANDLE]()` makes) and walks a `Record`'s entries in key order.
+//! (velt/encoding/json/generate); lowering only prints a `JsonValue` (through its
+//! `[JSON_INSPECT]` method) and walks a `Record`'s entries in key order.
 
 pub mod vir;
 
@@ -167,6 +167,7 @@ pub const STR_TEXT_AGG_NAME: &str = "string text";
 /// analysis (velt_codegen_llvm `tbaa.rs`).
 pub const OBJECT_AGG_SUFFIX: &str = " object";
 
+pub mod arch;
 pub mod atomic;
 pub mod c_abi;
 pub mod eh;
@@ -209,6 +210,7 @@ pub mod mangle;
 pub mod math;
 pub mod parallel;
 pub mod simd;
+pub mod start_up;
 pub mod tls;
 mod verify;
 

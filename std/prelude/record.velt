@@ -78,11 +78,13 @@ export class Record<K, V> {
   // Field 2: the symbol-keyed entries, a table of their own as in Node, made when the first
   // symbol key is written (`null` until then: the string-key methods never read it).
   private symbols: Map<symbol, V> | null = null;
-  // Field 3: the accessors `Object.defineProperty` defined (`[RECORD_DEFINE_ACCESSOR]`), by key. They
-  // are not enumerable, so `Object.keys`, `JSON.stringify`, spreads and `console.log` skip
-  // them, as in Node. Only a program that defines accessors reads this field: sema calls the
-  // `Keyed` methods there for every key (`hir::Program::record_accessors`).
-  private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool]> | null =
+  // Field 3: the accessors `Object.defineProperty` defined (`[RECORD_DEFINE_ACCESSOR]`), by key,
+  // and the data properties it defined with attributes an entry doesn't have
+  // (`[RECORD_DEFINE_DATA]`: getter, setter if writable, configurable, `true`). They are not
+  // enumerable, so `Object.keys`, `JSON.stringify`, spreads and `console.log` skip them, as in
+  // Node. Only a program that defines such properties reads this field: sema calls the `Keyed`
+  // methods there for every key (`hir::Program::record_accessors`).
+  private accessors: Map<K | symbol, [(() => V) | null, ((value: V) => void) | null, bool, bool]> | null =
     null;
   // Field 4: for a view (#379, velt_vir lower/record_view.rs: an `any` converted to a record type
   // with `any` values), its source, which lowering keeps here; 0 for any other record. On a view,

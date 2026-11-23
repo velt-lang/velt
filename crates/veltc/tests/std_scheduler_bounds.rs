@@ -161,13 +161,31 @@ fn a_latch_with_many_waiters_frees_its_waker_buffer_by_size() {
 /// it): a reader and a writer ([`WAKE_SCAN`]), a task taking turns with a connection it follows
 /// (`join`, [`FOLLOWS`], the program where Windows lost its output), a timed wait that expires
 /// ([`DEADLINE`]) and a sleep ([`SLEEPER`]). The copies without parts of the fix show which
-/// window each covers: each ends the program early where it must ("Some(0) ", nothing printed).
+/// window each covers: each ends the program early where it must ("Some(0) ", nothing printed),
+/// in [`a_scan_without_the_fix_ends_the_program_early`] (the nightly's, not the gate's).
 /// Runs of each program of [`a_wake_delivered_while_worker_0_scans_keeps_the_program_alive`]: a
 /// broken copy must end early in one of them, a fixed copy must print in all.
 const BROKEN_RUNS: usize = 8;
 
+/// The fixed copies, in the gate: each prints in every run.
 #[test]
 fn a_wake_delivered_while_worker_0_scans_keeps_the_program_alive() {
+    wake_during_scan(false);
+}
+
+/// The copies without parts of the fix, which must end the program early in at least one of
+/// [`BROKEN_RUNS`] runs: the test's negative control. The pauses make the window likely, not
+/// certain, so a run that never hits it is no failure of the code: it runs in the nightly's
+/// `flake` job (`controls`), not in the gate (#3495).
+#[test]
+#[ignore = "timing-dependent negative control: the nightly flake job runs it (#3495)"]
+fn a_scan_without_the_fix_ends_the_program_early() {
+    wake_during_scan(true);
+}
+
+/// The variants of [`a_wake_delivered_while_worker_0_scans_keeps_the_program_alive`]: the
+/// programs that must end early (`broken`), or the ones that must print in every run.
+fn wake_during_scan(broken: bool) {
     if !has_threads() {
         return;
     }
@@ -198,10 +216,13 @@ fn a_wake_delivered_while_worker_0_scans_keeps_the_program_alive() {
         ("sleep_unguarded", &[("sleeper", true)]),
     ];
     for (variant, programs) in variants {
+        if !programs.iter().any(|&(_, ends_early)| ends_early == broken) {
+            continue;
+        }
         let std_dir = dir.path().join(format!("std_{variant}"));
         copy_dir(&manifest().join("../../std"), &std_dir);
         patch_std(&std_dir, variant);
-        for &(program, ends_early) in programs {
+        for &(program, ends_early) in programs.iter().filter(|&&(_, e)| e == broken) {
             let (src, want) = match program {
                 "wake_scan" => (WAKE_SCAN, "Some(0) read x\n"),
                 "follows" => (FOLLOWS, "Some(0) a! b!\n"),
@@ -511,7 +532,7 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
         return;
     }
     let dir = test_dir::TestDir::new();
-    let counted = "    wk.release(k);\n    if (mk.liveDown(g, e) === 1 && e !== g) {\n      // The last live task: worker 0 may wait for that in `schedFinish`.\n      wk.unpark(g);\n    }\n";
+    let counted = "    wk.releaseHere(k);\n    if (mk.liveDown(g, e) === 1 && e !== g) {\n      // The last live task: worker 0 may wait for that in `schedFinish`.\n      wk.unpark(g);\n    }\n";
     let pause = "    if (e !== g) {\n      pause(300);\n    }\n";
     for released_first in [true, false] {
         let std_dir = dir.path().join(format!("std_{released_first}"));
@@ -522,8 +543,8 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
             format!("{counted}{pause}")
         } else {
             format!(
-                "{}{pause}    wk.release(k);\n",
-                counted.replacen("    wk.release(k);\n", "", 1)
+                "{}{pause}    wk.releaseHere(k);\n",
+                counted.replacen("    wk.releaseHere(k);\n", "", 1)
             )
         };
         patch(&mut run, counted, &to);

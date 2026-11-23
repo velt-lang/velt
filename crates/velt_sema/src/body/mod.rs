@@ -70,7 +70,11 @@ pub(crate) mod lazy_std;
 pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 mod type_guards;
-pub(crate) use generators::{weak_copy_error, GenCopy, LOCK_NOTE};
+mod weak_copy;
+mod weak_globals;
+mod weak_locals;
+pub(crate) use generators::GenCopy;
+pub(crate) use weak_copy::{weak_capture_error, weak_copy_error, weak_copy_error_as, Held};
 mod chain_facts;
 mod literal_patterns;
 mod locals;
@@ -101,6 +105,7 @@ mod unsafe_code;
 pub(crate) use unsafe_code::unsafe_fn;
 mod untyped_let;
 mod using;
+mod written_type;
 mod yield_infer;
 
 use self::expr::trial_memo::NamedLocal;
@@ -445,6 +450,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// converts to a typed value checked at run time, and a function value to another function
     /// type through an adapting arrow.
     pub adapting: bool,
+    /// The spans of the arrays `pack_rest` builds of a call's rest arguments (`expr/spread_param.rs`).
+    pub rest_packs: rustc_hash::FxHashSet<Span>,
 }
 
 impl<'a, 'm> FnCx<'a, 'm> {
@@ -528,6 +535,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_calls: Default::default(),
             pending_member: None,
             adapting: false,
+            rest_packs: Default::default(),
         }
     }
 

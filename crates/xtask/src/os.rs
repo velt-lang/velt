@@ -228,11 +228,13 @@ pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
 /// the build of the goldens' job (.github/workflows/queue-goldens.yml). They take about as long
 /// as all the other tests together: on a 4-vCPU Windows runner about 45 minutes in one job. The
 /// test splits them into 8 functions of about 330 s there, which the shards share (two each on
-/// Windows). Every runner in [`QUEUE_OSES`] needs an entry, as for [`GOLDEN_SHARDS`].
+/// Windows and macOS). macOS had two shards until their test runs reached 25 minutes and the
+/// slower job its 40-minute limit (2026-11-22). Every runner in [`QUEUE_OSES`] needs an entry, as
+/// for [`GOLDEN_SHARDS`].
 pub const WASM_SHARDS: &[(&str, usize)] = &[
     ("ubuntu-latest", 2),
     ("windows-latest", 4),
-    ("macos-latest", 2),
+    ("macos-latest", 4),
 ];
 
 /// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
@@ -335,7 +337,10 @@ mod tests {
             all.contains(r#""windows-latest":["1/4","2/4","3/4","4/4"]"#),
             "{all}"
         );
-        assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");
+        assert!(
+            all.contains(r#""macos-latest":["1/4","2/4","3/4","4/4"]"#),
+            "{all}"
+        );
         assert_eq!(
             wasm_shards_json(&["ubuntu-latest"]),
             r#"{"ubuntu-latest":["1/2","2/2"]}"#

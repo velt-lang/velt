@@ -60,6 +60,7 @@ test-group = "end-to-end"
 [[profile.default.overrides]]
 filter = """
 test(/^prefixes_never_panic_/) | binary(native_packages) | (package(velt_vir) & binary(native)) \
-| test(=examples_compile_and_run) | test(=random_programs_match_interpreter) | binary(reload)\
+| test(=examples_compile_and_run) | test(=random_programs_match_interpreter) | binary(reload) \
+| test(/^std_modules_pass_their_tests_shard_/)\
 """
 priority = 100

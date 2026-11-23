@@ -49,7 +49,9 @@ pub(super) fn check_recovering_loaded(
         require_main: scope.require_main,
         eager_std: scope.eager_std,
         units: scope.units,
+        std_key: None,
         native_executor: super::native_executor(opts),
+        wasm32: super::wasm32(opts),
     };
     // The std modules the check demands are served as for a program that loaded cleanly
     // (`sema_stage`): the load left them to the check (#3150).

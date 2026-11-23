@@ -1,0 +1,99 @@
+// velt/arch/x86 (internal): `Avx512BW`, the check of `avx512bw-x86` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { AVX512BW_X86 } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("avx512bw-x86")`) and what such code calls.
+declare function velt_simd_has_avx512bw_x86(): bool;
+// Whether this build runs x86-64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_x86(): bool;
+
+/** AVX-512 byte and word instructions. The check of `@targetFeature("avx512bw-x86")`. */
+export class Avx512BW {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=AVX512BW`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_avx512bw_x86() || (velt_simd_on_x86() && cpuHas(AVX512BW_X86));
+  }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * The bytes of `left` plus those of `right`, wrapping.
+   *
+   * `_mm512_add_epi8` (`vpaddb`). Runs only where the CPU has it: call it behind
+   * `Avx512BW.isSupported()`, or in a function gated on `avx512bw-x86`.
+   */
+  static addU8(left: Vector512<u8>, right: Vector512<u8>): Vector512<u8> {
+    return velt_arch_avx512bw_add_u8(left, right);
+  }
+
+  /**
+   * Bit `i` set where byte `i` of `left` equals that of `right`.
+   *
+   * `_mm512_cmpeq_epi8_mask` (`vpcmpeqb`). Runs only where the CPU has it: call it behind
+   * `Avx512BW.isSupported()`, or in a function gated on `avx512bw-x86`.
+   */
+  static compareEqualU8(left: Vector512<u8>, right: Vector512<u8>): u64 {
+    return velt_arch_avx512bw_compare_equal_u8(left, right);
+  }
+
+  /**
+   * The smaller of each pair of bytes, unsigned.
+   *
+   * `_mm512_min_epu8` (`vpminub`). Runs only where the CPU has it: call it behind
+   * `Avx512BW.isSupported()`, or in a function gated on `avx512bw-x86`.
+   */
+  static minU8(left: Vector512<u8>, right: Vector512<u8>): Vector512<u8> {
+    return velt_arch_avx512bw_min_u8(left, right);
+  }
+
+  /**
+   * In each 128-bit quarter, byte `i` is byte `mask[i] & 15` of the same quarter of `value`, or 0
+   * where bit 7 of `mask[i]` is set.
+   *
+   * `_mm512_shuffle_epi8` (`vpshufb`). Runs only where the CPU has it: call it behind
+   * `Avx512BW.isSupported()`, or in a function gated on `avx512bw-x86`.
+   */
+  static shuffleU8(value: Vector512<u8>, mask: Vector512<u8>): Vector512<u8> {
+    return velt_arch_avx512bw_shuffle_u8(value, mask);
+  }
+
+  /**
+   * Bit `i` is the top bit of byte `i` of `value`.
+   *
+   * `_mm512_movepi8_mask` (`vpmovb2m`). Runs only where the CPU has it: call it behind
+   * `Avx512BW.isSupported()`, or in a function gated on `avx512bw-x86`.
+   */
+  static moveMaskU8(value: Vector512<u8>): u64 {
+    return velt_arch_avx512bw_move_mask_u8(value);
+  }
+}
+
+import { Vector512 } from "velt/arch/x86/vector512";
+
+declare function velt_arch_avx512bw_add_u8(
+  left: Vector512<u8>,
+  right: Vector512<u8>,
+): Vector512<u8>;
+declare function velt_arch_avx512bw_compare_equal_u8(
+  left: Vector512<u8>,
+  right: Vector512<u8>,
+): u64;
+declare function velt_arch_avx512bw_min_u8(
+  left: Vector512<u8>,
+  right: Vector512<u8>,
+): Vector512<u8>;
+declare function velt_arch_avx512bw_shuffle_u8(
+  value: Vector512<u8>,
+  mask: Vector512<u8>,
+): Vector512<u8>;
+declare function velt_arch_avx512bw_move_mask_u8(value: Vector512<u8>): u64;

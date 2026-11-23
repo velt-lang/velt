@@ -29,7 +29,7 @@ import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
 /** How long each measurement runs (nanoseconds). */
-const WINDOW: usize = 10000000;
+export const WINDOW: usize = 10000000;
 /** The delay from which a worker takes on a helper (nanoseconds). */
 const TARGET: usize = 200000;
 /** The share of a window (percent) a worker must be awake for, with input waiting, to be saturated. */
@@ -41,7 +41,7 @@ export const HELP: usize = 16;
 /** Looks at the spread at most between two reads of the clock while a window runs. */
 const SKIP_MAX: usize = 8;
 /** Input waiting on a worker from which a worker that ran out of work borrows half. */
-const BORROW_MIN: usize = 2;
+export const BORROW_MIN: usize = 2;
 /**
  * The polls a worker runs before workers try to borrow from it again when the older half of its
  * input, which a borrower takes, was all pinned or anchored: a server's connections, pinned to
@@ -189,9 +189,32 @@ function offer(e: usize, mode: u32, helper: usize): void {
 }
 
 /**
- * Worker `e`, out of work, takes over what a worker offers (its own offer first): whether there
- * was anything. The tasks' home becomes `e`.
+ * Worker `e` finds its own offer there at an I/O tick (sched_tick.velt), its newest task `top`.
+ * Only a worker out of work takes an offer (`steal`): the helper woken for it may have found work
+ * of its own first, and while every worker stays busy nothing takes it, its tasks never polled.
+ * An offer gets a tick to be taken (`E_OFFER_SEEN`: the top seen at the last one); one still
+ * there a tick later wakes a sleeping worker for it again or, with none asleep, `e` takes it back.
  */
+@noInline
+export function reclaim(e: usize, top: usize): void {
+  if (m.ld(e + t.E_OFFER_SEEN) !== top) {
+    m.st(e + t.E_OFFER_SEEN, top);
+    return;
+  }
+  const h = sleepingHelper(e);
+  if (h !== 0) {
+    wk.unpark(h);
+    return;
+  }
+  steal(e);
+}
+
+/**
+ * Worker `e`, out of work, takes over what a worker offers (its own offer first): whether there
+ * was anything. The tasks' home becomes `e`. Inlined into the idle loop (sched_loop.velt `idle`),
+ * as `borrow` is, as LLVM did on its own before the offers carried sleeps (#3097).
+ */
+@inline("always")
 export function steal(e: usize): bool {
   const g = t.main();
   const n = m.load(g + t.E_STARTED);
@@ -243,6 +266,7 @@ export function lend(w: usize): usize {
  * slice. The tasks keep their home: borrowing moves nothing for good. Sleeping workers lend
  * nothing, so light load stays on one worker. Whether it borrowed anything.
  */
+@inline("always")
 export function borrow(e: usize): bool {
   const g = t.main();
   const n = m.load(g + t.E_STARTED);
@@ -290,6 +314,15 @@ export function anchor(): void {
     return;
   }
   anchorTo(e, k);
+}
+
+/** `anchor` on worker `e`, which the caller has at hand (sched_sleep.velt `sleepPoll`). */
+@inline("always")
+export function anchorOn(e: usize): void {
+  const k = m.ld(e + t.E_CURRENT);
+  if (k !== 0 && !t.has(k, t.ANCHORED)) {
+    anchorTo(e, k);
+  }
 }
 
 /**

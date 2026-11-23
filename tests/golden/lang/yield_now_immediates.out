@@ -1,0 +1,23 @@
+y1
+y2
+then 1
+race 1
+after race microtask
+then 2
+e 0
+e 1
+race chain
+f 0
+f 1
+f 2
+race yielded
+started yielded
+sleep 1
+sleep race 1
+after sleep race microtask
+sleep 2
+timer 1
+timer 1 microtask
+timer 2
+timer 2 microtask
+done

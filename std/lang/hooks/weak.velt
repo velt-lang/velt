@@ -17,7 +17,11 @@
 // `weakRelease` removes a dying object from every map and `WeakRef`, and, on a decrement that may
 // leave the object referenced only by its own entries' values (the `raw -> proxy` ephemeron),
 // runs a bounded trial deletion (weak_trial.velt) that frees the cycle when nothing outside
-// refers to it.
+// refers to it. The release sequence decrements an object that has no release gate (`RC_GATED`
+// clear: it is no map's key and on no entry's path back to one, as a `weak T` or `WeakRef` target
+// alone is not) without calling here while its count stays above 0; the lock is for the
+// decrement that frees it. Called for such a decrement all the same, this makes it, as no gate
+// asks for more.
 //
 // Lock discipline: no generated code runs under the lock except trace glue, which only reads
 // fields and calls `visit` (weak_graph.velt), and the values' retain glue (`count += 1`). Values
@@ -32,7 +36,9 @@ import { mapOf } from "./weak_maps";
 import * as wm from "./weak_maps";
 import * as wr from "./weak_refs";
 import * as rec from "./weak_records";
-import { members, PAST_LIMIT, trial } from "./weak_trial";
+import { examine } from "./weak_examine";
+import { slotDrop, slotFor } from "./weak_slots";
+import { trial } from "./weak_trial";
 import {
   count,
   free,
@@ -293,57 +299,6 @@ function set(h: usize, map: u32, key: usize, value: u64, keyTrace: usize): void 
 }
 
 /**
- * Traces the values of the entries keyed by `k` (record `r`) that are not examined yet (a nonzero
- * value of a map with trace glue: a live counted object the map owns), and records the objects on
- * their paths back to `k` with the references the entry holds to each (their `hint`). An entry
- * whose value has no path back to `k` gets one more look, at the key's next decrement: the
- * decrement that triggered this examination may be the one that removed a path, which comes back
- * before the next. After that, or past the limit, the entry counts as examined, so a key's
- * decrements trace each entry at most twice. Returns `k`'s record, which moves when the
- * examination adds records.
- */
-function examine(h: usize, k: usize, r0: usize): usize {
-  let r = r0;
-  let left: usize = 0;
-  let i: usize = 0;
-  while (i < rec.listLen(r, rec.R_KEYED)) {
-    const map = rec.listAt(r, rec.R_KEYED, i) as u32;
-    i += 1;
-    const b = mapOf(h, map);
-    const e = wm.entryOf(b, k);
-    if (e === 0) {
-      continue;
-    }
-    const state = ld(e + wm.E_EXAMINED);
-    if (state === wm.EXAMINED) {
-      continue;
-    }
-    const ms = members(h, k, ld64(e + wm.E_VALUE) as usize, ld(b + wm.M_VALUE_TRACE));
-    if (ms === 0 && state === wm.UNEXAMINED) {
-      st(e + wm.E_EXAMINED, wm.LOOKED);
-      left += 1;
-      continue;
-    }
-    st(e + wm.E_EXAMINED, wm.EXAMINED);
-    if (ms === 0 || ms === PAST_LIMIT) {
-      continue;
-    }
-    // `node` adds records, not entries: the entry stays where it is.
-    st(e + wm.E_MEMBERS, ms);
-    const n = vlen(ms);
-    for (let j: usize = 0; j < n; j += 3) {
-      const m = rec.node(h, vat(ms, j), vat(ms, j + 2));
-      rec.memberPush(m, map as usize, k);
-      rec.setHint(m, rec.hint(m) + (vat(ms, j + 1) as u32));
-    }
-    // The records may have moved.
-    r = rec.find(h, k);
-  }
-  rec.setUnexamined(r, left);
-  return r;
-}
-
-/**
  * `map.get(key)`: the value, retained with the map's retain glue (the caller releases it), or 0.
  * Counted because any later release of a weakly held object may run a trial that deletes the
  * entry and releases its value.
@@ -436,6 +391,40 @@ export function weakRefDrop(r: u32): void {
   const h = enter();
   wr.refDrop(h, r);
   leave(h);
+}
+
+/**
+ * The slot of a `weak T` reference to `obj` (an object's address), with one more reference: a
+ * weak field or variable holds it (weak_slots.velt). It marks `obj` weakly held, so freeing it
+ * clears the slot. `null` (0) has no slot: 0, without the lock, so a write needs no branch.
+ */
+@noInline
+export function weakSlot(obj: usize): usize {
+  if (obj === 0) {
+    return 0;
+  }
+  untagged(obj);
+  const h = enter();
+  const s = slotFor(h, obj);
+  leave(h);
+  return s;
+}
+
+/**
+ * Gives up a weak field's or variable's reference to slot `s` (no lock: weak_slots.velt); 0, a
+ * `null` one's, is none.
+ */
+@noInline
+export function weakSlotDrop(s: usize): void {
+  if (s !== 0) {
+    slotDrop(s);
+  }
+}
+
+/** The slot blocks alive (tests and leak checks). */
+@noInline
+export function weakSlotsLive(): u64 {
+  return rec.slotsLive();
 }
 
 /** The records of weakly held objects (tests and leak checks). */

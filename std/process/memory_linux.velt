@@ -1,0 +1,87 @@
+// velt/process (internal): `process.memoryUsage()` on Linux (`#memory-sys`' linux variant,
+// std/imports.velt): `/proc/self/statm`, read with the C library's `open` and `read` into one
+// block from `calloc` (no arrays: passing one to C costs every program that calls this a
+// noticeably longer compile). Its second field is the resident pages, its third the resident
+// pages backed by a file or shared memory; the rest of the resident pages are the process' own
+// (the kernel's `RssAnon`): what its allocator has committed and touched, which is `heapUsed`.
+
+import { CVarArgs } from "velt/ffi/c_var_args";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+declare c("c") function open$memory(path: Ptr<u8>, oflag: i32, ...args: CVarArgs): i32;
+declare c("c") function read$memory(fd: i32, buf: Ptr<void> | null, nbyte: usize): isize;
+declare c("c") function close$memory(fd: i32): i32;
+declare c("c") function sysconf$memory(name: i32): i64;
+declare c("c") function calloc$memory(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$memory(p: Ptr<u8> | null): void;
+
+/** "/proc/self/statm" and its NUL, in three little-endian words (the block's first 24 bytes). */
+const PATH0: u64 = 0x65732f636f72702f;
+const PATH1: u64 = 0x6d746174732f666c;
+
+/** Where the file's text goes in the block, after the path. */
+const TEXT_AT: usize = 24;
+/** Room for the text: seven numbers of at most 20 digits and their separators. */
+const ROOM: usize = 160;
+
+/** `O_RDONLY | O_CLOEXEC` (the same on every Linux architecture). */
+const OPEN_FLAGS: i32 = 0x80000;
+
+/** `_SC_PAGESIZE` on Linux. */
+const SC_PAGESIZE: i32 = 30;
+
+/**
+ * `[rss, heapUsed]` in bytes from one read of `/proc/self/statm`: its second field (resident
+ * pages), and that minus its third (resident pages backed by a file or shared memory). Both come
+ * from the same moment, so `heapUsed` never exceeds `rss`. `[0, 0]` when the file can't be read.
+ */
+export function memoryFigures(): [i64, i64] {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$memory(1, TEXT_AT + ROOM) };
+  if (block === null) {
+    return [0, 0];
+  }
+  const p = Ptr.addressOf(block);
+  let n: isize = -1;
+  // SAFETY: the block holds `TEXT_AT + ROOM` bytes: the path (its third word stays 0, the NUL)
+  // and room for `ROOM` bytes of text; the descriptor is closed once.
+  unsafe {
+    addressStore<u64>(p, PATH0);
+    addressStore<u64>(p + 8, PATH1);
+    const fd = open$memory(block, OPEN_FLAGS);
+    if (fd >= 0) {
+      n = read$memory(fd, Ptr.orNull<void>(p + TEXT_AT), ROOM);
+      close$memory(fd);
+    }
+  }
+  let field: usize = 0;
+  let value: i64 = 0;
+  let resident: i64 = 0;
+  let shared: i64 = 0;
+  for (let i: isize = 0; i <= n && field < 3; i++) {
+    // SAFETY: inside the text `read` wrote (a space after it ends the last field).
+    const c = i < n ? unsafe { addressLoad<u8>(p + TEXT_AT + (i as usize)) } : 32;
+    if (c >= 48 && c <= 57) {
+      value = value * 10 + ((c - 48) as i64);
+      continue;
+    }
+    if (field === 1) {
+      resident = value;
+    } else if (field === 2) {
+      shared = value;
+    }
+    field++;
+    value = 0;
+  }
+  // SAFETY: the block from calloc above, freed once, after its last read.
+  unsafe {
+    free$memory(block);
+  }
+  // SAFETY: no precondition.
+  const page = unsafe { sysconf$memory(SC_PAGESIZE) };
+  if (n <= 0 || page <= 0) {
+    return [0, 0];
+  }
+  return [resident * page, resident > shared ? (resident - shared) * page : 0];
+}

@@ -34,6 +34,9 @@ use Intrinsic as I;
 pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // any.velt
     ("anyDelete", Op(I::AnyDelete)),
+    ("anyPromise", Op(I::AnyPromise)),
+    ("anyIsPromise", Op(I::AnyIsPromise)),
+    ("holdsDynamic", Op(I::HoldsDynamic)),
     ("anyIsList", Op(I::AnyIsList)),
     ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),
@@ -122,6 +125,10 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("addressAtomicLoad", Op(I::AddressAtomicLoad)),
     ("addressAtomicRmw", Op(I::AddressAtomicRmw)),
     ("addressAtomicStore", Op(I::AddressAtomicStore)),
+    ("ptrFromAddress", Op(I::PtrFromAddress)),
+    ("ptrToAddress", Op(I::PtrToAddress)),
+    ("ptrRead", Op(I::PtrRead)),
+    ("ptrWrite", Op(I::PtrWrite)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("addressCall3", Op(I::AddressCall3)),
@@ -153,6 +160,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strWord0", Op(I::StrWord0)),
     ("strWord1", Op(I::StrWord1)),
     ("strWord2", Op(I::StrWord2)),
+    ("strAt", Op(I::StrAt)),
     ("strbufPushAsciiWord", Op(I::StrbufPushAsciiWord)),
     ("strbufPushAsciiWords", Op(I::StrbufPushAsciiWords)),
     // symbol.velt
@@ -171,6 +179,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("fnCapturesNothing", Op(I::FnCapturesNothing)),
     ("holdsNull", Op(I::HoldsNull)),
     ("mayAlias", Op(I::MayAlias)),
+    ("isUnique", Op(I::IsUnique)),
     ("needsDrop", Op(I::NeedsDrop)),
     ("needsTransfer", Op(I::NeedsTransfer)),
     ("nullAs", Op(I::NullAs)),

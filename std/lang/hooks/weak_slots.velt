@@ -1,0 +1,61 @@
+// velt/lang/hooks (internal): the slots of `weak T` fields and variables (weak.velt;
+// docs/internals/design/cycles.md "`weak T`"), apart from a `WeakRef`'s handle-table slots
+// (weak_refs.velt).
+//
+// A slot is a block `[count][target]` shared by every weak reference to one object, as Swift's
+// side table is: a weak field or variable holds the slot's address, and a read is
+// `s ? s.target : 0` and a retain, inline and without the lock. The target's record holds one
+// reference to its slot and each weak field or variable one more; freeing the target sets its
+// target to 0 (`slotForget`, from weak_maps.velt `forget`), and the last reference frees the
+// block. A record with a slot stays until its object is freed, so the slot of an object that
+// weak references come back to is made once.
+//
+// `slotFor` runs with the lock held, as it adds to the record table. A slot itself is used by the
+// task that owns its target, one thread at a time, as the target is: its count changes without
+// the lock (`slotDrop`).
+
+import { R_SLOT, node, slotCounted } from "./weak_records";
+import { alloc, free, ld, st } from "./weak_mem";
+
+/** A slot: its references, then its target's address (0 once the target was freed). */
+export const S_COUNT: usize = 0;
+export const S_TARGET: usize = 8;
+const SLOT: usize = 16;
+
+/** The slot of `obj` (an object's address) with one more reference, made on the first. */
+export function slotFor(h: usize, obj: usize): usize {
+  const rec = node(h, obj, 0);
+  let s = ld(rec + R_SLOT);
+  if (s === 0) {
+    s = alloc(SLOT);
+    slotCounted(1);
+    // The record's reference.
+    st(s + S_COUNT, 1);
+    st(s + S_TARGET, obj);
+    st(rec + R_SLOT, s);
+  }
+  st(s + S_COUNT, ld(s + S_COUNT) + 1);
+  return s;
+}
+
+/** Gives up a reference to slot `s`; the last frees it. */
+export function slotDrop(s: usize): void {
+  const c = ld(s + S_COUNT) - 1;
+  if (c === 0) {
+    free(s);
+    slotCounted(-1);
+    return;
+  }
+  st(s + S_COUNT, c);
+}
+
+/** The object of record `rec` is being freed: its slot, if any, reads 0 from now on. */
+export function slotForget(rec: usize): void {
+  const s = ld(rec + R_SLOT);
+  if (s === 0) {
+    return;
+  }
+  st(rec + R_SLOT, 0);
+  st(s + S_TARGET, 0);
+  slotDrop(s);
+}

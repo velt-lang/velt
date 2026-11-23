@@ -3,7 +3,8 @@
 // schemes, ALPN), what it echoes (the legacy session id), and for TLS 1.2 (RFC 5246 §7.4.1.2) the
 // client random, extended_master_secret, renegotiation_info and ec_point_formats.
 
-import { utf8Decode, utf8DecodeLossy, utf8Valid } from "velt/encoding/utf8";
+import { utf8Decode, utf8DecodeLossy } from "velt/encoding/utf8";
+import { utf8Valid } from "velt/encoding/utf8_valid";
 import {
   DECODE_ERROR,
   HANDSHAKE_FAILURE,
@@ -24,6 +25,7 @@ import {
   EXT_SUPPORTED_GROUPS,
   EXT_SUPPORTED_VERSIONS,
   SECP256R1,
+  SECP384R1,
   X25519,
 } from "velt/net/tls/client_hello";
 import { RENEGOTIATION_SCSV } from "velt/net/tls/suites12";
@@ -53,9 +55,10 @@ export class ClientOffer {
   nullCompression: bool = false;
   /** supported_groups. */
   groups: usize[] = [];
-  /** The key shares for X25519 and secp256r1 (empty when not sent). */
+  /** The key shares for X25519, secp256r1 and secp384r1 (empty when not sent). */
   x25519Share: u8[] = [];
   p256Share: u8[] = [];
+  p384Share: u8[] = [];
   /** signature_algorithms. */
   schemes: usize[] = [];
   /** The ALPN protocols, in the client's order. */
@@ -206,7 +209,7 @@ export function parseClientHello(body: u8[]): ClientOffer {
   return offer;
 }
 
-// The key shares of a KeyShareClientHello: X25519's and secp256r1's are kept, others skipped.
+// The key shares of a KeyShareClientHello: those of this stack's groups are kept, others skipped.
 function readShares(list: ByteReader, offer: ClientOffer) {
   const groups: usize[] = [];
   while (list.left() > 0) {
@@ -230,6 +233,14 @@ function readShares(list: ByteReader, offer: ClientOffer) {
         );
       }
       offer.p256Share = bytes;
+    } else if (group == SECP384R1) {
+      if (bytes.length != 97 || bytes[0] != 4) {
+        throw new TlsFailure(
+          ILLEGAL_PARAMETER,
+          "a secp384r1 key share that is not an uncompressed point",
+        );
+      }
+      offer.p384Share = bytes;
     }
   }
 }

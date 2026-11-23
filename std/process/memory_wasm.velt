@@ -1,0 +1,11 @@
+// velt/process (internal): `process.memoryUsage()` in a WebAssembly build (`#memory-sys`'
+// default variant, std/imports.velt): the WebAssembly runtime answers both with the size of the
+// module's linear memory, as there is no OS process to ask.
+
+declare function velt_rt_memory_rss(): i64;
+declare function velt_rt_memory_heap(): i64;
+
+/** `[rss, heapUsed]`: the linear memory's size in bytes, twice. */
+export function memoryFigures(): [i64, i64] {
+  return [velt_rt_memory_rss(), velt_rt_memory_heap()];
+}

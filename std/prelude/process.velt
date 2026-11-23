@@ -4,21 +4,43 @@
 // to calls are hooks (std/lang/hooks/process.velt); the rest of Node's `process` is in
 // `velt/process` (https://veltlang.com/docs/std/process/).
 
+import { memoryFigures } from "#memory-sys";
 import { processEnv } from "velt/lang/hooks/process";
 
-declare function velt_rt_memory_rss(): i64;
-declare function velt_rt_memory_heap(): i64;
 declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
- * What `process.memoryUsage()` returns, in bytes (Node's field names): `rss` is the resident set
- * size the OS reports, `heapUsed` the memory the allocator has committed for the heap.
+ * What `process.memoryUsage()` returns, in bytes, with Node's field names:
+ * - `rss`: the resident set size the OS reports.
+ * - `heapUsed`: the memory the process itself holds as the OS counts it (the resident pages no
+ *   file backs on Linux, the physical footprint on macOS, the private committed bytes on
+ *   Windows; the linear memory's size on WebAssembly). Unlike Node's, it is not the live bytes
+ *   after a collection: it grows with retained data and falls when the allocator gives pages
+ *   back.
+ * - `heapTotal`: the same as `heapUsed`. Velt's allocator keeps no reserve of its own apart
+ *   from what the OS already counts there.
+ * - `external` and `arrayBuffers`: 0. Velt keeps no memory outside its heap that Node would
+ *   count there (no V8 heap, no off-heap `ArrayBuffer` store): arrays and buffers are in
+ *   `heapUsed`.
  */
-export type MemoryUsage = { rss: i64; heapUsed: i64 };
+export type MemoryUsage = {
+  rss: i64;
+  heapTotal: i64;
+  heapUsed: i64;
+  external: i64;
+  arrayBuffers: i64;
+};
 
-/** `process.memoryUsage()`: the process's memory use in bytes, now. */
+/** `process.memoryUsage()`: the process's memory use in bytes, now (one OS read). */
 export function processMemoryUsage(): MemoryUsage {
-  return { rss: velt_rt_memory_rss(), heapUsed: velt_rt_memory_heap() };
+  const figures = memoryFigures();
+  return {
+    rss: figures[0],
+    heapTotal: figures[1],
+    heapUsed: figures[1],
+    external: 0,
+    arrayBuffers: 0,
+  };
 }
 
 /**

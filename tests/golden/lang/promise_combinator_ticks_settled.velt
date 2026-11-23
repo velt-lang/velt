@@ -1,0 +1,55 @@
+// `Promise.all`, `race`, `allSettled` and `any` over inputs that settled before the call: each
+// settles in the reaction Node queues on its input, a microtask, so its `then` callback and the
+// code after an `await` of it run one microtask after a `then` on a settled promise (#3299).
+async function n(x: number): Promise<number> {
+  return x;
+}
+
+async function bad(): Promise<number> {
+  throw new Error("bad");
+}
+
+async function ticks(label: string): Promise<void> {
+  for (let i = 1; i <= 3; i++) {
+    console.log(`${label} ${i}`);
+    await null;
+  }
+}
+
+async function thens(): Promise<void> {
+  const all = Promise.all([n(1)]).then(() => console.log("all"));
+  const race = Promise.race([n(2)]).then(() => console.log("race"));
+  const settled = Promise.allSettled([n(3)]).then(() => console.log("allSettled"));
+  const any = Promise.any([n(4)]).then(() => console.log("any"));
+  const rejected = Promise.all([bad()]).then(
+    () => console.log("all fulfilled"),
+    () => console.log("all rejected"),
+  );
+  const plain = n(5).then(() => console.log("then"));
+  await ticks("t");
+  await all;
+  await race;
+  await settled;
+  await any;
+  await rejected;
+  await plain;
+}
+
+async function awaits(): Promise<void> {
+  const t = ticks("a");
+  console.log("race", await Promise.race([n(1), n(2)]));
+  console.log("all", (await Promise.all([n(1), n(2)])).length);
+  try {
+    await Promise.all([n(1), bad()]);
+  } catch (e) {
+    console.log("all", (e as Error).message);
+  }
+  console.log("allSettled", (await Promise.allSettled([n(1), bad()])).length);
+  console.log("any", await Promise.any([bad(), n(2)]));
+  await t;
+}
+
+async function main() {
+  await thens();
+  await awaits();
+}

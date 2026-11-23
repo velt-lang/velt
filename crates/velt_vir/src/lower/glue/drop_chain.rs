@@ -91,7 +91,8 @@ impl Cx<'_> {
         let tys = self.adt_field_tys(ty);
         let mut own = vec![];
         for (i, &t) in tys.iter().enumerate() {
-            if self.holds_self(t, ty) {
+            // A weak field holds a slot, not a node (weak_fields.rs): it drops in its place.
+            if self.holds_self(t, ty) && self.weak_field(ty, i as u32).is_none() {
                 own.push(i as u32);
             }
         }

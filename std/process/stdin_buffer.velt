@@ -7,26 +7,28 @@
 //
 // The state is C memory, one block for the process, whose address an `Atomic` holds: the lock
 // word, then the buffer's address and capacity, where unread bytes start and end, and whether the
-// OS reported the end of input. The lock is the runtime's thread lock (`velt_rt_mutex_lock`), held
-// across the OS read, so a second reader parks rather than spins (#2196 leaves it to switch to a
-// lock of std's).
+// OS reported the end of input. The lock is a `Mutex`'s thread lock (`#thread-lock`: std's on a
+// native target, std/lang/hooks/mutex.velt), held across the OS read, so a second reader parks
+// rather than spins.
 
 import { IoError } from "velt/io/error";
 import { Ptr } from "velt/ffi/ptr";
 import { readBytes } from "velt/ffi/read";
-import { addressArray, addressLoad, addressStore } from "velt/lang/intrinsics";
+import { addressArray, addressLoad, addressStore, ptrFromAddress } from "velt/lang/intrinsics";
 import { readChunk } from "#stdin-sys";
+import { mutexLock, mutexUnlock } from "#thread-lock";
 
-// C declarations, so that the `Ptr` is passed as the pointer it is: a Velt-ABI declaration passes
-// it as the address of a copy, which the runtime would lock instead (and an integer address is
-// 64 bits where a wasm32 pointer is 32).
-declare c("c") function velt_rt_mutex_lock(lock: Ptr<u64>): void;
-declare c("c") function velt_rt_mutex_unlock(lock: Ptr<u64>): void;
+// C declarations, so that a `Ptr` is passed as the pointer it is (an integer address is 64 bits
+// where a wasm32 pointer is 32).
 declare function velt_rt_flush(): void;
 declare c("c") function calloc$stdin(n: usize, size: usize): Ptr<u8> | null;
 declare c("c") function realloc$stdin(p: Ptr<u8> | null, size: usize): Ptr<u8> | null;
-declare c("c") function memchr$stdin(s: Ptr<u8>, c: i32, n: usize): Ptr<u8> | null;
-declare c("c") function memmove$stdin(dst: Ptr<u8>, src: Ptr<u8>, n: usize): Ptr<u8>;
+declare c("c") function memchr$stdin(s: Ptr<u8> | null, c: i32, n: usize): Ptr<u8> | null;
+declare c("c") function memmove$stdin(
+  dst: Ptr<u8> | null,
+  src: Ptr<u8> | null,
+  n: usize,
+): Ptr<u8> | null;
 declare c("c") function free$stdin(p: Ptr<u8> | null): void;
 
 /** Bytes read per refill. */
@@ -81,18 +83,14 @@ function state(): usize {
   return won === 0 ? mine : (won as usize);
 }
 
+/** Locks the buffer: its lock word is the block's first 8 bytes, zeroed when made. */
 function lock(s: usize): void {
-  // SAFETY: the lock word is the block's first 8 bytes, zeroed when made.
-  unsafe {
-    velt_rt_mutex_lock(Ptr.at<u64>(s + LOCK));
-  }
+  mutexLock(s + LOCK);
 }
 
+/** Unlocks the buffer, which this thread locked. */
 function unlock(s: usize): void {
-  // SAFETY: as `lock`, held by this thread.
-  unsafe {
-    velt_rt_mutex_unlock(Ptr.at<u64>(s + LOCK));
-  }
+  mutexUnlock(s + LOCK);
 }
 
 /**
@@ -106,7 +104,7 @@ function fill(s: usize): IoError | null {
   if (start > 0 && end > start) {
     // SAFETY: both ranges are inside the buffer; memmove allows them to overlap.
     unsafe {
-      memmove$stdin(Ptr.at<u8>(buf), Ptr.at<u8>(buf + start), end - start);
+      memmove$stdin(Ptr.orNull<u8>(buf), Ptr.orNull<u8>(buf + start), end - start);
     }
   }
   const unread = end - start;
@@ -117,7 +115,7 @@ function fill(s: usize): IoError | null {
     // Doubled, so reading everything copies each byte a bounded number of times.
     const cap = had * 2 > unread + CHUNK ? had * 2 : unread + CHUNK;
     // SAFETY: the buffer is realloc's own (or null before the first fill); its result is checked.
-    const grown = unsafe { realloc$stdin(buf === 0 ? null : Ptr.at<u8>(buf), cap) };
+    const grown = unsafe { realloc$stdin(buf === 0 ? null : Ptr.orNull<u8>(buf), cap) };
     if (grown === null) {
       panic("velt/process: no memory for standard input's buffer");
     }
@@ -141,7 +139,7 @@ function fill(s: usize): IoError | null {
 /** The first "\n" in the `n` (> 0) unread bytes at `p`, or null. */
 function newline(p: usize, n: usize): Ptr<u8> | null {
   // SAFETY: `p .. p + n` are unread bytes of the buffer, which the caller's lock keeps in place.
-  return unsafe { memchr$stdin(Ptr.at<u8>(p), 10, n) };
+  return unsafe { memchr$stdin(Ptr.orNull<u8>(p), 10, n) };
 }
 
 /**
@@ -213,15 +211,15 @@ export function readAll(asText: bool): StdinRead {
       // SAFETY: the unread bytes, which nothing changes while the lock is held.
       text = unsafe { textAt(buf + start, end - start) };
     } else if (end > start) {
-      // SAFETY: as above.
-      bytes = unsafe { readBytes(Ptr.at<u8>(buf + start), end - start) };
+      // SAFETY: as above; the buffer holds bytes, so `buf + start` is not 0.
+      bytes = unsafe { readBytes(ptrFromAddress<u8>(buf + start), end - start) };
     }
     // Nothing is left to read, so the buffer (as large as the input) is freed, not kept beside
     // the copy handed out; a later read starts a new one.
     if (buf !== 0) {
       // SAFETY: the buffer realloc gave, which nothing points into once the fields are reset.
       unsafe {
-        free$stdin(Ptr.at<u8>(buf));
+        free$stdin(Ptr.orNull<u8>(buf));
       }
     }
     setWord(s, BUF, 0);

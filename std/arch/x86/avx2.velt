@@ -1,0 +1,267 @@
+// velt/arch/x86 (internal): `Avx2`, the check of `avx2-x86` (docs/internals/design/package-machine-code.md §2).
+
+import { cpuHas } from "velt/lang/cpu/word";
+import { AVX2_X86 } from "velt/lang/cpu/masks";
+
+// True only where the build guarantees the feature: code built for a CPU that has it (`--cpu`),
+// or gated on it (`@targetFeature("avx2-x86")`) and what such code calls.
+declare function velt_simd_has_avx2_x86(): bool;
+// Whether this build runs x86-64's checks: false on another architecture, on WebAssembly and
+// in debug (Cranelift) builds.
+declare function velt_simd_on_x86(): bool;
+
+/** AVX2. The check of `@targetFeature("avx2-x86")`. */
+export class Avx2 {
+  /**
+   * Whether this CPU has it: true at compile time where the build guarantees it (`--cpu`, or in
+   * a function gated on it), otherwise the CPU's answer, read once at start-up. False on another
+   * architecture, on WebAssembly, in debug (Cranelift) builds, and with `VELT_CPU_DISABLE=AVX2`.
+   * Check once, outside a hot loop: it is a load of the start-up word wherever the build doesn't
+   * decide it.
+   */
+  static isSupported(): bool {
+    return velt_simd_has_avx2_x86() || (velt_simd_on_x86() && cpuHas(AVX2_X86));
+  }
+
+  // The instructions, generated from velt_vir's table (crates/velt_vir/src/arch) by
+  // `cargo xtask gen-arch`: edit the table, not these.
+
+  /**
+   * Each byte all ones where `left`'s equals `right`'s, else 0.
+   *
+   * `_mm256_cmpeq_epi8` (`vpcmpeqb`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static compareEqualU8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u8> {
+    return velt_arch_avx2_compare_equal_u8(left, right);
+  }
+
+  /**
+   * Bit `i` is the top bit of byte `i` of `value`.
+   *
+   * `_mm256_movemask_epi8` (`vpmovmskb`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static moveMaskU8(value: Vector256<u8>): u32 {
+    return velt_arch_avx2_move_mask_u8(value);
+  }
+
+  /**
+   * In each 128-bit half, byte `i` is byte `mask[i] & 15` of the same half of `value`, or 0 where
+   * bit 7 of `mask[i]` is set.
+   *
+   * `_mm256_shuffle_epi8` (`vpshufb`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static shuffleU8(value: Vector256<u8>, mask: Vector256<u8>): Vector256<u8> {
+    return velt_arch_avx2_shuffle_u8(value, mask);
+  }
+
+  /**
+   * The bytes of `left` plus those of `right`, wrapping.
+   *
+   * `_mm256_add_epi8` (`vpaddb`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static addU8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u8> {
+    return velt_arch_avx2_add_u8(left, right);
+  }
+
+  /**
+   * The lanes of `left` plus those of `right`, wrapping.
+   *
+   * `_mm256_add_epi32` (`vpaddd`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static addU32(left: Vector256<u32>, right: Vector256<u32>): Vector256<u32> {
+    return velt_arch_avx2_add_u32(left, right);
+  }
+
+  /**
+   * The lanes of `left` minus those of `right`, wrapping.
+   *
+   * `_mm256_sub_epi32` (`vpsubd`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static subtractU32(left: Vector256<u32>, right: Vector256<u32>): Vector256<u32> {
+    return velt_arch_avx2_subtract_u32(left, right);
+  }
+
+  /**
+   * The low 32 bits of each product of `left`'s and `right`'s lanes.
+   *
+   * `_mm256_mullo_epi32` (`vpmulld`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static multiplyLowU32(left: Vector256<u32>, right: Vector256<u32>): Vector256<u32> {
+    return velt_arch_avx2_multiply_low_u32(left, right);
+  }
+
+  /**
+   * The lanes of `left` plus those of `right`, wrapping.
+   *
+   * `_mm256_add_epi64` (`vpaddq`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static addU64(left: Vector256<u64>, right: Vector256<u64>): Vector256<u64> {
+    return velt_arch_avx2_add_u64(left, right);
+  }
+
+  /**
+   * Lane `i` is lane `indices[i] & 7` of `value`.
+   *
+   * `_mm256_permutevar8x32_epi32` (`vpermd`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static permuteVarU32(value: Vector256<u32>, indices: Vector256<u32>): Vector256<u32> {
+    return velt_arch_avx2_permute_var_u32(value, indices);
+  }
+
+  /**
+   * The smaller of each pair of bytes, unsigned.
+   *
+   * `_mm256_min_epu8` (`vpminub`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static minU8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u8> {
+    return velt_arch_avx2_min_u8(left, right);
+  }
+
+  /**
+   * The larger of each pair of bytes, unsigned.
+   *
+   * `_mm256_max_epu8` (`vpmaxub`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static maxU8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u8> {
+    return velt_arch_avx2_max_u8(left, right);
+  }
+
+  /**
+   * Lane `i` is `left[2i] * right[2i] + left[2i + 1] * right[2i + 1]`, signed.
+   *
+   * `_mm256_madd_epi16` (`vpmaddwd`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static multiplyAddAdjacentI16(left: Vector256<i16>, right: Vector256<i16>): Vector256<i32> {
+    return velt_arch_avx2_multiply_add_adjacent_i16(left, right);
+  }
+
+  /**
+   * Lane `i` is `left[2i] * right[2i] + left[2i + 1] * right[2i + 1]` (`left` unsigned, `right`
+   * signed), saturated to `i16`.
+   *
+   * `_mm256_maddubs_epi16` (`vpmaddubsw`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static multiplyAddAdjacentU8I8(left: Vector256<u8>, right: Vector256<i8>): Vector256<i16> {
+    return velt_arch_avx2_multiply_add_adjacent_u8_i8(left, right);
+  }
+
+  /**
+   * Lane `i` is the sum of `|left[j] - right[j]|` over bytes `8i` to `8i + 7`.
+   *
+   * `_mm256_sad_epu8` (`vpsadbw`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static sumAbsoluteDifferencesU8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u64> {
+    return velt_arch_avx2_sum_absolute_differences_u8(left, right);
+  }
+
+  /**
+   * Byte `i` is `right`'s where the top bit of `mask[i]` is set, else `left`'s.
+   *
+   * `_mm256_blendv_epi8` (`vpblendvb`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static blendVariableU8(
+    left: Vector256<u8>,
+    right: Vector256<u8>,
+    mask: Vector256<u8>,
+  ): Vector256<u8> {
+    return velt_arch_avx2_blend_variable_u8(left, right, mask);
+  }
+
+  /**
+   * Each lane of `value` shifted left by the same lane of `count` (0 from 32 on).
+   *
+   * `_mm256_sllv_epi32` (`vpsllvd`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static shiftLeftLogicalVariableU32(value: Vector256<u32>, count: Vector256<u32>): Vector256<u32> {
+    return velt_arch_avx2_shift_left_logical_variable_u32(value, count);
+  }
+
+  /**
+   * Each lane of `value` shifted right by the same lane of `count`, zeros in (0 from 32 on).
+   *
+   * `_mm256_srlv_epi32` (`vpsrlvd`). Runs only where the CPU has it: call it behind
+   * `Avx2.isSupported()`, or in a function gated on `avx2-x86`.
+   */
+  static shiftRightLogicalVariableU32(
+    value: Vector256<u32>,
+    count: Vector256<u32>,
+  ): Vector256<u32> {
+    return velt_arch_avx2_shift_right_logical_variable_u32(value, count);
+  }
+}
+
+import { Vector256 } from "velt/arch/x86/vector256";
+
+declare function velt_arch_avx2_compare_equal_u8(
+  left: Vector256<u8>,
+  right: Vector256<u8>,
+): Vector256<u8>;
+declare function velt_arch_avx2_move_mask_u8(value: Vector256<u8>): u32;
+declare function velt_arch_avx2_shuffle_u8(
+  value: Vector256<u8>,
+  mask: Vector256<u8>,
+): Vector256<u8>;
+declare function velt_arch_avx2_add_u8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u8>;
+declare function velt_arch_avx2_add_u32(
+  left: Vector256<u32>,
+  right: Vector256<u32>,
+): Vector256<u32>;
+declare function velt_arch_avx2_subtract_u32(
+  left: Vector256<u32>,
+  right: Vector256<u32>,
+): Vector256<u32>;
+declare function velt_arch_avx2_multiply_low_u32(
+  left: Vector256<u32>,
+  right: Vector256<u32>,
+): Vector256<u32>;
+declare function velt_arch_avx2_add_u64(
+  left: Vector256<u64>,
+  right: Vector256<u64>,
+): Vector256<u64>;
+declare function velt_arch_avx2_permute_var_u32(
+  value: Vector256<u32>,
+  indices: Vector256<u32>,
+): Vector256<u32>;
+declare function velt_arch_avx2_min_u8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u8>;
+declare function velt_arch_avx2_max_u8(left: Vector256<u8>, right: Vector256<u8>): Vector256<u8>;
+declare function velt_arch_avx2_multiply_add_adjacent_i16(
+  left: Vector256<i16>,
+  right: Vector256<i16>,
+): Vector256<i32>;
+declare function velt_arch_avx2_multiply_add_adjacent_u8_i8(
+  left: Vector256<u8>,
+  right: Vector256<i8>,
+): Vector256<i16>;
+declare function velt_arch_avx2_sum_absolute_differences_u8(
+  left: Vector256<u8>,
+  right: Vector256<u8>,
+): Vector256<u64>;
+declare function velt_arch_avx2_blend_variable_u8(
+  left: Vector256<u8>,
+  right: Vector256<u8>,
+  mask: Vector256<u8>,
+): Vector256<u8>;
+declare function velt_arch_avx2_shift_left_logical_variable_u32(
+  value: Vector256<u32>,
+  count: Vector256<u32>,
+): Vector256<u32>;
+declare function velt_arch_avx2_shift_right_logical_variable_u32(
+  value: Vector256<u32>,
+  count: Vector256<u32>,
+): Vector256<u32>;

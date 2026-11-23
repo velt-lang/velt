@@ -250,11 +250,14 @@ fn whole_rows_skip_and_read_as_values() {
     assert_eq!(r.array_next(), STEP_MORE);
     assert_eq!(r.skip(), 1);
     assert_eq!(r.array_next(), STEP_MORE);
-    let row = r.value().unwrap();
-    assert!(matches!(&*row, Value::Object(o) if o.len() == 6));
+    let row = json_of(&r.value().unwrap());
+    assert!(row.starts_with("{\"") && row.ends_with('}'), "{row}");
+    assert_eq!(row.matches("\":").count(), 6, "{row}");
     assert_eq!(r.array_next(), STEP_END);
     let mut r = make(sample(false), 0);
-    assert!(matches!(&*r.value().unwrap(), Value::Array(rows) if rows.len() == 2));
+    let rows = json_of(&r.value().unwrap());
+    assert!(rows.starts_with("[{") && rows.ends_with("}]"), "{rows}");
+    assert_eq!(rows.matches("},{").count(), 1, "{rows}");
     assert_eq!(r.end(), 1);
 }
 
@@ -347,10 +350,8 @@ fn a_damaged_buffer_is_a_mismatch_not_a_crash() {
     }
 }
 
-fn json_of(v: &Value) -> String {
-    let mut out = Vec::new();
-    crate::json::text::stringify_into(&mut out, v);
-    String::from_utf8(out).unwrap()
+fn json_of(v: &[u8]) -> String {
+    String::from_utf8(v.to_vec()).unwrap()
 }
 
 /// A column holding an array or object (a Postgres array, `jsonb`) reads as the JSON it is.
@@ -384,7 +385,8 @@ fn nested_values_read_as_their_json() {
     assert_eq!(r.open(b'{'), 1);
     assert_eq!(key(&mut r).as_deref(), Some("a"));
     let v = r.value().unwrap();
-    assert_eq!(json_of(&v), r#"{"b":true}"#);
+    // The nested value's text as the driver wrote it (std parses it).
+    assert_eq!(json_of(&v), r#"{"b": true}"#);
     assert_eq!(key(&mut r).as_deref(), Some("c"));
     assert_eq!(r.null(), 1);
     assert_eq!(key(&mut r), None);
@@ -399,7 +401,10 @@ fn nested_values_read_as_their_json() {
     key(&mut r);
     assert_eq!(r.skip(), 1);
     key(&mut r);
-    assert_eq!(json_of(&r.value().unwrap()), r#"{"a":{"b":true},"c":null}"#);
+    assert_eq!(
+        json_of(&r.value().unwrap()),
+        r#"{"a": {"b": true}, "c": null}"#
+    );
     key(&mut r);
     assert_eq!(r.i64(), Some(9));
     let mut r = make(buf, 0);

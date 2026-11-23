@@ -127,6 +127,7 @@ mod noalias;
 mod null_exits;
 mod numrep;
 mod parallel;
+mod range_versions;
 mod scc;
 mod simplify_cfg;
 mod srclocs;
@@ -495,6 +496,24 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
                 if t.time("invariant_reads", || {
                     invariant_reads::run(aggs, &kinds, func)
                 }) {
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+                false
+            });
+            // Every program: a loop's range tests are comparisons too (an element's check,
+            // `f32x8.fits`), not only `fits` externs.
+            let externs = range_versions::Externs::of(&program.externs);
+            // The cleanup folds the copies' decided tests (`true`): their branches and panic
+            // paths go. Calls were devirtualized by the rounds before, so it needs no signatures.
+            let fold = constfold::Program::of(&[]);
+            let aggs = &program.aggs;
+            each_function(served.bodies(&mut program.funcs), t, |t, func| {
+                if t.time("range_versions", || {
+                    range_versions::run(aggs, &externs, func)
+                }) {
+                    t.time("constfold", || constfold::run(&fold, func));
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(aggs, func));
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
                 false

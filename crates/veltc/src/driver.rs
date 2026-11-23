@@ -25,6 +25,7 @@ mod pipeline;
 mod recover;
 mod std_load;
 mod std_summary;
+mod units_key;
 use std_load::load_options;
 pub(crate) use std_load::StdLoad;
 mod warm;
@@ -411,6 +412,11 @@ fn prebuilt_finder(
         .flatten()
 }
 
+/// Is the build's target wasm32 (`velt_sema::CheckOptions::wasm32`)?
+pub(crate) fn wasm32(opts: &BuildOptions) -> bool {
+    (opts.target.as_deref()).is_some_and(|t| t.trim().starts_with("wasm32"))
+}
+
 /// Type-check the loaded program (and the native declarations against their libraries).
 fn sema_stage(
     sess: &mut Session,
@@ -423,7 +429,9 @@ fn sema_stage(
         require_main: scope.require_main,
         eager_std: scope.eager_std,
         units: scope.units,
+        std_key: units_key::units_std_key(sess, scope, loaded),
         native_executor: native_executor(opts),
+        wasm32: wasm32(opts),
     };
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;
@@ -636,6 +644,9 @@ fn lower_checked(
         )));
     }
 
+    // What runs before std's start-up check of the CPU is compiled for the baseline CPU, and
+    // the std cache never serves it compiled for `--cpu` (`velt_vir::start_up`).
+    velt_vir::start_up::mark_baseline(&mut program);
     // The std cache (#1728), around the optimizer. A generator host stays whole:
     // `check_generator_host` looks through its code.
     let std_use = match dest == VirFor::Link && !sess.generator_build {

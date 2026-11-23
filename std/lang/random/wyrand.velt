@@ -3,7 +3,7 @@
 // BigCrush). Each thread seeds its own on first use, so concurrent tasks never contend, and every
 // run gives a different sequence. Not for secrets: that is velt/crypto.
 
-import { seedWord } from "#random-seed";
+import { osRandomU64 } from "./os";
 
 const WY_ADD: u64 = 0xa0761d6478bd642f;
 const WY_XOR: u64 = 0xe7037ed1a0b428db;
@@ -27,7 +27,7 @@ export function wyStep(s: u64): u64 {
 export function nextU64(): u64 {
   let s = STATE.get();
   if (s == 0) {
-    s = seedWord() | 1;
+    s = osRandomU64() | 1;
   }
   s = wyStep(s);
   STATE.set(s);

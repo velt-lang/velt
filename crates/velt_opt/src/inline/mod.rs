@@ -41,7 +41,9 @@
 //! first served would only as far as the estimate is right.
 //!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
-//! never inlined: their calls are cold.
+//! never inlined: their calls are cold. A `@cold` function (`Function::rare`), whose calls are
+//! rare but return, is inlined only where it is trivial (`TRIVIAL_COST`), as LLVM's inliner
+//! treats a call of a `cold` function.
 //!
 //! std's markers override the rules (`Function::inline`): a function marked `@noInline`
 //! (`Inline::Never`, #1884) is never inlined, and one marked `@inline` (`Inline::Always`) is
@@ -66,7 +68,11 @@
 //! Signatures stay scalar-only because parameters simply become caller locals; aggregates keep
 //! travelling by pointer.
 
+mod helpers;
 mod splice;
+
+use helpers::GENERATED_STD;
+pub(crate) use helpers::{run_helpers, run_helpers_into, std_forwarders};
 
 use rustc_hash::FxHashMap;
 use velt_vir::vir::{
@@ -296,118 +302,6 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget, served: crate::Ser
     changed
 }
 
-/// Inline every direct call to a function marked in `helpers` (debug builds: the compiler's
-/// small helpers only, so user code keeps its calls and stays debuggable). Helpers must not
-/// call each other.
-/// [`run_helpers`] into function `fi` alone, the helpers' bodies from `bodies` (as they were
-/// when they were lowered: `velt dev`'s kept debug pipeline, lib.rs).
-pub(crate) fn run_helpers_into(
-    program: &mut Program,
-    fi: usize,
-    helpers: &[bool],
-    bodies: &rustc_hash::FxHashMap<usize, velt_vir::vir::Function>,
-) {
-    let original_blocks = program.funcs[fi].blocks.len();
-    for bi in 0..original_blocks {
-        let Terminator::Call {
-            callee: Callee::Func(callee),
-            args,
-            ..
-        } = &program.funcs[fi].blocks[bi].term
-        else {
-            continue;
-        };
-        let ci = callee.0 as usize;
-        let Some(body) = bodies
-            .get(&ci)
-            .filter(|_| helpers.get(ci).copied().unwrap_or(false))
-        else {
-            continue;
-        };
-        if body.blocks.is_empty() || !splice::arity_matches(args, body) {
-            continue;
-        }
-        let resume = splice::resume_extern(&program.externs);
-        splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, body, resume);
-    }
-}
-
-pub(crate) fn run_helpers(program: &mut Program, helpers: &[bool]) -> bool {
-    let mut changed = false;
-    for fi in 0..program.funcs.len() {
-        if helpers[fi] {
-            continue;
-        }
-        let original_blocks = program.funcs[fi].blocks.len();
-        for bi in 0..original_blocks {
-            let Terminator::Call {
-                callee: Callee::Func(callee),
-                args,
-                ..
-            } = &program.funcs[fi].blocks[bi].term
-            else {
-                continue;
-            };
-            let ci = callee.0 as usize;
-            // A declaration (an `Import` without a body) stays a call.
-            if !helpers.get(ci).copied().unwrap_or(false)
-                || program.funcs[ci].blocks.is_empty()
-                || !splice::arity_matches(args, &program.funcs[ci])
-            {
-                continue;
-            }
-            let body = program.funcs[ci].clone();
-            let resume = splice::resume_extern(&program.externs);
-            splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, &body, resume);
-            changed = true;
-        }
-    }
-    changed
-}
-
-/// Add to `helpers` (debug builds, [`run_helpers`]) the standard library's trivial functions
-/// (cost at most `TRIVIAL_COST`: a forwarder such as `appendJsonString(out, s)` or a builder's
-/// one-call method, and the forwarders generated code for std writes): each is a function the
-/// backend would compile, for a call that stepping through user code never enters. Those that
-/// call a helper stay functions (helpers do not call each other), and so do std/lang's (the
-/// compiler's hooks and the language's runtime code).
-pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
-    let candidate: Vec<bool> = (funcs.iter().enumerate())
-        .map(|(i, f)| {
-            // Not std/lang: the compiler's hooks and the language's runtime code, whose calls
-            // stay visible in a debug build's code. Except the helpers of the code generated
-            // for `deepEqual` and `toEqual` (std/lang/equal), which only that code calls.
-            let lang = f.symbol.starts_with("_V3stdP4lang") && !f.symbol.starts_with(STD_EQUAL);
-            let std =
-                (f.symbol.starts_with("_V3std") && !lang) || f.symbol.starts_with(GENERATED_STD);
-            std && !helpers[i]
-                && !f.blocks.is_empty()
-                // Exported too: the std cache's objects may call it (its body stays).
-                && f.linkage != velt_vir::vir::Linkage::Import
-                && !never_returns(f)
-                && f.target.is_none()
-                && f.inline != Inline::Never
-                && cost(f) <= TRIVIAL_COST
-        })
-        .collect();
-    for (i, f) in funcs.iter().enumerate() {
-        let calls_helper = direct_calls(f).any(|c| {
-            let c = c.0 as usize;
-            c == i || candidate.get(c) == Some(&true) || helpers.get(c) == Some(&true)
-        });
-        if candidate[i] && !calls_helper {
-            helpers[i] = true;
-        }
-    }
-}
-
-/// The symbol prefix of std/lang/equal: `generated.velt`'s helpers (`identity`, `beginPair`, …).
-const STD_EQUAL: &str = "_V3stdP4langP5equal";
-
-/// The symbol prefix of the code generated for std's generated functions
-/// (`<generated>/std/…`, velt_sema `generated`).
-const GENERATED_STD: &str = "_V15_3cgenerated_3eP3std";
-
 struct State {
     /// Per function, its blocks' [`loop_blocks`], when this round's `wants` computed them, for
     /// `inline_into` to take: a function's body doesn't change before it is visited.
@@ -480,6 +374,10 @@ fn decide(
     let size = site.size;
     if size <= TRIVIAL_COST || (target.inline == Inline::Always && !recursive) {
         return Some(Decision::Free);
+    }
+    // `@cold`: its calls are rare, so a copy only grows the hot code around them.
+    if target.rare {
+        return None;
     }
     if site.caller_cost + size > CALLER_LIMIT {
         return None;
@@ -596,8 +494,8 @@ fn inline_into(
         // runs only where the CPU has it: its body must not move into a function compiled
         // without (or for another) extension. An ordinary body may move into it: there it only
         // runs where the CPU has the extension.
-        let gated_elsewhere = target.target.is_some() && target.target != program.funcs[fi].target;
-        if !splice::arity_matches(args, target) || gated_elsewhere {
+        let elsewhere = !target.target.is_empty() && target.target != program.funcs[fi].target;
+        if !splice::arity_matches(args, target) || elsewhere {
             continue;
         }
         // Only a nested call in a loop asks, and only of a callee the nested limit would refuse.
@@ -781,7 +679,7 @@ fn calls<'a>(
             return None;
         };
         let target = program.funcs.get(callee.0 as usize)?;
-        let gated_elsewhere = target.target.is_some() && target.target != func.target;
+        let gated_elsewhere = !target.target.is_empty() && target.target != func.target;
         (splice::arity_matches(args, target) && !gated_elsewhere).then_some((*callee, bi))
     })
 }

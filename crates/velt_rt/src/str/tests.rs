@@ -253,8 +253,7 @@ fn strbuf_pushes_carry_units() {
     let mut b = Owned(VeltStr::empty());
     unsafe {
         velt_rt_strbuf_new(0, &mut b.0);
-        velt_rt_strbuf_push_f64(&mut b.0, -42.0);
-        velt_rt_strbuf_push_bytes(&mut b.0, "€ ".as_ptr(), 4);
+        velt_rt_strbuf_push_bytes(&mut b.0, "-42€ ".as_ptr(), 7);
         velt_rt_strbuf_push_bool(&mut b.0, 1);
         let s = VeltStr::from_static("😀".as_bytes());
         velt_rt_strbuf_push_json_str(&mut b.0, &s);
@@ -453,41 +452,8 @@ fn lossy_text_has_one_replacement_per_lone_surrogate() {
 }
 
 #[test]
-fn producers_join_halves_at_their_seams() {
-    use crate::str_ops::replace::*;
-    use crate::str_ops::slice::*;
-    let s = |t: &str| VeltStr::from_bytes(&w(t));
-    let pair = "😀";
-    // replace / replaceAll: the text before a match against the replacement, and the
-    // replacement against the text after it.
-    let r = out(|o| unsafe { velt_rt_str_replace(&s("aH-b"), &s("-"), &s("Lx"), o) });
-    assert_eq!(bytes(&r.0), format!("a{pair}xb").as_bytes());
-    let r = out(|o| unsafe { velt_rt_str_replace_all(&s("H-H-"), &s("-"), &s("L"), o) });
-    assert_eq!(bytes(&r.0), format!("{pair}{pair}").as_bytes());
-    let r = out(|o| unsafe { velt_rt_str_replace(&s("x-L"), &s("-"), &s("H"), o) });
-    assert_eq!(bytes(&r.0), format!("x{pair}").as_bytes());
-    // `$&`, `` $` `` and `$'` pieces join too.
-    let r = out(|o| unsafe { velt_rt_str_replace(&s("H-L"), &s("-"), &s("$'$`"), o) });
-    assert_eq!(bytes(&r.0), format!("{pair}{pair}").as_bytes());
-    // An empty pattern matches at every code point boundary.
-    let r = out(|o| unsafe { velt_rt_str_replace_all(&s("LH"), &s(""), &s("-"), o) });
-    assert_eq!(bytes(&r.0), w("-L-H-"));
-    // repeat: the end of one copy against the start of the next.
-    let r = out(|o| unsafe {
-        velt_rt_str_repeat(&s("LxH"), 3, o);
-    });
-    assert_eq!(bytes(&r.0), w(&format!("Lx{pair}x{pair}xH")));
-    // padStart / padEnd: fill against fill and fill against the string (lengths in units).
-    let r = out(|o| unsafe { velt_rt_str_pad_start(&s("Lz"), 6, &s("LH"), o) });
-    assert_eq!(bytes(&r.0), w(&format!("L{pair}{pair}z")));
-    let r = out(|o| unsafe { velt_rt_str_pad_end(&s("zH"), 6, &s("LH"), o) });
-    assert_eq!(bytes(&r.0), w(&format!("z{pair}{pair}H")));
-}
-
-#[test]
-fn ill_formed_text_through_the_string_methods() {
+fn ill_formed_text_through_case_mapping() {
     use crate::str_ops::case::*;
-    use crate::str_ops::split::*;
     let s = |t: &str| VeltStr::from_bytes(&w(t));
     // Case mapping keeps lone surrogates; final sigma sees one as the end of a word.
     let r = out(|o| unsafe { velt_rt_str_to_upper(&s("aHßL"), o) });
@@ -495,18 +461,6 @@ fn ill_formed_text_through_the_string_methods() {
     // node: "ΑΣ\uD83DΣ".toLowerCase() is "ας\ud83dσ".
     let r = out(|o| unsafe { velt_rt_str_to_lower(&s("ΑΣHΣ"), o) });
     assert_eq!(bytes(&r.0), w("αςHσ"));
-    // Trimming stops at a lone surrogate.
-    let r = out(|o| unsafe { velt_rt_str_trim(&s(" \u{3000}H \u{FEFF}"), o) });
-    assert_eq!(bytes(&r.0), w("H"));
-    // split("") gives a lone surrogate as one piece.
-    let mut a = std::mem::MaybeUninit::uninit();
-    unsafe { velt_rt_str_split(&s("aHb"), &VeltStr::empty(), a.as_mut_ptr()) };
-    let mut a = unsafe { a.assume_init() };
-    let pieces: Vec<Vec<u8>> = (0..a.len as usize)
-        .map(|i| bytes(unsafe { &*a.ptr.add(i) }).to_vec())
-        .collect();
-    assert_eq!(pieces, [w("a"), w("H"), w("b")]);
-    unsafe { crate::str_array::velt_rt_str_array_drop(&mut a) };
 }
 
 /// Writes `pieces` at `spare` (asking for room per piece but committing once, as a native

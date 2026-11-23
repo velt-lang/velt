@@ -383,7 +383,7 @@ docs/internals/design/iteration.md §4)
   `params` and clears `rest` (`(...a: [A, B]) => R` is `(a: A, b: B) => R`).
 - `declare function` params are never inferred modified: std passes out-parameters as fresh locals.
   A host or C function (`ExternFnDef::host`, `ExternFnDef::c`) writes every buffer parameter
-  not written `readonly` (and a C function its `Out`/`OutPtr` parameters): callers pass those
+  not written `readonly` (and a C function its `Out` parameters): callers pass those
   `BorrowMut`.
   An argument of such a call for a `u8[]` parameter (a buffer or a path) is a `u8[]`, a value
   of a class extending `std/lang/typed_array/buffer_view::BufferView` (a typed array or `DataView`:
@@ -733,6 +733,19 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   the call runs (lowering counts the type or borrows values of it inside counted objects, so
   params of it are never `noalias`). The array callback methods re-check the length after a
   callback only then.
+  `Intrinsic::IsUnique(value)` (std only, std/lang/intrinsics/ownership.velt, additive: units
+  codec tag 220; value borrowed and evaluated): a `bool`, whether `value` is reached by no other
+  reference, so a change in place shows nowhere else (copy-on-write: velt/encoding/json's tree).
+  By kind: a counted object, array or box compares its whole count word with 1, so any flag in
+  it (an immortal count, a lock-set object's `LOCAL`/`STORED`, the cycle collector's
+  `BUFFERED` on a value it may trace) makes it `false`; a reference type the program never counts
+  is `true` (each value has one owner); a lock-set type (readers of an `RwLock` share its counts)
+  is `false` without reading a count; any other kind (`shared<T>`, strings, functions,
+  interface values, plain values) is `false`. A borrow (a parameter, a captured variable) is the
+  reference it borrows: `true` there means a change in place shows in the lender's variable, as
+  in JavaScript; a function that must leave its caller's value unchanged takes it owned, or
+  copies it. A wrong `true` would be a lost write or a race, so every doubtful case answers
+  `false`, which only costs a copy.
   `Intrinsic::Truthy(x)` (compiler-internal, `x` a place of a type parameter's type,
   borrowed): a `bool`, JS truthiness of `x` (`!x`, `if (x)` in generic code), lowered per
   instantiation to the test sema writes for that type (truthiness.rs): numbers falsy at `0`,
@@ -778,6 +791,32 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   presence flag, below) and shows a class's optional field holding `undefined`, as Node does. A
   `null` (a present one of `a?: T | null`, or a `T | null` field that is not optional) is
   written as `null`.
+- `FieldDef::weak` (additive, #3119): a class's field declared `weak T | null` with `T` a class
+  (docs/internals/design/cycles.md "`weak T`"). `ty` is the read type, `T | null`; the field holds
+  its target's slot in the weak core (rt_abi.md "Weak references"), not a counted reference.
+  Lowering reads it as the target, retained, or `null` once the target is freed, writes it by
+  taking the value's slot (the value is borrowed: sema checks it as a borrow), and leaves it out of
+  the ownership graph (trace glue, the cycle and weak-capable analyses, drop chains). Sema narrows
+  nothing through it and rejects destructuring it and transferring or cloning a value with one.
+- `LocalDef::weak` (additive, #3119): a function's `let`, `const` or `var` declared `weak T | null`
+  with `T` a class. `ty` is the read type; the variable holds its target's slot, as a weak field
+  does. Its `Let` initializer and the values assigned to it are borrowed. Every read of it is
+  `Intrinsic::WeakRead` with the bare `Local` as its operand (its target retained, or `null`), so
+  a bare `Local` of a weak local is only that operand, an `Assign`'s place or its `Let`. Lowering
+  stores 0 then the initializer's slot at the `Let`, swaps slots on an assignment and gives the
+  slot up at the end of the scope. Sema narrows nothing through it. A closure's capture local of
+  one is `weak` too (its reads are `WeakRead`s): a capture by value or in a cell holds the slot
+  with a reference of its own, and sema refuses one crossing to another task or a lock.
+- `GlobalDef::weak` (additive, #3119): a module-level `let` or `var` declared `weak T | null`
+  with `T` a class, a slot of the module state (`is_slot`). `ty` is the read type; the slot holds
+  its target's slot, as a `weak` local's storage does. Its `init` and the values assigned to it
+  are borrowed. Every read of it is `Intrinsic::WeakRead` with the bare `Global` as its operand, so
+  a bare `Global` of one is only that operand or an `Assign`'s place. Lowering stores the
+  initializer's slot into the zeroed block, swaps slots on an assignment, and gives the slot up
+  in the state's drop at exit (`Work::ModuleDrop` in place of the state tuple's drop glue when a
+  slot is weak). Module state is used by the tasks that reach it one at a time, under the module
+  lock, so the slot stays on one task at a time. Sema narrows nothing through it, and refuses
+  `weak` on a module `const` that functions use.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type: decoding does not run the constructor (the decoder's
   generator reports it, std/encoding/json/generate/parse_check.velt).
@@ -999,12 +1038,12 @@ doesn't hold, so a std global is the same definition in every program (#2943).
   modified in place. A use that takes the value (`Want::Move`) is wrapped in
   `Intrinsic::Share` by sema; moving a part out of it (`Field { base: Global(d) }` with mode
   `Move`) is a share too (lowering).
-- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` for each access to slot `i` (rt_abi.md
-  "Module state") and projects slot `i` of the tuple behind it; `DESC` is
-  `{ size, align, init, drop, names, rest }`, `init` the function evaluating every slot's `init`
-  in order into the zeroed block (calling `velt_rt_module_ready` after each), `drop` the tuple's
-  drop glue, `names` the slots' names, `rest` below (null when `init` writes every slot). A
-  slot is never read from its initializer's stored data (a module constant table's
+- Lowering emits `velt_rt_module_state(&DESC, i) -> ptr` (on a native target std's hook for
+  it) for each access to slot `i` (rt_abi.md "Module state") and projects slot `i` of the tuple
+  behind it; `DESC` is `{ size, align, init, drop, names, rest }`, `init` the function evaluating
+  every slot's `init` in order into the zeroed block (calling `velt_rt_module_ready` after each),
+  `drop` the tuple's drop glue, `names` the slots' names, `rest` below (null when `init` writes
+  every slot). A slot is never read from its initializer's stored data (a module constant table's
   `table_read`). `velt_main` touches the state before calling `main` (sync or async), so every
   initializer runs first, as in Node.
 - The root file's slots when its top-level statements are the entry `main` (#1438): slots
@@ -1205,6 +1244,18 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   the field in its member's variant, and a write evaluates the value once and stores the
   value's member into the field when it is the field's type, else stops the program with a
   `TypeError` (docs/internals/design/deferred-types.md).
+- `g(...args)` with `args` of a type known only per instantiation, a type parameter bounded by
+  an array or tuple type (`A extends unknown[]`) or a deferred type (`[S] extends [void] ? [] :
+  [S]`), spread into a call's rest parameter of `U[]` with `U` dynamic (`unknown`, `any`)
+  (#943, additive): in the array of the call's rest arguments, the spread's source is a `Call`
+  of `Intrinsic::SpreadParam(args)` of type `U[]`, `args` borrowed, spread like any array.
+  Only there: a spread of such a value in an array literal, or into fixed parameters, is
+  refused, as its length is known only per instantiation. Lowering (velt_vir
+  `lower/array/spread_param.rs`) builds the array at each instantiation from the value's own
+  type: a tuple gives its elements in order, an array its elements, each shared and converted
+  to `U` (boxed); `[]` gives an empty array. The value is evaluated once, where it is written
+  among the arguments. An instantiation whose value is neither, or whose element type holds a
+  lock (a dynamic value is read without the lock), is a diagnostic at the spread.
 
 ## Interface intersections and upcasts (#350)
 
@@ -1324,7 +1375,8 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   stores a `bool` flag after the aggregate's fields (in field order, one per presence field).
   An absent field holds the option's nothing (`undefined`). An `AdtLit` sets the flag, unless the
   field's value is `Intrinsic::FieldAbsent` (`() -> T | undefined`; outside a literal it is
-  `undefined`); any write to the field sets it; `Intrinsic::FieldPresent` (`(field) -> bool`, the
+  `undefined`); any write to the field sets it, but an `Assign` of `Intrinsic::FieldAbsent` to
+  it, which clears it (`delete o.a`, sema `delete_optional`); `Intrinsic::FieldPresent` (`(field) -> bool`, the
   argument a `Field` place of a presence field) reads it. `console.log` leaves out an absent
   field and prints a present `undefined` or `null`; `JSON.stringify` leaves out an absent field
   and one holding `undefined`, and writes a present `null`; `JSON.parse` sets the flag when the
@@ -1396,6 +1448,17 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   becomes its base, a union each member (`union_to_common`), a `T | null` its payload, and its
   nothing, like the literals `null` and `undefined` written where `any` is expected, the nothing
   of `boolean | null` / `boolean | undefined` (the dynamic `null` / `undefined`).
+- A promise is boxed as it is, in the table of its own `Promise<T, E>` (velt_vir
+  `lower/any_await.rs`): its class id word is `PROMISE_ID`, and only such a table has the await
+  slot. `await x` of an `any` or `unknown` is a call of std's `awaitAny(x)` (a hook,
+  std/lang/hooks/any_ops.velt), awaited: the value is an `unknown` (an `any` again for an `any`
+  `x`), a rejection thrown as an `unknown`. `awaitAny` is `Intrinsic::AnyPromise(x)` — a
+  `Promise<unknown, unknown>` that polls the boxed promise and boxes its value or reason as it
+  settles (a widening wrapper, `async_fn/widen.rs`), or `undefined` when `x` holds no promise —
+  else `Promise.resolve(x)`, the one step JavaScript takes for a value that is no promise. A
+  thenable is not adopted (#3412). `Intrinsic::AnyIsPromise(x)` (`x instanceof Promise`, and
+  the promise member test of a union) borrows `x` of any type `T`: the table test for a dynamic
+  `T`, else a constant (`true` for a promise type), with no conversion to a dynamic type.
 - The table of `any_impl` for a concrete type is its type descriptor (velt_vir `lower/any.rs`).
   Besides the hidden slots of every interface table it holds, at slot 0, the `typeof` tag (an
   integer: 0 `undefined`, 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7
@@ -1417,7 +1480,18 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   without type arguments: the class id is `T` or a subclass; a generic class: that
   instantiation's table; `U | null`: `null` and `undefined` give `null`; a union or literal
   `U` with `| null`: a loose `=== null` test first, then per member as below). A mismatch
-  stops the program with `TypeError: the value is not a <T> (it is <found>)`. Its operand is
+  stops the program with `TypeError: the value is not a <T> (it is <found>)`. To a number type
+  a number of another numeric type converts, to an integer type as JavaScript's ToIntN does
+  (truncated, modulo 2^N, `NaN` and the infinities 0). One assignment is no type claim but
+  JavaScript's own converting store: an `any` assigned to an element of an integer array
+  (`buf[i] = v` on a `Buffer`, a `u8[]`, an `i32[]`). Sema writes its value as a test of the
+  tag: a number held is `AnyTo` the element type as it is, and anything else is first
+  converted with `ToNumber` (`ToPrimitive` before, for an object) and that number, as an
+  `any`, is `AnyTo` the element type (`body/expr/element_store.rs`). A typed array's index
+  setter is given `ToNumber` of the `any` the same way, and converts the number itself. Every
+  form of the store converts (`=`, `+=` and the other compound forms, `||=` / `&&=` / `??=`,
+  an assignment used as a value). A `number[]` element is not such a store (JavaScript keeps
+  the value itself there). `AnyTo`'s operand is
   owned: a place is wrapped in `Intrinsic::Share` of the place read with `UseMode::Borrow`, so
   the place keeps (and later drops) its value. An optional second operand, a string literal
   (`ExprKind::Lit(Lit::Str(text))`), says where the value comes from: a mismatch stops with
@@ -1873,9 +1947,16 @@ or string; for `any` or `unknown`, the tree as written). An abstract property
 `DecoratorTarget::Def`. The map is a side table, so a program without decorators has an empty
 one and no other HIR type changes. Lowering reads only the decorators the compiler acts on, each
 found by its `def`'s qualified name from the hook table (`std_hooks`, `decorator_*`): `@inline`
-and `@noInline` on a `Def(f)` set `vir::Function::inline` (contracts README "Inlining
-decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error
-(#2204), so it never gets here.
+and `@noInline` on a `Def(f)` set `vir::Function::inline`, and `@cold` sets
+`vir::Function::rare` (contracts README "Inlining decorators"); `@repr("transparent")` and
+`@align(n)` on a struct's `Def` (velt/compiler, `decorator_repr`, `decorator_align`;
+docs/internals/design/package-machine-code.md §5) are read for its layout and its C crossing:
+`@align`'s one argument is an `Int`, a power of two from 1 to 4096, which raises the value
+aggregate's alignment and pads its size; a transparent struct has exactly one field, neither
+optional nor `void`, and where it crosses to C the `CTy` is its field's (lowering passes the field
+and builds the struct around a result); sema reports both on anything but a struct, and the pair
+together. `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error (#2204), so
+it never gets here.
 
 `@export("c_name")` (velt/ffi, `std_hooks` `decorator_export`, #2203) is read through its
 own side table, `Program::c_exports: Vec<CExport>`, in the order sema checked them (empty without
@@ -1884,7 +1965,8 @@ that is neither generic, async nor a generator and throws nothing (`throws` is `
 `never`); `name` a C identifier no other export, `declare c` function, the runtime (`velt_…`) or
 C (`__…`, `_X…`, `main`, keywords, the common C library names) has; `params` and `ret` what
 crosses for each parameter and the result, as for a `declare c` function by value (integers,
-`F32`, `F64`, `Bool`, `Ptr`, and `Void` for the result). Lowering builds a C function for each
+`F32`, `F64`, `Bool`, `Ptr`, a `@repr("transparent")` struct's field's, and `Void` for the
+result). Lowering builds a C function for each
 (docs/internals/design/c-ffi.md "Exported functions"). `Intrinsic::ExportedAddress` (std only,
 `exportedAddress(f)`) has one argument, a `Lit::Int`: the index of `f`'s `CExport` there; its
 value is the C function's address as a `usize`.

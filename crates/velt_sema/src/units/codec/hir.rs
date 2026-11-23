@@ -18,7 +18,7 @@ structs! {
     Param { local, ty, mode }
     Capture { outer, inner, mode, share }
     Body { locals, block }
-    LocalDef { name, ty, mutable, boxed, span }
+    LocalDef { name, ty, mutable, boxed, weak, span }
     ExternFnDef { name, symbol, params, ret, is_async, host, c, is_decorator, span }
     CImport { library, errno, params, ret, variadic }
     HostImport { module, params, ret }
@@ -26,11 +26,11 @@ structs! {
         name, kind, generics, fields, is_copy, declared_struct, c_struct, private_fields, opaque,
         base, inherited_inits, ctor, dispose, to_string, to_json, inspect, vtable, span,
     }
-    FieldDef { name, ty, default, optional, private, presence, hidden, cell }
+    FieldDef { name, ty, default, optional, private, presence, hidden, cell, weak }
     FieldInit { field, depth, at, init }
     EnumDef { name, generics, variants, is_copy, is_union, span }
     VariantDef { name, payload, discriminant, str_value }
-    GlobalDef { name, ty, init, span, is_slot, c_const, c_global }
+    GlobalDef { name, ty, init, span, is_slot, c_const, c_global, weak }
     CConst { ty, value }
     CGlobal { library, symbol, ty, writable }
     InterfaceDef { name, generics, fields, methods, span }
@@ -95,7 +95,7 @@ enums! {
         7 => Buf { readonly },
         8 => CString,
         9 => Out,
-        10 => OutPtr,
+        // 10 was `OutPtr` (#3094): not reused.
         11 => Void,
     }
     @fielded HostTy {
@@ -242,6 +242,7 @@ enums! {
         20 => Symbol,
         21 => Simd(a),
         22 => Op(a, b),
+        23 => Ptr(a),
     }
     @fielded LitValue {
         0 => Str(a),
@@ -308,6 +309,31 @@ enums! {
         5 => AesArm,
         6 => FmaX86,
         7 => Bf16Arm,
+        8 => Sse3X86,
+        9 => Ssse3X86,
+        10 => Sse41X86,
+        11 => Sse42X86,
+        12 => PopcntX86,
+        13 => Cmpxchg16bX86,
+        14 => AvxX86,
+        15 => Avx2X86,
+        16 => Bmi1X86,
+        17 => Bmi2X86,
+        18 => LzcntX86,
+        19 => MovbeX86,
+        20 => F16cX86,
+        21 => Avx512fX86,
+        22 => Avx512bwX86,
+        23 => Avx512cdX86,
+        24 => Avx512dqX86,
+        25 => Avx512vlX86,
+        26 => Avx512vbmiX86,
+        27 => Avx512bitalgX86,
+        28 => DotprodArm,
+        29 => CrcArm,
+        30 => Sha3Arm,
+        31 => Fp16Arm,
+        32 => I8mmArm,
     }
     DynMemberKind {
         0 => Method,
@@ -554,5 +580,27 @@ enums! {
         211 => SymbolAddress,
         212 => SymbolAt,
         213 => AddressArrayOwned,
+        214 => StrAt,
+        215 => SpreadParam,
+        216 => AnyPromise,
+        217 => AnyIsPromise,
+        218 => PtrFromAddress,
+        219 => PtrToAddress,
+        220 => IsUnique,
+        221 => PtrRead,
+        222 => PtrWrite,
+        223 => WeakRead,
+    }
+}
+
+/// A set of CPU features (velt_common's, whose bits are private) as its features, each by its
+/// `CpuTarget` tag: the encoding does not depend on the order of the bits.
+impl super::Codec for CpuTargets {
+    fn enc(&self, w: &mut super::Writer) {
+        super::Codec::enc(&self.iter().collect::<Vec<CpuTarget>>(), w);
+    }
+    fn dec(r: &mut super::Reader) -> Self {
+        let features: Vec<CpuTarget> = super::Codec::dec(r);
+        (features.into_iter()).fold(CpuTargets::NONE, CpuTargets::with)
     }
 }

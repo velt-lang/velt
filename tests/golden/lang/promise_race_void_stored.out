@@ -1,0 +1,13 @@
+start sync race
+start sync any
+sync race settled
+sync any settled
+start race
+race ok
+start any
+late ran
+any ok
+start in array
+start returned
+late ran
+all ok
