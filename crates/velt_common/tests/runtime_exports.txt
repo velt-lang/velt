@@ -50,8 +50,6 @@ velt_rt velt_rt_fs_open_write
 velt_rt velt_rt_fs_reader_close
 velt_rt velt_rt_fs_reader_opened_stats
 velt_rt velt_rt_fs_reader_read
-velt_rt velt_rt_fs_reader_read_line
-velt_rt velt_rt_fs_reader_read_string
 velt_rt velt_rt_fs_writer_close
 velt_rt velt_rt_fs_writer_flush
 velt_rt velt_rt_fs_writer_free
