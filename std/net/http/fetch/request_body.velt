@@ -7,6 +7,8 @@ import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
 import { BodyParts, collect } from "velt/net/http/fetch/body";
 import { BodyStream } from "velt/net/http/fetch/body_stream";
 import { Request } from "velt/net/http/fetch/request";
+import { Extra } from "velt/net/http/fetch/request_extra";
+import { RequestSource } from "velt/net/http/fetch/source";
 
 /** A body read from `chunks`. */
 export function streamed(chunks: AsyncIterator<u8[], IoError | AbortError>): BodyParts {
@@ -54,21 +56,34 @@ export async function requestBytes(r: Request): Promise<u8[], IoError | AbortErr
   return s == null ? body.bytes : await collect(s);
 }
 
-/** The body of `r` chunk by chunk, for `BodyStream`; reading them uses the body up. */
-export async function* requestChunks(r: Request): AsyncIterator<u8[], IoError | AbortError> {
-  r.claim();
-  if (r.fromServer() != null) {
-    const source = r.received();
-    while (true) {
-      const r = await source.next();
-      if (r.done) {
+/**
+ * A request's body chunk by chunk, for `BodyStream`; reading them uses the body up. It takes the
+ * request's state `e` and its server side `received`, not the request: the body it reads may be a
+ * stream of these chunks' own type, which would make a cycle of every `Request`
+ * (docs/internals/design/cycles.md, #3119). Both are read at the first chunk, so a `clone()`
+ * before that tees what it reads, as when the request held them.
+ */
+export async function* requestChunks(
+  e: Extra,
+  received: RequestSource | null,
+): AsyncIterator<u8[], IoError | AbortError> {
+  const body = e.body;
+  if (body == null ? received != null && received.hasBody() : true) {
+    if (e.used) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    e.used = true;
+  }
+  if (body == null) {
+    while (received != null) {
+      const chunk = await received.read();
+      if (chunk == null) {
         return;
       }
-      yield r.value;
+      if (chunk.length > 0) {
+        yield chunk;
+      }
     }
-  }
-  const body = r.made();
-  if (body == null) {
     return;
   }
   const s = body.stream;
@@ -80,5 +95,23 @@ export async function* requestChunks(r: Request): AsyncIterator<u8[], IoError | 
     }
   } else if (body.bytes.length > 0) {
     yield body.bytes;
+  }
+}
+
+/** A received request's body as the connection receives it, chunk by chunk. */
+export async function* receivedChunks(
+  received: RequestSource | null,
+): AsyncIterator<u8[], IoError | AbortError> {
+  if (received == null) {
+    return;
+  }
+  while (true) {
+    const chunk = await received.read();
+    if (chunk == null) {
+      return;
+    }
+    if (chunk.length > 0) {
+      yield chunk;
+    }
   }
 }

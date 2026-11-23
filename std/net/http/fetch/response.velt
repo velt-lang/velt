@@ -31,6 +31,7 @@ import { Fetched } from "#http-transport";
 import { ResponseParts } from "velt/net/http/fetch/parts";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { Remote } from "velt/net/http/fetch/response_remote";
+import { BodyCell } from "velt/net/http/fetch/response_cell";
 import {
   cloneResponse,
   NONE,
@@ -52,20 +53,14 @@ export class Response {
   private headReason: string | null = "";
   // A fetched response's signal, URL and `redirected`: null for one made here.
   private headRemote: Remote | null = null;
-  private bodyRead: bool = false;
-  private bodySource: i64 = 0;
-  private bodyText: string = "";
-  // A bytes body (null for any other), so a response without one allocates no array.
-  private bodyBytes: u8[] | null = null;
-  private bodyStream: BodyStream | null = null;
-  // A fetched response's head and body (also of a HEAD request's, whose source is NONE).
-  private bodyFetched: Fetched | null = null;
+  // The body, which the chunks reading it share (response_cell.velt).
+  private cell: BodyCell = new BodyCell();
 
   constructor(body: BodyInit | null = null, init?: ResponseInit) {
     if (init == null && typeof body == "string") {
       // Most responses: text and no options, so no parts and no status to check.
-      this.bodySource = TEXT;
-      this.bodyText = body;
+      this.cell.source = TEXT;
+      this.cell.text = body;
       this.headImplied = TEXT_TYPE;
       return;
     }
@@ -89,17 +84,17 @@ export class Response {
     let implied = type;
     if (typeof body == "string") {
       // Most bodies: no parts to make.
-      this.bodySource = TEXT;
-      this.bodyText = body;
+      this.cell.source = TEXT;
+      this.cell.text = body;
       implied = type != 0 ? type : TEXT_TYPE;
     } else {
       const parts = bodyParts(body);
-      this.bodySource = parts.kind as i64;
-      this.bodyText = parts.text;
+      this.cell.source = parts.kind as i64;
+      this.cell.text = parts.text;
       if (parts.kind == 2) {
-        this.bodyBytes = parts.bytes;
+        this.cell.bytes = parts.bytes;
       }
-      this.bodyStream = parts.stream;
+      this.cell.stream = parts.stream;
       implied = type != 0 ? type : parts.implied;
       const st = sourceType(body);
       if (st != null && type == 0) {
@@ -145,8 +140,8 @@ export class Response {
     remote.url = f.url;
     remote.redirected = f.redirected;
     r.headRemote = remote;
-    r.bodySource = head ? NONE : RUNTIME;
-    r.bodyFetched = f;
+    r.cell.source = head ? NONE : RUNTIME;
+    r.cell.fetched = f;
     return r;
   }
 
@@ -166,8 +161,8 @@ export class Response {
   static json<T>(data: T, init?: ResponseInit): Response {
     const r = new Response();
     if (init == null) {
-      r.bodySource = TEXT;
-      r.bodyText = JSON.stringify(data);
+      r.cell.source = TEXT;
+      r.cell.text = JSON.stringify(data);
       r.headImplied = JSON_TYPE;
       return r;
     }
@@ -199,7 +194,7 @@ export class Response {
       return known;
     }
     let h = new Headers();
-    const f = this.bodyFetched;
+    const f = this.cell.fetched;
     if (f != null) {
       h = Headers.adopt(f.headers());
       h.frozen = true;
@@ -229,7 +224,7 @@ export class Response {
     if (known != null) {
       return known;
     }
-    const f = this.bodyFetched;
+    const f = this.cell.fetched;
     const s = f == null ? "" : f.statusText();
     this.headReason = s;
     return s;
@@ -286,12 +281,12 @@ export class Response {
   private streams(): bool {
     const code = this.headCode;
     const none = code == 101 || code == 103 || code == 204 || code == 205;
-    return !(none || code == 304 || this.bodySource == NONE);
+    return !(none || code == 304 || this.cell.source == NONE);
   }
 
   /** Whether the body has been read. */
   get bodyUsed(): bool {
-    return this.bodyRead;
+    return this.cell.read;
   }
 
   /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
@@ -329,7 +324,7 @@ export class Response {
 
   // Whether a fetched body arrives decoded (its `content-encoding` no longer applies).
   private decoded(): bool {
-    const f = this.bodyFetched;
+    const f = this.cell.fetched;
     if (f != null) {
       return f.decoded();
     }
@@ -337,16 +332,9 @@ export class Response {
     return remote != null && remote.decoded;
   }
 
-  // Marks the body read; throws if it was already. A response without a body can be read any
-  // number of times, as in JS.
+  // Marks the body read; throws if it was already (`BodyCell.claim`).
   private claim() throws IoError {
-    if (this.bodySource == NONE) {
-      return;
-    }
-    if (this.bodyRead) {
-      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
-    }
-    this.bodyRead = true;
+    this.cell.claim();
   }
 
   /** How `console.log` shows the response, like Node: its public state. */
@@ -356,21 +344,12 @@ export class Response {
       statusText: this.statusText,
       headers: this.headers,
       // As Node shows a body stream (printed without loading velt/io/streams/streams).
-      body: this.streams() ? BodyStream.adopt(this.chunks(), this.bodyRead) : null,
+      body: this.streams() ? BodyStream.adopt(this.chunks(), this.cell.read) : null,
       bodyUsed: this.bodyUsed,
       ok: this.ok,
       redirected: this.redirected,
       type: this.type,
       url: this.url,
     };
-  }
-
-  /** Drop hook: closes the connection of a fetched body nobody finished reading. */
-  [Symbol.dispose]() {
-    const f = this.bodyFetched;
-    if (f != null) {
-      f.close();
-      this.bodyFetched = null;
-    }
   }
 }
