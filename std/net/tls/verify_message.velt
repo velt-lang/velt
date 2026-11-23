@@ -1,0 +1,160 @@
+// velt/net (internal): the words of the two certificate failures whose text depends on the
+// certificates themselves, as Node says them (OpenSSL's codes): a chain that reaches no trusted
+// root, told apart by how far the certificates sent lead, and a certificate that is not for the
+// server's name, with the names it is for.
+
+import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { TlsFailure } from "velt/net/tls/alert";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { DerReader } from "velt/net/tls/x509/der";
+
+// Whether `a`'s issuer is `b`'s subject, byte for byte.
+function issuedBy(a: Certificate, b: Certificate): bool {
+  const n = a.issuer.end - a.issuer.start;
+  if (n != b.subject.end - b.subject.start) {
+    return false;
+  }
+  for (let i: usize = 0; i < n; i++) {
+    if (a.der[a.issuer.start + i] != b.der[b.subject.start + i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * What to say when no path from `leaf` reaches a trusted root, by OpenSSL's rule: a self-signed
+ * server certificate; else the certificates `sent` after it are followed issuer by issuer, and
+ * the answer is whether none is the leaf's issuer, the last one found is self-signed, or its
+ * issuer is simply not known here.
+ */
+export function unknownIssuerMessage(leaf: Certificate, sent: u8[][]): string {
+  if (issuedBy(leaf, leaf)) {
+    return "self-signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)";
+  }
+  const others: Certificate[] = [];
+  for (const der of sent) {
+    try {
+      others.push(new Certificate(der));
+    } catch (e) {
+      if (!(e instanceof TlsFailure)) {
+        throw e;
+      }
+    }
+  }
+  let current = leaf;
+  let found = false;
+  // Each step takes a certificate not taken before, so the walk ends.
+  const taken: bool[] = others.map((c) => false);
+  for (let step: usize = 0; step < others.length; step++) {
+    let next: i64 = -1;
+    for (let i: usize = 0; i < others.length && next < 0; i++) {
+      if (!taken[i] && issuedBy(current, others[i])) {
+        next = i as i64;
+      }
+    }
+    if (next < 0) {
+      break;
+    }
+    taken[next as usize] = true;
+    current = others[next as usize];
+    found = true;
+    if (issuedBy(current, current)) {
+      return "self-signed certificate in certificate chain (SELF_SIGNED_CERT_IN_CHAIN)";
+    }
+  }
+  return found
+    ? "unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)"
+    : "unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)";
+}
+
+/**
+ * An iPAddress entry's bytes as text. `openssl`: OpenSSL's form, which Node shows in the list of
+ * alternative names (IPv6 as eight groups in upper-case hex, nothing shortened). Otherwise RFC
+ * 5952's, which Node shows in the list of addresses: lower case, no leading zeros, and the
+ * longest run of two or more zero groups (the first of equals) as "::", and an IPv4-compatible or
+ * IPv4-mapped address's last 32 bits in dotted form, as libuv's inet_ntop does.
+ */
+export function ipText(b: u8[], start: usize, end: usize, openssl: bool): string {
+  const parts: string[] = [];
+  if (end - start == 4) {
+    for (let i = start; i < end; i++) {
+      parts.push(`${b[i]}`);
+    }
+    return parts.join(".");
+  }
+  const groups: u32[] = [];
+  for (let i = start; i + 1 < end; i += 2) {
+    groups.push(((b[i] as u32) << 8) | (b[i + 1] as u32));
+  }
+  if (openssl) {
+    return groups.map((g) => g.toString(16).toUpperCase()).join(":");
+  }
+  let best: usize = 0;
+  let bestLen: usize = 0;
+  let at: usize = 0;
+  while (at < groups.length) {
+    let run: usize = 0;
+    while (at + run < groups.length && groups[at + run] == 0) {
+      run++;
+    }
+    if (run > bestLen) {
+      best = at;
+      bestLen = run;
+    }
+    at += run == 0 ? 1 : run;
+  }
+  if (bestLen < 2) {
+    return groups.map((g) => g.toString(16)).join(":");
+  }
+  // `::a.b.c.d` (six zero groups) and `::ffff:a.b.c.d` (five, then ffff), as libuv's inet_ntop6.
+  if (groups.length == 8 && best == 0 && (bestLen == 6 || (bestLen == 5 && groups[5] == 0xffff))) {
+    return `::${bestLen == 5 ? "ffff:" : ""}${ipText(b, end - 4, end, false)}`;
+  }
+  const head = groups
+    .slice(0, best as i64)
+    .map((g) => g.toString(16))
+    .join(":");
+  const tail = groups
+    .slice((best + bestLen) as i64)
+    .map((g) => g.toString(16))
+    .join(":");
+  return `${head}::${tail}`;
+}
+
+/**
+ * What to say when `leaf` is not for the server `name` (`ip`: it is an IP address), with the
+ * names or addresses the certificate has, as Node's `checkServerIdentity` does.
+ */
+export function nameMismatchMessage(leaf: Certificate, name: string, ip: bool): string {
+  const names: string[] = [];
+  const addresses: string[] = [];
+  const san = leaf.subjectAltName;
+  if (san.tag != 0) {
+    const r = new DerReader(leaf.der);
+    r.pos = san.start;
+    while (r.pos < san.end) {
+      const t = r.any(san.end);
+      const text = utf8DecodeLossy(leaf.der.slice(t.start as i64, t.end as i64));
+      if (t.tag == 0x82) {
+        names.push(`DNS:${text}`);
+      } else if (t.tag == 0x87) {
+        names.push(`IP Address:${ipText(leaf.der, t.start, t.end, true)}`);
+        addresses.push(ipText(leaf.der, t.start, t.end, false));
+      } else if (t.tag == 0x86) {
+        names.push(`URI:${text}`);
+      } else if (t.tag == 0x81) {
+        names.push(`email:${text}`);
+      }
+    }
+  }
+  if (san.tag == 0) {
+    // Node would look at the subject's common name; this client never does.
+    return `Hostname/IP does not match certificate's altnames: the certificate has no subjectAltName (ERR_TLS_CERT_ALTNAME_INVALID)`;
+  }
+  const what =
+    ip
+      ? `IP: ${name} is not in the cert's list: ${addresses.join(", ")}`
+      : `Host: ${name}. is not in the cert's altnames: ${names.join(", ")}`;
+  return `Hostname/IP does not match certificate's altnames: ${what} (ERR_TLS_CERT_ALTNAME_INVALID)`;
+}

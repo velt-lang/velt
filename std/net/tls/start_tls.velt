@@ -4,25 +4,49 @@
 
 import { randomBytes } from "velt/crypto/random";
 import { x25519PublicKey } from "velt/crypto/x25519";
+import { utf8Encode } from "velt/encoding/utf8";
 import { IoError } from "velt/io/error";
 import { ByteStream } from "velt/net/byte_stream";
 import { preferredSuites } from "velt/net/tls/client_hello";
+import { dnsServerNameOk } from "velt/net/tls/server_name";
 import { TlsEngine } from "velt/net/tls/tls_engine";
 import { TlsStream } from "velt/net/tls/tls_stream";
+import { CertificateVerifier, ipAddressBytes, trustAnchors } from "velt/net/tls/verifier";
 
 export struct TlsStartOptions {
   /**
-   * The server's name, sent with SNI (none for an IP address or ""). It is only sent: with
-   * `verify: false` nothing checks that the server is this name.
+   * The server's name: a DNS name (an internationalized one in its ASCII form, "xn--…") or an IP
+   * address. It is sent with SNI (not for an IP address or ""), and the server's certificate
+   * must be for it. Needed unless `verify` or `checkServerName` is `false`.
    */
   serverName?: string;
   /**
-   * Whether to check the server's certificate. Must be `false` for now: nothing is checked.
-   * This protects against passive observers only; anyone who can intercept the connection can
-   * impersonate the server, and read and change everything sent. Verification is #2392 step 3;
-   * until then `true` (the default) is refused.
+   * Whether to check the server's certificate (default `true`): a chain to a trusted root (the
+   * built-in ones, Mozilla's for TLS servers, and those of `ca`), within its validity, for
+   * `serverName`, and the server's proof that it holds the certificate's key. Certificates
+   * are signed with RSA (2048 to 8192 bits), ECDSA on P-256 or P-384, or Ed25519; a chain
+   * through another key (one built-in root has a P-521 key) is refused, as rustls refuses it.
+   * With `false` nothing is checked: that protects against passive observers only, and anyone who can
+   * intercept the connection can impersonate the server, and read and change everything sent.
    */
   verify?: bool;
+  /**
+   * More trusted CA certificates (PEM), e.g. a private or test CA: on top of the built-in roots,
+   * or alone with `builtinRoots: false`.
+   */
+  ca?: string;
+  /**
+   * Whether the built-in roots are trusted (default `true`). With `false` only the certificates
+   * of `ca` are, which is then needed: for a server that must present a certificate of one's own
+   * CA and no other (and the only safe way to use `checkServerName: false`).
+   */
+  builtinRoots?: bool;
+  /**
+   * Whether the certificate must be for `serverName` (default `true`). With `false` any
+   * certificate with a chain to a trusted root is taken, whoever it is for (PostgreSQL's
+   * `sslmode=verify-ca`): use it only with a `ca` of your own.
+   */
+  checkServerName?: bool;
   /** The protocols to offer with ALPN, most preferred first (default: none). */
   alpn?: string[];
 }
@@ -37,17 +61,46 @@ export struct TlsStartOptions {
  * TLS 1.2 with ECDHE (X25519, secp256r1 or secp384r1) and an AEAD: ECDHE_ECDSA and ECDHE_RSA
  * with AES-128-GCM, AES-256-GCM and ChaCha20-Poly1305, the extended master secret when the
  * server has it, no renegotiation; a TLS 1.3 server's downgrade to TLS 1.2 is refused (RFC 8446
- * §4.1.3), and nothing older than TLS 1.2 is offered. Throws `IoError` (`EPROTO`, "TLS: …") when the handshake fails, and
- * `EINVAL` unless `opts.verify` is `false`. With `verify: false` the server is not authenticated:
- * this protects against passive observers only, and anyone who can intercept the connection can
- * impersonate the server.
+ * §4.1.3), and nothing older than TLS 1.2 is offered. Throws `IoError` (`EPROTO`, "TLS: …") when
+ * the handshake fails, which includes a certificate that is not trusted, not valid now or not
+ * for `serverName`; `EINVAL` for a `ca` that is not PEM certificates, or when the certificate is
+ * to be checked against a name and `serverName` is missing, not ASCII, or neither a DNS name nor
+ * an IP address.
  */
 export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): Promise<TlsStream> {
+  const serverName = opts.serverName ?? "";
+  let verifier: CertificateVerifier | null = null;
   if (opts.verify !== false) {
-    throw new IoError(
-      "EINVAL",
-      "startTls: certificate verification is not implemented yet (#2392); pass `verify: false` to encrypt without checking the certificate, or use connectTls",
-    );
+    const checkName = opts.checkServerName !== false;
+    if (checkName) {
+      if (serverName == "") {
+        throw new IoError(
+          "EINVAL",
+          "startTls: `serverName` is needed to check the server's certificate (or pass `verify: false` to encrypt without checking it)",
+        );
+      }
+      for (const c of utf8Encode(serverName)) {
+        if (c >= 0x80) {
+          throw new IoError(
+            "EINVAL",
+            `startTls: the server name "${serverName}" is not ASCII; give an internationalized name in its "xn--" form`,
+          );
+        }
+      }
+      if (ipAddressBytes(serverName) == null && !dnsServerNameOk(serverName)) {
+        throw new IoError(
+          "EINVAL",
+          `startTls: the server name "${serverName}" is neither a DNS name nor an IP address`,
+        );
+      }
+    }
+    const now = Math.floor((Date.now() as number) / 1000) as i64;
+    const builtin = opts.builtinRoots !== false;
+    if (!builtin && (opts.ca ?? "") == "") {
+      throw new IoError("EINVAL", "startTls: `ca` is needed when `builtinRoots` is false");
+    }
+    const anchors = trustAnchors(opts.ca ?? "");
+    verifier = new CertificateVerifier(anchors, serverName, checkName, now, builtin);
   }
   const key = randomBytes(32);
   const engine = new TlsEngine(stream);
@@ -56,12 +109,13 @@ export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): 
       random: randomBytes(32),
       sessionId: randomBytes(32),
       publicKey: x25519PublicKey(key),
-      serverName: opts.serverName ?? "",
+      serverName: serverName,
       alpn: opts.alpn ?? [],
       fixed: null,
       fixedRetry: null,
       suites: preferredSuites(),
       retryKey: null,
+      verifier: verifier ?? undefined,
     },
     key,
   );
