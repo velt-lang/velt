@@ -53,6 +53,7 @@ import * as mod from "./sched_module";
 import * as nd from "./sched_node";
 import * as nc from "./sched_node_catch";
 import * as sh from "./sched_share";
+import * as hd from "./sched_held";
 import * as ls from "./sched_share_listed";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -77,7 +78,7 @@ export function list(task: usize, n: usize): void {
   if ((m.ld32(task + t.T_FLAGS) & (t.LOST | t.LINKED)) !== t.LOST) {
     listRare(task, n);
   }
-  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) + 1);
+  m.st32(task + t.T_LISTED, m.ld32(task + t.T_LISTED) + 1);
 }
 
 /**
@@ -89,7 +90,7 @@ export function unlist(task: usize, n: usize, fl: u32): void {
   if ((fl & (NLINKED | sh.HUB_HERE | ls.WAITS)) !== 0) {
     unlistRare(task, n, fl);
   }
-  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
+  m.st32(task + t.T_LISTED, m.ld32(task + t.T_LISTED) - 1);
 }
 
 /** `unlist` for a linked node or a shared one (sched_share_listed.velt `unlisted`). */
@@ -185,7 +186,7 @@ function parksHeld(k: usize): bool {
 /** `parks`'s counts for task `k`, past its flags. */
 @inline("always")
 function counts(k: usize): bool {
-  const l = m.ld(k + t.T_LISTED);
+  const l = m.ld32(k + t.T_LISTED) as usize;
   if (l === 0 || l !== m.ld(k + t.T_LOCALS)) {
     return false;
   }
@@ -199,7 +200,7 @@ function counts(k: usize): bool {
   if ((js & t.J_HANDLE) !== 0) {
     dbg.handlePause(2);
   }
-  const refs = m.load(k + t.T_REFS);
+  const refs = m.load(k + t.T_REFS) - hd.held(k);
   if (refs === l + 1) {
     return dead(k, l);
   }
@@ -223,7 +224,7 @@ function dead(k: usize, l: usize): bool {
   }
   const kind = lk.kind();
   const s = mk.lockJoin(k, kind);
-  const refs = m.load(k + t.T_REFS);
+  const refs = m.load(k + t.T_REFS) - hd.held(k);
   if ((s & t.J_HANDLE) !== 0) {
     // Only the handle keeps it: whoever drops the handle wakes it for another look.
     mk.unlockJoin(k, refs === l + 2 ? s | t.J_PARKED : s, kind);
@@ -372,7 +373,7 @@ function checkUnlink(task: usize, n: usize, next: usize, prev: usize): void {
   const before = prev === 0 ? m.ld(task + t.T_LOST) : m.ld(prev + nd.N_NEXT);
   if (
     !t.has(task, t.LOST) ||
-    m.ld(task + t.T_LISTED) === 0 ||
+    m.ld32(task + t.T_LISTED) === 0 ||
     before !== n ||
     (next !== 0 && m.ld(next + nd.N_TAKEN_NEXT) !== n)
   ) {
@@ -397,10 +398,10 @@ function checkListed(k: usize, n: usize, refs: usize, fl: u32): void {
  * woke it: sched_run.velt `runOther` polls it as any other then.
  */
 export function stillLost(k: usize): bool {
-  const l = m.ld(k + t.T_LISTED);
+  const l = m.ld32(k + t.T_LISTED) as usize;
   return (
     l === m.ld(k + t.T_LOCALS) &&
-    m.load(k + t.T_REFS) === l + 1 &&
+    m.load(k + t.T_REFS) - hd.held(k) === l + 1 &&
     !t.has(k, t.ROOT | t.ROOT_DONE) &&
     (m.load32(k + t.T_JOIN_STATE) & t.J_HANDLE) === 0 &&
     m.load(k + t.T_WOKEN) === 0 &&

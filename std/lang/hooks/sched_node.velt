@@ -35,6 +35,7 @@
 
 import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
+import * as hd from "./sched_held";
 import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
 import * as lost from "./sched_node_lost";
@@ -408,7 +409,7 @@ export function run(task: usize, n: usize, taken: bool): void {
   m.st(task + t.T_LOCALS, m.ld(task + t.T_LOCALS) - 1);
   if ((prev & DETACHED) !== 0) {
     dropDetached(n);
-  } else if (!ss.settled(n, task, prev)) {
+  } else if (!hd.settled(n, task, prev)) {
     const w = aw.finishAwaiter(n, task);
     if (w === 0) {
       // Its owner holds it without waiting: a rejection is watched (sched_node_report.velt).
@@ -440,6 +441,7 @@ function dropDetached(n: usize): void {
 @noInline
 function watchHeld(n: usize, task: usize): void {
   rp.watch(n, task);
+  hd.hold(task, n);
 }
 
 /** Is started node `w` (a waker header) among its task's woken nodes? */
@@ -459,6 +461,7 @@ export function ownNode(task: usize, w: usize): bool {
 export function release(n: usize): void {
   if (m.dec(n + N_REFS) === 1) {
     const task = m.ld(n + N_TASK);
+    hd.freed(task, n);
     x.free(n);
     m.release(n, m.ld32(n + N_BYTES) as usize);
     if (task !== 0) {

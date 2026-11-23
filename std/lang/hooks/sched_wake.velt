@@ -6,6 +6,7 @@
 import { export as cExport } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
 import { clearStdoutWritten, stdoutWrittenSince } from "./process";
+import * as hd from "./sched_held";
 import * as io from "./sched_io";
 import * as m from "./sched_mem";
 import * as nc from "./sched_node_catch";
@@ -146,6 +147,7 @@ export function releaseHere(t: usize): void {
  */
 @inline("always")
 export function freed(t: usize): void {
+  hd.taskFreed(t);
   if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
     freePanicked(t);
   }

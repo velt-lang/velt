@@ -1,0 +1,143 @@
+// velt/lang/hooks (internal): a task's promises that finished while its own frames still hold
+// them (#3498). Such a promise can never wake its task again, but it keeps its reference to the
+// task until it is freed, so the park's count (sched_task_lost.velt `counts`) has one more
+// reference than its listed promises account for, and a task parked for ever with one was never
+// found. Each is counted here (`T_HELD`, flag `HELD` on the promise), and the park takes them off
+// the task's references.
+//
+// Only a promise its task's frames hold is counted: one handed to another task, a proxy among
+// them, or shared with a holder away, is not, so a promise another task holds never makes the
+// park say yes. A counted one leaves the count when it is handed over or shared away
+// (`unhold`), and when it is freed, on whichever thread (sched_node.velt `release`). The count
+// goes down before the node's reference to its task does: a park that reads the count after it
+// and the references before, or the other way round, finds one reference too many either way and
+// says no, and the free's wake brings another look.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as sh from "./sched_share";
+import * as ss from "./sched_share_settle";
+import * as t from "./sched_task";
+import * as tr from "./sched_node_transfer";
+import * as wk from "./sched_wake";
+
+/** A node's flag: counted in its task's `T_HELD`. */
+export const HELD: u32 = 2097152;
+
+/** The finished promises task `k`'s frames hold (`T_HELD`); 0 before the task listed any. */
+@inline("always")
+export function held(k: usize): usize {
+  return t.has(k, t.LOST) ? (m.load32(k + t.T_HELD) as usize) : 0;
+}
+
+/**
+ * Node `n` of task `task` finished while its owner holds it (sched_node.velt `finish`), on the
+ * task's thread: counted, unless it was handed to another task.
+ */
+@noInline
+export function hold(task: usize, n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & (tr.HANDED_OVER | HELD)) !== 0) {
+    return;
+  }
+  if (!t.has(task, t.LOST)) {
+    // The list's words start here (sched_task_lost.velt `listRare`): `T_LISTED`, `T_HELD` and
+    // `T_LOST` are read only with `LOST` set.
+    m.st(task + t.T_LISTED, 0);
+    m.st(task + t.T_LOST, 0);
+    t.flags(task, wk.counting() ? t.LOST | t.LINKED : t.LOST, 0);
+  }
+  add(task, 1);
+  m.or32(n + nd.N_FLAGS, HELD);
+}
+
+/**
+ * sched_share_settle.velt `settled` for node `n` of task `task` (its flags before the finish
+ * `prev`): a shared node settles its hub, whose holders keep it after. It is counted as `hold`
+ * counts one when no holder of it was handed to another task (`ORIG_OUT`, `AWAY`), which the hub
+ * says before the settle (the settle may free it).
+ */
+@inline("always")
+export function settled(n: usize, task: usize, prev: u32): bool {
+  if ((prev & sh.HUB_HERE) === 0) {
+    return false;
+  }
+  settledShared(n, task, prev);
+  return true;
+}
+
+@noInline
+function settledShared(n: usize, task: usize, prev: u32): void {
+  const kept = (m.load32(m.ld(n + sh.N_HUB) + sh.H_FLAGS) & (sh.AWAY | sh.ORIG_OUT)) === 0;
+  ss.settled(n, task, prev);
+  if (kept) {
+    hold(task, n);
+  }
+}
+
+/**
+ * Node `n` of task `task` is freed (sched_node.velt `release`), on any thread: a counted one
+ * leaves the count. With the block counters on, a counted one that was handed to another task is
+ * an `ICE:`: the hand-over should have taken it out (`unhold`), or the park could have said yes
+ * while another task held it.
+ */
+@inline("always")
+export function freed(task: usize, n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & HELD) !== 0) {
+    freedRare(task, n);
+  }
+}
+
+@noInline
+function freedRare(task: usize, n: usize): void {
+  if (wk.counting() && (m.load32(n + nd.N_FLAGS) & tr.HANDED_OVER) !== 0) {
+    panic("ICE: a promise counted as held by its task was handed to another task");
+  }
+  unholdRare(task, n);
+}
+
+/**
+ * Task `k` is freed (sched_wake.velt `freed`): with the block counters on, none of its finished
+ * promises may still be counted, since each held a reference to it until it was freed.
+ */
+@inline("always")
+export function taskFreed(k: usize): void {
+  if (wk.counting()) {
+    taskFreedRare(k);
+  }
+}
+
+@noInline
+function taskFreedRare(k: usize): void {
+  if (t.has(k, t.LOST) && m.load32(k + t.T_HELD) !== 0) {
+    panic("ICE: a task is freed with finished promises it still counts as held");
+  }
+}
+
+/** Node `n`, counted (`HELD`), is handed over or shared away: it leaves the count once. */
+@inline("always")
+export function unhold(task: usize, n: usize): void {
+  if ((m.load32(n + nd.N_FLAGS) & HELD) !== 0) {
+    unholdRare(task, n);
+  }
+}
+
+@noInline
+function unholdRare(task: usize, n: usize): void {
+  if ((m.and32(n + nd.N_FLAGS, ~HELD) & HELD) !== 0) {
+    add(task, -1);
+  }
+}
+
+/** `T_HELD` of task `task` moves by `d`, from any thread. */
+function add(task: usize, d: i32): void {
+  let v = m.load32(task + t.T_HELD);
+  while (true) {
+    const next = ((v as i32) + d) as u32;
+    const was = m.cas32(task + t.T_HELD, v, next);
+    if (was === v) {
+      return;
+    }
+    v = was;
+  }
+}

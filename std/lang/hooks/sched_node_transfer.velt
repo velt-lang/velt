@@ -18,6 +18,7 @@ import * as x from "./sched_node_ext";
 import * as al from "./sched_share_alias";
 import * as sh from "./sched_share";
 import * as shh from "./sched_share_hand";
+import * as hd from "./sched_held";
 import * as ls from "./sched_share_listed";
 import * as lt from "./sched_task_lost";
 
@@ -62,6 +63,8 @@ export function transfer(f: usize, glue: usize, hdrPoll: usize): bool {
     return false;
   }
   const n = nd.nodeOf(f);
+  // A finished promise its task's frames held is another task's now (sched_held.velt).
+  hd.unhold(m.ld(n + nd.N_TASK), n);
   if ((m.load32(n + nd.N_FLAGS) & ls.WAITS) !== 0) {
     // Listed while it waits in a hub: it leaves the list before it leaves the task.
     ls.leaveWaiting(n);

@@ -23,6 +23,7 @@
 import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
+import * as hd from "./sched_held";
 import * as lost from "./sched_node_lost";
 import * as sh from "./sched_share";
 import * as wt from "./sched_share_wait";
@@ -281,7 +282,7 @@ function offList(task: usize, n: usize, fl: u32): void {
     // Shared since it was listed (it stays listed as `list` would have listed it): its own hub.
     unlisted(task, n, fl);
   }
-  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
+  m.st32(task + t.T_LISTED, m.ld32(task + t.T_LISTED) - 1);
 }
 
 /**
@@ -292,6 +293,8 @@ function offList(task: usize, n: usize, fl: u32): void {
 export function handedOver(h: usize): void {
   const n = m.ld(h + sh.H_NODE);
   const fl = m.load32(n + nd.N_FLAGS);
+  // Finished and counted as held by its task (sched_held.velt): a holder of it is away now.
+  hd.unhold(m.ld(n + nd.N_TASK), n);
   if ((fl & lt.LISTED) !== 0 && (fl & nd.FINISHED) === 0) {
     leave(n, fl);
   }

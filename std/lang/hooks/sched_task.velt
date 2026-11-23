@@ -394,6 +394,11 @@ export const T_ID: usize = 176;
 export const T_LOST: usize = 184;
 export const T_LISTED: usize = 192;
 /**
+ * The task's finished promises its own frames still hold (sched_held.velt), a 32-bit count next
+ * to `T_LISTED`'s, changed atomically from any thread; read only with `LOST` set, as those are.
+ */
+export const T_HELD: usize = 196;
+/**
  * The task's yield block (sched_yield_list.velt: its list of yields waiting for their turn, its
  * yield generation and numbers), made when it first needs one (0: none), freed with the task.
  */
