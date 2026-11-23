@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use velt_common::Span;
 
-use super::regions::{holds_shared, pat_locals, reach};
+use super::regions::{pat_locals, reach, Facts, TypeFacts};
 use crate::body::places::{is_place, place_root};
 use crate::ctx::Ctx;
 use crate::defs::{BodyState, FnKind};
@@ -26,7 +26,7 @@ use crate::hir::{
     Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, Stmt, StmtKind as S,
     TyId, UseMode,
 };
-use crate::visit::{self, VisitMut};
+use crate::visit_ref::{self as visit, Visit};
 
 /// What a call of a function may do with its arguments (indices of `FnDef::params`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -82,6 +82,15 @@ impl Summaries {
         let mut last_run: FxHashMap<DefId, u64> = FxHashMap::default();
         let mut changed_at: FxHashMap<DefId, u64> = FxHashMap::default();
         let mut run = 0u64;
+        // A finished unit's bodies (std's, in a check by units) are read in place, never taken
+        // out: the facts about their types are learned first. Other bodies are taken out while
+        // the walk asks `Ctx`.
+        let mut learned = TypeFacts::new(cx);
+        for &d in &fns {
+            if cx.is_frozen(d) {
+                learned.learn(cx, d);
+            }
+        }
         // Passes repeat until one changes no summary. A summary is bounded by the parameter pairs
         // and bits, and grows with its callees' summaries; it is not monotone across passes,
         // though: one computed while a callee had no summary yet (read as an unknown callee,
@@ -95,12 +104,22 @@ impl Summaries {
                         continue;
                     }
                 }
-                let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
-                    continue;
+                let i = d.0 as usize;
+                let (new, cs) = if cx.is_frozen(d) {
+                    let Some(Def::Fn(f)) = cx.defs.get(i).and_then(|x| x.as_ref()) else {
+                        continue;
+                    };
+                    run += 1;
+                    summarize(&mut learned, &s, f)
+                } else {
+                    let Some(Def::Fn(f)) = cx.defs[i].take() else {
+                        continue;
+                    };
+                    run += 1;
+                    let r = summarize(cx, &s, &f);
+                    cx.defs[i] = Some(Def::Fn(f));
+                    r
                 };
-                run += 1;
-                let (new, cs) = summarize(cx, &s, &mut f);
-                cx.defs[d.0 as usize] = Some(Def::Fn(f));
                 last_run.insert(d, run);
                 callees.insert(d, cs);
                 if s.sums.get(&d) != Some(&new) {
@@ -136,9 +155,13 @@ fn bits_of(b: u64) -> impl Iterator<Item = usize> {
 
 /// Summary of body `f` given its callees' current summaries, and the functions whose
 /// summaries it read (the callees it calls by name).
-fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> (Summary, FxHashSet<DefId>) {
+fn summarize<F: Facts + ?Sized>(
+    facts: &mut F,
+    s: &Summaries,
+    f: &FnDef,
+) -> (Summary, FxHashSet<DefId>) {
     let mut w = Walk {
-        cx,
+        facts,
         s,
         bits: FxHashMap::default(),
         alias: FxHashMap::default(),
@@ -153,15 +176,15 @@ fn summarize(cx: &mut Ctx, s: &Summaries, f: &mut FnDef) -> (Summary, FxHashSet<
     }
     loop {
         w.changed = false;
-        visit::block(&mut f.body.block, &mut w);
+        visit::block(&f.body.block, &mut w);
         if !w.changed {
             return (w.out, w.callees);
         }
     }
 }
 
-struct Walk<'a, 's, 'm> {
-    cx: &'a mut Ctx<'m>,
+struct Walk<'a, 's, F: Facts + ?Sized> {
+    facts: &'a mut F,
     s: &'s Summaries,
     /// The parameters each local may reach.
     bits: FxHashMap<LocalId, u64>,
@@ -177,12 +200,12 @@ struct Walk<'a, 's, 'm> {
     callees: FxHashSet<DefId>,
 }
 
-impl Walk<'_, '_, '_> {
+impl<F: Facts + ?Sized> Walk<'_, '_, F> {
     fn mentions(&mut self, e: &Expr) -> u64 {
         let bits = &self.bits;
         let local = |l: LocalId| bits.get(&l).copied().unwrap_or(0);
         let s = self.s;
-        reach(self.cx, e, &local, &|n| s.captured(n))
+        reach(self.facts, e, &local, &|n| s.captured(n))
     }
 
     fn add(&mut self, l: LocalId, b: u64) {
@@ -290,7 +313,7 @@ impl Walk<'_, '_, '_> {
             self.callees.insert(*g);
         }
         let spawned = self.spawned.contains(&span);
-        if self.cx.holds_promise(ty) && !spawned {
+        if self.facts.holds_promise(ty) && !spawned {
             let all = bits.iter().fold(fn_bits, |b, x| b | x);
             self.promise(all);
         }
@@ -299,7 +322,7 @@ impl Walk<'_, '_, '_> {
                 // A call changes what is inside an argument; one whose type holds no shared
                 // value (`u8[]`, `i64[]`, a struct of numbers) keeps nothing of another (as
                 // `super::stores` checks a call's stores).
-                Some(b) if !holds_shared(self.cx, args[b].ty) => {}
+                Some(b) if !self.facts.holds_shared(args[b].ty) => {}
                 Some(b) => self.store(&args[b], bits[a]),
                 None => self.store_into_fn(fn_bits, bits[a]),
             }
@@ -367,8 +390,8 @@ pub(super) fn outer_mode(e: &Expr) -> Option<UseMode> {
     }
 }
 
-impl VisitMut for Walk<'_, '_, '_> {
-    fn stmt(&mut self, st: &mut Stmt) {
+impl<F: Facts + ?Sized> Visit for Walk<'_, '_, F> {
+    fn stmt(&mut self, st: &Stmt) {
         match &st.kind {
             S::Let {
                 local,
@@ -389,35 +412,21 @@ impl VisitMut for Walk<'_, '_, '_> {
         }
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Assign { place, value } => {
                 let b = self.mentions(value);
                 match place.kind {
                     // Rebinding a local only changes what it reaches.
                     E::Local(l, _) => self.add_alias(l, b),
-                    _ => {
-                        let place = (**place).clone();
-                        self.store(&place, b);
-                    }
+                    _ => self.store(place, b),
                 }
             }
-            E::Call { .. } => {
-                let (ty, span) = (e.ty, e.span);
-                if let E::Call { callee, args } = &mut e.kind {
-                    let taken = std::mem::take(args);
-                    let callee = callee.clone();
-                    self.call(ty, span, &callee, &taken);
-                    if let E::Call { args, .. } = &mut e.kind {
-                        *args = taken;
-                    }
-                }
-            }
+            E::Call { callee, args } => self.call(e.ty, e.span, callee, args),
             E::Match { scrutinee, arms } => {
                 let b = self.mentions(scrutinee);
-                let pats: Vec<Pat> = arms.iter().map(|a| a.pat.clone()).collect();
-                for p in &pats {
-                    self.bind(p, b);
+                for a in arms {
+                    self.bind(&a.pat, b);
                 }
             }
             _ => {}
