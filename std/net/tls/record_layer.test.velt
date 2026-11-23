@@ -788,17 +788,17 @@ describe("HandshakeBuffer", () => {
     expect(hs.hasMessage()).toBe(true);
     hs.take();
     hs.checkEmpty();
-    hs.append([4, 2, 0, 1], 0, 4);
+    hs.append([4, 1, 0, 0], 0, 4);
     expect(
       failureOf(() => {
         hs.hasMessage();
       }),
-    ).toBe("50 TLS: a handshake message of 131073 bytes");
+    ).toBe("50 TLS: a handshake message of 65536 bytes");
   });
 
   it("accepts a message of exactly the cap", () => {
     const hs = new HandshakeBuffer();
-    hs.append([4, 2, 0, 0], 0, 4);
+    hs.append([4, 0, 0xff, 0xff], 0, 4);
     expect(hs.hasMessage()).toBe(false);
   });
 

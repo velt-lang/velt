@@ -25,6 +25,7 @@ import { DerReader, OID } from "velt/net/tls/x509/der";
 import { checkNameConstraints } from "velt/net/tls/x509/name_constraints";
 import { OID_KP_SERVER_AUTH } from "velt/net/tls/x509/oids";
 import { CertificateRefused } from "velt/net/tls/x509/refused";
+import { builtinAnchorsNamed } from "velt/net/tls/x509/roots";
 import { verifySignature } from "velt/net/tls/x509/signed";
 import { Tlv } from "velt/net/tls/x509/tlv";
 import { TrustAnchor } from "velt/net/tls/x509/trust_anchor";
@@ -71,6 +72,8 @@ function sameBytes(a: u8[], as_: usize, ae: usize, b: u8[], bs: usize, be: usize
 /** One validation: the anchors, the certificates the server sent, the time and the budgets. */
 export class PathBuilder {
   private anchors: TrustAnchor[];
+  // Whether the built-in roots are anchors too, tried before `anchors`.
+  private builtin: bool;
   // The server's certificates after its own, parsed; null for one that does not parse, with
   // why in `refusals` at the same index (an error of verify_error.velt).
   private candidates: (Certificate | null)[];
@@ -84,11 +87,13 @@ export class PathBuilder {
   path: Certificate[];
 
   /**
-   * A validation against `anchors` at the time `now` (seconds since the Unix epoch), with
-   * `intermediates` (DER) as what the server sent after its own certificate, in any order.
+   * A validation against `anchors` (after the built-in roots, with `builtin`) at the time `now`
+   * (seconds since the Unix epoch), with `intermediates` (DER) as what the server sent after its
+   * own certificate, in any order.
    */
-  constructor(anchors: TrustAnchor[], intermediates: u8[][], now: i64) {
+  constructor(anchors: TrustAnchor[], intermediates: u8[][], now: i64, builtin: bool = false) {
     this.anchors = anchors;
+    this.builtin = builtin;
     this.candidates = [];
     this.refusals = [];
     for (const der of intermediates) {
@@ -119,14 +124,19 @@ export class PathBuilder {
       return own;
     }
     let error = UNKNOWN_ISSUER;
+    // The anchors with the issuer's name: the built-in ones first, as webpki has them.
+    const named: TrustAnchor[] =
+      this.builtin ? builtinAnchorsNamed(cert.der, cert.issuer.start, cert.issuer.end) : [];
     for (let a: usize = 0; a < this.anchors.length; a++) {
       const s = this.anchors[a].subject;
-      if (!sameBytes(cert.der, cert.issuer.start, cert.issuer.end, s, 0, s.length)) {
-        continue;
+      if (sameBytes(cert.der, cert.issuer.start, cert.issuer.end, s, 0, s.length)) {
+        named.push(this.anchors[a]);
       }
-      let result = this.checkSignatures(a);
+    }
+    for (const anchor of named) {
+      let result = this.checkSignatures(anchor);
       if (result == VALID) {
-        result = this.checkConstraints(a);
+        result = this.checkConstraints(anchor);
       }
       if (result == VALID || isFatal(result)) {
         return result;
@@ -233,9 +243,8 @@ export class PathBuilder {
     return VALID;
   }
 
-  // The path's signatures, from anchor `a`'s over the last certificate down to the first's.
-  private checkSignatures(a: usize): i32 {
-    const anchor = this.anchors[a];
+  // The path's signatures, from `anchor`'s over the last certificate down to the first's.
+  private checkSignatures(anchor: TrustAnchor): i32 {
     let keyAlgorithm = anchor.keyAlgorithm();
     let key = anchor.key();
     for (let i = this.path.length; i > 0; i--) {
@@ -260,10 +269,10 @@ export class PathBuilder {
     return VALID;
   }
 
-  // The name constraints of anchor `a` and of each CA on the path, each over all under it.
-  private checkConstraints(a: usize): i32 {
+  // The name constraints of `anchor` and of each CA on the path, each over all under it.
+  private checkConstraints(anchor: TrustAnchor): i32 {
     try {
-      let der = this.anchors[a].nameConstraints;
+      let der = anchor.nameConstraints;
       let constraints: Tlv = {
         tag: der.length == 0 ? 0 : 0x30,
         head: 0,
