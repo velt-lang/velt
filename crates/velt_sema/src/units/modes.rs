@@ -5,7 +5,7 @@
 //! program's bodies with std's modes as declared, and only the passes after the bodies judge what
 //! a call of std changes. std's unit keeps the modes its inference raised, and beside them the
 //! declared modes of what it raised (`Summaries::declared_modes`), which the app's body check
-//! reads while its bodies are checked ([`Ctx::declared_this`] and the others). Nothing in std's
+//! reads while its bodies are checked ([`Ctx::declared_this`], [`Ctx::declared_slot`]). Nothing in std's
 //! frozen unit is written.
 
 use crate::ctx::Ctx;
@@ -84,21 +84,6 @@ impl Ctx<'_> {
     /// Function `def`'s receiver mode as declared, while the app's bodies are checked.
     pub(crate) fn declared_this(&self, def: DefId) -> Option<PassMode> {
         self.declared_of(def, None)?.this
-    }
-
-    /// Function `def`'s parameter modes as declared, while the app's bodies are checked.
-    pub(crate) fn declared_params(&self, def: DefId) -> Option<&[PassMode]> {
-        Some(&self.declared_of(def, None)?.params)
-    }
-
-    /// `params` (a copy of function `def`'s) with their modes as declared, while the app's
-    /// bodies are checked.
-    pub(crate) fn as_declared(&self, def: DefId, params: &mut [crate::defs::ParamSig]) {
-        if let Some(ms) = self.declared_params(def) {
-            for (p, &m) in params.iter_mut().zip(ms) {
-                p.mode = m;
-            }
-        }
     }
 
     /// Slot `slot` of interface `iface` as declared (whether a call may change the receiver, and

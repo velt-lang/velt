@@ -100,8 +100,6 @@ impl FnCx<'_, '_> {
                 };
                 crate::body::defaults::param_defaults(self.cx, c);
                 let mut ps = self.cx.fn_info(c).params.clone();
-                // A check by units: std's as declared while the app's bodies are checked.
-                self.cx.as_declared(c, &mut ps);
                 for p in &mut ps {
                     p.ty = self.cx.subst(p.ty, &oargs);
                     // An inherited constructor's defaults are in its class's terms too

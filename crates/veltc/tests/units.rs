@@ -340,6 +340,9 @@ fn the_app_s_bodies_see_std_s_modes_as_declared() {
         "async function main() {\n  const h = new Headers({ \"x-a\": \"1\" });\n  await spawn((async () => {\n    console.log(h.get(\"x-a\") ?? \"\");\n  })());\n}\n",
         // Through an interface slot, whose modes are the join over its implementations.
         "function* numbers(): Generator<number> {\n  yield 1;\n}\n\nasync function main() {\n  const it: Iterator<number> = numbers();\n  await spawn((async () => {\n    console.log(it.next().value ?? 0);\n  })());\n}\n",
+        // An interface of the program extending std's, which copies std's slots when the
+        // program is collected (`collect/iface_extends.rs`).
+        "interface Counted extends Iterator<number> {\n  count(): number;\n}\n\nfunction* nums(): Generator<number> {\n  yield 1;\n}\n\nasync function main() {\n  const it: Iterator<number> = nums();\n  const c: Counted = {\n    next: () => it.next(),\n    count: () => 1,\n  };\n  await spawn((async () => {\n    console.log(c.next().value ?? 0, c.count());\n  })());\n}\n",
     ] {
         let whole = check_in(None, src);
         let two = check_in(Some("2"), src);

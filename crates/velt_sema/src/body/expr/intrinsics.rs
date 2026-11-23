@@ -55,7 +55,7 @@ impl FnCx<'_, '_> {
             return self.exported_address(args, span);
         }
         let f = self.cx.fn_info(d);
-        let mut c = Callable {
+        let c = Callable {
             what,
             params: f.params.clone(),
             ret: f.ret,
@@ -68,7 +68,6 @@ impl FnCx<'_, '_> {
             rest: false,
             defaults: f.generics.defaults.clone(),
         };
-        self.cx.as_declared(d, &mut c.params);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
         self.explicit_type_args(&mut slots, n, type_args, (&c.defaults, &c.params), span);

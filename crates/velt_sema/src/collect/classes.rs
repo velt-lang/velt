@@ -463,16 +463,12 @@ fn default_forwarder(cx: &mut Ctx, d: DefId, self_args: &[TyId], name: &str) -> 
     else {
         return None;
     };
-    let methods = &cx.iface(iface)?.methods;
-    let slot = methods.iter().position(|m| m.name == name)?;
-    let mut m = methods[slot].clone();
-    // A check by units: std's slot as declared while the app is collected (`units::modes`).
-    if let Some((mut_this, ps)) = cx.declared_slot(iface, slot as u32) {
-        m.mut_this = mut_this;
-        for (p, &mode) in m.params.iter_mut().zip(ps) {
-            p.mode = mode;
-        }
-    }
+    let m = cx
+        .iface(iface)?
+        .methods
+        .iter()
+        .find(|m| m.name == name)?
+        .clone();
     let params = m
         .params
         .iter()
