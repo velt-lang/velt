@@ -73,7 +73,8 @@ fn check_math_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
 }
 
 /// An extern's signature is scalar-only (invariant 2), but for a C function's `c_abi` (#2187
-/// layer 3): a struct result in registers is an `Agg` of one or two scalar words at 0 and 8 (`CRet::Words`),
+/// layer 3): a struct result in registers is an `Agg` of one to four scalar words of one size,
+/// packed (`CRet::Words`),
 /// and a `byval` or `sret` parameter is a `Ptr`, `sret` the first one, with no result.
 fn check_extern_signature(p: &Program, i: usize, e: &crate::vir::ExternFn, errs: &mut Vec<String>) {
     use crate::vir::{CParam, CRet};
@@ -110,16 +111,19 @@ fn check_extern_signature(p: &Program, i: usize, e: &crate::vir::ExternFn, errs:
     }
     match (c.ret, e.ret) {
         (CRet::Words, Ty::Agg(a)) => {
+            // One to four words of one size, packed: eightbytes, or an AAPCS64 HFA's floats.
             let ok = p.aggs.get(a.0 as usize).is_some_and(|l| {
-                (1..=2).contains(&l.fields.len())
-                    && l.fields
-                        .iter()
-                        .enumerate()
-                        .all(|(k, &(t, off))| t.is_scalar() && off == 8 * k as u32)
+                let size = l.fields.first().and_then(|&(t, _)| t.scalar_size());
+                (1..=4).contains(&l.fields.len())
+                    && size.is_some_and(|size| {
+                        (l.fields.iter().enumerate()).all(|(k, &(t, off))| {
+                            t.scalar_size() == Some(size) && off == size * k as u32
+                        })
+                    })
             });
             if !ok {
                 errs.push(format!(
-                    "extern#{i} {name}: a struct result in registers is an Agg of one or two scalar words at 0 and 8"
+                    "extern#{i} {name}: a struct result in registers is an Agg of one to four scalar words of one size, packed"
                 ));
             }
         }

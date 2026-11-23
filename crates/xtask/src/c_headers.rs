@@ -96,8 +96,10 @@ const PATHS: &[&str] = &[
     "crates/veltc/src/driver/std_cache/statics.rs",
     // C structs (#2187): the header check of structs (tests/c_struct_headers.rs, under
     // crates/veltc/src/native/) and structs by value, whose differential test is the
-    // classifier's entry criterion (tests/c_struct_by_value.rs).
-    "crates/velt_vir/src/c_struct_abi.rs",
+    // classifier's entry criterion (tests/c_struct_by_value.rs; ci.yml's c-struct-abi job runs
+    // it on arm64 Linux with this job, and scripts/abi-cross.sh under qemu).
+    "crates/velt_vir/src/c_struct_abi/",
+    "scripts/abi-cross.sh",
     "crates/velt_vir/src/lower/c_struct_call.rs",
     "crates/velt_vir/src/lower/c_call.rs",
     "crates/velt_codegen_llvm/src/c_struct.rs",
