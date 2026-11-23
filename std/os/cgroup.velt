@@ -11,40 +11,7 @@
 // (every CPU), Velt says 1. Node 24's libuv also dropped the cap for a v2 quota under one CPU;
 // Node 26's gives 1, as Velt does.
 
-import { utf8Encode } from "velt/encoding/utf8";
-import { readText } from "#fs-whole";
-
-/** The text of `path` (a /sys or /proc path, no 0 in it), or null when it can't be read. */
-function readOrNull(path: string): string | null {
-  const c = utf8Encode(path);
-  c.push(0);
-  return readText(c, path).value;
-}
-
-/** The text of `path`, or "" when it can't be read. */
-function read(path: string): string {
-  const text = readOrNull(path);
-  return text === null ? "" : text;
-}
-
-/** The integer `s` spells, spaces around it aside (digits, an optional leading "-"), or null. */
-function integer(s: string): i64 | null {
-  const t = s.trim();
-  const negative = t.startsWith("-");
-  const digits = negative ? t.slice(1) : t;
-  if (digits.length === 0 || digits.length > 18) {
-    return null;
-  }
-  let n: i64 = 0;
-  for (let i: i64 = 0; i < (digits.length as i64); i++) {
-    const c = digits.charCodeAt(i) as i64;
-    if (c < 48 || c > 57) {
-      return null;
-    }
-    n = n * 10 + (c - 48);
-  }
-  return negative ? -n : n;
-}
+import { integer, read, readOrNull } from "./proc_text";
 
 /** A v2 `cpu.max`'s whole CPUs (at least 1), or 0 for "no limit" or a file that doesn't parse. */
 function v2Limit(text: string): i64 {
