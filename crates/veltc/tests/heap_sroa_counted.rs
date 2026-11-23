@@ -6,7 +6,6 @@
 //! - A view alive across a caught throw (unwinding through the cleanup pads), a view returned
 //!   (its buffer outlives the page), and `using` objects whose dispose prints, in Node's order.
 //! - An object a `WeakRef` holds stays on the heap: the weak table knows it by its address.
-#![cfg(not(windows))]
 
 mod no_window;
 mod test_dir;
@@ -117,7 +116,11 @@ fn debug_runtime() -> PathBuf {
     Path::new(env!("CARGO_BIN_EXE_velt"))
         .parent()
         .unwrap()
-        .join("libvelt_rt.a")
+        .join(if cfg!(windows) {
+            "velt_rt.lib"
+        } else {
+            "libvelt_rt.a"
+        })
 }
 
 /// `velt <args> main.velt` with `src`, linked with the debug runtime: (stdout, stderr).

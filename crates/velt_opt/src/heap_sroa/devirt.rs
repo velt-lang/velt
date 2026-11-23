@@ -11,7 +11,8 @@
 //! - each allocation's next block stores `S` into the first field before anything reads the
 //!   object (a count, the object pointer computed from the block's, and the zero fill come
 //!   first: `new` as lowering emits it);
-//! - nothing else stores into the first field but `S`, and nothing stores the whole object;
+//! - nothing else stores into the first field but `S`, nothing stores the whole object, and no
+//!   fill but the one right after an allocation covers it;
 //! - the calls given the object are calls through its class's vtable or through a function
 //!   value, and only `new` writes an object's vtable: no method or function changes it.
 
@@ -28,6 +29,13 @@ use crate::visit::{stmt_operands, stmt_operands_mut, term_operands_mut};
 pub(super) fn run(allocator: Allocator, func: &mut Function, webs: &Webs) -> bool {
     let mut vtable_of = webs.vtable_of.clone();
     let groups = |l: Local, of: &[Option<StaticId>]| of.get(l.0 as usize).copied().flatten();
+    let clear = |of: &mut [Option<StaticId>], s: StaticId| {
+        for v in of.iter_mut().filter(|v| **v == Some(s)) {
+            *v = None;
+        }
+    };
+    // The zero fills `new` makes, (block, statement), before it stores the vtable.
+    let mut news: Vec<(usize, usize)> = Vec::new();
     // An allocation whose object may be read before its vtable is stored disqualifies its
     // group: every local holding that vtable.
     for block in &func.blocks {
@@ -44,9 +52,25 @@ pub(super) fn run(allocator: Allocator, func: &mut Function, webs: &Webs) -> boo
             continue;
         };
         let stmts = &func.blocks[next.0 as usize].stmts;
-        if !stores_first(stmts, s, &|l| groups(l, &vtable_of) == Some(s)) {
-            for v in vtable_of.iter_mut().filter(|v| **v == Some(s)) {
-                *v = None;
+        match stores_first(stmts, s, &|l| groups(l, &vtable_of) == Some(s)) {
+            Some(fills) => news.extend(fills.into_iter().map(|i| (next.0 as usize, i))),
+            None => clear(&mut vtable_of, s),
+        }
+    }
+    // Any other fill of a group's object zeroes its vtable word too.
+    for (bi, block) in func.blocks.iter().enumerate() {
+        for (i, st) in block.stmts.iter().enumerate() {
+            let Stmt::MemSet {
+                dst: Operand::Copy(p),
+                ..
+            } = st
+            else {
+                continue;
+            };
+            if let Some(s) = groups(p.local, &vtable_of).filter(|_| p.proj.is_empty()) {
+                if !news.contains(&(bi, i)) {
+                    clear(&mut vtable_of, s);
+                }
             }
         }
     }
@@ -70,10 +94,15 @@ pub(super) fn run(allocator: Allocator, func: &mut Function, webs: &Webs) -> boo
 
 /// Whether `stmts`, the block after an allocation, store `vtable` into the object's first field
 /// before any other mention of the group (`ours`): only the count's store, pointers computed
-/// from the block's and the zero fill may come first.
-fn stores_first(stmts: &[Stmt], vtable: StaticId, ours: &impl Fn(Local) -> bool) -> bool {
+/// from the block's and the zero fill may come first. Returns the zero fills' indices.
+fn stores_first(
+    stmts: &[Stmt],
+    vtable: StaticId,
+    ours: &impl Fn(Local) -> bool,
+) -> Option<Vec<usize>> {
     let through = |p: &Place| ours(p.local) && !p.proj.is_empty();
-    for s in stmts {
+    let mut fills = Vec::new();
+    for (i, s) in stmts.iter().enumerate() {
         match s {
             Stmt::Assign(dst, Rvalue::Use(Operand::Const(Const::Static(id), Ty::Ptr)))
                 if through(dst)
@@ -82,7 +111,7 @@ fn stores_first(stmts: &[Stmt], vtable: StaticId, ours: &impl Fn(Local) -> bool)
                         [Proj::Deref(Ty::Agg(_)), Proj::Field(0)]
                     ) =>
             {
-                return *id == vtable;
+                return (*id == vtable).then_some(fills);
             }
             Stmt::Assign(dst, Rvalue::Use(Operand::Const(..)))
                 if through(dst) && matches!(dst.proj.as_slice(), [Proj::Deref(Ty::U64)]) => {}
@@ -95,7 +124,7 @@ fn stores_first(stmts: &[Stmt], vtable: StaticId, ours: &impl Fn(Local) -> bool)
                 dst: Operand::Copy(p),
                 byte: Operand::Const(..),
                 len: Operand::Const(..),
-            } if p.proj.is_empty() && ours(p.local) => {}
+            } if p.proj.is_empty() && ours(p.local) => fills.push(i),
             _ => {
                 let mut mentions = false;
                 stmt_operands(s, &mut |op| {
@@ -103,10 +132,10 @@ fn stores_first(stmts: &[Stmt], vtable: StaticId, ours: &impl Fn(Local) -> bool)
                 });
                 let writes = matches!(s, Stmt::Assign(d, _) if ours(d.local));
                 if mentions || writes {
-                    return false;
+                    return None;
                 }
             }
         }
     }
-    false
+    None
 }

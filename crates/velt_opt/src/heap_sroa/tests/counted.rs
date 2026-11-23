@@ -641,6 +641,26 @@ fn an_object_whose_vtable_word_is_stored_again_keeps_its_vtable_loads() {
 }
 
 #[test]
+fn an_object_filled_again_keeps_its_vtable_loads() {
+    // A zero fill of the object between the releases zeroes its vtable word too: only the fill
+    // `new` makes before its store is allowed.
+    let VtProgram {
+        program, vtable, ..
+    } = vt_program(|fb, b, w, _, _| {
+        let fill = Stmt::MemSet {
+            dst: copy_local(w),
+            byte: int(0, U8),
+            len: int(16, U64),
+        };
+        fb.push(b, fill);
+    });
+    let mut p = program;
+    let (done, named) = vt_run(&mut p);
+    assert!(!done.vtables && !done.replaced, "{p}");
+    assert!(named.iter().filter(|&&s| s == vtable).count() == 1, "{p}");
+}
+
+#[test]
 fn an_object_read_before_its_vtable_is_stored_keeps_its_vtable_loads() {
     // A program that reads the vtable word before `new` stores it (read zero) must not see the
     // vtable there: the store-first check of the allocation's block fails.
