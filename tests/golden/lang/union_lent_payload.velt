@@ -1,0 +1,105 @@
+// A local lent to a union parameter that only reads it (#3537): the union holds a borrowed copy
+// of the local, so nothing is retained or dropped for it, and the local is as it was after the
+// call. A callee that changes the array or object it was lent changes the caller's, directly or as
+// a function value, also when pushes move a number array (`growNumbers`, 10,000 of them). A callee that keeps
+// the value (in an object) or reassigns the union, a later argument that assigns the local, and a
+// closure that assigns it during the call still work on values of their own. The leak check
+// counts every block.
+class Foo {
+  n: number = 1;
+}
+
+class Keeper {
+  kept: (u8[] | Foo)[] = [];
+
+  keep(x: u8[] | Foo) {
+    this.kept.push(x);
+  }
+}
+
+function size(x: u8[] | Foo, k: number): number {
+  return x instanceof Foo ? x.n + k : (x.length as number) + k;
+}
+
+function swap(x: u8[] | Foo): number {
+  x = new Foo();
+  return x instanceof Foo ? x.n : 0;
+}
+
+function poke(x: u8[] | Foo): number {
+  if (x instanceof Foo) {
+    x.n = 9;
+    return x.n;
+  }
+  x[0] = 5;
+  return x[0];
+}
+
+function growNumbers(x: number[] | Foo): number {
+  if (x instanceof Foo) {
+    return x.n;
+  }
+  for (let i = 0; i < 10000; i++) {
+    x.push(i);
+  }
+  return x.length;
+}
+
+// `growNumbers` for a function value: a function used as a value has a fixed signature.
+function growByValue(x: number[] | Foo): number {
+  return growNumbers(x);
+}
+
+function readAfter(x: u8[] | Foo, f: () => void): number {
+  f();
+  return x instanceof Foo ? x.n : (x.length as number);
+}
+
+function label(x: string | Foo): string {
+  return x instanceof Foo ? "foo" : x;
+}
+
+function main() {
+  const b = Buffer.alloc(8);
+  const f = new Foo();
+  const s = "text";
+  let total = 0;
+  for (let i = 0; i < 1000; i++) {
+    total += size(b, i % 3) + size(f, 1);
+  }
+  console.log(total, b.length, f.n, label(s), label(f), s);
+
+  // The callee keeps what it was lent: its own reference, so the local can go.
+  const keeper = new Keeper();
+  {
+    const c = Buffer.alloc(3);
+    c[0] = 42;
+    keeper.keep(c);
+    keeper.keep(f);
+  }
+  const first = keeper.kept[0];
+  console.log(keeper.kept.length, first instanceof Foo ? 0 : first[0]);
+
+  // A callee that assigns its union parameter, and an argument after the union that assigns
+  // the local the union was made from.
+  console.log(swap(b), b.length);
+  let d = Buffer.alloc(5);
+  console.log(size(d, (d = Buffer.alloc(2)).length), d.length);
+
+  // Callees that change what they were lent: the caller's array and object.
+  const e = Buffer.alloc(4);
+  const g = new Foo();
+  console.log(poke(e), e[0], poke(g), g.n);
+  const nums: number[] = [1, 2, 3, 4];
+  console.log(growNumbers(nums), nums.length, nums[10003]);
+  const changers = [poke];
+  const growers = [growByValue];
+  console.log(changers[0](e), e[0], growers[0](nums), nums.length, nums[20003]);
+
+  // A closure that assigns the lent local while the callee holds the union.
+  let h: u8[] = Buffer.alloc(8);
+  const reset = (): void => {
+    h = Buffer.alloc(1);
+  };
+  console.log(readAfter(h, reset), h.length);
+}
