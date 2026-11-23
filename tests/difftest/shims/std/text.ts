@@ -13,12 +13,20 @@ export class RegExpMatch {
   value: string;
   captures: (string | null)[];
   names: string[];
+  input: string;
   constructor(m: RegExpExecArray, names: string[]) {
     this.index = m.index;
     this.end = m.index + m[0].length;
     this.value = m[0];
     this.captures = m.slice(1).map((c) => c ?? null);
     this.names = names;
+    this.input = m.input;
+  }
+  get length(): number {
+    return this.captures.length + 1;
+  }
+  at(n: number): string | undefined {
+    return [this.value, ...this.captures.map((c) => c ?? undefined)].at(n);
   }
   group(n: number): string | null {
     return n === 0 ? this.value : (this.captures[n - 1] ?? null);
