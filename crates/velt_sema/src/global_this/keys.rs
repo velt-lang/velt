@@ -32,7 +32,7 @@ pub(super) fn mentions(module: &ast::Module) -> bool {
 /// including those the parser moved into a script's generated `main`.
 pub(super) fn string_consts(module: &ast::Module) -> FxHashMap<String, String> {
     let mut out = FxHashMap::default();
-    let symbol_global = !module_declares(module, "Symbol");
+    let symbol_global = !binds_anywhere(module, "Symbol");
     let mut add = |v: &ast::VarDecl| {
         if let Some((n, s)) = const_key(v, symbol_global) {
             out.insert(n, s);
@@ -54,34 +54,80 @@ pub(super) fn string_consts(module: &ast::Module) -> FxHashMap<String, String> {
     out
 }
 
-/// Does `module` declare `name` at its top level (a variable, a function, a class, an enum, an
-/// import), also in a script's generated `main`? It then hides the global of that name.
-pub(super) fn module_declares(module: &ast::Module, name: &str) -> bool {
-    let var = |v: &ast::VarDecl| {
-        let mut names = vec![];
-        pattern_names(&v.pattern, &mut names);
-        names.iter().any(|n| n == name)
-    };
-    module.items.iter().any(|item| match &item.kind {
-        I::Var(v) => var(v),
-        I::Function(f) if velt_syntax::is_script_main(&f.sig.name) => {
-            f.body.stmts.iter().any(|s| match &s.kind {
-                S::Var(v) => var(v),
-                _ => false,
-            })
+/// Does `module` bind `name` anywhere, at any depth: a variable, a parameter (of a function,
+/// a method, an arrow), a `catch` or `for…of` binding, a function, class, struct, enum or
+/// namespace, or an import? `Symbol.for` makes a key of `globalThis` only in a module that
+/// binds `Symbol` nowhere (`const_key`): a program that names something `Symbol` gets main's
+/// refusal for the whole module, whatever the scopes.
+pub(super) fn binds_anywhere(module: &ast::Module, name: &str) -> bool {
+    struct Binds<'n> {
+        name: &'n str,
+        found: bool,
+    }
+    impl Binds<'_> {
+        fn ident(&mut self, i: &ast::Ident) {
+            self.found |= i.name == self.name;
         }
-        I::Function(f) => f.sig.name.name == name,
-        I::Class(t) | I::Struct(t) => t.name.name == name,
-        I::Enum(e) => e.name.name == name,
-        I::Import(imp) => {
-            imp.namespace.as_ref().is_some_and(|n| n.name == name)
-                || imp
-                    .names
-                    .iter()
-                    .any(|n| n.alias.as_ref().unwrap_or(&n.name).name == name)
+        fn pattern(&mut self, p: &ast::Pattern) {
+            let mut names = vec![];
+            pattern_names(p, &mut names);
+            self.found |= names.iter().any(|n| n == self.name);
         }
-        _ => false,
-    })
+        fn params(&mut self, params: &[ast::Param]) {
+            self.found |= params_names(params).iter().any(|n| n == self.name);
+        }
+    }
+    impl<'a> Visit<'a> for Binds<'_> {
+        fn item(&mut self, item: &'a ast::Item) {
+            match &item.kind {
+                I::Function(f) => self.ident(&f.sig.name),
+                I::Class(t) | I::Struct(t) => self.ident(&t.name),
+                I::Enum(e) => self.ident(&e.name),
+                I::Namespace(n) => self.ident(&n.name),
+                I::Import(imp) => {
+                    imp.namespace.iter().for_each(|n| self.ident(n));
+                    for n in &imp.names {
+                        self.ident(n.alias.as_ref().unwrap_or(&n.name));
+                    }
+                }
+                _ => {}
+            }
+        }
+        fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
+            self.params(&sig.params);
+        }
+        fn stmt(&mut self, s: &'a ast::Stmt) {
+            match &s.kind {
+                S::ForOf { pattern, .. } => self.pattern(pattern),
+                S::Try {
+                    catch: Some((Some(p), _)),
+                    ..
+                } => self.pattern(p),
+                _ => {}
+            }
+        }
+        fn var_decl(&mut self, v: &'a ast::VarDecl) {
+            self.pattern(&v.pattern);
+        }
+        fn expr(&mut self, e: &'a ast::Expr) {
+            match &e.kind {
+                E::Arrow { params, .. } => {
+                    for p in params {
+                        self.ident(&p.name);
+                        p.pattern.iter().for_each(|pat| self.pattern(pat));
+                    }
+                }
+                E::Function(d) => {
+                    self.ident(&d.sig.name);
+                    self.params(&d.sig.params);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut b = Binds { name, found: false };
+    visit::walk_module(module, &mut b);
+    b.found
 }
 
 /// The string constants module `i` sees: its own, and those it imports by name.
@@ -113,7 +159,7 @@ pub(super) fn visible_consts(
 /// The name and string of `const K = "k";`: a key of `globalThis` where `K` is in scope. A
 /// constant declared with a type (`const K: string = "k"`) is not one, as in TypeScript, unless
 /// the type is the string itself (`const K: "k" = "k"`). `Symbol.for("k")` names the registry
-/// only where `Symbol` is the global (`symbol_global`), not a name the program declares.
+/// only in a module that binds `Symbol` nowhere (`symbol_global`, [`binds_anywhere`]).
 pub(super) fn const_key(v: &ast::VarDecl, symbol_global: bool) -> Option<(String, String)> {
     let (ast::VarKind::Const, ast::PatternKind::Ident(n), Some(init)) =
         (v.kind, &v.pattern.kind, &v.init)

@@ -1,0 +1,12 @@
+// A class `Symbol` in a bare block at module level turns `Symbol.for` keys off for the module
+// (Node prints `1`).
+{
+  class Symbol {
+    static for(s: string): string {
+      return s;
+    }
+  }
+  const K = Symbol.for("k");
+  (globalThis as Record<string, number | undefined>)[K] = 1;
+  console.log((globalThis as Record<string, number | undefined>)["k"]);
+}
