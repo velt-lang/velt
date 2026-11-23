@@ -9,8 +9,6 @@ velt_rt velt_rt_await_ready
 velt_rt velt_rt_await_tick
 velt_rt velt_rt_bytes_drop
 velt_rt velt_rt_bytes_from_str
-velt_rt velt_rt_bytes_range_to_str
-velt_rt velt_rt_bytes_range_to_str_lossy
 velt_rt velt_rt_bytes_to_str
 velt_rt velt_rt_bytes_zeroed
 velt_rt velt_rt_catch_arm

@@ -1,0 +1,202 @@
+// velt/encoding (internal): runs of well-formed UTF-8 checked sixteen bytes at a time, with their
+// UTF-16 length counted on the way: `validRun`, which `utf8Slice` (std/lang/bytes/range_text)
+// steps over most text with. Each byte is compared with the three before it (loaded again from
+// memory, one byte further back each), so no lane has to move between vectors; Unicode Table 3-7
+// (well-formed sequences) as compares; and `scanValid`, the same a character at a time, for
+// the bytes around the blocks. Imports only intrinsics, as std/encoding/utf8_valid.velt
+// imports nothing.
+
+import { addressLoad, arrayReadAddress, noInline } from "velt/lang/intrinsics";
+
+// The SIMD operations the check uses (`velt/simd`, std/simd/*.velt, is the API; declared again
+// here, as std/encoding/utf8_valid.velt does). `load` does not check its range.
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_lt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_gt(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_u8x16_ge(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_count(m: mask8x16): u64;
+declare function velt_simd_mask8x16_and(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
+declare function velt_simd_mask8x16_xor(a: mask8x16, b: mask8x16): mask8x16;
+
+/** A run of well-formed UTF-8 that `validRun` found: where it ends, and its UTF-16 length. */
+export struct ValidRun {
+  end: usize;
+  units: usize;
+}
+
+/** Whether `x` is in [lo, hi), lane by lane. */
+function within(x: u8x16, lo: u8, hi: u8): mask8x16 {
+  return velt_simd_mask8x16_and(
+    velt_simd_u8x16_ge(x, velt_simd_u8x16_splat(lo)),
+    velt_simd_u8x16_lt(x, velt_simd_u8x16_splat(hi)),
+  );
+}
+
+/** Lanes where `p` is `lead` and `c` is below `lo` or above `hi` (a second byte out of range). */
+function outside(p: u8x16, c: u8x16, lead: u8, lo: u8, hi: u8): mask8x16 {
+  return velt_simd_mask8x16_and(
+    velt_simd_u8x16_eq(p, velt_simd_u8x16_splat(lead)),
+    velt_simd_mask8x16_or(
+      velt_simd_u8x16_lt(c, velt_simd_u8x16_splat(lo)),
+      velt_simd_u8x16_gt(c, velt_simd_u8x16_splat(hi)),
+    ),
+  );
+}
+
+/**
+ * The well-formed UTF-8 from `start`, checked in sixteen-byte blocks while one more byte follows
+ * the block before `stop`: it ends at the first block that holds an invalid sequence, or at the
+ * last one, moved back to the start of the character the last block ends inside (which the
+ * caller checks itself). `start` is a character boundary, and the three bytes before it are
+ * whole, valid characters inside `data` (they are read). `end` is `start` when the first block
+ * is not valid. Out of line: its sixteen constant vectors are made where it runs, not on the way
+ * into a caller that decodes a few bytes without it.
+ */
+@noInline
+export function validRun(data: u8[], start: usize, stop: usize): ValidRun {
+  let i = start;
+  let units: usize = 0;
+  while (i + 16 < stop) {
+    const at = i as u64;
+    const c = velt_simd_u8x16_load(data, at);
+    const p1 = velt_simd_u8x16_load(data, at - 1);
+    const p2 = velt_simd_u8x16_load(data, at - 2);
+    const p3 = velt_simd_u8x16_load(data, at - 3);
+    const cont = within(c, 0x80, 0xc0);
+    // A lead one byte back, a three- or four-byte lead two back, or a four-byte lead three back
+    // needs a continuation here; nothing else may be one.
+    const needed = velt_simd_mask8x16_or(
+      velt_simd_mask8x16_or(
+        velt_simd_u8x16_ge(p1, velt_simd_u8x16_splat(0xc0)),
+        velt_simd_u8x16_ge(p2, velt_simd_u8x16_splat(0xe0)),
+      ),
+      velt_simd_u8x16_ge(p3, velt_simd_u8x16_splat(0xf0)),
+    );
+    // C0 and C1 (overlong two-byte forms) and F5..FF never occur; E0 and F0 need a second byte
+    // that is no overlong form, ED one that is no surrogate, F4 one at most U+10FFFF.
+    const bad = velt_simd_mask8x16_or(
+      velt_simd_mask8x16_or(
+        velt_simd_mask8x16_xor(cont, needed),
+        velt_simd_mask8x16_or(
+          within(c, 0xc0, 0xc2),
+          velt_simd_u8x16_ge(c, velt_simd_u8x16_splat(0xf5)),
+        ),
+      ),
+      velt_simd_mask8x16_or(
+        velt_simd_mask8x16_or(outside(p1, c, 0xe0, 0xa0, 0xbf), outside(p1, c, 0xed, 0x80, 0x9f)),
+        velt_simd_mask8x16_or(outside(p1, c, 0xf0, 0x90, 0xbf), outside(p1, c, 0xf4, 0x80, 0x8f)),
+      ),
+    );
+    if (velt_simd_mask8x16_any(bad)) {
+      break;
+    }
+    // One unit per character, two for a four-byte one (a surrogate pair).
+    const four = velt_simd_mask8x16_count(velt_simd_u8x16_ge(c, velt_simd_u8x16_splat(0xf0)));
+    units += 16 - (velt_simd_mask8x16_count(cont) as usize) + (four as usize);
+    i += 16;
+    if (!velt_simd_mask8x16_any(velt_simd_u8x16_ge(c, velt_simd_u8x16_splat(0x80)))) {
+      // A block of ASCII: no character reaches past it, so a run of ASCII after it is valid
+      // as it is, 64 bytes per step with one test (the last three bytes before each are ASCII).
+      while (i + 64 < stop) {
+        const at = i as u64;
+        const all = velt_simd_u8x16_or(
+          velt_simd_u8x16_or(velt_simd_u8x16_load(data, at), velt_simd_u8x16_load(data, at + 16)),
+          velt_simd_u8x16_or(
+            velt_simd_u8x16_load(data, at + 32),
+            velt_simd_u8x16_load(data, at + 48),
+          ),
+        );
+        if (velt_simd_mask8x16_any(velt_simd_u8x16_ge(all, velt_simd_u8x16_splat(0x80)))) {
+          break;
+        }
+        units += 64;
+        i += 64;
+      }
+    }
+  }
+  if (i > start) {
+    // The last character the blocks hold, from its lead (at most three continuations before the
+    // end): when it reaches past them, its continuations there are unchecked, so back to the
+    // lead (whose units the block counted) for the caller to check it whole.
+    let k = i - 1;
+    while ((data[k] & 0xc0) == 0x80) {
+      k--;
+    }
+    const lead = data[k];
+    const len: usize = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+    if (k + len > i) {
+      units -= lead >= 0xf0 ? 2 : 1;
+      i = k;
+    }
+  }
+  return { end: i, units };
+}
+
+/**
+ * The well-formed UTF-8 from `start` (a character boundary), a character at a time while one
+ * starts before `limit`, its bytes before `stop` (`limit <= stop <= data.length`): it ends at
+ * the first character at or past `limit`, or at an invalid sequence or one `stop` cuts off,
+ * which starts before `limit` then. Unicode Table 3-7, as `validRun`; the bytes are read without
+ * bounds checks (all are before `stop`).
+ */
+export function scanValid(data: u8[], start: usize, limit: usize, stop: usize): ValidRun {
+  let i = start;
+  let units: usize = 0;
+  // SAFETY: every load is at a position below `stop`, inside `data`, which is only read.
+  unsafe {
+    const p = arrayReadAddress(data);
+    while (i < limit) {
+      const b0 = addressLoad<u8>(p + i);
+      if (b0 < 0x80) {
+        i += 1;
+        units += 1;
+        continue;
+      }
+      if (b0 < 0xe0) {
+        if (b0 < 0xc2 || i + 1 >= stop || (addressLoad<u8>(p + i + 1) & 0xc0) != 0x80) {
+          break;
+        }
+        i += 2;
+        units += 1;
+        continue;
+      }
+      if (i + 2 >= stop) {
+        break;
+      }
+      const b1 = addressLoad<u8>(p + i + 1);
+      const b2 = addressLoad<u8>(p + i + 2);
+      if (b0 < 0xf0) {
+        // E0 needs A0..BF second (no overlong form), ED needs 80..9F (no surrogate).
+        const lo: u8 = b0 == 0xe0 ? 0xa0 : 0x80;
+        const hi: u8 = b0 == 0xed ? 0x9f : 0xbf;
+        if (b1 < lo || b1 > hi || (b2 & 0xc0) != 0x80) {
+          break;
+        }
+        i += 3;
+        units += 1;
+        continue;
+      }
+      // F0 needs 90..BF second (no overlong form), F4 needs 80..8F (at most U+10FFFF).
+      const lo: u8 = b0 == 0xf0 ? 0x90 : 0x80;
+      const hi: u8 = b0 == 0xf4 ? 0x8f : 0xbf;
+      if (
+        b0 > 0xf4 ||
+        b1 < lo ||
+        b1 > hi ||
+        (b2 & 0xc0) != 0x80 ||
+        i + 3 >= stop ||
+        (addressLoad<u8>(p + i + 3) & 0xc0) != 0x80
+      ) {
+        break;
+      }
+      i += 4;
+      units += 2;
+    }
+  }
+  return { end: i, units };
+}
