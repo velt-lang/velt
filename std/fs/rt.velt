@@ -203,16 +203,23 @@ export async function rename(from: string, to: string): Promise<void> {
 
 /**
  * `mode`: copy_mode.velt's bits, checked by the caller. The runtime's copy takes none, so the
- * mode is applied here: `COPYFILE_FICLONE_FORCE` is `ENOSYS` (no clone), and
- * `COPYFILE_EXCL` is `EEXIST` for a destination that exists before the copy starts.
+ * mode is applied here, after the source is found (a missing one stays the copy's `ENOENT`, as in
+ * Node): `COPYFILE_FICLONE_FORCE` is `ENOSYS` (no clone), and `COPYFILE_EXCL` is `EEXIST` for a
+ * destination there before the copy starts, a link too (`lstat`), even one to nothing. Another
+ * process can still make the destination between the check and the copy: the runtime has no
+ * exclusive copy. Mode 0 asks nothing more.
  */
 export function copyFileSync(from: string, to: string, mode: u32) {
-  copyModeCheck(from, to, mode, velt_rt_fs_exists_sync(to));
+  if (mode != 0 && velt_rt_fs_lstat_sync(from).code == 0) {
+    copyModeCheck(from, to, mode, velt_rt_fs_lstat_sync(to).code == 0);
+  }
   checkIo(velt_rt_fs_copy_file_sync(from, to));
 }
 
 export async function copyFile(from: string, to: string, mode: u32): Promise<void> {
-  copyModeCheck(from, to, mode, await velt_rt_fs_exists(to));
+  if (mode != 0 && (await velt_rt_fs_lstat(from)).code == 0) {
+    copyModeCheck(from, to, mode, (await velt_rt_fs_lstat(to)).code == 0);
+  }
   checkIo(await velt_rt_fs_copy_file(from, to));
 }
 

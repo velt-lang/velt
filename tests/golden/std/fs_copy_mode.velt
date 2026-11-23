@@ -78,7 +78,8 @@ async function main() {
 
   // COPYFILE_FICLONE_FORCE: ENOSYS on macOS and Windows; on macOS the destination, opened by
   // then, is removed, on Windows nothing is touched. On Linux the clone, or its errno where the
-  // file system has none (the destination removed).
+  // file system has none (the destination removed). On Linux a copy that fell back to plain
+  // copying would also read as the clone here: the macOS and Windows runs are what catch that.
   let asNode = false;
   try {
     copyFileSync(a, b, constants.COPYFILE_FICLONE_FORCE);

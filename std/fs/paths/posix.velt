@@ -59,7 +59,7 @@ export struct CopySystem {
   data: (src: i32, dst: i32, mode: u32, size: i64) => i32;
 }
 
-/** `CopySystem.clone`'s results besides an errno. */
+/** `CopySystem.cloneFile`'s results besides an errno. */
 export const CLONED: i32 = 0;
 export const NOT_CLONED: i32 = -1;
 
