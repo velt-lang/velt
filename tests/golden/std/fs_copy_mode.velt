@@ -43,8 +43,9 @@ async function main() {
 
   show("excl onto existing", () => copyFileSync(a, b, constants.COPYFILE_EXCL));
   console.log("  b:", content(b));
-  show("excl|ficlone onto existing", () =>
-    copyFileSync(a, b, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE)
+  show(
+    "excl|ficlone onto existing",
+    () => copyFileSync(a, b, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE),
   );
   console.log("  b:", content(b));
   show("default onto existing", () => copyFileSync(a, b));
