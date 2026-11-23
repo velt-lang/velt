@@ -21,6 +21,7 @@ import {
 } from "velt/lang/typed_array/buffer";
 import { ascending, elementsOf, localeNumber, TypedArray } from "velt/lang/typed_array/base";
 import { layout } from "velt/lang/typed_array/layout";
+import { indexOutOfBounds } from "velt/lang/typed_array/out_of_bounds";
 import {
   INSPECT,
   TYPED_ARRAY_GET,
@@ -143,22 +144,17 @@ export class Float32Array extends TypedArray implements Iterable<number> {
   [Symbol.index](i: number): number {
     // One test per branch, so the compiler knows `i` is in range where it converts it.
     if (!(i >= 0)) {
-      this.outOfBounds(i);
+      indexOutOfBounds(this.count(), i);
     }
     if (!(i < this.count())) {
-      this.outOfBounds(i);
+      indexOutOfBounds(this.count(), i);
     }
     if (i != Math.trunc(i)) {
-      this.outOfBounds(i);
+      indexOutOfBounds(this.count(), i);
     }
     // Inside the view, which is inside its buffer's bytes (`count`).
     const o = this.off + (i as usize) * 4;
     return elementF32(this.buf.bytes, o);
-  }
-
-  // `xs[i]` outside the array (cold).
-  private outOfBounds(i: number): never {
-    panic(`index out of bounds: the len is ${this.count()} but the index is ${i}`);
   }
 
   // Element bytes at `o` past the end of the buffer's bytes (cold): its bytes are a `u8[]`

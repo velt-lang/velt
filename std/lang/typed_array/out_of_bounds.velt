@@ -1,0 +1,8 @@
+// velt/lang/typed_array (internal): the panic of `xs[i]` outside a typed array, given the
+// array's length rather than the array, so a view read in a loop is not passed to anything on
+// that cold path and `heap_sroa` can keep it out of the heap (#1718).
+
+/** `xs[i]` outside an array of `len` elements (cold). */
+export function indexOutOfBounds(len: number, i: number): never {
+  panic(`index out of bounds: the len is ${len} but the index is ${i}`);
+}
