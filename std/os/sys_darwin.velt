@@ -92,7 +92,7 @@ export function uptime(): f64 {
 }
 
 /** The memory limit: 0, as macOS sets none a process can read (libuv's answer too). */
-export function constrainedMemory(): i64 {
+export function constrainedMemory(): f64 {
   return 0;
 }
 

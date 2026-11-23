@@ -5,9 +5,8 @@
 // Where this differs from libuv: the release's numbers come from the registry key libuv reads
 // the product name from (`CurrentMajorVersionNumber`, `CurrentMinorVersionNumber`,
 // `CurrentBuildNumber`, as Windows 10 and later have them), not from ntdll's `RtlGetVersion`,
-// which no Windows header outside the driver kit declares; an arm64 processor is "arm64", where
-// libuv has no name for it ("unknown"); and the CPU times keep the microseconds Windows counts,
-// where libuv rounds them to milliseconds.
+// which no Windows header outside the driver kit declares; and an arm64 processor is "arm64",
+// where libuv has no name for it ("unknown").
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, rawAlloc, rawFree } from "velt/lang/intrinsics";
@@ -79,7 +78,8 @@ export function windowsNames(): string[] {
 
 /**
  * `[user, system]`: the CPU time this process has spent in user code and in the kernel, in
- * microseconds (`GetProcessTimes`; `[0, 0]` when it fails).
+ * microseconds (`GetProcessTimes`; `[0, 0]` when it fails), in whole milliseconds as Node gives
+ * them: libuv reads them through `FileTimeToSystemTime`, which keeps milliseconds.
  */
 export function windowsCpuUsage(): [i64, i64] {
   const p = rawAlloc(32);
@@ -96,8 +96,8 @@ export function windowsCpuUsage(): [i64, i64] {
       Ptr.orNull<_FILETIME>(p + 24),
     );
     if (ok !== 0) {
-      kernel = (addressLoad<u64>(p + 16) / 10) as i64;
-      user = (addressLoad<u64>(p + 24) / 10) as i64;
+      kernel = (addressLoad<u64>(p + 16) / 10000 * 1000) as i64;
+      user = (addressLoad<u64>(p + 24) / 10000 * 1000) as i64;
     }
     rawFree(p, 32);
   }

@@ -48,7 +48,7 @@ export function uptime(): f64 {
 }
 
 /** The memory limit: 0 (none known). */
-export function constrainedMemory(): i64 {
+export function constrainedMemory(): f64 {
   return 0;
 }
 

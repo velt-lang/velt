@@ -38,6 +38,24 @@ describe("cpus()", () => {
     }
   });
 
+  it("counts times in milliseconds, against an uptime in seconds", () => {
+    // Each CPU's modes add up to about the time the machine has been up (less what goes
+    // uncounted: iowait, steal, and on macOS and Windows the time asleep), so a slip of units in
+    // the times or in `uptime()` (a factor of 1000) lands far outside these bounds.
+    const list = cpus();
+    const up = uptime() * 1000;
+    let most: f64 = 0;
+    for (const cpu of list) {
+      const t = cpu.times;
+      const total = (t.user + t.nice + t.sys + t.idle + t.irq) as f64;
+      expect(total <= up * 1.1 + 5000).toBe(true);
+      most = total > most ? total : most;
+    }
+    if (list.length > 0) {
+      expect(most >= up / 10).toBe(true);
+    }
+  });
+
   it("has no nice time on Windows and no interrupt time on macOS", () => {
     for (const cpu of cpus()) {
       if (platform() === "win32") {

@@ -56,8 +56,9 @@ export function registryNumber(subKey: string, name: string): i64 | null {
 }
 
 /**
- * The text value `name` of `HKEY_LOCAL_MACHINE\<subKey>`, spaces around it aside, or "" when it
- * can't be read (or is longer than 255 code units).
+ * The text value `name` of `HKEY_LOCAL_MACHINE\<subKey>` as it is stored (AMD's processor names
+ * end in spaces, which Node's `os.cpus()` keeps), or "" when it can't be read (or is longer than
+ * 255 code units).
  */
 export function registryText(subKey: string, name: string): string {
   const key = wideOf(subKey);
@@ -74,5 +75,5 @@ export function registryText(subKey: string, name: string): string {
   unsafe {
     r = RegGetValueW$text(Ptr.orNull<void>(LOCAL_MACHINE), key, value, flags, null, data, bytes);
   }
-  return r === 0 ? wideText(data).trim() : "";
+  return r === 0 ? wideText(data) : "";
 }

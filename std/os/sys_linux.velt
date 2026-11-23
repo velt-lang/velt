@@ -4,11 +4,12 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
 import { cpuQuota } from "./cgroup";
-import { cgroupMemoryLeft, cgroupMemoryLimit } from "./cgroup_memory";
+import { availableOf, constrainedOf } from "./cgroup_memory";
 import type { CpuInfo } from "./cpu_info";
 import { linuxCpus } from "./cpus_linux";
 import { linuxFreeMemory, linuxLoadAverage, linuxTotalMemory, linuxUptime } from "./meminfo_linux";
 import { cpuUsage, hostname as posixHostname, names } from "./posix";
+import { read, readOrNull } from "./proc_text";
 import { posixTmpdir } from "./tmpdir";
 
 /** C's `cpu_set_t`: a mask of 1024 CPUs. */
@@ -25,6 +26,9 @@ const SC_NPROCESSORS_ONLN: i32 = 84;
 
 /** `_SC_CLK_TCK` on Linux: the kernel's `USER_HZ`, the unit of /proc/stat's times. */
 const SC_CLK_TCK: i32 = 2;
+
+/** `_SC_PAGESIZE` on Linux: cgroup v1's "no limit" is `LONG_MAX` rounded down to it. */
+const SC_PAGESIZE: i32 = 30;
 
 /** Node's `process.platform` name of Linux. */
 export const PLATFORM: string = "linux";
@@ -116,15 +120,29 @@ export function uptime(): f64 {
   return linuxUptime();
 }
 
-/** The memory limit of this process' cgroup in bytes, 0 for none. */
-export function constrainedMemory(): i64 {
-  return cgroupMemoryLimit();
+/** This system's page size (4096 where `sysconf` can't say). */
+function pageSize(): u64 {
+  // SAFETY: no precondition.
+  const page = unsafe { sysconf(SC_PAGESIZE) };
+  return page > 0 ? page as u64 : 4096;
 }
 
-/** The memory this process may still use: what its cgroup leaves, else the free memory. */
+/**
+ * The memory limit of this process' own cgroup in bytes (2^64 for none), 0 when it can't be
+ * read.
+ */
+export function constrainedMemory(): f64 {
+  const cgroup = readOrNull("/proc/self/cgroup");
+  return cgroup === null ? 0 : constrainedOf(cgroup, read, pageSize()) as f64;
+}
+
+/** The memory this process may still use: what its cgroup's limit leaves, else the free memory. */
 export function availableMemory(): i64 {
-  const left = cgroupMemoryLeft(linuxTotalMemory());
-  return left < 0 ? linuxFreeMemory() : left;
+  const cgroup = readOrNull("/proc/self/cgroup");
+  if (cgroup === null) {
+    return 0;
+  }
+  return availableOf(cgroup, read, pageSize(), linuxTotalMemory(), linuxFreeMemory);
 }
 
 /** `[type, release, version, machine]`: the OS's names, as `uname` gives them. */

@@ -5,21 +5,23 @@
 import * as sys from "#os-sys";
 
 /**
- * The memory the OS limits this process to, in bytes (Node's `process.constrainedMemory()`): on
- * Linux the smallest memory limit of its cgroup and the cgroups above it (hard or soft); 0 when
- * nothing limits it, and on macOS, Windows and WebAssembly, which have no such limit to read.
- * Where Node's libuv reads a cgroup that sets no limit ("max"), Node gives 2^64 (2^64 - 1 as a
- * number), which an `i64` can't hold: Velt gives 0 there too. libuv reads only the process' own
- * cgroup; Velt also reads those above it, whose limits the kernel enforces as well.
+ * The memory the OS limits this process to, in bytes (Node's `process.constrainedMemory()`),
+ * read as Node's libuv reads it: on Linux the smaller of the hard and soft memory limits of the
+ * process' own cgroup (cgroup v2's `memory.max` and `memory.high`, v1's `memory.limit_in_bytes`
+ * and `memory.soft_limit_in_bytes`), 2^64 when it sets none (2^64 - 1, as a `number`), 0 when
+ * they can't be read; 0 on macOS, Windows and WebAssembly, where libuv reads no limit. The
+ * cgroups above the process' own are not read, as in Node: a limit set only there doesn't count.
  */
-export function constrainedMemory(): i64 {
+export function constrainedMemory(): number {
   return sys.constrainedMemory();
 }
 
 /**
- * The memory this process can still get, in bytes (Node's `process.availableMemory()`): what its
- * cgroups' limits leave on Linux (0 for one already over its limit), else the machine's free
- * memory (velt/os' `freemem()`); 0 on WebAssembly.
+ * The memory this process can still get, in bytes (Node's `process.availableMemory()`): on Linux
+ * what its cgroup's limit (`constrainedMemory()`) leaves of it, 0 for a cgroup already over it;
+ * the machine's free memory (velt/os' `freemem()`) where there is no limit, or one above the
+ * machine's memory, and on macOS and Windows; 0 on WebAssembly, and on Linux without
+ * /proc/self/cgroup.
  */
 export function availableMemory(): i64 {
   return sys.availableMemory();
