@@ -8,6 +8,9 @@ import { IoResult } from "velt/native/result";
 import { platform } from "velt/os/machine";
 import { errnoOfWin32 } from "velt/os/win_error";
 
+/** Win32's `ERROR_BAD_EXE_FORMAT`, which libuv reports as `EFTYPE`. */
+const ERROR_BAD_EXE_FORMAT: i32 = 193;
+
 /**
  * A program that did not start: Node's spawn error. `spawn` and `exec` read as Node's `spawn`
  * and `execFile` (`spawn vprog ENOENT`), `execSync` as its `spawnSync` and `execFileSync`
@@ -76,6 +79,8 @@ function uvWindowsErrno(code: string): number {
       return -4077;
     case "EFAULT":
       return -4074;
+    case "EFTYPE":
+      return -4028;
     case "EINTR":
       return -4072;
     case "EOF":
@@ -142,9 +147,9 @@ function uvWindowsErrno(code: string): number {
  * vprog: <the OS's text> (os error N)`), as Node's: `execSync`'s (`sync`) as `spawnSync`'s,
  * else as `spawn`'s, which throws without the program for errors other than those it reports
  * on the child (EACCES, EAGAIN, EMFILE, ENFILE, ENOENT). A failure that is not the OS's (a NUL
- * in an argument, a batch file on Windows) keeps its own message. A failure after the child
- * started that the runtime words the same way (a read or wait of `execSync`'s) becomes one too,
- * `spawnSync x CODE`, where Node reports such an error differently.
+ * in an argument) keeps its own message. A failure after the child started that the runtime
+ * words the same way (a read or wait of `execSync`'s) becomes one too, `spawnSync x CODE`, where
+ * Node reports such an error differently.
  */
 export function startError(
   code: i32,
@@ -160,7 +165,10 @@ export function startError(
   const windows = platform() == "win32";
   // Windows: the code std reports (as Rust maps the Win32 error); elsewhere the errno's name.
   let name = windows ? errorCodeName(code) : errnoName(e);
-  if (name == "UNKNOWN") {
+  if (windows && e == ERROR_BAD_EXE_FORMAT) {
+    // Not a program (a `.txt`): libuv's own name for it.
+    name = "EFTYPE";
+  } else if (name == "UNKNOWN") {
     name = windows ? errnoName(errnoOfWin32(e as u32)) : errorCodeName(code);
   }
   const errno: number = windows ? uvWindowsErrno(name) : -(e as number);
