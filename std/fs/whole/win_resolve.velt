@@ -187,6 +187,72 @@ export function namespaced(path: string, dirs: Dirs): string {
   return r;
 }
 
+/** `plainKind`'s answers. */
+export const NOT_PLAIN: i32 = 0;
+export const PLAIN_ABSOLUTE: i32 = 1;
+export const PLAIN_RELATIVE: i32 = 2;
+
+/**
+ * Whether `path` is one that resolving changes only by joining (most paths a program gives):
+ * `PLAIN_ABSOLUTE` for `X:\` (or `X:/`) and names, `PLAIN_RELATIVE` for names alone, each name
+ * neither empty nor `.` or `..` (no repeated or trailing separators). Anything else (`\x`,
+ * `\\server`, `\\?\`, `C:x`, `a/../b`) is `NOT_PLAIN`.
+ */
+export function plainKind(path: string): i32 {
+  const len = path.length as i64;
+  if (len === 0) {
+    return NOT_PLAIN;
+  }
+  let start: i64 = 0;
+  let kind = PLAIN_RELATIVE;
+  if (len >= 3 && letterAt(path, 0) && path.charCodeAt(1) === 58 && sepAt(path, 2)) {
+    start = 3;
+    kind = PLAIN_ABSOLUTE;
+    if (len === 3) {
+      return kind;
+    }
+  } else if (sepAt(path, 0) || (len >= 2 && path.charCodeAt(1) === 58)) {
+    return NOT_PLAIN;
+  }
+  let part = start;
+  for (let i = start; i <= len; i++) {
+    if (i < len && !isSep(path.charCodeAt(i) as u16)) {
+      continue;
+    }
+    const n = i - part;
+    if (n === 0) {
+      return NOT_PLAIN;
+    }
+    if (
+      path.charCodeAt(part) === 46 && (n === 1 || (n === 2 && path.charCodeAt(part + 1) === 46))
+    ) {
+      return NOT_PLAIN;
+    }
+    part = i + 1;
+  }
+  return kind;
+}
+
+/**
+ * `namespaced(path)` for a path `plainKind` calls `kind` (not `NOT_PLAIN`), a relative one on
+ * the working directory `cwd`; null when `cwd` is not a drive's (`X:\…`), which `namespaced`
+ * takes then.
+ */
+export function plainNamespaced(path: string, kind: i32, cwd: string): string | null {
+  const named = path.includes("/") ? path.replaceAll("/", "\\") : path;
+  if (kind === PLAIN_ABSOLUTE) {
+    return `\\\\?\\${named}`;
+  }
+  const len = cwd.length as i64;
+  if (len < 3 || !letterAt(cwd, 0) || cwd.charCodeAt(1) !== 58 || cwd.charCodeAt(2) !== 92) {
+    return null;
+  }
+  if (len === 3) {
+    return `\\\\?\\${cwd}${named}`;
+  }
+  return cwd.charCodeAt(len - 1) === 92 ? null : `\\\\?\\${cwd}\\${named}`;
+}
+
 /**
  * `path` as Node's fs errors name it on Windows: as it is given to Windows (`namespaced`), without
  * the `\\?\` prefix (`C:\work\a.txt`; `\\server\share\x` for `\\?\UNC\server\share\x`).

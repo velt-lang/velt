@@ -3,7 +3,17 @@
 // How std resolves a path on Windows before handing it to Windows (std/fs/whole/win_resolve.velt),
 // against Node 22's `path.win32.resolve` and `path.toNamespacedPath` with the working directory
 // `C:\work\dir`: the expected strings are Node's. Pure string code, so it runs on every system.
-import { Dirs, namespaced, resolveWin32, shownPath } from "velt/fs/whole/win_resolve";
+import {
+  Dirs,
+  NOT_PLAIN,
+  PLAIN_ABSOLUTE,
+  PLAIN_RELATIVE,
+  namespaced,
+  plainKind,
+  plainNamespaced,
+  resolveWin32,
+  shownPath,
+} from "velt/fs/whole/win_resolve";
 import { describe, expect, it } from "velt/test";
 
 /** `C:\work\dir`, and `E:\other\place` the working directory on `E:`. */
@@ -77,4 +87,54 @@ describe("a path as Node gives it to Windows", () => {
     expect(shownPath("\\\\.\\NUL", fixed())).toBe("\\\\.\\NUL");
     expect(shownPath("", fixed())).toBe("");
   });
+
+  it("joins a plain path as resolving it would", () => {
+    let plain = 0;
+    for (const c of cases()) {
+      const kind = plainKind(c[0]);
+      if (kind !== NOT_PLAIN) {
+        plain++;
+        expect(plainNamespaced(c[0], kind, "C:\\work\\dir")).toBe(c[2]);
+      }
+    }
+    expect(plain).toBe(8);
+  });
+
+  it("tells a plain path from one resolving changes", () => {
+    for (const p of ["a", "a/b\\c", "a.", "...", "a b. ", "ab:c"]) {
+      expect(plainKind(p)).toBe(PLAIN_RELATIVE);
+    }
+    for (const p of ["C:\\", "c:/a/b", "C:\\a.\\NUL"]) {
+      expect(plainKind(p)).toBe(PLAIN_ABSOLUTE);
+    }
+    for (const p of [
+      "",
+      ".",
+      "..",
+      "./a",
+      "a/.",
+      "a/..",
+      "a//b",
+      "a/",
+      "\\a",
+      "/a",
+      "C:",
+      "C:a",
+      "x:y",
+    ]) {
+      expect(plainKind(p)).toBe(NOT_PLAIN);
+    }
+    for (const p of ["\\\\?\\C:\\a", "\\\\.\\NUL", "//s/h", "C:\\a\\", "C:\\.\\a", "C:\\\\a"]) {
+      expect(plainKind(p)).toBe(NOT_PLAIN);
+    }
+  });
+
+  it(
+    "joins a plain path to a drive's root, and leaves a share's working directory to resolving",
+    () => {
+      expect(plainNamespaced("a/b", PLAIN_RELATIVE, "D:\\")).toBe("\\\\?\\D:\\a\\b");
+      expect(plainNamespaced("a", PLAIN_RELATIVE, "\\\\server\\share\\d")).toBe(null);
+      expect(plainNamespaced("a", PLAIN_RELATIVE, "")).toBe(null);
+    },
+  );
 });

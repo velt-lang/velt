@@ -8,7 +8,16 @@
 
 import { wideOf } from "velt/ffi/wide";
 import { osError } from "velt/fs/errors";
-import { Dirs, namespaced, resolveWin32, shownPath } from "velt/fs/whole/win_resolve";
+import {
+  Dirs,
+  NOT_PLAIN,
+  PLAIN_ABSOLUTE,
+  namespaced,
+  plainKind,
+  plainNamespaced,
+  resolveWin32,
+  shownPath,
+} from "velt/fs/whole/win_resolve";
 import { IoError } from "velt/io/error";
 import { cwd } from "velt/process/cwd_win32";
 import { getEnv } from "velt/process/env_win32";
@@ -32,7 +41,22 @@ function workingDir(): string {
 
 /** `path` as a NUL-terminated wide path, the way Node gives it to Windows; null for a 0 in it. */
 export function winPath(path: string): u16[] | null {
-  return wideOf(namespaced(path, dirs()));
+  return wideOf(namespacedPath(path));
+}
+
+/**
+ * `path` as Node gives it to Windows (`namespaced`), joined without resolving when it is plain
+ * (most are: `plainKind`), which costs a fraction of resolving.
+ */
+export function namespacedPath(path: string): string {
+  const kind = plainKind(path);
+  if (kind !== NOT_PLAIN) {
+    const plain = plainNamespaced(path, kind, kind === PLAIN_ABSOLUTE ? "" : workingDir());
+    if (plain !== null) {
+      return plain;
+    }
+  }
+  return namespaced(path, dirs());
 }
 
 /** `path` made absolute, as Node's `path.win32.resolve(path)` does. */

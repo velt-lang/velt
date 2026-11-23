@@ -48,3 +48,9 @@ writeFile com1.txt -> NUL,a.txt,b.txt,com1.txt,sub
 rm NUL com1.txt -> a.txt,b.txt,sub
 async readdir sub. !! ENOENT ENOENT: no such file or directory, scandir '<cwd>\velt_fs_win_node_paths_tmp\sub.'
 async copyFile !! ENOENT ENOENT: no such file or directory, copyfile '<cwd>\velt_fs_win_node_paths_tmp\nope' -> '<cwd>\velt_fs_win_node_paths_tmp\x'
+openRead a.txt -> A
+openRead a.txt. !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\a.txt.'
+openRead nope !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\nope'
+openRead NUL !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\NUL'
+openWrite w. -> a.txt,b.txt,sub,w. W
+after chdir !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\sub\nope'
