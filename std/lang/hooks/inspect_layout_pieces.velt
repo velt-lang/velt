@@ -2,18 +2,14 @@
 // Node's `... n more items` or a number), and the byte writers it lays the text out with
 // (inspect_layout_render.velt). Each reads the printed text through the address of its bytes.
 
-import { Ptr } from "velt/ffi/ptr";
 import {
+  addressArray,
   addressLoad,
-  arrayBytesWritten,
-  arrayDataAddress,
+  arrayMove,
   arraySetLen,
-  ptrFromAddress,
   strByteAt,
   strByteLen,
 } from "velt/lang/intrinsics";
-
-declare c("c") function memcpy$layout(dst: Ptr<void>, src: Ptr<void>, n: usize): Ptr<void>;
 
 /** Byte `k` of the text at `data`. */
 function at(data: usize, k: u64): u8 {
@@ -95,18 +91,13 @@ export function pushRange(out: u8[], data: usize, a: u64, b: u64): void {
   const len = out.length as usize;
   out.reserve(n as usize);
   arraySetLen(out, len + (n as usize));
-  // SAFETY: `out` has room for `n` more bytes at `len` (reserved, then its length set), and the
-  // text holds bytes `a..b` at `data` while the layout runs.
-  // (`ptrFromAddress`, not `Ptr.at`: neither address is 0, and this module may not panic, as a
-  // prebuilt module's code does not take its caller's location.)
-  unsafe {
-    memcpy$layout(
-      ptrFromAddress<void>(arrayDataAddress(out) + len),
-      ptrFromAddress<void>(data + (a as usize)),
-      n as usize,
-    );
-  }
-  arrayBytesWritten(out);
+  // A view of the bytes, copied with the compiler's own copy rather than C's `memcpy`: the
+  // JavaScript host's WebAssembly target has no C library, and every program that prints
+  // reaches this.
+  // SAFETY: the text holds bytes `a..b` at `data` while the layout runs, and the view is only
+  // read, here.
+  const src: u8[] = unsafe { addressArray<u8>(data + (a as usize), n as usize) };
+  arrayMove(out, len, src, 0, n as usize);
 }
 
 /** Appends bytes `a..b` of the text at `data`, each line after the first indented by `indent`. */
