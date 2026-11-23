@@ -172,7 +172,8 @@ impl FnCx<'_, '_> {
 
     /// Is `value` a number literal (`256`, `-1`, `(3.5)`) that `e = value` (`op`: `e op= value`)
     /// on an element of type `elem` takes as a `number`, converted as a typed array stores it
-    /// (#3182)? One outside `elem`'s range or not an integer; with `<<=`, `>>=`, `>>>=` or `**=`
+    /// (#3182)? One outside `elem`'s range, not an integer, or negated on an unsigned element; an
+    /// expression made only of literals (`1 << 9`); with `<<=`, `>>=`, `>>>=` or `**=`
     /// any literal, as JavaScript computes those on 32-bit integers or numbers (`b[1] <<= 9` on
     /// 1 stores 0); `/=` and `%=` by 0 (NaN or an infinity, stored as 0); and `*=` on a 32-bit
     /// element by 2^21 or more, whose product JavaScript rounds. The other operators with a
@@ -184,13 +185,19 @@ impl FnCx<'_, '_> {
         value: &ast::Expr,
     ) -> bool {
         use ast::BinaryOp as B;
-        let (Some(v), TyKind::Int(it)) = (literal_number(value), self.cx.ty.kind(elem)) else {
+        let TyKind::Int(it) = self.cx.ty.kind(elem) else {
             return false;
         };
         let Some((lo, hi)) = int_bounds(*it) else {
             return false;
         };
-        let fits = v.fract() == 0.0 && v >= lo && v <= hi;
+        let Some(v) = literal_number(value) else {
+            // An expression of literals (`1 << 9`, `200 + 100`): computed as JavaScript does.
+            return literal_only(value);
+        };
+        // A negated literal is refused on an unsigned type (`-0`, `-(-1)`).
+        let negated = lo == 0.0 && is_negated(value);
+        let fits = v.fract() == 0.0 && v >= lo && v <= hi && !negated;
         // A 32-bit product of 2^53 or more is rounded as a number before the store.
         let wide = hi > 65535.0 && v.abs() >= 2097152.0;
         !fits
@@ -270,6 +277,51 @@ fn literal_number(e: &ast::Expr) -> Option<f64> {
             expr,
         } => literal_number(expr).map(|v| -v),
         _ => None,
+    }
+}
+
+/// Is `e` made only of number literals (`1 << 9`, `-7 / 2`, `(2 * 200)`), which JavaScript
+/// computes on numbers?
+pub(crate) fn literal_only(e: &ast::Expr) -> bool {
+    use ast::{BinaryOp as B, ExprKind as E, UnaryOp as U};
+    match &e.kind {
+        E::Lit(ast::Lit::Int { suffix: None, .. } | ast::Lit::Float { suffix: None, .. }) => true,
+        E::Paren(x) => literal_only(x),
+        E::Unary {
+            op: U::Neg | U::Plus | U::BitNot,
+            expr,
+        } => literal_only(expr),
+        E::Binary { op, lhs, rhs } => {
+            let arith = matches!(
+                op,
+                B::Add
+                    | B::Sub
+                    | B::Mul
+                    | B::Div
+                    | B::Rem
+                    | B::Pow
+                    | B::Shl
+                    | B::Shr
+                    | B::UShr
+                    | B::BitAnd
+                    | B::BitOr
+                    | B::BitXor
+            );
+            arith && literal_only(lhs) && literal_only(rhs)
+        }
+        _ => false,
+    }
+}
+
+/// Is `e` a negation (`-1`, `(-0)`)?
+fn is_negated(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(x) => is_negated(x),
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            ..
+        } => true,
+        _ => false,
     }
 }
 

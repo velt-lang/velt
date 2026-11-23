@@ -85,6 +85,37 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block(outer, Some(e), span)), ty, span)
     }
 
+    /// Is `++b[i]` / `--b[i]` on `place` (a pure `target`) an update of an element that converts
+    /// a `number` ([`Self::element_update_value`])?
+    pub(crate) fn int_update(&self, place: &hir::Expr, target: &ast::Expr) -> bool {
+        self.logical_element_store(place)
+            && self.number_stores_into(place.ty)
+            && super::assign_paths::is_pure_place(target)
+    }
+
+    /// `++b[i]` / `--b[i]` used as a value: `(b[i] += 1)` / `(b[i] -= 1)`, the number the element
+    /// becomes before the store converts it (`++b[1]` at 255 is 256, as in JavaScript).
+    pub(crate) fn element_update_value(
+        &mut self,
+        op: ast::UpdateOp,
+        elem: TyId,
+        target: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let one = synth(
+            ast::ExprKind::Lit(ast::Lit::Int {
+                value: 1,
+                suffix: None,
+            }),
+            span,
+        );
+        let bop = match op {
+            ast::UpdateOp::Inc => ast::BinaryOp::Add,
+            ast::UpdateOp::Dec => ast::BinaryOp::Sub,
+        };
+        self.element_write_value(ElementWrite::Compound(bop), elem, target, &one, span)
+    }
+
     /// `v` as it is when it is an `any`, or a `number` an element of type `elem` converts
     /// (element_store.rs, #3182), else at the element's type.
     fn element_typed(&mut self, v: hir::Expr, elem: TyId) -> hir::Expr {
@@ -149,7 +180,12 @@ impl FnCx<'_, '_> {
         stmts: &mut Vec<hir::Stmt>,
         span: Span,
     ) -> hir::Expr {
-        let hint = self.value_hint(elem, Some(op), value);
+        // Used as a value, `op=` with literals gives JavaScript's number (`(b[1] += 1)` at 255 is
+        // 256), not the element stored.
+        let hint = match super::element_store::literal_only(value) {
+            true if self.number_stores_into(elem) => self.cx.ty.f64,
+            _ => self.value_hint(elem, Some(op), value),
+        };
         let v = self.expr(value, Some(hint), Want::Borrow);
         let any = self.cx.dynamic(v.ty) == Some(Dynamic::Any);
         if !any && !self.number_value(&v, elem) {

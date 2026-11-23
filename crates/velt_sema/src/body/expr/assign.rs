@@ -660,6 +660,9 @@ impl FnCx<'_, '_> {
                 let rmw = Rmw::Update(op, prefix);
                 return self.asserted_place_rmw(place, rmw, as_value, span);
             }
+            Some(AssignTarget::Place(p)) if as_value && prefix && self.int_update(&p, target) => {
+                return self.element_update_value(op, p.ty, target, span);
+            }
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {
                 return self.setter_update(obj, op, prefix, target, as_value, span)
@@ -678,10 +681,7 @@ impl FnCx<'_, '_> {
                 let rmw = DynRmw::Update(op, prefix);
                 return self.dynamic_member_rmw(obj, target, rmw, as_value, span);
             }
-            Some(AssignTarget::Keyed(obj, _)) => {
-                self.cannot_index(&obj);
-                return self.error_expr(span);
-            }
+            Some(AssignTarget::Keyed(obj, _)) => return self.index_error(&obj, span),
             None => return self.error_expr(span),
         };
         if self.cx.dynamic(place.ty) == Some(crate::any::Dynamic::Any) {

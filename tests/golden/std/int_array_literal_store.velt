@@ -675,6 +675,47 @@ function literals(): void {
   console.log(g.join(","));
 }
 
+function more(): void {
+  const a: u8[] = [0, 0, 0, 0, 0, 0, 0];
+  a[0] = 1 << 9;
+  a[1] = -7 / 2;
+  a[2] = -0;
+  a[3] = -(0);
+  a[4] = -(-1);
+  a[5] = 2 * 200;
+  a[6] = ~5;
+  console.log(`u8 literal expressions: ${a.join(",")}`);
+  const c: i8[] = [0, 0, 0, 0];
+  c[0] = 1 << 9;
+  c[1] = 200 + 100;
+  c[2] = 255 + 1;
+  c[3] = 2 * 200;
+  console.log(`i8 literal expressions: ${c.join(",")}`);
+  const w: u16[] = [0];
+  const x: u32[] = [0];
+  w[0] = -7 / 2;
+  x[0] = -7 / 2;
+  console.log(`u16, u32 -7 / 2: ${w[0]} ${x[0]}`);
+  const v: u8[] = [0, 255];
+  const r1 = (v[1] += 1);
+  const r2 = (v[0] -= 1);
+  console.log(`u8 op= as values: ${r1} ${r2} ${v.join(",")}`);
+  const u: u8[] = [0, 255];
+  const p1 = ++u[1];
+  const p2 = --u[0];
+  console.log(`u8 ++/-- as values: ${p1} ${p2} ${u.join(",")}`);
+  const s8: i8[] = [127];
+  const s32: u32[] = [4294967295];
+  const q1 = (s8[0] += 1);
+  const q2 = (s32[0] += 1);
+  console.log(`ends as values: ${q1} ${q2} ${s8[0]} ${s32[0]}`);
+  const m32: u32[] = [4294967295];
+  m32[0] *= 2097153;
+  const n32: i32[] = [2147483647];
+  n32[0] *= 4194305;
+  console.log(`32-bit wide products: ${m32[0]} ${n32[0]}`);
+}
+
 function main(): void {
 
   u8Rows();
@@ -685,6 +726,7 @@ function main(): void {
   i32Rows();
   values();
   literals();
+  more();
 }
 
 main();
