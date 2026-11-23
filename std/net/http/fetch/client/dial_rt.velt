@@ -20,3 +20,14 @@ export async function dialPlain(
 ): Promise<TcpStream, IoError | AbortError> {
   panic("ICE: fetch dials on the reactor only with the executor in Velt");
 }
+
+/** Not reached in this build. */
+export async function dialTls(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  signal: AbortSignal | null,
+): Promise<TcpStream, IoError | AbortError> {
+  panic("ICE: fetch dials on the reactor only with the executor in Velt");
+}

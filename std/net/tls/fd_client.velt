@@ -7,13 +7,15 @@
 // this file, so a program that can't connect with TLS loads none of the client.
 
 import { IoError } from "velt/io/error";
+import { noteStdUse } from "velt/lang/intrinsics";
+import { errorCodeName } from "velt/native/error";
 import { IoResult } from "velt/native/result";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
 import { TcpStream } from "velt/net/tcp_stream";
 import { FdTlsConn } from "velt/net/tls/fd_conn";
 import { ConnectHook, TlsConnectSide } from "velt/net/tls/fd_connect_hook";
-import "velt/net/tls/fd_reactor";
+import { status } from "velt/net/tls/fd_reactor";
 import { TlsSession } from "velt/net/tls/fd_session";
 import { addConn, Conn } from "velt/net/tls/fd_table";
 import { clientHandshake } from "velt/net/tls/start_tls";
@@ -150,4 +152,36 @@ extend TlsConnectSide implements ConnectHook {
   ): Promise<IoResult<u64> | null> {
     return await connectTls(addr, serverName, ca, alpn);
   }
+}
+
+/**
+ * The TLS stream of connected socket `fd` (on the reactor) once the client handshake is done,
+ * as `connectTls`'s, within `limitMs` milliseconds and before `signal` aborts (`fetch`'s
+ * `https:`; `handshakeWithin`). Throws `ETIMEDOUT` for the time limit, the signal's reason for an
+ * abort, else the handshake's failure with the code `connectTls` gives it (`status`: `EILSEQ` for
+ * a TLS failure).
+ */
+export async function handshakeOn(
+  fd: u64,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  limitMs: i64,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
+  // The program reads and writes TLS streams of the reactor's: tcp_sched checks for them.
+  noteStdUse("reactorTls");
+  let engine: TlsEngine | null = null;
+  try {
+    engine = await handshakeWithin(fd, serverName, ca, alpn, "fetch", limitMs, signal);
+  } catch (e) {
+    // Not an `IoError`: the signal's reason (a handshake's failure always is one).
+    if (!(e instanceof IoError)) {
+      throw e;
+    }
+    const st = status(e);
+    throw new IoError(errorCodeName(st.code), st.message);
+  }
+  const c: Conn = shared(new Mutex<TlsSession>(new FdTlsConn(fd, engine!, null, 0)));
+  return addConn(c);
 }
