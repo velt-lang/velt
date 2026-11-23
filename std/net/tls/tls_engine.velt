@@ -211,6 +211,10 @@ export class TlsEngine {
           r.cipher = new RecordCipher(h.suite, this.readSecret!);
           r.handshaking = false;
           this.alpn = h.alpn;
+          const ticket = h.ticket;
+          if (ticket != null) {
+            out.queue(HANDSHAKE, ticket, false);
+          }
         }
       }
     } catch (e) {
@@ -369,21 +373,8 @@ export class TlsEngine {
   }
 
   private async postHandshake(m: u8[]): Promise<void> {
-    if (this.tls12) {
-      afterHandshake12(m, this.r.peer == "client");
-      return;
-    }
-    const type = m[0];
-    if (type == NEW_SESSION_TICKET) {
-      return;
-    }
-    if (type != KEY_UPDATE) {
-      throw new TlsFailure(
-        UNEXPECTED_MESSAGE,
-        `unexpected handshake message ${type} after the handshake`,
-      );
-    }
-    if (this.keyUpdate(m) && !this.out.shutDown) {
+    const peerClient = this.r.peer == "client";
+    if (isKeyUpdate(m, this.tls12, peerClient) && this.keyUpdate(m) && !this.out.shutDown) {
       // After the writes in progress, which keep the old keys; the ones after it use the next.
       await this.out.turns.turn();
       try {
@@ -396,21 +387,8 @@ export class TlsEngine {
 
   // `postHandshake` for a reader that can't wait: the KeyUpdate it owes goes before the next write.
   private noteHandshake(m: u8[]) {
-    if (this.tls12) {
-      afterHandshake12(m, this.r.peer == "client");
-      return;
-    }
-    const type = m[0];
-    if (type == NEW_SESSION_TICKET) {
-      return;
-    }
-    if (type != KEY_UPDATE) {
-      throw new TlsFailure(
-        UNEXPECTED_MESSAGE,
-        `unexpected handshake message ${type} after the handshake`,
-      );
-    }
-    if (this.keyUpdate(m) && !this.out.shutDown) {
+    const peerClient = this.r.peer == "client";
+    if (isKeyUpdate(m, this.tls12, peerClient) && this.keyUpdate(m) && !this.out.shutDown) {
       this.out.updateOwed = true;
     }
   }
@@ -424,6 +402,27 @@ export class TlsEngine {
     this.r.cipher = new RecordCipher(this.suite, this.readSecret!);
     return m[4] == 1;
   }
+}
+
+// Whether post-handshake message `m` is a KeyUpdate to act on: TLS 1.2's are checked
+// (`afterHandshake12`, `peerClient`: the peer is a client), a NewSessionTicket is ignored, and
+// anything else is refused.
+function isKeyUpdate(m: u8[], tls12: bool, peerClient: bool): bool {
+  if (tls12) {
+    afterHandshake12(m, peerClient);
+    return false;
+  }
+  const type = m[0];
+  if (type == NEW_SESSION_TICKET) {
+    return false;
+  }
+  if (type != KEY_UPDATE) {
+    throw new TlsFailure(
+      UNEXPECTED_MESSAGE,
+      `unexpected handshake message ${type} after the handshake`,
+    );
+  }
+  return true;
 }
 
 // Middlebox compatibility (RFC 8446 §5): a ChangeCipherSpec is one byte, 1, and nothing else.
