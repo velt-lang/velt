@@ -19,7 +19,9 @@ mode -Infinity RangeError ERR_OUT_OF_RANGE mode is out of range
 mode 1.5 ok
 mode -0.5 ok
 mode 0.5 ok
+mode 8 as text: RangeError: mode is out of range: >= 0 && <= 7
 async excl onto existing EEXIST
   b: "old"
 async mode 8 RangeError mode is out of range: >= 0 && <= 7
+  as text: RangeError: mode is out of range: >= 0 && <= 7
 ficlone_force as Node: true

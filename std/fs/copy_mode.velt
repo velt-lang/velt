@@ -29,16 +29,14 @@ export function copyMode(mode: number): u32 {
   return m as u32;
 }
 
-/** Node's `ERR_OUT_OF_RANGE`, printed as Node prints it: `RangeError [ERR_OUT_OF_RANGE]: …`. */
-class RangeArgError extends IoError {
-  toString(): string {
-    return `${this.name} [${this.code}]: ${this.message}`;
-  }
-}
-
+/**
+ * Node's `ERR_OUT_OF_RANGE` for `copyFile`'s mode. Node throws it from C++, so it prints as
+ * `RangeError: mode is out of range…`, with no `[ERR_OUT_OF_RANGE]` in it (its `code` is still
+ * that).
+ */
 @noInline
 function outOfRange(message: string): IoError {
-  const e = new RangeArgError("ERR_OUT_OF_RANGE", message);
+  const e = new IoError("ERR_OUT_OF_RANGE", message);
   e.name = "RangeError";
   return e;
 }

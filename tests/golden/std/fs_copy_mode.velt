@@ -68,6 +68,11 @@ async function main() {
   for (const m of [8, -1, 2 ** 31, NaN, Infinity, -Infinity, 1.5, -0.5, 0.5]) {
     show(`mode ${m}`, () => copyFileSync(a, `${d}/m${m}.txt`, m));
   }
+  try {
+    copyFileSync(a, b, 8);
+  } catch (e) {
+    console.log("mode 8 as text:", String(e));
+  }
 
   writeFileSync(b, "old");
   try {
@@ -82,6 +87,7 @@ async function main() {
     console.log("async mode 8 ok");
   } catch (e) {
     console.log("async mode 8", e.name, e.message);
+    console.log("  as text:", String(e));
   }
 
   // COPYFILE_FICLONE_FORCE: ENOSYS on macOS and Windows; on macOS the destination, opened by
