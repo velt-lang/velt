@@ -4,7 +4,8 @@
 //! functions. A native build has them as std code (std/fs/whole/, #2196), so velt_rt no longer
 //! compiles them; they moved here from velt_rt's fs/ops.rs and fs/sync.rs unchanged.
 
-use super::ops::{at, data_arg, open, path_arg, stats_of, unit, VeltStat};
+use super::ops::{data_arg, open, path_arg, stats_of, VeltStat};
+use super::{at, unit};
 use crate::bytes::VeltBytes;
 use crate::result::{fs_error, op_error, IoResult};
 use crate::str::VeltStr;

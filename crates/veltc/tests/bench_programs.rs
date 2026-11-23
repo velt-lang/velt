@@ -11,10 +11,10 @@
 //! someone runs it. The gate runs this test whenever the compiler, the standard library or
 //! `bench/` changes (crates/xtask/src/plan.rs).
 //!
-//! A program that does not name `WeakMap`, `WeakSet` or `WeakRef` must have no weak-capable
-//! types (docs/internals/design/weak-refs.md): its VIR is the one it had before weak references
-//! existed, which shows as no call of the weak runtime (every release of a weak-capable type
-//! has one).
+//! A program that does not name `WeakMap`, `WeakSet` or `WeakRef`, or write a `weak` type, must
+//! have no weak-capable types (docs/internals/design/weak-refs.md): its VIR is the one it had
+//! before weak references existed, which shows as no call of the weak runtime (every release of a
+//! weak-capable type has one).
 
 mod no_window;
 
@@ -109,10 +109,10 @@ fn compile(path: &Path) -> Option<String> {
 }
 
 /// `Some(message)` when `vir` calls std's weak core (std/lang/hooks/weak.velt) although its
-/// program never names a weak collection.
+/// program never names a weak collection or writes a `weak` type (`parent: weak Node | null`).
 fn weak_without_weak_collections(path: &Path, vir: &velt_vir::vir::Program) -> Option<String> {
     let src = std::fs::read_to_string(path).unwrap_or_default();
-    if ["WeakMap", "WeakSet", "WeakRef"]
+    if ["WeakMap", "WeakSet", "WeakRef", ": weak "]
         .iter()
         .any(|n| src.contains(n))
     {

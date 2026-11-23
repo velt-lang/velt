@@ -235,6 +235,226 @@ fn std_s_unit_ends_clean_and_the_app_is_collected_as_a_whole_program_is() {
     }
 }
 
+/// std is held whole in a check by units, but only the std modules the program links have state
+/// when it runs (velt_sema `linked`): a `with` callback that calls a function value is refused
+/// only when some state could be reached, and this program has none of its own, as a
+/// whole-program check finds.
+#[test]
+fn std_state_the_program_does_not_link_is_not_module_state() {
+    let src = r#"
+function main() {
+  const m = shared(new Mutex<number>(0));
+  const add = () => 100;
+  const run = (f: () => number) => {
+    m.with((v) => {
+      v += f();
+    });
+  };
+  run(add);
+  console.log(m.with((v) => v));
+}
+"#;
+    let whole = check_in(None, src);
+    let stderr = String::from_utf8_lossy(&whole.stderr);
+    assert!(whole.status.success(), "{stderr}");
+    for units in ["1", "2"] {
+        let out = check_in(Some(units), src);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "VELT_UNITS={units}:\n{stderr}");
+    }
+    // The same program reading `navigator` links std's module that holds it, through a name in
+    // its code and no import: that module's state is the program's, and the callback is refused.
+    let src = src.replace(
+        "m.with((v) => v))",
+        "m.with((v) => v), navigator.hardwareConcurrency)",
+    );
+    let whole = check_in(None, &src);
+    let errors = error_lines(&whole);
+    assert!(
+        errors.iter().any(|l| l.contains("may use module state")),
+        "{errors:?}"
+    );
+    for units in ["1", "2"] {
+        assert_eq!(
+            errors,
+            error_lines(&check_in(Some(units), &src)),
+            "VELT_UNITS={units}"
+        );
+    }
+}
+
+/// With std checked as a unit of its own (`VELT_UNITS=2`), what std's bodies do with module
+/// state comes from std's unit (`StateFacts`), not from reading std's bodies again: a `with`
+/// callback that reaches the program's state through std's code (a generator's dispose hook,
+/// a sort's comparison) is refused with the path through it, as by a whole-program check.
+#[test]
+fn std_s_unit_keeps_what_its_bodies_do_with_module_state() {
+    for path in [
+        "lang/errors/module_let_mutex_with.velt",
+        "lang/errors/mutex_with_opaque.velt",
+        "lang/errors/rwlock_read_probe_m3.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        assert!(!whole.status.success(), "{path}");
+        assert_eq!(whole.status.code(), two.status.code(), "{path}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+    }
+}
+
+/// With std checked as a unit of its own, std's unit holds all of std, of which only what lazy std
+/// would have checked is the program's (`lazy_std::units_live_set`): the async closures' analysis
+/// reads only that code of std's (`lazy_std::walks`), so a closure changing a value it reached
+/// through std's http server is reported with the field it changes, a closure sent on a channel
+/// (std's `Channel.send`, whose body the analysis follows) is refused, and a program whose async
+/// closures stay local is accepted, each as by a whole-program check.
+#[test]
+fn the_async_closures_analysis_reads_the_std_code_the_program_has() {
+    for path in [
+        "lang/errors/async_closure_crosses.velt",
+        // A call through a function read from an `any` names the program's method, not std's.
+        "lang/errors/http_server/http_handler_code_on_write.velt",
+        "lang/errors/http_server/http_handler_store_any_read_fn.velt",
+        "lang/errors/http_server/http_handler_store_any_read_method.velt",
+        "lang/async_closure_generic_unknown_targ_others.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        assert_eq!(whole.status.code(), two.status.code(), "{path}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+    }
+}
+
+/// A whole-program check checks the program's bodies with std's modes as declared, and only its
+/// passes after the bodies judge what a call of std changes. std's unit keeps the declared modes
+/// for the app's bodies and the raised ones for its passes (`units::modes`). So a spawned closure
+/// calling `Map.set` on a captured map, `Headers.get` (which fills a cache) on captured headers,
+/// or `next` on a captured `Iterator` (an interface slot, the join over its implementations), is
+/// not refused at the call, and the http handlers' changes through std's methods are
+/// reported with the call that makes them. Each checks with `VELT_UNITS=2` as by a
+/// whole-program check.
+#[test]
+fn the_app_s_bodies_see_std_s_modes_as_declared() {
+    for src in [
+        "async function main() {\n  const seen = new Map<string, number>();\n  await spawn((async () => {\n    seen.set(\"a\", 1);\n  })());\n}\n",
+        "async function main() {\n  const h = new Headers({ \"x-a\": \"1\" });\n  await spawn((async () => {\n    console.log(h.get(\"x-a\") ?? \"\");\n  })());\n}\n",
+        // Through an interface slot, whose modes are the join over its implementations.
+        "function* numbers(): Generator<number> {\n  yield 1;\n}\n\nasync function main() {\n  const it: Iterator<number> = numbers();\n  await spawn((async () => {\n    console.log(it.next().value ?? 0);\n  })());\n}\n",
+    ] {
+        let whole = check_in(None, src);
+        let two = check_in(Some("2"), src);
+        assert_eq!(whole.status.code(), two.status.code(), "{src}");
+        assert_eq!(error_lines(&whole), error_lines(&two), "{src}");
+    }
+    let path = "lang/errors/http_server/http_handler_changes_through_call.velt";
+    let whole = check_golden_two(path, false);
+    let two = check_golden_two(path, true);
+    assert_eq!(whole.status.code(), two.status.code(), "{path}");
+    assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+}
+
+/// Questions about the whole program are answered from the std code it has
+/// (`lazy_std::units_live_set`), not from all of std's unit: whether it reads a `shared` value
+/// (`units::app_reads_shared`; a `read` callback passing the store's object to a function value
+/// is accepted) and which weak-holding values it makes (`weak_threads`; std's signal code, which
+/// a program that never uses it doesn't run, is not reported). Each checks with `VELT_UNITS=2`
+/// as by a whole-program check.
+#[test]
+fn program_wide_answers_come_from_the_std_code_the_program_has() {
+    for path in [
+        "lang/rwlock_read_closures.velt",
+        "lang/rwlock_read_call_result_readers_stop.velt",
+        "lang/any_in_builtins.velt",
+        "lang/class_objects.velt",
+    ] {
+        let whole = check_golden_two(path, false);
+        let two = check_golden_two(path, true);
+        let said = String::from_utf8_lossy(&two.stderr).to_string();
+        assert!(whole.status.success(), "{path}");
+        assert!(two.status.success(), "{path}:\n{said}");
+    }
+}
+
+/// With std checked as a unit of its own, the functions that hand a parameter to a channel
+/// (`Channel.send`, `trySend`) come from std's unit, not from reading std's bodies again
+/// (`ownership::boundary`): a value owning a resource that is sent while the program still
+/// uses it is refused, also through the program's own function that passes it on, as by a
+/// whole-program check.
+#[test]
+fn std_s_unit_keeps_the_functions_that_send_on_a_channel() {
+    let path = "lang/errors/channel_send_copies_resource.velt";
+    let whole = check_golden_two(path, false);
+    let two = check_golden_two(path, true);
+    let errors = error_lines(&whole);
+    assert!(
+        errors
+            .iter()
+            .any(|l| l.contains("is still used after `send`")),
+        "{errors:?}"
+    );
+    assert_eq!(errors, error_lines(&two));
+}
+
+/// A body's edges are kept as written, and its calls through a slot resolved in every check
+/// against the program's classes (velt_sema `module_state_facts`): a `with` callback that
+/// reaches module state through an override, through an interface's implementation or through
+/// a function it calls is refused with that path, by units as by a whole-program check.
+#[test]
+fn a_call_reaches_the_module_state_the_code_it_may_run_uses() {
+    let src = r#"
+let count = 0;
+class A {
+  run(): number {
+    return 1;
+  }
+}
+class B extends A {
+  override run(): number {
+    return count;
+  }
+}
+interface R {
+  go(): number;
+}
+class C implements R {
+  go(): number {
+    return count;
+  }
+}
+function pick(n: number): A {
+  return n > 0 ? new B() : new A();
+}
+function main() {
+  const m = shared(new Mutex<number>(0));
+  const a = pick(1);
+  const r: R = new C();
+  m.with((v) => {
+    v += a.run();
+  });
+  m.with((v) => {
+    v += r.go();
+  });
+  m.with((v) => {
+    v += bump();
+  });
+}
+function bump(): number {
+  return count++;
+}
+"#;
+    let errors = error_lines(&check_in(None, src));
+    for through in ["(through `B.run`)", "(through `C.go`)", "(through `bump`)"] {
+        assert!(errors.iter().any(|l| l.contains(through)), "{errors:?}");
+    }
+    for units in ["1", "2"] {
+        assert_eq!(
+            errors,
+            error_lines(&check_in(Some(units), src)),
+            "VELT_UNITS={units}"
+        );
+    }
+}
+
 /// std's unit has no program, so none of its modules is the root whose names are left
 /// unqualified: the passes that know std's methods by their `std/` names (a `concat` returns a
 /// new array, `ownership::derived`) know them in a check by units too. A `read` callback that

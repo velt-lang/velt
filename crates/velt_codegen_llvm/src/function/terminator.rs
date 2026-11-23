@@ -315,6 +315,20 @@ impl Emitter<'_> {
         })
     }
 
+    /// The extern a call of `symbol` compiles to in this function: `bf16x8.dotAddFast`'s
+    /// operation is Arm's `bfdot` in a function gated on `bf16-arm` (std's `sumBfdot`), as it is
+    /// in a build whose `--cpu` has FEAT_BF16; everywhere else the symbol itself, so that the
+    /// step still asks nothing in ordinary code.
+    fn gated_symbol<'s>(&self, symbol: &'s str) -> &'s str {
+        use velt_vir::simd::Ext;
+        let gated = self.function.target.covers(Ext::Bf16Arm)
+            && crate::simd::has_ext(self.simd, Ext::Bf16Arm);
+        match symbol {
+            "velt_simd_f32x4_dot_add_fast_bf16x8" if gated => "velt_simd_f32x4_bfdot",
+            s => s,
+        }
+    }
+
     /// The module's inline helper for the SIMD extern `callee` (`simd::helper`, defining it).
     /// (Math operations are statements, `math_target`.)
     fn simd_helper(&mut self, callee: &Callee, params: &[Ty], ret: Ty) -> Option<String> {
@@ -322,8 +336,9 @@ impl Emitter<'_> {
             return None;
         };
         let e = self.program.externs.get(id.0 as usize)?;
+        let symbol = self.gated_symbol(&e.symbol);
         if let Some((name, definitions, want_params, want_ret)) =
-            crate::simd::helper(&e.symbol, self.simd, self.simd_caps)
+            crate::simd::helper(symbol, self.simd, self.simd_caps)
         {
             if params != want_params || ret != want_ret {
                 return None;
@@ -338,7 +353,8 @@ impl Emitter<'_> {
 
     /// What to call for math operation `op` instead of its runtime function: an LLVM
     /// intrinsic (declaring it) or the module's inline helper (`rounding::helper`,
-    /// `runtime::inline_helper`, defining it); `None` for `pow`, which calls the runtime.
+    /// `runtime::inline_helper`, defining it); `None` for an operation that calls its runtime
+    /// function (none today: `runtime.rs`'s `classification` test checks every one is inline).
     pub(super) fn math_target(&mut self, op: MathOp) -> Option<String> {
         let helper = match op.rounding() {
             Some(how) => rounding::helper(how, self.rounds_by_conversion),

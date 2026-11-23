@@ -13,7 +13,14 @@ import {
 } from "velt/crypto/rt";
 import { H256, K256 } from "velt/crypto/tables";
 import { blockWords, keyWords, newBytes, Pair, tailBlock, tailBlocks } from "velt/crypto/vectors";
-import { targetFeature } from "velt/lang/intrinsics";
+import { noInline, targetFeature } from "velt/lang/intrinsics";
+
+// Out of line and loud: `blocks256Arm`'s and `blocks256X86`'s caller checked the range, so a
+// block past the data is an internal error; `never`, so the loads after the check need no other.
+@noInline
+function rangeFault(): never {
+  panic("ICE: a SHA-256 block past its data");
+}
 
 // One SHA-256 block on ARMv8: 64 rounds, four per SHA256H + SHA256H2, in four batches of four
 // with the next sixteen message words made after each batch (but the last). The schedule
@@ -75,6 +82,30 @@ export function hmac256Arm(k: u8[], data: u8[]): u8[] {
   s.a.reverseBytes().asU8x16().store(out, 0);
   s.b.reverseBytes().asU8x16().store(out, 16);
   return out;
+}
+
+/**
+ * The `count` blocks of `data` from `off` into the state `h` (eight words, A first), on ARMv8;
+ * the caller checked the range.
+ */
+@targetFeature("sha-arm")
+export function blocks256Arm(h: u32[], data: u8[], off: usize, count: usize) {
+  let s: Pair = { a: u32x4.load(h, 0), b: u32x4.load(h, 4) };
+  for (let i: usize = 0; i < count; i++) {
+    const at = off + i * BLOCK;
+    if (!u8x16.fits(data, at + 48)) {
+      rangeFault();
+    }
+    s = rounds256Arm(
+      s,
+      blockWords(data, at),
+      blockWords(data, at + 16),
+      blockWords(data, at + 32),
+      blockWords(data, at + 48),
+    );
+  }
+  s.a.store(h, 0);
+  s.b.store(h, 4);
 }
 
 // The state after SHA-256 (ARMv8) of `data`, after a keyed first block (see `sha256Of`).
@@ -187,6 +218,38 @@ export function hmac256X86(k: u8[], data: u8[]): u8[] {
   const marker = u32x4.splat(0).withLane(0, 0x80000000);
   const length = u32x4.splat(0).withLane(3, 768);
   return digest256X86(rounds256X86(s, inner.a, inner.b, marker, length));
+}
+
+/**
+ * The `count` blocks of `data` from `off` into the state `h` (eight words, A first), with x86
+ * SHA-NI; the caller checked the range.
+ */
+@targetFeature("sha-x86")
+export function blocks256X86(h: u32[], data: u8[], off: usize, count: usize) {
+  const dcba = u32x4.load(h, 0);
+  const hgfe = u32x4.load(h, 4);
+  const cdab = u32x4.shuffle(dcba, dcba, 1, 0, 3, 2);
+  const efgh = u32x4.shuffle(hgfe, hgfe, 3, 2, 1, 0);
+  let s: Pair = {
+    a: u32x4.shuffle(efgh, cdab, 2, 3, 4, 5),
+    b: u32x4.shuffle(efgh, cdab, 0, 1, 6, 7),
+  };
+  for (let i: usize = 0; i < count; i++) {
+    const at = off + i * BLOCK;
+    if (!u8x16.fits(data, at + 48)) {
+      rangeFault();
+    }
+    s = rounds256X86(
+      s,
+      blockWords(data, at),
+      blockWords(data, at + 16),
+      blockWords(data, at + 32),
+      blockWords(data, at + 48),
+    );
+  }
+  const abcd = unswapped256X86(s);
+  abcd.a.store(h, 0);
+  abcd.b.store(h, 4);
 }
 
 // The state (ABEF / CDGH) after SHA-256 with SHA-NI of `data`, after a keyed first block.

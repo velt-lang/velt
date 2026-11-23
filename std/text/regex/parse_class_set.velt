@@ -1,0 +1,201 @@
+// velt/text (internal): a character class with the `v` flag, which JavaScript gives set
+// syntax: nested classes, `&&` (intersection), `--` (difference) and `\q{…}` (strings), one kind
+// of operator per class. The engine matches a union of characters only: the rest is read and
+// checked as V8 checks it, so that a syntax error gets V8's text, and is refused at the end of
+// the pattern (`Parser.refused`) when the pattern is otherwise valid.
+
+import { CharSet } from "velt/text/regex/char_set";
+import { finish } from "velt/text/regex/classes";
+import { Node, setNode } from "velt/text/regex/node";
+import { A_SET, classAtom, refuse } from "velt/text/regex/parse_escape";
+import { Parser } from "velt/text/regex/parser";
+
+const UNSUPPORTED: string = "Set operations in character classes are not supported";
+
+/** How the members of a class are joined: not yet known (one member so far), by union, by
+ * `&&` or by `--`. */
+const ONE: u32 = 0;
+const UNION: u32 = 1;
+const AND: u32 = 2;
+const MINUS: u32 = 3;
+
+/** The class after its `[`, up to and including its `]`, with the `v` flag. */
+export function parseSetClass(p: Parser): Node {
+  return setNode(setClass(p));
+}
+
+/** Does a nested class or `\q{…}` start here? */
+function nested(p: Parser): bool {
+  return p.peek() == 0x5b || (p.peek() == 0x5c && p.peekAt(1) == 0x71);
+}
+
+/** A class after its `[`: its characters (of the members the engine can match). Whether it may
+ * match a string is left in `p.strings`. */
+function setClass(p: Parser): CharSet {
+  const negated = p.eat(0x5e);
+  const set = new CharSet();
+  let strings = false;
+  let joined = ONE;
+  let members: u32 = 0;
+  let ranged = false;
+  while (!p.eat(0x5d)) {
+    if (p.done()) {
+      p.fail("Unterminated character class");
+    }
+    const c = p.peek();
+    if (members > 0 && (c == 0x26 || c == 0x2d) && p.peekAt(1) == c) {
+      const op = c == 0x26 ? AND : MINUS;
+      if (joined == UNION || ranged || (joined != ONE && joined != op)) {
+        p.fail("Invalid set operation in character class");
+      }
+      joined = op;
+      p.at += 2;
+      if (p.peek() == 0x5d || (op == AND && p.peek() == 0x26)) {
+        p.fail("Invalid character in character class");
+      }
+      refuse(p, UNSUPPORTED);
+      p.strings = false;
+      operand(p, set);
+      // `a && b` may match a string when both may, `a -- b` when `a` may.
+      strings = op == AND ? strings && p.strings : strings;
+      members++;
+      continue;
+    }
+    if (joined == AND || joined == MINUS) {
+      p.fail("Invalid set operation in character class");
+    }
+    if (members > 0) {
+      joined = UNION;
+    }
+    p.strings = false;
+    ranged = member(p, set) || ranged;
+    strings = strings || p.strings;
+    members++;
+  }
+  // Checked when the class is read, so that an error of its syntax comes first.
+  if (negated && strings) {
+    p.fail("Negated character class may contain strings");
+  }
+  p.strings = strings;
+  finish(p, set, negated);
+  return set;
+}
+
+/** A nested class, `\q{…}`, or a single character or class escape, added to `set`. */
+function operand(p: Parser, set: CharSet): void {
+  if (p.eat(0x5b)) {
+    refuse(p, UNSUPPORTED);
+    set.addSet(setClass(p));
+  } else if (p.peek() == 0x5c && p.peekAt(1) == 0x71) {
+    strings(p, set);
+  } else {
+    const a = classAtom(p);
+    if (a == A_SET) {
+      set.addSet(p.set);
+    } else {
+      set.add(a as u32, a as u32);
+    }
+  }
+}
+
+/** A member of a union: an operand, or a range of characters (then true). */
+function member(p: Parser, set: CharSet): bool {
+  if (nested(p)) {
+    operand(p, set);
+    noRange(p);
+    return false;
+  }
+  const a = classAtom(p);
+  if (p.peek() != 0x2d || p.peekAt(1) == 0x2d) {
+    addAtom(p, set, a);
+    return false;
+  }
+  // A class escape or a nested class is no end of a range (`[\d-]`, `[a-[b]]`).
+  if (a == A_SET) {
+    noRange(p);
+  }
+  if (p.peekAt(1) < 0) {
+    p.fail("Unterminated character class");
+  }
+  if (p.peekAt(1) == 0x5d) {
+    // `[a-]`: the `-` is read next, and is an error with this flag.
+    addAtom(p, set, a);
+    return false;
+  }
+  p.at++;
+  if (nested(p)) {
+    // Read first: an error inside it comes before this one.
+    operand(p, set);
+    p.fail("Invalid character class");
+  }
+  const b = classAtom(p);
+  if (b == A_SET) {
+    p.fail("Invalid character class");
+  }
+  if (a > b) {
+    p.fail("Range out of order in character class");
+  }
+  set.add(a as u32, b as u32);
+  // Nor is a range (`[a-c-d]`).
+  noRange(p);
+  return true;
+}
+
+/** After a member that cannot start a range: an error when a `-` (not `--`) follows. */
+function noRange(p: Parser): void {
+  if (p.peek() == 0x2d && p.peekAt(1) != 0x2d) {
+    p.fail(p.peekAt(1) < 0 ? "Unterminated character class" : "Invalid character class");
+  }
+}
+
+function addAtom(p: Parser, set: CharSet, a: i64): void {
+  if (a == A_SET) {
+    set.addSet(p.set);
+  } else {
+    set.add(a as u32, a as u32);
+  }
+}
+
+/** `\q{…}`: strings separated by `|`. Those of one character are members; a longer or empty
+ * one is not matched (refused), and an error inside a negated class. */
+function strings(p: Parser, set: CharSet): void {
+  p.at += 2;
+  if (!p.eat(0x7b)) {
+    p.fail("Invalid escape");
+  }
+  let length: u32 = 0;
+  let long = false;
+  while (true) {
+    if (p.done()) {
+      p.fail("Unterminated character class");
+    }
+    const c = p.peek();
+    if (c == 0x7d || c == 0x7c) {
+      p.at++;
+      long = long || length != 1;
+      length = 0;
+      if (c == 0x7d) {
+        break;
+      }
+      continue;
+    }
+    if (c == 0x5b || c == 0x5d) {
+      p.fail("Invalid character in character class");
+    }
+    // A class escape stands for no string.
+    const e = p.peekAt(1) | 0x20;
+    if (c == 0x5c && (e == 0x64 || e == 0x73 || e == 0x77 || e == 0x70)) {
+      p.fail("Invalid escape");
+    }
+    const a = classAtom(p);
+    if (a == A_SET) {
+      p.fail("Invalid escape");
+    }
+    set.add(a as u32, a as u32);
+    length++;
+  }
+  if (long) {
+    p.strings = true;
+    refuse(p, UNSUPPORTED);
+  }
+}

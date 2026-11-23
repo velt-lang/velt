@@ -23,6 +23,6 @@ export {
   utf8Decode,
   utf8DecodeLossy,
   utf8Encode,
-  utf8Valid,
   validToString,
 } from "velt/encoding/utf8";
+export { utf8Valid } from "velt/encoding/utf8_valid";

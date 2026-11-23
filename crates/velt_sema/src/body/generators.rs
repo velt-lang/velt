@@ -413,84 +413,14 @@ impl FnCx<'_, '_> {
             | GenCopy::LockResult
             | GenCopy::TaskFn(_)
             | GenCopy::LockFn(_)
+            | GenCopy::SharedFn(_)
             | GenCopy::TaskResult
-            | GenCopy::TaskError => return,
+            | GenCopy::TaskError
+            | GenCopy::TaskPromise => return,
         };
         self.cx.error(Diagnostic::error(msg, span).with_note(note));
     }
 }
-
-impl FnCx<'_, '_> {
-    /// A `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it (a handle into the
-    /// runtime's table, which a copy would drop twice; docs/internals/design/weak-refs.md):
-    /// report `what` copying the value of type `t` at `span`.
-    pub(crate) fn no_weak_copy(&mut self, t: TyId, what: GenCopy, span: Span) {
-        let d = weak_copy_error(self.cx, t, &what, span);
-        self.cx.error(d);
-    }
-}
-
-/// The error for `what` copying a value of type `t`, which holds a weak collection, at `span`
-/// ([`FnCx::no_weak_copy`]; also `crate::weak_threads`).
-pub(crate) fn weak_copy_error(
-    cx: &mut crate::ctx::Ctx,
-    t: TyId,
-    what: &GenCopy,
-    span: Span,
-) -> Diagnostic {
-    let tn = cx.display(t);
-    let direct = matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.is_weak_class(*d));
-    let it = match direct {
-        true => format!("a weak collection (`{tn}`)"),
-        false => format!("`{tn}`, which holds a weak collection,"),
-    };
-    let (msg, note) = match what {
-        GenCopy::Clone => (
-            format!("{it} cannot be copied"),
-            "a `WeakMap`, `WeakSet` or `WeakRef` cannot be cloned (in JavaScript, `structuredClone` rejects it too): pass it on, or make a new one".to_string(),
-        ),
-        GenCopy::Task => (
-            format!("{it} cannot be passed to another task"),
-            "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it, and values passed to a spawned task (or sent on a channel) are copied for it: make it inside the task".to_string(),
-        ),
-        GenCopy::TaskFn(name) => (
-            format!("a function that uses the weak collection `{name}` cannot be passed to another task"),
-            "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it, and a function passed to a spawned task (or sent on a channel) takes what it captures to that task's thread: make it inside the task".to_string(),
-        ),
-        GenCopy::Shared => (
-            format!("{it} cannot be shared between threads"),
-            "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it, and a `shared(...)` value may be used by several tasks at once".to_string(),
-        ),
-        GenCopy::Capture(name) => (
-            format!("an async closure cannot capture the weak collection `{name}`"),
-            "an async closure that may run as a task on another thread copies what it captures, and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it: make it inside the closure, or pass it to an async function".to_string(),
-        ),
-        GenCopy::LockCapture(name) => (
-            format!("the function passed to `with` cannot use the weak collection `{name}`"),
-            LOCK_NOTE.to_string(),
-        ),
-        GenCopy::LockFn(name) => (
-            format!("a function stored into the locked value cannot capture the weak collection `{name}`"),
-            "the locked value is used by other threads (under the lock), and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it: a function there that uses one would release or read it from another thread; store the weak collection's results instead".to_string(),
-        ),
-        GenCopy::LockResult => (
-            format!("{it} cannot be returned from `with`"),
-            LOCK_NOTE.to_string(),
-        ),
-        GenCopy::TaskResult => (
-            format!("{it} cannot be the result of a spawned task"),
-            "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it, and a spawned task's result is copied for the task that awaits it: return what the weak collection gives (`ref.deref()`, `map.get(k)`) instead".to_string(),
-        ),
-        GenCopy::TaskError => (
-            format!("{it} cannot be thrown from a spawned task"),
-            "a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it, and the error a spawned task throws is copied for the task that awaits it: put what the weak collection gives in the error instead".to_string(),
-        ),
-    };
-    Diagnostic::error(msg, span).with_note(note)
-}
-
-/// Why a weak collection cannot cross a `with` lock.
-pub(crate) const LOCK_NOTE: &str = "the lock protects the locked value only while `with` runs, and a `WeakMap`, `WeakSet` or `WeakRef` belongs to the task that made it: one used across the lock would let another thread release or read a part of the value without the lock; use the weak collection outside `with`, or make it inside and drop it there";
 
 /// How a value would be copied, for [`FnCx::no_generator_copy`].
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -499,6 +429,9 @@ pub(crate) enum GenCopy {
     Clone,
     /// An argument of a spawned call, or a value sent on a channel.
     Task,
+    /// An argument of a call whose promise a variable holds and `spawn` is given later
+    /// (`const p = run(h); spawn(p)`): checked by `crate::weak_threads` only.
+    TaskPromise,
     /// A capture (named) of an async closure.
     Capture(String),
     /// The value given to `shared(...)`.
@@ -516,6 +449,9 @@ pub(crate) enum GenCopy {
     TaskResult,
     /// The error a spawned task throws, handed back to the awaiting task's thread.
     TaskError,
+    /// A closure literal given to `shared(...)` or as a `Mutex`'s or `RwLock`'s value, which
+    /// several tasks may call, capturing (named) a weak collection or a `weak` variable.
+    SharedFn(String),
 }
 
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
@@ -531,5 +467,7 @@ crate::units::codec::enums! {
         7 => LockFn(f0),
         8 => TaskResult,
         9 => TaskError,
+        10 => TaskPromise,
+        11 => SharedFn(f0),
     }
 }

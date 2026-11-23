@@ -268,7 +268,7 @@ export function nodeDrop(f: usize): void {
     return;
   } else if ((fl & FINISHED) === 0) {
     setFlags(n, DETACHED);
-    if (m.load(n + N_REFS) === 2) {
+    if (m.load(n + N_REFS) === 2 || lost.isProxy(n)) {
       return lost.dropPending(n);
     }
   } else if ((fl & DELIVERED) === 0) {
@@ -391,7 +391,7 @@ export function run(task: usize, n: usize, taken: bool): void {
     const r = unsafe { statePoll(m.ld(n + N_POLL), n + N_HEAD + 16, n + N_CX) };
     m.and32(n + N_FLAGS, ~RUNNING);
     if (r !== 1) {
-      if ((m.load32(n + N_FLAGS) & DETACHED) !== 0 && m.load(n + N_REFS) === 2) {
+      if ((m.load32(n + N_FLAGS) & DETACHED) !== 0 && lost.mayPark(n)) {
         lost.parked(task, n);
       }
       return;

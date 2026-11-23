@@ -7,6 +7,8 @@ mod init;
 mod typing;
 
 #[cfg(test)]
+mod init_tests;
+#[cfg(test)]
 mod parallel_tests;
 
 use rustc_hash::FxHashSet;

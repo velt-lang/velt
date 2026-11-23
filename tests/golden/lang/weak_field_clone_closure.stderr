@@ -1,0 +1,1 @@
+panic: a `H`, which has a `weak` field, cannot be copied (`clone()`, also inside a function value that captured it): copying a `weak` field is not implemented yet (#3119)

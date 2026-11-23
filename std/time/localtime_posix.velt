@@ -8,7 +8,7 @@ import { addressLoad, addressStore } from "velt/lang/intrinsics";
 /** C's `struct tm`. */
 declare c type tm;
 
-declare c("c") function localtime_r(time: Ptr<i64>, result: Ptr<tm>): Ptr<tm> | null;
+declare c("c") function localtime_r(time: Ptr<i64> | null, result: Ptr<tm> | null): Ptr<tm> | null;
 declare c("c") function calloc$time(n: usize, size: usize): Ptr<u8> | null;
 
 /** Where the `time_t` is in a thread's buffer (`BUFFER`), and its `struct tm` after it. */
@@ -60,9 +60,9 @@ export function localOffsetSeconds(epochMs: i64): i32 {
     addressStore<i64>(p + TIME_AT, secs);
   }
   // SAFETY: this thread's buffer holds the `time_t` and room for the `struct tm`.
-  const time = unsafe { Ptr.at<i64>(p + TIME_AT) };
+  const time = unsafe { Ptr.orNull<i64>(p + TIME_AT) };
   // SAFETY: as above.
-  const tmAt = unsafe { Ptr.at<tm>(p + TM_AT) };
+  const tmAt = unsafe { Ptr.orNull<tm>(p + TM_AT) };
   // SAFETY: both point into this thread's buffer, which only this call uses.
   const result = unsafe { localtime_r(time, tmAt) };
   // SAFETY: inside the buffer; localtime_r filled the `struct tm` when it returned non-NULL.

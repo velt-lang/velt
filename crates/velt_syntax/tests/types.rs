@@ -104,6 +104,49 @@ fn indexed_access_types() {
 }
 
 #[test]
+fn weak_types() {
+    // `weak` binds tighter than `|` and `&`, looser than `[]`, as `keyof` does.
+    assert_eq!(alias_ty("weak Node | null"), "(weak Node | null)");
+    assert_eq!(alias_ty("weak Node[] | null"), "(weak Node[] | null)");
+    assert_eq!(alias_ty("weak Map<string, Node>"), "weak Map<string, Node>");
+    assert_eq!(alias_ty("weak (A | B)"), "weak (A | B)");
+    // Everywhere else `weak` is an ordinary name: a type, a type argument, an element type.
+    assert_eq!(alias_ty("weak"), "weak");
+    assert_eq!(alias_ty("weak | null"), "(weak | null)");
+    assert_eq!(alias_ty("weak[]"), "weak[]");
+    assert_eq!(alias_ty("Array<weak>"), "Array<weak>");
+    assert_eq!(alias_ty("ns.weak"), "ns.weak");
+    // In a cast: the operator, and a type named `weak`.
+    check("x as weak T", "(as x weak T)");
+    check("x as weak", "(as x weak)");
+    // A type alias, a variable, a function, a property and a method named `weak`.
+    for src in [
+        "type weak = number;",
+        "let weak = 1; weak = weak + 1;",
+        "function weak(weak: weak): weak { return weak; }",
+        "class A implements weak {}",
+        "interface J extends weak { n: number }",
+        "class C { weak: number = 1; weak2(): weak { return this.weak; } }",
+        "class D { weak(): void {} }",
+        "const o = { weak: 1 }; o.weak;",
+        "interface I { weak: weak; }",
+        "class N { parent: weak N | null = null; }",
+        "let p: weak N | null = null;",
+        // Without semicolons: a line break ends a type named `weak` (TypeScript's style too).
+        "class C {\n  a: weak\n  b: number\n}",
+        "interface I {\n  x: weak\n  y: weak\n}",
+        "let x: weak\nshow(1)",
+        "let v: weak\nv = 3",
+        // A word that may follow a whole type.
+        "const a = x as weak as { n: number };",
+        "const b = x as weak satisfies T;",
+        "function g(x: unknown): x is weak { return true; }",
+    ] {
+        parse_ok(src);
+    }
+}
+
+#[test]
 fn type_queries_and_keyof() {
     assert_eq!(alias_ty("typeof x"), "typeof x");
     assert_eq!(alias_ty("typeof cfg.port"), "typeof cfg.port");

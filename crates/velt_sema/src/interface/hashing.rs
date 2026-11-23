@@ -82,7 +82,7 @@ impl<'p> Hashing<'p> {
                 self.name(*d).hash(&mut s);
                 self.tys_into(args, &mut s);
             }
-            TyKind::Array(x) | TyKind::Shared(x) => self.ty(*x).hash(&mut s),
+            TyKind::Array(x) | TyKind::Shared(x) | TyKind::Ptr(x) => self.ty(*x).hash(&mut s),
             TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
                 (self.ty(*a), self.ty(*b)).hash(&mut s)
             }
@@ -147,9 +147,10 @@ impl<'p> Hashing<'p> {
         let mut s = DefaultHasher::new();
         generics.hash(&mut s);
         for hir::Param { local, ty, mode } in params {
-            // What the body does to the parameter: modifies it, or keeps it in a shared cell.
+            // What the body does to the parameter: modifies it, or keeps it in a shared cell; a
+            // capture of a `weak` variable holds a slot.
             let local = body.locals.get(local.0 as usize);
-            let effects = local.map(|l| (l.mutable, l.boxed));
+            let effects = local.map(|l| (l.mutable, l.boxed, l.weak));
             (self.ty(*ty), mode, effects).hash(&mut s);
         }
         let sig = (self.ty(*ret), self.opt_ty(*throws), self.opt_ty(*self_ty));
@@ -194,8 +195,9 @@ impl<'p> Hashing<'p> {
                     presence,
                     hidden,
                     cell,
+                    weak,
                 } = f;
-                let flags = (optional, private, presence, hidden, cell);
+                let flags = (optional, private, presence, hidden, cell, weak);
                 finish((name, self.ty(*ty), default.is_some(), flags))
             })
             .collect()

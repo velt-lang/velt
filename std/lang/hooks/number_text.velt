@@ -1,21 +1,18 @@
-// velt/lang/hooks (internal): the compiler's hooks for a number in a template, `String()` or
-// `console.log` (std-layout.md §10b), on std's integer printing (velt/lang/number/integer). Loaded
-// when the check finds one needed (velt_common `ON_DEMAND_MODULES`,
-// docs/internals/design/lazy-std.md). Lowering converts and writes every integer through the
-// integer ones, with no runtime fallback (#2197): sema checks them where live code has a construct
-// whose lowering calls them (velt_common `hook_demand.rs`). The float ones are checked once the
-// program's own code converts a value that may hold a float (`ON_DEMAND_FLOAT`), which also loads
-// std's float printer (velt/lang/hooks/number_float, which lowering prefers). A float that is not
-// a whole number goes to the runtime's printer here, and where lowering needs a float hook the
-// program lacks (a conversion in std's own code) it calls the runtime. `console.log`'s float
-// writer is in velt/lang/hooks/number_write.
+// velt/lang/hooks (internal): the compiler's hooks for a number in a template or `String()`
+// (std-layout.md §10b), on std's integer printing (velt/lang/number/integer). Loaded when the
+// check finds one needed (velt_common `ON_DEMAND_MODULES`, docs/internals/design/lazy-std.md).
+// Lowering converts and writes every number through these or std's float printing, with no
+// runtime fallback (#2197, #2196): sema checks them where live code has a construct whose lowering
+// calls them (velt_common `hook_demand.rs`). A float goes to std's float printing by role
+// (`number_shortest`, prebuilt), so that a program whose own code converts no float doesn't check
+// that printing; one that does loads velt/lang/hooks/number_float, which lowering prefers.
+// `console.log`'s float writer is in velt/lang/hooks/number_write.
 
-import { trunc } from "velt/lang/intrinsics";
+import { hookCall, trunc } from "velt/lang/intrinsics";
 import { i64Text, pushI64, pushU64, u64Text } from "velt/lang/number/integer";
 import { digitsWrite } from "velt/lang/number/integer_write";
 
-declare function velt_rt_str_from_f64(x: f64): string;
-declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
 /** `String(v)` of a signed integer (a template's `${v}`, `v.toString()`): lowering calls it. */
 export function intText(v: i64): string {
@@ -59,22 +56,29 @@ export function whole(x: f64): bool {
 }
 
 /**
- * `String(x)` of a float (`${x}` alone, `x.toString()`) where std's float printer is not loaded:
- * a whole number below 2^53 is its integer's digits (`intText`, which `velt_opt` numrep calls
- * directly when it knows `x` is one), anything else the runtime's text.
+ * `String(x)` of a float (`${x}` alone, `x.toString()`) where std's float printer is not loaded
+ * inline: std's float printing by role (`number_shortest`), whole numbers included, so that this
+ * reaches none of std's integer printing (`velt_opt` numrep calls `intText` instead where it knows
+ * `x` is a whole number and the program has that).
  */
 export function numberText(x: f64): string {
-  if (whole(x)) {
-    return intText(x as i64);
-  }
-  return velt_rt_str_from_f64(x);
+  return hookCall("number_shortest", x);
 }
 
 /** Appends `String(x)` of a float to the builder `buf` (a template's `${x}`), as `numberText`. */
 export function numberPush(buf: string, x: f64): void {
-  if (whole(x)) {
-    intPush(buf, x as i64);
+  const text: string = hookCall("number_shortest", x);
+  velt_rt_strbuf_push_str(buf, text);
+}
+
+/**
+ * Appends a float to the builder `buf` as `console.log` prints it: `-0` is `-0`, anything else as
+ * `numberPush` appends it (the formatting glue of a float).
+ */
+export function numberInspectPush(buf: string, x: f64): void {
+  if (x == 0 && 1.0 / x < 0) {
+    velt_rt_strbuf_push_str(buf, "-0");
     return;
   }
-  velt_rt_strbuf_push_f64(buf, x);
+  numberPush(buf, x);
 }

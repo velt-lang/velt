@@ -19,13 +19,13 @@ declare async function velt_rt_fs_read_dir(path: string): Promise<IoResult<strin
 declare async function velt_rt_fs_read_dir_typed(path: string): Promise<IoResult<DirentList>>;
 declare async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>>;
 declare async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>>;
-export declare async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>>;
-export declare async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>>;
-export declare async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus>;
+declare async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>>;
+declare async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>>;
+declare async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus>;
 declare async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus>;
 declare async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus>;
-export declare async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus>;
-export declare async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus>;
+declare async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus>;
+declare async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus>;
 declare async function velt_rt_fs_exists(path: string): Promise<bool>;
 declare function velt_rt_fs_read_file_bytes_sync(path: string): IoResult<u8[]>;
 declare function velt_rt_fs_write_file_sync(path: string, data: string): IoStatus;
@@ -34,13 +34,13 @@ declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
 declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
 declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
 declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
-export declare function velt_rt_fs_readlink_sync(path: string): IoResult<string>;
-export declare function velt_rt_fs_realpath_sync(path: string): IoResult<string>;
-export declare function velt_rt_fs_symlink_sync(target: string, path: string): IoStatus;
+declare function velt_rt_fs_readlink_sync(path: string): IoResult<string>;
+declare function velt_rt_fs_realpath_sync(path: string): IoResult<string>;
+declare function velt_rt_fs_symlink_sync(target: string, path: string): IoStatus;
 declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
 declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
-export declare function velt_rt_fs_rename_sync(from: string, to: string): IoStatus;
-export declare function velt_rt_fs_copy_file_sync(from: string, to: string): IoStatus;
+declare function velt_rt_fs_rename_sync(from: string, to: string): IoStatus;
+declare function velt_rt_fs_copy_file_sync(from: string, to: string): IoStatus;
 declare function velt_rt_fs_exists_sync(path: string): bool;
 
 export declare async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>>;
@@ -175,4 +175,47 @@ export function existsSync(path: string): bool {
 
 export async function exists(path: string): Promise<bool> {
   return await velt_rt_fs_exists(path);
+}
+
+// Renaming, linking and copying, as std/fs/rt_sched.velt names them for native builds:
+// velt_rt_wasm's functions. The callers have checked the paths.
+
+export function renameSync(from: string, to: string) {
+  checkIo(velt_rt_fs_rename_sync(from, to));
+}
+
+export async function rename(from: string, to: string): Promise<void> {
+  checkIo(await velt_rt_fs_rename(from, to));
+}
+
+export function copyFileSync(from: string, to: string) {
+  checkIo(velt_rt_fs_copy_file_sync(from, to));
+}
+
+export async function copyFile(from: string, to: string): Promise<void> {
+  checkIo(await velt_rt_fs_copy_file(from, to));
+}
+
+export function symlinkSync(target: string, path: string) {
+  checkIo(velt_rt_fs_symlink_sync(target, path));
+}
+
+export async function symlink(target: string, path: string): Promise<void> {
+  checkIo(await velt_rt_fs_symlink(target, path));
+}
+
+export function readlinkSync(path: string): string {
+  return unwrapIo(velt_rt_fs_readlink_sync(path));
+}
+
+export async function readlink(path: string): Promise<string> {
+  return unwrapIo(await velt_rt_fs_readlink(path));
+}
+
+export function realpathSync(path: string): string {
+  return unwrapIo(velt_rt_fs_realpath_sync(path));
+}
+
+export async function realpath(path: string): Promise<string> {
+  return unwrapIo(await velt_rt_fs_realpath(path));
 }

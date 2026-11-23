@@ -9,12 +9,27 @@ import {
   anyReflectValue,
   identity as valueIdentity,
   isTypedProxy,
+  addressLoad,
+  addressStore,
+  rawAlloc,
+  rawFree,
   toAny,
 } from "velt/lang/intrinsics";
 import { RuntimeType } from "velt/reflect/runtime_type";
 
-declare function velt_rt_visit_enter(id: u64): u8;
-declare function velt_rt_visit_leave();
+/**
+ * This thread's visits (`beginVisit`), outermost first: how many there are, the first
+ * `VISIT_SLOTS` identities in thread-locals, and the deeper ones in a block of words
+ * (`blockBytes`: the identities, and a hash table of those past `DEEP_SCANNED`; 0 until a visit
+ * nests that deep; given back when the visits return to the thread-locals). A visit never suspends, so the visits of a thread form one stack.
+ */
+const VISIT_DEPTH = new ThreadLocal<u64>(0);
+const VISIT0 = new ThreadLocal<u64>(0);
+const VISIT1 = new ThreadLocal<u64>(0);
+const VISIT2 = new ThreadLocal<u64>(0);
+const VISIT3 = new ThreadLocal<u64>(0);
+const VISIT_DEEP = new ThreadLocal<u64>(0);
+const VISIT_SLOTS: u64 = 4;
 
 /** What `v` holds at run time. */
 export function typeOf(v: any): RuntimeType {
@@ -96,10 +111,199 @@ export function isProxy<T>(v: T): bool {
  * `endVisit`.
  */
 export function beginVisit(id: u64): bool {
-  return velt_rt_visit_enter(id) != 0;
+  const n = VISIT_DEPTH.get();
+  if (n > 0 && isVisiting(id, n)) {
+    return false;
+  }
+  if (n == 0) {
+    VISIT0.set(id);
+  } else if (n == 1) {
+    VISIT1.set(id);
+  } else if (n == 2) {
+    VISIT2.set(id);
+  } else if (n == 3) {
+    VISIT3.set(id);
+  } else {
+    pushDeep(n - VISIT_SLOTS, id);
+  }
+  VISIT_DEPTH.set(n + 1);
+  return true;
+}
+
+// Whether `id` is among the `n` (at least one) visits under way: the slots, the first
+// `DEEP_SCANNED` deep visits in one loop, then the deeper ones' hash table.
+function isVisiting(id: u64, n: u64): bool {
+  if (VISIT0.get() == id) {
+    return true;
+  }
+  if (n == 1) {
+    return false;
+  }
+  if (VISIT1.get() == id) {
+    return true;
+  }
+  if (n == 2) {
+    return false;
+  }
+  if (VISIT2.get() == id) {
+    return true;
+  }
+  if (n == 3) {
+    return false;
+  }
+  if (VISIT3.get() == id) {
+    return true;
+  }
+  if (n == VISIT_SLOTS) {
+    return false;
+  }
+  const deep = n - VISIT_SLOTS;
+  const p = VISIT_DEEP.get() as usize;
+  const scanned = deep < DEEP_SCANNED ? deep : DEEP_SCANNED;
+  const end = p + 8 + (scanned as usize) * 8;
+  for (let a = p + 8; a < end; a += 8) {
+    if (visitWord(a) == id) {
+      return true;
+    }
+  }
+  if (deep <= DEEP_SCANNED) {
+    return false;
+  }
+  return tableFind(p, id) != 0;
 }
 
 /** Ends the innermost visit `beginVisit` started. */
 export function endVisit(): void {
-  velt_rt_visit_leave();
+  const n = VISIT_DEPTH.get();
+  if (n == 0) {
+    return;
+  }
+  VISIT_DEPTH.set(n - 1);
+  if (n <= VISIT_SLOTS) {
+    return;
+  }
+  const p = VISIT_DEEP.get() as usize;
+  const k = n - 1 - VISIT_SLOTS;
+  if (k >= DEEP_SCANNED) {
+    tableRemove(p, visitWord(p + 8 + (k as usize) * 8));
+  }
+  if (k == 0) {
+    // SAFETY: `p` came from `rawAlloc` in `pushDeep` with room for its words; nothing uses it
+    // after.
+    unsafe {
+      rawFree(p, blockBytes(visitWord(p) as usize));
+    }
+    VISIT_DEEP.set(0);
+  }
+}
+
+/**
+ * The deep visits found by one loop; deeper ones are also kept in the block's hash table, so
+ * deep nesting costs O(1) per visit instead of a scan of every visit under way.
+ */
+const DEEP_SCANNED: u64 = 8;
+
+// The deep block: `[capacity, identity × capacity, table × 2·capacity]`. The table holds the deep
+// visits from `DEEP_SCANNED` on, by open addressing with linear probing (0 is an empty place: an
+// identity is an address, never 0), at most half full.
+function blockBytes(cap: usize): usize {
+  return (1 + cap * 3) * 8;
+}
+
+// Puts `id` at position `k` of the deep block, growing it first when full.
+function pushDeep(k: u64, id: u64): void {
+  let p = VISIT_DEEP.get() as usize;
+  const cap: usize = p == 0 ? 0 : (visitWord(p) as usize);
+  if ((k as usize) >= cap) {
+    const next = cap == 0 ? 16 : cap * 2;
+    const q = rawAlloc(blockBytes(next));
+    setVisitWord(q, next as u64);
+    for (let i: usize = 0; i < cap; i++) {
+      setVisitWord(q + 8 + i * 8, visitWord(p + 8 + i * 8));
+    }
+    // An empty table, then the deep visits it holds again at the new size.
+    const t = q + 8 + next * 8;
+    for (let i: usize = 0; i < next * 2; i++) {
+      setVisitWord(t + i * 8, 0);
+    }
+    for (let i = DEEP_SCANNED as usize; i < cap; i++) {
+      tableAdd(q, visitWord(q + 8 + i * 8));
+    }
+    if (p != 0) {
+      // SAFETY: `p` came from `rawAlloc` here with room for `cap`; nothing uses it after.
+      unsafe {
+        rawFree(p, blockBytes(cap));
+      }
+    }
+    p = q;
+    VISIT_DEEP.set(p as u64);
+  }
+  setVisitWord(p + 8 + (k as usize) * 8, id);
+  if (k >= DEEP_SCANNED) {
+    tableAdd(p, id);
+  }
+}
+
+// The home place of `id` in a table of `mask + 1` places (a Fibonacci hash: identities are
+// aligned addresses, so their low bits alone would crowd).
+function tableHome(id: u64, mask: u64): u64 {
+  return ((id * 0x9e3779b97f4a7c15) >> 32) & mask;
+}
+
+// The address of `id`'s place in block `p`'s table, or 0 if it is not there.
+function tableFind(p: usize, id: u64): usize {
+  const cap = visitWord(p);
+  const mask = cap * 2 - 1;
+  const t = p + 8 + (cap as usize) * 8;
+  let i = tableHome(id, mask);
+  while (true) {
+    const a = t + (i as usize) * 8;
+    const w = visitWord(a);
+    if (w == id) {
+      return a;
+    }
+    if (w == 0) {
+      return 0;
+    }
+    i = (i + 1) & mask;
+  }
+}
+
+function tableAdd(p: usize, id: u64): void {
+  const cap = visitWord(p);
+  const mask = cap * 2 - 1;
+  const t = p + 8 + (cap as usize) * 8;
+  let i = tableHome(id, mask);
+  while (visitWord(t + (i as usize) * 8) != 0) {
+    i = (i + 1) & mask;
+  }
+  setVisitWord(t + (i as usize) * 8, id);
+}
+
+// Removes `id` from block `p`'s table by emptying its place. Visits end in the reverse of the
+// order they started (and a grown table is filled again in that order), so every identity placed
+// after `id` is gone already, and none sits past this place on its probe path.
+function tableRemove(p: usize, id: u64): void {
+  const cap = visitWord(p);
+  const mask = cap * 2 - 1;
+  const t = p + 8 + (cap as usize) * 8;
+  let i = tableHome(id, mask);
+  while (visitWord(t + (i as usize) * 8) != id) {
+    i = (i + 1) & mask;
+  }
+  setVisitWord(t + (i as usize) * 8, 0);
+}
+
+// The word at `a`, in this thread's block of visits: 8 bytes, a `u64` on every target (an
+// identity is a `u64`, and a `usize` would be 4 bytes on wasm32).
+function visitWord(a: usize): u64 {
+  // SAFETY: `a` is a word of the block `rawAlloc` gave `pushDeep`, not freed yet.
+  return unsafe { addressLoad<u64>(a) };
+}
+
+function setVisitWord(a: usize, v: u64): void {
+  // SAFETY: as `visitWord`.
+  unsafe {
+    addressStore<u64>(a, v);
+  }
 }

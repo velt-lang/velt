@@ -159,6 +159,32 @@ fn unobservable_await_steps_are_not_lowered() {
     );
 }
 
+/// Under the executor in Velt the `await` step is std's hook (`schedAwaitTick`), and the observers
+/// are its hooks too: an `await`-only program, loaded with the real std, is lowered without the
+/// steps, and one that queues a microtask keeps them (await_order.rs, #3081).
+#[test]
+fn unobservable_await_steps_are_not_lowered_under_the_executor_in_velt() {
+    // A call of the step's hook: its definition is in every program that loads the executor.
+    let steps = |v: &vir::Program| {
+        let text = format!("{v}");
+        (text.lines()).any(|l| l.contains("call fn#") && l.contains("schedAwaitTick"))
+    };
+    let awaits = "async function step(i: i64): Promise<i64> {\n  return i;\n}\n\n\
+                  async function main() {\n  let sum = 0;\n  for (let i = 0; i < 10; i++) {\n    \
+                  sum += await step(i);\n  }\n  console.log(sum);\n}\n";
+    let v = super::lower_src(awaits);
+    assert!(!steps(&v), "unobservable await steps were lowered\n{v}");
+    let observed = "async function step(i: i64): Promise<i64> {\n  return i;\n}\n\n\
+                    async function main() {\n  queueMicrotask(() => console.log(\"micro\"));\n  \
+                    let sum = 0;\n  for (let i = 0; i < 10; i++) {\n    sum += await step(i);\n  \
+                    }\n  console.log(sum);\n}\n";
+    let v = super::lower_src(observed);
+    assert!(
+        steps(&v),
+        "a program that queues a microtask lost its await steps\n{v}"
+    );
+}
+
 /// `Promise.all` over an array literal awaits its elements in place (no `velt_rt_all`); dropping
 /// `both` part way through drops what it holds. Its result array is indexed (the out-of-bounds
 /// report prints the index through std's hooks, #2197): Velt source loaded with the real std.

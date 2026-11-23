@@ -1,0 +1,184 @@
+// velt/text (tests): white-box tests of the searches that read back from a byte every match
+// ends with (find.velt `suffixed`), of a call's search off a regex's kept tables (quick.velt),
+// and of how kept tables tell that they grew (dfa_tables.velt), run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { strByteLen } from "velt/lang/intrinsics";
+import { findByte } from "velt/lang/string/byte_scan";
+import { assemble } from "velt/text/regex/assemble";
+import { FAILED, MATCHED } from "velt/text/regex/backtrack";
+import { Dfa } from "velt/text/regex/dfa";
+import { DfaTables, grew, thaw } from "velt/text/regex/dfa_tables";
+import { find } from "velt/text/regex/find";
+import { pike, pikeReset } from "velt/text/regex/pike";
+import { candidate } from "velt/text/regex/prefilter";
+import { Program } from "velt/text/regex/program";
+import { quick, quickTest, UNSURE } from "velt/text/regex/quick";
+import { listsOf, Search } from "velt/text/regex/search";
+
+function program(source: string, flags: string = ""): Program {
+  const names: string[] = [];
+  return assemble(source, flags, names);
+}
+
+/** The slots of the first match of `prog` in `s` by the Pike machine. */
+function pk(prog: Program, s: string): i64[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  pikeReset(prog, listsOf(m), m.slots.length);
+  return pike(prog, m, s, strByteLen(s), 0, false) ? m.slots : [];
+}
+
+/** The slots of the first match of `prog` in `s` by `find`, with a search memory that has
+ * served before (a regex's second call): the automatons go first. */
+function warm(prog: Program, s: string): i64[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  m.uses = 2;
+  return find(prog, m, s, 0, false) ? m.slots : [];
+}
+
+/** The tables `find` left in a search memory, after searching each of `subjects`: the backward
+ * automaton's (`starts`), else the forward one's. */
+function kept(prog: Program, subjects: string[], starts: bool): shared<DfaTables> | null {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  m.uses = 2;
+  for (const s of subjects) {
+    m.forget();
+    find(prog, m, s, 0, false);
+  }
+  const d = starts ? m.starts : m.ends;
+  return d != null ? shared(new DfaTables(d)) : null;
+}
+
+/** `quick`'s answer for `prog` in `s` from 0, as `warm` gives slots: [] for none, `[-3]` when it
+ * cannot say. */
+function qk(prog: Program, t: shared<DfaTables> | null, s: string): i64[] {
+  const slots: i64[] = [];
+  for (let k: u32 = 0; k < 2 * prog.groups + 2; k++) {
+    slots.push(-1);
+  }
+  const first = prog.suffix ? findByte(s, prog.required as u8, 0, strByteLen(s)) : 0;
+  const q = quick(prog, t, s, 0, first, slots);
+  return q == UNSURE ? [UNSURE] : q == MATCHED ? slots : [];
+}
+
+describe("A byte every match ends with", () => {
+  it("is one the pattern has nowhere else", () => {
+    const yes = [
+      "(\\w+)=(\\d+);",
+      "\\d+;|\\s;",
+      "([a-z]+;)",
+      "[^;]+;",
+      "(?:\\w|-)+\\.",
+      "\\d{2,}#",
+    ];
+    const bytes: i64[] = [0x3b, 0x3b, 0x3b, 0x3b, 0x2e, 0x23];
+    for (let i: usize = 0; i < yes.length; i++) {
+      const prog = program(yes[i]);
+      expect(prog.suffix).toBe(true);
+      expect(prog.required).toBe(bytes[i]);
+    }
+    // Twice, in a class before it, repeated, optional, a letter, or after it something more;
+    // or the SIMD scan finds where matches start.
+    for (const p of [
+      "\\d;\\d;",
+      "[^x]*;",
+      "(\\d;)+",
+      "\\d;?",
+      "\\da",
+      "\\d;$",
+      "\\d;|\\w",
+      "(\\d;)\\w",
+      ">.*\\n|\\n",
+    ]) {
+      expect(program(p).suffix).toBe(false);
+    }
+  });
+
+  it("finds the leftmost match by reading back from each such byte", () => {
+    const pad = "k=v, ".repeat(70);
+    const subjects = [
+      pad + "a=1 b=2; c=x; d=33;",
+      pad + "x=; y=12;",
+      pad + "no match; at all;",
+      "q=1;" + pad + "r=2;",
+      pad + "émoji=7; z=8;",
+    ];
+    for (const p of ["(\\w+)=(\\d+);", "([a-z]+)=?(\\d*);", "\\w=[^;]*;"]) {
+      const prog = program(p);
+      expect(prog.suffix).toBe(true);
+      for (const s of subjects) {
+        expect(warm(prog, s)).toEqual(pk(prog, s));
+      }
+    }
+  });
+
+  it("is not taken where a match may go over the byte", () => {
+    // Greedy over the first `;`: a search from it alone would end the match there.
+    const prog = program("([^x]*);");
+    const s = "a;b;" + "y".repeat(300);
+    expect(warm(prog, s)).toEqual([0, 4, 0, 3]);
+  });
+});
+
+describe("A search off the kept tables", () => {
+  it("finds what find finds, or says it cannot", () => {
+    const pad = "k=v, ".repeat(70);
+    const subjects = [pad + "a=1 b=2; c=x;", pad + "none here", pad + "x=12; y=3;", "p=4;"];
+    for (const p of ["(\\w+)=(\\d+);", "(\\w+), $", "\\d$", "\\d+;"]) {
+      const prog = program(p);
+      expect(prog.quick).toBe(true);
+      const t = kept(prog, subjects, true);
+      for (const s of subjects) {
+        const q = qk(prog, t, s);
+        if (q.length != 1) {
+          expect(q).toEqual(warm(prog, s));
+        }
+      }
+    }
+    // A subject with a byte past ASCII where the run reads: it cannot say.
+    const pair = program("(\\w+)=(\\d+);");
+    const pairTables = kept(pair, subjects, true);
+    expect(qk(pair, pairTables, pad + "é=9; ")[0]).toBe(UNSURE);
+    const tail = program("(\\w+), $");
+    const tailTables = kept(tail, subjects, true);
+    expect(qk(tail, tailTables, pad + "é, ")[0]).toBe(UNSURE);
+  });
+
+  it("answers a test by the forward automaton's tables", () => {
+    const pad = "k=v, ".repeat(70);
+    const prog = program("value\\d+", "i");
+    // Each match far enough from the end for the automaton.
+    const subjects = [pad + "Value12, " + pad, pad + "valab", pad + "VALUE7, " + pad];
+    const t = kept(prog, subjects, false);
+    for (const s of subjects) {
+      const q = quickTest(prog, t, s, 0);
+      expect(q != UNSURE).toBe(true);
+      expect(q == MATCHED).toBe(warm(prog, s).length > 0);
+    }
+    expect(quickTest(prog, t, pad + "valu", 0)).toBe(FAILED);
+  });
+
+  it("is kept when it worked out a transition to a state it had", () => {
+    const prog = program("(?:ab|c)\\d+");
+    const s = "y".repeat(40);
+    const m = new Search(0);
+    const d = new Dfa(prog, false);
+    d.forward(m, s + "ab1", strByteLen(s) + 3, 0, false, false);
+    const t = shared(new DfaTables(d));
+    const again = thaw(prog, false, t);
+    again.forward(m, s + "ab1", strByteLen(s) + 3, 0, false, false);
+    expect(grew(again, t)).toBe(false);
+    // After `c`, the state after `ab`: no new state, one new transition.
+    again.forward(m, s + "c1", strByteLen(s) + 2, 0, false, false);
+    expect(grew(again, t)).toBe(true);
+  });
+});
+
+describe("The scan", () => {
+  it("finds no place too near the end for a match", () => {
+    const prog = program("value\\d+", "i");
+    const s = "key12=valab3, key4=valab7, xxxxxxxxk=3; valu";
+    expect(candidate(prog, null, s, 0, strByteLen(s))).toBe(-1);
+    const t = s + "e1";
+    expect(candidate(prog, null, t, 0, strByteLen(t))).toBe(40);
+  });
+});

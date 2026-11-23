@@ -232,8 +232,11 @@ export function schedCurrentWorker(): u64 {
 
 /**
  * `velt_rt_fut_box`: a lazy boxed promise of the initial state at `state` (on any thread: a C
- * library's thread's start hands it to worker 0, sched_foreign.velt).
+ * library's thread's start hands it to worker 0, sched_foreign.velt). Inlined: it is every async
+ * call's entry point, and a program split into codegen units keeps it inlined into a large `main`
+ * only so (#3097).
  */
+@inline("always")
 export function schedBox(poll: usize, drop: usize, state: usize, size: u64, align: u64): usize {
   exec();
   return node.boxed(poll, drop, state, size, fnAddress(node.nodePoll), fnAddress(node.nodeDrop));

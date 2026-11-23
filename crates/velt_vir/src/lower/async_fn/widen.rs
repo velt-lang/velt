@@ -44,6 +44,19 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if self.dead() {
             return unit();
         }
+        self.widen_fut(fut, from, to, start)
+    }
+
+    /// The owned promise `fut` of type `from` in a wrapper of promise type `to` (module docs);
+    /// `to`'s value type may also be `any` / `unknown`, which the value is boxed into
+    /// (`widen_slot`; a promise awaited through `any`, any_await.rs).
+    pub(in crate::lower) fn widen_fut(
+        &mut self,
+        fut: Operand,
+        from: TyId,
+        to: TyId,
+        start: bool,
+    ) -> Operand {
         let inner = self.temp(Ty::Ptr);
         self.assign(Place::local(inner), Rvalue::Use(fut));
         if start {
@@ -160,16 +173,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let TyKind::Result(t, e2) = self.cx.kind(to_slot) else {
             ice("widened promise without an error type")
         };
-        let vt = self.cx.ty(t);
+        let t1 = match self.cx.kind(from) {
+            TyKind::Promise(t1, _) => t1,
+            _ => ice("widened value that is no promise"),
+        };
+        let (vt, vt1) = (self.cx.ty(t), self.cx.ty(t1));
         let (ok_view, err_view) = (self.cx.view(to_slot, 0), self.cx.view(to_slot, 1));
         let Some(e1) = self.cx.promise_error(from) else {
             // `Promise<T>`: the value becomes `Ok`.
-            if vt != Ty::Unit {
-                let v = Operand::Copy(proj(src, Proj::Deref(vt)));
-                self.assign(
-                    proj(&proj(out, Proj::Cast(ok_view)), Proj::Field(1)),
-                    Rvalue::Use(v),
-                );
+            if vt != Ty::Unit || vt1 != Ty::Unit {
+                let v = match vt1 {
+                    Ty::Unit => unit(),
+                    _ => Operand::Copy(proj(src, Proj::Deref(vt1))),
+                };
+                let dst = proj(&proj(out, Proj::Cast(ok_view)), Proj::Field(1));
+                self.widen_value(v, t1, t, &dst);
             }
             self.assign(proj(out, Proj::Field(0)), Rvalue::Use(cint(0, Ty::U8)));
             return;
@@ -182,13 +200,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let (err_bb, ok_bb, done) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is_err, err_bb, ok_bb);
         self.switch_to(ok_bb);
-        if vt != Ty::Unit {
+        if vt != Ty::Unit || vt1 != Ty::Unit {
             let fok = self.cx.view(from_slot, 0);
-            let v = Operand::Copy(proj(&proj(&inner, Proj::Cast(fok)), Proj::Field(1)));
-            self.assign(
-                proj(&proj(out, Proj::Cast(ok_view)), Proj::Field(1)),
-                Rvalue::Use(v),
-            );
+            let v = match vt1 {
+                Ty::Unit => unit(),
+                _ => Operand::Copy(proj(&proj(&inner, Proj::Cast(fok)), Proj::Field(1))),
+            };
+            let dst = proj(&proj(out, Proj::Cast(ok_view)), Proj::Field(1));
+            self.widen_value(v, t1, t, &dst);
         }
         self.assign(proj(out, Proj::Field(0)), Rvalue::Use(cint(0, Ty::U8)));
         self.goto(done);
@@ -211,6 +230,29 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(proj(out, Proj::Field(0)), Rvalue::Use(cint(1, Ty::U8)));
         self.goto(done);
         self.switch_to(done);
+    }
+
+    /// The settled value `v` of type `t1` moved into `dst`, of type `t`: the same type, or
+    /// `any` / `unknown`, which it is boxed into (a promise awaited through `any`).
+    fn widen_value(&mut self, v: Operand, t1: TyId, t: TyId, dst: &Place) {
+        if t1 == t {
+            if self.cx.ty(t) != Ty::Unit {
+                self.assign(dst.clone(), Rvalue::Use(v));
+            }
+            return;
+        }
+        // Boxing makes temporaries: this function has no scope of its own.
+        let scoped = self.scopes.is_empty();
+        if scoped {
+            self.push_scope(crate::lower::ScopeKind::Temps);
+        }
+        let vt = self.cx.ty(t);
+        let zero = self.zero_value(vt);
+        self.assign(dst.clone(), Rvalue::Use(zero));
+        self.any_into(v, t1, t, dst);
+        if scoped {
+            self.pop_scope();
+        }
     }
 
     /// `(state)` of the widening wrapper, unfinished: drop the inner promise, which reports its

@@ -1,7 +1,7 @@
 //! Loops in the moves dataflow: iterate silently to a fixpoint, then run one reporting pass.
 //! `break` / `continue` states are collected per loop and joined at the exit / back edge.
 
-use super::state::{join, Flow};
+use super::state::{join, Flow, State};
 use super::Moves;
 use crate::hir::{Block, Expr, ExprKind, Lit, Pat, Stmt, StmtKind};
 
@@ -79,6 +79,8 @@ impl Moves<'_> {
 
     /// One pass over the loop from `head`; returns (state after the loop, state at the back edge).
     fn loop_iter(&mut self, p: &LoopParts, head: Flow) -> (Flow, Flow) {
+        let entries = head.as_ref().map_or(0, State::entries);
+        crate::check_work::add_move_loop_state(entries as u64);
         let mut s = head;
         if let Some(c) = p.cond {
             self.expr(c, &mut s);
