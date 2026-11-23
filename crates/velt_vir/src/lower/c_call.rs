@@ -162,7 +162,7 @@ impl FnLower<'_, '_> {
             if let CTy::Out = t {
                 let v = self.expr(a);
                 let obj = self.operand_place(v, Ty::Ptr);
-                vals.push(CArg::Field(obj, self.sub(a.ty), "value"));
+                vals.push(CArg::Field(obj, self.sub(a.ty), "held"));
                 continue;
             }
             if let CTy::Struct = t {

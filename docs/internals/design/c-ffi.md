@@ -145,7 +145,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `readonly T[]`, `T[]` (`T` a number type), views of bytes | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
-| `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, or `Ptr<U> \| null` for a `U **` |
+| `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, `Ptr<U> \| null` for a `U **`, or a C struct |
 | a `declare c struct` | the struct by value | x86-64 Linux, macOS (System V) and Windows (Win64), arm64 Linux and macOS (AAPCS64); other targets refuse it until their convention comes |
 | `void` | `void` | as a result |
 
@@ -172,8 +172,13 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   `Ptr<T> | null` is the same word with 0 as `null`, so nothing converts at a C call. Nothing
   puts 0 in a `Ptr<T>`: `Ptr.at(0)` stops the program (`Ptr.orNull` gives `null` for 0), and on
   wasm32 so does an address past 32 bits.
-- **`Out<T>`** takes a number, `bool` or `Ptr<U> | null` only: C may write NULL into a non-null
-  pointer, and writing a class reference, a `symbol` or a `shared<T>` would forge one.
+- **`Out<T>`** takes a number, `bool`, `Ptr<U> | null` or a C struct only: C may write NULL into
+  a non-null pointer, and writing a class reference, a `symbol` or a `shared<T>` would forge one.
+  A C struct's fields declared `Ptr<T>` are checked where `value` is read, not when C returns
+  (`value` is a getter through the std-only `cArrived<T>`): a C function that fails often leaves
+  its out-struct untouched, and a caller that tests its result first never reads it. One C left
+  NULL stops the program at the read, naming the field (``field `text` of the `Out<Label>` read
+  is NULL``). A value without such fields passes as it is.
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
@@ -495,7 +500,7 @@ native: {
   | `i8`…`u64`, `f32`, `f64` | the C type of that width and signedness; a C enum by its underlying type |
   | `bool` | `_Bool` / `bool` only |
   | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them, so a declaration right on one target is right on all |
-  | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`) |
+  | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`; `Out<S>` of a C struct is `S *`, by the definition it names) |
   | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
   | written arrays, `Out<T>` | non-const `T *` only |
   | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
@@ -718,8 +723,8 @@ must not depend on code elsewhere.
 
 - `declare c` calls are synchronous.
 - A C struct crosses by value only on x86-64 (Linux, macOS, Windows) and arm64 Linux and macOS,
-  and not as `Out<S>` or `Ref<S>`, in a variadic function, or to an `@export` function. C arrays in structs are not
-  supported.
+  and not as `Ref<S>`, in a variadic function, or to an `@export` function. C arrays in structs
+  are not supported, and an array of structs cannot be passed yet.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -735,8 +740,9 @@ must not depend on code elsewhere.
 ## Not yet implemented
 
 - **C structs by value on the remaining targets** (wasm32, Windows on arm64), in a variadic
-  function and to an `@export` function, and **`Out<S>` and `Ref<S>`**, in the same classifier
-  and differential test. C arrays become fields once Velt has fixed-size arrays.
+  function and to an `@export` function; **`Ref<S>`**, a `const S *` to a copy borrowed for the
+  call; and arrays of structs (`readonly S[]` as `const S *`), as decided on #2187. C arrays become
+  fields once Velt has fixed-size arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call
