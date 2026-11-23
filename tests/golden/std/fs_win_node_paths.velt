@@ -28,7 +28,7 @@ function names(): string {
   return fs.readDirSync(d).sort().join(",");
 }
 
-function main() {
+async function main() {
   fs.rmSync(d, { recursive: true, force: true });
   fs.mkdirSync(d);
   fs.writeFileSync(`${d}/a.txt`, "A");
@@ -38,8 +38,9 @@ function main() {
   // Each call's error names the path resolved.
   attempt("readFile", () => fs.readFileSync(`${d}/nope.txt`));
   attempt("readFile ..", () => fs.readFileSync(`${d}/x/../y/nope.txt`));
-  attempt("readFile absolute /", () =>
-    fs.readFileSync(`${cwd().split("\\").join("/")}/${d}/nope.txt`),
+  attempt(
+    "readFile absolute /",
+    () => fs.readFileSync(`${cwd().split("\\").join("/")}/${d}/nope.txt`),
   );
   attempt("readFile verbatim", () => fs.readFileSync(`\\\\?\\${cwd()}\\${d}\\nope.txt`));
   attempt("writeFile", () => {
@@ -157,6 +158,22 @@ function main() {
     fs.rmSync(`${d}/com1.txt`);
     return names();
   });
+
+  // The async forms name paths the same way.
+  try {
+    await fs.readDir(`${d}/sub.`);
+  } catch (e) {
+    if (e instanceof IoError) {
+      console.log("async readdir sub. !!", e.code, show(e.message));
+    }
+  }
+  try {
+    await fs.copyFile(`${d}/nope`, `${d}/x`);
+  } catch (e) {
+    if (e instanceof IoError) {
+      console.log("async copyFile !!", e.code, show(e.message));
+    }
+  }
 
   fs.rmSync(d, { recursive: true, force: true });
 }

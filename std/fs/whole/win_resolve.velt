@@ -7,16 +7,14 @@
 // prefix (`open 'C:\work\a.txt'`). Pure string code: the working directories come from `Dirs`
 // (Win32's in win_path.velt, fixed ones in the tests).
 
-import { IoError } from "velt/io/error";
-
 /** Where a relative path is resolved from. */
 export class Dirs {
   /** The working directory. */
-  cwd: () => string throws IoError;
+  cwd: () => string;
   /** An environment variable (`=D:`, the working directory on the drive `D:`), or undefined. */
   env: (name: string) => string | undefined;
 
-  constructor(cwd: () => string throws IoError, env: (name: string) => string | undefined) {
+  constructor(cwd: () => string, env: (name: string) => string | undefined) {
     this.cwd = cwd;
     this.env = env;
   }

@@ -15,7 +15,19 @@ import { getEnv } from "velt/process/env_win32";
 
 /** The process' working directories. */
 function dirs(): Dirs {
-  return new Dirs(() => cwd(), (name) => getEnv(name));
+  return new Dirs(() => workingDir(), (name) => getEnv(name));
+}
+
+/**
+ * The working directory, or "" when Windows can't give it: a relative path then goes to Windows
+ * as it is, which fails there or resolves it itself.
+ */
+function workingDir(): string {
+  try {
+    return cwd();
+  } catch (e) {
+    return "";
+  }
 }
 
 /** `path` as a NUL-terminated wide path, the way Node gives it to Windows; null for a 0 in it. */

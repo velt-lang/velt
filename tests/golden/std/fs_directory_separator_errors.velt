@@ -1,15 +1,19 @@
 // A directory named with the system's separator after it (`dir\` on Windows, `dir/` elsewhere)
 // fails as a file the same way the plain name does, as in Node: a read and a mapping report
-// EISDIR, and a write reports the failed `open` with the path as given (#3386: on Windows the
-// open of `dir\` fails with another code than the plain name's "access denied"). Messages print
-// the separator as `/`, so the output is the same on every system.
+// EISDIR, and a write reports the failed `open` with the path (#3386: on Windows the open of
+// `dir\` fails with another code than the plain name's "access denied"). Node names the path
+// resolved on Windows (`C:\work\dir`), and as given elsewhere (`dir/`): messages print it
+// relative, with `/` and without the separator after it, so the output is the same on every
+// system.
 import { MappedFile, mkdirSync, readFileSync, removeSync, writeFileSync } from "velt/fs";
 import { IoError } from "velt/io";
 import { platform } from "velt/os";
+import { cwd } from "velt/process";
 
 function report(e: unknown) {
   const err = e as IoError;
-  console.log(err instanceof IoError, err.code, err.message.replaceAll("\\", "/"));
+  const m = err.message.split(`${cwd()}\\`).join("").replaceAll("\\", "/");
+  console.log(err instanceof IoError, err.code, m.replaceAll("/'", "'"));
 }
 
 function main() {
