@@ -1,7 +1,8 @@
 // velt/lang/hooks (internal): a knob for tests only, with the block counters on (#3487):
-// `VELT_SCHED_WAKE_PAUSE=<n>` gives the core away `n` times right after a wake from a thread that
-// is not polling the task (`afterWake`), so the woken task runs, and parks, inside the window a
-// busy machine opens there now and then (sched_wake.velt `wakeGiving`).
+// `VELT_SCHED_WAKE_PAUSE=<n>` gives the core away `n` times right after every wake that queues a
+// task or marks it notified (sched_wake.velt `wake`, sched_wake_away.velt `wakeAway`), whichever
+// order a wake by value takes, so the woken task runs, and parks, inside the window a busy machine
+// opens there now and then before a reference given back after the wake goes.
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import { processEnv } from "./process";
@@ -35,7 +36,7 @@ function asked(): u64 {
   return n;
 }
 
-/** A wake from a thread not the task's home is done (sched_wake_away.velt `wakeAway`). */
+/** A wake queued a task or marked it notified (sched_wake.velt `wake`, `wakeAway`). */
 @inline("always")
 export function afterWake(): void {
   if (wk.counting()) {

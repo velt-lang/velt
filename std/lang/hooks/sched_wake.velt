@@ -124,12 +124,14 @@ export function wake(t: usize): void {
       const was = m.cas32(t + tk.T_STATE, tk.IDLE, tk.SCHEDULED);
       if (was === tk.IDLE) {
         schedule(t);
+        wp.afterWake();
         return;
       }
       s = was;
     } else if (s === tk.RUNNING) {
       const was = m.cas32(t + tk.T_STATE, tk.RUNNING, tk.NOTIFIED);
       if (was === tk.RUNNING) {
+        wp.afterWake();
         return;
       }
       s = was;

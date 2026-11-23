@@ -78,7 +78,6 @@ function locked(k: usize): void {
   const last = m.dec(k + tk.T_REFS) === 1;
   if (!last) {
     wk.wake(k);
-    wp.afterWake();
   }
   m.store32(k + tk.T_JOIN_STATE, s);
   if (last) {
