@@ -9,6 +9,7 @@ import {
   DECODE_ERROR,
   HANDSHAKE_FAILURE,
   ILLEGAL_PARAMETER,
+  MISSING_EXTENSION,
   PROTOCOL_VERSION,
   TlsFailure,
 } from "velt/net/tls/alert";
@@ -71,7 +72,8 @@ export class ClientOffer {
   serverName: string = "";
   /** Whether the hello has a cookie (only a second one, after a HelloRetryRequest that sent one). */
   cookie: bool = false;
-  /** Whether psk_key_exchange_modes has psk_dhe_ke. */
+  /** Whether the hello has psk_key_exchange_modes, and whether it lists psk_dhe_ke. */
+  pskModes: bool = false;
   pskDheKe: bool = false;
   /** pre_shared_key's identities (tickets), their obfuscated ages, and their binders. */
   pskIds: u8[][] = [];
@@ -193,10 +195,16 @@ export function parseClientHello(body: u8[]): ClientOffer {
       e.skip(e.left());
     } else if (type == EXT_PSK_KEY_EXCHANGE_MODES) {
       const list = e.vector(1);
+      offer.pskModes = true;
       offer.pskDheKe = list.bytes(list.left()).includes(PSK_DHE_KE);
     } else if (type == EXT_PRE_SHARED_KEY) {
       if (exts.left() > 0) {
         throw new TlsFailure(ILLEGAL_PARAMETER, "pre_shared_key is not the last extension");
+      }
+      // §4.2.9: a PSK without psk_key_exchange_modes (which comes before, as pre_shared_key is
+      // last) aborts the handshake.
+      if (!offer.pskModes) {
+        throw new TlsFailure(MISSING_EXTENSION, "pre_shared_key without psk_key_exchange_modes");
       }
       readPsk(e, offer);
     } else {

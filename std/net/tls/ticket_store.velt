@@ -1,8 +1,8 @@
 // velt/net (internal): `TicketStore`, the session tickets a TLS listener issued and has not seen
 // used yet (RFC 8446 §4.6.1, stateful tickets as rustls's default `ServerSessionMemoryCache`):
 // what each ticket's PSK resumes, keyed by the ticket, which is random and carries nothing. A
-// ticket is taken when a client resumes with it, so it resumes at most once; the oldest go first when
-// the store is full. One per listener, shared by its connections behind a mutex
+// ticket is taken when a client resumes with it, so it resumes at most once; the oldest go first
+// when the store is full. One per listener, shared by its connections behind a mutex
 // (std/net/tls/fd_server.velt).
 
 import { hexEncode } from "velt/encoding/hex";
@@ -30,12 +30,30 @@ export class TicketStore {
         }
       }
     }
-    if (this.next > CAPACITY) {
+    this.tickets.set(key, t);
+    this.order.push(key);
+    // `order` keeps the keys of taken tickets until they come up, and a store whose tickets are
+    // used stays below CAPACITY, so they never would: past twice CAPACITY, keep only the
+    // tickets still here, which bounds it (by 2 CAPACITY + 1).
+    if (this.order.length - this.next > 2 * CAPACITY) {
+      const kept: string[] = [];
+      for (let i = this.next; i < this.order.length; i++) {
+        const k = this.order[i];
+        if (this.tickets.has(k)) {
+          kept.push(k);
+        }
+      }
+      this.order = kept;
+      this.next = 0;
+    } else if (this.next > CAPACITY) {
       this.order = this.order.slice(this.next as i64);
       this.next = 0;
     }
-    this.tickets.set(key, t);
-    this.order.push(key);
+  }
+
+  /** How many keys `order` holds (tests: it stays bounded). */
+  orderLength(): usize {
+    return this.order.length - this.next;
   }
 
   /** The ticket `id`, left in place, or null when unknown. */

@@ -154,6 +154,61 @@ describe("the TLS 1.3 server with tickets", () => {
     expect(store.take(hexDecode(IDENTITY)) == null).toBe(true);
   });
 
+  it("resumes with a ticket once: a second handshake with it is a full one", () => {
+    const first = server([[IDENTITY, PSK]]);
+    expect(first.onMessage(hexDecode(CLIENT_HELLO))).toBe(S_SEND_FLIGHT);
+    expect(first.resumed).toBe(true);
+    const again = new ServerHandshake(serverKey(v.P256_CERT, v.P256_PKCS8, true)!, []);
+    again.tickets = first.tickets;
+    expect(again.onMessage(hexDecode(CLIENT_HELLO))).toBe(S_SEND_FLIGHT);
+    expect(again.resumed).toBe(false);
+  });
+
+  it("does not resume a hello whose psk_key_exchange_modes lists only psk_ke", () => {
+    const h = server([[IDENTITY, PSK]]);
+    // psk_key_exchange_modes (45) with psk_ke (0) in place of psk_dhe_ke (1).
+    const m = hexDecode(CLIENT_HELLO.replace("002d00020101", "002d00020100"));
+    expect(h.onMessage(m)).toBe(S_SEND_FLIGHT);
+    expect(h.resumed).toBe(false);
+  });
+
+  it("does not resume a ticket of a suite with another hash", () => {
+    const store = new TicketStore();
+    // TLS_AES_256_GCM_SHA384's ticket, offered where TLS_AES_128_GCM_SHA256 is chosen.
+    store.put(
+      hexDecode(IDENTITY),
+      new Ticket(hexDecode(PSK), 0x1302, "server", Date.now() as number, 0),
+    );
+    const h = new ServerHandshake(serverKey(v.P256_CERT, v.P256_PKCS8, true)!, []);
+    h.tickets = shared(new Mutex<TicketStore>(store));
+    expect(h.onMessage(hexDecode(CLIENT_HELLO))).toBe(S_SEND_FLIGHT);
+    expect(h.resumed).toBe(false);
+  });
+
+  it("aborts a pre_shared_key without psk_key_exchange_modes (RFC 8446 §4.2.9)", () => {
+    const h = server([[IDENTITY, PSK]]);
+    // The modes extension renamed to an unknown one (255).
+    const m = hexDecode(CLIENT_HELLO.replace("002d00020101", "00ff00020101"));
+    let got = "";
+    try {
+      h.onMessage(m);
+    } catch (e) {
+      got = e instanceof TlsFailure ? `${e.alert} ${e.message}` : `${e}`;
+    }
+    expect(got).toBe("109 TLS: pre_shared_key without psk_key_exchange_modes");
+  });
+
+  it("keeps its list of tickets bounded when the tickets are used", () => {
+    const store = new TicketStore();
+    const t = new Ticket(hexDecode(PSK), 0x1301, "server", Date.now() as number, 0);
+    for (let i: u32 = 0; i < 5000; i++) {
+      const id: u8[] = [(i >> 8) as u8, i as u8, 7];
+      store.put(id, t);
+      expect(store.take(id) != null).toBe(true);
+    }
+    expect(store.orderLength() <= 2049).toBe(true);
+  });
+
   it("does not resume for another server name or an expired ticket", () => {
     const key = serverKey(v.P256_CERT, v.P256_PKCS8, true)!;
     const names = ["other", "server"];
