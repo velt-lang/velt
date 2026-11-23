@@ -804,8 +804,9 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   `Intrinsic::WeakRead` with the bare `Local` as its operand (its target retained, or `null`), so
   a bare `Local` of a weak local is only that operand, an `Assign`'s place or its `Let`. Lowering
   stores 0 then the initializer's slot at the `Let`, swaps slots on an assignment and gives the
-  slot up at the end of the scope. Sema narrows nothing through it and refuses a closure capturing
-  it.
+  slot up at the end of the scope. Sema narrows nothing through it. A closure's capture local of
+  one is `weak` too (its reads are `WeakRead`s): a capture by value or in a cell holds the slot
+  with a reference of its own, and sema refuses one crossing to another task or a lock.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type: decoding does not run the constructor (the decoder's
   generator reports it, std/encoding/json/generate/parse_check.velt).

@@ -245,8 +245,13 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let ty = self.sub(p.ty);
             let by_ref = matches!(mode, PassMode::Borrow | PassMode::BorrowMut);
             let captured = modes.contains_key(&p.local);
+            // A capture of a `weak` variable holds its slot word (weak_captures.rs).
+            let weak = (captured && f.body.locals[p.local.0 as usize].weak).then_some(ty);
             if captured && !by_ref && f.body.locals[p.local.0 as usize].boxed {
                 inputs.push(self.declare_cell_capture(&mut info, p.local, ty, name));
+                if let Some(li) = info[p.local.0 as usize].as_mut() {
+                    li.weak = weak;
+                }
                 continue;
             }
             let (vir, indirect) = match self.cx.ty(ty) {
@@ -255,7 +260,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 t => (Some(self.new_local(t, Some(name))), false),
             };
             let droppable = mode == PassMode::Owned && vir.is_some() && self.cx.needs_drop(ty);
-            info[p.local.0 as usize] = Some(LInfo::new(vir, ty, indirect, droppable, LState::Init));
+            let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Init);
+            li.weak = weak;
+            info[p.local.0 as usize] = Some(li);
             inputs.push(vir);
         }
         self.declare_body_locals(f, info);
@@ -411,7 +418,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             } else if let Some((_, place, ty)) = owned.iter().find(|(l, ..)| *l == p.local) {
                 let (place, ty) = (place.clone(), *ty);
                 self.take_temp(&place);
-                self.drop_glue(place, ty);
+                match self.info[p.local.0 as usize].weak {
+                    Some(read) => self.weak_field_drop(place, read),
+                    None => self.drop_glue(place, ty),
+                }
             }
         }
         self.scopes = outer;
