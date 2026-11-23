@@ -171,3 +171,36 @@ function wrapLabel(g: Labeled) {
 }
 const fancy: Labeled = new Fancy();
 console.log(wrapLabel(fancy).label());
+
+// The read inside a wrapper that keeps its value (each arm of `?:`, `as`), and a variable that
+// holds the method, read directly or by destructuring, stored as the property: Node calls the
+// function with the literal as `this`. (The variable alone keeps the method bound, #746.)
+interface Greeter2 {
+  name: string;
+  greet2(): string;
+}
+const g2: Greeter2 = {
+  name: "o",
+  greet2() {
+    return "hi " + this.name;
+  },
+};
+function pick(s: string): boolean {
+  return s.length > 0;
+}
+function wrapCond(g: Greeter2): Greeter2 {
+  return { name: "w-cond", greet2: pick("x") ? g.greet2 : g.greet2 };
+}
+function wrapCast(g: Greeter2): Greeter2 {
+  return { name: "w-cast", greet2: g.greet2 as () => string };
+}
+function wrapDestructure(g: Greeter2): Greeter2 {
+  const { greet2 } = g;
+  return { name: "w-destructure", greet2 };
+}
+function wrapLocal(g: Greeter2): Greeter2 {
+  const f = g.greet2;
+  return { name: "w-local", greet2: f };
+}
+console.log(wrapCond(g2).greet2(), wrapCast(g2).greet2());
+console.log(wrapDestructure(g2).greet2(), wrapLocal(g2).greet2());

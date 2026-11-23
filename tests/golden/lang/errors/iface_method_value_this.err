@@ -8,3 +8,8 @@ iface_method_value_this.velt:131:35: error: the method `handle.setKey` may use `
 iface_method_value_this.velt:131:56: error: the method `handle.show` may use `this`, so it cannot be the value of an object-literal property
 iface_method_value_this.velt:150:35: error: the method `g.area` may use `this`, so it cannot be the value of an object-literal property
 iface_method_value_this.velt:170:36: error: the method `g.label` may use `this`, so it cannot be the value of an object-literal property
+iface_method_value_this.velt:195:36: error: the method `g.greet2` may use `this`, so it cannot be the value of an object-literal property
+iface_method_value_this.velt:203:37: error: the method `g.greet2` may use `this`, so it cannot be the value of an object-literal property
+iface_method_value_this.velt:199:35: error: the method `g.greet2` may use `this`, so it cannot be the value of an object-literal property
+iface_method_value_this.velt:192:48: error: the method `g.greet2` may use `this`, so it cannot be the value of an object-literal property
+iface_method_value_this.velt:192:59: error: the method `g.greet2` may use `this`, so it cannot be the value of an object-literal property

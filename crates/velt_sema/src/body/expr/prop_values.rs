@@ -84,7 +84,10 @@ impl FnCx<'_, '_> {
         }
         let h = match value {
             Some(v) => self.stored_value(v, |s| s.expr(v, exp, Want::Move)),
-            None => self.ident_expr(name, exp, Want::Move),
+            None => {
+                self.stored_local(name);
+                self.ident_expr(name, exp, Want::Move)
+            }
         };
         // A promise that rejects, stored into a field or record value whose `Promise<T>` is
         // written without an error type: that site takes its errors (`throws::promise_sites`).

@@ -31,3 +31,32 @@ r.dispose();
 r.setKey("a");
 r.dispose();
 console.log(r.state);
+
+// The same shapes for a method no implementation of which reads `this`: accepted, and the same
+// in Node, whatever `this` the function is called with.
+interface Counter {
+  count: number;
+  tick(): string;
+}
+const c1: Counter = {
+  count: 1,
+  tick: () => "tick",
+};
+function pickOne(s: string): boolean {
+  return s.length > 0;
+}
+function viaCond(c: Counter): Counter {
+  return { count: 2, tick: pickOne("x") ? c.tick : c.tick };
+}
+function viaCast(c: Counter): Counter {
+  return { count: 3, tick: c.tick as () => string };
+}
+function viaDestructure(c: Counter): Counter {
+  const { tick } = c;
+  return { count: 4, tick };
+}
+function viaLocal(c: Counter): Counter {
+  const f = c.tick;
+  return { count: 5, tick: f };
+}
+console.log(viaCond(c1).tick(), viaCast(c1).tick(), viaDestructure(c1).tick(), viaLocal(c1).tick());

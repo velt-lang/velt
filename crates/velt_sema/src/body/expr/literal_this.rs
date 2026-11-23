@@ -171,23 +171,29 @@ impl FnCx<'_, '_> {
     /// Object-literal property value `v`, checked by `check`. A method read off another object
     /// whose body may use `this` (`{ m: c.m }`, `{ m: mk().m }`) is reported: Node calls it
     /// with the literal as `this` (`o.m()`), while the value read keeps the object it was read
-    /// from. A static method is found by its class's name; another receiver's type is the one
-    /// it is checked with ([`Self::stored_method_read`], from `member`), so it is checked once.
+    /// from. The read may sit in a wrapper that keeps its value (`stored_reads`: `c ? a.m :
+    /// b.m`, `a.m as F`). A static method is found by its class's name; another receiver's type
+    /// is the one it is checked with ([`Self::stored_method_read`], from `member`), so it is
+    /// checked once.
     pub(super) fn stored_value(
         &mut self,
         v: &ast::Expr,
         check: impl FnOnce(&mut Self) -> hir::Expr,
     ) -> hir::Expr {
-        let read = super::method_value::strip_parens(v);
-        let ast::ExprKind::Member {
-            object,
-            prop,
-            optional: false,
-        } = &read.kind
-        else {
-            return check(self);
-        };
-        if self.static_namespace(object) {
+        let mut reads = vec![];
+        stored_reads(v, &mut reads);
+        for read in &reads {
+            // A variable holding an interface's method (`bound_value`): checked as its read.
+            if let ast::ExprKind::Ident(id) = &read.kind {
+                self.stored_local(id);
+                continue;
+            }
+            let ast::ExprKind::Member { object, prop, .. } = &read.kind else {
+                continue;
+            };
+            if !self.static_namespace(object) {
+                continue;
+            }
             // A static method that uses `this` runs on its class.
             let uses = match self.class_of_name(object) {
                 Some(d) => match self.find_static(d, &prop.name) {
@@ -199,20 +205,67 @@ impl FnCx<'_, '_> {
             if uses {
                 let text = super::method_value::path_text(read);
                 let what = format!("`{}`", text.clone().unwrap_or_else(|| prop.name.clone()));
-                self.report_stored_method(what, text, v.span);
+                self.report_stored_method(what, text, read.span);
                 return self.error_expr(v.span);
             }
-            return check(self);
         }
-        let saved = self.stored_prop.replace(read.span);
+        reads.retain(|r| matches!(r.kind, ast::ExprKind::Member { .. }));
+        self.with_stored_reads(&reads, false, check)
+    }
+
+    /// The initializer `v` of variable `name` (`const f = g.m`, and `const { m } = g`, which
+    /// declares `m` from `g.m`), checked by `check`. A method read as a value stays bound to its
+    /// object (#746); the variable holding an interface's method is remembered with the read
+    /// (`method_locals`), so that storing it as an object-literal property's value is checked
+    /// as storing the read would be (`stored_value`).
+    pub(crate) fn bound_value<R>(
+        &mut self,
+        v: &ast::Expr,
+        name: &str,
+        check: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let mut reads = vec![];
+        stored_reads(v, &mut reads);
+        reads.retain(|r| matches!(r.kind, ast::ExprKind::Member { .. }));
+        let outer = self.bound_read.take();
+        let h = self.with_stored_reads(&reads, true, check);
+        if let Some(r) = std::mem::replace(&mut self.bound_read, outer) {
+            if let Some(l) = self.declared_local(name) {
+                self.method_locals.insert(l, r);
+            }
+        }
+        h
+    }
+
+    /// Variable `id` stored as an object-literal property's value (`{ m: f }`, `{ m }`): when it
+    /// holds an interface's method (`bound_value`), the read is checked as if it were stored.
+    pub(super) fn stored_local(&mut self, id: &ast::Ident) {
+        let held = self.declared_local(&id.name);
+        if let Some(r) = held.and_then(|l| self.method_locals.get(&l)).cloned() {
+            let r = crate::iface_method_values::StoredRead { span: id.span, ..r };
+            self.cx.object_impls.method_values.reads.push(r);
+        }
+    }
+
+    /// `check`, with the member reads `reads` known as stored (`stored_props`).
+    fn with_stored_reads<R>(
+        &mut self,
+        reads: &[&ast::Expr],
+        bound: bool,
+        check: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let n = self.stored_props.len();
+        self.stored_props
+            .extend(reads.iter().map(|r| (r.span, bound)));
         let h = check(self);
-        self.stored_prop = saved;
+        self.stored_props.truncate(n);
         h
     }
 
     /// For `member`: is `object.prop` (the property read at `span`, `object` checked to type
     /// `t`) the value of an object-literal property (`stored_value`), and a method whose body
-    /// may use `this`? Reported.
+    /// may use `this`? Reported. A variable's value (`bound_value`) is checked for an
+    /// interface's method only.
     pub(super) fn stored_method_read(
         &mut self,
         object: &ast::Expr,
@@ -220,16 +273,21 @@ impl FnCx<'_, '_> {
         t: TyId,
         span: Span,
     ) -> bool {
+        let Some(at) = self.stored_props.iter().rposition(|(s, _)| *s == span) else {
+            return false;
+        };
+        let bound = self.stored_props[at].1;
+        let iface = matches!(self.cx.ty.kind(t), TyKind::Dyn(..)) && self.cx.dynamic(t).is_none();
         // A literal's own method using `this` is reported where it is read
         // (`detached_literal_method`).
-        if self.stored_prop != Some(span)
+        if (bound && !iface)
             || self.cx.ty.has_error(t)
             || self.own_literal_iface(t)
             || !self.method_of_reads_this(t, prop)
         {
             return false;
         }
-        self.stored_prop = None;
+        self.stored_props.remove(at);
         let text = super::method_value::path_text(object).map(|o| format!("{o}.{}", prop.name));
         let what = match &text {
             Some(text) => format!("`{text}`"),
@@ -237,19 +295,19 @@ impl FnCx<'_, '_> {
         };
         // An interface's method: whether one of its implementations reads `this` is known once
         // every body is checked (`crate::iface_method_values`).
-        if let TyKind::Dyn(d, _) = *self.cx.ty.kind(t) {
-            if self.cx.dynamic(t).is_none() {
-                self.cx.object_impls.method_values.reads.push(
-                    crate::iface_method_values::StoredRead {
-                        iface: d,
-                        name: prop.name.clone(),
-                        what,
-                        read: text,
-                        span,
-                    },
-                );
-                return false;
+        if let (true, &TyKind::Dyn(d, _)) = (iface, self.cx.ty.kind(t)) {
+            let r = crate::iface_method_values::StoredRead {
+                iface: d,
+                name: prop.name.clone(),
+                what,
+                read: text,
+                span,
+            };
+            match bound {
+                true => self.bound_read = Some(r),
+                false => self.cx.object_impls.method_values.reads.push(r),
             }
+            return false;
         }
         self.report_stored_method(what, text, span);
         true
@@ -275,4 +333,22 @@ pub(crate) fn stored_method_error(what: &str, read: Option<&str>, span: Span) ->
     )
     .with_note("TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from")
     .with_note(fix)
+}
+
+/// The member reads (`o.m`, not `o?.m`) and variables whose value is `v`'s: `v` itself, or one
+/// inside a wrapper that keeps the value: parentheses, `as`, `!`, and each arm of `?:`.
+fn stored_reads<'a>(v: &'a ast::Expr, out: &mut Vec<&'a ast::Expr>) {
+    match &v.kind {
+        ast::ExprKind::Paren(x) | ast::ExprKind::NonNull(x) => stored_reads(x, out),
+        ast::ExprKind::Cast { expr, .. } => stored_reads(expr, out),
+        ast::ExprKind::Cond { then, els, .. } => {
+            stored_reads(then, out);
+            stored_reads(els, out);
+        }
+        ast::ExprKind::Member {
+            optional: false, ..
+        }
+        | ast::ExprKind::Ident(_) => out.push(v),
+        _ => {}
+    }
 }

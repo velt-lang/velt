@@ -300,7 +300,10 @@ impl FnCx<'_, '_> {
                     }
                     let (h, this) = match v {
                         Some(v) => self.slot_fn(v, exp, (iface, slot), dyn_ty),
-                        None => (self.slot_shorthand(&key, exp, (iface, slot)), false),
+                        None => {
+                            self.stored_local(&key);
+                            (self.slot_shorthand(&key, exp, (iface, slot)), false)
+                        }
                     };
                     let h = self.overload_impl_results(&methods, &m.name, (h, v), key.span);
                     let h = self.fit_fn(h, m, this.then_some(dyn_ty));
