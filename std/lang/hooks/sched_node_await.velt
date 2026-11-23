@@ -114,7 +114,9 @@ export function ownSide(n: usize): bool {
     // One worker, but the owner may be a thread that isn't one (sched_foreign.velt `start`).
     return e !== 0;
   }
-  return e !== 0 && m.ld(e + t.E_CURRENT) === m.ld(n + nd.N_TASK);
+  const nt = m.ld(n + nd.N_TASK);
+  // Task 0: finished, it let go of its task (sched_node_done.velt): no finish left to race.
+  return nt === 0 || (e !== 0 && m.ld(e + t.E_CURRENT) === nt);
 }
 
 /**
