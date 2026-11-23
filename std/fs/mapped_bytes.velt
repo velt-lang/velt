@@ -170,6 +170,10 @@ export class MappedBytes {
         ss + count,
       ) as number;
     }
+    if (typeIs<T[], u8[]>()) {
+      // Bytes already: `u8[].copy` writes them, with no view of the target's memory to make.
+      return this.bytes.copy(asType<u8[]>(target), ts, ss, ss + count) as number;
+    }
     // SAFETY: the address and length are `target`'s own memory, which nothing grows or drops
     // while this view of it is in use; the copy writes only `ts..ts + count` of it, inside its
     // `room` bytes, and any bytes are values of a number type.
