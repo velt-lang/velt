@@ -1,0 +1,56 @@
+readFile !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\nope.txt'
+readFile .. !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\y\nope.txt'
+readFile absolute / !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\nope.txt'
+readFile verbatim !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\nope.txt'
+writeFile !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\no\x.txt'
+writeFile dir !! EISDIR EISDIR: illegal operation on a directory, open '<cwd>\velt_fs_win_node_paths_tmp\sub'
+appendFile !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\no\x.txt'
+stat !! ENOENT ENOENT: no such file or directory, stat '<cwd>\velt_fs_win_node_paths_tmp\nope'
+lstat !! ENOENT ENOENT: no such file or directory, lstat '<cwd>\velt_fs_win_node_paths_tmp\nope'
+mkdir !! EEXIST EEXIST: file already exists, mkdir '<cwd>\velt_fs_win_node_paths_tmp\sub'
+mkdir recursive !! ENOTDIR ENOTDIR: not a directory, mkdir '<cwd>\velt_fs_win_node_paths_tmp\a.txt\x\y'
+mkdir empty !! ENOENT ENOENT: no such file or directory, mkdir ''
+readdir !! ENOENT ENOENT: no such file or directory, scandir '<cwd>\velt_fs_win_node_paths_tmp\nope'
+readdir file !! ENOTDIR ENOTDIR: not a directory, scandir '<cwd>\velt_fs_win_node_paths_tmp\a.txt'
+rename !! ENOENT ENOENT: no such file or directory, rename '<cwd>\velt_fs_win_node_paths_tmp\nope' -> '<cwd>\velt_fs_win_node_paths_tmp\x'
+copyFile !! ENOENT ENOENT: no such file or directory, copyfile '<cwd>\velt_fs_win_node_paths_tmp\nope' -> '<cwd>\velt_fs_win_node_paths_tmp\x'
+copyFile excl !! EEXIST EEXIST: file already exists, copyfile '<cwd>\velt_fs_win_node_paths_tmp\a.txt' -> '<cwd>\velt_fs_win_node_paths_tmp\b.txt'
+symlink !! EEXIST EEXIST: file already exists, symlink 'sub\a.txt' -> '<cwd>\velt_fs_win_node_paths_tmp\b.txt'
+symlink absolute !! EEXIST EEXIST: file already exists, symlink '<cwd>\velt_fs_win_node_paths_tmp\a.txt' -> '<cwd>\velt_fs_win_node_paths_tmp\b.txt'
+readlink !! EINVAL EINVAL: invalid argument, readlink '<cwd>\velt_fs_win_node_paths_tmp\a.txt'
+readlink missing !! ENOENT ENOENT: no such file or directory, readlink '<cwd>\velt_fs_win_node_paths_tmp\nope'
+rm !! ENOENT ENOENT: no such file or directory, lstat '<cwd>\velt_fs_win_node_paths_tmp\nope'
+exists a.txt. -> false
+exists a.txt space -> false
+exists sub. -> false
+readFile a.txt. !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\a.txt.'
+stat a.txt.. !! ENOENT ENOENT: no such file or directory, stat '<cwd>\velt_fs_win_node_paths_tmp\a.txt..'
+readdir sub. !! ENOENT ENOENT: no such file or directory, scandir '<cwd>\velt_fs_win_node_paths_tmp\sub.'
+copyFile a.txt. !! ENOENT ENOENT: no such file or directory, copyfile '<cwd>\velt_fs_win_node_paths_tmp\a.txt.' -> '<cwd>\velt_fs_win_node_paths_tmp\c.txt'
+writeFile e. -> a.txt,b.txt,e.,sub
+readFile e. -> E
+exists e -> false
+rename e. f. -> a.txt,b.txt,f.,sub
+copyFile f. g. -> a.txt,b.txt,f.,g.,sub
+mkdir h. -> x
+realpath f. -> <cwd>\velt_fs_win_node_paths_tmp\f.
+rm f. g. h. -> a.txt,b.txt,sub
+exists NUL -> false
+exists nul relative -> false
+exists CON -> false
+exists aux.txt -> false
+readFile NUL !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\NUL'
+stat NUL !! ENOENT ENOENT: no such file or directory, stat '<cwd>\velt_fs_win_node_paths_tmp\NUL'
+readFile device -> []
+writeFile NUL -> NUL,a.txt,b.txt,sub
+readFile NUL again -> n
+writeFile com1.txt -> NUL,a.txt,b.txt,com1.txt,sub
+rm NUL com1.txt -> a.txt,b.txt,sub
+async readdir sub. !! ENOENT ENOENT: no such file or directory, scandir '<cwd>\velt_fs_win_node_paths_tmp\sub.'
+async copyFile !! ENOENT ENOENT: no such file or directory, copyfile '<cwd>\velt_fs_win_node_paths_tmp\nope' -> '<cwd>\velt_fs_win_node_paths_tmp\x'
+openRead a.txt -> A
+openRead a.txt. !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\a.txt.'
+openRead nope !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\nope'
+openRead NUL !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\NUL'
+openWrite w. -> a.txt,b.txt,sub,w. W
+after chdir !! ENOENT ENOENT: no such file or directory, open '<cwd>\velt_fs_win_node_paths_tmp\sub\nope'
