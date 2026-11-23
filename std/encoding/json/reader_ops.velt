@@ -27,7 +27,7 @@ import {
   rowsSkipUnknown,
   rowsValue,
   ROWS_MARK,
-} from "velt/encoding/json/rows_ops";
+} from "velt/encoding/json/rows_side";
 import {
   readerDepthLeft,
   readerDetail,

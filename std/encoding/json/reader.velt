@@ -6,9 +6,9 @@
 // `nextKey` / `arrayNext`: the reader only needs to know whether the last token it consumed
 // was an opening bracket.
 //
-// A driver's rows (std/db) are read by a `RowsReader` (rows_reader.velt): such a reader starts
-// out failed (`ROWS`), so every method takes its failure branch, which forwards to the rows
-// reader; reading text pays nothing for it.
+// A driver's rows (std/db) are read through a rows side (rows_side.velt), which only `overCursor`
+// makes: such a reader starts out failed (`ROWS`), so every method takes its failure branch,
+// which forwards to it; reading text pays nothing for it, nor compiles the rows reader.
 //
 // Port of the runtime's json/reader.rs and error.rs (#1668), with the same results and
 // messages.
@@ -33,19 +33,20 @@ import {
   readerValueStart,
   readerWalk,
 } from "velt/encoding/json/reader_steps";
-import { RowsReader } from "velt/encoding/json/rows_reader";
+import { RowsOps } from "velt/encoding/json/rows_ops";
 import {
   rowsArrayNext,
   rowsF64,
   rowsMark,
   rowsNestedKey,
   rowsNextKey,
+  RowsSide,
   rowsNull,
   rowsOpen,
   rowsPeek,
   rowsSkip,
   rowsString,
-} from "velt/encoding/json/rows_ops";
+} from "velt/encoding/json/rows_side";
 
 /** `peek` results. */
 export const TOKEN_EOF: u32 = 0;
@@ -101,8 +102,8 @@ export class Reader extends Scanner {
   depth: usize = 0;
   /** Where each array or object `skipLookahead` walked ends, by the offset of its bracket. */
   ends: Map<usize, usize> | null = null;
-  /** The rows reader, when reading a driver's rows. */
-  rows: RowsReader | null = null;
+  /** The rows side, when reading a driver's rows (made only by `overCursor`). */
+  rows: RowsSide | null = null;
   /** Reading a driver's rows, whether this reads a nested value's JSON text now (rows_ops.velt). */
   rowsNested: bool = false;
   /** The last number read. */
@@ -148,7 +149,7 @@ export class Reader extends Scanner {
    */
   static overCursor(cursor: u64, flags: u32, maxDepth: u32): Reader {
     const r = new Reader("", flags, maxDepth);
-    r.rows = new RowsReader(cursor, flags);
+    r.rows = new RowsOps(cursor, flags);
     r.failed = ROWS;
     return r;
   }
