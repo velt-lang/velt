@@ -1,0 +1,117 @@
+// velt/ffi (internal): where the calling thread's `errno` is with wasi-libc (wasm32-wasip1), and
+// how std reads it (`#errno-location`, errno.velt). wasi-libc's own `__errno_location()`
+// (libc-bottom-half) returns `&errno`, a `_Thread_local int`. Its values are WASI's
+// `__WASI_ERRNO_*` numbers (`ENOENT` is 44), which `fromCErrno` maps to the Linux number of the
+// same name: every reader of `errno()` (`lastOsError()` after `keepOsError()`, std/fs/errors.velt's
+// `osError`) sees Linux's numbering under WASI, as on Linux.
+
+import { Ptr } from "velt/ffi/ptr";
+
+declare c("c") function __errno_location(): Ptr<i32>;
+
+/** The address of the calling thread's `errno`. */
+export function errnoLocation(): Ptr<i32> | null {
+  // SAFETY: `__errno_location` takes nothing and returns the address of this thread's `errno`.
+  return unsafe { __errno_location() };
+}
+
+// The Linux errno of each WASI errno, at its index (wasi-libc's <errno.h>, WASI preview 1's
+// `errno` enum, 0 to 76). `ENOTCAPABLE` (76), which Linux has no name for, is `EACCES`: a path
+// the host did not grant.
+const LINUX_OF_WASI: readonly i32[] = [
+  0, // 0 ESUCCESS
+  7, // 1 E2BIG
+  13, // 2 EACCES
+  98, // 3 EADDRINUSE
+  99, // 4 EADDRNOTAVAIL
+  97, // 5 EAFNOSUPPORT
+  11, // 6 EAGAIN
+  114, // 7 EALREADY
+  9, // 8 EBADF
+  74, // 9 EBADMSG
+  16, // 10 EBUSY
+  125, // 11 ECANCELED
+  10, // 12 ECHILD
+  103, // 13 ECONNABORTED
+  111, // 14 ECONNREFUSED
+  104, // 15 ECONNRESET
+  35, // 16 EDEADLK
+  89, // 17 EDESTADDRREQ
+  33, // 18 EDOM
+  122, // 19 EDQUOT
+  17, // 20 EEXIST
+  14, // 21 EFAULT
+  27, // 22 EFBIG
+  113, // 23 EHOSTUNREACH
+  43, // 24 EIDRM
+  84, // 25 EILSEQ
+  115, // 26 EINPROGRESS
+  4, // 27 EINTR
+  22, // 28 EINVAL
+  5, // 29 EIO
+  106, // 30 EISCONN
+  21, // 31 EISDIR
+  40, // 32 ELOOP
+  24, // 33 EMFILE
+  31, // 34 EMLINK
+  90, // 35 EMSGSIZE
+  72, // 36 EMULTIHOP
+  36, // 37 ENAMETOOLONG
+  100, // 38 ENETDOWN
+  102, // 39 ENETRESET
+  101, // 40 ENETUNREACH
+  23, // 41 ENFILE
+  105, // 42 ENOBUFS
+  19, // 43 ENODEV
+  2, // 44 ENOENT
+  8, // 45 ENOEXEC
+  37, // 46 ENOLCK
+  67, // 47 ENOLINK
+  12, // 48 ENOMEM
+  42, // 49 ENOMSG
+  92, // 50 ENOPROTOOPT
+  28, // 51 ENOSPC
+  38, // 52 ENOSYS
+  107, // 53 ENOTCONN
+  20, // 54 ENOTDIR
+  39, // 55 ENOTEMPTY
+  131, // 56 ENOTRECOVERABLE
+  88, // 57 ENOTSOCK
+  95, // 58 ENOTSUP
+  25, // 59 ENOTTY
+  6, // 60 ENXIO
+  75, // 61 EOVERFLOW
+  130, // 62 EOWNERDEAD
+  1, // 63 EPERM
+  32, // 64 EPIPE
+  71, // 65 EPROTO
+  93, // 66 EPROTONOSUPPORT
+  91, // 67 EPROTOTYPE
+  34, // 68 ERANGE
+  30, // 69 EROFS
+  29, // 70 ESPIPE
+  3, // 71 ESRCH
+  116, // 72 ESTALE
+  110, // 73 ETIMEDOUT
+  26, // 74 ETXTBSY
+  18, // 75 EXDEV
+  13, // 76 ENOTCAPABLE
+];
+
+/** The Linux number of the WASI errno `e`; -1 (libuv's "UNKNOWN") for a number WASI has not. */
+export function fromCErrno(e: i32): i32 {
+  return e >= 0 && (e as usize) < LINUX_OF_WASI.length ? LINUX_OF_WASI[e as usize] : -1;
+}
+
+/**
+ * The WASI number of the Linux errno `e` (`EACCES` is WASI's `EACCES`, not `ENOTCAPABLE`); a
+ * number WASI has no name for is stored as it is.
+ */
+export function toCErrno(e: i32): i32 {
+  for (let i: usize = 0; i < LINUX_OF_WASI.length; i++) {
+    if (LINUX_OF_WASI[i] == e) {
+      return i as i32;
+    }
+  }
+  return e;
+}

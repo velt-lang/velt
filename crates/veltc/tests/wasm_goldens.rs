@@ -243,16 +243,23 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// `crypto`, `crypto_random_int` and `uuid` (the OS's random bytes are WASI's too,
 /// std/lang/random/os_wasi.velt), `clock_reads` (the clocks are WASI's too),
 /// `fs_mapped_file_portable` and `fs_mapped_counted_portable` (a `MappedFile` is memory of its
-/// own there), and two ephemeron caches, whose trials call between std's weak core and the
+/// own there), `fs_rename_copy`, `fs_links_errors`, `fs_symlinks` and `fs_copy_mode` (renaming,
+/// copying with Node's modes, and links are wasi-libc's calls, std/fs/paths/wasi.velt, with
+/// Node's errors from WASI's errno numbers; the links not on Windows hosts,
+/// [`WASI_STD_NOT_ON_WINDOWS_HOSTS`]), and two ephemeron caches, whose trials call between std's weak core and the
 /// compiler's glue.
 const WASI_STD: &[&str] = &[
     "bytes_search",
     "clock_reads",
     "crypto",
     "crypto_random_int",
+    "fs_copy_mode",
+    "fs_links_errors",
     "fs_mapped_counted_portable",
     "fs_mapped_file_getters",
     "fs_mapped_file_portable",
+    "fs_rename_copy",
+    "fs_symlinks",
     "half_dot",
     "half_dot_bf16_lengths",
     "half_dot_bf16_lengths_short",
@@ -297,6 +304,14 @@ const WASI_STD: &[&str] = &[
     "weakmap_nested",
 ];
 
+/// The ones of [`WASI_STD`] left out where the host is Windows: wasmtime's `path_symlink` there
+/// picks a file or a directory link by reading the target's metadata relative to the preopened
+/// directory instead of the link's directory, so a relative target next to the link
+/// (`symlink("a.txt", "dir/link")`) and a dangling one are `ENOENT`, and a target that happens
+/// to exist at the preopen's root is linked as given. std passes the target as it is; Windows'
+/// native goldens run both.
+const WASI_STD_NOT_ON_WINDOWS_HOSTS: &[&str] = &["fs_links_errors", "fs_symlinks"];
+
 /// The files of shard `shard`: every `SHARDS`-th one of the sorted list, so each shard gets a
 /// mix of directories and about the same number of files.
 fn shard_of(files: &[PathBuf], shard: usize) -> Vec<PathBuf> {
@@ -317,7 +332,12 @@ fn wasi_shard(shard: usize) {
     let root = root();
     build_runtime(&root, "wasm32-wasip1");
     let mut files = programs(&root, WASI_DIRS, UNSUPPORTED, None);
-    files.extend(programs(&root, &["std"], &[], Some(WASI_STD)));
+    let host_skip: &[&str] = if cfg!(windows) {
+        WASI_STD_NOT_ON_WINDOWS_HOSTS
+    } else {
+        &[]
+    };
+    files.extend(programs(&root, &["std"], host_skip, Some(WASI_STD)));
     files.sort();
     let files = shard_of(&files, shard);
     // A directory of this process's own: shards run at the same time, and a path that a

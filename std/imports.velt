@@ -30,6 +30,7 @@ export const imports: Imports = {
     darwin: "./ffi/errno_darwin.velt",
     linux: "./ffi/errno_linux.velt",
     win32: "./ffi/errno_windows.velt",
+    wasi: "./ffi/errno_wasi.velt",
     default: "./ffi/errno_none.velt",
   },
   // How a Velt panic under `catchUnwind` is raised and taken (docs/internals/design/unwinding.md):
@@ -248,12 +249,14 @@ export const imports: Imports = {
   // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
   // library's directory functions (`#fd-system`), or Win32's on Windows.
   "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },
-  // Renaming, linking and copying (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`) in a
-  // native build: the C library's on macOS and Linux (each with its own data copy), Win32's on
-  // Windows.
+  // Renaming, linking and copying (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`): the
+  // C library's on macOS and Linux (each with its own data copy), Win32's on Windows,
+  // wasi-libc's under WASI, and none under a JS host (each fails with `ENOTSUP`).
   "#fs-paths": {
     win32: "./fs/paths/win32.velt",
     darwin: "./fs/paths/darwin.velt",
+    wasi: "./fs/paths/wasi.velt",
+    js: "./fs/paths/js.velt",
     default: "./fs/paths/linux.velt",
   },
   // `fs.constants`: Node's keys and values on each OS (std/fs/constants/), Linux's for any other

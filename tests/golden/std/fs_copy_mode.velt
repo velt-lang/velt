@@ -94,13 +94,14 @@ async function main() {
   // then, is removed, on Windows nothing is touched. On Linux the clone, or its errno where the
   // file system has none (the destination removed). On Linux a copy that fell back to plain
   // copying would also read as the clone here: the macOS and Windows runs are what catch that.
+  // Under WASI, which has no clone, ENOSYS before the destination is opened, as on Windows.
   let asNode = false;
   try {
     copyFileSync(a, b, constants.COPYFILE_FICLONE_FORCE);
     asNode = platform() == "linux" && content(b) == '"alpha"';
   } catch (e) {
     const os = platform();
-    if (os == "win32") {
+    if (os == "win32" || os == "wasi") {
       asNode = e.code == "ENOSYS" && content(b) == '"old"';
     } else if (os == "darwin") {
       asNode = e.code == "ENOSYS" && !existsSync(b);
