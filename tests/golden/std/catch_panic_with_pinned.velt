@@ -1,11 +1,12 @@
-// check: unfreed blocks at most 1
+// check: no leaks
 // check: also with VELT_THREADS=4
+// requires: unix
 // `catchPanic` (#2008) in a task pinned to worker 1: a panic inside a `Mutex.with` callback that
 // may reach a function's properties, before it reaches any, so the callback holds the module
 // lock for itself alone (#2196 9c). The catch gives that hold back, so the tasks on the other
 // workers, which then update module state and a function's properties, go on. The program's
-// `Mutex` stays locked, as documented; nothing here uses it again. On Windows a caught panic
-// leaks what the abandoned frames held (lang/catch_panic_drops_state.velt): one block here.
+// `Mutex` stays locked, as documented; nothing here uses it again. Unix only: on Windows a caught
+// panic leaks what the abandoned frames held (lang/catch_panic_drops_state.velt).
 import { catchPanic, PanicError, workerCount } from "velt/task";
 
 function decl(): number {
@@ -17,10 +18,8 @@ let counter = 0;
 async function body(m: shared<Mutex<number>>): Promise<string> {
   await yieldNow();
   m.with((v) => {
-    if (v === 0) {
-      panic("before any property");
-    }
-    const x = v + 1;
+    const e: number[] = [];
+    const x = v + e[3]!;
     const d: any = decl;
     d.x = x;
     return x;
