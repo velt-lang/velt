@@ -18,6 +18,12 @@
 // guarantees the feature (`--cpu`, or inside gated code) and otherwise the CPU's answer, read once
 // at start-up; false on another architecture, on WebAssembly and in debug (Cranelift) builds.
 
+// The methods of the 128-bit parts a `Vector256` is built from and taken apart into (std's own
+// users import vector256.velt, which reads none of velt/simd).
+import "velt/simd/bytes";
+import "velt/simd/floats";
+import "velt/simd/words";
+
 /** The x86 AES round instructions (AES-NI), with the PCLMULQDQ every such CPU has: what AES-GCM needs (`aes-x86`). */
 export { Aes } from "velt/arch/x86/aes";
 /** AVX, with its register state saved by the operating system (`avx-x86`). */
