@@ -206,6 +206,7 @@ fn checks(cx: &Ctx) -> Checked {
             is_slot: false,
             c_const: None,
             c_global: None,
+            weak: false,
         })));
     let last = deep.defs.len() - 1;
     let (bytes, _) = encode_unit_sized(&deep);

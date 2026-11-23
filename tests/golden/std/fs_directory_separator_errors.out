@@ -1,0 +1,3 @@
+true EISDIR EISDIR: illegal operation on a directory, read
+true EISDIR EISDIR: illegal operation on a directory, open 'velt_fs_directory_separator_tmp/'
+true EISDIR EISDIR: illegal operation on a directory, mmap 'velt_fs_directory_separator_tmp/'

@@ -8,6 +8,7 @@
 //! cargo xtask repeat                 run the changed test files many times at once (flakiness)
 //! cargo xtask install-hooks          a pre-push hook that runs `precheck`
 //! cargo xtask pr-lint                check a pull request's text and commits
+//! cargo xtask gen-arch               rewrite velt/arch's instructions from velt_vir's table
 //! ```
 //!
 //! Run `cargo xtask help` for every option.
@@ -66,6 +67,9 @@ Commands:
   pr-lint     Check a pull request's title, description and commits for tool footers and
               trailers, session links, machine paths, review wording and the commit author
               (`cargo xtask pr-lint --help` for its options)
+  gen-arch    Rewrite what velt_vir's instruction table generates (crates/velt_vir/src/arch):
+              velt/arch's methods in std/arch/x86 and std/arch/arm and
+              docs/internals/arch-c-names.md (velt_vir's tests fail while they are stale)
 
 Options:
   --full               Check everything (the merge queue and nightly run this)
@@ -232,6 +236,22 @@ fn run() -> Result<(), String> {
             let graph = Graph::load(&root)?;
             let sel = precheck::select(&graph, &paths, |p| root.join(p).exists());
             precheck::run(&root, &sel, &reason)
+        }
+        "gen-arch" => {
+            // The table's tests compare the files with what it generates; blessed, they rewrite
+            // them (crates/velt_vir/src/arch/tests.rs).
+            let status = std::process::Command::new(
+                std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()),
+            )
+            .args(["test", "-q", "-p", "velt_vir", "--lib", "arch::tests"])
+            .env("VELT_BLESS", "1")
+            .current_dir(&root)
+            .status()
+            .map_err(|e| format!("cargo: {e}"))?;
+            match status.success() {
+                true => Ok(()),
+                false => Err("velt_vir's table tests failed".to_string()),
+            }
         }
         "install-hooks" => {
             println!("{}", hooks::describe(&hooks::install(&root, args.force)?));

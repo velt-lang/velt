@@ -1,0 +1,298 @@
+// velt/text (internal): JavaScript's `replace` and `split` with a regular expression, over the
+// matches of a program (find.velt).
+
+import {
+  arrayTruncate,
+  inline,
+  ptrFromAddress,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strLen,
+} from "velt/lang/intrinsics";
+import { findByte } from "velt/lang/string/byte_scan";
+import { after, find, findAll } from "velt/text/regex/find";
+import { inPair, textOf } from "velt/text/regex/offsets";
+import { Program } from "velt/text/regex/program";
+import {
+  velt_rt_str_byte_slice,
+  velt_rt_strbuf_finish,
+  velt_rt_strbuf_new,
+  velt_rt_strbuf_push_bytes,
+  velt_rt_strbuf_push_str,
+} from "velt/text/regex/rt";
+import { Search } from "velt/text/regex/search";
+
+/** The text of capture group `g` of the match whose slots start at `slots[at]`, `""` when it
+ * did not take part. */
+function group(s: string, slots: i64[], at: usize, g: usize): string {
+  const from = slots[at + 2 * g];
+  return from < 0 ? "" : textOf(s, from as usize, slots[at + 2 * g + 1] as usize);
+}
+
+/** What a part of a replacement is (`parts`): its text, or a capture group's (0: the match),
+ * or the subject before the match, or after it. */
+const TEXT: i64 = -1;
+const BEFORE: i64 = -2;
+const AFTER: i64 = -3;
+
+/** The parts of `replacement`, with `$$ $& $\` $' $n $nn $<name>` read as JavaScript's
+ * `GetSubstitution` reads them, for a pattern whose groups 1.. have the names `names` (`""`:
+ * none): per part, `TEXT` (its text in `texts`) or a group's number or `BEFORE` or `AFTER`
+ * in `kinds`. Read once per call, not once per match. */
+function parts(replacement: string, names: string[], kinds: i64[], texts: string[]): void {
+  const n = strByteLen(replacement);
+  const groups = names.length;
+  const named = names.some((name) => name != "");
+  let from: usize = 0;
+  let i: usize = 0;
+  while (i + 1 < n) {
+    if (strByteAt(replacement, i as u64) != 0x24) {
+      i++;
+      continue;
+    }
+    const c = strByteAt(replacement, (i + 1) as u64);
+    let kind = TEXT;
+    let used: usize = 0;
+    if (c == 0x24) {
+      // `$$`: one `$`, which ends the text before it.
+      kinds.push(TEXT);
+      texts.push(velt_rt_str_byte_slice(replacement, from as u64, (i + 1) as u64));
+      i += 2;
+      from = i;
+      continue;
+    }
+    if (c == 0x26 || c == 0x60 || c == 0x27) {
+      kind = c == 0x26 ? 0 : c == 0x60 ? BEFORE : AFTER;
+      used = 2;
+    } else if (c >= 0x30 && c <= 0x39) {
+      const d1 = (c - 0x30) as usize;
+      let two: usize = 0;
+      if (i + 2 < n) {
+        const c2 = strByteAt(replacement, (i + 2) as u64);
+        two = c2 >= 0x30 && c2 <= 0x39 ? d1 * 10 + ((c2 - 0x30) as usize) : 0;
+      }
+      if (two >= 1 && two <= groups) {
+        kind = two as i64;
+        used = 3;
+      } else if (d1 >= 1 && d1 <= groups) {
+        kind = d1 as i64;
+        used = 2;
+      }
+    } else if (c == 0x3c && named) {
+      const close = findByte(replacement, 0x3e, i + 2, n);
+      if (close >= 0) {
+        const name = velt_rt_str_byte_slice(replacement, (i + 2) as u64, close as u64);
+        // A name no group has stands for nothing.
+        const g = names.indexOf(name) + 1;
+        kind = g > 0 ? g as i64 : TEXT;
+        used = close as usize + 1 - i;
+      }
+    }
+    if (used == 0) {
+      i++;
+      continue;
+    }
+    // The text before it, when there is some.
+    if (i > from) {
+      kinds.push(TEXT);
+      texts.push(velt_rt_str_byte_slice(replacement, from as u64, i as u64));
+    }
+    if (kind != TEXT) {
+      kinds.push(kind);
+      texts.push("");
+    }
+    i += used;
+    from = i;
+  }
+  if (n > from) {
+    kinds.push(TEXT);
+    texts.push(velt_rt_str_byte_slice(replacement, from as u64, n as u64));
+  }
+}
+
+/** The most bytes of a subject appended to a builder where they are. */
+const MAX_PIECE: usize = 1 << 30;
+
+/** The length word of a piece of `n` bytes for `velt_rt_strbuf_push_bytes`: the bytes in the
+ * low half, and in the high half its UTF-16 code units when the subject is ASCII (as many), 0
+ * for the builder to count them. */
+@inline("always")
+function counted(n: u64, ascii: bool): u64 {
+  return ascii ? n | (n << 32) : n;
+}
+
+/** `s` with the first match of `prog` (every match when `all`) replaced by `replacement`,
+ * expanded as `substitution` does. The result is built in one buffer, the text between two
+ * matches copied into it from the subject's own bytes. */
+export function replaceMatches(
+  prog: Program,
+  names: string[],
+  s: string,
+  replacement: string,
+  all: bool,
+): string {
+  const plain = !replacement.includes("$");
+  const stride = plain ? 2 : 2 * (prog.groups as usize) + 2;
+  const m = new Search(stride);
+  const len = strByteLen(s);
+  const ascii = strLen(s) == len;
+  if (all) {
+    findAll(prog, m, s);
+  } else if (find(prog, m, s, 0, false)) {
+    m.found = m.slots;
+  }
+  const found = m.found;
+  if (found.length == 0) {
+    return s.clone();
+  }
+  const kinds: i64[] = [];
+  const texts: string[] = [];
+  if (!plain) {
+    parts(replacement, names, kinds, texts);
+  }
+  // A plain replacement is appended from where its bytes are, as the pieces of the subject are.
+  const textAt = strDataAddress(replacement);
+  const textBytes = strByteLen(replacement);
+  const textSize = counted(textBytes as u64, strLen(replacement) == textBytes);
+  let buf = "";
+  velt_rt_strbuf_new(len as u64, buf);
+  let last: usize = 0;
+  for (let at: usize = 0; at < found.length; at += stride) {
+    const start = found[at] as usize;
+    if (start > last) {
+      const n = (start - last) as u64;
+      // An all-ASCII subject has no pair to be inside of.
+      const split = !ascii && (inPair(s, last, len) || inPair(s, start, len));
+      if (start - last > MAX_PIECE || split) {
+        const piece = textOf(s, last, start);
+        velt_rt_strbuf_push_str(buf, piece);
+      } else {
+        const at = strDataAddress(s) + last;
+        const size = counted(n, ascii);
+        // SAFETY: `last < start <= len` are offsets of `s`, which this call borrows and nothing
+        // changes until it returns; the bytes are only read, by the append below, into `buf`,
+        // which is not `s`, and they are whole characters (`split` above).
+        const bytes = unsafe { ptrFromAddress<u8>(at) };
+        velt_rt_strbuf_push_bytes(buf, bytes, size);
+      }
+    }
+    if (plain && textBytes > MAX_PIECE) {
+      velt_rt_strbuf_push_str(buf, replacement);
+    } else if (plain && textBytes != 0) {
+      // SAFETY: `replacement` is borrowed for the call and not changed; its bytes are whole
+      // characters, only read by the append, into `buf`, which is not `replacement`.
+      const bytes = unsafe { ptrFromAddress<u8>(textAt) };
+      velt_rt_strbuf_push_bytes(buf, bytes, textSize);
+    }
+    for (let k: usize = 0; k < kinds.length; k++) {
+      const kind = kinds[k];
+      if (kind == TEXT) {
+        const text = texts[k];
+        velt_rt_strbuf_push_str(buf, text);
+        continue;
+      }
+      // A range of the subject: a group's (unset: nothing), or before or after the match.
+      let from =
+        kind == BEFORE ? 0 : kind == AFTER ? found[at + 1] : found[at + 2 * (kind as usize)];
+      let to =
+        kind == BEFORE
+          ? found[at]
+          : kind == AFTER ? len as i64 : found[at + 2 * (kind as usize) + 1];
+      if (from < 0 || to <= from) {
+        continue;
+      }
+      const a = from as usize;
+      const b = to as usize;
+      const split = !ascii && (inPair(s, a, len) || inPair(s, b, len));
+      if (b - a > MAX_PIECE || split) {
+        const piece = textOf(s, a, b);
+        velt_rt_strbuf_push_str(buf, piece);
+      } else {
+        const at = strDataAddress(s) + a;
+        const size = counted((b - a) as u64, ascii);
+        // SAFETY: `a < b <= len` are offsets of `s` (a group's or the match's ends, or its
+        // start or end), which this call borrows unchanged; the bytes are only read, by the
+        // append below, into `buf`, which is not `s`, and they are whole characters (`split`).
+        const bytes = unsafe { ptrFromAddress<u8>(at) };
+        velt_rt_strbuf_push_bytes(buf, bytes, size);
+      }
+    }
+    last = found[at + 1] as usize;
+  }
+  const rest = textOf(s, last, len);
+  velt_rt_strbuf_push_str(buf, rest);
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** JavaScript's `s.split(re, limit)`: the pieces between the matches of `prog`, each followed
+ * by the match's groups (`""` for one that did not take part); at most `limit` strings (0: any
+ * number). An empty match where the last piece ended, or at the end, splits nothing. */
+export function splitMatches(prog: Program, s: string, limit: usize): string[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  const len = strByteLen(s);
+  const parts: string[] = [];
+  if (len == 0) {
+    if (!find(prog, m, s, 0, false)) {
+      parts.push("");
+    }
+    return parts;
+  }
+  let last: usize = 0;
+  let pos: usize = 0;
+  while (pos < len && find(prog, m, s, pos, false)) {
+    const start = m.slots[0] as usize;
+    const end = m.slots[1] as usize;
+    if (start >= len) {
+      break;
+    }
+    if (end == last) {
+      pos = after(s, start, prog.units);
+      continue;
+    }
+    parts.push(textOf(s, last, start));
+    for (let g: usize = 1; g <= (prog.groups as usize); g++) {
+      parts.push(group(s, m.slots, 0, g));
+    }
+    if (limit != 0 && parts.length >= limit) {
+      arrayTruncate(parts, limit);
+      return parts;
+    }
+    last = end;
+    // An empty match would be found again from its own place, and not taken: the search goes
+    // on a character further.
+    pos = end > start ? end : after(s, end, prog.units);
+  }
+  parts.push(textOf(s, last, len));
+  return parts;
+}
+
+/** `s` with every character that means something in a pattern escaped with a backslash. */
+export function escapePattern(s: string): string {
+  let out = "";
+  let from: usize = 0;
+  const n = strByteLen(s);
+  for (let i: usize = 0; i < n; i++) {
+    const c = strByteAt(s, i as u64);
+    // JavaScript's syntax characters: the ones an escape stands for with the `u` flag too.
+    const meta =
+      c == 0x24 ||
+      (c >= 0x28 && c <= 0x2b) ||
+      c == 0x2e ||
+      c == 0x3f ||
+      (c >= 0x5b && c <= 0x5e) ||
+      (c >= 0x7b && c <= 0x7d);
+    if (meta) {
+      out += velt_rt_str_byte_slice(s, from as u64, i as u64);
+      out += "\\";
+      from = i;
+    }
+  }
+  if (from == 0 && out == "") {
+    return s.clone();
+  }
+  out += velt_rt_str_byte_slice(s, from as u64, n as u64);
+  return out;
+}

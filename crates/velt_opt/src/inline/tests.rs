@@ -716,3 +716,21 @@ fn a_callee_called_once_is_inlined_whatever_its_cleanup_pads_add() {
 }
 
 mod budget;
+
+#[test]
+fn a_rare_callee_is_inlined_only_where_trivial() {
+    // `@cold` (`Function::rare`): its calls return but are rare, so even one called once stays a
+    // call, unless its body is trivial.
+    let mut pb = ProgramBuilder::new();
+    let mut slow = adder("slow", 20, Linkage::Internal);
+    slow.rare = true;
+    let slow = pb.add(slow);
+    let mut tiny = adder("tiny", 1, Linkage::Internal);
+    tiny.rare = true;
+    let tiny = pb.add(tiny);
+    pb.add(caller(&[slow, tiny], 1));
+    let mut p = pb.finish();
+    inline(&mut p);
+    assert_eq!(calls_to(&p.funcs[2], slow), 1);
+    assert_eq!(calls_to(&p.funcs[2], tiny), 0);
+}

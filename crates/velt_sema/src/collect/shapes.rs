@@ -9,6 +9,7 @@ use crate::ctx::Ctx;
 use crate::defs::{Bound, DefInfo, FieldInfo, VariantInfo};
 use crate::hir::{AdtKind, DefId, TyId, TyKind};
 use crate::resolve::TyEnv;
+use crate::weak_types::WeakPlace;
 
 pub(super) fn resolve_shapes(cx: &mut Ctx, items: &ItemDefs) {
     let mut defs: Vec<DefId> = items.clone();
@@ -99,7 +100,7 @@ pub(super) fn check_finite(cx: &mut Ctx, d: DefId) {
     let start = self_type(cx, d, n);
     if contains_by_value(cx, start, d, &mut vec![], 0) {
         let note: String = match cx.is_c_struct(d) {
-            true => "a C struct can't hold itself: C holds fields by value; a pointer field to it comes in a later layer of #2187".into(),
+            true => "a C struct can't hold itself: C holds fields by value; point at it with a `Ptr<T> | null` field".into(),
             false => "recursive data needs indirection: make it a `class` (heap-allocated) or use an array".into(),
         };
         cx.error(
@@ -226,8 +227,20 @@ pub(crate) fn iface_bound(cx: &mut Ctx, t: &ast::TypeExpr, env: &TyEnv) -> Optio
     }
 }
 
-fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldInfo {
-    let mut ty = cx.resolve_field_type(&f.ty, env);
+fn field_info(
+    cx: &mut Ctx,
+    owner: DefId,
+    f: &ast::Field,
+    env: &TyEnv,
+    place: WeakPlace,
+) -> FieldInfo {
+    let (mut ty, mut weak) = cx.resolve_weak_annotation(&f.ty, env, place, &mut |cx, t, env| {
+        cx.resolve_field_type(t, env)
+    });
+    if weak && f.optional {
+        cx.err("`weak` with `?` is not implemented yet (#3119)", f.ty.span);
+        weak = false;
+    }
     cx.note_written_type(f.name.span, f.ty.span);
     let declared = ty;
     // `a?: T` is `T | undefined` (`a?: T | null` is `T | null | undefined`); `q?: any`: an
@@ -256,6 +269,7 @@ fn field_info(cx: &mut Ctx, owner: DefId, f: &ast::Field, env: &TyEnv) -> FieldI
         default: None,
         default_throws: vec![],
         private_to: f.is_private.then_some(owner),
+        weak,
     }
 }
 
@@ -303,7 +317,7 @@ fn iface_shape(cx: &mut Ctx, d: DefId) {
     let bounds = resolve_bounds(cx, &decl.generics, &env);
     let mut fields = vec![];
     for f in &decl.fields {
-        let fi = field_info(cx, d, f, &env);
+        let fi = field_info(cx, d, f, &env, WeakPlace::Other);
         push_iface_field(cx, &mut fields, fi, &decl.name.name);
     }
     let parents = decl
@@ -329,8 +343,12 @@ fn adt_shape(cx: &mut Ctx, d: DefId) {
     // A declared `struct` is an immutable value (#641): every field is readonly, with or
     // without the modifier.
     let value = kind == AdtKind::Struct && !cx.place_struct(d);
+    let place = match kind {
+        AdtKind::Class => WeakPlace::ClassField,
+        _ => WeakPlace::Other,
+    };
     for f in decl.fields.iter().filter(|f| !f.is_static) {
-        let mut fi = field_info(cx, d, f, &env);
+        let mut fi = field_info(cx, d, f, &env, place);
         // A C struct is a value too: changing one makes a new one (c_struct.rs).
         fi.readonly |= value || decl.c_struct;
         push_field(cx, &mut fields, fi);

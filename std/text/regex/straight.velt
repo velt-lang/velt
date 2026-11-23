@@ -1,0 +1,177 @@
+// velt/text (internal): the groups of a match that is known to be there (the automaton found
+// its ends, dfa.velt), read off in one pass when the program never has to choose: at every
+// split the next character says which way goes on (hints.velt), and no span has to give
+// back. It keeps no stack and counts no steps; where the program does have to choose, it
+// stops, and the groups are the backtracker's work.
+
+import {
+  addressLoad,
+  addressStore,
+  arrayDataAddress,
+  arrayReadAddress,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+import { byteAt, charAt } from "velt/text/regex/decode";
+import { AT_END } from "velt/text/regex/node";
+import {
+  OP_ASSERT,
+  OP_CHAR,
+  OP_CLASS,
+  OP_CLEAR,
+  OP_JUMP,
+  OP_MASK,
+  OP_MATCH,
+  OP_SAVE,
+  OP_SPAN,
+  OP_SPLIT,
+  Program,
+} from "velt/text/regex/program";
+
+/** Fills `slots` with the groups of the match of `prog` in `s` that starts at byte `start`
+ * and ends at `end` (all of them: a group the match does not enter is -1); false, with `slots`
+ * in any state, when the program has to choose. */
+export function straight(prog: Program, s: string, start: usize, end: usize, slots: i64[]): bool {
+  // Every group has its slots, so a save is a store.
+  if (prog.hintAt.length == 0 || slots.length != 2 * (prog.groups as usize) + 2) {
+    return false;
+  }
+  const base = strDataAddress(s);
+  // SAFETY: the program never changes once compiled and this call borrows it; these addresses
+  // are only read through, below.
+  const code = unsafe { arrayReadAddress(prog.code) };
+  // SAFETY: as `code`.
+  const hintAt = unsafe { arrayReadAddress(prog.hintAt) };
+  // SAFETY: as `code`.
+  const hints = unsafe { arrayReadAddress(prog.hints) };
+  // SAFETY: as `code`.
+  const ascii = unsafe { arrayReadAddress(prog.ascii) };
+  const count = slots.length;
+  // A group the match does not enter is unset, whatever an earlier attempt left there.
+  for (let k: usize = 0; k < count; k++) {
+    slots[k] = -1;
+  }
+  // SAFETY: `slots` is borrowed for the call and its length is fixed from here on (nothing
+  // pushes to it); the stores below are inside it.
+  const slotsAt = unsafe { arrayDataAddress(slots) };
+  let pc: usize = 0;
+  let pos = start;
+  while (true) {
+    // SAFETY: an instruction is three `u32`s, and `pc` is one of the program's: it starts at 0
+    // and takes only the successors and targets the compiler wrote.
+    let op = unsafe { addressLoad<u32>(code + 12 * pc) } & OP_MASK;
+    // Saves come in runs between the characters: they are done here, without the switch.
+    while (op == OP_SAVE) {
+      // SAFETY: the second word of instruction `pc` (as `op`'s load).
+      const slot = unsafe { addressLoad<u32>(code + 12 * pc + 4) } as usize;
+      // SAFETY: the third word of instruction `pc`.
+      const then = unsafe { addressLoad<u32>(code + 12 * pc + 8) } as usize;
+      // SAFETY: a save's slot is below `2 * groups + 2`, which `slots` has, as checked above.
+      unsafe {
+        addressStore<i64>(slotsAt + 8 * slot, pos as i64);
+      }
+      pc = then - 1;
+      // SAFETY: `then - 1` is the save's successor, an instruction (as `op`'s load).
+      op = unsafe { addressLoad<u32>(code + 12 * pc) } & OP_MASK;
+    }
+    // SAFETY: the second word of instruction `pc` (as `op`'s load).
+    const a = unsafe { addressLoad<u32>(code + 12 * pc + 4) } as usize;
+    // SAFETY: the third word of instruction `pc`.
+    const b = unsafe { addressLoad<u32>(code + 12 * pc + 8) } as usize;
+    // The two a loop over characters is made of come first; the rest is the switch's.
+    if (op == OP_SPLIT) {
+      // SAFETY: `hintAt` has one entry per instruction (hints.velt), and it is not empty here.
+      const hint = unsafe { addressLoad<u32>(hintAt + 4 * pc) } as usize;
+      const next = pos < end ? byteAt(base, pos) as usize : 0x80;
+      if (hint == 0 || next >= 0x80) {
+        return false;
+      }
+      // SAFETY: `hint` is a hint's number plus one, each hint 128 bytes, and `next < 0x80`.
+      const ways = unsafe { addressLoad<u8>(hints + 128 * (hint - 1) + next) };
+      if (ways == 0 || ways == 3) {
+        return false;
+      }
+      pc = ways == 1 ? a : b;
+      continue;
+    }
+    if (op == OP_CLASS) {
+      const next = pos < end ? byteAt(base, pos) as usize : 0x80;
+      if (next >= 0x80) {
+        return false;
+      }
+      // SAFETY: `ascii` has two `u64`s per set (compiler.velt), `a` is the class's set, and
+      // `next < 0x80` picks one of the two.
+      const word = unsafe { addressLoad<u64>(ascii + 16 * a + 8 * (next >> 6)) };
+      if (((word >> ((next & 63) as u64)) & 1) == 0) {
+        return false;
+      }
+      pos++;
+      pc++;
+      continue;
+    }
+    switch (op) {
+      case OP_CHAR: {
+        // Only ASCII is read here; anything else is the backtracker's.
+        if (pos >= end || byteAt(base, pos) as usize != a) {
+          return false;
+        }
+        pos++;
+        pc = b - 1;
+        break;
+      }
+      case OP_JUMP: {
+        pc = a;
+        break;
+      }
+      case OP_ASSERT: {
+        // `$` (the one assertion of a program the automaton runs): where the subject ends.
+        if (a != (AT_END as usize) || pos != strByteLen(s)) {
+          return false;
+        }
+        pc++;
+        break;
+      }
+      case OP_SPAN: {
+        // A span that might have to give back is a choice.
+        if (b == 0) {
+          return false;
+        }
+        pos = spanEnd(prog, base, pos, end, a);
+        pc++;
+        break;
+      }
+      case OP_CLEAR: {
+        for (let k = a; k < b && k < count; k++) {
+          slots[k] = -1;
+        }
+        pc++;
+        break;
+      }
+      default: {
+        return op == OP_MATCH && pos == end;
+      }
+    }
+  }
+}
+
+/** Where the characters of set `set` of `prog` from byte `pos` on end, at most at `end`. */
+function spanEnd(prog: Program, base: usize, from: usize, end: usize, set: usize): usize {
+  const low = prog.ascii[2 * set];
+  const high = prog.ascii[2 * set + 1];
+  let pos = from;
+  while (pos < end) {
+    const b = byteAt(base, pos);
+    if (b >= 0x80) {
+      const c = charAt(base, pos, prog.units);
+      if (!prog.sets[set].contains(c & 0xffffff)) {
+        break;
+      }
+      pos += (c >> 24) as usize;
+    } else if ((((b < 64 ? low : high) >> ((b & 63) as u64)) & 1) == 0) {
+      break;
+    } else {
+      pos++;
+    }
+  }
+  return pos;
+}

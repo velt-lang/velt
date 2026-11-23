@@ -35,8 +35,7 @@ import {
 } from "velt/encoding/json/tape";
 import { TapeBuilder } from "velt/encoding/json/tape_builder";
 import { TapeError } from "velt/encoding/json/tape_error";
-
-declare function velt_rt_json_node_syntax(src: string, out: string): bool;
+import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
 
 /**
  * Parses `src` (one JSON value, whitespace around it) into a tape, nesting at most `maxDepth`
@@ -144,9 +143,11 @@ export function parseWith(sc: Scanner, maxDepth: u32, whole: boolean): Tape | Ta
     ok = false;
   }
   if (!ok) {
-    let node = "";
-    if (!sc.comments && !sc.trailingCommas && velt_rt_json_node_syntax(sc.src, node)) {
-      return new TapeError(node);
+    if (!sc.comments && !sc.trailingCommas) {
+      const node = nodeSyntaxMessage(sc.src);
+      if (node != null) {
+        return new TapeError(node);
+      }
     }
     if (sc.code == OK) {
       sc.fail(TRAILING);
@@ -282,9 +283,10 @@ function orderMembers(t: TapeBuilder, v: u32, at: usize, n: usize) {
   for (let i: usize = 0; i < n; i++) {
     const k = t.kids[at + i];
     const s = t.text(k);
-    const j = places.get(s);
-    if (j == undefined) {
-      places.set(s, firsts.length);
+    // One lookup (one hash of the key) for a new key and a repeated one alike.
+    const next = firsts.length;
+    const j = places.getOrInsert(s, () => next);
+    if (j == next) {
       firsts.push(k);
     } else {
       firsts[j] = k;

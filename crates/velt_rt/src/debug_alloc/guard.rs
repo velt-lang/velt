@@ -296,13 +296,13 @@ mod tests {
         println!("{v}");
     }
 
-    /// A number read from a freed block and printed.
+    /// A number read from a freed block and formatted (as the runtime's JSON text does).
     unsafe fn freed_number_printed() {
         let p = velt_rt_alloc(16, 8);
         (p as *mut f64).add(1).write(2.5);
         velt_rt_free(p, 16, 8);
         let v = std::ptr::read_volatile((p as *const f64).add(1));
-        crate::io::velt_rt_write_f64(1, v);
+        crate::fmt::push_f64(&mut Vec::new(), v);
     }
 
     /// A string kept (a bitwise copy, no count; `VeltStr` has no `Drop`) after its buffer was

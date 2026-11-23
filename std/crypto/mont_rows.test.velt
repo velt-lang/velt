@@ -1,0 +1,162 @@
+// velt/crypto (tests): the two sets of `Mont`'s limb loops (`#mont-rows`), the one on addresses
+// (mont_rows_raw.velt) and the one on the arrays that JS hosts get (mont_rows_checked.velt),
+// give the same limbs for the same input, at widths of one to seventeen limbs (rows with and
+// without a tail after the four-limb steps) and with limbs that carry at every step; and a
+// square is the product of a number with itself. What the numbers must be is mont.test.velt's.
+import { describe, expect, it } from "velt/test";
+import * as checked from "velt/crypto/mont_rows_checked";
+import * as raw from "velt/crypto/mont_rows_raw";
+
+const WIDTHS: usize[] = [1, 2, 3, 4, 5, 7, 8, 9, 16, 17];
+
+// xorshift64: the same limbs on every run.
+class Limbs {
+  private x: u64 = 0x9e3779b97f4a7c15;
+
+  next(): u64 {
+    let x = this.x;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    this.x = x;
+    return x;
+  }
+
+  // `k` limbs: random, all ones, or all ones but the lowest (`shape` 0, 1, 2).
+  make(k: usize, shape: i32): u64[] {
+    const out: u64[] = [];
+    for (let i: usize = 0; i < k; i++) {
+      out.push(shape == 0 ? this.next() : 0xffffffffffffffff);
+    }
+    if (shape == 2) {
+      out[0] = 1;
+    }
+    return out;
+  }
+}
+
+function zeros(k: usize): u64[] {
+  const out: u64[] = [];
+  for (let i: usize = 0; i < k; i++) {
+    out.push(0);
+  }
+  return out;
+}
+
+function text(a: u64[]): string {
+  return a.map((x) => x.toString(16)).join(" ");
+}
+
+// -n^-1 mod 2^64 for odd n0, as `Mont`'s constructor finds it.
+function negInverse(n0: u64): u64 {
+  let x = n0;
+  for (let i = 0; i < 5; i++) {
+    x = x * (2 - n0 * x);
+  }
+  return 0 - x;
+}
+
+describe("Mont's limb loops, on addresses and on arrays", () => {
+  it("multiply and square alike", () => {
+    const g = new Limbs();
+    for (const k of WIDTHS) {
+      for (let shape: i32 = 0; shape < 3; shape++) {
+        const a = g.make(k, shape);
+        const b = g.make(k, shape == 2 ? 1 : shape);
+        const w1 = g.make(2 * k, 0);
+        const w2 = g.make(2 * k, 0);
+        raw.productWhole(w1, a, b, k);
+        checked.productWhole(w2, a, b, k);
+        expect(text(w1)).toBe(text(w2));
+        const s1 = g.make(2 * k, 0);
+        const s2 = g.make(2 * k, 0);
+        const s3 = zeros(2 * k);
+        raw.squareWhole(s1, a, k);
+        checked.squareWhole(s2, a, k);
+        raw.productWhole(s3, a, a, k);
+        expect(text(s1)).toBe(text(s3));
+        expect(text(s2)).toBe(text(s3));
+      }
+    }
+  });
+
+  it("reduce alike, from the largest product too", () => {
+    const g = new Limbs();
+    for (const k of WIDTHS) {
+      for (let shape: i32 = 0; shape < 3; shape++) {
+        // An odd modulus with its top bit set, and (n - 1)^2 or a random product below n R.
+        const n = g.make(k, shape == 1 ? 1 : 0);
+        n[0] |= 1;
+        n[k - 1] |= 0x8000000000000000;
+        const a = shape == 0 ? g.make(k, 0) : n.slice();
+        if (shape == 0) {
+          a[k - 1] &= 0x7fffffffffffffff;
+        } else {
+          a[0] -= 1;
+        }
+        const w1 = zeros(2 * k);
+        raw.squareWhole(w1, a, k);
+        const w2 = w1.slice();
+        const r1 = g.make(k, 0);
+        const r2 = g.make(k, 0);
+        raw.reduceWhole(r1, w1, n, k, negInverse(n[0]));
+        checked.reduceWhole(r2, w2, n, k, negInverse(n[0]));
+        expect(text(r1)).toBe(text(r2));
+      }
+    }
+  });
+
+  it("take n from a sum once, alike: below n, n itself, above it, and past the top limb", () => {
+    const g = new Limbs();
+    for (const k of WIDTHS) {
+      const n = g.make(k, 0);
+      n[0] |= 1;
+      n[k - 1] |= 0x8000000000000000;
+      for (let shape: i32 = 0; shape < 4; shape++) {
+        // n - 1, n, n + 1 and 2^(64 k) + 5 (below 2n: n has its top bit).
+        const t = shape == 3 ? zeros(k) : n.slice();
+        t.push(shape == 3 ? 1 : 0);
+        t[0] = shape == 3 ? 5 : t[0] + (shape as u64) - 1;
+        const r1 = g.make(k, 0);
+        const r2 = g.make(k, 0);
+        raw.storeBelow(r1, t, n, k);
+        checked.storeBelow(r2, t, n, k);
+        expect(text(r1)).toBe(text(r2));
+        if (shape < 3) {
+          // n - 1 stays; n and n + 1 become 0 and 1.
+          const want = shape == 0 ? t.slice(0, k as i64) : zeros(k);
+          want[0] = shape == 0 ? want[0] : (shape as u64) - 1;
+          expect(text(r1)).toBe(text(want));
+        }
+      }
+      // 2^(64 k) + n - 1: the borrow of the lowest limb runs through every limb above it, each
+      // equal to n's, and leaves all ones.
+      const run = n.slice();
+      run[0] -= 1;
+      run.push(1);
+      const r3 = g.make(k, 0);
+      const r4 = g.make(k, 0);
+      raw.storeBelow(r3, run, n, k);
+      checked.storeBelow(r4, run, n, k);
+      expect(text(r3)).toBe(text(new Limbs().make(k, 1)));
+      expect(text(r4)).toBe(text(r3));
+    }
+  });
+
+  it("pick the same entry of a table, each index and one past the end", () => {
+    const g = new Limbs();
+    for (const k of WIDTHS) {
+      const regs: u64[][] = [];
+      for (let i: i32 = 0; i < 6; i++) {
+        regs.push(g.make(k, 0));
+      }
+      const other = regs.map((r) => r.slice());
+      for (let index: u64 = 0; index <= 4; index++) {
+        raw.pickMasked(regs, 0, 2, 4, index, k);
+        checked.pickMasked(other, 0, 2, 4, index, k);
+        expect(text(regs[0])).toBe(text(other[0]));
+        expect(text(regs[0])).toBe(index < 4 ? text(regs[2 + (index as usize)]) : text(zeros(k)));
+      }
+    }
+  });
+});

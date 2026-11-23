@@ -1,18 +1,17 @@
 // velt/crypto (internal): SHA-256 (FIPS 180-4): the digest, and the portable rounds over `u32`
-// words for CPUs without SHA instructions.
+// words for CPUs without SHA instructions (also debug builds, WebAssembly, and valgrind, which
+// hides SHA-NI). The portable block is written out in full: 64 rounds whose eight working
+// variables change roles instead of moving, the message schedule in 16 rolling locals, the round
+// constants as immediates, and each Σ's three rotations nested so that one copy of the word
+// serves all three (as OpenSSL's x86-64 code does). That is a third fewer instructions than the
+// loop over arrays it replaces.
 
 import { utf8Encode } from "velt/encoding/utf8";
 import { hexEncode } from "velt/encoding/hex";
-import {
-  BLOCK,
-  finalBlocks,
-  keyBlock,
-  loadWords,
-  wordsToBytes,
-  zeroWords,
-} from "velt/crypto/blocks";
-import { sha256Arm, sha256X86 } from "velt/crypto/sha256_simd";
-import { H256, K256 } from "velt/crypto/tables";
+import { inline, noInline } from "velt/lang/intrinsics";
+import { BLOCK, finalBlocks, keyBlock, wordsToBytes } from "velt/crypto/blocks";
+import { blocks256Arm, blocks256X86, sha256Arm, sha256X86 } from "velt/crypto/sha256_simd";
+import { H256 } from "velt/crypto/tables";
 import { Sha256 } from "velt/arch/arm/sha256";
 import { Sha } from "velt/arch/x86/sha";
 
@@ -33,21 +32,45 @@ export function sha256Of(key: u8[], pad: u8, keyed: bool, data: u8[]): u8[] {
     return sha256X86(key, pad, keyed, data);
   }
   const h = H256.slice();
-  const w = zeroWords(64);
   let before: usize = 0;
   if (keyed) {
-    sha256Block(h, w, keyBlock(key, pad), 0);
+    sha256Block(h, keyBlock(key, pad), 0);
     before = BLOCK;
   }
   const full = data.length - data.length % BLOCK;
   for (let off: usize = 0; off < full; off += BLOCK) {
-    sha256Block(h, w, data, off);
+    sha256Block(h, data, off);
   }
   const tail = finalBlocks(data, full, before);
   for (let off: usize = 0; off < tail.length; off += BLOCK) {
-    sha256Block(h, w, tail, off);
+    sha256Block(h, tail, off);
   }
   return wordsToBytes(h);
+}
+
+/**
+ * The `count` 64-byte blocks of `data` from `off` into the state `h` (eight words, A first):
+ * with the CPU's SHA instructions where it has them, else the portable rounds. For a hasher that
+ * keeps its state between pieces (`Sha256`).
+ */
+export function sha256Blocks(h: u32[], data: u8[], off: usize, count: usize) {
+  // The caller keeps to its data; said once so that nothing below reads past it, and loudly,
+  // as in `sha256Block`.
+  // In this form, `off + count * BLOCK` cannot wrap.
+  if (off > data.length || count > (data.length - off) / BLOCK || h.length != 8) {
+    blockFault();
+  }
+  if (Sha256.isSupported()) {
+    blocks256Arm(h, data, off, count);
+    return;
+  }
+  if (Sha.isSupported()) {
+    blocks256X86(h, data, off, count);
+    return;
+  }
+  for (let i: usize = 0; i < count; i++) {
+    sha256Block(h, data, off + i * BLOCK);
+  }
 }
 
 /** Lowercase hex SHA-256 of the UTF-8 bytes of `s`. */
@@ -55,15 +78,82 @@ export function sha256Hex(s: string): string {
   return hexEncode(sha256(utf8Encode(s)));
 }
 
-function sha256Block(h: u32[], w: u32[], data: u8[], off: usize) {
-  loadWords(w, data, off);
-  for (let t: usize = 16; t < 64; t++) {
-    const x = w[t - 15];
-    const y = w[t - 2];
-    const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
-    const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
-    w[t] = w[t - 16] + s0 + w[t - 7] + s1;
+// Out of line: an internal error, never reached. `never`, so that the code after the guard
+// knows the guard was false and its bounds checks go.
+@noInline
+function blockFault(): never {
+  panic("ICE: a SHA-256 block outside its data, or a state not of eight words");
+}
+
+// One round with the roles named by the caller: `d += t1` and `h = t1 + S0(a) + Maj(a, b, c)`;
+// returns [d, h]. Eight calls with the roles moved along make the eight rounds of `sha256Block`'s
+// step, so no variable is copied between rounds.
+@inline("always")
+function round(
+  a: u32,
+  b: u32,
+  c: u32,
+  d: u32,
+  e: u32,
+  f: u32,
+  g: u32,
+  h: u32,
+  kw: u32,
+): [u32, u32] {
+  // Σ1(e) = ror6 ^ ror11 ^ ror25, as ror6(e ^ ror5(e ^ ror14(e))): one copy of e, not three.
+  const s1 = (e ^ (e ^ e.rotateRight(14)).rotateRight(5)).rotateRight(6);
+  const ch = g ^ (e & (f ^ g));
+  const t1 = h + s1 + ch + kw;
+  // Σ0(a) = ror2 ^ ror13 ^ ror22, as ror2(a ^ ror11(a ^ ror9(a))).
+  const s0 = (a ^ (a ^ a.rotateRight(9)).rotateRight(11)).rotateRight(2);
+  const maj = (a & b) | (c & (a | b));
+  return [d + t1, t1 + s0 + maj];
+}
+
+// The big-endian word at `data[i..i + 4]` (the caller checked the range).
+@inline("always")
+function word(data: u8[], i: usize): u32 {
+  return (
+    ((data[i] as u32) << 24) |
+    ((data[i + 1] as u32) << 16) |
+    ((data[i + 2] as u32) << 8) |
+    (data[i + 3] as u32)
+  );
+}
+
+// The message schedule's next word, in the place of `w16` (W[t - 16]), from W[t - 15], W[t - 7]
+// and W[t - 2].
+@inline("always")
+function next(w16: u32, w15: u32, w7: u32, w2: u32): u32 {
+  // σ0 = ror7 ^ ror18 ^ shr3 and σ1 = ror17 ^ ror19 ^ shr10, the rotations nested as in `round`.
+  const s0 = (w15 ^ w15.rotateRight(11)).rotateRight(7) ^ (w15 >>> 3);
+  const s1 = (w2 ^ w2.rotateRight(2)).rotateRight(17) ^ (w2 >>> 10);
+  return w16 + s0 + w7 + s1;
+}
+
+function sha256Block(h: u32[], data: u8[], off: usize) {
+  // Always false (the callers pass whole blocks of their data and an eight-word state): said
+  // once so that the bounds checks below go, and loudly, since a block skipped in silence
+  // would give a wrong digest.
+  if (h.length != 8 || off + BLOCK > data.length) {
+    blockFault();
   }
+  let w0 = word(data, off + 0);
+  let w1 = word(data, off + 4);
+  let w2 = word(data, off + 8);
+  let w3 = word(data, off + 12);
+  let w4 = word(data, off + 16);
+  let w5 = word(data, off + 20);
+  let w6 = word(data, off + 24);
+  let w7 = word(data, off + 28);
+  let w8 = word(data, off + 32);
+  let w9 = word(data, off + 36);
+  let w10 = word(data, off + 40);
+  let w11 = word(data, off + 44);
+  let w12 = word(data, off + 48);
+  let w13 = word(data, off + 52);
+  let w14 = word(data, off + 56);
+  let w15 = word(data, off + 60);
   let a = h[0];
   let b = h[1];
   let c = h[2];
@@ -72,21 +162,118 @@ function sha256Block(h: u32[], w: u32[], data: u8[], off: usize) {
   let f = h[5];
   let g = h[6];
   let hh = h[7];
-  for (let t: usize = 0; t < 64; t++) {
-    const s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
-    const ch = (e & f) ^ (~e & g);
-    const t1 = hh + s1 + ch + K256[t] + w[t];
-    const s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
-    const maj = (a & b) ^ (a & c) ^ (b & c);
-    hh = g;
-    g = f;
-    f = e;
-    e = d + t1;
-    d = c;
-    c = b;
-    b = a;
-    a = t1 + s0 + maj;
-  }
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0x428a2f98 + w0);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0x71374491 + w1);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0xb5c0fbcf + w2);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0xe9b5dba5 + w3);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0x3956c25b + w4);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0x59f111f1 + w5);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0x923f82a4 + w6);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0xab1c5ed5 + w7);
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0xd807aa98 + w8);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0x12835b01 + w9);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0x243185be + w10);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0x550c7dc3 + w11);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0x72be5d74 + w12);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0x80deb1fe + w13);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0x9bdc06a7 + w14);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0xc19bf174 + w15);
+  w0 = next(w0, w1, w9, w14);
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0xe49b69c1 + w0);
+  w1 = next(w1, w2, w10, w15);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0xefbe4786 + w1);
+  w2 = next(w2, w3, w11, w0);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0x0fc19dc6 + w2);
+  w3 = next(w3, w4, w12, w1);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0x240ca1cc + w3);
+  w4 = next(w4, w5, w13, w2);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0x2de92c6f + w4);
+  w5 = next(w5, w6, w14, w3);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0x4a7484aa + w5);
+  w6 = next(w6, w7, w15, w4);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0x5cb0a9dc + w6);
+  w7 = next(w7, w8, w0, w5);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0x76f988da + w7);
+  w8 = next(w8, w9, w1, w6);
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0x983e5152 + w8);
+  w9 = next(w9, w10, w2, w7);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0xa831c66d + w9);
+  w10 = next(w10, w11, w3, w8);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0xb00327c8 + w10);
+  w11 = next(w11, w12, w4, w9);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0xbf597fc7 + w11);
+  w12 = next(w12, w13, w5, w10);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0xc6e00bf3 + w12);
+  w13 = next(w13, w14, w6, w11);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0xd5a79147 + w13);
+  w14 = next(w14, w15, w7, w12);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0x06ca6351 + w14);
+  w15 = next(w15, w0, w8, w13);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0x14292967 + w15);
+  w0 = next(w0, w1, w9, w14);
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0x27b70a85 + w0);
+  w1 = next(w1, w2, w10, w15);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0x2e1b2138 + w1);
+  w2 = next(w2, w3, w11, w0);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0x4d2c6dfc + w2);
+  w3 = next(w3, w4, w12, w1);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0x53380d13 + w3);
+  w4 = next(w4, w5, w13, w2);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0x650a7354 + w4);
+  w5 = next(w5, w6, w14, w3);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0x766a0abb + w5);
+  w6 = next(w6, w7, w15, w4);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0x81c2c92e + w6);
+  w7 = next(w7, w8, w0, w5);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0x92722c85 + w7);
+  w8 = next(w8, w9, w1, w6);
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0xa2bfe8a1 + w8);
+  w9 = next(w9, w10, w2, w7);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0xa81a664b + w9);
+  w10 = next(w10, w11, w3, w8);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0xc24b8b70 + w10);
+  w11 = next(w11, w12, w4, w9);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0xc76c51a3 + w11);
+  w12 = next(w12, w13, w5, w10);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0xd192e819 + w12);
+  w13 = next(w13, w14, w6, w11);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0xd6990624 + w13);
+  w14 = next(w14, w15, w7, w12);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0xf40e3585 + w14);
+  w15 = next(w15, w0, w8, w13);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0x106aa070 + w15);
+  w0 = next(w0, w1, w9, w14);
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0x19a4c116 + w0);
+  w1 = next(w1, w2, w10, w15);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0x1e376c08 + w1);
+  w2 = next(w2, w3, w11, w0);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0x2748774c + w2);
+  w3 = next(w3, w4, w12, w1);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0x34b0bcb5 + w3);
+  w4 = next(w4, w5, w13, w2);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0x391c0cb3 + w4);
+  w5 = next(w5, w6, w14, w3);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0x4ed8aa4a + w5);
+  w6 = next(w6, w7, w15, w4);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0x5b9cca4f + w6);
+  w7 = next(w7, w8, w0, w5);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0x682e6ff3 + w7);
+  w8 = next(w8, w9, w1, w6);
+  [d, hh] = round(a, b, c, d, e, f, g, hh, 0x748f82ee + w8);
+  w9 = next(w9, w10, w2, w7);
+  [c, g] = round(hh, a, b, c, d, e, f, g, 0x78a5636f + w9);
+  w10 = next(w10, w11, w3, w8);
+  [b, f] = round(g, hh, a, b, c, d, e, f, 0x84c87814 + w10);
+  w11 = next(w11, w12, w4, w9);
+  [a, e] = round(f, g, hh, a, b, c, d, e, 0x8cc70208 + w11);
+  w12 = next(w12, w13, w5, w10);
+  [hh, d] = round(e, f, g, hh, a, b, c, d, 0x90befffa + w12);
+  w13 = next(w13, w14, w6, w11);
+  [g, c] = round(d, e, f, g, hh, a, b, c, 0xa4506ceb + w13);
+  w14 = next(w14, w15, w7, w12);
+  [f, b] = round(c, d, e, f, g, hh, a, b, 0xbef9a3f7 + w14);
+  w15 = next(w15, w0, w8, w13);
+  [e, a] = round(b, c, d, e, f, g, hh, a, 0xc67178f2 + w15);
   h[0] = h[0] + a;
   h[1] = h[1] + b;
   h[2] = h[2] + c;

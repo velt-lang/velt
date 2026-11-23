@@ -1,0 +1,236 @@
+// velt/text (tests): white-box tests of the one-pass reader (one_pass.velt) against the
+// backtracker, and of the grams' scans (prefilter.velt, and wide_avx2.velt on a CPU with AVX2)
+// against a plain search, run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { strByteLen } from "velt/lang/intrinsics";
+import { assemble } from "velt/text/regex/assemble";
+import { backtrack, FAILED, MATCHED } from "velt/text/regex/backtrack";
+import { find, findAll, following } from "velt/text/regex/find";
+import { pike, pikeReset } from "velt/text/regex/pike";
+import { onePass, readsInOnePass, UNSURE } from "velt/text/regex/one_pass";
+import { candidate } from "velt/text/regex/prefilter";
+import { Program, SCAN_GRAMS } from "velt/text/regex/program";
+import { listsOf, Search } from "velt/text/regex/search";
+
+function program(source: string, flags: string = ""): Program {
+  const names: string[] = [];
+  return assemble(source, flags, names);
+}
+
+/** What the backtracker finds at byte `at` of `s`: its slots, or [] for none. */
+function bt(prog: Program, s: string, at: usize): i64[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  m.fuel = 1 << 40;
+  return backtrack(prog, m, s, strByteLen(s), at, false) == MATCHED ? m.slots : [];
+}
+
+/** What the one-pass reader says at byte `at` of `s`: its slots, [] for none, or `[-3]`. */
+function op(prog: Program, s: string, at: usize): i64[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  m.fuel = 1 << 40;
+  const found = onePass(prog, m, s, strByteLen(s), at);
+  if (found == UNSURE) {
+    return [UNSURE];
+  }
+  return found == MATCHED ? m.slots : [];
+}
+
+describe("The one-pass reader", () => {
+  it("reads programs whose next character makes every choice", () => {
+    for (const p of [
+      "<[^>]*>",
+      ">.*\\n|\\n",
+      "\\|[^|][^|]*\\|",
+      "(\\w+)=(\\d+);",
+      "(a|b)*c",
+      "x$",
+    ]) {
+      expect(program(p).onePass).toBe(true);
+    }
+    // Ways that start alike, a span that may give back, an assertion, a character past ASCII,
+    // a loop that can match nothing.
+    for (const p of ["a|ab", "a*a", "\\bx", "é", "(é)x+", "(a*)*b", "x\\b"]) {
+      expect(program(p).onePass).toBe(false);
+    }
+    expect(readsInOnePass(program("[a-z]+@[a-z]+"))).toBe(true);
+  });
+
+  it("finds what the backtracker finds, from every place", () => {
+    const patterns = [
+      "<[^>]*>",
+      ">.*\\n|\\n",
+      "\\|[^|][^|]*\\|",
+      "(\\w+)=(\\d+);",
+      "(a|b)*c",
+      "x$",
+      "(?:ab|c)d+e",
+      "[a-z]+@[a-z]+\\.com",
+      "(k)(e)y\\d",
+      "(ab|ac)x+",
+    ];
+    const subjects = [
+      "a<2>b<>c<3 <4>>",
+      ">head\nACGT\n>x\n\nT",
+      "|a|b||c|xyz|",
+      "key1=22; k=x; z9=7;",
+      "abababc aac bc c",
+      "xxax x",
+      "abdde cdx cdde abd",
+      "me@ab.com x@y.co a@b.comm",
+      "key1 kex2 key keyz key9",
+      "é<é>|é|",
+      "acxx abx ax acx",
+    ];
+    for (const p of patterns) {
+      const prog = program(p);
+      expect(prog.onePass).toBe(true);
+      for (const s of subjects) {
+        for (let at: usize = 0; at <= strByteLen(s); at++) {
+          const read = op(prog, s, at);
+          if (read.length != 1 || read[0] != UNSURE) {
+            expect(read).toEqual(bt(prog, s, at));
+          }
+        }
+      }
+    }
+  });
+
+  it("gives up when its fuel is spent, as the backtracker does", () => {
+    const prog = program("a[^x]*y");
+    const s = "a".repeat(200);
+    const m = new Search(2);
+    m.fuel = 50;
+    expect(onePass(prog, m, s, strByteLen(s), 0)).toBe(-1);
+    m.fuel = 1000;
+    expect(onePass(prog, m, s, strByteLen(s), 0)).toBe(FAILED);
+    // A search that spends it goes on to a matcher whose time is bounded, with the same answer.
+    const all = new Search(2);
+    findAll(prog, all, s + "y");
+    expect(all.found).toEqual([0, 201]);
+  });
+});
+
+/** Every match of `prog` in `s` as `findAll` finds them, by the Pike machine. */
+function allByPike(prog: Program, s: string): i64[] {
+  const len = strByteLen(s);
+  const out: i64[] = [];
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  let pos: usize = 0;
+  while (pos <= len) {
+    pikeReset(prog, listsOf(m), m.slots.length);
+    if (!pike(prog, m, s, len, pos, false)) {
+      break;
+    }
+    for (const v of m.slots) {
+      out.push(v);
+    }
+    pos = following(prog, s, len, m.slots[0] as usize, m.slots[1] as usize);
+  }
+  return out;
+}
+
+describe("Every match by the scan and the reader", () => {
+  it("finds what a loop of searches finds", () => {
+    const subjects = [
+      "a<2>b<>c<3 <4>> " + "x<y>".repeat(80),
+      ">head\nACGT\n>x\n\nT\n".repeat(20),
+      "|a|b||c|xyz|" + "-|qq|".repeat(70),
+      "key1=22; k=x; z9=7;".repeat(20),
+      "é<é>|é|<ü>",
+      "acxx abx ax acx " + "aab acx".repeat(40),
+      // A match after one that captured a group the next does not.
+      "axy",
+      "axbyz",
+    ];
+    const patterns = [
+      "<[^>]*>",
+      ">.*\\n|\\n",
+      "\\|[^|][^|]*\\|",
+      "(\\w+)=(\\d+);",
+      "(ab|ac)x+",
+      "(a)x|y",
+      "(a)x|(b)y|z",
+    ];
+    for (const p of patterns) {
+      const prog = program(p);
+      expect(prog.onePass).toBe(true);
+      for (const s of subjects) {
+        const m = new Search(2 * (prog.groups as usize) + 2);
+        findAll(prog, m, s);
+        expect(m.found).toEqual(allByPike(prog, s));
+      }
+    }
+  });
+});
+
+describe("A case-insensitive pattern with a letter that folds past ASCII", () => {
+  it("finds the letters after it in either case", () => {
+    // `k` is also the Kelvin sign and `s` the long s under `iu`: the literals after them are
+    // not all letters at one offset, which the scan cannot fold.
+    const cases: string[][] = [
+      ["ke", "KE"],
+      ["ke", "kE"],
+      ["ke", "KEX"],
+      ["ke", "Ke"],
+      ["k(e)", "KE"],
+      ["k[e]", "KE"],
+      ["ke|zz", "KE"],
+      ["ke\\d", "KE1"],
+      ["\\bke", "KE"],
+      ["ke$", "KE"],
+      ["ka", "KA"],
+      ["sa", "SA"],
+      ["xke", "XKE"],
+    ];
+    for (const c of cases) {
+      const prog = program(c[0], "iu");
+      const m = new Search(2 * (prog.groups as usize) + 2);
+      expect(find(prog, m, c[1], 0, false)).toBe(true);
+    }
+    const all = new Search(2);
+    findAll(program("key\\d", "iu"), all, "Key9 KEY7 key");
+    expect(all.found).toEqual([0, 4, 5, 9]);
+  });
+});
+
+describe("The grams' scan", () => {
+  it("finds every literal at every offset and length, as a plain search does", () => {
+    // One to four tuples of one to four bytes, folded or not.
+    const cases: string[][] = [
+      ["q", ""],
+      ["q|z", ""],
+      ["ab|cd", ""],
+      ["abc|xyz|klm", ""],
+      ["agggtaaa|tttaccct", ""],
+      ["value\\d", "i"],
+      ["needle|pin", ""],
+    ];
+    for (const c of cases) {
+      const prog = program(c[0], c[1]);
+      expect(prog.scan).toBe(SCAN_GRAMS);
+      const words = c[0].replace("\\d", "").split("|");
+      for (let len: usize = 0; len < 100; len++) {
+        for (const w of words) {
+          if (w.length > len) {
+            continue;
+          }
+          for (let at: usize = 0; at + w.length <= len; at += len < 70 ? 1 : 13) {
+            const head = "-".repeat(at as i64);
+            const s =
+              head +
+              (c[1] == "i" ? w.toUpperCase() : w) +
+              "1" +
+              "-".repeat((len - at - w.length) as i64);
+            const found = candidate(prog, null, s, 0, strByteLen(s));
+            expect(found).toBe(at as i64);
+            const m = new Search(2);
+            expect(find(prog, m, s, 0, false)).toBe(true);
+            expect(m.slots[0]).toBe(at as i64);
+          }
+        }
+        const none = "-".repeat(len as i64);
+        expect(candidate(prog, null, none, 0, strByteLen(none))).toBe(-1);
+      }
+    }
+  });
+});

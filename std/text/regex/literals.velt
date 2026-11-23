@@ -1,0 +1,399 @@
+// velt/text (internal): what a pattern's tree says about every match before any is looked
+// for: the strings it starts with (or is: `exact`), its first byte, and whether it can only
+// start at the start. The compiler stores it in the program; prefilter.velt searches with it.
+
+import { arrayTruncate, strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { CharSet } from "velt/text/regex/char_set";
+import {
+  ALT,
+  ASSERT,
+  AT_START,
+  CAT,
+  CHAR,
+  EMPTY,
+  GROUP,
+  Node,
+  REPEAT,
+  SET,
+} from "velt/text/regex/node";
+import { Program, SCAN_FIRST, SCAN_GRAMS, SCAN_NONE } from "velt/text/regex/program";
+
+/** The most strings a set of literals holds, and the most characters of a class that are
+ * spelled out into them. */
+const MAX_LITERALS: usize = 8;
+const MAX_SET: usize = 4;
+/** The most tuples a scan compares at once, and the most offsets a tuple has bytes at. */
+const MAX_GRAMS: usize = 4;
+const MAX_OFFSETS: usize = 4;
+
+/** Is `c` a surrogate? One is never part of a literal: without the `u` flag it can match half
+ * of a pair, which no byte search finds. */
+function isSurrogate(c: u32): bool {
+  return c >= 0xd800 && c <= 0xdfff;
+}
+
+/** The strings a tree's matches start with, while they are being worked out. */
+class Literals {
+  list: string[] = [""];
+  /** Nothing but the strings matches, and nothing is captured. */
+  exact: bool = true;
+  /** A letter of the strings stands for both its cases (`/value/i`): it is spelled lower case,
+   * and the scan compares it whatever the case (prefilter.velt). */
+  folded: bool = false;
+
+  /** Extends every string with what `n` matches; false when it cannot (the strings are then
+   * the starts of the matches so far, and stay that). */
+  visit(n: Node): bool {
+    const kind = n.kind;
+    if (kind == EMPTY) {
+      return true;
+    }
+    if (kind == CHAR) {
+      return !isSurrogate(n.a) && this.cross([n.a, n.a]);
+    }
+    if (kind == SET) {
+      const set = n.set ?? new CharSet();
+      const r = set.ranges;
+      // An ASCII letter in both cases: one character, folded.
+      const lower = r.length == 4 ? r[2] : 0;
+      if (r.length == 4 && r[0] == r[1] && lower == r[3] && r[0] + 0x20 == lower) {
+        if (lower >= 0x61 && lower <= 0x7a) {
+          this.folded = true;
+          return this.cross([lower, lower]);
+        }
+      }
+      if (r.length == 0 || set.count(MAX_SET + 1) > MAX_SET) {
+        return false;
+      }
+      return !isSurrogate(r[0]) && !isSurrogate(r[r.length - 1]) && this.cross(r);
+    }
+    if (kind == CAT) {
+      for (let i: usize = 0; i < n.kids.length; i++) {
+        if (!this.visit(n.kids[i])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (kind == GROUP) {
+      this.exact = false;
+      return this.visit(n.kids[0]);
+    }
+    if (kind == ASSERT) {
+      this.exact = false;
+      return true;
+    }
+    if (kind == ALT) {
+      return this.alternatives(n);
+    }
+    if (kind == REPEAT && n.a > 0) {
+      this.visit(n.kids[0]);
+    }
+    return false;
+  }
+
+  /** Every string followed by each character of the ranges `r` (at most `MAX_SET`). */
+  private cross(r: u32[]): bool {
+    const out: string[] = [];
+    for (let i: usize = 0; i < this.list.length; i++) {
+      for (let k: usize = 0; k < r.length; k += 2) {
+        for (let c = r[k]; c <= r[k + 1]; c++) {
+          out.push(this.list[i] + String.fromCodePoint(c as f64));
+        }
+      }
+    }
+    if (out.length > MAX_LITERALS) {
+      return false;
+    }
+    this.list = out;
+    return true;
+  }
+
+  /** Every string followed by what each alternative of `n` matches, in their order. */
+  private alternatives(n: Node): bool {
+    const out: string[] = [];
+    let whole = true;
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      const branch = new Literals();
+      branch.list = this.list.slice();
+      whole = branch.visit(n.kids[i]) && whole;
+      this.exact = this.exact && branch.exact;
+      this.folded = this.folded || branch.folded;
+      for (let k: usize = 0; k < branch.list.length; k++) {
+        out.push(branch.list[k]);
+      }
+    }
+    if (out.length > MAX_LITERALS) {
+      return false;
+    }
+    this.list = out;
+    return whole;
+  }
+}
+
+/** Does every match of `n` start at the start of the subject? */
+function startsAtStart(n: Node): bool {
+  if (n.kind == ASSERT) {
+    return n.a == AT_START;
+  }
+  if (n.kind == GROUP || n.kind == CAT || (n.kind == REPEAT && n.a > 0)) {
+    return n.kids.length > 0 && startsAtStart(n.kids[0]);
+  }
+  if (n.kind == ALT) {
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      if (!startsAtStart(n.kids[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+/** The first byte of the WTF-8 of `c`. */
+function leadByte(c: u32): u32 {
+  if (c < 0x80) {
+    return c;
+  }
+  if (c < 0x800) {
+    return 0xc0 | (c >> 6);
+  }
+  return c < 0x10000 ? 0xe0 | (c >> 12) : 0xf0 | (c >> 18);
+}
+
+/** Sets in `bits` the first bytes of the matches of `n`; true when a match may be empty (what
+ * follows `n` then starts a match too). Without the `u` flag (`units`) a surrogate may be
+ * either half of a pair, whose first bytes are not its own: every byte is set. */
+function firstBytes(n: Node, bits: u64[], units: bool): bool {
+  const kind = n.kind;
+  if (kind == CHAR || kind == SET) {
+    const one: u32[] = [n.a, n.a];
+    const r = kind == CHAR ? one : (n.set ?? new CharSet()).ranges;
+    for (let i: usize = 0; i < r.length; i += 2) {
+      if (units && r[i] <= 0xdfff && r[i + 1] >= 0xd800) {
+        bits[0] = bits[1] = bits[2] = bits[3] = 0xffffffffffffffff;
+        return false;
+      }
+      // The bytes between the last ASCII one and the first lead byte start no character.
+      for (let b = leadByte(r[i]); b <= leadByte(r[i + 1]); b++) {
+        if (b < 0x80 || b >= 0xc2) {
+          bits[(b >> 6) as usize] |= (1 as u64) << ((b & 63) as u64);
+        }
+      }
+    }
+    return false;
+  }
+  if (kind == CAT) {
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      if (!firstBytes(n.kids[i], bits, units)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (kind == ALT) {
+    let empty = false;
+    for (let i: usize = 0; i < n.kids.length; i++) {
+      empty = firstBytes(n.kids[i], bits, units) || empty;
+    }
+    return empty;
+  }
+  if (kind == GROUP) {
+    return firstBytes(n.kids[0], bits, units);
+  }
+  if (kind == REPEAT) {
+    return firstBytes(n.kids[0], bits, units) || n.a == 0;
+  }
+  return true;
+}
+
+/** How common byte `b` is taken to be in a subject, out of 256: lower case letters and the
+ * space most, then upper case letters, digits and the bytes of characters past ASCII. */
+function weight(b: u8): u64 {
+  if ((b >= 0x61 && b <= 0x7a) || b == 0x20) {
+    return 16;
+  }
+  return (b >= 0x41 && b <= 0x5a) || (b >= 0x30 && b <= 0x39) || b >= 0x80 ? 4 : 2;
+}
+
+/** How often the tuples `grams` (`size` bytes each) are taken to be in a subject where no
+ * match is: the less, the fewer places the scan stops at for nothing. */
+function cost(grams: u8[], size: usize): u64 {
+  let sum: u64 = 0;
+  for (let t: usize = 0; t < grams.length; t += size) {
+    let product: u64 = 1;
+    for (let j: usize = 0; j < size; j++) {
+      product *= weight(grams[t + j]);
+    }
+    sum += product;
+  }
+  return sum;
+}
+
+/** How many distinct tuples the bytes of `lits` at `offsets[0..size]` make; they are left in
+ * `out`. */
+function tuples(lits: string[], offsets: usize[], size: usize, out: u8[]): usize {
+  arrayTruncate(out, 0);
+  for (let i: usize = 0; i < lits.length; i++) {
+    let seen = false;
+    for (let t: usize = 0; t < out.length && !seen; t += size) {
+      seen = true;
+      for (let j: usize = 0; j < size; j++) {
+        seen = seen && out[t + j] == strByteAt(lits[i], offsets[j] as u64);
+      }
+    }
+    for (let j: usize = 0; j < size && !seen; j++) {
+      out.push(strByteAt(lits[i], offsets[j] as u64));
+    }
+  }
+  return out.length / size;
+}
+
+/** Chooses the offsets whose bytes tell `lits` (each at least `min` bytes) from other text:
+ * one offset at a time, each time the one that leaves the tuples rarest (`cost`, as a share of
+ * all tuples of that size) while there are at most `MAX_GRAMS` of them, up to `MAX_OFFSETS`
+ * offsets; false when even one offset takes more tuples. Three tuples are stored as four, the
+ * first twice: the scan compares one, two or four. */
+function chooseGrams(prog: Program, lits: string[], min: usize): bool {
+  const top = min < 8 ? min : 8;
+  const chosen: usize[] = [];
+  const trial: u8[] = [];
+  let least: u64 = 0xffffffffffffffff;
+  while (chosen.length < MAX_OFFSETS && chosen.length < top) {
+    let best = top;
+    const size = chosen.length + 1;
+    for (let o: usize = 0; o < top; o++) {
+      if (chosen.includes(o)) {
+        continue;
+      }
+      chosen.push(o);
+      const count = tuples(lits, chosen, size, trial);
+      // Out of all tuples of `MAX_OFFSETS` bytes, so that sizes compare.
+      const share = cost(trial, size) << ((8 * (MAX_OFFSETS - size)) as u64);
+      if (count <= MAX_GRAMS && share < least) {
+        least = share;
+        best = o;
+        prog.grams = trial.slice();
+      }
+      chosen.pop();
+    }
+    if (best == top) {
+      break;
+    }
+    chosen.push(best);
+  }
+  if (chosen.length == 0) {
+    return false;
+  }
+  // The scan reads the offsets in order, and the tuples' bytes with them.
+  const size = chosen.length;
+  chosen.sort((x, y) => (x as i64) - (y as i64));
+  const count = tuples(lits, chosen, size, prog.grams);
+  for (let j: usize = 0; j < size && count == 3; j++) {
+    prog.grams.push(prog.grams[j]);
+  }
+  prog.gramAt = chosen;
+  prog.gramSize = size;
+  prog.minBytes = min;
+  prog.scan = SCAN_GRAMS;
+  return true;
+}
+
+/** Per offset of the grams, what the scan ORs into the subject's bytes there before it
+ * compares them: 0x20 when the literals' letters are folded and every tuple has a lower case
+ * letter at that offset (an upper case one then compares equal), else 0. False when the scan
+ * would miss matches: the letters are folded, and an offset has a lower case letter in one tuple
+ * and something else in another, so it cannot be folded (`/ke/iu`: `k` is also the Kelvin sign,
+ * whose second byte is beside the `e` of the other literals), and its letter's upper case would
+ * not compare equal. */
+function foldGrams(prog: Program, folded: bool): bool {
+  const size = prog.gramSize;
+  for (let j: usize = 0; j < size; j++) {
+    let letters = folded;
+    let lower = false;
+    for (let t = j; t < prog.grams.length; t += size) {
+      const isLower = prog.grams[t] >= 0x61 && prog.grams[t] <= 0x7a;
+      letters = letters && isLower;
+      lower = lower || isLower;
+    }
+    if (folded && !letters && lower) {
+      return false;
+    }
+    prog.gramFold.push(letters ? 0x20 : 0);
+    prog.gramFolded = prog.gramFolded || letters;
+  }
+  return true;
+}
+
+/** Undoes what `chooseGrams` and `foldGrams` put in `prog`: it has no grams' scan. */
+function dropGrams(prog: Program): void {
+  prog.grams = [];
+  prog.gramAt = [];
+  prog.gramSize = 0;
+  prog.gramFold = [];
+  prog.gramFolded = false;
+  prog.minBytes = 0;
+  prog.scan = SCAN_NONE;
+}
+
+/** Stores the first eight bytes of each literal of an `exact` program as a word, after the
+ * mask of the bytes it has: what the search compares a candidate's first eight bytes with. */
+function literalWords(prog: Program): void {
+  for (let i: usize = 0; i < prog.literals.length; i++) {
+    const lit = prog.literals[i];
+    const n = strByteLen(lit) < 8 ? strByteLen(lit) : 8;
+    let word: u64 = 0;
+    for (let j: usize = 0; j < n; j++) {
+      word |= (strByteAt(lit, j as u64) as u64) << ((8 * j) as u64);
+    }
+    prog.litWord.push(n == 8 ? 0xffffffffffffffff : ((1 as u64) << ((8 * n) as u64)) - 1);
+    prog.litWord.push(word);
+    prog.litBytes.push(strByteLen(lit));
+  }
+}
+
+/** Fills in what `prog` knows about the matches of `tree`. */
+export function analyze(prog: Program, tree: Node): void {
+  prog.anchored = startsAtStart(tree);
+  const lits = new Literals();
+  const whole = lits.visit(tree);
+  let min: usize = 0xffff;
+  for (let i: usize = 0; i < lits.list.length; i++) {
+    const n = strByteLen(lits.list[i]);
+    min = n < min ? n : min;
+  }
+  if (min > 0) {
+    prog.literals = lits.list;
+    if (chooseGrams(prog, lits.list, min)) {
+      if (foldGrams(prog, lits.folded)) {
+        // A folded letter is found whatever its case, and a matcher checks what was found.
+        prog.exact = whole && lits.exact && !lits.folded;
+        if (prog.exact) {
+          literalWords(prog);
+        }
+        return;
+      }
+      dropGrams(prog);
+    }
+  }
+  const empty = firstBytes(tree, prog.first, prog.units);
+  let count: usize = 0;
+  const bytes: string[] = [];
+  for (let b: u32 = 0; b < 256 && !empty; b++) {
+    if (((prog.first[(b >> 6) as usize] >> ((b & 63) as u64)) & 1) != 0) {
+      count++;
+      if (b < 0x80) {
+        bytes.push(String.fromCodePoint(b as f64));
+      }
+    }
+  }
+  if (empty || count == 256) {
+    return;
+  }
+  if (count > 0 && count == bytes.length && chooseGrams(prog, bytes, 1)) {
+    // Not folded: it never fails.
+    foldGrams(prog, false);
+    return;
+  }
+  prog.scan = SCAN_FIRST;
+}

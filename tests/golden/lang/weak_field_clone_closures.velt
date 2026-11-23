@@ -1,0 +1,22 @@
+// An array of closures, one capturing a class with a `weak` field, cloned: the clone glue of the
+// holder panics (velt_vir glue/clone.rs).
+class T {
+  n: i64;
+  constructor(n: i64) {
+    this.n = n;
+  }
+}
+
+class H {
+  t: weak T | null = null;
+}
+
+function main() {
+  const t = new T(7);
+  const h = new H();
+  h.t = t;
+  const fs: (() => i64)[] = [() => h.t?.n ?? 0];
+  console.log("before");
+  const c = fs.clone();
+  console.log(c[0](), t.n);
+}

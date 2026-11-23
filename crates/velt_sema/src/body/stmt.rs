@@ -335,7 +335,15 @@ impl FnCx<'_, '_> {
             self.cx
                 .err("`const` declarations must be initialized", v.span);
         }
-        let ann = v.ty.as_ref().map(|t| self.resolve(t));
+        // `weak T | null` may type a `let` or `const` naming one variable.
+        let var = matches!(v.kind, ast::VarKind::Let | ast::VarKind::Const)
+            && matches!(v.pattern.kind, ast::PatternKind::Ident(_));
+        let ann = v.ty.as_ref().map(|t| self.resolve_as(t, var));
+        let weak = ann.is_some_and(|(_, weak)| weak);
+        let ann = ann.map(|(t, _)| t);
+        if let (ast::PatternKind::Ident(name), Some(ty), true) = (&v.pattern.kind, ann, weak) {
+            return self.weak_var_decl(v, name, ty, span, out);
+        }
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
             let init_ty = v.init.as_ref().and_then(crate::throws::written_init_type);
             if let Some(t) = v.ty.as_ref().or(init_ty) {
@@ -715,26 +723,6 @@ impl FnCx<'_, '_> {
                 Self::push(out, S::Return(Some(h)), span);
             }
         }
-    }
-
-    pub fn resolve(&mut self, t: &ast::TypeExpr) -> hir::TyId {
-        let env = self.env.clone();
-        // `typeof x` may name the locals in scope (`crate::type_queries`).
-        let mut heads = vec![];
-        velt_syntax::visit::type_queries(t, &mut |path| {
-            if let Some(h) = path.first() {
-                heads.push(h.name.clone());
-            }
-        });
-        let base = self.cx.query_locals.len();
-        for h in heads {
-            if let Some(ty) = self.peek_local_ty(&h) {
-                self.cx.query_locals.push((h, ty));
-            }
-        }
-        let ty = self.cx.resolve_type(t, &env);
-        self.cx.query_locals.truncate(base);
-        ty
     }
 }
 

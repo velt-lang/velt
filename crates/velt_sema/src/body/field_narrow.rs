@@ -72,6 +72,9 @@ impl FnCx<'_, '_> {
         let Some(t) = self.find_token(root, &path) else {
             return h;
         };
+        // A test the path's `weak` field kept from narrowing it: an error at this read gets the
+        // note (`refuse_fact`).
+        self.note_refused_read(t, h.span);
         // A field path of a local (not of a module variable, without a `r[k]` key).
         let local_path =
             self.token_global_ty(root).is_none() && !path.iter().any(|p| p.starts_with('\0'));

@@ -1,0 +1,6 @@
+realpath f.txt/: ok
+readlink filelink/: f.txt
+rename r.txt/: to rename
+copyFile from f.txt/: file
+copyFile to c2.txt/: file
+symlink to sl/: f.txt

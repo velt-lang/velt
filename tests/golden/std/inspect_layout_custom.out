@@ -1,0 +1,52 @@
+[
+  $0.0,   $12.34,
+  $24.68, $37.2,
+  $49.36, $61.70,
+  $74.4,  $86.38,
+  $98.72, $111.6
+]
+{
+  total: $1234.56,
+  first: $0.5,
+  note: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+}
+Looks { list: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 ] }
+[
+  Looks { list: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 ] }
+]
+{
+  looks: Looks { list: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 ] },
+  other: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+}
+┌ top level
+└ end of card
+[
+  ┌ in an array
+  └ end of card
+]
+{
+  card: ┌ in an object
+  └ end of card,
+  deeper: {
+    card: ┌ two levels
+    └ end of card
+  }
+}
+<ref *1> Node2 {
+  name: 'first node with a long name',
+  next: Node2 {
+    name: 'second node with a long name',
+    next: [Circular *1],
+    children: []
+  },
+  children: []
+}
+<ref *1> Node2 {
+  name: 'root',
+  next: null,
+  children: [
+    Node2 { name: 'child number 0', next: [Circular *1], children: [] },
+    Node2 { name: 'child number 1', next: [Circular *1], children: [] },
+    Node2 { name: 'child number 2', next: [Circular *1], children: [] }
+  ]
+}

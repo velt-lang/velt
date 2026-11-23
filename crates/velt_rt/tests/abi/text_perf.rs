@@ -1,4 +1,4 @@
-//! The string builder and the JSON reader/value parser on large inputs. Timings are only printed
+//! The string builder and the runtime's JSON reader on large inputs. Timings are only printed
 //! (`cargo test -p velt_rt --release --lib text_perf -- --nocapture`): what is checked is
 //! counted, so a loaded machine can't fail it. Speed is measured by `bench/strings.velt` and
 //! `bench/json/` (`parse_typed`, `parse_value`).
@@ -6,7 +6,6 @@
 use super::json_reader::{borrow, decode_user_object};
 use crate::json::reader::*;
 use crate::json::reader_abi::*;
-use crate::json::value_abi::{velt_rt_json_parse_value, velt_rt_json_value_free};
 use crate::str::{velt_rt_str_drop, VeltStr};
 use crate::strbuf::*;
 use std::mem::MaybeUninit;
@@ -108,23 +107,11 @@ fn json_reader_throughput_10mb() {
     let decode = t.elapsed();
     assert_eq!(users.len(), count);
     assert_eq!(users[3].name, "user 3 \"q\"");
-    // JSON.parseValue: the whole tree.
-    let t = Instant::now();
-    unsafe {
-        let (mut h, mut err) = (MaybeUninit::uninit(), MaybeUninit::uninit());
-        assert_eq!(
-            velt_rt_json_parse_value(&src, h.as_mut_ptr(), err.as_mut_ptr()),
-            1
-        );
-        velt_rt_json_value_free(h.assume_init());
-    }
-    let value = t.elapsed();
     let len = doc.len();
     eprintln!(
-        "json {:.1} MB, {count} users: skip_value {:.0} MB/s, typed decode {:.0} MB/s, parseValue+free {:.0} MB/s",
+        "json {:.1} MB, {count} users: skip_value {:.0} MB/s, typed decode {:.0} MB/s",
         len as f64 / 1e6,
         mb_per_s(len, skip),
-        mb_per_s(len, decode),
-        mb_per_s(len, value)
+        mb_per_s(len, decode)
     );
 }

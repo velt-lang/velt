@@ -1,0 +1,58 @@
+// check: no leaks
+// A module-level `let` declared `weak` that functions use (velt_vir weak_globals.rs; cycles.md
+// "`weak T`"): its slot in the module state holds the target's slot. It starts as `null`
+// (written so, or without a value) or as its initializer's value, a function sets it, it reads `null` once the target went,
+// a closure that reads it sees the module variable, `??=` sets it, and a value across an
+// `await` stays. The state's drop at exit gives the slot up.
+class View {
+  title: string;
+  constructor(title: string) {
+    this.title = title;
+  }
+}
+
+function titleOf(v: View | null): string {
+  return v === null ? "null" : v.title;
+}
+
+const keeper = new View("kept");
+// Its initializer takes the slot of a value the module state keeps.
+let first: weak View | null = keeper;
+let current: weak View | null = null;
+let preset: weak View | null;
+
+function show(v: View): void {
+  current = v;
+}
+
+function read(): string {
+  return titleOf(current);
+}
+
+function readLater(): () => string {
+  return () => titleOf(current);
+}
+
+async function across(v: View): Promise<string> {
+  current = v;
+  await Promise.resolve(0);
+  return titleOf(current);
+}
+
+async function main() {
+  console.log("start", read(), titleOf(preset), titleOf(first));
+  const a = new View("a");
+  show(a);
+  console.log("set", read());
+  const f = readLater();
+  {
+    const t = new View("t");
+    show(t);
+    console.log("temp alive", f());
+  }
+  console.log("temp gone", read(), f());
+  current ??= a;
+  console.log("??=", read());
+  console.log("await", await across(new View("w")));
+  console.log(a.title);
+}

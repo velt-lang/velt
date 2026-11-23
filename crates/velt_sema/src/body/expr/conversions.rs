@@ -21,6 +21,9 @@ impl FnCx<'_, '_> {
             return self.str_lit("null", span);
         }
         let h = self.expr(a, None, Want::Borrow);
+        if self.reject_ptr_text(&h) {
+            return self.error_expr(span);
+        }
         let part = self.js_text(h, "`String(x)`");
         self.concat_parts(vec![part], span)
     }

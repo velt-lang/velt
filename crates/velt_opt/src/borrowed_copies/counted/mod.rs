@@ -67,12 +67,9 @@ use crate::locals::Usage;
 /// code reads (`velt_vir::math::effects`): allocation, and the string functions, which free
 /// only string buffers (never a counted object) and run no code of the program (an error's
 /// message built for a throw: `corrupt(\`page ${n}\`)`).
-const NO_FREE: [&str; 18] = [
+const NO_FREE: [&str; 16] = [
     "velt_rt_alloc",
     "velt_rt_realloc",
-    // A string from a byte range of an array, which they only read.
-    "velt_rt_bytes_range_to_str",
-    "velt_rt_bytes_range_to_str_lossy",
     "velt_rt_str_clone",
     "velt_rt_str_drop",
     "velt_rt_str_concat",
@@ -83,8 +80,9 @@ const NO_FREE: [&str; 18] = [
     "velt_rt_strbuf_push_str",
     "velt_rt_strbuf_push_bytes",
     "velt_rt_strbuf_push_words",
+    // A byte array's bytes appended (`utf8Slice`, std/lang/bytes/range_text.velt): only read.
+    "velt_rt_strbuf_push_u8s",
     "velt_rt_strbuf_push_byte",
-    "velt_rt_strbuf_push_f64",
     "velt_rt_strbuf_finish",
     "velt_rt_strbuf_drop",
 ];
