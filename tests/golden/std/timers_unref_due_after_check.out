@@ -1,0 +1,5 @@
+main done
+callback done
+ref'd immediate, the last ref'd
+unref'd immediate in the same check phase
+unref'd timeout, due in the check phase's pass
