@@ -1,6 +1,7 @@
 // velt/lang/hooks (internal): module state under the executor in Velt's workers (sched.velt,
-// #2649 step 3; the runtime's module lock until #2196 9c): one process-wide lock, which a task takes on its first access of module state and keeps until the
-// end of that poll, and at the start of every later poll (it is touched, flag `TOUCHED`); code
+// #2649 step 3; the runtime's module lock until #2196 9c): one process-wide lock, which a task
+// takes on its first access of module state and keeps until the end of that poll, and at the
+// start of every later poll (it is touched, flag `TOUCHED`); code
 // outside a task (worker 0's synchronous `main` once the executor runs) keeps it until it hands
 // over to the tasks. So a task's code between two `await`s runs alone with respect to every other
 // task that uses module state, as in Node, on whichever worker it runs.

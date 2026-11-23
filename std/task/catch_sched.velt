@@ -121,7 +121,8 @@ function settledDrop(f: usize): void {}
  * The executor's catching poll on worker `e`: polls the state at `a + 8` with its poll at `a`
  * and `cx` through `catchUnwindAt`; 0 pending, 1 ready, 2 panicked with the exception stored at
  * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way, the
- * module lock a `with` callback took: sched_module.velt `restore`) is restored then. `a` is the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
+ * module lock a `with` callback took: sched_module.velt `restore`) is restored then. `a` is the
+ * worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
  * (`pollArgs`) is called at its address with `a`: no closure, no function value.
  */
 function caughtPoll(a: usize, cx: usize): u32 {

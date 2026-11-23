@@ -1,0 +1,64 @@
+// check: unfreed blocks at most 1
+// check: also with VELT_THREADS=4
+// `catchPanic` (#2008) in a task pinned to worker 1: a panic inside a `Mutex.with` callback that
+// may reach a function's properties, before it reaches any, so the callback holds the module
+// lock for itself alone (#2196 9c). The catch gives that hold back, so the tasks on the other
+// workers, which then update module state and a function's properties, go on. The program's
+// `Mutex` stays locked, as documented; nothing here uses it again. On Windows a caught panic
+// leaks what the abandoned frames held (lang/catch_panic_drops_state.velt): one block here.
+import { catchPanic, PanicError, workerCount } from "velt/task";
+
+function decl(): number {
+  return 1;
+}
+
+let counter = 0;
+
+async function body(m: shared<Mutex<number>>): Promise<string> {
+  await yieldNow();
+  m.with((v) => {
+    if (v === 0) {
+      panic("before any property");
+    }
+    const x = v + 1;
+    const d: any = decl;
+    d.x = x;
+    return x;
+  });
+  return "ok";
+}
+
+async function guarded(m: shared<Mutex<number>>): Promise<string> {
+  try {
+    return await catchPanic(() => body(m));
+  } catch (e) {
+    return e instanceof PanicError ? "caught" : "other";
+  }
+}
+
+async function touch(i: number): Promise<number> {
+  await yieldNow();
+  counter += i;
+  const d: any = decl;
+  d.y = i;
+  return counter;
+}
+
+/** Worker `i`'s place among the workers from 2 on (worker 0 when there are fewer). */
+function away(i: i64): i64 {
+  const w = workerCount();
+  return w > 2 ? 2 + (i % (w - 2)) : 0;
+}
+
+async function main() {
+  const m = shared(new Mutex<number>(0));
+  console.log(await spawn(guarded(m), { worker: workerCount() > 1 ? 1 : 0 }));
+  const hs: Promise<number>[] = [];
+  for (let i: i64 = 0; i < 8; i++) {
+    hs.push(spawn(touch(i as number), { worker: away(i) }));
+  }
+  for (const h of hs) {
+    await h;
+  }
+  console.log("touched", counter);
+}

@@ -446,7 +446,7 @@ export function schedModuleReady(state: usize, n: u64): void {
   mod.ready(state, n);
 }
 
-/** Before a function's properties held as `any` are reached: the module lock (sched_module.velt). */
+/** Before a function's properties held as `any` are reached: the module lock (sched_module). */
 export function schedModuleTouch(): void {
   mod.touch();
 }
