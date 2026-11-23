@@ -7,6 +7,8 @@
 
 import { IoError } from "velt/io/error";
 import { TcpStream } from "velt/net";
+import { TlsOn } from "velt/net/http/fetch/client/target";
+import { velt_rt_tcp_close } from "#net-tcp";
 import { AbortError, AbortSignal } from "velt/task";
 
 /** Whether the executor's reactor runs: no reactor in this build. */
@@ -28,6 +30,7 @@ export async function dialTls(
   serverName: string,
   ca: string,
   alpn: string,
+  tls: TlsOn,
   signal: AbortSignal | null,
 ): Promise<TcpStream, IoError | AbortError> {
   panic("ICE: fetch dials on the reactor only with the executor in Velt");
@@ -42,7 +45,9 @@ export async function tlsOn(
   alpn: string,
   left: i64,
   signal: AbortSignal | null,
-): Promise<TcpStream, IoError | AbortError> {
-  TcpStream.ofHandle(fd).close();
+): Promise<u64, IoError | AbortError> {
+  // The runtime's close, not `TcpStream`'s: a `TcpStream` reachable from the function `fetch`
+  // stores (`TlsOn`) made a JS host's check of a Worker that serves and fetches take minutes.
+  velt_rt_tcp_close(fd);
   throw new IoError("ENOTSUP", `fetch failed: no TLS in this build (connecting to ${addr})`);
 }

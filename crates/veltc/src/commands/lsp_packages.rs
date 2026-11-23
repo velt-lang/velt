@@ -49,8 +49,11 @@ pub(super) fn load_options<'a>(
     root: &Path,
     overlay: &'a HashMap<PathBuf, String>,
     graph: Option<&'a PackageGraph>,
+    preload: &'a [String],
 ) -> LoadOptions<'a> {
     LoadOptions {
+        preload,
+        refuse_out_of_rule: true,
         std_root: loader::std_root(),
         packages: graph.map(|g| g as &dyn loader::PackageResolver),
         root_source: None,
