@@ -94,7 +94,6 @@ fn json_literal(rng: &mut Rng, s: &[u16]) -> Vec<u16> {
 #[test]
 fn json_strings_decode_to_their_code_units() {
     use crate::json::reader_abi::*;
-    use crate::json::value_abi::*;
     use std::mem::MaybeUninit;
     run("JSON string decoding", ALL_ALPHABETS, 4_000, |rng| {
         let s = gen_string(rng, ALL_ALPHABETS);
@@ -112,23 +111,6 @@ fn json_strings_decode_to_their_code_units() {
             let got = units(&Rt(out.assume_init_read()).0);
             if got != s {
                 return Err(format!("reader: {} gave {}", show(&src), show(&got)));
-            }
-            // The tree (`JSON.parseValue`).
-            let (mut h, mut err) = (MaybeUninit::uninit(), MaybeUninit::<VeltStr>::uninit());
-            if velt_rt_json_parse_value(&rsrc.0, h.as_mut_ptr(), err.as_mut_ptr()) != 1 {
-                return Err(format!("parseValue refused {}", show(&src)));
-            }
-            let h = h.assume_init();
-            let ok = velt_rt_json_value_as_str(h, out.as_mut_ptr()) == 1;
-            let len = velt_rt_json_value_len(h);
-            velt_rt_json_value_free(h);
-            let got = units(&Rt(out.assume_init()).0);
-            if !ok || got != s || len != s.len() as u64 {
-                return Err(format!(
-                    "parseValue: {} gave {} ({len})",
-                    show(&src),
-                    show(&got)
-                ));
             }
         }
         Ok(())

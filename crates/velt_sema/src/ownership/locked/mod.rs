@@ -349,9 +349,15 @@ fn check_callback(
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
     }
     for (n, at) in found.stored_fns {
-        for (ty, name, _) in crate::weak_threads::captures(cx, n) {
+        for (ty, name, _, is_weak) in crate::weak_threads::captures(cx, n) {
             let what = crate::body::GenCopy::LockFn(name);
-            weak.push((n, ty, what, at));
+            match is_weak {
+                true => {
+                    let d = crate::body::weak_capture_error(&what, at);
+                    cx.error(d);
+                }
+                false => weak.push((n, ty, what, at)),
+            }
         }
     }
     for m in found.made {
@@ -446,7 +452,7 @@ fn weak_across(
         for cap in &f.captures {
             let l = &f.body.locals[cap.inner.0 as usize];
             let (ty, at) = (l.ty, l.span);
-            if !cx.holds_weak(ty) {
+            if !l.weak && !cx.holds_weak(ty) {
                 let what = crate::body::GenCopy::LockCapture(l.name.clone());
                 weak.push((*d, ty, what, at));
                 continue;
@@ -454,7 +460,10 @@ fn weak_across(
             if !reported.insert(at) {
                 continue;
             }
-            let held = crate::body::Held::new(cx.holds_weak_field_only(ty));
+            let held = match l.weak {
+                true => crate::body::Held::variable(),
+                false => crate::body::Held::new(cx.holds_weak_field_only(ty)),
+            };
             let msg = match inside {
                 true => format!(
                     "a function returned from `with` cannot capture {}",

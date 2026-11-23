@@ -205,6 +205,8 @@ pub enum Intrinsic {
     MayAlias,
     /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
     IsUnique,
+    /// Every read of a `weak` local (hir_encodings.md `LocalDef::weak`; additive, #3119).
+    WeakRead,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.

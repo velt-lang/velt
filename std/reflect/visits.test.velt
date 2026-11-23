@@ -1,0 +1,89 @@
+// velt/reflect (tests): white-box tests, run by `velt test std/`.
+//
+// White-box tests of the visit stack (`beginVisit`, `endVisit`): a value being visited is found
+// again at any depth, past the four kept in thread-locals too, and the stack empties and grows
+// again (its block of deeper visits given back and taken anew without a leak).
+import { describe, expect, it } from "velt/test";
+import { beginVisit, endVisit } from "velt/reflect/reflect";
+
+describe("visits", () => {
+  it("find a value being visited at any depth", () => {
+    for (let round = 0; round < 3; round++) {
+      for (let id: u64 = 1; id <= 40; id++) {
+        expect(beginVisit(id * 8)).toBe(true);
+      }
+      for (const again of [8, 16, 32, 40, 48, 200, 320]) {
+        expect(beginVisit(again as u64)).toBe(false);
+      }
+      expect(beginVisit(41 * 8)).toBe(true);
+      endVisit();
+      for (let id: u64 = 1; id <= 40; id++) {
+        endVisit();
+      }
+      expect(beginVisit(8)).toBe(true);
+      endVisit();
+    }
+  });
+
+  it("find deep visits through the hash table as they start and end", () => {
+    // 1000 visits deep, then back: every visit under way is found, every ended one is not, so
+    // the table's deletes keep each identity reachable from its home place.
+    const ids: u64[] = [];
+    let seed: u64 = 0x9e3779b9;
+    for (let i = 0; i < 1000; i++) {
+      seed ^= seed << 13;
+      seed ^= seed >> 7;
+      seed ^= seed << 17;
+      // Aligned like addresses, some close together (sharing home places).
+      const id = i % 3 == 0 ? (ids.length as u64) * 16 + 16 : (seed | 1) << 4;
+      if (!ids.includes(id)) {
+        expect(beginVisit(id)).toBe(true);
+        ids.push(id);
+      }
+      if (i % 37 == 0) {
+        for (const old of ids) {
+          expect(beginVisit(old)).toBe(false);
+        }
+      }
+    }
+    while (ids.length > 0) {
+      const gone = ids.pop()!;
+      endVisit();
+      if (ids.length % 41 == 0) {
+        for (const old of ids) {
+          expect(beginVisit(old)).toBe(false);
+        }
+      }
+      expect(beginVisit(gone)).toBe(true);
+      endVisit();
+    }
+    expect(beginVisit(16)).toBe(true);
+    endVisit();
+  });
+
+  it("keep whole 64-bit identities past the thread-locals", () => {
+    for (let id: u64 = 1; id <= 6; id++) {
+      expect(beginVisit(id)).toBe(true);
+    }
+    // Deep visits whose identities differ only above bit 32 stay apart.
+    expect(beginVisit(0x100000007)).toBe(true);
+    expect(beginVisit(7)).toBe(true);
+    expect(beginVisit(0x100000007)).toBe(false);
+    for (let i = 0; i < 8; i++) {
+      endVisit();
+    }
+  });
+
+  it("ends only the innermost visit", () => {
+    expect(beginVisit(1)).toBe(true);
+    expect(beginVisit(2)).toBe(true);
+    endVisit();
+    expect(beginVisit(1)).toBe(false);
+    expect(beginVisit(2)).toBe(true);
+    endVisit();
+    endVisit();
+    endVisit();
+    expect(beginVisit(1)).toBe(true);
+    endVisit();
+  });
+});

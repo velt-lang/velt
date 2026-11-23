@@ -57,6 +57,16 @@ impl FnCx<'_, '_> {
             Fact::NonNull(l) | Fact::Members(l, _) | Fact::Excludes(l, _) => (*l, None),
             Fact::Class(l, t) => (*l, Some(*t)),
         };
+        // A `weak` local: no fact about it holds (`body::weak_locals`).
+        if self.token_path(l).is_none() && self.is_weak_local(l) {
+            let name = self.f.locals[l.0 as usize].name.clone();
+            let note = super::weak_locals::weak_local_refusal_note(&name);
+            let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+            if !scope.refused.iter().any(|(x, _)| *x == l) {
+                scope.refused.push((l, Refused { note, at: None }));
+            }
+            return true;
+        }
         if let Some((root, path)) = self.token_path(l) {
             let path = path.to_vec();
             if self.through_weak_field(root, &path) {

@@ -84,6 +84,8 @@ impl<'h> Cx<'h> {
             fut_header: None,
             sched_tasks: false,
             sched_used: false,
+            sched_observers: Default::default(),
+            sched_steps: false,
             module_hooks_declared: std::cell::OnceCell::new(),
             held: Some(vec![]),
             statics_table: None,

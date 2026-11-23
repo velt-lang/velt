@@ -1,7 +1,7 @@
 // velt/compiler: decorators that tell the compiler how to compile a function, for std, packages
 // and programs alike (docs/internals/design/package-machine-code.md).
 //
-//   import { inline, noInline, targetFeature } from "velt/compiler";
+//   import { cold, inline, noInline, targetFeature } from "velt/compiler";
 //
 //   export struct Fixed {
 //     readonly raw: i64;
@@ -10,8 +10,12 @@
 //
 // `@inline` offers a function's body to its callers and asks the inliner to prefer it, as Rust's
 // `#[inline]`; `@inline("always")` inlines every call in release builds whatever its size (not on
-// a recursive function); `@noInline` keeps every call a call. None applies to a generator or an
-// async function.
+// a recursive function); `@noInline` keeps every call a call. `@cold` says a function's calls are
+// rare, as Rust's `#[cold]` (an error path, a slow fallback): release builds keep the ways to them
+// out of the hot code. None applies to a generator or an async function.
+//
+//   @cold
+//   function grow(buf: Buffer, need: usize): void { … }
 //
 // `@targetFeature("clmul-x86")` compiles a function for a CPU extension. Every call of it must sit
 // behind velt/arch's check of that extension (an `if`, not `?:`), or in a function gated on
@@ -30,6 +34,8 @@
 export { inline } from "velt/lang/intrinsics/decorators";
 /** Calls of a function stay calls. */
 export { noInline } from "velt/lang/intrinsics/decorators";
+/** Calls of a function are rare: release builds keep the ways to them out of the hot code. */
+export { cold } from "velt/lang/intrinsics/decorators";
 /**
  * The function is compiled for CPU features; every call sits behind velt/arch's checks of them
  * (`if (Sha.isSupported()) { … }`) or in a function gated on features that cover them.

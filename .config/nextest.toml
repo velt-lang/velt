@@ -61,17 +61,6 @@ test-group = "end-to-end"
 filter = """
 test(/^prefixes_never_panic_/) | binary(native_packages) | (package(velt_vir) & binary(native)) \
 | test(=examples_compile_and_run) | test(=random_programs_match_interpreter) | binary(reload) \
-| test(=std_modules_pass_their_tests)\
+| test(/^std_modules_pass_their_tests_shard_/)\
 """
 priority = 100
-
-# std's own test files, all in one test: 19 minutes on the Windows runner on 2026-11-21 (1,140 s,
-# then 1,200 s, the limit, when a merge train added crypto tests). It gets twice the others' limit
-# until it is split into shards.
-[[profile.ci.overrides]]
-filter = "test(=std_modules_pass_their_tests)"
-slow-timeout = { period = "60s", terminate-after = 40 }
-
-[[profile.queue.overrides]]
-filter = "test(=std_modules_pass_their_tests)"
-slow-timeout = { period = "60s", terminate-after = 40 }

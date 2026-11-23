@@ -414,6 +414,11 @@ pub struct LocalDef {
     /// assigns it while another still sees it. Set on the enclosing local and on each capturing
     /// closure's capture local; the variable is never moved from.
     pub boxed: bool,
+    /// Declared `weak T | null` (docs/internals/design/cycles.md "`weak T`"): `ty` is the read
+    /// type, `T | null`, with `T` a class; the variable holds its target's slot in the weak core,
+    /// 0 for `null`. Its reads are `Intrinsic::WeakRead`; its `Let` initializer and assigned
+    /// values are borrowed. Additive (#3119).
+    pub weak: bool,
     pub span: Span,
 }
 

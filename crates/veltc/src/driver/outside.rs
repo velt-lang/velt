@@ -440,6 +440,7 @@ mod tests {
             target: velt_vir::simd::ExtSet::NONE,
             baseline: false,
             cold: false,
+            rare: false,
             inline: velt_vir::vir::Inline::Default,
             stops_unwind: false,
         }

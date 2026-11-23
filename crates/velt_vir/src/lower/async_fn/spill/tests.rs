@@ -31,6 +31,7 @@ fn func(locals: usize, blocks: Vec<BasicBlock>) -> Function {
         param_attrs: vec![],
         is_poll: false,
         cold: false,
+        rare: false,
         target: crate::simd::ExtSet::NONE,
         baseline: false,
         inline: crate::vir::Inline::Default,

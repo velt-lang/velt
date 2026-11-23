@@ -248,10 +248,11 @@ impl Cx<'_> {
     }
 
     /// How many of the runtime functions that observe `await` steps the program calls
-    /// (async_fn/await_order.rs: a runtime function is declared once something calls it).
+    /// (async_fn/await_order.rs: a runtime function is declared once something calls it), also
+    /// as the executor in Velt's hooks for their jobs (sched.rs, #3081).
     fn observers(&self) -> usize {
         (async_fn::await_order::OBSERVERS.iter())
-            .filter(|s| self.extern_map.contains_key(**s))
+            .filter(|s| self.extern_map.contains_key(**s) || self.sched_observers.contains(**s))
             .count()
     }
 

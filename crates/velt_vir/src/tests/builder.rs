@@ -327,6 +327,7 @@ impl FB {
             ty,
             mutable: true,
             boxed: false,
+            weak: false,
             span: SP,
         });
         LocalId(self.locals.len() as u32 - 1)

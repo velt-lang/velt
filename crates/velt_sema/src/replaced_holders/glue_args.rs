@@ -143,6 +143,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ModuleStateUsed
         | I::MayAlias
         | I::IsUnique
+        | I::WeakRead
         | I::Freeze
         | I::IsFrozen
         | I::HoldsNull

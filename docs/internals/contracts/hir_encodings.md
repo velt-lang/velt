@@ -814,6 +814,15 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   taking the value's slot (the value is borrowed: sema checks it as a borrow), and leaves it out of
   the ownership graph (trace glue, the cycle and weak-capable analyses, drop chains). Sema narrows
   nothing through it and rejects destructuring it and transferring or cloning a value with one.
+- `LocalDef::weak` (additive, #3119): a function's `let`, `const` or `var` declared `weak T | null`
+  with `T` a class. `ty` is the read type; the variable holds its target's slot, as a weak field
+  does. Its `Let` initializer and the values assigned to it are borrowed. Every read of it is
+  `Intrinsic::WeakRead` with the bare `Local` as its operand (its target retained, or `null`), so
+  a bare `Local` of a weak local is only that operand, an `Assign`'s place or its `Let`. Lowering
+  stores 0 then the initializer's slot at the `Let`, swaps slots on an assignment and gives the
+  slot up at the end of the scope. Sema narrows nothing through it. A closure's capture local of
+  one is `weak` too (its reads are `WeakRead`s): a capture by value or in a cell holds the slot
+  with a reference of its own, and sema refuses one crossing to another task or a lock.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type: decoding does not run the constructor (the decoder's
   generator reports it, std/encoding/json/generate/parse_check.velt).
@@ -1944,8 +1953,8 @@ or string; for `any` or `unknown`, the tree as written). An abstract property
 `DecoratorTarget::Def`. The map is a side table, so a program without decorators has an empty
 one and no other HIR type changes. Lowering reads only the decorators the compiler acts on, each
 found by its `def`'s qualified name from the hook table (`std_hooks`, `decorator_*`): `@inline`
-and `@noInline` on a `Def(f)` set `vir::Function::inline` (contracts README "Inlining
-decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error
+and `@noInline` on a `Def(f)` set `vir::Function::inline`, and `@cold` sets
+`vir::Function::rare` (contracts README "Inlining decorators"); `@intrinsic` is sema's alone. A TC39 run-time decorator is a compile error
 (#2204), so it never gets here.
 
 `@export("c_name")` (velt/ffi, `std_hooks` `decorator_export`, #2203) is read through its
