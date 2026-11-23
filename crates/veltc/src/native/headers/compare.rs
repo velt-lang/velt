@@ -307,7 +307,7 @@ pub(super) fn velt_for(c: &CType) -> String {
             CType::Void => "a `Ptr<void>`".into(),
             _ => "a pointer (`Ptr<T>`, an array, `Out<T>`)".into(),
         },
-        CType::Named(n) => format!("struct `{n}` by value, which can't cross yet"),
+        CType::Named(n) => format!("C struct `{n}` by value (`declare c struct {n} {{ … }}`)"),
         CType::FunctionPointer => "a `Ptr<void>` (a function pointer, until `CFunction`)".into(),
         CType::Unknown(n) => format!("`{n}`, which can't cross"),
     }
