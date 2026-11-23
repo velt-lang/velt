@@ -832,10 +832,30 @@ fn a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep() {
     if !has_threads() {
         return;
     }
+    sleeper_rounds(RUNS, &[]);
+}
+
+/// [`a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep`] with worker 0 held
+/// for 50 ms each time it wakes from its park, before it can relax (`VELT_SCHED_HANDLE_PAUSE=wake`,
+/// which only a counted run reads, sched_debug.velt), as a loaded machine's OS may leave a woken
+/// thread unrun. Asked to relax while it slept, woken by its carried sleep's timer, it was taken for
+/// stalled two ticks later, though it ran no poll, and the monitor took the request back: worker 0
+/// ran the next round shared (#3134: a Windows runner, run 6 of 20; every run with the hold).
+#[test]
+fn worker_0_woken_but_not_run_yet_still_relaxes() {
+    if !has_threads() {
+        return;
+    }
+    sleeper_rounds(5, &[("VELT_SCHED_HANDLE_PAUSE", "wake")]);
+}
+
+/// `runs` runs of [`SLEEPER_ON_SPARE`] with `env` set: its lines, and worker 0 lazy again after
+/// the first round (the second round's rescue turns the locks on again).
+fn sleeper_rounds(runs: usize, env: &[(&str, &str)]) {
     let dir = test_dir::TestDir::new();
     let exe = build_std(dir.path(), "sleeper_on_spare", SLEEPER_ON_SPARE);
-    for i in 0..RUNS {
-        let r = run(&exe, "1");
+    for i in 0..runs {
+        let r = run_with(&exe, "1", env);
         let what = format!("run {i}");
         check(&r, &what, "slept 0\nround 0\nslept 1\nround 1\n", 0);
         assert!(

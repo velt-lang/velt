@@ -65,11 +65,11 @@ export function relaxDuties(g: usize, now: usize): bool {
     return true;
   }
   if (relax === t.RELAX_ASKED) {
-    if (!mon.stalled(g, now)) {
+    if (!stuck(g, now)) {
       return true;
     }
-    // Stalled before it relaxed: the request is taken back, and the spares come back for the
-    // rescue (unless worker 0 began meanwhile).
+    // Stalled in a poll before it relaxed: the request is taken back, and the spares come back
+    // for the rescue (unless worker 0 began meanwhile).
     if (m.cas32(g + t.E_RELAX, t.RELAX_ASKED, 0) !== t.RELAX_ASKED) {
       return true;
     }
@@ -98,6 +98,17 @@ export function relaxDuties(g: usize, now: usize): bool {
     ask(g, n);
   }
   return false;
+}
+
+/**
+ * Worker 0 (`g`) stalled at tick `now` in a poll, which a spare may have to rescue. Awake in no
+ * poll, it relaxes before it starts one (sched_loop.velt `turnShared`), however long the OS takes
+ * to run its thread: one woken from its park (by a carried sleep, or its own timer) and not run
+ * yet was taken for stalled two ticks after the wake, and the request was taken back just before
+ * it relaxed. Worker 0 then ran on shared, and the spares were woken over and over (#3134).
+ */
+function stuck(g: usize, now: usize): bool {
+  return mon.stalled(g, now) && m.load(g + t.E_CURRENT) !== 0;
 }
 
 /** Asks the spares (of `n` started workers) that have not answered yet to retire. */
