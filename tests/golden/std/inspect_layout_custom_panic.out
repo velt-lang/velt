@@ -1,0 +1,19 @@
+caught
+caught
+caught
+{
+  first: Tag<a custom inspect's text, long enough to make the value break>,
+  second: [ 1, 2, 3 ],
+  third: Tag<a custom inspect's text, long enough to make the value break>
+}
+{
+  inside: Tag<a custom inspect's text, long enough to make the value break>,
+  list: [ 1, 2, 3 ],
+  text: 'breaks across lines as well'
+}
+{
+  outer: Tag<a custom inspect's text, long enough to make the value break>,
+  loud: Loud,
+  after: Tag<a custom inspect's text, long enough to make the value break>
+}
+[ Tag<a custom inspect's text, long enough to make the value break> ]
