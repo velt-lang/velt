@@ -204,6 +204,8 @@ table! {
     /// `body/expr/operator_bigint.rs` names the fix for a mixed one).
     math_bigint => "math/bigint",
     net_dns_lookup_sched => "net/dns/lookup_sched",
+    net_tls_fd_client => "net/tls/fd_client",
+    net_tls_fd_server => "net/tls/fd_server",
     net_http_fetch_response => "net/http/fetch/response",
     /// `velt/ops/operators`, the interfaces of the operator methods `velt/ops` exports (sema
     /// `collect/operators.rs`).

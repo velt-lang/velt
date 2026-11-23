@@ -26,10 +26,44 @@ pub(super) fn check_recovering_loaded(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(velt_loader::Loaded, Result<(), BuildError>), BuildError> {
+    // A std module the check demands that can't be served in the middle of it is loaded up front
+    // for a check again, as `sema_stage` does.
+    let mut scope = std::borrow::Cow::Borrowed(scope);
+    loop {
+        let diags_before = sess.diagnostics.len();
+        let files_before = sess.sm.files().count();
+        let (loaded, checked, refused) = check_recovering_once(sess, opts, &scope)?;
+        let fresh: Vec<String> = (refused.into_iter())
+            .filter(|p| !scope.preload.contains(p))
+            .collect();
+        if fresh.is_empty() {
+            return Ok((loaded, checked));
+        }
+        sess.diagnostics.truncate(diags_before);
+        let mut sm = velt_common::SourceMap::new();
+        for (_, f) in sess.sm.files().take(files_before) {
+            sm.add(f.path.clone(), f.src.clone());
+        }
+        sess.sm = sm;
+        scope.to_mut().preload.extend(fresh);
+    }
+}
+
+/// What [`check_recovering_once`] gives: what it loaded, the check's result, and the std modules
+/// it demanded that could not be served in place.
+type Recovered = (velt_loader::Loaded, Result<(), BuildError>, Vec<String>);
+
+/// One load and check of [`check_recovering_loaded`].
+fn check_recovering_once(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<Recovered, BuildError> {
     let mut loaded = load_modules(sess, opts, scope)?;
     if !sess.has_errors() {
+        // `sema_stage` checks again itself.
         let checked = sema_stage(sess, opts, scope, &mut loaded).map(drop);
-        return Ok((loaded, checked));
+        return Ok((loaded, checked, vec![]));
     }
     let t = Instant::now();
     let broken: std::collections::HashSet<velt_common::FileId> = sess
@@ -84,17 +118,21 @@ pub(super) fn check_recovering_loaded(
     let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         velt_sema::check_recovered(&loaded.modules, loaded.root, sema_opts, &recovered, loads)
     }));
-    let (sess, _) = match shared.into_inner() {
+    let (sess, more) = match shared.into_inner() {
         Ok(inner) => inner,
         Err(poisoned) => poisoned.into_inner(),
     };
+    let refused = more.map_or(vec![], |m| m.refused);
+    if !refused.is_empty() {
+        return Ok((loaded, Err(BuildError::Diagnostics), refused));
+    }
     if let Ok(diags) = checked {
         let found = (diags.into_iter())
             .filter(|d| primary_span(d).is_none_or(|span| !broken.contains(&span.file)));
         sess.diagnostics.extend(found);
     }
     sess.record("sema", t);
-    Ok((loaded, Err(BuildError::Diagnostics)))
+    Ok((loaded, Err(BuildError::Diagnostics), vec![]))
 }
 
 /// Where diagnostic `d` is reported (`None`: nowhere in particular).

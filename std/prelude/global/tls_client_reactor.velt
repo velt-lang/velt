@@ -1,6 +1,0 @@
-// Global, conditional (crates/velt_loader/src/globals): the TLS client in Velt on the reactor
-// (std/net/tls/fd_client.velt) for a program whose TCP functions are std/net/tcp_sched.velt (every
-// native program's) that names `connectTls`, `WebSocket` or `connectWebSocket` (whose `wss:`
-// connects with it). Other programs don't load the client.
-// load when std/net/tcp_sched uses: connectTls WebSocket connectWebSocket
-import "velt/net/tls/fd_client";

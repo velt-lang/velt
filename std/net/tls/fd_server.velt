@@ -1,16 +1,16 @@
 // velt/net (internal): `listenTls` on the reactor under the executor in Velt (#2649): the TLS
 // server in Velt (TLS 1.3, and TLS 1.2 for older clients; #2392 steps 4 and 5) for each accepted
-// socket, as std/net/tls/fd_reactor.velt's `ListenHook`. Only the conditional global
-// std/prelude/global/tls_reactor.velt loads this file, so a program that can't listen with TLS
-// loads none of the server.
+// socket. std/net/tcp_sched.velt's `listenTls` calls `velt_rt_tls_listen` by role (velt_common
+// `std_hooks.rs` `sched_tls_listen`), so a program loads the server only when live code can listen
+// with TLS.
 
 import { IoError } from "velt/io/error";
+import { noteStdUse } from "velt/lang/intrinsics";
 import { IoResult } from "velt/native/result";
 import * as fs from "velt/net/fd_socket";
 import { TcpStream } from "velt/net/tcp_stream";
 import { FdTlsConn } from "velt/net/tls/fd_conn";
-import { ListenHook, TlsListenSide } from "velt/net/tls/fd_listen_hook";
-import "velt/net/tls/fd_reactor";
+import { status } from "velt/net/tls/fd_reactor";
 import { TlsSession, TlsSessions } from "velt/net/tls/fd_session";
 import { addListener, TlsListen } from "velt/net/tls/fd_table";
 import { ServerHandshake } from "velt/net/tls/server_handshake";
@@ -69,15 +69,31 @@ export async function listenTls(
   return fs.value(addListener(entry));
 }
 
-/** The server's `listen` for std/net/tls/fd_reactor.velt. */
-extend TlsListenSide implements ListenHook {
-  async listen(
-    addr: string,
-    cert: string,
-    key: string,
-    alpn: string,
-    handed: u64,
-  ): Promise<IoResult<u64> | null> {
-    return await listenTls(addr, cert, key, alpn, handed);
+/**
+ * `listenTls` on the reactor for std/net/tcp_sched.velt, which calls it by role (`sched_tls_listen`):
+ * `listenTls`'s listener, or the status of its failure (`EINVAL` for a certificate or key that is
+ * not valid PEM, or a key of a kind the server doesn't sign with).
+ */
+export async function velt_rt_tls_listen(
+  addr: string,
+  cert: string,
+  key: string,
+  alpn: string,
+  handed: u64,
+): Promise<IoResult<u64>> {
+  // The program can listen with TLS on the reactor: tcp_sched's `stdUsed("reactorTls")` tests are
+  // true, so its operations check for TLS handles.
+  noteStdUse("reactorTls");
+  try {
+    const l = await listenTls(addr, cert, key, alpn, handed);
+    if (l == null) {
+      return fs.failed(
+        { code: 4, message: "listenTls: a key of a kind the TLS server doesn't sign with" },
+        0,
+      );
+    }
+    return l;
+  } catch (e) {
+    return fs.failed(status(e), 0);
   }
 }

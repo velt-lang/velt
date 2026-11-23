@@ -2,9 +2,10 @@
 // 6): a socket dialled on the reactor, the TLS client in Velt's handshake over it (`startTls`'s,
 // which checks the server's certificate against the built-in roots and `ca`), then the stream in
 // the reactor's table of TLS streams (std/net/tls/fd_table.velt), where it is read, written and
-// closed as a `listenTls` stream is (std/net/tls/fd_ops.velt). As std/net/tls/fd_reactor.velt's
-// `ConnectHook`. Only the conditional global std/prelude/global/tls_client_reactor.velt loads
-// this file, so a program that can't connect with TLS loads none of the client.
+// closed as a `listenTls` stream is (std/net/tls/fd_ops.velt). std/net/tcp_sched.velt's
+// `connectTls` and `fetch`'s `https:` call it by role (velt_common `std_hooks.rs`
+// `sched_tls_connect`, `sched_tls_handshake`), so a program loads the client only when live code
+// can connect with TLS.
 
 import { IoError } from "velt/io/error";
 import { noteStdUse } from "velt/lang/intrinsics";
@@ -14,7 +15,6 @@ import { velt_rt_tcp_close, velt_rt_tcp_connect } from "#net-tcp";
 import * as fs from "velt/net/fd_socket";
 import { TcpStream } from "velt/net/tcp_stream";
 import { FdTlsConn } from "velt/net/tls/fd_conn";
-import { ConnectHook, TlsConnectSide } from "velt/net/tls/fd_connect_hook";
 import { status } from "velt/net/tls/fd_reactor";
 import { TlsSession } from "velt/net/tls/fd_session";
 import { addConn, Conn } from "velt/net/tls/fd_table";
@@ -143,14 +143,43 @@ export async function handshakeWithin(
 }
 
 /** The client's `connect` for std/net/tls/fd_reactor.velt. */
-extend TlsConnectSide implements ConnectHook {
-  async connect(
-    addr: string,
-    serverName: string,
-    ca: string,
-    alpn: string,
-  ): Promise<IoResult<u64> | null> {
+/**
+ * `connectTls` on the reactor for std/net/tcp_sched.velt, which calls it by role
+ * (`sched_tls_connect`): `connectTls`'s stream with the default time limit, or the status of its
+ * failure.
+ */
+export async function velt_rt_tls_connect(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+): Promise<IoResult<u64>> {
+  // The program reads and writes TLS streams of the reactor's: tcp_sched checks for them.
+  noteStdUse("reactorTls");
+  try {
     return await connectTls(addr, serverName, ca, alpn);
+  } catch (e) {
+    return fs.failed(status(e), 0);
+  }
+}
+
+/**
+ * `handshakeOn` for `fetch`'s `https:` (std/net/http/fetch/client/dial_sched.velt), which calls it
+ * by role (`sched_tls_handshake`): the stream, or the status of the failure. After an abort the
+ * caller throws the signal's reason, whatever the status says.
+ */
+export async function velt_rt_tls_handshake(
+  fd: u64,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  limitMs: i64,
+  signal: AbortSignal | null,
+): Promise<IoResult<u64>> {
+  try {
+    return fs.value(await handshakeOn(fd, serverName, ca, alpn, limitMs, signal));
+  } catch (e) {
+    return fs.failed(status(e), 0);
   }
 }
 
