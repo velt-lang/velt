@@ -55,8 +55,9 @@ pub struct Plan {
     /// (`veltc::eager_std_identity`, lazy-std.md "Loading on demand"): when what reads the
     /// sources, sema, the loader, lowering or std changes ([`VIR_IDENTITY_CRATES`]).
     pub vir_identity: bool,
-    /// The merge queue compares every golden too, not a sample: the code that loads std on demand
-    /// changed ([`VIR_IDENTITY_CODE`]).
+    /// The code that loads std on demand changed ([`VIR_IDENTITY_CODE`]): CI still compares the
+    /// sample ([`Self::vir_identity_queue`]), and the report asks for every golden by hand
+    /// (`VELT_VIR_IDENTITY=all`) before pushing.
     pub vir_identity_all: bool,
     /// The native crates of the repository's packages (`packages/<name>/native`, outside the
     /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
@@ -116,7 +117,8 @@ impl Plan {
             goldens: Goldens::All,
             velt_fmt: true,
             vir_identity: true,
-            vir_identity_all: true,
+            // (Only a hint for a known change: without one there is nothing to tell its author.)
+            vir_identity_all: false,
             native_crates: true,
             difftest: true,
             vscode: true,
@@ -455,16 +457,19 @@ impl Plan {
         }
     }
 
-    /// `VELT_VIR_IDENTITY` for the merge queue, which runs `--full` and so knows no changes. A
-    /// change that can break the comparison already ran it on every golden in its pull request's
-    /// `test` job, so the queue, which adds only what landed since, runs all of it for the code
-    /// loading std on demand, a sample (`sample`) for the rest of [`Self::vir_identity`], and
-    /// nothing (`skip`) otherwise. The nightly gate leaves it unset: every golden.
+    /// `VELT_VIR_IDENTITY` for the merge queue and merge trains, which run `--full` and so know no
+    /// changes: the sample (`sample`, one golden in 8 chosen by a hash of its name,
+    /// crates/veltc/tests/eager_std_identity.rs) whenever [`Self::vir_identity`], even for the code
+    /// loading std on demand ([`Self::vir_identity_all`]), and nothing (`skip`) otherwise. Every
+    /// golden (`all`) only in the nightly gate on Linux, which sets it itself: a train of ten pull
+    /// requests nearly always touches `std/lang/hooks/` or the loader, and the whole comparison
+    /// took 11 to 20 minutes of each Windows golden shard and 30 of the Windows job after merging
+    /// (2026-11-23). It compares the order std loads in, which doesn't depend on the OS.
     pub fn vir_identity_queue(&self) -> &'static str {
-        match (self.vir_identity_all, self.vir_identity) {
-            (true, _) => "",
-            (false, true) => "sample",
-            (false, false) => "skip",
+        if self.vir_identity {
+            "sample"
+        } else {
+            "skip"
         }
     }
 
@@ -543,11 +548,14 @@ impl Plan {
             yes(self.velt_fmt)
         ));
         out.push_str(&format!(
-            "  VIR identity, std loaded up front and on demand: {}, in the merge queue {}\n",
-            yes(self.vir_identity),
-            match self.vir_identity_queue() {
-                "" => "every golden",
-                value => value,
+            "  VIR identity, std loaded up front and on demand: {}\n",
+            match (self.vir_identity, self.vir_identity_all) {
+                (false, _) => "no",
+                (true, false) => "yes, one golden in 8 (VELT_VIR_IDENTITY=all: every golden)",
+                (true, true) => {
+                    "yes, one golden in 8 here and in CI; the code loading std on demand \
+                     changed: run every golden before pushing (VELT_VIR_IDENTITY=all)"
+                }
             }
         ));
         out.push_str(&format!(
