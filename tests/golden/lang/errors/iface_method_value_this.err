@@ -29,5 +29,5 @@ iface_method_value_this.velt:195:36: error: the value of property `greet2` is a 
 iface_method_value_this.velt:192:36: error: the value of property `greet2` is a function not written in the literal, and a method named `greet2` may use `this`, so it is not supported yet
 iface_method_value_this.velt:346:28: error: the value of property `run` is a function not written in the literal, and a method named `greet3` may use `this`, so it is not supported yet
 iface_method_value_this.velt:349:28: error: the value of property `run` is a function not written in the literal, and a method named `shout3` may use `this`, so it is not supported yet
-iface_method_value_this.velt:353:28: error: the value of property `run` is a function not written in the literal, and it has the type of method `show`, which may use `this`, so it is not supported yet
-iface_method_value_this.velt:378:28: error: the value of property `run` is a function not written in the literal, and it has the type of method `show`, which may use `this`, so it is not supported yet
+iface_method_value_this.velt:353:28: error: the value of property `run` is a function not written in the literal, and it has the type of method `greet`, which may use `this`, so it is not supported yet
+iface_method_value_this.velt:378:28: error: the value of property `run` is a function not written in the literal, and it has the type of method `greet`, which may use `this`, so it is not supported yet

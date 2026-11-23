@@ -28,7 +28,7 @@
 //! slot. A function written in the literal (an arrow, a function expression, a method), a
 //! function declared by name and a `const` initialized with an arrow have no `this` of their
 //! own. A method value that passes through a function's result or a field and is stored under
-//! another name and type is not followed (#746's provenance follow-up).
+//! another name and type is not followed (#3650).
 //!
 //! The fact is the whole program's: std's stage of a separate check (`crate::units`) and a kept
 //! check's reload (`crate::kept_reload`) keep the reads for the check that sees every body.
@@ -79,6 +79,9 @@ pub(crate) fn check(cx: &mut Ctx) {
         return;
     }
     let (names, sigs) = this_methods(cx);
+    if names.is_empty() {
+        return;
+    }
     let mut seen = FxHashSet::default();
     for r in reads {
         if !seen.insert((r.span.file, r.span.lo, r.span.hi)) {
@@ -87,26 +90,31 @@ pub(crate) fn check(cx: &mut Ctx) {
         let named = std::iter::once(&r.name)
             .chain(&r.methods)
             .find(|n| names.contains(n.as_str()));
-        let typed = match (&r.sig, r.dynamic) {
-            (Some(sig), false) => sigs.iter().find(|(_, s)| s == sig).map(|(n, _)| n),
-            _ => None,
+        // The first method (in source order) of the value's function type.
+        let typed = match &r.sig {
+            Some(sig) => sigs.iter().find(|(_, _, s)| s == sig).map(|(n, _, _)| n),
+            None => None,
         };
-        let why = match (named, typed) {
-            (Some(n), _) => crate::body::expr::StoredWhy::Named(n),
-            (None, Some(n)) => crate::body::expr::StoredWhy::Typed(n),
-            (None, None) => continue,
+        let why = match (named, typed, r.dynamic) {
+            (Some(n), ..) => crate::body::expr::StoredWhy::Named(n),
+            (None, Some(n), _) => crate::body::expr::StoredWhy::Typed(n),
+            // A value of `any` or a type parameter's is checked by its name only: whatever its
+            // name, it would refuse every generic or dynamic value of a literal.
+            (None, None, _) => continue,
         };
         let d = crate::body::expr::stored_method_error(&r.name, why, r.read.as_deref(), r.span);
         cx.error(d);
     }
 }
 
+/// A function signature: parameter and result types.
+type Sig = (Vec<TyId>, TyId);
+
 /// The names of the methods that may read `this` (module docs), and the parameter and result
-/// types of each that isn't generic, with its name. Any interface's counts, not only the one a
-/// value was read from: an adapter fills one interface's slot with another interface's method,
-/// and a class's subclasses implement its interfaces' methods too.
-#[allow(clippy::type_complexity)]
-fn this_methods(cx: &Ctx) -> (FxHashSet<String>, Vec<(String, (Vec<TyId>, TyId))>) {
+/// types of each that isn't generic, with its name and place, in source order. Any interface's
+/// counts, not only the one a value was read from: an adapter fills one interface's slot with
+/// another interface's method, and a class's subclasses implement its interfaces' methods too.
+fn this_methods(cx: &Ctx) -> (FxHashSet<String>, Vec<(String, Span, Sig)>) {
     let mut names = FxHashSet::default();
     let mut sigs = vec![];
     let params = |ps: &[crate::defs::ParamSig]| ps.iter().map(|p| p.ty).collect::<Vec<_>>();
@@ -114,7 +122,7 @@ fn this_methods(cx: &Ctx) -> (FxHashSet<String>, Vec<(String, (Vec<TyId>, TyId))
         if let Some(m) = cx.iface(d).and_then(|i| i.methods.get(slot as usize)) {
             names.insert(m.name.clone());
             if m.generics.names.is_empty() {
-                sigs.push((m.name.clone(), (params(&m.params), m.ret)));
+                sigs.push((m.name.clone(), m.span, (params(&m.params), m.ret)));
             }
         }
     }
@@ -127,7 +135,7 @@ fn this_methods(cx: &Ctx) -> (FxHashSet<String>, Vec<(String, (Vec<TyId>, TyId))
                     if m.default.is_some_and(|d| uses_this(cx, d)) {
                         names.insert(m.name.clone());
                         if m.generics.names.is_empty() {
-                            sigs.push((m.name.clone(), (params(&m.params), m.ret)));
+                            sigs.push((m.name.clone(), m.span, (params(&m.params), m.ret)));
                         }
                     }
                 }
@@ -140,7 +148,7 @@ fn this_methods(cx: &Ctx) -> (FxHashSet<String>, Vec<(String, (Vec<TyId>, TyId))
                     names.insert(name.clone());
                     if let DefInfo::Fn(f) = &cx.info[m.def.0 as usize] {
                         if f.generics.names.is_empty() {
-                            sigs.push((name.clone(), (params(&f.params), f.ret)));
+                            sigs.push((name.clone(), f.span, (params(&f.params), f.ret)));
                         }
                     }
                 }
@@ -148,6 +156,8 @@ fn this_methods(cx: &Ctx) -> (FxHashSet<String>, Vec<(String, (Vec<TyId>, TyId))
             _ => {}
         }
     }
+    // Source order, so the method a message names is the same on every machine.
+    sigs.sort_by(|a, b| (a.1.file, a.1.lo, &a.0).cmp(&(b.1.file, b.1.lo, &b.0)));
     (names, sigs)
 }
 
