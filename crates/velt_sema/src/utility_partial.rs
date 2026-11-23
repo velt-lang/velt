@@ -20,7 +20,11 @@ impl Ctx<'_> {
     /// with methods.
     pub(crate) fn partial_iface(&mut self, t: TyId, module: usize, span: Span) -> Option<TyId> {
         match self.partial_fields(t)? {
-            Ok(fields) => Some(self.anon_type_with(&fields, module)),
+            Ok(fields) => {
+                let partial = self.anon_type_with(&fields, module);
+                self.objects.partial_types.insert(partial, t);
+                Some(partial)
+            }
             Err(why) => {
                 let shown = self.display(t);
                 self.error(Diagnostic::error(
@@ -42,12 +46,19 @@ impl Ctx<'_> {
             return None;
         };
         let mut fields = self.indexed_iface_members(t)?;
-        let methods: Vec<String> = (self.iface(d)?.methods.iter())
+        let mut methods: Vec<String> = (self.iface(d)?.methods.iter())
             .filter(|m| {
                 !m.is_getter && !m.name.starts_with("set ") && m.name != crate::generic_fns::CALL
             })
             .map(|m| m.name.clone())
             .collect();
+        // The declared ones too: an alias of another module can be expanded before this
+        // interface's methods are collected (a `Partial<I>` without them would be another type).
+        for name in self.declared_methods(d, 0) {
+            if !methods.contains(&name) {
+                methods.push(name);
+            }
+        }
         for name in methods {
             match self.partial_method_ty(d, &args, &name) {
                 Ok(ty) => fields.push(ShapeField {
@@ -65,15 +76,69 @@ impl Ctx<'_> {
         Some(Ok(fields))
     }
 
-    /// The interface `I`, among `found`'s own and those class `found` implements, whose
-    /// `Partial<I>` is `exp` or a member of union `exp`. TypeScript converts every `I` to
-    /// `Partial<I>` keeping the value; Velt's `Partial<I>` is an object type of its own, which
-    /// the value would be copied into (`body/expr/coerce_mismatch.rs` reports it).
+    /// The interface `I` whose `Partial<I>` is `exp` or a member of union `exp`, and which a
+    /// value of type `found` has: its own, one it extends, or one class `found` implements; or
+    /// the same through an array's elements (`I[]` for `Partial<I>[]`) or a function's result.
+    /// TypeScript converts every `I` to `Partial<I>` keeping the value; Velt's `Partial<I>` is an
+    /// object type of its own, which the value would be copied into
+    /// (`body/expr/coerce_mismatch.rs` reports it).
     pub(crate) fn partial_source(&mut self, exp: TyId, found: TyId) -> Option<TyId> {
+        self.partial_source_at(exp, found, 0)
+    }
+
+    fn partial_source_at(&mut self, exp: TyId, found: TyId, depth: u32) -> Option<TyId> {
+        if depth > 16 {
+            return None;
+        }
         let exp = self.ty.core(exp).unwrap_or(exp);
-        let targets = self.union_members(exp).unwrap_or_else(|| vec![exp]);
         let found = self.ty.core(found).unwrap_or(found);
+        // `I[]` (or `readonly I[]`) where `Partial<I>[]` is expected.
+        let (fe, ee) = (self.ty.mutable_twin(found), self.ty.mutable_twin(exp));
+        if let (Some(f), Some(e)) = (self.ty.array_elem(fe), self.ty.array_elem(ee)) {
+            return self.partial_source_at(e, f, depth + 1);
+        }
+        // `() => I` where `() => Partial<I>` is expected.
+        if let (
+            TyKind::FnPtr {
+                params: fp,
+                ret: fr,
+                ..
+            },
+            TyKind::FnPtr {
+                params: ep,
+                ret: er,
+                ..
+            },
+        ) = (self.ty.kind(found).clone(), self.ty.kind(exp).clone())
+        {
+            return match fp == ep {
+                true => self.partial_source_at(er, fr, depth + 1),
+                false => None,
+            };
+        }
+        let targets = self.union_members(exp).unwrap_or_else(|| vec![exp]);
+        if !targets
+            .iter()
+            .any(|t| self.objects.partial_types.contains_key(t))
+        {
+            return None;
+        }
         let mut sources = vec![found];
+        // The interfaces an interface value's type extends, at its arguments.
+        let mut i = 0;
+        while i < sources.len() && i < 64 {
+            if let TyKind::Dyn(d, args) = self.ty.kind(sources[i]).clone() {
+                let parents: Vec<_> = self.iface(d).map_or(vec![], |f| f.parents.clone());
+                for p in parents {
+                    let t = self.ty.intern(TyKind::Dyn(p.iface, p.args));
+                    let t = self.subst(t, &args);
+                    if !sources.contains(&t) {
+                        sources.push(t);
+                    }
+                }
+            }
+            i += 1;
+        }
         let mut class = self.class_of(found);
         for _ in 0..32 {
             let Some((c, args)) = class else { break };
@@ -92,6 +157,40 @@ impl Ctx<'_> {
                 .and_then(Result::ok)
                 .is_some_and(|f| targets.contains(&self.anon_type_with(&f, 0)))
         })
+    }
+
+    /// The interface whose `Partial` is `exp`, a member of union `exp`, or `exp`'s payload when
+    /// it may be null (`Partial<I> | undefined`): where a dynamic value can't convert yet
+    /// (`body/expr/dynamic.rs` `unbox_dynamic`).
+    pub(crate) fn partial_target(&mut self, exp: TyId) -> Option<TyId> {
+        let core = self.ty.core(exp).unwrap_or(exp);
+        let members = self.union_members(core).unwrap_or_else(|| vec![core]);
+        members.into_iter().find_map(|m| {
+            self.objects
+                .partial_types
+                .get(&self.ty.core(m).unwrap_or(m))
+                .copied()
+        })
+    }
+
+    /// The error for a value shown as `found` converted to `Partial<iface>` (module docs).
+    pub(crate) fn partial_limit_error(
+        &mut self,
+        found: &str,
+        iface: TyId,
+        span: Span,
+    ) -> Diagnostic {
+        let i = self.display(iface);
+        Diagnostic::error(
+            format!("a value of type `{found}` cannot convert to `Partial<{i}>` yet"),
+            span,
+        )
+        .with_note(format!(
+            "`Partial<{i}>` of an interface with methods is an object type of its own: the conversion would copy the members into a new object, where JavaScript keeps the one value (`===`, later writes)"
+        ))
+        .with_note(format!(
+            "take `{i}` itself where a full value is passed, or build the `Partial<{i}>` as an object literal"
+        ))
     }
 
     /// The function type of method `name` of interface `d` at `args`, from its declaration.
@@ -134,6 +233,26 @@ impl Ctx<'_> {
             true => self.subst(ty, args),
             false => ty,
         })
+    }
+
+    /// The names of the methods interface `d` and those it extends declare, as written
+    /// (getters and setters left out).
+    fn declared_methods(&self, d: DefId, depth: u32) -> Vec<String> {
+        let Some(info) = self.iface(d).filter(|_| depth <= 32) else {
+            return vec![];
+        };
+        let own = (info.decl.into_iter().flat_map(|x| x.methods.iter()))
+            .filter(|m| !m.is_getter && !m.is_setter)
+            .map(|m| m.sig.name.name.clone());
+        let mut out: Vec<String> = own.collect();
+        for p in &info.parents {
+            for name in self.declared_methods(p.iface, depth + 1) {
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+            }
+        }
+        out
     }
 
     /// The interface among `d` and those it extends that declares method `name`, and the

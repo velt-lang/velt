@@ -298,19 +298,9 @@ impl FnCx<'_, '_> {
         let Some(iface) = self.cx.partial_source(expected, found) else {
             return false;
         };
-        let (f, i) = (self.cx.display(found), self.cx.display(iface));
-        self.cx.error(
-            Diagnostic::error(
-                format!("a value of type `{f}` cannot convert to `Partial<{i}>` yet"),
-                span,
-            )
-            .with_note(format!(
-                "`Partial<{i}>` of an interface with methods is an object type of its own: the conversion would copy the members into a new object, where JavaScript keeps the one value (`===`, later writes)"
-            ))
-            .with_note(format!(
-                "take `{i}` itself where a full value is passed, or build the `Partial<{i}>` as an object literal"
-            )),
-        );
+        let f = self.cx.display(found);
+        let d = self.cx.partial_limit_error(&f, iface, span);
+        self.cx.error(d);
         true
     }
 }
