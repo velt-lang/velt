@@ -170,13 +170,11 @@ pub enum Intrinsic {
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
     FieldPresent,
-    /// `(v: T) -> T`, `T` an object type in `Program::freezable`: `Object.freeze(v)` of a value
-    /// made before, `v` itself with its frozen mark set (rt_abi.md "Counted objects",
-    /// `RC_FROZEN`), so that the checked writes of its type throw (#2623)
+    /// `(v: T) -> T`, `T` in `Program::freezable`: `Object.freeze(v)` of a value made before, `v`
+    /// with its frozen mark set (rt_abi.md `RC_FROZEN`): its type's checked writes throw (#2623)
     Freeze,
-    /// `(v: borrow T) -> bool`: JS `Object.isFrozen(v)`: a value of a type in `Program::freezable`
-    /// reads its frozen mark; a primitive (`T` not an object) is frozen; a value of a type made by
-    /// `Object.freeze` of a literal (readonly fields) is frozen; any other value is not (#2623)
+    /// `(v: borrow T) -> bool`: `Object.isFrozen(v)`, the mark of a freezable type's value; true
+    /// for a primitive and for a frozen literal's type (readonly fields), else false (#2623)
     IsFrozen,
     /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
