@@ -28,6 +28,12 @@ macro_rules! with_decorator_hooks {
             /// `@targetFeature("sha-arm")` on a function (any module; velt/compiler re-exports it): the
             /// CPU extension it is compiled for (`velt_sema` `body/gated.rs`, `hir::Program::cpu_targets`).
             decorator_target_feature => lang_intrinsics_decorators, "targetFeature", decorator;
+            /// `@repr("transparent")` on a struct (any module; velt/compiler re-exports it): passed as
+            /// its one field, to C too (`velt_sema` `decorators/layout.rs`, `velt_vir` `c_call.rs`).
+            decorator_repr => lang_intrinsics_decorators, "repr", decorator;
+            /// `@align(n)` on a struct: its values aligned to `n`, its size a multiple of it
+            /// (`velt_vir` `layout.rs`).
+            decorator_align => lang_intrinsics_decorators, "align", decorator;
             // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
             // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
             /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C

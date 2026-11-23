@@ -660,6 +660,7 @@ pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
                         ty: *ty,
                         mutable: false,
                         boxed: false,
+                        weak: false,
                         span: *span,
                     })
                     .collect();

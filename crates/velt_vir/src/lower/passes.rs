@@ -169,11 +169,12 @@ pub(super) fn lower_program_kept<'h>(
             cx.unfreeze_module_reach();
             let seed = want_seed.then(|| cx.seed(&next));
             let types_now = cx.types.clone();
+            let sched = (cx.sched_steps, !cx.sched_observers.is_empty());
             let (program, cx) = match keep {
                 true => (cx.finish_copy(), Some(cx)),
                 false => (cx.finish(), None),
             };
-            if !no_await_steps && async_fn::await_order::unobservable(&program) {
+            if !no_await_steps && async_fn::await_order::unobservable(&program, sched) {
                 // Lower again without the steps: the program then has no step code at all.
                 no_await_steps = true;
                 types = types_now;

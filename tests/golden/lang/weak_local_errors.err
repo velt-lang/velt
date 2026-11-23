@@ -1,0 +1,2 @@
+value of type `Node | null` may be null
+`w` is a `weak` variable, whose target may be gone between two reads, so a test does not narrow it: test a `const` copy instead: `const target = w; if (target !== null) { … }`

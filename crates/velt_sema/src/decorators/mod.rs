@@ -3,12 +3,13 @@
 //! supported yet, #2204) when it resolves to anything else. A use is checked against the
 //! declaration like a call, with arguments that must be constants ([`consts`]), and recorded
 //! for its readers in `Program::decorators`. A program without decorators pays one look per
-//! definition here, and nothing later. The decorators the compiler acts on itself are [`known`]'s
-//! and [`export`]'s.
+//! definition here, and nothing later. The decorators the compiler acts on itself are [`known`]'s,
+//! [`export`]'s and [`layout`]'s.
 
 mod consts;
 mod export;
 mod known;
+mod layout;
 mod scope;
 mod suffixes;
 
@@ -24,6 +25,7 @@ use crate::hir::{self, ConstTree, DecoratorTarget, DefId};
 pub(crate) use consts::path_of;
 pub(crate) use export::throws as export_throws;
 pub(crate) use known::{intrinsics, Inline, Variant, VariantCond, VariantTest};
+pub(crate) use layout::transparent_field;
 pub(crate) use scope::Scopes;
 
 /// The result types of a `declare decorator function`: where it may be used, with the bit each
@@ -141,6 +143,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
                     || decl.fields.iter().any(|f| !f.decorators.is_empty());
                 if decorated && seen.insert(decl as *const ast::TypeDecl as usize) {
                     type_uses(cx, d, module, decl);
+                    layout::check(cx, d, false);
                 }
             }
             DefInfo::Enum(e) => {
@@ -153,6 +156,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
                 };
                 let target = DecoratorTarget::Def(d);
                 uses(cx, module, &decl.decorators, TYPE, Some(target));
+                layout::check(cx, d, true);
             }
             _ => {}
         }

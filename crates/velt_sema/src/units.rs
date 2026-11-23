@@ -57,13 +57,17 @@ pub struct Summaries {
     /// The unit's functions whose modes its inference raised, with the raised modes: the unit
     /// itself holds their declared modes, for the app's bodies (`modes`).
     pub(crate) raised_modes: Vec<modes::Modes>,
+    /// std's function-type throws sites (the traps of `ProxyHandler`) with the types std's
+    /// check resolved them to, before any program stored into them: the app's rounds give a
+    /// closure made for one what their seeds give the site (`Ctx::app_trap_error`).
+    pub(crate) trap_sites: Vec<(velt_common::Span, crate::hir::TyId)>,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
-        raised_modes,
+        raised_modes, trap_sites,
     }
 }
 
@@ -143,6 +147,7 @@ pub(crate) fn finish_std(cx: &mut Ctx) {
     cx.frozen_reads = false;
     // The app's bodies see std's modes as declared, as in a whole-program check (`modes`).
     modes::keep_raised(cx);
+    cx.unit_sums.trap_sites = cx.std_trap_sites();
     codec::unit::clear_memos(cx);
     cx.freeze_defs();
     cx.unit_base = cx.defs.len() as u32;

@@ -147,9 +147,10 @@ impl<'p> Hashing<'p> {
         let mut s = DefaultHasher::new();
         generics.hash(&mut s);
         for hir::Param { local, ty, mode } in params {
-            // What the body does to the parameter: modifies it, or keeps it in a shared cell.
+            // What the body does to the parameter: modifies it, or keeps it in a shared cell; a
+            // capture of a `weak` variable holds a slot.
             let local = body.locals.get(local.0 as usize);
-            let effects = local.map(|l| (l.mutable, l.boxed));
+            let effects = local.map(|l| (l.mutable, l.boxed, l.weak));
             (self.ty(*ty), mode, effects).hash(&mut s);
         }
         let sig = (self.ty(*ret), self.opt_ty(*throws), self.opt_ty(*self_ty));
@@ -283,10 +284,11 @@ impl<'p> Hashing<'p> {
                     is_slot,
                     c_const,
                     c_global,
+                    weak,
                 } = g;
                 // `CConst` and `CGlobal` hold no ids.
                 let c = format!("{c_const:?}{c_global:?}");
-                (name.clone(), finish((4u8, self.ty(*ty), is_slot, c)))
+                (name.clone(), finish((4u8, self.ty(*ty), is_slot, c, weak)))
             }
         })
     }

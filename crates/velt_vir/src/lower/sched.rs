@@ -331,6 +331,13 @@ impl FnLower<'_, '_> {
         if matches!(r, Rt::FutStart | Rt::FutStartRejecting | Rt::FutDetach) {
             self.cx.sched_tasks = true;
         }
+        // What the runtime's function would have told await_order.rs by being declared (#3081).
+        if let Some(s) = observer_of(r) {
+            self.cx.sched_observers.insert(s);
+        }
+        if r == Rt::AwaitTick {
+            self.cx.sched_steps = true;
+        }
         let v = match (r, <[Operand; 5]>::try_from(args.clone())) {
             (Rt::FutBox, Ok([poll, drop, state, size, align])) => {
                 let [poll, drop, state] = [poll, drop, state].map(|o| self.as_usize(o));
@@ -523,6 +530,11 @@ impl FnLower<'_, '_> {
         ret: velt_sema::hir::TyId,
     ) -> Operand {
         let ops: Vec<Operand> = args.iter().map(|a| self.expr(a)).collect();
+        // `queueMicrotask` / a `then` callback's turn, and a `resolve` called later, observe
+        // `await` steps (await_order.rs `OBSERVERS`, #3081).
+        if let Some(s) = (super::async_fn::await_order::OBSERVERS.iter()).find(|s| **s == symbol) {
+            self.cx.sched_observers.insert(s);
+        }
         let arg = |i: usize| {
             ops.get(i)
                 .cloned()
@@ -587,4 +599,18 @@ impl FnLower<'_, '_> {
         let rt = self.sub(ret);
         self.owned_result(Some(d), rt)
     }
+}
+
+/// The runtime function (await_order.rs `OBSERVERS`) whose job the executor in Velt's hook for
+/// `r` does, when `r` is one that can make a task's await word non-0.
+fn observer_of(r: Rt) -> Option<&'static str> {
+    Some(match r {
+        Rt::FutStart => "velt_rt_fut_start",
+        Rt::FutStartRejecting => "velt_rt_fut_start_rejecting",
+        Rt::FutDetach => "velt_rt_fut_detach",
+        Rt::Race => "velt_rt_race",
+        Rt::RaceOk => "velt_rt_race_ok",
+        Rt::AllOrReject => "velt_rt_all_or_reject",
+        _ => return None,
+    })
 }

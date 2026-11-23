@@ -1,0 +1,8 @@
+// An imported `weak` module `let` is read-only where it is imported, as any imported `let` is.
+import { View, current } from "../_weak_global_lib/state";
+
+function main() {
+  const v = new View("v");
+  current = v;
+  console.log(current?.title ?? "null", v.title);
+}

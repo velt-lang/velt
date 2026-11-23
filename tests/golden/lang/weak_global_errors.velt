@@ -1,0 +1,30 @@
+// A module-level `let` declared `weak` is not narrowed by a test (its target may be gone between
+// two reads), a module `const` that functions use cannot be `weak` (one evaluated at each use
+// would hold nothing), and a class's static field cannot be yet (#3119).
+class View {
+  title: string;
+  constructor(title: string) {
+    this.title = title;
+  }
+}
+
+let current: weak View | null = null;
+const fixed: weak View | null = null;
+
+// A class's static field is not lowered yet.
+class Registry {
+  static last: weak View | null = null;
+}
+
+function narrowed(): string {
+  if (current !== null) {
+    return current.title;
+  }
+  return "";
+}
+
+function useFixed(): string {
+  return fixed?.title ?? "";
+}
+
+console.log(narrowed(), useFixed(), Registry.last?.title ?? "");

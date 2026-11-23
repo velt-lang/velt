@@ -1,4 +1,4 @@
-`weak` outside a class's own field is not implemented yet (#3119)
+`weak` outside a class's own field or a variable is not implemented yet (#3119)
 `weak` to anything but a class instance is not implemented yet (#3119)
 a `weak` reference reads `null` once its target is gone: its type must include `null`
 `weak` refers to an object with an identity: `f64` is not a class, an object type, an interface, an array or a map
