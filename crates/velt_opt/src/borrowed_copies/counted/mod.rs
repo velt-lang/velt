@@ -67,7 +67,7 @@ use crate::locals::Usage;
 /// code reads (`velt_vir::math::effects`): allocation, and the string functions, which free
 /// only string buffers (never a counted object) and run no code of the program (an error's
 /// message built for a throw: `corrupt(\`page ${n}\`)`).
-const NO_FREE: [&str; 17] = [
+const NO_FREE: [&str; 16] = [
     "velt_rt_alloc",
     "velt_rt_realloc",
     "velt_rt_str_clone",
