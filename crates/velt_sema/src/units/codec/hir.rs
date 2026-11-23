@@ -590,6 +590,8 @@ enums! {
         221 => PtrRead,
         222 => PtrWrite,
         223 => WeakRead,
+        225 => Freeze,
+        226 => IsFrozen,
     }
 }
 

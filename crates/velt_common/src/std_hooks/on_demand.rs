@@ -52,6 +52,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/weak",
     // The inline `Mutex` lock (#2196), demanded by a `Mutex`'s `with` (`Construct::Mutex`).
     "std/lang/hooks/mutex",
+    // The errors of a write to a frozen object (#2623), demanded by sema's test of the mark.
+    "std/lang/hooks/frozen",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
     // The other string methods in Velt, called by role too (#2198).

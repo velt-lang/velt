@@ -234,6 +234,16 @@ values crosses as an unboxed view (arguments) or is boxed after the call (result
 environments on the heap are counted blocks too; the drop function in their header releases one
 reference.
 
+**Frozen mark** (#2623). Bit 60 (`RC_FROZEN`) of the count word of a counted object of a
+freezable type (hir `Program::freezable`) is set once `Object.freeze` froze it, and stays set
+for the object's life; compiled code reads it before each write of the type's fields
+(`Object.isFrozen`, the write check). Such a type's count is bits 0..59: its release tests
+`(c & !RC_FROZEN) == 1` (and its weak-capable release, below, compares the count without the bit
+the same way); a decrement keeps the bit; a uniqueness test compares the whole word with 1, so a
+frozen object is never unique; the transfer glue's copy of a frozen object is frozen. A
+freezable type is never in a lock set, so bits 61 and 62's read-mode meanings (`STORED`,
+`LOCAL`) never meet it. The runtime never reads the bit.
+
 **Debug check of captured variables' cells**. A captured variable that a closure assigns
 lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two tasks: the
 transfer glue gives a value crossing to another task cells of its own, and sema rejects the
@@ -274,7 +284,8 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
   held. Bit 62 (`RC_GATED`) is set besides once its record has a release gate (a weak map key, or
   an object on an entry's path back to its key): a release of an object without one needs the
-  core only when it frees the object. The count proper is bits 0..61. Retain is unchanged
+  core only when it frees the object. The count proper is bits 0..59 (std's `RC_COUNT`); bit 60
+  is a frozen object's `RC_FROZEN` (above), which the core keeps when it clears its own bits. Retain is unchanged
   (`count += 1`).
 - **Release** of a *weak-capable* type (decided program-wide: weak keys, `WeakRef` targets, `weak`
   targets and every type reachable from a weak map's key and value types): `c = count; if (int64_t)c

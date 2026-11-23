@@ -69,6 +69,7 @@ mod bits;
 mod boxes;
 mod boxing;
 mod field_absent;
+mod frozen_mark;
 mod kept;
 mod passes;
 pub use boxing::CountedSeed;

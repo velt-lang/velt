@@ -34,7 +34,9 @@ export const RC_WEAK: u64 = 0x8000_0000_0000_0000;
 export const RC_GATED: u64 = 0x4000_0000_0000_0000;
 
 /** Count word: the count proper. */
-export const RC_COUNT: u64 = 0x3fff_ffff_ffff_ffff;
+export const RC_COUNT: u64 = 0x0fff_ffff_ffff_ffff;
+/** A frozen object's mark (`Object.freeze`, #2623): bit 60, which the count leaves out. */
+export const RC_FROZEN: u64 = 0x1000_0000_0000_0000;
 
 /** The address-sized field at `a`. */
 @inline("always")
