@@ -52,3 +52,17 @@ const left: CallOptions = { fresh: false };
 for (const k in left) {
   console.log("for-in", k);
 }
+// A for-in inside the key of `Object.hasOwn` on a lock-holding value: the inner check keeps the
+// outer typed branch it is nested in.
+console.log(
+  Object.hasOwn(
+    req,
+    ((): string => {
+      let s = "";
+      for (const k in req) {
+        s = k;
+      }
+      return s;
+    })(),
+  ),
+);
