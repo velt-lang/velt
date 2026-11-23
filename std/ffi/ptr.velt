@@ -3,7 +3,7 @@
 // documentation and its statics (`velt_common` `std_hooks`, `ffi_ptr_type`), never a type of its
 // own. One machine word: `Ptr<T> | null` is the same word, with 0 as `null`.
 
-import { ptrFromAddress, ptrToAddress } from "velt/lang/intrinsics/address";
+import { ptrFromAddress, ptrRead, ptrToAddress, ptrWrite } from "velt/lang/intrinsics/address";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
@@ -42,6 +42,27 @@ export struct Ptr<T> {
   /** The address `p` holds, or 0 for `null`. */
   static addressOf<T>(p: Ptr<T> | null): usize {
     return ptrToAddress<T>(p);
+  }
+
+  /**
+   * The `S` at element `index` of `p` (`p[index]` in C): `S` is a number type, `bool`, a pointer
+   * or a C struct. A pointer field of the struct declared `Ptr<T>` (not `| null`) that C left
+   * `NULL` stops the program, naming the field; a `bool` is its byte's truth to C, 0 or not. Unsafe: nothing checks that an `S` is there.
+   */
+  static unsafe read<S>(p: Ptr<S>, index: usize): S {
+    // SAFETY: the caller's promise.
+    return unsafe { ptrRead<S>(p, index) };
+  }
+
+  /**
+   * Writes `s` at element `index` of `p` (`p[index] = s` in C). Unsafe: nothing checks that the
+   * memory is there, writable, and not read or written by anything else meanwhile.
+   */
+  static unsafe write<S>(p: Ptr<S>, index: usize, s: S): void {
+    // SAFETY: the caller's promise.
+    unsafe {
+      ptrWrite<S>(p, index, s);
+    }
   }
 }
 

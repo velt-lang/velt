@@ -3,11 +3,11 @@
 //! member's `VariantDef::str_value`). Used by the formatter (`console.log`, `${x}`) and by
 //! `JSON.stringify`.
 
-use velt_sema::hir::{LitValue, TyId, TyKind};
+use velt_sema::hir::{IntTy, LitValue, TyId, TyKind};
 
 use crate::lower::rt::Rt;
 use crate::lower::FnLower;
-use crate::vir::{self, Const, Operand, Place, Terminator, Ty, STR_AGG};
+use crate::vir::{self, Operand, Place, Terminator, Ty, STR_AGG};
 
 impl FnLower<'_, '_> {
     /// The literal type of union variant `v` of `ty`, if that member is a literal type.
@@ -28,10 +28,10 @@ impl FnLower<'_, '_> {
             LitValue::Str(s) if nested => self.push_text(buf, &inspect_quote(s)),
             LitValue::Str(s) => self.push_text(buf, s),
             LitValue::Bool(b) => self.push_text(buf, if *b { "true" } else { "false" }),
-            LitValue::Int(_, n) => self.push_text(buf, &n.to_string()),
+            LitValue::Int(it, n) => self.push_text(buf, &int_literal_text(*it, *n)),
+            // Its text now: `String(x)` (`-0` is `0`).
             LitValue::Float(_, bits) => {
-                let f = Operand::Const(Const::Float(f64::from_bits(*bits)), Ty::F64);
-                self.call_rt(Rt::StrbufPushF64, vec![buf.clone(), f], None);
+                self.push_text(buf, &velt_syntax::js_number(f64::from_bits(*bits)))
             }
         }
     }
@@ -45,11 +45,12 @@ impl FnLower<'_, '_> {
                 self.call_rt(Rt::StrbufPushJsonStr, vec![buf.clone(), a], None);
             }
             LitValue::Bool(b) => self.push_text(buf, if *b { "true" } else { "false" }),
-            LitValue::Int(_, n) => self.push_text(buf, &n.to_string()),
-            LitValue::Float(_, bits) => {
-                let f = Operand::Const(Const::Float(f64::from_bits(*bits)), Ty::F64);
-                self.call_rt(Rt::StrbufPushJsonF64, vec![buf.clone(), f], None);
-            }
+            LitValue::Int(it, n) => self.push_text(buf, &int_literal_text(*it, *n)),
+            // `String(x)`, `null` for NaN and the infinities.
+            LitValue::Float(_, bits) => match f64::from_bits(*bits) {
+                x if x.is_finite() => self.push_text(buf, &velt_syntax::js_number(x)),
+                _ => self.push_text(buf, "null"),
+            },
         }
     }
 
@@ -104,6 +105,18 @@ impl FnLower<'_, '_> {
     }
 }
 
+/// The text of the value `n` of an integer literal type of width `it`. An unsuffixed literal
+/// type (`i64`, as sema gives it) is a `number`'s: `String(n)` of the double it denotes, as Node
+/// (`9007199254740993` is `9007199254740992`, `2^63 - 1` is `9223372036854776000`, `1e21` is
+/// `1e+21`), the digits themselves wherever the double holds the value exactly below 10^21. A
+/// literal of another width (`18446744073709551615u64`, `7u8`) is that integer: its digits.
+pub(in crate::lower) fn int_literal_text(it: IntTy, n: i128) -> String {
+    match it {
+        IntTy::I64 => velt_syntax::js_number(n as f64),
+        _ => n.to_string(),
+    }
+}
+
 /// An object key as `console.log` shows it: bare when it is an identifier of ASCII letters,
 /// digits and `_` (node quotes `$` and non-ASCII keys), else quoted (the runtime's
 /// `velt_rt_strbuf_push_inspect_key` does the same at run time).
@@ -155,7 +168,42 @@ pub(crate) fn inspect_quote(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::inspect_key;
+    use super::{inspect_key, int_literal_text, IntTy};
+
+    /// An unsuffixed integer literal type: a `number`'s.
+    fn number(n: i128) -> String {
+        int_literal_text(IntTy::I64, n)
+    }
+
+    #[test]
+    fn integer_literals_from_1e21_print_as_numbers_do() {
+        // The double nearest to it is 1e21.
+        assert_eq!(number(999_999_999_999_999_999_999), "1e+21");
+        assert_eq!(number(123_456_789_012_345_678_901), "123456789012345680000");
+        assert_eq!(number(1_000_000_000_000_000_000_000), "1e+21");
+        assert_eq!(number(-1_000_000_000_000_000_000_000), "-1e+21");
+    }
+
+    /// Between 2^53 and 2^64 a `number` literal is the double nearest to it, as Node prints it.
+    #[test]
+    fn integer_literals_past_2_53_print_their_double() {
+        assert_eq!(number(9_007_199_254_740_992), "9007199254740992");
+        assert_eq!(number(9_007_199_254_740_993), "9007199254740992");
+        assert_eq!(number(i64::MAX as i128), "9223372036854776000");
+        assert_eq!(number(i64::MIN as i128), "-9223372036854776000");
+        assert_eq!(number(42), "42");
+        assert_eq!(number(-7), "-7");
+    }
+
+    /// A literal type of another width is that integer: its digits.
+    #[test]
+    fn sized_integer_literals_print_their_digits() {
+        let max = u64::MAX as i128;
+        assert_eq!(int_literal_text(IntTy::U64, max), "18446744073709551615");
+        assert_eq!(int_literal_text(IntTy::USize, max), "18446744073709551615");
+        assert_eq!(int_literal_text(IntTy::I32, -2147483648), "-2147483648");
+        assert_eq!(int_literal_text(IntTy::U8, 255), "255");
+    }
 
     #[test]
     fn keys_bare_only_when_identifiers_like_node() {

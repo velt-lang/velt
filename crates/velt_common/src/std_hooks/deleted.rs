@@ -67,6 +67,8 @@ pub const DELETED: &[&str] = &[
     "velt_rt_prng_range",
     // #2196: `**` on floats (std/lang/math/pow, #1676).
     "velt_rt_pow_f64",
+    // #2196: `**` on integers (std/lang/hooks/pow_int).
+    "velt_rt_pow_i64",
     // #2196: collation (std/lang/string/collate).
     "velt_rt_str_locale_compare",
     // #2196: FNV-1a (std/hash/fnv), which only std called, so no hook replaces it.
@@ -130,4 +132,13 @@ pub const DELETED: &[&str] = &[
     "velt_rt_str_replace",
     "velt_rt_str_replace_all",
     "velt_rt_str_code_points",
+    // #2196: floats as text (std/lang/hooks/number_text, number_write, number_shortest,
+    // velt/lang/number/format); `JSON.stringify`'s float literals are the compiler's text, and
+    // the JSON writers' floats std's.
+    "velt_rt_str_from_f64",
+    "velt_rt_strbuf_push_f64",
+    "velt_rt_strbuf_push_inspect_f64",
+    "velt_rt_strbuf_push_json_f64",
+    "velt_rt_write_f64",
+    "velt_rt_bytes_put_f64",
 ];

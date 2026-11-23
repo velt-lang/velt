@@ -60,6 +60,8 @@ impl FnLower<'_, '_> {
                 let ty = self.sub(ty);
                 self.array_value(ty, data, len, cap)
             }
+            (I::PtrRead, [p, i]) => self.ptr_read(p, i, ty),
+            (I::PtrWrite, [p, i, v]) => self.ptr_write(p, i, v),
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),
@@ -448,6 +450,8 @@ impl FnLower<'_, '_> {
             (I::AnySetIndex, [o, i, v]) => self.any_set(o, i, v, true),
             (I::AnyHas, [o, k]) => self.any_has(o, k),
             (I::AnyDelete, [o, k]) => self.any_delete(o, k),
+            (I::AnyPromise, [x]) => self.any_promise(x, ty),
+            (I::AnyIsPromise, [x]) => self.any_is_promise(x),
             (I::Identity, [x]) => self.identity_of(x),
             (I::ToAny, [x]) => self.boxed_any(x),
             (I::AnyReflectInfo, [a]) => self.any_reflect(a, super::any_reflect::OP_INFO, None, ty),

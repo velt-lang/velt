@@ -1,0 +1,183 @@
+// scripts/std-lint: the `// SAFETY:` rule for std's unsafe code, by text, so that `cargo xtask
+// precheck` checks it without building veltc (#3496). The rule is veltc's
+// (crates/veltc/src/native/unsafe_sites.rs `safety_comment`, whose std test the gate runs;
+// docs/internals/design/c-ffi.md "`unsafe` blocks and functions"): each `unsafe { … }` and each
+// unsafe function or method with a body has a comment with `SAFETY:` in the comment lines
+// directly above its line, with no blank line or code between; an unsafe function may have an
+// `Unsafe:` paragraph in its doc comment instead.
+//
+// veltc finds the unsafe code in the parsed module; here it is found in the code outside
+// comments and strings (a template literal or a block comment may span lines): `unsafe`
+// followed by `{` (a block or an expression), by `function`, or by a name and `(` or `<` (a
+// method), but not a declaration without a body (`declare …`, an overload's signature). On
+// today's std both find the same sites. `velt fmt` moving `unsafe { … }` to the line below its
+// comment, when a call grows past 100 columns, is what this catches.
+
+/** Whether `c` can be part of a name. */
+function nameChar(c: string): boolean {
+  return (c >= "a" && c <= "z") ||
+    (c >= "A" && c <= "Z") ||
+    (c >= "0" && c <= "9") ||
+    c == "_" ||
+    c == "$";
+}
+
+/** Whether `c` is space between tokens (a CRLF file's `\r` too). */
+function space(c: string): boolean {
+  return c == " " || c == "\t" || c == "\r";
+}
+
+/** Whether the trimmed `line` is part of a comment: `//`, `/*`, or a doc comment's `*` line. */
+function commentLine(line: string): boolean {
+  return line.startsWith("//") || line.startsWith("/*") || line.startsWith("*");
+}
+
+/** What `codeOf` carries from one line to the next: an open string's quote, or an open `/*`. */
+class Scan {
+  quote = "";
+  block = false;
+}
+
+/**
+ * `line`'s code: strings and comments blanked out (a string's quotes kept), so that a message
+ * or a comment mentioning `unsafe {` is no unsafe code. `scan` says what is open where the line
+ * starts (a template literal or a block comment from an earlier line) and is left as the line ends.
+ */
+function codeOf(line: string, scan: Scan): string {
+  let out = "";
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (scan.block) {
+      if (c == "*" && i + 1 < line.length && line[i + 1] == "/") {
+        scan.block = false;
+        i++;
+        out += "  ";
+        continue;
+      }
+      out += " ";
+      continue;
+    }
+    if (scan.quote != "") {
+      if (c == "\\") {
+        i++;
+        out += "  ";
+        continue;
+      }
+      out += c == scan.quote ? c : " ";
+      if (c == scan.quote) {
+        scan.quote = "";
+      }
+      continue;
+    }
+    if (c == "/" && i + 1 < line.length && line[i + 1] == "/") {
+      break;
+    }
+    if (c == "/" && i + 1 < line.length && line[i + 1] == "*") {
+      scan.block = true;
+      i++;
+      out += "  ";
+      continue;
+    }
+    if (c == "\"" || c == "'" || c == "`") {
+      scan.quote = c;
+    }
+    out += c;
+  }
+  // Only a template literal goes on to the next line.
+  if (scan.quote != "`") {
+    scan.quote = "";
+  }
+  return out;
+}
+
+/** The kind of unsafe code at `code[at..]` (`at` the start of `unsafe`): 0 none, 1 a block or
+ * expression, 2 a function or method. */
+function kindAt(code: string, at: i64): i64 {
+  // A name's part, or a property (`config.unsafe`): no keyword.
+  if (at > 0 && (nameChar(code[at - 1]) || code[at - 1] == ".")) {
+    return 0;
+  }
+  let i = at + 6;
+  if (i < code.length && nameChar(code[i])) {
+    return 0;
+  }
+  while (i < code.length && space(code[i])) {
+    i++;
+  }
+  if (i >= code.length) {
+    // `unsafe` ending the line: what follows is on the next one, as the parser would read it.
+    return 1;
+  }
+  if (code[i] == "{") {
+    return 1;
+  }
+  let end = i;
+  while (end < code.length && nameChar(code[end])) {
+    end++;
+  }
+  if (end == i) {
+    return 0;
+  }
+  const word = code.slice(i, end);
+  while (end < code.length && space(code[end])) {
+    end++;
+  }
+  const isFunction =
+    word == "function" || (end < code.length && (code[end] == "(" || code[end] == "<"));
+  if (!isFunction) {
+    return 0;
+  }
+  // No body, no unsafe code of its own (veltc visits the functions with one): a `declare …
+  // unsafe function`, and an overload's signature, which ends with `;`.
+  if (code.slice(0, at).includes("declare ") || code.trimEnd().endsWith(";")) {
+    return 0;
+  }
+  return 2;
+}
+
+/** Whether the comment lines directly above line `i` of `lines` say `SAFETY:` (or `Unsafe:`). */
+function commented(lines: string[], i: i64, unsafeFunction: boolean): boolean {
+  for (let j = i - 1; j >= 0; j--) {
+    const above = lines[j].trim();
+    if (!commentLine(above)) {
+      return false;
+    }
+    if (above.includes("SAFETY:") || (unsafeFunction && above.includes("Unsafe:"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The lines (from 1) of `text` with unsafe code that has no `// SAFETY:` comment above it. */
+export function missingSafety(text: string): i64[] {
+  const out: i64[] = [];
+  if (!text.includes("unsafe")) {
+    return out;
+  }
+  const lines = text.split("\n");
+  const scan = new Scan();
+  for (let i: i64 = 0; i < (lines.length as i64); i++) {
+    const code = codeOf(lines[i], scan);
+    if (!code.includes("unsafe") || commentLine(lines[i].trim())) {
+      continue;
+    }
+    let missing = false;
+    let from: i64 = 0;
+    while (true) {
+      const at = code.indexOf("unsafe", from) as i64;
+      if (at < 0) {
+        break;
+      }
+      const kind = kindAt(code, at);
+      if (kind != 0 && !commented(lines, i, kind == 2)) {
+        missing = true;
+      }
+      from = at + 6;
+    }
+    if (missing) {
+      out.push(i + 1);
+    }
+  }
+  return out;
+}

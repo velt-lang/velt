@@ -1,0 +1,1 @@
+TypeError: adopting a promise held in `any` into a typed async result is not supported yet (#3475)

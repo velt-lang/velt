@@ -42,11 +42,18 @@
 //! `fits` and `fits_both` are true (rt_abi.md "SIMD": `at + lanes` does not wrap and is at most
 //! the length). Each array is tested for null first, as the loop might not have read it.
 //!
+//! **When a copy gains nothing.** A comparison the head already implies by value (the head
+//! bounds `i` by `min(count, xs.length)` read twice and the body checks `xs[i]`: [`same`]) is
+//! not decided, and a loop whose decided comparisons each repeat one the copy keeps (a decoder's
+//! `at + k >= len` before `bytes[at + k]`) is not copied: LLVM removes those tests itself, and
+//! the copy would only add the check in front, every time the loop is entered.
+//!
 //! The check reads each length as `fits` does, the second word of the header, through
 //! `ptradd P, 8`. Only innermost loops of at most [`MAX_BLOCKS`] blocks and [`MAX_STMTS`]
 //! statements are copied.
 
 mod rewrite;
+mod same;
 #[cfg(test)]
 mod tests;
 
@@ -108,11 +115,6 @@ impl Externs {
                 .collect(),
             harmless: calls.iter().map(simd_only).collect(),
         }
-    }
-
-    /// Whether any extern is a range test.
-    pub(crate) fn any(&self) -> bool {
-        self.tests.iter().any(Option::is_some)
     }
 }
 
@@ -176,6 +178,19 @@ pub(crate) fn run(aggs: &[AggLayout], externs: &Externs, func: &mut Function) ->
         return false;
     };
     let usage = Usage::of(func);
+    let mut all = Defs::default();
+    for (b, block) in func.blocks.iter().enumerate() {
+        for (s, st) in block.stmts.iter().enumerate() {
+            if let Stmt::Assign(p, _) = st {
+                all.entry(p.local.0).or_default().push((b, s));
+            }
+        }
+        if let Terminator::Call { dest: Some(p), .. } = &block.term {
+            all.entry(p.local.0)
+                .or_default()
+                .push((b, block.stmts.len()));
+        }
+    }
     let plans: Vec<Plan> = (loops.iter())
         .filter(|lp| loops.iter().all(|o| o.head == lp.head || !lp.body[o.head]))
         .filter_map(|lp| {
@@ -187,6 +202,7 @@ pub(crate) fn run(aggs: &[AggLayout], externs: &Externs, func: &mut Function) ->
                 doms: &doms,
                 usage: &usage,
                 lp,
+                all: &all,
             };
             analyse(&cx)
         })
@@ -223,6 +239,8 @@ struct Cx<'a> {
     doms: &'a Dominators,
     usage: &'a Usage,
     lp: &'a Loop,
+    /// Where the whole function assigns each local.
+    all: &'a Defs,
 }
 
 /// Where a loop assigns each local: (block, statement), the terminator being statement
@@ -331,17 +349,31 @@ fn analyse(cx: &Cx) -> Option<Plan> {
         }
         decided.push(Decided::Call(b, dest.local));
     }
+    // A decided comparison is worth a copy only where no comparison the copy keeps tests the
+    // same index against the same bound (a UTF-8 decoder's `at + k >= len` before `bytes[at + k]`):
+    // LLVM merges those itself, and the copy would only add the check in front.
+    let mut useful = !decided.is_empty();
+    let mut kept: Vec<(Option<Local>, u64, Operand)> = vec![];
+    let mut compares: Vec<(Option<Local>, u64, Operand)> = vec![];
     for b in body() {
         for (s, st) in func.blocks[b].stmts.iter().enumerate() {
             let Some((sum, limit, reach)) = compare(cx, &defs, &counter, &bound, gap, st, (b, s))
             else {
+                kept.extend(same::tested(cx, &defs, &counter, st, (b, s)));
                 continue;
             };
-            Range::note(&mut ranges, Limit::Bound(limit), sum.base, sum.k + reach);
+            Range::note(
+                &mut ranges,
+                Limit::Bound(limit.clone()),
+                sum.base,
+                sum.k + reach,
+            );
+            compares.push((sum.base, sum.k, limit));
             decided.push(Decided::Compare(b, s));
         }
     }
-    if decided.is_empty() {
+    useful |= compares.iter().any(|c| !kept.contains(c));
+    if !useful {
         return None;
     }
     Some(Plan {
@@ -357,7 +389,8 @@ fn analyse(cx: &Cx) -> Option<Plan> {
 
 /// A comparison at `at` that the check can decide: `c = le x, n` (or `lt`, or the operands
 /// swapped with `ge`, `gt`) with `x` a [`Sum`] of the counter and `n` invariant, which the head's
-/// own test does not already imply (`a[i]` under `i < n` is left to LLVM). Returns the sum, `n`,
+/// own test does not already imply (`a[i]` under `i < n` is left to LLVM, also where `n` is the
+/// head's bound by value: [`same::head_bound`]). Returns the sum, `n`,
 /// and what must fit after `x` (0, or 1 for a strict test).
 fn compare(
     cx: &Cx,
@@ -375,6 +408,9 @@ fn compare(
     {
         return None;
     }
+    if let Some(found) = difference(cx, defs, counter, *op, x, y, at) {
+        return Some(found);
+    }
     let (x, n, strict) = match op {
         BinOp::Le => (x, y, 0),
         BinOp::Lt => (x, y, 1),
@@ -386,10 +422,59 @@ fn compare(
         return None;
     }
     let sum = affine(cx, defs, counter, x, at, 0)?;
-    if !sum.counter || (sum.base.is_none() && n == bound && sum.k + strict <= gap) {
+    let implied =
+        sum.base.is_none() && sum.k + strict <= gap && same::head_bound(cx, cx.all, n, bound);
+    if !sum.counter || implied {
         return None;
     }
     Some((sum, n.clone(), strict))
+}
+
+/// `n - x >= k` (or `k <= n - x`, or either strict), with `n - x` computed once in the loop where
+/// it dominates the test: the second half of `f32x8.fits` (`at <= n && n - at >= 8`). Wherever
+/// `x + k <= n`, `x <= n`, the subtraction does not wrap and the test holds, so it is decided like
+/// `x + k <= n`. Returns `x`'s sum, `n`, and what must fit after `x`.
+fn difference(
+    cx: &Cx,
+    defs: &Defs,
+    counter: &Counter,
+    op: BinOp,
+    a: &Operand,
+    b: &Operand,
+    at: (usize, usize),
+) -> Option<(Sum, Operand, u64)> {
+    let (d, k, strict) = match op {
+        BinOp::Ge => (a, b, 0),
+        BinOp::Gt => (a, b, 1),
+        BinOp::Le => (b, a, 0),
+        BinOp::Lt => (b, a, 1),
+        _ => return None,
+    };
+    let (Operand::Copy(p), Operand::Const(Const::Int(k), Ty::U64)) = (d, k) else {
+        return None;
+    };
+    let k = u64::try_from(*k).ok().filter(|&k| k < SMALL)?;
+    if !p.proj.is_empty() || !register(cx, p.local) || !guarded(cx, counter, at) {
+        return None;
+    }
+    let [(db, ds)] = defs.get(&p.local.0)?.as_slice() else {
+        return None;
+    };
+    let (db, ds) = (*db, *ds);
+    let dominates = if db == at.0 {
+        ds < at.1
+    } else {
+        cx.doms.dominates(db, at.0)
+    };
+    let Some(Stmt::Assign(_, Rvalue::Binary(BinOp::Sub, n, x))) = cx.func.blocks[db].stmts.get(ds)
+    else {
+        return None;
+    };
+    if !dominates || !invariant(cx, defs, n) {
+        return None;
+    }
+    let sum = affine(cx, defs, counter, x, (db, ds), 0)?;
+    sum.counter.then(|| (sum, n.clone(), k + strict))
 }
 
 /// The loop changes no length and no local the check reads (module doc, "Nothing changes a

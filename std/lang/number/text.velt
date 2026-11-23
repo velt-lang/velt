@@ -2,6 +2,8 @@
 // form numbers are laid out in before `strAsciiWords` / `strbufPushAsciiWords` store them:
 // bytes placed, inserted and moved with shifts and masks, no memory.
 
+import { inline } from "velt/lang/intrinsics";
+
 /** The ASCII minus sign. */
 export const MINUS: u64 = 0x2d;
 
@@ -75,7 +77,11 @@ export function or(a: Text, b: Text): Text {
   return { w0: a.w0 | b.w0, w1: a.w1 | b.w1, w2: a.w2 | b.w2, w3: a.w3 | b.w3 };
 }
 
-/** `t` with byte `b` inserted at `at`: the bytes from `at` on move one place. */
+/**
+ * `t` with byte `b` inserted at `at`: the bytes from `at` on move one place. Inlined
+ * (`@inline("always")`) for the reason `intWords` is (velt/lang/number/integer).
+ */
+@inline("always")
 export function insert(t: Text, at: i64, b: u64): Text {
   // The bytes before `at`, and the others (`t` without them), moved one place.
   const head = between(t, 0, at, 0);

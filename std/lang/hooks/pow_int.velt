@@ -1,0 +1,62 @@
+// velt/lang/hooks (internal): the compiler's hook for `**` on integers (std-layout.md §10b). Only a
+// program that has one loads it (velt_common `ON_DEMAND_MODULES`, construct `PowInt`).
+
+/**
+ * `a ** b` on integers (the compiler widens both operands to `i64` and narrows the result back):
+ * the power by squaring, wrapping at 64 bits as `*` on `i64` does. A negative exponent gives 0,
+ * except that `1 ** b` is 1 for every `b` (and `(-1) ** b` is 0 for a negative one, as the
+ * runtime's function this replaced gave).
+ */
+export function powI64(a: i64, b: i64): i64 {
+  if (b < 0) {
+    return a == 1 ? 1 : 0;
+  }
+  // The lowest bit first, so each step squares before it multiplies and needs no check of its
+  // own whether another square is due.
+  let acc: i64 = (b & 1) == 1 ? a : 1;
+  let base = a;
+  let exp = b >> 1;
+  // Five bits a trip: every exponent below 64 (beyond which an even base is 0) is one trip, and
+  // the loop's own test and moves come once a trip, not once a bit (bench/stdport/pow_int: 19%
+  // fewer instructions than one bit a trip; three bits a trip saved 11%).
+  while (exp != 0) {
+    base = base * base;
+    if ((exp & 1) == 1) {
+      acc = acc * base;
+    }
+    exp = exp >> 1;
+    if (exp == 0) {
+      break;
+    }
+    base = base * base;
+    if ((exp & 1) == 1) {
+      acc = acc * base;
+    }
+    exp = exp >> 1;
+    if (exp == 0) {
+      break;
+    }
+    base = base * base;
+    if ((exp & 1) == 1) {
+      acc = acc * base;
+    }
+    exp = exp >> 1;
+    if (exp == 0) {
+      break;
+    }
+    base = base * base;
+    if ((exp & 1) == 1) {
+      acc = acc * base;
+    }
+    exp = exp >> 1;
+    if (exp == 0) {
+      break;
+    }
+    base = base * base;
+    if ((exp & 1) == 1) {
+      acc = acc * base;
+    }
+    exp = exp >> 1;
+  }
+  return acc;
+}

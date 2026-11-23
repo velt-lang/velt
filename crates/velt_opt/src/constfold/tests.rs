@@ -225,9 +225,9 @@ fn math_operations_on_constants_fold() {
             Const::Int(-21),
         ),
         (
-            MathOp::PowI64,
-            vec![int(3, Ty::I64), int(4, Ty::I64)],
-            Const::Int(81),
+            MathOp::Umulh,
+            vec![int(1 << 40, Ty::U64), int(1 << 40, Ty::U64)],
+            Const::Int(1 << 16),
         ),
         (
             MathOp::F64Bits,

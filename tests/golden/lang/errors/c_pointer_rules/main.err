@@ -1,5 +1,7 @@
 _clib/src/lib.velt:83:24: error: cannot convert to or from JSON: `Ptr<FILE>` has no JSON form
   = note: JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`
+_clib/src/lib.velt:115:26: error: field `p` of C struct `Loose` has type `Ptr<u8> | null | undefined`, which C doesn't have
+  = note: C's pointer is `Ptr<T> | null`, `NULL` as `null`: one word has no room for `undefined` too
 _clib/src/lib.velt:16:36: error: parameter `p` of C function `setNull` has type `Out<Ptr<FILE>>`, which cannot cross to C
   = note: C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`
 _clib/src/lib.velt:17:38: error: parameter `p` of C function `setObject` has type `Out<Holder>`, which cannot cross to C
@@ -92,3 +94,9 @@ _clib/src/lib.velt:101:3: error: a C pointer can't point at `string`
   = note: a type parameter used as `Ptr<T>`'s pointee is instantiated here: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer
 _clib/src/lib.velt:88:15: error: a `[Ptr<FILE>]` is converted to text here, through a type parameter: it holds a C pointer
   = note: a pointer has no dynamic form and no text: `Ptr.addressOf(p)` gives its address
+_clib/src/lib.velt:104:12: error: `Ptr.read` and `Ptr.write` can't move a `void`
+  = note: a `Ptr<void>` points at bytes of no type: read them through a `Ptr<u8>`, or a pointer to the type that is there
+_clib/src/lib.velt:106:24: error: `Ptr.read` and `Ptr.write` can't move a `DIR`
+  = note: a `declare c type` is opaque: only C knows its size and fields, so only C reads or writes one
+_clib/src/lib.velt:106:42: error: `Ptr.read` and `Ptr.write` can't move a `DIR`
+  = note: a `declare c type` is opaque: only C knows its size and fields, so only C reads or writes one

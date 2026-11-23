@@ -53,11 +53,14 @@ mod weak_hooks;
 mod string_hooks;
 #[macro_use]
 mod module_hooks;
+#[macro_use]
+mod decorator_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then module state's (`module_hooks.rs`), the string methods'
-// (`string_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
-with_module_hooks! {
+// The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
+// (`module_hooks.rs`), the string methods' (`string_hooks.rs`) and the weak core's
+// (`weak_hooks.rs`), given to `hooks!` together.
+with_decorator_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -71,6 +74,11 @@ with_module_hooks! {
     /// glibc's algorithm in Velt (std/lang/math/pow.velt, #1676).
     pow_f64 => lang_hooks_pow, "powF64", sig((f64, f64) -> f64), lowered, constructs(PowFloat),
         replaces("velt_rt_pow_f64"), bench("pow");
+    // pow_int.velt: `**` on integers.
+    /// `a ** b` on integers (`velt_vir` `lower/ops.rs`), operands widened to `i64`: wrapping,
+    /// a negative exponent gives 0 (1 for the base 1).
+    pow_i64 => lang_hooks_pow_int, "powI64", sig((i64, i64) -> i64), lowered, constructs(PowInt),
+        replaces("velt_rt_pow_i64"), bench("pow_int");
 
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
@@ -82,8 +90,7 @@ with_module_hooks! {
     /// `n.toString(radix)` of an unsigned integer.
     u64_to_string => lang_hooks_number, "u64ToString", sig((u64, f64) -> string),
         replaces("velt_rt_u64_to_radix");
-    /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, `velt_opt`
-    /// numrep).
+    /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
     /// An array index written as a float (`xs[i]` with `i: number`): ts-compat.md.
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
@@ -104,8 +111,12 @@ with_module_hooks! {
     /// don't settle, from its bytes `start` to `end`.
     number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
         replaces("velt_rt_parse_float"), prebuilt;
-    /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare` for a
-    /// string held as `any`).
+    /// `String(x)` of any float by std's float printing (velt/lang/number/format), for code that
+    /// doesn't load it: std's own (the JSON writers, `StringBuilder`, the digits of
+    /// `toExponential()`) and the float hooks of velt/lang/hooks/number_text and number_write.
+    number_shortest => lang_hooks_number_shortest, "shortestText", sig((f64) -> string),
+        replaces("velt_rt_str_from_f64"), prebuilt;
+    /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
         replaces("velt_rt_str_locale_compare"), bench("locale_compare");
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
@@ -137,26 +148,33 @@ with_module_hooks! {
     uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64, u8) -> void), lowered,
         replaces("velt_rt_write_u64"), constructs(Format);
     /// A float as `console.log` prints it and the byte after it: a whole number below 2^53 other
-    /// than `-0` by `whole_number_write`, anything else by the runtime's printer, which lowering
-    /// calls while this is unchecked ([`ON_DEMAND_WRITE`]). It holds no integer hook, so a printed
-    /// float checks no integer printing. numrep turns a call with such an `x` into one of
-    /// `int_write` where the program has that, else of `whole_number_write`.
+    /// than `-0` by `whole_number_write`, anything else by std's float printing
+    /// (`number_shortest`). It holds no integer hook, so a printed float checks no integer
+    /// printing. numrep turns a call with such an `x` into one of `int_write` where the program
+    /// has that, else of `whole_number_write`.
     number_write => lang_hooks_number_write, "numberWrite", sig((u32, f64, u8) -> void), lowered,
-        fallback, replaces("velt_rt_write_f64");
+        replaces("velt_rt_write_f64"), constructs(WriteFloat);
     /// A whole number below 2^53 other than `-0`, as an `i64`, and the byte after it, as
     /// `number_write` writes the float, by digits of its own (no integer hook): `number_write`'s
     /// and numrep's.
     whole_number_write => lang_hooks_number_write, "wholeNumberWrite", sig((u32, i64, u8) -> void),
-        lowered, fallback;
-    /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
-    /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
-    /// whole `x` into one of `int_text`.
-    number_text => lang_hooks_number_text, "numberText", sig((f64) -> string), lowered, fallback,
-        replaces("velt_rt_str_from_f64"), bench("float_to_string");
+        lowered, constructs(WriteFloat);
+    /// `String(x)` of a float (`velt_vir` `template.rs`), whole numbers included, by std's float
+    /// printing (`number_shortest`), so that it holds no integer printing. `velt_opt` numrep
+    /// turns a call with a whole `x` into one of `int_text` where the program has that. `TextFloat` also covers a numeric
+    /// key read through `any` or a proxy (`velt_vir` `any_has.rs`, `any_member.rs`, `any_proxy.rs`,
+    /// `proxy_throws.rs`).
+    number_text => lang_hooks_number_text, "numberText", sig((f64) -> string), lowered,
+        replaces("velt_rt_str_from_f64"), bench("float_to_string"), constructs(TextFloat);
     /// A float appended to a builder, as `number_text`; numrep turns a call with a whole `x` into
     /// `int_push`.
-    number_push => lang_hooks_number_text, "numberPush", sig((&mut string, f64) -> void), lowered, fallback,
-        replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
+    number_push => lang_hooks_number_text, "numberPush", sig((&mut string, f64) -> void), lowered,
+        replaces("velt_rt_strbuf_push_f64"), bench("float_to_string"), constructs(TextFloat);
+    /// A float appended to a builder as `console.log` prints it (`-0` is `-0`), as `number_push`
+    /// otherwise: the formatting glue (`velt_vir` `glue/format.rs`, `console.rs`).
+    number_inspect_push => lang_hooks_number_text, "numberInspectPush",
+        sig((&mut string, f64) -> void), lowered, replaces("velt_rt_strbuf_push_inspect_f64"),
+        constructs(TextFloat);
     /// `String(x)` of a float, all of it by std's printing (velt/lang/number/format): lowering
     /// calls it instead of `number_text` where its module is loaded ([`ON_DEMAND_MODULES`], for a
     /// program that converts an operand that may be a float).
@@ -520,6 +538,10 @@ with_module_hooks! {
     any_prim_keep => lang_hooks_any_ops, "anyPrimKeep", sig((move any, &string) -> any), lowered;
     /// A method's result when it is a primitive, else the next method's (`velt_sema` `any_prim.rs`).
     any_prim_then => lang_hooks_any_ops, "anyPrimThen", sig((move any, &Fn(() -> any)) -> any);
+    /// What an `await` of an `any` or `unknown` waits for (`velt_sema` `await_value.rs`, #924).
+    await_any => lang_hooks_any_ops, "awaitAny", sig((&unknown) -> Promise(unknown, unknown));
+    /// Does an `any` hold an object or a function (the thenable stop, `await_value.rs`, #3412)?
+    any_holds_object => lang_hooks_any_ops, "anyHoldsObject", sig((&any) -> bool);
     /// `ToNumber` of an object an `any` holds, for `-`, `*`, `<`, `+x` (`dynamic_arith.rs`).
     any_object_number => lang_hooks_any_ops, "anyObjectNumber", sig((&any, &string) -> f64);
     /// `a + b` of dynamic values one of which holds a string or an object (`dynamic_arith.rs`).
@@ -757,27 +779,6 @@ with_module_hooks! {
     host_await_ref => host_promise, "hostAwaitRef", sig(async (move Promise(HostSettled(u32), never)) -> HostRef throws IoError), lowered;
     /// `host_await` for a `HostRef | null` result.
     host_await_ref_or_null => host_promise, "hostAwaitRefOrNull", sig(async (move Promise(HostSettled(u32), never)) -> or_null(HostRef) throws IoError), lowered;
-
-    // lang/intrinsics/decorators.velt: the compile-time decorators the compiler acts on (#2203),
-    // found by these roles, never by the name a use is written with.
-    /// `@inline` on a function or method (any module; velt/compiler re-exports it):
-    /// `@inline("always")` inlines every call in release builds (`vir::Inline::Always`), the
-    /// default `"hint"` is `vir::Inline::Default` while a program is one unit (`velt_sema`
-    /// `decorators/known.rs`, `velt_vir` lowering).
-    decorator_inline => lang_intrinsics_decorators, "inline", decorator;
-    /// `@noInline`: calls stay calls (`vir::Inline::Never`).
-    decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
-    /// `@intrinsic declare function`: the declaration of a compiler intrinsic
-    /// (`velt_sema` `intrinsic_decls.rs`).
-    decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;
-    /// `@targetFeature("sha-arm")` on a function (any module; velt/compiler re-exports it): the
-    /// CPU extension it is compiled for (`velt_sema` `body/gated.rs`, `hir::Program::cpu_targets`).
-    decorator_target_feature => lang_intrinsics_decorators, "targetFeature", decorator;
-    // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
-    // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
-    /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C
-    /// calling convention, whose parameters and result cross as a `declare c` function's.
-    decorator_export => ffi_export, "export", decorator;
 }
 
 #[macro_use]
@@ -791,9 +792,7 @@ mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
 pub mod prebuilt;
-pub use on_demand::{
-    on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE,
-};
+pub use on_demand::{on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES};
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

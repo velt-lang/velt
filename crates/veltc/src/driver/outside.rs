@@ -8,7 +8,7 @@
 use velt_vir::vir::Program;
 
 /// The runtime's function groups (`velt_rt_<group>_…`) that touch nothing outside the program:
-/// strings, collections, numbers, JSON and regex, futures, tasks, threads, channels and locks,
+/// strings, collections, numbers, JSON, futures, tasks, threads, channels and locks,
 /// timers, `any`, proxies, memory management, and output (printing is not input). Any other
 /// runtime function counts as outside, so one added later is safe until it is listed here.
 const PURE_RUNTIME: &[&str] = &[
@@ -54,7 +54,6 @@ const PURE_RUNTIME: &[&str] = &[
     "race",
     "rc",
     "realloc",
-    "regex",
     // Reading rows by column: a driver's cursor (reached through its native code, which counts)
     // or a `RowSource` written in Velt.
     "rows",
@@ -441,6 +440,7 @@ mod tests {
             target: velt_vir::simd::ExtSet::NONE,
             baseline: false,
             cold: false,
+            rare: false,
             inline: velt_vir::vir::Inline::Default,
             stops_unwind: false,
         }

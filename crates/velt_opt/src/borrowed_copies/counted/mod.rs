@@ -83,7 +83,6 @@ const NO_FREE: [&str; 17] = [
     // A byte array's bytes appended (`utf8Slice`, std/lang/bytes/range_text.velt): only read.
     "velt_rt_strbuf_push_u8s",
     "velt_rt_strbuf_push_byte",
-    "velt_rt_strbuf_push_f64",
     "velt_rt_strbuf_finish",
     "velt_rt_strbuf_drop",
 ];
