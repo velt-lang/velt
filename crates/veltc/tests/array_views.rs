@@ -141,16 +141,6 @@ fn#",
     assert_eq!(past, 2, "{}", total[0]);
 }
 
-/// The lines of the function in `vir` whose signature line contains `name`.
-fn fn_lines<'a>(vir: &'a str, name: &str) -> Vec<&'a str> {
-    let fns: Vec<&str> = vir
-        .split("\nfn#")
-        .filter(|f| f.lines().next().is_some_and(|l| l.contains(name)))
-        .collect();
-    assert_eq!(fns.len(), 1, "no single `{name}` in the VIR:\n{vir}");
-    fns[0].lines().collect()
-}
-
 /// Is `rhs` a copy of a whole array header held in a box (`(*_3 as agg#5)`)?
 fn whole_header_copy(rhs: &str) -> bool {
     rhs.starts_with("(*_") && rhs.ends_with(')') && rhs.contains(" as agg#")
