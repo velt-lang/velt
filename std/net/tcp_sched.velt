@@ -34,6 +34,7 @@ import * as pool from "velt/net/fd_pool";
 import * as fs from "velt/net/fd_socket";
 import { readableUntil } from "velt/net/fd_until";
 import * as rt from "velt/net/rt";
+import { parkStream, unparkStream } from "velt/net/tcp_sched_pool";
 import * as lat from "velt/net/rt_later";
 import { isTls, TlsServer } from "velt/net/tls/fd_hook";
 
@@ -372,27 +373,14 @@ export async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>> {
   return stdUsed("reactorTls") && isTls(s) ? await TLS.alpn(s) : fs.value("");
 }
 
+/** Keeps idle stream `s` in `fetch`'s keep-alive pool under `key` (std/net/tcp_sched_pool.velt). */
 export function velt_rt_tcp_park(s: u64, key: string) {
-  // `fetch` parks here: it then dials plain TCP on the reactor (fetch/client/conn.velt `dial`).
-  noteStdUse("fetch-pool-reactor");
-  if (stdUsed("reactorTls") && isTls(s)) {
-    TLS.close(s);
-  } else if (tb.ours(s)) {
-    pool.park(s, key);
-  } else {
-    if (stdUsed("rt-later")) {
-      lat.park(s, key);
-    } else {
-      rt.velt_rt_tcp_park(s, key);
-    }
-  }
+  parkStream(s, key);
 }
 
+/** A usable idle stream of `key` from the pool, or 0 (std/net/tcp_sched_pool.velt). */
 export function velt_rt_tcp_unpark(key: string, settled: u32): u64 {
-  // A key's streams are all of one kind (an `http:` origin's ours, an `https:` one's the
-  // runtime's): the runtime is asked only when Velt's pool has none.
-  const h = pool.unpark(key, settled !== 0);
-  return h !== 0 ? h : rt.velt_rt_tcp_unpark(key, settled);
+  return unparkStream(key, settled);
 }
 
 export async function velt_rt_tcp_connect_tls(

@@ -4,9 +4,10 @@
 // reactor (std/net/fd_socket.velt), as `connect`'s, so every operation on it is Velt on the
 // worker, and its keep-alive pool is Velt too (std/net/fd_pool.velt, behind `TcpStream.park`).
 //
-// `https:` stays the runtime's (`connectTls`, conn.velt's `dial`): verifying a server's chain
-// against the built-in roots (mostly RSA) is #2392 step 3, and `startTls` does not verify. A
-// build whose OS has no reactor (std/lang/hooks/reactor_none.velt) uses the runtime's too.
+// An `https:` connection is such a socket with the TLS client in Velt over it
+// (std/net/tls/fd_client.velt, #2392 step 6), kept in the reactor's table of TLS streams, so it
+// pools as a plain one does. A build whose OS has no reactor (std/lang/hooks/reactor_none.velt)
+// uses the runtime's connections.
 
 import { IoError } from "velt/io/error";
 import { unwrapIo } from "velt/native/result";
@@ -17,6 +18,7 @@ import * as m from "velt/lang/hooks/sched_mem";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
+import { handshakeOn } from "velt/net/tls/fd_client";
 
 /** How long connecting may take (milliseconds) before `ETIMEDOUT`, as conn.velt's `CONNECT_MS`. */
 const CONNECT_MS: u64 = 10000;
@@ -35,6 +37,43 @@ export async function dialPlain(
   addr: string,
   signal: AbortSignal | null,
 ): Promise<TcpStream, IoError | AbortError> {
+  return TcpStream.ofHandle(await dialSocket(addr, signal));
+}
+
+/**
+ * A new TLS connection to `addr` on the reactor (`fetch`'s `https:`): the socket as `dialPlain`'s,
+ * then the TLS client's handshake, checking the certificate against the built-in roots and the
+ * PEM certificates of `ca` for `serverName`, offering the comma-separated ALPN protocols of
+ * `alpn`; both within `CONNECT_MS` and before an abort.
+ */
+export async function dialTls(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  signal: AbortSignal | null,
+): Promise<TcpStream, IoError | AbortError> {
+  const start = wt.now();
+  const fd = await dialSocket(addr, signal);
+  const spent = ((wt.now() - start) / 1000000) as i64;
+  const left = (CONNECT_MS as i64) - spent;
+  try {
+    return TcpStream.ofHandle(await handshakeOn(fd, serverName, ca, alpn, left, signal));
+  } catch (e) {
+    if (e instanceof IoError) {
+      throw e.code == "ETIMEDOUT"
+        ? new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`)
+        : new IoError(e.code, `fetch failed: ${e.message}`);
+    }
+    throw e;
+  }
+}
+
+// `dialPlain`'s socket handle.
+async function dialSocket(
+  addr: string,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
   if (signal != null) {
     signal.throwIfAborted();
   }
@@ -64,7 +103,7 @@ export async function dialPlain(
     throw new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`);
   }
   try {
-    return TcpStream.ofHandle(unwrapIo(r));
+    return unwrapIo(r);
   } catch (e) {
     throw e.message.startsWith("fetch failed")
       ? e
