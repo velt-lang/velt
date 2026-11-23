@@ -448,7 +448,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 let mut li = LInfo::new(vir, ty, indirect, droppable, LState::Uninit);
                 li.cell = cell;
                 li.in_cell = cell;
-                li.fixed = !ld.mutable && !cell && !by_ref;
+                li.fixed = !ld.mutable && !cell && !by_ref && !ld.weak;
+                li.weak = ld.weak.then_some(ty);
                 info[i] = Some(li);
             }
         }
@@ -618,6 +619,7 @@ impl LInfo {
             in_cell: false,
             gen: None,
             fixed: false,
+            weak: None,
         }
     }
 }
