@@ -179,6 +179,28 @@ export function readyOrFd(s: u64): IoResult<u64> {
   );
 }
 
+/**
+ * Whether idle TLS stream `s` (in `fetch`'s keep-alive pool) can carry another request: a look
+ * finds nothing yet. Records that carry no data (a TLS 1.3 server's NewSessionTicket) are taken
+ * on the way; data nobody asked for, the end of the stream (close_notify, the socket closed) or a
+ * failure say it can't.
+ */
+export function idleOpen(s: u64): bool {
+  const c = findConn(s);
+  if (c == null) {
+    return false;
+  }
+  const probe: u8[] = [0];
+  return c.with((x) => {
+    try {
+      return x.tryRead(probe, 0, 1) == -1;
+    } catch (e) {
+      x.fail(e);
+      return false;
+    }
+  });
+}
+
 /** The socket of TLS stream `s`, or 0 once it is closed. */
 export function fdOf(s: u64): u64 {
   const c = findConn(s);
