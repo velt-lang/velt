@@ -128,6 +128,16 @@ export const imports: Imports = {
   },
   // velt/sync's hand-offs (std/sync/output.velt): what the thread printed, published through the
   // runtime's latch; nothing to publish on WebAssembly's one thread.
+  // velt/lang/bytes's raw moves and zeroing (std/lang/bytes/raw.velt): the C library's `memmove`
+  // and `memset`, or a Velt loop on the JS host, which has no C library.
+  "#bytes-move": { js: "./lang/bytes/move_js.velt", default: "./lang/bytes/move_c.velt" },
+  // velt/lang/bytes's largest allocation (std/lang/bytes/raw.velt): a 32-bit target's on
+  // WebAssembly, none natively.
+  "#bytes-limit": {
+    wasi: "./lang/bytes/limit_wasm.velt",
+    js: "./lang/bytes/limit_wasm.velt",
+    default: "./lang/bytes/limit_native.velt",
+  },
   "#sync-output": {
     wasi: "./sync/output_wasm.velt",
     js: "./sync/output_wasm.velt",

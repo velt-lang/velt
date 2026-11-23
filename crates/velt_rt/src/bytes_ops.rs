@@ -1,27 +1,12 @@
-//! Bulk operations on `u8[]` (std/prelude/bytes.velt: `Buffer.alloc`, and `set`, `copy`,
-//! `copyWithin`, `slice` on byte arrays): allocation and memmove instead of byte loops.
-//! Searching, filling and concatenating are Velt code (std/lang/bytes).
+//! A range of a `u8[]` as a string (std/prelude/bytes.velt: `utf8Slice`, `toString` of a range).
+//! Making, copying and slicing byte arrays are Velt code (std/lang/bytes/raw.velt), and so are
+//! searching, filling and concatenating (std/lang/bytes).
 //!
-//! Positions follow JS: `copyWithin` and `slice` take relative indices (negative counts from the
-//! end) clamped to the array. The array's buffer is written in place and never reallocated, so
-//! its length and capacity stay as they are.
+//! Positions follow JS: relative indices (negative counts from the end) clamped to the array.
 
 use crate::bytes::VeltBytes;
 use crate::result::{invalid_utf8, IoResult, VeltErr};
 use crate::str::VeltStr;
-
-/// The array's bytes, writable.
-///
-/// # Safety
-/// `b` describes a valid, uniquely borrowed buffer.
-unsafe fn bytes_mut<'a>(b: *const VeltBytes) -> &'a mut [u8] {
-    let b = &*b;
-    if b.len == 0 {
-        &mut []
-    } else {
-        std::slice::from_raw_parts_mut(b.ptr, b.len as usize)
-    }
-}
 
 /// JS relative index: negative counts from `len`, then clamped to `0..=len`. Clamped in `i64`
 /// before converting, so an index beyond a 32-bit `usize` (wasm32) isn't truncated.
@@ -29,149 +14,6 @@ fn relative(i: i64, len: usize) -> usize {
     // A Rust allocation is at most `isize::MAX` bytes, so `len` fits in an `i64`.
     let n = len as i64;
     (if i < 0 { n + i.max(-n) } else { i.min(n) }) as usize
-}
-
-/// A zeroed array of `n` bytes (`Buffer.alloc(n)`): calloc, so large arrays cost no memset.
-/// Past the array length limit it is the limit's `RangeError`; a size the target cannot
-/// allocate (on wasm32, any past 2^31 - 1, never truncated) stops the program as
-/// `velt_rt_alloc` does.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_zeroed(n: u64, out: *mut VeltBytes) {
-    if n > crate::bytes::MAX_ARRAY_LEN {
-        crate::bytes::array_too_long();
-    }
-    let len = crate::mem::block_size(n, 1);
-    if len == 0 {
-        out.write(VeltBytes::from_vec(Vec::new()));
-        return;
-    }
-    let p = match std::alloc::Layout::array::<u8>(len) {
-        Ok(layout) => std::alloc::alloc_zeroed(layout),
-        Err(_) => std::ptr::null_mut(),
-    };
-    if p.is_null() {
-        crate::mem::out_of_memory(n, 1);
-    }
-    // SAFETY: `p` is a zeroed block of `len` bytes from the global allocator.
-    out.write(VeltBytes::from_vec(Vec::from_raw_parts(p, len, len)));
-}
-
-/// An array of `n` bytes whose contents are not set (`Buffer.allocUnsafe(n)`): for a buffer the
-/// program fills before it reads it (a decoder's output), which a zeroed one would write twice.
-/// Its bytes are whatever the allocator's block held: any `u8` value, never undefined
-/// behaviour for Velt code, which reads them only as bytes. Limits as `velt_rt_bytes_zeroed`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_uninit(n: u64, out: *mut VeltBytes) {
-    if n > crate::bytes::MAX_ARRAY_LEN {
-        crate::bytes::array_too_long();
-    }
-    let len = crate::mem::block_size(n, 1);
-    if len == 0 {
-        out.write(VeltBytes::from_vec(Vec::new()));
-        return;
-    }
-    let p = match std::alloc::Layout::array::<u8>(len) {
-        Ok(layout) => std::alloc::alloc(layout),
-        Err(_) => std::ptr::null_mut(),
-    };
-    if p.is_null() {
-        crate::mem::out_of_memory(n, 1);
-    }
-    // Not through a `Vec`: its bytes would have to be initialized. Freed by generated code like
-    // one of its own blocks (leak counters), as `VeltBytes::from_vec` counts it.
-    crate::str::stats::block_alloc();
-    out.write(VeltBytes {
-        ptr: p,
-        len: len as u64,
-        cap: len as u64,
-    });
-}
-
-/// Copies `src` into `dst` starting at `offset` (JS `typedArray.set(src, offset)`); 0 (nothing
-/// copied) when it does not fit. `src` may be `dst`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_set(
-    dst: *const VeltBytes,
-    src: *const VeltBytes,
-    offset: u64,
-) -> u8 {
-    let (d, s) = (&*dst, &*src);
-    let fits = offset.checked_add(s.len).is_some_and(|end| end <= d.len);
-    if !fits {
-        return 0;
-    }
-    if s.len > 0 {
-        // memmove: `src` and `dst` may be the same array.
-        std::ptr::copy(s.ptr, d.ptr.add(offset as usize), s.len as usize);
-    }
-    1
-}
-
-/// Copies `src[source_start..source_end)` into `dst` at `target_start` (Node's
-/// `src.copy(dst, targetStart, sourceStart, sourceEnd)`): as many bytes as fit, their number
-/// returned; `source_end` is clamped to `src`'s length. -1 (a `RangeError` in std) for a negative
-/// position or a `source_start` past `src`'s end. `src` may be `dst` (memmove).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_copy(
-    dst: *const VeltBytes,
-    src: *const VeltBytes,
-    target_start: i64,
-    source_start: i64,
-    source_end: i64,
-) -> i64 {
-    let (d, s) = (&*dst, &*src);
-    if target_start < 0 || source_start < 0 || source_end < 0 || source_start as u64 > s.len {
-        return -1;
-    }
-    let end = (source_end as u64).min(s.len);
-    if target_start as u64 >= d.len || source_start as u64 >= end {
-        return 0;
-    }
-    let count = (end - source_start as u64).min(d.len - target_start as u64);
-    // memmove: `src` and `dst` may be the same array.
-    std::ptr::copy(
-        s.ptr.add(source_start as usize),
-        d.ptr.add(target_start as usize),
-        count as usize,
-    );
-    count as i64
-}
-
-/// Copies `[start, end)` to `target` within the array (JS `copyWithin`, relative indices).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_copy_within(
-    b: *const VeltBytes,
-    target: i64,
-    start: i64,
-    end: i64,
-) {
-    let s = bytes_mut(b);
-    let len = s.len();
-    let (target, start, end) = (
-        relative(target, len),
-        relative(start, len),
-        relative(end, len),
-    );
-    let count = end.saturating_sub(start).min(len - target);
-    s.copy_within(start..start + count, target);
-}
-
-/// `[start, end)` (relative indices) as a new array (JS `slice`): one copy.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_slice(
-    b: *const VeltBytes,
-    start: i64,
-    end: i64,
-    out: *mut VeltBytes,
-) {
-    let s = (*b).as_bytes();
-    let (start, end) = (relative(start, s.len()), relative(end, s.len()));
-    let v = if start < end {
-        s[start..end].to_vec()
-    } else {
-        Vec::new()
-    };
-    out.write(VeltBytes::from_vec(v));
 }
 
 /// The bytes of `b` in `[start, end)` (relative indices).
@@ -287,27 +129,6 @@ mod tests {
     }
 
     #[test]
-    fn set_copy_within() {
-        let mut d = arr(b"......");
-        let src = arr(b"ab");
-        // SAFETY: valid owned buffers.
-        unsafe {
-            assert_eq!(velt_rt_bytes_set(&d, &src, 4), 1);
-            assert_eq!(velt_rt_bytes_set(&d, &src, 5), 0);
-            assert_eq!(d.as_bytes(), b"....ab");
-            velt_rt_bytes_copy_within(&d, 0, 4, 6);
-            assert_eq!(d.as_bytes(), b"ab..ab");
-            velt_rt_bytes_copy_within(&d, 1, 0, -2);
-            assert_eq!(d.as_bytes(), b"aab..b");
-            let mut z = VeltBytes::from_vec(Vec::new());
-            velt_rt_bytes_zeroed(3, &mut z);
-            assert_eq!(z.as_bytes(), [0, 0, 0]);
-            drop(z.take_vec());
-            drop(d.take_vec());
-        }
-    }
-
-    #[test]
     fn relative_indices_clamp_before_converting() {
         for (i, want) in [
             (0, 0),
@@ -323,21 +144,6 @@ mod tests {
             (i64::MIN, 0),
         ] {
             assert_eq!(relative(i, 10), want, "relative({i}, 10)");
-        }
-    }
-
-    #[test]
-    fn slice() {
-        let b = arr(b"hello world");
-        // SAFETY: valid owned buffers; `out` is written before it is read.
-        unsafe {
-            let mut out = std::mem::MaybeUninit::<VeltBytes>::uninit();
-            velt_rt_bytes_slice(&b, 6, 99, out.as_mut_ptr());
-            assert_eq!(out.assume_init_ref().as_bytes(), b"world");
-            velt_rt_bytes_slice(&b, -5, -3, out.as_mut_ptr());
-            assert_eq!(out.assume_init_ref().as_bytes(), b"wo");
-            velt_rt_bytes_slice(&b, 4, 2, out.as_mut_ptr());
-            assert_eq!(out.assume_init_ref().as_bytes(), b"");
         }
     }
 }
