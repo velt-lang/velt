@@ -1,6 +1,6 @@
 // `connectWebSocket("wss://…")` in a program that names nothing else of TLS's client or the
-// client class: its connection still runs the TLS client in Velt
-// (std/prelude/global/tls_client_reactor.velt loads it for this word too). The server answers the
+// client class: its connection still runs the TLS client in Velt (its live `connectTls` loads
+// it). The server answers the
 // upgrade with an ordinary response, so the client gets as far as the handshake's HTTP answer,
 // past TLS.
 import { describe, expect, it } from "velt/test";

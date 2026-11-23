@@ -759,6 +759,44 @@ class S<T> extends B {
     }
 }
 
+/// A dependency package's definitions are not live roots (#2392): its module is checked whole,
+/// but what only its uncalled functions call is not reached, so std code only they call stays
+/// unchecked (and unbuilt), as for std's own modules (here the prelude's `Number`); the program's own modules are roots whole.
+/// Before, every function of a dependency was a root, so a plain `serve` reached the TLS server
+/// its uncalled `listenTls` path calls.
+#[test]
+fn what_only_an_uncalled_dependency_function_calls_stays_unchecked() {
+    let dir = std::env::temp_dir().join(format!("velt_dep_roots_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("dep.velt"),
+        "export function used(): i64 {\n  return 1;\n}\n\nexport function unused(): number {\n  return Number(\"12\");\n}\n",
+    )
+    .unwrap();
+    let main = dir.join("main.velt");
+    let src = "import { used } from \"./dep\";\n\nfunction main() {\n  console.log(used());\n}\n";
+    let number_unchecked = |dependency: bool| {
+        let mut l = common::programs::load_src_at(&main, src);
+        let dep = (l.modules.iter())
+            .position(|m| m.path.ends_with("dep"))
+            .expect("the dependency module");
+        l.modules[dep].is_dependency = dependency;
+        let (p, d) = l.check();
+        assert!(d.iter().all(|d| !d.is_error()), "{}", l.render(&d));
+        let names = unchecked(&p.expect("a program"));
+        names.contains(&"std/prelude/string::Number".to_string())
+    };
+    let as_dependency = number_unchecked(true);
+    let as_own = number_unchecked(false);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        as_dependency,
+        "a dependency's uncalled function is a live root"
+    );
+    // The program's own uncalled function is a root: what it calls is checked.
+    assert!(!as_own, "the program's own function is no live root");
+}
+
 #[test]
 fn a_printed_float_without_the_prebuilt_printer_checks_it() {
     // A build with no prebuilt object of std's float printing (no clang, or a cold cache; as

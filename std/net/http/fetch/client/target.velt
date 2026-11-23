@@ -12,7 +12,17 @@
 // query of bytes the parser neither percent-encodes nor rewrites, without dot segments.
 
 import { IoError } from "velt/io/error";
+import { TcpStream } from "velt/net/tcp_stream";
 import { URL } from "velt/net/url";
+import { AbortError, AbortSignal } from "velt/task";
+
+/**
+ * The TLS client's handshake for `https:` on connected socket `fd` to `addr`
+ * (std/net/http/fetch/client/dial_sched.velt `tlsOn`): `fetch` hands it to the requests it makes,
+ * and `fetchPlain`, which takes only `http:` URLs, hands none, so a program whose every `fetch`
+ * is of an `http:` literal has no TLS client (fetch.velt).
+ */
+export type TlsOn = (fd: u64, addr: string, serverName: string, ca: string, alpn: string, left: i64, signal: AbortSignal | null) => Promise<TcpStream, IoError | AbortError>;
 
 /** An `http:` or `https:` URL without a fragment, taken apart for a request. */
 export class Target {
@@ -31,6 +41,8 @@ export class Target {
    * it is not the scheme's default (as `host` has it), so one origin has one spelling.
    */
   origin: string;
+  /** The TLS client for `https:` (`TlsOn`); null in a program that fetches only `http:` URLs. */
+  tls: TlsOn | null = null;
 
   constructor(
     href: string,

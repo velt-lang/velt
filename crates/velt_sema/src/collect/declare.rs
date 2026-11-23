@@ -155,6 +155,7 @@ pub(crate) fn fn_placeholder<'m>(
         is_private: false,
         is_getter: false,
         inline_marker: None,
+        variant: None,
         inherits_this: false,
         escaping: false,
         keeps_fn_params: false,
