@@ -29,12 +29,29 @@ pub(super) fn heap_hooks(release: bool, jit: bool, target: &str) -> bool {
     let env = |name: &str| std::env::var_os(name);
     // Read only for a release build that may use the hooks: the symbol index of a debug runtime
     // is a few MB.
-    let runtime = || {
-        velt_link::find_runtime_lib(target)
-            .ok()
-            .and_then(|lib| velt_link::runtime_lib_profile(&lib))
-    };
+    let runtime = || profile(&velt_link::find_runtime_lib(target).ok()?);
     decide(env, runtime)
+}
+
+/// The profile of the runtime library at `lib`, read once per process while the file stays the
+/// same (its size and time): a build asks twice, for its prebuilt objects (`std_cache::prebuilt`)
+/// and for its lowering, and reading the index is about as much work as 10% of a small build.
+fn profile(lib: &std::path::Path) -> Option<RuntimeProfile> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    type Stamp = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+    static SEEN: OnceLock<Mutex<HashMap<Stamp, Option<RuntimeProfile>>>> = OnceLock::new();
+    let meta = std::fs::metadata(lib).ok()?;
+    let stamp = (lib.to_path_buf(), meta.len(), meta.modified().ok());
+    let seen = SEEN.get_or_init(Mutex::default);
+    if let Some(p) = seen.lock().unwrap_or_else(|e| e.into_inner()).get(&stamp) {
+        return *p;
+    }
+    let p = velt_link::runtime_lib_profile(lib);
+    seen.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(stamp, p);
+    p
 }
 
 /// [`heap_hooks`] for a native release build: `env` reads a variable, `runtime` the profile of

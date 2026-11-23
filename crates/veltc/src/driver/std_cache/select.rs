@@ -160,13 +160,20 @@ pub(super) fn has_no_inline(program: &vir::Program) -> bool {
 
 /// The functions of `program` the cache serves (`names`: its statics' names).
 pub(super) fn candidates(program: &vir::Program, names: &Names, rule: Rule) -> Vec<usize> {
+    let heap = heap(program);
     (0..program.funcs.len())
-        .filter(|&i| reason(program, names, rule, i).is_none())
+        .filter(|&i| reason(program, &heap, names, rule, i).is_none())
         .collect()
 }
 
 /// Why std function `i` stays in the program; `None` when the cache serves it.
-fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option<&'static str> {
+fn reason(
+    program: &vir::Program,
+    heap: &Heap,
+    names: &Names,
+    rule: Rule,
+    i: usize,
+) -> Option<&'static str> {
     let f = &program.funcs[i];
     if f.linkage != Linkage::Internal || f.blocks.is_empty() {
         return Some("not internal");
@@ -190,7 +197,7 @@ fn reason(program: &vir::Program, names: &Names, rule: Rule, i: usize) -> Option
     if f.baseline {
         return Some("the start-up check");
     }
-    let set = inlinable(program, i, rule.depth());
+    let set = inlinable_with(program, heap, i, rule.depth());
     if matches!(
         rule,
         Rule::Debug {
@@ -296,10 +303,11 @@ pub(super) fn reasons(
     names: &Names,
     rule: Rule,
 ) -> BTreeMap<&'static str, usize> {
+    let heap = heap(program);
     let mut by = BTreeMap::new();
     for (i, f) in program.funcs.iter().enumerate() {
         if is_std(f) {
-            *by.entry(reason(program, names, rule, i).unwrap_or("served"))
+            *by.entry(reason(program, &heap, names, rule, i).unwrap_or("served"))
                 .or_default() += size(f);
         }
     }
@@ -313,17 +321,32 @@ pub(super) fn reasons(
 /// place at the end, in an object as in the program, so its key holds the hooks' code and an
 /// object compiled without them never serves a build that has them, nor the other way round.
 pub(super) fn inlinable(program: &vir::Program, i: usize, depth: Depth) -> Vec<usize> {
-    let heap = velt_opt::heap_hook_pairs(program);
+    inlinable_with(program, &heap(program), i, depth)
+}
+
+/// The runtime allocator's externs `program` calls, each with std's heap hook that takes its
+/// calls' place (`velt_opt::heap_hook_pairs`): none where lowering put no hooks in it. Worked out
+/// once per program for [`inlinable_with`]: finding the hooks reads every function's symbol.
+pub(super) type Heap = Vec<(vir::ExternId, vir::FuncId)>;
+
+pub(super) fn heap(program: &vir::Program) -> Heap {
+    velt_opt::heap_hook_pairs(program)
+}
+
+/// [`inlinable`] with `program`'s [`heap`].
+pub(super) fn inlinable_with(
+    program: &vir::Program,
+    heap: &Heap,
+    i: usize,
+    depth: Depth,
+) -> Vec<usize> {
     let mut seen = HashSet::from([i]);
     let mut order = vec![i];
     let mut n = 0;
     while let Some(&j) = order.get(n) {
         n += 1;
         let f = &program.funcs[j];
-        let hooks = velt_opt::heap_hooks_of(f, &heap)
-            .into_iter()
-            .map(|h| h.0 as usize);
-        for c in referenced(f).into_iter().chain(hooks) {
+        for c in referenced(f).into_iter().chain(heap_hooks(f, heap)) {
             let f = &program.funcs[c];
             if f.linkage == Linkage::Internal && inlines(f, depth) && seen.insert(c) {
                 order.push(c);
@@ -331,6 +354,26 @@ pub(super) fn inlinable(program: &vir::Program, i: usize, depth: Depth) -> Vec<u
         }
     }
     order
+}
+
+/// The heap hooks of `heap` that take the place of the allocator calls in `f`.
+fn heap_hooks(f: &vir::Function, heap: &Heap) -> Vec<usize> {
+    if heap.is_empty() {
+        return vec![];
+    }
+    let mut out = vec![];
+    for b in &f.blocks {
+        if let Terminator::Call {
+            callee: Callee::Extern(e),
+            ..
+        } = &b.term
+        {
+            if let Some(&(_, h)) = heap.iter().find(|(x, _)| x == e) {
+                out.push(h.0 as usize);
+            }
+        }
+    }
+    out
 }
 
 /// The functions the code of `set` (an [`inlinable`] set) calls without compiling them, and those

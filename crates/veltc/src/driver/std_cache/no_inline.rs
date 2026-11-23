@@ -103,8 +103,9 @@ pub(in crate::driver) fn serve(
     let mut conservative = 0;
     let mut memo = HashMap::new();
     let filling = serve::fill();
+    let heap = select::heap(program);
     for i in select::candidates(program, &names, rule) {
-        let keys = Keys::of(program, &canon, &inputs, i, &mut memo);
+        let keys = Keys::of(program, &heap, &canon, &inputs, i, &mut memo);
         match keys.linked(cache, filling) {
             Some((path, assumed)) => {
                 conservative += usize::from(assumed == Assumed::Conservative);
@@ -133,7 +134,7 @@ pub(in crate::driver) fn serve(
     // Every set as keyed, before anything is exported: `inlinable` follows internal functions
     // only, and exporting one would hide it from the sets after.
     let linked: Vec<(usize, Vec<usize>)> = (placed.iter())
-        .map(|&(i, _)| (i, select::inlinable(program, i, DEPTH)))
+        .map(|&(i, _)| (i, select::inlinable_with(program, &heap, i, DEPTH)))
         .collect();
     let mut served = Served::default();
     for ((i, object), (_, set)) in placed.into_iter().zip(&linked) {
@@ -176,12 +177,14 @@ struct Keys {
 impl Keys {
     fn of(
         program: &vir::Program,
+        heap: &select::Heap,
         canon: &Canon,
         inputs: &key::Inputs,
         i: usize,
         memo: &mut HashMap<usize, String>,
     ) -> Keys {
-        let mut at = |assumed| super::release_key(program, canon, inputs, i, DEPTH, assumed, memo);
+        let mut at =
+            |assumed| super::release_key((program, heap), canon, inputs, i, DEPTH, assumed, memo);
         Keys {
             program: at(Assumed::Program),
             conservative: at(Assumed::Conservative),
@@ -565,7 +568,7 @@ mod tests {
         };
         let keys_of = |p: &vir::Program| {
             let canon = Canon::new(p, Mode::Link);
-            Keys::of(p, &canon, &inputs, 0, &mut HashMap::new())
+            Keys::of(p, &select::heap(p), &canon, &inputs, 0, &mut HashMap::new())
         };
         let keys = keys_of(&program);
         assert_ne!(keys.program, keys.conservative);

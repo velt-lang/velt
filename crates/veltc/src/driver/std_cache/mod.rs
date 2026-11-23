@@ -230,6 +230,7 @@ pub(super) fn split(
         );
     }
     let candidates = select::candidates(program, &names, select::Rule::Release);
+    let heap = select::heap(program);
     if candidates.is_empty() {
         return plan;
     }
@@ -237,7 +238,15 @@ pub(super) fn split(
     let mut memo = HashMap::new();
     let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
         .map(|&i| {
-            let key = release_key(program, &canon, &inputs, i, DEPTH_ALL, PROGRAM, &mut memo);
+            let key = release_key(
+                (program, &heap),
+                &canon,
+                &inputs,
+                i,
+                DEPTH_ALL,
+                PROGRAM,
+                &mut memo,
+            );
             (i, key, cache.path_of(KIND, &key))
         })
         .collect();
@@ -260,11 +269,12 @@ pub(super) fn split(
             }
         };
         let symbol = program.funcs[i].symbol.clone();
-        let mut calls: Vec<String> = (select::inlinable(program, i, DEPTH_ALL).into_iter())
-            .flat_map(|j| select::referenced(&program.funcs[j]))
-            .filter(|c| *c != i && taken.contains(c))
-            .map(|c| program.funcs[c].symbol.clone())
-            .collect();
+        let mut calls: Vec<String> = (select::inlinable_with(program, &heap, i, DEPTH_ALL)
+            .into_iter())
+        .flat_map(|j| select::referenced(&program.funcs[j]))
+        .filter(|c| *c != i && taken.contains(c))
+        .map(|c| program.funcs[c].symbol.clone())
+        .collect();
         calls.sort();
         calls.dedup();
         plan.entries.push(Entry {
@@ -278,7 +288,7 @@ pub(super) fn split(
     // Every set as keyed, before anything is exported: `inlinable` follows internal functions
     // only, and exporting one would hide it from the sets after.
     let linked: Vec<(usize, Vec<usize>)> = (taken.iter())
-        .map(|&i| (i, select::inlinable(program, i, DEPTH_ALL)))
+        .map(|&i| (i, select::inlinable_with(program, &heap, i, DEPTH_ALL)))
         .collect();
     for (_, set) in &linked {
         let reached = statics::reached(program, set);
@@ -312,7 +322,7 @@ const PROGRAM: key::Assumed = key::Assumed::Program;
 /// object calls the program's copies of what it doesn't inline, at `Depth::Whole` its own, which
 /// the program then doesn't export.
 fn release_key(
-    program: &vir::Program,
+    (program, heap): (&vir::Program, &select::Heap),
     canon: &Canon,
     inputs: &key::Inputs,
     i: usize,
@@ -320,7 +330,7 @@ fn release_key(
     assumed: key::Assumed,
     memo: &mut HashMap<usize, String>,
 ) -> Key {
-    let set = select::inlinable(program, i, depth);
+    let set = select::inlinable_with(program, heap, i, depth);
     let declared = select::declared(program, &set);
     let mut code: Vec<key::Code> = vec![];
     if depth == select::Depth::Whole {
@@ -558,7 +568,18 @@ mod tests {
             cpu: None,
             release: true,
         };
-        let at = |depth| release_key(&p, &canon, &inputs, 0, depth, PROGRAM, &mut HashMap::new());
+        let heap = select::heap(&p);
+        let at = |depth| {
+            release_key(
+                (&p, &heap),
+                &canon,
+                &inputs,
+                0,
+                depth,
+                PROGRAM,
+                &mut HashMap::new(),
+            )
+        };
         assert_eq!(select::inlinable(&p, 0, select::Depth::Small), [0]);
         assert_eq!(select::inlinable(&p, 0, select::Depth::Whole), [0]);
         assert_ne!(at(select::Depth::Small), at(select::Depth::Whole));

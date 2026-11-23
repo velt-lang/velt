@@ -668,3 +668,49 @@ fn every_function_never_served_exists() {
         );
     }
 }
+
+/// A function that calls the runtime's allocator reaches std's heap hook for it where lowering
+/// put the hook in the program (`velt_opt`'s `heap_calls` makes the call the hook's at the end, in
+/// an object as in the program), so the hook is compiled into its object and its key holds the
+/// hook's code; without the hook nothing more is reached.
+#[test]
+fn an_allocator_call_reaches_the_heap_hook_where_the_program_has_one() {
+    let alloc_call = |f: &mut Function| {
+        f.blocks.insert(
+            0,
+            BasicBlock {
+                stmts: vec![],
+                term: Terminator::Call {
+                    callee: Callee::Extern(vir::ExternId(0)),
+                    args: vec![],
+                    dest: Some(Place::local(Local(1))),
+                    next: vir::BlockId(1),
+                    unwind: None,
+                },
+            },
+        );
+    };
+    let mut caller = func("caller", 2, &[], None);
+    alloc_call(&mut caller);
+    let mut hook = func("heap", 2, &[], None);
+    hook.symbol = velt_vir::mangle::mangle(velt_common::std_hook!(heap_alloc));
+    hook.inline = Inline::Always;
+    let mut p = program(vec![caller, hook], vec![]);
+    p.externs.push(vir::ExternFn {
+        symbol: "velt_rt_alloc".into(),
+        params: vec![Ty::I64, Ty::I64],
+        ret: Ty::Ptr,
+        noreturn: false,
+        host: None,
+        c_decl: None,
+        variadic: false,
+    });
+    assert_eq!(heap(&p), [(vir::ExternId(0), FuncId(1))]);
+    for depth in [Depth::Small, Depth::Whole] {
+        assert_eq!(inlinable(&p, 0, depth), [0, 1], "{depth:?}");
+    }
+    // A program lowered without the hooks (a debug build's): the call stays the runtime's.
+    p.funcs[1].symbol = velt_vir::mangle::mangle("std/m::other");
+    assert!(heap(&p).is_empty());
+    assert_eq!(inlinable(&p, 0, Depth::Whole), [0]);
+}

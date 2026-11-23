@@ -62,10 +62,8 @@ pub fn pairs(program: &Program) -> Vec<(ExternId, FuncId)> {
 }
 
 /// Std's heap hooks that take the place of the allocator externs `f` calls at the end ([`run`]),
-/// given the program's [`pairs`]: what `f`'s code reaches beyond its own calls, for whoever
-/// compiles a function apart from the program it was lowered in (veltc's std cache,
-/// `dead_funcs`).
-pub fn hooks_of(f: &Function, pairs: &[(ExternId, FuncId)]) -> Vec<FuncId> {
+/// given the program's [`pairs`]: what `f`'s code reaches beyond its own calls (`dead_funcs`).
+pub(crate) fn hooks_of(f: &Function, pairs: &[(ExternId, FuncId)]) -> Vec<FuncId> {
     (pairs.iter())
         .filter(|&&(e, _)| calls_extern(f, e))
         .map(|&(_, h)| h)

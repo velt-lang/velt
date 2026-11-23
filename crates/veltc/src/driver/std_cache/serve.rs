@@ -74,9 +74,10 @@ pub(in crate::driver) fn serve(
         );
     }
     let inputs = key::Inputs::debug(&cg.target);
+    let heap = select::heap(program);
     let mut digests = Digests::default();
     let looked_up: Vec<(usize, Key)> = (select::candidates(program, &names, rule).into_iter())
-        .map(|i| (i, digests.key(program, &canon, &inputs, i)))
+        .map(|i| (i, digests.key(program, &heap, &canon, &inputs, i)))
         .collect();
     drop(canon);
     let mut found: Vec<(usize, PathBuf)> = vec![];
@@ -115,7 +116,7 @@ pub(in crate::driver) fn serve(
     // Every set as keyed, before anything is exported: `inlinable` follows internal functions
     // only, and exporting one would hide it from the sets after.
     let linked: Vec<(usize, Vec<usize>)> = (taken.iter())
-        .map(|&i| (i, select::inlinable(program, i, DEPTH)))
+        .map(|&i| (i, select::inlinable_with(program, &heap, i, DEPTH)))
         .collect();
     for (_, set) in &linked {
         let reached = statics::reached(program, set);
@@ -168,11 +169,12 @@ impl Digests {
     fn key(
         &mut self,
         program: &vir::Program,
+        heap: &select::Heap,
         canon: &Canon,
         inputs: &key::Inputs,
         i: usize,
     ) -> Key {
-        let set = select::inlinable(program, i, DEPTH);
+        let set = select::inlinable_with(program, heap, i, DEPTH);
         let declared = select::declared(program, &set);
         let code = set.iter().map(|&j| {
             *(self.code)
