@@ -1,0 +1,131 @@
+// velt/fs (internal): byte-range locks on a file descriptor, for programs that share a file
+// between processes (a database's lock states, a single-instance file). A lock is held by the
+// open file, not by the process: two descriptors of one file exclude each other also inside one
+// process, closing another descriptor of the file drops nothing, and closing this one (or the
+// end of the process, however it ends) gives its locks back. Locks are advisory: only other
+// lockers notice them. Nothing in Node to follow; the design is #3321.
+
+import { lastError, lockRange } from "#fd-system";
+import { descriptor, integer, MAX_SAFE } from "velt/fs/fd/args";
+import { osError } from "velt/fs/errors";
+import { AbortSignal } from "velt/task/signal";
+
+/**
+ * Which bytes of a file to lock and how: `"exclusive"` (the default: no other lock on the
+ * range) or `"shared"` (any number of shared locks, no exclusive one), on the `length` bytes
+ * from byte `offset`. A `length` of 0, the default, is from `offset` to the end of the file
+ * and whatever is written past it; the range need not exist in the file. `signal` ends a wait
+ * of `lock`, which then rejects with an `AbortError` (whose message is the reason given to
+ * `abort(reason)`) or a `TimeoutError` for `AbortSignal.timeout(ms)`; `lockSync` does not
+ * wait, and does not read it.
+ */
+export type LockOptions = {
+  mode?: "shared" | "exclusive";
+  offset?: number;
+  length?: number;
+  signal?: AbortSignal;
+};
+
+// `lockRange` for `options`: 0 done, 1 taken by another holder; an `IoError` otherwise.
+function range(what: string, fd: number, mode: i32, options: LockOptions | undefined): i32 {
+  const f = descriptor(fd);
+  const offset = integer("offset", options?.offset ?? 0, 0, MAX_SAFE);
+  const length = integer("length", options?.length ?? 0, 0, MAX_SAFE);
+  const rc = lockRange(f, mode, offset, length);
+  if (rc < 0) {
+    throw osError(lastError(), what);
+  }
+  return rc;
+}
+
+function modeOf(options: LockOptions | undefined): i32 {
+  return options?.mode == "shared" ? 1 : 2;
+}
+
+/**
+ * Takes the lock `options` names on the file `fd` is open on, without waiting: `true`, or
+ * `false` when another holder has a lock that conflicts. Asking for a range this descriptor
+ * already holds changes its mode (shared to exclusive and back). An `IoError` when the
+ * descriptor is not open (`EBADF`), is not open the way the lock needs (a shared lock needs
+ * it readable, an exclusive one writable), or the file system has no locks; `ENOSYS` on
+ * Windows and WebAssembly.
+ */
+export function lockSync(fd: number, options?: LockOptions): bool {
+  return range("lock", fd, modeOf(options), options) == 0;
+}
+
+/**
+ * Gives back the lock on the range `options` names (its `mode` is not looked at): all of what
+ * this descriptor holds there, which may be a part of a larger lock. Nothing when it holds
+ * none.
+ */
+export function unlockSync(fd: number, options?: LockOptions) {
+  range("unlock", fd, 0, options);
+}
+
+/**
+ * Takes the lock as `lockSync` does, waiting until no other holder conflicts. It asks again
+ * after a pause that grows from 1 ms to 50 ms, on a timer: no thread waits. A lock that is
+ * being waited for keeps the program running, as a pending read does (`process.exit()` ends
+ * it all the same).
+ *
+ * With a `signal`, an abort ends the wait: the promise rejects as `signal.throwIfAborted()`
+ * throws (an `AbortError`, whose message is the reason given to `abort(reason)`, or a
+ * `TimeoutError` for `AbortSignal.timeout(ms)`, which makes a time limit) and no lock is taken. A signal aborted already rejects before the first try. An abort
+ * once the lock is taken changes nothing: the lock is held, and given back as any other.
+ */
+export async function lock(fd: number, options?: LockOptions): Promise<void> {
+  const signal = options?.signal;
+  if (signal !== undefined) {
+    signal.throwIfAborted();
+  }
+  let pause = 1;
+  while (!lockSync(fd, options)) {
+    if (signal === undefined) {
+      await later(pause);
+    } else {
+      await pauseUnless(pause, signal);
+      signal.throwIfAborted();
+    }
+    pause = nextPause(pause);
+  }
+}
+
+/** The pause after one of `ms` milliseconds: twice as long, up to 50 ms (std's tests read it). */
+export function nextPause(ms: number): number {
+  return ms * 2 > 50 ? 50 : ms * 2;
+}
+
+// Resolves after `ms` milliseconds. The timer keeps the program running, as a pending read
+// does: a task that waits for a lock is waiting for something that can still happen.
+function later(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(
+      () => {
+        resolve();
+      },
+      ms as i64,
+    );
+  });
+}
+
+// Resolves after `ms` milliseconds, or as soon as `signal` aborts, whichever comes first. An
+// abort clears the timer, so a program with nothing else to do ends at once rather than when
+// the pause would have.
+async function pauseUnless(ms: number, signal: AbortSignal): Promise<void> {
+  const armed: Timer[] = [];
+  const timer = new Promise<void>((resolve) => {
+    armed.push(
+      setTimeout(
+        () => {
+          resolve();
+        },
+        ms as i64,
+      ),
+    );
+  });
+  await Promise.race([timer, signal.whenAborted()]);
+  if (signal.aborted && armed.length > 0) {
+    clearTimeout(armed[0]);
+  }
+}

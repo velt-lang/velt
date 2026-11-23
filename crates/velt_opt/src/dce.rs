@@ -148,16 +148,17 @@ fn zero_init(aggs: &[AggLayout], l: Local, mut ty: Ty) -> Option<Stmt> {
         match ty {
             Ty::Unit => return None,
             Ty::Agg(id) => {
-                let fields = &aggs[id.0 as usize].fields;
+                let layout = &aggs[id.0 as usize];
+                let fields = &layout.fields;
                 if fields.is_empty() {
                     return Some(Stmt::Assign(place, Rvalue::Aggregate(id, vec![])));
                 }
-                // A 256-bit vector (two 128-bit halves) is zeroed whole: a write of one half
-                // would have LLVM keep the local as two halves from then on (`crate::sroa`).
-                if let [(Ty::V128, 0), (Ty::V128, 16)] = fields[..] {
-                    let zero = crate::sroa::zero(Ty::V128);
-                    let halves = vec![zero.clone(), zero];
-                    return Some(Stmt::Assign(place, Rvalue::Aggregate(id, halves)));
+                // A 256- or 512-bit vector (two or four 128-bit parts) is zeroed whole: a write
+                // of one part would have LLVM keep the local in parts from then on
+                // (`crate::sroa`).
+                if crate::sroa::is_wide_vector(layout) {
+                    let parts = vec![crate::sroa::zero(Ty::V128); fields.len()];
+                    return Some(Stmt::Assign(place, Rvalue::Aggregate(id, parts)));
                 }
                 let (i, &(field, _)) = fields.iter().enumerate().find(|(_, f)| f.0 != Ty::Unit)?;
                 place.proj.push(Proj::Field(i as u32));

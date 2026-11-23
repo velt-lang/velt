@@ -1,0 +1,3 @@
+shared_take_field.velt:7:19: error: `this.data` stays where it is held; `shared(...)` takes the value itself (share a clone)
+  = note: use it through the `shared` value from now on (`m.with((v) => …)`), or pass a copy: `this.data.clone()`
+  = note: or, where nothing needs it there any more, take it out without a copy: `const v = this.data; this.data = …;` (a new value), then `shared(v)`

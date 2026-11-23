@@ -45,7 +45,7 @@ enum Between {
     StringExtern,
     /// A math operation (`f64.fromBits`), a statement.
     MathOperation,
-    /// A string from a byte range of `data` itself.
+    /// A byte array's bytes (`data` itself) appended to a string builder.
     BytesRangeExtern,
     /// A pointer into the object (`&(*v).len`) read through.
     InteriorPointer,
@@ -91,8 +91,8 @@ fn kit() -> Kit {
         false,
     );
     pb.ext("velt_rt_math_bits_f64", &[Ty::U64], Ty::F64, false);
-    let range_params = [Ty::Ptr, Ty::I64, Ty::I64, Ty::Ptr];
-    let range = pb.ext("velt_rt_bytes_range_to_str", &range_params, Ty::Unit, false);
+    let range_params = [Ty::Ptr, Ty::Ptr, Ty::U64, Ty::U64];
+    let range = pb.ext("velt_rt_strbuf_push_u8s", &range_params, Ty::Unit, false);
     // quiet(a) = a.len
     let mut fb = FuncBuilder::internal("quiet", &[Ty::Ptr], Ty::U64);
     let (a, b) = (fb.param(0), fb.block());
@@ -218,10 +218,10 @@ fn program(between: Between) -> (Program, FuncId) {
         }
         Between::BytesRangeExtern => {
             let args = vec![
-                copy_local(v),
-                int(0, Ty::I64),
-                int(1, Ty::I64),
                 copy_local(this),
+                copy_local(v),
+                int(1, Ty::U64),
+                int(1, Ty::U64),
             ];
             b = call(&mut fb, b, Callee::Extern(k.range), args)
         }

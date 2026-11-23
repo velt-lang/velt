@@ -6,10 +6,6 @@
 // (#2392 step 3 adds verification); the server's Finished is always checked. When the server
 // chooses TLS 1.2, `ClientHandshake12` takes the handshake over after the ServerHello.
 
-import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
-import { x25519 } from "velt/crypto/x25519";
-import { sha256 } from "velt/crypto/sha256";
-import { sha384 } from "velt/crypto/sha512";
 import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { arrayMove, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
 import {
@@ -20,13 +16,21 @@ import {
   TlsFailure,
   UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
-import { clientHello, EXT_ALPN, HelloInput, SECP256R1, X25519 } from "velt/net/tls/client_hello";
+import { clientHello, EXT_ALPN, HelloInput, X25519 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
-import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import { exchangeKey, exchangePublic, exchangeSecret } from "velt/net/tls/key_exchange";
+import {
+  expandLabelWith,
+  finishedMac,
+  handshakeSecret,
+  masterSecretWith,
+  prepareSecret,
+} from "velt/net/tls/key_schedule";
 import { ClientHandshake12, DONE12 } from "velt/net/tls/client_handshake12";
 import { AES_256_GCM_SHA384, hashLength, RecordCipher } from "velt/net/tls/record_cipher";
-import { parseServerHello } from "velt/net/tls/server_hello";
+import { groupName, parseServerHello } from "velt/net/tls/server_hello";
+import { TranscriptHash } from "velt/net/tls/transcript_hash";
 
 // Handshake message types.
 
@@ -74,6 +78,8 @@ export class ClientHandshake {
   /** The group of the key share sent last. */
   private group: usize;
   private transcript: u8[];
+  // The transcript's running hash (transcript_hash.velt).
+  private th: TranscriptHash = new TranscriptHash();
   private state: i32;
   private retried: bool;
   private certRequestContext: u8[] | null;
@@ -143,10 +149,7 @@ export class ClientHandshake {
 
   // The transcript's hash with the suite's hash (SHA-256 until the server chose).
   private hash(): u8[] {
-    if (this.suite == AES_256_GCM_SHA384) {
-      return sha384(this.transcript);
-    }
-    return sha256(this.transcript);
+    return this.th.of(this.transcript, this.suite == AES_256_GCM_SHA384);
   }
 
   /**
@@ -230,14 +233,16 @@ export class ClientHandshake {
       // hash of the suite the HelloRetryRequest chose.
       const first = this.hash();
       this.transcript = [254, 0, 0, first.length as u8];
+      this.th.reset();
       this.add(first);
       this.add(m);
       let publicKey = this.input.publicKey;
-      if (sh.group == SECP256R1) {
-        // A P-256 share instead (parseServerHello allows no other group).
-        this.privateKey = this.input.retryKey ?? p256PrivateKey();
-        this.group = SECP256R1;
-        publicKey = p256PublicKey(this.privateKey);
+      if (sh.group != 0) {
+        // A share of the curve asked for instead (parseServerHello allows only the groups
+        // offered, and not the one already sent).
+        this.privateKey = this.input.retryKey ?? exchangeKey(sh.group);
+        this.group = sh.group;
+        publicKey = exchangePublic(sh.group, this.privateKey);
       }
       const again = clientHello(this.input, true, sh.cookie, this.group, publicKey);
       this.add(again);
@@ -277,23 +282,22 @@ export class ClientHandshake {
     this.add(m);
     let shared: u8[];
     try {
-      shared =
-        this.group == X25519
-          ? x25519(this.privateKey, sh.keyShare)
-          : p256Ecdh(this.privateKey, sh.keyShare);
+      shared = exchangeSecret(this.group, this.privateKey, sh.keyShare);
     } catch (e) {
       throw new TlsFailure(
         ILLEGAL_PARAMETER,
         this.group == X25519
           ? "the server's X25519 share is a small-order point"
-          : "the server's secp256r1 share is not a point on the curve",
+          : `the server's ${groupName(this.group)} share is not a point on the curve`,
       );
     }
     const hs = handshakeSecret(shared, hashLength(this.suite));
     const h = this.hash();
-    this.clientHandshake = expandLabel(hs, "c hs traffic", h, h.length);
-    this.serverHandshake = expandLabel(hs, "s hs traffic", h, h.length);
-    this.master = masterSecret(hs);
+    // One prepared handshake secret for both traffic secrets and the master secret's salt.
+    const prepared = prepareSecret(hs);
+    this.clientHandshake = expandLabelWith(prepared, "c hs traffic", h, h.length);
+    this.serverHandshake = expandLabelWith(prepared, "s hs traffic", h, h.length);
+    this.master = masterSecretWith(prepared);
     this.state = WAIT_ENCRYPTED_EXTENSIONS;
     return HANDSHAKE_KEYS;
   }
@@ -338,7 +342,8 @@ export class ClientHandshake {
   }
 
   private finished(m: u8[], body: u8[]): i32 {
-    const expected = finishedMac(this.serverHandshake, this.hash());
+    const transcript = this.hash();
+    const expected = finishedMac(this.serverHandshake, transcript);
     const n = expected.length;
     let diff: u8 = body.length == n ? 0 : 1;
     for (let i: usize = 0; i < n && i < body.length; i++) {
@@ -349,8 +354,9 @@ export class ClientHandshake {
     }
     this.add(m);
     const h = this.hash();
-    this.clientApplication = expandLabel(this.master, "c ap traffic", h, h.length);
-    this.serverApplication = expandLabel(this.master, "s ap traffic", h, h.length);
+    const master = prepareSecret(this.master);
+    this.clientApplication = expandLabelWith(master, "c ap traffic", h, h.length);
+    this.serverApplication = expandLabelWith(master, "s ap traffic", h, h.length);
     const w = new ByteWriter();
     const context = this.certRequestContext;
     if (context != null) {
@@ -370,7 +376,8 @@ export class ClientHandshake {
     fin.u8(FINISHED);
     const f = fin.begin(3);
     // The transcript only grew when a Certificate was sent; otherwise `h` is still its hash.
-    fin.put(finishedMac(this.clientHandshake, context != null ? this.hash() : h));
+    const sent = context != null ? this.hash() : h;
+    fin.put(finishedMac(this.clientHandshake, sent));
     fin.end(f, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);

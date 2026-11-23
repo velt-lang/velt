@@ -10,7 +10,7 @@ import * as m from "velt/lang/hooks/sched_mem";
 import * as fs from "velt/net/fd_socket";
 
 /** Two connected sockets, their descriptors at `fds`. */
-declare c("c") function socketpair(family: i32, kind: i32, protocol: i32, fds: Ptr<u8>): i32;
+declare c("c") function socketpair(family: i32, kind: i32, protocol: i32, fds: Ptr<u8> | null): i32;
 
 const AF_UNIX: i32 = 1;
 const SOCK_STREAM: i32 = 1;

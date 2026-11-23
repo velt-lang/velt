@@ -1,0 +1,12 @@
+// `x ** y` on i64: 20 million pairs, bases from -50 to 49 and exponents from 0 to 63 (wrapping
+// at 64 bits). The Rust port is the runtime's `velt_rt_pow_i64`, which compiled code called
+// before `**` on integers moved to std (#2196).
+function main() {
+  let sum: i64 = 0;
+  for (let i: i64 = 0; i < 20000000; i++) {
+    const base = (i % 100) - 50;
+    const exp = (i * 7) % 64;
+    sum += base ** exp;
+  }
+  console.log(sum);
+}

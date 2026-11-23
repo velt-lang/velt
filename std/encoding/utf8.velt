@@ -1,23 +1,10 @@
-// velt/encoding (internal): UTF-8: encoding, strict and lossy decoding, and validation in Velt,
-// skipping ASCII sixteen and 64 bytes at a time with SIMD vectors (`validPrefix`, which the
-// WebSocket reader's check of text that arrives in pieces, std/net/websocket/text, uses too).
+// velt/encoding (internal): UTF-8: encoding, and strict and lossy decoding in Velt. Validation
+// (`utf8Valid`, `validPrefix`) is in utf8_valid.velt.
 
 import { EncodingError } from "velt/encoding/errors";
-import {
-  velt_rt_bytes_from_str,
-  velt_rt_bytes_to_str,
-  velt_simd_mask8x16_and,
-  velt_simd_mask8x16_any,
-  velt_simd_mask8x16_first,
-  velt_simd_u64x2_as_u8x16,
-  velt_simd_u64x2_splat,
-  velt_simd_u64x2_with_lane,
-  velt_simd_u8x16_ge,
-  velt_simd_u8x16_load,
-  velt_simd_u8x16_or,
-  velt_simd_u8x16_splat,
-} from "velt/encoding/rt";
+import { velt_rt_bytes_from_str, velt_rt_bytes_to_str } from "velt/encoding/rt";
 import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { maximalSequence } from "velt/encoding/utf8_valid";
 
 /** The UTF-8 bytes of `s` (a copy). */
 export function utf8Encode(s: string): u8[] {
@@ -64,11 +51,6 @@ export function utf8DecodeLossy(data: u8[]): string {
   return validToString(out);
 }
 
-/** Whether `data` is valid UTF-8. */
-export function utf8Valid(data: u8[]): bool {
-  return validPrefix(data, 0, data.length) == (data.length as i64);
-}
-
 /** Offset of the first byte of `data` that starts an invalid UTF-8 sequence, or -1. */
 export function firstInvalid(data: u8[]): i64 {
   let i: usize = 0;
@@ -88,40 +70,9 @@ export function firstInvalid(data: u8[]): i64 {
 }
 
 // Length of the valid sequence starting at `i`, or minus the length of its maximal invalid
-// subpart (the bytes one U+FFFD replaces). Follows Unicode Table 3-7 (well-formed sequences).
+// subpart (std/encoding/utf8_valid.velt `maximalSequence`).
 function sequenceAt(data: u8[], i: usize): i64 {
-  const b0 = data[i];
-  if (b0 < 0x80) {
-    return 1;
-  }
-  let need: usize = 0;
-  let lo: u8 = 0x80;
-  let hi: u8 = 0xbf;
-  if (b0 >= 0xc2 && b0 <= 0xdf) {
-    need = 1;
-  } else if (b0 >= 0xe0 && b0 <= 0xef) {
-    need = 2;
-    lo = b0 == 0xe0 ? 0xa0 : 0x80;
-    hi = b0 == 0xed ? 0x9f : 0xbf;
-  } else if (b0 >= 0xf0 && b0 <= 0xf4) {
-    need = 3;
-    lo = b0 == 0xf0 ? 0x90 : 0x80;
-    hi = b0 == 0xf4 ? 0x8f : 0xbf;
-  } else {
-    return -1;
-  }
-  for (let k: usize = 1; k <= need; k++) {
-    if (i + k >= data.length) {
-      return -(k as i64);
-    }
-    const b = data[i + k];
-    if (b < lo || b > hi) {
-      return -(k as i64);
-    }
-    lo = 0x80;
-    hi = 0xbf;
-  }
-  return (need + 1) as i64;
+  return maximalSequence(data, i, data.length);
 }
 
 /** Bytes known to be valid UTF-8 (encoder output, repaired lossy input) as a string. */
@@ -131,141 +82,4 @@ export function validToString(bytes: u8[]): string {
     panic("ICE: std/encoding produced invalid UTF-8");
   }
   return r.value;
-}
-
-/**
- * How many of the bytes in [start, end) are well-formed UTF-8: all of them, fewer when they end
- * inside a character (more bytes may complete it), or -1 when they hold a sequence that no
- * continuation can make valid. Positions past the array's length count as its length.
- */
-export function validPrefix(data: u8[], start: usize, end: usize): i64 {
-  const stop = end < data.length ? end : data.length;
-  if (start >= stop) {
-    return 0;
-  }
-  const high = velt_simd_u8x16_splat(0x80);
-  let i = start;
-  while (i < stop) {
-    if (data[i] < 0x80) {
-      i++;
-      // Vectors only for a run of ASCII: a space between words that are not is stepped over
-      // alone.
-      if (i < stop && data[i] < 0x80) {
-        i = asciiEnd(data, i + 1, stop, high);
-      }
-      continue;
-    }
-    const len = sequenceLength(data, i, stop);
-    if (len < 0) {
-      return -1;
-    }
-    if (len == 0) {
-      return (i - start) as i64;
-    }
-    i += len as usize;
-  }
-  return (stop - start) as i64;
-}
-
-// The position of the first byte in [from, stop) that is not ASCII (`high`: sixteen 0x80), or
-// `stop`. Most text is ASCII: 64 bytes per step with one test, then 16, then one vector ending
-// at `stop` (single bytes only in a range shorter than a vector).
-function asciiEnd(data: u8[], from: usize, stop: usize, high: u8x16): usize {
-  let i = from;
-  while (i + 64 <= stop) {
-    const a = velt_simd_u8x16_or(
-      velt_simd_u8x16_load(data, i as u64),
-      velt_simd_u8x16_load(data, (i + 16) as u64),
-    );
-    const b = velt_simd_u8x16_or(
-      velt_simd_u8x16_load(data, (i + 32) as u64),
-      velt_simd_u8x16_load(data, (i + 48) as u64),
-    );
-    if (velt_simd_mask8x16_any(velt_simd_u8x16_ge(velt_simd_u8x16_or(a, b), high))) {
-      break;
-    }
-    i += 64;
-  }
-  while (i + 16 <= stop) {
-    const m = velt_simd_u8x16_ge(velt_simd_u8x16_load(data, i as u64), high);
-    if (velt_simd_mask8x16_any(m)) {
-      return i + (velt_simd_mask8x16_first(m) as usize);
-    }
-    i += 16;
-  }
-  if (i < stop && stop >= 16) {
-    // The last bytes in a vector ending at `stop`, which overlaps bytes already seen: only its
-    // lanes from `i` on count.
-    const at = stop - 16;
-    const low = velt_simd_u64x2_with_lane(
-      velt_simd_u64x2_splat(0x0f0e0d0c0b0a0908),
-      0,
-      0x0706050403020100,
-    );
-    const rest = velt_simd_u8x16_ge(
-      velt_simd_u64x2_as_u8x16(low),
-      velt_simd_u8x16_splat((i - at) as u8),
-    );
-    const m = velt_simd_mask8x16_and(
-      velt_simd_u8x16_ge(velt_simd_u8x16_load(data, at as u64), high),
-      rest,
-    );
-    return velt_simd_mask8x16_any(m) ? at + (velt_simd_mask8x16_first(m) as usize) : stop;
-  }
-  while (i < stop && data[i] < 0x80) {
-    i++;
-  }
-  return i;
-}
-
-// Length of the well-formed sequence starting at `i` (a byte that is not ASCII), 0 when `stop`
-// cuts it off with the bytes before it valid, or -1 when it is invalid. Follows Unicode Table
-// 3-7 (well-formed sequences): a byte is judged as soon as it is read, as `str::from_utf8` does.
-// One branch per length, so that the common two- and three-byte characters take few tests.
-function sequenceLength(data: u8[], i: usize, stop: usize): i64 {
-  const b0 = data[i];
-  if (b0 < 0xe0) {
-    if (b0 < 0xc2) {
-      return -1;
-    }
-    if (i + 1 >= stop) {
-      return 0;
-    }
-    return (data[i + 1] & 0xc0) == 0x80 ? 2 : -1;
-  }
-  if (i + 1 >= stop) {
-    return b0 < 0xf5 ? 0 : -1;
-  }
-  const b1 = data[i + 1];
-  if (b0 < 0xf0) {
-    // E0 needs A0..BF second (no overlong form), ED needs 80..9F (no surrogate).
-    const lo: u8 = b0 == 0xe0 ? 0xa0 : 0x80;
-    const hi: u8 = b0 == 0xed ? 0x9f : 0xbf;
-    if (b1 < lo || b1 > hi) {
-      return -1;
-    }
-    if (i + 2 >= stop) {
-      return 0;
-    }
-    return (data[i + 2] & 0xc0) == 0x80 ? 3 : -1;
-  }
-  // F0 needs 90..BF second (no overlong form), F4 needs 80..8F (at most U+10FFFF).
-  if (b0 > 0xf4) {
-    return -1;
-  }
-  const lo: u8 = b0 == 0xf0 ? 0x90 : 0x80;
-  const hi: u8 = b0 == 0xf4 ? 0x8f : 0xbf;
-  if (b1 < lo || b1 > hi) {
-    return -1;
-  }
-  if (i + 2 >= stop) {
-    return 0;
-  }
-  if ((data[i + 2] & 0xc0) != 0x80) {
-    return -1;
-  }
-  if (i + 3 >= stop) {
-    return 0;
-  }
-  return (data[i + 3] & 0xc0) == 0x80 ? 4 : -1;
 }

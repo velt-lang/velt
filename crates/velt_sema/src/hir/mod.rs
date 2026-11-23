@@ -128,6 +128,10 @@ pub enum TyKind {
     Literal(LitValue),
     /// `symbol`: Copy, the address of a symbol record (rt_abi.md "Symbols"), compared by identity.
     Symbol,
+    /// `Ptr<T>` (velt/ffi, #3094): a C pointer to a `T`, Copy, never counted, compared by
+    /// address. One machine word, never `NULL`: `Ptr<T> | null` is the same word with 0 as `null`
+    /// (lowering's null niche). The pointee is checked where it is concrete (`c_sig::c_pointee`).
+    Ptr(TyId),
     /// A SIMD vector or mask: Copy, 16 bytes.
     Simd(SimdTy),
     /// A type operator that can't be evaluated yet because an argument it inspects is still a
@@ -401,6 +405,11 @@ pub struct LocalDef {
     /// assigns it while another still sees it. Set on the enclosing local and on each capturing
     /// closure's capture local; the variable is never moved from.
     pub boxed: bool,
+    /// Declared `weak T | null` (docs/internals/design/cycles.md "`weak T`"): `ty` is the read
+    /// type, `T | null`, with `T` a class; the variable holds its target's slot in the weak core,
+    /// 0 for `null`. Its reads are `Intrinsic::WeakRead`; its `Let` initializer and assigned
+    /// values are borrowed. Additive (#3119).
+    pub weak: bool,
     pub span: Span,
 }
 

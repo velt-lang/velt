@@ -1,0 +1,111 @@
+// velt/lang/hooks (tests): the slots of captured `weak` variables, compiled as a program has them
+// (velt_vir `weak_captures`): a closure that keeps one holds a reference of its own to the slot,
+// given back with the closure, which the leak counters cannot see (the weak core's blocks are the
+// C library's); run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { weakSlotsLive } from "velt/lang/hooks/weak";
+
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Box {
+  f: () => string;
+  constructor(f: () => string) {
+    this.f = f;
+  }
+}
+
+function nameOf(n: Node | null): string {
+  return n === null ? "null" : n.name;
+}
+
+function none(): string {
+  return "none";
+}
+
+describe("weak captures", () => {
+  it("keep the slot while the closure lives, after the variable and the target went", () => {
+    const before = weakSlotsLive();
+    let f: () => string = none;
+    {
+      const t = new Node("t");
+      const w: weak Node | null = t;
+      f = () => nameOf(w);
+      expect(f()).toBe("t");
+    }
+    expect(f()).toBe("null");
+    // Only the closure holds the slot now.
+    expect(weakSlotsLive()).toBe(before + 1);
+    f = none;
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("share a variable's cell, which gives the slot back with its last reference", () => {
+    const before = weakSlotsLive();
+    let set = (n: Node) => {
+      console.log(n.name);
+    };
+    let get = none;
+    {
+      const t = new Node("t");
+      let w: weak Node | null = null;
+      // Both closures outlive the block and one assigns `w`: they share its cell.
+      set = (n: Node) => {
+        w = n;
+      };
+      get = () => nameOf(w);
+      expect(get()).toBe("null");
+      set(t);
+      expect(get()).toBe("t");
+    }
+    expect(get()).toBe("null");
+    // Only the cell holds the slot now.
+    expect(weakSlotsLive()).toBe(before + 1);
+    set = (n: Node) => {
+      console.log(n.name);
+    };
+    get = none;
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("take one more reference in a copy of the closure", () => {
+    const before = weakSlotsLive();
+    let b = new Box(none);
+    let c = new Box(none);
+    {
+      const t = new Node("t");
+      const w: weak Node | null = t;
+      b = new Box(() => nameOf(w));
+      c = b.clone();
+      expect(c.f()).toBe("t");
+    }
+    expect(weakSlotsLive()).toBe(before + 1);
+    b = new Box(none);
+    // The copy still holds the slot.
+    expect(c.f()).toBe("null");
+    expect(weakSlotsLive()).toBe(before + 1);
+    c = new Box(none);
+    expect(weakSlotsLive()).toBe(before);
+  });
+
+  it("are given back by a generator closure's state, which holds a reference of its own", () => {
+    const before = weakSlotsLive();
+    const t = new Node("g");
+    {
+      const w: weak Node | null = t;
+      const make = function* (): Generator<string> {
+        yield nameOf(w);
+        yield nameOf(w);
+      };
+      const g = make();
+      expect(g.next().value).toBe("g");
+    }
+    // `t`'s record still holds the slot after the variable, the closure and the state let go.
+    expect(weakSlotsLive()).toBe(before + 1);
+    expect(t.name).toBe("g");
+  });
+});

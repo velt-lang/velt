@@ -273,6 +273,12 @@ pub struct Function {
     /// it only grows the hot code around the call) and backends may compile it as cold. Set by
     /// lowering; `velt_opt` keeps it on clones. False promises nothing.
     pub cold: bool,
+    /// `@cold` (std/lang/intrinsics/decorators.velt): its calls are rare, though unlike
+    /// [`Function::cold`]'s they return. Backends compile it as cold, so the ways to its calls
+    /// are laid out of the hot code (LLVM `cold`), and `velt_opt` inlines it only where it is
+    /// trivial. Nothing may assume a call of it does not return. Set by lowering; `velt_opt`
+    /// keeps it on clones. False promises nothing.
+    pub rare: bool,
     /// Whether optimizers and backends must inline it, must not, or decide for themselves: the
     /// std decorators `@inline` and `@noInline` (std/lang/intrinsics/decorators.velt). Set by
     /// lowering; `velt_opt` keeps it on clones.
@@ -353,6 +359,7 @@ impl Function {
             target: crate::simd::ExtSet::NONE,
             baseline: false,
             cold: false,
+            rare: false,
             inline: Inline::Default,
             stops_unwind: false,
         }

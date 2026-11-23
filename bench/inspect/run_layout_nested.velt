@@ -1,0 +1,46 @@
+// Line breaking's long path: a large nested value that breaks across lines, with number arrays
+// grouped into columns, a string split at its line breaks, class instances and a Map, parsed and
+// laid out again for every line printed.
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class Shape {
+  name: string;
+  points: Point[];
+  samples: number[];
+  note: string;
+  constructor(name: string, n: number) {
+    this.name = name;
+    this.points = [];
+    this.samples = [];
+    for (let i = 0; i < n; i++) {
+      this.points.push(new Point(i * 10, i * -20));
+    }
+    for (let i = 0; i < 40; i++) {
+      this.samples.push((i * 7919) % 1000);
+    }
+    this.note =
+      "first line of the note\nsecond line, long enough that node splits the string at its line break";
+  }
+}
+
+function main(): void {
+  const byName = new Map<string, number[]>();
+  byName.set("weights", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  byName.set("names", [100, 200, 300]);
+  const value = {
+    triangle: new Shape("triangle", 3),
+    square: new Shape("square", 4),
+    index: byName,
+    title: "a nested value printed on many lines",
+  };
+  for (let i = 0; i < 2000; i++) {
+    console.log(value);
+  }
+}

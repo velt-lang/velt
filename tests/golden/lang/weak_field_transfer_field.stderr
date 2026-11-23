@@ -1,0 +1,1 @@
+panic: a `H`, which has a `weak` field, cannot go to another thread (`spawn`, a channel, `shared(...)` or a `Mutex`'s value), also inside a function value that captured it: its `weak` fields belong to the task that made them

@@ -566,6 +566,56 @@ fn decorated_classes_grow_linearly() {
     assert_linear_counted(&[100, 800], statements, names, steps, 1.5);
 }
 
+/// A function holding `n` closures in `const`s, each capturing a number and called once.
+fn held_closures(n: usize) -> String {
+    let mut out = String::from("function f(x: number): number {\n  let s = 0;\n");
+    for i in 0..n {
+        out += &format!("  const c{i} = (y: number) => y + x + {i};\n  s += c{i}(1);\n");
+    }
+    out + "  return s;\n}\nfunction main() {\n  console.log(f(1));\n}\n"
+}
+
+/// A function holding `n` closures in `const`s, each borrowing an object and called once.
+fn borrowing_closures(n: usize) -> String {
+    let mut out = String::from(
+        "class Box {\n  v: number = 1;\n}\nfunction f(b: Box): number {\n  let s = 0;\n",
+    );
+    for i in 0..n {
+        out += &format!("  const c{i} = (y: number) => y + b.v + {i};\n  s += c{i}(1);\n");
+    }
+    out + "  return s;\n}\nfunction main() {\n  console.log(f(new Box()));\n}\n"
+}
+
+/// Deciding which `const`-held closures capture by reference walks their function's body once
+/// for all of them, not once per closure (and per capture), whether they borrow or copy.
+#[test]
+fn held_closures_grow_linearly() {
+    let steps = || [check_work().local_closure_steps];
+    let load = |n| load_src(&held_closures(n));
+    assert_linear_counted(&[100, 800], load, ["local_closure_steps"], steps, 1.5);
+    let load = |n| load_src(&borrowing_closures(n));
+    assert_linear_counted(&[100, 800], load, ["local_closure_steps"], steps, 1.5);
+}
+
+/// A function of `n` loops in a row, each with a counter of its own.
+fn many_loops(n: usize) -> String {
+    let mut out = String::from("function f(n: number): number {\n  let s = 0;\n");
+    for i in 0..n {
+        out += &format!("  for (let i = 0; i < n; i++) {{ s += i * {i}; }}\n");
+    }
+    out + "  return s;\n}\nfunction main() {\n  console.log(f(3));\n}\n"
+}
+
+/// The move check carries through each loop only what it knows about the function's locals,
+/// not an entry per local: each loop adds locals, and a state of all of them per pass over a
+/// loop costs the square of the number of loops.
+#[test]
+fn many_loops_grow_linearly() {
+    let steps = || [check_work().move_loop_state];
+    let load = |n| load_src(&many_loops(n));
+    assert_linear_counted(&[100, 800], load, ["move_loop_state"], steps, 1.5);
+}
+
 /// Choosing the member of a union of function types for nested arrows that each use the
 /// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
 /// Each try of an arrow checks the arrows nested in it, so the arrows checked are quadratic in

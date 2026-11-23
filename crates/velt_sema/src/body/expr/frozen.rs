@@ -59,6 +59,15 @@ impl FnCx<'_, '_> {
         let m = &self.cx.modules[self.module];
         if !(m.is_std && m.path == velt_common::std_module!(sync_epoch_reclaim)) {
             self.cx.frozen_reads = true;
+            // std's unit notes where, for the app's stage (`units::app_reads_shared`).
+            if self.cx.units_stage == crate::units::Stage::Std {
+                let s = &mut self.cx.unit_sums;
+                if let Some(d) = self.body_def {
+                    s.shared_readers.insert(d);
+                } else {
+                    s.shared_read_outside = true;
+                }
+            }
         }
         let span = h.span;
         let mut h = h;

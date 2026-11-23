@@ -1,0 +1,353 @@
+// velt/lang/hooks (internal): a promise shared on its own task that nothing but its holders can
+// reach any more (#3439; sched_share.velt, sched_task_lost.velt).
+//
+// A started node shared on its task (`HUB_HERE`) is run by that task, never by its holders: a
+// holder of a started node only waits in the hub (sched_share_wait.velt). When a holder waits
+// for it (sched_share.velt `pollHolder`, in a poll of the task) while it is suspended with the
+// hub's reference and its task's only, no waker of it exists, so nothing can run it again: it is
+// owner-only, as an adoption poll leaves an unshared one, and is listed on its task the same way
+// (`list`), so the task's park can find it parked for ever. Every wait looks again: one that
+// comes while the node still has a waker (a yield of its own) lists it at the next, after it.
+// The hub's entries hold their wakers with a reference each; the task's own waker (its root's,
+// `w === task`) is held without one while the node is listed (flag `UNCOUNTED` in the entry's
+// waker word), as the yield list holds its root's (sched_yield_list.velt `ROOT`). Otherwise that
+// clone is a reference the park counts, and a root awaiting the promise would look alive for
+// ever. The task outlives every such entry wherever the holder lives: the hub is freed, its
+// entries with it, before its node gives back its task's reference (sched_share_drop.velt
+// `free`).
+// Not listed: a node whose original is handed to another task and still held there (its node may
+// be dropped there), a hub that settled, a node of `main`'s root task. A node leaves the list as
+// any listed one does (it finishes, or is given up), and when a holder of it is handed to another
+// task (`handedOver`); its entries take their references back then (`unlisted`).
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as lost from "./sched_node_lost";
+import * as sh from "./sched_share";
+import * as wt from "./sched_share_wait";
+import * as t from "./sched_task";
+import * as tr from "./sched_node_transfer";
+import * as x from "./sched_node_ext";
+import * as lt from "./sched_task_lost";
+import * as wk from "./sched_wake";
+
+/** An entry's waker word: its task's own waker, held without a reference (`list`). */
+export const UNCOUNTED: usize = 1;
+/**
+ * A node's flag: listed by `waiting`, its waker held uncounted in the hub in its side block
+ * (`X_WAITS`). Cleared as it leaves the list, whichever way (sched_task_lost.velt `unlist`).
+ */
+export const WAITS: u32 = 1048576;
+
+/** The waker of the entry at `at`, without its flag. */
+@inline("always")
+export function wakerOf(at: usize): usize {
+  return m.ld(at + 8) & ~UNCOUNTED;
+}
+
+/** Gives back the waker of the entry at `at`: a reference, unless it holds none. */
+@inline("always")
+export function dropWaker(at: usize): void {
+  const w = m.ld(at + 8);
+  if ((w & UNCOUNTED) === 0) {
+    m.wakerDrop(w);
+  }
+}
+
+/** The entry at `at` of hub `h` waits with waker `w` (sched_share_wait.velt `wait`). */
+@inline("always")
+export function storeWaker(h: usize, at: usize, w: usize): void {
+  const n = m.ld(h + sh.H_NODE);
+  // Only a hub on its node's own task (`HUB_HERE`): an `AWAY` hub's node is another task's, and
+  // its entries are read raw (sched_share_away.velt `watch`).
+  const both = lt.LISTED | sh.HUB_HERE;
+  if ((m.load32(n + nd.N_FLAGS) & both) === both && w === m.ld(n + nd.N_TASK)) {
+    m.st(at + 8, w | UNCOUNTED);
+    return;
+  }
+  m.st(at + 8, m.wakerClone(w));
+}
+
+/**
+ * Lists node `n` of task `task` (a holder's wait, in a poll of `task`) when nothing but its
+ * holders can reach it: started and shared here, suspended, not catching, the hub's reference and
+ * its task's its only ones. Its task's own wakers in the hub give back their references then.
+ */
+@noInline
+export function list(task: usize, n: usize): void {
+  const fl = m.load32(n + nd.N_FLAGS);
+  const is = nd.STARTED | sh.HUB_HERE;
+  const busy =
+    nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED | nd.CATCHES | nd.PANICKED | nd.ADOPTED;
+  if ((fl & (is | busy | lt.LISTED)) === (is | lt.LISTED) && m.ld(n + nd.N_TASK) === task) {
+    // Listed already, maybe in a wait of a promise of the task while it ran: that promise's
+    // entry, idle now, can be taken as it would have been then (`waiting`).
+    sweep(task, m.ld(n + sh.N_HUB));
+    return;
+  }
+  if ((fl & (is | busy | lt.LISTED)) !== is || m.load(n + nd.N_REFS) !== 2) {
+    return;
+  }
+  if (m.ld(n + nd.N_TASK) !== task || t.has(task, t.ROOT)) {
+    return;
+  }
+  const h = m.ld(n + sh.N_HUB);
+  const hf = m.load32(h + sh.H_FLAGS);
+  if ((hf & (sh.DONE | sh.AWAY)) !== 0 || (hf & (sh.ORIG_OUT | sh.ORIG_GONE)) === sh.ORIG_OUT) {
+    return;
+  }
+  nd.setFlags(n, lt.LISTED);
+  lt.list(task, n);
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const at = wt.entry(h, i);
+    const w = m.ld(at + 8);
+    if (w === task) {
+      m.st(at + 8, w | UNCOUNTED);
+      // Not the last: the node holds one.
+      wk.release(task);
+    } else if (nd.ownNode(task, w)) {
+      waiting(task, h, at, w);
+    }
+  }
+}
+
+/** The entries of hub `h`, whose node is listed on task `task`, for its waiting promises. */
+function sweep(task: usize, h: usize): void {
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const at = wt.entry(h, i);
+    const w = m.ld(at + 8);
+    if ((w & UNCOUNTED) === 0 && w !== task && nd.ownNode(task, w)) {
+      waiting(task, h, at, w);
+    }
+  }
+}
+
+/**
+ * The entry at `at` of a hub whose node `list` just listed holds the waker of `w`, a promise of
+ * the same task `task` waiting there (#3487): when that is the only waker it has (its owner's,
+ * its task's and this entry's its references) and it is idle, nothing else can run it either, so
+ * the entry holds it without a reference and `w` is listed owner-only as well. A promise running,
+ * or waiting in two places, keeps its entry counted (it stays unlisted). Unlisting the hub's node
+ * gives the reference back and takes `w` off the list (`unlisted`).
+ */
+@noInline
+function waiting(task: usize, h: usize, at: usize, w: usize): void {
+  const fl = m.load32(w + nd.N_FLAGS);
+  const busy =
+    nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED | nd.CATCHES | nd.PANICKED | nd.ADOPTED;
+  // Not a promise handed to another task (a proxy too): its owner may drop it there; nor a shared
+  // one, whose own hub `list` takes care of.
+  const out = tr.HANDED_OVER | sh.HUB_HERE;
+  if ((fl & (nd.STARTED | busy | out | lt.LISTED)) !== nd.STARTED || m.load(w + nd.N_REFS) !== 3) {
+    return;
+  }
+  m.st(at + 8, w | UNCOUNTED);
+  // Not the last: its owner's and its task's are left.
+  m.dec(w + nd.N_REFS);
+  m.st(x.make(w) + x.X_WAITS, h);
+  nd.setFlags(w, lt.LISTED | WAITS);
+  lt.list(task, w);
+}
+
+/**
+ * `list` once a holder of the promise of hub `h` is dropped and another role keeps the hub
+ * (sched_share_drop.velt `dropped`): the hand-over of a holder took the node off the list
+ * (`handedOver`), and that holder's proxy, or a copy of it, may be what goes now (#3476). On the
+ * node's task's thread the node is listed again here. A holder kept in module state is dropped
+ * by another task, under the module lock (sched_node_lost.velt `heldApart`): the node's task is
+ * woken there instead, and its next poll lists the node as its root waits again (`list`, from
+ * sched_share.velt `pollHolder`), then finds it parked for ever.
+ */
+@inline("always")
+export function relist(h: usize): void {
+  const n = m.ld(h + sh.H_NODE);
+  if ((m.load32(n + nd.N_FLAGS) & (sh.HUB_HERE | lt.LISTED)) !== sh.HUB_HERE) {
+    return;
+  }
+  if (m.load(n + nd.N_REFS) !== 2) {
+    return;
+  }
+  relistSlow(n);
+}
+
+@noInline
+function relistSlow(n: usize): void {
+  const task = m.ld(n + nd.N_TASK);
+  const e = t.here();
+  if (e !== 0 && m.ld(e + t.E_CURRENT) === task) {
+    list(task, n);
+  } else if (lost.heldApart(task)) {
+    // A reference of its own while the task is woken, given back with the wake.
+    m.inc(task + t.T_REFS);
+    lt.releaseAway(task);
+  }
+}
+
+/**
+ * Listed node `n` of task `task` leaves the list (sched_task_lost.velt `unlist`, its flags `fl`
+ * from before): while its hub is there, its task's own wakers in it take their references back.
+ */
+@noInline
+export function unlisted(task: usize, n: usize, fl: u32): void {
+  if ((fl & sh.HUB_HERE) === 0) {
+    return;
+  }
+  const h = m.ld(n + sh.N_HUB);
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const at = wt.entry(h, i);
+    const w = m.ld(at + 8);
+    if ((w & UNCOUNTED) !== 0) {
+      const p = w & ~UNCOUNTED;
+      m.st(at + 8, m.wakerClone(p));
+      if (p !== task) {
+        // A promise of the task waiting here, listed with it (`waiting`), or listed again since as
+        // a shared promise (#3487 review): with a counted waker it can be woken, so not listed.
+        const pf = m.load32(p + nd.N_FLAGS);
+        if ((pf & (lt.LISTED | nd.FINISHED)) === lt.LISTED) {
+          offList(task, p, pf);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Node `n`, listed by `waiting` (flag `WAITS`), leaves its task by its owner's hand: handed to
+ * another task (sched_node_transfer.velt `transfer`), on its task's thread. Its owner may be
+ * running, unlike that of a promise listed at its owner's poll, which waits on it. Its entry in
+ * the hub it waits in takes its reference back and it leaves the list (#3487 review).
+ */
+@noInline
+export function leaveWaiting(n: usize): void {
+  if (!counted(n) && wk.counting()) {
+    // `WAITS` outlived the wait it stands for: every way off the list or out of that hub clears it.
+    panic("ICE: a promise listed waiting in a hub is not waiting there");
+  }
+  offList(m.ld(n + nd.N_TASK), n, m.load32(n + nd.N_FLAGS));
+}
+
+/**
+ * Node `n` (flags `fl`) leaves its task's list another way (sched_task_lost.velt `unlist`): no
+ * longer `WAITS`. Its entry in the hub it waits in stays uncounted while that hub's node is
+ * listed, as every such entry does; unlisting that node counts it again (`unlisted`).
+ */
+export function leftList(n: usize, fl: u32): void {
+  if ((fl & WAITS) !== 0) {
+    m.and32(n + nd.N_FLAGS, ~WAITS);
+  }
+}
+
+/** The entry of node `n` (flag `WAITS`) in the hub it waits in holds a reference again: found? */
+function counted(n: usize): bool {
+  const h = m.ld(x.get(n) + x.X_WAITS);
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const at = wt.entry(h, i);
+    if (m.ld(at + 8) === (n | UNCOUNTED)) {
+      m.st(at + 8, m.wakerClone(n));
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A hub entry's uncounted waker `old` is replaced by another (sched_share_wait.velt `wait`): a
+ * promise listed waiting there (`waiting`, flag `WAITS`) no longer waits in that hub, as its
+ * owner's adoption poll waits in its place, and keeps no pointer to it.
+ */
+export function replaced(old: usize): void {
+  const p = old & ~UNCOUNTED;
+  if (m.ld(p) === t.main() + t.E_NODE_VT && (m.load32(p + nd.N_FLAGS) & WAITS) !== 0) {
+    m.and32(p + nd.N_FLAGS, ~WAITS);
+  }
+}
+
+/**
+ * Promise `n` of task `task` (flags `fl`), listed by `waiting`, leaves the list as
+ * sched_task_lost.velt `unlist` takes one: inline, as `unlist` (always inlined) cannot call back
+ * into `unlisted`, which calls this.
+ */
+function offList(task: usize, n: usize, fl: u32): void {
+  m.and32(n + nd.N_FLAGS, ~(lt.LISTED | lt.NLINKED | WAITS));
+  if ((fl & lt.NLINKED) !== 0) {
+    lt.unlinkCounted(task, n);
+  }
+  if ((fl & sh.HUB_HERE) !== 0) {
+    // Shared since it was listed (it stays listed as `list` would have listed it): its own hub.
+    unlisted(task, n, fl);
+  }
+  m.st(task + t.T_LISTED, m.ld(task + t.T_LISTED) - 1);
+}
+
+/**
+ * A holder of the promise of hub `h` is handed to another task (sched_share_hand.velt
+ * `handOver`), on the hub's task: its node leaves the list before the proxy is made.
+ */
+@inline("always")
+export function handedOver(h: usize): void {
+  const n = m.ld(h + sh.H_NODE);
+  const fl = m.load32(n + nd.N_FLAGS);
+  if ((fl & lt.LISTED) !== 0 && (fl & nd.FINISHED) === 0) {
+    leave(n, fl);
+  }
+}
+
+@noInline
+function leave(n: usize, fl: u32): void {
+  const task = m.ld(n + nd.N_TASK);
+  const e = t.here();
+  if (e === 0 || m.ld(e + t.E_CURRENT) !== task) {
+    // Only through module state (sched_share_drop.velt `release`): the list is the task's own.
+    // It stays listed, and its task gives it up when a drop elsewhere gives it back; linked (the
+    // block counters on), it leaves the list here as such a drop does (sched_node_lost.velt).
+    if ((fl & lt.NLINKED) !== 0 && lost.heldApart(task)) {
+      lost.unlistAway(task, n, fl);
+    }
+    return;
+  }
+  m.and32(n + nd.N_FLAGS, ~(lt.LISTED | lt.NLINKED));
+  lt.unlist(task, n, fl);
+}
+
+/**
+ * The original of hub `h` was just handed over (sched_share_hand.velt `handOver`), its proxy made:
+ * with the block counters on, its node must not be listed (another task may drop it now).
+ */
+@inline("always")
+export function checkHanded(h: usize): void {
+  if (wk.counting()) {
+    const n = m.ld(h + sh.H_NODE);
+    const fl = m.load32(n + nd.N_FLAGS);
+    const out = (m.load32(h + sh.H_FLAGS) & sh.ORIG_OUT) !== 0;
+    if (out && (fl & (lt.LISTED | nd.FINISHED)) === lt.LISTED) {
+      panic("ICE: a shared promise is listed while its original is handed over");
+    }
+  }
+}
+
+/**
+ * Listed node `n` of task `k` at its park, with the block counters on (sched_task_lost.velt
+ * `checkListDead`): a shared one's hub holds the task's own wakers without references only.
+ */
+export function checkHub(k: usize, n: usize, fl: u32): void {
+  if ((fl & sh.HUB_HERE) === 0) {
+    return;
+  }
+  const h = m.ld(n + sh.N_HUB);
+  const len = m.ld(h + sh.H_WLEN);
+  for (let i: usize = 0; i < len; i++) {
+    const w = m.ld(wt.entry(h, i) + 8);
+    const p = w & ~UNCOUNTED;
+    // Uncounted: the task's own waker, or a promise of the task listed waiting here (`waiting`).
+    const listedHere =
+      p === k || (nd.ownNode(k, p) && (m.load32(p + nd.N_FLAGS) & lt.LISTED) !== 0);
+    if (w === k || ((w & UNCOUNTED) !== 0 && !listedHere)) {
+      panic("ICE: a listed shared promise's hub holds a waker its task's park did not count");
+    }
+  }
+}

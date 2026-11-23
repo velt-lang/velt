@@ -25,6 +25,7 @@
 //! (`super::exclusive`), so a capture moved before a call becomes a share, and a call that
 //! would invalidate a held reference is an error rather than undefined behaviour.
 
+mod facts;
 mod sites;
 pub(crate) mod walk;
 
@@ -33,7 +34,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::hir::{
-    Block, Callee, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Stmt, StmtKind as S,
+    Block, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, PassMode, Stmt, StmtKind as S,
 };
 
 /// Demote the `const`-bound closures of every function that are only called (module docs).
@@ -47,9 +48,18 @@ pub(crate) fn demote_local_closures(cx: &mut Ctx) {
             continue;
         };
         if !f.is_async && !f.is_generator {
-            for (local, c) in candidates(cx, d, &f) {
-                if qualifies(cx, d, &f, local, c) {
-                    demote(cx, &f, c);
+            let candidates = candidates(cx, d, &f);
+            // Demoting a closure changes how it captures, not what: the facts stay true.
+            let facts = (!candidates.is_empty()).then(|| {
+                let held: FxHashSet<LocalId> = candidates.iter().map(|&(l, _)| l).collect();
+                facts::Facts::of(cx, d, &f.body.block, held)
+            });
+            for (local, c) in candidates {
+                let facts = facts
+                    .as_ref()
+                    .expect("ICE: facts of a function with candidates");
+                if qualifies(cx, &f, facts, local, c) {
+                    demote(cx, c, facts);
                 }
             }
         }
@@ -120,8 +130,9 @@ fn candidates(cx: &Ctx, d: DefId, f: &FnDef) -> Vec<(LocalId, DefId)> {
         .collect()
 }
 
-/// May closure `c`, held in `local` of `d`'s body, capture by reference (module docs)?
-fn qualifies(cx: &mut Ctx, d: DefId, f: &FnDef, local: LocalId, c: DefId) -> bool {
+/// May closure `c`, held in `local` of function `f` (whose body's `facts` these are), capture by
+/// reference (module docs)?
+fn qualifies(cx: &mut Ctx, f: &FnDef, facts: &facts::Facts, local: LocalId, c: DefId) -> bool {
     let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] else {
         return false;
     };
@@ -146,13 +157,13 @@ fn qualifies(cx: &mut Ctx, d: DefId, f: &FnDef, local: LocalId, c: DefId) -> boo
         .captures
         .iter()
         .zip(&copies)
-        .filter(|&(cap, &copy)| assigned_as(cx, &f.body.block, cap.outer, copy))
+        .filter(|&(cap, &copy)| facts.assigned.has(cap.outer, copy))
         .map(|(cap, _)| cap.inner)
         .collect();
     if !reassigned.is_empty() && recaptures(cx, &cf.body.block, &reassigned) {
         return false;
     }
-    let kinds = cx.fn_info(d).local_kinds.clone();
+    let kinds = &facts.kinds;
     let mut borrowed = FxHashSet::default();
     for &(outer, ty) in &caps {
         if outer == local || kinds.get(outer.0 as usize) == Some(&LocalKind::Using) {
@@ -165,35 +176,20 @@ fn qualifies(cx: &mut Ctx, d: DefId, f: &FnDef, local: LocalId, c: DefId) -> boo
             borrowed.insert(outer);
         }
     }
-    if !only_called(cx, &f.body.block, local) {
+    if !facts.only_called(local) {
         return false;
     }
-    let aliases: FxHashSet<LocalId> = (0..kinds.len())
-        .filter(|&i| matches!(kinds[i], LocalKind::Bind | LocalKind::Elem))
-        .map(|i| LocalId(i as u32))
-        .collect();
-    let mut s = sites::Sites::new(cx, local, &borrowed, &aliases, &kinds);
-    s.block(&f.body.block, false);
-    s.ok
-}
-
-/// Is every use of `local` in `b` the callee of a direct call, and no closure captures it?
-fn only_called(cx: &Ctx, b: &Block, local: LocalId) -> bool {
-    let (mut uses, mut calls, mut captured) = (0usize, 0usize, false);
-    each_expr(b, &mut |e: &Expr| match &e.kind {
-        E::Local(l, _) if *l == local => uses += 1,
-        E::Call {
-            callee: Callee::Indirect(callee),
-            ..
-        } if matches!(callee.kind, E::Local(l, _) if l == local) => calls += 1,
-        E::Closure(k) => {
-            if let Some(Def::Fn(kf)) = &cx.defs[k.0 as usize] {
-                captured |= kf.captures.iter().any(|cap| cap.outer == local);
-            }
-        }
-        _ => {}
-    });
-    !captured && uses == calls
+    // A call is refused while a reference into a watched variable (one it borrows, or a
+    // borrowing pattern binding, which may point into one) is held, or when its arguments
+    // mention one. With none watched, every call is fine and the body needn't be walked.
+    if borrowed.is_empty() && facts.aliases.is_empty() {
+        return true;
+    }
+    let watched = |l: &LocalId| borrowed.contains(l) || facts.aliases.contains(l);
+    !facts
+        .at_calls(cx, &f.body.block)
+        .get(&local)
+        .is_some_and(|seen| seen.iter().any(watched))
 }
 
 /// Does a closure created in `b` capture one of `locals`?
@@ -209,10 +205,11 @@ fn recaptures(cx: &Ctx, b: &Block, locals: &FxHashSet<LocalId>) -> bool {
     hit
 }
 
-/// Make closure `c` (created in `f`) non-escaping: it captures by reference (mutably where its
-/// body assigns the variable), except Copy values that are never assigned, which stay copies.
-/// Modifications of a captured object's contents raise `Borrow` later, in mutation inference.
-fn demote(cx: &mut Ctx, f: &FnDef, c: DefId) {
+/// Make closure `c` (created in the function whose body's `facts` these are) non-escaping: it
+/// captures by reference (mutably where its body assigns the variable), except Copy values
+/// that are never assigned, which stay copies. Modifications of a captured object's contents
+/// raise `Borrow` later, in mutation inference.
+fn demote(cx: &mut Ctx, c: DefId, facts: &facts::Facts) {
     let Some(Def::Fn(cf)) = &cx.defs[c.0 as usize] else {
         return;
     };
@@ -227,15 +224,12 @@ fn demote(cx: &mut Ctx, f: &FnDef, c: DefId) {
             )
         })
         .collect();
+    let own = facts::Assigned::of(cx, &cf.body.block);
     let mut modes = vec![];
     for (outer, inner, ty) in caps {
-        let own_write = match &cx.defs[c.0 as usize] {
-            Some(Def::Fn(cf)) => assigned(cx, &cf.body.block, inner),
-            _ => true,
-        };
-        modes.push(if own_write {
+        modes.push(if own.has(inner, true) {
             PassMode::BorrowMut
-        } else if cx.is_copy(ty) && !assigned(cx, &f.body.block, outer) {
+        } else if cx.is_copy(ty) && !facts.assigned.has(outer, true) {
             PassMode::Copy
         } else {
             PassMode::Borrow
@@ -252,42 +246,16 @@ fn demote(cx: &mut Ctx, f: &FnDef, c: DefId) {
     cx.held_borrows_used = true;
 }
 
-/// Is local `l` assigned anywhere in `b`, as a whole or through a projection (`t[0] = 10`,
-/// `p.x += 1`), directly or by a closure capturing it?
-fn assigned(cx: &Ctx, b: &Block, l: LocalId) -> bool {
-    assigned_as(cx, b, l, true)
-}
-
-/// [`assigned`]; with `projections` false only an assignment of `l` as a whole counts.
-fn assigned_as(cx: &Ctx, b: &Block, l: LocalId, projections: bool) -> bool {
-    let mut hit = false;
-    each_expr(b, &mut |e: &Expr| match &e.kind {
-        E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
-            hit |= if projections {
-                crate::body::places::place_root(place) == Some(l)
-            } else {
-                matches!(place.kind, E::Local(p, _) if p == l)
-            };
-        }
-        E::Closure(k) => {
-            if let Some(Def::Fn(kf)) = &cx.defs[k.0 as usize] {
-                for cap in kf.captures.iter().filter(|cap| cap.outer == l) {
-                    hit |= assigned_as(cx, &kf.body.block, cap.inner, projections);
-                }
-            }
-        }
-        _ => {}
-    });
-    hit
-}
-
 /// Calls `f` on every expression of `b`.
 fn each_expr(b: &Block, f: &mut dyn FnMut(&Expr)) {
-    struct Exprs<'a>(&'a mut dyn FnMut(&Expr));
+    struct Exprs<'a>(&'a mut dyn FnMut(&Expr), u64);
     impl walk::Visit for Exprs<'_> {
         fn expr(&mut self, e: &Expr) {
+            self.1 += 1;
             (self.0)(e);
         }
     }
-    walk::block(b, &mut Exprs(f));
+    let mut v = Exprs(f, 0);
+    walk::block(b, &mut v);
+    crate::check_work::add_local_closure_steps(v.1);
 }

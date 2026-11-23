@@ -1,0 +1,310 @@
+// velt/text (internal): the grams' scan (prefilter.velt `wide`) thirty-two positions a step, with
+// AVX2: on a CPU that has it, the scans of `wideScan` run here. Each tuple's bytes at each offset
+// are compared and their lanes taken as the bits of a word, which the words of the other offsets
+// and tuples are combined with: the same places as the sixteen-byte steps, in half the steps.
+
+import { inline, strLoadU8x16 } from "velt/lang/intrinsics";
+import { Avx2 } from "velt/arch/x86/avx2";
+import { Vector256 } from "velt/arch/x86/vector256";
+import { targetFeature } from "velt/compiler";
+import { Program } from "velt/text/regex/program";
+import { hit, hitIn } from "velt/text/regex/scan_hit";
+import { Search } from "velt/text/regex/search";
+
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+
+/** The 32 bytes of `s` at `at`, with `fold` ORed into each where `folded`. */
+@inline("always")
+function bytesAt(s: string, at: usize, fold: u8x16, folded: bool): Vector256<u8> {
+  const lo = strLoadU8x16(s, at as u64);
+  const hi = strLoadU8x16(s, (at + 16) as u64);
+  return folded
+    ? Vector256.fromU8x16(velt_simd_u8x16_or(lo, fold), velt_simd_u8x16_or(hi, fold))
+    : Vector256.fromU8x16(lo, hi);
+}
+
+/** The 32 lanes of byte `b`. */
+@inline("always")
+function lanes(b: u8): Vector256<u8> {
+  const v = velt_simd_u8x16_splat(b);
+  return Vector256.fromU8x16(v, v);
+}
+
+/** Bit `k` set where byte `k` of `v` equals `want`'s. */
+@inline("always")
+@targetFeature("avx2-x86")
+function equal(v: Vector256<u8>, want: Vector256<u8>): u64 {
+  return Avx2.moveMaskU8(Avx2.compareEqualU8(v, want)) as u64;
+}
+
+/** The places among the 32 at byte `i` where the tuples are: bit `k` for byte `i + k`. The
+ * offsets `o…`, folds `f…` and tuple bytes (`a…` the first tuple's, `b…`, `c…`, `d…` the others')
+ * are `wide32`'s. */
+@inline("always")
+@targetFeature("avx2-x86")
+function stepBits(
+  s: string,
+  i: usize,
+  size: usize,
+  count: usize,
+  folded: bool,
+  o0: usize,
+  o1: usize,
+  o2: usize,
+  o3: usize,
+  f0: u8x16,
+  f1: u8x16,
+  f2: u8x16,
+  f3: u8x16,
+  a0: Vector256<u8>,
+  a1: Vector256<u8>,
+  a2: Vector256<u8>,
+  a3: Vector256<u8>,
+  b0: Vector256<u8>,
+  b1: Vector256<u8>,
+  b2: Vector256<u8>,
+  b3: Vector256<u8>,
+  c0: Vector256<u8>,
+  c1: Vector256<u8>,
+  c2: Vector256<u8>,
+  c3: Vector256<u8>,
+  d0: Vector256<u8>,
+  d1: Vector256<u8>,
+  d2: Vector256<u8>,
+  d3: Vector256<u8>,
+): u64 {
+  const v0 = bytesAt(s, i + o0, f0, folded);
+  let ma = equal(v0, a0);
+  let mb = count > 1 ? equal(v0, b0) : 0;
+  let mc = count > 2 ? equal(v0, c0) : 0;
+  let md = count > 2 ? equal(v0, d0) : 0;
+  if (size > 1) {
+    const v1 = bytesAt(s, i + o1, f1, folded);
+    ma &= equal(v1, a1);
+    mb &= count > 1 ? equal(v1, b1) : 0;
+    mc &= count > 2 ? equal(v1, c1) : 0;
+    md &= count > 2 ? equal(v1, d1) : 0;
+  }
+  if (size > 2) {
+    const v2 = bytesAt(s, i + o2, f2, folded);
+    ma &= equal(v2, a2);
+    mb &= count > 1 ? equal(v2, b2) : 0;
+    mc &= count > 2 ? equal(v2, c2) : 0;
+    md &= count > 2 ? equal(v2, d2) : 0;
+  }
+  if (size > 3) {
+    const v3 = bytesAt(s, i + o3, f3, folded);
+    ma &= equal(v3, a3);
+    mb &= count > 1 ? equal(v3, b3) : 0;
+    mc &= count > 2 ? equal(v3, c3) : 0;
+    md &= count > 2 ? equal(v3, d3) : 0;
+  }
+  return ma | mb | mc | md;
+}
+
+/** `wide` of prefilter.velt, thirty-two positions a step, over every place a match may start
+ * at: the first hit at or after `from`, or `-2 - p` for `p`, the first place past them (where
+ * the shortest match, `Program.minBytes`, would go past the end). The caller makes sure one
+ * step fits (`from + 31 + minBytes <= len`); the last places are one more step over the last
+ * 32. */
+@inline("always")
+@targetFeature("avx2-x86")
+function wide32(
+  prog: Program,
+  m: Search | null,
+  s: string,
+  from: usize,
+  len: usize,
+  size: usize,
+  count: usize,
+  folded: bool,
+  mode: u32,
+): i64 {
+  const g = prog.grams;
+  const o0 = prog.gramAt[0];
+  const o1 = size > 1 ? prog.gramAt[1] : 0;
+  const o2 = size > 2 ? prog.gramAt[2] : 0;
+  const o3 = size > 3 ? prog.gramAt[3] : 0;
+  const fold = prog.gramFold;
+  const f0 = velt_simd_u8x16_splat(fold[0]);
+  const f1 = velt_simd_u8x16_splat(size > 1 ? fold[1] : 0);
+  const f2 = velt_simd_u8x16_splat(size > 2 ? fold[2] : 0);
+  const f3 = velt_simd_u8x16_splat(size > 3 ? fold[3] : 0);
+  const a0 = lanes(g[0]);
+  const a1 = lanes(size > 1 ? g[1] : 0);
+  const a2 = lanes(size > 2 ? g[2] : 0);
+  const a3 = lanes(size > 3 ? g[3] : 0);
+  const b0 = lanes(count > 1 ? g[size] : 0);
+  const b1 = lanes(count > 1 && size > 1 ? g[size + 1] : 0);
+  const b2 = lanes(count > 1 && size > 2 ? g[size + 2] : 0);
+  const b3 = lanes(count > 1 && size > 3 ? g[size + 3] : 0);
+  const c0 = lanes(count > 2 ? g[2 * size] : 0);
+  const c1 = lanes(count > 2 && size > 1 ? g[2 * size + 1] : 0);
+  const c2 = lanes(count > 2 && size > 2 ? g[2 * size + 2] : 0);
+  const c3 = lanes(count > 2 && size > 3 ? g[2 * size + 3] : 0);
+  const d0 = lanes(count > 2 ? g[3 * size] : 0);
+  const d1 = lanes(count > 2 && size > 1 ? g[3 * size + 1] : 0);
+  const d2 = lanes(count > 2 && size > 2 ? g[3 * size + 2] : 0);
+  const d3 = lanes(count > 2 && size > 3 ? g[3 * size + 3] : 0);
+  // The places a match may start at end where the shortest match would go past the end (the
+  // tuples' bytes are inside it); the last step starts 32 before.
+  const end = len - prog.minBytes + 1;
+  const stop = end - 32;
+  let i = from;
+  while (true) {
+    let bits: u64 = 0;
+    while (i <= stop) {
+      bits = stepBits(
+        s,
+        i,
+        size,
+        count,
+        folded,
+        o0,
+        o1,
+        o2,
+        o3,
+        f0,
+        f1,
+        f2,
+        f3,
+        a0,
+        a1,
+        a2,
+        a3,
+        b0,
+        b1,
+        b2,
+        b3,
+        c0,
+        c1,
+        c2,
+        c3,
+        d0,
+        d1,
+        d2,
+        d3,
+      );
+      if (bits != 0) {
+        break;
+      }
+      i += 32;
+    }
+    let at = i;
+    let last = false;
+    if (bits == 0) {
+      if (i >= end) {
+        return -2 - (end as i64);
+      }
+      // One more step, over the last 32 places: those before `i` were looked at already.
+      at = stop;
+      last = true;
+      const skip = (i - stop) as u64;
+      const tail = stepBits(
+        s,
+        stop,
+        size,
+        count,
+        folded,
+        o0,
+        o1,
+        o2,
+        o3,
+        f0,
+        f1,
+        f2,
+        f3,
+        a0,
+        a1,
+        a2,
+        a3,
+        b0,
+        b1,
+        b2,
+        b3,
+        c0,
+        c1,
+        c2,
+        c3,
+        d0,
+        d1,
+        d2,
+        d3,
+      );
+      bits = (tail >> skip) << skip;
+    }
+    while (bits != 0) {
+      const p = at + (bits.trailingZeros() as usize);
+      const floor = m != null ? m.floor : 0;
+      const into = m != null ? m.found : null;
+      const found = hitIn(m, hit(prog, into, floor, s, p, len, mode));
+      if (found >= 0) {
+        return found;
+      }
+      bits &= bits - 1;
+    }
+    if (last) {
+      return -2 - (end as i64);
+    }
+    i = at + 32;
+  }
+}
+
+/** `wideScan` of prefilter.velt with AVX2 (the caller has checked `Avx2.isSupported()`, and
+ * that one step of 32 fits from `from`): the loop for the program's tuples, their size and
+ * number, folded or not. It looks at every place a match may start at. */
+@targetFeature("avx2-x86")
+export function wideAvx2(
+  prog: Program,
+  m: Search | null,
+  s: string,
+  from: usize,
+  len: usize,
+  mode: u32,
+): i64 {
+  return prog.gramFolded
+    ? sized(prog, m, s, from, len, true, mode)
+    : sized(prog, m, s, from, len, false, mode);
+}
+
+@inline("always")
+@targetFeature("avx2-x86")
+function sized(
+  prog: Program,
+  m: Search | null,
+  s: string,
+  from: usize,
+  len: usize,
+  folded: bool,
+  mode: u32,
+): i64 {
+  const size = prog.gramSize;
+  const count = prog.grams.length / size;
+  if (size == 1) {
+    return count == 1
+      ? wide32(prog, m, s, from, len, 1, 1, folded, mode)
+      : count == 2
+        ? wide32(prog, m, s, from, len, 1, 2, folded, mode)
+        : wide32(prog, m, s, from, len, 1, 4, folded, mode);
+  }
+  if (size == 2) {
+    return count == 1
+      ? wide32(prog, m, s, from, len, 2, 1, folded, mode)
+      : count == 2
+        ? wide32(prog, m, s, from, len, 2, 2, folded, mode)
+        : wide32(prog, m, s, from, len, 2, 4, folded, mode);
+  }
+  if (size == 3) {
+    return count == 1
+      ? wide32(prog, m, s, from, len, 3, 1, folded, mode)
+      : count == 2
+        ? wide32(prog, m, s, from, len, 3, 2, folded, mode)
+        : wide32(prog, m, s, from, len, 3, 4, folded, mode);
+  }
+  return count == 1
+    ? wide32(prog, m, s, from, len, 4, 1, folded, mode)
+    : count == 2
+      ? wide32(prog, m, s, from, len, 4, 2, folded, mode)
+      : wide32(prog, m, s, from, len, 4, 4, folded, mode);
+}

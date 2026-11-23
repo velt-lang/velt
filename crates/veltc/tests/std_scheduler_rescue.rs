@@ -560,30 +560,53 @@ async function main() {
 /// run. Each round a task prints on lazy worker 0, is moved to a spare and prints there (the
 /// first line published after the poll that printed it); `main` prints in the poll the rescue made
 /// shared, after the hand-over (published when worker 0 takes on the shared mode), then lets the
-/// task print once more. No line may be lost or come out of order; two hand-overs at least mean
-/// worker 0 was lazy again after one, so its marks were set again (process.velt `setLazyWorker`).
+/// task print once more. No line may be lost or come out of order; hand-overs after the first
+/// mean worker 0 was lazy again, so its marks were set again (process.velt `setLazyWorker`).
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "#3148: on a loaded Windows runner worker 0 may never be lazy again within the rounds"
-)]
 fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again() {
-    flip_rounds(&flip_output(TIMER_WAIT));
+    flip_rounds(&flip_output(TIMER_WAIT), RUNS, &[], LAZY_ROUNDS_MIN);
 }
 
 /// [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again`] with `main` waiting
 /// between rounds in a `sleep`. A rescue may move `main` to a spare (`lazyRescue` takes the whole
-/// queue), and its sleep then anchors it there: that spare declines to retire, and worker 0 is not
-/// lazy again (#3117; on Windows in most runs).
+/// queue), and its sleep then anchors it there; asked to retire, the spare carries that sleep with
+/// `main` to worker 0 (#3117: before, it declined, and worker 0 was not lazy again, on Windows in
+/// most runs).
 #[test]
-#[ignore = "#3117: a rescued main sleeping on a spare keeps the spare from retiring"]
 fn worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sleeps() {
-    flip_rounds(&flip_output("sleep(40)"));
+    flip_rounds(&flip_output("sleep(40)"), RUNS, &[], LAZY_ROUNDS_MIN);
 }
 
-/// Five rounds of `src` (a [`FLIP_OUTPUT`]): each run's lines in order, and worker 0 lazy again
-/// after a rescue at least once.
-fn flip_rounds(src: &str) {
+/// Of five rounds that each start with a rescue of a lazy worker 0, how many must find it lazy
+/// (`locks-on`): after the first, worker 0 is lazy again in one of the four pauses at least. Each
+/// pause gives the spares time to retire many times over, but a loaded CI runner can still miss
+/// several (it went to 2 of 5 on a Windows runner with the fix in).
+/// The monitor used to take its request to retire back whenever a spare it had just woken to
+/// answer was slow to run (a tick; #3148, #3500), so on a machine with fewer cores than busy
+/// threads worker 0 was lazy again in one pause of four or none in most runs.
+const LAZY_ROUNDS_MIN: u64 = 2;
+
+/// [`worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sleeps`] with
+/// worker 0 held for 50 ms each time it wakes from its park ([`WAKE_HOLD`]). Woken by another
+/// thread (the carry of `main`'s sleep, the spares' hand-on), it was taken for stalled two ticks
+/// later, though it ran no poll, and the monitor took its requests to the spares to retire back
+/// (sched_relax.velt `calm`, #3134): worker 0 was lazy again in two pauses of four at most (1 on
+/// main, where the request to relax was taken back too). Now it is lazy again in all four; the
+/// check asks for three (`locks-on >= 4`), room for a loaded machine.
+#[test]
+fn worker_0_woken_but_not_run_yet_counts_as_calm() {
+    flip_rounds(&flip_output("sleep(40)"), 5, &[WAKE_HOLD], 4);
+}
+
+/// `VELT_SCHED_HANDLE_PAUSE=wake` (read only in counted runs, sched_debug.velt): a shared worker 0
+/// is held for 50 ms after each wake from its park, after the wake stored its park word and its
+/// progress: as a worker 0 woken by another thread (the waker stores both) that the OS has not
+/// run yet, or one preempted before its next poll.
+const WAKE_HOLD: (&str, &str) = ("VELT_SCHED_HANDLE_PAUSE", "wake");
+
+/// `runs` runs of five rounds of `src` (a [`FLIP_OUTPUT`]) with `env` set: each run's lines in
+/// order, and worker 0 lazy again after a rescue so that `min` rounds turned the locks on.
+fn flip_rounds(src: &str, runs: usize, env: &[(&str, &str)], min: u64) {
     if !has_threads() {
         return;
     }
@@ -596,12 +619,12 @@ fn flip_rounds(src: &str) {
             )
         })
         .collect();
-    for i in 0..RUNS {
-        let r = run(&exe, "1");
+    for i in 0..runs {
+        let r = run_with(&exe, "1", env);
         let what = format!("run {i}");
         check(&r, &what, &want, 0);
         assert!(
-            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= min),
             "{what}: worker 0 was not lazy again after a rescue: {}",
             r.err
         );
@@ -637,14 +660,15 @@ async function main() {
     await t;
     console.log(`main ${r} done`);
     // The spares go idle and retire; worker 0 becomes lazy again. The wait: a Node timer,
-    // which anchors no task, or the `sleep` of #3117 (`flip_output`).
+    // which anchors no task, or a `sleep`, which a retiring spare carries (`flip_output`).
     await $WAIT;
   }
 }
 "#;
 
 /// [`FLIP_OUTPUT`] with `wait` as `main`'s wait between rounds: a Node timer ([`TIMER_WAIT`])
-/// leaves `main` movable, so a spare a rescue moved it to can retire; a `sleep` anchors it there.
+/// leaves `main` movable; a `sleep` anchors it to the spare a rescue moved it to, which carries
+/// the sleep to worker 0 when it retires.
 fn flip_output(wait: &str) -> String {
     FLIP_OUTPUT.replace("$WAIT", wait)
 }
@@ -658,10 +682,6 @@ const TIMER_WAIT: &str = "new Promise<void>((resolve) => setTimeout(() => resolv
 /// to retire, so worker 0 never was lazy again (on Windows the race made the worker-0 test above
 /// fail 9 runs in 10; this one wakes `main` mid-poll every round, on any OS).
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "#3117: on Windows a rescue may also move main to a spare, where its sleep keeps the spare"
-)]
 fn a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire() {
     if !has_threads() {
         return;
@@ -676,7 +696,7 @@ fn a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire() {
         let what = format!("run {i}");
         check(&r, &what, &want, 0);
         assert!(
-            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+            rescue_count(&r.err, "locks-on").is_some_and(|n| n >= LAZY_ROUNDS_MIN),
             "{what}: worker 0 was not lazy again after a rescue: {}",
             r.err
         );
@@ -816,6 +836,91 @@ async function main() {
     await p;
     await t;
     await b;
+    console.log(`round ${r}`);
+  }
+}
+"#;
+
+/// A spare asked to retire while a task the rescue moved to it sleeps there carries the sleep with
+/// the task to worker 0 and retires, so worker 0 is lazy again (#3117): the next round's rescue
+/// turns the locks on a second time. Before, the spare declined while the sleep was pending
+/// (sched_relax.velt `keeps`), and worker 0 stayed shared (every run on macOS).
+///
+/// The check waits on that state, not on the clock: a run counts when the monitor asked worker 0
+/// to relax before the carried sleep was due (`asked-carrying`, sched_stats.velt), and then
+/// worker 0 relaxes before it polls the task again, however slow each step. A run whose spare
+/// answered after the 300 ms ran out declines with the sleep due, as it should, and proves nothing
+/// (a loaded runner); no run counting fails, so a scheduler that never carries fails too.
+#[test]
+fn a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep() {
+    if !has_threads() {
+        return;
+    }
+    sleeper_rounds(RUNS, &[]);
+}
+
+/// [`a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep`] with worker 0 held
+/// for 50 ms each time it wakes from its park ([`WAKE_HOLD`]). Asked to relax while it slept, then
+/// woken, it was taken for stalled two ticks later, though it ran no poll, and the monitor took
+/// the request back: worker 0 ran the next round shared (#3134: a Windows runner, run 6 of 20;
+/// every run with the hold).
+#[test]
+fn worker_0_woken_but_not_run_yet_still_relaxes() {
+    if !has_threads() {
+        return;
+    }
+    sleeper_rounds(5, &[WAKE_HOLD]);
+}
+
+/// `runs` runs of [`SLEEPER_ON_SPARE`] with `env` set: its lines, and in each run where the monitor
+/// asked worker 0 to relax before the carried sleep was due (`asked-carrying`), worker 0 lazy
+/// again after the first round (the second round's rescue turns the locks on again); one such run
+/// at least.
+fn sleeper_rounds(runs: usize, env: &[(&str, &str)]) {
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "sleeper_on_spare", SLEEPER_ON_SPARE);
+    let mut counted = 0;
+    for i in 0..runs {
+        let r = run_with(&exe, "1", env);
+        let what = format!("run {i}");
+        check(&r, &what, "slept 0\nround 0\nwoke 1\nround 1\n", 0);
+        if rescue_count(&r.err, "asked-carrying").is_some_and(|n| n >= 1) {
+            counted += 1;
+            assert!(
+                rescue_count(&r.err, "locks-on").is_some_and(|n| n >= 2),
+                "{what}: worker 0 was not lazy again after the first rescue: {}",
+                r.err
+            );
+        }
+    }
+    assert!(
+        counted > 0,
+        "no run of {runs} asked worker 0 to relax before the carried sleep was due"
+    );
+}
+
+/// The program of [`a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep`].
+const SLEEPER_ON_SPARE: &str = r#"const MOVED = new Atomic<i64>(0);
+
+// Moved to a spare by the rescue of `main`'s spin, it sleeps there in the first round: the spare
+// is asked to retire while that sleep is pending. The second round only needs the rescue (and no
+// sleep there may count as the first one's in `asked-carrying`).
+async function sleeper(r: i64): Promise<void> {
+  MOVED.store(r + 1);
+  if (r == 0) {
+    await sleep(300);
+    console.log(`slept ${r}`);
+  } else {
+    console.log(`woke ${r}`);
+  }
+}
+
+async function main() {
+  for (let r = 0; r < 2; r++) {
+    const t = spawn(sleeper(r));
+    // Only a rescue runs the task while this poll spins.
+    while (MOVED.load() <= r) {}
+    await t;
     console.log(`round ${r}`);
   }
 }

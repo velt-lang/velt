@@ -205,6 +205,8 @@ mod std_tests {
 
     /// std is the root of trust: its unsafe code follows the packages' `// SAFETY:` rule, which
     /// builds don't check for std (docs/internals/design/c-ffi.md "The trust boundary").
+    /// scripts/std-lint checks the same rule by text (`safety.velt`), so that `cargo xtask
+    /// precheck` catches it without a veltc build (#3496); on std both find the same sites.
     #[test]
     fn std_s_unsafe_code_has_safety_comments() {
         let std_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");

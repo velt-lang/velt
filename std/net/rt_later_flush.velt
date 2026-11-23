@@ -36,7 +36,7 @@ import * as sh from "velt/net/rt_later_shadow";
 /** The runtime's `write` of `data[start..end]` (a `VeltBytes`): a new heap future. */
 declare c("c") function velt_rt_tcp_write_range$rt(
   s: u64,
-  data: Ptr<u8>,
+  data: Ptr<u8> | null,
   start: u64,
   end: u64,
 ): Ptr<u8>;

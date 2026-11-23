@@ -2,13 +2,17 @@
 // (sched_monitor.velt, #2649), counted for a measurement to show: `VELT_RESCUE_STATS=1` (any value
 // but `0`) prints at the program's normal end (sched.velt `schedFinish`), to standard error,
 //
-//     rescue stats: rescues=R spares=S locks-on=L
+//     rescue stats: rescues=R spares=S locks-on=L asked-carrying=A
 //
 // R the rescues that handed tasks to another worker (a stalled worker's, a lazy worker 0's), S
 // the spare threads started, L the times the monitor turned the locks of a lazy worker 0 on
-// (sched_lock.velt `locksOn`). A run whose line says `rescues=0 spares=0 locks-on=0` ran as if
-// there were no monitor. Only the monitor thread counts (nothing on a worker's path); the
-// variable is read once, at the end.
+// (sched_lock.velt `locksOn`), A the requests to relax (sched_relax.velt) made before the first
+// due of the sleeps a retiring spare carried home last (sched_sleep_carry.velt `carryHome`), less
+// those taken back before it (`tookBack`): worker 0 relaxes before it polls the task that sleep
+// wakes, so in std_scheduler_rescue.rs the next rescue turns the locks on again however long each
+// step took. A run whose line says `rescues=0 spares=0 locks-on=0` ran as if there were no
+// monitor. Only the monitor thread counts, and a spare's answer to a request to retire (nothing
+// on a poll's path); the variables are read once, at the end.
 
 import { processEnv } from "./process";
 
@@ -19,6 +23,9 @@ declare function velt_rt_write_str(stream: u32, s: string);
 const RESCUES = new Atomic<u64>(0);
 const SPARES = new Atomic<u64>(0);
 const LOCKS_ON = new Atomic<u64>(0);
+const ASKED_CARRYING = new Atomic<u64>(0);
+/** The first deadline of the sleeps carried home last (sched_sleep.velt `clock`, nanoseconds). */
+const CARRIED_UNTIL = new Atomic<u64>(0);
 
 /** The monitor handed a stalled worker's tasks to another worker. */
 export function rescued(): void {
@@ -35,14 +42,35 @@ export function locksTurnedOn(): void {
   LOCKS_ON.add(1);
 }
 
+/** A retiring spare carries home a sleep due at `deadline` (its block's last first). */
+export function carried(deadline: u64): void {
+  CARRIED_UNTIL.store(deadline);
+}
+
+/** The monitor asked worker 0 to relax at `now`: counted before the carried sleep is due. */
+export function askedToRelax(now: u64): void {
+  if (now < CARRIED_UNTIL.load()) {
+    ASKED_CARRYING.add(1);
+  }
+}
+
+/**
+ * The monitor took a request to relax back at `now`, worker 0 stalled in a poll: before the
+ * carried sleep is due, that request no longer counts (worker 0 may then run the sleeper shared,
+ * rightly). One taken back after it, from a worker 0 woken for that sleep, still counts.
+ */
+export function tookBack(now: u64): void {
+  if (now < CARRIED_UNTIL.load() && ASKED_CARRYING.load() > 0) {
+    ASKED_CARRYING.sub(1);
+  }
+}
+
 /** Prints the counts to standard error when `VELT_RESCUE_STATS` asks for them (module docs). */
 export function report(): void {
   const v = processEnv("VELT_RESCUE_STATS");
   if (v === undefined || v.trim() === "0" || v.trim() === "") {
     return;
   }
-  velt_rt_write_str(
-    2,
-    `rescue stats: rescues=${RESCUES.load()} spares=${SPARES.load()} locks-on=${LOCKS_ON.load()}\n`,
-  );
+  const counts = `rescues=${RESCUES.load()} spares=${SPARES.load()} locks-on=${LOCKS_ON.load()}`;
+  velt_rt_write_str(2, `rescue stats: ${counts} asked-carrying=${ASKED_CARRYING.load()}\n`);
 }

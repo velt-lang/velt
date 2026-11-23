@@ -166,8 +166,8 @@ pub enum Intrinsic {
     /// `(object: borrow mut T, key: borrow K, value: T[K]) -> void`: `object[key] = value` in a
     /// generic body, as for `KeyRead`; lowering writes that field.
     KeyWrite,
-    /// `() -> T | null`, only as the value of a `presence` field in an `AdtLit`
-    /// (`FieldDef::presence`): the field is absent (its value `null`, its presence flag clear)
+    /// `() -> T | null`, only as a `presence` field's value in an `AdtLit` (`FieldDef::presence`)
+    /// or assigned to one (`delete o.a`): the field is absent (`null`, its presence flag clear)
     FieldAbsent,
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
@@ -175,12 +175,11 @@ pub enum Intrinsic {
     /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
-    /// by sema around a value a `Mutex.with` callback stores across the lock
-    /// (ownership/locked).
+    /// by sema around a value a `Mutex.with` callback stores across the lock (ownership/locked).
     Transfer,
     /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
-    /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
-    /// (the value itself is not read)?
+    /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
+    /// object or a promise (whose holder is handed over)? The value itself is not read.
     NeedsTransfer,
     /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
@@ -189,16 +188,19 @@ pub enum Intrinsic {
     NeedsDrop,
     /// std only (std/lang/intrinsics/task.velt): `moduleStateUsed() -> bool`, a constant:
     /// does the program have module state (`Program::module_state`) or functions that may have
-    /// properties through `any` (which are module state too), so that its tasks may take the
-    /// process-wide module lock (rt_abi.md "Module state")? velt/net's `TcpListener.workers()`
-    /// spreads a server's connections over the workers only without it (#2744), until #2726
-    /// replaces the module lock.
+    /// properties through `any` (module state too), so that its tasks may take the process-wide
+    /// module lock (rt_abi.md "Module state")? velt/net's `TcpListener.workers()` spreads a
+    /// server's connections over the workers only without it (#2744), until #2726 replaces it.
     ModuleStateUsed,
-    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a
-    /// constant: can a value of type `T` that a call borrows be reached through another
-    /// reference while the call runs (lowering counts the type, or borrows values of it inside
-    /// counted objects)? Only then can a callback change it. The value is not evaluated.
+    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a constant:
+    /// can a value of type `T` that a call borrows be reached through another reference while
+    /// the call runs (lowering counts the type, or borrows values of it inside counted objects)?
+    /// Only then can a callback change it. The value is not evaluated.
     MayAlias,
+    /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
+    IsUnique,
+    /// Every read of a `weak` local (hir_encodings.md `LocalDef::weak`; additive, #3119).
+    WeakRead,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
@@ -349,9 +351,8 @@ pub enum Intrinsic {
     MutexWith,
     /// `new RwLock<T>(x)` → `RwLock<T>` (lock word + value, like `Mutex<T>`)
     RwLockNew,
-    /// `rw.read(f)` on `RwLock<T>` or `shared<RwLock<T>>`: `MutexWith` with the lock taken shared,
-    /// so readers run at once (in velt_rt's read mode); sema rejects a callback that modifies
-    /// the value.
+    /// `rw.read(f)` on `RwLock<T>` or `shared<RwLock<T>>`: `MutexWith` with the lock taken
+    /// shared, readers at once (velt_rt's read mode); sema rejects a callback that modifies it.
     LockRead,
     /// `a.load(order)` on an `Atomic<T>` (docs/internals/design/atomics.md; T an integer or
     /// `bool`): `(a: borrow Atomic<T>, order: u8) -> T`. Every ordering argument of the
@@ -394,8 +395,7 @@ pub enum Intrinsic {
     /// functions). Additive.
     AddressLoad,
     /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema
-    /// checks it): `v` written at `address`, unchecked (intrinsics.md "Memory at an address").
-    /// Additive.
+    /// checks it): `v` written at `address`, unchecked (intrinsics.md). Additive.
     AddressStore,
     /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
     /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
@@ -404,30 +404,29 @@ pub enum Intrinsic {
     AddressArray,
     /// std only: `addressArray` with an owner block, whose first word is called at the drop.
     AddressArrayOwned,
-    /// std only (as are the other four `AddressAtomic*`): `addressAtomicLoad<T>(address: usize,
-    /// order: u8) -> T`, `T` an integer type: as `AtomicLoad` on the integer at `address`, `T`
-    /// being the call's type. Sema turns the declaration's string literal orderings into the
-    /// `Atomic*` intrinsics' integer literals.
-    ///
-    /// Changed (#3094), for all five `AddressAtomic*`: renamed from `PtrAtomic*`; the first
-    /// operand is a `usize` address, not a `Ptr<T>`. Not additive.
+    /// std only, as all five `AddressAtomic*`: `(address: usize, order: u8) -> T`, `AtomicLoad` of
+    /// the integer `T` at `address` (orderings: literals, sema's `raw_memory.rs`). Changed (#3094)
+    /// for all five: renamed from `PtrAtomic*`, the first operand a `usize`. Not additive.
     AddressAtomicLoad,
-    /// std only: `(address: usize, v: T, order: u8)`: as `AtomicStore` at `address`, `T` being
-    /// `v`'s type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, order: u8)`: `AtomicStore` at `address` (`T`: `v`'s).
     AddressAtomicStore,
-    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: as `AtomicRmw` at `address`
-    /// (the declaration's `(address, op, v, order)` reordered by sema, `op` a literal as
-    /// `AtomicRmw` numbers it). Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, v: T, op: u8, order: u8) -> T`: `AtomicRmw` at `address` (the
+    /// declaration's `(address, op, v, order)` reordered by sema, `op` numbered as `AtomicRmw`'s).
     AddressAtomicRmw,
-    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: as
-    /// `AtomicCas` at `address`. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: `(address: usize, expected: T, v: T, order: u8, failure: u8) -> T`: `AtomicCas`.
     AddressAtomicCas,
-    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously), `T` being `expected`'s
-    /// type. Changed (#3094): see `AddressAtomicLoad`.
+    /// std only: as `AddressAtomicCas`, `-> bool` (may fail spuriously; `T`: `expected`'s).
     AddressAtomicCasWeak,
-    /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`: the address of `a`'s word.
-    /// Sema allows only an `Atomic` of a 32- or 64-bit integer that cannot move: a static atomic
-    /// (`Global(d)`), or a field (of a field…) of the value of `SharedRead`. Additive.
+    /// std only (`Ptr.at`, `Ptr.orNull`, #3094): `ptrFromAddress<T>(a: usize) -> Ptr<T>`. Additive.
+    PtrFromAddress,
+    /// std only (`Ptr.addressOf`): `ptrToAddress<T>(p: Ptr<T> | null) -> usize`. Additive.
+    PtrToAddress,
+    /// std only (`Ptr.read`): `(p: Ptr<S>, i: usize) -> S`, stops at a NULL `Ptr<T>`. Additive.
+    PtrRead,
+    /// std only (`Ptr.write`): `ptrWrite<S>(p: Ptr<S>, i: usize, s: S)`, as `PtrRead`. Additive.
+    PtrWrite,
+    /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`, the address of `a`'s word: a
+    /// 32- or 64-bit `Atomic` that can't move (`Global(d)`, a field of `SharedRead`'s). Additive.
     AtomicAddress,
     /// std only: `futPoll(f: usize, cx: usize) -> u32`: `f->poll(f, cx)`, the call through
     /// offset 0 of heap future `f`'s header (rt_abi_async.md §1), inline. Additive.
@@ -436,8 +435,7 @@ pub enum Intrinsic {
     FutDrop,
     /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds
     /// for an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index
-    /// of its `CExport` there. For a C API that takes a function pointer (`pthread_create`).
-    /// Additive.
+    /// of its `CExport` there. For a C API taking a function pointer (`pthread_create`). Additive.
     ExportedAddress,
     /// std only: `catchUnwind(f: () => void) -> usize`: call `f` (borrowed) and return 0 when it
     /// returns, or the address of the Velt panic's exception object when a Velt panic unwound
@@ -625,9 +623,8 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
-    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
-    /// to std's weak core (`Construct::Weak`), which a program without weak collections
-    /// doesn't load.
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered to
+    /// std's weak core (`Construct::Weak`), which a program without weak collections doesn't load.
     WeakMapDrop,
     /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
     WeakRefDrop,
@@ -722,6 +719,10 @@ pub enum Intrinsic {
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
+    /// std only: `(x: borrow unknown) -> Promise<unknown, unknown> | undefined`, awaits x's. Additive.
+    AnyPromise,
+    /// `(x: borrow T) -> bool`: `x instanceof Promise`, by its table if dynamic. Additive.
+    AnyIsPromise,
     /// std only: `(name: string literal) -> bool`, a constant: can the program call the array
     /// method `name` through `any`, so that its generic algorithm on a proxy can run
     /// (velt/lang/proxy/array)? True when `name` is called by name, when a method is called by a
@@ -745,8 +746,7 @@ pub enum Intrinsic {
     /// std only: `(x: borrow any, index: i64, op: i64) -> i64`, the holes those methods made in
     /// the array `x` holds (identified by its data pointer): `op` 0 tests element `index`, 1
     /// records it (only in a trap call of a method on `x`, else -1), 2 forgets it, 3 forgets
-    /// those from `index` on, 4 gives the first below `index` (or -1)
-    /// (`velt_rt_proxy_array_hole`).
+    /// those from `index` on, 4 gives the first below `index` (or -1) (`velt_rt_proxy_array_hole`).
     ProxyArrayHole,
     /// `(x: borrow T) -> bool`, made by sema only: whether the value of the class or object type
     /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that

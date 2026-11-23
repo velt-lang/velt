@@ -4,17 +4,14 @@
 //
 // Reading, writing and appending whole files, `stat`, `lstat` and `exists` are Velt code
 // (`#fs-whole`: the C library on macOS and Linux, Win32 on Windows), and so are listing, making
-// and removing directories (`#fs-tree`), their async forms on the
-// executor's blocking pool (std/lang/hooks/sched_blocking.velt), which has threads on every OS a
-// native build targets. The other whole-file operations (link, rename, copy)
-// run the runtime's synchronous twin on that pool (the runtime has no asynchronous leaves for
-// them any more; WebAssembly builds use std/fs/rt.velt and velt_rt_wasm's). File streams
+// and removing directories (`#fs-tree`) and renaming, linking and copying (`#fs-paths`), their
+// async forms on the executor's blocking pool (std/lang/hooks/sched_blocking.velt), which has
+// threads on every OS a native build targets (WebAssembly builds use std/fs/rt.velt and
+// velt_rt_wasm's). File streams
 // (`openRead`, `openWrite` and their
 // readers and writers) keep the runtime's leaves: they have no synchronous twin to run on the
 // pool (a gap until streams are Velt code over file descriptors, std/fs/fd).
 
-import { IoResult } from "velt/native/result";
-import { IoStatus } from "velt/native/status";
 import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { hookCall } from "velt/lang/intrinsics";
@@ -30,9 +27,9 @@ import {
 } from "#fs-whole";
 import { Done, take } from "velt/fs/whole/done";
 import { list, listTyped, make, removeAt } from "#fs-tree";
+import { copyAt, readlinkAt, realpathAt, renameAt, symlinkAt } from "#fs-paths";
 
 export {
-  velt_rt_fs_copy_file_sync,
   velt_rt_fs_open_read,
   velt_rt_fs_open_read_range,
   velt_rt_fs_open_write,
@@ -41,48 +38,12 @@ export {
   velt_rt_fs_reader_read,
   velt_rt_fs_reader_read_line,
   velt_rt_fs_reader_read_string,
-  velt_rt_fs_readlink_sync,
-  velt_rt_fs_realpath_sync,
-  velt_rt_fs_rename_sync,
-  velt_rt_fs_symlink_sync,
   velt_rt_fs_writer_close,
   velt_rt_fs_writer_flush,
   velt_rt_fs_writer_write,
   velt_rt_fs_writer_free,
   velt_rt_fs_writer_write_bytes,
 } from "./rt";
-
-export async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>> {
-  return await hookCall<IoResult<string>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_readlink_sync(path),
-  );
-}
-
-export async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>> {
-  return await hookCall<IoResult<string>>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_realpath_sync(path),
-  );
-}
-
-export async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus> {
-  return await hookCall<IoStatus>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_symlink_sync(target, path),
-  );
-}
-
-export async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus> {
-  return await hookCall<IoStatus>("sched_blocking_run", () => rt.velt_rt_fs_rename_sync(from, to));
-}
-
-export async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus> {
-  return await hookCall<IoStatus>(
-    "sched_blocking_run",
-    () => rt.velt_rt_fs_copy_file_sync(from, to),
-  );
-}
 
 // Whole files: Velt code over the C library or Win32 (`#fs-whole`), the async forms on the
 // blocking pool. The path is checked on the calling thread, so the work on the pool only
@@ -191,4 +152,56 @@ export async function exists(path: string): Promise<bool> {
   }
   const c = bytesOf(path);
   return await hookCall<bool>("sched_blocking_run", () => existsAt(c, path));
+}
+
+// Renaming, linking and copying: Velt code over the C library or Win32 (`#fs-paths`). The
+// callers (velt/fs/entries.velt, metadata.velt) have checked the paths with Node's argument names.
+
+export function renameSync(from: string, to: string) {
+  take(renameAt(bytesOf(from), from, bytesOf(to), to));
+}
+
+export async function rename(from: string, to: string): Promise<void> {
+  const cf = bytesOf(from);
+  const ct = bytesOf(to);
+  take(await hookCall<Done<bool>>("sched_blocking_run", () => renameAt(cf, from, ct, to)));
+}
+
+/** `mode`: copy_mode.velt's bits, checked by the caller. */
+export function copyFileSync(from: string, to: string, mode: u32) {
+  take(copyAt(bytesOf(from), from, bytesOf(to), to, mode));
+}
+
+export async function copyFile(from: string, to: string, mode: u32): Promise<void> {
+  const cf = bytesOf(from);
+  const ct = bytesOf(to);
+  take(await hookCall<Done<bool>>("sched_blocking_run", () => copyAt(cf, from, ct, to, mode)));
+}
+
+export function symlinkSync(target: string, path: string) {
+  take(symlinkAt(bytesOf(target), target, bytesOf(path), path));
+}
+
+export async function symlink(target: string, path: string): Promise<void> {
+  const ct = bytesOf(target);
+  const cp = bytesOf(path);
+  take(await hookCall<Done<bool>>("sched_blocking_run", () => symlinkAt(ct, target, cp, path)));
+}
+
+export function readlinkSync(path: string): string {
+  return take(readlinkAt(bytesOf(path), path));
+}
+
+export async function readlink(path: string): Promise<string> {
+  const c = bytesOf(path);
+  return take(await hookCall<Done<string>>("sched_blocking_run", () => readlinkAt(c, path)));
+}
+
+export function realpathSync(path: string): string {
+  return take(realpathAt(bytesOf(path), path));
+}
+
+export async function realpath(path: string): Promise<string> {
+  const c = bytesOf(path);
+  return take(await hookCall<Done<string>>("sched_blocking_run", () => realpathAt(c, path)));
 }

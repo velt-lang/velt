@@ -10,7 +10,7 @@ import { posixTmpdir } from "./tmpdir";
 /** C's `cpu_set_t`: a mask of 1024 CPUs. */
 declare c type cpu_set_t;
 
-declare c("c") function sched_getaffinity(pid: i32, size: usize, mask: Ptr<cpu_set_t>): i32;
+declare c("c") function sched_getaffinity(pid: i32, size: usize, mask: Ptr<cpu_set_t> | null): i32;
 declare c("c") function sysconf(name: i32): i64;
 
 /** `sizeof(cpu_set_t)`: 1024 bits. */
@@ -32,7 +32,7 @@ function affinityCount(): i64 {
     }
   }
   // SAFETY: `p` holds a `cpu_set_t` (zeroed), the size passed.
-  const mask = unsafe { Ptr.at<cpu_set_t>(p) };
+  const mask = unsafe { Ptr.orNull<cpu_set_t>(p) };
   // SAFETY: as above; pid 0 is the calling thread.
   const r = unsafe { sched_getaffinity(0, CPU_SET_BYTES, mask) };
   let n: i64 = -1;

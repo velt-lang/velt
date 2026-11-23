@@ -273,7 +273,7 @@ fn not_declared_before<'a>(
             })
             .chain(std::iter::once(&**members))
             .find_map(|a| not_declared_before(a, rest)),
-        K::KeyOf(t) => not_declared_before(t, rest),
+        K::KeyOf(t) | K::Weak(t) => not_declared_before(t, rest),
         K::Conditional(c) => [&c.check, &c.extends, &c.then, &c.else_]
             .into_iter()
             .find_map(|a| not_declared_before(a, rest)),

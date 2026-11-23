@@ -1,0 +1,44 @@
+// A built `JsonValue` nested 100,000 deep goes to a task (on another worker) and comes back: the
+// sender keeps its own reference, so the task gets a copy. A tree stays at most 512 nodes high
+// (a deeper subtree is kept as a frozen tape, which crosses without a copy), so the copy never
+// recurses deeper than that: a copy of the whole chain node by node would run out of native
+// stack. Edits stay apart on both sides.
+import { Channel, ChannelClosed, channel } from "velt/sync";
+
+async function edit(
+  inbox: Channel<JsonValue>,
+  outbox: Channel<JsonValue>,
+): Promise<void> throws ChannelClosed {
+  const v = (await inbox.receive())!;
+  v.set("seen", JsonValue.of(true));
+  await outbox.send(v);
+}
+
+async function main() {
+  const depth = 100000;
+  let v = JsonValue.object();
+  for (let i = 0; i < depth; i++) {
+    const outer = JsonValue.object();
+    outer.set("c", v);
+    v = outer;
+  }
+  const inbox = channel<JsonValue>(1);
+  const outbox = channel<JsonValue>(1);
+  const t = spawn(edit(inbox, outbox));
+  await inbox.send(v.clone());
+  const back = (await outbox.receive())!;
+  await t;
+  let inner = back;
+  let levels = 0;
+  while (inner.has("c")) {
+    inner = inner.get("c")!;
+    levels++;
+  }
+  console.log(
+    back.has("seen"),
+    v.has("seen"),
+    levels,
+    back.stringify().length,
+    v.stringify().length,
+  );
+}

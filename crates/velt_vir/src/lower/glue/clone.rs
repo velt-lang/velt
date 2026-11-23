@@ -245,6 +245,16 @@ impl FnLower<'_, '_> {
             );
             return;
         }
+        if let Some(name) = self.cx.weak_holder(ty) {
+            // Its `weak` fields hold slots of this task's weak core; a copy mapping them to the
+            // copies of their targets is not built yet (cycles.md "`weak T`"). Sema refuses the
+            // visible cases (velt_sema weak_threads.rs); this is one in a function value's
+            // environment.
+            self.panic_msg(&format!(
+                "a `{name}`, which has a `weak` field, cannot be copied (`clone()`, also inside a function value that captured it): copying a `weak` field is not implemented yet (#3119)"
+            ));
+            return;
+        }
         if let Some(m) = self.cx.own_clone(ty) {
             // The class duplicates what it owns itself (a resource handle, #122).
             let this = Operand::Copy(Place::local(obj));

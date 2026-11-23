@@ -1,0 +1,72 @@
+// console.log's layout around text node doesn't lay out itself: a custom inspect's string
+// (`[Symbol.for("nodejs.util.inspect.custom")]()`) is inserted as it is, its lines after the
+// first indented by the depth it sits at, however it looks; and objects that hold themselves
+// print `<ref *N>` and `[Circular *N]` inside broken values. Output from node 22.
+
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+class Money {
+  cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  [custom](): string {
+    return "$" + Math.floor(this.cents / 100) + "." + (this.cents % 100);
+  }
+}
+
+class Looks {
+  [custom](): string {
+    return "Looks { list: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 ] }";
+  }
+}
+
+class Card {
+  title: string;
+  constructor(title: string) {
+    this.title = title;
+  }
+  [custom](): string {
+    return "┌ " + this.title + "\n└ end of card";
+  }
+}
+
+class Node2 {
+  name: string;
+  next: Node2 | null = null;
+  children: Node2[] = [];
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function main() {
+  // Short custom text in grouped and broken containers.
+  const prices: Money[] = [];
+  for (let i = 0; i < 10; i++) {
+    prices.push(new Money(i * 1234));
+  }
+  console.log(prices);
+  console.log({ total: new Money(123456), first: new Money(5), note: "x".repeat(50) });
+  // A custom string that looks like a container is kept as one piece.
+  console.log(new Looks());
+  console.log([new Looks()]);
+  console.log({ looks: new Looks(), other: "a".repeat(30) });
+  // Multi-line custom text, indented where it is nested.
+  console.log(new Card("top level"));
+  console.log([new Card("in an array")]);
+  console.log({ card: new Card("in an object"), deeper: { card: new Card("two levels") } });
+  // Cycles inside values long enough to break.
+  const a = new Node2("first node with a long name");
+  const b = new Node2("second node with a long name");
+  a.next = b;
+  b.next = a;
+  console.log(a);
+  const root = new Node2("root");
+  for (let i = 0; i < 3; i++) {
+    const kid = new Node2("child number " + i);
+    kid.next = root;
+    root.children.push(kid);
+  }
+  console.log(root);
+}

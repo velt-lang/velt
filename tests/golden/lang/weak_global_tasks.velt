@@ -1,0 +1,36 @@
+// check: no leaks
+// Tasks writing and reading a `weak` module `let`: module state is used by the tasks that reach
+// it one at a time, under the module lock (semantics.md "Threads"), so the slot stays on one task
+// at a time, as the weak core requires (#3119).
+class View {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+
+let current: weak View | null = null;
+const views: View[] = [];
+
+async function work(i: number): Promise<number> {
+  const v = new View(i);
+  views.push(v);
+  current = v;
+  await Promise.resolve(0);
+  const c = current;
+  return c === null ? -1 : c.n >= 0 ? 1 : 0;
+}
+
+async function main() {
+  const ts: Promise<number>[] = [];
+  for (let i = 0; i < 16; i++) {
+    ts.push(spawn(work(i)));
+  }
+  let sum = 0;
+  for (const t of ts) {
+    sum += await t;
+  }
+  console.log("sum", sum, views.length);
+  views.length = 0;
+  console.log("after", current === null);
+}

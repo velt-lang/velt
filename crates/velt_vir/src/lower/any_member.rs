@@ -35,6 +35,19 @@ pub(super) const SLOT_INDEX: i128 = 6;
 pub(super) const SLOT_CALL: i128 = 7;
 pub(super) const SLOT_APPLY: i128 = 8;
 
+/// Is `slot` one of the slots `any_member_entries` adds only with the member slots?
+fn is_member_slot(slot: i128) -> bool {
+    use super::{any_delete::SLOT_DELETE, any_has::SLOT_HAS, any_set};
+    (SLOT_GET..=SLOT_APPLY).contains(&slot)
+        || [
+            any_set::SLOT_SET,
+            any_set::SLOT_SET_INDEX,
+            SLOT_HAS,
+            SLOT_DELETE,
+        ]
+        .contains(&slot)
+}
+
 pub(super) const ST_OK: i128 = 0;
 pub(super) const ST_UNSUPPORTED: i128 = 1;
 pub(super) const ST_NOT_FN: i128 = 2;
@@ -158,6 +171,8 @@ impl Cx<'_> {
             | TyKind::Array(_)
             | TyKind::Tuple(_)
             | TyKind::FnPtr { .. } => true,
+            // Not a promise: glue that boxes a result, field or element (a call through `any`)
+            // doesn't box one yet; `ToDyn` does (any_await.rs, #924 step 1).
             TyKind::Adt(d, args) => match self.hir.def(*d) {
                 hir::Def::Adt(_) => true,
                 // A union whose members are boxable (`string | symbol`, an element of the keys
@@ -166,8 +181,7 @@ impl Cx<'_> {
                     e.is_union
                         && args.is_empty()
                         && e.variants.iter().all(|v| match v.payload.as_slice() {
-                            // A promise member is never held as `any`: boxing one stops
-                            // (`any_box_with`), the other members box.
+                            // A promise member is boxed as it is (any_await.rs).
                             [p] => {
                                 !self.is_dynamic(*p)
                                     && (self.any_boxable_plain(*p)
@@ -239,8 +253,13 @@ impl FnLower<'_, '_> {
                 let vt = self.cx.ty(t);
                 let p = Place::local(self.copy_to_temp(v, vt));
                 self.for_each_variant_total(&p, t, |lw, v, parts| match parts.as_slice() {
-                    [(_, pt)] if matches!(lw.cx.kind(*pt), TyKind::Promise(..)) => {
-                        lw.panic_msg("TypeError: a promise cannot be held as `any` yet (#924)");
+                    // A program running no async code holds no promise, and can't build the
+                    // table of one (its glue is the executor's): that member never comes.
+                    [(_, pt)]
+                        if matches!(lw.cx.kind(*pt), TyKind::Promise(..))
+                            && !lw.cx.executor_loaded() =>
+                    {
+                        lw.panic_msg("TypeError: a promise held as `any` without async code");
                         lw.terminate(Terminator::Unreachable);
                         let next = lw.new_block();
                         lw.switch_to(next);
@@ -276,6 +295,15 @@ impl FnLower<'_, '_> {
     }
 
     fn any_box_raw(&mut self, v: Operand, t: TyId, out: &Place) {
+        // A program running no async code holds no promise, and can't build the table of one
+        // (its glue is the executor's): an option's promise payload never comes.
+        if matches!(self.cx.kind(t), TyKind::Promise(..)) && !self.cx.executor_loaded() {
+            self.panic_msg("TypeError: a promise held as `any` without async code");
+            self.terminate(Terminator::Unreachable);
+            let next = self.new_block();
+            self.switch_to(next);
+            return;
+        }
         // An object type is one counted object when the program writes through `any`
         // (`any_set`), so the box holds the object itself, not a copy.
         let any = self.cx.any_ty();
@@ -304,9 +332,12 @@ impl FnLower<'_, '_> {
     }
 
     /// Call descriptor slot `slot` of `desc` with `args` of VIR types `params`. A member slot
-    /// (`SLOT_GET` to `SLOT_APPLY`) is in the tables when sema saw a member of an `any` used
-    /// (`hir::Program::dyn_members`), or when a pass before built such a call
-    /// (`Boxing::any_members`): without it the call would jump to a null entry (#2578).
+    /// (`SLOT_GET` to `SLOT_APPLY`, and the write, `has` and `delete` slots, which
+    /// `any_member_entries` adds only with them) is in the tables when sema saw a member of an
+    /// `any` used (`hir::Program::dyn_members`), or when a pass before built such a call
+    /// (`Boxing::any_members`): without it the call would jump past the table (#2578). Std
+    /// called by name doesn't tell sema (`FnCx::note_dyn_members`), so a `"k" in v` there in a
+    /// program with no member use of its own is one (#3492).
     pub(super) fn any_slot(
         &mut self,
         desc: Operand,
@@ -314,7 +345,7 @@ impl FnLower<'_, '_> {
         args: Vec<Operand>,
         params: Vec<Ty>,
     ) -> Operand {
-        if (SLOT_GET..=SLOT_APPLY).contains(&slot) && self.cx.hir.dyn_members.is_none() {
+        if is_member_slot(slot) && self.cx.hir.dyn_members.is_none() {
             self.cx.note_any_member_call();
         }
         let f = self.dispatch(desc, slot);
@@ -382,7 +413,7 @@ impl FnLower<'_, '_> {
                 NullKey::Num(i) => {
                     let ks = self.temp(Ty::Agg(STR_AGG));
                     let ka = self.addr(Place::local(ks));
-                    self.call_rt(Rt::StrFromF64, vec![i.clone(), ka.clone()], None);
+                    self.float_text_into(i.clone(), Place::local(ks));
                     ka
                 }
             };

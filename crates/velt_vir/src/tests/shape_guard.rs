@@ -88,14 +88,16 @@ fn the_guard_finds_an_unguarded_read() {
 /// read goes through `Cx::raw_kind`, an ICE on a placeholder.
 const RAW_KIND_READS: &[(&str, &str)] = &[
     ("types.rs", "        match self.types.kind(t) {"),
+    // The shape questions of type_kinds.rs (split out of types.rs), through `ph_rep`.
     (
-        "types.rs",
+        "type_kinds.rs",
         "        match self.types.kind(self.ph_rep(t)) {",
     ),
     (
-        "types.rs",
-        "            || matches!(self.types.kind(t), TyKind::Shared(_) | TyKind::Symbol)",
+        "type_kinds.rs",
+        "        matches!(self.types.kind(t), TyKind::Ptr(_))",
     ),
+    ("type_kinds.rs", "                self.types.kind(t),"),
     ("keys.rs", "        match self.types.kind(t) {"),
 ];
 

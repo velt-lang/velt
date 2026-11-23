@@ -1,0 +1,10 @@
+// A `MappedFile` held in a `shared` value (read by many tasks) cannot make counted arrays: making
+// one changes the `MappedFile`'s count of them, which no other task may change at the same time.
+// Its typed methods, `bytes` and getters change nothing and stay callable.
+import { MappedFile } from "velt/fs";
+
+function main() {
+  const m = shared(MappedFile.open("data.bin"));
+  console.log(m.u32s(0, 1)[0], m.bytes[0], m.getUint32(0));
+  console.log(m.countedU32s(0, 1)[0]);
+}
