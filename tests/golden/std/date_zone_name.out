@@ -1,0 +1,26 @@
+2026-01-15T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+2026-07-15T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+1850-01-01T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+1850-07-01T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+1975-07-01T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+1945-07-01T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+2040-07-01T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+-000500-07-01T00:00:00.000Z: name as Node: true
+  toString() is toDateString() toTimeString(): true
+  toTimeString() ends with the name: true
+Invalid Date
+Invalid Date

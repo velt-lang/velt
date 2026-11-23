@@ -1,0 +1,94 @@
+// velt/time (tests): white-box tests, run by `velt test std/`.
+//
+// `Date`'s zone names (std/time/zone_name.velt) against Node 22's, zone by zone, whatever the
+// zone of the machine that runs them: each case is Node's `toString()` name at an instant with
+// `TZ` set to the zone, and its offset at the instant's equivalent time (from Node too).
+import { describe, expect, it } from "velt/test";
+import { equivalentTime, nameAt, offsetName, zoneinfoId, zoneRecord } from "velt/time/zone_name";
+
+/** `[zone, t, offset in seconds at equivalentTime(t), Node's name]`. */
+type Case = [string, i64, i64, string];
+
+function cases(): Case[] {
+  return [
+    ["Europe/Berlin", 1768435200000, 3600, "Central European Standard Time"],
+    ["Europe/Berlin", 1784073600000, 7200, "Central European Summer Time"],
+    // 1850-07-01, local mean time: named as in July of 2019, its equivalent year.
+    ["Europe/Berlin", -3771187200000, 7200, "Central European Summer Time"],
+    ["Europe/Dublin", 1768435200000, 0, "Greenwich Mean Time"],
+    ["Europe/Dublin", 1784073600000, 3600, "Irish Standard Time"],
+    // +01:00 in 1970 (British Standard Time) and in a summer after.
+    ["Europe/London", 13046400000, 3600, "Greenwich Mean Time"],
+    ["Europe/London", 173404800000, 3600, "British Summer Time"],
+    // Lisbon on CET in 1993: named by today's metazone.
+    ["Europe/Lisbon", 725846400000, 3600, "Western European Standard Time"],
+    ["Europe/Lisbon", 741484800000, 7200, "Western European Summer Time"],
+    ["America/New_York", -615513600000, -14400, "Eastern Daylight Time"],
+    ["America/New_York", 1768435200000, -18000, "Eastern Standard Time"],
+    ["America/Sao_Paulo", 1421280000000, -7200, "Brasilia Summer Time"],
+    ["America/Sao_Paulo", 1768435200000, -10800, "Brasilia Standard Time"],
+    // -03:00 as daylight time until October 15, 2024, then as standard time.
+    ["America/Asuncion", 1728518400000, -10800, "Paraguay Summer Time"],
+    ["America/Asuncion", 1736899200000, -10800, "Paraguay Standard Time"],
+    ["America/Indiana/Knox", 741484800000, -18000, "Central Standard Time"],
+    ["Australia/Lord_Howe", 1768435200000, 39600, "Lord Howe Daylight Time"],
+    ["Australia/Lord_Howe", 1784073600000, 37800, "Lord Howe Standard Time"],
+    ["Asia/Kolkata", -836438400000, 19800, "India Standard Time"],
+    ["Asia/Kathmandu", 1768435200000, 20700, "Nepal Time"],
+    ["Pacific/Chatham", 1768435200000, 49500, "Chatham Daylight Time"],
+    ["Africa/Casablanca", 1768435200000, 3600, "Western European Summer Time"],
+    ["Africa/Casablanca", 1772323200000, 0, "Western European Standard Time"],
+    ["Antarctica/Troll", 1768435200000, 0, "Greenwich Mean Time"],
+    ["Antarctica/Troll", 1784073600000, 7200, "GMT+02:00"],
+    ["Etc/GMT+5", 1768435200000, -18000, "GMT-05:00"],
+    ["EST5EDT", -615513600000, -14400, "GMT-04:00"],
+    ["GMT0", 1784073600000, 0, "Greenwich Mean Time"],
+    ["UTC", -3771187200000, 0, "Coordinated Universal Time"],
+    ["Antarctica/DumontDUrville", 1768435200000, 36000, "Dumont d’Urville Time"],
+    ["US/Eastern", 1784073600000, -14400, "Eastern Daylight Time"],
+  ];
+}
+
+describe("velt/time's zone names", () => {
+  it("names each zone as Node does", () => {
+    for (const [zone, t, offset, name] of cases()) {
+      const record = zoneRecord(zone);
+      expect(record >= 0).toBe(true);
+      expect(`${zone} ${t}: ${nameAt(record, equivalentTime(t), offset)}`).toBe(
+        `${zone} ${t}: ${name}`,
+      );
+    }
+  });
+
+  it("names an unknown zone by its offset", () => {
+    expect(zoneRecord("XYZ3")).toBe(-1);
+    expect(zoneRecord("")).toBe(-1);
+    expect(zoneRecord("Europe")).toBe(-1);
+    expect(zoneRecord("Europe/Berlin\nUTC")).toBe(-1);
+    expect(nameAt(-1, 0, -10800)).toBe("GMT-03:00");
+    expect(offsetName(0)).toBe("GMT+00:00");
+    expect(offsetName(19800)).toBe("GMT+05:30");
+    expect(offsetName(-2205)).toBe("GMT-00:36:45");
+  });
+
+  it("knows the first and last ids", () => {
+    expect(zoneRecord("Africa/Abidjan") >= 0).toBe(true);
+    expect(zoneRecord("Zulu") >= 0).toBe(true);
+  });
+
+  it("asks about V8's equivalent time outside 1970..2038", () => {
+    expect(equivalentTime(0)).toBe(0);
+    expect(equivalentTime(2147483647000)).toBe(2147483647000);
+    expect(equivalentTime(-1)).toBe(1956527999999);
+    expect(equivalentTime(2147483648000)).toBe(1800328448000);
+    expect(equivalentTime(-3771187200000)).toBe(1561939200000);
+    expect(equivalentTime(-77929988093000)).toBe(2066907907000);
+    expect(equivalentTime(253375862399000)).toBe(1803859199000);
+  });
+
+  it("reads the zone id of a zone file's path", () => {
+    expect(zoneinfoId("/var/db/timezone/zoneinfo/Europe/Berlin")).toBe("Europe/Berlin");
+    expect(zoneinfoId("../usr/share/zoneinfo/America/New_York")).toBe("America/New_York");
+    expect(zoneinfoId("/etc/zones/UTC")).toBe(null);
+  });
+});

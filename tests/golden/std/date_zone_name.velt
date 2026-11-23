@@ -1,0 +1,67 @@
+// check: also with TZ=Europe/Berlin
+// `toString()` and `toTimeString()` end with the zone's long name as Node 22 prints it (#3152):
+// the name of the zone's metazone today, standard or daylight as at the instant, and outside
+// 1970..2038 as at the same day of an equivalent year of 2008..2035, as V8 asks (Berlin in July
+// 1850 is "Central European Summer Time"). A golden can't set `TZ` per call, so the program
+// tells the zone it runs in by its offsets in January and July 2026 and checks the names against
+// Node's for that zone: UTC (CI's runners, and Windows, where local time follows only a fixed
+// `TZ`, so the run with TZ=Europe/Berlin is the system zone's there too) and Central European
+// Time (that run on macOS and Linux). In any other zone it checks only the names' form. The
+// output is the same in every zone; the expected output is Node's, from a twin of this program
+// (date_zone_name.mjs in the pull request that added it), run with TZ=UTC and TZ=Europe/Berlin.
+// The table itself is checked against Node in many zones by std/time/zone_name.test.velt.
+
+/** The instants: 2026 in winter and summer, local mean time, 1975, 1945, 2040, and 500 BC. */
+function instants(): number[] {
+  return [
+    Date.UTC(2026, 0, 15),
+    Date.UTC(2026, 6, 15),
+    Date.UTC(1850, 0, 1),
+    Date.UTC(1850, 6, 1),
+    Date.UTC(1975, 6, 1),
+    Date.UTC(1945, 6, 1),
+    Date.UTC(2040, 6, 1),
+    Date.UTC(-500, 6, 1),
+  ];
+}
+
+/** The name in parentheses at the end of `s`. */
+function nameIn(s: string): string {
+  const at = s.lastIndexOf(" (");
+  return at < 0 || !s.endsWith(")") ? "" : s.slice(at + 2, s.length - 1);
+}
+
+function main() {
+  const ts = instants();
+  const winter = new Date(ts[0]).getTimezoneOffset();
+  const summer = new Date(ts[1]).getTimezoneOffset();
+  const cet = winter == -60 && summer == -120;
+  const utc = winter == 0 && summer == 0;
+  const std = "Central European Standard Time";
+  const dst = "Central European Summer Time";
+  // Node's names in Central European Time, instant by instant.
+  const central = [std, dst, std, dst, std, dst, dst, dst];
+  const first = nameIn(new Date(ts[0]).toString());
+  for (const [i, t] of ts.entries()) {
+    const d = new Date(t);
+    const s = d.toString();
+    const name = nameIn(s);
+    let asNode = name.length > 0;
+    if (cet) {
+      asNode = name == central[i];
+    } else if (utc) {
+      // `Etc/UTC` and its aliases are "Coordinated Universal Time", `GMT` and its aliases
+      // "Greenwich Mean Time", at every instant.
+      asNode =
+        (name == "Coordinated Universal Time" || name == "Greenwich Mean Time") && name == first;
+    }
+    console.log(`${d.toISOString()}: name as Node: ${asNode}`);
+    console.log(
+      "  toString() is toDateString() toTimeString():",
+      s == `${d.toDateString()} ${d.toTimeString()}`,
+    );
+    console.log("  toTimeString() ends with the name:", d.toTimeString().endsWith(` (${name})`));
+  }
+  console.log(String(new Date(0.0 / 0.0)));
+  console.log(new Date(0.0 / 0.0).toTimeString());
+}

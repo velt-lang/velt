@@ -335,4 +335,12 @@ export const imports: Imports = {
     native: "./time/localtime_posix.velt",
     default: "./time/localtime_none.velt",
   },
+  // The zone local time is in, by its id, for `Date`'s zone name (std/time/zone_name.velt):
+  // `TZ` or `/etc/localtime`'s link on macOS and Linux, `TZ`'s fixed offsets or the system
+  // zone's registry key on Windows, UTC on WebAssembly.
+  "#zone-id": {
+    win32: "./time/zone_id_win32.velt",
+    native: "./time/zone_id_posix.velt",
+    default: "./time/zone_id_none.velt",
+  },
 };

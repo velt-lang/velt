@@ -1,0 +1,97 @@
+// velt/time (internal): the zone id of local time on macOS and Linux (`#zone-id`'s native
+// variant, std/imports.velt), for `Date`'s zone name (zone_name.velt). The C library follows any
+// `TZ`; without one, the system zone is the file `/etc/localtime` links to, named after its
+// `zoneinfo/` (macOS: `/var/db/timezone/zoneinfo/Europe/Berlin`, Linux:
+// `/usr/share/zoneinfo/Europe/Berlin`), else the first line of `/etc/timezone` (Debian's, for an
+// `/etc/localtime` that is a copy). Read with the C library into one block from `calloc`.
+
+import { CVarArgs } from "velt/ffi/c_var_args";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+declare c("c") function readlink$zone(path: Ptr<u8>, buf: Ptr<u8> | null, size: usize): isize;
+declare c("c") function open$zone(path: Ptr<u8>, oflag: i32, ...args: CVarArgs): i32;
+declare c("c") function read$zone(fd: i32, buf: Ptr<void> | null, nbyte: usize): isize;
+declare c("c") function close$zone(fd: i32): i32;
+declare c("c") function calloc$zone(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$zone(p: Ptr<u8> | null): void;
+
+/** Room for a path and its NUL at the block's start, and for what is read after it. */
+const PATH_ROOM: usize = 32;
+const ROOM: usize = 256;
+
+/** `O_RDONLY`, the same on macOS and Linux. */
+const O_RDONLY: i32 = 0;
+
+/** Whether the C library's local time follows `tz`: any `TZ` here. */
+export function tzHonoured(tz: string): bool {
+  return true;
+}
+
+/** The system zone's id, or null when the system names none. */
+export function systemZoneId(): string | null {
+  const link = readText("/etc/localtime", true);
+  const at = link === null ? -1 : link.lastIndexOf("zoneinfo/");
+  if (link !== null && at >= 0) {
+    return link.slice(at + 9);
+  }
+  const text = readText("/etc/timezone", false);
+  if (text === null) {
+    return null;
+  }
+  const end = text.indexOf("\n");
+  const line = (end < 0 ? text : text.slice(0, end)).trim();
+  return line.length == 0 ? null : line;
+}
+
+/**
+ * The target of the link at `path` (`link`), or the start of the file there: at most `ROOM`
+ * bytes, null when it can't be read or isn't ASCII. `path` is ASCII and shorter than `PATH_ROOM`.
+ */
+function readText(path: string, link: bool): string | null {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$zone(1, PATH_ROOM + ROOM) };
+  if (block === null) {
+    return null;
+  }
+  const p = Ptr.addressOf(block);
+  for (let i: usize = 0; i < path.length; i++) {
+    // SAFETY: inside the block's path room; the zeroed byte after the path is its NUL.
+    unsafe {
+      addressStore<u8>(p + i, path.charCodeAt(i as i64) as u8);
+    }
+  }
+  let n: isize = -1;
+  // SAFETY: the block holds the path and `ROOM` bytes after `PATH_ROOM`; the descriptor is
+  // closed once.
+  unsafe {
+    const out = Ptr.orNull<u8>(p + PATH_ROOM);
+    if (link) {
+      n = readlink$zone(block, out, ROOM);
+    } else {
+      const fd = open$zone(block, O_RDONLY);
+      if (fd >= 0) {
+        n = read$zone(fd, Ptr.orNull<void>(p + PATH_ROOM), ROOM);
+        close$zone(fd);
+      }
+    }
+  }
+  // A link that fills the room may be longer: no zone id is.
+  let ok = n >= 0 && (!link || (n as usize) < ROOM);
+  let text = "";
+  const count: usize = ok ? n as usize : 0;
+  for (let i: usize = 0; i < count; i++) {
+    // SAFETY: inside the block, among the `n` bytes the call wrote.
+    const b = unsafe { addressLoad<u8>(p + PATH_ROOM + i) };
+    if (b >= 0x80) {
+      ok = false;
+      break;
+    }
+    text += String.fromCharCode(b as f64);
+  }
+  // SAFETY: the block calloc gave above, which nothing else has seen.
+  unsafe {
+    free$zone(block);
+  }
+  return ok ? text : null;
+}

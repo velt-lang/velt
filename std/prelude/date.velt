@@ -5,7 +5,8 @@
 // The calendar arithmetic is velt/time/datetime's; prefer its `DateTime` (UTC-first, months 1-12) in
 // new code.
 //
-// Differences from JS: `toString()` has no time zone name in parentheses, and the `toLocale…`
+// `toString()` and `toTimeString()` end with the zone's long name as Node prints it, `(Central
+// European Standard Time)` (std/time/zone_name.velt). Differences from JS: the `toLocale…`
 // methods always use the `en-US` format.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
@@ -15,6 +16,7 @@ import { pad, offsetString, isoString, httpString } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { dateNow } from "velt/lang/hooks/clock";
+import { hookCall } from "velt/lang/intrinsics";
 import { localOffset, localToUtc } from "velt/time/local";
 import { fromFields, fullYear, isLocalForm, timeClip } from "velt/time/date_value";
 
@@ -400,7 +402,7 @@ export class Date implements Comparable<Date> {
     return this.t != this.t ? "Invalid Date" : httpString(this.t as i64);
   }
 
-  /** `Mon Jan 15 2024 10:30:00 GMT+0100` (local time). */
+  /** `Mon Jan 15 2024 10:30:00 GMT+0100 (Central European Standard Time)` (local time). */
   toString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -417,14 +419,16 @@ export class Date implements Comparable<Date> {
     return `${weekdayShort(p.dayOfWeek)} ${monthShort(p.month)} ${pad(p.day, 2)} ${pad(p.year, 4)}`;
   }
 
-  /** `10:30:00 GMT+0100` (local time). */
+  /** `10:30:00 GMT+0100 (Central European Standard Time)` (local time). */
   toTimeString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
     }
     const p = this.parts(false);
     const zone = offsetString(p.offsetMinutes, false);
-    return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone}`;
+    // By role: the table of names (velt/time/zone_name) loads only where live code calls this.
+    const name: string = hookCall("date_zone_name", this.t);
+    return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone} (${name})`;
   }
 
   /** `1/15/2024` (local time, en-US). */

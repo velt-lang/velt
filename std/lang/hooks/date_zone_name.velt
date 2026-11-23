@@ -1,0 +1,10 @@
+// velt/lang/hooks (internal): the zone name of `Date`'s `toString()` and `toTimeString()`
+// (velt/time/zone_name), which the prelude's `Date` calls by role (`hookCall`), so a program loads
+// the table of names only when live code calls one of them.
+
+import { localZoneName } from "velt/time/zone_name";
+
+/** The long name of the local zone at `t` (ms since the epoch, not NaN), as Node prints it. */
+export function dateZoneName(t: f64): string {
+  return localZoneName(t);
+}
