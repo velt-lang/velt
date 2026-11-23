@@ -39,6 +39,36 @@ export function builtinAnchors(): TrustAnchor[] {
   return out;
 }
 
+/**
+ * The built-in anchors whose subject is `name[start..end]` (a Name's contents), in the table's
+ * order: what path validation asks for at each step, without making the others.
+ */
+export function builtinAnchorsNamed(name: u8[], start: usize, end: usize): TrustAnchor[] {
+  const out: TrustAnchor[] = [];
+  let at: usize = 0;
+  for (let i: usize = 0; i < ROOT_COUNT; i++) {
+    const subjectEnd = ROOT_ENDS[3 * i] as usize;
+    const last = ROOT_ENDS[3 * i + 2] as usize;
+    let same = subjectEnd - at == end - start;
+    for (let k: usize = 0; same && k < end - start; k++) {
+      const j = at + k;
+      same = (((ROOT_BYTES[j >> 3] >> ((8 * (j & 7)) as u64)) & 0xff) as u8) == name[start + k];
+    }
+    if (same) {
+      const keyEnd = ROOT_ENDS[3 * i + 1] as usize;
+      out.push(
+        new TrustAnchor(
+          tableBytes(at, subjectEnd),
+          tableBytes(subjectEnd, keyEnd),
+          tableBytes(keyEnd, last),
+        ),
+      );
+    }
+    at = last;
+  }
+  return out;
+}
+
 /** The table's size in bytes, for a test of the whole of it. */
 export function builtinAnchorBytes(): u8[] {
   return tableBytes(0, ROOT_BYTES_LENGTH);
