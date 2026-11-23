@@ -4,6 +4,10 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
 import { cpuQuota } from "./cgroup";
+import { cgroupMemoryLeft, cgroupMemoryLimit } from "./cgroup_memory";
+import type { CpuInfo } from "./cpu_info";
+import { linuxCpus } from "./cpus_linux";
+import { linuxFreeMemory, linuxLoadAverage, linuxTotalMemory, linuxUptime } from "./meminfo_linux";
 import { hostname as posixHostname } from "./posix";
 import { posixTmpdir } from "./tmpdir";
 
@@ -18,6 +22,9 @@ const CPU_SET_BYTES: usize = 128;
 
 /** `_SC_NPROCESSORS_ONLN` on Linux. */
 const SC_NPROCESSORS_ONLN: i32 = 84;
+
+/** `_SC_CLK_TCK` on Linux: the kernel's `USER_HZ`, the unit of /proc/stat's times. */
+const SC_CLK_TCK: i32 = 2;
 
 /** Node's `process.platform` name of Linux. */
 export const PLATFORM: string = "linux";
@@ -80,4 +87,42 @@ export function hostname(): string {
 /** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
 export function tmpdir(): string {
   return posixTmpdir();
+}
+
+/** The online CPUs, with /proc/stat's times in milliseconds. */
+export function cpus(): CpuInfo[] {
+  // SAFETY: no precondition.
+  const hz = unsafe { sysconf(SC_CLK_TCK) };
+  return linuxCpus(hz > 0 && hz <= 1000 ? 1000 / hz : 10);
+}
+
+/** The machine's memory in bytes. */
+export function totalMemory(): i64 {
+  return linuxTotalMemory();
+}
+
+/** The memory programs can still get without swapping, in bytes. */
+export function freeMemory(): i64 {
+  return linuxFreeMemory();
+}
+
+/** The 1, 5 and 15 minute load averages. */
+export function loadAverage(): f64[] {
+  return linuxLoadAverage();
+}
+
+/** Seconds since the machine started. */
+export function uptime(): f64 {
+  return linuxUptime();
+}
+
+/** The memory limit of this process' cgroup in bytes, 0 for none. */
+export function constrainedMemory(): i64 {
+  return cgroupMemoryLimit();
+}
+
+/** The memory this process may still use: what its cgroup leaves, else the free memory. */
+export function availableMemory(): i64 {
+  const left = cgroupMemoryLeft(linuxTotalMemory());
+  return left < 0 ? linuxFreeMemory() : left;
 }

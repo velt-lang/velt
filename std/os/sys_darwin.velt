@@ -4,6 +4,14 @@
 import { CString } from "velt/ffi/c_string";
 import { Out } from "velt/ffi/out";
 import { Ptr } from "velt/ffi/ptr";
+import type { CpuInfo } from "./cpu_info";
+import {
+  darwinCpus,
+  darwinFreeMemory,
+  darwinLoadAverage,
+  darwinTotalMemory,
+  darwinUptime,
+} from "./machine_darwin";
 import { hostname as posixHostname } from "./posix";
 import { posixTmpdir } from "./tmpdir";
 
@@ -56,4 +64,39 @@ export function hostname(): string {
 /** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
 export function tmpdir(): string {
   return posixTmpdir();
+}
+
+/** Every CPU, with Mach's times in milliseconds. */
+export function cpus(): CpuInfo[] {
+  return darwinCpus();
+}
+
+/** The machine's memory in bytes. */
+export function totalMemory(): i64 {
+  return darwinTotalMemory();
+}
+
+/** The free memory in bytes. */
+export function freeMemory(): i64 {
+  return darwinFreeMemory();
+}
+
+/** The 1, 5 and 15 minute load averages. */
+export function loadAverage(): f64[] {
+  return darwinLoadAverage();
+}
+
+/** Seconds since the machine started. */
+export function uptime(): f64 {
+  return darwinUptime();
+}
+
+/** The memory limit: 0, as macOS sets none a process can read (libuv's answer too). */
+export function constrainedMemory(): i64 {
+  return 0;
+}
+
+/** The memory this process may still get: the free memory. */
+export function availableMemory(): i64 {
+  return darwinFreeMemory();
 }

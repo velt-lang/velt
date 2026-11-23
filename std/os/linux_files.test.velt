@@ -1,0 +1,139 @@
+// velt/os (tests): the readers of Linux's /proc and /sys files behind `cpus()`, `totalmem()`,
+// `freemem()`, `loadavg()`, `uptime()` and velt/process' memory limits, on texts as the kernel
+// writes them (so they run on every OS), run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { armPartName } from "velt/os/arm_parts";
+import { chain, limitOf, roomLeft, smallestLimit } from "velt/os/cgroup_memory";
+import type { MemoryLevel } from "velt/os/cgroup_memory";
+import { cpuinfoModels, statLines } from "velt/os/cpus_linux";
+import { leadingNumbers, meminfoBytes } from "velt/os/meminfo_linux";
+import { integer, keyed, words } from "velt/os/proc_text";
+
+const STAT =
+  "cpu  20685 0 1786 97652 154 0 105 253 0 0\n" +
+  "cpu0 4761 3 422 24806 31 7 53 71 0 0\n" +
+  "cpu2 5045 0 425 24589 28 0 25 52 0 0\n" +
+  "intr 1234 0 0\n" +
+  "ctxt 99\n";
+
+const CPUINFO_X64 =
+  "processor\t: 0\nvendor_id\t: GenuineIntel\nmodel name\t: Intel(R) Xeon(R) @ 2.30GHz\n" +
+  "cpu MHz\t\t: 2300.000\n\nprocessor\t: 1\nmodel name\t: Intel(R) Xeon(R) @ 2.30GHz\n\n";
+
+const CPUINFO_ARM64 =
+  "processor\t: 0\nBogoMIPS\t: 50.00\nCPU implementer\t: 0x41\nCPU part\t: 0xd0c\n\n" +
+  "processor\t: 1\nCPU part\t: 0xd40\n\nprocessor\t: 2\nCPU part\t: 0xd03\n";
+
+const MEMINFO =
+  "MemTotal:       16473744 kB\nMemFree:        10616220 kB\nMemAvailable:   12916380 kB\n";
+
+describe("/proc/stat", () => {
+  it("gives each cpuN line's times in milliseconds, skipping the summary and other lines", () => {
+    const lines = statLines(STAT, 10);
+    expect(lines.length).toBe(2);
+    expect(lines[0].cpu).toBe(0);
+    expect(lines[0].times.user).toBe(47610);
+    expect(lines[0].times.nice).toBe(30);
+    expect(lines[0].times.sys).toBe(4220);
+    expect(lines[0].times.idle).toBe(248060);
+    // The sixth field (irq) after iowait, which is left out.
+    expect(lines[0].times.irq).toBe(70);
+    // Numbered as the kernel numbers them: an offline CPU 1 leaves a gap.
+    expect(lines[1].cpu).toBe(2);
+  });
+
+  it("skips a line with too few fields or one that isn't numbers", () => {
+    expect(statLines("cpu0 1 2 3\ncpux 1 2 3 4 5 6\n", 10).length).toBe(0);
+  });
+});
+
+describe("/proc/cpuinfo", () => {
+  it("gives each processor's model name on x86-64", () => {
+    const models = cpuinfoModels(CPUINFO_X64, false);
+    expect(models.get(0)).toBe("Intel(R) Xeon(R) @ 2.30GHz");
+    expect(models.get(1)).toBe("Intel(R) Xeon(R) @ 2.30GHz");
+    expect(models.has(2)).toBe(false);
+  });
+
+  it("names each processor's CPU part on arm64, as libuv does", () => {
+    const models = cpuinfoModels(CPUINFO_ARM64, true);
+    expect(models.get(0)).toBe("Neoverse-N1");
+    expect(models.get(1)).toBe("unknown");
+    expect(models.get(2)).toBe("Cortex-A53");
+  });
+
+  it("finds every part of the table and nothing else", () => {
+    expect(armPartName("0x811")).toBe("ARM810");
+    expect(armPartName("0xb02")).toBe("ARM11 MPCore");
+    expect(armPartName("0xd4b")).toBe("Cortex-A78C");
+    expect(armPartName("0xd0")).toBe("unknown");
+    expect(armPartName("xd0c")).toBe("unknown");
+    expect(armPartName("")).toBe("unknown");
+  });
+});
+
+describe("/proc/meminfo, /proc/loadavg and /proc/uptime", () => {
+  it("reads a meminfo line's kB as bytes", () => {
+    expect(meminfoBytes(MEMINFO, "MemTotal")).toBe(16473744 * 1024);
+    expect(meminfoBytes(MEMINFO, "MemAvailable")).toBe(12916380 * 1024);
+    expect(meminfoBytes(MEMINFO, "SwapTotal")).toBe(0);
+    // "Mem" is no key of its own: only a whole key matches.
+    expect(meminfoBytes(MEMINFO, "Mem")).toBe(0);
+  });
+
+  it("reads the leading numbers, 0 for each missing one", () => {
+    const load = leadingNumbers("2.53 0.76 0.26 8/135 4081\n", 3);
+    expect(load.length).toBe(3);
+    expect(load[0]).toBe(2.53);
+    expect(load[2]).toBe(0.26);
+    expect(leadingNumbers("302.41 976.52\n", 1)[0]).toBe(302.41);
+    expect(leadingNumbers("", 3)[2]).toBe(0);
+  });
+
+  it("splits words and keyed lines", () => {
+    expect(words(" a\tb  c ").length).toBe(3);
+    expect(keyed("model name\t: X Y \n", "model name")).toBe("X Y");
+    expect(keyed("model\t: X\n", "model name")).toBe(null);
+    expect(integer(" 42\n")).toBe(42);
+    expect(integer("4x")).toBe(null);
+  });
+});
+
+describe("cgroup memory limits", () => {
+  it("reads a limit, with v2's max and v1's 2^63-less-a-page as none", () => {
+    expect(limitOf("14338744320\n")).toBe(14338744320);
+    expect(limitOf("max\n")).toBe(0);
+    expect(limitOf("9223372036854771712\n")).toBe(0);
+    expect(limitOf("")).toBe(0);
+  });
+
+  it("walks a cgroup's ancestors up to the root", () => {
+    const dirs = chain("/a/b");
+    expect(dirs.length).toBe(3);
+    expect(dirs[0]).toBe("/a/b");
+    expect(dirs[1]).toBe("/a");
+    expect(dirs[2]).toBe("/");
+    expect(chain("/").length).toBe(1);
+  });
+
+  it("takes the smallest limit, and the least room any limited level leaves", () => {
+    const levels: MemoryLevel[] = [
+      { limit: 0, used: 100 },
+      { limit: 1000, used: 900 },
+      { limit: 500, used: 50 },
+    ];
+    expect(smallestLimit(levels)).toBe(500);
+    expect(roomLeft(levels, 4000)).toBe(100);
+  });
+
+  it("has no room left over a limit, and leaves the free memory without one", () => {
+    const over: MemoryLevel[] = [{ limit: 500, used: 600 }];
+    expect(roomLeft(over, 4000)).toBe(0);
+    const none: MemoryLevel[] = [{ limit: 0, used: 600 }];
+    expect(roomLeft(none, 4000)).toBe(-1);
+    expect(roomLeft([], 4000)).toBe(-1);
+    // A limit above the machine's memory is none (libuv's rule).
+    const above: MemoryLevel[] = [{ limit: 8000, used: 600 }];
+    expect(roomLeft(above, 4000)).toBe(-1);
+  });
+});

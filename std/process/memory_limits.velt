@@ -1,0 +1,26 @@
+// velt/process (internal): the memory the OS lets this process have (`constrainedMemory`) and
+// how much of it is left (`availableMemory`), as Node's `process.constrainedMemory()` and
+// `process.availableMemory()` give them (std/os's `#os-sys` reads them).
+
+import * as sys from "#os-sys";
+
+/**
+ * The memory the OS limits this process to, in bytes (Node's `process.constrainedMemory()`): on
+ * Linux the smallest memory limit of its cgroup and the cgroups above it (hard or soft); 0 when
+ * nothing limits it, and on macOS, Windows and WebAssembly, which have no such limit to read.
+ * Where Node's libuv reads a cgroup that sets no limit ("max"), Node gives 2^64 (2^64 - 1 as a
+ * number), which an `i64` can't hold: Velt gives 0 there too. libuv reads only the process' own
+ * cgroup; Velt also reads those above it, whose limits the kernel enforces as well.
+ */
+export function constrainedMemory(): i64 {
+  return sys.constrainedMemory();
+}
+
+/**
+ * The memory this process can still get, in bytes (Node's `process.availableMemory()`): what its
+ * cgroups' limits leave on Linux (0 for one already over its limit), else the machine's free
+ * memory (velt/os' `freemem()`); 0 on WebAssembly.
+ */
+export function availableMemory(): i64 {
+  return sys.availableMemory();
+}

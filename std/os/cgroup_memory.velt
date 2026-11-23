@@ -1,0 +1,146 @@
+// velt/os (internal): the memory limit of this process' cgroup on Linux and the room left under
+// it, for velt/process' `constrainedMemory()` and `availableMemory()` (libuv's
+// `uv_get_constrained_memory` and `uv_get_available_memory`, which Node's
+// `process.constrainedMemory()` and `process.availableMemory()` return). A cgroup's limit is the
+// smaller of its hard and soft limits, as libuv counts them: cgroup v2's `memory.max` and
+// `memory.high` ("max" is none), v1's `memory.limit_in_bytes` and `memory.soft_limit_in_bytes`
+// of the `memory` controller's cgroup (its "no limit" is 2^63 less a page), also on a hybrid
+// system whose unified hierarchy is empty.
+//
+// Where this differs from libuv, on purpose, as for the CPU quota (cgroup.velt): Velt reads the
+// process' cgroup and each ancestor up to the root, as the kernel enforces each of them, where
+// libuv reads the process' own only (a container whose limit is set on a parent says it has none
+// there). The room left is the least any of them leaves.
+
+import { integer, read, readOrNull } from "./proc_text";
+
+/** A cgroup's memory limit in bytes (0: none) and the bytes its processes use. */
+export type MemoryLevel = { limit: i64; used: i64 };
+
+/** The limit a v2 file's or v1 file's `text` gives, in bytes, or 0 for none ("max", no file). */
+export function limitOf(text: string): i64 {
+  const n = integer(text);
+  return n === null || n <= 0 ? 0 : n;
+}
+
+/** The smaller of two limits, 0 being none. */
+function smaller(a: i64, b: i64): i64 {
+  if (a === 0) {
+    return b;
+  }
+  return b === 0 || a < b ? a : b;
+}
+
+/** `path` ("/a/b") and each of its ancestors, the root ("/") last. */
+export function chain(path: string): string[] {
+  const out: string[] = [];
+  let dir = path.length === 0 ? "/" : path;
+  while (true) {
+    out.push(dir);
+    if (dir === "/") {
+      return out;
+    }
+    const up = dir.lastIndexOf("/");
+    dir = up <= 0 ? "/" : dir.slice(0, up);
+  }
+}
+
+/** The levels of the v2 cgroup at `path` and its ancestors, or null when it is no v2 cgroup. */
+function v2Levels(path: string): MemoryLevel[] | null {
+  const root = "/sys/fs/cgroup";
+  if (readOrNull(`${root}${path === "/" ? "" : path}/cgroup.controllers`) === null) {
+    return null;
+  }
+  const out: MemoryLevel[] = [];
+  for (const dir of chain(path)) {
+    const base = `${root}${dir === "/" ? "" : dir}`;
+    const used = integer(read(`${base}/memory.current`));
+    out.push({
+      limit: smaller(limitOf(read(`${base}/memory.max`)), limitOf(read(`${base}/memory.high`))),
+      used: used === null ? 0 : used,
+    });
+  }
+  return out;
+}
+
+/** The levels of the v1 `memory` controller's cgroup at `path` and its ancestors. */
+function v1Levels(path: string): MemoryLevel[] {
+  const out: MemoryLevel[] = [];
+  for (const dir of chain(path)) {
+    const base = `/sys/fs/cgroup/memory${dir === "/" ? "" : dir}`;
+    const used = integer(read(`${base}/memory.usage_in_bytes`));
+    out.push({
+      limit: smaller(
+        limitOf(read(`${base}/memory.limit_in_bytes`)),
+        limitOf(read(`${base}/memory.soft_limit_in_bytes`)),
+      ),
+      used: used === null ? 0 : used,
+    });
+  }
+  return out;
+}
+
+/** The memory levels of this process' cgroup and its ancestors (none without cgroups). */
+function levels(): MemoryLevel[] {
+  const lines = read("/proc/self/cgroup").split("\n");
+  for (const line of lines) {
+    // "0::/path": the unified (v2) hierarchy, unless it is a hybrid system's empty one.
+    if (line.startsWith("0::")) {
+      const v2 = v2Levels(line.slice(3));
+      if (v2 !== null) {
+        return v2;
+      }
+    }
+  }
+  for (const line of lines) {
+    // "4:memory:/path": a v1 hierarchy; the one whose controllers include `memory`.
+    const fields = line.split(":");
+    if (fields.length >= 3 && fields[1].split(",").includes("memory")) {
+      return v1Levels(fields.slice(2).join(":"));
+    }
+  }
+  return [];
+}
+
+/** The smallest limit of `levels` in bytes, or 0 when none has one. */
+export function smallestLimit(levels: MemoryLevel[]): i64 {
+  let limit: i64 = 0;
+  for (const level of levels) {
+    limit = smaller(limit, level.limit);
+  }
+  return limit;
+}
+
+/**
+ * The bytes `levels` leave before one of their limits is reached: the least that any level with
+ * a limit leaves (0 for one already over it, which the kernel allows for short bursts); -1 when
+ * none has a limit, or their smallest is more than `total` (the machine's memory), where the
+ * machine's free memory is what is left (libuv's rule).
+ */
+export function roomLeft(levels: MemoryLevel[], total: i64): i64 {
+  const limit = smallestLimit(levels);
+  if (limit === 0 || (total > 0 && limit > total)) {
+    return -1;
+  }
+  let room: i64 = -1;
+  for (const level of levels) {
+    if (level.limit > 0) {
+      const here = level.used >= level.limit ? 0 : level.limit - level.used;
+      room = room < 0 || here < room ? here : room;
+    }
+  }
+  return room;
+}
+
+/** The memory limit of this process' cgroup in bytes, or 0 when none limits it. */
+export function cgroupMemoryLimit(): i64 {
+  return smallestLimit(levels());
+}
+
+/**
+ * The bytes this process' cgroup may still use before a limit is reached, or -1 when the
+ * machine's free memory is what it has (`roomLeft`).
+ */
+export function cgroupMemoryLeft(total: i64): i64 {
+  return roomLeft(levels(), total);
+}
