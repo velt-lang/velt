@@ -61,20 +61,22 @@ function asciiLen(s: string): u64 {
  */
 @inline("always")
 function sliceOf(s: string, start: i64, end: i64): string {
-  const n = asciiLen(s);
-  if (start >= 0 && (start as u64) < n && end == start + 1) {
-    return strAsciiWords(strByteAt(s, start as u64) as u64, 0, 0, 1);
-  }
-  // Static (`w2` 0) and ASCII (units equal bytes, not 0): the runtime's static branch of
-  // `VeltStr::substring`, inline. Only `w2` is tested before the call, not `n`: a heap string
-  // then pays one compare, and LLVM need not compute `n` for slices the test above rules out
-  // (+5 % instructions on bench/typical/consume when the test read `n`).
+  // Static (`w2` 0) and ASCII (units equal bytes; the empty string too): the runtime's static
+  // branch of `VeltStr::substring`, inline. Tested first, so a slice of a static string is always static,
+  // one-unit slices included: a loop over a view (#3469) then keeps a view, which lets the
+  // compiler keep it in registers. Only `w2` is tested before the other paths, not the ASCII
+  // length: a heap string then pays one compare, and LLVM need not compute the length for
+  // slices the one-unit test rules out (+5 % instructions on bench/typical/consume when it did).
   if (strWord2(s) == 0) {
     const w1 = strWord1(s);
     const len = w1 & 0xffffffff;
-    if (w1 >> 32 == len && len != 0) {
+    if (w1 >> 32 == len) {
       return staticAsciiSlice(strWord0(s), len, start, end);
     }
+  }
+  const n = asciiLen(s);
+  if (start >= 0 && (start as u64) < n && end == start + 1) {
+    return strAsciiWords(strByteAt(s, start as u64) as u64, 0, 0, 1);
   }
   return velt_rt_str_slice(s, start, end);
 }
@@ -91,7 +93,9 @@ function staticAsciiSlice(ptr: u64, n: u64, start: i64, end: i64): string {
   if (a >= b) {
     return strBorrowedWords(0, 0);
   }
-  const len = b - a;
+  // Below 2^31 (as `b <= n` is), and masked so the compiler can see it: the string views
+  // proof accepts a count word `x << 32 | x` only for an `x` it knows is that small (#3469).
+  const len = (b - a) & 0x7fffffff;
   return strBorrowedWords(ptr + a, (len << 32) | len);
 }
 

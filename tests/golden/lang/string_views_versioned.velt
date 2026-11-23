@@ -1,0 +1,158 @@
+// check: no leaks
+// String views, versioned (#3469): when a loop over `rest` starts from a view, the compiler
+// runs a copy of the loop that takes every value of `rest` (and of the strings sliced from it)
+// to be a static ASCII string, and proves it first. Each loop here either keeps that true
+// (the copy runs) or puts another string into the family (the copy must not run): a heap
+// string, a one-character string, a non-ASCII string. The loops also leave in every way, so
+// the values copied back to the original code are checked too. Each function reads `text` after
+// its loop, so `text` stays the caller's and the loop can start from a view
+// (crates/veltc/tests/string_views_vir.rs checks which functions run a copy). They report `rest`
+// through numbers: interpolating it would hand it to the string builder, which the analysis
+// does not take.
+
+/** A heap string of `n` pieces (built at run time, so not a literal). */
+function heap(piece: string, n: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(`${piece}${i % 10}`);
+  }
+  return parts.join("");
+}
+
+/** The copy runs: only slices of `rest`. `rest` is read after the loop. */
+function plain(text: string): string {
+  let rest = text;
+  let sum = 0;
+  while (rest.length > 3) {
+    sum += rest.charCodeAt(0);
+    rest = rest.slice(rest.charCodeAt(1) % 3 + 1);
+  }
+  return `${sum} ${rest.length} ${rest.charCodeAt(0)} ${text.length}`;
+}
+
+/** A heap string replaces `rest` in the middle of the loop. */
+function replaced(text: string, other: string): string {
+  let rest = text;
+  let sum = 0;
+  let k = 0;
+  while (rest.length > 0) {
+    sum += rest.charCodeAt(0) * (k % 7);
+    rest = rest.slice(1);
+    k++;
+    if (k === 20) {
+      rest = other;
+    }
+  }
+  return `${sum} ${k}`;
+}
+
+/** `rest` becomes a one-character (inline) string. */
+function oneChar(text: string): string {
+  let rest = text;
+  let sum = 0;
+  let k = 0;
+  while (rest.length > 1) {
+    sum += rest.charCodeAt(0);
+    rest = k % 5 === 4 ? rest.charAt(1) + rest.slice(2) : rest.slice(1);
+    k++;
+  }
+  return `${sum} ${k} ${rest}`;
+}
+
+/** `rest` becomes a non-ASCII string. */
+function wide(text: string): string {
+  let rest = text;
+  let sum = 0;
+  let k = 0;
+  while (rest.length > 0) {
+    sum += rest.charCodeAt(0);
+    rest = rest.slice(1);
+    k++;
+    if (k === 10) {
+      rest = `é${rest}`;
+    }
+  }
+  return `${sum} ${k}`;
+}
+
+/** Leaves by `break`, `continue` and an early `return`; uses `rest` after. */
+function exits(text: string, stop: number): string {
+  let rest = text;
+  let words = 0;
+  let skipped = 0;
+  while (rest.length > 0) {
+    const c = rest.charCodeAt(0);
+    if (c === 57) {
+      return `early ${words} ${rest.length} ${text.length}`;
+    }
+    if (c === 48) {
+      rest = rest.slice(1);
+      skipped++;
+      continue;
+    }
+    if (words === stop) {
+      break;
+    }
+    words++;
+    rest = rest.slice(2);
+  }
+  const first = rest.length > 0 ? rest.charCodeAt(0) : 0;
+  return `${words} ${skipped} ${rest.length} ${first} ${text.length}`;
+}
+
+/**
+ * `count` has a value before the loop, changes in it, and is read after each way out: an early
+ * `return`, a `break` and the loop's end. A copy that did not copy it back would print 1000.
+ */
+function carried(text: string, stop: number): string {
+  let rest = text;
+  let count = 1000;
+  while (rest.length > 0) {
+    if (rest.charCodeAt(0) === 57) {
+      return `early ${count} ${rest.length} ${text.length}`;
+    }
+    if (count === stop) {
+      break;
+    }
+    count++;
+    rest = rest.slice(1);
+  }
+  return `${count} ${rest.length} ${text.length}`;
+}
+
+/** Two loops over one source in one function. */
+function twice(text: string): string {
+  let a = text;
+  let n = 0;
+  while (a.length > 0) {
+    n += a.charCodeAt(0) & 7;
+    a = a.slice(1);
+  }
+  let b = text;
+  let m = 0;
+  while (b.length > 2) {
+    m += b.charCodeAt(b.length - 1) & 3;
+    b = b.slice(0, -2);
+  }
+  return `${n} ${m} ${b} ${text.length}`;
+}
+
+function main() {
+  const ascii = heap("abc_", 300);
+  const other = heap("xyz-", 50);
+  const digits = heap("12345678", 40);
+  console.log("plain", plain(ascii));
+  console.log("plain literal", plain("a literal of some length, to be sliced"));
+  console.log("replaced", replaced(ascii, other));
+  console.log("one char", oneChar(ascii));
+  console.log("wide", wide(ascii));
+  console.log("exits", exits(digits, 1000), exits(ascii, 5), exits(heap("0a", 30), 1000));
+  console.log("twice", twice(ascii));
+  console.log(
+    "carried",
+    carried(heap("abc_", 30), 1010),
+    carried(heap("xyz", 8), 1000000),
+    carried(digits, 1000000),
+  );
+  console.log("source", ascii.length, ascii.slice(0, 8), other.length);
+}

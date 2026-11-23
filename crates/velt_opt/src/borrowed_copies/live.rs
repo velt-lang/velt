@@ -9,15 +9,25 @@ use crate::locals::Usage;
 use crate::visit::{derefs, rvalue_operands, successors, term_operands};
 
 impl Cx<'_> {
-    /// Whether nothing can change a source of `f` while the family's text may still be read.
-    pub(super) fn borrowable(&self, f: &Family) -> bool {
-        let sources: Vec<Source> = f.sources.iter().map(|s| self.source(*s)).collect();
+    /// The blocks at whose start some local of `f` may still be read (strong liveness), in
+    /// block order: where the family's values matter (`views_version.rs`).
+    pub(super) fn live_blocks(&self, f: &Family) -> Vec<usize> {
+        let (_, _, live_in) = self.family_live_in(f);
+        (live_in.iter().enumerate())
+            .filter(|(_, l)| l.contains(&true))
+            .map(|(b, _)| b)
+            .collect()
+    }
+
+    /// Strong liveness of `f`'s members and pointers at the start of every block: the tracked
+    /// locals, their indices, and the live-in sets.
+    fn family_live_in(&self, f: &Family) -> (Vec<Local>, FxHashMap<Local, usize>, Vec<Vec<bool>>) {
         let tracked: Vec<Local> = f.members.iter().chain(f.pointers.iter()).copied().collect();
         let index: FxHashMap<Local, usize> =
             tracked.iter().enumerate().map(|(i, l)| (*l, i)).collect();
         let n = self.func.blocks.len();
         let preds = crate::map_probe::region::predecessors(self.func);
-        // Strong liveness of the tracked locals, backwards to a fixed point.
+        // Backwards to a fixed point.
         let mut live_in: Vec<Vec<bool>> = vec![vec![false; tracked.len()]; n];
         let mut work: Vec<usize> = (0..n).collect();
         let mut queued = vec![true; n];
@@ -34,6 +44,14 @@ impl Cx<'_> {
                 }
             }
         }
+        (tracked, index, live_in)
+    }
+
+    /// Whether nothing can change a source of `f` while the family's text may still be read.
+    pub(super) fn borrowable(&self, f: &Family) -> bool {
+        let sources: Vec<Source> = f.sources.iter().map(|s| self.source(*s)).collect();
+        let (tracked, index, live_in) = self.family_live_in(f);
+        let n = self.func.blocks.len();
         // Check every point after which a tracked local is still live.
         for b in 0..n {
             let mut live = self.live_out(b, &live_in, tracked.len());

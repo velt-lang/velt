@@ -62,7 +62,9 @@
 //! - `string_views`: right after it, the families that slice their strings (`rest = text;
 //!   rest = rest.slice(n)`) start with a static view of a heap ASCII source instead of a clone,
 //!   when the source stays alive and unchanged and no view can leave: slicing and dropping a
-//!   view cost no call and no count (#3469, `borrowed_copies/views.rs`).
+//!   view cost no call and no count (#3469, `borrowed_copies/views.rs`); the view path runs a
+//!   copy of the loop in which the views are known static ASCII, without form tests or runtime
+//!   paths, when that is proven (`borrowed_copies/views_version/`).
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.
