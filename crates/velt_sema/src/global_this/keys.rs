@@ -32,8 +32,9 @@ pub(super) fn mentions(module: &ast::Module) -> bool {
 /// including those the parser moved into a script's generated `main`.
 pub(super) fn string_consts(module: &ast::Module) -> FxHashMap<String, String> {
     let mut out = FxHashMap::default();
+    let symbol_global = !module_declares(module, "Symbol");
     let mut add = |v: &ast::VarDecl| {
-        if let Some((n, s)) = const_key(v) {
+        if let Some((n, s)) = const_key(v, symbol_global) {
             out.insert(n, s);
         }
     };
@@ -51,6 +52,36 @@ pub(super) fn string_consts(module: &ast::Module) -> FxHashMap<String, String> {
         }
     }
     out
+}
+
+/// Does `module` declare `name` at its top level (a variable, a function, a class, an enum, an
+/// import), also in a script's generated `main`? It then hides the global of that name.
+pub(super) fn module_declares(module: &ast::Module, name: &str) -> bool {
+    let var = |v: &ast::VarDecl| {
+        let mut names = vec![];
+        pattern_names(&v.pattern, &mut names);
+        names.iter().any(|n| n == name)
+    };
+    module.items.iter().any(|item| match &item.kind {
+        I::Var(v) => var(v),
+        I::Function(f) if velt_syntax::is_script_main(&f.sig.name) => {
+            f.body.stmts.iter().any(|s| match &s.kind {
+                S::Var(v) => var(v),
+                _ => false,
+            })
+        }
+        I::Function(f) => f.sig.name.name == name,
+        I::Class(t) | I::Struct(t) => t.name.name == name,
+        I::Enum(e) => e.name.name == name,
+        I::Import(imp) => {
+            imp.namespace.as_ref().is_some_and(|n| n.name == name)
+                || imp
+                    .names
+                    .iter()
+                    .any(|n| n.alias.as_ref().unwrap_or(&n.name).name == name)
+        }
+        _ => false,
+    })
 }
 
 /// The string constants module `i` sees: its own, and those it imports by name.
@@ -81,15 +112,16 @@ pub(super) fn visible_consts(
 
 /// The name and string of `const K = "k";`: a key of `globalThis` where `K` is in scope. A
 /// constant declared with a type (`const K: string = "k"`) is not one, as in TypeScript, unless
-/// the type is the string itself (`const K: "k" = "k"`).
-pub(super) fn const_key(v: &ast::VarDecl) -> Option<(String, String)> {
+/// the type is the string itself (`const K: "k" = "k"`). `Symbol.for("k")` names the registry
+/// only where `Symbol` is the global (`symbol_global`), not a name the program declares.
+pub(super) fn const_key(v: &ast::VarDecl, symbol_global: bool) -> Option<(String, String)> {
     let (ast::VarKind::Const, ast::PatternKind::Ident(n), Some(init)) =
         (v.kind, &v.pattern.kind, &v.init)
     else {
         return None;
     };
     // `const K = Symbol.for("k")`: the registry's symbol, the same one in every module.
-    if let Some(k) = registry_symbol(init) {
+    if let Some(k) = registry_symbol(init).filter(|_| symbol_global) {
         return v.ty.is_none().then(|| (n.name.clone(), symbol_key(&k)));
     }
     let s = string_lit(init)?;

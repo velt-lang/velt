@@ -67,9 +67,10 @@ impl<'a> Walk<'a> {
     /// Rewrite every item of the module, its constants standing for `globalThis` first (a
     /// function may use one declared after it).
     pub(super) fn module_items(&mut self, module: &mut ast::Module) {
+        let symbol_global = !super::keys::module_declares(module, "Symbol");
         for item in &module.items {
             if let I::Var(v) = &item.kind {
-                if let Some((n, _)) = const_key(v) {
+                if let Some((n, _)) = const_key(v, symbol_global) {
                     self.module_consts.insert(n, v.span.lo);
                 }
             }
@@ -156,16 +157,23 @@ impl<'a> Walk<'a> {
         let shown = k.strip_prefix(super::keys::RESERVED);
         let literal = !matches!(e.kind, E::Ident(_)) && super::keys::reserved_key(&k);
         if shown.is_some() || literal {
-            self.early.borrow_mut().push(Diagnostic::error(
-                format!(
-                    "the property name `{}` of `globalThis` is not supported: Velt uses names starting with `[Symbol.` for symbol keys",
-                    shown.unwrap_or(&k)
-                ),
-                e.span,
-            ));
+            self.reserved_name(shown.unwrap_or(&k), e.span);
             return None;
         }
         Some(k)
+    }
+
+    /// Property name `name` of `globalThis`, spelled as a symbol's key, written at `at`: refused.
+    pub(super) fn reserved_name(&self, name: &str, at: velt_common::Span) {
+        self.early.borrow_mut().push(Diagnostic::error(
+            format!("the property name `{name}` of `globalThis` is not supported: Velt uses names starting with `[Symbol.` for symbol keys"),
+            at,
+        ));
+    }
+
+    /// Is `Symbol` the global here, not a name the program declares (`keys::const_key`)?
+    fn symbol_global(&self) -> bool {
+        self.lookup("Symbol").is_none()
     }
 
     /// [`Self::key`] before the check of names spelled as symbol keys.
@@ -305,7 +313,7 @@ impl<'a> Walk<'a> {
                     let mut names = vec![];
                     pattern_names(&v.pattern, &mut names);
                     self.shadow(names);
-                    if let Some((n, k)) = const_key(v) {
+                    if let Some((n, k)) = const_key(v, self.symbol_global()) {
                         let scope = self.const_scopes.last_mut().expect("ICE: no scope");
                         scope.insert(
                             n,
@@ -341,7 +349,7 @@ impl<'a> Walk<'a> {
                 let mut names = vec![];
                 pattern_names(&v.pattern, &mut names);
                 self.shadow(names);
-                if let Some((n, k)) = const_key(v) {
+                if let Some((n, k)) = const_key(v, self.symbol_global()) {
                     let scope = self.const_scopes.last_mut().expect("ICE: no scope");
                     scope.insert(
                         n,
