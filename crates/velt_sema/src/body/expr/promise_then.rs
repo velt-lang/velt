@@ -576,8 +576,8 @@ fn nothing_body(arrow: &ast::Expr) -> bool {
 }
 
 /// Does a value of type `t` hold a dynamic value (`any`, `unknown`, `object`, `Function`) by
-/// itself or through its parts: elements, fields, type arguments, and a function type's
-/// parameters and result?
+/// itself or through its parts: elements, fields, a union's members, type arguments, and a
+/// function type's parameters and result?
 fn holds_dynamic_deep(cx: &mut crate::ctx::Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
     if !seen.insert(t) {
         return false;
@@ -598,6 +598,10 @@ fn holds_dynamic_deep(cx: &mut crate::ctx::Ctx, t: TyId, seen: &mut FxHashSet<Ty
             params
         }
         TyKind::Adt(d, args) => {
+            // A union's members (its def is an enum: no fields).
+            if let Some(members) = cx.union_members(t) {
+                return members.into_iter().any(|m| holds_dynamic_deep(cx, m, seen));
+            }
             let fields: Vec<TyId> = cx
                 .adt(d)
                 .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
