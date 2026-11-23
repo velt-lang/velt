@@ -195,6 +195,7 @@ export class DataView extends BufferView {
     const buf = inspectBuffer(this.buf.bytes, 2);
     return {
       text: `DataView {\n  [byteLength]: ${this.len},\n  [byteOffset]: ${this.off},\n  [buffer]: ${buf}\n}`,
+      cut: "",
     };
   }
 }
