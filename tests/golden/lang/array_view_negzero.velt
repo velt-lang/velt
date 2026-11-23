@@ -4,6 +4,12 @@
 // has no `-0`) leaves an original `-0` alone, and whole-array writes through an
 // `f32[]` view (`fill`, `sort`, `reverse`) carry a zero's sign both ways. In TypeScript the
 // casts are no-ops, so the Node twin (array_view_negzero.mjs) writes the same arrays.
+type Child = string | number | null;
+
+function childNegFirst(p: Child, q: Child): number {
+  return (Object.is(p, -0) ? -1 : 0) - (Object.is(q, -0) ? -1 : 0);
+}
+
 function main() {
   const e: any = [0, 5];
   (e as f32[])[0] = -0;
@@ -45,6 +51,30 @@ function main() {
   const rv = r as f32[];
   rv.reverse();
   console.log(`reverse: ${Object.is(r[0], -0)} ${Object.is(r[1], -0)}`);
+
+  const g2: any = [-0, 1];
+  const gv = g2 as i32[];
+  gv[0] = gv[0];
+  console.log(`i32 view, -0 written back: ${Object.is(g2[0], -0)}`);
+  const h2: any = [-0, 7, 2, -0];
+  const h2v = h2 as i32[];
+  h2v.reverse();
+  console.log(`i32 view reverse: ${h2.map((x: any) => (Object.is(x, -0) ? "-0" : `${x}`)).join(",")}`);
+
+  const w1: any = [0, -0, 0, -0];
+  const w1v = w1 as Child[];
+  w1v.sort(childNegFirst);
+  console.log(`Child sort: ${w1.map((x: any) => (Object.is(x, -0) ? "-0" : `${x}`)).join(",")}`);
+  const w2: any = [0, -0, "a"];
+  const w2v = w2 as Child[];
+  w2v.shift();
+  console.log(`Child shift: ${w2.map((x: any) => (Object.is(x, -0) ? "-0" : `${x}`)).join(",")}`);
+  const w3: any = [0, 5];
+  const w3v = w3 as Child[];
+  console.log(`Child read: ${w3v[0]}`);
+  w3[0] = -0;
+  w3v.sort(childNegFirst);
+  console.log(`Child sort after a change behind: ${w3.map((x: any) => (Object.is(x, -0) ? "-0" : `${x}`)).join(",")}`);
 }
 
 main();

@@ -46,7 +46,14 @@ export function arrayViewSync<T>(v: ArrayView<T>) {
   for (let i = 0; i < n; i++) {
     const cur: any = t[i];
     if (i < seen.length) {
-      if (!mirrorKeeps(seen[i], cur)) {
+      // Exact before a change of the whole array (a sort, a shift): a zero changed to the other
+      // one behind the view is converted again too, so its write-back keeps the original's sign.
+      let again = !mirrorKeeps(seen[i], cur);
+      if (!again && typeof cur === "number" && (cur as number) === 0) {
+        const had: any = seen[i];
+        again = !Object.is(had, cur);
+      }
+      if (again) {
         seen[i] = cur as T;
       }
     } else {
@@ -78,15 +85,19 @@ export function arrayViewFlushFrom<T>(v: ArrayView<T>, from: usize) {
   for (let i: usize = from; i < n; i++) {
     const now: any = seen[i];
     const k = i as number;
-    // Written back when it differs (`!==`), or, for a plain `T` (a number), when both are zeros
-    // and `now` is not the original's zero as the mirror holds it (the original's converted to
-    // `T`), as `Object.is` tells it: `-0` over `+0` and `+0` over `-0` go back from an `f64` or
-    // `f32` view (#3248), and an original `-0` a `u8` view left alone (its mirror holds `0`)
-    // stays `-0`.
+    // Written back when it differs (`!==`), or when both are zeros of signs `Object.is` tells
+    // apart (#3248): for a plain `T` (a number), `now` against the original's zero as the mirror
+    // holds it (converted to `T`), so `-0` over `+0` and `+0` over `-0` go back from an `f64` or
+    // `f32` view and an original `-0` a `u8` view left alone (its mirror holds `0`) stays `-0`;
+    // for a `T` that owns something (a `number | string`), against the original's.
     let back = k >= (t.length as number) || t[k] !== now;
-    if (!back && !needsDrop(seen[i]) && now === 0) {
-      const held: any = t[k] as T;
-      back = !Object.is(now, held);
+    if (!back && typeof now === "number" && (now as number) === 0) {
+      if (needsDrop(seen[i])) {
+        back = !Object.is(t[k], now);
+      } else {
+        const held: any = t[k] as T;
+        back = !Object.is(now, held);
+      }
     }
     if (back) {
       t[k] = now;
@@ -191,13 +202,28 @@ export function arrayViewFlushAt<T>(v: ArrayView<T>, i: usize) {
     return;
   }
   const k = i as number;
-  // The element was just written, and goes back as it is: a plain one with no comparison (a
-  // write over an equal element changes nothing, one of the other zero changes the sign,
-  // #3248), one that owns something unless it is the same as `Object.is` tells it (`v[i].x = 1`
-  // writes into the element, not over it).
   const now: any = seen[i];
-  if (needsDrop(seen[i]) && k < (t.length as number) && Object.is(t[k], now)) {
-    return;
+  // The element was just written, and goes back unless it is the original's own (as
+  // `Object.is` tells it, so the other zero goes back, #3248). A plain one (a number) is
+  // compared only when it is a zero, with the original's zero as the mirror holds it: an
+  // integer view's `0` over an original `-0` is that `-0` read and written back (`v[0] = v[0]`,
+  // a swap). One that owns something is compared with `===` first (`v[i].x = 1` writes into the
+  // element, not over it).
+  if (k < (t.length as number)) {
+    if (needsDrop(seen[i])) {
+      const was: any = t[k];
+      if (was === now && (typeof now !== "number" || Object.is(was, now))) {
+        return;
+      }
+    } else if (typeof now === "number" && (now as number) === 0) {
+      const was: any = t[k];
+      if (was === 0) {
+        const held: any = was as T;
+        if (Object.is(now, held)) {
+          return;
+        }
+      }
+    }
   }
   t[k] = now;
 }

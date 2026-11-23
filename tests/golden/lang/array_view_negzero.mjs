@@ -35,3 +35,26 @@ console.log(`sort, zeros swap: ${Object.is(s[0], -0)} ${Object.is(s[1], -0)} ${s
 const r = [-0, 0];
 r.reverse();
 console.log(`reverse: ${Object.is(r[0], -0)} ${Object.is(r[1], -0)}`);
+
+const show = (xs) => xs.map((x) => (Object.is(x, -0) ? "-0" : `${x}`)).join(",");
+const g2 = [-0, 1];
+const gv = g2;
+gv[0] = gv[0];
+console.log(`i32 view, -0 written back: ${Object.is(g2[0], -0)}`);
+const h2 = [-0, 7, 2, -0];
+h2.reverse();
+console.log(`i32 view reverse: ${show(h2)}`);
+
+const childNegFirst = (p, q) => (Object.is(p, -0) ? -1 : 0) - (Object.is(q, -0) ? -1 : 0);
+const w1 = [0, -0, 0, -0];
+w1.sort(childNegFirst);
+console.log(`Child sort: ${show(w1)}`);
+const w2 = [0, -0, "a"];
+w2.shift();
+console.log(`Child shift: ${show(w2)}`);
+const w3 = [0, 5];
+const w3v = w3;
+console.log(`Child read: ${w3v[0]}`);
+w3[0] = -0;
+w3v.sort(childNegFirst);
+console.log(`Child sort after a change behind: ${show(w3)}`);
