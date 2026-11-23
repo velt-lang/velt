@@ -501,9 +501,26 @@ async function main() {
     std::fs::write(dir.path().join("fetch_follow.velt"), follows).unwrap();
     let exe = build(dir.path(), "fetch_follow");
     assert_eq!(run(&exe, 1), "200 ok\n");
+    let follow = vir(dir.path(), Some("fetch_follow"));
     assert!(
-        vir(dir.path(), Some("fetch_follow")).contains(CLIENT_MARKER),
+        follow.contains(CLIENT_MARKER),
         "an http: fetch that follows redirects must keep the TLS client"
+    );
+    // The client reaches the server's handshake only through `ServerSteps`
+    // (std/net/tls/server_steps.velt), so it doesn't load it, let alone check it (#3634): the
+    // build stamp lists every std file the build read.
+    let stamp = std::fs::read_to_string(exe.with_file_name(format!(
+        "{}.build-stamp",
+        exe.file_name().unwrap().to_string_lossy()
+    )))
+    .unwrap();
+    assert!(
+        stamp.contains("fd_client.velt"),
+        "the stamp lists std's files"
+    );
+    assert!(
+        !stamp.contains("server_handshake.velt"),
+        "a program that only connects with TLS loads the TLS server's handshake"
     );
 }
 

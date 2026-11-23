@@ -151,7 +151,9 @@ through an `extend` of a type of its own; the error classes under `Error` and `I
 (`CryptoError`, `TlsFailure`, `CertificateRefused`) load up front with `fd_hook.velt`; and the
 record layer makes its views without `u8[]`'s `subarray` (`std/lang/typed_array/u8_view.velt`),
 whose `extend` of `Array` would break the rule. A call of a function value is checked against its
-type alone, so a program that never loads the TLS code checks none of it. So a `fetch` that can
+type alone, so a program that never loads the TLS code checks none of it. Likewise the engine
+drives the server's handshake through an interface (`std/net/tls/server_steps.velt`), so a
+program that only connects never loads the server's handshake. So a `fetch` that can
 reach `https:`, which is every `fetch` that follows redirects, is checked once, with the client added in the middle of
 the check. velt/simd's `extend`s of the vector types, which the record layer and the crypto use,
 are the one part left: a `fetch` program loads velt/simd up front anyway, but a program that
