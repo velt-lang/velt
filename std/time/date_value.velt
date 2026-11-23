@@ -1,0 +1,79 @@
+// velt/time (internal): `Date`'s time values (std/prelude/date.velt), as ECMA-262 makes them:
+// TimeClip, the time of calendar fields (MakeDay, MakeTime and MakeDate, with V8's bounds),
+// MakeFullYear, and which date strings are local time.
+
+import { epochMsOf } from "velt/time/civil";
+import { localToUtc } from "velt/time/local";
+
+// The largest distance from the epoch a JS date can be (100,000,000 days).
+const MAX_TIME: f64 = 8640000000000000.0;
+
+// JS's TimeClip: NaN outside ±8.64e15 ms, else the time truncated to whole milliseconds.
+export function timeClip(t: f64): f64 {
+  if (!(t >= -MAX_TIME && t <= MAX_TIME)) {
+    return 0.0 / 0.0;
+  }
+  return Math.trunc(t) + 0.0;
+}
+
+// The largest year and month (0-based, before it rolls into years) V8's MakeDay takes: past them a
+// date is NaN, as in Node, even where a month would bring the year back.
+const MAX_YEAR: f64 = 1000000;
+const MAX_MONTH: f64 = 10000000;
+
+// The epoch time of calendar fields `[year, month 0-11, day, hours, minutes, seconds, ms]`, UTC
+// or local, as ECMA-262's MakeDay, MakeTime and MakeDate compute it in doubles: NaN if one is not
+// finite, if the year or month is past V8's bounds, or if the time is out of range (TimeClip), so
+// a huge field never wraps. The year is taken as given (see `fullYear`).
+export function fromFields(utc: bool, fields: f64[]): f64 {
+  for (const f of fields) {
+    if (!(f - f == 0.0)) {
+      return 0.0 / 0.0;
+    }
+  }
+  const year = Math.trunc(fields[0]);
+  const month = Math.trunc(fields[1]);
+  if (!(Math.abs(year) <= MAX_YEAR && Math.abs(month) <= MAX_MONTH)) {
+    return 0.0 / 0.0;
+  }
+  // Within those bounds the first day of the month is a small integer.
+  const first = epochMsOf(year as i64, (month as i64) + 1, 1, 0, 0, 0, 0) / 86400000;
+  const day = (first as f64) + Math.trunc(fields[2]) - 1.0;
+  const time =
+    Math.trunc(fields[3]) * 3600000.0 +
+    Math.trunc(fields[4]) * 60000.0 +
+    Math.trunc(fields[5]) * 1000.0 +
+    Math.trunc(fields[6]);
+  const t = day * 86400000.0 + time;
+  // Past the range by more than any offset a local time could have: NaN, before the conversion
+  // to whole milliseconds could wrap.
+  if (!(Math.abs(t) <= MAX_TIME + 86400000.0)) {
+    return 0.0 / 0.0;
+  }
+  return timeClip(utc ? t : localToUtc(t as i64) as f64);
+}
+
+// JS's MakeFullYear: a year of 0-99 means 1900-1999. Only the constructor and `Date.UTC` apply
+// it; the setters take the year as given.
+export function fullYear(y: f64): f64 {
+  const whole = Math.trunc(y);
+  return whole >= 0.0 && whole <= 99.0 ? whole + 1900.0 : y;
+}
+
+// Is `s` a date-time without an offset (`2024-01-15T10:30`, `+275760-09-13T00:00`), which JS
+// reads as local time? The date is 10 characters, or 13 with an extended year (a sign and six
+// digits).
+export function isLocalForm(s: string): bool {
+  const text = s.trim();
+  const date: usize = text.startsWith("+") || text.startsWith("-") ? 13 : 10;
+  if (text.length <= date) {
+    return false;
+  }
+  const rest = text.slice(date as i64);
+  const sep = rest.charAt(0);
+  if (sep != "T" && sep != "t" && sep != " ") {
+    return false;
+  }
+  const time = rest.slice(1);
+  return !(time.endsWith("Z") || time.endsWith("z") || time.includes("+") || time.includes("-"));
+}
