@@ -271,7 +271,7 @@ export async function dial(
     return TcpStream.ofHandle(fd);
   }
   const left = CONNECT_MS - ((Date.now() as i64) - start);
-  return await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal);
+  return TcpStream.ofHandle(await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal));
 }
 
 /**

@@ -60,13 +60,15 @@ export async function dialTls(
   const start = wt.now();
   const fd = await dialSocket(addr, signal);
   const spent = ((wt.now() - start) / 1000000) as i64;
-  return await tls(fd, addr, serverName, ca, alpn, (CONNECT_MS as i64) - spent, signal);
+  return TcpStream.ofHandle(
+    await tls(fd, addr, serverName, ca, alpn, (CONNECT_MS as i64) - spent, signal),
+  );
 }
 
 /**
  * The TLS client's handshake on connected socket `fd` to `addr` (the reactor's, or the runtime's
- * on an OS without a reactor), as `dialTls` describes, within `left` milliseconds; on a failure
- * the socket is closed.
+ * on an OS without a reactor), as `dialTls` describes, within `left` milliseconds: the TLS
+ * stream's handle (`TlsOn`); on a failure the socket is closed.
  */
 export async function tlsOn(
   fd: u64,
@@ -76,10 +78,10 @@ export async function tlsOn(
   alpn: string,
   left: i64,
   signal: AbortSignal | null,
-): Promise<TcpStream, IoError | AbortError> {
+): Promise<u64, IoError | AbortError> {
   const r = await hookCall("sched_tls_handshake", fd, serverName, ca, alpn, left, signal);
   if (r.code === 0) {
-    return TcpStream.ofHandle(r.value);
+    return r.value;
   }
   if (signal != null) {
     signal.throwIfAborted();

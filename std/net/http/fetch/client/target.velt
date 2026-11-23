@@ -12,17 +12,18 @@
 // query of bytes the parser neither percent-encodes nor rewrites, without dot segments.
 
 import { IoError } from "velt/io/error";
-import { TcpStream } from "velt/net/tcp_stream";
 import { URL } from "velt/net/url";
 import { AbortError, AbortSignal } from "velt/task";
 
 /**
- * The TLS client's handshake for `https:` on connected socket `fd` to `addr`
- * (std/net/http/fetch/client/dial_sched.velt `tlsOn`): `fetch` hands it to the requests it makes,
+ * The TLS client's handshake for `https:` on connected socket `fd` to `addr`, resolving to the
+ * TLS stream's handle (std/net/http/fetch/client/dial_sched.velt `tlsOn`; a handle, not a
+ * `TcpStream`: a `TcpStream` in this field's function type made a JS host's check of a Worker
+ * that serves and fetches take minutes): `fetch` hands it to the requests it makes,
  * and `fetchPlain`, which takes only `http:` URLs, hands none, so a program whose every `fetch`
  * is of an `http:` literal has no TLS client (fetch.velt).
  */
-export type TlsOn = (fd: u64, addr: string, serverName: string, ca: string, alpn: string, left: i64, signal: AbortSignal | null) => Promise<TcpStream, IoError | AbortError>;
+export type TlsOn = (fd: u64, addr: string, serverName: string, ca: string, alpn: string, left: i64, signal: AbortSignal | null) => Promise<u64, IoError | AbortError>;
 
 /** An `http:` or `https:` URL without a fragment, taken apart for a request. */
 export class Target {
