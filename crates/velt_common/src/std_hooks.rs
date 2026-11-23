@@ -59,9 +59,8 @@ mod module_hooks;
 mod decorator_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
-// (`module_hooks.rs`), the string methods' (`string_hooks.rs`), `console.log`'s line breaking's
-// (`inspect_layout_hooks.rs`) and the weak core's (`weak_hooks.rs`), given to `hooks!` together.
+// The table: these rows, then those of `decorator_hooks.rs`, `module_hooks.rs`, `string_hooks.rs`,
+// `inspect_layout_hooks.rs` (`console.log`'s line breaking) and `weak_hooks.rs`, all in `hooks!`.
 with_decorator_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
