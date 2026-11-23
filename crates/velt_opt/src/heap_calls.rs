@@ -41,8 +41,9 @@ const HOOKS: [(&str, &str); 3] = [
 
 use velt_vir::heap::{ALLOC_WRAPPER, REALLOC_WRAPPER};
 
-/// The allocator externs `program` declares, each with the hook the program has for it.
-pub(crate) fn pairs(program: &Program) -> Vec<(ExternId, FuncId)> {
+/// The allocator externs `program` declares, each with the hook the program has for it: none
+/// where lowering put no hooks in the program (`velt_vir::LowerOptions::heap_hooks`).
+pub fn pairs(program: &Program) -> Vec<(ExternId, FuncId)> {
     if program.externs.is_empty() {
         return vec![];
     }
@@ -58,6 +59,23 @@ pub(crate) fn pairs(program: &Program) -> Vec<(ExternId, FuncId)> {
         out.push((ExternId(e as u32), FuncId(f as u32)));
     }
     out
+}
+
+/// Std's heap hooks that take the place of the allocator externs `f` calls at the end ([`run`]),
+/// given the program's [`pairs`]: what `f`'s code reaches beyond its own calls, for whoever
+/// compiles a function apart from the program it was lowered in (veltc's std cache,
+/// `dead_funcs`).
+pub fn hooks_of(f: &Function, pairs: &[(ExternId, FuncId)]) -> Vec<FuncId> {
+    (pairs.iter())
+        .filter(|&&(e, _)| calls_extern(f, e))
+        .map(|&(_, h)| h)
+        .collect()
+}
+
+/// Whether `f` calls extern `e`.
+pub(crate) fn calls_extern(f: &Function, e: ExternId) -> bool {
+    (f.blocks.iter())
+        .any(|b| matches!(b.term, Terminator::Call { callee: Callee::Extern(x), .. } if x == e))
 }
 
 /// Turns every call of an allocator extern that has its hook into a call of the hook; whether

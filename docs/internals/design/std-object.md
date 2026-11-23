@@ -213,16 +213,18 @@ it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`):
   another build's garbage collection or `velt clean --cache` cannot fail it. An object that
   cannot be pinned is a miss.
 - **Filled** by `velt cache warm`, which compiles every prebuilt module's object for the default
-  CPU and for `native`, and by `VELT_PREBUILT_HOOKS=fill` after a build that missed.
+  CPU (as debug and release builds link it) and for `native`, and by `VELT_PREBUILT_HOOKS=fill` after a build that missed.
   `VELT_PREBUILT_HOOKS=0` turns prebuilt objects off. WebAssembly loads the module.
 - **Carried by the toolchain.** A cached object's key names the machine (the compiler
   executable's size and time, the absolute std root, each file's size and time), so it cannot be
   handed to another one, and a build before the warm-up, without clang, in CI or with the cache
   off compiled the module into the program. A release therefore carries the objects for each
   target's default CPU in `lib/hooks/<target>` (`std_cache/shipped.rs`), made when it is packaged
-  (`velt cache hooks`, from `scripts/package.*`). Their manifest names nothing of a machine: the
-  compiler's version line, the target, and each std file as its content hash and its path below
-  the std root. An installed `velt` that finds no object in the cache takes the toolchain's when
+  (`velt cache hooks`, from `scripts/package.*`), once per allocator: calling the runtime's
+  allocator, and mimalloc directly as a release build's own code does (rt_abi.md "Memory"; a
+  cached object's lookup key names the allocator too). Their manifest names nothing of a machine:
+  the compiler's version line, the target, the allocator, and each std file as its content hash
+  and its path below the std root. An installed `velt` that finds no object in the cache takes the toolchain's when
   the version line is its own and every listed file hashes as recorded, which is what keeps it
   from linking an object against std sources that were edited. With the cache on it then stores
   the object under its own key, and later builds find it by sizes and times as any other; with

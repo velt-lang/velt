@@ -53,6 +53,8 @@ semver = "1.0.28"
 # Target packs (.tar.gz) for the `velt target add` tests.
 flate2 = "1.1.10"
 tar = "0.4"
+# Reading the std cache's objects' undefined symbols (tests/heap_hooks.rs).
+object = { version = "0.39", default-features = false, features = ["read", "std"] }
 lsp-server = "0.10.0"
 lsp-types = "0.95"
 tempfile = "3.27.0"

@@ -58,7 +58,7 @@ fn a_manifest_reads_back_and_names_nothing_of_the_machine() {
         &built(&std_root, &RELS),
         &std_root,
         "velt 1 (h t)",
-        "t",
+        ("t", false),
     )
     .unwrap();
     let text = std::fs::read_to_string(dir.join("m.manifest")).unwrap();
@@ -68,6 +68,7 @@ fn a_manifest_reads_back_and_names_nothing_of_the_machine() {
         (manifest.compiler.as_str(), manifest.target.as_str()),
         ("velt 1 (h t)", "t")
     );
+    assert_eq!(manifest.allocator, "runtime");
     let paths: Vec<&str> = manifest.files.iter().map(|(_, p)| p.as_str()).collect();
     assert_eq!(paths, RELS);
     // No path of this machine, no size, no time: the hash and the path below std alone.
@@ -79,7 +80,7 @@ fn a_manifest_reads_back_and_names_nothing_of_the_machine() {
     assert!(text.ends_with("\nend\n"), "{text}");
     // Another form is no manifest.
     assert_eq!(
-        Manifest::parse(&text.replacen("module 2", "module 1", 1)),
+        Manifest::parse(&text.replacen("module 3", "module 2", 1)),
         None
     );
     assert_eq!(Manifest::parse(&format!("{text}what\n")), None);
@@ -99,12 +100,12 @@ fn a_manifest_cut_short_or_listing_no_file_is_not_read() {
         &built(&std_root, &RELS),
         &std_root,
         "velt 1",
-        "t",
+        ("t", false),
     )
     .unwrap();
     let path = dir.join("m.manifest");
     let whole = std::fs::read_to_string(&path).unwrap();
-    let found = || find(&dir, "m", &std_root, "velt 1", "t").is_some();
+    let found = || find(&dir, "m", &std_root, "velt 1", ("t", false)).is_some();
     assert!(found());
     let lines: Vec<&str> = whole.lines().collect();
     for keep in 1..lines.len() {
@@ -135,11 +136,11 @@ fn a_damaged_object_is_not_taken() {
         &built(&std_root, &RELS),
         &std_root,
         "velt 1",
-        "t",
+        ("t", false),
     )
     .unwrap();
     let object = dir.join("m.o");
-    let found = || find(&dir, "m", &std_root, "velt 1", "t");
+    let found = || find(&dir, "m", &std_root, "velt 1", ("t", false));
     assert_eq!(found().map(|s| s.bytes), Some(b"an object".to_vec()));
     for damaged in [&b"an obj"[..], b"", b"garbage!!"] {
         std::fs::write(&object, damaged).unwrap();
@@ -160,7 +161,15 @@ fn a_file_outside_std_is_refused() {
     let mut b = built(&std_root, &RELS);
     b.files
         .push(super::super::prebuilt::file_entry(&outside, "x"));
-    let err = write(&tmp.path().join("out"), "m", &b, &std_root, "c", "t").unwrap_err();
+    let err = write(
+        &tmp.path().join("out"),
+        "m",
+        &b,
+        &std_root,
+        "c",
+        ("t", false),
+    )
+    .unwrap_err();
     assert!(err.contains("is not below the std root"), "{err}");
 }
 
@@ -171,8 +180,8 @@ fn an_object_of_this_toolchain_and_these_sources_is_found() {
     let (tmp, std_root) = std_with("found", &FILES);
     let dir = tmp.path().join("prefix/lib/hooks/t");
     let b = built(&std_root, &RELS);
-    write(&dir, "m", &b, &std_root, "velt 1", "t").unwrap();
-    let found = find(&dir, "m", &std_root, "velt 1", "t").expect("found");
+    write(&dir, "m", &b, &std_root, "velt 1", ("t", false)).unwrap();
+    let found = find(&dir, "m", &std_root, "velt 1", ("t", false)).expect("found");
     assert_eq!(found.object, dir.join("m.o"));
     assert_eq!(found.entries, b.entries);
     assert_eq!(found.files, b.files);
@@ -183,13 +192,13 @@ fn an_object_of_this_toolchain_and_these_sources_is_found() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, src).unwrap();
     }
-    let moved = find(&dir, "m", &copy, "velt 1", "t").expect("found");
+    let moved = find(&dir, "m", &copy, "velt 1", ("t", false)).expect("found");
     assert!(moved
         .files
         .iter()
         .all(|f| f.contains(&copy.display().to_string())));
     assert_eq!(
-        find(&dir, "other", &std_root, "velt 1", "t").map(|f| f.object),
+        find(&dir, "other", &std_root, "velt 1", ("t", false)).map(|f| f.object),
         None
     );
 }
@@ -206,11 +215,12 @@ fn anything_else_is_not_found() {
         &built(&std_root, &RELS),
         &std_root,
         "velt 1",
-        "t",
+        ("t", false),
     )
     .unwrap();
-    let found =
-        |compiler: &str, target: &str| find(&dir, "m", &std_root, compiler, target).is_some();
+    let found = |compiler: &str, target: &str| {
+        find(&dir, "m", &std_root, compiler, (target, false)).is_some()
+    };
     assert!(found("velt 1", "t"));
     assert!(!found("velt 2", "t"));
     assert!(!found("velt 1", "u"));
@@ -224,6 +234,29 @@ fn anything_else_is_not_found() {
     std::fs::write(&source, FILES[1].1).unwrap();
     std::fs::remove_file(dir.join("m.o")).unwrap();
     assert!(!found("velt 1", "t"));
+}
+
+/// Each allocator's object is its own pair of files (`m.o`, `m.mimalloc.o`), found only by a
+/// build that allocates the same way: one allocating through mimalloc directly never links an
+/// object that calls the runtime's allocator, nor the other way round (driver/heap_hooks.rs).
+#[test]
+fn an_object_is_found_only_by_builds_that_allocate_as_it_does() {
+    let (tmp, std_root) = std_with("allocator", &FILES);
+    let dir = tmp.path().join("prefix/lib/hooks/t");
+    let found = |hooks: bool| find(&dir, "m", &std_root, "velt 1", ("t", hooks)).is_some();
+    let b = built(&std_root, &RELS);
+    write(&dir, "m", &b, &std_root, "velt 1", ("t", true)).unwrap();
+    assert!(dir.join("m.mimalloc.o").is_file() && !dir.join("m.o").exists());
+    assert!(found(true));
+    assert!(!found(false));
+    write(&dir, "m", &b, &std_root, "velt 1", ("t", false)).unwrap();
+    assert!(found(false));
+    // A manifest that says another allocator than its file name is not taken.
+    let (runtime, mimalloc) = (dir.join("m.manifest"), dir.join("m.mimalloc.manifest"));
+    std::fs::copy(&runtime, &mimalloc).unwrap();
+    std::fs::copy(dir.join("m.o"), dir.join("m.mimalloc.o")).unwrap();
+    assert!(!found(true));
+    assert!(found(false));
 }
 
 /// A manifest's path is one below the std root, or the object is not taken: a path out of it
@@ -255,7 +288,7 @@ fn a_path_out_of_the_std_root_is_not_followed() {
         &built(&std_root, &RELS),
         &std_root,
         "velt 1",
-        "t",
+        ("t", false),
     )
     .unwrap();
     let manifest = dir.join("m.manifest");
@@ -265,7 +298,7 @@ fn a_path_out_of_the_std_root_is_not_followed() {
         text.replace(RELS[1], "../std/lang/number/digits.velt"),
     )
     .unwrap();
-    assert!(find(&dir, "m", &std_root, "velt 1", "t").is_none());
+    assert!(find(&dir, "m", &std_root, "velt 1", ("t", false)).is_none());
 }
 
 /// The objects are an installed toolchain's: `<prefix>/bin/velt` with `<prefix>/std`, and only

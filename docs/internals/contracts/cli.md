@@ -826,18 +826,22 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
 - `cache hooks --out <dir> [--target <triple>]` (additive, #3262; for packaging a release, not in
   `velt help`): compiles the object of every prebuilt hook module from the std this `velt` finds,
   for `<triple>` (default: the host) and its default CPU, and writes `<dir>/<triple>/<module
-  entry>.o` and `<module entry>.manifest`, `<dir>` being a toolchain's `lib/hooks`. The build
+  entry>.o` and `<module entry>.manifest`, `<dir>` being a toolchain's `lib/hooks`; and again as
+  `<module entry>.mimalloc.o` and `<module entry>.mimalloc.manifest`, allocating through mimalloc
+  directly as a release build's own code does (rt_abi.md "Memory"). The build
   cache is neither read nor written. It needs clang, as `velt cache warm`'s objects do. A module
   whose object cannot be made → `error: some prebuilt hook modules did not compile: …`, exit 1;
   otherwise `velt: wrote <n> prebuilt hook modules to <dir>/<triple>` on stderr. The test module
   of prebuilt hooks (`lang_hooks_prebuilt_probe`) is not written. The manifest: `velt shipped hook
-  module 2`, `compiler <version line>`, `target <triple>`, `object <content hash of the .o>`,
+  module 3`, `compiler <version line>`, `target <triple>`, `allocator runtime` or `allocator
+  mimalloc`, `object <content hash of the .o>`,
   then `entry` and `tls` lines as a cached manifest has them, one `file <content hash>\t<path
   below the std root, /-separated>` per std file the object's world loaded (at least one), and
   `end`. An installed `velt` (`<prefix>/bin/velt` with `<prefix>/std`) that finds no object of a
   module in the build cache, or runs with the cache off, takes `<prefix>/lib/hooks/<target>`'s
   when the manifest is whole (it ends with `end`), its version line is this `velt`'s, the target
-  is the build's, the object hashes as recorded and every listed file hashes as recorded; with
+  is the build's, the allocator is the one the build's own code calls (the `.mimalloc` pair for a
+  build that calls mimalloc directly), the object hashes as recorded and every listed file hashes as recorded; with
   the cache on it stores that object under its own key. The statistics then say `velt: prebuilt
   hooks: <module>: object found (shipped)`.
 - `completions <shell>`: prints a completion script for bash, zsh, fish or PowerShell

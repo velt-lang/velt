@@ -42,12 +42,14 @@ pub(super) struct Built {
 }
 
 /// Compile the object of module `module_entry` (a std module table entry) for `target` and
-/// `cpu`, from the std at `std_root`.
+/// `cpu`, from the std at `std_root`; with `heap_hooks`, allocating through mimalloc directly as
+/// the builds that link it do (driver/heap_hooks.rs), else through the runtime's allocator.
 pub(super) fn build(
     module_entry: &str,
     std_root: &Path,
     target: &str,
     cpu: Option<&str>,
+    heap_hooks: bool,
 ) -> Result<Built, String> {
     let hooks: Vec<usize> = prebuilt::of_module(module_entry).map(|(i, _)| i).collect();
     let first = hooks
@@ -91,10 +93,10 @@ pub(super) fn build(
         no_cpu_extensions: false,
         counted_seed: None,
         jit: false,
-        // The object is shared by every release build, whichever runtime it links (a debug one
-        // checks and counts every block: driver/heap_hooks.rs), so it keeps the runtime's
-        // allocator.
-        heap_hooks: false,
+        // Only builds that allocate through mimalloc directly link such an object (its lookup
+        // key and a shipped object's manifest say which allocator it calls): a debug runtime
+        // checks and counts every block (driver/heap_hooks.rs).
+        heap_hooks,
     };
     let mut program = velt_vir::lower_checked(&hir, &lower).map_err(|d| {
         let shown: Vec<String> = d.iter().map(|d| d.render(&sess.sm)).collect();

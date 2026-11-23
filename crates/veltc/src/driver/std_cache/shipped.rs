@@ -10,17 +10,21 @@
 //! ```text
 //! <prefix>/lib/hooks/<target>/<module entry>.o
 //! <prefix>/lib/hooks/<target>/<module entry>.manifest
+//! <prefix>/lib/hooks/<target>/<module entry>.mimalloc.o
+//! <prefix>/lib/hooks/<target>/<module entry>.mimalloc.manifest
 //! ```
 //!
 //! for the target's default CPU (what every debug build links, and a release build without
-//! `--cpu`). The manifest names nothing of a machine: the compiler's version line, the target,
-//! the entry points and thread-local values as a cached manifest lists them, and each std file
-//! the object's world loaded as its content hash and its path below the std root.
+//! `--cpu`). Each module comes twice: allocating through the runtime's allocator (debug builds),
+//! and through mimalloc directly, as a release build's own code does (driver/heap_hooks.rs).
+//! The manifest names nothing of a machine: the compiler's version line, the target, the
+//! allocator, the entry points and thread-local values as a cached manifest lists them, and each
+//! std file the object's world loaded as its content hash and its path below the std root.
 //!
 //! **Found** ([`find`]) by an installed `velt` only (`<prefix>/bin/velt` with `<prefix>/std` as
 //! its std root: a development build has no prefix), when the manifest's version line is this
-//! compiler's, its target the build's, and every file's hash that of the std file as it is now.
-//! The last is what keeps an object from being linked against std sources that were edited: it
+//! compiler's, its target and allocator the build's, and every file's hash that of the std file
+//! as it is now. The last is what keeps an object from being linked against std sources that were edited: it
 //! reads and hashes each of those files. The finder then stores the object in the build cache
 //! under this install's own key (`prebuilt::Finder`), so later builds find it there by sizes
 //! and times alone; with the cache off, every build makes this check.
@@ -36,9 +40,27 @@ use velt_common::std_hooks::HOOKS;
 use super::prebuilt_object::Built;
 
 /// The first line of a shipped manifest; one of another form finds nothing.
-const HEADER: &str = "velt shipped hook module 2";
+const HEADER: &str = "velt shipped hook module 3";
 /// Its last line: a manifest cut short (a copy or an unpack that stopped) lacks it.
 const END: &str = "end";
+
+/// What a manifest's `allocator` line names: what an object compiled with `heap_hooks` (or
+/// without) allocates through. Also a part of a cached object's lookup key (`prebuilt`).
+pub(super) fn allocator(heap_hooks: bool) -> &'static str {
+    match heap_hooks {
+        true => "mimalloc",
+        false => "runtime",
+    }
+}
+
+/// The file name of module `module_entry`'s object or manifest (`ext`) with `heap_hooks` or
+/// without.
+fn file_name(module_entry: &str, heap_hooks: bool, ext: &str) -> String {
+    match heap_hooks {
+        true => format!("{module_entry}.mimalloc.{ext}"),
+        false => format!("{module_entry}.{ext}"),
+    }
+}
 
 /// A shipped object that may be linked: the object, its bytes (as the manifest's hash says they
 /// are), and what its manifest says, with its std files as build-stamp `file` entries of the
@@ -57,6 +79,8 @@ pub(super) struct Shipped {
 struct Manifest {
     compiler: String,
     target: String,
+    /// What the object allocates through ([`allocator`]).
+    allocator: String,
     /// The object's content hash: a damaged object (cut short, emptied, replaced) is no match.
     object: String,
     entries: Vec<String>,
@@ -75,6 +99,7 @@ impl Manifest {
         }
         let compiler = lines.next()?.strip_prefix("compiler ")?.to_string();
         let target = lines.next()?.strip_prefix("target ")?.to_string();
+        let allocator = lines.next()?.strip_prefix("allocator ")?.to_string();
         let object = lines.next()?.strip_prefix("object ")?.to_string();
         let (mut entries, mut tls, mut files) = (vec![], vec![], vec![]);
         for line in lines {
@@ -96,6 +121,7 @@ impl Manifest {
         Some(Manifest {
             compiler,
             target,
+            allocator,
             object,
             entries,
             tls,
@@ -105,8 +131,8 @@ impl Manifest {
 
     fn render(&self) -> String {
         let mut s = format!(
-            "{HEADER}\ncompiler {}\ntarget {}\nobject {}\n",
-            self.compiler, self.target, self.object
+            "{HEADER}\ncompiler {}\ntarget {}\nallocator {}\nobject {}\n",
+            self.compiler, self.target, self.allocator, self.object
         );
         for e in &self.entries {
             s.push_str(&format!("entry {e}\n"));
@@ -141,19 +167,22 @@ pub(super) fn dir_of(exe: &Path, std_root: &Path, target: &str) -> Option<PathBu
 }
 
 /// The shipped object of module `module_entry` in `dir`, when it is this compiler's (version
-/// line `compiler`), for `target`, and compiled from the std files under `std_root` as they are
-/// now (module docs).
+/// line `compiler`), for `target`, allocates as a build with `heap_hooks` (or without) does, and
+/// was compiled from the std files under `std_root` as they are now (module docs).
 pub(super) fn find(
     dir: &Path,
     module_entry: &str,
     std_root: &Path,
     compiler: &str,
-    target: &str,
+    (target, heap_hooks): (&str, bool),
 ) -> Option<Shipped> {
-    let object = dir.join(format!("{module_entry}.o"));
-    let text = std::fs::read_to_string(dir.join(format!("{module_entry}.manifest"))).ok()?;
-    let manifest = Manifest::parse(&text)?;
-    if manifest.compiler != compiler || manifest.target != target {
+    let object = dir.join(file_name(module_entry, heap_hooks, "o"));
+    let manifest_path = dir.join(file_name(module_entry, heap_hooks, "manifest"));
+    let manifest = Manifest::parse(&std::fs::read_to_string(manifest_path).ok()?)?;
+    if manifest.compiler != compiler
+        || manifest.target != target
+        || manifest.allocator != allocator(heap_hooks)
+    {
         return None;
     }
     // The object as it was written: anything else is not linked, nor stored in the cache.
@@ -193,14 +222,14 @@ fn below(std_root: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 /// Write module `module_entry`'s object `built` (compiled from the std at `std_root` for
-/// `target`) and its manifest into `dir`, as [`find`] reads them.
+/// `target`, with `heap_hooks` or without) and its manifest into `dir`, as [`find`] reads them.
 pub(super) fn write(
     dir: &Path,
     module_entry: &str,
     built: &Built,
     std_root: &Path,
     compiler: &str,
-    target: &str,
+    (target, heap_hooks): (&str, bool),
 ) -> Result<(), String> {
     let mut files = vec![];
     for entry in &built.files {
@@ -209,6 +238,7 @@ pub(super) fn write(
     let manifest = Manifest {
         compiler: compiler.to_string(),
         target: target.to_string(),
+        allocator: allocator(heap_hooks).to_string(),
         object: vpm::probe::content_hash(&built.object),
         entries: built.entries.clone(),
         tls: built.tls.clone(),
@@ -216,9 +246,9 @@ pub(super) fn write(
     };
     let said = |path: &Path, e: std::io::Error| format!("{}: {e}", path.display());
     std::fs::create_dir_all(dir).map_err(|e| said(dir, e))?;
-    let object = dir.join(format!("{module_entry}.o"));
+    let object = dir.join(file_name(module_entry, heap_hooks, "o"));
     std::fs::write(&object, &built.object).map_err(|e| said(&object, e))?;
-    let path = dir.join(format!("{module_entry}.manifest"));
+    let path = dir.join(file_name(module_entry, heap_hooks, "manifest"));
     std::fs::write(&path, manifest.render()).map_err(|e| said(&path, e))
 }
 
@@ -239,8 +269,8 @@ fn relative(entry: &str, std_root: &Path) -> Result<(String, String), String> {
 }
 
 /// `velt cache hooks --out <hooks>`: compile the object of every module with a `prebuilt` hook,
-/// from the std this `velt` finds, for `target`'s default CPU, and write each with its manifest
-/// into `<hooks>/<target>`, as a toolchain carries them in `lib/hooks`. Per module: its name, and
+/// from the std this `velt` finds, for `target`'s default CPU, once per allocator, and write each
+/// with its manifest into `<hooks>/<target>`, as a toolchain carries them in `lib/hooks`. Per module: its name, and
 /// why it failed if it did. The build cache is neither read nor written.
 pub(crate) fn ship(hooks: &Path, target: &str) -> Vec<(String, Result<(), String>)> {
     let dir = &hooks.join(target);
@@ -255,8 +285,11 @@ pub(crate) fn ship(hooks: &Path, target: &str) -> Vec<(String, Result<(), String
     let compiler = crate::commands::version::version_line();
     let each = |m: &'static str| -> Result<(), String> {
         let std_root = velt_loader::std_root().ok_or("no std root")?;
-        let built = super::prebuilt_object::build(m, &std_root, target, None)?;
-        write(dir, m, &built, &std_root, &compiler, target)
+        for heap_hooks in [false, true] {
+            let built = super::prebuilt_object::build(m, &std_root, target, None, heap_hooks)?;
+            write(dir, m, &built, &std_root, &compiler, (target, heap_hooks))?;
+        }
+        Ok(())
     };
     modules
         .into_iter()

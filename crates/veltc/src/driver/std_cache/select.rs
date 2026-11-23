@@ -308,14 +308,22 @@ pub(super) fn reasons(
 
 /// Function `i` and every function compiled into it at `depth` ([`inlines`]) that it reaches
 /// through such functions: what its code compiled on its own may inline. In a deterministic
-/// order, `i` first.
+/// order, `i` first. A call of the runtime's allocator reaches std's heap hook for it where the
+/// program has one (`velt_opt::heap_hook_pairs`): the optimizer puts the hook in the call's
+/// place at the end, in an object as in the program, so its key holds the hooks' code and an
+/// object compiled without them never serves a build that has them, nor the other way round.
 pub(super) fn inlinable(program: &vir::Program, i: usize, depth: Depth) -> Vec<usize> {
+    let heap = velt_opt::heap_hook_pairs(program);
     let mut seen = HashSet::from([i]);
     let mut order = vec![i];
     let mut n = 0;
     while let Some(&j) = order.get(n) {
         n += 1;
-        for c in referenced(&program.funcs[j]) {
+        let f = &program.funcs[j];
+        let hooks = velt_opt::heap_hooks_of(f, &heap)
+            .into_iter()
+            .map(|h| h.0 as usize);
+        for c in referenced(f).into_iter().chain(hooks) {
             let f = &program.funcs[c];
             if f.linkage == Linkage::Internal && inlines(f, depth) && seen.insert(c) {
                 order.push(c);

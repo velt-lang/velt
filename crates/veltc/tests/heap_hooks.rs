@@ -10,6 +10,10 @@
 //! builds, not debug ones, nor a release build asked to count blocks (`VELT_RC_STATS=1`), nor one
 //! linked against a debug runtime, whose checks and counts are asked for when the program runs.
 //!
+//! Std code a release build links as an object compiled before it (the std cache's `@noInline`
+//! functions, prebuilt hook modules) allocates as the build's own code does: its objects are
+//! compiled and found per allocator.
+//!
 //! The runtime these tests link is the profile's own: a debug one under `cargo test`. The probes
 //! set `VELT_HEAP_HOOKS=1`, which makes a release build call the hooks with it too (they never
 //! run with `VELT_RT_DEBUG_ALLOC` or `VELT_RC_STATS` set).
@@ -18,6 +22,7 @@ use std::path::Path;
 use std::process::Output;
 
 mod no_window;
+mod runtime_support;
 mod test_dir;
 
 const PROBE: &str = r#"
@@ -452,4 +457,116 @@ fn a_release_build_on_a_debug_runtime_runs_with_its_checks_and_counts() {
     // At least one block per Point, closure and array made in the loop, each freed.
     assert!(allocated >= 3000, "{stderr}");
     assert_eq!(allocated, freed, "{stderr}");
+}
+
+/// A program whose release build links std objects that allocate: the std cache's `@noInline`
+/// functions (`split`, `JSON.parse`, the set's growth, ...) and prebuilt hook modules (string
+/// case, trimming, replacing).
+const STD_OBJECTS: &str = r#"
+function main() {
+  const parts = ("a,b,c," + Date.now()).split(",");
+  const s = parts.join("-").replaceAll("-", "+").toUpperCase().padStart(30, "*");
+  const v = JSON.parse("[1,2,3]") as number[];
+  const arr = [5, 3, 9, 1];
+  arr.sort((a, b) => a - b);
+  const t = new TextEncoder().encode(s);
+  const set = new Set<string>(parts);
+  const doubled = [1, 2].map((x) => x * 2);
+  console.log(s.length, v.length, arr[0], t.length, set.size, s.trim().length, doubled.length);
+}
+"#;
+
+/// Per object the build cache at `cache` holds of `kind` (`stdfn`: the std cache's functions,
+/// `stdhook`: prebuilt hook modules): whether it calls the runtime's allocator, and whether
+/// mimalloc's.
+fn allocators_of(cache: &Path, kind: &str) -> Vec<(bool, bool)> {
+    use object::{Object, ObjectSymbol};
+    let mut files = vec![];
+    let mut dirs = vec![cache.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.components().any(|c| c.as_os_str() == kind) {
+                files.push(path);
+            }
+        }
+    }
+    let mut out = vec![];
+    for path in files {
+        let bytes = std::fs::read(&path).unwrap();
+        let Ok(file) = object::File::parse(&*bytes) else {
+            continue;
+        };
+        let undefined: Vec<String> = (file.symbols())
+            .filter(|s| s.is_undefined())
+            .filter_map(|s| s.name().ok())
+            .map(|n| n.strip_prefix('_').unwrap_or(n).to_string())
+            .collect();
+        let calls = |names: &[&str]| undefined.iter().any(|u| names.contains(&u.as_str()));
+        let runtime = calls(&["velt_rt_alloc", "velt_rt_realloc", "velt_rt_free"]);
+        let mimalloc = calls(&["mi_malloc", "mi_malloc_aligned", "mi_realloc", "mi_free"]);
+        out.push((runtime, mimalloc));
+    }
+    out
+}
+
+/// `velt run --release` of [`STD_OBJECTS`] storing the std objects it links in the build cache
+/// `dir/<cache>` (`VELT_STD_OBJECT_FILL`), with `hooks` for `VELT_HEAP_HOOKS`.
+fn fill_std_objects(dir: &test_dir::TestDir, cache: &str, hooks: &str) {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    std::fs::write(dir.path().join("std_objects.velt"), STD_OBJECTS).unwrap();
+    let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["run", "--release", "std_objects.velt"])
+        .env(
+            "VELT_STD",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        )
+        .env("VELT_BUILD_CACHE", dir.path().join(cache))
+        .env("VELT_STD_OBJECT_FILL", "1")
+        .env("VELT_HEAP_HOOKS", hooks)
+        .env("VELT_BUILD_STAMP", "off")
+        .env_remove("VELT_STD_OBJECT")
+        .env_remove("VELT_PREBUILT_HOOKS")
+        .env_remove("VELT_RC_STATS")
+        .env_remove("VELT_RT_DEBUG_ALLOC")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    let expected = "30 3 1 30 4 30 2\n";
+    assert_eq!(text("run", &out), expected);
+}
+
+#[test]
+fn std_objects_allocate_as_the_build_does() {
+    let dir = test_dir::TestDir::new();
+    // With the hooks, nothing std compiled ahead calls the runtime's allocator: it would
+    // bypass mimalloc in a release binary.
+    fill_std_objects(&dir, "hooks", "1");
+    for kind in ["stdfn", "stdhook"] {
+        let objects = allocators_of(&dir.path().join("hooks"), kind);
+        assert!(!objects.is_empty(), "no {kind} objects stored");
+        assert!(objects.iter().all(|&(rt, _)| !rt), "{kind}: {objects:?}");
+        assert!(objects.iter().any(|&(_, mi)| mi), "{kind}: {objects:?}");
+    }
+    // Without them, nothing calls mimalloc directly: a debug runtime checks and counts every
+    // block (driver/heap_hooks.rs). The objects of a build with hooks are another key, so a
+    // build without them in the same cache neither links them nor finds its own.
+    fill_std_objects(&dir, "hooks", "0");
+    for kind in ["stdfn", "stdhook"] {
+        let objects = allocators_of(&dir.path().join("hooks"), kind);
+        let runtime = objects.iter().filter(|&&(rt, mi)| rt && !mi).count();
+        assert!(runtime > 0, "{kind}: {objects:?}");
+        assert!(
+            objects.iter().all(|&(rt, mi)| !(rt && mi)),
+            "{kind}: {objects:?}"
+        );
+    }
+    fill_std_objects(&dir, "runtime", "0");
+    for kind in ["stdfn", "stdhook"] {
+        let objects = allocators_of(&dir.path().join("runtime"), kind);
+        assert!(objects.iter().all(|&(_, mi)| !mi), "{kind}: {objects:?}");
+        assert!(objects.iter().any(|&(rt, _)| rt), "{kind}: {objects:?}");
+    }
 }

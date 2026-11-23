@@ -15,8 +15,9 @@
 //! **Key.** Nothing about a program enters it: only numbers and strings cross, and the object is
 //! compiled in a world of its own (a root that calls the hooks and nothing else). A lookup key
 //! names the compiler (`build_cache::compiler_identity`), LLVM's optimization flag, the target,
-//! the CPU (a debug build's: the target's default, as for the std cache's debug objects), the std
-//! root and the module. Under it, a manifest (`<cache>/warm/hooks/<lookup key>`, rewritten by each
+//! the CPU (a debug build's: the target's default, as for the std cache's debug objects), the
+//! allocator its code calls (mimalloc directly where the build's own code does, else the
+//! runtime's: driver/heap_hooks.rs), the std root and the module. Under it, a manifest (`<cache>/warm/hooks/<lookup key>`, rewritten by each
 //! fill) lists every std file the object's world loaded, as build-stamp `file` entries (hash, size
 //! and time), each entry point's VIR signature, and the object's own key, which also covers those
 //! files' hashes. A manifest whose files changed (a size or time that differs, then a hash) finds
@@ -101,6 +102,9 @@ pub(crate) struct Finder {
     cpu: Option<String>,
     /// The build links what it finds: each object is pinned as it is found ([`pin`]).
     linking: bool,
+    /// The objects allocate through mimalloc directly, as the build's own code does
+    /// (driver/heap_hooks.rs), rather than through the runtime's allocator.
+    heap_hooks: bool,
     /// Per module (its table entry): what was found, `None` for a miss.
     seen: Mutex<HashMap<&'static str, Option<Found>>>,
 }
@@ -141,8 +145,13 @@ impl Finder {
         if cache.is_none() && shipped.is_none() {
             return None;
         }
+        // As the build's own code allocates (an object of the other kind is another key): only
+        // an executable's link has a runtime to ask.
+        let heap_hooks =
+            linking && crate::driver::heap_hooks::heap_hooks(opts.release, false, &target);
         let mut base = KeyHasher::new();
         base.part(MANIFEST_HEADER.as_bytes())
+            .part(super::shipped::allocator(heap_hooks).as_bytes())
             .part(&crate::build_cache::compiler_identity().0)
             .part(velt_codegen_llvm::opt_flag().as_bytes())
             .part(target.as_bytes())
@@ -157,6 +166,7 @@ impl Finder {
             target,
             cpu,
             linking,
+            heap_hooks,
             seen: Mutex::default(),
         })
     }
@@ -209,7 +219,14 @@ impl Finder {
     fn shipped(&self, module_entry: &str) -> Option<Found> {
         let dir = self.shipped.as_ref()?;
         let compiler = crate::commands::version::version_line();
-        let s = super::shipped::find(dir, module_entry, &self.std_root, &compiler, &self.target)?;
+        let (root, target) = (&self.std_root, &self.target);
+        let s = super::shipped::find(
+            dir,
+            module_entry,
+            root,
+            &compiler,
+            (target, self.heap_hooks),
+        )?;
         if !s.tls.is_empty() && !velt_codegen_cl::has_thread_local_data(&self.target) {
             return None;
         }
@@ -331,7 +348,9 @@ impl Finder {
     fn fill_one(&self, module_entry: &str) -> Result<(), String> {
         let cache = self.cache.ok_or("the build cache is off")?;
         let cpu = self.cpu.as_deref();
-        let built = super::prebuilt_object::build(module_entry, &self.std_root, &self.target, cpu)?;
+        let (root, target) = (&self.std_root, &self.target);
+        let built =
+            super::prebuilt_object::build(module_entry, root, target, cpu, self.heap_hooks)?;
         let key = self.lookup_key(module_entry);
         let object_key = object_key(&key, &built.files);
         let stored = super::compile::store_kind(cache, KIND, &object_key, &built.object);

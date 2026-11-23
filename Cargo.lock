@@ -1853,6 +1853,7 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "notify",
+ "object",
  "semver",
  "serde_json",
  "sha2",

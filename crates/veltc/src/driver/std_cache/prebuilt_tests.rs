@@ -15,6 +15,7 @@ fn finder(dir: &Path) -> Finder {
         target: String::new(),
         cpu: None,
         linking: true,
+        heap_hooks: false,
         seen: Mutex::default(),
     }
 }

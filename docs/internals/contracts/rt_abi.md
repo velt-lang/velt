@@ -1113,7 +1113,12 @@ function, and growth past the array length limit or a request mimalloc refuses s
 with the runtime's message and exit code (through `velt_rt_write_str` and `velt_rt_exit`, not a
 panic a `catchVeltPanic` could catch or that could unwind through a `nounwind` call). Array growth
 calls `velt_rt_realloc` for an empty buffer too (an old size of 0 allocates). The runtime's Rust
-uses mimalloc too (its global allocator), so blocks move both ways.
+uses mimalloc too (its global allocator), so blocks move both ways. Std code such a build links
+as an object compiled before it allocates the same way: the std cache's objects (their keys hold
+the hooks' code, which their code inlines as the program's does) and the prebuilt hook modules'
+objects (their lookup keys, and a toolchain's manifests, name the allocator; veltc
+`std_cache/prebuilt.rs`, `std_cache/shipped.rs`). A build that keeps the runtime's allocator links
+only objects that call it.
 
 An allocation of a constant size and a free call the hook itself, inlined. An allocation of a
 run-time size (an array buffer) and growth call a wrapper of the hook instead, `velt.heap.alloc`

@@ -146,9 +146,11 @@ fn failures(programs: &[String], hooks: &[String]) -> Option<String> {
 }
 
 /// The CPUs (and modes) whose prebuilt hook module objects `velt cache warm` stores: what a
-/// release build with `--cpu native` links, and what every other build links (a debug build's
-/// object is the default CPU's, which a release build without `--cpu` links too).
-const HOOK_BUILDS: [(bool, Option<&str>); 2] = [(true, Some("native")), (false, None)];
+/// release build links with `--cpu native` and without, and what a debug build links (the default
+/// CPU's). A release build without `--cpu` links a debug build's object unless it allocates
+/// through mimalloc directly (driver/heap_hooks.rs), whose objects do too: then that is one more.
+const HOOK_BUILDS: [(bool, Option<&str>); 3] =
+    [(true, Some("native")), (true, None), (false, None)];
 
 /// Compile and store the object of every prebuilt hook module the cache lacks
 /// (`std_cache::prebuilt`), for each of [`HOOK_BUILDS`]: a warm-up program reaches only some of
