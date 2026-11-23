@@ -472,6 +472,17 @@ native: {
   A function whose type has a calling convention other than the target's C one (`vectorcall`,
   `preserve_most`, `ms_abi` off Windows) is refused. An enum whose width clang's dump does not
   show cannot cross.
+- **C structs** (#2187 layer 4, `crates/veltc/src/native/headers/structs.rs`): each
+  `declare c struct` a library's declarations reach (a pointer's pointee, an `Out<T>`'s `T`, a
+  reached struct's field) is checked with that library. The headers' struct of that name is
+  found by its tag (`struct point`) or a typedef, a definition winning over a declaration, and
+  its fields must be the same, in order, by C name and by type through the table above (a nested
+  struct by name, a function pointer as `Ptr<void>`). Unions, structs only declared, `packed`,
+  bit-fields, C arrays and flexible array members are refused with the header line. The layout
+  is clang's own: a second clang run reads `sizeof`, `_Alignof` and `__builtin_offsetof` of each
+  struct as enumerators, compared with Velt's layout, so `#pragma pack` and `aligned(…)` are
+  refused, naming each offset and size that differs. A struct's fields and layout are part of the
+  remembered check's key and of `c-headers.json`'s digests.
 - **A mismatch is a build error** naming the declaration and the header line.
 - **Remembered**: a check that passed is kept in `$VELT_HOME/cache/headers/`, keyed by zig's
   version, the target, the headers' names, the library's `defines` and the declarations, with a
@@ -697,9 +708,7 @@ must not depend on code elsewhere.
   over 8 bytes, `sret`). One table-driven classifier, a port of rustc's
   `rustc_target::abi::call`, serves both backends, and a differential ABI test (generated C
   functions over many struct shapes, compiled with the system C compiler, called from both
-  backends on every CI target) gates it. Structs are compared with headers (names, order, types,
-  size, alignment, offsets per target), and C arrays become fields once Velt has fixed-size
-  arrays.
+  backends on every CI target) gates it. C arrays become fields once Velt has fixed-size arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call
