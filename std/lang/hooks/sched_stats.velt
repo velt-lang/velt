@@ -7,12 +7,12 @@
 // R the rescues that handed tasks to another worker (a stalled worker's, a lazy worker 0's), S
 // the spare threads started, L the times the monitor turned the locks of a lazy worker 0 on
 // (sched_lock.velt `locksOn`), A the requests to relax (sched_relax.velt) made before the first
-// due of the sleeps a retiring spare carried home last (sched_sleep_carry.velt `carryHome`):
-// worker 0 relaxes before it polls the task that sleep wakes, so in std_scheduler_rescue.rs the
-// next rescue turns the locks on again however long each step took. A run whose line says
-// `rescues=0 spares=0 locks-on=0` ran as if there were no monitor. Only the monitor thread
-// counts, and a spare's answer to a request to retire (nothing on a poll's path); the variables
-// are read once, at the end.
+// due of the sleeps a retiring spare carried home last (sched_sleep_carry.velt `carryHome`), less
+// those taken back before it (`tookBack`): worker 0 relaxes before it polls the task that sleep
+// wakes, so in std_scheduler_rescue.rs the next rescue turns the locks on again however long each
+// step took. A run whose line says `rescues=0 spares=0 locks-on=0` ran as if there were no
+// monitor. Only the monitor thread counts, and a spare's answer to a request to retire (nothing
+// on a poll's path); the variables are read once, at the end.
 
 import { processEnv } from "./process";
 
@@ -51,6 +51,17 @@ export function carried(deadline: u64): void {
 export function askedToRelax(now: u64): void {
   if (now < CARRIED_UNTIL.load()) {
     ASKED_CARRYING.add(1);
+  }
+}
+
+/**
+ * The monitor took a request to relax back at `now`, worker 0 stalled in a poll: before the
+ * carried sleep is due, that request no longer counts (worker 0 may then run the sleeper shared,
+ * rightly). One taken back after it, from a worker 0 woken for that sleep, still counts.
+ */
+export function tookBack(now: u64): void {
+  if (now < CARRIED_UNTIL.load() && ASKED_CARRYING.load() > 0) {
+    ASKED_CARRYING.sub(1);
   }
 }
 
