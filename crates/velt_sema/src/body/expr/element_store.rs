@@ -17,7 +17,7 @@
 use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::ctx::Item;
-use crate::hir::{self, BinOp, ExprKind as H, TyId};
+use crate::hir::{self, BinOp, ExprKind as H, IntTy, TyId, TyKind};
 
 use super::dynamic_arith::{Side, TAG_NUMBER};
 
@@ -89,6 +89,42 @@ impl FnCx<'_, '_> {
         self.op_block(stmts, value, span)
     }
 
+    /// Is `place` an element of an array of `u8`, `i8`, `u16`, `i16`, `u32` or `i32`, and `value`
+    /// a `number` (#3182)? A JavaScript typed array (`Buffer`/`Uint8Array`, `Int8Array`, …)
+    /// converts a number it stores ([`Self::number_store_value`]); a value already of the
+    /// element's type is stored as it is, and every other conversion of a `number` to an integer
+    /// type is still `as` (which saturates). A 64-bit element is not one: `BigInt64Array` takes
+    /// a `bigint`.
+    pub(crate) fn number_store(&self, place: &hir::Expr, value: &hir::Expr) -> bool {
+        let H::Index { base, .. } = &place.kind else {
+            return false;
+        };
+        value.ty == self.cx.ty.f64
+            && self.cx.ty.array_elem(base.ty) == Some(place.ty)
+            && store_hook(self.cx.ty.kind(place.ty)).is_some()
+    }
+
+    /// The `number` `v` as the element type `elem` (one of [`Self::number_store`]'s): a call of
+    /// std's conversion of that typed array (std/lang/hooks/int_store.velt, demanded here), or
+    /// `v` coerced, which reports the mismatch, without the prelude.
+    pub(crate) fn number_store_value(&mut self, v: hir::Expr, elem: TyId) -> hir::Expr {
+        let Some(name) = store_hook(self.cx.ty.kind(elem)) else {
+            return self.coerce(v, elem);
+        };
+        if let Some((module, _)) = name.split_once("::") {
+            self.cx.demand_std(module);
+        }
+        let Some(Item::Def(d)) = self.cx.std_def(name) else {
+            return self.coerce(v, elem);
+        };
+        let span = v.span;
+        let kind = H::Call {
+            callee: hir::Callee::Def(d, vec![]),
+            args: vec![v],
+        };
+        self.mk(kind, elem, span)
+    }
+
     /// The `number` `v` (what `-`, `*`, `|`… give on an `any`) as the integer type `elem` of an
     /// integer array's element, as JavaScript's store converts it: as a number held in an `any`
     /// converts (truncated, modulo 2^N, NaN as 0; `b[0] -= "1"` on 0 stores 255).
@@ -99,4 +135,19 @@ impl FnCx<'_, '_> {
         let boxed = self.coerce(v, any);
         self.coerce(boxed, elem)
     }
+}
+
+/// The hook that converts a `number` for an element of type `k` (std/lang/hooks/int_store.velt),
+/// for the integer types a JavaScript typed array has but the 64-bit ones.
+fn store_hook(k: &TyKind) -> Option<&'static str> {
+    use velt_common::std_hook as h;
+    Some(match k {
+        TyKind::Int(IntTy::U8) => h!(number_to_u8),
+        TyKind::Int(IntTy::I8) => h!(number_to_i8),
+        TyKind::Int(IntTy::U16) => h!(number_to_u16),
+        TyKind::Int(IntTy::I16) => h!(number_to_i16),
+        TyKind::Int(IntTy::U32) => h!(number_to_u32),
+        TyKind::Int(IntTy::I32) => h!(number_to_i32),
+        _ => return None,
+    })
 }

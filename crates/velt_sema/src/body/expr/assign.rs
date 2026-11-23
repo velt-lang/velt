@@ -456,6 +456,9 @@ impl FnCx<'_, '_> {
                         })
                     } else if s.converting_store(&place, &v) {
                         s.any_element_value(v, lty)
+                    } else if s.number_store(&place, &v) {
+                        // `buf[i] = n`: converted as a typed array stores a number (#3182).
+                        s.number_store_value(v, lty)
                     } else {
                         s.coerce(v, lty)
                     }
@@ -576,6 +579,27 @@ impl FnCx<'_, '_> {
         }
         if self.cx.dynamic(v.ty) == Some(crate::any::Dynamic::Any) {
             return self.number_place_any_rmw(place, op, v, span);
+        }
+        // `buf[i] += n` with `n: number`: computed as a number, as JavaScript does, and stored as
+        // a typed array stores it (#3182). The index is evaluated once, before `n`.
+        if self.number_store(&place, &v) {
+            let mut place = place;
+            let mut stmts = Vec::new();
+            self.hoist_indices(&mut place, &mut stmts);
+            let f64_ = self.cx.ty.f64;
+            let cur = self.place_read(&place, Want::Borrow);
+            let cur = self.mk(H::Cast(Box::new(cur)), f64_, span);
+            let Some(wide) = self.storage_op(cur, op, v, span) else {
+                return self.error_expr(span);
+            };
+            let wide = self.coerce(wide, f64_);
+            let stored = self.number_store_value(wide, lty);
+            let kind = H::Assign {
+                place: Box::new(place),
+                value: Box::new(stored),
+            };
+            let assign = self.mk(kind, unit, span);
+            return self.with_temps(stmts, assign);
         }
         // `depth += xs.length` on an integer that holds it: the integer (`numbers::std_int_fits`).
         let v = self.std_int_coerce(v, lty).unwrap_or_else(|v| v);
