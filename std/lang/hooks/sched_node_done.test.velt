@@ -29,6 +29,12 @@ function task(refs: usize): usize {
   return k;
 }
 
+/** Frees hand-built node `n` and task `k`. */
+function free(n: usize, k: usize): void {
+  m.release(n, BLOCK);
+  m.release(k, BLOCK);
+}
+
 describe("a finished promise's task reference", () => {
   it("goes back when its owner, its task and the run's caller are all that hold it", () => {
     const k = task(5);
@@ -37,6 +43,7 @@ describe("a finished promise's task reference", () => {
     dn.letGo(k, n, 3);
     expect(m.ld(n + nd.N_TASK)).toBe(0);
     expect(m.ld(k + t.T_REFS)).toBe(4);
+    free(n, k);
   });
 
   it("stays while a waker of it is out", () => {
@@ -50,6 +57,7 @@ describe("a finished promise's task reference", () => {
     // Once that waker is dropped, the node's free (not this finish) gives the reference back.
     m.dec(n + nd.N_REFS);
     expect(m.ld(n + nd.N_REFS)).toBe(3);
+    free(n, k);
   });
 
   it("stays when its owner dropped it, though the count reads as many as an owner's", () => {
@@ -59,6 +67,7 @@ describe("a finished promise's task reference", () => {
     dn.letGo(k, n, 3);
     expect(m.ld(n + nd.N_TASK)).toBe(k);
     expect(m.ld(k + t.T_REFS)).toBe(5);
+    free(n, k);
   });
 
   it("stays with a rejection, whose report reads the task", () => {
@@ -67,5 +76,6 @@ describe("a finished promise's task reference", () => {
     dn.letGo(k, n, 3);
     expect(m.ld(n + nd.N_TASK)).toBe(k);
     expect(m.ld(k + t.T_REFS)).toBe(5);
+    free(n, k);
   });
 });
