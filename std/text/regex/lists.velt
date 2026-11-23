@@ -1,0 +1,18 @@
+// velt/text (internal): `Lists`, the arrays the Pike machine works in, and the automaton when it
+// works out a state (dfa.velt): made for a search when the Pike machine first runs (`listsOf`,
+// search.velt), so a search that does not need it allocates none of them.
+
+/** The Pike machine's working arrays. */
+export class Lists {
+  /** The pending jobs while the threads' splits are followed. */
+  stack: u64[] = [];
+  /** The Pike machine's two thread lists: per list, the instructions in priority order,
+   * where each instruction is in that order, and each thread's capture slots. */
+  dense: u32[] = [];
+  sparse: u32[] = [];
+  caps: i64[] = [];
+  /** The capture slots of the thread whose splits are being followed. */
+  work: i64[] = [];
+  /** How many threads each list holds. */
+  count: usize[] = [0, 0];
+}

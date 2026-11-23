@@ -100,7 +100,7 @@ pub(super) fn check_finite(cx: &mut Ctx, d: DefId) {
     let start = self_type(cx, d, n);
     if contains_by_value(cx, start, d, &mut vec![], 0) {
         let note: String = match cx.is_c_struct(d) {
-            true => "a C struct can't hold itself: C holds fields by value; a pointer field to it comes in a later layer of #2187".into(),
+            true => "a C struct can't hold itself: C holds fields by value; point at it with a `Ptr<T> | null` field".into(),
             false => "recursive data needs indirection: make it a `class` (heap-allocated) or use an array".into(),
         };
         cx.error(

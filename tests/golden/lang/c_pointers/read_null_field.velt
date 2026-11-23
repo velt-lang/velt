@@ -1,0 +1,20 @@
+// `Ptr.read` of a C struct whose field is declared `Ptr<T>` stops the program where C left that
+// field NULL, naming it, in a nested struct too (#3094): a `Ptr<T>` is never NULL, and the word
+// would otherwise read as `null` once widened. A field declared `Ptr<T> | null` reads as `null`.
+import { Ptr } from "velt/ffi";
+
+declare c struct Inner { n: i32; data: Ptr<u8>; }
+declare c struct Maybe { n: i32; data: Ptr<u8> | null; }
+declare c struct Outer { tag: u8; inner: Inner; }
+
+declare c("c") function calloc(count: usize, size: usize): Ptr<Maybe>;
+
+function main() {
+  // SAFETY: room for one `Outer` (24 bytes), zeroed; the program stops before freeing it.
+  const p = unsafe { calloc(1, 24) };
+  // SAFETY: zeroed memory, a `Maybe` at its start.
+  console.log(unsafe { Ptr.read(p, 0) }.data);
+  // SAFETY: the same memory as an `Outer`.
+  const o = unsafe { Ptr.read(Ptr.at<Outer>(Ptr.addressOf(p)), 0) };
+  console.log("not reached", o.tag);
+}

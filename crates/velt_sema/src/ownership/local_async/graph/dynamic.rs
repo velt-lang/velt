@@ -204,6 +204,7 @@ pub(super) fn inspects_only(i: crate::hir::Intrinsic) -> bool {
             | Intrinsic::AnyReflectCount
             | Intrinsic::AnyReflectName
             | Intrinsic::AnyIsArray
+            | Intrinsic::AnyIsPromise
             | Intrinsic::AnyKeys
             | Intrinsic::AnyTag
             | Intrinsic::AnyToNumber

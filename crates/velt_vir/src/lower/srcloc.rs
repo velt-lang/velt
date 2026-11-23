@@ -85,14 +85,10 @@ impl LocMap {
                 None => path.clone(),
             });
             files.push(path);
+            // `match_indices` of a `char` searches with memchr: a large generated file (a table,
+            // #3457) costs a fraction of a byte-at-a-time scan.
             let starts = std::iter::once(0)
-                .chain(
-                    f.src
-                        .bytes()
-                        .enumerate()
-                        .filter(|(_, b)| *b == b'\n')
-                        .map(|(i, _)| i as u32 + 1),
-                )
+                .chain(f.src.match_indices('\n').map(|(i, _)| i as u32 + 1))
                 .collect();
             line_starts.push(starts);
             // Code a std generator wrote for a std module (`<generated>/std/…`, veltc's

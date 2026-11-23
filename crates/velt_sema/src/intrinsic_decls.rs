@@ -34,6 +34,9 @@ use Intrinsic as I;
 pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // any.velt
     ("anyDelete", Op(I::AnyDelete)),
+    ("anyPromise", Op(I::AnyPromise)),
+    ("anyIsPromise", Op(I::AnyIsPromise)),
+    ("holdsDynamic", Op(I::HoldsDynamic)),
     ("anyIsList", Op(I::AnyIsList)),
     ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),
@@ -124,6 +127,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("addressAtomicStore", Op(I::AddressAtomicStore)),
     ("ptrFromAddress", Op(I::PtrFromAddress)),
     ("ptrToAddress", Op(I::PtrToAddress)),
+    ("ptrRead", Op(I::PtrRead)),
+    ("ptrWrite", Op(I::PtrWrite)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("addressCall3", Op(I::AddressCall3)),

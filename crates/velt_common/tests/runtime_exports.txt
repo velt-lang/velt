@@ -9,7 +9,6 @@ velt_rt velt_rt_await_ready
 velt_rt velt_rt_await_tick
 velt_rt velt_rt_bytes_drop
 velt_rt velt_rt_bytes_from_str
-velt_rt velt_rt_bytes_put_f64
 velt_rt velt_rt_bytes_range_to_str
 velt_rt velt_rt_bytes_range_to_str_lossy
 velt_rt velt_rt_bytes_to_str
@@ -170,7 +169,6 @@ velt_rt velt_rt_param_null
 velt_rt velt_rt_param_object
 velt_rt velt_rt_param_str
 velt_rt velt_rt_param_u64
-velt_rt velt_rt_pow_i64
 velt_rt velt_rt_process_args
 velt_rt velt_rt_process_node_argv
 velt_rt velt_rt_proxy_array_call
@@ -178,18 +176,6 @@ velt_rt velt_rt_proxy_array_hole
 velt_rt velt_rt_rc_dec
 velt_rt velt_rt_rc_inc
 velt_rt velt_rt_realloc
-velt_rt velt_rt_regex_escape
-velt_rt velt_rt_regex_exec
-velt_rt velt_rt_regex_exec_all
-velt_rt velt_rt_regex_free
-velt_rt velt_rt_regex_group_count
-velt_rt velt_rt_regex_group_names
-velt_rt velt_rt_regex_last_index
-velt_rt velt_rt_regex_new
-velt_rt velt_rt_regex_replace
-velt_rt velt_rt_regex_set_last_index
-velt_rt velt_rt_regex_split
-velt_rt velt_rt_regex_test
 velt_rt velt_rt_rows_begin_named
 velt_rt velt_rt_rows_blob
 velt_rt velt_rt_rows_bool
@@ -233,7 +219,6 @@ velt_rt velt_rt_str_drop
 velt_rt velt_rt_str_eq
 velt_rt velt_rt_str_from_bool
 velt_rt velt_rt_str_from_char_code
-velt_rt velt_rt_str_from_f64
 velt_rt velt_rt_str_hash
 velt_rt velt_rt_str_is_well_formed
 velt_rt velt_rt_str_join
@@ -254,12 +239,9 @@ velt_rt velt_rt_strbuf_new
 velt_rt velt_rt_strbuf_push_bool
 velt_rt velt_rt_strbuf_push_byte
 velt_rt velt_rt_strbuf_push_bytes
-velt_rt velt_rt_strbuf_push_f64
-velt_rt velt_rt_strbuf_push_inspect_f64
 velt_rt velt_rt_strbuf_push_inspect_json
 velt_rt velt_rt_strbuf_push_inspect_key
 velt_rt velt_rt_strbuf_push_inspect_str
-velt_rt velt_rt_strbuf_push_json_f64
 velt_rt velt_rt_strbuf_push_json_str
 velt_rt velt_rt_strbuf_push_json_value
 velt_rt velt_rt_strbuf_push_str
@@ -314,7 +296,6 @@ velt_rt velt_rt_visit_leave
 velt_rt velt_rt_worker_count
 velt_rt velt_rt_write_bool
 velt_rt velt_rt_write_byte
-velt_rt velt_rt_write_f64
 velt_rt velt_rt_write_str
 velt_rt velt_rt_xfer_begin
 velt_rt velt_rt_xfer_defer
@@ -491,7 +472,6 @@ velt_rt_wasm velt_rt_unhandled_defer
 velt_rt_wasm velt_rt_worker_count
 velt_rt_wasm velt_rt_write_bool
 velt_rt_wasm velt_rt_write_byte
-velt_rt_wasm velt_rt_write_f64
 velt_rt_wasm velt_rt_write_str
 velt_rt_wasm velt_rt_xfer_keep_shared
 velt_rt_wasm velt_rt_yield_now

@@ -445,6 +445,10 @@ fn has_unwind_edges(function: &vir::Function) -> bool {
 /// returns stays `cold noinline` even when marked `@inline`: the two attributes conflict, and its
 /// calls are rare.
 ///
+/// A `@cold` function (`Function::rare`) returns, but its calls are rare: `cold` alone, so the
+/// ways to its calls are laid out of the hot code and LLVM inlines it only where it is tiny
+/// (`noinline` too when it is `@noInline` or too large to inline).
+///
 /// An unmarked function that can grow too large to inline (`inlining::Caps`) gets `noinline`,
 /// and one that is small but for its cleanup pads (`small_with_pads`,
 /// `inlining::small_with_pads`) `inlinehint`.
@@ -452,6 +456,14 @@ fn inline_attrs(function: &vir::Function, too_large: bool, small_with_pads: bool
     let returns = (function.blocks.iter()).any(|b| matches!(b.term, vir::Terminator::Return(_)));
     if function.cold || !returns {
         return " cold noinline";
+    }
+    if function.rare {
+        // Sema keeps `@cold` and `@inline` apart.
+        return match function.inline {
+            vir::Inline::Never => " cold noinline",
+            _ if too_large => " cold noinline",
+            _ => " cold",
+        };
     }
     match function.inline {
         vir::Inline::Default if too_large => " noinline",

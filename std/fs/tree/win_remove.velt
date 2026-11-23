@@ -44,8 +44,8 @@ declare c type LARGE_INTEGER;
 declare c("c") function NtCreateFile$tree(
   handle: Out<Ptr<void> | null>,
   access: u32,
-  attributes: Ptr<_OBJECT_ATTRIBUTES>,
-  status: Ptr<_IO_STATUS_BLOCK>,
+  attributes: Ptr<_OBJECT_ATTRIBUTES> | null,
+  status: Ptr<_IO_STATUS_BLOCK> | null,
   size: Ptr<LARGE_INTEGER> | null,
   fileAttributes: u32,
   share: u32,
@@ -153,8 +153,8 @@ unsafe function openIn(
     const status = NtCreateFile$tree(
       out,
       access,
-      Ptr.at<_OBJECT_ATTRIBUTES>(at),
-      Ptr.at<_IO_STATUS_BLOCK>(at + 64),
+      Ptr.orNull<_OBJECT_ATTRIBUTES>(at),
+      Ptr.orNull<_IO_STATUS_BLOCK>(at + 64),
       null,
       0,
       SHARE_ALL,

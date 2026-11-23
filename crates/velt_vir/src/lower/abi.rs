@@ -284,10 +284,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         // through its error, if at all: its calls are cold (`Function::cold`).
         let cold = lw.cx.is_never(ret);
         let inline = lw.cx.inline_of(def);
+        let rare = lw.cx.is_rare(def);
         let mut func = lw.finish(symbol, params, abi.ret);
         func.param_attrs = attrs;
         func.cold = cold;
         func.inline = inline;
+        func.rare = rare;
         // `@targetFeature`'s set (sema and velt_vir share the features' table).
         func.target = hir_prog.cpu_targets.get(&def).copied().unwrap_or_default();
         func

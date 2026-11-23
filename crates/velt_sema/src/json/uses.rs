@@ -49,7 +49,8 @@ pub(super) fn uses_of(
     if let Some(a) = unlocked.filter(|a| param_in(tys, a.ty)) {
         u.direct.push((a.ty, a.span, Need::NoLock));
     }
-    // A type parameter converted to or from `any`, or to text: it can't be a C pointer (#3094).
+    // A type parameter converted to or from `any`, or to text: it can't be a C pointer; one read
+    // or written through a pointer must be laid out as C's (#3094).
     let converted = match &e.kind {
         E::ToDyn { expr, .. } => Some((expr.ty, expr.span, PtrUse::ToDyn)),
         E::Call {
@@ -64,6 +65,14 @@ pub(super) fn uses_of(
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
         } if param_element(tys, record, e.ty) => Some((e.ty, e.span, PtrUse::FromDyn)),
+        // `ptrRead<S>(p, i)` and `ptrWrite<S>(p, i, s)`: `S` is `p`'s pointee.
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::PtrRead | Intrinsic::PtrWrite),
+            args,
+        } => match args.first().map(|p| tys.kind(p.ty)) {
+            Some(TyKind::Ptr(s)) => Some((*s, e.span, PtrUse::Memory)),
+            _ => None,
+        },
         _ => None,
     };
     if let Some((t, span, how)) = converted.filter(|(t, ..)| param_in(tys, *t)) {

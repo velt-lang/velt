@@ -125,6 +125,10 @@ impl Cx<'_> {
                         // `Array.isArray` (any_set_site.rs).
                         id = super::super::any_set_site::ARRAY_ID;
                     }
+                    if matches!(self.kind(ty), TyKind::Promise(..)) {
+                        // `await` of an `any` (any_await.rs).
+                        id = super::super::any_await::PROMISE_ID;
+                    }
                 } else if let Some(t) = self.any_table_entry(index, ty) {
                     // The name slot, unused in interface tables (crate::lower::any).
                     entries.push((SLOT_NAME, t));
