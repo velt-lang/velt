@@ -1,0 +1,12 @@
+// requires: unix
+// `utf8Slice` of a range longer than a string can be (2^31 + 16 bytes, past the runtime's string
+// capacity): the runtime's "string too long", before anything is copied (#2196: std's builder,
+// whose capacity is cut to the limit, must not be written past it). The bytes are never set, so
+// the 2 GiB block stays untouched memory. Not on WebAssembly, whose largest block is smaller
+// (allocating it fails first: lang/buffer_alloc_past_memory); not on Windows, which commits it.
+function main() {
+  console.log("before");
+  const b = Buffer.allocUnsafe(2 ** 31 + 16);
+  const s = b.utf8Slice();
+  console.log(s.length);
+}
