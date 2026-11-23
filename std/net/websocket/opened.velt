@@ -1,6 +1,7 @@
 // velt/net/websocket (internal): `Opened`, a client connection after its opening handshake.
 
 import { connect, connectTls } from "velt/net/connect";
+import { IoError } from "velt/io/error";
 import { TcpStream } from "velt/net/tcp_stream";
 import { handshake } from "velt/net/websocket/handshake";
 import { target } from "velt/net/websocket/target";
@@ -17,6 +18,25 @@ export async function open(url: string, ca: string): Promise<Opened> {
   const addr = t.host.includes(":") ? `[${t.host}]:${t.port}` : `${t.host}:${t.port}`;
   const stream =
     t.secure ? await connectTls(addr, { serverName: t.host, ca: ca }) : await connect(addr);
+  try {
+    return { stream: stream, rest: await handshake(stream, t) };
+  } catch (e) {
+    stream.close();
+    throw e;
+  }
+}
+
+/**
+ * `open` for a URL written as a `ws:` literal (`connectWebSocketPlain`): never TLS, so a program
+ * whose every client connection is one neither loads nor builds the TLS client (#2392).
+ */
+export async function openPlain(url: string): Promise<Opened> {
+  const t = target(url);
+  if (t.secure) {
+    throw new IoError("ENOTSUP", `ICE: a ws: literal reached wss: (${url})`);
+  }
+  const addr = t.host.includes(":") ? `[${t.host}]:${t.port}` : `${t.host}:${t.port}`;
+  const stream = await connect(addr);
   try {
     return { stream: stream, rest: await handshake(stream, t) };
   } catch (e) {

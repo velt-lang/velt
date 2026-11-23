@@ -1,23 +1,16 @@
 // velt/net (internal): the TLS operations of std/net/tcp_sched.velt on the reactor under the
 // executor in Velt (#2649): `extend TlsServer implements ReactorTls`, in place of the stubs of
-// std/net/tls/fd_hook.velt, for the TLS streams of both `listenTls` and `connectTls`. Which of the
-// two a program has is a hook each (fd_listen_hook.velt, fd_connect_hook.velt):
-// std/net/tls/fd_server.velt gives `listen`, and std/net/tls/fd_client.velt `connect`; the conditional globals tls_reactor.velt and
-// tls_client_reactor.velt load them, and each loads this file. A program with neither loads none.
+// std/net/tls/fd_hook.velt, for the TLS streams of both `listenTls` and `connectTls`. The TLS
+// server and client (std/net/tls/fd_server.velt, fd_client.velt) load this file; a program loads
+// them only when live code can listen or connect with TLS (fd_hook.velt).
 
 import { IoError } from "velt/io/error";
-import { noteStdUse } from "velt/lang/intrinsics";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import * as fs from "velt/net/fd_socket";
 import { CLOSE_NOTIFY, TlsFailure } from "velt/net/tls/alert";
 import { ReactorTls, TlsServer } from "velt/net/tls/fd_hook";
-import { TlsConnectSide } from "velt/net/tls/fd_connect_hook";
-import { TlsListenSide } from "velt/net/tls/fd_listen_hook";
 import * as ops from "velt/net/tls/fd_ops";
-
-const LISTEN: TlsListenSide = {};
-const CONNECT: TlsConnectSide = {};
 
 /**
  * The status of failure `e` for std/net/tcp_sched.velt, whose results carry codes: the runtime's
@@ -51,35 +44,6 @@ export function status(e: unknown): IoStatus {
 
 /** The TLS operations for std/net/tcp_sched.velt (std/net/tls/fd_ops.velt), in place of the stubs. */
 extend TlsServer implements ReactorTls {
-  async listen(
-    addr: string,
-    cert: string,
-    key: string,
-    alpn: string,
-    handed: u64,
-  ): Promise<IoResult<u64> | null> {
-    // The program can listen with TLS on the reactor: tcp_sched's `stdUsed("reactorTls")`
-    // tests are true, so its operations check for TLS handles.
-    noteStdUse("reactorTls");
-    try {
-      return await LISTEN.listen(addr, cert, key, alpn, handed);
-    } catch (e) {
-      return fs.failed(status(e), 0);
-    }
-  }
-  async connect(
-    addr: string,
-    serverName: string,
-    ca: string,
-    alpn: string,
-  ): Promise<IoResult<u64> | null> {
-    noteStdUse("reactorTls");
-    try {
-      return await CONNECT.connect(addr, serverName, ca, alpn);
-    } catch (e) {
-      return fs.failed(status(e), 0);
-    }
-  }
   listenerFd(l: u64): u64 {
     return ops.listenerFd(l);
   }

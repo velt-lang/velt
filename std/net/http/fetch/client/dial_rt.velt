@@ -7,6 +7,7 @@
 
 import { IoError } from "velt/io/error";
 import { TcpStream } from "velt/net";
+import { TlsOn } from "velt/net/http/fetch/client/target";
 import { AbortError, AbortSignal } from "velt/task";
 
 /** Whether the executor's reactor runs: no reactor in this build. */
@@ -28,6 +29,7 @@ export async function dialTls(
   serverName: string,
   ca: string,
   alpn: string,
+  tls: TlsOn,
   signal: AbortSignal | null,
 ): Promise<TcpStream, IoError | AbortError> {
   panic("ICE: fetch dials on the reactor only with the executor in Velt");

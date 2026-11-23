@@ -71,22 +71,56 @@ impl Analysis {
 }
 
 /// Analyze the document at `path` whose current text is `overlay[path]`; `ts_folders` caches the
-/// packages' `tsCompat` folders across analyses.
+/// packages' `tsCompat` folders across analyses. A std module the check demands that can't be
+/// served in the middle of it (the TLS client and server) is loaded up front for a check again,
+/// as `velt check` does.
 pub fn analyze(
     loader: &dyn ProgramLoader,
     path: &Path,
     overlay: &HashMap<PathBuf, String>,
     ts_folders: &mut crate::lint::FolderCache,
 ) -> Analysis {
+    let mut preload: Vec<String> = vec![];
+    let mut analysis = loop {
+        let (analysis, refused) = analyze_once(loader, path, overlay, &preload);
+        let fresh: Vec<String> = (refused.into_iter())
+            .filter(|p| !preload.contains(p))
+            .collect();
+        if fresh.is_empty() {
+            break analysis;
+        }
+        preload.extend(fresh);
+    };
+    let linted = catch_unwind(AssertUnwindSafe(|| {
+        crate::lint::findings(&analysis, path, overlay, ts_folders)
+    }));
+    // A crash in the lint costs its findings, not the document's analysis.
+    analysis.lint = linted.unwrap_or_default();
+    analysis
+}
+
+/// One load and check of [`analyze`], with `preload` up front: the analysis, and the std modules
+/// the check demanded that could not be served in place.
+fn analyze_once(
+    loader: &dyn ProgramLoader,
+    path: &Path,
+    overlay: &HashMap<PathBuf, String>,
+    preload: &[String],
+) -> (Analysis, Vec<String>) {
     let mut sm = SourceMap::new();
     let mut diagnostics = vec![];
     let loaded = catch_unwind(AssertUnwindSafe(|| {
-        loader.load(path, overlay, &mut sm, &mut diagnostics)
+        loader.load_preloaded(path, overlay, preload, &mut sm, &mut diagnostics)
     }));
     let loaded = match loaded {
         Ok(Ok(loaded)) => loaded,
-        Ok(Err(msg)) => return standalone(path, overlay, msg),
-        Err(_) => return standalone(path, overlay, "internal error while loading".into()),
+        Ok(Err(msg)) => return (standalone(path, overlay, msg), vec![]),
+        Err(_) => {
+            return (
+                standalone(path, overlay, "internal error while loading".into()),
+                vec![],
+            )
+        }
     };
     let LoadedProgram {
         modules,
@@ -104,16 +138,11 @@ pub fn analyze(
         lint: vec![],
         docs: Default::default(),
     };
-    run_sema(
+    let refused = run_sema(
         &mut analysis,
         more.map(|state| (loader, path, overlay, state)),
     );
-    let linted = catch_unwind(AssertUnwindSafe(|| {
-        crate::lint::findings(&analysis, path, overlay, ts_folders)
-    }));
-    // A crash in the lint costs its findings, not the document's analysis.
-    analysis.lint = linted.unwrap_or_default();
-    analysis
+    (analysis, refused)
 }
 
 /// A loader that goes on during the check ([`ProgramLoader::load_more`]), with the document, the
@@ -125,16 +154,33 @@ type MoreLoads<'a> = (
     Box<dyn std::any::Any + Send>,
 );
 
-fn run_sema(analysis: &mut Analysis, more: Option<MoreLoads>) {
+/// The check of `analysis`'s modules; the std modules it demanded that could not be served in
+/// place (after the first, nothing more is served: the check is done again).
+fn run_sema(analysis: &mut Analysis, more: Option<MoreLoads>) -> Vec<String> {
     let loaded_cleanly = analysis.loaded_cleanly;
     let has_more = more.is_some();
     let base = std::mem::take(&mut analysis.modules);
+    let refused = std::sync::Mutex::new(Vec::<String>::new());
     let shared = std::sync::Mutex::new((&mut analysis.sm, more, vec![], vec![]));
     let serve = |demanded: &[String]| {
+        let mut out = refused.lock().ok()?;
+        // A refusal stops the check (velt_sema `StdLoads::refused`): it is thrown away.
+        let refusal = || velt_sema::StdBatch {
+            refused: demanded.to_vec(),
+            ..Default::default()
+        };
+        if !out.is_empty() {
+            out.extend(demanded.iter().cloned());
+            return Some(refusal());
+        }
         let mut guard = shared.lock().ok()?;
         let (sm, more, added, diags) = &mut *guard;
         let (loader, path, overlay, state) = more.as_mut()?;
         let batch = loader.load_more(path, overlay, &mut **state, &base, demanded, sm, diags)?;
+        if !batch.refused.is_empty() {
+            out.extend(demanded.iter().cloned());
+            return Some(refusal());
+        }
         added.extend(batch.modules.iter().map(copy_module));
         Some(batch)
     };
@@ -170,6 +216,7 @@ fn run_sema(analysis: &mut Analysis, more: Option<MoreLoads>) {
             analysis.diagnostics.push(Diagnostic::error(msg, span));
         }
     }
+    refused.into_inner().unwrap_or_default()
 }
 
 fn copy_module(m: &SourceModule) -> SourceModule {

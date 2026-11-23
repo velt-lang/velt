@@ -776,3 +776,24 @@ fn a_default_functions_overloads_keep_its_decorators_on_the_implementation() {
         [&C::Str("a".into()), &C::Str("b".into())]
     );
 }
+
+/// `@variant` (velt/compiler, #3515) naming the decorated function itself says that the plain
+/// function must be another one, and one naming nothing says it is no function of the module.
+#[test]
+fn a_variant_names_another_function_of_its_module() {
+    let src = |plain: &str| {
+        format!(
+            "import {{ variant }} from \"velt/compiler\";\n\n@variant(\"{plain}\", {{ arg: 0, startsWith: \"a:\" }})\nfunction f(s: string): i64 {{\n  return 1;\n}}\n\nfunction main() {{\n  console.log(f(\"x\"));\n}}\n"
+        )
+    };
+    let itself = err_src(&src("f"));
+    assert!(
+        itself.contains("`@variant` names `f` itself: the plain function must be another function"),
+        "{itself}"
+    );
+    let missing = err_src(&src("g"));
+    assert!(
+        missing.contains("`@variant` names `g`, which is no function of this module"),
+        "{missing}"
+    );
+}

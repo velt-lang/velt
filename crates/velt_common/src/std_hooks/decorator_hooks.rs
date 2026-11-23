@@ -18,6 +18,10 @@ macro_rules! with_decorator_hooks {
             decorator_no_inline => lang_intrinsics_decorators, "noInline", decorator;
             /// `@cold`: its calls are rare, though they return (`vir::Function::rare`).
             decorator_cold => lang_intrinsics_decorators, "cold", decorator;
+            /// `@variant("plain", ...when)` on a function (any module; velt/compiler re-exports
+            /// it): a call whose arguments pass every condition calls `plain` instead (`velt_sema`
+            /// `decorators::known`, `body::expr::call`; docs/internals/design/call-variants.md).
+            decorator_variant => lang_intrinsics_decorators, "variant", decorator;
             /// `@intrinsic declare function`: the declaration of a compiler intrinsic
             /// (`velt_sema` `intrinsic_decls.rs`).
             decorator_intrinsic => lang_intrinsics_decorators, "intrinsic", decorator;

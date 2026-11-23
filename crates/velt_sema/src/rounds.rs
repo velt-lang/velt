@@ -48,6 +48,10 @@ pub(crate) fn run<'m>(
     let (mut rounds, mut held) = (0, true);
     let generated = 'check: loop {
         loop {
+            // A refused demand throws the check away (`Ctx::load_refused`): no more rounds.
+            if cx.load_refused() {
+                return Err(Box::new(((None, cx.diags), Default::default())));
+            }
             // Views of new families (`union_views`) are checked again together with the growth of
             // the throws sets, in one round.
             let grown_views = cx.union_views_grown().filter(|_| view_rounds < VIEW_ROUNDS);
