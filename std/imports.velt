@@ -103,7 +103,8 @@ export const imports: Imports = {
   },
   // Whether a child that is a script without a `#!` line (ENOEXEC) runs through `/bin/sh`, as Node
   // runs it on Linux with glibc (its `execvp`; musl's has no such rule, and Velt has no musl
-  // condition), not on macOS (libuv's `posix_spawn`): spawn_posix.velt and exec_sync.velt.
+  // condition), not on macOS (libuv's `posix_spawn`): spawn_posix.velt, which starts the children
+  // of `spawn`, `exec` and `execSync`.
   "#script-shell": {
     linux: "./process/child/script_shell_linux.velt",
     default: "./process/child/script_shell_none.velt",
@@ -206,9 +207,13 @@ export const imports: Imports = {
     win32: "./process/child/child_win32.velt",
     default: "./process/child/child_posix.velt",
   },
-  // `execSync`'s start: the runtime's, after the program is found and checked as `exec` does it
-  // on Windows; elsewhere the runtime's alone.
+  // `execSync`'s start: on macOS and Linux std's (`posix_spawn`, as `spawn` and `exec` start
+  // theirs, and a `poll` loop on the pipes, without the executor); on Windows the runtime's,
+  // after the program is found and checked as `exec` does it; elsewhere (WebAssembly) the
+  // runtime's alone.
   "#exec-sync": {
+    darwin: "./process/child/exec_sync_posix.velt",
+    linux: "./process/child/exec_sync_posix.velt",
     win32: "./process/child/exec_sync_win32.velt",
     default: "./process/child/exec_sync.velt",
   },

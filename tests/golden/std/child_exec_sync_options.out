@@ -1,0 +1,11 @@
+input: 0 [hello
+world] []
+no input: 0 [] []
+cwd: 0 [marker] []
+env: 0 [foo=bar home=set] []
+env alone: 0 [foo=bar home=] []
+exit: 7 [out] [err]
+signal: 137 [] []
+long PATH entry: 0 [found] []
+both pipes: 0 stdout 300000 bytes, 0 other, stderr 150000 bytes, 0 other
+input after output: 0 150001 lines, read 300000

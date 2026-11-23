@@ -45,6 +45,7 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<errno.h>",
         "<fcntl.h>",
         "<netdb.h>",
+        "<poll.h>",
         "<pthread.h>",
         "<sched.h>",
         "<signal.h>",
@@ -119,6 +120,7 @@ const CHECKED: &[&str] = &[
     "lang/hooks/clock_darwin.velt",
     "lang/hooks/clock_linux.velt",
     "lang/hooks/clock_win32.velt",
+    "lang/hooks/mem_raw.velt",
     "lang/hooks/os_posix.velt",
     "lang/hooks/pid_posix.velt",
     "lang/hooks/pid_win32.velt",
@@ -184,6 +186,7 @@ const CHECKED: &[&str] = &[
 const CHECKED_POSIX: &[&str] = &[
     "process/child/child_posix.velt",
     "process/child/child_record.velt",
+    "process/child/exec_sync_posix.velt",
     "process/child/spawn_open_darwin.velt",
     "process/child/spawn_open_linux.velt",
     "process/child/spawn_posix.velt",

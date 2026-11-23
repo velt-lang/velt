@@ -1,28 +1,55 @@
-// velt/process/child (internal): `#spawn-open` on macOS: `posix_spawn_file_actions_addopen`, whose
-// `mode_t` is 16 bits here (std/process/child/spawn_posix.velt spawns the children).
+// velt/process/child (internal): `#spawn-open` on macOS: what differs from Linux for starting a
+// child: `posix_spawn_file_actions_addopen`, whose `mode_t` is 16 bits here
+// (std/process/child/spawn_posix.velt spawns the children), `faccessat`'s constants and
+// `PATH_MAX` (spawn_lookup.velt), and `poll`, whose `nfds_t` is 32 bits here
+// (exec_sync_posix.velt waits on the pipes).
 
-import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
-import * as m from "velt/lang/hooks/sched_mem";
+import * as m from "velt/lang/hooks/mem_raw";
 
-/** C's `posix_spawn_file_actions_t`. */
+/** C's `posix_spawn_file_actions_t` and `struct pollfd`. */
 declare c type posix_spawn_file_actions_t;
+declare c type pollfd;
+
+declare c("c") function poll(fds: Ptr<pollfd> | null, nfds: u32, timeout: i32): i32;
+
+declare c("c") function faccessat(fd: i32, path: Ptr<u8> | null, mode: i32, flag: i32): i32;
+
+/** `AT_FDCWD` and `AT_EACCESS` (<sys/fcntl.h>), and `PATH_MAX` (<sys/syslimits.h>). */
+const AT_FDCWD: i32 = -2;
+const AT_EACCESS: i32 = 0x10;
+export const PATH_MAX: usize = 1024;
+
+/**
+ * Whether the NUL-terminated path at address `path` exists (`faccessat`'s `F_OK` with the
+ * effective ids, as the kernel checks an exec): 0, or -1 with `errno` set.
+ */
+export function exists(path: usize): i32 {
+  // SAFETY: the caller's NUL-terminated path.
+  return unsafe { faccessat(AT_FDCWD, m.ptr(path), 0, AT_EACCESS) };
+}
+
+/** `poll` on the `n` `struct pollfd`s at address `fds`, at most `timeoutMs` (-1: no limit). */
+export function pollFds(fds: usize, n: usize, timeoutMs: i32): i32 {
+  // SAFETY: the caller's `n` initialized `struct pollfd`s.
+  return unsafe { poll(m.ptrTo<pollfd>(fds), n as u32, timeoutMs) };
+}
 
 declare c("c") function posix_spawn_file_actions_addopen(
   fa: Ptr<posix_spawn_file_actions_t> | null,
   fd: i32,
-  path: CString,
+  path: Ptr<u8> | null,
   flags: i32,
   mode: u16,
 ): i32;
 
 /** `posix_spawn_file_actions_addopen` on the file-actions object at address `fa`. */
-export function addOpen(fa: usize, fd: i32, path: CString, flags: i32, mode: u32): i32 {
+export function addOpen(fa: usize, fd: i32, path: usize, flags: i32, mode: u32): i32 {
   // SAFETY: the caller's initialized file-actions object and a NUL-terminated path.
   return unsafe { posix_spawn_file_actions_addopen(
     m.ptrTo<posix_spawn_file_actions_t>(fa),
     fd,
-    path,
+    m.ptr(path),
     flags,
     mode as u16,
   ) };

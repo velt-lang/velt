@@ -1,0 +1,77 @@
+// requires: unix
+// `execSync`'s options and results, as Node's `spawnSync` gives them (#3573: macOS's and Linux's
+// `execSync` start their child in std): `input` fed to stdin (and stdin at its end without it),
+// `cwd`, `env` added to the parent's or alone (`clearEnv`), stdout and stderr both captured with
+// a non-zero exit code, a death by a signal as 128 + the signal, a `PATH` entry too long to
+// search, and more than a pipe holds on
+// stdout and stderr, and on stdin while the child writes, without a deadlock. This program
+// prints what child_exec_sync_options.mjs prints under `node` on macOS and Linux.
+import { ExecOptions, execSync } from "velt/process/child";
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+/** `text` with the test directory written as <dir>. */
+function hide(text: string, dir: string): string {
+  return text.split(dir).join("<dir>");
+}
+
+/** How many bytes `text` has, and how many of them are not `c`. */
+function count(text: string, c: string): string {
+  let other = 0;
+  for (const ch of text) {
+    if (ch != c) {
+      other++;
+    }
+  }
+  return `${text.length} bytes, ${other} other`;
+}
+
+/** Prints `label` and what `program` with `args` and `opts` gave. */
+function run(label: string, program: string, args: string[], opts: ExecOptions, dir: string) {
+  const r = execSync(program, args, opts);
+  console.log(`${label}: ${r.code} [${hide(r.stdout, dir).trim()}] [${r.stderr.trim()}]`);
+}
+
+function main() {
+  const dir = `${tmpdir()}/velt-golden-exec-sync-options-${process.pid}`;
+  fs.mkdirSync(dir, { recursive: true });
+  const fd = fs.openSync(`${dir}/marker`, "w", 0o644);
+  fs.closeSync(fd);
+
+  run("input", "cat", [], { input: "hello\nworld\n" }, dir);
+  run("no input", "cat", [], {}, dir);
+  run("cwd", "ls", [], { cwd: dir }, dir);
+  const extra = new Map<string, string>();
+  extra.set("VELT_GOLDEN_FOO", "bar");
+  const script = 'echo "foo=$VELT_GOLDEN_FOO home=${HOME:+set}"';
+  run("env", "sh", ["-c", script], { env: extra }, dir);
+  run("env alone", "sh", ["-c", script], { env: extra, clearEnv: true }, dir);
+  run("exit", "sh", ["-c", "echo out; echo err >&2; exit 7"], {}, dir);
+  run("signal", "sh", ["-c", "kill -9 $$"], {}, dir);
+  // A `PATH` entry longer than `PATH_MAX` (1024 on macOS, 4096 on Linux) is skipped, as libuv
+  // skips it, and the program is found in the next.
+  const long = new Map<string, string>();
+  long.set("PATH", `${("/" + "b".repeat(99)).repeat(50)}:/usr/bin:/bin`);
+  run("long PATH entry", "sh", ["-c", "echo found"], { env: long, clearEnv: true }, dir);
+
+  // 300 KB to stdout, then 300 KB to stderr, then 300 KB to stdout again: a parent that read
+  // one pipe to its end before the other would wait forever.
+  const both = "yes o | head -c 300000; yes e | head -c 300000 >&2; yes o | head -c 300000";
+  const big = execSync("sh", ["-c", both]);
+  const out = big.stdout.replaceAll("\n", "");
+  const err = big.stderr.replaceAll("\n", "");
+  console.log(`both pipes: ${big.code} stdout ${count(out, "o")}, stderr ${count(err, "e")}`);
+
+  // 300 KB of output before it reads 300 KB of input.
+  const first = execSync("sh", ["-c", "yes w | head -c 300000; wc -c"], {
+    input: "i".repeat(300000),
+  });
+  const lines = first.stdout.trim().split("\n");
+  console.log(
+    `input after output: ${first.code} ${lines.length} lines, read ${lines[lines.length - 1].trim()}`,
+  );
+
+  fs.rmSync(dir, { recursive: true });
+}
+
+main();

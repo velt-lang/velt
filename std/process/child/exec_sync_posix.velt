@@ -1,0 +1,236 @@
+// velt/process/child (internal): `execSync`'s start on macOS and Linux (`#exec-sync`,
+// std/imports.velt), blocking the calling thread as Node's `spawnSync` does. The child starts as
+// `spawn` and `exec` start theirs (std/process/child/spawn_posix.velt: the program looked up in
+// the child's `PATH` as libuv does, and on Linux a script without a `#!` line run through
+// `/bin/sh`; on macOS it fails with ENOEXEC, as in Node). Its stdout and stderr are pipes, its
+// stdin a pipe when there is input (the null device otherwise); one `poll` loop writes the input
+// and reads both outputs as each pipe is ready, so a child that fills one pipe while this side
+// waits on another never deadlocks; then `waitpid` reaps it. A program that runs nothing else
+// on the executor loads none of it (crates/veltc/tests/std_scheduler_demand.rs): this file and
+// spawn_posix.velt use only plain raw memory (std/lang/hooks/mem_raw.velt) and the reactor
+// file's OS calls, never a reactor; the pipes' non-blocking ends are polled by this thread alone.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Ptr } from "velt/ffi/ptr";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
+import { velt_rt_bytes_to_str } from "velt/encoding/rt";
+import { arrayDataAddress, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/mem_raw";
+import { strerror } from "#net-calls";
+import * as sys from "#net-sys";
+import { cText } from "velt/net/fd_addr";
+import * as r from "#reactor";
+import { pollFds } from "#spawn-open";
+import * as sp from "velt/process/child/spawn_posix";
+import { CommandSpec } from "velt/process/child/spec";
+import { RawOutput } from "./rt";
+
+// The headers' types (`velt native headers --std` checks this file:
+// crates/veltc/src/native/headers/std_check.rs).
+declare c("c") function waitpid$exec(pid: i32, status: Ptr<i32> | null, options: i32): i32;
+declare c("c") function read$exec(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
+declare c("c") function write$exec(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
+/** The address of a byte array's elements (a copy of nothing returns its destination). */
+declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
+
+/** `struct pollfd`'s events (the same on macOS and Linux). */
+const POLLIN: u32 = 0x1;
+const POLLOUT: u32 = 0x4;
+const POLLERR: u32 = 0x8;
+const POLLHUP: u32 = 0x10;
+const POLLNVAL: u32 = 0x20;
+/** The size of a `struct pollfd` (`int fd; short events; short revents;`). */
+const POLLFD: usize = 8;
+/** A pipe's buffer's first size, and the least it grows by. */
+const CHUNK: usize = 65536;
+/** The spare room below which a buffer grows before the next `read` (it reads into the rest). */
+const MIN_READ: usize = 4096;
+
+/** The address of byte `i` of `data` (which has it, or `i` is its length). */
+function byteAt(data: u8[], i: usize): usize {
+  // SAFETY: a copy of nothing; `data` is borrowed for the call.
+  return Ptr.addressOf(unsafe { memset$bytes(data, 0, 0) }) + i;
+}
+
+/**
+ * `spawn x: … (os error N)` for failure `errno` of `program`, as `spawn` and `exec` word it
+ * (child_record.velt): `execSync` throws Node's error made of it (spawn_error.velt).
+ */
+function spawnError(program: string, errno: i32): IoStatus {
+  if (errno === sp.EINVAL) {
+    return { code: 4, message: `spawn ${program}: nul byte found in provided data` };
+  }
+  // SAFETY: strerror returns a NUL-terminated message.
+  const text = cText(Ptr.addressOf(unsafe { strerror(errno) }));
+  return { code: sys.codeOf(errno), message: `spawn ${program}: ${text} (os error ${errno})` };
+}
+
+/**
+ * One output pipe being read to its end: its descriptor (-1 once ended) and what it gave, in one
+ * buffer that grows by doubling (as Rust's `read_to_end`), so memory follows the output's size,
+ * not the number of reads; `room` is the buffer's capacity.
+ */
+class Drain {
+  fd: i32 = -1;
+  data: u8[] = [];
+  room: usize = 0;
+}
+
+/** Reads what `d`'s pipe holds now, straight into its buffer; at its end (or an error) closes it. */
+function readNow(d: Drain): void {
+  while (d.fd >= 0) {
+    const len = d.data.length;
+    if (d.room - len < MIN_READ) {
+      const want = len + CHUNK > 2 * d.room ? len + CHUNK : 2 * d.room;
+      arrayReserve(d.data, want - len);
+      d.room = want;
+    }
+    // The spare room, which only `read` writes before its bytes are kept (`n` of them).
+    const space = d.room - len;
+    arraySetLen(d.data, d.room);
+    // SAFETY: the buffer holds `room` bytes and nothing grows it during the call.
+    const at = unsafe { arrayDataAddress(d.data) } + len;
+    // SAFETY: `space` bytes at `at`; the descriptor is open.
+    const n = unsafe { read$exec(d.fd, m.ptr(at), space) };
+    arraySetLen(d.data, n > 0 ? len + (n as usize) : len);
+    if (n > 0) {
+      continue;
+    }
+    const e = n < 0 ? r.errno() : 0;
+    if (n < 0 && e === r.EAGAIN) {
+      return;
+    }
+    if (n < 0 && e === r.EINTR) {
+      continue;
+    }
+    sp.closeFd(d.fd);
+    d.fd = -1;
+  }
+}
+
+/**
+ * A child's output as text: valid UTF-8 checked and copied by the runtime in one fast pass (a
+ * child's output is large, and nearly always valid), else `utf8DecodeLossy`'s U+FFFDs.
+ */
+function textOf(data: u8[]): string {
+  const whole = velt_rt_bytes_to_str(data);
+  return whole.code == 0 ? whole.value : utf8DecodeLossy(data);
+}
+
+/** Writes what stdin `fd` takes of `data` from `off` now: the new offset, or -1 when it is done. */
+function writeNow(fd: i32, data: u8[], off: usize): i64 {
+  let at = off;
+  while (at < data.length) {
+    // SAFETY: `data` holds `length - at` bytes from `at`; the descriptor is open.
+    const n = unsafe { write$exec(fd, m.ptr(byteAt(data, at)), data.length - at) };
+    if (n >= 0) {
+      at += n as usize;
+      continue;
+    }
+    const e = r.errno();
+    if (e === r.EAGAIN) {
+      return at as i64;
+    }
+    if (e !== r.EINTR) {
+      // The child closed its stdin (EPIPE: SIGPIPE is ignored): the rest is dropped and the run
+      // goes on, as the runtime's `execSync` did. Node's `spawnSync` reports `error` EPIPE then.
+      return -1;
+    }
+  }
+  return -1;
+}
+
+/** Puts `fd` with `events` in the poll set at `set`, entry `i`. */
+function entry(set: usize, i: usize, fd: i32, events: u32): void {
+  m.st32(set + POLLFD * i, fd as u32);
+  m.st32(set + POLLFD * i + 4, events);
+}
+
+/** Entry `i`'s `revents` after the poll (the high half of the word after `fd`: little-endian). */
+function revents(set: usize, i: usize): u32 {
+  return m.ld32(set + POLLFD * i + 4) >> 16;
+}
+
+/** Reaps `pid`: its exit code (128 + the signal that killed it), or -1 when `waitpid` failed. */
+function reap(pid: i32): i64 {
+  const st = m.zeroed(16);
+  let got: i32 = -1;
+  while (true) {
+    // SAFETY: room for the status `int`.
+    got = unsafe { waitpid$exec(pid, m.ptrTo<i32>(st), 0) };
+    if (got >= 0 || r.errno() !== r.EINTR) {
+      break;
+    }
+  }
+  const w = m.ld32(st);
+  m.release(st, 16);
+  if (got !== pid) {
+    return -1;
+  }
+  const sig = w & 0x7f;
+  return sig === 0 ? ((w >> 8) & 0xff) as i64 : 128 + (sig as i64);
+}
+
+/** Runs `spec` to completion with `input`, blocking the calling thread. */
+export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
+  const none: RawOutput = { code: 0, stdout: "", stderr: "" };
+  const data = utf8Encode(input);
+  // Stdin is a pipe only when there is input; the child reads end of stream otherwise.
+  const modes: u32 = (data.length === 0 ? 2 : 1) | (1 << 2) | (1 << 4);
+  const got = sp.start(spec, modes);
+  if (got.pid === 0) {
+    const st = spawnError(spec.program, got.error);
+    return { code: st.code, message: st.message, value: none };
+  }
+  let stdin = got.stdin;
+  let off: usize = 0;
+  const out = new Drain();
+  out.fd = got.stdout;
+  const err = new Drain();
+  err.fd = got.stderr;
+  const set = m.zeroed(3 * POLLFD);
+  let broken = false;
+  while (stdin >= 0 || out.fd >= 0 || err.fd >= 0) {
+    // stdin (if still open), stdout, stderr: an ended one is -1, which `poll` skips.
+    entry(set, 0, stdin, POLLOUT);
+    entry(set, 1, out.fd, POLLIN);
+    entry(set, 2, err.fd, POLLIN);
+    const n = pollFds(set, 3, -1);
+    if (n < 0) {
+      if (r.errno() === r.EINTR) {
+        continue;
+      }
+      broken = true;
+      break;
+    }
+    const ready = POLLIN | POLLOUT | POLLERR | POLLHUP | POLLNVAL;
+    if (stdin >= 0 && (revents(set, 0) & ready) !== 0) {
+      const next = writeNow(stdin, data, off);
+      if (next < 0) {
+        sp.closeFd(stdin);
+        stdin = -1;
+      } else {
+        off = next as usize;
+      }
+    }
+    if (out.fd >= 0 && (revents(set, 1) & ready) !== 0) {
+      readNow(out);
+    }
+    if (err.fd >= 0 && (revents(set, 2) & ready) !== 0) {
+      readNow(err);
+    }
+  }
+  m.release(set, 3 * POLLFD);
+  sp.closeFd(stdin);
+  sp.closeFd(out.fd);
+  sp.closeFd(err.fd);
+  const code = reap(got.pid);
+  if (broken || code < 0) {
+    return { code: 99, message: "waiting for the child failed", value: none };
+  }
+  const stdout = textOf(out.data);
+  const stderr = textOf(err.data);
+  const ran: RawOutput = { code: code as i32, stdout: stdout, stderr: stderr };
+  return { code: 0, message: "", value: ran };
+}

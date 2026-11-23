@@ -1,46 +1,34 @@
 // velt/process/child (internal): what `posix_spawn` is given besides the program's arguments
 // (std/process/child/spawn_posix.velt): the child's environment, and the paths its program is
-// looked up at in the child's `PATH`, as libuv looks it up for Node.
+// looked up at in the child's `PATH`, as libuv looks it up for Node, and which of them exist.
 
 import { CommandSpec } from "velt/process/child/spec";
 import { envPairs } from "#env-sys";
+import { errno } from "#reactor";
+import { exists, PATH_MAX } from "#spawn-open";
+import { strByteLen } from "velt/lang/intrinsics";
+
+const ENOENT: i32 = 2;
+const ENOTDIR: i32 = 20;
 
 /**
  * The child's environment as `[name, value, …]`: the parent's unless cleared (a copy, made
  * under velt/process' environment lock), then the spec's.
  */
 export function environment(spec: CommandSpec): string[] {
-  const names: string[] = [];
-  const values: string[] = [];
-  if (!spec.clearEnv) {
-    const all = envPairs();
-    for (let i: usize = 0; i + 1 < all.length; i += 2) {
-      names.push(all[i]);
-      values.push(all[i + 1]);
-    }
-  }
+  const out: string[] = spec.clearEnv ? [] : envPairs();
   for (let i: usize = 0; i + 1 < spec.env.length; i += 2) {
-    const at = names.indexOf(spec.env[i]);
-    if (at >= 0) {
-      values[at as usize] = spec.env[i + 1];
-    } else {
-      names.push(spec.env[i]);
-      values.push(spec.env[i + 1]);
+    const name = spec.env[i];
+    let at: usize = 0;
+    while (at + 1 < out.length && out[at] != name) {
+      at += 2;
     }
-  }
-  const out: string[] = [];
-  for (let i: usize = 0; i < names.length; i++) {
-    out.push(names[i]);
-    out.push(values[i]);
-  }
-  return out;
-}
-
-/** `[name, value, …]` as the "name=value" strings `posix_spawn` takes. */
-export function lines(env: string[]): string[] {
-  const out: string[] = [];
-  for (let i: usize = 0; i + 1 < env.length; i += 2) {
-    out.push(`${env[i]}=${env[i + 1]}`);
+    if (at + 1 < out.length) {
+      out[at + 1] = spec.env[i + 1];
+    } else {
+      out.push(name);
+      out.push(spec.env[i + 1]);
+    }
   }
   return out;
 }
@@ -64,15 +52,41 @@ export function pathOf(env: string[]): string {
  * bare name, which `posix_spawn` opens there, and which the shell of a script without `#!` is
  * given as glibc gives it (`/bin/sh prog …`, so its `$0` is `prog`). So nothing reads this
  * process' environment outside velt/process' lock, as `posix_spawnp`, which reads its `PATH`,
- * would.
+ * would. An entry of `PATH_MAX` bytes or more is skipped, as libuv skips it (its `execvpe`,
+ * musl's: entries as long as `PATH`, at most `PATH_MAX - 1` bytes plus one, are left out).
  */
 export function candidates(program: string, path: string): string[] {
   if (program.includes("/")) {
     return [program];
   }
   const out: string[] = [];
-  for (const dir of path.split(":")) {
-    out.push(dir == "" ? program.clone() : `${dir}/${program}`);
+  const longest = strByteLen(path) < PATH_MAX - 1 ? strByteLen(path) : PATH_MAX - 1;
+  let from: i64 = 0;
+  while (true) {
+    const end = path.indexOf(":", from);
+    const dir = path.slice(from, end < 0 ? (path.length as i64) : end);
+    if (strByteLen(dir) <= longest) {
+      out.push(dir == "" ? program.clone() : `${dir}/${program}`);
+    }
+    if (end < 0) {
+      return out;
+    }
+    from = end + 1;
   }
-  return out;
+}
+
+/**
+ * ENOENT or ENOTDIR when absolute candidate `path` (at address `file`, NUL-terminated) does not
+ * exist, which `posix_spawn` would fail with too; 0 to try it. A failed `posix_spawn` costs
+ * about as much as a started one on macOS (the kernel makes the process first), and a program
+ * found late in `PATH` fails at every entry before. The check uses the effective ids, as the
+ * kernel's exec does (a setuid program). Relative candidates resolve in the child's working
+ * directory, after its chdir: always tried.
+ */
+export function absent(path: string, file: usize): i32 {
+  if (!path.startsWith("/") || exists(file) === 0) {
+    return 0;
+  }
+  const e = errno();
+  return e === ENOENT || e === ENOTDIR ? e : 0;
 }
