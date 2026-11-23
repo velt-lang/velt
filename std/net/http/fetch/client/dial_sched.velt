@@ -6,19 +6,22 @@
 //
 // An `https:` connection is such a socket with the TLS client in Velt over it
 // (std/net/tls/fd_client.velt, #2392 step 6), kept in the reactor's table of TLS streams, so it
-// pools as a plain one does. A build whose OS has no reactor (std/lang/hooks/reactor_none.velt)
+// pools as a plain one does. The client is called by role (`sched_tls_handshake`): a program loads
+// it only when live code can dial `https:`. A build whose OS has no reactor (std/lang/hooks/reactor_none.velt)
 // uses the runtime's sockets, with the TLS client in Velt over them for `https:` (`tlsOn`).
 
 import { IoError } from "velt/io/error";
+import { hookCall } from "velt/lang/intrinsics";
+import { errorCodeName } from "velt/native/error";
 import { unwrapIo } from "velt/native/result";
 import { TcpStream } from "velt/net";
+import { TlsOn } from "velt/net/http/fetch/client/target";
 import { AbortError, AbortSignal } from "velt/task";
 import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
-import { handshakeOn } from "velt/net/tls/fd_client";
 
 /** How long connecting may take (milliseconds) before `ETIMEDOUT`, as conn.velt's `CONNECT_MS`. */
 const CONNECT_MS: u64 = 10000;
@@ -51,18 +54,21 @@ export async function dialTls(
   serverName: string,
   ca: string,
   alpn: string,
+  tls: TlsOn,
   signal: AbortSignal | null,
 ): Promise<TcpStream, IoError | AbortError> {
   const start = wt.now();
   const fd = await dialSocket(addr, signal);
   const spent = ((wt.now() - start) / 1000000) as i64;
-  return await tlsOn(fd, addr, serverName, ca, alpn, (CONNECT_MS as i64) - spent, signal);
+  return TcpStream.ofHandle(
+    await tls(fd, addr, serverName, ca, alpn, (CONNECT_MS as i64) - spent, signal),
+  );
 }
 
 /**
  * The TLS client's handshake on connected socket `fd` to `addr` (the reactor's, or the runtime's
- * on an OS without a reactor), as `dialTls` describes, within `left` milliseconds; on a failure
- * the socket is closed.
+ * on an OS without a reactor), as `dialTls` describes, within `left` milliseconds: the TLS
+ * stream's handle (`TlsOn`); on a failure the socket is closed.
  */
 export async function tlsOn(
   fd: u64,
@@ -72,17 +78,18 @@ export async function tlsOn(
   alpn: string,
   left: i64,
   signal: AbortSignal | null,
-): Promise<TcpStream, IoError | AbortError> {
-  try {
-    return TcpStream.ofHandle(await handshakeOn(fd, serverName, ca, alpn, left, signal));
-  } catch (e) {
-    if (e instanceof IoError) {
-      throw e.code == "ETIMEDOUT"
-        ? new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`)
-        : new IoError(e.code, `fetch failed: ${e.message}`);
-    }
-    throw e;
+): Promise<u64, IoError | AbortError> {
+  const r = await hookCall("sched_tls_handshake", fd, serverName, ca, alpn, left, signal);
+  if (r.code === 0) {
+    return r.value;
   }
+  if (signal != null) {
+    signal.throwIfAborted();
+  }
+  const code = errorCodeName(r.code);
+  throw code == "ETIMEDOUT"
+    ? new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`)
+    : new IoError(code, `fetch failed: ${r.message}`);
 }
 
 // `dialPlain`'s socket handle.
