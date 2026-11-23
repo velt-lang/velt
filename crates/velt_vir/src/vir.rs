@@ -421,17 +421,12 @@ pub struct ExternFn {
     /// `I64`, `U64`, `F64` or `Ptr` (C's default argument promotions already applied). Backends
     /// call it with the target's variadic convention. `false` for every other extern.
     pub variadic: bool,
-    /// A C function taking or returning C structs by value (#2187 layer 3, additive): how its
-    /// parameters and result cross beyond their types, as the target's C calling convention
-    /// classifies them (`crate::c_struct_abi`). `None` for every other extern, whose scalars
-    /// cross as they are.
+    /// A C function taking or returning structs by value (#2187 layer 3, additive): how its
+    /// parameters and result cross, per the target's C convention (`crate::c_struct_abi`).
     pub c_abi: Option<CAbi>,
 }
 
-/// How a C function's parameters and result cross (`ExternFn::c_abi`). A struct passed in
-/// registers is already one or two scalar parameters (`I64` or `F64` words); what is left for a
-/// backend is a pointer parameter that stands for a struct on the stack or the result's slot, and a
-/// struct result in registers.
+/// How a C function's parameters and result cross beyond their types (`ExternFn::c_abi`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CAbi {
     /// One per entry of `ExternFn::params`.
@@ -442,13 +437,11 @@ pub struct CAbi {
 /// How one parameter of a C function crosses (`CAbi::params`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CParam {
-    /// As its type says.
+    /// As its type says (also each `I64`/`F64` word of a struct passed in registers).
     Value,
-    /// A `Ptr` to a copy of a struct of `size` bytes and alignment `align`, passed on the stack
-    /// by value: the callee gets its own copy (LLVM `byval`, Cranelift `StructArgument`).
+    /// A `Ptr` to the callee's own copy of a struct, on the stack (LLVM `byval`).
     ByVal { size: u32, align: u32 },
-    /// The first parameter, a `Ptr` to the caller's slot of the struct result, which the callee
-    /// fills (LLVM `sret`, Cranelift `StructReturn`); the extern's `ret` is `Unit`.
+    /// The first parameter, a `Ptr` to the struct result's slot (LLVM `sret`); `ret` is `Unit`.
     Sret { size: u32, align: u32 },
 }
 
