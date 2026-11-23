@@ -29,6 +29,43 @@ use crate::SourceModule;
 /// The prefix of a renamed parameter (module docs).
 pub(crate) const PREFIX: &str = "<param ";
 
+/// `diags` with each renamed parameter (`<param x>`) shown by its source name (`x`): a
+/// diagnostic about the parameter names it as written.
+pub(crate) fn source_names(diags: &mut [velt_common::Diagnostic]) {
+    for d in diags {
+        let texts = std::iter::once(&mut d.message)
+            .chain(d.labels.iter_mut().map(|l| &mut l.message))
+            .chain(d.notes.iter_mut());
+        for t in texts {
+            if t.contains(PREFIX) {
+                *t = source_name(t);
+            }
+        }
+    }
+}
+
+/// Text `t` with each `<param x>` written `x`.
+fn source_name(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    let mut rest = t;
+    while let Some(i) = rest.find(PREFIX) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + PREFIX.len()..];
+        match after.find('>') {
+            Some(j) => {
+                out.push_str(&after[..j]);
+                rest = &after[j + 1..];
+            }
+            None => {
+                out.push_str(&rest[i..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The program with its arrows' assigned parameters copied (`None`: no arrow assigns one).
 pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
     // Std is not scanned: none of its arrows assigns a parameter, which was an error before.
@@ -183,9 +220,7 @@ impl<'a> Visit<'a> for Scan<'a> {
     fn expr(&mut self, e: &'a ast::Expr) {
         match &e.kind {
             E::Assign { target, .. } | E::Update { target, .. } => {
-                if let E::Ident(i) = &strip(target).kind {
-                    self.assigned.insert(i.name.as_str());
-                }
+                target_names(target, &mut self.assigned);
             }
             E::Arrow { params, .. } => {
                 for p in params {
@@ -214,6 +249,33 @@ impl<'a> Visit<'a> for Reads<'_> {
         if matches!(&e.kind, E::Ident(i) if i.name == self.0) {
             self.1 = true;
         }
+    }
+}
+
+/// The variables assignment target `e` assigns: a name, or each name inside a destructuring
+/// target (`[a, b] = …`, `({ s, t: u } = …)`), nested, with a default (`[a = 1] = …`) or a rest
+/// (`[...r] = …`).
+fn target_names<'a>(e: &'a ast::Expr, out: &mut FxHashSet<&'a str>) {
+    match &strip(e).kind {
+        E::Ident(i) => {
+            out.insert(i.name.as_str());
+        }
+        E::Array(elems) => elems.iter().for_each(|x| target_names(x, out)),
+        E::Object(props) => {
+            for p in props {
+                match p {
+                    ast::ObjectProp::KeyValue(_, v) => target_names(v, out),
+                    ast::ObjectProp::Shorthand(i) => {
+                        out.insert(i.name.as_str());
+                    }
+                    ast::ObjectProp::Spread(x) => target_names(x, out),
+                    ast::ObjectProp::Method(_) => {}
+                }
+            }
+        }
+        E::Spread(x) => target_names(x, out),
+        E::Assign { target, .. } => target_names(target, out),
+        _ => {}
     }
 }
 

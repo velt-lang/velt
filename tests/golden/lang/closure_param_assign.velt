@@ -58,3 +58,19 @@ console.log(counter(10));
   n *= 10;
   console.log(i, n);
 });
+
+// Destructuring assignment of parameters, nested, with a default and a rest.
+const swap = (a: string, b: string) => {
+  [a, b] = [b, a];
+  return a + b;
+};
+const take = (s: string, o: { s: string }) => {
+  ({ s } = o);
+  return s;
+};
+const deep = (a: string, b: string, rest: string[], o: { p: { q: string } }) => {
+  [a = "d", ...rest] = [b, "x", "y"];
+  ({ p: { q: b } } = o);
+  return a + b + rest.join("");
+};
+console.log(swap("1", "2"), take("old", { s: "new" }), deep("a", "b", [], { p: { q: "q" } }));

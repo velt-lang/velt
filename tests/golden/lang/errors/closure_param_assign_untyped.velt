@@ -1,0 +1,7 @@
+// A parameter an arrow assigns is renamed while checking (`param_copies`); a diagnostic about it
+// names it as written.
+const h = (x) => {
+  x = 1;
+  return x;
+};
+console.log(h(2));

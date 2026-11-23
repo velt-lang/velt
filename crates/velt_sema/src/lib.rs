@@ -267,7 +267,10 @@ fn check_on_current_thread(
     if opts.units {
         ctx::def_table::report();
     }
-    out
+    let (checked, mut diags) = out;
+    // A renamed parameter is shown by its own name (`param_copies`).
+    param_copies::source_names(&mut diags);
+    (checked, diags)
 }
 
 /// [`check_on_current_thread`], its passes timed (`timings`).
