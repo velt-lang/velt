@@ -10,30 +10,9 @@
 // another zone where the region's differs (Peru, Ecuador and Panama under "SA Pacific Standard
 // Time", 001's America/Bogota), and so can print another name than Node there.
 
-import { Ptr } from "velt/ffi/ptr";
-import { wideText } from "velt/ffi/wide";
-import { addressLoad } from "velt/lang/intrinsics";
+import { systemZoneKey } from "#localtime";
 import { fixedOffset } from "./tz_fixed";
 import { WINDOWS_IDS, WINDOWS_KEYS } from "./zone_names_windows_table";
-
-/** Win32's `DYNAMIC_TIME_ZONE_INFORMATION` (localtime_win32.velt says why two names). */
-declare c type _TIME_DYNAMIC_ZONE_INFORMATION;
-
-declare c("c") function GetDynamicTimeZoneInformation$zone(
-  info: Ptr<_TIME_DYNAMIC_ZONE_INFORMATION> | null,
-): u32;
-declare c("c") function calloc$zone(n: usize, size: usize): Ptr<u8> | null;
-declare c("c") function free$zone(p: Ptr<u8> | null): void;
-
-/** `sizeof(DYNAMIC_TIME_ZONE_INFORMATION)`. */
-const ZONE_BYTES: usize = 432;
-
-/** Where `TimeZoneKeyName` (128 `WCHAR`s) is in it. */
-const ZONE_KEY_NAME: usize = 172;
-const ZONE_KEY_UNITS: usize = 128;
-
-/** `GetDynamicTimeZoneInformation`'s failure result. */
-const TIME_ZONE_ID_INVALID: u32 = 0xffffffff;
 
 /** Whether local time follows `tz`: when it names UTC or a fixed offset. */
 export function tzHonoured(tz: string): bool {
@@ -45,27 +24,15 @@ export function tzReadOnce(): bool {
   return true;
 }
 
-/** The system zone's IANA id, or null when Windows reports none or CLDR doesn't map its key. */
+/**
+ * The system zone's IANA id, or null when Windows reports none or CLDR doesn't map its key. The
+ * key is read by localtime_win32.velt, which declares the Win32 types: a second declaration in
+ * this on-demand module made the VIR of a program that never loads it differ when std is loaded
+ * up front (`any`'s tags count the opaque C types).
+ */
 export function systemZoneId(): string | null {
-  // SAFETY: calloc has no precondition; its result is checked.
-  const block = unsafe { calloc$zone(1, ZONE_BYTES) };
-  if (block === null) {
-    return null;
-  }
-  const at = Ptr.addressOf(block);
-  // SAFETY: `at` holds a zeroed DYNAMIC_TIME_ZONE_INFORMATION, which the call fills.
-  const id = unsafe { GetDynamicTimeZoneInformation$zone(Ptr.orNull(at)) };
-  const units: u16[] = [];
-  for (let i: usize = 0; id !== TIME_ZONE_ID_INVALID && i < ZONE_KEY_UNITS; i++) {
-    // SAFETY: inside the block, whose key name the call filled.
-    units.push(unsafe { addressLoad<u16>(at + ZONE_KEY_NAME + 2 * i) });
-  }
-  // SAFETY: the block calloc gave above, which nothing else has seen.
-  unsafe {
-    free$zone(block);
-  }
-  const key = wideText(units);
-  return key.length == 0 || key.includes("\n") ? null : ianaId(key);
+  const key = systemZoneKey();
+  return key === null || key.includes("\n") ? null : ianaId(key);
 }
 
 /** The IANA id CLDR maps Windows key `key` to, or null. */
