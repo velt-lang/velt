@@ -1,20 +1,16 @@
 // velt/fs (internal): reading, writing and describing whole files on Windows (`#fs-whole`'s win32
 // variant, std/imports.velt), through Win32's wide-path functions, with Node's messages and
-// libuv's names for Win32's errors (std/os/win_error.velt). A path of 248 units or more is made
-// absolute and given the `\\?\` prefix, as Rust's std does, so that it is not cut at MAX_PATH;
-// errors name the path as it was given, as Node's do. A directory refuses to open as a file
-// ("access denied", or another code when named with a separator after it), which is `EISDIR`
-// here, as everywhere else. A file named with separators after it (`dir\file\`) is read,
-// described and found as the file, as Node does (`asFile`).
+// libuv's names for Win32's errors (std/os/win_error.velt). A path is resolved and given with the
+// `\\?\` prefix, and errors name it absolute, as Node does (velt/fs/whole/win_path). A directory
+// refuses to open as a file ("access denied"), which is `EISDIR` here, as everywhere else.
 
 import { Ptr } from "velt/ffi/ptr";
-import { osError } from "velt/fs/errors";
 import { Stats } from "velt/fs/stats";
 import { Done } from "velt/fs/whole/done";
 import { readAll } from "velt/fs/whole/read_all";
 import { utf8Encode } from "velt/encoding/utf8";
 import { addressLoad } from "velt/lang/intrinsics";
-import { asFile, winPath, withoutSeparators } from "velt/fs/whole/win_path";
+import { winError, winPath } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
 
 /** C's `SECURITY_ATTRIBUTES` and `OVERLAPPED`: never passed. */
@@ -91,7 +87,7 @@ const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_SHARING_VIOLATION: u32 = 32;
 const ERROR_BROKEN_PIPE: u32 = 109;
-/** EISDIR, Linux's number, which `osError` reads on Windows. */
+/** EISDIR, Linux's number, which `winError` reads. */
 const EISDIR: i32 = 21;
 /** EIO, Linux's number: a write that wrote nothing. */
 const EIO: i32 = 5;
@@ -163,16 +159,16 @@ function readRest(h: Ptr<void>): Done<u8[]> {
   const failed: u32[] = [0];
   const bytes = readAll(hint, (b, start, end) => readSome(h, b, start, end, failed));
   if (bytes === null) {
-    return { value: null, error: osError(errnoOfWin32(failed[0]), "read") };
+    return { value: null, error: winError(errnoOfWin32(failed[0]), "read") };
   }
   return { value: bytes, error: null };
 }
 
 /** The bytes of the file at `path` (`c`, its C form, is POSIX's). */
 export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
-  const w = winPath(asFile(path));
+  const w = winPath(path);
   if (w === null) {
-    return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
+    return { value: null, error: winError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
   const h = open(w, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
   if (h === null) {
@@ -180,9 +176,9 @@ export function readBytes(c: readonly u8[], path: string): Done<u8[]> {
     // A directory refuses to open as a file: with "access denied", or, named with a separator
     // after it (`dir\`), with another code. Node reads either as EISDIR.
     if (isDirectory(w)) {
-      return { value: null, error: osError(EISDIR, "read") };
+      return { value: null, error: winError(EISDIR, "read") };
     }
-    return { value: null, error: osError(errnoOfWin32(code), "open", path) };
+    return { value: null, error: winError(errnoOfWin32(code), "open", path) };
   }
   const r = readRest(h);
   close(h);
@@ -202,9 +198,9 @@ export function readText(c: readonly u8[], path: string): Done<string> {
 /** Writes `data` as UTF-8 to the file at `path`, created if missing, truncated or `append`ed to. */
 export function writeText(c: readonly u8[], path: string, data: string, append: bool): Done<bool> {
   // `f\` writes `f`, made if missing, and `d\` is EISDIR, as in Node.
-  const w = winPath(withoutSeparators(path));
+  const w = winPath(path);
   if (w === null) {
-    return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
+    return { value: null, error: winError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path) };
   }
   const access = append ? FILE_APPEND_DATA | SYNCHRONIZE : GENERIC_WRITE;
   const h = open(w, access, append ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
@@ -214,10 +210,10 @@ export function writeText(c: readonly u8[], path: string, data: string, append: 
       // A directory: Node names the open for a write, but the write (no path) for an append.
       return {
         value: null,
-        error: append ? osError(EISDIR, "write") : osError(EISDIR, "open", path),
+        error: append ? winError(EISDIR, "write") : winError(EISDIR, "open", path),
       };
     }
-    return { value: null, error: osError(errnoOfWin32(code), "open", path) };
+    return { value: null, error: winError(errnoOfWin32(code), "open", path) };
   }
   const bytes = utf8Encode(data);
   const total = bytes.length as usize;
@@ -242,7 +238,7 @@ export function writeText(c: readonly u8[], path: string, data: string, append: 
   }
   close(h);
   if (failed !== 0) {
-    return { value: null, error: osError(failed, "write") };
+    return { value: null, error: winError(failed, "write") };
   }
   return { value: true, error: null };
 }
@@ -281,14 +277,14 @@ function handleInfo(h: Ptr<void>, info: u32[]): u32 {
 /** `stat` (`follow`) or `lstat` of `path`, from one open of it (a directory too). */
 export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats> {
   const call = follow ? "stat" : "lstat";
-  const w = winPath(asFile(path));
+  const w = winPath(path);
   if (w === null) {
-    return { value: null, error: osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), call, path) };
+    return { value: null, error: winError(errnoOfWin32(ERROR_FILE_NOT_FOUND), call, path) };
   }
   const flags = FILE_FLAG_BACKUP_SEMANTICS | (follow ? 0 : FILE_FLAG_OPEN_REPARSE_POINT);
   const h = open(w, FILE_READ_ATTRIBUTES, OPEN_EXISTING, flags);
   if (h === null) {
-    return { value: null, error: osError(errnoOfWin32(lastWin32()), call, path) };
+    return { value: null, error: winError(errnoOfWin32(lastWin32()), call, path) };
   }
   // BY_HANDLE_FILE_INFORMATION, as 13 DWORDs: the attributes at 0, the last write time at 5-6,
   // the size at 8 (high) and 9 (low).
@@ -296,7 +292,7 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
   const code = handleInfo(h, info);
   if (code !== 0) {
     close(h);
-    return { value: null, error: osError(errnoOfWin32(code), call, path) };
+    return { value: null, error: winError(errnoOfWin32(code), call, path) };
   }
   let link = false;
   if (!follow && (info[0] & FILE_ATTRIBUTE_REPARSE_POINT) !== 0) {
@@ -325,7 +321,7 @@ export function statOf(c: readonly u8[], path: string, follow: bool): Done<Stats
 
 /** Whether anything is at `path`, following symlinks (a broken one is not there). */
 export function existsAt(c: readonly u8[], path: string): bool {
-  const w = winPath(asFile(path));
+  const w = winPath(path);
   if (w === null) {
     return false;
   }
