@@ -147,8 +147,8 @@ impl FnLower<'_, '_> {
 
     /// `velt_main`'s root task `poll` with its state at `state`, run to completion. The third
     /// argument is 1 when tasks must stay on their worker: a program that may give a declared
-    /// function properties through `any` reaches them in the runtime (fn_props.rs), under the
-    /// runtime's module lock, which worker 0 keeps.
+    /// function properties through `any`, placed as when the runtime's module lock guarded them
+    /// and worker 0 kept it (the lock is std's now, sched_module.velt; #2196 9c).
     pub(super) fn sched_block_on(&mut self, poll: Operand, state: Operand) {
         let (poll, state) = (self.as_usize(poll), self.as_usize(state));
         let stay = cint(i128::from(self.cx.boxing.fn_props), Ty::U64);
