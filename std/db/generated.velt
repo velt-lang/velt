@@ -1,22 +1,11 @@
 // velt/db (internal): the functions velt/db's readers and binder call whose bodies are generated
 // per type at compile time (docs/internals/design/source-generators.md) by velt/db/generate:
 // rows of a `RowSource` read by column (rows.velt, columns.velt), and a statement's parameters
-// handed to a native driver's sink value by value (bind.velt). The code they generate calls what
-// is imported here.
+// handed to a `ParamSink` value by value (bind.velt). The code they generate calls what is
+// imported here.
 
 import { CellKind } from "velt/db/row_source";
-import {
-  rowMismatch,
-  velt_rt_param_bool,
-  velt_rt_param_bytes,
-  velt_rt_param_f64,
-  velt_rt_param_i64,
-  velt_rt_param_name,
-  velt_rt_param_null,
-  velt_rt_param_object,
-  velt_rt_param_str,
-  velt_rt_param_u64,
-} from "velt/db/rt";
+import { rowMismatch } from "velt/db/rt";
 
 // 1 and the integer in `out` (passed by pointer) when `v` is one exactly, else 0.
 declare function velt_rt_rows_exact_i64(v: f64, out: RowsI64): u8;
@@ -39,15 +28,6 @@ export declare generated("velt/db/generate/rows") function readRowsByColumn<T, S
 export declare generated("velt/db/generate/rows") function readRowByColumn<T, S>(
   src: S,
 ): T | null throws Error;
-
-/**
- * Hands `params` to a native driver's parameter sink (its address) value by value; false,
- * having done nothing, for a type whose JSON text the driver binds instead.
- */
-export declare generated("velt/db/generate/bind") function bindValues<P>(
-  sink: u64,
-  params: P,
-): bool;
 
 /**
  * Hands `params` to a `ParamSink` value by value; false, having done nothing, for a type that

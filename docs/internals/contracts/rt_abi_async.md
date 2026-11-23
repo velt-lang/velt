@@ -359,7 +359,7 @@ A native program runs on the executor in Velt (std/lang/hooks/sched*.velt): lowe
 hooks (`sched_block_on`, `sched_spawn`, `sched_spawn_fut`, `sched_yield`, `sched_finish`) in place
 of this section's symbols. The symbols below are the ABI WebAssembly programs call
 (`velt_rt_wasm`); velt_rt defines them too, running tasks on its host (below), which also runs
-the runtime's Rust glue (child processes on Windows, file streams, the native-package ABI).
+the runtime's Rust glue (child processes on Windows, file streams).
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -971,17 +971,10 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
 | `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas and no line break is left alone without being parsed; a custom inspect's text (`velt_rt_strbuf_inspect_atom`) is kept as it is, its lines after the first indented by the value's indentation, as node indents a custom inspect's string. Emitted after each top-level `console.log` / `${}` value that can hold containers |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
-| `velt_rt_strbuf_spare` | `(VeltStrBuf* b, u64 min, u64* avail) -> u8*` | room for writing `min` or more bytes in place after the text (the builder becomes a unique heap buffer): where they start, and how many there are in `*avail`. Native libraries write their results into Velt's memory this way ([native_abi.md](native_abi.md)) |
-| `velt_rt_strbuf_commit` | `(VeltStrBuf* b, u64 n, u8 ascii)` | the `n` bytes written after the text (`velt_rt_strbuf_spare`) become part of it: UTF-8, ASCII when `ascii` is 1 (not counted then) |
+| `velt_rt_strbuf_commit` | `(VeltStrBuf* b, u64 n, u8 ascii)` | the `n` bytes written after the text, in the builder's spare room (a unique heap buffer), become part of it: UTF-8, ASCII when `ascii` is 1 (not counted then) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
-| `velt_rt_rows_begin_named` / `velt_rt_rows_end` | `(u64 cursor, const VeltStr* names) -> u64` / `(u64 st)` | velt/db's `decodeRows<T>` / `decodeRow<T>` of a row of plain fields read a driver's row cursor (its address) by column, in the code velt/encoding/json's generator of `parseJsonCursor<T>` writes (velt/db/generate/columns.velt): `names` gives the row type's fields, each name with its length in UTF-8 bytes in front (`2:id4:name`); each column is matched to its field once (the map is kept per thread for the next result with the same header and names). The rows state is a `u64` (its address) |
-| `velt_rt_rows_next` / `_columns` / `_field` / `_field_map` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` / `(st) -> u64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none); the fields of the first 16 columns, 4 bits each (column `c` at bit `4c`: the field's index plus one, 0 for none and for an index of 15 or more) |
-| `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD) |
-| `velt_rt_rows_kind` / `_blob` | `(st, u64 col) -> u8` / `(st, u64 col, VeltBytes* out)` | what column `col` of the current row holds, numbered as std/db's `CellKind` (0 NULL, 1 boolean, 2 integer, 3 float, 4 text, 5 blob, 6 JSON); a blob's bytes (empty for another kind) |
 | `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell of a `RowSource`), else 0 |
 | `velt_rt_rows_fail` | `(const VeltStr* expected, i64 row, const VeltStr* field, VeltStr* out)` | the JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field` (`row` -1: the single row; `field` empty: the row itself) |
-| `velt_rt_param_object` / `velt_rt_param_name` | `(u64 sink)` / `(u64 sink, const VeltStr* name)` | velt/db's `bindParams<P>` (the code velt/db/generate/bind.velt writes for `P`) hands a driver's parameter sink (its address; native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value |
-| `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(u64 sink, v)` (`_bool`: `u8`, `_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB |
 
 ### 12.2 String methods
 
@@ -1032,8 +1025,7 @@ parameter would not match on wasm32.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_json_reader_new` | `(const VeltStr* src) -> VeltJsonReader*` | never null; `src` must stay alive, unchanged **and in place** (an inline string's bytes live in the `VeltStr` itself) until `free` |
-| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`; no std code sets it): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`, native_abi.md "Rows"), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most). Flag 8 (`FLAG_CURSOR`, set by `velt_rt_json_reader_over_cursor`): `src` is a driver's row cursor (`const RawCursor*`, native_abi.md "Row cursors"), read as binary rows are, which the reader uses but does not free; a decoder that marks a position outside a row (a union of whole results) gets the rows left copied into binary form |
-| `velt_rt_json_reader_over_cursor` | `(u64 cursor, u32 flags, u32 max_depth) -> u64` | `velt_rt_json_reader_new_with` with flag 8 over a driver's row cursor (its address), as a `u64`: what the generated `parseJsonCursor<T>` reads a row type that is not read by column with (velt/encoding/json's `Reader.overRows`) |
+| `velt_rt_json_reader_new_with` | `(const VeltStr* src, u32 flags, u32 max_depth) -> VeltJsonReader*` (with flag 4, `src` is a `const VeltBytes*`) | `JSON.parse` options: flag 1 = `skip_unknown` fails; flag 2 = a JSON `null` for an optional field without `null` is not an absent field (`velt_rt_json_reader_null_absent`); `max_depth` = most arrays/objects open at once, counted from the top-level value (0 = no limit), checked by `expect_*_start`, `skip_value` and `read_value`. Flag 4 (`FLAG_ROWS`; no std code sets it): `src` is a `const VeltBytes*`, a `u8[]` of a driver's binary rows (`velt_text::rows`), which the reader walks instead of text, borrowed like a source string. Every reader call then answers as it would for the JSON the rows stand for; the only failures are a value of another kind and a rejected unknown key. `max_depth` does not apply to such rows (they nest three deep at most) |
 | `velt_rt_json_reader_free` | `(u64 r)` | 0 ok |
 | `velt_rt_json_reader_null_absent` | `(u64 r) -> u8` | 1 when a JSON `null` may stand for an absent optional field whose type has no `null` (`JSON.parse<T>`), 0 when the reader was made with flag 2 (`JSON.parse(text) as T`): the decoder then reads the field's value, which fails |
 | `velt_rt_json_reader_peek` | `(u64 r) -> u32` | next token kind, skipping whitespace: 0 EOF, 1 `null`, 2 `true`, 3 `false`, 4 number, 5 string, 6 `[`, 7 `]`, 8 `{`, 9 `}`, 10 error (bad byte, or the reader already failed). Classifies by first byte only; the `read_*` call validates. |
@@ -1338,8 +1330,7 @@ These have no runtime functions. `escapeHtml` and std/jsx's escaping are Velt co
 (`std/text/html.velt`). The SQLite, Redis and PostgreSQL clients are packages: `sqlite`
 (`packages/sqlite`, which calls SQLite through `declare c`,
 [c-ffi.md](../design/c-ffi.md)), `redis` (`packages/redis`, plain Velt on `velt/net`) and
-`postgres` (`packages/postgres`, a package with native code, whose functions, `COPY` and
-batches included, are documented in `packages/postgres/docs/native_abi.md`). The HTTP server
+`postgres` (`packages/postgres`, plain Velt on `velt/net` and its TLS client). The HTTP server
 and client are Velt code (§7).
 
 ### 14.11 Fast random numbers

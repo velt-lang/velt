@@ -16,8 +16,6 @@ pub(crate) const PIPELINE: &[&str] = &[
     "velt_rt",
     "velt_rt_host",
     "velt_rt_shared",
-    "velt_native",
-    "velt_native_macros",
     "veltc",
 ];
 
@@ -72,7 +70,6 @@ pub(crate) const TOOLING: &[(&str, &[&str])] = &[
         &[
             "cli_package",
             "registry_cli",
-            "native_packages",
             "templates",
             "install_layout",
             // `velt check --ts-compat` in a package reads `tsCompat` from the manifest.

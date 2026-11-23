@@ -27,9 +27,9 @@ impl Ctx<'_> {
     }
 
     /// Is module `m` part of a package with a native library? A package has one when one of
-    /// its modules declares a function of it: outside std, a `declare function` may only name
-    /// an export of the package's own native library (the driver checks that), and a `declare c`
-    /// function is one of a C library's, whose handles it keeps just the same. Either marks a
+    /// its modules declares a function of it: a `declare c` function is one of a C library's,
+    /// whose handles it keeps. (Outside std the driver refuses a plain `declare function`, what
+    /// a Rust crate's export was declared with before velt-lang/velt#2563.) Either marks a
     /// dependency. The program itself is marked only by a `declare function`: `declare c` is the
     /// general FFI, and one in a program must not change what `JSON.stringify` does with all its
     /// classes (Node writes their `private` fields). A `declare host` function (the JS host's)

@@ -2,17 +2,14 @@
 name = "velt_text"
 version.workspace = true
 edition.workspace = true
-description = "Velt's string encoding, number formatting and database JSON, shared by the runtime and std's native libraries"
+description = "Velt's string encoding, number formatting and database JSON, for the runtime"
 
 [dependencies]
 itoa = "1.0.18"
 memchr = "2.8.3"
 ryu = "1.0.23"
-velt_native = { path = "../velt_native", optional = true }
 
 [features]
-# `Out` for `velt_native::StrBuf`: std's drivers write rows into the Velt string itself.
-sdk = ["dep:velt_native"]
 # `wtf8::check_canonical` in every profile, for the runtime's own tests: release test builds
 # have no `debug_assertions`, and `cfg(test)` is only this crate's.
 invariants = []

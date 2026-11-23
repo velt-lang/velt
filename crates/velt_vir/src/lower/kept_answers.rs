@@ -29,7 +29,7 @@
 //!
 //! `velt_main` (entry.rs) is the one function a splice never builds again, so its inputs are
 //! named here: `uses_placement` and `reaches_tasks` (compared), `no_await_steps` (refused when
-//! it would change), `native_inits` and the module state's slots (declarations), and `main`'s
+//! it would change), the module state's slots (declarations), and `main`'s
 //! own signature (warm sema compares interfaces), and the statics table it registers
 //! (`statics_used`). The other code built once per program is
 //! built again by every splice: the module initializers (`Work::ModuleInit`), the function
@@ -60,7 +60,7 @@
 //! - `prelude_proxy`, `view_fn`, `std_fns`, `prelude_error`, `prelude_type_error`,
 //!   `tla_marks`, `ffi_hooks`: std's definitions. (`prelude_defs`, the prelude's definitions by
 //!   name, borrows the program's names: a splice starts it again.)
-//! - `native_inits`, `c_symbols`, `c_globals`, `reg_slot_agg`, `fut_header`:
+//! - `c_symbols`, `c_globals`, `reg_slot_agg`, `fut_header`:
 //!   `declare` items and C layouts.
 //! - `types`, `aggs`, `externs`, `extern_map`, `statics`, `static_map`, `str_objects`,
 //!   `symbol_records`, `numbered`, `callees`, `callee_ids`: tables keyed by content, which only

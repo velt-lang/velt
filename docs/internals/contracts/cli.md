@@ -867,15 +867,16 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   change. `update` re-resolves ignoring the lock. `publish` uploads the package to its registry
   (or copies it into a local directory registry).
 - Native libraries (native_abi.md): `build`, `run`, `check`, `dev`, `test` and the LSP
-  install the packages' native libraries for the target (prebuilt and verified, or built with
-  cargo for path packages and missing targets); `add`/`install`/`update` print one
-  `Native: `<pkg>` <ver> runs native code (prebuilt, checksum verified, <triple>)` (or
-  `built from source`) line per such package. `native build` writes the current package's bundle
+  install the C libraries packages build from `sources` for the target (prebuilt and verified, or
+  built with zig for path packages, and for missing targets when `VELT_NATIVE_FROM_SOURCE=1`);
+  `add`/`install`/`update` print one
+  `Native: `<pkg>` <ver> runs native code (prebuilt, checksum verified, <triple>)` line per package
+  with a prebuilt bundle. `native build` writes the current package's bundle
   to `<pkg>/target/velt-native/<triple>/` (default: the host). `native headers` checks the
   package's C declarations against their headers on every target and records the result in
   `c-headers.json`; `--std` checks the standard library's own and records nothing. `publish` adds
   a bundle for every `native.targets` entry, from `--native-artifacts <dir>/<triple>/` or
-  `target/velt-native/<triple>/` (the host's is (re)built), and fails if one is missing;
+  `target/velt-native/<triple>/` (built with zig when missing), and fails if one is missing;
   `--native-only` adds bundles for targets not yet published to the published version.
 - `fmt` formats in place (no paths: the package's `package.velt` and the `.velt`/`.ts`/`.tsx`
   files of `src/`, or all `.velt` under cwd outside a package; a directory path: its `.velt`

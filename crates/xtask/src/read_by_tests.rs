@@ -21,15 +21,10 @@ pub(crate) const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // The standard library's `velt test` suites (`std_tests`; std and the compiler run it too:
     // they select every `veltc` test).
     ("tests/std/", &[], &["std_tests"]),
-    // `packages` runs `velt test` in every packages/<name>/ (building its native crate);
-    // `native_packages` publishes http-server through a local registry; example apps depend
-    // on packages by path. What else uses a package adds its tests
+    // `packages` runs `velt test` in every packages/<name>/; example apps depend on packages by
+    // path. What else uses a package adds its tests
     // (crates/xtask/src/package_users.rs).
-    (
-        "packages/",
-        &[],
-        &["packages", "native_packages", "example_apps"],
-    ),
+    ("packages/", &[], &["packages", "example_apps"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),
     // The LLDB script the toolchain ships (`install_layout` installs it and asks for its path;

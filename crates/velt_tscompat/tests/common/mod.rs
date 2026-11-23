@@ -270,7 +270,7 @@ pub fn lint_source(path: &Path, src: &str) -> Vec<Finding> {
 }
 
 /// [`lint_source`], or [`lint_syntax`] for a sample that isn't valid Velt on its own (a
-/// `declare function` without a native library, a JSX provider that doesn't exist).
+/// `declare function` outside the standard library, a JSX provider that doesn't exist).
 pub fn lint_any(path: &Path, src: &str) -> Vec<Finding> {
     lint_checked(path, src).unwrap_or_else(|_| lint_syntax(path, src))
 }
@@ -317,8 +317,8 @@ pub fn apply_fixes(src: &str, findings: &[Finding]) -> String {
 }
 
 /// Lint `src` (as the file `path`) with the syntax rules only, without checking it: for code
-/// the lint must handle that `velt check` rejects on its own (`declare function` outside a
-/// package with a native library).
+/// the lint must handle that `velt check` rejects on its own (`declare function` outside the
+/// standard library).
 pub fn lint_syntax(path: &Path, src: &str) -> Vec<Finding> {
     let module = parse(path, src);
     let file = canonical(path);

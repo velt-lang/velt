@@ -22,7 +22,6 @@ import { choices, recordKeys } from "velt/encoding/json/generate/choice";
 import { intRange, isJsonValue, readInto } from "velt/encoding/json/generate/read_value";
 import { readUnion, unionDecodable } from "velt/encoding/json/generate/read_union";
 import { parseProblem } from "velt/encoding/json/generate/parse_check";
-import { beginRows, plainRow, readRow, RowsFrom } from "velt/db/generate/columns";
 import {
   readArray,
   readMap,
@@ -165,60 +164,4 @@ function reported(model: Model, id: i64, out: Output): bool {
   const labels: [i64, string][] = problem.labelAt >= 0 ? [[problem.labelAt, problem.label]] : [];
   out.error(problem.message, -1, labels);
   return true;
-}
-
-/**
- * The generator of `parseJsonCursor<T>(cursor: u64, flags: i64, maxDepth: i64): T throws
- * JsonError`: a native driver's rows (velt/db's `decodeRows`), read by column when `T` is a row
- * of plain fields or an array of them (velt/db/generate/columns), else by the reader over the
- * runtime's row reader, as `parseJsonTop` reads text.
- */
-export function parseJsonCursor(req: InstanceRequest, out: Output): void {
-  const model = req.model;
-  const id = req.args[0];
-  const [cursor, flags, depth] = [req.params[0], req.params[1], req.params[2]];
-  if (reported(model, id, out)) {
-    return;
-  }
-  const t = model.type(id);
-  const many = t.kind == "array";
-  const rowId = many ? t.args[0] : id;
-  if (plainRow(model, rowId)) {
-    const from = new RowsFrom(true, "st");
-    // Each throw ends the rows state first (no `try`: a row's reads throw nothing else).
-    from.end = "velt_rt_rows_end(st); ";
-    beginRows(out, model, rowId, from, cursor);
-    if (many) {
-      out.line(`const out: ${out.typeName(id)} = [];`);
-      out.line(`let row: i64 = 0;`);
-      out.line(`while (velt_rt_rows_next(st) != 0) {`);
-      readRow(out, model, rowId, from, "row", "x");
-      out.line(`out.push(x);`);
-      out.line(`row++;`);
-      out.line(`}`);
-      out.line(`velt_rt_rows_end(st);`);
-      out.line(`return out;`);
-    } else {
-      out.line(
-        `if (velt_rt_rows_next(st) == 0) { velt_rt_rows_end(st); throw rowMismatch("object", -1, ""); }`,
-      );
-      readRow(out, model, rowId, from, "-1", "x");
-      out.line(`velt_rt_rows_end(st);`);
-      out.line(`return x;`);
-    }
-    return;
-  }
-  // The runtime's reader reads the cursor's rows as a document.
-  out.line(
-    `const r = Reader.overRows(velt_rt_json_reader_over_cursor(${cursor}, ${flags} as u32, ${depth} as u32));`,
-  );
-  out.line(`try {`);
-  readInto(out, model, id, "v");
-  out.line(`if (!readerFinish(r)) { throw jsonFailed("end of input"); }`);
-  out.line(`return v;`);
-  out.line(`} catch (e) {`);
-  out.line(`throw new JsonError(readerMessage(r, e.expected, "$" + e.path));`);
-  out.line(`} finally {`);
-  out.line(`r.close();`);
-  out.line(`}`);
 }

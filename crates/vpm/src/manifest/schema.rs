@@ -175,14 +175,14 @@ pub const PACKAGE: &[Field] = &[
         kind: Kind::Object(NATIVE),
         ty: "Native",
         required: false,
-        doc: "A Rust crate in the package, built into a native library.",
+        doc: "The package's native code: the C libraries its `declare c` functions name.",
     },
     Field {
         key: "allowNative",
         kind: Kind::Entries(ALLOW_NATIVE),
         ty: "AllowNative[]",
         required: false,
-        doc: "The packages with native code (C libraries or a Rust crate) the program allows: \
+        doc: "The packages with native code (C libraries) the program allows: \
               `[\"sqlite\"]` from the registry (or a local path), \
               `{ name: \"llama\", git: \"https://…\" }` from that repository, \
               `{ name: \"duck\", url: \"https://…/releases/download/\" }` from archives under that \
@@ -442,29 +442,14 @@ pub const BUILD: &[Field] = &[Field {
 /// `native`.
 pub const NATIVE: &[Field] = &[
     Field {
-        key: "path",
-        kind: Kind::Str,
-        ty: "string",
-        required: false,
-        doc: "The crate's directory, one directory name in the package root (default \
-              `\"native\"`).",
-    },
-    Field {
         key: "targets",
         kind: Kind::StrArray {
             values: NATIVE_TARGETS,
         },
         ty: "string[]",
         required: false,
-        doc: "The targets `velt publish` publishes a prebuilt library for, of a Rust crate or a \
-              package's C `sources`.",
-    },
-    Field {
-        key: "wasm",
-        kind: Kind::Bool,
-        ty: "boolean",
-        required: false,
-        doc: "WebAssembly libraries are not supported yet: must be `false` (the default).",
+        doc: "The targets `velt publish` publishes the libraries of the package's C `sources` \
+              for.",
     },
     Field {
         key: "c",

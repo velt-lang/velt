@@ -35,7 +35,6 @@ impl<'h> Cx<'h> {
             numbered: Default::default(),
             hir,
             prelude_proxy: None,
-            native_inits: vec![],
             view_fn: None,
             std_fns: std::cell::OnceCell::new(),
             prelude_defs: std::cell::OnceCell::new(),

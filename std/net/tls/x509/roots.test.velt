@@ -1,6 +1,6 @@
 // velt/net (tests): the built-in trust anchors (roots.velt): how many there are and of which
-// kinds, a hash of the whole table, and a root everyone knows. That the table equals
-// webpki-roots' anchors one by one is crates/velt_tls/tests/roots_table.rs.
+// kinds, a hash of the whole table, and a root everyone knows. The table is webpki-roots'
+// anchors as scripts/gen-tls-roots.py writes them from the source file it pins by hash.
 import { describe, expect, it } from "velt/test";
 import { sha256 } from "velt/crypto/sha256";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
