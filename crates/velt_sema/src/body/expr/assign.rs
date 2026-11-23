@@ -446,7 +446,7 @@ impl FnCx<'_, '_> {
                         true => Want::Borrow,
                         false => Want::Move,
                     };
-                    let v = s.expr(value, Some(lty), want);
+                    let v = s.expr(value, Some(s.store_hint(&place, None, value)), want);
                     // A local declared from a literal takes the type of what it is assigned
                     // (`literal_locals`); other places are a typed position.
                     if s.literal_assign(&place, &v) {
@@ -544,7 +544,7 @@ impl FnCx<'_, '_> {
         let storage = self.cx.ty.is_storage_float(lty);
         let hint = match storage {
             true => Some(self.cx.ty.f64),
-            false => Some(lty),
+            false => Some(self.store_hint(&place, Some(op), value)),
         };
         let v = self.expr(value, hint, Want::Borrow);
         self.place_compound_checked(place, op, v, span)
