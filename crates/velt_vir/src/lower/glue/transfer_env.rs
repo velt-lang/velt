@@ -3,7 +3,7 @@
 //! environment, copies a shared one, and gives the environment captured variables' cells of
 //! its own. Called with a tagged pointer, it runs the many-threads check instead (many.rs).
 
-use velt_sema::hir::{DefId, PassMode, TyId};
+use velt_sema::hir::{DefId, LocalId, PassMode, TyId};
 
 use super::transfer::NO_TRANSFER;
 use crate::lower::closure::closure_name;
@@ -139,6 +139,21 @@ impl<'c, 'h> FnLower<'c, 'h> {
         );
         let caps = lw.value_captures(def);
         let cells = lw.cell_captures(def);
+        let sym = format!(
+            "_Genv_transfer_{}",
+            lw.cx.instance_symbol(&closure_name(lw.cx.hir, def), targs)
+        );
+        if let Some(name) = lw.weak_capture_name(def) {
+            // Its slot belongs to this task's weak core (weak_captures.rs). Sema rejects the
+            // visible cases (velt_sema weak_threads.rs); this is a function value it cannot see.
+            let msg = format!(
+                "a function value that captured the `weak` variable `{name}` cannot go to another thread (`spawn`, a channel, `shared(...)` or a `Mutex`'s value): a `weak` variable belongs to the task that set it"
+            );
+            lw.check_if_tagged(env, |lw, _| lw.walk_panic(&msg));
+            lw.panic_msg(&msg);
+            lw.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
+            return lw.finish(sym, vec![Ty::Ptr], Ty::Ptr);
+        }
         let uncopyable = caps
             .iter()
             .find(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.uncopyable(*ty))
@@ -235,19 +250,25 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.goto(unique);
         lw.switch_to(unique);
         let base = proj(&Place::local(out), Proj::Deref(Ty::Agg(ea)));
+        let callers = callers_captures(lw.cx, def);
         for (field, mode, ty) in caps {
-            if mode == PassMode::Owned {
-                lw.transfer_in_place(proj(&base, Proj::Field(field)), ty);
+            if mode != PassMode::Owned {
+                continue;
+            }
+            let slot = proj(&base, Proj::Field(field));
+            match callers.contains(&field) && lw.callers_own_type(ty) {
+                true => lw.unless_kept(|lw| lw.transfer_in_place(slot, ty)),
+                false => lw.transfer_in_place(slot, ty),
             }
         }
         for (field, ty) in cells {
-            lw.own_cell(proj(&base, Proj::Field(field)), ty);
+            let slot = proj(&base, Proj::Field(field));
+            match callers.contains(&field) {
+                true => lw.unless_kept(|lw| lw.own_cell(slot, ty)),
+                false => lw.own_cell(slot, ty),
+            }
         }
         lw.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
-        let sym = format!(
-            "_Genv_transfer_{}",
-            lw.cx.instance_symbol(&closure_name(lw.cx.hir, def), targs)
-        );
         lw.finish(sym, vec![Ty::Ptr], Ty::Ptr)
     }
 
@@ -304,6 +325,32 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.assign(c, Rvalue::Use(n));
     }
 
+    /// `f` (making a captured variable's cell, or a captured object of the code outside every
+    /// read, this env's own: `callers_captures`), except in a transfer that keeps what that code
+    /// holds (velt_rt `velt_rt_xfer_keeps`): a `read` callback storing the closure into that
+    /// code's containers. The closure stays on this thread, beside the variable, so it shares
+    /// the variable's cell and the variable's object as in JavaScript. A copy would change only
+    /// its own value (`later = () => out.pop()`: the caller's `out` kept its elements), and
+    /// keeping the object would count its parts once more, which it holds counted already.
+    fn unless_kept(&mut self, f: impl FnOnce(&mut Self)) {
+        let keeps = self.temp(Ty::U8);
+        self.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keeps)));
+        let kept = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(
+                BinOp::Ne,
+                Operand::Copy(Place::local(keeps)),
+                cint(0, Ty::U8),
+            ),
+        );
+        let (own, done) = (self.new_block(), self.new_block());
+        self.branch(kept, done, own);
+        self.switch_to(own);
+        f(self);
+        self.goto(done);
+        self.switch_to(done);
+    }
+
     /// The cell pointer at `slot` (holding a `ty`), made this env's own: transferred in place
     /// when nothing else references it, else replaced by a new cell with a copy of the value.
     pub(super) fn own_cell(&mut self, slot: Place, ty: TyId) {
@@ -332,4 +379,47 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.goto(done);
         self.switch_to(done);
     }
+}
+
+/// The env fields of closure `def`'s captures that are variables of the code outside every
+/// read: `def` is written in a `read` callback that captured the variable, through each `read`
+/// callback around it, from code outside them (`Cx::closure_parents`). Only such a closure can
+/// be stored into that code's containers by a transfer that keeps what it holds.
+fn callers_captures(cx: &Cx<'_>, def: DefId) -> Vec<u32> {
+    let f = cx.fn_def(def);
+    let header = cx.env_header(def);
+    let mut out = vec![];
+    for (k, c) in f.captures.iter().enumerate() {
+        if from_outside_reads(cx, def, c.outer) {
+            out.push(header + k as u32);
+        }
+    }
+    out
+}
+
+/// Is `var`, a variable of the function `def` is written in, captured by that function (or by
+/// the closures around `def` up to one), a `read` callback, through each `read` callback around
+/// it from code outside them?
+fn from_outside_reads(cx: &Cx<'_>, def: DefId, mut var: LocalId) -> bool {
+    let Some(&(Some(mut p), false)) = cx.closure_parents.get(&def) else {
+        return false;
+    };
+    // Through closures `def` is written in, inside the callback (`const mk = () => () => …`).
+    while let Some(&(Some(pp), false)) = cx.closure_parents.get(&p) {
+        let Some(c) = cx.fn_def(p).captures.iter().find(|c| c.inner == var) else {
+            return false;
+        };
+        (var, p) = (c.outer, pp);
+    }
+    let mut through = false;
+    while let Some(&(parent, true)) = cx.closure_parents.get(&p) {
+        let Some(c) = cx.fn_def(p).captures.iter().find(|c| c.inner == var) else {
+            return false;
+        };
+        let Some(pp) = parent else {
+            return false;
+        };
+        (var, p, through) = (c.outer, pp, true);
+    }
+    through
 }

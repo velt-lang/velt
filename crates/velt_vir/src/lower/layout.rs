@@ -1,13 +1,22 @@
 //! Aggregate layouts. Fields keep declaration order at their natural alignment (offset rounded up
 //! to the field's alignment, size rounded up to the aggregate's alignment, minimum size 1).
 //!
+//! - A struct declared `@align(n)` has alignment `n` where that is more than its own, and its
+//!   size is a multiple of it (`Cx::align_of`; docs/internals/design/package-machine-code.md §5).
+//!   Every home of a value keeps it (the list: that note's §5 "As built in step 6"): heap blocks
+//!   with the layout's alignment, counted boxes and generator objects with a header or lead in
+//!   front, std's task blocks and module blocks rounded up, std slots copied through an
+//!   8-aligned view (slot.rs). Cranelift aligns a stack slot to at most 16 bytes from the
+//!   frame's start, which no Velt code can see: nothing takes a local's address.
+//!
 //! - `void` fields (`IoResult<void>`) are zero-sized: they have no VIR field, so HIR field `i`
 //!   is VIR field [`vir_field`](Cx::vir_field)`(t, i)` (the non-`void` fields before it).
 //! - Tagged enums: a base aggregate `{ tag: u32 }` sized for the largest variant, plus one "view"
 //!   aggregate per variant `{ tag: u32, payload... }` reached with `Proj::Cast`. The tag is the
 //!   variant index. `Result<T, E>` works the same with a `u8` tag (views: Ok, Err; a `void`
 //!   payload has no field).
-//! - `T | null` without a niche: `{ some: bool, value: T }`.
+//! - `T | null` without a niche: `{ some: bool, value: T }` (with one, a class, `shared<T>`,
+//!   `symbol` or a C pointer `Ptr<T>`, it is the word itself, 0 for none: type_kinds.rs).
 //! - Class objects: `[vtable: ptr]` + all fields (base-class fields first, so a subclass object
 //!   starts with its base's layout and upcasts are free). The vtable pointer exists when the
 //!   class hierarchy has more than one class or any virtual slot; it points to a dispatcher
@@ -44,6 +53,9 @@ pub(super) struct Layouts {
     text: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
+    /// The 8-aligned view of each aggregate aligned beyond 8 that sits in a std slot
+    /// (slot.rs `raw_view`).
+    pub(super) raw_views: FxHashMap<AggId, AggId>,
     /// Tables of generator instances (async_fn/gen_object.rs).
     pub(super) gen_tables: FxHashMap<(DefId, Vec<TyId>), crate::vir::StaticId>,
     /// State of the `Promise.all` wrapper future (async_fn/tasks.rs).
@@ -109,6 +121,14 @@ impl Cx<'_> {
         })
     }
 
+    /// `@align(n)`: layout `a` aligned to `n` where that is more than its own, and its size a
+    /// multiple of it, so each element of an array starts on such a boundary.
+    fn raise_align(&mut self, a: AggId, n: u32) {
+        let l = &mut self.aggs[a.0 as usize];
+        l.align = l.align.max(n);
+        l.size = l.size.next_multiple_of(l.align);
+    }
+
     /// Register a finished layout (async state structs compute their own, see async_fn/).
     pub(super) fn push_agg(&mut self, l: AggLayout) -> AggId {
         self.aggs.push(l);
@@ -169,11 +189,18 @@ impl Cx<'_> {
                 self.tagged_base(t, Ty::U32)
             }
             TyKind::Result(..) => self.tagged_base(t, Ty::U8),
-            TyKind::Adt(..) => {
+            TyKind::Adt(d, _) => {
                 // Fields, then presence flags (`Cx::presence_slot`).
                 let tys = self.part_types(t);
                 let tys = self.stored_tys(tys);
-                self.new_agg(name, &tys)
+                let a = self.new_agg(name, &tys);
+                // A C struct's layout is C's: sema refuses `@align` on one.
+                if self.c_struct(t) {
+                    self.assert_c_layout(t, a);
+                } else if let Some(n) = self.align_of(d) {
+                    self.raise_align(a, n);
+                }
+                a
             }
             TyKind::Tuple(es) => {
                 let tys = self.stored_tys(es);

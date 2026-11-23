@@ -12,7 +12,7 @@ use velt_sema::hir::{self, TyId};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, ice, unit, FnLower};
-use crate::vir::{Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{AggId, AggLayout, Operand, Place, Proj, Rvalue, Ty};
 
 /// The alignment of `rawAlloc`'s blocks.
 const RAW_ALIGN: i128 = 8;
@@ -68,14 +68,37 @@ impl FnLower<'_, '_> {
         unit()
     }
 
-    /// The slot type `t` as a VIR type: its alignment fits `rawAlloc`'s 8 bytes (VIR aligns
-    /// scalars to at most 8, so an aggregate never needs more).
+    /// The slot type `t` as a VIR type.
     fn slot_ty(&mut self, t: TyId) -> Ty {
-        let vt = self.cx.ty(t);
-        if vt != Ty::Unit && i128::from(self.cx.size_align(vt).1) > RAW_ALIGN {
-            ice("a slot's value is aligned to more than 8 bytes")
+        self.cx.ty(t)
+    }
+
+    /// For a value aligned beyond a slot's 8 bytes (an `@align(32)` struct), an aggregate of
+    /// its size made of words, aligned to 8: the slot is written and read through it, so the
+    /// copy assumes only the slot's alignment, while the value itself lives in an aligned
+    /// temporary on either side. A slot's memory is std's alone (a channel's ring, a hand-off's
+    /// block), reached only through these intrinsics, so no program sees it.
+    fn raw_view(&mut self, vt: Ty) -> Option<AggId> {
+        let Ty::Agg(a) = vt else {
+            return None;
+        };
+        let (size, align) = self.cx.size_align(vt);
+        if i128::from(align) <= RAW_ALIGN {
+            return None;
         }
-        vt
+        if let Some(&v) = self.cx.lay.raw_views.get(&a) {
+            return Some(v);
+        }
+        let name = format!("{} bytes", self.cx.aggs[a.0 as usize].name);
+        let fields = (0..size / 8).map(|k| (Ty::U64, k * 8)).collect();
+        let v = self.cx.push_agg(AggLayout {
+            name,
+            size,
+            align: RAW_ALIGN as u32,
+            fields,
+        });
+        self.cx.lay.raw_views.insert(a, v);
+        Some(v)
     }
 
     /// Writes `val` (type `t`) to `*(T*)addr`.
@@ -85,8 +108,17 @@ impl FnLower<'_, '_> {
             return;
         }
         let p = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
-        let place = proj(&self.operand_place(p, Ty::Ptr), Proj::Deref(vt));
-        self.assign(place, Rvalue::Use(val));
+        let slot = self.operand_place(p, Ty::Ptr);
+        match self.raw_view(vt) {
+            None => self.assign(proj(&slot, Proj::Deref(vt)), Rvalue::Use(val)),
+            Some(view) => {
+                let tmp = self.temp(vt);
+                self.assign(Place::local(tmp), Rvalue::Use(val));
+                let from = proj(&Place::local(tmp), Proj::Cast(view));
+                let to = proj(&slot, Proj::Deref(Ty::Agg(view)));
+                self.assign(to, Rvalue::Use(Operand::Copy(from)));
+            }
+        }
     }
 
     /// `slotTake<T>(at)`: the value at `at` moved into a temporary the caller owns.
@@ -98,9 +130,19 @@ impl FnLower<'_, '_> {
             return unit();
         }
         let p = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
-        let place = proj(&self.operand_place(p, Ty::Ptr), Proj::Deref(vt));
+        let slot = self.operand_place(p, Ty::Ptr);
         let tmp = self.temp(vt);
-        self.assign(Place::local(tmp), Rvalue::Use(Operand::Copy(place)));
+        match self.raw_view(vt) {
+            None => {
+                let from = proj(&slot, Proj::Deref(vt));
+                self.assign(Place::local(tmp), Rvalue::Use(Operand::Copy(from)));
+            }
+            Some(view) => {
+                let from = proj(&slot, Proj::Deref(Ty::Agg(view)));
+                let to = proj(&Place::local(tmp), Proj::Cast(view));
+                self.assign(to, Rvalue::Use(Operand::Copy(from)));
+            }
+        }
         self.owned_result(Some(tmp), t)
     }
 

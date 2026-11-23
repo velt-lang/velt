@@ -314,6 +314,9 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.dynamic_delete(object, &key, span) {
             return h;
         }
+        if let Some(h) = self.delete_optional(operand, object, &key, span) {
+            return h;
+        }
         let obj = self.expr(object, None, Want::Borrow);
         let Some((k, _)) = self.record_args(obj.ty) else {
             if !self.cx.ty.is_bottom(obj.ty) {

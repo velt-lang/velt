@@ -6,9 +6,7 @@
 
 use super::reader::{Reader, FLAG_CURSOR, FLAG_ROWS, STEP_END, STEP_ERROR, STEP_MORE};
 use super::rows_reader::RowReader;
-use super::value_abi::ValueHandle;
 use crate::bytes::VeltBytes;
-use crate::handle::Handle;
 use crate::str::VeltStr;
 
 /// `new Reader(src)`: never null. `src` must stay alive and unchanged until `reader_free`.
@@ -246,17 +244,17 @@ pub unsafe extern "C" fn velt_rt_json_reader_reset(h: u64, mark: u64) {
     (*r).reset(mark)
 }
 
-/// Read one value of any kind into `*out` (an owned `json.Value` handle): 1 = ok, 0 = error
-/// (`out` untouched).
+/// Read one value of any kind into `*out`, its JSON text (owned; std's `JsonValue` parses it):
+/// 1 = ok, 0 = error (`out` untouched).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_json_reader_read_value(h: u64, out: *mut ValueHandle) -> u8 {
+pub unsafe extern "C" fn velt_rt_json_reader_read_value(h: u64, out: *mut VeltStr) -> u8 {
     let r = h as usize as *mut Reader;
     let v = match (*r).value() {
         None => (*r).rows_or(None, RowReader::value),
         v => v,
     };
     v.map_or(0, |v| {
-        out.write(Handle::from_arc(v));
+        out.write(VeltStr::from_vec(v));
         1
     })
 }
@@ -291,18 +289,4 @@ pub unsafe extern "C" fn velt_rt_json_error(
     out.write(VeltStr::from_vec(
         (*r).message(&expected, &path).into_bytes(),
     ));
-}
-
-/// Node's own message for text that is not JSON (`JSON.parse`'s `SyntaxError`), into `*out`:
-/// 1 if `src` is not JSON, 0 (`out` untouched) if it is. The Velt reader (std/encoding/json/reader.velt)
-/// asks only after a failure.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_json_node_syntax(src: *const VeltStr, out: *mut VeltStr) -> u8 {
-    match super::node_syntax::node_syntax_message((*src).as_bytes()) {
-        Some(m) => {
-            out.write(VeltStr::from_vec(m.into_bytes()));
-            1
-        }
-        None => 0,
-    }
 }

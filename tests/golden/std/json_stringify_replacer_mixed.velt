@@ -1,0 +1,37 @@
+// JSON.stringify with a replacer array of mixed strings and numbers, other number types, or a
+// replacer only known at run time (`any`), as Node reads it (#3328): a string entry as it is, a
+// number as String(n), any other entry ignored, the first of duplicates kept; a non-array
+// replacer filters nothing. A function passed as `any` is refused with a TypeError (Node calls
+// it; a replacer function is typed `JsonReplacer`), so the .out's last line is Velt's.
+class Point {
+  a: f64 = 1;
+  b: f64 = 3;
+  c: string = "c";
+}
+
+function main() {
+  const o: Record<string, f64> = { a: 1, "1": 2, b: 3 };
+  console.log(JSON.stringify(o, ["a", 1]));
+  console.log(JSON.stringify({ a: [1, 2] }, [["a"]] as any));
+  console.log(JSON.stringify(o, ["a", "a", 1, "1"]));
+  const z: Record<string, f64> = { "0": 0, "1.5": 1.5, x: 9 };
+  console.log(JSON.stringify(z, [-0, 1.5]));
+  const ints: i64[] = [1, 0];
+  console.log(JSON.stringify(o, ints));
+  const mixed: (string | number)[] = ["b", 1];
+  console.log(JSON.stringify(o, mixed));
+  console.log(JSON.stringify(o, mixed, 2));
+  console.log(JSON.stringify(new Point(), ["c", "a"], "--"));
+  const dynamic: any[] = [["b", 1, null, true], null, { x: 1 }];
+  for (const r of dynamic) {
+    console.log(JSON.stringify(o, r));
+  }
+  const nested: Record<string, Record<string, f64>> = { a: { a: 1, z: 2 }, z: { a: 3 } };
+  console.log(JSON.stringify(nested, ["a", "z"] as unknown));
+  try {
+    const f: any = (k: string, v: JsonValue) => v;
+    JSON.stringify(o, f);
+  } catch (e) {
+    console.log(e instanceof TypeError);
+  }
+}

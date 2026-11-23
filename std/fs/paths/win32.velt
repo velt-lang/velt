@@ -1,0 +1,368 @@
+// velt/fs (internal): renaming, linking and copying on Windows (`#fs-paths`'s win32 variant,
+// std/imports.velt), the way libuv does each for Node, through Win32's wide-path functions, with
+// Node's messages and libuv's names for Win32's errors (std/os/win_error.velt). A long path gets
+// the `\\?\` prefix, and separators after a path are taken as Node takes them (velt/fs/whole/
+// win_path: a path read names the file, a path made is made without them). Errors name the paths
+// as they were given.
+
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf, wideText } from "velt/ffi/wide";
+import { osError } from "velt/fs/errors";
+import { Done } from "velt/fs/whole/done";
+import { asFile, winPath, withoutSeparators } from "velt/fs/whole/win_path";
+import { errnoOfWin32 } from "velt/os/win_error";
+import { COPY_EXCL, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
+
+declare c type _SECURITY_ATTRIBUTES;
+declare c type _OVERLAPPED;
+
+declare c("c") function CreateFileW(
+  name: readonly u16[],
+  access: u32,
+  share: u32,
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
+  disposition: u32,
+  flags: u32,
+  template: Ptr<void> | null,
+): Ptr<void> | null;
+declare c("c") function CloseHandle(handle: Ptr<void>): i32;
+declare c("c") function GetLastError(): u32;
+declare c("c") function MoveFileExW(from: readonly u16[], to: readonly u16[], flags: u32): i32;
+declare c("c") function CopyFileW(from: readonly u16[], to: readonly u16[], failIfExists: i32): i32;
+declare c("c") function CreateSymbolicLinkW(
+  link: readonly u16[],
+  target: readonly u16[],
+  flags: u32,
+): u8;
+declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
+declare c("c") function DeviceIoControl(
+  handle: Ptr<void>,
+  code: u32,
+  inBuf: Ptr<void> | null,
+  inSize: u32,
+  outBuf: u16[],
+  outSize: u32,
+  returned: u32[],
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function GetFinalPathNameByHandleW(
+  handle: Ptr<void>,
+  path: u16[],
+  size: u32,
+  flags: u32,
+): u32;
+declare c("c") function GetFileInformationByHandleEx$paths(
+  handle: Ptr<void>,
+  infoClass: i32,
+  info: u32[],
+  size: u32,
+): i32;
+
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+/** FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE. */
+const SHARE_ALL: u32 = 7;
+const OPEN_EXISTING: u32 = 3;
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+const MOVEFILE_REPLACE_EXISTING: u32 = 1;
+const SYMBOLIC_LINK_FLAG_DIRECTORY: u32 = 1;
+const SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE: u32 = 2;
+const FSCTL_GET_REPARSE_POINT: u32 = 0x000900a8;
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003;
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000000c;
+/** `MAXIMUM_REPARSE_DATA_BUFFER_SIZE` (16 KiB), in 16-bit units. */
+const REPARSE_UNITS: u32 = 8192;
+const VOLUME_NAME_DOS: u32 = 0;
+/** `FileIdInfo`: a file's volume serial number and 128-bit id, 24 bytes. */
+const FILE_ID_INFO: i32 = 18;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_INVALID_FUNCTION: u32 = 1;
+const ERROR_INVALID_PARAMETER: u32 = 87;
+const ERROR_SYMLINK_NOT_SUPPORTED: u32 = 1464;
+/** errno's `EBUSY`, which a copy onto the file itself fails with. */
+const EBUSY: i32 = 16;
+/** errno's `ENOSYS`, libuv's answer to `COPYFILE_FICLONE_FORCE` on Windows. */
+const ENOSYS: i32 = 38;
+
+function failed<T>(code: u32, syscall: string, path: string, dest: string | null = null): Done<T> {
+  return { value: null, error: osError(errnoOfWin32(code), syscall, path, dest) };
+}
+
+function lastWin32(): u32 {
+  // SAFETY: reads this thread's last error, which the call before left.
+  return unsafe { GetLastError() };
+}
+
+/** `w` opened with no access (to ask about it), following a link or not: the handle, or null. */
+function openAt(w: readonly u16[], follow: bool): Ptr<void> | null {
+  const flags = FILE_FLAG_BACKUP_SEMANTICS | (follow ? 0 : FILE_FLAG_OPEN_REPARSE_POINT);
+  // SAFETY: `w` is NUL-terminated; no security attributes and no template.
+  const h = unsafe { CreateFileW(w, 0, SHARE_ALL, null, OPEN_EXISTING, flags, null) };
+  if (h === null || Ptr.addressOf(h) === INVALID_HANDLE) {
+    return null;
+  }
+  return h;
+}
+
+function close(h: Ptr<void>) {
+  // SAFETY: `h` is a handle this module opened, closed once.
+  unsafe {
+    CloseHandle(h);
+  }
+}
+
+/** Renames `from` to `to`, replacing a file there (libuv's `MoveFileExW`). */
+export function renameAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+): Done<bool> {
+  const wf = winPath(asFile(from));
+  const wt = winPath(withoutSeparators(to));
+  if (wf === null || wt === null) {
+    return failed(ERROR_FILE_NOT_FOUND, "rename", from, to);
+  }
+  // SAFETY: both paths are NUL-terminated.
+  if (unsafe { MoveFileExW(wf, wt, MOVEFILE_REPLACE_EXISTING) } == 0) {
+    return failed(lastWin32(), "rename", from, to);
+  }
+  return { value: true, error: null };
+}
+
+/** The volume serial number and id of the file at `w`, or null. */
+function idOf(w: readonly u16[]): u32[] | null {
+  const h = openAt(w, true);
+  if (h === null) {
+    return null;
+  }
+  const info: u32[] = [0, 0, 0, 0, 0, 0];
+  // SAFETY: `info` holds the 24 bytes of `FILE_ID_INFO`, the size passed.
+  const ok = unsafe { GetFileInformationByHandleEx$paths(h, FILE_ID_INFO, info, 24) };
+  close(h);
+  return ok == 0 ? null : info;
+}
+
+/**
+ * Copies the file `from` to `to`, replacing a file there unless `mode` has `COPYFILE_EXCL`
+ * (libuv's `CopyFileW`, failing if it exists). A copy onto the file itself fails with a sharing
+ * violation, which libuv then finds is one file: done. libuv has no clone on Windows:
+ * `COPYFILE_FICLONE` copies, and `COPYFILE_FICLONE_FORCE` is `ENOSYS` before anything is opened.
+ */
+export function copyAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+  mode: u32,
+): Done<bool> {
+  if ((mode & COPY_FICLONE_FORCE) != 0) {
+    return { value: null, error: osError(ENOSYS, "copyfile", from, to) };
+  }
+  const wf = winPath(asFile(from));
+  const wt = winPath(withoutSeparators(to));
+  if (wf === null || wt === null) {
+    return failed(ERROR_FILE_NOT_FOUND, "copyfile", from, to);
+  }
+  const failIfExists: i32 = (mode & COPY_EXCL) != 0 ? 1 : 0;
+  // SAFETY: both paths are NUL-terminated.
+  if (unsafe { CopyFileW(wf, wt, failIfExists) } != 0) {
+    return { value: true, error: null };
+  }
+  const code = lastWin32();
+  if (errnoOfWin32(code) == EBUSY) {
+    const a = idOf(wf);
+    const b = idOf(wt);
+    if (a !== null && b !== null && a.every((x, i) => x == b[i])) {
+      return { value: true, error: null };
+    }
+  }
+  return failed(code, "copyfile", from, to);
+}
+
+/** Whether `target` is absolute: `X:\` or `X:/`, or a separator first (`C:x` is relative). */
+function absolute(target: string): bool {
+  return target.startsWith("\\") ||
+    target.startsWith("/") ||
+    (target.length >= 3 && target[1] == ":" && (target[2] == "\\" || target[2] == "/"));
+}
+
+/** `target` seen from the directory of the link at `path`, as Node resolves it. */
+function fromLink(target: string, path: string): string {
+  if (absolute(target)) {
+    return target;
+  }
+  const back = path.lastIndexOf("\\");
+  const slash = path.lastIndexOf("/");
+  const cut = back > slash ? back : slash;
+  return cut < 0 ? target : `${path.slice(0, cut + 1)}${target}`;
+}
+
+/**
+ * Makes a link at `path` to `target`, as Node does on Windows: a directory link when `target`
+ * (seen from the link's directory) is a directory now, else a file link; a relative target is
+ * stored with `\` for `/`, which Windows doesn't resolve in a link. Without Developer Mode or the
+ * right to make links, it is `EPERM`.
+ */
+export function symlinkAt(
+  ct: readonly u8[],
+  target: string,
+  cp: readonly u8[],
+  path: string,
+): Done<bool> {
+  // A relative target is stored as it is, not resolved: from the link's directory is how
+  // Windows follows it.
+  const link = withoutSeparators(path);
+  const wl = winPath(link);
+  const wt = absolute(target) ? winPath(target) : wideOf(target.replaceAll("/", "\\"));
+  const wr = winPath(fromLink(target, link));
+  if (wl === null || wt === null || wr === null) {
+    return failed(ERROR_FILE_NOT_FOUND, "symlink", target, path);
+  }
+  // SAFETY: `wr` is NUL-terminated.
+  const attributes = unsafe { GetFileAttributesW(wr) };
+  const dir = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+  const flags = dir ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0;
+  const unprivileged = flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+  // SAFETY: both paths are NUL-terminated.
+  const made = unsafe { CreateSymbolicLinkW(wl, wt, unprivileged) };
+  if (made != 0) {
+    return { value: true, error: null };
+  }
+  let code = lastWin32();
+  if (code == ERROR_INVALID_PARAMETER) {
+    // A Windows before the unprivileged flag: again without it, as libuv does.
+    // SAFETY: as above.
+    if (unsafe { CreateSymbolicLinkW(wl, wt, flags) } != 0) {
+      return { value: true, error: null };
+    }
+    code = lastWin32();
+  }
+  return failed(code, "symlink", target, path);
+}
+
+/** Whether unit `u` is an ASCII letter. */
+function letter(u: u16): bool {
+  return (u >= 65 && u <= 90) || (u >= 97 && u <= 122);
+}
+
+/** Whether `w[at..at + n]` starts `\??\X:` (then `\` or the end). */
+function ntDrive(w: readonly u16[], at: usize, n: usize): bool {
+  return n >= 6 &&
+    w[at] == 92 &&
+    w[at + 1] == 63 &&
+    w[at + 2] == 63 &&
+    w[at + 3] == 92 &&
+    letter(w[at + 4]) &&
+    w[at + 5] == 58 &&
+    (n == 6 || w[at + 6] == 92);
+}
+
+/**
+ * The target of the link at `path`, as libuv reads it: a symbolic link's substitute name, its
+ * `\??\` prefix taken off an absolute path (`\??\C:\x` is `C:\x`, `\??\UNC\s\x` is `\\s\x`), and
+ * a junction's when it names a drive's path. Something that is not a link is `EINVAL`.
+ */
+export function readlinkAt(c: readonly u8[], path: string): Done<string> {
+  const w = winPath(asFile(path));
+  if (w === null) {
+    return failed(ERROR_FILE_NOT_FOUND, "readlink", path);
+  }
+  const h = openAt(w, false);
+  if (h === null) {
+    return failed(lastWin32(), "readlink", path);
+  }
+  const buf: u16[] = new Array<u16>(REPARSE_UNITS as usize).fill(0);
+  const got: u32[] = [0];
+  const io = FSCTL_GET_REPARSE_POINT;
+  const bytes = REPARSE_UNITS * 2;
+  // SAFETY: `buf` holds REPARSE_UNITS units, `bytes` bytes, the size passed; `got` holds one
+  // DWORD; no input and no overlapped call.
+  const ok = unsafe { DeviceIoControl(h, io, null, 0, buf, bytes, got, null) };
+  const code = lastWin32();
+  close(h);
+  if (ok == 0) {
+    return failed(code, "readlink", path);
+  }
+  // REPARSE_DATA_BUFFER: the tag (units 0-1), then the substitute name's offset and length in
+  // bytes (units 4 and 5); its names start at unit 10 for a symbolic link (after its flags) and
+  // at unit 8 for a junction.
+  const tag = (buf[0] as u32) | ((buf[1] as u32) << 16);
+  const names: usize = tag == IO_REPARSE_TAG_SYMLINK ? 10 : 8;
+  if (tag != IO_REPARSE_TAG_SYMLINK && tag != IO_REPARSE_TAG_MOUNT_POINT) {
+    return failed(ERROR_SYMLINK_NOT_SUPPORTED, "readlink", path);
+  }
+  let at = names + (buf[4] as usize) / 2;
+  let n = (buf[5] as usize) / 2;
+  if (at + n > (got[0] as usize) / 2 || at + n > (REPARSE_UNITS as usize)) {
+    return failed(ERROR_SYMLINK_NOT_SUPPORTED, "readlink", path);
+  }
+  const unc =
+    n >= 8 &&
+    buf[at] == 92 &&
+    buf[at + 1] == 63 &&
+    buf[at + 2] == 63 &&
+    buf[at + 3] == 92 &&
+    (buf[at + 4] | 32) == 117 &&
+    (buf[at + 5] | 32) == 110 &&
+    (buf[at + 6] | 32) == 99 &&
+    buf[at + 7] == 92;
+  let lead = "";
+  if (ntDrive(buf, at, n)) {
+    at += 4;
+    n -= 4;
+  } else if (tag == IO_REPARSE_TAG_MOUNT_POINT) {
+    // A junction to a volume (`\??\Volume{…}`) is no path a program could follow.
+    return failed(ERROR_SYMLINK_NOT_SUPPORTED, "readlink", path);
+  } else if (unc) {
+    at += 7;
+    n -= 7;
+    lead = "\\";
+  }
+  return { value: lead + wideText(buf.slice(at as i64, (at + n) as i64)), error: null };
+}
+
+/**
+ * The absolute path of `path` with every link, `.` and `..` resolved, as libuv's
+ * `GetFinalPathNameByHandleW` gives it, with its `\\?\` prefix taken off (`\\?\UNC\s\x` is
+ * `\\s\x`). A path that doesn't exist is `ENOENT`.
+ */
+export function realpathAt(c: readonly u8[], path: string): Done<string> {
+  const w = winPath(asFile(path));
+  if (w === null) {
+    return failed(ERROR_FILE_NOT_FOUND, "realpath", path);
+  }
+  const h = openAt(w, true);
+  if (h === null) {
+    return failed(lastWin32(), "realpath", path);
+  }
+  let room: u32 = 512;
+  let units: u16[] = [];
+  while (true) {
+    const out: u16[] = new Array<u16>(room as usize).fill(0);
+    // SAFETY: `out` holds `room` units, the count passed.
+    const got = unsafe { GetFinalPathNameByHandleW(h, out, room, VOLUME_NAME_DOS) };
+    if (got == 0) {
+      const code = lastWin32();
+      close(h);
+      return failed(code, "realpath", path);
+    }
+    if (got < room) {
+      units = out.slice(0, got as i64);
+      break;
+    }
+    // Too small: `got` is the size needed, with the NUL.
+    room = got;
+  }
+  close(h);
+  const text = wideText(units);
+  if (text.startsWith("\\\\?\\UNC\\")) {
+    return { value: `\\${text.slice(7)}`, error: null };
+  }
+  if (text.startsWith("\\\\?\\")) {
+    return { value: text.slice(4), error: null };
+  }
+  return failed(ERROR_INVALID_FUNCTION, "realpath", path);
+}

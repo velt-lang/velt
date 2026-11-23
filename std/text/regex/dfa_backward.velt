@@ -1,0 +1,61 @@
+// velt/text (internal): the backward run of an automaton (dfa.velt): from where a match ends,
+// reading towards the start, where the longest match of the reversed program starts.
+
+import { arrayReadAddress, addressLoad, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { before, charAt } from "velt/text/regex/decode";
+import { DEAD, Dfa, GAVE_UP, HIT, MATCH, ROW, SLOW, UNKNOWN } from "velt/text/regex/dfa";
+
+/** Where the longest match of the (backward) program that ends at byte `end` of `s` starts,
+ * not before `floor`; -1 when no match ends there, `GAVE_UP` when the automaton is full. */
+export function backward(d: Dfa, s: string, end: usize, floor: usize): i64 {
+  const base = strDataAddress(s);
+  const prog = d.prog;
+  const width = d.classes + 1;
+  let st = d.start(true, end == strByteLen(s));
+  let pos = end;
+  let found: i64 = -1;
+  while (st >= 0) {
+    const flags = d.flagOf(st as usize);
+    if ((flags & MATCH) != 0) {
+      found = pos as i64;
+    }
+    if ((flags & DEAD) != 0 || pos <= floor) {
+      return found;
+    }
+    pos = before(base, pos, prog.units);
+    const packed = charAt(base, pos, prog.units);
+    const ch = packed & 0xffffff;
+    const c = ch < 128 ? prog.asciiClass[ch] as usize : d.classOf(ch);
+    const to = d.edge((st as usize) * width + c);
+    st = to != UNKNOWN ? ((to & ROW) as i64) / (width as i64) : d.step(st as usize, c);
+    if (st < 0 || (d.flagOf(st as usize) & DEAD) != 0) {
+      continue;
+    }
+    // As `forward`, towards the start.
+    const next = d.edges();
+    // SAFETY: the program never changes once compiled, and `d` holds it; the address is only
+    // read through, below.
+    const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
+    let row = (st as usize) * width;
+    found = (d.flagOf(st as usize) & MATCH) != 0 ? pos as i64 : found;
+    while (pos > floor) {
+      // SAFETY: `floor < pos <= end <= len`: the byte before `pos` is the subject's, which this
+      // call borrows.
+      const byte = unsafe { addressLoad<u8>(base + pos - 1) } as usize;
+      // SAFETY: `asciiClass` has 256 entries (classify.velt), one for every byte.
+      const kind = unsafe { addressLoad<u8>(kinds + byte) };
+      // SAFETY: the tables are rows of `classes + 1` transitions, one per state; `row` is the
+      // start of one (the state's above, or a transition's without `SLOW`, which `UNKNOWN`
+      // has), and `kind` is at most `classes`.
+      const known = unsafe { addressLoad<u32>(next + 4 * (row + (kind as usize))) };
+      if ((known & SLOW) != 0) {
+        break;
+      }
+      pos--;
+      row = (known & ROW) as usize;
+      found = (known & HIT) != 0 ? pos as i64 : found;
+    }
+    st = (row / width) as i64;
+  }
+  return GAVE_UP;
+}

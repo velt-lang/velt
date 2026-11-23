@@ -1,6 +1,7 @@
 //! The compile-time decorators the compiler acts on (#2203 step 3), declared in
 //! std/lang/intrinsics/decorators.velt and found through their roles in the hook table
-//! (`velt_common::std_hooks`: `decorator_inline`, `decorator_no_inline`, `decorator_intrinsic`),
+//! (`velt_common::std_hooks`: `decorator_inline`, `decorator_no_inline`, `decorator_cold`,
+//! `decorator_intrinsic`),
 //! never by the name a use is written with: a program's own `declare decorator function inline`
 //! is a decorator like any other, which the compiler records and ignores.
 //!
@@ -12,6 +13,8 @@
 //!   ([`function_hints`]), which lowering carries to `vir::Function::inline` (lowering finds the
 //!   uses in `Program::decorators` by the same roles) and `body::inline_markers` checks.
 //!   `@inline` takes how: `"hint"` (the default) or `"always"`; std writes `"always"`.
+//! - `@cold` on the same functions says their calls are rare (lowering sets
+//!   `vir::Function::rare` from `Program::decorators`); it is not allowed with `@inline`.
 
 use velt_common::{std_hook, Diagnostic, Span};
 use velt_syntax::ast;
@@ -48,6 +51,7 @@ fn role(cx: &Ctx, qualified: &str) -> Option<DefId> {
 pub(super) struct Roles {
     inline: Option<DefId>,
     no_inline: Option<DefId>,
+    cold: Option<DefId>,
     intrinsic: Option<DefId>,
 }
 
@@ -56,6 +60,7 @@ impl Roles {
         Roles {
             inline: role(cx, std_hook!(decorator_inline)),
             no_inline: role(cx, std_hook!(decorator_no_inline)),
+            cold: role(cx, std_hook!(decorator_cold)),
             intrinsic: role(cx, std_hook!(decorator_intrinsic)),
         }
     }
@@ -119,7 +124,7 @@ pub(crate) fn intrinsics<'m>(cx: &mut Ctx<'m>, from: u32) {
 
 /// The `declare decorator function` decorator `dec` (written in module `m`) names, if it names
 /// one; what is wrong with it is reported where its uses are checked.
-fn written_def(cx: &Ctx, m: usize, dec: &ast::Decorator) -> Option<DefId> {
+pub(super) fn written_def(cx: &Ctx, m: usize, dec: &ast::Decorator) -> Option<DefId> {
     let callee = match &dec.expr.kind {
         ast::ExprKind::Call { callee, .. } => callee,
         _ => &dec.expr,
@@ -153,8 +158,23 @@ pub(super) fn function_hints(
     let hints: Vec<(Inline, Span)> = (uses.iter())
         .filter_map(|u| Some((roles.of(u)?, u.span)))
         .collect();
+    let cold = (uses.iter())
+        .find(|u| roles.cold.is_some_and(|c| u.def == c))
+        .map(|u| u.span);
     if let Some(span) = misplaced {
         cx.err("`@intrinsic` applies to a `declare function`", span);
+    }
+    if let Some(span) = cold {
+        match hints.first() {
+            Some(&(Inline::Always | Inline::Hint, at)) => cx.error(
+                Diagnostic::error("a function is `@cold` or `@inline`, not both", span)
+                    .with_label(at, "`@inline` here")
+                    .with_note("`@cold` keeps a body out of its callers, which `@inline` asks to take it in"),
+            ),
+            _ => {
+                placed(cx, d, "cold", span, sig, is_abstract);
+            }
+        }
     }
     let Some(&(hint, span)) = hints.first() else {
         return;
@@ -170,7 +190,7 @@ pub(super) fn function_hints(
         Inline::Always | Inline::Hint => "inline",
         Inline::Never => "noInline",
     };
-    let (module, is_async) = (cx.fn_info(d).module, cx.fn_info(d).is_async);
+    let module = cx.fn_info(d).module;
     if hint == Inline::Hint && cx.scopes[module].is_std {
         // std's `@inline` meant "always" before the hint existed; one written without its
         // argument (a pull request from before) would lose its forcing without a word.
@@ -180,19 +200,37 @@ pub(super) fn function_hints(
         );
         return;
     }
+    if placed(cx, d, name, span, sig, is_abstract) {
+        cx.fn_info_mut(d).inline_marker = Some((hint, span));
+    }
+}
+
+/// Whether decorator `@{name}` (at `span`), which acts on a function's calls, is on a function
+/// `d` it can act on: one with a body (not a `declare function` or an abstract method) that is
+/// neither async nor a generator (lowering compiles those into a function that resumes them,
+/// which the decorator would not reach). Reports it if not.
+fn placed(
+    cx: &mut Ctx,
+    d: DefId,
+    name: &str,
+    span: Span,
+    sig: &ast::FnSig,
+    is_abstract: bool,
+) -> bool {
+    let (kind, is_async) = (cx.fn_info(d).kind, cx.fn_info(d).is_async);
     if kind == FnKind::Extern {
         cx.err(
             format!("`@{name}` applies to a function with a body, not to a `declare function`"),
             span,
         );
-        return;
+        return false;
     }
     if is_abstract {
         cx.err(
             format!("`@{name}` applies to a function with a body, not to an abstract method"),
             span,
         );
-        return;
+        return false;
     }
     if is_async || sig.is_async || sig.is_generator {
         cx.error(
@@ -202,7 +240,7 @@ pub(super) fn function_hints(
             )
             .with_note("its body is compiled into a function that resumes it, which the decorator would not reach"),
         );
-        return;
+        return false;
     }
-    cx.fn_info_mut(d).inline_marker = Some((hint, span));
+    true
 }

@@ -109,6 +109,10 @@ impl Literals {
         let mut out = Literals::default();
         for (i, d) in cx.defs.iter().enumerate() {
             let def = DefId(i as u32);
+            // In a check by units, std's code the program has (`lazy_std::walks`).
+            if !crate::body::lazy_std::walks(cx, def) {
+                continue;
+            }
             // Function values std makes reach the program only through std's API; they come
             // with its declared effects (step 2), not with this join.
             let std = match cx.try_fn(def) {
@@ -436,7 +440,7 @@ pub(super) fn held_adts(cx: &mut Ctx, lits: &Literals) -> Vec<DefId> {
                 let below: Vec<DefId> = lits.below(d).into_iter().filter(|&c| c != d).collect();
                 work.extend(super::types::adt_parts_below(cx, d, &args, &below));
             }
-            k => work.extend(crate::types::children(&k)),
+            k => work.extend(crate::types::contents(&k)),
         }
     }
     out.sort_by_key(|d| d.0);
@@ -484,7 +488,16 @@ pub(super) fn value_targets(
         Read::FromAny => held_adts(cx, lits),
         _ => vec![],
     };
-    let t = find_values(cx, lits, want, &held, read);
+    let mut t = find_values(cx, lits, want, &held, read);
+    // The targets go in definition order, and the first one's reason is the one an error gives.
+    // A whole-program check numbers the program's definitions before the std code lazy std
+    // checks for it; in the app's stage of a check by units std's unit comes first: the
+    // program's targets go first there too (a stable sort keeps each group's order).
+    if cx.units_stage == crate::units::Stage::App {
+        if let Some(list) = t.as_mut() {
+            list.sort_by_key(|(g, _)| g.0 < cx.unit_base);
+        }
+    }
     lits.by_shape.borrow_mut().insert(key, t.clone());
     Some(t?.into_iter().map(|(g, s)| (g, skip - s)).collect())
 }

@@ -1,0 +1,18 @@
+// What a `weak` local variable (docs/internals/design/cycles.md "`weak T`") does not do: a test
+// does not narrow it, since the target may be gone between two reads (#3119).
+class Node {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function narrowed(n: Node): string {
+  const w: weak Node | null = n;
+  if (w !== null) {
+    return w.name;
+  }
+  return "";
+}
+
+console.log(narrowed(new Node("a")));

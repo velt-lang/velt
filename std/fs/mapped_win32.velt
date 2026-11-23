@@ -43,7 +43,7 @@ declare c("c") function MapViewOfFile(
   offsetLow: u32,
   bytes: usize,
 ): Ptr<void> | null;
-declare c("c") function UnmapViewOfFile(base: Ptr<void>): i32;
+declare c("c") function UnmapViewOfFile(base: Ptr<void> | null): i32;
 declare c("c") function CloseHandle(handle: Ptr<void>): i32;
 declare c("c") function GetLastError(): u32;
 
@@ -57,7 +57,6 @@ const FILE_TYPE_DISK: u32 = 1;
 const PAGE_READONLY: u32 = 2;
 const FILE_MAP_READ: u32 = 4;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
-const ERROR_ACCESS_DENIED: u32 = 5;
 /** Linux's numbers, which `osError` reads on Windows. */
 const EISDIR: i32 = 21;
 const EINVAL: i32 = 22;
@@ -103,8 +102,9 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
   // INVALID_HANDLE_VALUE is what a failed open returns.
   if (opened === null || Ptr.addressOf(opened) === INVALID_HANDLE) {
     const code = lastWin32();
-    // A directory refuses to open as a file with "access denied".
-    if (code === ERROR_ACCESS_DENIED && isDirectory(w)) {
+    // A directory refuses to open as a file: with "access denied", or, named with a separator
+    // after it (`dir\`), with another code.
+    if (isDirectory(w)) {
       throw osError(EISDIR, "mmap", path);
     }
     throw osError(errnoOfWin32(code), "open", path);
@@ -179,7 +179,7 @@ function release(owner: usize): void {
     if (gone != null) {
       // A failure has no one to report to (the drop of an array), and a view of our own is not
       // refused.
-      UnmapViewOfFile(Ptr.at<void>(gone.base));
+      UnmapViewOfFile(Ptr.orNull<void>(gone.base));
     }
   }
 }

@@ -1,6 +1,6 @@
 //! Iterative (no recursion) walk over one JSON value, reporting structure to a [`Sink`], with
 //! an optional limit on nesting. Used by `skip_value` (a no-op sink), by union lookahead (a
-//! sink remembering where containers end) and by the `json.Value` parser (a tree builder).
+//! sink remembering where containers end) and by `Reader::value` (the text of one value).
 
 use super::scan::{NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
 use std::collections::HashMap;

@@ -76,18 +76,28 @@ declare c("c") function epoll_create1(flags: i32): i32;
 // Pointers are `Ptr`s and integers the C types', as in a program's own declarations of these
 // symbols (velt/fs's `read(fd: i32, buf: u8[], nbyte: usize): isize` passes a pointer and a
 // `size_t`): one C symbol has one signature in a program. Addresses become `Ptr`s with `m.ptr`.
-declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<epoll_event>): i32;
-declare c("c") function epoll_wait(ep: i32, events: Ptr<epoll_event>, max: i32, timeout: i32): i32;
+declare c("c") function epoll_ctl(ep: i32, op: i32, fd: i32, event: Ptr<epoll_event> | null): i32;
+declare c("c") function epoll_wait(
+  ep: i32,
+  events: Ptr<epoll_event> | null,
+  max: i32,
+  timeout: i32,
+): i32;
 declare c("c") function eventfd(initval: u32, flags: i32): i32;
-declare c("c") function read$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
-declare c("c") function write$io(fd: i32, buf: Ptr<u8>, n: usize): isize;
+declare c("c") function read$io(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
+declare c("c") function write$io(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
 // The signature the compiler calls it with for `{ errno: true }` (velt_vir c_abi.rs): one C
 // symbol has one signature in a program.
 declare c("c") function __errno_location(): Ptr<i32>;
 // `fcntl` is variadic: its `int` argument goes as C's `...` (`CVarArgs`), where each architecture
 // reads it.
 declare c("c") function fcntl$io(fd: i32, cmd: i32, ...args: CVarArgs): i32;
-declare c("c") function accept4(fd: i32, addr: Ptr<sockaddr>, len: Ptr<u32>, flags: i32): i32;
+declare c("c") function accept4(
+  fd: i32,
+  addr: Ptr<sockaddr> | null,
+  len: Ptr<u32> | null,
+  flags: i32,
+): i32;
 
 /** The calling thread's `errno`. */
 export function errno(): i32 {
@@ -163,7 +173,7 @@ export const EXITED: i32 = -1;
 /** `posix_spawnattr_setflags`' extra flags for a child process: none (pipes are `pipe2`'s). */
 export const SPAWN_FLAGS: i16 = 0;
 
-declare c("c") function pipe2(fds: Ptr<i32>, flags: i32): i32;
+declare c("c") function pipe2(fds: Ptr<i32> | null, flags: i32): i32;
 
 /** `O_CLOEXEC`. */
 const O_CLOEXEC: i32 = 0x80000;
@@ -174,7 +184,7 @@ const O_CLOEXEC: i32 = 0x80000;
  */
 export function pipeCloexec(fds: usize): i32 {
   // SAFETY: room for two descriptors.
-  return unsafe { pipe2(Ptr.at<i32>(fds), O_CLOEXEC) };
+  return unsafe { pipe2(Ptr.orNull<i32>(fds), O_CLOEXEC) };
 }
 
 /** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
@@ -243,10 +253,15 @@ export function wake(r: usize): void {
   }
 }
 
-/** Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. */
+/**
+ * Accepts a connection of listener `fd`, non-blocking and close-on-exec: its fd, or -1. `addr`
+ * and `len` are 0 (`NULL`) when the peer's address isn't wanted.
+ */
 export function accept(fd: i32, addr: usize, len: usize): i32 {
-  // SAFETY: `addr` holds the `socklen_t` at `len` bytes.
-  return unsafe { accept4(fd, m.ptrTo<sockaddr>(addr), m.ptrTo<u32>(len), SOCKET_FLAGS) };
+  const a = m.ptrTo<sockaddr>(addr);
+  const l = m.ptrTo<u32>(len);
+  // SAFETY: `addr` holds the `socklen_t` at `len` bytes, or both are NULL.
+  return unsafe { accept4(fd, a, l, SOCKET_FLAGS) };
 }
 
 /** `fcntl`'s command that sets a descriptor's status flags, and the flag of non-blocking I/O. */
@@ -311,7 +326,7 @@ export function wordWake(word: usize): void {
   }
 }
 
-declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<timespec>): i32;
+declare c("c") function clock_gettime$io(clock: i32, ts: Ptr<timespec> | null): i32;
 
 /** The gettid call's number on this architecture. */
 function gettidNumber(): i64 {

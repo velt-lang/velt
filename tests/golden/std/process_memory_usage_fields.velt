@@ -1,0 +1,20 @@
+// `process.memoryUsage()` has Node's five fields, in Node's order, all numbers. `heapTotal` is at
+// least `heapUsed`, and `external` and `arrayBuffers` are not negative, as in Node. On Linux
+// both figures come from one read of /proc/self/statm, and `heapUsed` (the resident pages no file
+// backs) is less than `rss`: the executable's own pages are file-backed. (Node: the same with
+// `platform` from "node:os".)
+import { platform } from "velt/os";
+
+function main() {
+  const m = process.memoryUsage();
+  console.log(Object.keys(m).join(","));
+  console.log(
+    typeof m.rss,
+    typeof m.heapTotal,
+    typeof m.heapUsed,
+    typeof m.external,
+    typeof m.arrayBuffers,
+  );
+  console.log(m.heapTotal >= m.heapUsed, m.external >= 0, m.arrayBuffers >= 0);
+  console.log(platform() !== "linux" || m.heapUsed < m.rss);
+}

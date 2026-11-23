@@ -1,0 +1,49 @@
+// velt/text (internal): `Cursor`, what a `RegExp` keeps from call to call (regexp.velt): its
+// `lastIndex`, how many calls searched with it, and the tables of its automatons; and the
+// search memory a call makes from them and gives back.
+
+import { DfaTables, grew } from "velt/text/regex/dfa_tables";
+import { Program } from "velt/text/regex/program";
+import { Search } from "velt/text/regex/search";
+
+/** A `RegExp`'s `lastIndex`, and what its calls keep for the next ones: in an object of its
+ * own, which the methods reach through a receiver they may not change. */
+export class Cursor {
+  at: Atomic<f64> = new Atomic<f64>(0);
+  /** How many calls searched with the regex. */
+  calls: Atomic<u32> = new Atomic<u32>(0);
+  /** The tables of its automatons (dfa_tables.velt), so that they are worked out once per
+   * regex, not once per call: the one that finds where a match ends, and the backward one. */
+  ends: Atomic<shared<DfaTables> | null> = new Atomic<shared<DfaTables> | null>(null);
+  starts: Atomic<shared<DfaTables> | null> = new Atomic<shared<DfaTables> | null>(null);
+}
+
+/** A search of `prog` with `slots` capture slots, as the next call of the regex whose cursor is
+ * `cursor`, with the tables of its automatons that earlier calls kept. */
+export function memoryOf(cursor: shared<Cursor>, prog: Program, slots: usize): Search {
+  const m = new Search(slots);
+  m.uses = cursor.calls.add(1, "relaxed") + 1;
+  // A program whose matches end where the subject does runs only the backward automaton.
+  if (!prog.endsAtEnd) {
+    m.endsKept = cursor.ends.load("acquire");
+  }
+  m.startsKept = cursor.starts.load("acquire");
+  return m;
+}
+
+/** Keeps the tables of `m`'s automatons in `cursor` for the next calls, when they worked out
+ * more. */
+export function keepTables(cursor: shared<Cursor>, m: Search): void {
+  const ends = m.ends;
+  if (m.endsFull) {
+    cursor.ends.store(null, "release");
+  } else if (ends != null && grew(ends, cursor.ends.load("acquire"))) {
+    cursor.ends.store(shared(new DfaTables(ends)), "release");
+  }
+  const starts = m.starts;
+  if (m.startsFull) {
+    cursor.starts.store(null, "release");
+  } else if (starts != null && grew(starts, cursor.starts.load("acquire"))) {
+    cursor.starts.store(shared(new DfaTables(starts)), "release");
+  }
+}

@@ -10,12 +10,10 @@ use super::error::{mismatch_message, syntax_message, unknown_message};
 use super::node_syntax::node_syntax_message;
 use super::rows_reader::RowReader;
 use super::scan::{number_f64, number_i64, NumTok, Scanner, StrTok, SyntaxError, TOO_DEEP};
-use super::value::{read_limited, Value};
 use super::walk::{walk_limited, MemoSink, SkipSink};
 use crate::str::{VeltStr, STRIDE};
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
-use std::sync::Arc;
 
 /// `peek` results.
 pub const TOKEN_EOF: u32 = 0;
@@ -426,12 +424,13 @@ impl Reader {
         self.error = None;
     }
 
-    /// One complete value of any kind, built as a `json.Value` tree.
-    pub fn value(&mut self) -> Option<Arc<Value>> {
+    /// The text of one complete value of any kind (a driver's `JsonValue` member, parsed by std).
+    pub fn value(&mut self) -> Option<Vec<u8>> {
         self.value_start(|_| true)?;
+        let start = self.sc.pos;
         let limit = self.depth_left();
-        match read_limited(&mut self.sc, limit) {
-            Ok(v) => Some(v),
+        match walk_limited(&mut self.sc, &mut SkipSink, limit) {
+            Ok(()) => Some(self.sc.src[start..self.sc.pos].to_vec()),
             Err(e) => {
                 self.fail(ReadError::Syntax(e));
                 None

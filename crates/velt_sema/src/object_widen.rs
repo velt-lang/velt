@@ -245,6 +245,7 @@ impl Ctx<'_> {
                 default: None,
                 default_throws: vec![],
                 private_to: None,
+                weak: false,
             };
             self.adt_mut(d).fields.push(cell);
         }

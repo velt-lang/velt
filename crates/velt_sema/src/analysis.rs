@@ -142,6 +142,7 @@ pub(crate) fn analyze_after_phase(cx: &mut ctx::Ctx) {
     body::lazy_std::finish_live(cx);
     let before = error_count(cx);
     generated::bind::fix_modes(cx);
+    units::app_reads_shared(cx);
     timings::pass("ownership_passes", || ownership_passes(cx));
     if cx.fn_sites.again() {
         return;

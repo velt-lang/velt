@@ -1,0 +1,1 @@
+Ptr.read: field `inner.data` of C struct `Outer` is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL

@@ -1,0 +1,22 @@
+// An `unknown` holding a promise, captured by a task that is spawned and awaits it there (#924):
+// the promise inside is handed over as a promise is, and every block is freed. Velt only
+// (`spawn`); the sum is 0 + 1 + ... + 19 twice.
+async function soon(n: number): Promise<number> {
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function main(): Promise<void> {
+  let sum = 0;
+  for (let r = 0; r < 20; r++) {
+    const u: unknown = soon(r);
+    const t = spawn((async (): Promise<number> => (await u) as number)());
+    sum += await t;
+    const w: unknown = soon(r);
+    sum += (await w) as number;
+  }
+  console.log(`done ${sum}`);
+}
+main();

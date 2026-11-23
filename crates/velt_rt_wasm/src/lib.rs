@@ -5,7 +5,7 @@
 //!
 //! Two kinds of modules:
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
-//!   methods and builders, number formatting, JSON (incl. `json.Value` handles), byte buffers
+//!   methods and builders, number formatting, the JSON reader, byte buffers
 //!   and their bulk operations, BigInts, results, object handles, hashing (also `velt/hash`'s
 //!   FNV-1a), HTML escaping, math, memory, the fs operations and the
 //!   `*_sync` fs calls. Their

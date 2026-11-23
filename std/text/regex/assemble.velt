@@ -1,0 +1,46 @@
+// velt/text (internal): from a pattern's text to its program: parsed (parse_pattern.velt),
+// compiled (compiler.velt), and, when it can run as an automaton (dfa.velt), compiled once
+// more to read a match backwards.
+
+import { Compiler } from "velt/text/regex/compiler";
+import { classify } from "velt/text/regex/classify";
+import { hint } from "velt/text/regex/hints";
+import { parsePattern } from "velt/text/regex/parse_pattern";
+import { readsInOnePass } from "velt/text/regex/one_pass";
+import { Parser } from "velt/text/regex/parser";
+import { Program, SCAN_GRAMS } from "velt/text/regex/program";
+import { endsAtEnd, requiredByte, suffixByte } from "velt/text/regex/required";
+
+/** The program of `pattern` with `flags` (valid ones); the names of its groups are added to
+ * `names`. Throws `RegExpError` for a pattern that is none. */
+export function assemble(pattern: string, flags: string, names: string[]): Program {
+  const parser = new Parser(pattern, flags);
+  const tree = parsePattern(parser);
+  const compiler = new Compiler(parser);
+  compiler.compile(tree);
+  for (const name of parser.names) {
+    names.push(name);
+  }
+  const prog = compiler.prog;
+  // A literal is found by the scan alone (find.velt): it needs none of these.
+  if (!prog.exact) {
+    hint(prog);
+    prog.onePass = readsInOnePass(prog);
+    classify(prog);
+    // Read back from a byte every match ends with, unless the SIMD scan finds where matches
+    // start (`>.*\n|\n`): reading forwards from there costs less than reading lines back.
+    const suffix = prog.automaton && prog.scan != SCAN_GRAMS ? suffixByte(tree) : -1;
+    prog.suffix = suffix >= 0;
+    prog.required = prog.suffix ? suffix : requiredByte(tree);
+    prog.endsAtEnd = prog.automaton && endsAtEnd(tree);
+    prog.quick = (prog.suffix || prog.endsAtEnd) && !prog.anchored;
+  }
+  if (prog.automaton) {
+    const back = new Compiler(parser, true);
+    back.compile(tree);
+    back.prog.classStarts = prog.classStarts;
+    back.prog.asciiClass = prog.asciiClass;
+    prog.backward = back.prog;
+  }
+  return prog;
+}

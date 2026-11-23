@@ -8,7 +8,8 @@ import { Aead } from "velt/crypto/aead";
 import { AesGcm } from "velt/crypto/aes_gcm";
 import { ChaCha20Poly1305 } from "velt/crypto/chacha20_poly1305";
 import { BAD_RECORD_MAC, INTERNAL_ERROR, TlsFailure } from "velt/net/tls/alert";
-import { expandLabel } from "velt/net/tls/key_schedule";
+import { HmacKey } from "velt/crypto/hmac_key";
+import { expandLabelWith, prepareSecret } from "velt/net/tls/key_schedule";
 import { u64x2, u8x16 } from "velt/simd";
 
 /** TLS_AES_128_GCM_SHA256. */
@@ -43,15 +44,15 @@ export const TAG: usize = 16;
 // §5.3).
 const LAST_SEQUENCE: u64 = 0xffffffffffffffff;
 
-/** The AEAD of `suite` under the `secret`'s traffic key. */
-function aeadOf(suite: usize, secret: u8[]): Aead {
+/** The AEAD of `suite` under the traffic key of the prepared `secret`. */
+function aeadOf(suite: usize, secret: HmacKey): Aead {
   if (suite == AES_128_GCM_SHA256) {
-    return new AesGcm(expandLabel(secret, "key", [], 16));
+    return new AesGcm(expandLabelWith(secret, "key", [], 16));
   }
   if (suite == AES_256_GCM_SHA384) {
-    return new AesGcm(expandLabel(secret, "key", [], 32));
+    return new AesGcm(expandLabelWith(secret, "key", [], 32));
   }
-  return new ChaCha20Poly1305(expandLabel(secret, "key", [], 32));
+  return new ChaCha20Poly1305(expandLabelWith(secret, "key", [], 32));
 }
 
 /** One direction's keys and sequence number. */
@@ -79,8 +80,10 @@ export class RecordCipher {
     this.nonce = Buffer.alloc(12);
     this.seq = 0;
     if (fixedIv == null) {
-      this.aead = aeadOf(suite, secret);
-      this.iv = expandLabel(secret, "iv", [], 12);
+      // The key and the IV from one prepared secret: its HMAC blocks are hashed once.
+      const prepared = prepareSecret(secret);
+      this.aead = aeadOf(suite, prepared);
+      this.iv = expandLabelWith(prepared, "iv", [], 12);
       this.aad = Buffer.alloc(HEADER);
       this.tls12 = false;
       this.prefix = 0;

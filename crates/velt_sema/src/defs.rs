@@ -333,9 +333,7 @@ impl FnInfo<'_> {
             let unwritten = |t: &crate::hir::CTy| {
                 !matches!(
                     t,
-                    crate::hir::CTy::Buf { readonly: false }
-                        | crate::hir::CTy::Out
-                        | crate::hir::CTy::OutPtr
+                    crate::hir::CTy::Buf { readonly: false } | crate::hir::CTy::Out
                 )
             };
             return Some(c.params.iter().map(unwritten).collect());
@@ -406,6 +404,8 @@ pub(crate) struct FieldInfo {
     pub default_throws: Vec<ThrowSrc>,
     /// `private`: the declaring type (inherited copies keep the base class).
     pub private_to: Option<DefId>,
+    /// Declared `weak T | null` (`hir::FieldDef::weak`).
+    pub weak: bool,
 }
 
 /// An initializer a class gives a field it inherits (`AdtInfo::redefined`).
@@ -528,6 +528,9 @@ pub(crate) struct GlobalInfo<'m> {
     /// whose value is not a constant (`new Map()`, a call with effects) or whose identity shows
     /// (a function from a call, #802).
     pub stored: bool,
+    /// A module-level `let` declared `weak T | null` (`hir::GlobalDef::weak`,
+    /// body/weak_globals.rs), once its type is checked.
+    pub weak: bool,
     /// `declare c const`: what it crosses as, once its type is checked.
     pub c_const: Option<crate::hir::CTy>,
     /// `declare c("<library>") let` (or `const`): the C variable, once its type is checked.
@@ -568,6 +571,9 @@ pub(crate) struct AliasInfo<'m> {
     /// Expanded at least once; an alias never used is checked on its own at the end
     /// ([`crate::resolve::check_unused_aliases`]).
     pub used: bool,
+    /// Its C pointers' pointees were checked, once, at its declaration: an alias with no type
+    /// arguments has the same expansion at every use (`Ctx::alias_written`, #3094).
+    pub pointees_checked: bool,
     /// Declared in a generic function's body: that function's type parameters (and those of
     /// the functions and class around it), which the alias may name. They are its first
     /// parameters, before its own, and every use passes them on (`Ctx::item_type`).

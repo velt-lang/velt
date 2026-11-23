@@ -23,6 +23,10 @@ pub struct CheckOptions {
     /// on disk under it and loaded instead of checking std (`crate::units::disk`). `None`: std
     /// is checked. Additive.
     pub std_key: Option<u64>,
+    /// The target is wasm32, where C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's
+    /// `Ptr<T>`, `usize` and `isize` 8: a read or write through a `Ptr` of a type holding one
+    /// isn't C's memory there, and is refused (`Ctx::c_memory_refused`, #3094).
+    pub wasm32: bool,
 }
 
 impl Default for CheckOptions {
@@ -33,6 +37,7 @@ impl Default for CheckOptions {
             native_executor: true,
             units: false,
             std_key: None,
+            wasm32: false,
         }
     }
 }

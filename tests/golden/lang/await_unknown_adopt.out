@@ -1,0 +1,12 @@
+6 plain undefined
+caught returned
+2 two 6
+yield 10
+caught yielded
+elem 8
+elem 9
+elem done
+3
+elem 12
+caught element
+t1 t2 returned t3 t4 t1 plain t2 t3 t4

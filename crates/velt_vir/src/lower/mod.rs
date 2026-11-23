@@ -24,6 +24,7 @@ mod adt;
 mod any;
 mod any_args;
 mod any_array_proto;
+mod any_await;
 mod any_borrowed;
 mod any_builtin;
 mod any_checks;
@@ -67,6 +68,7 @@ mod attempt;
 mod bits;
 mod boxes;
 mod boxing;
+mod field_absent;
 mod kept;
 mod passes;
 pub use boxing::CountedSeed;
@@ -76,10 +78,12 @@ pub(crate) use passes::{lower_program, lower_program_seeded};
 mod c_call;
 mod c_export;
 pub(crate) mod c_global;
+mod c_layout;
 mod call;
 mod callee;
 mod caller_aliases;
 mod caller_stores;
+mod callers_own;
 mod cell_fields;
 mod cells;
 mod cfg;
@@ -106,11 +110,13 @@ mod foreign;
 mod frame_envs;
 mod lower_profile;
 mod moved_args;
+mod ptr_memory;
 mod raw_memory;
 mod sched;
 mod slot;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
+mod compound_assign;
 mod extern_args;
 mod fn_rest_tuple;
 mod fn_shapes;
@@ -176,12 +182,14 @@ mod stringify;
 mod strings;
 mod symbols;
 mod system_views;
+mod tables;
 mod template;
 mod this_fn;
 mod thread_local;
 mod track_caller;
 mod transfer;
 mod truthy;
+mod type_kinds;
 mod type_tests;
 mod types;
 mod upcast;
@@ -191,6 +199,9 @@ mod view_unswitch_addrs;
 mod view_unswitch_handover;
 mod view_unswitch_plain;
 mod weak;
+mod weak_captures;
+mod weak_fields;
+mod weak_globals;
 mod weak_object;
 mod weak_view;
 mod widen;
@@ -254,6 +265,9 @@ struct Cx<'h> {
     /// The first function or class of each name, built on the first `prelude_def` lookup
     /// (array_view.rs): one map, not a scan of every def per call (7% of a build's lowering).
     prelude_defs: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
+    /// The class roots of the targets of `weak` fields, built on first use (weak_fields.rs
+    /// `slot_target`).
+    weak_targets: std::cell::OnceCell<FxHashSet<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function but `velt_main` is lowered, hence built last.
     uses_placement: bool,
@@ -346,6 +360,11 @@ struct Cx<'h> {
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
     sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
     sched_used: bool,  // a task or timer hook of the executor in Velt is called (module_state.rs)
+    /// The observers of `await` steps (await_order.rs `OBSERVERS`, by the runtime function each
+    /// stands for) the program calls as the executor in Velt's hooks, and whether it takes the
+    /// steps as its hook (`sched_await_tick`): sched.rs.
+    sched_observers: FxHashSet<&'static str>,
+    sched_steps: bool,
     /// Did sema declare module_blocks.velt's hooks in its object (sched.rs `module_hook_live`)?
     module_hooks_declared: std::cell::OnceCell<bool>,
     held: Option<Vec<(FuncId, Work)>>, // module state's accesses, until main is built (drain)

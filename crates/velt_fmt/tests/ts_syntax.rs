@@ -677,3 +677,14 @@ type D = import(\"./m\").T<string> | typeof import(\"./m\").v;
         panic!("{msg}");
     }
 }
+
+#[test]
+fn weak_types() {
+    // `weak` binds tighter than `|`: no parentheses as a union member, but as an array element.
+    round_trips(
+        "class Node {\n  parent: weak Node | null = null;\n  all: (weak Node)[] = [];\n}\n",
+    );
+    round_trips("let p: weak Node | null | undefined = null;\n");
+    // A type named `weak`.
+    round_trips("type weak = number;\n\nlet w: weak = 1;\nlet ws: weak[] = [];\n");
+}

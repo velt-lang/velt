@@ -162,7 +162,8 @@ impl Ctx<'_> {
             }
             (TyKind::Tuple(a), TyKind::Array(b)) => a.iter().all(|x| self.relate(*x, b, slots)),
             (TyKind::Promise(a, _), TyKind::Promise(b, _))
-            | (TyKind::Shared(a), TyKind::Shared(b)) => self.relate(a, b, slots),
+            | (TyKind::Shared(a), TyKind::Shared(b))
+            | (TyKind::Ptr(a), TyKind::Ptr(b)) => self.relate(a, b, slots),
             (TyKind::Map(a1, a2), TyKind::Map(b1, b2)) => {
                 self.relate(a1, b1, slots) && self.relate(a2, b2, slots)
             }

@@ -14,11 +14,6 @@ use super::{cint, ice, unit, Cx, FnLower};
 use crate::c_abi;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
 
-/// std's hooks that turn a `Ptr` into its address and back (std/ffi/ptr.velt).
-pub(super) const PTR_OF: &str = velt_common::std_hook!(ffi_ptr_of);
-pub(super) const PTR_OR_NULL: &str = velt_common::std_hook!(ffi_ptr_or_null);
-pub(super) const PTR_ADDRESS: &str = velt_common::std_hook!(ffi_ptr_address);
-pub(super) const PTR_ADDRESS_OR_ZERO: &str = velt_common::std_hook!(ffi_ptr_address_or_zero);
 const STR_BYTES_OF: &str = velt_common::std_hook!(ffi_str_bytes_of);
 const C_STRING_BYTES: &str = velt_common::std_hook!(ffi_c_string_bytes);
 
@@ -31,7 +26,7 @@ enum CArg {
     Buffer(Arg),
     /// A string (a `StrBytes` argument, well-formed): where its bytes are is read at the call.
     Str(Operand),
-    /// An object (`Out`, `OutPtr`): the address of its field `name` is taken at the call.
+    /// An object (`Out`): the address of its field `name` is taken at the call.
     Field(Place, TyId, &'static str),
 }
 
@@ -161,26 +156,20 @@ impl FnLower<'_, '_> {
                 vals.push(CArg::Buffer(Arg::Value(self.operand_place(bytes, vt), bt)));
                 continue;
             }
-            if let CTy::Out | CTy::OutPtr = t {
+            if let CTy::Out = t {
                 let v = self.expr(a);
                 let obj = self.operand_place(v, Ty::Ptr);
-                let field = if *t == CTy::Out { "value" } else { "address" };
-                vals.push(CArg::Field(obj, self.sub(a.ty), field));
+                vals.push(CArg::Field(obj, self.sub(a.ty), "value"));
                 continue;
             }
             let v = match t {
-                CTy::Ptr { nullable } => {
-                    let hook = if *nullable {
-                        PTR_ADDRESS_OR_ZERO
-                    } else {
-                        PTR_ADDRESS
-                    };
-                    let targ = self.ptr_target(a.ty);
-                    let addr = {
-                        let d = self.ffi_hook(hook);
-                        self.call_def(d, vec![targ], vec![], std::slice::from_ref(a))
-                    };
-                    self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr))
+                // `Ptr<T>` and `Ptr<T> | null` are C's pointer word already (#3094); a
+                // `@repr("transparent")` struct of one passes it.
+                CTy::Ptr { .. } => {
+                    let v = self.expr(a);
+                    // Read now, as the other arms: a later argument may reassign the variable.
+                    let (v, ty) = self.unwrap_transparent(v, a.ty);
+                    self.freeze(v, ty)
                 }
                 CTy::Null => {
                     self.expr(a);
@@ -188,7 +177,9 @@ impl FnLower<'_, '_> {
                 }
                 _ => {
                     let v = self.expr(a);
-                    let v = self.freeze(v, a.ty);
+                    // A `@repr("transparent")` struct passes its field (`collect::c_sig`).
+                    let (v, ty) = self.unwrap_transparent(v, a.ty);
+                    let v = self.freeze(v, ty);
                     match (narrow(*t, wasm), c_vir(*t, wasm)) {
                         (true, ct) => self.rvalue_temp(ct, Rvalue::Cast(v, ct)),
                         (false, _) => v,
@@ -324,21 +315,27 @@ impl FnLower<'_, '_> {
         if vret != cret {
             result = self.rvalue_temp(cret, Rvalue::Cast(result, cret));
         }
-        match c.ret {
+        let result = self.c_result(&symbol, c.ret, result);
+        // A `@repr("transparent")` struct is built around what C returns (`collect::c_sig`).
+        self.wrap_transparent(result, ret)
+    }
+
+    /// What C function `symbol` returned (`result`, of its C type `ret`) as Velt's value of it.
+    fn c_result(&mut self, symbol: &str, ret: CTy, result: Operand) -> Operand {
+        let wasm = wasm32(&self.cx.target);
+        match ret {
+            // The pointer word is `Ptr<T>` and `Ptr<T> | null` as they are (#3094).
             CTy::Ptr { nullable } => {
-                let addr = self.rvalue_temp(Ty::U64, Rvalue::Cast(result, Ty::U64));
                 if !nullable {
                     // C has no non-null pointer type, so the header check can't see this: a NULL
                     // where the declaration says `Ptr<T>` stops the program here, not where the
-                    // pointer is used.
-                    self.null_result_check(&symbol, addr.clone());
+                    // pointer is used (where it would read as `null`).
+                    let name = base_symbol(symbol);
+                    self.stop_if_null(result.clone(), &format!(
+                        "C function `{name}` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`"
+                    ));
                 }
-                let hook = if nullable { PTR_OR_NULL } else { PTR_OF };
-                let targ = self.ptr_target(ret);
-                {
-                    let d = self.ffi_hook(hook);
-                    self.call_def(d, vec![targ], vec![addr], &[])
-                }
+                result
             }
             t if narrow(t, wasm) => {
                 // `size_t`/`ssize_t` are 32 bits on wasm32; Velt's `usize`/`isize` are 64.
@@ -424,26 +421,40 @@ impl FnLower<'_, '_> {
             Some(hir::CValue::Int(v)) => cint(v, vt),
             Some(hir::CValue::Float(v)) => Operand::Const(vir::Const::Float(v), vt),
             Some(hir::CValue::Bool(v)) => Operand::Const(vir::Const::Bool(v), vt),
+            // The pointer word itself (#3094). A `Ptr<T>` constant is never 0: veltc refuses one
+            // whose header value is `NULL` (it would read as `null`).
             Some(hir::CValue::Address(a)) => {
-                let nullable = matches!(c.ty, CTy::Ptr { nullable: true });
-                let hook = if nullable { PTR_OR_NULL } else { PTR_OF };
-                let targ = self.ptr_target(ty);
-                let d = self.ffi_hook(hook);
-                self.call_def(d, vec![targ], vec![cint(i128::from(a), Ty::U64)], &[])
+                if a == 0 && matches!(c.ty, CTy::Ptr { nullable: false }) {
+                    ice("a `Ptr<T>` C constant whose value is NULL");
+                }
+                cint(i128::from(a), Ty::Ptr)
             }
         }
     }
 
-    /// Stops the program when `addr` (a `Ptr<T>` result of C function `symbol`) is NULL.
-    fn null_result_check(&mut self, symbol: &str, addr: Operand) {
+    /// Stops the program with `msg` when the pointer word `p` (a `Ptr`, from C) is NULL: C has no
+    /// non-null pointer type, and a `Ptr<T>` holding 0 would read as `null` (#3094).
+    pub(super) fn stop_if_null(&mut self, p: Operand, msg: &str) {
+        let addr = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
         let null = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, addr, cint(0, Ty::U64)));
         let (bad, ok) = (self.new_block(), self.new_block());
         self.branch(null, bad, ok);
         self.switch_to(bad);
-        let name = base_symbol(symbol);
-        self.panic_msg(&format!(
-            "C function `{name}` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`"
-        ));
+        self.panic_msg(msg);
+        self.terminate(vir::Terminator::Unreachable);
+        self.switch_to(ok);
+    }
+
+    /// Stops the program where `address` (a `usize`) has bits past the low 32: on wasm32 a
+    /// pointer has 32, and the cast to one would make it another address, or NULL behind a
+    /// `Ptr<T>` that is never NULL (`ptrFromAddress`, #3094).
+    pub(super) fn stop_if_past_32_bits(&mut self, address: Operand) {
+        let high = self.u64_op(BinOp::UShr, address, cint(32, Ty::U64));
+        let past = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, high, cint(0, Ty::U64)));
+        let (bad, ok) = (self.new_block(), self.new_block());
+        self.branch(past, bad, ok);
+        self.switch_to(bad);
+        self.panic_msg("Ptr: the address does not fit a pointer of this target (32 bits)");
         self.terminate(vir::Terminator::Unreachable);
         self.switch_to(ok);
     }
@@ -461,19 +472,6 @@ impl FnLower<'_, '_> {
         let dangling = self.u64_op(BinOp::Shl, null, cint(4, Ty::U64));
         let p = self.u64_op(BinOp::BitOr, p, dangling);
         self.rvalue_temp(Ty::Ptr, Rvalue::Cast(p, Ty::Ptr))
-    }
-
-    /// The `T` of `Ptr<T>` or `Ptr<T> | null` (type `t`).
-    pub(super) fn ptr_target(&mut self, t: TyId) -> TyId {
-        let t = self.sub(t);
-        let t = match self.cx.kind(t) {
-            TyKind::Option(inner, _) => inner,
-            _ => t,
-        };
-        match self.cx.kind(t) {
-            TyKind::Adt(_, args) if args.len() == 1 => args[0],
-            _ => ice("a C pointer type that is not `Ptr<T>`"),
-        }
     }
 
     /// The definition of std hook `qualified`.
@@ -524,13 +522,9 @@ pub(super) fn c_vir(t: CTy, wasm32: bool) -> Ty {
         CTy::F32 => Ty::F32,
         CTy::F64 => Ty::F64,
         CTy::Bool => Ty::Bool,
-        CTy::Ptr { .. }
-        | CTy::Null
-        | CTy::StrBytes
-        | CTy::Buf { .. }
-        | CTy::CString
-        | CTy::Out
-        | CTy::OutPtr => Ty::Ptr,
+        CTy::Ptr { .. } | CTy::Null | CTy::StrBytes | CTy::Buf { .. } | CTy::CString | CTy::Out => {
+            Ty::Ptr
+        }
         CTy::Void => Ty::Unit,
     }
 }
@@ -561,8 +555,7 @@ fn class(t: CTy) -> CClass {
         | CTy::StrBytes
         | CTy::Buf { .. }
         | CTy::CString
-        | CTy::Out
-        | CTy::OutPtr => CClass::Word,
+        | CTy::Out => CClass::Word,
         CTy::Int(i) => CClass::Int(i),
         CTy::F32 => CClass::F32,
         CTy::F64 => CClass::F64,
@@ -722,7 +715,6 @@ fn c_name(t: CTy) -> &'static str {
         CTy::Buf { readonly: false } => "array",
         CTy::CString => "CString",
         CTy::Out => "Out",
-        CTy::OutPtr => "OutPtr",
         CTy::Void => "void",
     }
 }

@@ -73,6 +73,12 @@ Velt against the runtime's Rust, the same compiler and runtime with only the std
 - `prng` (`Math.random()`'s wyrand generator, Velt code): 820M instructions against the Rust
   port's 1,300M built with `rustc -C opt-level=3`, 0.63 (release, Linux, cachegrind, 2026-11-08,
   commit 74125fdf6).
+- `os_random` (the operating system's random numbers: 300K each of `randomBytes(16)`, crypto's
+  `randomInt` and `uuidv4()`, one OS call per draw; std/lang/random/os.velt over `getrandom`, against
+  the `getrandom` crate the runtime used): 418M instructions against the Rust port's 517M, 0.81. The
+  same program on the runtime's Rust took 520M, with the same compiler and only std swapped
+  (Linux x86_64, cachegrind, 2026-11-21). Wall time is the system calls' on both (243 ms against
+  246 ms, best of 7): the instructions saved are the zero fill and the `Vec` per draw.
 
 ## SHA-2 and SHA-1
 
@@ -254,6 +260,24 @@ checks. On arm64, and with `--cpu x86-64-v3`, every `fma` is one instruction. On
 which has no `fma` instruction (wasmtime 50), the program takes 525.9 M instructions
 (precompiled).
 
+## Integer powers
+
+`pow_int` is `**` on `i64` (20 million pairs, exponents 0 to 63), Velt code in
+`std/lang/hooks/pow_int.velt`, against the runtime's `velt_rt_pow_i64` it replaced (the Rust
+column, called through a function that is not inlined, as compiled code called it). Instructions
+executed (cachegrind, x86-64 Linux, release), 2026-11-22:
+
+| benchmark | Velt | runtime call before | Rust | Velt / Rust |
+|---|---:|---:|---:|---:|
+| pow_int | 944.8 M | 1,463.6 M | 1,522.9 M | 0.62 |
+
+Inlined at the call, the power squares before it multiplies, so a step has no check of its own
+for whether another square is due, and the loop takes five bits a trip: every exponent below 64
+is one trip (one bit a trip took 1,164.8 M). With exponents 0 to 9 instead, the same loop takes
+741.1 M against 833.1 M for one bit a trip. Best of 25 interleaved runs: 51 ms against 67 ms for
+one bit a trip. A debug build (cold cache) takes 2,047.5 M against 2,118.1 M for one bit a trip
+and 1,843.8 M for the runtime call; with the warm cache it runs optimized code.
+
 ## Map lookups by UTF-8 bytes
 
 `map_get_utf8`: 4M `Map<string, i64>.getUtf8` lookups of keys given as bytes (short, long, not
@@ -263,6 +287,11 @@ ASCII; three in four present). The key's hash and comparison are Velt code
 swapped, cachegrind, 2026-11-20: 1,285M instructions before, 1,283M after (−0.2%); wall clock,
 best of 7 interleaved, 103.7 → 86.5 ms. The Rust port (std's `HashMap` with the runtime's hash)
 executes 521M.
+
+The key's UTF-8 check is Velt code too (`utf8Valid`, std/encoding/utf8_valid.velt); a key that
+isn't UTF-8 is decoded by `utf8Slice`. It was the runtime's `velt_rt_bytes_is_utf8` and
+`velt_rt_bytes_to_str_lossy`, 36% of the row. Same setup, 2026-11-22: 1,292M instructions
+before, 1,093M after (−15.4%); wall clock, best of 7 interleaved, 75.0 → 51.3 ms.
 
 ## Symbols
 

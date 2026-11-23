@@ -1,1 +1,0 @@
-thenable_test_callable_then.velt:13:18: error: cannot cast `Promise<() => string> | () => string` as `any`

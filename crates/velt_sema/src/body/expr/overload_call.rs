@@ -329,12 +329,25 @@ impl FnCx<'_, '_> {
     /// `return e;` in a signature's body: the implementation's result as the signature's
     /// result type `ret`, tested when it is a wider union (`checked_narrow`), or converted as
     /// `as` converts when the implementation returns `unknown` or `any` (checked at run time;
-    /// TypeScript relates the two either way, TS2394, and Node never tests the value).
+    /// TypeScript relates the two either way, TS2394, and Node never tests the value). It is
+    /// stored into the site of the signature's written result, as any `return` is
+    /// (`returned`): a `Promise<R>` there rejects with what the implementation's promise rejects
+    /// with, as TypeScript writes no error type (`throws::promise_sites`).
     pub(crate) fn signature_result(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
+        let site = self.return_site(ret);
+        let outer = self.set_target(site);
+        let h = self.signature_value(e, ret, site);
+        self.set_target(outer);
+        h
+    }
+
+    fn signature_value(&mut self, e: &ast::Expr, ret: TyId, site: Option<Span>) -> hir::Expr {
         let h = self.expr(e, None, Want::Move);
         if self.cx.ty.has_error(h.ty) {
             return h;
         }
+        // Before the conversion, which needs the error types to match (`stored_into`).
+        self.flow_into(&h, site);
         if self.cx.dynamic(h.ty).is_some() && self.cx.dynamic(ret).is_none() {
             return self.cast_dynamic(h, ret);
         }

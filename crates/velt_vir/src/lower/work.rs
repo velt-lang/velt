@@ -119,6 +119,9 @@ pub(super) enum Work {
     /// `(state: ptr)`: the initializer of module state slots `from..to` (module_state.rs):
     /// the state's own (`0..deferred`), or the root file's slots its `main` initializes.
     ModuleInit(u32, u32),
+    /// `(state: ptr)`: the module state's drop at exit when a slot is a `weak` module `let`
+    /// (weak_globals.rs); otherwise the state tuple's drop glue.
+    ModuleDrop,
     /// `()`: releases the references the static atomics hold, at exit (static_atomic.rs).
     StaticsDrop,
     /// An access of module state (module_state.rs `Access`), through the executor in Velt's
