@@ -174,11 +174,16 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   wasm32 so does an address past 32 bits.
 - **`Out<T>`** takes a number, `bool`, `Ptr<U> | null` or a C struct only: C may write NULL into
   a non-null pointer, and writing a class reference, a `symbol` or a `shared<T>` would forge one.
-  A C struct's fields declared `Ptr<T>` are checked where `value` is read, not when C returns
-  (`value` is a getter through the std-only `cArrived<T>`): a C function that fails often leaves
-  its out-struct untouched, and a caller that tests its result first never reads it. One C left
-  NULL stops the program at the read, naming the field (``field `text` of the `Out<Label>` read
-  is NULL``). A value without such fields passes as it is.
+  C writes the `Out`'s private field `held`; `value` is an accessor that reads it through the
+  std-only `cArrived<T>`, as `Ptr.read` reads C memory: each `bool` is its byte's truth (0 or
+  not), and a C struct's fields declared `Ptr<T>` are checked where `value` is read, not when C
+  returns, since a C function that fails often leaves its out-struct untouched and a caller that
+  tests its result first never reads it. One C left NULL stops the program at the read, naming
+  the field (``field `text` of the `Out<Label>` read is NULL``). A `T` holding neither passes as
+  it is. As a value, an `Out` prints as `Out { value: 3 }` and serializes as `{"value":3}` (an
+  inspect hook and `toJSON`, both reading `value`), and a spread (`{ ...out }`) copies no
+  accessor, as in JS, so it is `{}`. An `Out<S>` of a C struct aligned above 8 bytes, what the
+  `Out` object gives its value, is refused where it is passed (none can be declared today).
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and

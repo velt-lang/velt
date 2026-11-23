@@ -1,6 +1,7 @@
 // velt/ffi (internal): `Out<T>`, a value a C function writes through a pointer (`int *out`,
 // `sqlite3 **db`, `struct stat *st`): the C function gets the address of its value.
 
+import { INSPECT } from "velt/lang/hooks/keys";
 import { cArrived } from "velt/lang/intrinsics/address";
 
 /**
@@ -12,7 +13,10 @@ import { cArrived } from "velt/lang/intrinsics/address";
  * A C struct's fields declared `Ptr<T>` are checked where `value` is read, not when C returns: a
  * C function that fails often leaves its out-struct untouched, and a caller that tests the result
  * first never reads it. One that C left `NULL` stops the program, naming the field; declare the
- * fields C may leave `NULL` as `Ptr<T> | null`.
+ * fields C may leave `NULL` as `Ptr<T> | null`. A `bool` C wrote is its byte's truth, 0 or not.
+ *
+ * `value` is an accessor, so `console.log` shows `Out { value: … }` and `JSON.stringify` writes
+ * `{"value":…}` (both read it, checked); a spread (`{ ...out }`) copies no accessor, as in JS.
  */
 export class Out<T> {
   // What C writes: the call passes its address (velt_vir `c_call.rs`).
@@ -28,5 +32,15 @@ export class Out<T> {
 
   set value(value: T) {
     this.held = value;
+  }
+
+  /** How `console.log` shows it: `Out { value: 3 }`, `value` read (and checked). */
+  [INSPECT]() {
+    return { value: this.value };
+  }
+
+  /** How `JSON.stringify` writes it: `{"value":3}`. */
+  toJSON(): { value: T } {
+    return { value: this.value };
   }
 }

@@ -6,9 +6,10 @@
 //! would read as `null` once widened), so the program stops, naming the field. A `bool` in it
 //! is its byte's truth to C, 0 or not.
 //!
-//! `cArrived<T>(v)` (velt/ffi's `Out.value`, #2187) checks a value C wrote the same way, where it
-//! is read rather than when C returns: a C function that fails often leaves its out-struct
-//! untouched, and a caller that tests the result first never reads it.
+//! `cArrived<T>(v)` (velt/ffi's `Out.value`, #2187) reads a value C wrote the same way (its
+//! `bool`s normalized, its non-null pointers checked), where it is read rather than when C
+//! returns: a C function that fails often leaves its out-struct untouched, and a caller that tests
+//! the result first never reads it.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -43,26 +44,29 @@ impl FnLower<'_, '_> {
         v
     }
 
-    /// `cArrived<T>(v)`: `v`, its non-null pointers checked. A `T` holding none passes as it is.
+    /// `cArrived<T>(v)`: `v`, read from where C wrote it (the `Out`'s field), as `ptr_read`
+    /// reads: each `bool` in it is its byte's truth to C and its non-null pointers are checked. A
+    /// `T` holding neither passes as it is.
     pub(super) fn c_arrived(&mut self, v: &hir::Expr, ty: TyId) -> Operand {
         let ty = self.sub(ty);
-        let value = self.expr(v);
-        if !self.cx.holds_non_null_ptr(ty) {
-            return value;
+        let (pointers, bools) = (self.cx.holds_non_null_ptr(ty), self.cx.holds_bool(ty));
+        if !pointers && !bools {
+            return self.expr(v);
         }
         let t = self.vty(ty);
-        // The `Out` object holds the struct inline, at its alignment: no C struct is aligned above
-        // the 8 a heap block gives (its fields are C's scalars and C structs; `@align` doesn't
-        // apply to one).
-        if self.cx.size_align(t).1 > 8 {
-            super::ice(format_args!(
-                "a C struct `{}` aligned above 8 in an `Out`",
-                self.cx.type_name(ty)
-            ));
-        }
+        // The bytes C wrote, before a load as `bool` narrows them: `v` is the field's place.
+        let at = self.place_expr(v);
+        let addr = self.addr(at.clone());
+        let base = self.rvalue_temp(Ty::U64, Rvalue::Cast(addr, Ty::U64));
+        let value = self.rvalue_temp(t, Rvalue::Use(Operand::Copy(at)));
         let held = self.operand_place(value.clone(), t);
-        let s = format!("Out<{}>", self.cx.type_name(ty));
-        self.stop_on_null(&held, ty, (&s, Arrived::Out), "");
+        if bools {
+            self.normalize_bools(&held, ty, &base, 0);
+        }
+        if pointers {
+            let s = format!("Out<{}>", self.cx.type_name(ty));
+            self.stop_on_null(&held, ty, (&s, Arrived::Out), "");
+        }
         value
     }
 
