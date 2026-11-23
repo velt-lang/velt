@@ -1,0 +1,5 @@
+// velt/lang/bytes (internal): the largest block of bytes a native program can have: no limit
+// here, the allocator refuses a size it cannot serve (WebAssembly's limit is in limit_wasm.velt).
+
+/** The most bytes one allocation can have here: any, as far as this check goes. */
+export const MAX_BLOCK: u64 = 18446744073709551615;

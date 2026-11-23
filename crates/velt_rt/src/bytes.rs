@@ -133,6 +133,31 @@ pub unsafe extern "C" fn velt_rt_bytes_to_str(b: *const VeltBytes, out: *mut IoR
     r.write_to(out);
 }
 
+/// A zeroed array of `n` bytes (`Buffer.alloc(n)` of a large `n`, std/lang/bytes/raw.velt):
+/// calloc, so memory fresh from the system costs no memset. Past the array length limit it is
+/// the limit's `RangeError`; a size the target cannot allocate (on wasm32, any past 2^31 - 1,
+/// never truncated) stops the program as `velt_rt_alloc` does.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_bytes_zeroed(n: u64, out: *mut VeltBytes) {
+    if n > MAX_ARRAY_LEN {
+        array_too_long();
+    }
+    let len = crate::mem::block_size(n, 1);
+    if len == 0 {
+        out.write(VeltBytes::from_vec(Vec::new()));
+        return;
+    }
+    let p = match std::alloc::Layout::array::<u8>(len) {
+        Ok(layout) => std::alloc::alloc_zeroed(layout),
+        Err(_) => std::ptr::null_mut(),
+    };
+    if p.is_null() {
+        crate::mem::out_of_memory(n, 1);
+    }
+    // SAFETY: `p` is a zeroed block of `len` bytes from the global allocator.
+    out.write(VeltBytes::from_vec(Vec::from_raw_parts(p, len, len)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,7 +196,7 @@ mod tests {
         let b = VeltBytes::from_vec(Vec::new());
         assert_eq!((b.len, b.cap, b.ptr as usize & 1), (0, 0, 0));
         let mut z = MaybeUninit::<VeltBytes>::uninit();
-        unsafe { crate::bytes_ops::velt_rt_bytes_zeroed(0, z.as_mut_ptr()) };
+        unsafe { velt_rt_bytes_zeroed(0, z.as_mut_ptr()) };
         assert_eq!(unsafe { z.assume_init() }.ptr as usize & 1, 0);
         assert_eq!(empty_data::<u8>() as usize & 1, 0);
         assert_eq!(empty_data::<u64>() as usize % 8, 0);
