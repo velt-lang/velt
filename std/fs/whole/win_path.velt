@@ -5,7 +5,8 @@
 // path under a long working directory needs the prefix too, so only an absolute path is
 // judged by its own length.
 
-import { OutPtr } from "velt/ffi/out_ptr";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
 import { wideOf } from "velt/ffi/wide";
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
@@ -13,7 +14,7 @@ declare c("c") function GetFullPathNameW(
   name: readonly u16[],
   room: u32,
   out: u16[],
-  file: OutPtr<u16>,
+  file: Out<Ptr<u16> | null>,
 ): u32;
 declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
 
@@ -89,7 +90,7 @@ export function winPath(path: string): u16[] | null {
     const full = arrayWithCapacity<u16>(room as usize);
     arraySetLen(full, room as usize);
     // SAFETY: `w` is NUL-terminated and `full` holds `room` units, the count passed.
-    const got = unsafe { GetFullPathNameW(w, room, full, new OutPtr<u16>()) };
+    const got = unsafe { GetFullPathNameW(w, room, full, new Out<Ptr<u16> | null>(null)) };
     if (got === 0) {
       return w;
     }

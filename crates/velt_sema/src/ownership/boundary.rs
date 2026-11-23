@@ -126,8 +126,27 @@ pub(crate) fn check_boundaries(cx: &mut Ctx) {
 /// `Intrinsic::SlotPut`), and a function that passes its parameter on to one of those
 /// (`enqueue(ch, x)` calling `ch.send(x)`) hands it over too. A parameter the body assigns (`c = new Conn(…)`) may send another value, so it
 /// is left out (`LocalDef::mutable` would also cover a parameter whose contents change).
+///
+/// A finished unit's senders come from its summary (`units::Summaries::senders`, which std's
+/// stage keeps): its bodies are not among `fns`, and the program's functions pass on to them.
 fn channel_senders(cx: &mut Ctx, fns: &[DefId]) -> FxHashMap<DefId, Vec<usize>> {
-    let mut out: FxHashMap<DefId, Vec<usize>> = FxHashMap::default();
+    let known = match cx.units_stage {
+        crate::units::Stage::App => cx.unit_sums.senders.clone(),
+        _ => FxHashMap::default(),
+    };
+    let out = senders_from(cx, fns, known);
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.unit_sums.senders = out.clone();
+    }
+    out
+}
+
+/// [`channel_senders`] of `fns`, on top of the senders known (`out`).
+fn senders_from(
+    cx: &mut Ctx,
+    fns: &[DefId],
+    mut out: FxHashMap<DefId, Vec<usize>>,
+) -> FxHashMap<DefId, Vec<usize>> {
     // (function, callee, argument index, parameter index): the parameter is passed on as is.
     let mut passes: Vec<(DefId, DefId, usize, usize)> = vec![];
     for &d in fns {
@@ -446,7 +465,17 @@ fn report_shared(cx: &mut Ctx, span: Span, name: &str, local: bool, ty: TyId) {
         }
         false => format!(", or pass a copy: `{name}.clone()`"),
     };
-    cx.error(Diagnostic::error(msg, span).with_note(format!(
+    let mut d = Diagnostic::error(msg, span).with_note(format!(
         "use it through the `shared` value from now on (`m.with((v) => …)`){copy}"
-    )));
+    ));
+    // `place_text` renders an element as `xs[..]` and anything else unnamed as "the value": only
+    // a name that is code can go in the snippet.
+    let code = !name.contains("[..]") && name != "the value";
+    if !local && code {
+        // A field can hand its value over without a copy once nothing needs it there.
+        d = d.with_note(format!(
+            "or, where nothing needs it there any more, take it out without a copy: `const v = {name}; {name} = …;` (a new value), then `shared(v)`"
+        ));
+    }
+    cx.error(d);
 }

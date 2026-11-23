@@ -1,0 +1,36 @@
+// `**` on integer types is std's `powI64` (std/lang/hooks/pow_int.velt; the runtime's
+// `velt_rt_pow_i64` before #2196): the operands widened to i64, the power by squaring wrapping at
+// 64 bits, the result narrowed back to the operands' type. A negative exponent gives 0, except
+// that 1 to any power is 1.
+
+function pow(a: i64, b: i64): i64 {
+  return a ** b;
+}
+
+function main() {
+  // Exponents 0 and 1, and a zero base.
+  console.log(pow(0, 0), pow(5, 0), pow(0, 5), pow(7, 1), pow(-7, 1));
+  // Negative bases: the sign follows the exponent's parity.
+  console.log(pow(-3, 3), pow(-3, 4), pow(-2, 63), pow(-1, 1000001));
+  // Wrapping at 64 bits: 2 ** 63 is i64's minimum, 2 ** 64 and beyond are 0.
+  console.log(pow(2, 62), pow(2, 63), pow(2, 64), pow(2, 100));
+  // Large exponents: 3 ** 40 wraps, and odd powers of 7 stay odd.
+  console.log(pow(3, 39), pow(3, 40), pow(7, 1000003));
+  // Negative exponents: 0, except for the base 1.
+  console.log(pow(2, -1), pow(1, -5), pow(-1, -5), pow(0, -1));
+  // Every square from a loop.
+  let squares = "";
+  for (let i: i64 = -3; i <= 3; i++) {
+    squares += `${i ** 2} `;
+  }
+  console.log(squares);
+  // Narrower types: computed at 64 bits and narrowed back, so they wrap at their own width.
+  let b: u8 = 3;
+  b **= 6;
+  const s: i16 = 7;
+  const w: i32 = 46341;
+  const u: u64 = 3;
+  console.log(b, s ** 5, w ** 2, u ** 41);
+  // Floats keep std's `pow` (std/lang/math/pow.velt) in the same program.
+  console.log(2.0 ** 0.5, 10.0 ** -5.0);
+}

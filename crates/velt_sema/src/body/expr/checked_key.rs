@@ -7,11 +7,39 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::global_this::{DEFINE_KEY_CHECK, DELETE_KEY_CHECK, KEY_CHECK};
 use crate::hir;
 
 impl FnCx<'_, '_> {
+    /// `delete` of the property `key` of `globalThis`: its variable assigned `undefined`, and
+    /// `true`.
+    fn delete_global(&mut self, key: &str, span: Span) -> hir::Expr {
+        let ident = |name: String| ast::Ident { name, span };
+        let assign = synth(
+            ast::ExprKind::Assign {
+                op: None,
+                target: Box::new(synth(
+                    ast::ExprKind::Ident(ident(format!("{}{key}", crate::global_this::PREFIX))),
+                    span,
+                )),
+                value: Box::new(synth(ast::ExprKind::Lit(ast::Lit::Undefined), span)),
+            },
+            span,
+        );
+        let unit = self.cx.ty.unit;
+        let bool_ = self.cx.ty.bool_;
+        let assigned = self.expr(&assign, Some(unit), Want::Move);
+        let stmt = hir::Stmt {
+            kind: hir::StmtKind::Expr(assigned),
+            span,
+        };
+        let yes = self.mk(hir::ExprKind::Lit(hir::Lit::Bool(true)), bool_, span);
+        let b = super::accessor_rmw::block(vec![stmt], Some(yes), span);
+        self.mk(hir::ExprKind::Block(b), bool_, span)
+    }
+
     /// `globalThis.key<K, Host>(k)`: `k` as a `K` (`None`: `callee` is not such a check).
     pub(super) fn checked_key_call(
         &mut self,
@@ -47,9 +75,20 @@ impl FnCx<'_, '_> {
             return Some(h);
         }
         match self.try_coerce(h, want) {
+            // `delete (globalThis as T).K`: the property's variable is `undefined` again, as
+            // a read of the deleted property is in Node.
+            Ok(_)
+                if site == Site::Delete
+                    && matches!(k.kind, ast::ExprKind::Lit(ast::Lit::Str(_))) =>
+            {
+                let ast::ExprKind::Lit(ast::Lit::Str(key)) = &k.kind else {
+                    return None;
+                };
+                Some(self.delete_global(key, span))
+            }
             Ok(_) if site == Site::Delete => {
                 self.cx.error(
-                    Diagnostic::error("`delete` of a property of `globalThis` is not supported yet", span)
+                    Diagnostic::error("`delete` of a property of `globalThis` with a key known only at run time is not supported yet", span)
                         .with_note("Velt keeps each property of `globalThis` as a variable: assign it `undefined` instead"),
                 );
                 Some(self.error_expr(span))

@@ -81,6 +81,7 @@ mod dynamic_rmw;
 mod dynamic_whole;
 mod dynamic_write;
 mod element_store;
+mod element_value;
 mod env_globals;
 mod generic_dynamic;
 mod identity_eq;
@@ -93,6 +94,7 @@ pub(crate) use primitive_statics::primitive_this;
 mod array_view_cast;
 pub(crate) mod await_value;
 mod checked_key;
+mod delete_optional;
 mod error_slots;
 mod error_view;
 mod errors;
@@ -300,6 +302,8 @@ impl FnCx<'_, '_> {
         // A value typed by error-set variables (a rejection reason): its set must be known
         // (`throws::var_known`).
         self.cx.value_typed_by_vars(h.ty);
+        // A check by units: std's traps as this round's seeds give them (`seeded_trap_value`).
+        let h = self.seeded_trap_value(h);
         let temps = std::mem::replace(&mut self.call_temps, outer);
         let h = self.with_lets(temps, h);
         // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).

@@ -19,15 +19,17 @@ declare c("c") function InitializeProcThreadAttributeList(
   size: Out<u64>,
 ): i32;
 declare c("c") function UpdateProcThreadAttribute(
-  list: Ptr<_PROC_THREAD_ATTRIBUTE_LIST>,
+  list: Ptr<_PROC_THREAD_ATTRIBUTE_LIST> | null,
   flags: u32,
   attribute: u64,
-  value: Ptr<void>,
+  value: Ptr<void> | null,
   size: u64,
   previous: Ptr<void> | null,
   returned: Ptr<u64> | null,
 ): i32;
-declare c("c") function DeleteProcThreadAttributeList(list: Ptr<_PROC_THREAD_ATTRIBUTE_LIST>): void;
+declare c("c") function DeleteProcThreadAttributeList(
+  list: Ptr<_PROC_THREAD_ATTRIBUTE_LIST> | null,
+): void;
 declare c("c") function SetLastError(e: u32): void;
 
 const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: u64 = 0x20002;

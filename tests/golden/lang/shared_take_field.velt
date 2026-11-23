@@ -1,0 +1,55 @@
+// What the error for `shared(this.data)` suggests (lang/errors/shared_take_field): take the value
+// out of the field, put a new one in, and share the old one: no copy, and the object goes on with
+// its new value. The rows are read through the `shared` value on other tasks.
+class Index {
+  data: f32[] = [];
+  add(x: f32) {
+    this.data.push(x);
+  }
+  freeze(): shared<f32[]> {
+    const rows = this.data;
+    this.data = [];
+    return shared(rows);
+  }
+}
+
+class Counter {
+  n: i64 = 0;
+}
+
+class Holder {
+  counter: Counter = new Counter();
+  share(): shared<Mutex<Counter>> {
+    const c = this.counter;
+    this.counter = new Counter();
+    return shared(new Mutex<Counter>(c));
+  }
+}
+
+async function total(rows: shared<f32[]>, from: usize, to: usize): Promise<f32> {
+  let s: f32 = 0;
+  for (let i = from; i < to; i++) {
+    s += rows[i];
+  }
+  return s;
+}
+
+async function main() {
+  const ix = new Index();
+  for (let i = 0; i < 100; i++) {
+    ix.add(i as f32);
+  }
+  const rows = ix.freeze();
+  ix.add(7);
+  console.log(rows.length, ix.data.length, ix.data[0]);
+  const parts = await Promise.all([spawn(total(rows, 0, 50)), spawn(total(rows, 50, 100))]);
+  console.log(parts[0], parts[1], parts[0] + parts[1]);
+
+  const h = new Holder();
+  h.counter.n = 5;
+  const m = h.share();
+  m.with((c) => {
+    c.n += 1;
+  });
+  console.log(m.with((c) => c.n), h.counter.n);
+}

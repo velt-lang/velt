@@ -418,6 +418,9 @@ impl FnCx<'_, '_> {
             return Some(self.error_expr(span));
         }
         let def = self.static_def_for(m.def, this_class);
+        if self.gated_value(def, &what, span) {
+            return Some(self.error_expr(span));
+        }
         crate::body::defaults::param_defaults(self.cx, def);
         let ret = crate::body::returns::ret_of(self.cx, def, span);
         let f = self.cx.fn_info(def);

@@ -36,6 +36,12 @@ type Blocks = SmallVec<[u32; 2]>;
 
 impl FnCheck<'_> {
     pub(super) fn check_definite_init(&mut self) {
+        self.definite_init();
+    }
+
+    /// The check, returning how many blocks the dominator climbs looked at (for tests of its
+    /// cost).
+    pub(super) fn definite_init(&mut self) -> u64 {
         let f = self.f;
         let summary = summarize(f);
         let cfg = Cfg::new(f);
@@ -48,13 +54,15 @@ impl FnCheck<'_> {
             }
         }
         let mut walk = Walk::new(f.blocks.len());
+        let mut climb = Climb::new(f.blocks.len());
         let mut unsafe_uses: Vec<(u32, Local)> = vec![];
         for (l, blocks) in uses_of.iter().enumerate().skip(f.params.len()) {
             let assigned = &summary.assigned_in[l];
+            climb.next_local();
             let open: Vec<u32> = blocks
                 .iter()
                 .copied()
-                .filter(|&b| !cfg.assigned_before(assigned, b))
+                .filter(|&b| !cfg.assigned_before(assigned, b, &mut climb))
                 .collect();
             if open.is_empty() || !walk.reaches_entry(&cfg, assigned, &open) {
                 continue;
@@ -66,6 +74,7 @@ impl FnCheck<'_> {
             }
         }
         self.report_unassigned(&summary, &unsafe_uses);
+        climb.steps
     }
 
     /// One diagnostic per exposed read that some path reaches unassigned, in block order.
@@ -93,8 +102,8 @@ struct Cfg {
 }
 
 /// Up to this many assigning blocks, each is tested for dominance directly; beyond it the
-/// read's dominator chain is climbed instead (locals assigned in many blocks, such as
-/// accumulators, are usually assigned close to their reads).
+/// read's dominator chain is climbed instead, remembering each block's answer for the local
+/// (`Climb`).
 const FEW_ASSIGNMENTS: usize = 8;
 
 impl Cfg {
@@ -121,8 +130,9 @@ impl Cfg {
     }
 
     /// Whether a block assigning the local strictly dominates reachable block `b`: then every
-    /// path to `b` assigns it first, with no CFG search.
-    fn assigned_before(&self, assigned: &[u32], b: u32) -> bool {
+    /// path to `b` assigns it first, with no CFG search. `climb` holds the answers already
+    /// found for this local.
+    fn assigned_before(&self, assigned: &[u32], b: u32, climb: &mut Climb) -> bool {
         if b == 0 {
             return false;
         }
@@ -131,15 +141,68 @@ impl Cfg {
                 .iter()
                 .any(|&d| d != b && self.doms.dominates(d, b));
         }
-        let mut x = b;
-        while x != 0 {
-            x = self.doms.idom[x as usize].expect("ICE: reachable block has a dominator");
+        let idom =
+            |x: u32| self.doms.idom[x as usize].expect("ICE: reachable block has a dominator");
+        // Whether `x` or a block dominating it assigns the local. Climb until a block that
+        // assigns it, the entry, or a block answered already; then answer every block passed.
+        // A chain of `if`s makes the dominator tree a long path whose branches (the assigning
+        // blocks) dominate nothing below: without the answers, each read climbs to the entry.
+        let mut x = idom(b);
+        let mut path: SmallVec<[u32; 8]> = SmallVec::new();
+        let answer = loop {
+            climb.steps += 1;
+            if let Some(known) = climb.get(x) {
+                break known;
+            }
             // `assigned` is sorted: blocks are summarized in order.
             if assigned.binary_search(&x).is_ok() {
-                return true;
+                climb.set(x, true);
+                break true;
             }
+            path.push(x);
+            if x == 0 {
+                break false;
+            }
+            x = idom(x);
+        };
+        for p in path {
+            climb.set(p, answer);
         }
-        false
+        answer
+    }
+}
+
+/// For one local at a time: per block, whether the block or one dominating it assigns the
+/// local, as far as found (epoch-stamped, so moving to the next local costs nothing).
+struct Climb {
+    /// Blocks looked at, over all locals.
+    steps: u64,
+    epoch: u32,
+    stamp: Vec<u32>,
+    assigned: Vec<bool>,
+}
+
+impl Climb {
+    fn new(blocks: usize) -> Climb {
+        Climb {
+            steps: 0,
+            epoch: 0,
+            stamp: vec![0; blocks],
+            assigned: vec![false; blocks],
+        }
+    }
+
+    fn next_local(&mut self) {
+        self.epoch += 1;
+    }
+
+    fn get(&self, b: u32) -> Option<bool> {
+        (self.stamp[b as usize] == self.epoch).then(|| self.assigned[b as usize])
+    }
+
+    fn set(&mut self, b: u32, assigned: bool) {
+        self.stamp[b as usize] = self.epoch;
+        self.assigned[b as usize] = assigned;
     }
 }
 

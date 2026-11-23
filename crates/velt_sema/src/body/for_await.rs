@@ -50,8 +50,11 @@ impl FnCx<'_, '_> {
         }
         match elem {
             Some(e) if matches!(self.cx.ty.kind(e), TyKind::Promise(..)) => {
-                self.for_await_promises(it, p, out)
+                self.for_await_promises(it, p, true, out)
             }
+            // An `any` or `unknown` element may hold a promise (#924): each one is awaited, the
+            // array kept (its elements are shared, not moved out).
+            Some(e) if self.cx.dynamic(e).is_some() => self.for_await_promises(it, p, false, out),
             _ => self.for_of(it, p, out),
         }
     }
@@ -87,14 +90,16 @@ impl FnCx<'_, '_> {
     }
 
     /// Over an array of promises: `for (const <promise> of src) { kind pattern = await
-    /// <promise>; { body } }`, consuming the array.
+    /// <promise>; { body } }`, consuming the array (`consume`; an array of `unknown` values is
+    /// kept, each awaited as `await` of an `unknown` is).
     fn for_await_promises(
         &mut self,
         mut src: hir::Expr,
         p: ForOfParts<'_>,
+        consume: bool,
         out: &mut Vec<hir::Stmt>,
     ) {
-        if is_place(&src) {
+        if consume && is_place(&src) {
             set_place_mode(&mut src, UseMode::Move);
         }
         let at = Span::new(p.span.file, p.span.lo, p.span.lo);

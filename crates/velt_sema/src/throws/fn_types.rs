@@ -79,7 +79,7 @@ pub(crate) struct FnTypeSeeds {
     /// Check with the sets written in, without variables (`throws::vars`).
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
-    proxy_sites: FxHashSet<Span>,
+    pub(super) proxy_sites: FxHashSet<Span>,
     /// Check without any variable, also for the traps (`FnSites::doubted`).
     exact: bool,
 }
@@ -661,9 +661,9 @@ impl Ctx<'_> {
             (TyKind::Adt(d, xs), TyKind::Adt(e, ys)) | (TyKind::Dyn(d, xs), TyKind::Dyn(e, ys)) => {
                 d == e && all(xs, ys)
             }
-            (TyKind::Array(a), TyKind::Array(b)) | (TyKind::Shared(a), TyKind::Shared(b)) => {
-                m(*a, *b)
-            }
+            (TyKind::Array(a), TyKind::Array(b))
+            | (TyKind::Shared(a), TyKind::Shared(b))
+            | (TyKind::Ptr(a), TyKind::Ptr(b)) => m(*a, *b),
             (TyKind::Option(a, n), TyKind::Option(b, o)) => n == o && m(*a, *b),
             (TyKind::Map(a, x), TyKind::Map(b, y)) => m(*a, *b) && m(*x, *y),
             (TyKind::Tuple(xs), TyKind::Tuple(ys)) => all(xs, ys),

@@ -28,36 +28,39 @@ std declares the C function and selects the module through an import condition. 
 of vpm's conditions for `wasm32-wasip1` (`crates/vpm/src/imports.rs`):
 
 ```ts
-// std/lang/random/seed_wasi.velt
-declare c("c") function getentropy(buf: u8[], len: usize): i32;
+// std/lang/random/os_wasi.velt
+declare c("c") function getentropy(buf: Ptr<u8>, len: usize): i32;
 
-/** 64 bits to seed a generator with. */
-export function seedWord(): u64 {
-  const b: u8[] = Buffer.alloc(8);
-  // SAFETY: `b` holds the 8 bytes getentropy writes, and nothing else uses it during the call.
-  const rc = unsafe { getentropy(b, 8) };
-  // random_get is a host call and may fail; going on would seed every run with zeros.
-  if (rc != 0) {
-    panic("WASI random_get failed: no seed for Math.random()");
+/** Fills the `n` bytes at `base` with the host's random bytes. Stops the program if `random_get`
+ * fails. */
+export unsafe function fillRandomAt(base: usize, n: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    const k = n - done < 256 ? n - done : 256; // getentropy's most per call
+    // SAFETY: bytes `done..done + k` of the caller's memory, at most 256.
+    if (unsafe { getentropy(Ptr.at<u8>(base + done), k) } != 0) {
+      panic("WASI random_get failed: no random numbers");
+    }
+    done += k;
   }
-  let w: u64 = 0;
-  for (let i = 0; i < 8; i++) {
-    w = (w << 8) | (b[i] as u64);
-  }
-  return w;
 }
 ```
 
 ```ts
 // std/imports.velt
-"#random-seed": {
-  wasi: "./lang/random/seed_wasi.velt",
-  js: "./lang/random/seed_js.velt",
-  default: "./lang/random/seed_native.velt",
+"#os-random": {
+  darwin: "./lang/random/os_darwin.velt",
+  linux: "./lang/random/os_linux.velt",
+  win32: "./lang/random/os_win32.velt",
+  wasi: "./lang/random/os_wasi.velt",
+  js: "./lang/random/os_js.velt",
 },
 ```
 
-The seed panics rather than throws when `random_get` fails: `Math.random()` throws nothing, and
+std/lang/random/os.velt builds `osRandomBytes` and `osRandomU64` (the seed of `Math.random()`,
+velt/crypto, UUIDs) on the variant's `fillRandomAt`.
+
+A draw panics rather than throws when `random_get` fails: `Math.random()` throws nothing, and
 its callers must not have to handle an exception because of it.
 
 ### Who may call C on WebAssembly
@@ -75,11 +78,11 @@ cannot be checked against WASI's headers: the header check needs a zig target, a
 
 ### The browser flavor
 
-`wasm32-unknown-unknown` (browsers, workers) has no C library, so its seed goes through a
+`wasm32-unknown-unknown` (browsers, workers) has no C library, so its random numbers go through a
 `declare host` function in a std glue module:
 
 ```ts
-// std/lang/random/seed_js.velt
+// std/lang/random/os_js.velt
 declare host("velt:random") function fill(buf: u8[]): void;
 ```
 
@@ -113,18 +116,21 @@ declarations.
   and `memcpy`, `std/ffi/read.velt`) on `wasm32-wasip1` with `size_t` as `u32` and on
   `aarch64-apple-darwin` as `u64`, and checks the refusals and their notes.
   `crates/veltc/tests/c_functions.rs` checks that a package's C call is refused on both
-  WebAssembly targets. `crates/veltc/tests/wasm_goldens.rs` runs the `std/random` golden under
-  WASI; `math_random_seeds_each_run_on_webassembly` runs a program twice under wasmtime and twice
+  WebAssembly targets. `crates/veltc/tests/wasm_goldens.rs` runs the `std/random`, `std/crypto`,
+  `std/crypto_random_int` and `std/uuid` goldens under WASI;
+  `crypto_random_bytes_fill_large_draws_on_webassembly` draws up to 200,000 bytes on both targets,
+  past the JS host's 65,536 bytes a call; `math_random_seeds_each_run_on_webassembly` runs a program twice under wasmtime and twice
   in the browser glue under Node and expects different numbers; `a_failed_wasi_seed_panics` runs
   it under `node:wasi` with a `random_get` that returns `EIO` and expects a panic (exit 101).
 
 ## Runtime cost
 
-- **Run time:** one `getentropy` call (one `random_get` import call) per thread, at its first
-  random number. Native targets are unaffected.
-- **Build time:** none measurable: one more condition variant, parsed only when `#random-seed`
+- **Run time:** `Math.random()` makes one `getentropy` call (one `random_get` import call) per
+  thread, at its first number. velt/crypto's `randomBytes` and `randomInt` and the UUIDs make
+  one per draw (a 256-byte chunk each), as they make one OS call per draw on native targets.
+- **Build time:** none measurable: one more condition variant, parsed only when `#os-random`
   resolves to it.
-- **Runtime size:** the runtime has no seed function on any target.
+- **Runtime size:** the runtime has no random function on any target.
 
 ## Diagnostics
 
@@ -157,6 +163,6 @@ wasi-libc already provides.
 - Packages cannot call C on WebAssembly.
 - std's file functions (`#fd-system`) have variants for macOS and Linux only; on `wasm32-wasip1`
   the `unsupported.velt` variant is used.
-- `Out<T>` and `OutPtr` arguments cross by address with no narrowing, so on wasm32 a C function
-  would write 4 bytes into an 8-byte `usize` field. A std declaration reachable on WebAssembly
-  must not pass a `usize` or `isize` field that way.
+- `Out<T>` arguments cross by address with no narrowing, so on wasm32 a C function would write
+  4 bytes into an 8-byte `usize` or `Ptr<T> | null` field. A std declaration reachable on
+  WebAssembly must not pass a `usize`, `isize` or pointer field that way.

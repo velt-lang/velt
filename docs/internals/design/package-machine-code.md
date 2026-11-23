@@ -100,6 +100,13 @@ followed by `Unreachable`, and `inline::never_returns` reads it. Setting it on a
 returns would be unsound. `@cold` needs its own VIR flag (a contract change: layout and LLVM
 `cold` without the no-return facts), so it moves to a later step with that change.
 
+**As built after step 6.** `@cold` (velt/compiler, `std_hooks` `decorator_cold`) sets a new flag,
+`vir::Function::rare`: calls of the function are rare, and they return. `velt_opt`'s inliner
+takes such a function in only where it is trivial (as LLVM treats a call of a `cold` function),
+LLVM gets `cold` (and `noinline` only with `@noInline` or for size), and nothing reads it as
+"does not return". Sema rejects it with `@inline` (they ask opposite things) and where it rejects
+`@inline`; `@cold @noInline` is allowed. Cranelift ignores it, as it ignores `inline`.
+
 ## 2. CPU features for packages (G2) — steps 2 and 3
 
 **`@targetFeature(...)` replaces the first-statement call**, and each instruction set is a class
@@ -245,6 +252,44 @@ only tests the portable path. Step 4 adds:
 - The LLVM native tests compare each table row with clang; they test the instructions, these two
   test the packages.
 
+**As built in step 4.** The table is Rust, not TOML: `crates/velt_vir/src/arch/table.rs`, a row
+per instruction with its class's feature, Velt name, C intrinsic, mnemonic, signature (scalars
+and velt/simd's 128-bit lane types), how LLVM computes it (an intrinsic, or a few lines of IR) and
+a one-sentence doc. xtask has no TOML parser, and velt_common's feature table set the pattern.
+
+- **Generated.** Each row is a static method of its feature's class (`Sse42.crc32U64`), calling
+  its extern `velt_arch_<class>_<method>`; `velt_vir::arch::render` writes the methods and
+  externs at the end of each class file (after `isSupported`, from a marker line) and
+  `docs/internals/arch-c-names.md`, the C-name index. velt_vir's `arch::tests` fails while they
+  are stale; `cargo xtask gen-arch` runs it with `VELT_BLESS=1`, which rewrites them.
+- **Names.** Velt has no nested classes or functions in namespaces, so `Sse42.X64.crc32` is
+  `Sse42.crc32U64`: a method per operand width where the instruction has several (`U8` … `U64`),
+  .NET's names otherwise (`parallelBitDepositU64`, `shuffle`, `dotProductI8`).
+- **Gating.** A static method of a velt/arch class other than `isSupported` is gated on its
+  class's feature, as if it had its `@targetFeature` (velt_sema `body/gated.rs`): a call needs
+  the check (or one whose feature implies it, `Avx2.isSupported()` for SSE4.2) or a gated caller,
+  and the method is compiled for the feature. Taken as a value it is an error, and only std may
+  declare a `velt_arch_*` extern.
+- **Lowering.** The extern is `SimdCall::Arch(ArchOp)`. LLVM computes it in a helper carrying
+  the row's feature (`gated_features`), which inlines into the gated method; unlike SHA, AES and
+  PCLMULQDQ, the features are never added program-wide, since LLVM would then use POPCNT or BMI2
+  anywhere. Cranelift gives a zero (it never runs gated code). The verifier rejects one in a
+  function whose target does not cover the row's feature; velt_opt never inlines a gated function
+  into a caller with another target, so none moves out.
+- **First batch** (42 rows: 27 for x86-64, 15 for arm64): SSE4.2's CRC32, POPCNT, LZCNT, BMI1 (`andn`, `tzcnt`, `blsi`,
+  `blsr`, `blsmsk`, `bextr`), BMI2 (`bzhi`, `pdep`, `pext`), SSSE3's `pshufb`; arm64's CRC32 and
+  CRC32C, 64-bit PMULL, the dot products (`udot`, `sdot`) and I8MM (`ummla`, `smmla`, `usdot`).
+  Left for later: the baseline instructions of an architecture (`tbl`, `tbx`, `ext`,
+  `movemask`), which need a check of the architecture alone; those with an immediate operand
+  (`palignr`); `prefetch`, which velt/simd has (`arrayPrefetch`). SSE4.2's LLVM features now
+  include `+crc32`, which LLVM's backend keeps apart from SSE4.2.
+- **Tests.** `velt_codegen_llvm` `tests/arch.rs` compiles each row's helper in a function gated on
+  its feature and the row's C intrinsic with clang, for the row's architecture, and finds the row's
+  instruction in both. veltc's `arch_instructions.rs` runs every row of the host's architecture in
+  a release program and compares each answer with a reference written from the manual (and the
+  rows a CPU lacks print `-`, as Rust's detection says). The double `velt test` run is not part of
+  this step yet.
+
 ## 4. 256- and 512-bit register types (G5) — step 5
 
 `velt/arch/x86` adds the opaque register types `Vector256<T>` / `Vector512<T>` (.NET's names,
@@ -257,12 +302,47 @@ hi)` convert to and from `velt/simd`'s 128-bit types. LLVM lowers them as `<8 x 
 unaligned loads and stores; the wide types are the same: **8-byte aligned in fields and arrays,
 and every arch load and store is the unaligned form** (`vmovups`, `vmovdqu`, `vmovdqu8`/`16`/
 `32`/`64`), which costs nothing on aligned data on every CPU since Haswell and Zen. The aligned
-forms (`vmovaps`, `vmovdqa64`, whose AVX-512 forms fault on a misaligned address) are not in the
-table until `@align(32/64)` (step 6) exists, and then only on a `Ptr<T>` to a type declared with
-that alignment, so sema can prove the address aligned; never on an arbitrary address.
+forms (`vmovaps`, `vmovdqa64`, whose AVX-512 forms fault on a misaligned address) were planned
+for after `@align(32/64)` (step 6); step 6 dropped them (§5 "As built in step 6").
 
 After this, `velt/simd`'s `f32x8` can lower to one `ymm` register inside gated code; that is a
 separate step on `velt/simd`.
+
+**As built in step 5.** No new HIR or VIR type: `Vector256<T>` and `Vector512<T>` (velt/arch/x86,
+generated by `velt_vir::arch::render::vector_file`) are std structs of two and four `u8x16`
+parts, the shape of velt/simd's `f32x8`, and a row of the table takes them by address as
+`f32x8`'s operations do (a struct parameter of an extern is a `Ptr`, a struct result one more
+`Ptr`).
+
+- **The types.** `T` is the lane type; the struct has public `readonly` parts (`lo`, `hi`;
+  `q0` … `q3`), because an `extend` cannot reach private fields. Per lane type there are
+  `Vector256.fromU32x4(lo, hi)`, `Vector256.loadU32(xs, at)`, `lower()`, `upper()` and `store`
+  (Velt picks no static method by argument type, so the constructors carry the lane in their
+  name); `Vector512.join(lo, hi)`, `lower()`, `upper()`, `loadU32` and `store`; and
+  `reinterpret<U>()` on both. All of it is plain code that runs anywhere; only the rows need the
+  check, so "operated on only in gated code" holds without a rule of its own in sema.
+- **Masks** are plain integers (`u16`, `u64`), as Intel's own `__mmask16` and `__mmask64` are,
+  rather than `Mask8` … `Mask64` types.
+- **Lowering.** A wide operand is one `load <8 x i32>` (or `<16 x i32>`, …) from its address and a
+  wide result one `store`, inside the row's helper; the helper says `min-legal-vector-width`.
+  velt_opt keeps a local of four `V128` whole as it does one of two (`sroa`, `dce`). Every
+  AVX-512 feature's LLVM features now include `+evex512`: LLVM 18 needs it beside `+avx512f`
+  in a function of an `x86-64-v2` build (without it, a 512-bit operation crashed instruction
+  selection), and LLVM 16 and 17 ignore it.
+- **First batch** (38 rows): AVX's `vaddps`/`vmulps`/`vaddpd`/`vmulpd`, FMA's `vfmadd` at 256
+  bits; AVX2's byte compare, `vpmovmskb`, `vpshufb`, adds, `vpmulld`, `vpermd`, `vpminub`/
+  `vpmaxub`, `vpmaddwd`, `vpmaddubsw`, `vpsadbw`, `vpblendvb`, `vpsllvd`/`vpsrlvd`; AVX-512 F's
+  adds, `vpmulld`, compare to a mask, masked blend and `vpermd`; BW's adds, compare, `vpminub`,
+  `vpshufb` and `vpmovb2m`; VBMI's `vpermb`, CD's `vplzcntd`, BITALG's `vpopcntb`, DQ's
+  `vpmullq`. Not yet: the bitwise operations (LLVM picks `vpand` or `vandps` freely), immediate
+  operands (`vpternlogd`, `vpalignr`), masked loads and stores, and `f32x8` in one register.
+  `permuteVarU32` and `permuteVarU8` take the value first at both widths, the opposite of
+  Intel's `_mm512_permutexvar_*(idx, a)`; their docs and the C index say so.
+- **Tests.** The LLVM test also requires a 256-bit row to be a `ymm` instruction and a 512-bit
+  one a `zmm` instruction, in velt's output and clang's; a row may list the equivalent forms LLVM
+  chooses between (`vpermd|vpermps`). The end-to-end test runs every wide row the test host's CPU has
+  against references written from Intel's guide (a host without AVX-512 checks those rows'
+  instructions only).
 
 ## 5. Layout decorators for value types (G4) — step 6
 
@@ -276,6 +356,72 @@ separate step on `velt/simd`.
 - `@align(n)` on a struct: a power of two, at least the natural alignment; arrays are padded.
 
 Both are compile-time decorators (#2203) in `velt/compiler`.
+
+**As built in step 6.** `velt/compiler` exports `repr` and `align` (declared in
+std/lang/intrinsics/decorators.velt, roles `decorator_repr` and `decorator_align`); sema's
+`decorators/layout.rs` checks them and lowering reads `Program::decorators` (no HIR type
+changes).
+
+- **Transparent.** "Exactly one non-zero-size field" is exactly one field, neither optional (its
+  presence flag is a second part) nor `void`. Where it crosses to C (`declare c` parameters and
+  results, `@export`), its `CTy` is its field's (`collect::c_sig::crossing_ty`, transparent of
+  transparent too), and lowering passes the field (`c_call.rs`) or builds the struct around what
+  C gives (`c_call.rs`'s result, `c_export.rs`'s parameters). A struct that breaks the rules
+  crosses as nothing, so its declaration is the usual error besides the rule's own. Not on a
+  class, an enum or a `declare c struct`, and not with `@align`, which would change its layout.
+  crates/veltc/tests/layout_decorators.rs builds a package with transparent structs of `f64`,
+  `f32`, `u64`, `u8` and `Ptr<u8>` for each of the four conventions, requires Velt's
+  declarations and exports to be those of the same package written with the fields' types, and
+  those to be the types clang declares the fields' C prototypes with; on Windows x64 clang passes
+  a C struct of one `double` as an `i64`, which is what the decorator rules out.
+  std/compiler/layout.test.velt calls the C library through them in debug and release builds.
+- **Align.** `n` is a power of two from 1 to 4096 (a page). "At least the natural alignment" is
+  not an error but a floor, as Rust's `repr(align)`: the struct's alignment is the larger of the
+  two, so `@align(2)` on a struct of a `u64` changes nothing, and a generic struct's natural
+  alignment, which depends on its type arguments, needs no check per instance. The size is a
+  multiple of the alignment, so arrays are padded, and a struct holding one takes its
+  alignment. Every home of a value keeps it:
+  - array buffers and other heap blocks of one value come from `velt_rt_alloc` with the
+    layout's alignment;
+  - a counted box (a closure's environment, a captured `let` that is assigned) puts a header of
+    `max(8, n)` bytes in front of its payload, the count in the header's last word;
+  - a generator's object starts far enough into a block aligned to its state that the state, at
+    its class's fixed offset, is aligned (velt_vir `gen_object.rs` `gen_lead`);
+  - a spawned task's state starts at the next multiple of its alignment in a block with room for
+    that (`sched_make.velt` `alignedRoot`), and the task's result is copied in and out of its
+    slot as bytes;
+  - a module variable's block is rounded up within a larger one from the C library, which keeps
+    the larger block's address in the word before it (`module_blocks.velt` `alignedBlock`);
+  - a std slot (a channel's ring, a hand-off) is std's own memory, which a value is copied into
+    and out of through an 8-aligned view of its bytes (velt_vir `slot.rs` `raw_view`), so the
+    value itself is only ever in an aligned temporary;
+  - LLVM aligns stack slots. Cranelift aligns a stack slot to at most 16 bytes from the frame's
+    start, which no Velt code can see (nothing takes a local's address), so debug builds keep
+    every guarantee a program can observe.
+- **No aligned loads and stores.** The aligned forms of step 5's loads and stores were planned
+  for here and are dropped:
+  - **Unsound across builds:** a debug build's stack slot is aligned to at most 16 bytes, and a
+    debug build may link std functions compiled once by LLVM (the std cache). Giving
+    `Vector256` / `Vector512` `@align(32/64)` and their rows aligned loads would let such a
+    function receive a debug build's 16-byte-aligned value and fault. A program's own `@align`
+    struct can't reach that path, because std's cached code never holds a program's types;
+    std's vector types can.
+  - **No gain:** on every CPU since Haswell and Zen an unaligned form costs the same as the
+    aligned one on aligned data.
+
+  What does pay is aligning the data itself, and `@align` does that for any program: wrap the
+  vector in a struct, and arrays of it start each element on a cache line.
+
+  ```ts
+  @align(64)
+  struct Block {
+    readonly v: Vector512<u8>;
+  }
+  ```
+
+  The same debug-build limit applies to C code that does aligned loads on the address of an
+  `@align(32/64)` local: #3539.
+- **`@cold`** came with its own VIR flag in #3509 (§1 "As built after step 6").
 
 ## 6. What a numeric package writes
 
@@ -375,8 +521,9 @@ generated from the table and checked against it.
    LLVM lowering, the verifier rule, the first batch, the reverse index, `velt test`'s release run
    and `VELT_CPU_DISABLE` (D).
 5. **`Vector256` / `Vector512`, unaligned loads and stores (E), the AVX2 / AVX-512 batches.**
-6. **`@repr("transparent")` (checked against clang) and `@align(n)`**, then the aligned forms of
-   step 5's loads and stores; `@cold` with its own VIR flag.
+6. **`@repr("transparent")` (checked against clang) and `@align(n)`**, and `@cold` with its own
+   VIR flag (built: §1 "As built after step 6"). The aligned forms of step 5's loads and stores
+   were dropped (§5 "As built in step 6").
 
 ## Cost
 

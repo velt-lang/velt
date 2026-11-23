@@ -1,0 +1,1 @@
+TypeError: adopting an object with a `then` member is not supported yet (#3412)

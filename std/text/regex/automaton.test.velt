@@ -1,0 +1,251 @@
+// velt/text (tests): white-box tests of the automaton, the hints and the reader of groups
+// that needs no stack, run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { strByteLen } from "velt/lang/intrinsics";
+import { assemble } from "velt/text/regex/assemble";
+import { backward } from "velt/text/regex/dfa_backward";
+import { Dfa, GAVE_UP } from "velt/text/regex/dfa";
+import { find } from "velt/text/regex/find";
+import { pike, pikeReset } from "velt/text/regex/pike";
+import { Program } from "velt/text/regex/program";
+import { listsOf, Search } from "velt/text/regex/search";
+import { straight } from "velt/text/regex/straight";
+
+function program(source: string, flags: string = ""): Program {
+  const names: string[] = [];
+  return assemble(source, flags, names);
+}
+
+/** The slots of the first match of `prog` in `s` by the Pike machine. */
+function pk(prog: Program, s: string): i64[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  pikeReset(prog, listsOf(m), m.slots.length);
+  return pike(prog, m, s, strByteLen(s), 0, false) ? m.slots : [];
+}
+
+/** As `pk`, by `find`, which takes a long subject to the automaton. */
+function fd(prog: Program, s: string): i64[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  return find(prog, m, s, 0, false) ? m.slots : [];
+}
+
+/** As `fd`, with a search memory that has served before, as a regex's has from its second
+ * search on: the automaton goes first, without the backtracker's steps before it. */
+function warm(prog: Program, s: string): i64[] {
+  const m = new Search(2 * (prog.groups as usize) + 2);
+  m.uses = 2;
+  return find(prog, m, s, 0, false) ? m.slots : [];
+}
+
+/** The groups of the match of `prog` that is all of `s`, read without a stack; none when the
+ * program has to choose. */
+function read(prog: Program, s: string): i64[] {
+  const slots: i64[] = [];
+  for (let k: u32 = 0; k < 2 * prog.groups + 2; k++) {
+    slots.push(-1);
+  }
+  const ok = straight(prog, s, 0, strByteLen(s), slots);
+  return ok ? slots : [];
+}
+
+describe("Automaton", () => {
+  it("finds where a match ends and where it starts", () => {
+    const prog = program("b+c|a(b|c)*d");
+    expect(prog.automaton).toBe(true);
+    const s = "x".repeat(300) + "abbcbd" + "bbc";
+    const m = new Search(2);
+    const ends = new Dfa(prog, false);
+    expect(ends.forward(m, s, strByteLen(s), 0, false, false)).toBe(306);
+    const starts = new Dfa(prog.backward ?? prog, true);
+    expect(backward(starts, s, 306, 0)).toBe(300);
+    // The leftmost match, not the first to end: `bbc` ends first.
+    expect(ends.forward(m, "abbcd", 5, 0, false, false)).toBe(5);
+    expect(ends.forward(m, "abbcd", 5, 0, false, true)).toBe(4);
+    expect(ends.forward(m, "abbcd", 5, 1, true, false)).toBe(4);
+    expect(ends.forward(m, "xbbcd", 5, 0, true, false)).toBe(-1);
+    expect(ends.forward(m, "x".repeat(400), 400, 0, false, false)).toBe(-1);
+  });
+
+  it("works out the classes from every set, however many cuts they have", () => {
+    // A thousand sets of non-ASCII ranges have thousands of cuts, few of them distinct: a cut
+    // left out would put characters the program tells apart in one class.
+    const many = program("(?:" + "[\u00e0-\u00e9]".repeat(1021) + "|x)[\u00f6-\u00f8]");
+    const x = "x".repeat(300);
+    const m = new Search(2);
+    expect(find(many, m, x + "\u00f6", 0, false)).toBe(true);
+    expect(find(many, m, x + "\u00f9", 0, false)).toBe(false);
+    const counted = program("(?:[\u00e0-\u00e9]{1021}|x)[\u00f6-\u00f8]");
+    expect(find(counted, m, x + "\u00f6", 0, false)).toBe(true);
+    expect(find(counted, m, x + "\u00f9", 0, false)).toBe(false);
+    // Too many distinct cuts for the classes: no automaton, and the same answers.
+    let ranges = "";
+    for (let c = 0x100; c < 0x100 + 2 * 300; c += 2) {
+      ranges += String.fromCodePoint(c);
+    }
+    const wide = program("(?:[" + ranges + "]|x)y");
+    expect(wide.automaton).toBe(false);
+    expect(find(wide, m, x + "y", 0, false)).toBe(true);
+    expect(find(wide, m, x + "\u0101y", 0, false)).toBe(false);
+    expect(find(wide, m, x + "\u0102y", 0, false)).toBe(true);
+    expect(find(wide, m, x + "\u0102z", 0, false)).toBe(false);
+  });
+
+  it("is none for a program with an assertion", () => {
+    expect(program("\\bab").automaton).toBe(false);
+    expect(program("^a").automaton).toBe(false);
+    expect(program("a$", "m").automaton).toBe(false);
+    expect(program("a|b*c").automaton).toBe(true);
+    // `$` is the one it runs: it holds where the subject ends.
+    expect(program("a$").automaton).toBe(true);
+  });
+
+  it("finds a match that ends with the subject from its end", () => {
+    expect(program("(\\w+), $").endsAtEnd).toBe(true);
+    expect(program("a$b?").endsAtEnd).toBe(true);
+    expect(program("(?:a|b$)$").endsAtEnd).toBe(true);
+    expect(program("(a$)|(a)").endsAtEnd).toBe(false);
+    expect(program("(?:a$)*").endsAtEnd).toBe(false);
+    expect(program("a$", "m").endsAtEnd).toBe(false);
+    const x = "x".repeat(300);
+    // Without slots (`test`): no match is no match, not one at the end.
+    const words = program("(\\w+), $");
+    const none = new Search(0);
+    none.uses = 2;
+    expect(find(words, none, x + ", y", 0, false)).toBe(false);
+    const one = new Search(0);
+    one.uses = 2;
+    expect(find(words, one, x + "ab, ", 0, false)).toBe(true);
+    for (const source of ["(\\w+), $", "a+$", "(a|ab)(c|bcd)?$", "(?:a|b$)$", "x*$", "[^,]*,?$"]) {
+      const p = program(source);
+      for (const s of [x, x + "a", x + "ab, ", x + "abcd", x + ",", "", "ab, "]) {
+        expect(warm(p, s)).toEqual(pk(p, s));
+      }
+    }
+  });
+
+  it("matches `$` where the subject ends only", () => {
+    const x = "x".repeat(300);
+    const prog = program("(\\w+), $");
+    expect(warm(prog, x + "a, b, ")).toEqual([303, 306, 303, 304]);
+    expect(warm(prog, x + "a, b, c")).toEqual([]);
+    expect(warm(prog, x + "a, ")).toEqual(pk(prog, x + "a, "));
+    // A group that ends with `$` where the match ends before the subject does is not taken.
+    const either = program("(a$)|(a)");
+    expect(warm(either, x + "ab")).toEqual([300, 301, -1, -1, 300, 301]);
+    expect(warm(either, x + "a")).toEqual([300, 301, 300, 301, -1, -1]);
+    expect(warm(program("b|a$"), x + "a")).toEqual([300, 301]);
+    expect(warm(program("(?:a$|ab)c?"), x + "abc")).toEqual([300, 303]);
+    for (const source of ["a*$", "(a|b)*$", "(?:a$)*", "x*$", "(x+)(y?)$", "[^,]*$"]) {
+      const p = program(source);
+      for (const s of [x, x + "a", x + "ab", x + ",y", "", "a"]) {
+        expect(warm(p, s)).toEqual(pk(p, s));
+        expect(fd(p, s)).toEqual(pk(p, s));
+      }
+    }
+  });
+
+  it("gives up when it is full, and the search goes on without it", () => {
+    // Which of the last thirteen characters were an `a` is one state each.
+    const prog = program("a[ab]{12}c");
+    let s = "";
+    let seed: u32 = 7;
+    for (let k = 0; k < 6000; k++) {
+      seed = seed * 1103515245 + 12345;
+      s += ((seed >> 16) & 1) == 0 ? "a" : "b";
+    }
+    const m = new Search(2);
+    const ends = new Dfa(prog, false);
+    expect(ends.forward(m, s, strByteLen(s), 0, false, false)).toBe(GAVE_UP);
+    expect(fd(prog, s)).toEqual([]);
+    expect(fd(prog, s + "abbbbbbbbbbbbc")).toEqual([6000, 6014]);
+  });
+
+  it("agrees with the Pike machine over long subjects", () => {
+    const sources = [
+      "(a+)+b",
+      "(a|b)*c",
+      "([^,]*,)*x",
+      ".*.*=.*",
+      "(?:a|(b))*c",
+      "(a*?)(b|c)+?d",
+      "(a|ab)(c|bcd)(d*)",
+      "[a-c]+?d|x(y)?",
+      "(?:(a)|b|é)*$",
+      "(a?)*?b",
+      "\\w+@(\\w+)\\.com",
+    ];
+    const subjects = [
+      "a".repeat(300),
+      "a".repeat(300) + "b",
+      "ab".repeat(200) + "c",
+      "aa,".repeat(100) + "x",
+      "x".repeat(150) + "=" + "x".repeat(150),
+      "é".repeat(150) + "abcd" + "ab".repeat(100) + "d",
+      "😀".repeat(80) + "abbbcbcd",
+      "who ".repeat(80) + "me@example.com" + " b".repeat(40),
+    ];
+    for (const source of sources) {
+      for (const flags of ["", "u", "i"]) {
+        const prog = program(source, flags);
+        for (const s of subjects) {
+          expect(fd(prog, s)).toEqual(pk(prog, s));
+        }
+      }
+    }
+  });
+});
+
+describe("The reader of groups", () => {
+  it("reads the groups where the next character says which way to go", () => {
+    expect(read(program("(a|b)*c"), "ababc")).toEqual([0, 5, 3, 4]);
+    expect(read(program("(?:(a)|b)*c"), "abc")).toEqual([0, 3, -1, -1]);
+    expect(read(program("(?:(a)|b)*c"), "bac")).toEqual([0, 3, 1, 2]);
+    expect(read(program("([^,]*),(\\d+)"), "ab,12")).toEqual([0, 5, 0, 2, 3, 5]);
+    expect(read(program("(a)?(b)"), "b")).toEqual([0, 1, -1, -1, 0, 1]);
+    // `$` where the subject ends, and nowhere else.
+    expect(read(program("(a|b)*c$"), "abc")).toEqual([0, 3, 1, 2]);
+    const slots: i64[] = [-1, -1, -1, -1];
+    expect(straight(program("(a|b)*c$"), "abcc", 0, 3, slots)).toBe(false);
+  });
+
+  it("unsets the groups an earlier attempt set", () => {
+    const prog = program("(a+?b??)??y", "s");
+    const slots: i64[] = [-1, -1, 7, -1];
+    expect(straight(prog, "aby", 2, 3, slots)).toBe(true);
+    expect(slots).toEqual([2, 3, -1, -1]);
+    // Through `find`: the reader first tries from where the scan began (a group starts at 7
+    // there, and the program has to choose later), then from the match's start.
+    const s = "bbyxbyyaxxxa".repeat(4);
+    const m = new Search(4);
+    m.uses = 2;
+    expect(find(prog, m, s, 7, false)).toBe(true);
+    expect(m.slots).toEqual([14, 15, -1, -1]);
+  });
+
+  it("stops where the program has to choose", () => {
+    // Both ways of the split start with `a`.
+    expect(read(program("(a|ab)(c|bcd)"), "abcd")).toEqual([]);
+    expect(read(program("(a*)(a)"), "aaa")).toEqual([]);
+    // A character that is not ASCII is not read.
+    expect(read(program("(é|b)*c"), "éc")).toEqual([]);
+    // Only some of the slots: not this reader's.
+    const slots: i64[] = [-1, -1];
+    expect(straight(program("(a|b)*c"), "abc", 0, 3, slots)).toBe(false);
+  });
+
+  it("gives the groups the matchers give", () => {
+    for (const source of ["(a|b)*c", "(?:(a)|(b))*c", "(a+)(b+)?c", "(?:([ab])x)*(c)"]) {
+      const prog = program(source);
+      for (const s of ["c", "abc", "aabbc", "axbxc", "bbac", "ac"]) {
+        const got = read(prog, s);
+        const m = new Search(2 * (prog.groups as usize) + 2);
+        pikeReset(prog, listsOf(m), m.slots.length);
+        const want = pike(prog, m, s, strByteLen(s), 0, true) && m.slots[1] == strByteLen(s) as i64;
+        if (got.length > 0) {
+          expect(want).toBe(true);
+          expect(got).toEqual(m.slots);
+        }
+      }
+    }
+  });
+});

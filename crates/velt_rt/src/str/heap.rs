@@ -120,8 +120,8 @@ pub(super) unsafe fn mark_remembered(data: *mut u8) {
 /// surrogates); returns the address of its first byte.
 pub(super) fn alloc(cap: usize, header: bool) -> *mut u8 {
     let l = layout(cap, header);
-    // SAFETY: the layout has a non-zero size (the prefix).
-    let base = unsafe { alloc::alloc(l) };
+    // A non-zero size (the prefix), as `raw::alloc` needs.
+    let base = crate::mem::raw::alloc(l.size(), l.align());
     if base.is_null() {
         alloc::handle_alloc_error(l);
     }
@@ -150,7 +150,8 @@ pub(super) unsafe fn grow(data: *mut u8, cap: usize, new_cap: usize, header: boo
     }
     let new = layout(new_cap, header);
     let p = prefix(header);
-    let base = alloc::realloc(data.sub(p), layout(cap, header), new.size());
+    let old = layout(cap, header);
+    let base = crate::mem::raw::realloc(data.sub(p), old.size(), old.align(), new.size());
     if base.is_null() {
         alloc::handle_alloc_error(new);
     }
@@ -169,7 +170,8 @@ pub(super) unsafe fn add_header(data: *mut u8, cap: usize, len: usize, new_cap: 
     let new = alloc(new_cap, true);
     std::ptr::copy_nonoverlapping(data, new, len);
     stats::free();
-    alloc::dealloc(data.sub(COUNT), layout(cap, false));
+    let l = layout(cap, false);
+    crate::mem::raw::free(data.sub(COUNT), l.size(), l.align());
     new
 }
 
@@ -233,7 +235,8 @@ pub(super) unsafe fn release(data: *mut u8, cap: usize, header: bool) {
     if header {
         return free_with_header(data, cap);
     }
-    alloc::dealloc(data.sub(COUNT), layout(cap, false));
+    let l = layout(cap, false);
+    crate::mem::raw::free(data.sub(COUNT), l.size(), l.align());
 }
 
 /// Free a non-ASCII buffer and its breadcrumb table: out of line, so dropping a string (inlined
@@ -250,5 +253,6 @@ unsafe fn free_with_header(data: *mut u8, cap: usize) {
         super::recent::buffer_gone();
     }
     super::crumbs::free(table_of(table));
-    alloc::dealloc(data.sub(HEADER), layout(cap, true));
+    let l = layout(cap, true);
+    crate::mem::raw::free(data.sub(HEADER), l.size(), l.align());
 }

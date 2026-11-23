@@ -1,0 +1,63 @@
+// check: also with TZ=Etc/GMT+5
+// Date at the edges of its range, as Node 22 has it (#3152). A local date-time string with an
+// extended year is local time, and like any time it is NaN past ±8.64e15 ms once the zone's
+// offset is applied: so whether such a string is NaN depends on the zone, and the program
+// prints whether it is what this zone's offset makes it (true in every zone). A field beyond
+// what a double date holds (a year of 1e300, an hour of 1e20) gives NaN, never a wrapped date,
+// in the constructor, Date.UTC and the setters; so does a year past ±1e6 or a month past ±1e7
+// (V8's bounds), even where the two would cancel. The expected output is Node's, from a twin
+// of this program (date_range_edges.mjs in the pull request that added it), run with and
+// without TZ=Etc/GMT+5 (UTC-5).
+
+function main() {
+  // The zone's offset (minutes west of UTC) at the two ends of the range.
+  const lastOffset = new Date(8.64e15).getTimezoneOffset();
+  const firstOffset = new Date(-8.64e15).getTimezoneOffset();
+
+  // 275760-09-13T00:00 local is UTC + offset: past the end in a zone west of UTC.
+  const end = Date.parse("+275760-09-13T00:00:00");
+  console.log("local end as Node:", Number.isNaN(end) == lastOffset > 0);
+  // An hour before, past the end only an hour or more west.
+  const nearEnd = Date.parse("+275760-09-12T23:00:00");
+  console.log("an hour before the end as Node:", Number.isNaN(nearEnd) == lastOffset > 60);
+  // A day past the end: NaN in every zone.
+  console.log("a day past the end:", Number.isNaN(Date.parse("+275760-09-14T00:00:00")));
+  // -271821-04-19T23:00 local is before the start unless the zone is an hour or more west.
+  const start = Date.parse("-271821-04-19T23:00:00");
+  console.log("local start as Node:", Number.isNaN(start) == !(firstOffset >= 60));
+  // An extended-year date-time with an offset is not local: exactly the end.
+  console.log("with Z:", Date.parse("+275760-09-13T00:00:00Z"));
+  console.log("with -05:00:", Date.parse("+275760-09-12T19:00:00-05:00"));
+  // The same edge through the constructor's local fields.
+  const fields = new Date(275760, 8, 13).getTime();
+  console.log("local fields at the end as Node:", Number.isNaN(fields) == lastOffset > 0);
+
+  // Huge field values: NaN, never a wrapped date.
+  console.log(String(new Date(1e300, 0)));
+  console.log(Date.UTC(1e300));
+  console.log(Date.UTC(2000, 1e20));
+  console.log(Date.UTC(2000, 0, 1e20));
+  console.log(Date.UTC(2000, 0, 1, 1e20));
+  console.log(Date.UTC(2000, 0, 1, 0, 0, 0, 1e300));
+  // V8's bounds: a year past ±1e6 or a month past ±1e7 is NaN, though the other field would bring
+  // the date back into range; at the bounds it isn't.
+  console.log(Date.UTC(1000001, -9000000), Date.UTC(1000000, -9000000));
+  console.log(Date.UTC(-1000001, 9000000), Date.UTC(-1000000, 9000000));
+  console.log(Date.UTC(-900000, 10000001), Date.UTC(-900000, 10000000));
+  console.log(Date.UTC(900000, -10000001), Date.UTC(900000, -10000000));
+  console.log(Date.UTC(1970, 0, 1, 1e10, -6e11));
+  console.log(Date.UTC(275760, 8, 13), Date.UTC(275760, 8, 13, 0, 0, 0, 1));
+  console.log(Date.UTC(-271821, 3, 20), Date.UTC(-271821, 3, 19, 23, 59, 59, 999));
+  const d = new Date(Date.UTC(2024, 0, 15));
+  console.log(d.setUTCFullYear(1e300), d.getTime());
+  const e = new Date(Date.UTC(2024, 0, 15));
+  console.log(e.setUTCMilliseconds(1e20), e.getTime());
+  const f = new Date(Date.UTC(2024, 0, 15));
+  console.log(f.setUTCMonth(-1e8), f.getTime());
+  const g = new Date(Date.UTC(2024, 0, 15));
+  console.log(g.setUTCDate(1e300), g.getTime());
+  const h = new Date(Date.UTC(2024, 0, 15));
+  console.log(h.setUTCHours(-1e300), h.getTime());
+  const i = new Date(2024, 0, 15);
+  console.log(Number.isNaN(i.setFullYear(1e300)), Number.isNaN(i.getTime()));
+}

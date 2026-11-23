@@ -1,0 +1,27 @@
+// `Buffer.alloc` by size (std/lang/bytes/raw.velt, #2196): 16 bytes 2M times, 1 KiB 500k times,
+// 1 MiB 2000 times and 64 MiB 16 times, each array touched once: the small sizes' allocation
+// and memset in Velt, the large ones' calloc (`velt_rt_bytes_zeroed`, from 1 MiB). The Rust port
+// uses `vec![0; n]` (calloc).
+function main() {
+  let total: i64 = 0;
+  for (let round: usize = 0; round < 2000000; round++) {
+    const b = Buffer.alloc(16);
+    b[round % 16] = 1;
+    total += b[(round + 1) % 16] as i64;
+  }
+  for (let round: usize = 0; round < 500000; round++) {
+    const b = Buffer.alloc(1024);
+    total += b[round % 1024] as i64 + (b.length as i64);
+  }
+  for (let round: usize = 0; round < 2000; round++) {
+    const b = Buffer.alloc(1048576);
+    total += b[(round * 4096) % 1048576] as i64 + (b.length as i64);
+  }
+  for (let round: usize = 0; round < 16; round++) {
+    const b = Buffer.alloc(67108864);
+    total += b[round * 4096] as i64 + (b.length as i64);
+  }
+  console.log(total);
+}
+
+main();

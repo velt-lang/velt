@@ -92,11 +92,8 @@ export function missingMessage(required: u64, have: u64, arm: bool): string {
     pushNames(buf, need, arm);
     velt_rt_strbuf_push_str(buf, ")");
   } else {
-    if (arm) {
-      velt_rt_strbuf_push_str(buf, "an arm64 CPU with ");
-    } else {
-      velt_rt_strbuf_push_str(buf, "an x86-64 CPU with ");
-    }
+    const what = arm ? "an arm64 CPU with " : "an x86-64 CPU with ";
+    velt_rt_strbuf_push_str(buf, what);
     pushNames(buf, need, arm);
   }
   velt_rt_strbuf_push_str(buf, "; this CPU lacks ");

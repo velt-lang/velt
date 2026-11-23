@@ -3,6 +3,7 @@
 // there (sched_end.velt), and a spare asked to retire answers as it leaves (sched_relax.velt).
 
 import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
+import * as dbg from "./sched_debug";
 import * as end from "./sched_end";
 import * as ex from "./sched_exit";
 import * as io from "./sched_io";
@@ -15,6 +16,7 @@ import * as q from "./sched_queue";
 import * as rx from "./sched_relax";
 import * as sl from "./sched_sleep";
 import * as mv from "./sched_sleep_move";
+import * as sn from "./sched_spin";
 import * as sp from "./sched_spread";
 import * as t from "./sched_task";
 import * as tick from "./sched_tick";
@@ -65,6 +67,24 @@ export function park(e: usize): void {
   if (io.anyDue(b)) {
     w.flushDue(b);
   }
+  const mode = m.ld32(e + t.E_MODE);
+  // Several workers: a task woken from another one may come within microseconds (sched_spin.velt).
+  const spins = mode !== 0 && mode !== t.M_LAZY;
+  if (spins && sn.spin(e)) {
+    if (m.load(e + t.E_SLEEP_ASKS) !== 0) {
+      // A request's push ends the spin as a task's does (sched_sleep_move.velt `send`): served
+      // now, as below, not after another spin.
+      mv.serve(e);
+    }
+    m.st32(e + t.E_DISPATCH, 0);
+    if (timersAny(e)) {
+      tookWork(e);
+    }
+    // As every way out of a park: a spare asked to retire while it spun was woken by that ask
+    // (sched_relax.velt `ask`), which never wakes it again, so it answers now.
+    retiring(e);
+    return;
+  }
   let timeout: i64 = -1;
   const timers = timersAny(e);
   if (timers) {
@@ -76,7 +96,6 @@ export function park(e: usize): void {
     }
   }
   m.store32(e + t.E_PARK, 1);
-  const mode = m.ld32(e + t.E_MODE);
   // The inbox and the sleeps asked for (sched_sleep_move.velt) in one test.
   if ((m.load(e + t.E_INBOX) | m.load(e + t.E_SLEEP_ASKS)) !== 0 || q.any(e) || !parkable(e)) {
     wk.awake(e);
@@ -109,8 +128,15 @@ export function park(e: usize): void {
   if ((mode & t.M_SPREAD) !== 0) {
     asleep = sp.now();
   }
+  const timed = spins && sn.off(e);
+  const at = timed ? (sl.clock() as usize) : 0;
+  const unparks = timed ? m.load(e + t.E_UNPARKS) : 0;
   io.park(b, timeout, e + t.E_PARK, e + t.E_UNPARKS);
   m.store32(e + t.E_PARK, 0);
+  if (timed && m.load(e + t.E_UNPARKS) !== unparks) {
+    // Another worker woke it (its own timers and sockets don't turn the spin back on).
+    sn.woke(e, at);
+  }
   ex.takeExit(e);
   if (timers) {
     woke(e);
@@ -133,6 +159,10 @@ export function park(e: usize): void {
     m.st(e + t.E_PROGRESS, m.load(g + t.E_TICKS));
     if ((mode & t.M_MONITOR) !== 0) {
       mon.kick(g);
+    }
+    if (e === g) {
+      // A test holds worker 0 here, as an OS slow to run it (`VELT_SCHED_HANDLE_PAUSE=wake`).
+      dbg.handlePause(3);
     }
   } else if (m.ld(e + t.E_LAZY) !== 0) {
     // A lazy worker 0 awake again: its polls need watching (sched_monitor.velt `lazyDuties`).

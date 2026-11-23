@@ -420,7 +420,7 @@ impl Moves<'_> {
         if s.overlaps(i, path) {
             // Every move that may have happened is blamed: soft ones become shares; any other
             // makes this use an error.
-            let sites = &s.moved_at[i];
+            let sites = s.moved_at(i);
             let hard = sites.iter().find(|(_, kind)| *kind != MoveKind::Soft);
             if self.report {
                 match hard {
@@ -434,11 +434,11 @@ impl Moves<'_> {
                 }
             }
             s.clear(i);
-        } else if s.uninit[i] && self.capturing && self.late[i] {
+        } else if s.is_uninit(i) && self.capturing && self.late[i] {
             // Captured before it is assigned (`body::late_consts`): the closure and this
             // function share the variable, which this function assigns afterwards.
             self.late_capture(l, span);
-        } else if s.uninit[i] {
+        } else if s.is_uninit(i) {
             if self.report {
                 let name = &self.locals[i].name;
                 self.errors.push(Diagnostic::error(
@@ -446,7 +446,7 @@ impl Moves<'_> {
                     span,
                 ));
             }
-            s.uninit[i] = false;
+            s.set_uninit(i, false);
         }
         if mode == UseMode::Move {
             self.check_using_move(i, span);
@@ -470,7 +470,9 @@ impl Moves<'_> {
     fn assigned(&mut self, l: LocalId, span: Span, st: &mut Flow) {
         let Some(s) = st else { return };
         let i = l.0 as usize;
-        let Some((at, holder, writes)) = s.captured[i].take() else {
+        let taken = s.captured(i);
+        s.set_captured(i, None);
+        let Some((at, holder, writes)) = taken else {
             return;
         };
         if self.in_step {
@@ -479,7 +481,7 @@ impl Moves<'_> {
         if self.boxable[i] {
             // The closure and this function see one variable: it lives in a shared cell.
             self.boxed.insert(l);
-            s.captured[i] = Some((at, holder, writes));
+            s.set_captured(i, Some((at, holder, writes)));
             return;
         }
         if !self.report || self.late[i] {
@@ -530,7 +532,7 @@ impl Moves<'_> {
     /// whether it is (now) boxed, so a move into that closure is no move.
     fn watch_cell(&mut self, s: &mut State, i: usize, closure: bool) -> bool {
         let l = LocalId(i as u32);
-        if s.captured[i].is_some_and(|(_, _, writes)| writes) && self.boxable[i] && !closure {
+        if s.captured(i).is_some_and(|(_, _, writes)| writes) && self.boxable[i] && !closure {
             self.boxed.insert(l);
         }
         self.boxed.contains(&l)
@@ -697,7 +699,7 @@ impl Moves<'_> {
                 if let Some(s) = st {
                     let i = local.0 as usize;
                     s.clear(i);
-                    s.uninit[i] = true;
+                    s.set_uninit(i, true);
                 }
             }
         }

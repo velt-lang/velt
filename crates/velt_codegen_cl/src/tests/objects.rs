@@ -182,7 +182,6 @@ fn rt_abi_calls() {
     let pt = fb.local(Ty::Ptr);
     let p = fb.local(Ty::Ptr);
     let c = fb.local(Ty::I32);
-    let n = fb.local(Ty::I64);
     let w0 = fb.local(Ty::U64);
     let msg_ptr = Operand::Const(Const::Static(msg), Ty::Ptr);
     fb.assign(b0, w0, Rvalue::Cast(msg_ptr, Ty::U64));
@@ -239,11 +238,13 @@ fn rt_abi_calls() {
             None,
         ),
     ];
-    // `pow` is a statement (`math.pow_i64`) that calls its runtime function, declared here.
-    pb.ext("velt_rt_pow_i64", &[Ty::I64, Ty::I64], Ty::I64, false);
-    let pow = velt_vir::vir::Intrinsic::Math(velt_vir::math::MathOp::PowI64);
-    let pow_args = vec![int(2, Ty::I64), int(10, Ty::I64)];
-    fb.assign(b0, n, velt_vir::vir::Rvalue::Intrinsic(pow, pow_args));
+    // ToInt32 is a statement (`math.to_int32`) whose cold path calls its runtime function,
+    // declared here.
+    pb.ext("velt_rt_math_to_int32", &[Ty::F64], Ty::I32, false);
+    let to_int32 = velt_vir::vir::Intrinsic::Math(velt_vir::math::MathOp::ToInt32);
+    let i = fb.local(Ty::I32);
+    let x = velt_vir::vir::Operand::Const(velt_vir::vir::Const::Float(1e20), Ty::F64);
+    fb.assign(b0, i, velt_vir::vir::Rvalue::Intrinsic(to_int32, vec![x]));
     let mut cur = b0;
     for (e, args, dest) in calls {
         cur = fb.call(cur, Callee::Extern(e), args, dest);

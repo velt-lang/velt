@@ -1,11 +1,11 @@
 // velt/encoding/json (internal): numbers as `JSON.stringify` writes them (writer.velt): integers in
 // decimal, other `f64`s in their shortest round-tripping form with JavaScript's exponent rules.
 
-import { strbufPushAsciiWords } from "velt/lang/intrinsics";
+import { hookCall, strbufPushAsciiWords } from "velt/lang/intrinsics";
 import { isWhole, pushI64, pushU64 } from "velt/lang/number/integer";
 
 declare function velt_rt_strbuf_push_byte(out: string, byte: u8);
-declare function velt_rt_strbuf_push_f64(out: string, v: f64);
+declare function velt_rt_strbuf_push_str(out: string, s: string);
 
 // `null`, as the words `strbufPushAsciiWords` takes.
 const NULL_TEXT: u64 = 0x6c6c756e;
@@ -74,9 +74,10 @@ export function writeF64(out: string, x: f64): void {
     writeDecimal(out, d.neg, d.m, d.k);
     return;
   }
-  // Any other double: the runtime's shortest digits (std's float printer, velt/lang/number/format,
-  // is not loaded for JSON).
-  velt_rt_strbuf_push_f64(out, x);
+  // Any other double: std's shortest digits, by role (`number_shortest`: std's float printer,
+  // velt/lang/number/format, is not compiled into every program that writes JSON).
+  const text: string = hookCall("number_shortest", x);
+  velt_rt_strbuf_push_str(out, text);
 }
 
 // `m / 10^k` (`k` below 16), after a `-` when `neg` and `m` is not 0: the whole part, the point and

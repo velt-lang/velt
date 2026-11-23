@@ -1,0 +1,73 @@
+// requires: symlinks
+// Node's errors for symlink, readlink and realpath (`EEXIST: file already exists, symlink 'a' ->
+// 'b'`), and a long link target. The expected output is Node's, from a twin of this program over
+// node:fs (fs_links_errors.mjs in the pull request that added it, #2196). `realpathSync`'s error
+// is printed by code only: Node's resolves the path in JavaScript and names its first missing
+// part (`lstat '/abs/…'`), where velt/fs's, as Node's `fs.promises.realpath`, names the path.
+import {
+  existsSync,
+  mkdir,
+  readlink,
+  readlinkSync,
+  realpath,
+  realpathSync,
+  remove,
+  symlink,
+  symlinkSync,
+  writeFile,
+} from "velt/fs";
+
+async function tryIt(label: string, f: () => Promise<void>) {
+  try {
+    await f();
+    console.log(label, "ok");
+  } catch (e) {
+    console.log(label, e.code, e.message);
+  }
+}
+
+async function main() {
+  const d = "velt_fs_links_errors_tmp";
+  if (existsSync(d)) {
+    await remove(d, { recursive: true }); // left by an interrupted run
+  }
+  await mkdir(d);
+  await writeFile(`${d}/a.txt`, "alpha");
+  await symlink("a.txt", `${d}/link`);
+
+  await tryIt("symlink exists", () => symlink("a.txt", `${d}/link`));
+  try {
+    symlinkSync("a.txt", `${d}/no/link`);
+  } catch (e) {
+    console.log("symlinkSync missing dir", e.code, e.message);
+  }
+  await tryIt("readlink file", async () => {
+    await readlink(`${d}/a.txt`);
+  });
+  await tryIt("readlink missing", async () => {
+    await readlink(`${d}/nope`);
+  });
+  try {
+    readlinkSync(`${d}/nope`);
+  } catch (e) {
+    console.log("readlinkSync missing", e.code, e.message);
+  }
+  await tryIt("realpath missing", async () => {
+    await realpath(`${d}/nope`);
+  });
+  try {
+    realpathSync(`${d}/nope`);
+  } catch (e) {
+    console.log("realpathSync missing", e.code);
+  }
+
+  // A target longer than a first guess at its size, kept exactly.
+  const long = "t".repeat(300);
+  symlinkSync(long, `${d}/long`);
+  const back = readlinkSync(`${d}/long`);
+  console.log("long target:", back.length, back == long);
+  // realpath of the link and of its file are the same absolute path.
+  console.log("realpath:", (await realpath(`${d}/link`)) == realpathSync(`${d}/a.txt`));
+
+  await remove(d, { recursive: true });
+}

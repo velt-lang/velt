@@ -2,17 +2,12 @@
 //! `std_hooks` for size).
 
 /// Lowered hooks that sema checks only once the program's own code converts a value that may hold
-/// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
-/// numbers take std's integer printing, and, where the program loaded it, std's float printing
-/// (velt/lang/number/format, `shortest`, the table of powers of ten). Lowering calls the runtime's
-/// printer where one is unchecked. The integer hooks have no fallback (#2197): sema checks them
-/// where live code has one of their `constructs` ([`crate::hook_demand`]).
-pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
-
-/// The lowered hook that sema checks only once live code prints a float (`velt_sema` `lazy_std`):
-/// `console.log`'s float writer and its whole-number writer, which hold no integer hook. Lowering
-/// calls the runtime's printer while they are unchecked.
-pub const ON_DEMAND_WRITE: &[&str] = &["number_write", "whole_number_write"];
+/// a float to text (`velt_sema` `lazy_std`), by their entries' names: std's float printing
+/// (velt/lang/number/format, `shortest`, the table of powers of ten) inline at the program's
+/// conversions. Lowering calls `number_text` / `number_push` where one is unchecked, which sema
+/// checks where live code has a `TextFloat` construct ([`crate::hook_demand`]) and which reach
+/// that printing by role (`number_shortest`, prebuilt).
+pub const ON_DEMAND_FLOAT: &[&str] = &["float_text", "float_push"];
 
 /// Lowered hooks with a fallback that sema checks where live code has one of their `constructs`,
 /// by their entries' names: the shapes std/lang/hooks/inspect.velt writes for every type, which
@@ -46,13 +41,17 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/inspect",
     "std/lang/hooks/inspect_cycles",
     "std/lang/hooks/pow",
+    "std/lang/hooks/pow_int",
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
+    "std/lang/hooks/number_shortest",
     // The blocks of module state (#2196 9c): a native program with module state.
     "std/lang/hooks/module_blocks",
     // The weak core (#3145), demanded by a weak collection's intrinsic (`Construct::Weak`).
     "std/lang/hooks/weak",
+    // The inline `Mutex` lock (#2196), demanded by a `Mutex`'s `with` (`Construct::Mutex`).
+    "std/lang/hooks/mutex",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
     // The other string methods in Velt, called by role too (#2198).
@@ -61,6 +60,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/string/split",
     "std/lang/string/replace",
     "std/lang/string/case",
+    // A byte range as a string, which the prelude's `utf8Slice` calls by role (#2196).
+    "std/lang/bytes/range_text",
     // The CPU's features (#3222 step 3): every program with an entry demands it (`velt_main`
     // calls `cpuStart` first thing; velt_sema `lazy_std` `cpu_hook`).
     "std/lang/hooks/cpu",
