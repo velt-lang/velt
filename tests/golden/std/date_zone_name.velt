@@ -6,10 +6,14 @@
 // tells the zone it runs in by its offsets in January and July 2026 and checks the names against
 // Node's for that zone: UTC (CI's runners, and Windows, where local time follows only a fixed
 // `TZ`, so the run with TZ=Europe/Berlin is the system zone's there too) and Central European
-// Time (that run on macOS and Linux). In any other zone it checks only the names' form. The
+// Time (that run on macOS and Linux), with a name of zero offset also "GMT+00:00", what Node
+// prints for a zone it can't name (`TZ=""`, `TZ=Foo/Bar`). In any other zone it checks only the
+// names' form. Last, it sets `TZ` and checks that the name follows the new zone. The
 // output is the same in every zone; the expected output is Node's, from a twin of this program
 // (date_zone_name.mjs in the pull request that added it), run with TZ=UTC and TZ=Europe/Berlin.
 // The table itself is checked against Node in many zones by std/time/zone_name.test.velt.
+
+import { removeEnv, setEnv } from "velt/process";
 
 /** The instants: 2026 in winter and summer, local mean time, 1975, 1945, 2040, and 500 BC. */
 function instants(): number[] {
@@ -51,9 +55,13 @@ function main() {
       asNode = name == central[i];
     } else if (utc) {
       // `Etc/UTC` and its aliases are "Coordinated Universal Time", `GMT` and its aliases
-      // "Greenwich Mean Time", at every instant.
-      asNode =
-        (name == "Coordinated Universal Time" || name == "Greenwich Mean Time") && name == first;
+      // "Greenwich Mean Time", a zone Node can't name (`TZ=""`, `TZ=Foo/Bar`) "GMT+00:00", at
+      // every instant.
+      const zero =
+        name == "Coordinated Universal Time" ||
+        name == "Greenwich Mean Time" ||
+        name == "GMT+00:00";
+      asNode = zero && name == first;
     }
     console.log(`${d.toISOString()}: name as Node: ${asNode}`);
     console.log(
@@ -64,4 +72,21 @@ function main() {
   }
   console.log(String(new Date(0.0 / 0.0)));
   console.log(new Date(0.0 / 0.0).toTimeString());
+
+  // `TZ` set while the program runs: where local time follows it (macOS; the offset in July 2026
+  // is then New York's), the name follows too, as Node's.
+  const saved = process.env.TZ;
+  setEnv("TZ", "America/New_York");
+  const july = new Date(ts[1]);
+  const followed = july.getTimezoneOffset() == 240;
+  const newName = nameIn(july.toString());
+  console.log(
+    "after setting TZ, as Node:",
+    followed ? newName == "Eastern Daylight Time" : newName.length > 0,
+  );
+  if (saved === undefined) {
+    removeEnv("TZ");
+  } else {
+    setEnv("TZ", saved);
+  }
 }

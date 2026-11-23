@@ -24,3 +24,4 @@
   toTimeString() ends with the name: true
 Invalid Date
 Invalid Date
+after setting TZ, as Node: true

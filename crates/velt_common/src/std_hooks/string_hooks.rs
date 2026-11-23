@@ -72,8 +72,9 @@ macro_rules! with_string_hooks {
             // velt/lang/hooks/date_zone_name: the zone name `Date`'s `toString()` and
             // `toTimeString()` end with (#3152), called by role, so a program loads the table of
             // names only when live code calls one.
-            /// The local zone's long name at `(t)`, ms since the epoch, as Node prints it.
-            date_zone_name => lang_hooks_date_zone_name, "dateZoneName", sig((f64) -> string);
+            /// The local zone's long name at `(t, offset)`, ms since the epoch and the offset there
+            /// in seconds, as Node prints it.
+            date_zone_name => lang_hooks_date_zone_name, "dateZoneName", sig((f64, i64) -> string);
         }
     };
 }

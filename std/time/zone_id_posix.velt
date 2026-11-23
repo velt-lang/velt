@@ -2,12 +2,20 @@
 // variant, std/imports.velt), for `Date`'s zone name (zone_name.velt). The C library follows any
 // `TZ`; without one, the system zone is the file `/etc/localtime` links to, named after its
 // `zoneinfo/` (macOS: `/var/db/timezone/zoneinfo/Europe/Berlin`, Linux:
-// `/usr/share/zoneinfo/Europe/Berlin`), else the first line of `/etc/timezone` (Debian's, for an
-// `/etc/localtime` that is a copy). Read with the C library into one block from `calloc`.
+// `/usr/share/zoneinfo/Europe/Berlin`, also under `posix/` or `right/`), else the first line of
+// `/etc/timezone` (Debian's, for an `/etc/localtime` that is a copy). With no `/etc/localtime` at
+// all (Alpine's default) the C library runs on UTC, and so does the name, as Node's. Read with the
+// C library into one block from `calloc`.
+//
+// Known gap: an `/etc/localtime` that is a regular file with no `/etc/timezone` beside it gets the
+// offset form (`(GMT+01:00)`), where ICU finds the zone whose file under zoneinfo has the same
+// contents.
 
 import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import { O_CLOEXEC } from "#zone-cloexec";
+import { zoneinfoId } from "./zone_path";
 
 declare c("c") function readlink$zone(path: Ptr<u8>, buf: Ptr<u8> | null, size: usize): isize;
 declare c("c") function open$zone(path: Ptr<u8>, oflag: i32, ...args: CVarArgs): i32;
@@ -20,22 +28,34 @@ declare c("c") function free$zone(p: Ptr<u8> | null): void;
 const PATH_ROOM: usize = 32;
 const ROOM: usize = 256;
 
-/** `O_RDONLY`, the same on macOS and Linux. */
-const O_RDONLY: i32 = 0;
+/** What `readText` reads: a link's target, or the start of a file. */
+const LINK: u8 = 0;
+const FILE: u8 = 1;
 
 /** Whether the C library's local time follows `tz`: any `TZ` here. */
 export function tzHonoured(tz: string): bool {
   return true;
 }
 
+/**
+ * Whether local time reads `TZ` only once per process: no, the name follows `TZ` at each call, as
+ * macOS' `localtime_r` does.
+ */
+export function tzReadOnce(): bool {
+  return false;
+}
+
 /** The system zone's id, or null when the system names none. */
 export function systemZoneId(): string | null {
-  const link = readText("/etc/localtime", true);
-  const at = link === null ? -1 : link.lastIndexOf("zoneinfo/");
-  if (link !== null && at >= 0) {
-    return link.slice(at + 9);
+  const link = readText("/etc/localtime", LINK);
+  const id = link === null ? null : zoneinfoId(link);
+  if (id !== null) {
+    return id;
   }
-  const text = readText("/etc/timezone", false);
+  if (link === null && !exists("/etc/localtime")) {
+    return "UTC";
+  }
+  const text = readText("/etc/timezone", FILE);
   if (text === null) {
     return null;
   }
@@ -44,11 +64,17 @@ export function systemZoneId(): string | null {
   return line.length == 0 ? null : line;
 }
 
+/** Whether the file at `path` (ASCII, shorter than `PATH_ROOM`) can be opened. */
+function exists(path: string): bool {
+  return readText(path, FILE) !== null;
+}
+
 /**
- * The target of the link at `path` (`link`), or the start of the file there: at most `ROOM`
- * bytes, null when it can't be read or isn't ASCII. `path` is ASCII and shorter than `PATH_ROOM`.
+ * The target of the link at `path` (`LINK`), or the start of the file there (`FILE`): at most
+ * `ROOM` bytes, null when it can't be read or isn't ASCII. `path` is ASCII and shorter than
+ * `PATH_ROOM`.
  */
-function readText(path: string, link: bool): string | null {
+function readText(path: string, what: u8): string | null {
   // SAFETY: calloc has no precondition; its result is checked.
   const block = unsafe { calloc$zone(1, PATH_ROOM + ROOM) };
   if (block === null) {
@@ -66,24 +92,26 @@ function readText(path: string, link: bool): string | null {
   // closed once.
   unsafe {
     const out = Ptr.orNull<u8>(p + PATH_ROOM);
-    if (link) {
+    if (what == LINK) {
       n = readlink$zone(block, out, ROOM);
     } else {
-      const fd = open$zone(block, O_RDONLY);
+      // `O_RDONLY` is 0.
+      const fd = open$zone(block, O_CLOEXEC);
       if (fd >= 0) {
         n = read$zone(fd, Ptr.orNull<void>(p + PATH_ROOM), ROOM);
         close$zone(fd);
       }
     }
   }
-  // A link that fills the room may be longer: no zone id is.
-  let ok = n >= 0 && (!link || (n as usize) < ROOM);
+  // A link that fills the room may be longer: no zone id is. A file's text may be binary (a
+  // zone file): then it is not ASCII and null, but it exists, which `exists` asks only for.
+  let ok = n >= 0 && (what != LINK || (n as usize) < ROOM);
   let text = "";
   const count: usize = ok ? n as usize : 0;
   for (let i: usize = 0; i < count; i++) {
     // SAFETY: inside the block, among the `n` bytes the call wrote.
     const b = unsafe { addressLoad<u8>(p + PATH_ROOM + i) };
-    if (b >= 0x80) {
+    if (b >= 0x80 && what == LINK) {
       ok = false;
       break;
     }

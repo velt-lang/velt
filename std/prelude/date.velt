@@ -20,6 +20,14 @@ import { hookCall } from "velt/lang/intrinsics";
 import { localOffset, localToUtc } from "velt/time/local";
 import { fromFields, fullYear, isLocalForm, timeClip } from "velt/time/date_value";
 
+// The local fields of `t` at offset `offset` (seconds): with the whole offset, seconds included
+// (a local mean time has them), and the zone's minutes as `offsetMinutes` (`toTimeString()`'s
+// `GMT+0521`), as V8.
+function localParts(t: i64, offset: i64): DateParts {
+  const minutes = offset / 60;
+  return partsOf(t + (offset - minutes * 60) * 1000, minutes);
+}
+
 /**
  * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
  * 1970-01-01T00:00:00Z, NaN for an invalid date, with JS's conventions (months 0-11, local-time
@@ -424,10 +432,11 @@ export class Date implements Comparable<Date> {
     if (this.t != this.t) {
       return "Invalid Date";
     }
-    const p = this.parts(false);
+    const offset = localOffset(this.t as i64);
+    const p = localParts(this.t as i64, offset);
     const zone = offsetString(p.offsetMinutes, false);
     // By role: the table of names (velt/time/zone_name) loads only where live code calls this.
-    const name: string = hookCall("date_zone_name", this.t);
+    const name: string = hookCall("date_zone_name", this.t, offset);
     return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone} (${name})`;
   }
 
@@ -470,11 +479,7 @@ export class Date implements Comparable<Date> {
     if (utc) {
       return partsOf(t, 0);
     }
-    // The fields with the whole offset, seconds included (a local mean time has them), and the
-    // zone's minutes as `offsetMinutes` (`toTimeString()`'s `GMT+0521`), as V8.
-    const offset = localOffset(t);
-    const minutes = offset / 60;
-    return partsOf(t + (offset - minutes * 60) * 1000, minutes);
+    return localParts(t, localOffset(t));
   }
 
   // Field `k` of `[year, month 0-11, day, hours, minutes, seconds, ms, weekday]`, or NaN.

@@ -26,7 +26,7 @@
 // after). A name that is just the offset's GMT form (`GMT-05:00`, which zone_name.velt derives)
 // is not stored. A zone `TZ` can't name is printed in that form too, as Node does (`TZ=XYZ3`:
 // `(GMT-03:00)`). The worker checks the table against `toString()` inside the range and, through
-// the equivalent time, at instants from the year -10000 to 10000.
+// the equivalent time, at instants from the year 1000 to 9999.
 //
 // The zone ids are Node's own (`Intl.supportedValuesOf("timeZone")`) and every alias of CLDR's
 // bcp47/timezone.xml Node accepts (`US/Eastern`, `GMT0`, `EST5EDT`); Windows' registry keys map
@@ -344,7 +344,7 @@ async function main() {
     names.join("").length +
     2 * nameAt.length +
     ids.join("\n").length +
-    2 * zoneRecord.length +
+    4 * zoneRecord.length +
     4 * recordRuns.length +
     4 * runStart.length +
     4 * runPairs.length +
@@ -381,12 +381,29 @@ function header(role, user) {
   ];
 }
 
+/** Where each id's leading `\n` is in `ZONE_IDS`. */
+function zoneAt(ids) {
+  const at = [];
+  let p = 0;
+  for (const id of ids) {
+    at.push(p);
+    p += id.length + 1;
+  }
+  if (p >= 65536) throw new Error("ZONE_IDS outgrew u16 positions");
+  return at;
+}
+
 function writeTable(ids, zoneRecord, recordRuns, runStart, runPairs, pairs, names, nameAt) {
   const lines = header("the long zone names of `Date`'s `toString()`", "zone_name.velt");
   lines.push(
     "/** Every zone id `TZ` can name, sorted, each between two `\\n`s. */",
     "export const ZONE_IDS: string =",
     ...stringLines(`\n${ids.join("\n")}\n`),
+    "",
+    "/** Per zone id, in `ZONE_IDS`' order: where its `\\n` before it is in `ZONE_IDS`. */",
+    "export const ZONE_AT: u16[] = [",
+    ...arrayLines(zoneAt(ids)),
+    "];",
     "",
     "/** Per zone id, in `ZONE_IDS`' order: its record. */",
     "export const ZONE_RECORD: u16[] = [",

@@ -4,7 +4,10 @@
 
 import { localZoneName } from "velt/time/zone_name";
 
-/** The long name of the local zone at `t` (ms since the epoch, not NaN), as Node prints it. */
-export function dateZoneName(t: f64): string {
-  return localZoneName(t);
+/**
+ * The long name of the local zone at `t` (ms since the epoch, not NaN), whose offset there is
+ * `offset` seconds, as Node prints it.
+ */
+export function dateZoneName(t: f64, offset: i64): string {
+  return localZoneName(t, offset);
 }

@@ -1,0 +1,18 @@
+// velt/time (internal): the zone id in a path to a zone file, for `Date`'s zone name
+// (zone_name.velt, zone_id_posix.velt): `/usr/share/zoneinfo/Europe/Berlin` is `Europe/Berlin`.
+
+/**
+ * The zone id in `path`, after its last `zoneinfo/` and, as ICU reads it, a `posix/` or `right/`
+ * (tzdata's copies of each zone without and with leap seconds); null without a `zoneinfo/`.
+ */
+export function zoneinfoId(path: string): string | null {
+  const at = path.lastIndexOf("zoneinfo/");
+  if (at < 0) {
+    return null;
+  }
+  const id = path.slice(at + 9);
+  if (id.startsWith("posix/")) {
+    return id.slice(6);
+  }
+  return id.startsWith("right/") ? id.slice(6) : id;
+}

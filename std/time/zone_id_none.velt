@@ -7,6 +7,11 @@ export function tzHonoured(tz: string): bool {
   return false;
 }
 
+/** Whether local time reads `TZ` only once per process: it never reads it here. */
+export function tzReadOnce(): bool {
+  return true;
+}
+
 /** The zone local time is in: UTC. */
 export function systemZoneId(): string | null {
   return "UTC";

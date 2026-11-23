@@ -4,6 +4,11 @@
 // is the system zone, whose registry key (`GetDynamicTimeZoneInformation`'s `TimeZoneKeyName`,
 // "W. Europe Standard Time") maps to an IANA id through CLDR's windowsZones
 // (zone_names_windows_table.velt).
+//
+// Known gap: ICU picks the windowsZones mapping for the user's region (`GetUserGeoID` and
+// `GetGeoInfoW(GEO_ISO2)`) and falls back to territory 001; this always takes 001, which names
+// another zone where the region's differs (Peru, Ecuador and Panama under "SA Pacific Standard
+// Time", 001's America/Bogota), and so can print another name than Node there.
 
 import { Ptr } from "velt/ffi/ptr";
 import { wideText } from "velt/ffi/wide";
@@ -33,6 +38,11 @@ const TIME_ZONE_ID_INVALID: u32 = 0xffffffff;
 /** Whether local time follows `tz`: when it names UTC or a fixed offset. */
 export function tzHonoured(tz: string): bool {
   return fixedOffset(tz) !== null;
+}
+
+/** Whether local time reads `TZ` only once per process: yes, localtime_win32.velt does. */
+export function tzReadOnce(): bool {
+  return true;
 }
 
 /** The system zone's IANA id, or null when Windows reports none or CLDR doesn't map its key. */

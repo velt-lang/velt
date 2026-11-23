@@ -1,15 +1,22 @@
 // velt/time (internal): the long zone name `Date`'s `toString()` and `toTimeString()` end with,
 // `(Central European Standard Time)`, as Node prints it, from the table generated from Node's
 // ICU (zone_names_table.velt; scripts/gen-zone-names.js says how Node picks the name). The zone
-// is `TZ` where the OS's local time follows it, else the system's (`#zone-id`), read once per
-// process: neither changes while a program runs, as the C library's local time assumes too. A
-// zone the table doesn't know is named by its offset, `(GMT-03:00)`, as Node names one.
+// is `TZ` where the OS's local time follows it, else the system's (`#zone-id`). `TZ` is read at
+// every call, as macOS' `localtime_r` reads it, so a program that sets it gets the new zone's
+// names (where local time reads it only once, on Windows, so does this: `tzReadOnce`); looking it
+// up is one search of the ids. The system zone is read once per process. A zone the table
+// doesn't know is named by its offset, `(GMT-03:00)`, as Node names one.
+//
+// The name is keyed by the offset the OS gives (`localOffset`), so where the OS's tzdata differs
+// from the tz Node bundles, the name can differ from Node's: Winnipeg in 1900 is asked about in
+// its equivalent year 2035, where the two may disagree on the offset.
 
-import { systemZoneId, tzHonoured } from "#zone-id";
+import { systemZoneId, tzHonoured, tzReadOnce } from "#zone-id";
 import { processEnv } from "velt/lang/hooks/process";
 import { daysFromCivil, floorDiv, floorMod, isLeapYear, MS_PER_DAY, partsOf } from "./civil";
 import { pad } from "./format";
 import { localOffset } from "./local";
+import { zoneinfoId } from "./zone_path";
 import {
   NAME_AT,
   NAME_SLOTS,
@@ -19,6 +26,7 @@ import {
   RECORD_RUNS,
   RUN_PAIRS,
   RUN_START,
+  ZONE_AT,
   ZONE_IDS,
   ZONE_RECORD,
 } from "./zone_names_table";
@@ -26,27 +34,50 @@ import {
 /** V8's last instant it asks the zone about as it is (`kMaxEpochTimeInMs`, 2038-01-19). */
 const LAST_MS: i64 = 2147483647000;
 
-/** The process' zone: its record in the table, -1 for a zone it doesn't know, -2 not read yet. */
-const RECORD = new Atomic<i32>(-2);
+/** A record: in the table, -1 for a zone it doesn't know, -2 not read yet. */
+const UNREAD: i32 = -2;
 
 /**
- * The zone id `TZ` names where local time follows it (anything set on macOS and Linux, an empty
- * or POSIX `TZ` too, which the table doesn't know), else the system's, or null.
+ * The system zone's record, read once per process. Both atomics start at a literal -2 (`UNREAD`):
+ * one started at the constant's name is built anew at every use, so it would keep nothing.
  */
-function processZoneId(): string | null {
-  const tz = processEnv("TZ");
-  if (tz !== undefined && tzHonoured(tz)) {
-    // POSIX allows a leading `:`; a path names the zone after its `zoneinfo/`.
-    const zone = tz.startsWith(":") ? tz.slice(1) : tz;
-    return zoneinfoId(zone) ?? zone;
+const SYSTEM = new Atomic<i32>(-2);
+
+/** Where `tzReadOnce`: the record of the zone local time took at the first call. */
+const FIRST = new Atomic<i32>(-2);
+
+/** The system zone's record. */
+function systemRecord(): i32 {
+  let record = SYSTEM.load("relaxed");
+  if (record == UNREAD) {
+    const id = systemZoneId();
+    record = (id === null ? -1 : zoneRecord(id)) as i32;
+    SYSTEM.store(record, "relaxed");
   }
-  return systemZoneId();
+  return record;
 }
 
-/** The zone id in a path to a zone file, after its last `zoneinfo/`, or null. */
-export function zoneinfoId(path: string): string | null {
-  const at = path.lastIndexOf("zoneinfo/");
-  return at < 0 ? null : path.slice(at + 9);
+/** The record of the zone `TZ` names (an empty or POSIX `TZ` is one the table doesn't know). */
+function tzRecord(tz: string): i32 {
+  // POSIX allows a leading `:`; a path names the zone after its `zoneinfo/`.
+  const zone = tz.startsWith(":") ? tz.slice(1) : tz;
+  return zoneRecord(zoneinfoId(zone) ?? zone) as i32;
+}
+
+/** The record of the zone local time is in now: `TZ`'s where local time follows it, else the system's. */
+function processRecord(): i32 {
+  if (tzReadOnce()) {
+    const first = FIRST.load("relaxed");
+    if (first != UNREAD) {
+      return first;
+    }
+  }
+  const tz = processEnv("TZ");
+  const record = tz !== undefined && tzHonoured(tz) ? tzRecord(tz) : systemRecord();
+  if (tzReadOnce()) {
+    FIRST.store(record, "relaxed");
+  }
+  return record;
 }
 
 /** The table's record of zone `id`, or -1 for a zone it doesn't know. */
@@ -58,14 +89,18 @@ export function zoneRecord(id: string): i64 {
   if (at < 0) {
     return -1;
   }
-  // The id's index: how many ids end before it.
-  let index: i64 = 0;
-  for (let i: i64 = 0; i < at; i++) {
-    if (ZONE_IDS.charCodeAt(i) == 10) {
-      index += 1;
+  // The id's index: the one whose `\n` is at `at`.
+  let lo: i64 = 0;
+  let hi: i64 = ZONE_AT.length as i64;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) / 2;
+    if ((ZONE_AT[mid] as i64) <= at) {
+      lo = mid;
+    } else {
+      hi = mid;
     }
   }
-  return ZONE_RECORD[index] as i64;
+  return ZONE_RECORD[lo] as i64;
 }
 
 /**
@@ -118,14 +153,13 @@ export function nameAt(record: i64, e: i64, offset: i64): string {
   return offsetName(offset);
 }
 
-/** The zone name of the process' local time at `t` (ms since the epoch, not NaN). */
-export function localZoneName(t: f64): string {
-  let record = RECORD.load("relaxed");
-  if (record == -2) {
-    const id = processZoneId();
-    record = (id === null ? -1 : zoneRecord(id)) as i32;
-    RECORD.store(record, "relaxed");
-  }
-  const e = equivalentTime(t as i64);
-  return nameAt(record as i64, e, localOffset(e));
+/**
+ * The zone name of the process' local time at `t` (ms since the epoch, not NaN), whose offset is
+ * `offset` seconds: the OS is asked again only for an equivalent time outside 1970..2038.
+ */
+export function localZoneName(t: f64, offset: i64): string {
+  const record = processRecord();
+  const at = t as i64;
+  const e = equivalentTime(at);
+  return nameAt(record as i64, e, e == at ? offset : localOffset(e));
 }
