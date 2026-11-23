@@ -27,16 +27,6 @@ pub unsafe extern "C" fn velt_rt_tcp_connect(_addr: *const VeltStr) -> *mut Velt
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_connect_tls(
-    _addr: *const VeltStr,
-    _server_name: *const VeltStr,
-    _ca: *const VeltStr,
-    _alpn: *const VeltStr,
-) -> *mut VeltFut {
-    ready_leaf(|| IoResult::<u64>::err(no_network()))
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_try_read_into(
     _s: u64,
     _data: *const VeltBytes,
