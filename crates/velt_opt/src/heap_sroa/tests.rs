@@ -817,3 +817,4 @@ fn a_counted_object_copied_in_a_loop_it_is_not_made_in_keeps_the_heap() {
     env.pb.add(fb.finish());
     check(env.pb.finish(), &[0, 3], false);
 }
+mod counted;
