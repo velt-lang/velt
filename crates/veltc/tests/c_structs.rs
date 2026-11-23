@@ -446,3 +446,24 @@ function main() {
         );
     }
 }
+
+/// `Ref<S>` is a `const S *` of a C struct, as a parameter (#2187): a `Ref` of anything else, and
+/// a C function returning one, are errors at the declaration.
+#[test]
+fn a_ref_is_a_c_struct_parameter() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ref } from \"velt/ffi\";\n\nexport declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function takes(n: Ref<i32>): void;\ndeclare c(\"c\") function gives(): Ref<P>;\n\nexport function run(): void {\n  const p: P = { x: 1, y: 2 };\n  // SAFETY: a test of the checks only; never run.\n  unsafe {\n    takes(3);\n    gives();\n  }\n  ;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  run();\n}\n",
+    );
+    let o = velt(dir.path(), &["check"]);
+    let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(!o.status.success(), "{out}");
+    for want in [
+        "parameter `n` of C function `takes` is a `Ref` of `i32`, which is no C struct",
+        "C function `gives` can't return a `Ref<S>`",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+}
