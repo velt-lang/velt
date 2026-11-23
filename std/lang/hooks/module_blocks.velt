@@ -1,9 +1,10 @@
 // velt/lang/hooks (internal): the blocks of module state (module-level `let`s and stored constants,
 // rt_abi.md "Module state"), as the runtime made them (#2196 9c): one block per descriptor, made
 // by the thread that reaches it first (`newBlock`): zeroed, with the descriptor's size and
-// alignment, its entry recorded before the initializers run (they read the slots written before them and report each slot done, `ready`), then `init`, and
-// `rest` too for a block that is not the program's first (code `velt dev` swaps in with a state
-// of its own: the root file's slots, whose `main` does not run again). Normally one block;
+// alignment, its entry recorded before the initializers run (they read the slots written before
+// them and report each slot done, `ready`), then `init`, and `rest` too for a block that is not
+// the program's first (code `velt dev` swaps in with a state of its own: the root file's slots,
+// whose `main` does not run again). Normally one block;
 // `velt dev` brings one per state layout, while code still running from before keeps the old one.
 // A slot read before its initializer ran is the runtime's uncaught `ReferenceError`.
 //
