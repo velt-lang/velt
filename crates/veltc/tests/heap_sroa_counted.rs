@@ -145,7 +145,12 @@ fn blocks(stderr: &str) -> (u64, u64) {
         .rfind(|l| l.starts_with("rc stats:"))
         .unwrap_or_else(|| panic!("no rc stats: {stderr}"));
     let at = line.find(" blocks=").expect("blocks") + " blocks=".len();
-    let (a, f) = line[at..].split(' ').next().unwrap().split_once('/').unwrap();
+    let (a, f) = line[at..]
+        .split(' ')
+        .next()
+        .unwrap()
+        .split_once('/')
+        .unwrap();
     (a.parse().unwrap(), f.parse().unwrap())
 }
 
@@ -163,7 +168,10 @@ fn views_in_a_loop_are_not_allocated_and_every_block_is_freed() {
     // only the pages, the returned view and what the error paths make.
     let (debug_made, _) = blocks(&debug_err);
     assert!(debug_made >= 94, "{debug_err}");
-    assert!(made <= 20, "views were allocated: {made} blocks\n{release_err}");
+    assert!(
+        made <= 20,
+        "views were allocated: {made} blocks\n{release_err}"
+    );
 }
 
 #[test]

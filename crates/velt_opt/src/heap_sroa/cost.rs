@@ -25,7 +25,10 @@ impl Depths {
     /// `None` inside: an irreducible CFG, with no loop depths to judge by.
     pub fn new(func: &Function, webs: &Webs) -> Option<Depths> {
         let n = func.locals.len() as u32;
-        if !(0..n).map(Local).any(|l| webs.obj(l).is_some() && webs.counted(l)) {
+        if !(0..n)
+            .map(Local)
+            .any(|l| webs.obj(l).is_some() && webs.counted(l))
+        {
             return None;
         }
         let preds = predecessors(func);

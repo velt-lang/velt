@@ -1,9 +1,223 @@
-//! The soundness cases of counted objects (#1718): what keeps a counted object on the heap
+//! Counted objects (#1718): the count in front of the object, and the soundness cases: what
+//! keeps a counted object on the heap
 //! (a weak reference, the cycle collector) and what replacing one must keep (its own counted
 //! fields' releases, cleanup pads, a drop with side effects, a drop through a known vtable).
 
 use super::*;
 use velt_vir::vir::{Const, StaticId};
+
+impl Env {
+    /// `w = new Pair(x, y)` for a counted object: a count of 1 in the 8 bytes before it.
+    fn new_counted(
+        &self,
+        fb: &mut FuncBuilder,
+        b: BlockId,
+        w: Local,
+        x: Operand,
+        y: Operand,
+    ) -> BlockId {
+        let base = fb.local(Ptr);
+        let args = vec![int(24, U64), int(8, U64)];
+        let b = fb.call(b, Callee::Extern(self.alloc), args, Some(base));
+        fb.assign(b, base, Rvalue::Use(copy_local(base)));
+        fb.push(b, Stmt::Assign(deref(base, U64), Rvalue::Use(int(1, U64))));
+        fb.assign(b, w, bin(BinOp::PtrAdd, copy_local(base), int(8, I64)));
+        let len = int(16, U64);
+        fb.push(
+            b,
+            Stmt::MemSet {
+                dst: copy_local(w),
+                byte: int(0, U8),
+                len,
+            },
+        );
+        fb.push(b, Stmt::Assign(self.field(w, 0), Rvalue::Use(x)));
+        fb.push(b, Stmt::Assign(self.field(w, 1), Rvalue::Use(y)));
+        b
+    }
+
+    /// `w`'s count, plus `by` (a retain is `by = 1`).
+    fn bump(&self, fb: &mut FuncBuilder, b: BlockId, w: Local, by: i128) {
+        let (h, c) = (fb.local(Ptr), fb.local(U64));
+        fb.assign(b, h, bin(BinOp::PtrAdd, copy_local(w), int(-8, I64)));
+        fb.assign(b, c, Rvalue::Use(copy_place(deref(h, U64))));
+        let (op, by) = if by < 0 {
+            (BinOp::Sub, -by)
+        } else {
+            (BinOp::Add, by)
+        };
+        fb.push(
+            b,
+            Stmt::Assign(deref(h, U64), bin(op, copy_local(c), int(by, U64))),
+        );
+    }
+
+    /// The release of `w`: `if (w != null) { if (count == 1) free else count -= 1 }`.
+    fn release(&self, fb: &mut FuncBuilder, b: BlockId, w: Local, size: i128) -> BlockId {
+        let (h, c, n, one) = (fb.local(Ptr), fb.local(Bool), fb.local(U64), fb.local(Bool));
+        fb.assign(b, c, bin(BinOp::Ne, copy_local(w), int(0, Ptr)));
+        let (some, next) = (fb.block(), fb.block());
+        fb.branch(b, c, some, next);
+        fb.assign(some, h, bin(BinOp::PtrAdd, copy_local(w), int(-8, I64)));
+        fb.assign(some, n, Rvalue::Use(copy_place(deref(h, U64))));
+        fb.assign(some, one, bin(BinOp::Eq, copy_local(n), int(1, U64)));
+        let (last, shared) = (fb.block(), fb.block());
+        fb.branch(some, one, last, shared);
+        let args = vec![copy_local(h), int(size, U64), int(8, U64)];
+        let after = fb.call(last, Callee::Extern(self.free), args, None);
+        fb.goto(after, next);
+        let dec = bin(BinOp::Sub, copy_local(n), int(1, U64));
+        fb.push(shared, Stmt::Assign(deref(h, U64), dec));
+        fb.goto(shared, next);
+        next
+    }
+}
+
+/// `loop_program` with counted objects: each round also takes a second reference `q` to the
+/// new object (a retain) and lets it go (a release), and the result adds the last object's
+/// count, so a count the rewrite got wrong changes the result or leaks.
+fn counted_program(
+    size: i128,
+    between: impl Fn(&Env, &mut FuncBuilder, BlockId, Local, Local) -> BlockId,
+) -> Program {
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let n = fb.param(0);
+    let (p, t, q, i, c) = (
+        fb.local(Ptr),
+        fb.local(Ptr),
+        fb.local(Ptr),
+        fb.local(I64),
+        fb.local(Bool),
+    );
+    let b = fb.block();
+    fb.assign(b, p, Rvalue::Use(int(0, Ptr)));
+    fb.assign(b, q, Rvalue::Use(int(0, Ptr)));
+    fb.assign(b, i, Rvalue::Use(int(0, I64)));
+    let b = env.new_counted(&mut fb, b, p, int(0, I64), int(1, I64));
+    let head = fb.block();
+    fb.goto(b, head);
+    let (body, exit) = (fb.block(), fb.block());
+    fb.assign(head, c, bin(BinOp::Lt, copy_local(i), copy_local(n)));
+    fb.branch(head, c, body, exit);
+    let x = env.sum(&mut fb, body, p);
+    let b = env.new_counted(&mut fb, body, t, copy_local(x), int(1, I64));
+    fb.assign(b, q, Rvalue::Use(copy_local(t)));
+    env.bump(&mut fb, b, q, 1);
+    let b = between(&env, &mut fb, b, p, t);
+    let b = env.release(&mut fb, b, q, size);
+    let b = env.release(&mut fb, b, p, size);
+    fb.assign(b, p, Rvalue::Use(copy_local(t)));
+    fb.assign(b, i, bin(BinOp::Add, copy_local(i), int(1, I64)));
+    fb.goto(b, head);
+    let r = env.sum(&mut fb, exit, p);
+    let (h, k, kk, out) = (fb.local(Ptr), fb.local(U64), fb.local(I64), fb.local(I64));
+    fb.assign(exit, h, bin(BinOp::PtrAdd, copy_local(p), int(-8, I64)));
+    fb.assign(exit, k, Rvalue::Use(copy_place(deref(h, U64))));
+    fb.assign(exit, kk, Rvalue::Cast(copy_local(k), I64));
+    fb.assign(exit, out, bin(BinOp::Add, copy_local(r), copy_local(kk)));
+    let b = env.release(&mut fb, exit, p, size);
+    fb.ret(b, copy_local(out));
+    env.pb.add(fb.finish());
+    env.pb.finish()
+}
+
+#[test]
+fn replaces_a_counted_object() {
+    let p = counted_program(24, |_, _, b, _, _| b);
+    check(p, &[0, 1, 4], true);
+}
+
+#[test]
+fn a_counted_object_with_a_second_reference_alive_keeps_its_count() {
+    // `q` keeps the new object while the old one is let go: its count is 2 until `q`'s release.
+    let p = counted_program(24, |env, fb, b, _, t| {
+        env.bump(fb, b, t, 1);
+        env.bump(fb, b, t, -1);
+        b
+    });
+    check(p, &[0, 3], true);
+}
+
+#[test]
+fn a_counted_block_of_another_size_keeps_the_heap() {
+    // Freed as 16 bytes: the count is not in front of a 16-byte object then.
+    check(counted_program(16, |_, _, b, _, _| b), &[0], false);
+}
+
+#[test]
+fn a_count_whose_address_escapes_keeps_the_heap() {
+    let p = counted_program(24, |env, fb, b, _, t| {
+        let h = fb.local(Ptr);
+        fb.assign(b, h, bin(BinOp::PtrAdd, copy_local(t), int(-8, I64)));
+        fb.call(
+            b,
+            Callee::Extern(env.keep),
+            vec![copy_local(h), int(0, I64)],
+            None,
+        )
+    });
+    check(p, &[0], false);
+}
+
+#[test]
+fn a_count_read_as_another_type_keeps_the_heap() {
+    let p = counted_program(24, |_, fb, b, _, t| {
+        let (h, x) = (fb.local(Ptr), fb.local(U32));
+        fb.assign(b, h, bin(BinOp::PtrAdd, copy_local(t), int(-8, I64)));
+        fb.assign(b, x, Rvalue::Use(copy_place(deref(h, U32))));
+        b
+    });
+    check(p, &[0], false);
+}
+
+#[test]
+fn a_pointer_into_the_middle_of_a_counted_object_keeps_the_heap() {
+    let p = counted_program(24, |_, fb, b, _, t| {
+        let (h, x) = (fb.local(Ptr), fb.local(I64));
+        fb.assign(b, h, bin(BinOp::PtrAdd, copy_local(t), int(8, I64)));
+        fb.assign(b, x, Rvalue::Use(copy_place(deref(h, I64))));
+        b
+    });
+    check(p, &[0], false);
+}
+
+#[test]
+fn a_counted_object_copied_in_a_loop_it_is_not_made_in_keeps_the_heap() {
+    // `p = new(1, 2); for i < n { q = p; s += q.0 } release p`: in locals, each round would copy
+    // the whole object where the heap copies a pointer (`cost`).
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[I64], I64);
+    let n = fb.param(0);
+    let (p, q, i, s, c) = (
+        fb.local(Ptr),
+        fb.local(Ptr),
+        fb.local(I64),
+        fb.local(I64),
+        fb.local(Bool),
+    );
+    let b = fb.block();
+    fb.assign(b, p, Rvalue::Use(int(0, Ptr)));
+    fb.assign(b, q, Rvalue::Use(int(0, Ptr)));
+    fb.assign(b, i, Rvalue::Use(int(0, I64)));
+    fb.assign(b, s, Rvalue::Use(int(0, I64)));
+    let b = env.new_counted(&mut fb, b, p, int(1, I64), int(2, I64));
+    let head = fb.block();
+    fb.goto(b, head);
+    let (body, exit) = (fb.block(), fb.block());
+    fb.assign(head, c, bin(BinOp::Lt, copy_local(i), copy_local(n)));
+    fb.branch(head, c, body, exit);
+    fb.assign(body, q, Rvalue::Use(copy_local(p)));
+    let x = fb.local(I64);
+    fb.assign(body, x, Rvalue::Use(copy_place(env.field(q, 0))));
+    fb.assign(body, s, bin(BinOp::Add, copy_local(s), copy_local(x)));
+    fb.assign(body, i, bin(BinOp::Add, copy_local(i), int(1, I64)));
+    fb.goto(body, head);
+    let b = env.release(&mut fb, exit, p, 24);
+    fb.ret(b, copy_local(s));
+    env.pb.add(fb.finish());
+    check(env.pb.finish(), &[0, 3], false);
+}
 
 /// The weak-capable release of `w` (lowering's `release_weak`): `c as i64 > 1` decrements,
 /// `c == 1` frees, anything else (a weakly held object, `RC_WEAK` in the sign bit, or one the
