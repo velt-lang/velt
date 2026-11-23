@@ -23,9 +23,10 @@ pub enum FieldOp {
     P256Add,
     /// `(r, d, a, b)`: register `d` = `a - b` mod p256 (both below p).
     P256Sub,
-    /// `(r, d, p) -> bool`: the Jacobian point at registers `d..d+3` = twice the one at `p..p+3`
-    /// on y^2 = x^3 - 3x + b ([`double_p256`]), `d` may be `p`; true when done, false where the
-    /// target has no fused form (the caller doubles with the other operations then).
+    /// `(r, d, p) -> bool`: the Jacobian point at registers `d`, `d + 1`, `d + 2` (X, Y, Z) =
+    /// twice the one at `p`, `p + 1`, `p + 2` on y^2 = x^3 - 3x + b ([`double_p256`]), `d` may be
+    /// `p`; true when done, false where the target has no fused form (the caller doubles with
+    /// the other operations then).
     P256Double,
     /// `(r, d, u, k) -> bool`: registers `d` and `d + 1` = X2 and Z2 (fully reduced) after RFC
     /// 7748's Montgomery ladder on Curve25519 for the u-coordinate at register `u` (four 64-bit

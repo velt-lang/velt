@@ -92,9 +92,9 @@ export class FeP256 {
   }
 
   /**
-   * The Jacobian point at registers `d..d + 3` = twice the one at `p..p + 3` (std/crypto/p256.velt
-   * `double`'s formula) in one fused operation, where the target has one: false (nothing
-   * written) where it does not.
+   * The Jacobian point at registers `d`, `d + 1`, `d + 2` (X, Y, Z) = twice the one at `p`,
+   * `p + 1`, `p + 2` (std/crypto/p256.velt `double`'s formula) in one fused operation, where the
+   * target has one: false (nothing written) where it does not.
    */
   doubleFused(d: usize, p: usize): bool {
     this.check(d + 2, p + 2, p);
