@@ -10,6 +10,8 @@ import {
 } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
 
+declare async function velt_rt_microtask(): Promise<void>;
+
 /** The states of a stream. */
 export const READABLE: u8 = 0;
 
@@ -142,9 +144,33 @@ export class ReadableStreamDefaultController<R> {
     if (p == null) {
       queueMicrotask(() => c.begun());
     } else {
-      p.then(() => c.begun(), (e) => c.error(e));
+      const settling = c.settled(p, true);
     }
     return c;
+  }
+
+  // `start`'s promise (`start`) or `pull`'s, or a `ReadableStream.from` step, settled: `p.then(ok,
+  // err)` written out (std/prelude/promise.velt `promiseThenElse`: the step runs at a microtask's
+  // turn after it settles). Closures over the controller, kept in the source's promise, made the
+  // controller a cycle (#3119).
+  private async settled(p: Promise<void, unknown>, start: bool) {
+    try {
+      await p;
+    } catch (e) {
+      await velt_rt_microtask();
+      if (start) {
+        this.error(e);
+      } else {
+        this.fail(e);
+      }
+      return;
+    }
+    await velt_rt_microtask();
+    if (start) {
+      this.begun();
+    } else {
+      this.pulled();
+    }
   }
 
   private begun() {
@@ -192,7 +218,7 @@ export class ReadableStreamDefaultController<R> {
     this.pulling = true;
     const it = this.iter;
     if (it != null) {
-      this.pullFrom(it).then(() => this.pulled(), (e) => this.fail(e));
+      const settling = this.settled(this.pullFrom(it), false);
       return;
     }
     const pull = this.pullFn;
@@ -205,7 +231,7 @@ export class ReadableStreamDefaultController<R> {
       if (p == null) {
         queueMicrotask(() => this.pulled());
       } else {
-        p.then(() => this.pulled(), (e) => this.fail(e));
+        const settling = this.settled(p, false);
       }
     } catch (e) {
       queueMicrotask(() => this.fail(e));
