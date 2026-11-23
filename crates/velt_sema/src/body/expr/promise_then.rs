@@ -2,6 +2,7 @@
 //! prelude's `promiseThen` family (std/prelude/promise.velt), which take the promise. A callback
 //! that returns a promise selects the `…Async` form, which awaits it (flattening, as in JS).
 
+use rustc_hash::FxHashSet;
 use velt_common::Span;
 use velt_syntax::ast;
 
@@ -434,9 +435,13 @@ impl FnCx<'_, '_> {
                 };
                 (name, vec![e, *u, g], recv.ty, *u, g)
             }
-            // Not a dynamic value (`(e: any) => e`): TypeScript's `Promise<T | any>` is a
-            // `Promise<any>`, which a checked conversion to `T` would get wrong at run time.
-            ("catch", [(u, xg)]) if t != *u && self.cx.dynamic(*u).is_none() => {
+            // Not a value holding a dynamic one (`(e: any) => e`, `() => ({ x: v as any })`):
+            // TypeScript's `Promise<T | any>` is a `Promise<any>`, and a `Promise<T | U>` with a
+            // `U` holding `any` converts nothing, while a checked conversion to `T` would stop the
+            // program at run time where the `any` holds another type.
+            ("catch", [(u, xg)])
+                if t != *u && !holds_dynamic_deep(self.cx, *u, &mut FxHashSet::default()) =>
+            {
                 // A handler that only throws (`p.catch((e) => { throw e; })`), or that gives a
                 // value of the promise's value type (`undefined` for a `T | undefined`): the
                 // promise's value type, as TypeScript types it (`Promise<T | U>` is `T` when
@@ -568,4 +573,38 @@ fn nothing_body(arrow: &ast::Expr) -> bool {
         body.kind,
         ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
     )
+}
+
+/// Does a value of type `t` hold a dynamic value (`any`, `unknown`, `object`, `Function`) by
+/// itself or through its parts: elements, fields, type arguments, and a function type's
+/// parameters and result?
+fn holds_dynamic_deep(cx: &mut crate::ctx::Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+    if !seen.insert(t) {
+        return false;
+    }
+    if cx.dynamic(t).is_some() {
+        return true;
+    }
+    let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
+        TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) | TyKind::Promise(x, _) => {
+            vec![x]
+        }
+        TyKind::Map(k, v) | TyKind::Result(k, v) => vec![k, v],
+        TyKind::Tuple(xs) => xs,
+        TyKind::FnPtr {
+            mut params, ret, ..
+        } => {
+            params.push(ret);
+            params
+        }
+        TyKind::Adt(d, args) => {
+            let fields: Vec<TyId> = cx
+                .adt(d)
+                .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
+            let fields: Vec<TyId> = fields.into_iter().map(|f| cx.subst(f, &args)).collect();
+            args.into_iter().chain(fields).collect()
+        }
+        _ => vec![],
+    };
+    parts.into_iter().any(|x| holds_dynamic_deep(cx, x, seen))
 }

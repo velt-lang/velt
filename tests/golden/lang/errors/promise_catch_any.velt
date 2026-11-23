@@ -1,4 +1,5 @@
-// A `catch` handler giving `any` is refused: TypeScript types the result `Promise<any>`, which
+// A `catch` handler giving `any`, or a value holding one (a field, a nested field, a function's
+// result), is refused: TypeScript types the result `Promise<any>` or `Promise<T | U>`, which
 // Velt doesn't make yet, and taking the value as the promise's value type would be a checked
 // conversion that fails at run time for the error object or another value.
 async function fail(b: boolean): Promise<number> {
@@ -19,10 +20,45 @@ async function failU(b: boolean): Promise<number | undefined> {
   return 7;
 }
 
+interface P {
+  x: number;
+}
+async function failP(b: boolean): Promise<P | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return { x: 1 };
+}
+function loose(): { x: any } {
+  return { x: "s" };
+}
+async function failNested(b: boolean): Promise<{ inner: { x: number } } | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return { inner: { x: 1 } };
+}
+function nested(): { inner: { x: any } } {
+  return { inner: { x: "n" } };
+}
+async function failFn(b: boolean): Promise<(() => number) | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return () => 1;
+}
+function fnAny(): () => any {
+  return () => "f";
+}
+
 async function main() {
   const v = await fail(true).catch((e: any) => e);
   const w = await failU(true).catch(() => fallback());
   console.log("a", typeof v, typeof w);
+  const p = await failP(true).catch(() => loose());
+  const n = await failNested(true).catch(() => nested());
+  const f = await failFn(true).catch(() => fnAny());
+  console.log(typeof p, typeof n, typeof f);
 }
 
 main();

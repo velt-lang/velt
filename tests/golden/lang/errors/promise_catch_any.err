@@ -1,2 +1,5 @@
-promise_catch_any.velt:23:19: error: the callback of `catch` must give the promise's value type `f64`, found `any`
-promise_catch_any.velt:24:19: error: the callback of `catch` must give the promise's value type `f64 | undefined`, found `any`
+promise_catch_any.velt:55:19: error: the callback of `catch` must give the promise's value type `f64`, found `any`
+promise_catch_any.velt:56:19: error: the callback of `catch` must give the promise's value type `f64 | undefined`, found `any`
+promise_catch_any.velt:58:19: error: the callback of `catch` must give the promise's value type `P | undefined`, found `{ x: any }`
+promise_catch_any.velt:59:19: error: the callback of `catch` must give the promise's value type `{ inner: { x: f64 } } | undefined`, found `{ inner: { x: any } }`
+promise_catch_any.velt:60:19: error: the callback of `catch` must give the promise's value type `(() => f64) | undefined`, found `() => any`
