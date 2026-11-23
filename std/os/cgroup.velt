@@ -1,7 +1,14 @@
 // velt/os (internal): the CPU quota of this process' cgroup on Linux, which caps
-// `availableParallelism()` (sys_linux.velt), read exactly as libuv 1.51's
-// `uv__get_constrained_cpu` reads it for Node 22's `os.availableParallelism()`
-// (src/unix/linux.c):
+// `availableParallelism()` (sys_linux.velt). It follows libuv 1.51 exactly, as Node 22 does
+// (`uv__get_constrained_cpu` and `uv_available_parallelism`, src/unix/linux.c and core.c), so
+// Velt gives Node's answer, which is not always the limit the kernel enforces:
+//
+// - With limits at several levels, the outermost one counts, not the smallest (4 for a parent
+//   at 4 CPUs over a child at 2).
+// - A quota under one CPU caps nothing: every CPU, even where a whole-CPU limit sits below it.
+// - On cgroup v1, Linux's usual layout gives no quota at all.
+//
+// In detail:
 //
 // - A /proc/self/cgroup that starts with "0::/" is cgroup v2 (a hybrid system's, whose "0::" line
 //   comes last, is not). Without the process' cgroup's `cgroup.controllers` there is no quota.
@@ -12,9 +19,9 @@
 //   "4:cpu,cpuacct:/path" line `/sys/fs/cgroup/cpuacct:/path/cpu.cfs_quota_us` and
 //   `cpu.cfs_period_us`, which don't exist: Node 22 sees no v1 quota. A "3:cpu:/path" line has no
 //   ":cpu," and gives none either.
-// - The quota is quota / period, rounded toward 0: 0 (no cap) under one CPU and for v1's -1, so
-//   a cgroup limited to half a CPU gets every CPU. Files are read as libuv reads them (1023
-//   bytes, `cpu.max` 15), paths cut at 255 bytes.
+// - The quota is quota / period, rounded toward 0: 0 under one CPU and for v1's -1. It caps the
+//   CPU count only when it is above 0 and below it (`parallelismOf`). Files are read as libuv
+//   reads them (1023 bytes, `cpu.max` 15), paths cut at 255 bytes.
 //
 // `cpuQuotaOf` takes the files it reads as a function, so tests can give it a tree of their own.
 
@@ -146,6 +153,15 @@ export function cpuQuotaOf(cgroup: string, read: (path: string) => string | null
     return v2Quota(end < 0 ? rest : rest.slice(0, end), read);
   }
   return v1Quota(cgroup, read);
+}
+
+/**
+ * `uv_available_parallelism`'s answer from the CPUs the process may use (`cpus`) and its CPU
+ * quota: the quota when it is above 0 and below `cpus`, else `cpus`; at least 1.
+ */
+export function parallelismOf(cpus: i64, quota: i64): i64 {
+  const n = quota > 0 && quota < cpus ? quota : cpus;
+  return n < 1 ? 1 : n;
 }
 
 /** This process' CPU quota (`cpuQuotaOf`), or 0 when there is no /proc/self/cgroup to read. */

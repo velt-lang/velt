@@ -4,7 +4,7 @@
 // `velt test std/`.
 import { describe, expect, it } from "velt/test";
 import { armPartName } from "velt/os/arm_parts";
-import { cpuQuotaOf } from "velt/os/cgroup";
+import { cpuQuotaOf, parallelismOf } from "velt/os/cgroup";
 import { availableOf, constrainedOf, uint64Of, v1MemoryPath } from "velt/os/cgroup_memory";
 import { cpuinfoModels, statLines } from "velt/os/cpus_linux";
 import { leadingNumbers, meminfoBytes } from "velt/os/meminfo_linux";
@@ -254,6 +254,36 @@ describe("cgroup CPU quota, read as libuv 1.51 (Node 22) reads it", () => {
     const tree = v2Tree([]);
     tree.set("/sys/fs/cgroup/a/cpu.max", "200000 100000\n");
     expect(cpuQuotaOf("0::/a\n", fileOrNull(tree))).toBe(0);
+  });
+
+  it("gives Node 22's availableParallelism on 9 CPUs in the layouts it was compared in", () => {
+    // [parent cpu.max, child cpu.max ("" for none), Node 22's answer], all with period 100000,
+    // as measured in a Linux VM with 9 CPUs: /sys/fs/cgroup/cgtest and cgtest/child.
+    const cases: [string, string, i64][] = [
+      ["50000", "", 9], // A: a limit only on the parent, under one CPU
+      ["50000", "max", 9], // B
+      ["200000", "max", 2], // C: a limit only on the parent, 2 CPUs
+      ["max", "300000", 3], // D: a limit only on the process' own cgroup
+      ["400000", "200000", 4], // E: the outermost limit counts, not the smallest
+      ["200000", "50000", 2], // F
+      ["50000", "300000", 9], // G: an outer limit under one CPU caps nothing
+      ["200000", "400000", 2], // H
+    ];
+    for (const [parent, child, node] of cases) {
+      const tree = v2Tree([".lxc", "cgtest", "cgtest/child"]);
+      tree.set("/sys/fs/cgroup/cpu.max", "max 100000\n");
+      tree.set("/sys/fs/cgroup/.lxc/cpu.max", "max 100000\n");
+      tree.set("/sys/fs/cgroup/cgtest/cpu.max", `${parent} 100000\n`);
+      if (child.length > 0) {
+        tree.set("/sys/fs/cgroup/cgtest/child/cpu.max", `${child} 100000\n`);
+      }
+      const quota = cpuQuotaOf("0::/cgtest/child\n", fileOrNull(tree));
+      expect(`${parent}/${child}: ${parallelismOf(9, quota)}`).toBe(`${parent}/${child}: ${node}`);
+      // The baseline, outside the test cgroups.
+      expect(parallelismOf(9, cpuQuotaOf("0::/.lxc\n", fileOrNull(tree)))).toBe(9);
+    }
+    expect(parallelismOf(9, -3)).toBe(9);
+    expect(parallelismOf(0, 0)).toBe(1);
   });
 
   it("reads v1's path after the first \":cpu,\", which Linux's usual layout doesn't have", () => {
