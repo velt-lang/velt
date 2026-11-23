@@ -165,7 +165,7 @@ function runWoken(e: usize, k: usize, fl: u32): void {
     let n = wn.takeWoken(k);
     while (n !== 0) {
       const next = wn.nextWoken(n);
-      node.run(k, n, true);
+      node.run(k, n, true, 1);
       node.release(n);
       drain(e, k);
       n = next;
@@ -306,7 +306,7 @@ export function drain(e: usize, k: usize): void {
       wk.release(k);
       pollRootAgain(e, k);
     } else if (node.ownNode(k, w)) {
-      node.run(k, w, false);
+      node.run(k, w, false, 1);
       node.release(w);
     } else {
       micro.forgetLast(k);
@@ -391,7 +391,7 @@ function finish(e: usize, k: usize): void {
   let n = wn.takeWoken(k);
   while (n !== 0) {
     const next = wn.nextWoken(n);
-    node.run(k, n, true);
+    node.run(k, n, true, 1);
     node.release(n);
     n = next;
   }
