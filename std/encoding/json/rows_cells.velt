@@ -20,7 +20,6 @@ import { utf8DecodeLossy } from "velt/encoding";
 declare function velt_rt_strbuf_push_json_str(buf: string, s: string);
 declare function velt_rt_rows_header(st: u64): u8[];
 declare function velt_rt_rows_json(st: u64, col: u64, out: string): u8;
-declare function velt_rt_rows_push_text_json(st: u64, col: u64, buf: string): u8;
 declare function velt_rt_rows_i64(st: u64, col: u64, out: CellI64): u8;
 declare function velt_rt_rows_f64(st: u64, col: u64, out: CellF64): u8;
 declare function velt_rt_rows_bool(st: u64, col: u64, out: CellU8): u8;
@@ -207,7 +206,9 @@ export class RowCells {
       velt_rt_strbuf_push_json_str(buf, c[this.row * this.names.length + col].text);
       return;
     }
-    velt_rt_rows_push_text_json(this.st, col as u64, buf);
+    let text = "";
+    velt_rt_rows_str(this.st, col as u64, text);
+    velt_rt_strbuf_push_json_str(buf, text);
   }
 
   /** A nested value's JSON text (`CELL_JSON`): `text` after true. */
