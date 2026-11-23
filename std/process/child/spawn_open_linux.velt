@@ -2,10 +2,50 @@
 // child: `posix_spawn_file_actions_addopen`, whose `mode_t` is 32 bits here
 // (std/process/child/spawn_posix.velt spawns the children), `faccessat`'s constants and
 // `PATH_MAX` (spawn_lookup.velt), and `poll`, whose `nfds_t` is 64 bits here
-// (exec_sync_posix.velt waits on the pipes).
+// (exec_sync_posix.velt waits on the pipes), and the few OS calls starting a child needs
+// (`errno`, its pipes), so that `execSync` loads no reactor file. One C symbol has one signature
+// in a program: these declarations are the reactor's (std/lang/hooks/reactor_epoll.velt).
 
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
 import * as m from "velt/lang/hooks/mem_raw";
+
+declare c("c") function __errno_location(): Ptr<i32>;
+declare c("c") function pipe2(fds: Ptr<i32> | null, flags: i32): i32;
+declare c("c") function fcntl$spawn(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+
+/** `errno`'s values a non-blocking pipe and an interrupted call give. */
+export const EAGAIN: i32 = 11;
+export const EINTR: i32 = 4;
+/** `posix_spawnattr_setflags`' extra flags for a child process: none (pipes are `pipe2`'s). */
+export const SPAWN_FLAGS: i16 = 0;
+const O_CLOEXEC: i32 = 0x80000;
+const F_SETFL: i32 = 4;
+const O_NONBLOCK: i32 = 0x800;
+
+/** The calling thread's `errno`. */
+export function errno(): i32 {
+  // SAFETY: `__errno_location` returns the thread's errno slot.
+  return m.ld32(Ptr.addressOf(unsafe { __errno_location() })) as i32;
+}
+
+/**
+ * A pipe at `fds` (read end, write end), both close-on-exec from the start, so a child another
+ * thread spawns meanwhile gets neither; 0, or -1 with `errno` set.
+ */
+export function pipeCloexec(fds: usize): i32 {
+  // SAFETY: room for two descriptors.
+  return unsafe { pipe2(Ptr.orNull<i32>(fds), O_CLOEXEC) };
+}
+
+/** Makes the parent's end of a pipe non-blocking; 0 or errno. */
+export function nonBlocking(fd: i32): i32 {
+  // SAFETY: F_SETFL takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$spawn(fd, F_SETFL, O_NONBLOCK) } < 0 ? errno() : 0;
+}
+
+/** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
+export function spawnInherit(fa: usize, fd: i32): void {}
 
 /** C's `posix_spawn_file_actions_t` and `struct pollfd`. */
 declare c type posix_spawn_file_actions_t;
@@ -19,6 +59,26 @@ declare c("c") function faccessat(fd: i32, path: Ptr<u8> | null, mode: i32, flag
 const AT_FDCWD: i32 = -100;
 const AT_EACCESS: i32 = 0x200;
 export const PATH_MAX: usize = 4096;
+/** Where a program is looked up when the child's environment has no `PATH` (glibc's). */
+export const DEFAULT_PATH = "/bin:/usr/bin";
+
+/**
+ * Does the lookup go on to `PATH`'s next entry after a candidate failed with `e`? glibc's
+ * `execvp` (Node's lookup here) does after ENOENT, ENOTDIR, EACCES, ESTALE, ENODEV and
+ * ETIMEDOUT (ENAMETOOLONG ends it, as in Node).
+ */
+export function goesOn(e: i32): bool {
+  return e === 2 || e === 20 || e === 13 || e === 116 || e === 19 || e === 110;
+}
+
+/**
+ * The error of a program name to look up in `PATH` before any lookup: none here. glibc's check
+ * of `NAME_MAX` can't fire (it measures at most `NAME_MAX` bytes), so a long name is looked up
+ * and fails as the OS fails it, as in Node.
+ */
+export function nameError(bytes: usize): i32 {
+  return 0;
+}
 
 /**
  * Whether the NUL-terminated path at address `path` exists (`faccessat`'s `F_OK` with the

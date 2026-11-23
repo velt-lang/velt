@@ -1,9 +1,9 @@
 // velt/process/child (internal): starting a child process with `posix_spawn` (macOS and Linux),
 // for the executor in Velt's child processes (std/process/child/child_sched.velt, #2649 step 4)
 // and `execSync` (exec_sync_posix.velt, which runs without the executor: this file uses nothing
-// of it but plain raw memory, mem_raw.velt, and the reactor file's OS calls; the caller hands
-// off the program's output before a child that inherits it starts, child_record.velt's
-// `startChild`):
+// of it but plain raw memory, mem_raw.velt, and loads no reactor file: its OS calls are
+// `#spawn-open`'s; the caller hands off the program's output before a child that inherits it
+// starts, child_record.velt's `startChild`):
 // the program looked up in the child's `PATH` as libuv does (spawn_lookup.velt), its arguments
 // and environment as C arrays, its working directory, its standard streams (inherited, piped, or
 // the null device) and SIGPIPE back at its default (the runtime ignores it, as Rust programs do).
@@ -12,9 +12,9 @@
 //
 // Pipes are close-on-exec from the start where the OS can (`pipe2` on Linux); on macOS, which
 // can't, every child is spawned with `POSIX_SPAWN_CLOEXEC_DEFAULT` and keeps only the descriptors
-// its file actions name (`#reactor`'s `pipeCloexec`, `SPAWN_FLAGS`, `spawnInherit`), so a pipe of
-// another child spawned at the same time never reaches it (that child would never see its stdin
-// end). The parent's end of each pipe is non-blocking, for the reactor (or `execSync`'s `poll`);
+// its file actions name (`#spawn-open`'s `pipeCloexec`, `SPAWN_FLAGS`, `spawnInherit`), so a
+// pipe of another child spawned at the same time never reaches it (that child would never see
+// its stdin end). The parent's end of each pipe is non-blocking, for the reactor (or `execSync`'s `poll`);
 // the child's end becomes the child's descriptor 0, 1 or 2 through a `dup2` file action (which
 // clears the flag on the copy).
 //
@@ -24,8 +24,8 @@
 import { Ptr } from "velt/ffi/ptr";
 import { strBytesOf } from "velt/ffi/str_bytes";
 import { addressStore, strByteLen, strDataAddress } from "velt/lang/intrinsics";
-import * as r from "#reactor";
-import { addOpen } from "#spawn-open";
+import * as r from "#spawn-open";
+import { addOpen, goesOn, nameError } from "#spawn-open";
 import { ENOEXEC, SCRIPT_SHELL, SHELL } from "#script-shell";
 import * as m from "velt/lang/hooks/mem_raw";
 import { CommandSpec } from "velt/process/child/spec";
@@ -90,7 +90,6 @@ const SIGPIPE: i32 = 13;
 const O_RDWR: i32 = 2;
 const ENOENT: i32 = 2;
 const EACCES: i32 = 13;
-const ENOTDIR: i32 = 20;
 /** `EINVAL`: a string holding a NUL (as Rust refuses it). */
 export const EINVAL: i32 = 22;
 
@@ -235,7 +234,7 @@ function pipeFor(fa: usize, target: i32): i32 {
   m.release(fds, 16);
   const child = target === 0 ? readEnd : writeEnd;
   const parent = target === 0 ? writeEnd : readEnd;
-  r.prepare(parent);
+  r.nonBlocking(parent);
   // SAFETY: `fa` is an initialized file-actions object.
   unsafe {
     posix_spawn_file_actions_adddup2(m.ptrTo<posix_spawn_file_actions_t>(fa), child, target);
@@ -337,13 +336,20 @@ export function start(spec: CommandSpec, modes: u32): Started {
     const attrAt = m.ptrTo<posix_spawnattr_t>(attr);
     const argvAt = m.ptrTo<Ptr<u8>>(cArgv);
     const envAt = m.ptrTo<Ptr<u8>>(cEnv);
-    // Each candidate in turn, as libuv: the next one after ENOENT, ENOTDIR or EACCES (a
-    // directory of that name, a file that isn't executable), EACCES at the end if one gave it.
-    // A relative candidate resolves in the child's working directory, after the chdir.
+    // Each candidate in turn, as Node's lookup on this OS (`#spawn-open`'s `goesOn`): the next
+    // one after ENOENT, ENOTDIR or EACCES (a directory of that name, a file that isn't
+    // executable) and the OS's other such errors, EACCES at the end if one gave it. A relative
+    // candidate resolves in the child's working directory, after the chdir. A name too long to
+    // look up fails first.
     let rc: i32 = ENOENT;
     let denied = false;
     // The candidate tried last.
     let at: usize = 0;
+    const named = spec.program.includes("/") ? 0 : nameError(strByteLen(spec.program));
+    if (named !== 0) {
+      rc = named;
+      at = paths.length;
+    }
     while (at < paths.length) {
       const file = m.ld(cFiles + 8 * at);
       rc = absent(paths[at], file);
@@ -356,7 +362,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
       if (rc === EACCES) {
         denied = true;
       }
-      if (rc !== ENOENT && rc !== ENOTDIR && rc !== EACCES) {
+      if (!goesOn(rc)) {
         break;
       }
       at++;
@@ -366,7 +372,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
       // `/bin/sh` (glibc's `execvp`, which Node follows there): `/bin/sh <file> <args…>`.
       rc = throughShell(pidAt, paths[at], spec.args, faAt, attrAt, envAt);
     }
-    if (rc !== 0 && denied && (rc === ENOENT || rc === ENOTDIR)) {
+    if (rc !== 0 && denied && goesOn(rc)) {
       rc = EACCES;
     }
     if (rc === 0) {

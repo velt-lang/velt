@@ -7,21 +7,25 @@
 // and reads both outputs as each pipe is ready, so a child that fills one pipe while this side
 // waits on another never deadlocks; then `waitpid` reaps it. A program that runs nothing else
 // on the executor loads none of it (crates/veltc/tests/std_scheduler_demand.rs): this file and
-// spawn_posix.velt use only plain raw memory (std/lang/hooks/mem_raw.velt) and the reactor
-// file's OS calls, never a reactor; the pipes' non-blocking ends are polled by this thread alone.
+// spawn_posix.velt use only plain raw memory (std/lang/hooks/mem_raw.velt) and `#spawn-open`'s
+// OS calls, and load no reactor or net file; the pipes' non-blocking ends are polled by this
+// thread alone.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { Ptr } from "velt/ffi/ptr";
-import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
-import { velt_rt_bytes_to_str } from "velt/encoding/rt";
-import { arrayDataAddress, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
+import {
+  arrayDataAddress,
+  arrayReserve,
+  arraySetLen,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+import { strBytesOf } from "velt/ffi/str_bytes";
 import * as m from "velt/lang/hooks/mem_raw";
-import { strerror } from "#net-calls";
 import * as sys from "#net-sys";
-import { cText } from "velt/net/fd_addr";
-import * as r from "#reactor";
-import { pollFds } from "#spawn-open";
+import * as r from "#spawn-open";
+import { readCString } from "velt/ffi/read";
 import * as sp from "velt/process/child/spawn_posix";
 import { CommandSpec } from "velt/process/child/spec";
 import { RawOutput } from "./rt";
@@ -31,8 +35,7 @@ import { RawOutput } from "./rt";
 declare c("c") function waitpid$exec(pid: i32, status: Ptr<i32> | null, options: i32): i32;
 declare c("c") function read$exec(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
 declare c("c") function write$exec(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
-/** The address of a byte array's elements (a copy of nothing returns its destination). */
-declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
+declare c("c") function strerror$exec(e: i32): Ptr<u8>;
 
 /** `struct pollfd`'s events (the same on macOS and Linux). */
 const POLLIN: u32 = 0x1;
@@ -47,12 +50,6 @@ const CHUNK: usize = 65536;
 /** The spare room below which a buffer grows before the next `read` (it reads into the rest). */
 const MIN_READ: usize = 4096;
 
-/** The address of byte `i` of `data` (which has it, or `i` is its length). */
-function byteAt(data: u8[], i: usize): usize {
-  // SAFETY: a copy of nothing; `data` is borrowed for the call.
-  return Ptr.addressOf(unsafe { memset$bytes(data, 0, 0) }) + i;
-}
-
 /**
  * `spawn x: … (os error N)` for failure `errno` of `program`, as `spawn` and `exec` word it
  * (child_record.velt): `execSync` throws Node's error made of it (spawn_error.velt).
@@ -62,7 +59,7 @@ function spawnError(program: string, errno: i32): IoStatus {
     return { code: 4, message: `spawn ${program}: nul byte found in provided data` };
   }
   // SAFETY: strerror returns a NUL-terminated message.
-  const text = cText(Ptr.addressOf(unsafe { strerror(errno) }));
+  const text = unsafe { readCString(strerror$exec(errno)) };
   return { code: sys.codeOf(errno), message: `spawn ${program}: ${text} (os error ${errno})` };
 }
 
@@ -110,20 +107,14 @@ function readNow(d: Drain): void {
 }
 
 /**
- * A child's output as text: valid UTF-8 checked and copied by the runtime in one fast pass (a
- * child's output is large, and nearly always valid), else `utf8DecodeLossy`'s U+FFFDs.
+ * Writes what stdin `fd` takes of the `size` bytes at address `from`, from `off` on, now: the new
+ * offset, or -1 when it is done.
  */
-function textOf(data: u8[]): string {
-  const whole = velt_rt_bytes_to_str(data);
-  return whole.code == 0 ? whole.value : utf8DecodeLossy(data);
-}
-
-/** Writes what stdin `fd` takes of `data` from `off` now: the new offset, or -1 when it is done. */
-function writeNow(fd: i32, data: u8[], off: usize): i64 {
+function writeNow(fd: i32, from: usize, size: usize, off: usize): i64 {
   let at = off;
-  while (at < data.length) {
-    // SAFETY: `data` holds `length - at` bytes from `at`; the descriptor is open.
-    const n = unsafe { write$exec(fd, m.ptr(byteAt(data, at)), data.length - at) };
+  while (at < size) {
+    // SAFETY: `size - at` bytes at `from + at`, alive for the call; the descriptor is open.
+    const n = unsafe { write$exec(fd, m.ptr(from + at), size - at) };
     if (n >= 0) {
       at += n as usize;
       continue;
@@ -175,9 +166,12 @@ function reap(pid: i32): i64 {
 /** Runs `spec` to completion with `input`, blocking the calling thread. */
 export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
   const none: RawOutput = { code: 0, stdout: "", stderr: "" };
-  const data = utf8Encode(input);
+  // The input's UTF-8 bytes, in the string itself (a lone surrogate as U+FFFD), alive below.
+  const text = strBytesOf(input);
+  const size = strByteLen(text);
+  const from = size === 0 ? 0 : strDataAddress(text);
   // Stdin is a pipe only when there is input; the child reads end of stream otherwise.
-  const modes: u32 = (data.length === 0 ? 2 : 1) | (1 << 2) | (1 << 4);
+  const modes: u32 = (size === 0 ? 2 : 1) | (1 << 2) | (1 << 4);
   const got = sp.start(spec, modes);
   if (got.pid === 0) {
     const st = spawnError(spec.program, got.error);
@@ -196,7 +190,7 @@ export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput
     entry(set, 0, stdin, POLLOUT);
     entry(set, 1, out.fd, POLLIN);
     entry(set, 2, err.fd, POLLIN);
-    const n = pollFds(set, 3, -1);
+    const n = r.pollFds(set, 3, -1);
     if (n < 0) {
       if (r.errno() === r.EINTR) {
         continue;
@@ -206,7 +200,7 @@ export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput
     }
     const ready = POLLIN | POLLOUT | POLLERR | POLLHUP | POLLNVAL;
     if (stdin >= 0 && (revents(set, 0) & ready) !== 0) {
-      const next = writeNow(stdin, data, off);
+      const next = writeNow(stdin, from, size, off);
       if (next < 0) {
         sp.closeFd(stdin);
         stdin = -1;
@@ -229,8 +223,8 @@ export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput
   if (broken || code < 0) {
     return { code: 99, message: "waiting for the child failed", value: none };
   }
-  const stdout = textOf(out.data);
-  const stderr = textOf(err.data);
+  const stdout = out.data.utf8Slice();
+  const stderr = err.data.utf8Slice();
   const ran: RawOutput = { code: code as i32, stdout: stdout, stderr: stderr };
   return { code: 0, message: "", value: ran };
 }

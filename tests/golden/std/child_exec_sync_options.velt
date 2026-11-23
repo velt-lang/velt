@@ -2,13 +2,13 @@
 // `execSync`'s options and results, as Node's `spawnSync` gives them (#3573: macOS's and Linux's
 // `execSync` start their child in std): `input` fed to stdin (and stdin at its end without it),
 // `cwd`, `env` added to the parent's or alone (`clearEnv`), stdout and stderr both captured with
-// a non-zero exit code, a death by a signal as 128 + the signal, a `PATH` entry too long to
-// search, and more than a pipe holds on
-// stdout and stderr, and on stdin while the child writes, without a deadlock. This program
-// prints what child_exec_sync_options.mjs prints under `node` on macOS and Linux.
-import { ExecOptions, execSync } from "velt/process/child";
+// a non-zero exit code, a death by a signal as 128 + the signal, `PATH` entries and program
+// names too long for the lookup, and more than a pipe holds on stdout and stderr, and on stdin
+// while the child writes, without a deadlock. This program prints what
+// child_exec_sync_options.mjs prints under `node` on macOS and Linux.
+import { ExecOptions, execSync, SpawnError } from "velt/process/child";
 import * as fs from "velt/fs";
-import { tmpdir } from "velt/os";
+import { platform, tmpdir } from "velt/os";
 
 /** `text` with the test directory written as <dir>. */
 function hide(text: string, dir: string): string {
@@ -32,6 +32,16 @@ function run(label: string, program: string, args: string[], opts: ExecOptions, 
   console.log(`${label}: ${r.code} [${hide(r.stdout, dir).trim()}] [${r.stderr.trim()}]`);
 }
 
+/** The code `execSync` of `program` throws with `opts`, or "ran". */
+function failure(program: string, opts: ExecOptions): string {
+  try {
+    execSync(program, [], opts);
+    return "ran";
+  } catch (err) {
+    return err instanceof SpawnError ? err.code : err.message;
+  }
+}
+
 function main() {
   const dir = `${tmpdir()}/velt-golden-exec-sync-options-${process.pid}`;
   fs.mkdirSync(dir, { recursive: true });
@@ -53,6 +63,18 @@ function main() {
   const long = new Map<string, string>();
   long.set("PATH", `${("/" + "b".repeat(99)).repeat(50)}:/usr/bin:/bin`);
   run("long PATH entry", "sh", ["-c", "echo found"], { env: long, clearEnv: true }, dir);
+  // A directory whose name passes `NAME_MAX` (255) ends the lookup with ENAMETOOLONG, as in
+  // Node on both OSes.
+  const longDir = new Map<string, string>();
+  longDir.set("PATH", `/${"d".repeat(299)}:/usr/bin:/bin`);
+  console.log("long dir:", failure("sh", { env: longDir, clearEnv: true }));
+  // A program name longer than `NAME_MAX`: ENAMETOOLONG before any lookup on macOS (libuv's
+  // check), looked up and not found on Linux (glibc's check can't fire), as in Node.
+  const nope = new Map<string, string>();
+  nope.set("PATH", "/nope1:/nope2");
+  const name = failure("p".repeat(256), { env: nope, clearEnv: true });
+  console.log("long name as Node:", name == (platform() == "linux" ? "ENOENT" : "ENAMETOOLONG"));
+  console.log("255-byte name:", failure("p".repeat(255), { env: nope, clearEnv: true }));
 
   // 300 KB to stdout, then 300 KB to stderr, then 300 KB to stdout again: a parent that read
   // one pipe to its end before the other would wait forever.

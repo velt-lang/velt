@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import { constants, tmpdir } from "node:os";
+import { constants, platform, tmpdir } from "node:os";
 
 function hide(text, dir) {
   return text.split(dir).join("<dir>");
@@ -28,6 +28,11 @@ function run(label, program, args, opts, dir) {
   console.log(`${label}: ${r.code} [${hide(r.stdout, dir).trim()}] [${r.stderr.trim()}]`);
 }
 
+function failure(program, opts) {
+  const r = spawnSync(program, [], opts);
+  return r.error ? r.error.code : "ran";
+}
+
 function main() {
   const dir = `${tmpdir()}/velt-golden-exec-sync-options-${process.pid}`;
   fs.mkdirSync(dir, { recursive: true });
@@ -43,6 +48,12 @@ function main() {
   run("signal", "sh", ["-c", "kill -9 $$"], {}, dir);
   const long = `${("/" + "b".repeat(99)).repeat(50)}:/usr/bin:/bin`;
   run("long PATH entry", "sh", ["-c", "echo found"], { env: { PATH: long } }, dir);
+  const longDir = `/${"d".repeat(299)}:/usr/bin:/bin`;
+  console.log("long dir:", failure("sh", { env: { PATH: longDir } }));
+  const nope = { PATH: "/nope1:/nope2" };
+  const name = failure("p".repeat(256), { env: nope });
+  console.log("long name as Node:", name == (platform() == "linux" ? "ENOENT" : "ENAMETOOLONG"));
+  console.log("255-byte name:", failure("p".repeat(255), { env: nope }));
 
   const both = "yes o | head -c 300000; yes e | head -c 300000 >&2; yes o | head -c 300000";
   const big = execSync("sh", ["-c", both]);

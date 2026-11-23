@@ -95,8 +95,9 @@ export const imports: Imports = {
     win32: "./lang/hooks/thread_win32.velt",
     default: "./lang/hooks/thread_none.velt",
   },
-  // `posix_spawn_file_actions_addopen`, whose `mode_t` is 16 bits on macOS and 32 on Linux
-  // (std/process/child/spawn_posix.velt, which only those load).
+  // What starting a child differs in between macOS and Linux (std/process/child/spawn_posix.velt,
+  // which only those load): `posix_spawn_file_actions_addopen`'s `mode_t`, `poll`'s `nfds_t`,
+  // `errno` and the pipes' calls, `PATH_MAX`, the default `PATH`, and Node's lookup rules.
   "#spawn-open": {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
