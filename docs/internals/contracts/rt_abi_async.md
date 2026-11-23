@@ -273,7 +273,8 @@ runtime's hub, #2196 9e): the original future of a shared promise (it stays allo
 holder lives), the future itself for an unshared one (the same pointer once it is shared, so a
 hash taken before stays valid). A shared promise that isn't a node of the executor in Velt (a
 join handle, a `sleep` kept as a value, a runtime leaf) keeps its own address too: it becomes
-the holder of a node that drives it (std/lang/hooks/sched_share_leaf.velt).
+the holder of a node that drives it, whose hub keeps it allocated while any holder lives
+(std/lang/hooks/sched_share_leaf.velt).
 - A converted promise is a new future: a `Promise<T, E1>` as a `Promise<T, E2>`
   (`Intrinsic::PromiseWiden`, a wrapper owning `inner`), or a `Promise<T>` as a
   `Promise<unknown>` (`Intrinsic::PromiseSame`: a `then` converting the value, which awaits a

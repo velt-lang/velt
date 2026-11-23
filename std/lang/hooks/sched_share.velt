@@ -82,10 +82,11 @@ const H_WATCH: usize = 88;
 /** The task the promise is shared on, the only one that touches the hub (`sd.release` checks). */
 export const H_TASK: usize = 96;
 /**
- * The leaf whose driver the node is (sched_share_leaf.velt), which is the promise's identity, or 0
- * for a node shared as itself.
+ * The record of the leaf whose driver the node is (sched_share_leaf.velt), whose address is the
+ * promise's identity, or 0 for a node shared as itself. The hub keeps the leaf allocated until it
+ * is freed (sched_share_drop.velt `free`).
  */
-const H_LEAF: usize = 104;
+export const H_LEAF: usize = 104;
 export const H_BYTES: usize = 112;
 
 /** It settled: its result is in `H_RESULT`, or its node panicked (no result). */
@@ -113,9 +114,10 @@ export const FRONT: usize = 32;
 /**
  * `velt_rt_fut_share` (the hook lowering calls under `VELT_SCHEDULER=std`): another holder of
  * promise `f` (0: none), a handle of its own. `size` is the result's size, `share` its
- * `SharePoll` glue (0: copied as it is), `rdrop` its drop glue (0: nothing to drop). Only a node
- * of this executor is shared here; the runtime's futures (a leaf, a join handle, a race) are
- * shared by the runtime's hub.
+ * `SharePoll` glue (0: copied as it is), `rdrop` its drop glue (0: nothing to drop). On a task,
+ * a node of this executor is shared as itself, and any other promise (a join handle, a `sleep`, a
+ * race, a runtime leaf) through a lazy node that drives it, whose holder it becomes in place
+ * (sched_share_leaf.velt). Outside any task (a C library's thread) the runtime's hub shares it.
  */
 @inline("always")
 export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usize {
@@ -174,13 +176,12 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
   }
   m.st(h + H_WATCH, 1);
   m.st(h + H_TASK, task);
-  m.st(h + H_LEAF, leaf);
   m.st(n + N_HUB, h);
   m.st(f, fnAddress(holderPoll));
   m.st(f + 8, fnAddress(holderDrop));
   if (leaf !== 0) {
     // The driver's original holder is the leaf's role: the leaf forwards to it.
-    lf.forwardTo(leaf, f);
+    m.st(h + H_LEAF, lf.forwardTo(leaf, f));
   }
   return newHandle(h);
 }
@@ -201,9 +202,10 @@ export function schedFutId(f: usize): u64 {
         continue;
       }
       const h = m.ld(g - 8);
-      if (m.ld(h + H_LEAF) !== 0) {
+      const r = m.ld(h + H_LEAF);
+      if (r !== 0) {
         // A shared leaf's promise (sched_share_leaf.velt): the leaf's address, as before the share.
-        return m.ld(h + H_LEAF) as u64;
+        return lf.leafOf(r) as u64;
       }
       n = m.ld(h + H_NODE);
       g = n + nd.N_HEAD;
