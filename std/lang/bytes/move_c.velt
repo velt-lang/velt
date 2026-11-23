@@ -1,0 +1,37 @@
+// velt/lang/bytes (internal): moving and zeroing bytes in memory (std/lang/bytes/raw.velt), by
+// the C library's `memmove` and `memset`: the `#bytes-move` variant of native targets and WASI
+// (the JS host has no C library: std/lang/bytes/move_js.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+
+// The pointers as `Ptr.orNull` makes them, which cannot fail: `Ptr.at` reports a null address at
+// its caller, which would give every function that copies bytes its caller's location to carry
+// (velt_vir track_caller.rs). No call here passes a null one.
+declare c("c") function memmove$bytes(dst: Ptr<u8> | null, src: Ptr<u8> | null, n: usize): Ptr<u8>;
+declare c("c") function memset$bytes(dst: Ptr<u8> | null, c: i32, n: usize): Ptr<u8>;
+
+/**
+ * Copies the `n` bytes at `src` to `dst`; the ranges may overlap. Unsafe: both ranges must be
+ * memory the caller owns for the call (inside arrays it holds).
+ */
+export unsafe function moveAt(dst: usize, src: usize, n: usize) {
+  if (n == 0) {
+    return;
+  }
+  // SAFETY: the caller's statement (so neither address is 0); memmove allows the ranges to
+  // overlap.
+  unsafe {
+    memmove$bytes(Ptr.orNull<u8>(dst), Ptr.orNull<u8>(src), n);
+  }
+}
+
+/** Sets the `n` bytes at `at` to 0. Unsafe: they must be memory the caller owns for the call. */
+export unsafe function zeroAt(at: usize, n: usize) {
+  if (n == 0) {
+    return;
+  }
+  // SAFETY: the caller's statement (so the address is not 0).
+  unsafe {
+    memset$bytes(Ptr.orNull<u8>(at), 0, n);
+  }
+}
