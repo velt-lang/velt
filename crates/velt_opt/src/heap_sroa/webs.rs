@@ -158,20 +158,23 @@ impl Groups {
 
     /// The root of `x` and `x`'s offset from it.
     fn find(&mut self, x: usize) -> (usize, i128) {
-        let mut path = vec![];
-        let mut root = x;
+        // Two passes, no allocation: find the root and `x`'s offset from it, then point each
+        // node on the path at the root with its own offset (what is left of `x`'s after the
+        // steps below it).
+        let (mut root, mut total) = (x, 0);
         while self.parent[root] != root {
-            path.push(root);
+            total += self.by[root];
             root = self.parent[root];
         }
-        // From the node nearest the root down, each offset becomes its offset from the root.
-        let mut up = 0;
-        for &node in path.iter().rev() {
-            up += self.by[node];
-            self.by[node] = up;
+        let (mut node, mut off) = (x, total);
+        while node != root {
+            let (next, step) = (self.parent[node], self.by[node]);
             self.parent[node] = root;
+            self.by[node] = off;
+            off -= step;
+            node = next;
         }
-        (root, if x == root { 0 } else { self.by[x] })
+        (root, total)
     }
 
     /// Record `a = b + by`; false when the two were grouped already at other offsets.
