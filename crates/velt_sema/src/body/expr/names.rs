@@ -497,6 +497,9 @@ impl FnCx<'_, '_> {
         }
         let g = self.cx.global(d).expect("ICE: global");
         let (ty, mutable) = (g.ty, g.stored);
+        if g.weak {
+            return self.weak_global_read(d, ty, span);
+        }
         // A constant whose value is taken over is the one object Node evaluates once.
         let taken = want == Want::Move && !self.cx.is_copy(ty) && ty != self.cx.ty.str_;
         let shared_fn = taken && crate::body::pure_init::shares_on_move(self.cx, d);
