@@ -1,0 +1,3 @@
+action: restart
+stdout: random 2 true
+action: exit

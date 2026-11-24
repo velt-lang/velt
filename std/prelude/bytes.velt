@@ -12,6 +12,7 @@
 import { hookCall, inline, noInline, strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
 import { received, textEquals } from "velt/lang/bytes/text";
+import { copyOutOfRange, copyPosition } from "velt/lang/bytes/copy_args";
 import { byteLengthIn, textBytes, utf8Bytes } from "velt/lang/bytes/encodings";
 import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
 import {
@@ -53,25 +54,6 @@ function writeOutOfRange(offset: number, n: usize): never {
   const must = Number.isInteger(offset) ? `>= 0 && <= ${n}` : "an integer";
   throw new RangeError(
     `The value of "offset" is out of range. It must be ${must}. Received ${received(offset)}`,
-  );
-}
-
-// A position of `copy` as Node reads it (its `toInteger`): a whole number as it is, a fraction
-// rounded down, `NaN` and a number beyond the safe integers 0.
-function copyPosition(n: number): number {
-  if (Number.isInteger(n)) {
-    return n;
-  }
-  if (Number.isNaN(n) || n < -9007199254740991 || n > 9007199254740991) {
-    return 0;
-  }
-  return Math.floor(n);
-}
-
-// `copy`'s position `name` out of range (cold): Node's `ERR_OUT_OF_RANGE` message.
-function copyOutOfRange(name: string, must: string, n: number): never {
-  throw new RangeError(
-    `The value of "${name}" is out of range. It must be ${must}. Received ${received(n)}`,
   );
 }
 

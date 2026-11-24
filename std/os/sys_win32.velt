@@ -3,6 +3,9 @@
 
 import { Out } from "velt/ffi/out";
 import { wideText } from "velt/ffi/wide";
+import type { CpuInfo } from "./cpu_info";
+import { windowsCpus, windowsMemory, windowsUptime } from "./machine_win32";
+import { windowsCpuUsage, windowsNames } from "./names_win32";
 import { windowsTmpdir } from "./tmpdir";
 import { startWinsock } from "./winsock_win32";
 
@@ -73,4 +76,49 @@ function windowsDirectory(): string {
 /** The directory for temporary files, as Node's `os.tmpdir()` finds it. */
 export function tmpdir(): string {
   return windowsTmpdir(windowsDirectory);
+}
+
+/** The CPUs of the calling thread's processor group, with their times in milliseconds. */
+export function cpus(): CpuInfo[] {
+  return windowsCpus();
+}
+
+/** The machine's physical memory in bytes. */
+export function totalMemory(): i64 {
+  return windowsMemory()[0];
+}
+
+/** The available physical memory in bytes. */
+export function freeMemory(): i64 {
+  return windowsMemory()[1];
+}
+
+/** The load averages: `[0, 0, 0]`, as Windows has none (Node's answer too). */
+export function loadAverage(): f64[] {
+  return [0, 0, 0];
+}
+
+/** Seconds since the machine started. */
+export function uptime(): f64 {
+  return windowsUptime();
+}
+
+/** The memory limit: 0, as libuv reads none on Windows (a job object's limit is not read). */
+export function constrainedMemory(): f64 {
+  return 0;
+}
+
+/** The memory this process may still get: the available physical memory. */
+export function availableMemory(): i64 {
+  return windowsMemory()[1];
+}
+
+/** `[type, release, version, machine]`: "Windows_NT" and the installed Windows' names. */
+export function systemNames(): string[] {
+  return windowsNames();
+}
+
+/** `[user, system]`: this process' CPU time in microseconds. */
+export function processCpuUsage(): [i64, i64] {
+  return windowsCpuUsage();
 }

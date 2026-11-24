@@ -634,6 +634,88 @@ fn interface_values_have_the_sites_of_the_values_they_hold() {
 }
 
 #[test]
+fn a_type_argument_a_field_shows_closes_a_cycle_through_that_field() {
+    // `Box<A>` holds its `A` in a field: the edge `Box<A> -> A` is that field's (cycles.rs
+    // `owned_tys`), and the cycle `A -> Box<A> -> A` is found through it.
+    let out = debug_out(
+        "class Box<T> {
+           item: T | null = null;
+         }
+         class A {
+           b: Box<A> = new Box<A>();
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           a.b.item = a;
+           console.log(a.name, a.b.item?.name ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+}
+
+#[test]
+fn a_type_argument_no_field_shows_is_an_edge() {
+    // A class whose fields never mention `T` may keep its `T`s where they don't show (behind the
+    // runtime's pointers, as std's channel core does): `Handle<A> -> A` stays an edge.
+    let out = debug_out(
+        "class Handle<T> {
+           id: u64 = 0;
+         }
+         class A {
+           h: Handle<A> = new Handle<A>();
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           const keep = [a, a];
+           console.log(a.name, a.h.id, keep.length);
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+}
+
+#[test]
+fn a_type_argument_only_a_shared_field_shows_is_no_edge() {
+    // `Held<T>` keeps its `T` in a `shared<T>`, which is no edge (a copy with an atomic count):
+    // `Held<A>` reaches no `A`, and `A -> Held<A>` closes no cycle (std/sync/epoch/reclaim.velt
+    // `Held`, which put `Retired` values in every program's set).
+    let out = debug_out(
+        "class Held<T> {
+           value: shared<T>;
+           constructor(value: shared<T>) {
+             this.value = value;
+           }
+         }
+         class A {
+           h: Held<A> | null = null;
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           const other = new A();
+           a.h = new Held<A>(shared(other));
+           const keep = [a, a];
+           console.log(a.name, keep.length, a.h?.value.name ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(!has(line, "class A"), "{out}");
+    assert!(!has(line, "class Held"), "{out}");
+}
+
+#[test]
 fn a_streams_controller_keeps_closures_out_of_the_set() {
     // The controller waits for its source's `start` and `pull` promises with an async method of
     // its own (std/io/streams/controller.velt `settled`), not with `then` callbacks over it: those closures' environments are the type of every `() => void`
@@ -655,7 +737,7 @@ fn a_streams_controller_keeps_closures_out_of_the_set() {
     );
     let line = (out.lines())
         .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
-        .unwrap_or("")
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
         .trim();
     assert!(!has_closures(line), "{out}");
     assert!(!line.contains("CloseWait[]"), "{out}");

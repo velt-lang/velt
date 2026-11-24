@@ -75,7 +75,7 @@ pub(super) fn check(
         );
         return;
     }
-    if let Err(note) = compare::compare(&d.ret, &h.resolve(&c.ty, long_bits)) {
+    if let Err(note) = compare::compare_in(&d.ret, &h.resolve(&c.ty, long_bits), h) {
         diags.push(
             Diagnostic::error(
                 format!(

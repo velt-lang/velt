@@ -556,7 +556,7 @@ async function parent(self: string) {
   try {
     await exec("velt-no-such-program");
   } catch (err) {
-    console.log(`missing ${err.code} ${err.message.startsWith("spawn velt-no-such-program: ")}`);
+    console.log(`missing ${err.code} ${err.message == "spawn velt-no-such-program ENOENT"}`);
   }
 }
 

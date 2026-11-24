@@ -1,8 +1,9 @@
-// velt/os (internal): facts about the machine: its platform, architecture, CPUs, host name,
-// temporary directory and line terminator.
+// velt/os (internal): facts about the machine: its platform, architecture, CPUs, memory, load,
+// uptime, host name, temporary directory, line terminator and byte order.
 
 import { ARCH } from "#os-arch";
 import * as sys from "#os-sys";
+import type { CpuInfo } from "./cpu_info";
 
 /**
  * "darwin", "linux" or "win32" (Node's `process.platform` names); "wasi" in a WebAssembly
@@ -20,6 +21,91 @@ export function arch(): string {
 /** Logical CPUs this process may use (at least 1). */
 export function availableParallelism(): i64 {
   return sys.cpuCount();
+}
+
+/**
+ * The machine's logical CPUs, each with its model, clock and the time it has spent in each mode
+ * (Node's `os.cpus()`): the online CPUs on Linux, every CPU on macOS, the CPUs of the processor
+ * group of the calling thread on Windows (up to 64); an empty array when the OS can't say, and
+ * on WebAssembly. Unlike `availableParallelism()`, it counts the CPUs the process' affinity or
+ * cgroup keeps it off.
+ */
+export function cpus(): CpuInfo[] {
+  return sys.cpus();
+}
+
+/** The machine's memory in bytes (Node's `os.totalmem()`; 0 on WebAssembly). */
+export function totalmem(): i64 {
+  return sys.totalMemory();
+}
+
+/**
+ * The memory programs can still get, in bytes (Node's `os.freemem()`): on Linux what the kernel
+ * can give without swapping (`MemAvailable`, which counts the page cache it can drop), on macOS
+ * the free pages, on Windows the available physical memory; 0 on WebAssembly.
+ */
+export function freemem(): i64 {
+  return sys.freeMemory();
+}
+
+/**
+ * The 1, 5 and 15 minute load averages (Node's `os.loadavg()`): the processes running or
+ * waiting to run, averaged over each span. Windows has none, and WebAssembly no OS to ask: `[0,
+ * 0, 0]` there, as in Node.
+ */
+export function loadavg(): f64[] {
+  return sys.loadAverage();
+}
+
+/**
+ * Seconds since the machine started (Node's `os.uptime()`): to a hundredth of a second on Linux,
+ * whole seconds on macOS, milliseconds on Windows; 0 on WebAssembly.
+ */
+export function uptime(): f64 {
+  return sys.uptime();
+}
+
+/**
+ * The operating system's name, as `uname -s` gives it (Node's `os.type()`): "Linux", "Darwin",
+ * "Windows_NT"; "" on WebAssembly.
+ */
+export function type(): string {
+  return sys.systemNames()[0];
+}
+
+/**
+ * The operating system's release (Node's `os.release()`): the kernel's on Linux and macOS
+ * ("6.8.0-45-generic", "24.1.0"), "<major>.<minor>.<build>" on Windows ("10.0.22631"); "" on
+ * WebAssembly or when the OS can't say.
+ */
+export function release(): string {
+  return sys.systemNames()[1];
+}
+
+/**
+ * The operating system's version (Node's `os.version()`): the kernel's build on Linux and macOS
+ * ("#1 SMP PREEMPT_DYNAMIC …", "Darwin Kernel Version 24.1.0: …"), the product's name on Windows
+ * ("Windows 11 Pro"); "" on WebAssembly or when the OS can't say.
+ */
+export function version(): string {
+  return sys.systemNames()[2];
+}
+
+/**
+ * The processor's name as the OS gives it, as `uname -m` would (Node's `os.machine()`):
+ * "x86_64" on x86-64, "aarch64" on arm64 Linux, "arm64" on macOS and Windows; "wasm32" on
+ * WebAssembly. `arch()` names the build's processor instead, the same on every OS.
+ */
+export function machine(): string {
+  return sys.systemNames()[3];
+}
+
+/**
+ * The byte order of the processor (Node's `os.endianness()`): "LE", as for every target Velt
+ * builds for (x86-64, arm64, WebAssembly).
+ */
+export function endianness(): string {
+  return "LE";
 }
 
 /** The directory for temporary files, without a trailing separator. */

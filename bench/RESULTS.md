@@ -439,6 +439,25 @@ and about half again the time of a pinned array, on a loop that makes one array 
 typed methods cost what they did before the counted ones existed (`mapped_header.velt` rows
 unchanged).
 
+## Records copied out of a mapped file (`bench/fs/mapped_copy.velt`)
+
+2,000,000 copies of a 64-byte record from computed offsets of a 64 KiB `MappedFile` into a buffer
+that is used again. User-space instructions (cachegrind, Linux x86-64, release, one thread; a
+debug-built compiler with a release runtime), less the 19.89 M the program costs with no copies.
+2026-11-23.
+
+| program | instructions | per copy |
+|---|---:|---:|
+| `m.bytes.copy(record, 0, at, at + 64)`: `u8[]`'s copy on the mapping's bytes | 196.01 M | 98 |
+| `m.copy(record, 0, at, at + 64)`: MappedFile's, into a `u8[]` | 352.01 M | 176 |
+| `m.copy(words, 0, at, at + 64)`: the same into a `u32[]` of 16 | 539.42 M | 270 |
+| 64 `record[i] = m.bytes[at + i]` | 4,290.01 M | 2,145 |
+
+`m.copy`'s target is a union (`T[] | ArrayBufferView`), which the caller retains and drops around
+each call (about 79 instructions), and its arguments are checked twice: by `copy`, then inside
+`u8[].copy`. A number array of another type is viewed as bytes first (`addressArray`, which
+allocates). Each copy is one `memcpy`; the loop checks every index.
+
 ## `f16x8` arithmetic (`bench/simd/half_arith.sh`)
 
 Instructions retired per element, 2^20 elements, 100 passes (each run with 0 and with 100 passes

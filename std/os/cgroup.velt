@@ -1,125 +1,175 @@
 // velt/os (internal): the CPU quota of this process' cgroup on Linux, which caps
-// `availableParallelism()` as libuv's `uv_available_parallelism` caps Node's (sys_linux.velt).
-// cgroup v2: `cpu.max` ("<quota> <period>" or "max <period>") in the process' cgroup and each
-// ancestor up to the root, the smallest quota counting; cgroup v1: `cpu.cfs_quota_us` over
-// `cpu.cfs_period_us` of the `cpu` controller's cgroup, also on a hybrid system whose unified
-// hierarchy is empty. A quota under one CPU counts as 1.
+// `availableParallelism()` (sys_linux.velt). It follows libuv 1.51 exactly, as in Node 22.23
+// (`uv__get_constrained_cpu`, new in libuv 1.49, and `uv_available_parallelism`, src/unix/linux.c
+// and core.c; earlier Node 22 releases bundle other libuv versions), so Velt gives Node's
+// answer, which is not always the limit the kernel enforces:
 //
-// Where this differs from libuv (and so from Node), on purpose: Velt gives what the kernel
-// enforces. With nested v2 limits (a slice at 400% holding a scope at 200%), libuv returns the
-// outermost quota (Node 26 says 4, Velt 2). With a v1 quota under one CPU, libuv drops the cap
-// (every CPU), Velt says 1. Node 24's libuv also dropped the cap for a v2 quota under one CPU;
-// Node 26's gives 1, as Velt does.
+// - With limits at several levels, the outermost one counts, not the smallest (4 for a parent
+//   at 4 CPUs over a child at 2).
+// - A quota under one CPU caps nothing: every CPU, even where a whole-CPU limit sits below it.
+// - On cgroup v1, Linux's usual layout gives no quota at all.
+//
+// In detail:
+//
+// - A /proc/self/cgroup that starts with "0::/" is cgroup v2 (a hybrid system's, whose "0::" line
+//   comes last, is not). Without the process' cgroup's `cgroup.controllers` there is no quota.
+//   Otherwise libuv reads `cpu.max` ("<quota> <period>", or "max ...") in that cgroup and in each
+//   one above it up to `/sys/fs/cgroup`, skipping the levels whose file is missing, "max" or
+//   doesn't parse; the last level it reads, the outermost with a limit, gives the quota.
+// - Otherwise cgroup v1: the path after the first ":cpu," in the file, so for the usual
+//   "4:cpu,cpuacct:/path" line `/sys/fs/cgroup/cpuacct:/path/cpu.cfs_quota_us` and
+//   `cpu.cfs_period_us`, which don't exist: Node 22 sees no v1 quota. A "3:cpu:/path" line has no
+//   ":cpu," and gives none either.
+// - The quota is quota / period, rounded toward 0: 0 under one CPU and for v1's -1. It caps the
+//   CPU count only when it is above 0 and below it (`parallelismOf`). Files are read as libuv
+//   reads them (1023 bytes, `cpu.max` 15), paths cut at 255 bytes. Velt counts these lengths
+//   in UTF-16 code units of the UTF-8-decoded text where libuv counts bytes, so a non-ASCII
+//   cgroup name over about 128 bytes is cut elsewhere and invalid UTF-8 doesn't round-trip
+//   (rare: systemd escapes such names).
+//
+// `cpuQuotaOf` takes the files it reads as a function, so tests can give it a tree of their own.
 
-import { utf8Encode } from "velt/encoding/utf8";
-import { readText } from "#fs-whole";
+import { readOrNull } from "./proc_text";
 
-/** The text of `path` (a /sys or /proc path, no 0 in it), or null when it can't be read. */
-function readOrNull(path: string): string | null {
-  const c = utf8Encode(path);
-  c.push(0);
-  return readText(c, path).value;
+/** `snprintf` into libuv's 256-byte path buffers: at most 255 characters. */
+function cPath(s: string): string {
+  return s.length > 255 ? s.slice(0, 255) : s;
 }
 
-/** The text of `path`, or "" when it can't be read. */
-function read(path: string): string {
-  const text = readOrNull(path);
-  return text === null ? "" : text;
-}
-
-/** The integer `s` spells, spaces around it aside (digits, an optional leading "-"), or null. */
-function integer(s: string): i64 | null {
-  const t = s.trim();
-  const negative = t.startsWith("-");
-  const digits = negative ? t.slice(1) : t;
-  if (digits.length === 0 || digits.length > 18) {
+/** `uv__slurp` into a `len`-byte buffer: the file's first `len - 1` characters, null if unread. */
+function slurp(read: (path: string) => string | null, path: string, len: i64): string | null {
+  const text = read(path);
+  if (text === null) {
     return null;
   }
-  let n: i64 = 0;
-  for (let i: i64 = 0; i < (digits.length as i64); i++) {
-    const c = digits.charCodeAt(i) as i64;
+  return (text.length as i64) < len ? text : text.slice(0, len - 1);
+}
+
+/** C's `isspace` in the C locale. */
+function isSpace(c: i64): bool {
+  return c === 32 || (c >= 9 && c <= 13);
+}
+
+/**
+ * `sscanf`'s `%lld` at `at` in `text`: spaces, an optional sign, then digits (`LLONG_MAX` or
+ * `LLONG_MIN` past the range, as `strtoll` gives); `[value, end]`, or null with no digits.
+ */
+function scanLongLong(text: string, at: i64): [i64, i64] | null {
+  const n = text.length as i64;
+  let i = at;
+  while (i < n && isSpace(text.charCodeAt(i) as i64)) {
+    i++;
+  }
+  let negative = false;
+  if (i < n && (text.charCodeAt(i) === 43 || text.charCodeAt(i) === 45)) {
+    negative = text.charCodeAt(i) === 45;
+    i++;
+  }
+  // The magnitude, held at 2^63 once past it.
+  const limit: u64 = 0x8000000000000000;
+  let magnitude: u64 = 0;
+  const start = i;
+  while (i < n) {
+    const c = text.charCodeAt(i) as u64;
     if (c < 48 || c > 57) {
-      return null;
+      break;
     }
-    n = n * 10 + (c - 48);
+    const d = c - 48;
+    magnitude = magnitude > (limit - d) / 10 ? limit : magnitude * 10 + d;
+    i++;
   }
-  return negative ? -n : n;
+  if (i === start) {
+    return null;
+  }
+  if (negative) {
+    return [magnitude === limit ? -9223372036854775807 - 1 : -(magnitude as i64), i];
+  }
+  return [magnitude === limit ? 9223372036854775807 : magnitude as i64, i];
 }
 
-/** A v2 `cpu.max`'s whole CPUs (at least 1), or 0 for "no limit" or a file that doesn't parse. */
-function v2Limit(text: string): i64 {
-  const parts = text.trim().split(" ");
-  if (parts.length !== 2 || parts[0] === "max") {
+/** C's `quota / period` (rounded toward 0), `period` not 0; `LLONG_MIN / -1` as arm64 gives it. */
+function divide(quota: i64, period: i64): i64 {
+  if (period === -1) {
+    return quota === -9223372036854775807 - 1 ? quota : -quota;
+  }
+  return quota / period;
+}
+
+/** `uv__get_cgroupv2_constrained_cpu` for the cgroup `dir` (no leading "/"): 0 for no quota. */
+function v2Quota(dir: string, read: (path: string) => string | null): i64 {
+  const mount = "/sys/fs/cgroup";
+  // Not really a cgroup without its `cgroup.controllers`.
+  if (slurp(read, cPath(`${mount}/${dir}/cgroup.controllers`), 1024) === null) {
     return 0;
   }
-  const quota = integer(parts[0]);
-  const period = integer(parts[1]);
-  if (quota === null || period === null || quota <= 0 || period <= 0) {
-    return 0;
-  }
-  const cpus = quota / period;
-  return cpus < 1 ? 1 : cpus;
-}
-
-/**
- * The v2 limit of the cgroup at `path` ("/a/b") and its ancestors: the smallest; 0 for none, -1
- * when `path` is no v2 cgroup here (a hybrid system's empty unified hierarchy, whose
- * `/sys/fs/cgroup` holds the v1 controllers).
- */
-function v2Quota(path: string): i64 {
-  const root = "/sys/fs/cgroup";
-  // Not really a cgroup without its `cgroup.controllers` (libuv's test too).
-  if (readOrNull(`${root}${path === "/" ? "" : path}/cgroup.controllers`) === null) {
-    return -1;
-  }
-  let limit: i64 = 0;
-  let dir = path;
-  while (true) {
-    const here = v2Limit(read(`${root}${dir === "/" ? "" : dir}/cpu.max`));
-    if (here > 0 && (limit === 0 || here < limit)) {
-      limit = here;
-    }
-    if (dir === "/" || dir.length === 0) {
-      return limit;
-    }
-    const up = dir.lastIndexOf("/");
-    dir = up <= 0 ? "/" : dir.slice(0, up);
-  }
-}
-
-/** The v1 limit of the `cpu` controller's cgroup at `path`: whole CPUs (at least 1); 0 for none. */
-function v1Quota(path: string): i64 {
-  const dir = `/sys/fs/cgroup/cpu${path === "/" ? "" : path}`;
-  const quota = integer(read(`${dir}/cpu.cfs_quota_us`));
-  const period = integer(read(`${dir}/cpu.cfs_period_us`));
-  if (quota === null || period === null || quota <= 0 || period <= 0) {
-    return 0;
-  }
-  const cpus = quota / period;
-  return cpus < 1 ? 1 : cpus;
-}
-
-/**
- * The whole CPUs this process' cgroup may use, or 0 when no quota limits it (or there is no
- * cgroup to read: not Linux, no `/proc`).
- */
-export function cpuQuota(): i64 {
-  const lines = read("/proc/self/cgroup").split("\n");
-  for (const line of lines) {
-    // "0::/path": the unified (v2) hierarchy, unless it is a hybrid system's empty one.
-    if (line.startsWith("0::")) {
-      const v2 = v2Quota(line.slice(3));
-      if (v2 >= 0) {
-        return v2;
+  let quota: i64 = 0;
+  let path = cPath(`${mount}/${dir}`);
+  while (path.startsWith(mount)) {
+    const text = slurp(read, cPath(`${path}/cpu.max`), 16);
+    if (text !== null && !text.startsWith("max")) {
+      const limit = scanLongLong(text, 0);
+      const period = limit === null ? null : scanLongLong(text, limit[1]);
+      if (limit !== null && period !== null && period[0] !== 0) {
+        // Each level overwrites the one below it: the outermost limit is the one that counts.
+        quota = divide(limit[0], period[0]);
       }
     }
-  }
-  for (const line of lines) {
-    // "4:cpu,cpuacct:/path": a v1 hierarchy; the one whose controllers include `cpu`.
-    const fields = line.split(":");
-    if (fields.length >= 3 && fields[1].split(",").includes("cpu")) {
-      return v1Quota(fields.slice(2).join(":"));
+    const up = path.lastIndexOf("/");
+    if (up < 0 || path === mount) {
+      break;
     }
+    path = path.slice(0, up);
   }
-  return 0;
+  return quota;
+}
+
+/** `uv__get_cgroupv1_constrained_cpu`: the path after the first ":cpu,", 0 for no quota. */
+function v1Quota(cgroup: string, read: (path: string) => string | null): i64 {
+  const at = cgroup.indexOf(":cpu,");
+  if (at < 0) {
+    return 0;
+  }
+  const rest = cgroup.slice(at + 5);
+  const end = rest.indexOf("\n");
+  const dir = end < 0 ? rest : rest.slice(0, end);
+  const quotaText = slurp(read, cPath(`/sys/fs/cgroup/${dir}/cpu.cfs_quota_us`), 1024);
+  const quota = quotaText === null ? null : scanLongLong(quotaText, 0);
+  if (quota === null) {
+    return 0;
+  }
+  const periodText = slurp(read, cPath(`/sys/fs/cgroup/${dir}/cpu.cfs_period_us`), 1024);
+  const period = periodText === null ? null : scanLongLong(periodText, 0);
+  if (period === null || period[0] === 0) {
+    return 0;
+  }
+  return divide(quota[0], period[0]);
+}
+
+/**
+ * The CPU quota that /proc/self/cgroup's `cgroup` (its first 1023 characters) and the files
+ * `read` gives (null for one that can't be read) set, as libuv computes it: whole CPUs, rounded
+ * toward 0; 0 or less caps nothing.
+ */
+export function cpuQuotaOf(cgroup: string, read: (path: string) => string | null): i64 {
+  if (cgroup.startsWith("0::/")) {
+    const rest = cgroup.slice(4);
+    const end = rest.indexOf("\n");
+    return v2Quota(end < 0 ? rest : rest.slice(0, end), read);
+  }
+  return v1Quota(cgroup, read);
+}
+
+/**
+ * `uv_available_parallelism`'s answer from the CPUs the process may use (`cpus`) and its CPU
+ * quota: the quota when it is above 0 and below `cpus`, else `cpus`; at least 1.
+ */
+export function parallelismOf(cpus: i64, quota: i64): i64 {
+  const n = quota > 0 && quota < cpus ? quota : cpus;
+  return n < 1 ? 1 : n;
+}
+
+/** This process' CPU quota (`cpuQuotaOf`), or 0 when there is no /proc/self/cgroup to read. */
+export function cpuQuota(): i64 {
+  const cgroup = slurp(readOrNull, "/proc/self/cgroup", 1024);
+  return cgroup === null ? 0 : cpuQuotaOf(cgroup, readOrNull);
 }
