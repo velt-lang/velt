@@ -173,6 +173,21 @@ pub(crate) fn lit_matches(v: &LitValue, l: &ast::SignedLit) -> bool {
     }
 }
 
+/// A non-negative number as JavaScript prints it (`String(n)`): `1e+21`, `1e-7`, `0.5`, `3`.
+pub(crate) fn js_number(f: f64) -> String {
+    if f == 0.0 {
+        return "0".into();
+    }
+    if !(1e-6..1e21).contains(&f.abs()) {
+        let t = format!("{f:e}");
+        return match t.split_once('e') {
+            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
+            _ => t,
+        };
+    }
+    f.to_string()
+}
+
 fn float_value(ft: FloatTy, v: f64, negative: bool) -> LitValue {
     LitValue::Float(ft, (if negative { -v } else { v }).to_bits())
 }
@@ -186,7 +201,15 @@ pub(crate) fn display_lit(v: &LitValue) -> String {
         LitValue::Int(it, n) => format!("{n}{}", int_name(*it)),
         LitValue::Float(ft, bits) => {
             let f = f64::from_bits(*bits);
-            let shown = if f.fract() == 0.0 && f.is_finite() {
+            let shown = if f.is_finite() && f.abs() >= (1u64 << 53) as f64 {
+                // An integer spelling from 2^53 on (#3183): as JavaScript and tsc print it.
+                let s = js_number(f.abs());
+                if f < 0.0 {
+                    format!("-{s}")
+                } else {
+                    s
+                }
+            } else if f.fract() == 0.0 && f.is_finite() {
                 format!("{f:.1}")
             } else {
                 f.to_string()
