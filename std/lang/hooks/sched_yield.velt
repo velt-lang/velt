@@ -241,8 +241,13 @@ export function schedYieldReady(cx: usize, record: usize): u32 {
 function otherReady(w: usize): u32 {
   const vt = m.ld(w);
   if (vt === t.main() + t.E_VT) {
-    // A task's waker in another cx: its state, as with its own cx.
-    return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
+    // A task's waker in another cx: its state, as with its own cx. Going on, it is a waiter of
+    // the turn polling the root, if one is (`ls.nextTurn`).
+    if (m.load32(w + t.T_STATE) === t.YIELDED) {
+      return 0;
+    }
+    ls.taken(w);
+    return 1;
   }
   const isNode = vt === t.main() + t.E_NODE_VT;
   if (isNode && (m.load32(w + node.N_FLAGS) & (node.QUEUED | node.YIELDING)) !== 0) {

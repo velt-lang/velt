@@ -72,6 +72,10 @@ export function fireYields(e: usize, k: usize): void {
       return;
     }
     if (w !== 0) {
+      if (w === k) {
+        // A held record of the root's whose turn is next may go on in this poll (`ls.nextTurn`).
+        ls.turnNext(k, nx);
+      }
       woken = resume(e, k, w, lent, w !== k && node.ownNode(k, w), woken, true);
     }
     y = nx;
@@ -132,6 +136,9 @@ function resume(
       return true;
     }
     run.pollRootAgain(e, k);
+    if (yieldTurn) {
+      ls.turnOver(k);
+    }
     return between(e, k, m.load32(k + t.T_STATE) === t.NOTIFIED);
   }
   if (own) {
