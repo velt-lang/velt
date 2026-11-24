@@ -784,6 +784,8 @@ mod conditional_tests;
 #[cfg(test)]
 mod globals_tests;
 #[cfg(test)]
+mod spelling_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod ts_tests;
