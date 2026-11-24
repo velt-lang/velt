@@ -18,7 +18,7 @@ and reviewed. When one must change, propose it in an issue or in your pull reque
 | Runtime ABI | `docs/internals/contracts/rt_abi.md` + `rt_abi_async.md` | runtime ↔ IR lowering |
 | CLI | `docs/internals/contracts/cli.md` | tooling ↔ golden tests |
 | Manifest, lockfile, registry | `docs/internals/contracts/manifest.md` | vpm ↔ tooling, registries |
-| Native libraries of packages | `docs/internals/contracts/native_abi.md` + `crates/velt_native` | packages' Rust crates ↔ runtime, vpm, compiler |
+| Prebuilt C libraries of packages | `docs/internals/contracts/native_abi.md` | bundles ↔ vpm, registries, compiler, linker |
 | Host builds | `docs/internals/contracts/workers.md`: `velt build --host <package>`'s output, host packages, the glue's server core, the host module `velt:worker` | glue ↔ host packages' entries, the Velt code serving through `velt:worker`, packages' host modules |
 | Language semantics | https://veltlang.com/docs/reference/ + `tests/golden/**` | everyone |
 
@@ -100,7 +100,7 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   last one for the terminator; empty = no information (vir.rs invariant 8, checked by `verify`).
   Helpers: `Function::loc(block, stmt)`, `term_loc(block)`, `first_loc()`.
 - `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, .. })` fills them
-  (`LowerOptions` also holds `native_inits`, `cell_checks`, `debug_info`, `target`, `shapes`,
+  (`LowerOptions` also holds `cell_checks`, `debug_info`, `target`, `shapes`,
   `no_cpu_extensions`, `counted_seed`, `jit` and `heap_hooks`; each defaults to off; the driver
   calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
   hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations).
@@ -247,9 +247,9 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 | ir | `crates/velt_vir` (except `vir.rs` data types — `Display` impl may be improved) |
 | optimizer | `crates/velt_opt` |
 | codegen | `crates/velt_codegen_cl`, `crates/velt_codegen_llvm` |
-| runtime | `crates/velt_rt`, `crates/velt_text`, `crates/velt_tls`, `std/**` |
+| runtime | `crates/velt_rt`, `crates/velt_text`, `std/**` |
 | tooling | `crates/veltc` (except `tests/golden.rs`), `crates/velt_loader`, `crates/velt_link`, `crates/vpm`, `crates/velt_build_cache`, `crates/velt_toolchain`, `crates/velt_launcher`, `crates/velt_doc`, `crates/velt_tscompat`, `crates/velt_lint`, `crates/velt_registry`, `crates/velt_http`, `crates/velt_lsp`, `crates/velt_fmt`, `crates/xtask` |
-| native SDK | `crates/velt_native`, `crates/velt_native_macros` (versioned with the native ABI), `packages/**` |
+| packages | `packages/**` |
 | runtime (wasm) | `crates/velt_rt_wasm`, `crates/velt_rt_host` (mirror of velt_rt deps) |
 | runtime packaging | `crates/velt_rt_shared` (the runtime as a shared library for debug builds; mirror of velt_rt deps) |
 

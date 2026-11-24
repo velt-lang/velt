@@ -1,9 +1,0 @@
-[package]
-name = "velt_tls"
-version.workspace = true
-edition.workspace = true
-description = "Velt's TLS client setup (rustls, the ring provider, Mozilla's roots plus extra PEM CAs), for native libraries (the runtime has none: TLS in programs is Velt's)"
-
-[dependencies]
-rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
-webpki-roots = "1.0.9"

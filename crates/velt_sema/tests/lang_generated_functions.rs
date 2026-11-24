@@ -275,8 +275,8 @@ class Holder<T> {{
 
 /// A function that calls one leading to a generated function at type arguments of which some are
 /// concrete and some its own (`rows<T>` calling `pair<T, Rows>`) has an instance of its own and
-/// leads to more through its callers: `bench/sqlite/engine.velt`'s `Statement.all<T>` reading rows
-/// with `decodeRows<T, Rows>`.
+/// leads to more through its callers, as a driver's `Statement.all<T>` reading its rows with
+/// velt/db's `readRows<T, S>`.
 #[test]
 fn demand_follows_a_call_with_concrete_and_generic_type_arguments() {
     let src = r#"

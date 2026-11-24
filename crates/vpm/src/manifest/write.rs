@@ -3,7 +3,7 @@
 
 use serde_json::{json, Map, Value};
 
-use super::{Dependency, Manifest, DEFAULT_ENTRY, DEFAULT_NATIVE_PATH};
+use super::{Dependency, Manifest, DEFAULT_ENTRY};
 
 /// The first line of every generated manifest.
 pub(crate) const TYPES_IMPORT: &str = "import type { Package } from \"velt/package\";";
@@ -88,20 +88,8 @@ pub(super) fn to_velt(m: &Manifest) -> String {
             .map(|(name, value)| format!("{}: {}", key(name), string_lit(value)));
         fields.push(format!("define: {}", multiline_object(defines)));
     }
-    if m.native.is_some() || m.c_libraries.is_some() {
+    if m.c_libraries.is_some() {
         let mut parts = Vec::new();
-        if let Some(native) = &m.native {
-            if native.path != DEFAULT_NATIVE_PATH {
-                parts.push(format!("path: {}", string_lit(&native.path)));
-            }
-            if !native.targets.is_empty() {
-                let targets: Vec<String> = native.targets.iter().map(|t| string_lit(t)).collect();
-                parts.push(format!("targets: [{}]", targets.join(", ")));
-            }
-            if native.wasm {
-                parts.push("wasm: true".into());
-            }
-        }
         if !m.c_targets.is_empty() {
             let targets: Vec<String> = m.c_targets.iter().map(|t| string_lit(t)).collect();
             parts.push(format!("targets: [{}]", targets.join(", ")));
@@ -254,15 +242,8 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     if !m.define.is_empty() {
         out.insert("define".into(), json!(m.define));
     }
-    if m.native.is_some() || m.c_libraries.is_some() {
-        let mut o = match &m.native {
-            Some(native) => {
-                let crate_fields =
-                    json!({ "path": native.path, "targets": native.targets, "wasm": native.wasm });
-                crate_fields.as_object().cloned().unwrap_or_default()
-            }
-            None => Map::new(),
-        };
+    if m.c_libraries.is_some() {
+        let mut o = Map::new();
         if !m.c_targets.is_empty() {
             o.insert("targets".into(), json!(m.c_targets));
         }

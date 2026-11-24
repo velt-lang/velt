@@ -92,7 +92,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let graph = crate::graph::Graph::load(&root).unwrap();
         let crates = crates_with_doctests(&root, &graph.dirs);
-        assert!(crates.contains(&"velt_native".to_string()), "{crates:?}");
+        assert!(crates.contains(&"velt_sema".to_string()), "{crates:?}");
         assert!(!crates.contains(&"xtask".to_string()), "{crates:?}");
     }
 }

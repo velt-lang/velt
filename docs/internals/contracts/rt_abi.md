@@ -16,15 +16,6 @@ listed.
   `entry` as the program's main. The shared runtime (debug builds) has no `main`: the compiler
   emits a small entry object whose `main` calls `velt_rt_start(argc, argv, &velt_main)`.
 
-## Native libraries of packages
-Contract: [native_abi.md](native_abi.md). Called by `velt_main` before the user `main`, once per
-package with a native library:
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_native_api` | `() -> const VeltRtApi*` | the function table handed to `velt_native_init_<pkg>` |
-| `velt_rt_native_check` | `(int32_t rc, const VeltStr* package)` | `rc != 0`: prints ``error: the native library of package `<name>` failed to start (code <rc>)`` to stderr, exits 1 |
-
 ## Strings
 Strings are immutable values ([design/semantics.md](../design/semantics.md)): copying one never
 copies its bytes.

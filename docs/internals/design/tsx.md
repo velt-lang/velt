@@ -198,7 +198,7 @@ How the rules decide:
 - `jsx-provider` reports one finding per module, at its first element. `jsx-pragma-comment`
   reports the pragma Velt uses (the first one before the first token, in a module with JSX); its
   fix rewrites a comment holding only the pragma.
-- `declare-fn` is valid Velt only in a package with a native library.
+- `declare-fn` is valid Velt only in the standard library (outside it, `declare c`).
 - `int-division` meets only integer types that `velt-number-type` reports where they are written
   (or that come from another shared file). Unions of integer literal types (`(1 | 3)[]`) are
   numbers and divide as numbers do, so they are no finding.

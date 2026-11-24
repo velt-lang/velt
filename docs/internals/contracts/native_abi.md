@@ -1,415 +1,38 @@
-# Native libraries of packages — CONTRACT
+# Prebuilt C libraries of packages — CONTRACT
 
-How a package's Rust crate (`native` in [`package.velt`](manifest.md)) talks to Velt code and to
-the runtime, how its library is built, published, installed, linked and loaded. Design and
-rationale: [native-packages.md](../design/native-packages.md). Implemented by `crates/velt_rt`
-(`native/`), `crates/velt_native` (the SDK, with `crates/velt_native_macros`), `crates/vpm`
-(`native/`), `crates/velt_link` (`native.rs`, `NativeLink`), `crates/velt_vir`
-(`LowerOptions::native_inits`) and `crates/veltc` (`native/`, `dev/native.rs`).
+How the C libraries a package builds from `sources` ([c-ffi.md](../design/c-ffi.md) "Where
+libraries come from") are published prebuilt, installed, verified and linked. Implemented by
+`crates/vpm` (`vpm::native`: bundles, checks, `c_build`), the compiler (`crates/veltc/src/native/`)
+and `crates/velt_link` (`NativeLink`).
 
-## Calls from Velt into the library
-
-Velt declares the library's functions with `declare function` / `declare async function`, with
-the pass modes of `rt_abi_async.md` §3.1. A package passes the same values std's runtime
-functions do, under one rule for both (`veltc/src/native/`):
-
-| Velt | Parameter (C) | Result (C) | Signature name |
-|---|---|---|---|
-| `bool`, `i8`…`i64`, `u8`…`u64`, `f32`, `f64` (`number`) | by value | returned | `bool`, `i64`, `f64`, … |
-| `string` | `const VeltStr*` (borrowed for the call) | trailing `VeltStr*` out-pointer | `string` |
-| `T[]`, `T` a value | `const VeltArray*`: `{ T* ptr; u64 len; u64 cap; }` (borrowed) | trailing `VeltArray*` out-pointer (elements from `alloc`) | `u8[]`, `{id:i64,name:string}[]`, … |
-| a `struct` of values | `const S*` (borrowed) | trailing `S*` out-pointer | its shape: `{id:i64,name:string}` |
-| `IoResult<T>`, `T` a value | — | trailing `IoResult<T>*` (§3) | `IoResult<T>` |
-| `IoStatus` | — | trailing `VeltErr*` | `IoStatus` |
-| `void` | — | nothing | `void` |
-| `Promise<R>` (`declare async function`) | — | returns `VeltFut*`, result `R` at +16 | the `R` name, `async ` before the signature |
-
-A value is a scalar, a `string`, an array of values or a `struct` of values, in Velt's own
-layout (rt_abi.md): a struct is named by its shape, its fields' names (as Velt spells them),
-order and types, so a field that differs is a build error. `isize`/`usize`, classes,
-interfaces, unions, optional or private fields, recursive structs, closures and functions
-cannot cross: native objects are `u64` handles (§3.2) that the package wraps in a class with
-`[Symbol.dispose]()` (or a Copy struct for copies used by async calls). The SDK's
-`#[derive(velt_native::Value)]` gives a `#[repr(C)]` Rust struct Velt's layout and its
-signature name (field names camelCased, or `#[velt(name)]`); `velt_native::Array<T>` is a
-Velt array in the runtime's memory.
-
-**Signatures** are written `(<param>,<param>)-><result>`, with `async ` in front for
-`declare async function`: `(string,u32)->IoResult<u64>`, `async (u64,string)->IoResult<string>`.
-
-**Names**: every export of package `p` starts with `velt_p__` (`-` in the package name becomes `_`,
-then a double underscore), plus `velt_native_init_p`. The prefix is structural: no C library or
-system function starts with `velt_`, so a package's exports can't take the name of one. It is
-one-to-one: package names separate words with single `-` or `_` (never two in a row, nor at the
-end), so `velt_a__` is never the start of `velt_a_b__`; and names that differ only in `-` versus `_`
-count as the same, so the registry refuses `my_pkg` when `my-pkg` exists and installing refuses two
-packages with native code whose names normalise the same. Names whose first component is `rt`, `sig`
-or `native` (`rt`, `rt-str`, `native_init`) are reserved, since `velt_rt_`, `velt_sig_` and
-`velt_native_` are Velt's own runtime functions, signature records and init functions. Outside std,
-the compiler requires every `declare function` (other than a `declare c(…)` or `declare host(…)`
-one) to name one of the exports of **its own** package's library with **exactly** the recorded
-signature: a root program, a package without a library (`free`, `memcpy`) and another package's
-export are errors. `IoResult`/`IoStatus` are std's types (`std/native/result.velt`, `status.velt`),
-identified by definition (a look-alike struct is rejected). Violations are compile errors at the
-`declare` (`check_declares` in `crates/veltc/src/native/mod.rs`). Separately, sema rejects a
-`velt_rt_*` runtime function declared outside std, in any package or the root program (`velt_sema`
-`collect/declare.rs`).
-
-**Library name**: the crate's `[lib] name` is `velt_native_<p>`, so its files are
-`libvelt_native_<p>.so`/`.dylib` and `velt_native_<p>.dll`; `velt native build` refuses any
-other name (two packages' DLLs beside one executable must never collide).
-
-**SDK parameters** are borrowed for the call only: `#[export]` rejects references with an
-explicit lifetime (`&'static str`).
-
-## Signature records
-
-The SDK's `#[velt_native::export]` emits, for each exported function `f`, a data symbol
-`velt_sig_f` holding the NUL-terminated signature of `f`. `velt native build` reads the shared
-library's exports with the `object` crate (any target's ELF, Mach-O or PE) and writes the
-`exports` table of `native.json`. Building fails when the init function is missing, an export
-lacks the `velt_p__` prefix (an export spelled `<p>_x` or `velt_<p>_x` gets its `velt_p__` name
-as a fix-it), an export has no record, or a record names nothing exported.
-
-## The function table
-
-```c
-typedef struct VeltRtApi {
-    uint32_t abi_version;                    // 1
-    uint32_t size;                           // sizeof(VeltRtApi) of the runtime
-    void (*str_new)(const uint8_t* p, size_t len, VeltStr* out);     // owned copy, decoded lossily
-    const uint8_t* (*str_bytes)(const VeltStr* s, size_t* len);      // a string's bytes (borrowed)
-    void (*str_drop)(VeltStr* s);                                     // velt_rt_str_drop
-    void (*bytes_new)(const uint8_t* p, size_t len, VeltBytes* out); // owned copy (rt allocator)
-    void (*bytes_drop)(VeltBytes* b);                                 // velt_rt_bytes_drop
-    const uint8_t* (*bytes_data)(const VeltBytes* b, size_t* len);    // a u8[]'s bytes (borrowed)
-    VeltFut* (*fut_blocking)(void (*work)(void* ctx, void* out), void* ctx,
-                             void (*drop_ctx)(void* ctx), size_t result_size,
-                             void (*drop_result)(void* result));
-    VeltFut* (*fut_completer)(size_t result_size, void (*drop_result)(void* result),
-                              uint64_t* handle);
-    void (*complete)(uint64_t handle, const void* result);
-    _Noreturn void (*fatal)(const uint8_t* msg, size_t len);         // `panic: <msg>`, exit 101
-    // ... version 2: the async I/O part and the string part (below), in that order ...
-    // version 3: the row cursors and parameter sinks a library hands to std ("Row cursors")
-    uint64_t (*db_open)(uint32_t kind, void* data, const void* vtable, uint64_t tag);
-    void* (*db_close)(uint32_t kind, uint64_t handle, uint64_t tag);
-} VeltRtApi;
-```
-
-- `db_open` registers a row cursor (`kind` 0, `vtable` a `CursorVTable`) or a parameter sink
-  (`kind` 1, a `SinkVTable`) and returns its handle (never 0), a key with a generation as the
-  runtime's own handles (`registry.rs`); `db_close` unregisters the one `handle` names if it was
-  opened with the same `kind` and `tag` (the SDK's tag of the Rust type) and returns its data,
-  else null and nothing changes. std's `velt_rt_db_cursor(handle)` / `velt_rt_db_sink(handle)`
-  give the registered `RawCursor*` / `RawSink*` (0 for a handle that names none) to the generated
-  decoder and binder.
-
-- `str_new` decodes the bytes as UTF-8 from outside the program: an invalid sequence becomes
-  U+FFFD by the WHATWG rule (Rust's `String::from_utf8_lossy`), and that includes a surrogate
-  encoded on its own (`ED A0..BF xx`), so `ED A0 BD ED B8 80` gives six U+FFFD and two halves of
-  a pair are never joined. The result is a canonical string (rt_abi.md "Strings") with its UTF-16
-  length counted.
-- `str_bytes` lends a string's bytes as they are stored: UTF-8 when the string is well-formed,
-  else WTF-8 with lone surrogates (`ED A0..BF xx`, #377). The SDK's `str_of` gives a
-  `Cow<str>`: borrowed when the bytes are UTF-8, else a copy with one U+FFFD per lone surrogate
-  (the rule of every other output, so the length is unchanged). A `&str` parameter of an
-  exported function borrows such a copy from the generated wrapper for the call; `String` and
-  `Cow<str>` parameters take it as they are.
-- The library never links a `velt_rt_*` symbol: it gets this table (every entry is the runtime
-  function or helper named in its comment). A library is `dlopen`ed into `velt dev`'s host,
-  whose runtime symbols are not exported, and a DLL cannot import from an executable.
-- **Versioning**: the table is append-only; `abi_version` grows by one with each addition
-  (version 2 adds the async I/O and string parts below, from `fut_poll` to `fut_poll_in`, and
-  the values beyond `u8[]`; version 3 adds `db_open` and `db_close`). The current version is 3.
-  A library records the version it needs (`abi` in `native.json`, `native_abi` in the index);
-  vpm refuses a library needing more than the running `velt` provides
-  (`vpm::native::NATIVE_ABI` = velt_rt's `NATIVE_ABI_VERSION`), and the SDK's init checks
-  `abi_version` and `size` again.
-- `fut_blocking`: a future whose first poll runs `work(ctx, out)` on the runtime's blocking
-  pool; `work` writes `result_size` bytes (align ≤ 8) and owns `ctx` from then on. Dropped before
-  its first poll, `drop_ctx(ctx)` runs instead; dropped while `work` runs, the finished result
-  goes to `drop_result` (if not null).
-- `fut_completer`: a pending future and a `handle` that `complete(handle, result)` completes
-  exactly once, from any thread (`result_size` bytes are moved). If the future was dropped first,
-  `drop_result` gets the result. Handles are ids in a runtime table, never reused: a second
-  `complete` or an unknown id is a fatal error, never a use of freed memory. The SDK's
-  `Completer` (results that can fail only) completes with the error "completer dropped" when it
-  is dropped without completing, so awaiting Velt code never hangs.
-- `VeltStr` and `VeltBytes` layouts are private to the runtime: libraries read them only through
-  `str_bytes` and `bytes_data`. One value is fixed: all 24 bytes zero is the empty string (and
-  the empty `u8[]`), which a library may make and drop without a call. velt_rt's unit tests
-  check that the SDK's `Api`, `VeltStr`, `VeltBytes`, `VeltErr` and `IoResultSlot` match the
-  runtime's exactly.
-- Hot-reload rule (`rt_abi_async.md` §13.5): the only code pointers stored are `work`,
-  `drop_ctx` and `drop_result`, which point into the library; libraries are never unloaded. A
-  library never stores a Velt code pointer (no function types cross the boundary).
-
-## Async I/O
-
-The table's second part lets a library run async Rust beside the program's tasks, the way the
-runtime's own drivers do (`crates/velt_rt/src/native/aio.rs`). Programs run on the executor
-written in Velt (`std/lang/hooks/sched.velt`); the runtime's Rust glue has one host, a tokio
-runtime with one worker thread and a blocking pool (`crates/velt_rt/src/task/runtime/host.rs`).
-A library's futures are polled inline by the Velt task awaiting them; its sockets are the
-runtime's, registered with the host's reactor, whose I/O wakes the awaiting task across threads;
-a task it spawns and its blocking work (`fut_blocking`) run on the host. Nothing Rust-specific
-crosses: a library carries its own std, possibly from another compiler.
-
-```c
-typedef uint32_t (*VeltPollFn)(void* state, void* cx, void* out);   // READY = 1, PENDING = 0
-typedef struct { const void* (*clone)(const void*); void (*wake)(const void*);
-                 void (*wake_by_ref)(const void*); void (*drop)(const void*); } VeltForeignWaker;
-typedef struct { const void* runtime; const void* data; const VeltForeignWaker* vtable; } VeltWakerArg;
-
-    VeltFut* (*fut_poll)(VeltPollFn poll, void* state, void (*drop_state)(void*), size_t result_size);
-    const void* (*cx_waker)(void* cx);                // the task's waker, borrowed for the poll
-    void* (*waker_clone)(const void* w);              // an owned (boxed) copy of a runtime waker
-    void (*waker_wake)(void* w);                      // wake and free
-    void (*waker_wake_by_ref)(const void* w);
-    void (*waker_drop)(void* w);
-    uint32_t (*fut_poll_ext)(VeltFut* f, const VeltWakerArg* w);  // await a runtime future
-    void (*fut_drop)(VeltFut* f);
-    void (*spawn)(VeltFut* f);                        // detached; result size 0
-    VeltFut* (*tcp_connect)(const uint8_t* addr, size_t len);     // "host:port" -> IoResult<u64>
-    int32_t (*stream_from_socket)(int64_t socket, uint64_t* out); // adopt a connected socket
-    uint32_t (*stream_poll_read)(uint64_t h, const VeltWakerArg* w, uint8_t* buf, size_t cap,
-                                 size_t* n, int32_t* err);        // n == 0: end of stream
-    uint32_t (*stream_poll_write)(uint64_t h, const VeltWakerArg* w, const uint8_t* buf,
-                                  size_t len, size_t* n, int32_t* err);
-    uint32_t (*stream_poll_flush)(uint64_t h, const VeltWakerArg* w, int32_t* err);
-    uint32_t (*stream_poll_shutdown)(uint64_t h, const VeltWakerArg* w, int32_t* err);
-    int64_t (*stream_socket)(uint64_t h);             // for socket options; the stream owns it
-    void (*stream_close)(uint64_t h);
-    uint64_t (*now_ns)(void);                         // monotonic
-    void* (*sleep_new)(uint64_t deadline_ns);
-    uint32_t (*sleep_poll)(void* s, const VeltWakerArg* w);
-    void (*sleep_reset)(void* s, uint64_t deadline_ns);
-    void (*sleep_drop)(void* s);
-    int64_t (*worker_index)(void);                    // always -1: one state per process
-    // after the string part below:
-    VeltFut* (*fut_poll_in)(VeltPollFn poll, void (*drop_state)(void*), size_t result_size,
-                            size_t state_size, size_t state_align, void** state_out);
-```
-
-- `fut_poll` makes a `VeltFut` from a library future: the runtime calls `poll(state, cx, out)`
-  on the thread of the awaiting task; `READY` means `result_size` bytes are at `out`. `state`
-  is freed with `drop_state` when the future finishes or is dropped. A panic must not cross
-  `poll` (the SDK turns it into the result's error). `fut_poll_in` is the same with one
-  allocation instead of two: the runtime's block has room for the state (`state_size`,
-  `state_align`) at `*state_out`, where the library moves it before the first poll; it never
-  moves, and `drop_state` drops it in place (the runtime frees the block). The SDK uses it for
-  every `#[export(async)]` call and `rt::spawn`.
-- `cx` is the runtime's poll context, valid during the call; `cx_waker(cx)` is the task's
-  waker, borrowed for the call. Functions that wait take a `VeltWakerArg`: `runtime` set to a
-  runtime waker (borrowed or owned) when the library's waker is one, which costs nothing; else
-  `data` (borrowed for the call) and `vtable`, the library's own waker (a combinator's), which
-  the runtime clones through `clone` when it must keep it.
-- Error codes (`err`, `stream_from_socket`): 0 is success; a positive value is the OS error
-  number, a negative one the negated `IoError` code (rt_abi_async.md §3).
-- Handles (streams, sleeps, owned wakers) are pointers the library owns until it closes,
-  drops or wakes them; using one after that is undefined, as with any Rust value.
-- The SDK wraps all of it: `#[export(async)] async fn`, `velt_native::rt::spawn`,
-  `velt_native::net::TcpStream` (tokio's `AsyncRead`/`AsyncWrite` with the `tokio` feature),
-  `velt_native::time::{sleep, timeout}`, `velt_native::rt::worker_index`.
-- `worker_index` is always -1: the host has no workers of its own to place work on, so a library
-  keeps one state for the process.
-
-## Strings
-
-A Velt string knows its UTF-16 length and whether it is ASCII (rt_abi.md "Strings"), so making one
-reads its text once. The table lets a library make strings without copying them (these entries
-follow `worker_index`; `fut_poll_in`, above, follows `str_utf8`):
-
-```c
-    void* (*alloc)(uint64_t size, uint64_t align);                  // the runtime's allocator
-    void* (*realloc)(void* p, uint64_t old_size, uint64_t align, uint64_t new_size);
-    void (*free)(void* p, uint64_t size, uint64_t align);
-    void (*str_from_utf8)(const uint8_t* p, size_t len, VeltStr* out); // trusted UTF-8, counted
-    void (*str_retain)(const VeltStr* s, VeltStr* out);               // another reference
-    uint8_t* (*strbuf_spare)(VeltStr* buf, uint64_t min, uint64_t* avail);
-    void (*strbuf_commit)(VeltStr* buf, uint64_t n, uint8_t ascii);
-    const uint8_t* (*str_utf8)(const VeltStr* s, size_t* len);       // bytes if UTF-8, else null
-```
-
-- `alloc`/`realloc`/`free`: memory Velt frees (arrays a library returns).
-- `str_from_utf8`: like `str_new` for bytes the library knows are UTF-8 (no check in release
-  builds; debug runtimes check).
-- `str_retain`: another reference to the same immutable string (a count, no copy): a library
-  keeps a string argument past the call this way (an async export's parameter).
-- `str_utf8`: a string's bytes when they are UTF-8 (no lone surrogate), else null. The string
-  knows (its lone-surrogate count), so a `&str` parameter borrows the text without scanning it;
-  only a string with a lone surrogate takes the lossy copy. A `&Str` parameter is the caller's
-  string itself and reads nothing until asked (`as_bytes`, `to_str`): JSON text from
-  `JSON.stringify` (always UTF-8) is read as stored this way.
-- `strbuf_spare(buf, min, avail)`: makes `buf` a unique heap buffer with room for at least `min`
-  bytes after its text and returns where the room starts (`*avail` bytes). Bytes written there
-  are not text yet; the runtime keeps them when a later `strbuf_spare` grows the buffer.
-  `strbuf_commit(buf, n, ascii)` makes the next `n` written bytes text: UTF-8 of whole
-  characters, counted once (not at all when `ascii` is 1). The first non-ASCII text of an ASCII
-  buffer gives it a header (rt_abi.md "Strings"): the text moves once, into a fresh buffer.
-- The SDK's `velt_native::StrBuf` is built on them: it writes into the spare room directly (a
-  bounds check and a copy per write, no call into the runtime), grows by doubling, keeps up to 23
-  bytes to itself (an inline string), and `finish()` commits once. `velt_text`'s encoders
-  (numbers, JSON, database rows) write into any `velt_text::Out`, a `Vec<u8>` or a `StrBuf`.
-  `velt_native::Str` is an owned Velt string: a parameter (retained, not copied), a result
-  (moved), an array element or a field.
-
-What a string result costs, per path (`cargo run --release -p velt_rt --example native_strings`,
-Apple M-series): a `StrBuf` is as fast as or faster than a `Vec<u8>` copied into a string once, from
-−11 % (short text) to +1 % (1 MB of non-ASCII text), and 18–77 % faster than a `String` result
-(checked, then copied); a retained `Str` parameter costs 2–4 ns where a `String` copy costs 13 ns
-(16 bytes) to 17 µs (64 KB).
-
-## Handles and borrowed async arguments
-
-- `velt_native::handles::Registry<T>` keys (generation-checked, sharded): for handles Velt may
-  copy (a Copy struct holding the handle): a closed handle fails cleanly through every copy.
-- `velt_native::handles::Single<T>`: the object's address, for an object exactly one Velt value
-  owns (a class that never copies its handle and releases it once).
-  Using it costs nothing; nothing checks a stale one, so it is for that ownership only.
-- `#[export(async)] fn f(a: &[Str], ..) -> impl Future<Output = R> + Send + 'static`: the
-  arguments are borrowed for the synchronous part (encode a request from them), and the
-  returned future cannot keep them (a compile error). `async fn` exports take owned arguments.
-
-## Rows
-
-A database driver hands result rows to std's `JSON.parse<T[]>` decoder without making them
-JSON text: as a `u8[]` in the binary rows format of `velt_text::rows` (`BinRows` writes it,
-into a `velt_native::Array<u8>`, the Velt array itself). The runtime's reader reads them
-(`velt_rt_json_reader_new_with` flag 4, `FLAG_ROWS`, [rt_abi_async.md](rt_abi_async.md)),
-answering every call as it would for the JSON the rows stand for (`[{"col":value,...},...]`, or
-with `single` one row's object). No number formatting or escaping on the way out, no scanning on
-the way in. std's own decoders read drivers' rows through row cursors (below); the format is also
-what a cursor's rows are copied into when a decoder looks ahead.
-
-Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows, one
-cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT` 3 + `i64`,
-`FLOAT` 4 + `f64`, `TEXT` 5 or `ASCII` 7 + `u32` length + UTF-8, `BLOB` 6 + `u32` length +
-bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The reader
-trusts what the tags say about text (UTF-8, ASCII; `BinRows` checks), and a buffer cut short
-reads as a type mismatch, never out of bounds. The format has no cell for nested values (arrays,
-JSON columns); a row cursor hands those as JSON text.
-
-## Row cursors
-
-A driver can also let the decoder read its rows where it has them, without writing them into a
-buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()` (the header of
-the binary rows: `single`, the column names), `step()` (to the next row, the first on the first
-call; false at the end and after a failure, which the driver keeps) and `cell(col)` (a `Cell`
-of the current row: null, bool, int, float, text, ascii text, blob, or a nested value as JSON
-text, borrowed until the next step) — and registers it with the runtime: `open_cursor(Box<C>)`
-(`velt_text`'s `sdk` feature) puts its data pointer and a `#[repr(C)]` table of those three
-functions (`RawCursor`) in the runtime's table of open cursors (`db_open`, below) and returns the
-key, a `u64` handle like every other native handle, which the library hands its Velt side. The
-Velt side decodes with velt/db's `decodeRows<T>(cursor)` (or `decodeRow<T>` for a cursor opened
-for one row; [velt/db](https://veltlang.com/docs/std/db/) "Native drivers"): std looks the handle up
-(`velt_rt_db_cursor`), throws `RowError` when it names no open cursor (a made-up number, a
-closed cursor's handle, a sink's), and otherwise runs the generated decoder over the cursor
-(reader flag 8, rt_abi_async.md). No Velt code ever holds an address. Then it gives the handle
-back to the driver, whose library takes the cursor back with `close_cursor::<C>(handle)` (`None`
-for a handle that is not an open cursor of type `C`: the runtime checks the key and a tag of the
-type), releases what it held and reports a failure met
-while stepping. The decoder reads cells between two steps; a decoder that looks ahead across rows (a
-union of whole results) gets the remaining rows copied into binary form once, and a nested value
-is read with a JSON reader over its text.
-
-When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
-`u8[]`), the generated decoder reads the rows by column instead of through the JSON reader
-(`velt_rt_rows_*`, rt_abi_async.md; `std/db/generate/columns.velt`), with the same results and
-messages. `crates/veltc/tests/native_rows/` exercises cursors and sinks end to end, and
-`packages/postgres/native/` (a reference driver over tokio-postgres that the package's Velt code
-does not use) is built on them. A driver written in Velt (`packages/sqlite`, `packages/postgres`)
-offers its rows as velt/db's `RowSource` instead ([velt/db](https://veltlang.com/docs/std/db/)),
-read the same way through its own methods.
-
-## Parameter sinks
-
-The other way, a driver can take a statement's parameters as typed values instead of the JSON
-text of `JSON.stringify(params)`: it implements `ParamSink` — `object()` (the parameters are an
-object's members), `name(bytes)` (the next value is the member of that name) and `value(Cell)`
-— and registers it with `open_sink(Box<S>)` (as a cursor: its handle goes to the Velt side, the
-library takes it back with `close_sink::<S>(handle)`). velt/db's `bindParams<P>(sink, params)`
-looks the handle up (`velt_rt_db_sink`; false, binding nothing, when it names no open sink)
-and fills the sink: it calls them from code generated for `P` (`std/db/generate/bind.velt`):
-values in order for an array, a tuple
-or a lone value, `object()` and then names and values for an object, each value as its JSON
-text would read back (an integral number below 1e21 an int, NaN null, a `u8[]` member a blob).
-It does so for numbers, bools, strings, `T | null` of those, `u8[]` members and objects of such
-fields, and returns false, doing nothing, for any other type: the driver then takes the JSON
-text, so the binding never depends on which way the parameters went.
-
-## Helper crates
-
-Two crates of this repository help a native library and are shared with the runtime:
-`velt_text` (string encoding, number formatting, JSON, database rows, row cursors and parameter
-sinks; its `sdk` feature writes into Velt strings) and `velt_tls` (one rustls client setup per
-process: the `ring` provider, Mozilla's roots plus extra PEM CAs, cached per CA text; the runtime
-does not use it: TLS in programs is Velt's, std/net/tls/). `packages/postgres/native/` is built on them.
-
-## Start-up
-
-`velt_main` (VIR lowering, `LowerOptions::native_inits`) begins, for each package with a library
-in package-graph order, with
-
-```c
-int32_t rc = velt_native_init_<pkg>(velt_rt_native_api());
-velt_rt_native_check(rc, &"<pkg>");
-// rc != 0: "error: the native library of package `<pkg>` failed to start (code <rc>)", exit 1
-```
-
-`velt_rt_native_api` and `velt_rt_native_check` are in [rt_abi.md](rt_abi.md). The SDK's init
-(`velt_native::package!(p)`) stores the table and silences Rust's panic hook (exports catch
-panics: `IoResult`/`IoStatus` results become `native panic: <msg>` errors, other results are
-fatal).
+`declare c` is the only way to call native code. The Velt-specific native ABI that packages' Rust
+crates used (the runtime function table `velt_native_init_<pkg>` received, `velt_<pkg>__` exports
+with signature records, handle tables, row cursors and parameter sinks, the `velt_native` SDK) was
+removed in [#2563](https://github.com/velt-lang/velt/issues/2563); a manifest or a bundle of one
+is refused with an error saying to use `declare c`.
 
 ## Bundles
 
-A bundle is one target's library, a directory exchanged as a `VELTPKG1` archive
-(`vpm::archive`) restricted to these paths:
+A bundle is one target's C libraries of one package version, a directory exchanged as a
+`VELTPKG1` archive (`vpm::archive`) restricted to these paths:
 
 ```text
-native.json                   # package, version, target, abi, shared, import_lib?, static?,
-                              # system_libs?, exports
-shared/libvelt_native_<p>.so  # .dylib (install name @rpath/...) on macOS
-shared/velt_native_<p>.dll    # Windows, with shared/velt_native_<p>.dll.lib
-static/<p>.o                  # Linux and macOS only
+native.json                        # package, version, target, abi (0), exports ({}), c
+shared/libvelt_c_<p>__<lib>.so     # .dylib on macOS
+static/libvelt_c_<p>__<lib>.a      # Linux and macOS
+shared/velt_c_<p>__<lib>.dll       # Windows, with shared/velt_c_<p>__<lib>.dll.lib
 ```
 
-- `velt native build [--target <triple>]` runs
-  `cargo rustc --release --lib --target <triple> --manifest-path <pkg>/<path>/Cargo.toml --
-  --print native-static-libs=<file>` (`$VELT_CARGO`); the crate must build a `cdylib` and (except
-  on Windows) a `staticlib`.
-- `system_libs` (with `static`): the system libraries the object needs, as rustc printed them
-  for the staticlib (`-lgcc_s`, `-framework`, `SystemConfiguration`, …: what the crate's
-  dependencies declare with `cargo:rustc-link-lib`). A release link adds those that the link
-  does not pass anyway, so a library's system dependencies (a macOS framework such as
-  SystemConfiguration) reach only the programs that use it. A shared library brings its own. A
-  bundle without the field is built again when it is built from source, and linked without them
-  when it is prebuilt.
-- **Prelinking** (`static/<p>.o`): `ld -r --force-group-allocation -u <export>… lib.a`, then
-  `objcopy --strip-debug --keep-global-symbols=<exports + init>` (GNU ld/objcopy,
-  `$VELT_NATIVE_LD`/`$VELT_NATIVE_OBJCOPY`); macOS: `ld -r -exported_symbols_list`. The Rust
-  std inside it becomes local, so it cannot clash with the runtime's copy or another package's.
-  Section groups are turned into plain sections first: otherwise the runtime's copy of a group
-  (e.g. `DW.ref.rust_eh_personality`) would replace the library's and leave references dangling.
-- `native.json` may only name the bundle's own files: `shared` and `import_lib` under `shared/`,
-  `static` under `static/`, no absolute paths or `..` (checked on unpack, publish and load).
-- A prebuilt bundle's `exports` list is not trusted as written. On unpack, publish and load:
-  - every listed name must start with `velt_<pkg>__`;
-  - the shared library's exports, read back with `vpm::native::exports::read`, must equal the
-    list, signatures included. They are read from the ELF `.dynsym` section (every defined
-    symbol with global, weak or unique binding and default or protected visibility, whatever its
-    type), the Mach-O symbol table and the PE export directory;
-  - the Windows import library must import exactly the DLL's exports, each by its own name from
-    the bundle's DLL; other members may define only the import descriptor names, and the
-    archive's symbol map must point each name at a member that defines it;
-  - the prelinked object may define no non-local symbol besides the exports, the init function
-    and the toolchain's names (common symbols, Mach-O tentative definitions included).
-
-  These checks cover the tables listed; a file whose loader-visible data disagrees with them
-  (an ELF `PT_DYNAMIC` that is not `.dynsym`, a Mach-O export trie) is not detected
-  ([#314](https://github.com/velt-lang/velt/issues/314)).
+- `velt native build [--target <triple>]` compiles the package's `sources` with the pinned zig
+  (`vpm::native::c_build`) into `<package>/target/velt-native/<triple>/`; a bundle is reused
+  while the hash of its inputs is unchanged (c-ffi.md).
+- `native.json`'s `c` maps each library name the package's declarations give to its files,
+  under exactly the names above (`vpm::native::c_library_files`): on Windows the DLL is copied
+  beside the executable, so a bundle can't name another package's. Every file it names must be in
+  the bundle. Checked on unpack, publish and load (`vpm::native::bundle::check_meta`).
+- `abi` is 0 and `exports` empty: C libraries call no runtime function and have no init. Both
+  fields stay so that an older velt reads the bundle. A bundle with no `c`, an `abi` above 0 or
+  exports is a Rust crate's library: refused.
 - The checksum of a bundle is the content hash of its files (`vpm::native::bundle::checksum`,
   the hash `velt.lock.json` records for packages).
 
@@ -420,52 +43,33 @@ For the build target (`InstallOptions::target`):
   fetched into `<cache>/native/<name>-<version>/<triple>/`, after its checksum (and its
   `native.json`'s package, version and target) is verified in a staging directory; nothing
   unverified is ever where the compiler loads or links it. A cached bundle whose files changed is
-  replaced.
-- No bundle for the target: built from the package's sources with `cargo build --locked` (the
-  published `Cargo.lock`, which `velt publish` requires) only when cargo is installed **and** the
-  user opted in with `VELT_NATIVE_FROM_SOURCE=1` (the build runs the package's build scripts);
-  `velt` announces the build before it starts. Otherwise the error
+  replaced. The index's `native_abi` above 0 is refused before download.
+- No bundle for the target: built from the package's sources with zig, when the program links
+  them, only when the user opted in with `VELT_NATIVE_FROM_SOURCE=1`. Otherwise the error
 
   ```text
-  `sqlite 0.1.0` has no prebuilt native library for <triple> (published: <targets>).
-  Install Rust (https://rustup.rs) to build it from source, or ask the package author to publish this target.
+  `tiny 0.1.0` has no prebuilt native library for <triple> (published: <targets>).
+  Set VELT_NATIVE_FROM_SOURCE=1 to build its C sources here with the pinned zig, or ask the package author to publish this target.
   ```
-- A **path** package (or the root package) with `native` is built from source into
-  `<package>/target/velt-native/<triple>/` (cargo's work in `.../cargo`).
-- `wasm32-*` targets: an error naming the package (WebAssembly libraries are not supported).
-- The result is `vpm::GraphPackage::native: Option<NativeLib>`; `velt add`/`velt install` list
-  every package that runs native code and whether it was prebuilt or built from source.
-
-## C libraries from `sources`
-
-A package's C `sources` ([c-ffi.md](../design/c-ffi.md) "Where libraries come from") make a bundle
-of the same form and the same registry paths, checksums and lock entries as a crate's, whose
-`native.json` has no `shared` and no `exports` but `c`: library name → `{ shared, import_lib?,
-static? }`, under exactly the names `shared/libvelt_c_<pkg>__<lib>.so` or `.dylib` and
-`static/libvelt_c_<pkg>__<lib>.a`, or `shared/velt_c_<pkg>__<lib>.dll` and `.dll.lib`. Its `abi` is
-0: such code calls no runtime function, has no init and isn't held to an export list. A bundle has a
-crate's library or C libraries, not both. Only the libraries a program's declarations name are
-linked (`NativeLink`, as below, with no `system_libs`); `velt dev` loads their shared libraries with
-`RTLD_GLOBAL`.
+- A **path** package (or the root package) builds its sources into
+  `<package>/target/velt-native/<triple>/`; a git or url package only with
+  `VELT_NATIVE_FROM_SOURCE=1`.
+- The result is `vpm::GraphPackage::c_bundle`: `CBundle::Prebuilt` (a verified bundle) or
+  `CBundle::FromSource` (where it builds). `velt add`/`velt install` list every package with a
+  prebuilt bundle.
 
 ## Linking (`velt_link::NativeLink`)
 
+Only the libraries a program's declarations name are linked.
+
 | Build | Linux / macOS | Windows |
 |---|---|---|
-| debug | `-L<dir> -lvelt_native_<p> -Wl,-rpath,<dir>` | import library; the DLL is copied next to the executable |
-| `--release` | `static/<p>.o` after the program's objects, its `system_libs` after the runtime's libraries: self-contained | as debug (no partial link with MSVC) |
-| `velt dev` (JIT) | `dlopen` (RTLD_NOW, RTLD_LOCAL), exports and init given to the JIT | `LoadLibraryW` |
+| debug | `-L<dir> -lvelt_c_<p>__<lib> -Wl,-rpath,<dir>` | import library; the DLL is copied next to the executable |
+| `--release` | `static/libvelt_c_<p>__<lib>.a` after the program's objects: self-contained | as debug (no partial link with MSVC) |
+| `velt dev` (JIT) | the shared library loaded with `RTLD_GLOBAL` | `LoadLibraryW` |
 
 The bundled linker (lld with a link kit, [linking](../linking.md)) gets the same libraries
 (`-rpath <dir>` instead of `-Wl,-rpath,<dir>`); a static musl executable
-(`--target <arch>-unknown-linux-musl`) takes only `static/<p>.o`, so its native packages need a
-`--release` build. The kits' system libraries cover what the runtime imports and, on Windows and
-Linux, every export of those system libraries; a native library that needs another system
-library links with `VELT_LINKER=system` (the macOS kit has CoreFoundation and
-SystemConfiguration besides libSystem).
-
-The link stamp hashes every native file (path, size, modification time) and the system
-libraries. A statically linked
-(musl) `velt` cannot load libraries into its JIT host and says to use `velt dev --exe`.
-`velt dev` watches the crate sources of libraries built from source and restarts (never swaps)
-when they change.
+(`--target <arch>-unknown-linux-musl`) always takes the static library. The link stamp hashes
+every library file (path, size, modification time). `velt dev` watches the C sources of
+libraries built here and restarts (never swaps) when they change.

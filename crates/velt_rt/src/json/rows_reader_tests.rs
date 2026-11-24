@@ -1,85 +1,10 @@
-//! Tests of the rows reader (rows_reader.rs), over binary rows and over a live cursor.
+//! Tests of the rows reader (rows_reader.rs) over binary rows.
+use super::bin::BinRows;
 use super::*;
-use velt_text::rows_cursor::RowCursor;
 
-thread_local! {
-    /// The tests read through a live cursor ([`BufCursor`]) instead of the buffer.
-    static LIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// A reader over `buf`, or over a live cursor serving the same rows.
+/// A reader over `buf`.
 fn make(buf: Vec<u8>, flags: u32) -> RowReader {
-    if !LIVE.with(|l| l.get()) {
-        return RowReader::new(buf, flags);
-    }
-    let (_, columns, start) = bin::header_end(&buf).unwrap();
-    // Leaked: a test's cursor lives as long as the test.
-    let cursor = Box::leak(Box::new(BufCursor {
-        buf,
-        columns,
-        start,
-        row: None,
-    }));
-    // SAFETY: the cursor is leaked, so it outlives the reader.
-    unsafe { RowReader::live(RawCursor::new(cursor), flags) }
-}
-
-/// A driver's cursor over binary rows: the reader must answer the same through it.
-struct BufCursor {
-    buf: Vec<u8>,
-    columns: usize,
-    start: usize,
-    row: Option<usize>,
-}
-
-impl RowCursor for BufCursor {
-    fn header(&self) -> &[u8] {
-        &self.buf[..self.start]
-    }
-    fn step(&mut self) -> bool {
-        let next = match self.row {
-            None => self.start,
-            Some(mut pos) => {
-                for _ in 0..self.columns {
-                    pos = bin::cell_at(&self.buf, pos).unwrap().1;
-                }
-                pos
-            }
-        };
-        self.row = Some(next);
-        next < self.buf.len()
-    }
-    fn cell(&self, col: usize) -> Cell<'_> {
-        let mut pos = self.row.unwrap();
-        for _ in 0..col {
-            pos = bin::cell_at(&self.buf, pos).unwrap().1;
-        }
-        match bin::cell_at(&self.buf, pos).unwrap().0 {
-            BinCell::Null => Cell::Null,
-            BinCell::Bool(v) => Cell::Bool(v),
-            BinCell::Int(v) => Cell::Int(v),
-            BinCell::Float(v) => Cell::Float(v),
-            BinCell::Text(a, b, _) => Cell::Text(&self.buf[a..b]),
-            BinCell::Blob(a, b) => Cell::Blob(&self.buf[a..b]),
-            BinCell::Json(a, b) => Cell::Json(&self.buf[a..b]),
-        }
-    }
-}
-
-#[test]
-fn a_live_cursor_reads_as_the_rows_it_serves() {
-    LIVE.with(|l| l.set(true));
-    reads_rows_as_an_array_of_objects();
-    a_single_row_is_an_object();
-    no_rows_is_an_empty_array();
-    a_wrong_kind_fails_until_reset();
-    unknown_keys_are_skipped_or_rejected();
-    whole_rows_skip_and_read_as_values();
-    negative_zero_reads_as_zero();
-    a_column_name_of_any_length_is_kept();
-    marks_made_in_a_row_are_forgotten_at_the_next();
-    nested_values_read_as_their_json();
-    LIVE.with(|l| l.set(false));
+    RowReader::new(buf, flags)
 }
 
 /// Two rows of every kind of cell.

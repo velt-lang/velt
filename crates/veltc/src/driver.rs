@@ -473,12 +473,6 @@ fn lower_checked(
 
     let t = Instant::now();
     let std_root = loader::std_root();
-    // A generator host reaches no native code (`check_generator_host`): it starts none of the
-    // program's native packages and links none of their libraries.
-    let native_inits = match sess.generator_build {
-        true => vec![],
-        false => crate::native::inits(opts.packages.as_ref()),
-    };
     let target = opts.target();
     let line_info = opts.has_line_info();
     // Lowering reads the source map and the counted types while the session lends its kept
@@ -488,7 +482,6 @@ fn lower_checked(
     let lower_opts = velt_vir::LowerOptions {
         source_map: Some(&sm),
         std_root: std_root.as_deref(),
-        native_inits: &native_inits,
         // A debug compiler links the debug runtime, which checks that no two tasks use one
         // captured variable's cell (#916); release programs and release compilers skip it. So
         // does a source generator host under either executor: it runs no tasks, so the check would

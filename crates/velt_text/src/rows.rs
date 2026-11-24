@@ -2,7 +2,7 @@
 //! database driver's rows reach the compile-time generated `JSON.parse<T[]>` decoder without
 //! becoming JSON text: no escaping and number formatting on the way out, no scanning on the way
 //! in. A driver returns them as a `u8[]` and std decodes them with the same decoder as JSON text
-//! (native_abi.md "Rows").
+//! (rt_abi_async.md, `FLAG_ROWS`).
 //!
 //! Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows,
 //! each one cell per column. A cell is a tag byte and its payload: [`NULL`], [`FALSE`],
@@ -17,8 +17,24 @@
 //! [`BinRows`], which checks them. A buffer cut short reads as a mismatch, never out of bounds.
 
 use crate::json_escape::push_json_string;
-use crate::rows_cursor::Cell;
 use crate::Out;
+
+/// One value of a row (what a binary cell holds, its text borrowed from the buffer).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Cell<'a> {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    /// Text, UTF-8 or not (the reader replaces what is not with U+FFFD).
+    Text(&'a [u8]),
+    /// Text known to be all ASCII.
+    Ascii(&'a [u8]),
+    Blob(&'a [u8]),
+    /// A nested value (an array or object the column holds) as its JSON text, one well-formed
+    /// value: the decoder reads it as JSON.
+    Json(&'a [u8]),
+}
 
 pub const NULL: u8 = 0;
 pub const FALSE: u8 = 1;
@@ -71,9 +87,8 @@ where
     }
 }
 
-/// Builds a result set into `O` (a `Vec<u8>`, or a Velt `u8[]` itself, a native library's
-/// `velt_native::Array<u8>`: no copy): one value method per column, in column order, for every
-/// row.
+/// Builds a result set into `O` (a `Vec<u8>`): one value method per column, in column order, for
+/// every row.
 pub struct BinRows<O: Out = Vec<u8>> {
     buf: O,
     rows: usize,
@@ -284,8 +299,7 @@ pub fn push_cell_json(out: &mut Vec<u8>, buf: &[u8], cell: BinCell) {
     );
 }
 
-/// [`push_cell_json`] of a cell however it is held (a live cursor's,
-/// [`crate::rows_cursor`]); text that is not UTF-8 gets U+FFFD.
+/// [`push_cell_json`] of a cell however it is held; text that is not UTF-8 gets U+FFFD.
 pub fn push_cell(out: &mut Vec<u8>, cell: Cell<'_>) {
     match cell {
         Cell::Null => out.extend_from_slice(b"null"),

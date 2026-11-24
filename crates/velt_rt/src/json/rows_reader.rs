@@ -15,9 +15,9 @@ use super::reader::{
     TOKEN_ARRAY_START, TOKEN_EOF, TOKEN_ERROR, TOKEN_FALSE, TOKEN_NULL, TOKEN_NUMBER,
     TOKEN_OBJECT_END, TOKEN_OBJECT_START, TOKEN_STRING, TOKEN_TRUE,
 };
-use super::rows_bin::{self as bin, BinCell, BinRows};
+use super::rows_bin::{self as bin, BinCell};
 use crate::str::VeltStr;
-use velt_text::rows_cursor::{Cell, RawCursor};
+use velt_text::rows::Cell;
 
 /// Where the reader is in the document.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,8 +44,7 @@ enum At {
 #[derive(Clone, Copy)]
 struct Cursor {
     at: At,
-    /// Offset of the next unread row or cell (binary rows; a live cursor has its cells by
-    /// column).
+    /// Offset of the next unread row or cell.
     pos: usize,
     col: usize,
     /// The blob being read (in `Bytes` / `Byte`): its address and length, the next byte's
@@ -60,13 +59,9 @@ struct Cursor {
 
 pub struct RowReader {
     /// The rows: a `u8[]` the decoder borrows for the whole parse (as the text reader borrows
-    /// its source string), or `_owned`'s bytes. Over a live cursor, its header alone.
+    /// its source string), or `_owned`'s bytes.
     buf: &'static [u8],
     _owned: Vec<u8>,
-    /// A driver's live rows ([`RawCursor`]) instead of binary ones, and whether it is on a row
-    /// not read yet (`None`: not asked since the last row).
-    live: Option<RawCursor>,
-    on_row: Option<bool>,
     columns: usize,
     single: bool,
     c: Cursor,
@@ -93,7 +88,7 @@ impl RowReader {
         // SAFETY: the bytes live in `_owned`'s heap buffer, which moves with the reader but
         // never changes.
         let bytes = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(buf.as_slice()) };
-        RowReader::with(bytes, buf, None, flags)
+        RowReader::with(bytes, buf, flags)
     }
 
     /// A reader over rows the caller keeps alive and unchanged until the reader is dropped.
@@ -104,28 +99,16 @@ impl RowReader {
         RowReader::with(
             std::mem::transmute::<&[u8], &'static [u8]>(buf),
             Vec::new(),
-            None,
             flags,
         )
     }
 
-    /// A reader over a driver's live rows (`velt_text::rows_cursor`).
-    ///
-    /// # Safety
-    /// The cursor stays alive, and is used by nothing else, until the reader is dropped.
-    pub unsafe fn live(cursor: RawCursor, flags: u32) -> RowReader {
-        let header = cursor.header();
-        RowReader::with(header, Vec::new(), Some(cursor), flags)
-    }
-
-    fn with(buf: &'static [u8], owned: Vec<u8>, live: Option<RawCursor>, flags: u32) -> RowReader {
+    fn with(buf: &'static [u8], owned: Vec<u8>, flags: u32) -> RowReader {
         // A buffer without a readable header has no rows.
         let (single, columns, start) = bin::header_end(buf).unwrap_or((false, 0, buf.len()));
         RowReader {
             buf,
             _owned: owned,
-            live,
-            on_row: None,
             columns,
             single,
             c: Cursor {
@@ -196,44 +179,24 @@ impl RowReader {
     /// The cell of column `col` and where the next one starts.
     #[inline]
     fn cell(&self) -> Option<(Cell<'static>, usize)> {
-        match &self.live {
-            // SAFETY: the reader's contract; `col` is below the column count (`Val`).
-            Some(cursor) => Some((unsafe { cursor.cell(self.c.col) }, self.c.pos)),
-            None => bin::cell_at(self.buf, self.c.pos).map(|(cell, next)| {
-                let cell = match cell {
-                    BinCell::Null => Cell::Null,
-                    BinCell::Bool(v) => Cell::Bool(v),
-                    BinCell::Int(v) => Cell::Int(v),
-                    BinCell::Float(v) => Cell::Float(v),
-                    BinCell::Text(start, end, true) => Cell::Ascii(&self.buf[start..end]),
-                    BinCell::Text(start, end, false) => Cell::Text(&self.buf[start..end]),
-                    BinCell::Blob(start, end) => Cell::Blob(&self.buf[start..end]),
-                    BinCell::Json(start, end) => Cell::Json(&self.buf[start..end]),
-                };
-                (cell, next)
-            }),
-        }
+        bin::cell_at(self.buf, self.c.pos).map(|(cell, next)| {
+            let cell = match cell {
+                BinCell::Null => Cell::Null,
+                BinCell::Bool(v) => Cell::Bool(v),
+                BinCell::Int(v) => Cell::Int(v),
+                BinCell::Float(v) => Cell::Float(v),
+                BinCell::Text(start, end, true) => Cell::Ascii(&self.buf[start..end]),
+                BinCell::Text(start, end, false) => Cell::Text(&self.buf[start..end]),
+                BinCell::Blob(start, end) => Cell::Blob(&self.buf[start..end]),
+                BinCell::Json(start, end) => Cell::Json(&self.buf[start..end]),
+            };
+            (cell, next)
+        })
     }
 
-    /// Whether another row follows (a live cursor steps to it, once).
-    fn row_ahead(&mut self) -> bool {
-        match &self.live {
-            None => self.c.pos < self.buf.len(),
-            Some(cursor) => match self.on_row {
-                Some(on) => on,
-                None => {
-                    // SAFETY: the reader's contract.
-                    let on = unsafe { cursor.step() };
-                    self.on_row = Some(on);
-                    on
-                }
-            },
-        }
-    }
-
-    /// The row was read (or skipped): a live cursor steps again when asked for the next.
-    fn row_done(&mut self) {
-        self.on_row = None;
+    /// Whether another row follows.
+    fn row_ahead(&self) -> bool {
+        self.c.pos < self.buf.len()
     }
 
     /// The pending column value and where the next cell starts.
@@ -266,7 +229,7 @@ impl RowReader {
         if self.c.blob_at >= self.c.blob_len {
             return None;
         }
-        // SAFETY: in the blob, which lives as long as the buffer or the cursor's row.
+        // SAFETY: in the blob, which lives as long as the buffer.
         let b = unsafe { *(self.c.blob as *const u8).add(self.c.blob_at) };
         self.c.blob_at += 1;
         self.c.at = At::Bytes;
@@ -321,10 +284,7 @@ impl RowReader {
                 self.c.at = At::Rows;
                 self.row_marks = self.marks.len();
             }
-            // A live single row: the cursor steps to it.
-            (At::Top, b'{') if self.single && (self.live.is_none() || self.row_ahead()) => {
-                self.open_row()
-            }
+            (At::Top, b'{') if self.single => self.open_row(),
             (At::Row, b'{') => self.open_row(),
             (At::Val, b'[') => match self.cell() {
                 Some((Cell::Blob(b), next)) => {
@@ -400,7 +360,6 @@ impl RowReader {
         }
         if self.c.col >= self.columns {
             self.c.at = if self.single { At::Done } else { At::Rows };
-            self.row_done();
             return Ok(None);
         }
         // In bounds: `header_end` walked every name.
@@ -538,10 +497,6 @@ impl RowReader {
         }
         match self.c.at {
             At::Top => self.c.at = At::Done,
-            At::Row if self.live.is_some() => {
-                self.row_done();
-                self.c.at = At::Rows;
-            }
             At::Row => match self.row_end(self.c.pos) {
                 Some(end) => {
                     self.c.pos = end;
@@ -572,11 +527,6 @@ impl RowReader {
 
     /// The current position, for `reset`.
     pub fn mark(&mut self) -> u64 {
-        // A live cursor cannot go back to an earlier row: a decoder that may read the rows
-        // again (a union of whole results) gets the ones left in binary form, once.
-        if self.live.is_some() && matches!(self.c.at, At::Top | At::Rows) {
-            self.buffer_live();
-        }
         let inner = self.nested.as_deref().map(Reader::mark);
         self.marks.push((self.c, inner));
         (self.marks.len() - 1) as u64
@@ -598,61 +548,6 @@ impl RowReader {
         }
     }
 
-    /// Reads the rows a live cursor has left into binary rows and goes on over those.
-    fn buffer_live(&mut self) {
-        let Some(cursor) = self.live.take() else {
-            return;
-        };
-        let mut w = BinRows::with_names(Vec::new(), &self.buf[1..], self.single);
-        // SAFETY: the reader's contract; every `col` is below the column count.
-        unsafe {
-            let mut on = match (self.c.at, self.on_row) {
-                (At::Rows, Some(on)) => on,
-                _ => cursor.step(),
-            };
-            while on {
-                for col in 0..self.columns {
-                    match cursor.cell(col) {
-                        Cell::Null => w.null(),
-                        Cell::Bool(v) => w.bool(v),
-                        Cell::Int(v) => w.int(v),
-                        Cell::Float(v) => w.float(v),
-                        Cell::Text(t) | Cell::Ascii(t) => w.text(t),
-                        Cell::Blob(b) => w.bytes(b),
-                        Cell::Json(j) => w.json(j),
-                    }
-                }
-                w.end_row();
-                on = !self.single && cursor.step();
-            }
-        }
-        self._owned = w.finish();
-        // SAFETY: the bytes live in `_owned`'s heap buffer, which never changes from now on.
-        self.buf = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(self._owned.as_slice()) };
-        self.on_row = None;
-        self.c.pos = bin::header_end(self.buf).map_or(self.buf.len(), |(_, _, start)| start);
-    }
-
-    /// The current row (a live cursor's) as a JSON object.
-    fn push_live_row(&self, out: &mut Vec<u8>) {
-        let mut name = bin::NAMES;
-        out.push(b'{');
-        for col in 0..self.columns {
-            if col > 0 {
-                out.push(b',');
-            }
-            let (start, end, _) = bin::name_at(self.buf, name);
-            name = end;
-            velt_text::json_escape::push_json_string(out, &self.buf[start..end]);
-            out.push(b':');
-            if let Some(cursor) = &self.live {
-                // SAFETY: the reader's contract; `col` is below the column count.
-                bin::push_cell(out, unsafe { cursor.cell(col) });
-            }
-        }
-        out.push(b'}');
-    }
-
     /// One complete value of any kind as the JSON text it stands for (std reads it as a
     /// `JsonValue`; a decoder asking for a dynamic value is the rare case).
     pub fn value(&mut self) -> Option<Vec<u8>> {
@@ -666,24 +561,6 @@ impl RowReader {
         }
         let mut text = Vec::new();
         let ok = match self.c.at {
-            At::Top if self.live.is_some() => {
-                if self.single {
-                    let on = self.row_ahead();
-                    self.push_live_row(&mut text);
-                    on
-                } else {
-                    text.push(b'[');
-                    while self.row_ahead() {
-                        if text.len() > 1 {
-                            text.push(b',');
-                        }
-                        self.push_live_row(&mut text);
-                        self.row_done();
-                    }
-                    text.push(b']');
-                    true
-                }
-            }
             At::Top => match bin::to_json(self.buf) {
                 Some(json) => {
                     text = json;
@@ -691,10 +568,6 @@ impl RowReader {
                 }
                 None => false,
             },
-            At::Row if self.live.is_some() => {
-                self.push_live_row(&mut text);
-                true
-            }
             At::Row => bin::push_row_json(&mut text, self.buf, self.c.pos).is_some(),
             At::Val => match self.cell() {
                 Some((cell, _)) => {

@@ -257,8 +257,6 @@ struct Cx<'h> {
     hir: &'h hir::Program,
     /// The prelude's `Proxy` class type, once looked up (proxy_throws.rs).
     prelude_proxy: Option<Option<TyId>>,
-    /// Native library inits `velt_main` runs first (entry.rs).
-    native_inits: Vec<crate::NativeInit>,
     /// The prelude's `Proxy.__view` (any_view.rs), once looked up.
     view_fn: Option<Option<DefId>>,
     /// The standard library's functions by qualified name, built on the first lookup of the
