@@ -152,6 +152,7 @@ const CHECKED: &[&str] = &[
     "process/env_linux.velt",
     "process/env_posix.velt",
     "process/env_win32.velt",
+    "process/full_path_win32.velt",
     "process/memory_darwin.velt",
     "process/memory_linux.velt",
     "process/memory_win32.velt",

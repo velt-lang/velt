@@ -19,7 +19,8 @@ import {
   shownPath,
 } from "velt/fs/whole/win_resolve";
 import { IoError } from "velt/io/error";
-import { cwd, driveDir } from "velt/process/cwd_win32";
+import { cwd } from "velt/process/cwd_win32";
+import { driveDir } from "velt/process/full_path_win32";
 
 /** The process' working directories. */
 function dirs(): Dirs {

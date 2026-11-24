@@ -1,21 +1,13 @@
 // velt/process (internal): the working directory on Windows (`#cwd-sys`' win32 variant,
-// std/imports.velt), through Win32's wide-string functions, with libuv's names for its errors
-// (std/os/win_error.velt).
+// std/imports.velt), through Win32's wide-string functions (std/process/full_path_win32.velt
+// reads it), with libuv's names for its errors (std/os/win_error.velt).
 
-import { Out } from "velt/ffi/out";
-import { Ptr } from "velt/ffi/ptr";
-import { wideOf, wideText } from "velt/ffi/wide";
+import { wideOf } from "velt/ffi/wide";
 import { osError } from "velt/fs/errors";
 import { IoError } from "velt/io/error";
-import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 import { errnoOfWin32 } from "velt/os/win_error";
+import { fullPathOf } from "velt/process/full_path_win32";
 
-declare c("c") function GetFullPathNameW(
-  name: readonly u16[],
-  room: u32,
-  out: u16[],
-  file: Out<Ptr<u16> | null>,
-): u32;
 declare c("c") function SetCurrentDirectoryW(path: readonly u16[]): i32;
 declare c("c") function GetLastError(): u32;
 
@@ -48,42 +40,6 @@ function readCwd(): string {
     throw osError(errnoOfWin32(unsafe { GetLastError() }), "uv_cwd");
   }
   return dir;
-}
-
-/**
- * The working directory on the drive `device` (`D:`), as Windows keeps it for each drive (its
- * `=D:` variable, which Node reads, or the drive's root), or null when Windows can't say.
- */
-export function driveDir(device: string): string | null {
-  return fullPathOf(device);
-}
-
-/**
- * `GetFullPathNameW(name)`: `.` is the working directory, `D:` the drive's. Through the call the
- * file system's paths are made (not `GetCurrentDirectoryW`, nor the environment), so what reads
- * it reaches the file system alone. Null on failure, with the error left for `GetLastError`.
- */
-function fullPathOf(name: string): string | null {
-  const w = wideOf(name);
-  if (w === null) {
-    return null;
-  }
-  let room: u32 = 260;
-  while (true) {
-    // Not zeroed: only Windows writes it, and only what it wrote (up to its NUL) is read.
-    const buf = arrayWithCapacity<u16>(room as usize);
-    arraySetLen(buf, room as usize);
-    // SAFETY: `w` is NUL-terminated and `buf` holds `room` code units, the count passed.
-    const got = unsafe { GetFullPathNameW(w, room, buf, new Out<Ptr<u16> | null>(null)) };
-    if (got === 0) {
-      return null;
-    }
-    if (got < room) {
-      return wideText(buf);
-    }
-    // Too small: `got` is the room the path needs, its NUL counted.
-    room = got;
-  }
 }
 
 /**
