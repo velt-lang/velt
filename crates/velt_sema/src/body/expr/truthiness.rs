@@ -374,6 +374,11 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let b = self.cx.ty.bool_;
         let is_and = op == ast::BinaryOp::And;
+        // `s || "c"` on a union local with a falsy literal member (`"" | "a"`) is `s ? s : "c"`,
+        // so the left value is the truthy `s`, narrowed to its other members (#3370).
+        if !is_and && exp != Some(b) && self.falsy_member_facts(lhs).is_some() {
+            return self.ternary(lhs, lhs, rhs, exp, span);
+        }
         let (when_true, when_false) = self.narrowing(lhs);
         // The right side runs when the left one is truthy (`&&`) / falsy (`||`).
         let facts = if is_and { when_true } else { when_false };

@@ -208,15 +208,17 @@ impl FnCx<'_, '_> {
         if let Some(ty) = joined {
             return (t, f, ty);
         }
+        // A failed conversion may give back a changed branch (a literal no longer written as
+        // one), so each is tried on a copy: the branch as checked still converts to `exp` (#3370).
         let tt = t.ty;
-        let f = match self.try_coerce(f, tt) {
+        let f = match self.try_coerce(f.clone(), tt) {
             Ok(f) => return (t, f, tt),
-            Err(f) => f,
+            Err(_) => f,
         };
         let ft = f.ty;
-        let t = match self.try_coerce(t, ft) {
+        let t = match self.try_coerce(t.clone(), ft) {
             Ok(t) => return (t, f, ft),
-            Err(t) => t,
+            Err(_) => t,
         };
         if let Some(e) = exp.filter(|e| *e != error) {
             let t = self.coerce(t, e);
