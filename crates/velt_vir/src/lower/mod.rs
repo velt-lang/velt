@@ -39,6 +39,7 @@ mod any_glue;
 mod any_has;
 mod any_has_builtin;
 mod any_iface;
+mod any_index_match;
 mod any_keys;
 mod any_member;
 mod any_not_fn;
@@ -79,6 +80,7 @@ mod c_call;
 mod c_export;
 pub(crate) mod c_global;
 mod c_layout;
+mod c_struct_call;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -108,6 +110,7 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod lent_variant;
 mod lower_profile;
 mod moved_args;
 mod ptr_memory;
@@ -199,7 +202,9 @@ mod view_unswitch_addrs;
 mod view_unswitch_handover;
 mod view_unswitch_plain;
 mod weak;
+mod weak_captures;
 mod weak_fields;
+mod weak_globals;
 mod weak_object;
 mod weak_view;
 mod widen;
@@ -358,6 +363,11 @@ struct Cx<'h> {
     fut_header: Option<crate::vir::AggId>, // a heap future's header (raw_memory.rs `fut_header`)
     sched_tasks: bool, // the executor in Velt's hooks start promises or spawn tasks (sched.rs)
     sched_used: bool,  // a task or timer hook of the executor in Velt is called (module_state.rs)
+    /// The observers of `await` steps (await_order.rs `OBSERVERS`, by the runtime function each
+    /// stands for) the program calls as the executor in Velt's hooks, and whether it takes the
+    /// steps as its hook (`sched_await_tick`): sched.rs.
+    sched_observers: FxHashSet<&'static str>,
+    sched_steps: bool,
     /// Did sema declare module_blocks.velt's hooks in its object (sched.rs `module_hook_live`)?
     module_hooks_declared: std::cell::OnceCell<bool>,
     held: Option<Vec<(FuncId, Work)>>, // module state's accesses, until main is built (drain)

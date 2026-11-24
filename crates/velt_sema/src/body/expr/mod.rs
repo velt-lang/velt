@@ -148,6 +148,7 @@ mod lit;
 mod literal_iface;
 mod literal_keys;
 mod literal_this;
+pub(crate) use literal_this::{is_arrow, stored_method_error, StoredWhy};
 mod literal_types;
 mod literal_union_cast;
 mod literal_union_compare;
@@ -214,6 +215,7 @@ mod record_props;
 mod record_view;
 mod record_view_cast;
 mod regex_args;
+mod regexp_match_reads;
 mod rest_forms;
 mod rest_shapes;
 mod rest_tuple;
@@ -303,6 +305,8 @@ impl FnCx<'_, '_> {
         // A value typed by error-set variables (a rejection reason): its set must be known
         // (`throws::var_known`).
         self.cx.value_typed_by_vars(h.ty);
+        // A check by units: std's traps as this round's seeds give them (`seeded_trap_value`).
+        let h = self.seeded_trap_value(h);
         let temps = std::mem::replace(&mut self.call_temps, outer);
         let h = self.with_lets(temps, h);
         // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).

@@ -339,12 +339,23 @@ impl FnCx<'_, '_> {
         let var = matches!(v.kind, ast::VarKind::Let | ast::VarKind::Const)
             && matches!(v.pattern.kind, ast::PatternKind::Ident(_));
         let ann = v.ty.as_ref().map(|t| self.resolve_as(t, var));
+        let weak = ann.is_some_and(|(_, weak)| weak);
+        let ann = ann.map(|(t, _)| t);
+        if let (ast::PatternKind::Ident(name), Some(ty), true) = (&v.pattern.kind, ann, weak) {
+            return self.weak_var_decl(v, name, ty, span, out);
+        }
         if let ast::PatternKind::Ident(name) = &v.pattern.kind {
             let init_ty = v.init.as_ref().and_then(crate::throws::written_init_type);
             if let Some(t) = v.ty.as_ref().or(init_ty) {
                 self.cx.note_written_type(name.span, t.span);
             }
             self.decl_keeping_arms(v, name, ann, span, out);
+            // `const f = () => …`: a function with no `this` of its own (`literal_this.rs`).
+            if v.kind == ast::VarKind::Const && v.init.as_ref().is_some_and(super::expr::is_arrow) {
+                if let Some(l) = self.declared_local(&name.name) {
+                    self.f.arrow_consts.insert(l);
+                }
+            }
             return self.note_named_fn(v, name);
         }
         let Some(e) = &v.init else {

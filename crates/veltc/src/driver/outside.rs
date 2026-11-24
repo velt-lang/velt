@@ -440,6 +440,7 @@ mod tests {
             target: velt_vir::simd::ExtSet::NONE,
             baseline: false,
             cold: false,
+            rare: false,
             inline: velt_vir::vir::Inline::Default,
             stops_unwind: false,
         }
@@ -457,6 +458,7 @@ mod tests {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         };
         let r0 = func(
             "_V12____velt__r0",
@@ -524,6 +526,7 @@ mod tests {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         };
         let calls: Vec<Callee> = (0..symbols.len())
             .map(|i| Callee::Extern(ExternId(i as u32)))

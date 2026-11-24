@@ -206,6 +206,36 @@ pub fn after_merge_reason(paths: &[String]) -> Option<String> {
         .map(|p| format!("{p} changed: refresh the build cache"))
 }
 
+/// The host side of the WebAssembly goldens: what finds and runs the tools that turn a program
+/// into a `.wasm` module and run it. The module is the same on every OS (the guest: the
+/// runtime `velt_rt_wasm`, the WebAssembly code generation, std, the goldens); what differs by
+/// OS is only the host's tooling: the paths and `.exe` names of LLVM's `opt`/`llc` and of
+/// `rust-lld` (`VELT_LLVM_BIN` on Windows, Homebrew's LLVM on macOS), the wasi-libc in the
+/// toolchain, how wasmtime and node are started, and the test that drives them all. The pinned
+/// toolchain (and its configuration) ships those tools per host. A change here runs the
+/// WebAssembly goldens on Windows and macOS too, when the queue checks that OS
+/// ([`other_os_reason`], [`macos_reason`]); any other WebAssembly change runs them on Linux only,
+/// and the nightly's `wasm-goldens` runs them on every OS.
+pub(crate) const WASM_HOST_PATHS: &[&str] = &[
+    "rust-toolchain.toml",
+    ".cargo/",
+    "crates/velt_link/src/wasm.rs",
+    "crates/velt_codegen_llvm/src/llc.rs",
+    "crates/veltc/src/commands/wasm.rs",
+    "crates/veltc/tests/wasm_goldens.rs",
+    "crates/veltc/tests/wasm_tools/",
+];
+
+/// Why the merge queue runs the WebAssembly goldens on the other OSes it checks, or `None` when
+/// Linux is enough ([`WASM_HOST_PATHS`]). Documentation never counts.
+pub fn wasm_host_reason(paths: &[String]) -> Option<String> {
+    paths
+        .iter()
+        .filter(|p| !p.ends_with(".md"))
+        .find(|p| WASM_HOST_PATHS.iter().any(|w| p.starts_with(w)))
+        .map(|p| format!("{p} runs WebAssembly's host tools"))
+}
+
 /// The runners the merge queue checks on: Linux always (first), the others when a change needs
 /// them ([`other_os_reason`], [`macos_reason`]).
 pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-latest"];
@@ -216,24 +246,49 @@ pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-late
 /// limit (2026-10). With 5 macOS runners for everything, more shards would let queue entries
 /// starve each other. Linux gets three: with two, a shard's goldens (about 38 minutes) and its
 /// half of the VIR identity (about 18) outgrew the job's limit on a ten-PR train (2026-11-20).
+/// Windows gets four: with three, a shard's goldens reached 31 to 33 minutes and, with the whole
+/// VIR identity's share, the job's 55-minute limit (2026-11-23); Windows runners are not the scarce
+/// ones.
 /// Every runner in [`QUEUE_OSES`] needs an entry: the workflow fails when an OS has no shards.
 pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
     ("ubuntu-latest", 3),
-    ("windows-latest", 3),
+    ("windows-latest", 4),
     ("macos-latest", 2),
 ];
 
 /// How many jobs check the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) in parallel
-/// on each OS, in the merge queue when a change touches WebAssembly code and in the nightly, from
+/// on each OS, in the merge queue when a change touches WebAssembly code (on Windows and macOS
+/// only for its host side, [`WASM_HOST_PATHS`]) and in the nightly, from
 /// the build of the goldens' job (.github/workflows/queue-goldens.yml). They take about as long
 /// as all the other tests together: on a 4-vCPU Windows runner about 45 minutes in one job. The
 /// test splits them into 8 functions of about 330 s there, which the shards share (two each on
-/// Windows). Every runner in [`QUEUE_OSES`] needs an entry, as for [`GOLDEN_SHARDS`].
+/// Windows and macOS). macOS had two shards until their test runs reached 25 minutes and the
+/// slower job its 40-minute limit (2026-11-22). Every runner in [`QUEUE_OSES`] needs an entry, as
+/// for [`GOLDEN_SHARDS`].
 pub const WASM_SHARDS: &[(&str, usize)] = &[
     ("ubuntu-latest", 2),
     ("windows-latest", 4),
+    ("macos-latest", 4),
+];
+
+/// How many jobs run the unit and integration tests in parallel on each OS in the after-merge
+/// gate (.github/workflows/main-gate.yml, `VELT_TEST_SHARD`): each builds and runs every n-th
+/// test of each test binary (nextest's `--partition count:<i>/<n>`), and the first also lints and
+/// runs the steps that aren't nextest tests (doctests, `velt fmt`, std-lint, the VS Code
+/// extension, the smoke test). On one 4-vCPU Windows runner the tests took 48 to 63 minutes
+/// (2026-11-23), after a build of 13 to 22. macOS gets two: its runners are the scarce ones, and
+/// with its golden build and two golden shards that is all five of them.
+pub const TEST_SHARDS: &[(&str, usize)] = &[
+    ("ubuntu-latest", 2),
+    ("windows-latest", 3),
     ("macos-latest", 2),
 ];
+
+/// The after-merge gate's test shards (`VELT_TEST_SHARD` values) on each of the runners `oses`,
+/// as [`golden_shards_json`] gives the goldens'.
+pub fn test_shards_json(oses: &[&str]) -> String {
+    shards_json(TEST_SHARDS, oses)
+}
 
 /// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
 /// JSON object: `{"ubuntu-latest":["1/3","2/3","3/3"],…}`. A runner without a [`GOLDEN_SHARDS`] entry
@@ -310,7 +365,7 @@ mod tests {
         let total: usize = GOLDEN_SHARDS.iter().map(|(_, n)| n).sum();
         assert_eq!(all.matches('/').count(), total);
         assert!(
-            all.contains(r#""windows-latest":["1/3","2/3","3/3"]"#),
+            all.contains(r#""windows-latest":["1/4","2/4","3/4","4/4"]"#),
             "{all}"
         );
         assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");
@@ -320,7 +375,7 @@ mod tests {
 
     #[test]
     fn every_queue_os_has_at_least_one_golden_shard() {
-        for table in [GOLDEN_SHARDS, WASM_SHARDS] {
+        for table in [GOLDEN_SHARDS, WASM_SHARDS, TEST_SHARDS] {
             for os in QUEUE_OSES {
                 let n = table.iter().find(|(name, _)| name == os).map(|e| e.1);
                 assert!(n.is_some_and(|n| n >= 1), "{os} has no shards");
@@ -335,11 +390,26 @@ mod tests {
             all.contains(r#""windows-latest":["1/4","2/4","3/4","4/4"]"#),
             "{all}"
         );
-        assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");
+        assert!(
+            all.contains(r#""macos-latest":["1/4","2/4","3/4","4/4"]"#),
+            "{all}"
+        );
         assert_eq!(
             wasm_shards_json(&["ubuntu-latest"]),
             r#"{"ubuntu-latest":["1/2","2/2"]}"#
         );
         assert_eq!(wasm_shards_json(&["other"]), "{}");
+    }
+
+    #[test]
+    fn the_after_merge_tests_get_shards_on_every_os() {
+        let all = test_shards_json(QUEUE_OSES);
+        assert!(
+            all.contains(r#""windows-latest":["1/3","2/3","3/3"]"#),
+            "{all}"
+        );
+        assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");
+        assert!(all.contains(r#""ubuntu-latest":["1/2","2/2"]"#), "{all}");
+        assert_eq!(test_shards_json(&[]), "{}");
     }
 }

@@ -140,11 +140,13 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 |---|---|---|
 | `bool`, `i8`…`i64`, `u8`…`u64`, `isize`, `usize`, `f32`, `f64` | `_Bool`, `int8_t`…, `ssize_t`, `size_t`, `float`, `double` | by value; `bool` is C's `_Bool` only, never an `int` flag |
 | `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` |
+| a `@repr("transparent")` struct (velt/compiler) | its one field's C type | exactly as the field, on every target: `struct Meters { readonly m: f64; }` is a `double`, not a C struct of one (which Windows x64 passes in an integer register) |
 | `null` (as a parameter type) | any pointer | always `NULL` |
 | `readonly T[]`, `T[]` (`T` a number type), views of bytes | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
 | `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, or `Ptr<U> \| null` for a `U **` |
+| a `declare c struct` | the struct by value | x86-64 Linux, macOS (System V) and Windows (Win64), arm64 Linux and macOS (AAPCS64); other targets refuse it until their convention comes |
 | `void` | `void` | as a result |
 
 - **No hidden conversions.** A `string` crosses only as a `StrBytes` parameter (the declaration
@@ -345,6 +347,36 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
 - On wasm32 C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's 8, so `Ptr.read` and
   `Ptr.write` of a type holding one are compile errors naming the target; a struct of other
   fields is C's layout there too.
+- **By value**: a C struct is a parameter or result of a `declare c` function, passed as the
+  target's C calling convention classifies it (`crates/velt_vir/src/c_struct_abi/`, one module
+  per convention, one table both backends follow through `vir::ExternFn::c_abi`):
+  - **x86-64 System V** (Linux, macOS): a struct of 16 bytes or less crosses in registers, each
+    eightbyte in an integer register or, if only floats are in it, a vector one, and takes them
+    all or none: when too few remain it goes on the stack whole. A larger struct goes on the
+    stack (a copy the callee owns, `byval`), and a larger result comes back through a slot the
+    caller passes first (`sret`).
+  - **Win64** (x86-64 Windows): a struct of 1, 2, 4 or 8 bytes crosses as an integer in its
+    argument's register or slot, floats too; any other is passed by reference, the address of a
+    copy the caller makes. A result of those sizes comes back in RAX, any other through `sret`.
+  - **AAPCS64** (arm64 Linux, and Apple's variant): an HFA (one to four fields, all `f32` or all
+    `f64`) crosses in that many vector registers, any other struct of 16 bytes or less in one or
+    two integer registers, all or none; a struct that doesn't fit goes on the stack and uses up
+    its class's registers, so the arguments of that class after it go there too (lowering passes
+    zeros in the registers left). A larger struct is passed by reference, and a larger result
+    comes back through x8. Apple's variant packs stack arguments by size, so an `f32` HFA on its
+    stack takes four bytes a field where Linux's slot is eight-byte aligned.
+
+  A struct result arriving from C has its non-null pointer fields checked as `Ptr.read` does.
+  Other targets (wasm32, Windows on arm64), a variadic function's struct and an `@export`
+  function's struct are errors until their layers; `velt build` reports the target's at the
+  declaration. tests/c_struct_by_value.rs is the differential test: generated C functions over
+  23 struct shapes and the cases where registers run out, called from debug (Cranelift) and
+  release (LLVM) builds, every field compared in both directions, on the host or, with
+  `VELT_ABI_TARGET`, for another target under an emulator (scripts/abi-cross.sh runs arm64 Linux
+  under qemu). CI runs it on x86-64 Linux (the c-headers job) and arm64 Linux (c-struct-abi) for
+  every pull request that touches it, and on macOS and Windows nightly; the c-headers job also
+  compares every C function's signature in Velt's LLVM IR with clang's for Win64, Apple's arm64
+  and arm64 Linux.
 - It has no identity, so every comparison compares its content, with the numbers in it compared
   as the operation compares numbers: `===`, `==` and `indexOf` by IEEE, `Object.is` by
   SameValue, `Map` and `Set` keys and `includes` by SameValueZero.
@@ -421,6 +453,9 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
   JS callback's comes before its microtasks, so a rejection it handles later in that run is not
   reported meanwhile. A `spawn` there runs beside the call at once. Work handed over after `main`
   and the tasks left ended (a thread that outlives them) never runs: the process is exiting.
+  The outermost call has a task id of its own (std/lang/hooks/sched_id.velt), from the counter
+  tasks' ids come from, so a promise it settles for another call or a task is transferred as one
+  settled by another task is, and the debug cell check sees its uses (#2907).
 - **Its address**: `exportedAddress(f)` (std only, unsafe) is the C function's address as a
   `usize`, for C APIs that take a function pointer (`pthread_create`, `qsort`); its
   argument must name an `@export` function.
@@ -468,6 +503,17 @@ native: {
   A function whose type has a calling convention other than the target's C one (`vectorcall`,
   `preserve_most`, `ms_abi` off Windows) is refused. An enum whose width clang's dump does not
   show cannot cross.
+- **C structs** (#2187 layer 4, `crates/veltc/src/native/headers/structs.rs`): each
+  `declare c struct` a library's declarations reach (a pointer's pointee, an `Out<T>`'s `T`, a
+  reached struct's field) is checked with that library. The headers' struct of that name is
+  found by its tag (`struct point`) or a typedef, a definition winning over a declaration, and
+  its fields must be the same, in order, by C name and by type through the table above (a nested
+  struct by name, a function pointer as `Ptr<void>`). Unions, structs only declared, `packed`,
+  bit-fields, C arrays and flexible array members are refused with the header line. The layout
+  is clang's own: a second clang run reads `sizeof`, `_Alignof` and `__builtin_offsetof` of each
+  struct as enumerators, compared with Velt's layout, so `#pragma pack` and `aligned(…)` are
+  refused, naming each offset and size that differs. A struct's fields and layout are part of the
+  remembered check's key and of `c-headers.json`'s digests.
 - **A mismatch is a build error** naming the declaration and the header line.
 - **Remembered**: a check that passed is kept in `$VELT_HOME/cache/headers/`, keyed by zig's
   version, the target, the headers' names, the library's `defines` and the declarations, with a
@@ -671,9 +717,9 @@ must not depend on code elsewhere.
 ## Limitations
 
 - `declare c` calls are synchronous.
-- A C struct crosses only behind `Ptr<S>` (read and written with `Ptr.read` and `Ptr.write`):
-  not by value, not as `Out<S>`; struct declarations are not compared with headers. C arrays in
-  structs are not supported.
+- A C struct crosses by value only on x86-64 (Linux, macOS, Windows) and arm64 Linux and macOS,
+  and not as `Out<S>` or `Ref<S>`, in a variadic function, or to an `@export` function. C arrays in structs are not
+  supported.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -688,14 +734,9 @@ must not depend on code elsewhere.
 
 ## Not yet implemented
 
-- **C structs by value** in `declare c` signatures, `Out<S>` and `Ref<S>`, following the target's
-  convention (SysV x86-64 eightbytes, AAPCS64 homogeneous float aggregates, Win64 by reference
-  over 8 bytes, `sret`). One table-driven classifier, a port of rustc's
-  `rustc_target::abi::call`, serves both backends, and a differential ABI test (generated C
-  functions over many struct shapes, compiled with the system C compiler, called from both
-  backends on every CI target) gates it. Structs are compared with headers (names, order, types,
-  size, alignment, offsets per target), and C arrays become fields once Velt has fixed-size
-  arrays.
+- **C structs by value on the remaining targets** (wasm32, Windows on arm64), in a variadic
+  function and to an `@export` function, and **`Out<S>` and `Ref<S>`**, in the same classifier
+  and differential test. C arrays become fields once Velt has fixed-size arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call

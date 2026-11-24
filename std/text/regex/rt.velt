@@ -1,6 +1,8 @@
 // velt/text (internal): the runtime functions the regular expressions call: a string's bytes
 // as a string, and the string builder (std/text/string_builder.velt says how one is passed).
 
+import { Ptr } from "velt/ffi/ptr";
+
 /** The text of bytes `start..end` of `s`, both at the start of a character or the end. */
 export declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 
@@ -13,6 +15,11 @@ export declare function velt_rt_strbuf_push_str(buf: string, s: string);
 /** Appends the first `len` bytes of `bytes` to the builder `buf`: whole characters, `units`
  * UTF-16 code units of them (`len` when they are ASCII; all ones when not known). */
 export declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+
+/** Appends the bytes at `bytes` to the builder `buf`: whole characters of a string's text, as
+ * many bytes as the low half of `len` says, and as many UTF-16 code units as its high half
+ * (equal to the bytes when they are ASCII; 0 when not known). */
+export declare function velt_rt_strbuf_push_bytes(buf: string, bytes: Ptr<u8>, len: u64);
 
 /** Moves the text of the builder `buf` to `out`. */
 export declare function velt_rt_strbuf_finish(buf: string, out: string);

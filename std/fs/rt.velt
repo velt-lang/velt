@@ -11,6 +11,8 @@ import { IoStatus, checkIo } from "velt/native/status";
 import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { checkPathArg } from "velt/fs/path_arg";
+import { COPY_EXCL, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
+import { osError } from "velt/fs/errors";
 
 declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;
 declare async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus>;
@@ -51,11 +53,6 @@ export declare async function velt_rt_fs_open_read_range(
 ): Promise<IoResult<u64>>;
 export declare function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats>;
 export declare async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>>;
-export declare async function velt_rt_fs_reader_read_string(
-  r: u64,
-  max: u64,
-): Promise<IoResult<string>>;
-export declare async function velt_rt_fs_reader_read_line(r: u64): Promise<LineRead>;
 export declare function velt_rt_fs_reader_close(r: u64);
 export declare async function velt_rt_fs_open_write(
   path: string,
@@ -72,12 +69,6 @@ export declare function velt_rt_fs_writer_free(w: u64);
 struct DirentList {
   names: string[];
   kinds: u8[];
-}
-
-// The runtime's `LineRead` (§14.4).
-struct LineRead {
-  line: IoResult<string>;
-  eof: bool;
 }
 
 /** The entries of a runtime listing, each with its type. */
@@ -199,12 +190,35 @@ export async function rename(from: string, to: string): Promise<void> {
   checkIo(await velt_rt_fs_rename(from, to));
 }
 
-export function copyFileSync(from: string, to: string) {
+/**
+ * `mode`: copy_mode.velt's bits, checked by the caller. The runtime's copy takes none, so the
+ * mode is applied here, after the source is found (a missing one stays the copy's `ENOENT`, as in
+ * Node): `COPYFILE_FICLONE_FORCE` is `ENOSYS` (no clone), and `COPYFILE_EXCL` is `EEXIST` for a
+ * destination there before the copy starts, a link too (`lstat`), even one to nothing. Another
+ * process can still make the destination between the check and the copy: the runtime has no
+ * exclusive copy. Mode 0 asks nothing more.
+ */
+export function copyFileSync(from: string, to: string, mode: u32) {
+  if (mode != 0 && velt_rt_fs_lstat_sync(from).code == 0) {
+    copyModeCheck(from, to, mode, velt_rt_fs_lstat_sync(to).code == 0);
+  }
   checkIo(velt_rt_fs_copy_file_sync(from, to));
 }
 
-export async function copyFile(from: string, to: string): Promise<void> {
+export async function copyFile(from: string, to: string, mode: u32): Promise<void> {
+  if (mode != 0 && (await velt_rt_fs_lstat(from)).code == 0) {
+    copyModeCheck(from, to, mode, (await velt_rt_fs_lstat(to)).code == 0);
+  }
   checkIo(await velt_rt_fs_copy_file(from, to));
+}
+
+function copyModeCheck(from: string, to: string, mode: u32, exists: bool) {
+  if ((mode & COPY_FICLONE_FORCE) != 0) {
+    throw osError(38, "copyfile", from, to);
+  }
+  if ((mode & COPY_EXCL) != 0 && exists) {
+    throw osError(17, "copyfile", from, to);
+  }
 }
 
 export function symlinkSync(target: string, path: string) {

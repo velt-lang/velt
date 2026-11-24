@@ -403,6 +403,7 @@ export class RegExp implements Pattern {
       textOf(s, start, end),
       captures,
       this.#names.clone(),
+      s.clone(),
     );
   }
 }

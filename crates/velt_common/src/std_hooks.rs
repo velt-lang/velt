@@ -57,11 +57,13 @@ mod module_hooks;
 mod decorator_hooks;
 #[macro_use]
 mod promise_hooks;
+#[macro_use]
+mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then those of `promise_hooks.rs`, `decorator_hooks.rs`,
-// `module_hooks.rs`, `string_hooks.rs` and `weak_hooks.rs`, given to `hooks!` together.
-with_promise_hooks! {
+// The table: these rows, then TLS's, promises' through `any`, the decorators', module state's,
+// the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+with_tls_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -539,10 +541,6 @@ with_promise_hooks! {
     any_prim_keep => lang_hooks_any_ops, "anyPrimKeep", sig((move any, &string) -> any), lowered;
     /// A method's result when it is a primitive, else the next method's (`velt_sema` `any_prim.rs`).
     any_prim_then => lang_hooks_any_ops, "anyPrimThen", sig((move any, &Fn(() -> any)) -> any);
-    /// What an `await` of an `any` or `unknown` waits for (`velt_sema` `await_value.rs`, #924).
-    await_any => lang_hooks_any_ops, "awaitAny", sig((&unknown) -> Promise(unknown, unknown));
-    /// Does an `any` hold an object or a function (the thenable stop, `await_value.rs`, #3412)?
-    any_holds_object => lang_hooks_any_ops, "anyHoldsObject", sig((&any) -> bool);
     /// `ToNumber` of an object an `any` holds, for `-`, `*`, `<`, `+x` (`dynamic_arith.rs`).
     any_object_number => lang_hooks_any_ops, "anyObjectNumber", sig((&any, &string) -> f64);
     /// `a + b` of dynamic values one of which holds a string or an object (`dynamic_arith.rs`).

@@ -181,7 +181,7 @@ export class DataView extends BufferView {
   }
 
   /** `"[object DataView]"`, as `String(view)` gives in JS. */
-  toString(): string {
+  override toString(): string {
     return "[object DataView]";
   }
 

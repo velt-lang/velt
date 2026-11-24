@@ -270,6 +270,10 @@ impl FnLower<'_, '_> {
                 let len = self.expr_as_u64(len);
                 self.str_ascii_words(words, len, ty)
             }
+            (I::StrBorrowedWords, [ptr, w1]) => {
+                let (ptr, w1) = (self.expr(ptr), self.expr(w1));
+                self.str_borrowed_words(ptr, w1, ty)
+            }
             (I::StrbufPushAsciiWord, [buf, w, len]) => {
                 let w = self.expr(w);
                 let len = self.expr_as_u64(len);
@@ -498,6 +502,7 @@ impl FnLower<'_, '_> {
             (I::AnyToNumber, [a]) => self.any_to_number(a),
             (I::AnyStrictEq, [a, b]) => self.any_eq(a, b, false),
             (I::AnyLooseEq, [a, b]) => self.any_eq(a, b, true),
+            (I::WeakRead, [a]) => self.weak_local_read(a, ty),
             // A weak field's read is a reference of its own already (weak_fields.rs).
             (I::Share, [a]) if self.weak_read_expr(a) => self.expr(a),
             (I::Share, [a]) => {

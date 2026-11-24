@@ -12,6 +12,7 @@ import {
   renameSync as renameAtSync,
 } from "#fs-rt";
 import { checkPathArg } from "velt/fs/path_arg";
+import { copyMode } from "velt/fs/copy_mode";
 
 /** The options of `remove`. */
 export type RemoveOptions = {
@@ -31,11 +32,15 @@ export async function rename(from: string, to: string): Promise<void> {
   await renameAt(from, to);
 }
 
-/** Copies the file `from` to `to`, replacing a file at `to`. */
-export async function copyFile(from: string, to: string): Promise<void> {
+/**
+ * Copies the file `from` to `to`, replacing a file at `to`. `mode` is Node's (`fs.constants`'
+ * `COPYFILE_*`): `COPYFILE_EXCL` fails with `EEXIST` where `to` exists, `COPYFILE_FICLONE` clones
+ * where the file system can, `COPYFILE_FICLONE_FORCE` clones or fails.
+ */
+export async function copyFile(from: string, to: string, mode: number = 0): Promise<void> {
   checkPathArg(from, "src");
   checkPathArg(to, "dest");
-  await copyAt(from, to);
+  await copyAt(from, to, copyMode(mode));
 }
 
 /** Never throws: any failure to reach `path` reads as `false`. */
@@ -59,10 +64,10 @@ export function renameSync(from: string, to: string) {
 }
 
 /** `copyFile`, blocking the calling thread. */
-export function copyFileSync(from: string, to: string) {
+export function copyFileSync(from: string, to: string, mode: number = 0) {
   checkPathArg(from, "src");
   checkPathArg(to, "dest");
-  copyAtSync(from, to);
+  copyAtSync(from, to, copyMode(mode));
 }
 
 /** `exists`, blocking the calling thread. */

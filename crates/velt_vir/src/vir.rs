@@ -6,7 +6,9 @@
 //! 1. Fully monomorphic and layout-resolved. Target is 64-bit (`Ptr` = 8 bytes, little endian).
 //! 2. **Function signatures are scalar-only**: params/returns are never `Ty::Agg`. Lowering passes
 //!    aggregates by pointer (`Ptr`) and returns them via an explicit out-pointer param.
-//!    `Ty::Unit` params never appear; a `Unit` return means "returns nothing".
+//!    `Ty::Unit` params never appear; a `Unit` return means "returns nothing". The one exception
+//!    is a C extern returning a struct in registers (`ExternFn::c_abi`, `CRet::Words`), whose
+//!    `ret` is an `Agg` of one to four scalar words.
 //! 3. Drops, drop flags, moves, bounds checks, overflow policy, async state machines are all already
 //!    expanded into ordinary statements/calls. Backends do no semantic work.
 //! 4. Block 0 is the entry block (an `Import`, invariant 11, may have none). Locals
@@ -273,6 +275,12 @@ pub struct Function {
     /// it only grows the hot code around the call) and backends may compile it as cold. Set by
     /// lowering; `velt_opt` keeps it on clones. False promises nothing.
     pub cold: bool,
+    /// `@cold` (std/lang/intrinsics/decorators.velt): its calls are rare, though unlike
+    /// [`Function::cold`]'s they return. Backends compile it as cold, so the ways to its calls
+    /// are laid out of the hot code (LLVM `cold`), and `velt_opt` inlines it only where it is
+    /// trivial. Nothing may assume a call of it does not return. Set by lowering; `velt_opt`
+    /// keeps it on clones. False promises nothing.
+    pub rare: bool,
     /// Whether optimizers and backends must inline it, must not, or decide for themselves: the
     /// std decorators `@inline` and `@noInline` (std/lang/intrinsics/decorators.velt). Set by
     /// lowering; `velt_opt` keeps it on clones.
@@ -353,6 +361,7 @@ impl Function {
             target: crate::simd::ExtSet::NONE,
             baseline: false,
             cold: false,
+            rare: false,
             inline: Inline::Default,
             stops_unwind: false,
         }
@@ -419,6 +428,39 @@ pub struct ExternFn {
     /// `I64`, `U64`, `F64` or `Ptr` (C's default argument promotions already applied). Backends
     /// call it with the target's variadic convention. `false` for every other extern.
     pub variadic: bool,
+    /// A C function taking or returning structs by value (#2187 layer 3, additive): how its
+    /// parameters and result cross, per the target's C convention (`crate::c_struct_abi`).
+    pub c_abi: Option<CAbi>,
+}
+
+/// How a C function's parameters and result cross beyond their types (`ExternFn::c_abi`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CAbi {
+    /// One per entry of `ExternFn::params`.
+    pub params: Vec<CParam>,
+    pub ret: CRet,
+}
+
+/// How one parameter of a C function crosses (`CAbi::params`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CParam {
+    /// As its type says (also each `I64`/`F64` word of a struct passed in registers).
+    Value,
+    /// A `Ptr` to the callee's own copy of a struct, on the stack (LLVM `byval`).
+    ByVal { size: u32, align: u32 },
+    /// The first parameter, a `Ptr` to the struct result's slot (LLVM `sret`); `ret` is `Unit`.
+    Sret { size: u32, align: u32 },
+}
+
+/// How a C function's result crosses (`CAbi::ret`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CRet {
+    /// As `ExternFn::ret` says.
+    Value,
+    /// A struct in registers: `ExternFn::ret` is an `Agg` of one to four scalar words of one
+    /// size, packed (eightbytes, or an AAPCS64 HFA's `F32`s), which the call's destination
+    /// receives whole (LLVM a `{ a, b }` result, Cranelift one return per word).
+    Words,
 }
 
 /// Read-only data (string literal bytes, vtables, …), or a word the program writes.

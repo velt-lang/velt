@@ -40,11 +40,24 @@ impl FnLower<'_, '_> {
         let (Some(l), ty) = (info.vir, info.ty) else {
             return;
         };
-        self.release_cell_ptr(Operand::Copy(Place::local(l)), ty);
+        match info.weak {
+            Some(read) => self.release_weak_cell_ptr(Operand::Copy(Place::local(l)), read),
+            None => self.release_cell_ptr(Operand::Copy(Place::local(l)), ty),
+        }
     }
 
     /// Release one reference to the cell `ptr` holding a value of type `ty`.
     pub(super) fn release_cell_ptr(&mut self, ptr: Operand, ty: hir::TyId) {
+        self.release_cell_as(ptr, ty, false);
+    }
+
+    /// Release one reference to the cell `ptr` of a `weak` variable of read type `read`, which
+    /// holds its target's slot: the last one gives the slot up (weak_captures.rs).
+    pub(super) fn release_weak_cell_ptr(&mut self, ptr: Operand, read: hir::TyId) {
+        self.release_cell_as(ptr, read, true);
+    }
+
+    fn release_cell_as(&mut self, ptr: Operand, ty: hir::TyId, weak_var: bool) {
         let vt = self.cx.ty(ty);
         let q = ptr.clone();
         self.cell_check(Rt::CellUse, vec![ptr.clone()]);
@@ -52,7 +65,10 @@ impl FnLower<'_, '_> {
         self.release_as(ptr.clone(), weak, |lw| {
             let p = lw.operand_place(q.clone(), Ty::Ptr);
             let value = super::operand::proj(&p, crate::vir::Proj::Deref(vt));
-            lw.drop_glue(value, ty);
+            match weak_var {
+                true => lw.weak_field_drop(value, ty),
+                false => lw.drop_glue(value, ty),
+            }
             lw.cell_check(Rt::CellFree, vec![q.clone()]);
             lw.counted_free(q, vt);
         });

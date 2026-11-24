@@ -310,6 +310,7 @@ impl FnCx<'_, '_> {
         let abs = self.cx.is_abstract_ctor(target);
         let lit = self.class_value_lit(&name, &name, (f, abs), span)?;
         let info = GlobalInfo {
+            weak: false,
             name: format!("{name}#value"),
             qual_name: format!("{qual}#value"),
             module,

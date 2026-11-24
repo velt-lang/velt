@@ -199,6 +199,8 @@ pub enum Intrinsic {
     MayAlias,
     /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
     IsUnique,
+    /// Every read of a `weak` local (hir_encodings.md `LocalDef::weak`; additive, #3119).
+    WeakRead,
     /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
@@ -501,21 +503,21 @@ pub enum Intrinsic {
     /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
     StrLoadPartialU8x16,
     /// std only: `(w0: u64, w1: u64, w2: u64, len: usize)` → string: the inline ASCII string of
-    /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`. The bytes past
-    /// `len` must be 0 (equality compares the words). No call: the string's inline form
-    /// (rt_abi.md "Strings") written as three words.
+    /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`, bytes past `len`
+    /// 0 (equality compares the words). No call: the inline form (rt_abi.md "Strings").
     StrAsciiWords,
+    /// std only: `(ptr: u64, w1: u64)` → string: the static form `{ptr, w1, 0}`, made only from a
+    /// sub-range of a static string (std/lang/intrinsics/string.velt says why). Additive.
+    StrBorrowedWords,
     /// std only: `(buf: Mut<string>, w0: u64, w1: u64, w2: u64, len: usize)`: appends the first
-    /// `len` (at most 24) bytes of the words, ASCII, to the builder `buf` (a `velt_rt_strbuf_*`
-    /// builder, which the call writes): the three words are stored after its text when its plain
-    /// heap buffer has room for 24 more bytes; an inline ASCII builder that still fits gets them
-    /// shifted in and OR'd; anything else calls `velt_rt_strbuf_push_words` with them by value.
+    /// `len` (at most 24) bytes of the words, ASCII, to the builder `buf` (which the call writes):
+    /// stored after its text when its plain heap buffer has room for 24 more bytes, shifted in
+    /// and OR'd in an inline builder that fits, else by value to `velt_rt_strbuf_push_words`.
     StrbufPushAsciiWords,
     /// std only: `(buf: Mut<string>, w: u64, len: usize)`: appends the first `len` (at most 8)
     /// bytes of `w`, ASCII, to the builder `buf`: an inline ASCII builder of fewer than 16 bytes
-    /// gets the word stored where its text ends, in the builder itself, and byte 23 raised; a
-    /// plain heap builder with room for 8 more bytes gets it stored after its text; anything else
-    /// calls `velt_rt_strbuf_push_words` (`StrbufPushAsciiWords` for up to 24).
+    /// gets the word stored where its text ends and byte 23 raised; a plain heap builder with
+    /// room for 8 more gets it after its text; else `velt_rt_strbuf_push_words` is called.
     StrbufPushAsciiWord,
     /// `(xs: borrow T[]) -> u64` — address of element 0 (no std declaration calls it now).
     ArrayDataPtr,
@@ -621,9 +623,8 @@ pub enum Intrinsic {
     /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
     /// null once it was freed.
     WeakRefDeref,
-    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered
-    /// to std's weak core (`Construct::Weak`), which a program without weak collections
-    /// doesn't load.
+    /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered to
+    /// std's weak core (`Construct::Weak`), which a program without weak collections doesn't load.
     WeakMapDrop,
     /// std only: `weakRefDrop(r: u32)` — a `WeakRef` slot's drop.
     WeakRefDrop,

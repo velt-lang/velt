@@ -178,6 +178,14 @@ fn declaration_digest(d: &Decl) -> String {
         Some(false) => h.update([3, b'c']),
         None => {}
     }
+    // A C struct: its fields and its layout.
+    if let Some(s) = &d.structure {
+        h.update([4]);
+        for (f, shape) in &s.fields {
+            h.update(format!("{f}: {}\0", compare::describe(shape)));
+        }
+        h.update(format!("{:?} {} {}", s.offsets, s.size, s.align));
+    }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -233,6 +241,7 @@ mod tests {
             ret: Shape::Scalar(int),
             variadic: false,
             variable: None,
+            structure: None,
             span: Span::DUMMY,
         }
     }
@@ -253,8 +262,23 @@ mod tests {
         let function = declaration_digest(&decl("f", vec![]));
         let variable = |writable| Decl {
             variable: Some(writable),
+            structure: None,
             ..decl("f", vec![])
         };
+        // A struct's digest changes with its fields and its layout.
+        let point = |field: &str, size: u32| Decl {
+            structure: Some(Box::new(super::super::structs::StructDecl {
+                fields: vec![(field.into(), Shape::Scalar(compare::Scalar::F64))],
+                offsets: vec![0],
+                size,
+                align: 8,
+            })),
+            ..decl("point", vec![])
+        };
+        let p = declaration_digest(&point("x", 8));
+        assert_ne!(p, declaration_digest(&decl("point", vec![])));
+        assert_ne!(p, declaration_digest(&point("y", 8)));
+        assert_ne!(p, declaration_digest(&point("x", 16)));
         let (var, constant) = (variable(true), variable(false));
         assert_ne!(function, declaration_digest(&var));
         assert_ne!(declaration_digest(&var), declaration_digest(&constant));

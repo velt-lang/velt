@@ -1,6 +1,7 @@
 //! Tests: hand-built VIR programs, executed via the JIT (same translation path) and emitted as
 //! objects for all supported targets.
 
+mod aligned_slots;
 mod atomics;
 #[cfg(unix)]
 mod debug_info;
@@ -194,6 +195,7 @@ impl ProgramBuilder {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         });
         ExternId(self.p.externs.len() as u32 - 1)
     }

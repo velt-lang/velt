@@ -21,7 +21,7 @@ use crate::SourceModule;
 
 /// The version of the encoding: the first bytes of every encoded unit, before the checksum of
 /// the rest ([`checksum`]).
-pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x07";
+pub(crate) const FORMAT: &[u8; 8] = b"vunit\x00\x00\x08";
 
 /// The fields of `Ctx` a unit saves (`save`), in order, then those it does not: `skip` (the
 /// caller's, what every check installs again), `memo` (built again on demand: one built over a

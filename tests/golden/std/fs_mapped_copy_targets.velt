@@ -1,0 +1,34 @@
+// `MappedFile.copy` into Node's other targets, counted in bytes as Node counts them: a typed
+// array of another element type, a `DataView`, and a view of part of a larger buffer, which the
+// copy stays inside. A view of the mapping's own bytes (`m.bytes.subarray`) is read out of a
+// `shared` value, so the call gets a copy and the read-only mapping is left as it was. It also
+// runs under wasmtime (wasm_goldens.rs names it), where the mapping is a copy of the file.
+import { MappedFile, rmSync, writeFileSync } from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+
+function shown(t: Uint8Array): string {
+  let s = "";
+  for (const b of t) {
+    s += b == 0 ? "." : String.fromCharCode(b);
+  }
+  return s;
+}
+
+function main() {
+  const dir = platform() == "win32" ? `${tmpdir()}\\` : "";
+  const path = `${dir}velt-golden-mapped-copy-${process.pid}.tmp`;
+  writeFileSync(path, "0123456789abcdef");
+  const m = MappedFile.open(path);
+  const words = new Uint32Array(2);
+  console.log(m.copy(words, 1), shown(new Uint8Array(words.buffer)));
+  const view = new DataView(new ArrayBuffer(8));
+  console.log(m.copy(view, 1), view.getUint8(1), view.getUint8(7));
+  const whole = new Uint8Array(16);
+  console.log(m.copy(whole.subarray(4, 12), 1), shown(whole));
+  console.log(m.copy(m.bytes.subarray(0, 8), 0, 8), m.bytes[0], m.bytes[8]);
+  try {
+    rmSync(path);
+  } catch (e) {
+    // Windows may refuse to remove a file that is mapped.
+  }
+}

@@ -20,10 +20,11 @@ pub(crate) fn total() -> usize {
     SCANNED.with(|c| c.get())
 }
 
-/// The least of a few runs of `run`, which returns the work it did: other tests freeing indexed
-/// strings at the same time bump the epoch (`recent.rs`), which only ever adds work to a run, so
-/// the least is a run without interference.
+/// The least of a few runs of `run`, which returns the work it did. The runs see a heap epoch of
+/// this thread's own (`recent::with_private_epoch`): other tests freeing indexed strings at the
+/// same time bump the shared one, which expires remembered positions and adds work (#3617, under
+/// parallel `cargo test` every run could see such bumps).
 #[cfg(test)]
 pub(crate) fn least_work(mut run: impl FnMut() -> usize) -> usize {
-    (0..5).map(|_| run()).min().unwrap_or(0)
+    super::recent::with_private_epoch(|| (0..5).map(|_| run()).min().unwrap_or(0))
 }

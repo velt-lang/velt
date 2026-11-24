@@ -49,6 +49,7 @@ export {
   symlinkSync,
 } from "velt/fs/metadata";
 export { rm, RmOptions, rmSync } from "velt/fs/rm";
+export { constants, FsConstants } from "velt/fs/fs_constants";
 export { Dirent } from "velt/fs/dirent";
 export { Stats } from "velt/fs/stats";
 export { FileReader } from "velt/fs/file_reader";

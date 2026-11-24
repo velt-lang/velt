@@ -65,6 +65,16 @@ export declare function strCharCodeAt(s: string, i: i64): i64;
 export declare function strAsciiWords(w0: u64, w1: u64, w2: u64, len: usize): string;
 
 /**
+ * The static (borrowed) string of the `len` bytes at `ptr`, `w1` being `units << 32 | len`
+ * (rt_abi.md "Strings"): no call, no count, and nothing to free. The bytes must stay alive and
+ * unchanged while the string or any copy of it is used, so std makes one only from a sub-range
+ * of a static string (a literal, or a view the runtime already handed out as static), which has
+ * that lifetime. `strBorrowedWords(0, 0)` is the empty string.
+ */
+@intrinsic
+export declare function strBorrowedWords(ptr: u64, w1: u64): string;
+
+/**
  * Appends the first `len` bytes (at most 24, ASCII) of the three words, byte `i` in bits
  * `8 * (i % 8)` of word `i / 8`, to the builder `buf` (a string the runtime's builder functions
  * append to): inline stores when its buffer has room, a runtime call when it must grow. `buf`

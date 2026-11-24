@@ -99,6 +99,7 @@ table! {
     lang_hooks_class_object => "lang/hooks/class_object",
     lang_hooks_error => "lang/hooks/error",
     lang_hooks_clock => "lang/hooks/clock",
+    lang_hooks_date_zone_name => "lang/hooks/date_zone_name",
     lang_hooks_mutex => "lang/hooks/mutex",
     lang_hooks_heap => "lang/hooks/heap",
     lang_hooks_iter => "lang/hooks/iter",
@@ -170,6 +171,7 @@ table! {
     lang_typed_array_apply_list => "lang/typed_array/apply_list",
     lang_typed_array_buffer_view => "lang/typed_array/buffer_view",
     lang_bytes_view_bytes => "lang/bytes/view_bytes",
+    lang_bytes_range_text => "lang/bytes/range_text",
     lang_typed_array_core => "lang/typed_array/core",
     lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
 
@@ -204,6 +206,8 @@ table! {
     /// `body/expr/operator_bigint.rs` names the fix for a mixed one).
     math_bigint => "math/bigint",
     net_dns_lookup_sched => "net/dns/lookup_sched",
+    net_tls_fd_client => "net/tls/fd_client",
+    net_tls_fd_server => "net/tls/fd_server",
     net_http_fetch_response => "net/http/fetch/response",
     /// `velt/ops/operators`, the interfaces of the operator methods `velt/ops` exports (sema
     /// `collect/operators.rs`).

@@ -5,7 +5,8 @@ edition.workspace = true
 # A deliberately small HTTP/1.1 server and client over std::net for the developer tools
 # (`velt playground`, the package registry server, vpm's registry client): the tools serve a
 # few requests on a developer's machine or a LAN, not production traffic. https:// URLs use
-# rustls with the same features as the runtime (velt_rt), so the TLS stack is built once.
+# rustls (the ring provider, Mozilla's roots); programs Velt compiles use the TLS stack in Velt
+# (std/net/tls/), so only the developer tools build rustls.
 
 [dependencies]
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }

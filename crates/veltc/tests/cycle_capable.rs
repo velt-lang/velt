@@ -21,6 +21,23 @@ fn debug_out(src: &str) -> String {
     stderr
 }
 
+/// The VIR lowering prints for `src` (`--emit vir`).
+fn vir_out(src: &str) -> String {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
+    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "main.velt", "--emit", "vir"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 /// The `velt: cycle-capable types:` line lowering prints for `src` (`VELT_DEBUG_COUNTED=1`).
 /// Type names may contain commas (object types), so the line is kept whole.
 fn cycle_capable(src: &str) -> String {
@@ -159,6 +176,81 @@ fn a_weak_back_reference_does_not_close_a_cycle() {
         !has(line, "class Conn") && !has(line, "class Stream"),
         "{out}"
     );
+}
+
+#[test]
+fn a_listener_capturing_its_view_weakly_does_not_close_a_cycle() {
+    // The listener of `a_listener_closure_capturing_its_view_closes_a_cycle`, capturing the view
+    // through a `weak` variable: the closure holds the variable's slot, no edge (velt_vir
+    // weak_captures.rs, `env_captures`).
+    let out = debug_out(
+        "class Button {
+           listeners: (() => void)[] = [];
+           onClick(f: () => void) { this.listeners.push(f); }
+           click() { for (const f of this.listeners) f(); }
+         }
+         class View { clicks = 0; button = new Button(); }
+         function main() {
+           const v = new View();
+           const b = v.button;
+           const me: weak View | null = v;
+           b.onClick(() => { const s = me; if (s !== null) { s.clicks += 1; } });
+           b.click();
+           console.log(v.clicks);
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(
+        !has(line, "class View") && !has(line, "class Button"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_weak_map_value_capturing_its_key_weakly_is_not_traced() {
+    // A weak map value whose closure refers to the key only through a `weak` variable cannot
+    // lead back to it, so the map has no value trace (`weakMapNew`'s last argument 0) and its
+    // entries are never examined (velt_vir weak_captures.rs, `env_owned`). With a strong
+    // capture of the key, the map traces its values.
+    let src = |decl: &str| {
+        format!(
+            "class Key {{ n: number; constructor(n: number) {{ this.n = n; }} }}
+             class Holder {{ f: () => number; constructor(f: () => number) {{ this.f = f; }} }}
+             function main() {{
+               const cache = new WeakMap<Key, Holder>();
+               const k = new Key(1);
+               const w: {decl} = k;
+               cache.set(k, new Holder(() => w?.n ?? 0));
+               console.log(cache.get(k)!.f(), k.n);
+             }}"
+        )
+    };
+    let traced = |vir: &str| {
+        let lines: Vec<&str> = vir.lines().collect();
+        let at = (lines.iter())
+            .position(|l| l.contains("weakMapNew("))
+            .unwrap_or_else(|| panic!("no weakMapNew call:\n{vir}"));
+        // `weakMapNew(keyTrace, retain, release, trace)`: the trace's operand, set just before
+        // the call in the same block.
+        let args = lines[at].split("weakMapNew(").nth(1).unwrap_or("");
+        let arg = args
+            .split(')')
+            .next()
+            .unwrap_or("")
+            .rsplit(", ")
+            .next()
+            .unwrap_or("");
+        let set = format!("{} = cast ", arg.trim());
+        let value = (lines[..at].iter().rev())
+            .find_map(|l| l.trim().strip_prefix(set.as_str()))
+            .unwrap_or_else(|| panic!("no value for {arg}:\n{vir}"));
+        !value.starts_with("0_ptr")
+    };
+    assert!(traced(&vir_out(&src("Key | null"))));
+    assert!(!traced(&vir_out(&src("weak Key | null"))));
 }
 
 #[test]
@@ -539,4 +631,149 @@ fn interface_values_have_the_sites_of_the_values_they_hold() {
         .find_map(|l| l.strip_prefix("velt: cycle-capable sites: `App` interface values: "))
         .unwrap_or_else(|| panic!("no sites for `App` interface values:\n{out}"));
     assert!(line.contains("main.velt:3:"), "{line}");
+}
+
+#[test]
+fn a_type_argument_a_field_shows_closes_a_cycle_through_that_field() {
+    // `Box<A>` holds its `A` in a field: the edge `Box<A> -> A` is that field's (cycles.rs
+    // `owned_tys`), and the cycle `A -> Box<A> -> A` is found through it.
+    let out = debug_out(
+        "class Box<T> {
+           item: T | null = null;
+         }
+         class A {
+           b: Box<A> = new Box<A>();
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           a.b.item = a;
+           console.log(a.name, a.b.item?.name ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+}
+
+#[test]
+fn a_type_argument_no_field_shows_is_an_edge() {
+    // A class whose fields never mention `T` may keep its `T`s where they don't show (behind the
+    // runtime's pointers, as std's channel core does): `Handle<A> -> A` stays an edge.
+    let out = debug_out(
+        "class Handle<T> {
+           id: u64 = 0;
+         }
+         class A {
+           h: Handle<A> = new Handle<A>();
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           const keep = [a, a];
+           console.log(a.name, a.h.id, keep.length);
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+}
+
+#[test]
+fn a_type_argument_only_a_shared_field_shows_is_no_edge() {
+    // `Held<T>` keeps its `T` in a `shared<T>`, which is no edge (a copy with an atomic count):
+    // `Held<A>` reaches no `A`, and `A -> Held<A>` closes no cycle (std/sync/epoch/reclaim.velt
+    // `Held`, which put `Retired` values in every program's set).
+    let out = debug_out(
+        "class Held<T> {
+           value: shared<T>;
+           constructor(value: shared<T>) {
+             this.value = value;
+           }
+         }
+         class A {
+           h: Held<A> | null = null;
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           const other = new A();
+           a.h = new Held<A>(shared(other));
+           const keep = [a, a];
+           console.log(a.name, keep.length, a.h?.value.name ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(!has(line, "class A"), "{out}");
+    assert!(!has(line, "class Held"), "{out}");
+}
+
+#[test]
+fn two_instantiations_of_an_interface_that_point_at_each_other_are_a_cycle() {
+    // Interface nodes are per instantiation (cycles.rs `Node::Iface`): `Slot<string>` holds the
+    // `A`s converted to it, `Slot<i64>` the `B`s. Each holds the other instantiation, so the cycle
+    // runs through both nodes.
+    let out = debug_out(
+        "interface Slot<T> { take(): T; }
+         class A implements Slot<string> {
+           other: Slot<i64> | null = null;
+           take(): string { return \"a\"; }
+         }
+         class B implements Slot<i64> {
+           other: Slot<string> | null = null;
+           take(): i64 { return 1; }
+         }
+         function main() {
+           const a = new A();
+           const b = new B();
+           a.other = b;
+           b.other = a;
+           console.log(a.take(), b.take());
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+    assert!(has(line, "class B"), "{out}");
+}
+
+#[test]
+fn an_instantiation_that_does_not_reach_back_is_no_cycle() {
+    // An `A` is a `Slot<string>` holding a `Slot<i64>`, whose only values are `B`s, which hold
+    // nothing: no cycle. With one node for every `Slot`, `A -> Slot -> A` was one.
+    let out = debug_out(
+        "interface Slot<T> { take(): T; }
+         class A implements Slot<string> {
+           other: Slot<i64> | null = null;
+           take(): string { return \"a\"; }
+         }
+         class B implements Slot<i64> {
+           take(): i64 { return 1; }
+         }
+         class Holder {
+           s: Slot<string> | null = null;
+         }
+         function main() {
+           const a = new A();
+           const b = new B();
+           a.other = b;
+           const h = new Holder();
+           h.s = a;
+           console.log(a.take(), b.take(), h.s?.take() ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(!has(line, "class A"), "{out}");
 }

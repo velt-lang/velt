@@ -312,9 +312,9 @@ impl FnLower<'_, '_> {
     ///
     /// `in_place` (a synchronous extern): an array whose elements need no converting is passed
     /// as its own header (the box's, when its type is boxed), not a copy, so an extern that
-    /// writes it (`velt_rt_bytes_copy`'s destination) changes the array itself (#1831). A view
-    /// (array_view.rs) passes its mirror, written back to the original after the call. It also
-    /// keeps the inlined SIMD helpers from reading a copy (which LLVM would redo after every
+    /// writes it (an out parameter; a C function's buffer) changes the array itself (#1831). A
+    /// view (array_view.rs) passes its mirror, written back to the original after the call. It
+    /// also keeps the inlined SIMD helpers from reading a copy (which LLVM would redo after every
     /// element store, tbaa.rs in velt_codegen_llvm).
     fn foreign_args(
         &mut self,
@@ -417,6 +417,13 @@ impl FnLower<'_, '_> {
                     });
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
+                    // A union made for a read-only borrow holds a borrowed payload (#3537).
+                    if *mode == PassMode::Borrow && !(i < 64 && changed >> i & 1 == 1) {
+                        if let Some(v) = self.lent_variant(a, later) {
+                            argv.push(self.operand_addr(v, t));
+                            continue;
+                        }
+                    }
                     let v = match how {
                         Stabilize::Share | Stabilize::Direct(_) => {
                             let reach = self.arg_reach(how, args, modes, i, changed);

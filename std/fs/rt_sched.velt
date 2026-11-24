@@ -36,8 +36,6 @@ export {
   velt_rt_fs_reader_close,
   velt_rt_fs_reader_opened_stats,
   velt_rt_fs_reader_read,
-  velt_rt_fs_reader_read_line,
-  velt_rt_fs_reader_read_string,
   velt_rt_fs_writer_close,
   velt_rt_fs_writer_flush,
   velt_rt_fs_writer_write,
@@ -167,14 +165,15 @@ export async function rename(from: string, to: string): Promise<void> {
   take(await hookCall<Done<bool>>("sched_blocking_run", () => renameAt(cf, from, ct, to)));
 }
 
-export function copyFileSync(from: string, to: string) {
-  take(copyAt(bytesOf(from), from, bytesOf(to), to));
+/** `mode`: copy_mode.velt's bits, checked by the caller. */
+export function copyFileSync(from: string, to: string, mode: u32) {
+  take(copyAt(bytesOf(from), from, bytesOf(to), to, mode));
 }
 
-export async function copyFile(from: string, to: string): Promise<void> {
+export async function copyFile(from: string, to: string, mode: u32): Promise<void> {
   const cf = bytesOf(from);
   const ct = bytesOf(to);
-  take(await hookCall<Done<bool>>("sched_blocking_run", () => copyAt(cf, from, ct, to)));
+  take(await hookCall<Done<bool>>("sched_blocking_run", () => copyAt(cf, from, ct, to, mode)));
 }
 
 export function symlinkSync(target: string, path: string) {

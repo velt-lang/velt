@@ -43,6 +43,9 @@ impl fmt::Display for Program {
             if e.variadic {
                 params.push_str(if e.params.is_empty() { "..." } else { ", ..." });
             }
+            if let Some(c) = &e.c_abi {
+                params.push_str(&format!(" c_abi {c:?}"));
+            }
             let host = e
                 .host
                 .as_ref()
@@ -60,13 +63,14 @@ impl fmt::Display for Program {
             let open = if func.blocks.is_empty() { "" } else { " {" };
             writeln!(
                 f,
-                "fn#{} {} {}({}) -> {}{}{}{}{open}",
+                "fn#{} {} {}({}) -> {}{}{}{}{}{open}",
                 i,
                 link,
                 func.symbol,
                 fmt_tys(&func.params),
                 func.ret,
                 if func.cold { " cold" } else { "" },
+                if func.rare { " rare" } else { "" },
                 if func.baseline { " baseline" } else { "" },
                 match func.inline {
                     crate::vir::Inline::Default => "",

@@ -1,7 +1,8 @@
 // velt/fs (internal): the bytes of a `MappedFile` and its reads of single values, `DataView`'s
 // getters (std/lang/typed_array/data_view.velt) over the mapping: any offset, either byte
-// order, one range check and one load, and nothing allocated. `MappedFile` extends it with
-// the mapping itself and the typed arrays over it.
+// order, one range check and one load, and nothing allocated. `copy` copies a range out into
+// a buffer the caller has, as Node's `buf.copy`. `MappedFile` extends it with the mapping
+// itself and the typed arrays over it.
 
 import {
   f32FromBits,
@@ -14,6 +15,15 @@ import {
   swap64,
 } from "velt/lang/typed_array/buffer";
 import { toIndex } from "velt/lang/typed_array/core";
+import { ArrayBufferView, BufferView } from "velt/lang/typed_array/buffer_view";
+import { VIEW_SIZE } from "velt/lang/hooks/keys";
+import { copyOutOfRange, copyPosition } from "velt/lang/bytes/copy_args";
+import {
+  addressArray,
+  arrayByteLength,
+  arrayBytesWritten,
+  arrayDataAddress,
+} from "velt/lang/intrinsics";
 
 /** The mapped bytes of a file and `DataView`'s getters over them (see `MappedFile`). */
 export class MappedBytes {
@@ -104,5 +114,77 @@ export class MappedBytes {
   /** The 64-bit float at `byteOffset` (`DataView.getFloat64`). */
   getFloat64(byteOffset: number, littleEndian: bool = false): number {
     return f64FromBits(this.getUint64(byteOffset, littleEndian));
+  }
+
+  /**
+   * Copies the mapped bytes in [sourceStart, sourceEnd) into `target` at byte `targetStart`, as
+   * Node's `buf.copy(target, targetStart, sourceStart, sourceEnd)`: as many as fit there, and
+   * returns their number; `sourceEnd` past the end is the end. Positions are read as Node reads
+   * them (a fraction rounded down, `NaN` 0), and a negative one or a `sourceStart` past the end
+   * throws a `RangeError` with Node's message. `target` is a `u8[]` (Node's `Buffer`), an array
+   * of another number type, a typed array or a `DataView`, counted in bytes, as `readSync`'s
+   * buffer. One copy: a record read out into a buffer that is used again. A `u8[]`, a typed
+   * array or a view allocates nothing; an array of another number type is viewed as bytes
+   * first. Where the last instructions count, `bytes.copy` on a `u8[]` target does less.
+   *
+   * A `target` read out of a `shared` value, the mapping's own `bytes` among them, is passed as
+   * a copy of it, as to any function that writes its argument: the bytes go into that copy,
+   * never into the read-only mapping. A typed array of a mapping is no target at all. On WebAssembly `bytes` is a copy of the
+   * file, and so is what this copies from.
+   */
+  copy<T extends Numeric = u8>(
+    target: T[] | ArrayBufferView,
+    targetStart: number = 0,
+    sourceStart: number = 0,
+    sourceEnd?: number,
+  ): number {
+    const n = this.bytes.length as number;
+    const ts = copyPosition(targetStart);
+    if (ts < 0) {
+      copyOutOfRange("targetStart", ">= 0", ts);
+    }
+    const ss = copyPosition(sourceStart);
+    if (ss < 0 || ss > n) {
+      copyOutOfRange("sourceStart", `>= 0 && <= ${n}`, ss);
+    }
+    let se = n;
+    if (sourceEnd != null) {
+      se = copyPosition(sourceEnd);
+      if (se < 0) {
+        copyOutOfRange("sourceEnd", ">= 0", se);
+      }
+      se = se > n ? n : se;
+    }
+    const room =
+      (
+        target instanceof BufferView ? target.len * target[VIEW_SIZE]() : arrayByteLength(target)
+      ) as number;
+    if (ts >= room || ss >= se) {
+      return 0;
+    }
+    const count = se - ss < room - ts ? se - ss : room - ts;
+    if (target instanceof BufferView) {
+      // A view's bytes are `buf.bytes`, from `off`; `count` keeps the copy inside the view.
+      return this.bytes.copy(
+        target.buf.bytes,
+        (target.off as number) + ts,
+        ss,
+        ss + count,
+      ) as number;
+    }
+    if (typeIs<T[], u8[]>()) {
+      // Bytes already: `u8[].copy` writes them, with no view of the target's memory to make.
+      return this.bytes.copy(asType<u8[]>(target), ts, ss, ss + count) as number;
+    }
+    // SAFETY: the address and length are `target`'s own memory, which nothing grows or drops
+    // while this view of it is in use; the copy writes only `ts..ts + count` of it, inside its
+    // `room` bytes, and any bytes are values of a number type.
+    const address = unsafe { arrayDataAddress(target) };
+    // SAFETY: as above.
+    const into: u8[] = unsafe { addressArray<u8>(address, room as usize) };
+    const copied = this.bytes.copy(into, ts, ss, ss + count) as number;
+    // A view of another array (an `any` converted to `T[]`) gives what was written back to it.
+    arrayBytesWritten(target);
+    return copied;
   }
 }

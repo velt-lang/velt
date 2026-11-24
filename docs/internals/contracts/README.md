@@ -151,7 +151,9 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   (`weak Node | null` is a union of `Weak(Node)` and `null`); `weak` stays a name everywhere else.
   Its meaning is sema's (`velt_sema` `weak_types`): only at the top of the type of a field or a
   variable, as the read type `T | null`. The AST encoding's version (`AST_FORMAT`) is `0x11` with
-  it (variant 25). A lowered `weak` class field is `FieldDef::weak` in HIR (hir_encodings.md).
+  it (variant 25). A lowered `weak` class field is `FieldDef::weak` in HIR, a lowered `weak`
+  local `LocalDef::weak` and a lowered `weak` module `let` `GlobalDef::weak`, their reads
+  `Intrinsic::WeakRead` (hir_encodings.md).
 
 ## Host functions (additive AST, HIR and VIR extension, #1735)
 - Decorators (`ast.rs`, https://github.com/velt-lang/velt/issues/2203): `Decorator { expr, span }`
@@ -203,6 +205,17 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   velt/ffi's `Ptr.read` and `Ptr.write`, a read checking the element's non-null pointers.
   `CheckOptions::wasm32` (additive) tells sema the target is wasm32, where they refuse a type
   holding a pointer, `usize` or `isize`.
+- C structs by value (#2187 layer 3, docs/internals/design/c-ffi.md "C structs"): `hir::CTy::Struct`
+  (additive) is a `declare c struct` parameter or result, the declaration's type naming which.
+  `vir::ExternFn::c_abi` (additive, `None` for every other extern) is the target's C calling
+  convention's classification (`velt_vir::c_struct_abi`): a struct in registers is already its
+  `I64`/`F64` eightbytes or an AAPCS64 HFA's `F32`/`F64` fields as parameters (after zeros
+  that use up the registers a struct on the AAPCS64 stack leaves), and a struct passed by
+  reference (Win64, AAPCS64 over 16 bytes) a plain `Ptr` parameter to a copy; `CParam::ByVal` is a `Ptr` to a copy passed on the stack (LLVM
+  `byval`, Cranelift `StructArgument`), `CParam::Sret` the first parameter, a `Ptr` to the
+  result's slot (`sret`, `StructReturn`), with `ret` `Unit`; `CRet::Words` makes `ret` an `Agg` of
+  one to four scalar words of one size, packed, the only `Agg` an extern signature may have (invariant 2
+  otherwise), which the call's destination receives whole. The verifier checks each.
 - Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
   `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:
   CVarArgs`; its `CImport::params` and `ExternFnDef::params` are the fixed parameters, and a
@@ -333,6 +346,15 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - The LLVM backend marks `Always` `alwaysinline` and `Never` `noinline` (not `cold`); a
   function that never returns stays `cold noinline` whatever its marker. Cranelift ignores the
   field.
+- `vir::Function::rare: bool`: the decorator `@cold` (`std_hooks` `decorator_cold`): calls of the
+  function are rare, though they return. It is not `Function::cold`, which says no call returns
+  normally and lets `velt_opt` end a call of it with `Unreachable`; nothing may assume that of a
+  `rare` one. Sema rejects `@cold` with `@inline`, and where it rejects `@inline` (a `declare
+  function`, an abstract method, a generator, an async function); `@cold @noInline` is allowed.
+  `velt_opt`'s inliner inlines a `rare` function only where it is trivial; the LLVM backend marks
+  it `cold` (`cold noinline` with `Never`, or where it would be `noinline` for its size).
+  Cranelift ignores it. `Function::new` sets `false`; lowering sets it from the decorators;
+  `velt_opt` keeps it on clones.
 
 ## Debug variables (additive VIR extension)
 - `vir::Program::debug_types: Vec<DebugTy>` and `vir::LocalDecl::debug: Option<LocalDebug>`

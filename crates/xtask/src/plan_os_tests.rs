@@ -267,3 +267,88 @@ fn the_macos_paths_exist() {
         assert!(root.join(path).exists(), "no {path}");
     }
 }
+
+/// The `wasm_os` line of the queue's plan (`$GITHUB_OUTPUT`): the OSes whose `queue-golden` job
+/// gets the WebAssembly goldens' shards (ci.yml).
+fn wasm_os(plan: &Plan) -> String {
+    let text = crate::github_output_text(plan);
+    let line = text.lines().find_map(|l| l.strip_prefix("wasm_os="));
+    line.unwrap_or_else(|| panic!("no wasm_os in\n{text}"))
+        .to_string()
+}
+
+/// A merge train runs `--full`, which knows no changes: every OS checks the goldens, but the
+/// WebAssembly goldens run on Linux only (the module is the same on every OS; the nightly runs
+/// them everywhere).
+#[test]
+fn a_full_queue_run_checks_the_webassembly_goldens_on_linux_only() {
+    let full = Plan::everything("--full");
+    let text = crate::github_output_text(&full);
+    assert!(
+        text.contains("\nos=[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]\n"),
+        "{text}"
+    );
+    assert_eq!(wasm_os(&full), r#"["ubuntu-latest"]"#);
+    // The nightly reads every OS's shards from the same plan.
+    let shards = text.lines().find(|l| l.starts_with("wasm_shards="));
+    assert!(
+        shards.is_some_and(|l| l.contains("windows-latest") && l.contains("macos-latest")),
+        "{text}"
+    );
+    let summary = full.describe();
+    assert!(
+        summary.contains("WebAssembly goldens in the queue: Linux only"),
+        "{summary}"
+    );
+    let mut skipped = Plan::everything("--full");
+    skipped.skip_wasm_goldens();
+    assert_eq!(wasm_os(&skipped), "[]");
+}
+
+/// What differs by OS is the host's tooling, not the module: a change to it runs the WebAssembly
+/// goldens on every OS the queue checks; any other WebAssembly change on Linux only.
+#[test]
+fn only_webassemblys_host_side_runs_its_goldens_on_windows_and_macos() {
+    let every = r#"["ubuntu-latest","windows-latest","macos-latest"]"#;
+    let windows = r#"["ubuntu-latest","windows-latest"]"#;
+    let linux = r#"["ubuntu-latest"]"#;
+    let cases: &[(&str, &str)] = &[
+        // Finding rust-lld and wasi-libc; LLVM's tools (Homebrew's on macOS): every OS is checked.
+        ("crates/velt_link/src/wasm.rs", every),
+        ("crates/velt_codegen_llvm/src/llc.rs", every),
+        // Starting wasmtime, the test harness, the toolchain: macOS isn't checked, Windows is.
+        ("crates/veltc/src/commands/wasm.rs", windows),
+        ("crates/veltc/tests/wasm_goldens.rs", windows),
+        ("crates/veltc/tests/wasm_tools/mod.rs", windows),
+        ("rust-toolchain.toml", windows),
+        // The guest: the same module everywhere, though Windows and macOS check the rest.
+        ("crates/velt_codegen_llvm/src/target.rs", linux),
+        ("crates/velt_rt_wasm/src/fs/paths.rs", linux),
+        ("std/process/cwd_wasm.velt", linux),
+        // No WebAssembly at all.
+        (".github/workflows/ci.yml", "[]"),
+        ("crates/velt_rt/src/timer.rs", "[]"),
+    ];
+    for (path, oses) in cases {
+        assert_eq!(wasm_os(&plan(&[path])), *oses, "{path}");
+    }
+    let p = plan(&["crates/veltc/src/commands/wasm.rs"]);
+    assert!(
+        p.describe()
+            .contains("Linux and the other OSes it checks (crates/veltc/src/commands/wasm.rs"),
+        "{}",
+        p.describe()
+    );
+    // Documentation of the host side changes no tool.
+    let docs = plan(&["crates/veltc/tests/wasm_tools/README.md"]);
+    assert_eq!(docs.wasm_host, None);
+}
+
+/// A path that moved would stop running the WebAssembly goldens on Windows and macOS.
+#[test]
+fn the_webassembly_host_paths_exist() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for path in crate::os::WASM_HOST_PATHS {
+        assert!(root.join(path).exists(), "no {path}");
+    }
+}

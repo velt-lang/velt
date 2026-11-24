@@ -122,6 +122,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             args.push(read(p.ty));
         }
         lw.info = info;
+        // A `@repr("transparent")` parameter: C passed its field, which the call's argument is
+        // built around (`collect::c_sig`), in a local of the struct's own.
+        for (k, p) in f.params.iter().enumerate() {
+            if lw.cx.transparent_field(p.ty).is_none() {
+                continue;
+            }
+            let field = Operand::Copy(crate::vir::Place::local(locals[k]));
+            let v = lw.wrap_transparent(field, p.ty);
+            let vt = lw.cx.ty(p.ty);
+            let own = lw.copy_to_temp(v, vt);
+            lw.info[k] = LInfo::new(Some(own), p.ty, false, false, LState::Init);
+        }
         let call = hir::Expr {
             kind: E::Call {
                 callee: hir::Callee::Def(e.def, vec![]),
@@ -139,6 +151,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.sched_export_call(true);
         }
         let v = lw.expr(&call);
+        // A `@repr("transparent")` result returns its field.
+        let v = lw.unwrap_transparent(v, f.ret).0;
         let ret = c_call::c_vir(e.ret, false);
         let v = match ret {
             Ty::Unit => unit(),

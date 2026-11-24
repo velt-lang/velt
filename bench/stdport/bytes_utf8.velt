@@ -1,0 +1,38 @@
+// A byte range as a string (`utf8Slice`, std/lang/bytes/range_text.velt, #2196): 12 bytes of
+// ASCII 2M times, 40 bytes 1M times, 4 KiB of ASCII 50k times, 4 KiB of two- and three-byte
+// characters 20k times, and 40 bytes with an invalid byte 200k times, each from a position
+// inside a larger buffer. The Rust port decodes each slice into a `String`
+// (`from_utf8_lossy`), as the runtime did.
+function main() {
+  const text: u8[] = [];
+  for (let i = 0; i < 8192; i++) {
+    text.push((97 + (i % 26)) as u8);
+  }
+  const wide = Buffer.from("añ€".repeat(800));
+  const bad = Buffer.from("0123456789012345678901234567890123456789".repeat(4));
+  bad[20] = 0xff;
+  let total: i64 = 0;
+  for (let round: usize = 0; round < 2000000; round++) {
+    const at = round % 4000;
+    total += text.utf8Slice(at as i64, (at + 12) as i64).length as i64;
+  }
+  for (let round: usize = 0; round < 1000000; round++) {
+    const at = round % 4000;
+    total += text.utf8Slice(at as i64, (at + 40) as i64).length as i64;
+  }
+  for (let round: usize = 0; round < 50000; round++) {
+    const at = round % 4000;
+    total += text.utf8Slice(at as i64, (at + 4096) as i64).length as i64;
+  }
+  for (let round: usize = 0; round < 20000; round++) {
+    const at = (round % 64) * 6;
+    total += wide.utf8Slice(at as i64, (at + 4096) as i64).length as i64;
+  }
+  for (let round: usize = 0; round < 200000; round++) {
+    const at = round % 20;
+    total += bad.utf8Slice(at as i64, (at + 40) as i64).length as i64;
+  }
+  console.log(total);
+}
+
+main();

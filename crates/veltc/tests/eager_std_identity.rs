@@ -6,9 +6,12 @@
 //! things in.
 //!
 //! Long: selected by `cargo xtask affected`, which runs it with `--ignored` next to the goldens
-//! (the gate's `golden` part, so in CI it runs beside the unit tests instead of after them). With
-//! `VELT_VIR_IDENTITY=sample` it compares one golden in [`SAMPLE_ONE_IN`] (the merge queue, unless
-//! the code loading std on demand changed: `Plan::vir_identity_queue` in crates/xtask/src/plan.rs).
+//! (the gate's `golden` part, so in CI it runs beside the unit tests instead of after them). It
+//! compares the sample, one golden in [`SAMPLE_ONE_IN`] chosen by a hash of its name
+//! ([`in_sample`]), unless `VELT_VIR_IDENTITY=all` asks for every golden ([`every_golden`]). The
+//! merge queue, the checks after merging and a local run compare the sample; the nightly gate on
+//! Linux, and the pull request of a change to the code loading std on demand, every golden
+//! (`Plan::vir_identity_queue` and `Plan::vir_identity_pr` in crates/xtask/src/plan.rs).
 //! `VELT_GOLDEN_SHARD=<i>/<n>` compares every n-th of them only, as the goldens' shards do.
 
 mod no_window;
@@ -48,6 +51,13 @@ fn in_sample(name: &str) -> bool {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
     hash % SAMPLE_ONE_IN == 0
+}
+
+/// `VELT_VIR_IDENTITY=all`: every golden, not the sample (the nightly gate on Linux, and a change
+/// to the code loading std on demand, in its pull request or by hand). Anything else (unset, `sample`) is the sample;
+/// xtask doesn't run the test at all for `skip`.
+fn every_golden() -> bool {
+    std::env::var("VELT_VIR_IDENTITY").is_ok_and(|v| v == "all")
 }
 
 #[test]
@@ -172,7 +182,7 @@ fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<String> {
 }
 
 #[test]
-#[ignore = "builds every golden twice: `cargo xtask check` runs it when sema, the loader, lowering or std change"]
+#[ignore = "builds the sample of the goldens (all with VELT_VIR_IDENTITY=all) twice: `cargo xtask check` runs it when sema, the loader, lowering or std change"]
 fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
     let mut files = vec![];
@@ -185,7 +195,7 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
         files.retain(|p| p.to_string_lossy().contains(&f));
     }
     let filtered = std::env::var_os("VELT_GOLDEN").is_some();
-    let sample = std::env::var("VELT_VIR_IDENTITY").is_ok_and(|v| v == "sample");
+    let sample = !every_golden();
     if sample {
         files.retain(|p| {
             let name = p.strip_prefix(&root).unwrap_or(p).to_string_lossy();

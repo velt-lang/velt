@@ -71,8 +71,10 @@ pub(crate) mod literal_hosts;
 pub(crate) mod literal_locals;
 mod type_guards;
 mod weak_copy;
+mod weak_globals;
+mod weak_locals;
 pub(crate) use generators::GenCopy;
-pub(crate) use weak_copy::{weak_copy_error, weak_copy_error_as, Held};
+pub(crate) use weak_copy::{weak_capture_error, weak_copy_error, weak_copy_error_as, Held};
 mod chain_facts;
 mod literal_patterns;
 mod locals;
@@ -293,9 +295,6 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object-literal method written at `.0` takes the object it is called on, of type
     /// `.1`, as its `this` parameter (`expr/literal_this.rs`).
     pub method_this: Option<(Span, TyId)>,
-    /// The property read written at this span is the value of an object-literal property
-    /// (`expr/literal_this.rs` `stored_value`).
-    pub stored_prop: Option<Span>,
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
@@ -488,7 +487,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             promise_callback: false,
             literal_slot: None,
             method_this: None,
-            stored_prop: None,
             call_temps: vec![],
             held_recheck: Vec::new(),
             callee_effects: None,

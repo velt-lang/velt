@@ -1,0 +1,3 @@
+// velt/fs (internal): `fs.constants`, this OS's (`#fs-constants`, std/fs/constants/).
+
+export { constants, FsConstants } from "#fs-constants";

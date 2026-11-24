@@ -1,5 +1,5 @@
-//! Velt's TLS client setup, shared by the runtime (`fetch`, WebSockets) and native libraries
-//! (std's database drivers, any package): rustls with the `ring` provider and Mozilla's root
+//! A TLS client setup for native libraries (`packages/postgres/native`, any package; the runtime
+//! has no TLS since #2392, programs use the client and server in Velt, std/net/tls/): rustls with the `ring` provider and Mozilla's root
 //! certificates (`webpki-roots`, compiled in, so the result does not depend on the machine's
 //! trust store), plus extra PEM CA certificates (private CAs, self-signed test certificates).
 //! One provider and one cache per process, whoever connects.
