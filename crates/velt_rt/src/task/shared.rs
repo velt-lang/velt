@@ -85,9 +85,6 @@ struct HubState {
     /// The waiting holders (by address) in the order they started waiting, with their wakers
     /// and the microtask ticket each was queued as when the promise settled (0: not queued).
     waiters: Vec<(usize, Waker, u64)>,
-    /// A holder that is not a converted promise's view took the settled result (identity.rs):
-    /// someone handled the promise.
-    claimed: bool,
     /// The original panicked (`catchPanic`, panic.rs): it settled with this message and no
     /// result, and every holder's await raises it.
     panic: Option<Box<[u8]>>,
@@ -96,37 +93,8 @@ struct HubState {
 /// The hubs of the shared original futures, by address.
 static HUBS: Mutex<Option<HashMap<usize, Arc<Hub>>>> = Mutex::new(None);
 
-/// Bytes in front of a handle's header: its hub, then whether it is a view (identity.rs).
+/// Bytes in front of a handle's header: its hub, then a word kept 0.
 const FRONT: usize = 16;
-
-std::thread_local! {
-    /// The handles made now are views: holders a converted promise awaits its promise through
-    /// (identity.rs), whose taking the result handles nothing of its own.
-    static VIEWS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Make the handles made from now on views (`on`), or holders again.
-pub(super) fn set_views(on: bool) {
-    VIEWS.with(|c| c.set(on));
-}
-
-/// Is handle (not original future) `f` a view?
-unsafe fn is_view(f: *mut VeltFut) -> bool {
-    *((f as *mut u8).sub(FRONT - 8) as *const u64) != 0
-}
-
-/// A shared promise's record, kept by a converted promise (identity.rs).
-pub(super) type HubRef = Arc<Hub>;
-
-/// Did a holder of the promise of `h` that is not a view take its settled result?
-pub(super) fn claimed(h: &HubRef) -> bool {
-    h.st.lock().claimed
-}
-
-/// Someone handled the promise of `h` through a converted promise standing for it.
-pub(super) fn mark_claimed(h: &HubRef) {
-    h.st.lock().claimed = true;
-}
 
 fn handle_layout(size: usize) -> Layout {
     Layout::from_size_align(FRONT + FUT_RESULT_OFFSET + size, 16)
@@ -206,7 +174,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_share(
                 result: Vec::new(),
                 loc: ThrowLoc::NONE,
                 waiters: Vec::new(),
-                claimed: false,
                 panic: None,
             }),
         });
@@ -237,17 +204,6 @@ pub(super) unsafe fn origin(f: *mut VeltFut) -> Option<Result<*mut VeltFut, *mut
     Some(Ok(hub(f).orig))
 }
 
-/// Another holder of shared promise `f` (`f` is a holder, not handed over): a handle of its
-/// own, needing no result glue, and the promise's record.
-///
-/// # Safety
-/// `f` must be a live holder of a shared promise, not handed to another task.
-pub(super) unsafe fn another_holder(f: *mut VeltFut) -> (*mut VeltFut, HubRef) {
-    let h = hub(f);
-    on_its_task(&h);
-    (new_handle(h.clone()), h)
-}
-
 /// A new holder of the promise of `h`: a handle of its own.
 unsafe fn new_handle(h: Arc<Hub>) -> *mut VeltFut {
     h.st.lock().holders += 1;
@@ -257,7 +213,7 @@ unsafe fn new_handle(h: Arc<Hub>) -> *mut VeltFut {
         std::alloc::handle_alloc_error(l);
     }
     (base as *mut Arc<Hub>).write(h);
-    (base.add(FRONT - 8) as *mut u64).write(VIEWS.with(std::cell::Cell::get) as u64);
+    (base.add(FRONT - 8) as *mut u64).write(0);
     let g = base.add(FRONT) as *mut VeltFut;
     g.write(VeltFut {
         poll: holder_poll,
@@ -591,9 +547,6 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             return PENDING;
         }
         st.waiters.remove(i);
-    }
-    if f == h.orig || !is_view(f) {
-        st.claimed = true;
     }
     if let Some(msg) = st.panic.clone() {
         // The lock goes before the unwind (it would be poisoned otherwise).
