@@ -38,7 +38,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("anyIsPromise", Op(I::AnyIsPromise)),
     ("holdsDynamic", Op(I::HoldsDynamic)),
     ("anyIsList", Op(I::AnyIsList)),
-    ("anyIsZero", Op(I::AnyIsZero)),
+    ("anyZeroSign", Op(I::AnyZeroSign)),
     ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),
     ("noteStdUse", Op(I::NoteStdUse)),

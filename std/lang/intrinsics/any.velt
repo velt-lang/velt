@@ -57,11 +57,11 @@ export declare function anyMethodCalled(name: string): bool;
 export declare function anyIsList(value: any): bool;
 
 /**
- * Does `value` hold a number that is `0` or `-0` (of any number type)? Lowered inline: for a
- * `number` a test of the descriptor and one compare, no call.
+ * `1` when `value` holds a number that is `0`, `-1` for a `-0` (of any number type), `0` for
+ * anything else. Lowered inline: for a `number` a test of the descriptor and two compares.
  */
 @intrinsic
-export declare function anyIsZero(value: any): bool;
+export declare function anyZeroSign(value: any): i32;
 
 /** Nothing runs. Where this is compiled, the program can reach it: `stdUsed(name)` is then true. */
 @intrinsic

@@ -12,7 +12,7 @@
 // original's elements in order, up to the last one a read reaches, so the elements after it are
 // never converted. Nothing here is called in a program without views.
 
-import { anyIsZero, inline, needsDrop } from "velt/lang/intrinsics";
+import { anyZeroSign, inline, needsDrop } from "velt/lang/intrinsics";
 
 /** The state of one view: the original array and the mirror of its elements as `T`. */
 export class ArrayView<T> {
@@ -226,7 +226,7 @@ export function arrayViewFlushAt<T>(v: ArrayView<T>, i: usize) {
  * plain `T` (a number, a `bool`) is converted again, which is exact (a zero's sign too, #3248)
  * and costs less than a comparison. A `T` that owns something stays when `cur` is the same as
  * `Object.is` tells it, so a borrow of it stays valid: `===` first, then for a zero, which
- * `anyIsZero` tests inline, `Object.is` (a zero changed to the other one behind the view, #3610).
+ * `anyZeroSign` tests inline, their signs (a zero changed to the other one behind the view, #3610).
  */
 @inline("always")
 function mirrorKeeps<T>(had: T, cur: any): bool {
@@ -234,12 +234,13 @@ function mirrorKeeps<T>(had: T, cur: any): bool {
     return false;
   }
   const h: any = had;
-  if (h !== cur) {
-    return false;
+  // A zero is kept only as the same zero (#3610): its sign against the mirror's, both tested
+  // inline (`anyZeroSign`), with no `===` on two `any`s; anything else is kept when `===`.
+  const s = anyZeroSign(cur);
+  if (s != 0) {
+    return anyZeroSign(h) == s;
   }
-  // A zero changed to the other one behind the view is converted again (#3610): an equal pair
-  // is compared by `Object.is` only when it is a zero, a test lowered inline (`anyIsZero`).
-  return !anyIsZero(cur) || Object.is(h, cur);
+  return h === cur;
 }
 
 /**

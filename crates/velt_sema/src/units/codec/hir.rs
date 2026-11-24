@@ -590,7 +590,7 @@ enums! {
         221 => PtrRead,
         222 => PtrWrite,
         223 => WeakRead,
-        227 => AnyIsZero,
+        227 => AnyZeroSign,
     }
 }
 

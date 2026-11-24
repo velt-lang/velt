@@ -218,9 +218,10 @@ assignment) are listed in the module comment of `crates/velt_sema/src/hir/mod.rs
   slot likewise compares only the names the program calls; lowering starts from
   `Program::any_call_names`, those in its own code. `Call { Intrinsic(AnyIsList), [x] }`, std only,
   is not a constant: a comparison of the descriptor of the `any` `x` with the table of `any[]`.
-  `Call { Intrinsic(AnyIsZero), [x] }`, std only, is not a constant either: does the `any` `x`
-  hold a number that is `0` or `-0`? A comparison of its descriptor with `number`'s table and of
-  the value with `0`, inline; another number type goes through its descriptor's number slot.
+  `Call { Intrinsic(AnyZeroSign), [x] }`, std only, is not a constant either: `1` when the `any`
+  `x` holds a number that is `0`, `-1` for a `-0`, `0` otherwise. A comparison of its descriptor
+  with `number`'s table and of the value's bits, inline; another number type goes through its
+  descriptor's number slot.
   `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the same kind of constant: is a
   `Call { Intrinsic(NoteStdUse), [Lit(Str(name))] }` in code the program reaches?
 - Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type

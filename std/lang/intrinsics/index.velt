@@ -24,7 +24,7 @@ export {
 export {
   anyDelete,
   anyIsList,
-  anyIsZero,
+  anyZeroSign,
   anyIsPromise,
   anyMethodCalled,
   anyPromise,

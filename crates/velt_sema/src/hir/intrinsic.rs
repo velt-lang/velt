@@ -731,8 +731,8 @@ pub enum Intrinsic {
     /// std only: `(x: borrow any) -> bool`: does `x` hold an `any[]` itself (not a view, a proxy or
     /// another array)? A comparison of its descriptor.
     AnyIsList,
-    /// std only: `(x: borrow any) -> bool`: does `x` hold a `0` or `-0`? Lowered inline.
-    AnyIsZero,
+    /// std only: `(x: borrow any) -> i32`: `1` for a `0`, `-1` for a `-0`, else `0`. Inline.
+    AnyZeroSign,
     /// std only: `(name: string literal)`: nothing runs. Where it is lowered, the program can reach
     /// this code, so `StdUsed(name)` is true for the whole program.
     NoteStdUse,

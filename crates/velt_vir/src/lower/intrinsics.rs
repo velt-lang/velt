@@ -415,7 +415,7 @@ impl FnLower<'_, '_> {
                 Operand::Const(crate::vir::Const::Bool(fact), Ty::Bool)
             }
             (I::AnyIsList, [a]) => self.any_is_list(a),
-            (I::AnyIsZero, [a]) => self.any_is_zero(a),
+            (I::AnyZeroSign, [a]) => self.any_zero_sign(a),
             (I::NoteStdUse, [name]) => {
                 if let hir::ExprKind::Lit(hir::Lit::Str(n)) = &name.kind {
                     self.cx.note_std_use(n);
