@@ -1404,16 +1404,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-rustls"
-version = "0.26.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
-dependencies = [
- "rustls",
- "tokio",
-]
-
-[[package]]
 name = "toml"
 version = "1.1.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1695,18 +1685,13 @@ dependencies = [
  "libc",
  "libmimalloc-sys",
  "lock_api",
- "memchr",
  "mimalloc",
  "parking_lot",
  "parking_lot_core",
- "rustls",
  "socket2",
  "tokio",
- "tokio-rustls",
  "velt_native",
  "velt_text",
- "velt_tls",
- "webpki-roots",
  "windows-sys 0.61.2",
 ]
 
@@ -1719,18 +1704,13 @@ dependencies = [
  "libc",
  "libmimalloc-sys",
  "lock_api",
- "memchr",
  "mimalloc",
  "parking_lot",
  "parking_lot_core",
- "rustls",
  "socket2",
  "tokio",
- "tokio-rustls",
  "velt_native",
  "velt_text",
- "velt_tls",
- "webpki-roots",
  "windows-sys 0.61.2",
 ]
 
@@ -1743,18 +1723,13 @@ dependencies = [
  "libc",
  "libmimalloc-sys",
  "lock_api",
- "memchr",
  "mimalloc",
  "parking_lot",
  "parking_lot_core",
- "rustls",
  "socket2",
  "tokio",
- "tokio-rustls",
  "velt_native",
  "velt_text",
- "velt_tls",
- "webpki-roots",
  "windows-sys 0.61.2",
 ]
 

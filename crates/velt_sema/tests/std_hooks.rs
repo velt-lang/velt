@@ -34,6 +34,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/lang/hooks/sched_blocking\";\n\
     import \"velt/lang/hooks/sched_cells\";\n\
     import \"velt/process/child/child_reactor\";\nimport \"velt/net/dns/lookup_sched\";\n\
+    import \"velt/net/tls/fd_server\";\nimport \"velt/net/tls/fd_client\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
     const j = JSON.parse<i64>(\"1\");\n  const v: JsonValue = JsonValue.of(1);\n}\n";

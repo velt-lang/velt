@@ -1,0 +1,362 @@
+// velt/net (tests): `CertificateVerifier` (verifier.velt): the chain and the name with the alert
+// for each failure, the server's handshake signature under TLS 1.3's rules and TLS 1.2's, the
+// trust anchors from `ca` PEM, and IP addresses from text.
+import { describe, expect, it } from "velt/test";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { base64Encode } from "velt/encoding/base64";
+import { IoError } from "velt/io/error";
+import { TlsFailure } from "velt/net/tls/alert";
+import { TrustAnchor } from "velt/net/tls/x509/trust_anchor";
+import * as e from "velt/net/tls/x509/verify_error";
+import { CertificateVerifier, ipAddressBytes, trustAnchors } from "velt/net/tls/verifier";
+import { ipText } from "velt/net/tls/verify_message";
+import * as v from "./verifier_vectors.test";
+
+// 2027-01-01, within every test certificate's validity.
+const NOW: i64 = 1798761600;
+
+function anchors(der: string): TrustAnchor[] {
+  return [TrustAnchor.fromCertificate(hexDecode(der))];
+}
+
+// A verifier that has verified `leaf` under the test CA for localhost.
+function verified(leaf: string): CertificateVerifier {
+  const c = new CertificateVerifier(anchors(v.CA_DER), "localhost", true, NOW);
+  c.verifyChain([hexDecode(leaf), hexDecode(v.INT_DER)]);
+  return c;
+}
+
+// "ok", or the failure's alert and message.
+function outcome(f: () => void throws TlsFailure): string {
+  try {
+    f();
+    return "ok";
+  } catch (e) {
+    return e instanceof TlsFailure ? `${e.alert} ${e.message}` : `not a TlsFailure: ${e}`;
+  }
+}
+
+function chain(name: string, now: i64, ca: string, certs: string[]): string {
+  const ders: u8[][] = [];
+  for (const c of certs) {
+    ders.push(hexDecode(c));
+  }
+  const c = new CertificateVerifier(anchors(ca), name, true, now);
+  return outcome(() => c.verifyChain(ders));
+}
+
+function sign13(leaf: string, scheme: usize, signature: string): string {
+  const c = verified(leaf);
+  const hash = hexDecode(v.HASH);
+  const sig = hexDecode(signature);
+  return outcome(() => c.verifyHandshake13(scheme, hash, sig));
+}
+
+function sign12(leaf: string, scheme: usize, signature: string): string {
+  const c = verified(leaf);
+  const signed = hexDecode(v.SIGNED_12);
+  const sig = hexDecode(signature);
+  return outcome(() => c.verifyHandshake12(scheme, signed, sig));
+}
+
+const BAD_SIGNATURE = "51 TLS: the server's signature does not verify";
+
+describe("CertificateVerifier.verifyChain", () => {
+  it("takes a chain to an anchor for the server's name", () => {
+    expect(chain("localhost", NOW, v.CA_DER, [v.P256_DER, v.INT_DER])).toBe("ok");
+    expect(chain("127.0.0.1", NOW, v.CA_DER, [v.RSA_DER, v.INT_DER])).toBe("ok");
+    expect(chain("[::1]", NOW, v.CA_DER, [v.ED_DER, v.INT_DER, v.CA_DER])).toBe("ok");
+  });
+
+  it("answers each failure with the alert rustls sends", () => {
+    const certs = [v.P256_DER, v.INT_DER];
+    expect(chain("localhost", NOW, v.CA_DER, [])).toBe("42 TLS: the server sent no certificate");
+    expect(chain("localhost", NOW, v.CA_DER, ["3003020100", v.INT_DER])).toContain(
+      "42 TLS: malformed",
+    );
+    // unknown_ca, decrypt_error, certificate_expired (also for one not yet valid).
+    expect(chain("localhost", NOW, v.CA_DER, [v.P256_DER])).toContain("48 TLS: unable to verify");
+    expect(chain("localhost", NOW, v.OTHER_DER, certs)).toContain("51 TLS: certificate signature");
+    const later = NOW + 86400 * 40000;
+    expect(chain("localhost", later, v.CA_DER, certs)).toContain("45 TLS: certificate has expired");
+    expect(chain("localhost", 86400, v.CA_DER, certs)).toContain(
+      "45 TLS: certificate is not yet valid",
+    );
+    // certificate_unknown for a CA presented as the server's certificate.
+    expect(chain("localhost", NOW, v.CA_DER, [v.INT_DER])).toContain(
+      "46 TLS: the server's certificate is a CA",
+    );
+    // bad_certificate for the name, after the chain: an untrusted chain says so first.
+    expect(chain("example.com", NOW, v.CA_DER, certs)).toBe(
+      "42 TLS: Hostname/IP does not match certificate's altnames: Host: example.com. is not in the cert's altnames: DNS:localhost, DNS:*.velt.test, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1 (ERR_TLS_CERT_ALTNAME_INVALID)",
+    );
+    expect(chain("192.0.2.1", NOW, v.CA_DER, certs)).toBe(
+      "42 TLS: Hostname/IP does not match certificate's altnames: IP: 192.0.2.1 is not in the cert's list: 127.0.0.1, ::1 (ERR_TLS_CERT_ALTNAME_INVALID)",
+    );
+    expect(chain("example.com", NOW, v.OTHER_DER, certs)).toContain(
+      "51 TLS: certificate signature",
+    );
+  });
+
+  it("says why no trusted root was reached, as Node does, by how far the chain sent leads", () => {
+    // Trusting only an unrelated certificate. All are unknown_ca.
+    const other = v.P384_DER;
+    expect(chain("localhost", NOW, other, [v.P256_DER])).toBe(
+      "48 TLS: unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)",
+    );
+    expect(chain("localhost", NOW, other, [v.P256_DER, v.INT_DER])).toBe(
+      "48 TLS: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
+    );
+    expect(chain("localhost", NOW, other, [v.P256_DER, v.INT_DER, v.CA_DER])).toBe(
+      "48 TLS: self-signed certificate in certificate chain (SELF_SIGNED_CERT_IN_CHAIN)",
+    );
+    // The order sent does not matter, and a certificate that is nobody's issuer is not followed.
+    expect(chain("localhost", NOW, other, [v.P256_DER, v.CA_DER, v.INT_DER])).toBe(
+      "48 TLS: self-signed certificate in certificate chain (SELF_SIGNED_CERT_IN_CHAIN)",
+    );
+    expect(chain("localhost", NOW, other, [v.P256_DER, v.CA_DER])).toBe(
+      "48 TLS: unable to verify the first certificate (UNABLE_TO_VERIFY_LEAF_SIGNATURE)",
+    );
+    expect(chain("localhost", NOW, other, [v.SELF_DER])).toBe(
+      "48 TLS: self-signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)",
+    );
+    expect(chain("localhost", NOW, other, [v.SELF_DER, v.INT_DER])).toBe(
+      "48 TLS: self-signed certificate (DEPTH_ZERO_SELF_SIGNED_CERT)",
+    );
+    // Trusted, a self-signed certificate is its own chain.
+    expect(chain("localhost", NOW, v.SELF_DER, [v.SELF_DER])).toBe("ok");
+    expect(e.describeError(e.EKU_NOT_FOUND)).toBe(
+      "unsuitable certificate purpose (INVALID_PURPOSE)",
+    );
+  });
+
+  it(
+    "prints IPv6 addresses as Node does: OpenSSL's form among the names, RFC 5952's in the list",
+    () => {
+      expect(chain("example.com", NOW, v.V6_DER, [v.V6_DER])).toBe(
+        "42 TLS: Hostname/IP does not match certificate's altnames: Host: example.com. is not in the cert's altnames: DNS:other.test, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1, IP Address:2001:DB8:0:0:0:0:A:1, IP Address:2001:DB8:0:1:0:0:0:1, IP Address:1:0:0:2:0:0:0:3, IP Address:1:0:2:0:3:0:4:5, IP Address:1:0:0:2:0:0:3:4 (ERR_TLS_CERT_ALTNAME_INVALID)",
+      );
+      // The longest run of zero groups is shortened, the first of two equal runs, and never one
+      // group alone.
+      expect(chain("127.0.0.2", NOW, v.V6_DER, [v.V6_DER])).toBe(
+        "42 TLS: Hostname/IP does not match certificate's altnames: IP: 127.0.0.2 is not in the cert's list: 127.0.0.1, ::1, 2001:db8::a:1, 2001:db8:0:1::1, 1:0:0:2::3, 1:0:2:0:3:0:4:5, 1::2:0:0:3:4 (ERR_TLS_CERT_ALTNAME_INVALID)",
+      );
+      expect(chain("::1", NOW, v.V6_DER, [v.V6_DER])).toBe("ok");
+      expect(chain("2001:db8::a:1", NOW, v.V6_DER, [v.V6_DER])).toBe("ok");
+    },
+  );
+
+  it(
+    "prints IPv4-mapped and IPv4-compatible IPv6 addresses' last 32 bits dotted, as Node does",
+    () => {
+      const text = (hex: string, openssl: bool = false): string => {
+        const b = hexDecode(hex);
+        return ipText(b, 0, b.length, openssl);
+      };
+      expect(text("00000000000000000000ffffc0000201")).toBe("::ffff:192.0.2.1");
+      expect(text("000000000000000000000000c0000201")).toBe("::192.0.2.1");
+      expect(text("00000000000000000000000000000002")).toBe("::2");
+      expect(text("00000000000000000000000000000000")).toBe("::");
+      // Not mapped: ffff after fewer zero groups, or another group than ffff.
+      expect(text("0000000000000000ffff0000c0000201")).toBe("::ffff:0:c000:201");
+      expect(text("00000000000000000000fffec0000201")).toBe("::fffe:c000:201");
+      expect(text("00010000000000000000ffffc0000201")).toBe("1::ffff:c000:201");
+      // OpenSSL's form among the names is unchanged.
+      expect(text("00000000000000000000ffffc0000201", true)).toBe("0:0:0:0:0:FFFF:C000:201");
+    },
+  );
+
+  it(
+    "says so when the certificate has no subjectAltName, and does not look at its common name",
+    () => {
+      expect(chain("localhost", NOW, v.NOSAN_DER, [v.NOSAN_DER])).toBe(
+        "42 TLS: Hostname/IP does not match certificate's altnames: the certificate has no subjectAltName (ERR_TLS_CERT_ALTNAME_INVALID)",
+      );
+    },
+  );
+
+  it("does not look through more than 17 certificates", () => {
+    const many = [v.P256_DER];
+    for (let i = 0; i < 16; i++) {
+      many.push(v.INT_DER);
+    }
+    expect(chain("localhost", NOW, v.CA_DER, many)).toBe("ok");
+    many.push(v.INT_DER);
+    expect(chain("localhost", NOW, v.CA_DER, many)).toBe(
+      "42 TLS: the server sent 18 certificates (at most 17 are looked at)",
+    );
+    // Not one of them is read: garbage in the list is not what is reported.
+    many[5] = "3003020100";
+    expect(chain("localhost", NOW, v.CA_DER, many)).toBe(
+      "42 TLS: the server sent 18 certificates (at most 17 are looked at)",
+    );
+  });
+
+  it("names what is wrong with a certificate that does not parse, as rustls classes it", () => {
+    // The intermediate with a byte after it: bad_certificate, as any bad encoding.
+    expect(chain("localhost", NOW, v.CA_DER, [v.P256_DER, v.INT_DER + "00"])).toBe(
+      "42 TLS: a certificate in the chain is malformed",
+    );
+    // Not v3 (its version changed to v2), and another signature algorithm outside its signed
+    // part than inside: certificate_unknown, rustls's alert for what it has no class for.
+    const version = v.INT_DER.indexOf("a003020102");
+    const v2 = v.INT_DER.slice(0, version + 8) + "01" + v.INT_DER.slice(version + 10);
+    expect(chain("localhost", NOW, v.CA_DER, [v.P256_DER, v2])).toBe(
+      "46 TLS: a certificate in the chain is not an X.509 v3 certificate",
+    );
+    const outer = v.INT_DER.lastIndexOf("06082a8648ce3d040302");
+    expect(outer > 0).toBe(true);
+    const other = v.INT_DER.slice(0, outer + 18) + "03" + v.INT_DER.slice(outer + 20);
+    expect(chain("localhost", NOW, v.CA_DER, [v.P256_DER, other])).toBe(
+      "46 TLS: a certificate names two different signature algorithms",
+    );
+    // A good intermediate beside one of these still makes the path.
+    expect(chain("localhost", NOW, v.CA_DER, [v.P256_DER, other, v.INT_DER])).toBe("ok");
+  });
+
+  it("leaves the name alone when told to", () => {
+    const c = new CertificateVerifier(anchors(v.CA_DER), "example.com", false, NOW);
+    const certs = [hexDecode(v.P256_DER), hexDecode(v.INT_DER)];
+    expect(outcome(() => c.verifyChain(certs))).toBe("ok");
+  });
+});
+
+describe("CertificateVerifier.verifyHandshake13", () => {
+  it("takes each key's signature with its scheme", () => {
+    expect(sign13(v.P256_DER, 0x0403, v.P256_SHA256_13)).toBe("ok");
+    expect(sign13(v.P384_DER, 0x0503, v.P384_SHA384_13)).toBe("ok");
+    expect(sign13(v.ED_DER, 0x0807, v.ED_13)).toBe("ok");
+    expect(sign13(v.RSA_DER, 0x0804, v.RSA_PSS_SHA256_13)).toBe("ok");
+    expect(sign13(v.RSA_DER, 0x0805, v.RSA_PSS_SHA384_13)).toBe("ok");
+    expect(sign13(v.RSA_DER, 0x0806, v.RSA_PSS_SHA512_13)).toBe("ok");
+  });
+
+  it("refuses a signature over something else, or by another key", () => {
+    const c = verified(v.P256_DER);
+    const hash = hexDecode(v.HASH);
+    const sig = hexDecode(v.P256_SHA256_13);
+    hash[0] ^= 1;
+    expect(outcome(() => c.verifyHandshake13(0x0403, hash, sig))).toBe(BAD_SIGNATURE);
+    hash[0] ^= 1;
+    sig[sig.length - 1] ^= 1;
+    expect(outcome(() => c.verifyHandshake13(0x0403, hash, sig))).toBe(BAD_SIGNATURE);
+    expect(sign13(v.RSA_DER, 0x0805, v.RSA_PSS_SHA256_13)).toBe(BAD_SIGNATURE);
+    expect(sign13(v.RSA_DER, 0x0804, v.RSA_PKCS1_SHA256_13)).toBe(BAD_SIGNATURE);
+    expect(sign13(v.ED_DER, 0x0807, v.P256_SHA256_13)).toBe(BAD_SIGNATURE);
+    // A TLS 1.2 signature is over other bytes.
+    expect(sign13(v.P256_DER, 0x0403, v.P256_SHA256_12)).toBe(BAD_SIGNATURE);
+  });
+
+  it("refuses a scheme that TLS 1.3 or the certificate's key does not take", () => {
+    const refused = "47 TLS: the server signed with scheme";
+    // PKCS#1 v1.5, though the signature is right.
+    expect(sign13(v.RSA_DER, 0x0401, v.RSA_PKCS1_SHA256_13)).toContain(refused);
+    // ECDSA with the other curve's hash: TLS 1.3 ties them.
+    expect(sign13(v.P256_DER, 0x0503, v.P256_SHA384_13)).toContain(refused);
+    expect(sign13(v.P384_DER, 0x0403, v.P384_SHA256_13)).toContain(refused);
+    // A scheme of another kind of key, and one that does not exist.
+    expect(sign13(v.P256_DER, 0x0804, v.P256_SHA256_13)).toContain(refused);
+    expect(sign13(v.RSA_DER, 0x0403, v.RSA_PSS_SHA256_13)).toContain(refused);
+    expect(sign13(v.P256_DER, 0x0807, v.P256_SHA256_13)).toContain(refused);
+    expect(sign13(v.P256_DER, 0x0203, v.P256_SHA256_13)).toContain(refused);
+  });
+});
+
+describe("CertificateVerifier.verifyHandshake12", () => {
+  it("takes ECDSA with either hash, Ed25519, and RSA as PSS or PKCS#1 v1.5", () => {
+    expect(sign12(v.P256_DER, 0x0403, v.P256_SHA256_12)).toBe("ok");
+    expect(sign12(v.P256_DER, 0x0503, v.P256_SHA384_12)).toBe("ok");
+    expect(sign12(v.P384_DER, 0x0403, v.P384_SHA256_12)).toBe("ok");
+    expect(sign12(v.ED_DER, 0x0807, v.ED_12)).toBe("ok");
+    expect(sign12(v.RSA_DER, 0x0401, v.RSA_PKCS1_SHA256_12)).toBe("ok");
+    expect(sign12(v.RSA_DER, 0x0501, v.RSA_PKCS1_SHA384_12)).toBe("ok");
+    expect(sign12(v.RSA_DER, 0x0601, v.RSA_PKCS1_SHA512_12)).toBe("ok");
+    expect(sign12(v.RSA_DER, 0x0804, v.RSA_PSS_SHA256_12)).toBe("ok");
+    expect(sign12(v.RSA_DER, 0x0805, v.RSA_PSS_SHA384_12)).toBe("ok");
+    expect(sign12(v.RSA_DER, 0x0806, v.RSA_PSS_SHA512_12)).toBe("ok");
+  });
+
+  it("refuses a wrong signature, hash or kind of key", () => {
+    expect(sign12(v.P256_DER, 0x0403, v.P256_SHA384_12)).toBe(BAD_SIGNATURE);
+    expect(sign12(v.RSA_DER, 0x0401, v.RSA_PSS_SHA256_12)).toBe(BAD_SIGNATURE);
+    expect(sign12(v.RSA_DER, 0x0501, v.RSA_PKCS1_SHA256_12)).toBe(BAD_SIGNATURE);
+    expect(sign12(v.RSA_DER, 0x0401, v.RSA_PKCS1_SHA256_13)).toBe(BAD_SIGNATURE);
+    expect(sign12(v.P256_DER, 0x0401, v.P256_SHA256_12)).toContain("47 TLS: the server signed");
+    expect(sign12(v.RSA_DER, 0x0403, v.RSA_PKCS1_SHA256_12)).toContain("47 TLS: the server signed");
+    expect(sign12(v.P256_DER, 0x0201, v.P256_SHA256_12)).toContain("47 TLS: the server signed");
+  });
+});
+
+function pem(label: string, der: string): string {
+  return `-----BEGIN ${label}-----\n${base64Encode(hexDecode(der))}\n-----END ${label}-----\n`;
+}
+
+// "ok <count>", or the `IoError`'s code and message.
+function anchorsOf(text: string): string {
+  try {
+    return `ok ${trustAnchors(text).length}`;
+  } catch (e) {
+    return e instanceof IoError ? `${e.code} ${e.message}` : `not an IoError: ${e}`;
+  }
+}
+
+describe("trustAnchors", () => {
+  it("reads the CA PEM's certificates, among other blocks and text", () => {
+    expect(anchorsOf("")).toBe("ok 0");
+    expect(anchorsOf(pem("CERTIFICATE", v.CA_DER))).toBe("ok 1");
+    const two = `a comment\n${pem("CERTIFICATE", v.CA_DER)}\n${pem("PRIVATE KEY", "00")}${pem("CERTIFICATE", v.OTHER_DER)}`;
+    expect(anchorsOf(two)).toBe("ok 2");
+    const added = trustAnchors(pem("CERTIFICATE", v.CA_DER))[0];
+    expect(hexEncode(added.subject)).toBe(hexEncode(anchors(v.CA_DER)[0].subject));
+  });
+
+  it("refuses text without a certificate, and a certificate that does not parse", () => {
+    expect(anchorsOf("nothing")).toBe("EINVAL no certificate found in the CA PEM");
+    expect(anchorsOf(pem("PRIVATE KEY", "00"))).toBe("EINVAL no certificate found in the CA PEM");
+    expect(anchorsOf(pem("CERTIFICATE", "3003020100"))).toContain(
+      "EINVAL invalid CA certificate in the CA PEM",
+    );
+    expect(anchorsOf("-----BEGIN CERTIFICATE-----\nAAAA")).toContain("EINVAL invalid CA PEM");
+  });
+});
+
+describe("ipAddressBytes", () => {
+  it("reads IPv4 and IPv6 addresses, and nothing else", () => {
+    const rows: [string, string][] = [
+      ["127.0.0.1", "7f000001"],
+      ["255.255.255.255", "ffffffff"],
+      ["0.0.0.0", "00000000"],
+      ["::", "00000000000000000000000000000000"],
+      ["::1", "00000000000000000000000000000001"],
+      ["[::1]", "00000000000000000000000000000001"],
+      ["1::", "00010000000000000000000000000000"],
+      ["2001:db8::8:800:200c:417a", "20010db80000000000080800200c417a"],
+      ["2001:DB8:0:0:8:800:200C:417A", "20010db80000000000080800200c417a"],
+      ["::ffff:192.0.2.1", "00000000000000000000ffffc0000201"],
+      ["1:2:3:4:5:6:192.0.2.1", "000100020003000400050006c0000201"],
+      ["1:2:3:4:5:6:7::", "00010002000300040005000600070000"],
+      // Not addresses.
+      ["localhost", ""],
+      ["", ""],
+      ["1.2.3", ""],
+      ["1.2.3.4.5", ""],
+      ["256.1.1.1", ""],
+      ["01.2.3.4", ""],
+      ["1.2.3.a", ""],
+      ["1..3.4", ""],
+      ["1:2:3:4:5:6:7", ""],
+      ["1:2:3:4:5:6:7:8:9", ""],
+      ["1::2::3", ""],
+      [":::", ""],
+      ["12345::", ""],
+      ["g::", ""],
+      ["1:2:3:4:5:6:7:8::", ""],
+      ["::192.0.2.1:1", ""],
+      ["1:2:3:4:5:6:7:192.0.2.1", ""],
+    ];
+    for (const [text, hex] of rows) {
+      const b = ipAddressBytes(text);
+      expect(`${text} -> ${b == null ? "" : hexEncode(b)}`).toBe(`${text} -> ${hex}`);
+    }
+  });
+});

@@ -1,0 +1,56 @@
+// velt/net (internal): what the TLS engine (std/net/tls/tls_engine.velt `tryServerHandshake`) and
+// a reactor's connection (fd_conn.velt) use of the server's handshake: `ServerSteps`, which
+// `ServerHandshake` (server_handshake.velt) implements, and the steps its `onMessage` returns.
+// Through it a program that only connects with TLS reaches none of the server's code, which it
+// would check and build otherwise (#3634).
+
+import { RecordCipher } from "velt/net/tls/record_cipher";
+
+/** What the engine must do after a message: keep reading. */
+export const S_KEEP_READING = 0;
+/** Send `retry` in plaintext (with a ChangeCipherSpec after it when `compat`), keep reading. */
+export const S_SEND_RETRY = 1;
+/**
+ * Send `hello` in plaintext (with a ChangeCipherSpec after it when `compat` and none went yet),
+ * then `flight` under `serverHandshake`, then write with `serverApplication` and read with
+ * `clientHandshake`.
+ */
+export const S_SEND_FLIGHT = 2;
+/** The client's Finished is checked: read with `clientApplication`. */
+export const S_DONE = 3;
+/** TLS 1.2: send `hello` (ServerHello to ServerHelloDone) in plaintext, keep reading. */
+export const S_SEND_PLAIN = 4;
+/**
+ * TLS 1.2: the client's Finished is checked: send a ChangeCipherSpec, then `flight` under
+ * `writeCipher`.
+ */
+export const S_DONE12 = 5;
+
+/** The server's side of one handshake, as the engine drives it (`ServerHandshake`). */
+export interface ServerSteps {
+  /** The legacy session id was not empty: middlebox compatibility (§D.4) is on. */
+  compat: bool;
+  /** A ChangeCipherSpec went out already (after the HelloRetryRequest). */
+  ccsSent: bool;
+  /** The cipher suite chosen. */
+  suite: usize;
+  /** The protocol chosen with ALPN, or null. */
+  alpn: string | null;
+  /** What to send, per the step `onMessage` returned. */
+  retry: u8[] | null;
+  hello: u8[] | null;
+  flight: u8[] | null;
+  /** The traffic secrets, once known. */
+  serverHandshake: u8[] | null;
+  clientHandshake: u8[] | null;
+  serverApplication: u8[] | null;
+  clientApplication: u8[] | null;
+  /** TLS 1.2: the write keys, after `S_DONE12`. */
+  writeCipher: RecordCipher | null;
+  /** Whether the handshake is over. */
+  done(): bool;
+  /** TLS 1.2: the client's write keys at its ChangeCipherSpec, or null (TLS 1.3). */
+  ccs(): RecordCipher | null;
+  /** The next handshake message from the client: what the engine does next (`S_*`). */
+  onMessage(m: u8[]): i32;
+}

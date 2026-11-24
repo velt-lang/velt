@@ -240,6 +240,7 @@ pub(super) fn pure_intrinsic(i: hir::Intrinsic) -> bool {
             | I::SymbolAt
             | I::ExportedAddress
             | I::StrAsciiWords
+            | I::StrBorrowedWords
             | I::StrLoadU8x16
             | I::StrLoadPartialU8x16
             | I::Sqrt

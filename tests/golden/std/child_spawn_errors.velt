@@ -1,0 +1,58 @@
+// requires: unix
+// A program that does not start throws `SpawnError` with Node's message and fields (#3167):
+// `spawn` and `exec` as Node's `spawn` and `execFile` (`spawn vprog ENOENT`), `execSync` as its
+// `execFileSync` (`spawnSync vprog ENOENT`), with `errno` (negative), `syscall`, `path` and
+// `spawnargs`. A missing program is ENOENT; a file without the execute bit is EACCES, named with
+// a `/` or found in `PATH`. This program prints what `node` prints on macOS and Linux for the
+// same calls (child_spawn_errors.mjs).
+import { exec, execSync, spawn, SpawnError } from "velt/process/child";
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+function show(what: string, err: Error) {
+  if (err instanceof SpawnError) {
+    const args = err.spawnargs == null ? "none" : JSON.stringify(err.spawnargs);
+    console.log(what, err.code, err.errno, err.syscall, err.path ?? "none", args);
+    console.log("  ", err.message);
+  } else {
+    console.log(what, "not a SpawnError:", err.message);
+  }
+}
+
+async function attempt(label: string, program: string, opts: Map<string, string>, cwd: string) {
+  try {
+    const p = spawn(program, ["arg 1", "two"], { env: opts, cwd: cwd, stdout: "ignore" });
+    console.log(label, "spawn started", await p.wait());
+  } catch (err) {
+    show(`${label} spawn`, err);
+  }
+  try {
+    const r = await exec(program, ["arg 1", "two"], { env: opts, cwd: cwd });
+    console.log(label, "exec ran", r.code);
+  } catch (err) {
+    show(`${label} exec`, err);
+  }
+  try {
+    const r = execSync(program, ["arg 1", "two"], { env: opts, cwd: cwd });
+    console.log(label, "execSync ran", r.code);
+  } catch (err) {
+    show(`${label} execSync`, err);
+  }
+}
+
+async function main() {
+  const dir = `${tmpdir()}/velt-golden-child-spawn-errors-${process.pid}`;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(`${dir}/plain`, "echo ran\n");
+  // A PATH of only a missing directory, so the lookup fails the same way on every machine.
+  const missing = new Map<string, string>();
+  missing.set("PATH", "velt-no-such-dir");
+  const here = new Map<string, string>();
+  here.set("PATH", dir);
+
+  await attempt("missing", "velt-no-such-program", missing, dir);
+  await attempt("not executable", "./plain", new Map<string, string>(), dir);
+  await attempt("not executable in PATH", "plain", here, dir);
+
+  fs.rmSync(dir, { recursive: true });
+}

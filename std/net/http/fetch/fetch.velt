@@ -19,6 +19,9 @@ import { Request } from "velt/net/http/fetch/request";
 import { normalizeMethod, RequestInit, RequestRedirect } from "velt/net/http/fetch/request_init";
 import { Response } from "velt/net/http/fetch/response";
 import { ClientRequest, ERROR, FOLLOW, MANUAL } from "velt/net/http/fetch/client/client_request";
+import { TlsOn } from "velt/net/http/fetch/client/target";
+import { variant } from "velt/lang/intrinsics/decorators";
+import { tlsOn } from "#fetch-dial";
 import { send } from "#http-transport";
 
 export { BodyInit } from "velt/net/http/fetch/body";
@@ -45,9 +48,36 @@ function redirectMode(r: RequestRedirect): i64 {
  * `AbortError` (`TimeoutError` for `AbortSignal.timeout`) when it is aborted. An HTTP error
  * status is a response, not an error: check `res.ok`.
  */
+@variant(
+  "fetchPlain",
+  { arg: 0, startsWith: "http:" },
+  { arg: 1, field: "redirect", oneOf: ["manual", "error"] },
+)
 export async function fetch(
   input: string | URL | Request,
   init: RequestInit = {},
+): Promise<Response, IoError | AbortError> {
+  return await fetchWith(input, init, tlsOn);
+}
+
+/**
+ * `fetch` of a URL written as an `http:` literal whose options follow no redirect (`redirect` is
+ * `"manual"` or `"error"`; `@variant` makes such a call this one): the same without the TLS
+ * client, which no such request can reach, so a program whose every `fetch` is one neither loads
+ * nor builds it (#2392). A `fetch` that may follow a redirect may meet `https:`, and keeps it.
+ */
+async function fetchPlain(
+  input: string | URL | Request,
+  init: RequestInit = {},
+): Promise<Response, IoError | AbortError> {
+  return await fetchWith(input, init, null);
+}
+
+// `fetch`, with the TLS client for `https:` (`tls`; null: none).
+async function fetchWith(
+  input: string | URL | Request,
+  init: RequestInit,
+  tls: TlsOn | null,
 ): Promise<Response, IoError | AbortError> {
   const o = outgoing(input, init);
   let text = o.text;
@@ -70,6 +100,7 @@ export async function fetch(
     redirectMode(o.redirect),
     signal,
     o.ca,
+    tls,
   );
   try {
     return Response.adopt(await send(out), signal, o.method == "HEAD");

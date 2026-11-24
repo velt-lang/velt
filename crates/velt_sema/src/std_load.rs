@@ -34,6 +34,9 @@ pub struct StdBatch {
     /// Imports it resolved in modules loaded earlier (a re-export skipped until a name of it was
     /// asked for): module path, specifier, target path.
     pub imports: Vec<(String, String, String)>,
+    /// Why the demand can't be served in place (velt_loader `LoadOptions::refuse_out_of_rule`):
+    /// the driver loads it up front and checks again; empty when it was served.
+    pub refused: Vec<String>,
 }
 
 /// How the driver loads during a check: given canonical std module paths, those modules and what
@@ -70,12 +73,20 @@ pub struct StdLoads {
     /// Per demanded or served module path: its batch, `None` when it could not be loaded; and how
     /// many batches there are.
     served: Mutex<(FxHashMap<String, Option<usize>>, usize)>,
+    /// A demand was refused (`StdBatch::refused`): the driver throws this check away and checks
+    /// again with the module up front, so the check stops where it is (`Ctx::load_refused`).
+    refused: std::sync::atomic::AtomicBool,
 }
 
 impl StdLoads {
     /// What tells one `StdLoads` from another, also after it moves: the address of its slots.
     pub(crate) fn id(&self) -> usize {
         self.slots.as_ptr() as usize
+    }
+
+    /// Was a demand of a check on these loads refused?
+    pub fn refused(&self) -> bool {
+        self.refused.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The address and length of each served batch's modules.
@@ -92,6 +103,7 @@ impl Default for StdLoads {
         StdLoads {
             slots: (0..SLOTS).map(|_| OnceLock::new()).collect(),
             served: Default::default(),
+            refused: Default::default(),
         }
     }
 }
@@ -120,6 +132,13 @@ impl<'a> Loads<'a> {
             return *known;
         }
         let batch = (self.run)(&[path.to_string()]);
+        if batch.as_ref().is_some_and(|b| !b.refused.is_empty()) {
+            self.kept
+                .refused
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            served.0.insert(path.to_string(), None);
+            return None;
+        }
         let batch = batch.filter(|b| !b.modules.is_empty() || !b.imports.is_empty());
         let Some(batch) = batch else {
             served.0.insert(path.to_string(), None);
@@ -159,6 +178,7 @@ fn rewrite(b: StdBatch) -> Batch {
     let StdBatch {
         mut modules,
         imports,
+        refused: _,
     } = b;
     let mut diags = vec![];
     diags.extend(crate::call_sigs::check(&modules));
@@ -212,6 +232,12 @@ fn rewrite(b: StdBatch) -> Batch {
 }
 
 impl Ctx<'_> {
+    /// Was a demand of this check refused (`StdLoads::refused`)? Then nothing it finds counts:
+    /// the bodies' check and the rounds stop.
+    pub(crate) fn load_refused(&self) -> bool {
+        self.loads.is_some_and(|l| l.kept.refused())
+    }
+
     /// Was `d` made by a collection, the program's or that of added modules, rather than by a
     /// body's check? A next round can find such a definition again (`Assumed::defs`).
     pub(crate) fn collected(&self, d: crate::hir::DefId) -> bool {

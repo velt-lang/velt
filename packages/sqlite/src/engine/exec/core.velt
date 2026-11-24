@@ -156,8 +156,8 @@ function compileCoreOnce(
   }
   // LIMIT and OFFSET name no column, not even an enclosing query's (SQLite resolves them in an
   // empty name context).
-  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, new Scope());
-  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, new Scope());
+  const limitEv: Ev | null = tail.limit == null ? null : c.compileEv(tail.limit!, new Scope());
+  const offsetEv: Ev | null = tail.offset == null ? null : c.compileEv(tail.offset!, new Scope());
   // Terms that read no level of this core run once, before the loops.
   const pre: Pred[] = [];
   for (const t of terms) {

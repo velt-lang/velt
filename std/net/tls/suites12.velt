@@ -111,23 +111,16 @@ export function clientSuites12(hasAes: bool): usize[] {
 }
 
 /**
- * The ECDSA suite a server with a P-256 key chooses from `offered`, by its own order as for TLS
- * 1.3: AES-128-GCM, AES-256-GCM, then ChaCha20-Poly1305 with AES instructions (`hasAes`),
- * ChaCha20-Poly1305 first without; 0 when the client offers none of them.
+ * The suite a server chooses from `offered`: ECDHE_RSA with an RSA key (`rsa`), else
+ * ECDHE_ECDSA (a P-256, P-384 or Ed25519 key), by its own order as for TLS 1.3: AES-128-GCM,
+ * AES-256-GCM, then ChaCha20-Poly1305 with AES instructions (`hasAes`), ChaCha20-Poly1305
+ * first without; 0 when the client offers none of them.
  */
-export function chooseSuite12(offered: usize[], hasAes: bool): usize {
-  const order =
-    hasAes
-      ? [
-        ECDHE_ECDSA_AES_128_GCM_SHA256,
-        ECDHE_ECDSA_AES_256_GCM_SHA384,
-        ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
-      ]
-      : [
-        ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
-        ECDHE_ECDSA_AES_128_GCM_SHA256,
-        ECDHE_ECDSA_AES_256_GCM_SHA384,
-      ];
+export function chooseSuite12(offered: usize[], hasAes: bool, rsa: bool = false): usize {
+  const aes128 = rsa ? ECDHE_RSA_AES_128_GCM_SHA256 : ECDHE_ECDSA_AES_128_GCM_SHA256;
+  const aes256 = rsa ? ECDHE_RSA_AES_256_GCM_SHA384 : ECDHE_ECDSA_AES_256_GCM_SHA384;
+  const chacha = rsa ? ECDHE_RSA_CHACHA20_POLY1305_SHA256 : ECDHE_ECDSA_CHACHA20_POLY1305_SHA256;
+  const order = hasAes ? [aes128, aes256, chacha] : [chacha, aes128, aes256];
   for (let i: usize = 0; i < order.length; i++) {
     if (offered.includes(order[i])) {
       return order[i];

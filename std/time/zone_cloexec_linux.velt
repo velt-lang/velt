@@ -1,0 +1,5 @@
+// velt/time (internal): `O_CLOEXEC` on Linux (`#zone-cloexec`'s default variant,
+// std/imports.velt), for zone_id_posix.velt's `open`; unused on Windows and WebAssembly.
+
+/** `O_CLOEXEC` in Linux' fcntl.h (the same on every Linux architecture). */
+export const O_CLOEXEC: i32 = 0x80000;

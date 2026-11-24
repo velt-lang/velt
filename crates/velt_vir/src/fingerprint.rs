@@ -250,6 +250,10 @@ impl<'p> Canon<'p> {
                 if e.variadic {
                     out.push_str(" ...");
                 }
+                // How C structs by value cross (#2187 layer 3) is part of the call.
+                if let Some(c) = &e.c_abi {
+                    let _ = write!(out, " C{c:?}");
+                }
                 // A host function's import and manifest line (what crosses) are part of it.
                 if let Some(h) = &e.host {
                     let _ = write!(out, " H{:?}", h.manifest_line());

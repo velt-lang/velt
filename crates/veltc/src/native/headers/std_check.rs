@@ -15,7 +15,9 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// targets load none of std's POSIX declarations (the `#fd-system` variant there declares
 /// nothing), only the C library's memory and string functions and `errno`'s location
 /// (velt/ffi's `#errno-location`), and after `<windows.h>` kernel32's process counters
-/// (`<psapi.h>`, std/process/memory_win32.velt); `<unwind.h>` has the Itanium unwinder's
+/// (`<psapi.h>`, std/process/memory_win32.velt) and velt/os' CPUs, memory and uptime
+/// (std/os/machine_win32.velt: `<windows.h>`, and `<winternl.h>` for `NtQuerySystemInformation`);
+/// `<unwind.h>` has the Itanium unwinder's
 /// `_Unwind_RaiseException` (std/lang/hooks/unwind_itanium.velt); the socket headers
 /// (`<sys/socket.h>`, `<netdb.h>`, `<arpa/inet.h>`, and `<strings.h>` for `bcopy`) have velt/net's
 /// calls (std/net/calls_posix.velt); `<dirent.h>` has velt/fs's directories (std/fs/fd/dirs.velt),
@@ -23,7 +25,8 @@ use super::{check_library, decl_of, zig_target, LibraryHeaders};
 /// On Windows `<winternl.h>` has ntdll's `NtCreateFile` and `RtlNtStatusToDosError`
 /// (std/fs/tree/win_remove.velt). `<sys/random.h>` has the OS generator's calls (`getrandom` on
 /// Linux, `getentropy` on macOS: std/lang/random/os_linux.velt, os_darwin.velt), `<bcrypt.h>`
-/// Windows' `BCryptGenRandom` (os_win32.velt).
+/// Windows' `BCryptGenRandom` (os_win32.velt). `<sys/utsname.h>` and `<sys/resource.h>` have
+/// velt/os' `uname` and velt/process' `getrusage` (std/os/posix.velt).
 fn std_headers(target: &str) -> Vec<&'static str> {
     if target.contains("-windows") {
         return vec![
@@ -52,15 +55,18 @@ fn std_headers(target: &str) -> Vec<&'static str> {
         "<strings.h>",
         "<sys/mman.h>",
         "<sys/random.h>",
+        "<sys/resource.h>",
         "<sys/socket.h>",
         "<sys/stat.h>",
+        "<sys/utsname.h>",
         "<sys/wait.h>",
         "<time.h>",
         "<unistd.h>",
         "<unwind.h>",
     ];
     // The reactors' (std/lang/hooks/reactor_kqueue.velt, reactor_epoll.velt), and on macOS
-    // velt/os' (`sysctlbyname`, std/os/sys_darwin.velt) and velt/process' (`_NSGetEnviron`,
+    // velt/os' (`sysctlbyname`, std/os/sys_darwin.velt; Mach's `host_processor_info`,
+    // `host_statistics` and `vm_deallocate`, machine_darwin.velt) and velt/process' (`_NSGetEnviron`,
     // std/process/env_darwin.velt).
     if target.contains("-apple-") {
         headers.extend([
@@ -138,9 +144,13 @@ const CHECKED: &[&str] = &[
     "net/fd_until.velt",
     "net/rt_later_flush.velt",
     "net/udp/udp_sched.velt",
+    "os/machine_darwin.velt",
+    "os/machine_win32.velt",
+    "os/names_win32.velt",
     "os/posix.velt",
     "os/sys_darwin.velt",
     "os/sys_linux.velt",
+    "os/win_registry.velt",
     "process/child/child_win32.velt",
     "process/child/command_line_win32.velt",
     "process/child/exit_win32.velt",

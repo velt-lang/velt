@@ -1,0 +1,12 @@
+toString true false
+toDateString DATE TIME
+template true true true
+invalid Invalid Date DATE
+toLocaleString true false
+toLocaleDateString LDATE LTIME
+toJSON ISO null
+JSON.stringify "ISO" ["ISO"] {"c":"ISO"}
+toString override TEXT TEXT TEXT TEXT
+valueOf override true 2024-01-15T09:30:00.000Z Mon, 15 Jan 2024 09:30:00 GMT 2024-01-15T09:30:00.000Z
+toJSON override "JSON" {"f":"JSON"}
+toUTCString override UTC true 2024-01-15T09:30:00.000Z

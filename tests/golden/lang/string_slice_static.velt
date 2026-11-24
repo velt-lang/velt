@@ -1,0 +1,90 @@
+// check: no leaks
+// A slice of a static ASCII string (a literal, or a view the runtime handed out as static) is
+// compiled inline as the static string of its sub-range, without a runtime call (#3469). Every
+// `slice` and `substring` of literals here, with positions before, inside and past the text,
+// negative and swapped, must give what the runtime gives for the same text built at run time
+// (a heap string), and what Node prints. Non-ASCII literals keep the runtime path.
+
+function built(s: string): string {
+  const parts: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    parts.push(s.charAt(i));
+  }
+  return parts.join("");
+}
+
+function main() {
+  const lits = [
+    "",
+    "a",
+    "ab",
+    "hello world",
+    "a static literal that is too long to be inline!",
+    "héllo wörld, not ascii",
+    "x😀y",
+  ];
+  let checks = 0;
+  let bad = 0;
+  let sum = 0;
+  for (const lit of lits) {
+    const heap = built(lit);
+    const n = lit.length;
+    // Integer positions around the text, and the numbers that convert to one (NaN, the
+    // infinities, fractions, -0, ±2^32, 2^53 - 1), whose conversion the inline path relies on.
+    const pos: number[] = [
+      -100,
+      -n - 1,
+      -n,
+      -3,
+      -1,
+      0,
+      1,
+      2,
+      5,
+      n - 1,
+      n,
+      n + 1,
+      100,
+      NaN,
+      Infinity,
+      -Infinity,
+      1.5,
+      -1.5,
+      -0,
+      4294967296,
+      -4294967296,
+      9007199254740991,
+    ];
+    for (const a of pos) {
+      for (const b of pos) {
+        const x = lit.slice(a, b);
+        const y = heap.slice(a, b);
+        const u = lit.substring(a, b);
+        const v = heap.substring(a, b);
+        checks++;
+        if (x !== y || x.length !== y.length || u !== v || u.length !== v.length) {
+          bad++;
+          console.log("MISMATCH", lit, a, b, x, y, u, v);
+        }
+        sum += x.length * 3 + u.length + (x.length > 0 ? x.charCodeAt(0) : 0);
+      }
+      const z = lit.slice(a);
+      if (z !== heap.slice(a)) {
+        bad++;
+        console.log("MISMATCH end", lit, a);
+      }
+      sum += z.length;
+    }
+    // Slices of slices of a literal, as a consuming parser takes them.
+    let rest = lit;
+    while (rest.length > 0) {
+      sum += rest.charCodeAt(0);
+      rest = rest.slice(1);
+    }
+    if (rest !== "" || rest.length !== 0) {
+      bad++;
+      console.log("MISMATCH rest");
+    }
+  }
+  console.log(checks, bad, sum);
+}
