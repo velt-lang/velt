@@ -2,7 +2,8 @@
 //! file loaded as an extra root (`velt test`) through another spelling of the std root (a link, or
 //! on Windows the verbatim `\\?\C:\…` form of a canonical path) imports std files by relative
 //! path. Each gets its std name, so the check finds its hooks by it; before, they came out as
-//! `std/../../…/std/…`, and lowering met a hook the check had not found.
+//! `std/../../…/std/…`, and lowering met a hook the check had not found. A std test run by `velt
+//! test` doesn't show it: the runner spells the std root and the test file alike.
 
 use std::path::{Path, PathBuf};
 
@@ -73,13 +74,18 @@ fn the_names_hold_when_a_link_reaches_std_or_the_test_file() {
     assert_eq!(names(&t, &real, &link.join("x/inner.test.velt")), WANT);
 }
 
-/// The test file by its canonical, verbatim path (`\\?\C:\…`), std by its plain one.
+/// The test file by its canonical, verbatim path (`\\?\C:\…`) and std by its plain one, and the
+/// other way round: the two mixed spellings that hit the ICE on Windows.
 #[cfg(windows)]
 #[test]
 fn the_names_hold_for_a_verbatim_path_on_windows() {
     let t = Tree::new();
     let std = std_tree(&t);
-    let verbatim = std::fs::canonicalize(std.join("x/inner.test.velt")).unwrap();
-    assert!(verbatim.to_string_lossy().starts_with(r"\\?\"));
-    assert_eq!(names(&t, &std, &verbatim), WANT);
+    let file = std.join("x/inner.test.velt");
+    let verbatim_file = std::fs::canonicalize(&file).unwrap();
+    let verbatim_std = std::fs::canonicalize(&std).unwrap();
+    assert!(verbatim_file.to_string_lossy().starts_with(r"\\?\"));
+    assert!(!std.to_string_lossy().starts_with(r"\\?\"));
+    assert_eq!(names(&t, &std, &verbatim_file), WANT);
+    assert_eq!(names(&t, &verbatim_std, &file), WANT);
 }
