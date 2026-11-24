@@ -51,6 +51,10 @@ static HEAP_EPOCH: AtomicPtr<AtomicU64> =
 /// thread, and starting one synchronizes.
 #[inline]
 fn heap_epoch() -> &'static AtomicU64 {
+    #[cfg(test)]
+    if let Some(word) = PRIVATE_EPOCH.with(Cell::get) {
+        return word;
+    }
     // SAFETY: the pointer is the fallback or the program's static (`use_epoch`), each of which
     // lives as long as the process.
     unsafe { &*HEAP_EPOCH.load(Ordering::Relaxed) }
@@ -154,4 +158,36 @@ pub(super) fn buffer_gone() {
 #[cfg(test)]
 pub(super) fn epoch() -> u64 {
     heap_epoch().load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// This thread's own heap epoch while [`with_private_epoch`] runs (#3617).
+    static PRIVATE_EPOCH: Cell<Option<&'static AtomicU64>> = const { Cell::new(None) };
+}
+
+/// Runs `f` with a heap epoch of this thread's own, so other tests freeing strings meanwhile
+/// (each bumps the shared epoch) don't expire the positions `f` remembers: a cost test counts
+/// work that only `f`'s own frees add. Only for code whose strings stay on this thread.
+#[cfg(test)]
+pub(super) fn with_private_epoch<R>(f: impl FnOnce() -> R) -> R {
+    // Above every epoch given out so far, so no entry remembered before is valid in `f`.
+    let start = heap_epoch().load(Ordering::Acquire) + 1;
+    let word: &'static AtomicU64 = Box::leak(Box::new(AtomicU64::new(start)));
+    let outer = PRIVATE_EPOCH.with(|p| p.replace(Some(word)));
+    struct Restore {
+        outer: Option<&'static AtomicU64>,
+        word: &'static AtomicU64,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PRIVATE_EPOCH.with(|p| p.set(self.outer));
+            // Entries remembered under the private word stay behind: raise the epoch now in use
+            // above it, so none of them is valid after.
+            let last = self.word.load(Ordering::Acquire);
+            heap_epoch().fetch_max(last + 1, Ordering::AcqRel);
+        }
+    }
+    let _restore = Restore { outer, word };
+    f()
 }
