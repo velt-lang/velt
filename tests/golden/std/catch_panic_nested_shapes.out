@@ -1,0 +1,7 @@
+typed outer, typed inner: inner caught
+any outer, typed inner: inner caught
+typed outer, any inner: inner caught
+any outer, any inner: inner caught
+typed outer, spawn inner: inner caught
+any outer, spawn inner: inner caught
+done
