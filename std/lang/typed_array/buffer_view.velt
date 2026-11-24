@@ -37,6 +37,15 @@ export class BufferView extends ViewBytes {
     return "";
   }
 
+  /**
+   * What `String(view)` and `${view}` give: each view overrides it (a typed array's elements
+   * joined by `,`, `[object DataView]`), so a view whose type is `ArrayBufferView` reads as
+   * what it holds, as in JS.
+   */
+  toString(): string {
+    return "[object Object]";
+  }
+
   /** The buffer the view is of. */
   get buffer(): ArrayBuffer {
     return this.buf;
