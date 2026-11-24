@@ -1,0 +1,54 @@
+// velt/net (internal): the TLS 1.3 server's Certificate and CertificateVerify (RFC 8446 §4.4.2,
+// §4.4.3), for `ServerHandshake` in a full handshake (a resumption sends neither).
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+import { CERTIFICATE, CERTIFICATE_VERIFY } from "velt/net/tls/client_handshake";
+import { ServerKey } from "velt/net/tls/server_key";
+import { signWith } from "velt/net/tls/server_signer";
+
+/** The Certificate message: the chain, no request context, no extensions per entry. */
+export function certificateMessage(key: ServerKey): u8[] {
+  const cert = new ByteWriter();
+  cert.u8(CERTIFICATE);
+  const cb = cert.begin(3);
+  cert.u8(0);
+  const list = cert.begin(3);
+  for (const der of key.chain) {
+    const one = cert.begin(3);
+    cert.put(der);
+    cert.end(one, 3);
+    cert.u16(0);
+  }
+  cert.end(list, 3);
+  cert.end(cb, 3);
+  return cert.bytes;
+}
+
+/** The CertificateVerify message: the transcript hash `th`, signed with `scheme` (§4.4.3). */
+export function certificateVerify(key: ServerKey, scheme: usize, th: u8[]): u8[] {
+  const signed: u8[] = [];
+  for (let i = 0; i < 64; i++) {
+    signed.push(0x20);
+  }
+  // By index: a `for...of` over these arrays leaks them in a release build where `u8[]` is
+  // counted (#2455).
+  const context = utf8Encode("TLS 1.3, server CertificateVerify");
+  for (let i: usize = 0; i < context.length; i++) {
+    signed.push(context[i]);
+  }
+  signed.push(0);
+  for (let i: usize = 0; i < th.length; i++) {
+    signed.push(th[i]);
+  }
+  const sig = signWith(key, scheme, signed);
+  const cv = new ByteWriter();
+  cv.u8(CERTIFICATE_VERIFY);
+  const vb = cv.begin(3);
+  cv.u16(scheme);
+  const s = cv.begin(2);
+  cv.put(sig);
+  cv.end(s, 2);
+  cv.end(vb, 3);
+  return cv.bytes;
+}
