@@ -1,0 +1,17 @@
+4 value-5-xxxxx true false
+3 value-4-xxxx true false
+2 value-3-xxx true false
+1 value-2-xx true false
+0 value-1-x true false
+0 value-1-x
+1 value-2-xx
+2 value-3-xxx
+3 value-4-xxxx
+4 value-5-xxxxx
+value-3-xxx value-3-xxx true
+b4 b4 true
+value-5-xxxxx value-5-xxxxx
+3 9
+value-8-xxxxxxxx value-8-xxxxxxxx
+dropped true
+Promise { 'value-10-xxxxxxxxxx' } Promise { 'value-10-xxxxxxxxxx' }
