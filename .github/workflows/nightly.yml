@@ -24,7 +24,7 @@ on:
       only:
         description: Run only one job (all = every job, flake included).
         type: choice
-        options: [all, gate, stress, oracle, workerd, bench, yardstick, wasm, flake, cache, headers]
+        options: [all, gate, stress, oracle, workerd, bench, yardstick, wasm, flake, cache, headers, units]
         default: all
       bench_baseline:
         description: >-
@@ -233,6 +233,27 @@ jobs:
       # The pin itself: the release still downloads and matches its SHA-256.
       - name: the pinned zig downloads
         run: env -u VELT_ZIG cargo test -p velt_toolchain zig -- --ignored
+
+  # Every golden by units (`VELT_UNITS=2`, #2943): std checked as a unit of its own and frozen,
+  # the program checked against it, and the program built from that check. Each golden checks
+  # all of std again (about 15G instructions), so the whole suite is nightly, not on pull
+  # requests. The goldens listed `units` in golden_known_failing.txt (#2943's U6 list) only report;
+  # any other failure fails the job, and a listed one that passes is reported to be taken off.
+  golden-units:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'units')
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - name: the runtime
+        run: cargo build -p velt_rt
+      - name: every golden by units
+        env:
+          VELT_UNITS: "2"
+        run: cargo test --workspace --test golden
 
   # The differential test of C structs by value natively on each convention CI can run but the
   # pull request gate doesn't (Windows runners are scarce, #2901): Win64, Apple's arm64 variant,

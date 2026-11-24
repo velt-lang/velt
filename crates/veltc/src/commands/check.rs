@@ -10,6 +10,7 @@ use super::lint;
 use super::project::Project;
 use super::test::discover;
 use crate::cli::{BuildArgs, CheckArgs, Emit, FixMode};
+use crate::driver::all_std::{file_key, std_files, unselected_variants};
 use crate::driver::{self, BuildError, CheckScope, Session};
 use serde_json::{json, Value};
 use velt_common::{Diagnostic, Severity, SourceMap, Span};
@@ -258,9 +259,8 @@ fn resolve(
     let scope = without_other_variants(scope, &opts);
     // The oracle's whole-std mode, and a check by units (velt_sema `units`), which checks std
     // whole as its own unit.
-    let all_std = ["VELT_STD_SUMMARY_EAGER", "VELT_UNITS"];
-    let scope = match all_std.iter().any(|v| std::env::var_os(v).is_some()) {
-        true => with_all_std(scope, &opts)?,
+    let scope = match driver::all_std::wanted() {
+        true => driver::all_std::with_all_std(scope, &opts)?,
         false => scope,
     };
     Ok((opts, scope, same_path))
@@ -351,72 +351,6 @@ fn without_other_variants(mut scope: CheckScope, opts: &driver::BuildOptions) ->
     let unused = unselected_variants(root, imports, &opts.target());
     scope.extra_roots.retain(|f| !unused.contains(&file_key(f)));
     scope
-}
-
-/// Every file of the standard library at `std` (its tests and its import map aside), sorted.
-fn std_files(std: &Path) -> Result<Vec<PathBuf>, BuildError> {
-    let mut files: Vec<PathBuf> = discover::source_files(std)
-        .map_err(BuildError::Failed)?
-        .into_iter()
-        .filter(|f| {
-            let name = f.file_name().map(|n| n.to_string_lossy().into_owned());
-            name.is_some_and(|n| n.ends_with(".velt") && !n.ends_with(".test.velt"))
-        })
-        .collect();
-    // std's conditional imports are data the loader reads, as a manifest is, not a module.
-    let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
-    files.retain(|f| *f != imports);
-    files.sort();
-    Ok(files)
-}
-
-/// `VELT_STD_SUMMARY_EAGER` (the std identity oracle's whole-std mode, #2943): the program with
-/// every std file, each std definition checked whether or not the program reaches it, as a cache
-/// of checked std holds std. A source generator's host is built apart and doesn't see it.
-fn with_all_std(
-    mut scope: CheckScope,
-    opts: &driver::BuildOptions,
-) -> Result<CheckScope, BuildError> {
-    let std = velt_loader::std_root().ok_or_else(|| {
-        BuildError::Failed("cannot find the standard library; set VELT_STD".into())
-    })?;
-    let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
-    let mut files = std_files(&std)?;
-    if let Ok(src) = std::fs::read_to_string(&imports) {
-        let map = vpm::manifest::read::read_std_imports(velt_common::FileId(0), &src);
-        let unused = unselected_variants(&std, &map.unwrap_or_default(), &opts.target());
-        files.retain(|f| !unused.contains(&file_key(f)));
-    }
-    scope.extra_roots.extend(files);
-    scope.eager_std = true;
-    scope.units = std::env::var_os("VELT_UNITS").is_some();
-    Ok(scope)
-}
-
-/// The files of `imports` (variants relative to `base`) that a build for `target` uses for no
-/// `#name`, as [`file_key`]s.
-fn unselected_variants(
-    base: &Path,
-    imports: &vpm::imports::ImportMap,
-    target: &str,
-) -> Vec<PathBuf> {
-    let conditions = vpm::imports::conditions(target, None);
-    let file = |t: &str| file_key(&base.join(t.trim_start_matches("./")));
-    let used: Vec<PathBuf> = imports
-        .values()
-        .filter_map(|variants| vpm::imports::select(variants, &conditions))
-        .map(|v| file(&v.target))
-        .collect();
-    imports
-        .values()
-        .flatten()
-        .map(|v| file(&v.target))
-        .filter(|f| !used.contains(f))
-        .collect()
-}
-
-fn file_key(f: &Path) -> PathBuf {
-    std::fs::canonicalize(f).unwrap_or_else(|_| f.to_path_buf())
 }
 
 /// The whole current package, like `tsc` checks a project: its root module (see
