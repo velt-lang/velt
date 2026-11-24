@@ -58,3 +58,34 @@ console.log(`Child read: ${w3v[0]}`);
 w3[0] = -0;
 w3v.sort(childNegFirst);
 console.log(`Child sort after a change behind: ${show(w3)}`);
+
+const raw = [0, 5];
+const cv = raw;
+const first = Object.is(cv[0], -0);
+raw[0] = -0;
+console.log(`Child read behind: ${first} ${Object.is(cv[0], -0)}`);
+const raw2 = [0, 5];
+const cv2 = raw2;
+let before = true;
+for (const c of cv2) {
+  before = Object.is(c, -0);
+  break;
+}
+raw2[0] = -0;
+let after = false;
+for (const c of cv2) {
+  after = Object.is(c, -0);
+  break;
+}
+console.log(`Child for...of behind: ${before} ${after}`);
+const w4 = [0, 5];
+const w4v = w4;
+console.log(`Child read: ${w4v[0]}`);
+w4[0] = -0;
+w4v.reverse();
+console.log(`Child reverse after a change behind: ${show(w4)}`);
+const w5 = [-0, "a"];
+const w5v = w5;
+console.log(`Child read: ${Object.is(w5v[0], -0)}`);
+w5[0] = 0;
+console.log(`Child back to +0: ${Object.is(w5v[0], -0)}`);
