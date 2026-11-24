@@ -1,10 +1,11 @@
 // `startTls` (velt/net's TLS 1.3 client written in Velt, #2392) against the runtime's rustls
 // server (`listenTls`): the handshake, ALPN, data both ways in records of every size, the end
-// of the stream at the server's close_notify, a connection cut without it, and a refused
-// certificate check.
-import { connect, listenTls, startTls, TcpStream } from "velt/net";
+// of the stream at the server's close_notify and a connection cut without it; and the checks of
+// the server's certificate: its chain to a trusted CA, its name, and the options for both.
+import { connect, listenTls, startTls, TcpListener, TcpStream, TlsStartOptions } from "velt/net";
 import { describe, expect, it } from "velt/test";
-import { TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+import * as certs from "./_verify_certs";
 
 // `n` bytes of a repeating pattern.
 function pattern(n: usize): u8[] {
@@ -222,12 +223,212 @@ describe("startTls against rustls", () => {
     expect(await server).toBe("abcd");
     l.close();
   });
+});
 
-  it("refuses to run without verify: false", async () => {
-    const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
-    const tcp = await connect(`127.0.0.1:${l.port}`);
-    await expect(startTls(tcp)).rejects.toThrow("certificate verification is not implemented yet");
-    tcp.close();
+// A server with `cert` (its certificate and the intermediate) and `key` that answers each
+// connection's first bytes with "ok" and closes.
+async function server(cert: string, key: string): Promise<TcpListener> {
+  const l = await listenTls("127.0.0.1:0", { cert: cert + certs.INTERMEDIATE, key: key });
+  const accepting = l;
+  spawn(async () => {
+    // A handshake the client gave up fails `accept` or the read; the server goes on to the next
+    // connection. A closed listener fails every `accept`, which ends the task.
+    let failures = 0;
+    while (failures < 20) {
+      try {
+        const conn: TcpStream = await accepting.accept();
+        failures = 0;
+        await conn.read();
+        await conn.write("ok");
+        conn.close();
+      } catch (e) {
+        failures++;
+      }
+    }
+  });
+  return l;
+}
+
+// What the server answers over a verified connection made with `opts`.
+async function answer(port: number, opts: TlsStartOptions): Promise<string> {
+  const tls = await startTls(await connect(`127.0.0.1:${port}`), opts);
+  await tls.write("hello");
+  const text = new TextDecoder().decode(await tls.read());
+  tls.close();
+  return text;
+}
+
+describe("TlsStream.takeIn", () => {
+  it(
+    "takes a byte that was read from the socket outside the stream, and loses nothing",
+    async () => {
+      const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+      const accepting = l;
+      const serving = spawn(async () => {
+        const conn = await accepting.accept();
+        await conn.read();
+        await conn.write("a notification");
+        await conn.shutdown();
+        conn.close();
+      });
+      const tcp = await connect(`127.0.0.1:${l.port}`);
+      const tls = await startTls(tcp, { verify: false });
+      // A look at an idle connection: nothing has come, and nothing is taken.
+      const one: u8[] = [0xee, 0];
+      expect(tcp.tryRead(one, 1, 2)).toBe(0);
+      await tls.write("go");
+      // Now the server's record is on its way: one byte of it is read from the socket, as a look
+      // at an idle connection does, and given to the stream.
+      await tcp.readable();
+      expect(tcp.tryRead(one, 1, 2)).toBe(1);
+      tls.takeIn(one, 1, 2);
+      let text = "";
+      while (true) {
+        const chunk = await tls.read();
+        if (chunk.length == 0) {
+          break;
+        }
+        text += String.fromCharCode(...chunk.map((b) => b as number));
+      }
+      expect(text).toBe("a notification");
+      expect(() => tls.takeIn(one, 2, 1)).toThrow("takeIn: the range");
+      tls.close();
+      await serving;
+      l.close();
+    },
+  );
+});
+
+describe("startTls verifying the server", () => {
+  it("takes a chain to a CA given with `ca`, for each kind of server key", async () => {
+    const keys: [string, string][] = [
+      [certs.P256_CERT, certs.P256_KEY],
+      [certs.P384_CERT, certs.P384_KEY],
+      [certs.RSA_CERT, certs.RSA_KEY],
+      [certs.ED_CERT, certs.ED_KEY],
+    ];
+    for (const [cert, key] of keys) {
+      const l = await server(cert, key);
+      expect(await answer(l.port, { serverName: "localhost", ca: certs.CA })).toBe("ok");
+      l.close();
+    }
+  });
+
+  it("checks by default, and refuses a chain to no trusted root", async () => {
+    const l = await server(certs.P256_CERT, certs.P256_KEY);
+    // The built-in roots alone, a CA with the right name and another key, and another CA.
+    await expect(answer(l.port, { serverName: "localhost" })).rejects.toThrow(
+      "TLS: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
+    );
+    await expect(answer(l.port, { serverName: "localhost", ca: certs.OTHER_CA })).rejects.toThrow(
+      "TLS: certificate signature failure",
+    );
+    await expect(answer(l.port, { serverName: "localhost", ca: TEST_CA })).rejects.toThrow(
+      "TLS: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
+    );
+    // With the right one among others it is found.
+    const both: TlsStartOptions = {
+      serverName: "localhost",
+      ca: certs.OTHER_CA + TEST_CA + certs.CA,
+    };
+    expect(await answer(l.port, both)).toBe("ok");
+    l.close();
+  });
+
+  it("takes the intermediate itself as a trusted CA", async () => {
+    const l = await server(certs.P256_CERT, certs.P256_KEY);
+    expect(await answer(l.port, { serverName: "localhost", ca: certs.INTERMEDIATE })).toBe("ok");
+    l.close();
+  });
+
+  it("refuses a certificate that is not for the server's name", async () => {
+    const l = await server(certs.P256_CERT, certs.P256_KEY);
+    const names = ["a.velt.test", "LOCALHOST", "localhost.", "127.0.0.1", "::1", "[::1]"];
+    for (const name of names) {
+      expect(`${name} ${await answer(l.port, { serverName: name, ca: certs.CA })}`).toBe(
+        `${name} ok`,
+      );
+    }
+    // Another name, two labels under the wildcard, the wildcard's parent, the common name, and
+    // addresses that are not in the certificate.
+    const others = [
+      "example.com",
+      "a.b.velt.test",
+      "velt.test",
+      "not-a-name.test",
+      "127.0.0.2",
+      "::2",
+      "::ffff:127.0.0.1",
+    ];
+    for (const name of others) {
+      let message = "no failure";
+      try {
+        await answer(l.port, { serverName: name, ca: certs.CA });
+      } catch (e) {
+        message = `${e}`;
+      }
+      expect(`${name}: ${message}`).toContain(
+        "TLS: Hostname/IP does not match certificate's altnames: ",
+      );
+      expect(message).toContain("(ERR_TLS_CERT_ALTNAME_INVALID)");
+    }
+    l.close();
+  });
+
+  it("checks the chain alone with checkServerName: false", async () => {
+    const l = await server(certs.P256_CERT, certs.P256_KEY);
+    const opts: TlsStartOptions = {
+      serverName: "example.com",
+      ca: certs.CA,
+      checkServerName: false,
+    };
+    expect(await answer(l.port, opts)).toBe("ok");
+    expect(await answer(l.port, { ca: certs.CA, checkServerName: false })).toBe("ok");
+    // The CA alone, without the built-in roots: what checking a chain without the name is for.
+    const own: TlsStartOptions = { ca: certs.CA, checkServerName: false, builtinRoots: false };
+    expect(await answer(l.port, own)).toBe("ok");
+    const wrong: TlsStartOptions = { ca: TEST_CA, checkServerName: false, builtinRoots: false };
+    await expect(answer(l.port, wrong)).rejects.toThrow(
+      "TLS: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
+    );
+    await expect(answer(l.port, { checkServerName: false })).rejects.toThrow(
+      "TLS: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
+    );
+    l.close();
+  });
+
+  it("refuses options it cannot verify with, before anything is sent", async () => {
+    const l = await server(certs.P256_CERT, certs.P256_KEY);
+    await expect(answer(l.port, {})).rejects.toThrow("`serverName` is needed");
+    await expect(answer(l.port, { serverName: "localhost", builtinRoots: false })).rejects.toThrow(
+      "`ca` is needed when `builtinRoots` is false",
+    );
+    await expect(answer(l.port, { serverName: "bücher.example" })).rejects.toThrow("is not ASCII");
+    // What rustls refuses as a server name: an empty label, a label ending in a hyphen, a last
+    // label of digits that is no IP address, a port.
+    for (const name of ["a..example", "host-.example", "1.2.3.400", "localhost:443", "*.example"]) {
+      await expect(answer(l.port, { serverName: name })).rejects.toThrow(
+        "is neither a DNS name nor an IP address",
+      );
+    }
+    await expect(answer(l.port, { serverName: "localhost", ca: "not PEM" })).rejects.toThrow(
+      "no certificate found in the CA PEM",
+    );
+    const broken = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
+    await expect(answer(l.port, { serverName: "localhost", ca: broken })).rejects.toThrow(
+      "invalid CA certificate in the CA PEM",
+    );
+    // A key is not a certificate.
+    await expect(answer(l.port, { serverName: "localhost", ca: certs.P256_KEY })).rejects.toThrow(
+      "no certificate found in the CA PEM",
+    );
+    l.close();
+  });
+
+  it("still takes any certificate with verify: false", async () => {
+    const l = await server(certs.P256_CERT, certs.P256_KEY);
+    expect(await answer(l.port, { serverName: "example.com", verify: false })).toBe("ok");
+    expect(await answer(l.port, { verify: false })).toBe("ok");
     l.close();
   });
 });

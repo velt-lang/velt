@@ -1,0 +1,18 @@
+// velt/time (internal): the zone id of local time in a WebAssembly build (`#zone-id`'s default
+// variant, std/imports.velt): local time is UTC there (localtime_none.velt), whatever `TZ` says,
+// so `Date`'s `toString()` names it `(Coordinated Universal Time)`.
+
+/** Whether local time follows `tz`: never here. */
+export function tzHonoured(tz: string): bool {
+  return false;
+}
+
+/** Whether local time reads `TZ` only once per process: it never reads it here. */
+export function tzReadOnce(): bool {
+  return true;
+}
+
+/** The zone local time is in: UTC. */
+export function systemZoneId(): string | null {
+  return "UTC";
+}

@@ -41,6 +41,7 @@ pub(super) fn run(
         Err(e) => return (Err(e), vec![]),
     };
     let scope = CheckScope {
+        preload: vec![],
         require_main: false,
         extra_roots: rest.to_vec(),
         eager_std: false,

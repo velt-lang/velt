@@ -3,8 +3,8 @@
 // abort stops the request at once (the stream is then closed, never pooled). Between requests a
 // keep-alive connection is parked in the process's pool under its origin (`TcpStream.park`), which
 // every task takes connections from: the runtime's (crates/velt_rt/src/net/park.rs), or under the
-// executor in Velt, for its plain-TCP connections on the reactor, Velt's (std/net/fd_pool.velt;
-// which connections those are: `#fetch-dial`, dial_sched.velt).
+// executor in Velt, for its connections on the reactor (plain and TLS), Velt's
+// (std/net/fd_pool.velt; which connections those are: `#fetch-dial`, dial_sched.velt).
 //
 // Reads go straight into the buffer (`tryRead`, nothing copied on the way for plain TCP). I/O
 // errors become `fetch failed: …` with the code of the error, as Node words them.
@@ -13,18 +13,12 @@ import { IoError } from "velt/io/error";
 import { IoResult, unwrapIo } from "velt/native/result";
 import { TcpStream } from "velt/net";
 import { AbortController, AbortError, AbortSignal } from "velt/task";
-import { Target } from "velt/net/http/fetch/client/target";
+import { Target, TlsOn } from "velt/net/http/fetch/client/target";
 import { setBytes } from "velt/lang/bytes/copy";
 import { stdUsed } from "velt/lang/intrinsics";
-import { dialPlain, reactorUp } from "#fetch-dial";
+import { dialPlain, dialTls, reactorUp } from "#fetch-dial";
 
 declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
-declare async function velt_rt_tcp_connect_tls(
-  addr: string,
-  serverName: string,
-  ca: string,
-  alpn: string,
-): Promise<IoResult<u64>>;
 
 /** How long connecting may take (milliseconds) before `ETIMEDOUT`, as undici's default. */
 const CONNECT_MS: i64 = 10000;
@@ -239,17 +233,22 @@ export async function dial(
   alpn: string = "http/1.1",
 ): Promise<TcpStream, IoError | AbortError> {
   const addr = `${t.hostname}:${t.port}`;
-  // `http:` where the executor in Velt's pool keeps sockets of its reactor (std/net/tcp_sched.velt
-  // notes it): a socket on the reactor (dial_sched.velt). A constant: a build without it lowers
-  // only the runtime's connect below.
-  if (stdUsed("fetch-pool-reactor") && !t.https && reactorUp()) {
-    return await dialPlain(addr, signal);
+  // `https:` needs the request's TLS client, checked before a socket is made.
+  const tls = t.https ? tlsOf(t, addr) : null;
+  // Where the executor in Velt's pool keeps streams of its reactor (std/net/tcp_sched.velt notes
+  // it): a socket on the reactor, with the TLS client in Velt over it for `https:`
+  // (dial_sched.velt). A constant: a build without it lowers only the runtime's connect below.
+  if (stdUsed("fetch-pool-reactor") && reactorUp()) {
+    return tls != null
+      ? await dialTls(addr, bare(t.hostname), ca, alpn, tls, signal)
+      : await dialPlain(addr, signal);
   }
   const stop = new AbortController();
+  const start = Date.now() as i64;
   // The runtime's connect itself races the limits: when it loses, it is dropped, which stops
-  // connecting (a function around it would go on and make a connection nobody closes).
-  const connecting =
-    t.https ? velt_rt_tcp_connect_tls(addr, bare(t.hostname), ca, alpn) : velt_rt_tcp_connect(addr);
+  // connecting (a function around it would go on and make a connection nobody closes). For
+  // `https:` the TLS client in Velt then runs over the runtime's socket (`tlsOn`).
+  const connecting = velt_rt_tcp_connect(addr);
   const racers: Promise<IoResult<u64>>[] = [connecting, expire(stop.signal)];
   if (signal != null) {
     racers.push(aborted(signal, stop.signal));
@@ -262,11 +261,29 @@ export async function dial(
     }
     throw new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`);
   }
+  let fd: u64 = 0;
   try {
-    return TcpStream.ofHandle(unwrapIo(r));
+    fd = unwrapIo(r);
   } catch (e) {
     throw failed(e);
   }
+  if (tls == null) {
+    return TcpStream.ofHandle(fd);
+  }
+  const left = CONNECT_MS - ((Date.now() as i64) - start);
+  return TcpStream.ofHandle(await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal));
+}
+
+/**
+ * The TLS client of `t`'s request (`Target.tls`). Only `fetchPlain` (fetch.velt) has none, for
+ * an `http:` URL that follows no redirect, so never reaches `https:`: an internal error.
+ */
+function tlsOf(t: Target, addr: string): TlsOn throws IoError {
+  const tls = t.tls;
+  if (tls == null) {
+    throw new IoError("ENOTSUP", `ICE: fetch reached https: (${addr}) without a TLS client`);
+  }
+  return tls;
 }
 
 /** What `expire` and `aborted` give when they win the race. */

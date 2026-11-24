@@ -1,7 +1,8 @@
 // velt/net/websocket (internal): opening a client connection (`connectWebSocket`): the
 // handshake (handshake.velt), then a `WebSocket` over the stream.
 
-import { open } from "velt/net/websocket/opened";
+import { variant } from "velt/lang/intrinsics/decorators";
+import { open, openPlain } from "velt/net/websocket/opened";
 import { WebSocket, webSocketOver } from "velt/net/websocket/socket";
 
 export type WsConnectOptions = {
@@ -10,10 +11,20 @@ export type WsConnectOptions = {
 };
 
 /** Opens a client connection to a `ws://` or `wss://` URL. */
+@variant("connectWebSocketPlain", { arg: 0, startsWith: "ws:" })
 export async function connectWebSocket(
   url: string,
   opts: WsConnectOptions = {},
 ): Promise<WebSocket> {
   const opened = await open(url, opts.ca ?? "");
+  return webSocketOver(opened.stream, false, opened.rest);
+}
+
+/**
+ * `connectWebSocket` of a URL written as a `ws:` literal (`@variant` makes such a call this one):
+ * the same without the TLS client, which a `ws:` URL never reaches (#2392).
+ */
+async function connectWebSocketPlain(url: string, opts: WsConnectOptions = {}): Promise<WebSocket> {
+  const opened = await openPlain(url);
   return webSocketOver(opened.stream, false, opened.rest);
 }

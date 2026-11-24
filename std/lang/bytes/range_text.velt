@@ -1,0 +1,336 @@
+// velt/lang/bytes (internal): a range of a byte array as a string (#2196): `utf8Slice` and
+// `toString("utf8", start, end)`, an invalid sequence as U+FFFD (one per maximal invalid
+// subpart, as `TextDecoder`). ASCII of up to 23 bytes is an inline string, made from three words
+// with no call and no allocation. Longer text that starts as ASCII is checked and copied in one
+// pass, 64 bytes at a time, into a builder allocated once at its size. Other text is checked
+// here in one pass that counts its UTF-16 length (std/encoding/utf8_valid.velt), so the runtime's
+// builder copies each valid run once, into a buffer of the right kind, without counting it again.
+
+import { MAX_TEXT } from "#bytes-limit";
+import { scanValid, validRun } from "velt/encoding/utf8_run";
+import { asciiPrefix, maximalSequence } from "velt/encoding/utf8_valid";
+import {
+  addressArray,
+  addressLoad,
+  arrayReadAddress,
+  noInline,
+  strAsciiWords,
+  strbufPushAsciiWords,
+  strWord0,
+} from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_strbuf_commit(buf: string, n: u64, ascii: u8);
+declare function velt_rt_exit(code: i32): never;
+declare function velt_rt_flush(): void;
+declare function velt_rt_write_str(stream: u32, s: string);
+
+// The SIMD operations the copy uses (`velt/simd`, std/simd/*.velt, is the API; declared again
+// here, as std/encoding/utf8_valid.velt does). `load` and `store` do not check their range.
+declare function velt_simd_u8x16_splat(x: u8): u8x16;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_u8x16_or(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_ge(a: u8x16, b: u8x16): mask8x16;
+declare function velt_simd_mask8x16_any(m: mask8x16): bool;
+declare function velt_simd_mask8x16_first(m: mask8x16): u64;
+
+/** The most bytes of ASCII an inline string holds. */
+const INLINE_ASCII: usize = 23;
+
+/** The high bit of each of a word's bytes: a byte that is not ASCII sets one. */
+const HIGH_BITS: u64 = 0x8080808080808080;
+
+/** U+FFFD in UTF-8 (one UTF-16 unit), the replacement for a maximal invalid subpart. */
+const REPLACEMENT: u8[] = [0xef, 0xbf, 0xbd];
+
+/** The low `k` bytes of `w` (all of it from 8 on). */
+function lowBytes(w: u64, k: usize): u64 {
+  return k >= 8 ? w : w & ((1 << ((k * 8) as u64)) - 1);
+}
+
+/** The bytes `b[from..to)` (at most 23) as an inline string, or "" when one is not ASCII. */
+function shortAscii(b: u8[], from: usize, to: usize): string {
+  const n = to - from;
+  let w0: u64 = 0;
+  let w1: u64 = 0;
+  let w2: u64 = 0;
+  if (from + 24 <= b.length) {
+    // SAFETY: `b[from..from + 24)` is inside `b`, which is only read; unaligned loads.
+    unsafe {
+      const at = arrayReadAddress(b) + from;
+      w0 = lowBytes(addressLoad<u64>(at), n);
+      w1 = n > 8 ? lowBytes(addressLoad<u64>(at + 8), n - 8) : 0;
+      w2 = n > 16 ? lowBytes(addressLoad<u64>(at + 16), n - 16) : 0;
+    }
+  } else {
+    // Near the array's end: byte by byte, so nothing past it is read.
+    for (let i = from; i < to; i++) {
+      const k = i - from;
+      const bits = (b[i] as u64) << (((k % 8) * 8) as u64);
+      if (k < 8) {
+        w0 |= bits;
+      } else if (k < 16) {
+        w1 |= bits;
+      } else {
+        w2 |= bits;
+      }
+    }
+  }
+  return ((w0 | w1 | w2) & HIGH_BITS) == 0 ? strAsciiWords(w0, w1, w2, n) : "";
+}
+
+/**
+ * Copies `b[from..to)` (at least sixteen bytes) to `dst` while it is ASCII, checking and copying
+ * 64 bytes per step, then sixteen, then one vector ending at `to`; returns how many bytes are
+ * ASCII (`to - from` when all are). Bytes past those may be copied too.
+ */
+function copyAscii(b: u8[], from: usize, to: usize, dst: u8[]): usize {
+  const high = velt_simd_u8x16_splat(0x80);
+  let i = from;
+  while (i + 64 <= to) {
+    const at = i as u64;
+    const v0 = velt_simd_u8x16_load(b, at);
+    const v1 = velt_simd_u8x16_load(b, at + 16);
+    const v2 = velt_simd_u8x16_load(b, at + 32);
+    const v3 = velt_simd_u8x16_load(b, at + 48);
+    const all = velt_simd_u8x16_or(velt_simd_u8x16_or(v0, v1), velt_simd_u8x16_or(v2, v3));
+    if (velt_simd_mask8x16_any(velt_simd_u8x16_ge(all, high))) {
+      break;
+    }
+    const out = (i - from) as u64;
+    velt_simd_u8x16_store(v0, dst, out);
+    velt_simd_u8x16_store(v1, dst, out + 16);
+    velt_simd_u8x16_store(v2, dst, out + 32);
+    velt_simd_u8x16_store(v3, dst, out + 48);
+    i += 64;
+  }
+  while (i + 16 <= to) {
+    const v = velt_simd_u8x16_load(b, i as u64);
+    // Stored first, so the ASCII bytes before one that is not are copied too.
+    velt_simd_u8x16_store(v, dst, (i - from) as u64);
+    const m = velt_simd_u8x16_ge(v, high);
+    if (velt_simd_mask8x16_any(m)) {
+      return (i - from) + (velt_simd_mask8x16_first(m) as usize);
+    }
+    i += 16;
+  }
+  if (i < to) {
+    // The last bytes, in a vector ending at `to` that overlaps bytes already copied (all
+    // ASCII, so a byte it finds that is not is at `i` or later); stored first, so the ASCII
+    // bytes before such a byte are copied too.
+    const at = to - 16;
+    const v = velt_simd_u8x16_load(b, at as u64);
+    velt_simd_u8x16_store(v, dst, (at - from) as u64);
+    if (velt_simd_mask8x16_any(velt_simd_u8x16_ge(v, high))) {
+      return asciiPrefix(b, i, to) - from;
+    }
+  }
+  return to - from;
+}
+
+/** Appends `b[from..to)` (valid UTF-8 of `units` UTF-16 units) to the builder `out`. */
+function pushRun(out: string, b: u8[], from: usize, to: usize, units: usize) {
+  const n = to - from;
+  // SAFETY: `b[from..to)` is inside `b`, which outlives the view: it is only read, and dropped
+  // before this returns.
+  const view: u8[] = unsafe { addressArray<u8>(arrayReadAddress(b) + from, n) };
+  const len = n as u64;
+  const counted = units as u64;
+  velt_rt_strbuf_push_u8s(out, view, len, counted);
+}
+
+/**
+ * Appends `b[from..to)` to the builder `out`, in one pass that counts UTF-16 units as it checks:
+ * each valid run (all of the range, when it is valid) is copied once with its length, and each
+ * maximal invalid subpart becomes U+FFFD. Out of line, as `longText`: one copy in a program,
+ * however many `utf8Slice` calls it has, and a call is nothing next to the work.
+ */
+@noInline
+function pushDecoded(out: string, b: u8[], from: usize, to: usize) {
+  let run = from;
+  let units: usize = 0;
+  let i = from;
+  // Blocks of sixteen bytes from here on (`validRun` reads the three bytes before a block, which
+  // must be valid characters: not before three bytes in, three after a replacement, nor inside a
+  // block it turned down).
+  let blocksFrom = from + 3;
+  while (i < to) {
+    if (i >= blocksFrom && i + 16 < to) {
+      const r = validRun(b, i, to);
+      if (r.end > i) {
+        units += r.units;
+        i = r.end;
+        continue;
+      }
+      blocksFrom = i + 16;
+    }
+    // A character at a time up to where blocks can start, or to the end when none can.
+    const limit = i < blocksFrom && blocksFrom + 16 < to ? blocksFrom : to;
+    const s = scanValid(b, i, limit, to);
+    units += s.units;
+    i = s.end;
+    if (i >= limit) {
+      continue;
+    }
+    if (run < i) {
+      pushRun(out, b, run, i, units);
+    }
+    velt_rt_strbuf_push_u8s(out, REPLACEMENT, 3, 1);
+    // Invalid, or cut off by the range's end: the bytes one U+FFFD replaces.
+    i += (-maximalSequence(b, i, to)) as usize;
+    run = i;
+    units = 0;
+    blocksFrom = i + 3;
+  }
+  if (run < to) {
+    pushRun(out, b, run, to, units);
+  }
+}
+
+/**
+ * Stops the program: the text is longer than a string can be. As the runtime's string
+ * allocation does (`fatal("string too long")`), with its message and exit code.
+ */
+@noInline
+function stringTooLong(): never {
+  velt_rt_flush();
+  velt_rt_write_str(2, "panic: string too long\n");
+  velt_rt_exit(101);
+}
+
+/** Whether the sixteen bytes at `b[at]` are ASCII (they must be inside `b`). */
+function asciiVector(b: u8[], at: usize): bool {
+  const v = velt_simd_u8x16_load(b, at as u64);
+  return !velt_simd_mask8x16_any(velt_simd_u8x16_ge(v, velt_simd_u8x16_splat(0x80)));
+}
+
+/**
+ * The bytes `[k, k + 8)` of the `n` bytes at `at` as a word, byte `i` in bits `8 * i`, those
+ * from `n` on 0 (read from the word ending at `n`, so nothing past it is). Unsafe: the `n` bytes
+ * (at least eight) must be readable.
+ */
+unsafe function wordAt(at: usize, k: usize, n: usize): u64 {
+  if (k + 8 <= n) {
+    // SAFETY: the caller's statement; `[k, k + 8)` is inside the `n` bytes.
+    return unsafe { addressLoad<u64>(at + k) };
+  }
+  if (k >= n) {
+    return 0;
+  }
+  // SAFETY: the caller's statement; `[n - 8, n)` is inside the `n` bytes (`n` >= 8).
+  const last = unsafe { addressLoad<u64>(at + n - 8) };
+  return last >> (((8 - (n - k)) * 8) as u64);
+}
+
+/** The most bytes `mediumAscii` takes: two pieces of 24 (longer text copies faster as vectors). */
+const MEDIUM_ASCII: usize = 48;
+
+/**
+ * The bytes `b[from..to)` (24 to 48 of them) as a string when they are ASCII, else "": read once
+ * as six words, and appended in one or two pieces of 24 with inline stores
+ * (`strbufPushAsciiWords`) to a builder allocated once, so the string takes no call but the
+ * allocation's. The builder is the string (see `finished`).
+ */
+function mediumAscii(b: u8[], from: usize, to: usize): string {
+  const n = to - from;
+  let w0: u64 = 0;
+  let w1: u64 = 0;
+  let w2: u64 = 0;
+  let w3: u64 = 0;
+  let w4: u64 = 0;
+  let w5: u64 = 0;
+  // SAFETY: `b[from..to)` is inside `b` and holds at least 24 bytes; `wordAt` reads only inside
+  // it, and `b` is only read here.
+  unsafe {
+    const at = arrayReadAddress(b) + from;
+    w0 = addressLoad<u64>(at);
+    w1 = addressLoad<u64>(at + 8);
+    w2 = addressLoad<u64>(at + 16);
+    w3 = wordAt(at, 24, n);
+    w4 = wordAt(at, 32, n);
+    w5 = wordAt(at, 40, n);
+  }
+  if (((w0 | w1 | w2 | w3 | w4 | w5) & HIGH_BITS) != 0) {
+    return "";
+  }
+  // Each push stores 24 bytes: room for the last one's whole 24.
+  const cap = (n > 24 ? 48 : 24) as u64;
+  let out = "";
+  velt_rt_strbuf_new(cap, out);
+  strbufPushAsciiWords(out, w0, w1, w2, 24);
+  if (n > 24) {
+    strbufPushAsciiWords(out, w3, w4, w5, n - 24);
+  }
+  return finished(out);
+}
+
+/**
+ * The builder `out` as the string: a builder is a string the runtime's builder functions append
+ * to (rt_abi_async.md), and `velt_rt_strbuf_finish` would only move it here. What else it does
+ * is make text short enough to be inline an inline string, and a builder this file makes is one
+ * already: it starts inline, or at its text's size above 23 bytes, and only moves to a buffer
+ * when its text no longer fits inline.
+ */
+function finished(out: string): string {
+  return out;
+}
+
+/**
+ * The bytes `b[from..to)` (more than 48, the first sixteen ASCII) as a string: a buffer of their
+ * size, the ASCII text checked and copied into it at once, what follows a byte that is not
+ * ASCII decoded after it.
+ */
+@noInline
+function longText(b: u8[], from: usize, to: usize): string {
+  const n = to - from;
+  const cap = n as u64;
+  let out = "";
+  velt_rt_strbuf_new(cap, out);
+  // SAFETY: a builder made with a capacity above 23 is a heap buffer allocated up front with
+  // nothing in it (rt_abi_async.md, `velt_rt_strbuf_new`): its data starts at word 0 (rt_abi.md
+  // "Strings") and has room for `n` bytes, the room `velt_rt_strbuf_spare` would give; the view
+  // is only written, and dropped before the builder is touched again.
+  const dst: u8[] = unsafe { addressArray<u8>(strWord0(out) as usize, n) };
+  const ascii = copyAscii(b, from, to, dst);
+  const done = ascii as u64;
+  velt_rt_strbuf_commit(out, done, 1);
+  if (ascii < n) {
+    pushDecoded(out, b, from + ascii, to);
+  }
+  return finished(out);
+}
+
+/** `b[from..to)` decoded into a builder whose first push allocates a buffer of the right kind. */
+function decodedText(b: u8[], from: usize, to: usize): string {
+  let out = "";
+  velt_rt_strbuf_new(0, out);
+  pushDecoded(out, b, from, to);
+  return finished(out);
+}
+
+/**
+ * The bytes `b[from..to)` as a string, an invalid sequence as U+FFFD (`from <= to <=
+ * b.length`): Node's `buf.utf8Slice(from, to)`.
+ */
+export function rangeText(b: u8[], from: usize, to: usize): string {
+  if (to <= from) {
+    return "";
+  }
+  const n = to - from;
+  if (n > MAX_TEXT) {
+    // Its text is at least as long as its bytes (U+FFFD takes 3 for the 1 to 3 it replaces), so
+    // no string holds it; the builders here would be cut to the capacity they can have.
+    stringTooLong();
+  }
+  if (n <= INLINE_ASCII) {
+    const s = shortAscii(b, from, to);
+    return s.length != 0 ? s : decodedText(b, from, to);
+  }
+  if (n <= MEDIUM_ASCII) {
+    const s = mediumAscii(b, from, to);
+    return s.length != 0 ? s : decodedText(b, from, to);
+  }
+  return asciiVector(b, from) ? longText(b, from, to) : decodedText(b, from, to);
+}

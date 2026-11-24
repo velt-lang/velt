@@ -1,0 +1,34 @@
+// `connectWebSocket("wss://…")` in a program that names nothing else of TLS's client or the
+// client class: its connection still runs the TLS client in Velt (its live `connectTls` loads
+// it). The server answers the
+// upgrade with an ordinary response, so the client gets as far as the handshake's HTTP answer,
+// past TLS.
+import { describe, expect, it } from "velt/test";
+import { listenTls } from "velt/net";
+import { connectWebSocket } from "velt/net/websocket";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+
+describe("connectWebSocket over wss:", () => {
+  it("connects with the TLS client and reads the server's answer", async () => {
+    const server = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+    const serving = spawn(
+      (async () => {
+        const c = await server.accept();
+        await c.readString();
+        await c.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno");
+        c.shutdown();
+        c.close();
+      })(),
+    );
+    let why = "";
+    try {
+      await connectWebSocket(`wss://localhost:${server.port}/ws`, { ca: TEST_CA });
+    } catch (e) {
+      why = `${e}`;
+    }
+    // A client that never connected leaves the accept waiting: closing the listener ends it.
+    server.close();
+    await serving.catch((_) => {});
+    expect(why).toContain("handshake failed");
+  });
+});

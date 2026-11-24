@@ -398,6 +398,10 @@ pub(crate) fn reach(cx: &mut Ctx) {
         return;
     }
     loop {
+        // A refused demand throws the check away (`Ctx::load_refused`): check no more of it.
+        if cx.load_refused() {
+            return;
+        }
         let defs_before = cx.info.len();
         let texts = live::step(cx);
         let mut found = vec![];

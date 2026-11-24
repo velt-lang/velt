@@ -47,6 +47,11 @@ export { noInline } from "velt/lang/intrinsics/decorators";
 /** Calls of a function are rare: release builds keep the ways to them out of the hot code. */
 export { cold } from "velt/lang/intrinsics/decorators";
 /**
+ * A call whose argument shows at compile time that it needs less calls a plainer function of the
+ * same module: `@variant("servePlain", { arg: 0, lacks: "tls" })`.
+ */
+export { variant } from "velt/lang/intrinsics/decorators";
+/**
  * The function is compiled for CPU features; every call sits behind velt/arch's checks of them
  * (`if (Sha.isSupported()) { … }`) or in a function gated on features that cover them.
  */

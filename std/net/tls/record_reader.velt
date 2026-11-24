@@ -298,6 +298,23 @@ export class RecordReader {
     return true;
   }
 
+  /**
+   * Appends `b[start..end]`, transport bytes read elsewhere, behind the unread records, as
+   * `tryMore` appends what it reads: false when there is no room for them.
+   */
+  takeIn(b: u8[], start: usize, end: usize): bool {
+    this.makeRoom();
+    const n = end - start;
+    if (this.rend + n > BUFFER) {
+      return false;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      this.buf[this.rend + i] = b[start + i];
+    }
+    this.rend += n;
+    return true;
+  }
+
   // Moves the unread records to the front. Only when no application data is waiting.
   private makeRoom() {
     if (this.rstart > 0 && this.pstart == this.pend) {

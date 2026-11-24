@@ -71,6 +71,10 @@ jobs:
       VELT_ROBUSTNESS: full
       # Every golden with variables described, not a sample (crates/veltc/tests/debug_vars.rs).
       VELT_DEBUG_VARS: all
+      # Every golden's VIR with std loaded up front and on demand, not the sample the queue and the
+      # checks after merging compare (crates/veltc/tests/eager_std_identity.rs). On Linux only: what
+      # it checks, the order std loads in, doesn't depend on the OS.
+      VELT_VIR_IDENTITY: all
     steps:
       # The whole gate fills the runner's disk (2026-11-05: "No space left on device", which kills
       # the runner itself and leaves no log). Remove what the image carries and this job never uses.
@@ -224,10 +228,41 @@ jobs:
       - name: declarations against headers, C constants and sources, every target
         env:
           VELT_ZIG_TESTS: "1"
-        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export --test c_struct_pointers -- --nocapture
+        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export --test c_struct_pointers --test c_struct_headers --test c_struct_by_value -- --nocapture
       # The pin itself: the release still downloads and matches its SHA-256.
       - name: the pinned zig downloads
         run: env -u VELT_ZIG cargo test -p velt_toolchain zig -- --ignored
+
+  # The differential test of C structs by value natively on each convention CI can run but the
+  # pull request gate doesn't (Windows runners are scarce, #2901): Win64, Apple's arm64 variant,
+  # and arm64 Linux (ci.yml's c-struct-abi runs that one on pull requests too).
+  c-struct-abi:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'headers')
+    name: c-struct-abi (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      - name: the runtime
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo build -p velt_rt
+      - name: C structs by value, against C
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_ZIG_TESTS: "1"
+        run: cargo test --workspace --test c_struct_by_value -- --nocapture
 
   tsc-oracle:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'oracle')

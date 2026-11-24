@@ -5,20 +5,28 @@
 // The calendar arithmetic is velt/time/datetime's; prefer its `DateTime` (UTC-first, months 1-12) in
 // new code.
 //
-// Differences from JS: `toString()` has no time zone name in parentheses, and the `toLocale…`
+// `toString()` and `toTimeString()` end with the zone's long name as Node prints it, `(Central
+// European Standard Time)` (std/time/zone_name.velt). Differences from JS: the `toLocale…`
 // methods always use the `en-US` format.
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-import { DateParts, partsOf, epochMsOf, monthShort, weekdayShort } from "velt/time/civil";
+import { DateParts, partsOf, monthShort, weekdayShort } from "velt/time/civil";
 import { pad, offsetString, isoString, httpString } from "velt/time/format";
 import { parseIso, parseHttp } from "velt/time/parse";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { dateNow } from "velt/lang/hooks/clock";
+import { hookCall } from "velt/lang/intrinsics";
 import { localOffset, localToUtc } from "velt/time/local";
+import { fromFields, fullYear, isLocalForm, timeClip } from "velt/time/date_value";
 
-// The largest distance from the epoch a JS date can be (100,000,000 days).
-const MAX_TIME: f64 = 8640000000000000.0;
+// The local fields of `t` at offset `offset` (seconds): with the whole offset, seconds included
+// (a local mean time has them), and the zone's minutes as `offsetMinutes` (`toTimeString()`'s
+// `GMT+0521`), as V8.
+function localParts(t: i64, offset: i64): DateParts {
+  const minutes = offset / 60;
+  return partsOf(t + (offset - minutes * 60) * 1000, minutes);
+}
 
 /**
  * Enables basic storage and retrieval of dates and times: an instant in milliseconds since
@@ -70,7 +78,7 @@ export class Date implements Comparable<Date> {
   static parse(s: string): number {
     const iso = parseIso(s);
     if (iso != null) {
-      return isLocalForm(s) ? localToUtc(iso) as f64 : timeClip(iso as f64);
+      return timeClip(isLocalForm(s) ? localToUtc(iso) as f64 : iso as f64);
     }
     const http = parseHttp(s);
     if (http != null) {
@@ -402,7 +410,7 @@ export class Date implements Comparable<Date> {
     return this.t != this.t ? "Invalid Date" : httpString(this.t as i64);
   }
 
-  /** `Mon Jan 15 2024 10:30:00 GMT+0100` (local time). */
+  /** `Mon Jan 15 2024 10:30:00 GMT+0100 (Central European Standard Time)` (local time). */
   toString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
@@ -419,14 +427,17 @@ export class Date implements Comparable<Date> {
     return `${weekdayShort(p.dayOfWeek)} ${monthShort(p.month)} ${pad(p.day, 2)} ${pad(p.year, 4)}`;
   }
 
-  /** `10:30:00 GMT+0100` (local time). */
+  /** `10:30:00 GMT+0100 (Central European Standard Time)` (local time). */
   toTimeString(): string {
     if (this.t != this.t) {
       return "Invalid Date";
     }
-    const p = this.parts(false);
+    const offset = localOffset(this.t as i64);
+    const p = localParts(this.t as i64, offset);
     const zone = offsetString(p.offsetMinutes, false);
-    return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone}`;
+    // By role: the table of names (velt/time/zone_name) loads only where live code calls this.
+    const name: string = hookCall("date_zone_name", this.t, offset);
+    return `${pad(p.hour, 2)}:${pad(p.minute, 2)}:${pad(p.second, 2)} GMT${zone} (${name})`;
   }
 
   /** `1/15/2024` (local time, en-US). */
@@ -468,11 +479,7 @@ export class Date implements Comparable<Date> {
     if (utc) {
       return partsOf(t, 0);
     }
-    // The fields with the whole offset, seconds included (a local mean time has them), and the
-    // zone's minutes as `offsetMinutes` (`toTimeString()`'s `GMT+0521`), as V8.
-    const offset = localOffset(t);
-    const minutes = offset / 60;
-    return partsOf(t + (offset - minutes * 60) * 1000, minutes);
+    return localParts(t, localOffset(t));
   }
 
   // Field `k` of `[year, month 0-11, day, hours, minutes, seconds, ms, weekday]`, or NaN.
@@ -510,48 +517,4 @@ export class Date implements Comparable<Date> {
     this.t = fromFields(utc, fields);
     return this.t;
   }
-}
-
-// JS's TimeClip: NaN outside ±8.64e15 ms, else the time truncated to whole milliseconds.
-function timeClip(t: f64): f64 {
-  if (!(t >= -MAX_TIME && t <= MAX_TIME)) {
-    return 0.0 / 0.0;
-  }
-  return Math.trunc(t) + 0.0;
-}
-
-// The epoch time of calendar fields `[year, month 0-11, day, hours, minutes, seconds, ms]`, UTC
-// or local; NaN if one is not finite. The year is taken as given (see `fullYear`).
-function fromFields(utc: bool, fields: f64[]): f64 {
-  const n: i64[] = [];
-  for (const f of fields) {
-    if (!(f - f == 0.0)) {
-      return 0.0 / 0.0;
-    }
-    n.push(Math.trunc(f) as i64);
-  }
-  const t = epochMsOf(n[0], n[1] + 1, n[2], n[3], n[4], n[5], n[6]);
-  return timeClip((utc ? t : localToUtc(t)) as f64);
-}
-
-// JS's MakeFullYear: a year of 0-99 means 1900-1999. Only the constructor and `Date.UTC` apply
-// it; the setters take the year as given.
-function fullYear(y: f64): f64 {
-  const whole = Math.trunc(y);
-  return whole >= 0.0 && whole <= 99.0 ? whole + 1900.0 : y;
-}
-
-// Is `s` a date-time without an offset (`2024-01-15T10:30`), which JS reads as local time?
-function isLocalForm(s: string): bool {
-  const text = s.trim();
-  if (text.length <= 10) {
-    return false;
-  }
-  const rest = text.slice(10);
-  const sep = rest.charAt(0);
-  if (sep != "T" && sep != "t" && sep != " ") {
-    return false;
-  }
-  const time = rest.slice(1);
-  return !(time.endsWith("Z") || time.endsWith("z") || time.includes("+") || time.includes("-"));
 }

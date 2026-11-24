@@ -1,0 +1,134 @@
+// velt/net (internal): the TLS operations of std/net/tcp_sched.velt on the reactor under the
+// executor in Velt (#2649): `extend TlsServer implements ReactorTls`, in place of the stubs of
+// std/net/tls/fd_hook.velt, for the TLS streams of both `listenTls` and `connectTls`. The TLS
+// server and client (std/net/tls/fd_server.velt, fd_client.velt) load this file; a program loads
+// them only when live code can listen or connect with TLS (fd_hook.velt).
+
+import { IoError } from "velt/io/error";
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import * as fs from "velt/net/fd_socket";
+import { CLOSE_NOTIFY, TlsFailure } from "velt/net/tls/alert";
+import { ReactorTls, TlsServer } from "velt/net/tls/fd_hook";
+import * as ops from "velt/net/tls/fd_ops";
+
+/**
+ * The status of failure `e` for std/net/tcp_sched.velt, whose results carry codes: the runtime's
+ * code of the `IoError`'s name; a TLS failure (`EPROTO`) is `EILSEQ`, as the runtime's TLS
+ * listener reports it. The message is kept. `fetch`'s `https:` dial reports the same codes.
+ */
+export function status(e: unknown): IoStatus {
+  if (!(e instanceof IoError)) {
+    return { code: 5, message: `TLS: ${e}` };
+  }
+  // The peer went away without close_notify (`RecordReader.cut`): EOF, as the runtime's
+  // listener reports it, not a protocol error.
+  if (e instanceof TlsFailure && e.alert == CLOSE_NOTIFY && !e.sendAlert) {
+    return { code: 11, message: e.message };
+  }
+  switch (e.code) {
+    case "EINVAL":
+      return { code: 4, message: e.message };
+    case "ETIMEDOUT":
+      return { code: 6, message: e.message };
+    case "ECONNRESET":
+      return { code: 8, message: e.message };
+    case "EPIPE":
+      return { code: 10, message: e.message };
+    case "EBADF":
+      return { code: 16, message: e.message };
+    default:
+      return { code: 5, message: e.message };
+  }
+}
+
+/** The TLS operations for std/net/tcp_sched.velt (std/net/tls/fd_ops.velt), in place of the stubs. */
+extend TlsServer implements ReactorTls {
+  listenerFd(l: u64): u64 {
+    return ops.listenerFd(l);
+  }
+  closeListener(l: u64) {
+    ops.closeListener(l);
+  }
+  async accept(l: u64): Promise<IoResult<u64>> {
+    try {
+      return await ops.accept(l);
+    } catch (e) {
+      return fs.failed(status(e), 0);
+    }
+  }
+  async read(s: u64, max: u64): Promise<IoResult<u8[]>> {
+    try {
+      return await ops.read(s, max);
+    } catch (e) {
+      return fs.failed(status(e), []);
+    }
+  }
+  async readString(s: u64, max: u64): Promise<IoResult<string>> {
+    try {
+      return await ops.readString(s, max);
+    } catch (e) {
+      return fs.failed(status(e), "");
+    }
+  }
+  tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+    try {
+      return ops.tryReadInto(s, data, start, end);
+    } catch (e) {
+      return fs.failed(status(e), 0);
+    }
+  }
+  readyOrFd(s: u64): IoResult<u64> {
+    return ops.readyOrFd(s);
+  }
+  fdOf(s: u64): u64 {
+    return ops.fdOf(s);
+  }
+  async readable(s: u64): Promise<IoStatus> {
+    try {
+      return await ops.readable(s);
+    } catch (e) {
+      return status(e);
+    }
+  }
+  writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+    try {
+      return ops.writeLaterRange(s, data, start, end);
+    } catch (e) {
+      return fs.failed(status(e), 0);
+    }
+  }
+  tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
+    return ops.tryWriteRange(s, data, start, end);
+  }
+  async drained(s: u64, max: u64): Promise<IoStatus> {
+    try {
+      return await ops.drained(s, max);
+    } catch (e) {
+      return status(e);
+    }
+  }
+  async writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+    try {
+      return await ops.writeRange(s, data, start, end);
+    } catch (e) {
+      return status(e);
+    }
+  }
+  shutdown(s: u64): IoStatus {
+    return ops.shutdown(s);
+  }
+  async alpn(s: u64): Promise<IoResult<string>> {
+    try {
+      return await ops.alpn(s);
+    } catch (e) {
+      return fs.failed(status(e), "");
+    }
+  }
+  idleOpen(s: u64): bool {
+    return ops.idleOpen(s);
+  }
+  close(s: u64) {
+    ops.close(s);
+  }
+}

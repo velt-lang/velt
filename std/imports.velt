@@ -128,6 +128,16 @@ export const imports: Imports = {
   },
   // velt/sync's hand-offs (std/sync/output.velt): what the thread printed, published through the
   // runtime's latch; nothing to publish on WebAssembly's one thread.
+  // velt/lang/bytes's raw moves and zeroing (std/lang/bytes/raw.velt): the C library's `memmove`
+  // and `memset`, or a Velt loop on the JS host, which has no C library.
+  "#bytes-move": { js: "./lang/bytes/move_js.velt", default: "./lang/bytes/move_c.velt" },
+  // velt/lang/bytes's largest allocation (std/lang/bytes/raw.velt): a 32-bit target's on
+  // WebAssembly, none natively.
+  "#bytes-limit": {
+    wasi: "./lang/bytes/limit_wasm.velt",
+    js: "./lang/bytes/limit_wasm.velt",
+    default: "./lang/bytes/limit_native.velt",
+  },
   "#sync-output": {
     wasi: "./sync/output_wasm.velt",
     js: "./sync/output_wasm.velt",
@@ -341,5 +351,19 @@ export const imports: Imports = {
     win32: "./time/localtime_win32.velt",
     native: "./time/localtime_posix.velt",
     default: "./time/localtime_none.velt",
+  },
+  // The zone local time is in, by its id, for `Date`'s zone name (std/time/zone_name.velt):
+  // `TZ` or `/etc/localtime`'s link on macOS and Linux, `TZ`'s fixed offsets or the system
+  // zone's registry key on Windows, UTC on WebAssembly.
+  "#zone-id": {
+    win32: "./time/zone_id_win32.velt",
+    native: "./time/zone_id_posix.velt",
+    default: "./time/zone_id_none.velt",
+  },
+  // `O_CLOEXEC` for zone_id_posix.velt's `open`, which differs between macOS and Linux (without
+  // velt/os, which a program printing a date need not load).
+  "#zone-cloexec": {
+    darwin: "./time/zone_cloexec_darwin.velt",
+    default: "./time/zone_cloexec_linux.velt",
   },
 };
