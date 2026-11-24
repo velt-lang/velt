@@ -438,12 +438,20 @@ fn join_iface_slot(cx: &mut Ctx, iface: DefId, slot: usize, methods: &[DefId]) -
         }
         join_into(&mut join, &modes);
     }
+    let this_mut = join[0] == PassMode::BorrowMut;
+    // Unchanged (std's interfaces, in a later unit): nothing to write.
+    let DefInfo::Iface(info) = &cx.info[iface.0 as usize] else {
+        unreachable!("ICE: iface")
+    };
+    let m = &info.methods[slot];
+    if this_mut == m.mut_this && m.params.iter().zip(&join[1..]).all(|(p, j)| p.mode == *j) {
+        return false;
+    }
     let DefInfo::Iface(info) = &mut cx.info[iface.0 as usize] else {
         unreachable!("ICE: iface")
     };
     let m = &mut info.methods[slot];
     let mut changed = false;
-    let this_mut = join[0] == PassMode::BorrowMut;
     if this_mut != m.mut_this {
         m.mut_this = this_mut;
         changed = true;
