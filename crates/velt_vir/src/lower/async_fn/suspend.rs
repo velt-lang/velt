@@ -331,6 +331,10 @@ impl FnLower<'_, '_> {
         }
         let (k, resume) = self.suspension();
         self.tla_suspends();
+        // The suspension itself, a block of its own: a resume asked too early comes back to it.
+        let suspend = self.new_block();
+        self.goto(suspend);
+        self.switch_to(suspend);
         self.set_tag(k);
         self.terminate(Terminator::Return(cint(0, Ty::U32)));
         self.cancel_block(k, |_| {});
@@ -342,8 +346,11 @@ impl FnLower<'_, '_> {
             let (go_bb, wait_bb) = (self.new_block(), self.new_block());
             self.branch(go, go_bb, wait_bb);
             self.switch_to(wait_bb);
-            // Still suspended at `k` (its tag is unchanged): the next poll asks again.
-            self.terminate(Terminator::Return(cint(0, Ty::U32)));
+            // Still suspended at `k`: the next poll asks again. Back through the suspension,
+            // since in a program that catches panics the resume marked the state as polled
+            // (`POLLING`, which no poll resumes), and the yield would never be asked again
+            // (#3596).
+            self.goto(suspend);
             self.switch_to(go_bb);
         }
         unit()

@@ -148,6 +148,19 @@ fn non_ascii_slices_know_their_units_without_a_count() {
     invariants::check_whole(&tail.0);
 }
 
+/// The units a `charCodeAt` loop over all of `tail` scans (the least of a few runs), checking
+/// each unit against `want`.
+fn char_code_at_loop_work(tail: &VeltStr, want: &[u16]) -> usize {
+    work::least_work(|| {
+        let before = work::total();
+        for (i, &u) in want.iter().enumerate() {
+            let got = unsafe { velt_rt_str_char_code_at(tail, i as i64) };
+            assert_eq!(got, u as i64, "unit {i}");
+        }
+        work::total() - before
+    })
+}
+
 #[test]
 fn sequential_loops_over_a_non_ascii_slice_stay_linear() {
     // A slice has no breadcrumbs of its own; the per-thread cursor keeps a `charCodeAt` loop
@@ -158,18 +171,66 @@ fn sequential_loops_over_a_non_ascii_slice_stay_linear() {
     let tail = Owned(unsafe { s.0.substring(2, text.len()) });
     assert!(tail.0.is_slice());
     let want: Vec<u16> = text.encode_utf16().skip(1).collect();
-    let n = work::least_work(|| {
-        let before = work::total();
-        for (i, &u) in want.iter().enumerate() {
-            let got = unsafe { velt_rt_str_char_code_at(&tail.0, i as i64) };
-            assert_eq!(got, u as i64, "unit {i}");
-        }
-        work::total() - before
-    });
+    let n = char_code_at_loop_work(&tail.0, &want);
     assert!(n <= 3 * want.len(), "{n} units scanned for {}", want.len());
     // Being remembered marks the buffer, so freeing it forgets the positions.
     let field = unsafe { heap::crumbs(s.0.buffer()) }.load(std::sync::atomic::Ordering::Relaxed);
     assert_eq!(field, heap::REMEMBERED);
+}
+
+#[test]
+fn a_cost_count_ignores_other_threads_freeing_strings() {
+    // Regression (#3617): other tests freeing remembered strings bump the shared heap epoch,
+    // which expired this thread's positions in every run of the count, so the loop above
+    // counted ~3.5x its units under parallel `cargo test`. Here another thread bumps it every
+    // `EVERY` units of the loop, and the loop waits for each bump, so every run sees them.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    const EVERY: usize = 500;
+    const STOP: u64 = u64::MAX;
+    let text = "é日😀a".repeat(5000);
+    let s = Owned(VeltStr::from_bytes(text.as_bytes()));
+    let tail = Owned(unsafe { s.0.substring(2, text.len()) });
+    assert!(tail.0.is_slice());
+    let want: Vec<u16> = text.encode_utf16().skip(1).collect();
+    // Bumps asked for and bumps done; `STOP` asked ends the bumper.
+    let (asked, done) = (AtomicU64::new(0), AtomicU64::new(0));
+    // Stops the bumper also when the count panics, so the scope's join doesn't wait forever.
+    struct Stop<'a>(&'a AtomicU64);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            self.0.store(STOP, Ordering::Release);
+        }
+    }
+    let n = std::thread::scope(|scope| {
+        let _stop = Stop(&asked);
+        scope.spawn(|| loop {
+            let a = asked.load(Ordering::Acquire);
+            if a == STOP {
+                break;
+            }
+            if a > done.load(Ordering::Relaxed) {
+                recent::buffer_gone();
+                done.store(a, Ordering::Release);
+            } else {
+                std::thread::yield_now();
+            }
+        });
+        work::least_work(|| {
+            let before = work::total();
+            for (i, &u) in want.iter().enumerate() {
+                if i % EVERY == 0 {
+                    let a = asked.fetch_add(1, Ordering::AcqRel) + 1;
+                    while done.load(Ordering::Acquire) < a {
+                        std::thread::yield_now();
+                    }
+                }
+                let got = unsafe { velt_rt_str_char_code_at(&tail.0, i as i64) };
+                assert_eq!(got, u as i64, "unit {i}");
+            }
+            work::total() - before
+        })
+    });
+    assert!(n <= 3 * want.len(), "{n} units scanned for {}", want.len());
 }
 
 #[test]
@@ -256,7 +317,10 @@ fn the_program_s_epoch_is_raised_above_the_runtime_s_then_bumped_by_frees() {
     let before = recent::epoch();
     unsafe { crate::str::use_epoch(word) };
     assert!(word.load(Relaxed) > before);
-    assert_eq!(recent::epoch(), word.load(Relaxed));
+    // The heap epoch is the word now. Other tests' frees keep bumping it, so it is read after
+    // the word and is at least as high (the fallback stays below it).
+    let handed_over = word.load(Relaxed);
+    assert!(recent::epoch() >= handed_over);
     // A remembered buffer freed bumps the program's word.
     let text = "é日😀a".repeat(100);
     let mut s = VeltStr::from_bytes(text.as_bytes());

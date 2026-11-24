@@ -137,9 +137,13 @@ not a reason for another round.
   `GOLDEN_SHARDS` in `crates/xtask/src/os.rs`: 4 on Windows, 3 on Linux, 2 on macOS), Linux
   always, Windows when the change touches OS-specific code, and macOS only when it touches code that
   really can differ there (`crates/xtask/src/os.rs`, below). For a change to WebAssembly code the
-  same build also packs the WebAssembly goldens, which then run in shards of their own
-  (`WASM_SHARDS` in `os.rs`: 4 on Windows and macOS, 2 on Linux) instead of in the lint-and-test
-  job, where on Windows they would take about 45 minutes. Enable it with `gh pr merge <n> --auto` in
+  Linux build also packs the WebAssembly goldens, which then run in shards of their own
+  (`WASM_SHARDS` in `os.rs`: 2 on Linux) instead of in the lint-and-test job. The module is the
+  same on every OS, so Windows and macOS run them in the queue (4 shards each) only for a change to
+  WebAssembly's host side, the tools that build and run the module (`WASM_HOST_PATHS` in `os.rs`:
+  the wasm linker and LLVM tool lookups, starting wasmtime, the test harness, the toolchain), and
+  only when the queue checks that OS anyway; a merge train (`--full`) runs them on Linux only. The
+  nightly runs them on every OS. Enable it with `gh pr merge <n> --auto` in
   the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
   session links, machine paths and review-process wording; editing the description re-runs it. It
@@ -148,7 +152,7 @@ not a reason for another round.
   `main` and runs its checks again.
 - A nightly workflow runs the whole gate with PostgreSQL and Redis (and the parser's robustness
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
-  goldens, which pull requests and the queue run only for WebAssembly changes), the differential
+  goldens, which pull requests and the queue run only for WebAssembly changes, on Linux), the differential
   tests against Node (`tests/difftest`), `declare c` checked against C headers (`c-headers`,
   through the pinned zig), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
@@ -189,20 +193,36 @@ not a reason for another round.
   to the list.
 - `ci.yml`'s scheduled run checks the whole gate on Windows and macOS once a day (without the
   WebAssembly goldens, which the nightly's `wasm-goldens` runs there), and opens or updates the
-  issue "main fails on <OS>" when that fails or doesn't finish in the job's 180 minutes, with the
-  commits since the last run that passed; fix it first. A tag runs the same gate before the release
-  publishes (`release.yml`). A push to `main` (the `main` jobs in `ci.yml`) refreshes the build
-  cache: on Linux every time, on Windows and macOS with the gate when the change touches the
-  toolchain or the dependencies (`main-plan`: `cargo xtask affected --base HEAD^1`, the queue's own
-  plan, since the queue tested the commit on its parent; rules in `crates/xtask/src/os.rs`). A
-  commit no passing merge queue run tested (a direct push or an admin merge) runs every OS. Pull
-  request and merge queue runs restore the cache but never save their own.
+  issue "main fails on <OS>" when that fails or doesn't finish in its jobs' time limits, with the
+  commits since the last run that passed; fix it first. The gate after a push and in the scheduled
+  run is parallel jobs per OS (`main (<os>)`, `.github/workflows/main-gate.yml`): test shards, each
+  building and running every n-th test (shard 1 also lints and runs the doctests, `velt fmt`,
+  std-lint and the smoke test), and the goldens' build and shards (`queue-goldens.yml`, with the
+  VIR identity); together they run what `cargo xtask check --full` runs, each step once. A tag
+  runs the whole gate before the release publishes (`release.yml`). A push to `main` refreshes the
+  build cache: on Linux every time (`main (ubuntu-latest)`), on Windows and macOS with the gate.
+  Which OSes the gate runs on is `cargo xtask main-plan`'s (`crates/xtask/src/main_plan.rs`, fed by
+  `ci.yml`'s `main-plan` job):
+  - a commit a passing run tested runs it only when the change touches the toolchain or the
+    dependencies, for the caches (rules in `crates/xtask/src/os.rs`). Tested means a merge queue
+    run that passed on the commit (planned from `HEAD^1`, the queue's base), or a merge train's:
+    a dispatched run on a `train-*` branch that passed with a head commit whose tree is this
+    commit's tree (planned from the train's base, so every PR the train landed counts). A train
+    whose PRs land as squash merges onto the base it tested ends on exactly that tree;
+  - a commit that is no longer `main`'s tip when the plan runs (the earlier PRs of a train
+    landing, seconds apart) skips the gate: the newer commit's run checks the same code. Linux's
+    cache and clang's objects still refresh;
+  - a commit nothing tested (a direct push, an admin merge outside a train, a train landed onto a
+    `main` that moved) runs the gate on every OS, Linux included.
+
+  Pull request and merge queue runs restore the cache but never save their own.
 - Clang's objects (`velt-clang-objects-<os>-<arch>-<run id>`, Linux) are a cache of their own. The
   golden shards and the `check` job restore the newest entry; a day-old entry makes shards about
   twice as slow as a fresh one, and a `check` job 190-360 s slower. The nightly gate saves one from
   an empty cache, which drops what no program uses any more. A queue entry saves no cache: its
   shards and `check` job upload what they added as artifacts (`clang-objects.sh`, kept a day), and
-  the push to `main` from that entry adds them to the newest entry and saves it (the `clang-objects`
+  the push to `main` from that entry (or of a merge train's last PR, from the train's dispatched
+  run, which uploads them too) adds them to the newest entry and saves it (the `clang-objects`
   job). That job takes only files named as objects, and only adds them. So what ran in a queue entry
   reaches a cache `main` restores, and the one check is that the queue run passed on the commit that
   landed: a key's content can't be verified without compiling it. The cache is Linux-only, so this

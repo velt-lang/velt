@@ -11,14 +11,14 @@ import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { incompleteTail } from "velt/net/fd_utf8";
 import { READY, TlsSession, WAIT } from "velt/net/tls/fd_session";
 import { DATA, ENDED, NOTHING_YET, TlsEngine } from "velt/net/tls/tls_engine";
-import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { ServerSteps } from "velt/net/tls/server_steps";
 
 /** A TLS stream over the reactor socket `fd`. */
 export class FdTlsConn implements TlsSession {
   private fd: u64;
   private e: TlsEngine;
   // The server's handshake until it is done.
-  private hs: ServerHandshake | null;
+  private hs: ServerSteps | null;
   // Plaintext written before the write keys, sealed once they are there.
   private pending: u8[] = [];
   // A UTF-8 character cut off at the end of the last `readString` chunk.
@@ -29,7 +29,7 @@ export class FdTlsConn implements TlsSession {
   private failure: IoError | null = null;
 
   /** The connection `e` on `fd`; `hs` is the server's handshake still to run, or null. */
-  constructor(fd: u64, e: TlsEngine, hs: ServerHandshake | null, deadline: number) {
+  constructor(fd: u64, e: TlsEngine, hs: ServerSteps | null, deadline: number) {
     this.fd = fd;
     this.e = e;
     this.hs = hs;

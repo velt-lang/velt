@@ -30,8 +30,14 @@ impl Translator<'_, '_> {
         let mut loc = match self.storage[index] {
             Storage::Var(v) => Loc::Var(v, decl.ty),
             Storage::Value(local) => Loc::Value(local, decl.ty),
-            Storage::Slot(slot) => {
-                let addr = self.builder.ins().stack_addr(types::I64, slot, 0);
+            Storage::Slot(slot, over) => {
+                let mut addr = self.builder.ins().stack_addr(types::I64, slot, 0);
+                if over != 0 {
+                    // Rounded up to the value's alignment: the slot has the room.
+                    let up = i64::from(over - 1);
+                    let sum = self.builder.ins().iadd_imm(addr, up);
+                    addr = self.builder.ins().band_imm(sum, !up);
+                }
                 Loc::Mem(addr, 0, decl.ty)
             }
             Storage::Unit => Loc::Unit,

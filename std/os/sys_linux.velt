@@ -3,7 +3,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
-import { cpuQuota } from "./cgroup";
+import { cpuQuota, parallelismOf } from "./cgroup";
 import { availableOf, constrainedOf } from "./cgroup_memory";
 import type { CpuInfo } from "./cpu_info";
 import { linuxCpus } from "./cpus_linux";
@@ -76,11 +76,7 @@ export function cpuCount(): i64 {
     // SAFETY: no precondition.
     n = unsafe { sysconf(SC_NPROCESSORS_ONLN) };
   }
-  const quota = cpuQuota();
-  if (quota > 0 && quota < n) {
-    n = quota;
-  }
-  return n < 1 ? 1 : n;
+  return parallelismOf(n, cpuQuota());
 }
 
 /** The machine's host name ("" if unknown). */

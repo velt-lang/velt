@@ -41,6 +41,8 @@ const ERRNOS =
   "4 EINTR: interrupted system call\n" +
   "5 EIO: i/o error\n" +
   "6 ENXIO: no such device or address\n" +
+  "7 E2BIG: argument list too long\n" +
+  "8 ENOEXEC: exec format error\n" +
   "9 EBADF: bad file descriptor\n" +
   "11 EAGAIN: resource temporarily unavailable\n" +
   "12 ENOMEM: not enough memory\n" +
@@ -70,6 +72,23 @@ const ERRNOS =
   "95 ENOTSUP: operation not supported on socket\n" +
   "122 EDQUOT: disk quota exceeded\n";
 
+/** libuv's `<name>: <message>` of the errno `e` ("UNKNOWN: unknown error" for one not listed). */
+function errnoLine(e: i32): string {
+  const key = `\n${isMac() ? linuxErrno(e) : e} `;
+  const at = ERRNOS.indexOf(key);
+  if (at < 0) {
+    return "UNKNOWN: unknown error";
+  }
+  const from = at + (key.length as i64);
+  return ERRNOS.slice(from, ERRNOS.indexOf("\n", from));
+}
+
+/** Node's name of the errno `e` ("ENOENT"; "UNKNOWN" for one not listed). */
+export function errnoName(e: i32): string {
+  const line = errnoLine(e);
+  return line.slice(0, line.indexOf(":"));
+}
+
 /**
  * The `IoError` for the errno `e` of the system call `syscall` (on `path`, if any, and to `dest`
  * for a call with two paths), as Node writes it: `ENOENT: no such file or directory, open
@@ -81,13 +100,7 @@ export function osError(
   path: string | null = null,
   dest: string | null = null,
 ): IoError {
-  const key = `\n${isMac() ? linuxErrno(e) : e} `;
-  const at = ERRNOS.indexOf(key);
-  let line = "UNKNOWN: unknown error";
-  if (at >= 0) {
-    const from = at + (key.length as i64);
-    line = ERRNOS.slice(from, ERRNOS.indexOf("\n", from));
-  }
+  const line = errnoLine(e);
   const code = line.slice(0, line.indexOf(":"));
   const on = path == null ? "" : ` '${path}'`;
   const to = dest == null ? "" : ` -> '${dest}'`;
