@@ -1,0 +1,29 @@
+// A swap can't put module state into a `Mutex`'s `with` callback (#3467): velt dev checks the
+// edited program again, and sema refuses a callback that reaches module state, through a call
+// too (step 2), so the old code keeps running (state and all, in both modes). std's module lock
+// stops a `velt dev` thread that waits for it while it holds a `Mutex` only for code that gets
+// past that check. The harness's probe asks `/`, which changes nothing.
+import { serve } from "http-server";
+
+let hits: number = 0;
+const m = new Mutex<number[]>([]);
+
+function count(): number {
+  return hits;
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    if (new URL(req.url).pathname != "/add") {
+      return new Response("up");
+    }
+    hits++;
+    const n = m.with((xs) => {
+      xs.push(count());
+      return xs.length;
+    });
+    return new Response(`v2 ${n}`);
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

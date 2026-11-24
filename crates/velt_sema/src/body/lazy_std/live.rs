@@ -381,6 +381,10 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
         live_classes(cx, d);
     }
     cx.lazy.live.present |= w.constructs;
+    // A `with` in a build for the `velt dev` JIT counts its `Mutex` too (`Construct::MutexHeld`).
+    if cx.lazy.jit && w.constructs & Construct::Mutex.bit() != 0 {
+        cx.lazy.live.present |= Construct::MutexHeld.bit();
+    }
     if w.async_host {
         let settled = hook_class(cx, hook_index::host_settled);
         live_classes(cx, settled);
