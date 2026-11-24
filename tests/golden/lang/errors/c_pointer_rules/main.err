@@ -1,5 +1,5 @@
 _clib/src/lib.velt:83:24: error: cannot convert to or from JSON: `Ptr<FILE>` has no JSON form
-  = note: JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`
+  = note: JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, structs, classes and object literals of those, and `JsonValue`; a `Map` or a `Set` is written as `{}`, as in Node
 _clib/src/lib.velt:115:26: error: field `p` of C struct `Loose` has type `Ptr<u8> | null | undefined`, which C doesn't have
   = note: C's pointer is `Ptr<T> | null`, `NULL` as `null`: one word has no room for `undefined` too
 _clib/src/lib.velt:16:36: error: parameter `p` of C function `setNull` has type `Out<Ptr<FILE>>`, which cannot cross to C
