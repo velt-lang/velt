@@ -91,6 +91,7 @@ mod canon_key;
 mod glue_reach;
 pub mod ide;
 mod iface_method_checks;
+mod iface_method_values;
 mod iface_method_writes;
 mod iface_overloads;
 mod iface_writes;

@@ -110,6 +110,9 @@ pub(crate) fn analyze_after_phase(cx: &mut ctx::Ctx) {
     // Every implementation exists now: those of interfaces whose methods are written get their
     // method setters (`iface_method_writes`).
     cx.finish_method_setters();
+    timings::pass("iface_method_values::check", || {
+        crate::iface_method_values::check(cx)
+    });
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {
         cx.check_adapted_array_reads()
