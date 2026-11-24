@@ -78,6 +78,8 @@ impl FnCx<'_, '_> {
                 None => synth(ast::ExprKind::Ident(k.clone()), k.span),
             };
             let h = self.expr(&e, hint, Want::Move);
+            // The literal built from these temporaries skips them (`literal_this.rs`).
+            self.stored_value(k, *v, &h);
             let ty = h.ty;
             let id = self.temp_ident("#cast", h, &mut stmts);
             temps.push((k.clone(), id, ty));

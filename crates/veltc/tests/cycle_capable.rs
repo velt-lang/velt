@@ -716,6 +716,69 @@ fn a_type_argument_only_a_shared_field_shows_is_no_edge() {
 }
 
 #[test]
+fn two_instantiations_of_an_interface_that_point_at_each_other_are_a_cycle() {
+    // Interface nodes are per instantiation (cycles.rs `Node::Iface`): `Slot<string>` holds the
+    // `A`s converted to it, `Slot<i64>` the `B`s. Each holds the other instantiation, so the cycle
+    // runs through both nodes.
+    let out = debug_out(
+        "interface Slot<T> { take(): T; }
+         class A implements Slot<string> {
+           other: Slot<i64> | null = null;
+           take(): string { return \"a\"; }
+         }
+         class B implements Slot<i64> {
+           other: Slot<string> | null = null;
+           take(): i64 { return 1; }
+         }
+         function main() {
+           const a = new A();
+           const b = new B();
+           a.other = b;
+           b.other = a;
+           console.log(a.take(), b.take());
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+    assert!(has(line, "class B"), "{out}");
+}
+
+#[test]
+fn an_instantiation_that_does_not_reach_back_is_no_cycle() {
+    // An `A` is a `Slot<string>` holding a `Slot<i64>`, whose only values are `B`s, which hold
+    // nothing: no cycle. With one node for every `Slot`, `A -> Slot -> A` was one.
+    let out = debug_out(
+        "interface Slot<T> { take(): T; }
+         class A implements Slot<string> {
+           other: Slot<i64> | null = null;
+           take(): string { return \"a\"; }
+         }
+         class B implements Slot<i64> {
+           take(): i64 { return 1; }
+         }
+         class Holder {
+           s: Slot<string> | null = null;
+         }
+         function main() {
+           const a = new A();
+           const b = new B();
+           a.other = b;
+           const h = new Holder();
+           h.s = a;
+           console.log(a.take(), b.take(), h.s?.take() ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(!has(line, "class A"), "{out}");
+}
+
+#[test]
 fn request_and_response_bodies_keep_the_request_and_response_out_of_the_set() {
     // A body's chunks hold the request's state and its server side (std/net/http/fetch
     // request_body.velt `requestChunks`), or the response's body cell (response_cell.velt), not
