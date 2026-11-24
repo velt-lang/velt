@@ -1,0 +1,94 @@
+// check: no leaks
+// `for await` over a `ReadableStream` against a chain of microtasks: each value arrives in the
+// turn Node 22's does (#3711), and leaving the loop early lets the stream go before the cancel
+// settles (#3717). The Node twin is streams_for_await.mjs.
+function ticks(log: string[]): Promise<void> {
+  let p = Promise.resolve();
+  for (let i = 0; i < 20; i++) {
+    const k = i;
+    p = p.then(() => {
+      log.push("t" + k);
+    });
+  }
+  return p;
+}
+
+async function loop(name: string, s: ReadableStream<number>): Promise<void> {
+  const log: string[] = [];
+  const t = ticks(log);
+  for await (const v of s) {
+    log.push("v" + v);
+  }
+  log.push("end");
+  await t;
+  console.log(name + ": " + log.join(" "));
+}
+
+async function main(): Promise<void> {
+  await loop(
+    "start",
+    new ReadableStream<number>({
+      start: (c) => {
+        c.enqueue(1);
+        c.enqueue(2);
+        c.enqueue(3);
+        c.close();
+      },
+    }),
+  );
+
+  let n = 0;
+  await loop(
+    "sync pull",
+    new ReadableStream<number>({
+      pull: (c) => {
+        n++;
+        if (n > 3) {
+          c.close();
+        } else {
+          c.enqueue(n);
+        }
+      },
+    }),
+  );
+
+  let m = 0;
+  await loop(
+    "async pull",
+    new ReadableStream<number>({
+      pull: async (c) => {
+        m++;
+        if (m > 3) {
+          c.close();
+        } else {
+          c.enqueue(m);
+        }
+      },
+    }),
+  );
+
+  // Leaving early: the stream is let go at once, before the source's `cancel` runs out and
+  // before the loop goes on (#3717).
+  const log: string[] = [];
+  const s = new ReadableStream<number>({
+    start: (c) => {
+      c.enqueue(1);
+      c.enqueue(2);
+    },
+    cancel: (reason) => {
+      log.push("cancel");
+    },
+  });
+  for await (const v of s) {
+    log.push("v" + v);
+    queueMicrotask(() => {
+      log.push("locked " + s.locked);
+    });
+    break;
+  }
+  log.push("after locked " + s.locked);
+  await null;
+  console.log("break: " + log.join(" "));
+}
+
+main();

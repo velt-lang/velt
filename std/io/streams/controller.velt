@@ -282,30 +282,40 @@ export class ReadableStreamDefaultController<R> {
   // `reader.read()`, done at once as in JS (a queued chunk is taken, a pull started); the
   // promise settles with the chunk, or when one arrives.
   private read(): Promise<ReadableStreamReadResult<R>, unknown> {
-    // The field itself, not a copy in a local: such a copy is freed too early (#1140).
-    if (this.state == ERRORED) {
-      return Promise.reject<ReadableStreamReadResult<R>>(this.stored);
-    }
-    if (this.queued() > 0) {
-      const chunk = this.dequeue();
-      if (this.closeRequested && this.queued() == 0) {
-        this.finishClose();
-      } else {
-        this.callPullIfNeeded();
-      }
-      return Promise.resolve<ReadableStreamReadResult<R>>({ value: chunk, done: false });
-    }
-    if (this.state == CLOSED) {
-      return Promise.resolve<ReadableStreamReadResult<R>>({ done: true });
-    }
     const {
       promise,
       resolve,
       reject,
     } = Promise.withResolvers<ReadableStreamReadResult<R>, unknown>();
-    this.requests.push({ resolve: resolve, reject: reject });
-    this.callPullIfNeeded();
+    this.readSteps(resolve, reject);
     return promise;
+  }
+
+  // A read as the spec's read request: `chunk` gets the result at once when one is queued (or
+  // the stream has closed), else when one arrives; `fail` gets the error (the `for await`
+  // iterator's steps, `StreamIterator`).
+  private readSteps(chunk: (r: ReadableStreamReadResult<R>) => void, fail: (e: unknown) => void) {
+    // The field itself, not a copy in a local: such a copy is freed too early (#1140).
+    if (this.state == ERRORED) {
+      fail(this.stored);
+      return;
+    }
+    if (this.queued() > 0) {
+      const value = this.dequeue();
+      if (this.closeRequested && this.queued() == 0) {
+        this.finishClose();
+      } else {
+        this.callPullIfNeeded();
+      }
+      chunk({ value: value, done: false });
+      return;
+    }
+    if (this.state == CLOSED) {
+      chunk({ done: true });
+      return;
+    }
+    this.requests.push({ resolve: chunk, reject: fail });
+    this.callPullIfNeeded();
   }
 
   // Rejects `reader.closed` and the waiting reads (in that order, as Node): their reader

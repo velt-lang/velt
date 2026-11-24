@@ -92,7 +92,7 @@ export class ReadableStream<R> extends ByteSource {
 
   /** `for await (const chunk of stream)`: reads to the end; leaving the loop early cancels the stream. */
   [Symbol.asyncIterator](): AsyncIterator<R, Reason> {
-    return new StreamIterator<R>(this.getReader());
+    return new StreamIterator<R>(this.getReader(), this.ctl);
   }
 
   /**
@@ -111,36 +111,83 @@ export class ReadableStream<R> extends ByteSource {
   }
 }
 
-// `for await` over a stream.
+// `for await` over a stream, in the steps of Node's iterator (#3711). A `next()` that comes
+// while the last one's promise is the current one runs after it has settled, and gives its read's
+// promise adopted; a read's result clears the current promise, so the `next()` after it reads at
+// once. `return()` cancels, lets the stream go at once, then waits for the cancel (#3717).
 class StreamIterator<R> implements AsyncIterator<R, Reason> {
   private reader: ReadableStreamDefaultReader<R>;
+  private ctl: ReadableStreamDefaultController<R>;
+  private current: Promise<IteratorResult<R>, unknown> | null = null;
+  private started: bool = false;
+  private done: bool = false;
 
-  constructor(reader: ReadableStreamDefaultReader<R>) {
+  constructor(reader: ReadableStreamDefaultReader<R>, ctl: ReadableStreamDefaultController<R>) {
     this.reader = reader;
+    this.ctl = ctl;
   }
 
   async next(): Promise<IteratorResult<R>> throws unknown {
-    let r: IteratorResult<R>;
-    try {
-      r = await this.reader.read();
-    } catch (e) {
-      // The loop ends with the error; the stream is released, as in JS.
-      this.reader.releaseLock();
-      throw e;
+    if (!this.started) {
+      // The first read waits a microtask, as in Node.
+      this.current = Promise.resolve<IteratorResult<R>>({ done: true });
+      this.started = true;
     }
-    if (r.done) {
-      this.reader.releaseLock();
+    const cur = this.current;
+    let p: Promise<IteratorResult<R>, unknown>;
+    if (cur != null) {
+      p = new Promise<IteratorResult<R>, unknown>((resolve, reject) => {
+        const steps = () => {
+          const q = this.nextSteps();
+          q.then((r) => queueMicrotask(() => resolve(r)), (e) => queueMicrotask(() => reject(e)));
+        };
+        cur.then((r) => steps(), (e) => steps());
+      });
+    } else {
+      p = this.nextSteps();
     }
-    return r;
+    this.current = p;
+    return await p;
+  }
+
+  // One read, as the spec's read request: its result clears the current promise.
+  private nextSteps(): Promise<IteratorResult<R>, unknown> {
+    if (this.done) {
+      return Promise.resolve<IteratorResult<R>>({ done: true });
+    }
+    const { promise, resolve, reject } = Promise.withResolvers<IteratorResult<R>, unknown>();
+    this.ctl.readSteps(
+      (r) => {
+        this.current = null;
+        if (r.done) {
+          // The loop has ended: the stream is released, as in JS.
+          this.done = true;
+          this.reader.releaseLock();
+        }
+        resolve(r as IteratorResult<R>);
+      },
+      (e) => {
+        this.current = null;
+        this.done = true;
+        this.reader.releaseLock();
+        reject(e);
+      },
+    );
+    return promise;
   }
 
   async return(): Promise<IteratorResult<R>> {
+    if (this.done) {
+      return { done: true };
+    }
+    this.done = true;
+    const cancelled = this.reader.cancel(null);
+    this.reader.releaseLock();
     try {
-      await this.reader.cancel(null);
+      await cancelled;
     } catch (e) {
       // The loop is left either way.
     }
-    this.reader.releaseLock();
     return { done: true };
   }
 }
