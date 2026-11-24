@@ -480,6 +480,8 @@ mod arch;
 mod atomics;
 mod bfdot;
 mod c_export;
+mod field;
+mod field25519;
 mod half;
 mod inlining;
 mod placement;

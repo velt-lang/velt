@@ -7,6 +7,12 @@ import { CryptoError } from "velt/crypto/errors";
 import { Fe25519 } from "velt/crypto/field25519";
 import { x25519BaseMultiply } from "velt/crypto/x25519_base";
 
+// The whole ladder as one operation where the backend has a fused form (velt_vir `field.rs`
+// `X25519Ladder`: x86-64 with BMI2 and ADX, four 64-bit limbs per element, as ring's assembly):
+// registers `d` and `d + 1` of `r` (four limbs each) get X2 and Z2, reduced, for the u at
+// register `u` and the clamped scalar at register `k`; false where there is none.
+declare function velt_field_x25519_ladder(r: u64[], d: u64, u: u64, k: u64): bool;
+
 /**
  * X25519 (RFC 7748): the shared secret of the 32-byte private `scalar` and the peer's 32-byte
  * public `u`-coordinate. The scalar is clamped as the RFC says. Throws `CryptoError` for a
@@ -60,6 +66,21 @@ function ladder(scalar: u8[], u: u8[]): u8[] {
   k[31] &= 127;
   k[31] |= 64;
   const f = new Fe25519(SCRATCH + 5);
+  // Registers of four limbs: X2, Z2, u (its top bit masked, RFC 7748 §5), k.
+  const w: u64[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i: usize = 0; i < 32; i++) {
+    w[8 + (i >> 3)] |= (u[i] as u64) << (((i & 7) * 8) as u64);
+    w[12 + (i >> 3)] |= (k[i] as u64) << (((i & 7) * 8) as u64);
+  }
+  w[11] &= 0x7fffffffffffffff;
+  if (velt_field_x25519_ladder(w, 0, 2, 3)) {
+    // X2 and Z2 are below p: their 51-bit limbs, then X2 / Z2 as below.
+    fromWords(f, X2, w[0], w[1], w[2], w[3]);
+    fromWords(f, Z2, w[4], w[5], w[6], w[7]);
+    f.invert(A, Z2, SCRATCH);
+    f.mul(X2, X2, A);
+    return f.encode(X2);
+  }
   f.decode(X1, u);
   f.set(X2, 1);
   f.copy(X3, X1);
@@ -96,4 +117,19 @@ function ladder(scalar: u8[], u: u8[]): u8[] {
   f.invert(A, Z2, SCRATCH);
   f.mul(X2, X2, A);
   return f.encode(X2);
+}
+
+// Register `d` = the element below 2^255 whose 64-bit limbs are `w0..w3`, in 51-bit limbs.
+function fromWords(f: Fe25519, d: usize, w0: u64, w1: u64, w2: u64, w3: u64) {
+  const m: u64 = 0x7ffffffffffff;
+  f.zero(d);
+  f.orLimbs(
+    d,
+    w0 & m,
+    ((w0 >> 51) | (w1 << 13)) & m,
+    ((w1 >> 38) | (w2 << 26)) & m,
+    ((w2 >> 25) | (w3 << 39)) & m,
+    w3 >> 12,
+    0xffffffffffffffff,
+  );
 }
