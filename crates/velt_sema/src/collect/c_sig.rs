@@ -7,6 +7,7 @@
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
+use super::c_ref::{mentions_ref, misplaced_ref, ref_param, written_ref};
 use crate::ctx::Ctx;
 use crate::defs::{FnKind, ParamSig};
 use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
@@ -26,8 +27,6 @@ const OUT: &str = velt_common::std_item!(ffi_out, "Out");
 
 /// The module of velt/ffi's `CVarArgs`, the type of C's `...` (std/ffi/c_var_args.velt).
 const C_VAR_ARGS_MODULE: &str = velt_common::std_module!(ffi_c_var_args);
-/// The module of std's `Ref<S>` (std/ffi/ref.velt).
-const REF_MODULE: &str = velt_common::std_module!(ffi_ref);
 
 /// The imports of extern function `d` (`kind`, declared in `module`) with signature `sig`:
 /// a host function's (`host_sig`) or a C function's, recorded on its `FnInfo`.
@@ -107,11 +106,7 @@ fn c_import(
         .zip(ps)
         .map(|(p, s)| param(cx, module, name, p, s.ty))
         .collect();
-    if let Some(t) = sig
-        .ret
-        .as_ref()
-        .filter(|t| written_ref(cx, module, t).is_some())
-    {
+    if let Some(t) = sig.ret.as_ref().filter(|t| mentions_ref(cx, module, t)) {
         cx.error(
             Diagnostic::error(
                 format!("C function `{name}` can't return a `Ref<S>`: C reads a `Ref` through a parameter"),
@@ -177,6 +172,10 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
     }
     if let Some(nullable) = written_ref(cx, module, &p.ty) {
         return ref_param(cx, (name, p), ty, nullable);
+    }
+    if mentions_ref(cx, module, &p.ty) {
+        misplaced_ref(cx, name, &format!("parameter `{}`", p.name.name), &p.ty);
+        return CTy::Void;
     }
     if let Some(t) = crossing_ty(cx, ty) {
         return t;
@@ -329,74 +328,6 @@ pub(crate) fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
 /// Does the written type `t` (in `module`) name velt/ffi's `StrBytes`, directly
 /// (`StrBytes`, imported) or through a namespace (`ffi.StrBytes`)? A look-alike alias of
 /// `string` does not.
-/// Whether the written type `t` (in `module`) is velt/ffi's `Ref<S>` (`Some(false)`) or
-/// `Ref<S> | null` (`Some(true)`), named as `StrBytes` is ([`is_str_bytes`]), or through a type
-/// alias of one: an alias of `Ref<S>` resolves to `S`, which would otherwise cross by value.
-fn written_ref(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<bool> {
-    written_ref_in(cx, module, t, 0)
-}
-
-/// [`written_ref`], `depth` aliases deep.
-fn written_ref_in(cx: &Ctx, module: usize, t: &ast::TypeExpr, depth: u32) -> Option<bool> {
-    // An alias cycle is reported where it is expanded; this only stops following it.
-    if depth > 32 {
-        return None;
-    }
-    match &t.kind {
-        ast::TypeExprKind::Named { path, args } => {
-            if args.len() == 1 && names_ffi_item(cx, module, path, ("Ref", REF_MODULE)) {
-                return Some(false);
-            }
-            // A program's alias (`type SmallRef = Ref<small>`): what it is written as.
-            match path_item(cx, module, path) {
-                Some(crate::ctx::Item::Alias(a)) => {
-                    let alias = &cx.aliases[a as usize];
-                    let std = cx.modules[alias.module].is_std;
-                    (!std).then(|| written_ref_in(cx, alias.module, &alias.decl.ty, depth + 1))?
-                }
-                _ => None,
-            }
-        }
-        // Exactly `Ref<S> | null`, in either order: any other union isn't a `Ref`, and is
-        // checked as the type it is.
-        ast::TypeExprKind::Union(parts) => match parts.as_slice() {
-            [a, b] | [b, a]
-                if written_ref_in(cx, module, a, depth + 1) == Some(false)
-                    && matches!(b.kind, ast::TypeExprKind::Null) =>
-            {
-                Some(true)
-            }
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Parameter `p` of C function `name`, of type `ty`, declared `Ref<S>` (or `Ref<S> | null`,
-/// `nullable`): the address of a copy of C struct `S`, borrowed for the call (#2187).
-fn ref_param(cx: &mut Ctx, (name, p): (&str, &ast::Param), ty: TyId, nullable: bool) -> CTy {
-    let inner = match (nullable, cx.ty.kind(ty)) {
-        (true, TyKind::Option(inner, Nothing::Null)) => Some(*inner),
-        (false, _) => Some(ty),
-        _ => None,
-    };
-    if inner.is_some_and(|t| cx.is_c_struct_ty(t)) {
-        return CTy::Ref { nullable };
-    }
-    let shown = cx.display(ty);
-    cx.error(
-        Diagnostic::error(
-            format!(
-                "parameter `{}` of C function `{name}` is a `Ref` of `{shown}`, which is no C struct",
-                p.name.name
-            ),
-            p.ty.span,
-        )
-        .with_note("`Ref<S>` passes a `declare c struct`'s address (`const S *`); `Ref<S> | null` may pass `NULL`"),
-    );
-    CTy::Void
-}
-
 fn is_str_bytes(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> bool {
     names_ffi_alias(cx, module, t, ("StrBytes", STR_BYTES_MODULE))
 }
@@ -423,7 +354,7 @@ fn names_ffi_alias(
 
 /// Does `path` (written in `module`) name the std alias `alias_name` declared in std module
 /// `defining`, directly or through a namespace?
-fn names_ffi_item(
+pub(super) fn names_ffi_item(
     cx: &Ctx,
     module: usize,
     path: &[ast::Ident],
@@ -444,7 +375,7 @@ fn names_ffi_item(
 
 /// The item `path` (written in `module`) names: a name in scope, or one a namespace's module
 /// exports (`ffi.StrBytes`).
-fn path_item(cx: &Ctx, module: usize, path: &[ast::Ident]) -> Option<crate::ctx::Item> {
+pub(super) fn path_item(cx: &Ctx, module: usize, path: &[ast::Ident]) -> Option<crate::ctx::Item> {
     match path {
         [n] => cx.scopes[module].items.get(&n.name).copied(),
         [ns, n] => {

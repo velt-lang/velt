@@ -190,10 +190,12 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   takes a `string`. The call copies it and C gets the copy's address (`CTy::Ref`), borrowed for
   the call: C must not keep the pointer (the `unsafe` block's promise), and what C does to the
   copy, `const` cast away, never reaches the caller's value. `Ref<S> | null` passes `NULL` for
-  `null`. It is recognized through type aliases too (`type R = Ref<S>`, which resolves to `S`
-  and would otherwise cross by value). A `Ref` of anything else, and a C function returning
-  one, are errors at the declaration. Elsewhere `Ref<S>` is just `S`, as `StrBytes` is
-  `string`.
+  `null`. It is recognized through a program's type aliases too, generic ones included
+  (`type R = Ref<S>`, `type Id<T> = T` as `Id<Ref<S>>`, `type M<T> = T | null`): each resolves
+  to `S`, which would otherwise cross by value. A `Ref` of anything else, a `Ref` written
+  anywhere else in a C function's signature (`Ref<S>[]`, `Ref<S> | undefined`), and a C
+  function returning one are errors at the declaration (collect/c_ref.rs). Elsewhere `Ref<S>`
+  is just `S`, as `StrBytes` is `string`.
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
