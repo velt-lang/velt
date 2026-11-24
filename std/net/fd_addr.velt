@@ -13,7 +13,7 @@ import { utf8DecodeLossy } from "velt/encoding/utf8";
 import { addressLoad, hookCall } from "velt/lang/intrinsics";
 import { GAI_OS_ERROR, addrinfo, freeaddrinfo, gai_strerror, inet_ntop } from "#net-calls";
 import * as sys from "#net-sys";
-import * as m from "velt/lang/hooks/sched_mem";
+import * as m from "velt/lang/hooks/mem_raw";
 
 const SOCK_STREAM: i32 = 1;
 const AI_PASSIVE: i32 = 1;
