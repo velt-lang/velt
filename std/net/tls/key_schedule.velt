@@ -252,8 +252,13 @@ const EARLY_DERIVED_384: u8[] = [
   0x2b,
 ];
 
-// Derive-Secret(secret, "derived", "") for the next extract.
-function derived(secret: HmacKey): u8[] {
+/** The hash of the empty string with the hash of `len` bytes (32: SHA-256, 48: SHA-384). */
+export function emptyHash(len: usize): u8[] {
+  return len == SHA384_LEN ? EMPTY_HASH_384.slice() : EMPTY_HASH.slice();
+}
+
+/** Derive-Secret(secret, "derived", "") for the next extract. */
+export function derived(secret: HmacKey): u8[] {
   if (secret.length == SHA384_LEN) {
     return expandLabelWith(secret, "derived", EMPTY_HASH_384, SHA384_LEN);
   }
