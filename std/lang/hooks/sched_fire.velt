@@ -58,7 +58,7 @@ export function fireYields(e: usize, k: usize): void {
   let y = ls.take(k);
   while (y !== 0) {
     const nx = ls.next(y);
-    let w = ls.fire(y);
+    let w = ls.fire(k, y);
     const lent = w === ls.ROOT;
     if (lent) {
       w = k;

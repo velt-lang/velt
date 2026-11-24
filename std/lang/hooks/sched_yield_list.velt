@@ -102,7 +102,12 @@ export const B_STAMP: usize = 8;
 export const B_ROOT: usize = 16;
 export const B_NEXT: usize = 24;
 export const B_TAKEN: usize = 32;
-export const B_SIZE: usize = 40;
+/** Records kept for reuse (`recAlloc`, `recFree`): the first, linked by `Y_NEXT`, and how many. */
+export const B_FREE: usize = 40;
+export const B_NFREE: usize = 48;
+export const B_SIZE: usize = 56;
+/** At most this many records are kept for reuse. */
+const POOL: usize = 8;
 /** One generation in a stamp. */
 export const GEN: usize = 4294967296;
 
@@ -165,6 +170,8 @@ function makeBlock(k: usize): usize {
   m.st(b + B_ROOT, 0);
   m.st(b + B_NEXT, 0);
   m.st(b + B_TAKEN, 0);
+  m.st(b + B_FREE, 0);
+  m.st(b + B_NFREE, 0);
   m.st(k + t.T_YIELDS, b);
   if (m.load32(k + t.T_STATE) === t.YIELDED) {
     // Its root yielded in this poll, before any yield was made: its turn comes first (stamp 0).
@@ -200,7 +207,7 @@ export function record(w: usize, stamp: usize): usize {
  * does; it is task `k`'s, stamped `stamp`.
  */
 export function held(w: usize, k: usize, stamp: usize): usize {
-  const r = m.alloc(Y_SIZE);
+  const r = recAlloc(blockOf(k));
   m.st(r, HELD);
   m.st(r + 8, 0);
   m.st(r + Y_WAKER, w);
@@ -221,7 +228,10 @@ export function join(k: usize, y: usize): void {
   let last = m.ld(b + B_LAST);
   if (last === 0 && t.has(k, t.ROOT_ALONE) && m.load32(k + t.T_STATE) === t.YIELDED) {
     t.flags(k, 0, t.ROOT_ALONE);
-    last = record(ROOT, m.ld(b + B_ROOT));
+    last = recAlloc(b);
+    m.st(last, 0);
+    m.st(last + Y_WAKER, ROOT);
+    m.st(last + Y_STAMP, m.ld(b + B_ROOT));
     m.st(last + Y_STATE, QUEUED);
     m.st(last + Y_NEXT, last);
     m.st(b + B_LAST, last);
@@ -280,7 +290,38 @@ export function hasBlock(k: usize): bool {
 /** Task `k`'s yield block goes with the task (its list is empty: the task ended). */
 @noInline
 export function freeBlock(k: usize): void {
-  m.release(blockOf(k), B_SIZE);
+  const b = blockOf(k);
+  let r = m.ld(b + B_FREE);
+  while (r !== 0) {
+    const nx = m.ld(r + Y_NEXT);
+    m.release(r, Y_SIZE);
+    r = nx;
+  }
+  m.release(b, B_SIZE);
+}
+
+/** A record's memory, from yield block `b`'s spare ones if it has one (on its task's thread). */
+@inline("always")
+function recAlloc(b: usize): usize {
+  const r = m.ld(b + B_FREE);
+  if (r === 0) {
+    return m.alloc(Y_SIZE);
+  }
+  m.st(b + B_FREE, m.ld(r + Y_NEXT));
+  m.st(b + B_NFREE, m.ld(b + B_NFREE) - 1);
+  return r;
+}
+
+/** Record `r` is done with: kept by yield block `b` for reuse, or freed (on its task's thread). */
+function recFree(b: usize, r: usize): void {
+  const n = m.ld(b + B_NFREE);
+  if (n >= POOL) {
+    m.release(r, Y_SIZE);
+    return;
+  }
+  m.st(r + Y_NEXT, m.ld(b + B_FREE));
+  m.st(b + B_FREE, r);
+  m.st(b + B_NFREE, n + 1);
 }
 
 /** The yield after `y` in a list `take` gave. */
@@ -290,14 +331,15 @@ export function next(y: usize): usize {
 }
 
 /**
- * Yield `y`'s turn: the waker to resume (a clone the caller owns, or `ROOT`: its task's, with no
- * reference), 0 when nothing waits for it. An awaited yield's record is freed, and a dropped
- * stored one; a held one (`held`) is left `FIRED` for the resume that takes it.
+ * Yield `y`'s turn, on task `k`'s thread: the waker to resume (a clone the caller owns, or
+ * `ROOT`: its task's, with no reference), 0 when nothing waits for it. An awaited yield's record
+ * is freed, and a dropped stored one; a held one (`held`) is left `FIRED` for the resume that
+ * takes it.
  */
-export function fire(y: usize): usize {
+export function fire(k: usize, y: usize): usize {
   if (m.ld(y) === 0) {
     const w = m.ld(y + Y_WAKER);
-    m.release(y, Y_SIZE);
+    recFree(blockOf(k), y);
     if (w > ROOT && m.ld(w) === t.main() + t.E_NODE_VT) {
       m.and32(w + node.N_FLAGS, ~node.YIELDING);
     }
@@ -305,7 +347,7 @@ export function fire(y: usize): usize {
   }
   // Dropped (for good: nothing else touches it), or dropped meanwhile (the CAS fails).
   if (m.load(y + Y_STATE) === DROPPED || m.cas(y + Y_STATE, QUEUED, FIRING) !== QUEUED) {
-    m.release(y, Y_SIZE);
+    recFree(blockOf(k), y);
     return 0;
   }
   const w = m.swap(y + Y_WAKER, 0);
@@ -340,9 +382,11 @@ export function letGo(w: usize): void {
 export function heldPoll(f: usize, w: usize, cur: usize): u32 {
   const k = m.ld(f + Y_TASK);
   if (m.load(f + Y_STATE) === FIRED) {
-    m.release(f, Y_SIZE);
     if (k === cur) {
+      recFree(blockOf(k), f);
       taken(k);
+    } else {
+      m.release(f, Y_SIZE);
     }
     return 1;
   }
