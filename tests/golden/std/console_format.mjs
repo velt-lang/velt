@@ -315,6 +315,22 @@ const anyPair = [new Set([1]), new SelfJ()];
 const anyCyc = new CycJ();
 console.log("%j|%j|%j|%j", anySelfSet, anyPair, anyCyc, new SelfJ());
 
+// `%j` of an `any` calls a `toJSON()` once, at the top and inside an object
+let jsonCalls = 0;
+class Data {
+  constructor() {
+    this.v = 4;
+  }
+  toJSON() {
+    jsonCalls++;
+    return { d: this.v };
+  }
+}
+const anyData = new Data();
+const anyInside = { inner: new Data() };
+console.log("%j|%j", anyData, anyInside);
+console.log("toJSON calls " + jsonCalls);
+
 // non-ASCII
 console.log("é%sü → %d€", "ñ", 3);
 console.log("日本%s語", "の");

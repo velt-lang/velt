@@ -1,3 +1,4 @@
+// check: no leaks
 // `%s` of an `any` holding a class instance in a program with no `String(x)` of an `any` of its
 // own (#3662): the `toString()` of the class is called through `any`. The Node twin is
 // console_format_any.mjs.

@@ -164,21 +164,75 @@ impl FnCx<'_, '_> {
     }
 
     /// May converting a value of type `t` for specifier `spec` run the program's code (its
-    /// `toString()`, `valueOf()`, `toJSON()`), so that it must wait for the arguments after it?
+    /// `toString()`, `valueOf()`, `toJSON()`, `[Symbol.toPrimitive]`, a custom inspect), so that
+    /// it must wait for the arguments after it?
     fn format_converts(&mut self, spec: Option<u8>, t: TyId) -> bool {
         let t = self.cx.widened(t);
-        let primitive = matches!(
-            self.cx.ty.kind(t),
+        matches!(spec, Some(b's' | b'd' | b'i' | b'f' | b'j')) && self.may_run_code(t, &mut vec![])
+    }
+
+    /// May a conversion of a value of `t` (`String`, `Number`, `JSON.stringify`, inspect) call
+    /// the program's code: a value held by an `any`, an interface, a type parameter or a
+    /// function, or a class (or what it holds) with one of the methods those call?
+    fn may_run_code(&mut self, t: TyId, seen: &mut Vec<TyId>) -> bool {
+        if seen.contains(&t) {
+            return false;
+        }
+        seen.push(t);
+        let runs = match self.cx.ty.kind(t).clone() {
             TyKind::Int(_)
-                | TyKind::Float(_)
-                | TyKind::Bool
-                | TyKind::Str
-                | TyKind::Literal(_)
-                | TyKind::Unit
-                | TyKind::Never
-                | TyKind::Symbol
-        );
-        matches!(spec, Some(b's' | b'd' | b'i' | b'f' | b'j')) && !primitive
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Str
+            | TyKind::Literal(_)
+            | TyKind::Unit
+            | TyKind::Never
+            | TyKind::Symbol => false,
+            TyKind::Option(e, _) | TyKind::Array(e) => self.may_run_code(e, seen),
+            TyKind::Tuple(es) => es.into_iter().any(|e| self.may_run_code(e, seen)),
+            TyKind::Adt(d, args) => self.adt_may_run_code(d, &args, seen),
+            _ => true,
+        };
+        seen.pop();
+        runs
+    }
+
+    /// [`Self::may_run_code`] of the class, struct, enum or object literal type `d<args>`.
+    fn adt_may_run_code(&mut self, d: DefId, args: &[TyId], seen: &mut Vec<TyId>) -> bool {
+        if self.cx.is_json_value(d) {
+            return false;
+        }
+        if let Some(e) = self.cx.enum_info(d) {
+            let payloads: Vec<TyId> = e.variants.iter().flat_map(|v| v.payload.clone()).collect();
+            return payloads.into_iter().any(|p| {
+                let p = self.cx.subst(p, args);
+                self.may_run_code(p, seen)
+            });
+        }
+        const HOOKS: [&str; 5] = [
+            "toString",
+            "valueOf",
+            "toJSON",
+            "[Symbol.toPrimitive]",
+            crate::hooks::INSPECT,
+        ];
+        for name in HOOKS {
+            if let Some(Found::Class { owner, .. }) = lookup_method(self.cx, d, args, name) {
+                // A built-in's (`Date`'s `toJSON()`) runs no code of the program's.
+                if !self.cx.scopes[self.cx.adt(owner).map_or(0, |a| a.module)].is_std {
+                    return true;
+                }
+            }
+        }
+        let fields: Vec<TyId> = self
+            .cx
+            .adt(d)
+            .map(|a| a.fields.iter().map(|f| f.ty).collect())
+            .unwrap_or_default();
+        fields.into_iter().chain(args.to_vec()).any(|ft| {
+            let ft = self.cx.subst(ft, args);
+            self.may_run_code(ft, seen)
+        })
     }
 
     /// Argument `k` (its value `h`), converted for its specifier.
@@ -426,7 +480,32 @@ impl FnCx<'_, '_> {
     }
 
     /// A call of std's function `f` (a prelude name or a `module::name` path) on the value `h`.
+    /// A direct call (no temporary): the other parameters take their defaults, a type parameter
+    /// the value's type.
     fn std_call(&mut self, f: &str, h: hir::Expr, span: Span) -> hir::Expr {
+        if let Some(d) = self.cx.prelude_fn(f) {
+            crate::body::param_defaults(self.cx, d);
+            let info = self.cx.fn_info(d);
+            let generic = !info.generics.names.is_empty();
+            let ret = info.ret;
+            let rest: Option<Vec<hir::Expr>> = info
+                .params
+                .iter()
+                .skip(1)
+                .map(|p| p.default.clone())
+                .collect();
+            if let (Some(rest), 1..) = (rest, info.params.len()) {
+                let targs = if generic { vec![h.ty] } else { vec![] };
+                let ret = self.cx.subst(ret, &targs);
+                let mut args = vec![h];
+                args.extend(rest);
+                let kind = H::Call {
+                    callee: hir::Callee::Def(d, targs),
+                    args,
+                };
+                return self.mk(kind, ret, span);
+            }
+        }
         self.with_temp("#value", h, span, span, |lw, v| {
             lw.prelude_call(f, "`console.log`", &[], std::slice::from_ref(v), None, span)
         })

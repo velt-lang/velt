@@ -2,9 +2,9 @@
 // the compiler sends here as one (a nullable, a `Map`, a type that can hold itself), as Node's
 // `util.format` writes it: `JSON.stringify(v)`; `undefined` for what that gives `undefined` for;
 // `[Circular]` for a value that holds itself (Node's `tryStringify`); and, for a value holding
-// one std's JSON cannot write through `any` (a `Set`, a `Map`, a `RegExp`), the text Node writes
-// (`{}` for those), from the value's runtime type (velt/lang/intrinsics reflection) instead of a
-// panic.
+// one std's JSON cannot write through `any` (a `Set`, a `Map`, a `RegExp`) or a `toJSON()`, the
+// text Node writes (`{}` for those), from the value's runtime type (velt/lang/intrinsics
+// reflection) instead of a panic. A `toJSON()` is called once, as `JSON.stringify` calls it.
 
 import {
   anyReflectCount,
@@ -23,35 +23,45 @@ export function jsonAny(value: any): string {
     return "undefined";
   }
   const path: u64[] = [];
-  const found = scan(value, "", path, false);
+  const found = scan(value, path);
   if (found == CIRCULAR) {
     return "[Circular]";
   }
   if (found == PLAIN) {
     return JSON.stringify(value);
   }
-  return write(value, "", false) ?? "undefined";
+  const state = new Written();
+  const text = write(value, "", false, path, state);
+  return state.circular ? "[Circular]" : (text ?? "undefined");
 }
 
 /** What `scan` found: data std's JSON writes through `any`, */
 const PLAIN: i64 = 0;
-/** a value std's JSON cannot write through `any` (written here), */
+/** a value written here (a kind std's JSON cannot write through `any`, a `toJSON()`), */
 const OWN: i64 = 1;
 /** or a value that holds itself. */
 const CIRCULAR: i64 = 2;
 
-/** The kind and name of what `v` holds (velt/reflect `typeOf`'s first and third fields). */
-function kindOf(v: any): string {
-  const info = anyReflectInfo(v);
-  return info.slice(0, info.indexOf("|") as i64);
+/** What `write` met: a value that holds itself (through what a `toJSON()` returned). */
+class Written {
+  circular: bool = false;
 }
 
-/** The class name of what `v` holds, without its type arguments. */
-function nameOf(v: any): string {
-  const parts = anyReflectInfo(v).split("|");
-  const name = parts.length > 2 ? parts[2] : "";
+/** The fields of what `v` holds (`kind|repr|name|hooks`, velt/reflect `typeOf`). */
+function fields(v: any): string[] {
+  return anyReflectInfo(v).split("|");
+}
+
+/** The class name in `info` (`fields`), without its type arguments. */
+function nameIn(info: string[]): string {
+  const name = info.length > 2 ? info[2] : "";
   const angle = name.indexOf("<");
   return angle >= 0 ? name.slice(0, angle) : name;
+}
+
+/** Has the class instance whose runtime type is `info` a `toJSON()`? */
+function hasToJson(info: string[]): boolean {
+  return info.length > 3 && info[3].split(",").includes("toJSON");
 }
 
 /**
@@ -92,28 +102,24 @@ function container(kind: string): boolean {
 }
 
 /**
- * `PLAIN`, `OWN` or `CIRCULAR` for `v` under `key`, `path` the identities of the objects it is
- * inside (an object met again on the way is a cycle). A `toJSON()` is called once, as
- * `JSON.stringify` calls it, and its result scanned without calling it again (`hooked`); a
- * value with one is written here (`OWN`), so that it is called once there too.
+ * `PLAIN`, `OWN` or `CIRCULAR` for `v`, `path` the identities of the objects it is inside (an
+ * object met again on the way is a cycle). A value with a `toJSON()` is `OWN` without calling it:
+ * `write` calls it once, and finds a cycle through what it returns.
  */
-function scan(v: any, key: string, path: u64[], hooked: bool): i64 {
-  const kind = kindOf(v);
+function scan(v: any, path: u64[]): i64 {
+  const info = fields(v);
+  const kind = info[0];
   if (kind == "undefined" || kind == "symbol" || kind == "function") {
     return OWN;
   }
-  if (!known(kind, nameOf(v))) {
+  if (!known(kind, nameIn(info))) {
     return OWN;
   }
   if (!container(kind)) {
     return PLAIN;
   }
-  if (!hooked) {
-    const own = anyReflectHook(v, key);
-    if (typeof own !== "undefined") {
-      const inner = scan(own, key, path, true);
-      return inner > OWN ? inner : OWN;
-    }
+  if (hasToJson(info)) {
+    return OWN;
   }
   const id = identity(v);
   if (id != 0 && path.includes(id)) {
@@ -123,58 +129,64 @@ function scan(v: any, key: string, path: u64[], hooked: bool): i64 {
   let found: i64 = PLAIN;
   const n = anyReflectCount(v);
   for (let i: i64 = 0; i < n && found != CIRCULAR; i++) {
-    const inner = scan(anyReflectValue(v, i), entryKey(v, kind, i), path, false);
+    const inner = scan(anyReflectValue(v, i), path);
     found = inner > found ? inner : found;
   }
   path.pop();
   return found;
 }
 
-/** The key of entry `i` of the container `v` of kind `kind`: its index in an array or tuple. */
-function entryKey(v: any, kind: string, i: i64): string {
-  return kind == "array" || kind == "tuple" ? `${i}` : anyReflectName(v, i);
-}
-
 /**
  * `v` as `JSON.stringify` writes it under `key`, a kind std's JSON cannot write through `any` as
- * `{}`; `null` for a value it leaves out (an `undefined`, a symbol, a function). `v` holds no
- * cycle (`scan`). Its `toJSON()` is called once, and the result written without calling it
- * again (`hooked`, Node's `SerializeJSONProperty`).
+ * `{}`; `null` for a value it leaves out (an `undefined`, a symbol, a function). Its `toJSON()`
+ * is called once, and the result written without calling it again (`hooked`, Node's
+ * `SerializeJSONProperty`); an object met again inside itself (`path`) sets `state.circular`.
  */
-function write(v: any, key: string, hooked: bool): string | null {
-  const kind = kindOf(v);
+function write(v: any, key: string, hooked: bool, path: u64[], state: Written): string | null {
+  const info = fields(v);
+  const kind = info[0];
   if (kind == "undefined" || kind == "symbol" || kind == "function") {
     return null;
   }
-  if (!known(kind, nameOf(v))) {
+  if (!known(kind, nameIn(info))) {
     return "{}";
   }
   if (!container(kind)) {
     return JSON.stringify(v);
   }
-  if (!hooked) {
-    const own = anyReflectHook(v, key);
-    if (typeof own !== "undefined") {
-      return write(own, key, true);
-    }
+  if (!hooked && hasToJson(info)) {
+    return write(anyReflectHook(v, key), key, true, path, state);
   }
+  const id = identity(v);
+  if (id != 0 && path.includes(id)) {
+    state.circular = true;
+    return "";
+  }
+  path.push(id);
+  const text = entries(v, kind, path, state);
+  path.pop();
+  return text;
+}
+
+/** The entries of the container `v` of kind `kind`, as `write` writes them. */
+function entries(v: any, kind: string, path: u64[], state: Written): string {
   if (kind == "shared") {
-    return write(anyReflectValue(v, 0), key, false);
+    return write(anyReflectValue(v, 0), "", false, path, state) ?? "null";
   }
   const n = anyReflectCount(v);
   if (kind == "array" || kind == "tuple") {
     let out = "[";
-    for (let i: i64 = 0; i < n; i++) {
+    for (let i: i64 = 0; i < n && !state.circular; i++) {
       out += i > 0 ? "," : "";
-      out += write(anyReflectValue(v, i), `${i}`, false) ?? "null";
+      out += write(anyReflectValue(v, i), `${i}`, false, path, state) ?? "null";
     }
     return out + "]";
   }
   let out = "{";
   let first = true;
-  for (let i: i64 = 0; i < n; i++) {
+  for (let i: i64 = 0; i < n && !state.circular; i++) {
     const name = anyReflectName(v, i);
-    const text = write(anyReflectValue(v, i), name, false);
+    const text = write(anyReflectValue(v, i), name, false, path, state);
     if (text != null) {
       out += first ? "" : ",";
       out += JSON.stringify(name) + ":" + text;

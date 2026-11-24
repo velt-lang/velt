@@ -96,6 +96,8 @@ both-text|both-inspect
 3
 [{},2]|{}
 {"s":{}}|[{},{"v":1}]|[Circular]|{"v":1}
+{"d":4}|{"inner":{"d":4}}
+toJSON calls 2
 éñü → 3€
 日本の語
 🙂 😀
