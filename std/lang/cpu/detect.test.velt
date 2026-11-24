@@ -48,7 +48,7 @@ describe("x86 detection", () => {
 // Every x86 feature: the CPUID register its bit is in (0 leaf 1 ECX, 1 leaf 7 EBX, 2 leaf 7 ECX,
 // 3 leaf 0x80000001 ECX), that bit, its word bit, and the register state the OS must save for it
 // (0 none, 1 AVX's, 2 AVX-512's).
-const REGS: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3];
+const REGS: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 1];
 const BITS: u32[] = [
   0,
   1,
@@ -74,6 +74,7 @@ const BITS: u32[] = [
   1,
   12,
   5,
+  19,
 ];
 const WORD: u64[] = [
   0,
@@ -100,8 +101,9 @@ const WORD: u64[] = [
   19,
   20,
   11,
+  24,
 ];
-const STATE: u32[] = [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 2, 2, 2, 0, 2, 2, 2, 2, 0];
+const STATE: u32[] = [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 2, 2, 2, 0, 2, 2, 2, 2, 0, 0];
 const FULL: u64 = 0xe6;
 
 // `x86Bits` of feature `i`'s bit alone, with OSXSAVE where `osxsave` and XCR0 `xcr0`.
@@ -113,14 +115,14 @@ function alone(i: i64, osxsave: bool, xcr0: u64): u64 {
 
 describe("x86 detection, bit by bit", () => {
   it("gives each feature's word bit for its CPUID bit alone, and nothing else", () => {
-    expect(BITS.length).toBe(24);
-    for (let i = 0; i < 24; i++) {
+    expect(BITS.length).toBe(25);
+    for (let i = 0; i < 25; i++) {
       expect(alone(i, true, FULL)).toBe((1 as u64) << WORD[i]);
     }
   });
 
   it("counts an AVX feature only where the OS saves the AVX state", () => {
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 25; i++) {
       if (STATE[i] != 0) {
         expect(alone(i, false, FULL)).toBe(0);
         expect(alone(i, true, FULL & ~(2 as u64))).toBe(0);
@@ -130,7 +132,7 @@ describe("x86 detection, bit by bit", () => {
   });
 
   it("counts an AVX-512 feature only where the OS saves all three of its states", () => {
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 25; i++) {
       if (STATE[i] == 2) {
         for (const xcr0 of [0x26, 0x46, 0x86, 0x66, 0xa6, 0xc6, 6]) {
           expect(alone(i, true, xcr0 as u64)).toBe(0);

@@ -401,7 +401,7 @@ serves none of them. It computes the CPU's **feature word** (std/lang/cpu, velt_
 `cpu_features`): bit 0
 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX, 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA,
 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW, 16 AVX512CD, 17 AVX512DQ, 18 AVX512VL,
-19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ, 23 AES (`velt_codegen_cl::X86_FEATURES`; a
+19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ, 23 AES, 24 ADX (`velt_codegen_cl::X86_FEATURES`; a
 feature whose registers the OS must save counts only where XCR0 says it does), from CPUID and
 XGETBV on x86-64 (`velt_simd_cpuid` and `velt_simd_xgetbv`, "SIMD": inline assembly under
 LLVM; under Cranelift, which has no instruction for either, a function of fixed SSE2 code each
@@ -437,7 +437,52 @@ Under Cranelift (and on wasm) `velt_simd_on_x86()` and `velt_simd_on_arm()` are 
 `velt_simd_cpu_word()` is 0 and `velt_simd_cpu_word_set` does nothing, so every run-time check is
 false: no gated code runs there, though the requirement is checked. Code whose features hold a feature's mask (SHA with SSE4.1 and down
 for `sha-x86`) takes its check (`velt_simd_has_<feature>`, "SIMD") as true; the LLVM backend folds
-it.
+it. The field operations' helpers read the word for their fast form the same way ("Field
+arithmetic").
+
+## Field arithmetic
+
+The prime-field operations of std's elliptic curves (std/crypto/field_p256.velt, x25519.velt) are
+externs `velt_field_*` that, like the SIMD externs, **no runtime defines**: `velt_vir::field`
+gives each symbol's operation and VIR signature (`FieldOp`), the verifier rejects a
+`velt_field_*` extern that is not one, and both backends emit every call inline (Cranelift
+declares no symbol; LLVM defines internal helpers). `FieldOp::eval`, `double_p256` and
+`x25519_ladder` are the reference every form matches.
+
+| extern | signature | does |
+|---|---|---|
+| `velt_field_p256_mul` | `(r: u64[], d, a, b: u64)` | register `d` = `a * b / 2^256` mod p (P-256, Montgomery) |
+| `velt_field_p256_sqr` | `(r: u64[], d, a: u64)` | register `d` = `a * a / 2^256` mod p |
+| `velt_field_p256_add` | `(r: u64[], d, a, b: u64)` | register `d` = `a + b` mod p |
+| `velt_field_p256_sub` | `(r: u64[], d, a, b: u64)` | register `d` = `a - b` mod p |
+| `velt_field_p256_double` | `(r: u64[], d, p: u64): bool` | the Jacobian point at registers `d`..`d + 2` (X, Y, Z) = twice the one at `p`..`p + 2` |
+| `velt_field_x25519_ladder` | `(r: u64[], d, u, k: u64): bool` | registers `d`, `d + 1` = X2, Z2 after RFC 7748's ladder for the u-coordinate at `u` and the clamped scalar at `k` |
+
+- **Registers.** `r` is the field's register array (`FeP256.r`). Register `n` is four `u64` limbs,
+  little-endian, at elements `4n` to `4n + 3` of its data. No index is checked: std checks its
+  registers against the array's length once, where it makes them.
+- **Inputs and results.** P-256 operands are fully reduced (below p) and the results are too. The
+  ladder's u is any value below 2^256; its X2 and Z2 are fully reduced mod 2^255 - 19.
+- **Aliasing.** An operation reads its operand registers whole before it writes its result, so
+  the result register may be an operand's (`mul(d, d, d)`, a doubling in place).
+- **Memory.** It touches nothing but those registers (and a stack scratch area of its own), keeps
+  no pointer and never unwinds. Nothing in it branches on or indexes by a secret: the limbs' values
+  choose no path or address.
+- **The `bool`.** `p256_double` and `x25519_ladder` return true when they did the operation, and
+  false where the target has no fused form; std then runs the same formula with the other
+  operations (its own ladder for X25519). No register is written when false.
+
+Which form runs:
+
+- **LLVM on x86-64.** `mul` and `sqr` are hand-scheduled assembly in two forms: with BMI2 and ADX,
+  `mulx` and the two carry chains of `adcx`/`adox`; without them, `mul`. `double` and the ladder
+  have only the first form and return false without it. The choice reads the CPU feature word
+  ("CPU check": `adx-x86`'s mask, ADX's bit 24 with BMI2's bit 9), so `VELT_CPU_DISABLE=ADX` or
+  `BMI2` selects the other form; where `--cpu` guarantees both, the check is folded away. `add`
+  and `sub` are one form (`add`/`adc`, `sub`/`sbb`) on every x86-64 CPU.
+- **LLVM elsewhere (arm64, wasm32).** Portable IR with 128-bit multiplies (the same interleaved
+  Montgomery multiplication); `double` and the ladder return false.
+- **Cranelift.** The same algorithm in Cranelift IR; `double` and the ladder return false.
 
 ## Math operations
 
@@ -497,7 +542,8 @@ The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
 `velt_simd_mask8x16_any`) declared by `std/simd/*.velt` (`velt/simd`). **No runtime defines
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
-inline. They never cross the C ABI, so no target's vector calling convention is involved.
+inline. They never cross the C ABI, so no target's vector calling convention is involved. The field
+operations (`velt_field_*`, "Field arithmetic") are externs of the same kind.
 velt/arch's instructions are externs too, `velt_arch_<class>_<method>`
 (`velt_arch_sse42_crc32_u64`), declared by `std/arch/x86` and `std/arch/arm` (#3222 step 4) and
 defined by no runtime: `velt_vir::arch` gives each one's row (`SimdCall::Arch`), with its

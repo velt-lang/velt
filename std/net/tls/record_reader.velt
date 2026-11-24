@@ -62,7 +62,9 @@ export class RecordReader {
 
   constructor(t: ByteStream) {
     this.t = t;
-    this.buf = Buffer.alloc(BUFFER);
+    // Not zeroed: only bytes read from the stream are ever looked at, and the pages a
+    // handshake-only connection never fills are never touched.
+    this.buf = Buffer.allocUnsafe(BUFFER);
     this.cstart = 0;
     this.cend = 0;
     this.rstart = 0;
