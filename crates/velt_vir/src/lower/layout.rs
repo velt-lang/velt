@@ -53,6 +53,8 @@ pub(super) struct Layouts {
     text: Option<AggId>,
     closure: Option<AggId>,
     dyn_value: Option<AggId>,
+    /// A poll's `cx`, its two words (async_fn/all.rs `child_cx`).
+    poll_cx: Option<AggId>,
     /// The 8-aligned view of each aggregate aligned beyond 8 that sits in a std slot
     /// (slot.rs `raw_view`).
     pub(super) raw_views: FxHashMap<AggId, AggId>,
@@ -160,6 +162,16 @@ impl Cx<'_> {
         }
         let a = self.new_agg("closure".into(), &[Ty::Ptr, Ty::Ptr]);
         self.lay.closure = Some(a);
+        a
+    }
+
+    /// The two words of a poll's `cx` (rt_abi_async.md §1): its await word and its waker.
+    pub(super) fn cx_agg(&mut self) -> AggId {
+        if let Some(a) = self.lay.poll_cx {
+            return a;
+        }
+        let a = self.new_agg("cx".into(), &[Ty::Ptr, Ty::Ptr]);
+        self.lay.poll_cx = Some(a);
         a
     }
 

@@ -132,6 +132,28 @@ async function main() {
   say(`all: ${w.join(",")}`);
   flush("all, a child awaits another");
 
+  // A child that throws at once rejects the all in its first pass: the yielders beside it go on
+  // detached, each a started promise of its own, still in the order they yielded (#3687).
+  try {
+    await Promise.all([yields("b", 2), dies("t", 0), yields("c", 2)]);
+  } catch (e) {
+    say("caught t");
+  }
+  for (let i = 0; i < 4; i++) {
+    await yieldNow();
+  }
+  flush("all, a throw at once beside two yielders");
+
+  try {
+    await Promise.all([yields("a", 3), yields("b", 2), dies("t", 0), yields("c", 2)]);
+  } catch (e) {
+    say("caught t");
+  }
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  flush("all, a throw at once beside three yielders");
+
   // Last: after `main`'s root awaited a settled promise, or a `Promise.any` that rejected, the
   // children of its inline alls still take their turns in order (#3611, #3687).
   await Promise.resolve(1);

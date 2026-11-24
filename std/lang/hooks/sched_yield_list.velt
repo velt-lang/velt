@@ -42,13 +42,12 @@ export const HELD: usize = 1;
 
 /**
  * An awaited yield's token (sched_yield.velt `schedYield`, what its suspension keeps, #3687):
- * - `POLL` (0): its task's root yielded with no record, and it goes on once the poll it yielded in
- *   is over (`YIELDED`, which lasts exactly that poll), whatever cx asks (`pollReady`);
- * - `OFF` (1): made off the workers (no task);
- * - above 1: its held record (`held`), a block's address.
+ * - `POLL` (0), no record: its task's root yielded, and it goes on once the poll it yielded in is
+ *   over (`YIELDED`, which lasts exactly that poll), whatever cx asks (`pollReady`); or it was
+ *   made off the workers (no task);
+ * - not 0: its held record (`held`), a block's address.
  */
 export const POLL: usize = 0;
-export const OFF: usize = 1;
 
 /**
  * Token `POLL` asked with waker `w`, a started promise's (`isNode`) or a foreign one, on the thread
@@ -81,10 +80,15 @@ export function pollReady(k: usize, w: usize, isNode: bool): u32 {
   return 0;
 }
 
-/** `pollReady`'s turn for waker `w` of task `k`, behind the yields made so far. */
+/**
+ * `pollReady`'s turn for waker `w` of task `k`. It was made as the root's yield with no record, whose
+ * turn the root placed in this poll (`B_ROOT`): it takes that stamp, so it comes before the yields
+ * made after it (a yield of the same number joins before the root's record, `join`).
+ */
 @noInline
 function otherTurn(k: usize, w: usize): void {
-  join(k, record(m.wakerClone(w), nextStamp(block(k))));
+  const b = block(k);
+  join(k, record(m.wakerClone(w), m.ld(b + B_ROOT)));
 }
 
 // A task's yield block: its list's last yield (0: none), its last stamp, and the stamp of the
@@ -99,26 +103,23 @@ export const B_SIZE: usize = 24;
 export const GEN: usize = 4294967296;
 
 /**
- * `T_YIELDS`' top bit, which no address has: the block is parked (`park`), its list empty. The root's yields take the
- * no-block fast path then (`active`), and whatever needs the block un-parks it (`block`), with
- * its stamps and generation as they were.
+ * Task `k`'s yield block, made now if it has none, un-parked if parked (on its thread). A parked
+ * block (`park`, sched_task.velt `T_PARKED`) comes back with its stamps and generation as they were.
  */
-export const PARKED: usize = 1 << 63;
-
-/** Task `k`'s yield block, made now if it has none, un-parked if parked (on its thread). */
 @inline("always")
 export function block(k: usize): usize {
   const b = m.ld(k + t.T_YIELDS);
-  return b - 1 < PARKED - 1 ? b : blockAgain(k, b);
+  return b !== 0 ? b : blockAgain(k);
 }
 
-/** `block` for a task with no block (`b` 0) or a parked one. */
+/** `block` for a task with no block in use: its parked one, or one made now. */
 @noInline
-function blockAgain(k: usize, b: usize): usize {
-  if (b === 0) {
+function blockAgain(k: usize): usize {
+  const u = m.ld(k + t.T_PARKED);
+  if (u === 0) {
     return makeBlock(k);
   }
-  const u = b & ~PARKED;
+  m.st(k + t.T_PARKED, 0);
   m.st(k + t.T_YIELDS, u);
   if (m.load32(k + t.T_STATE) === t.YIELDED && !t.has(k, t.ROOT_ALONE)) {
     // Its root yielded in this poll while the block was parked, when no stamp is made: its turn
@@ -134,14 +135,8 @@ function blockAgain(k: usize, b: usize): usize {
 /** Task `k`'s yield block, parked or not (0: none), for what reads its stamps. */
 @inline("always")
 export function blockOf(k: usize): usize {
-  return m.ld(k + t.T_YIELDS) & ~PARKED;
-}
-
-/** Task `k`'s yield block unless parked (0: none or parked). */
-@inline("always")
-export function active(k: usize): usize {
-  const b = m.ld(k + t.T_YIELDS);
-  return b < PARKED ? b : 0;
+  // At most one of the two is set.
+  return m.ld(k + t.T_YIELDS) | m.ld(k + t.T_PARKED);
 }
 
 /**
@@ -153,7 +148,8 @@ export function active(k: usize): usize {
 export function park(k: usize): void {
   const b = m.ld(k + t.T_YIELDS);
   if (b !== 0 && !t.has(k, t.YIELDS)) {
-    m.st(k + t.T_YIELDS, b | PARKED);
+    m.st(k + t.T_PARKED, b);
+    m.st(k + t.T_YIELDS, 0);
   }
 }
 
@@ -272,7 +268,7 @@ export function waiting(k: usize): bool {
 /** Has task `k` a yield block, to go with it? Never in a program that never yields. */
 @inline("always")
 export function hasBlock(k: usize): bool {
-  return stdUsed("yields") && m.ld(k + t.T_YIELDS) !== 0;
+  return stdUsed("yields") && blockOf(k) !== 0;
 }
 
 /** Task `k`'s yield block goes with the task (its list is empty: the task ended). */

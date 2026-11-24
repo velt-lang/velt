@@ -69,6 +69,28 @@ p done
 q got 2
 q done
 all: 3,2,1
+-- all, a throw at once beside two yielders
+b yield 0
+t throws
+c yield 0
+caught t
+b yield 1
+c yield 1
+b done
+c done
+-- all, a throw at once beside three yielders
+a yield 0
+b yield 0
+t throws
+c yield 0
+caught t
+a yield 1
+b yield 1
+c yield 1
+a yield 2
+b done
+c done
+a done
 -- all, after a settled await (adopted)
 t yield 0
 u yield 0
