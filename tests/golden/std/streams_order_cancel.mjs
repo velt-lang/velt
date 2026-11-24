@@ -1,6 +1,11 @@
 // Node twin of streams_order_cancel.velt.
 async function noneCase() {
   const log = [];
+  // The pending pull's promise, settled at the end.
+  let open = () => {};
+  const gate = new Promise((r) => {
+    open = r;
+  });
   let p0 = Promise.resolve();
   for (let i = 0; i < 8; i++) {
     const k = i;
@@ -11,7 +16,7 @@ async function noneCase() {
   const s = new ReadableStream({
     pull: (c) => {
       log.push("pull");
-      return new Promise((r) => setTimeout(r, 1));
+      return gate;
     },
   });
   const r = s.getReader();
@@ -21,9 +26,10 @@ async function noneCase() {
   r.closed.then(() => {
     log.push("closed");
   });
+  let settled = Promise.resolve();
   queueMicrotask(() => {
     log.push("cancel");
-    r.cancel("x").then(
+    settled = r.cancel("x").then(
       () => {
         log.push("cancel resolved");
       },
@@ -32,12 +38,19 @@ async function noneCase() {
       },
     );
   });
-  await new Promise((r) => setTimeout(r, 20));
+  await p0;
+  await settled;
+  open();
   console.log("none: " + log.join(" "));
 }
 
 async function syncCase() {
   const log = [];
+  // The pending pull's promise, settled at the end.
+  let open = () => {};
+  const gate = new Promise((r) => {
+    open = r;
+  });
   let p0 = Promise.resolve();
   for (let i = 0; i < 8; i++) {
     const k = i;
@@ -48,7 +61,7 @@ async function syncCase() {
   const s = new ReadableStream({
     pull: (c) => {
       log.push("pull");
-      return new Promise((r) => setTimeout(r, 1));
+      return gate;
     },
     cancel: (reason) => {
       log.push("cancelFn");
@@ -61,9 +74,10 @@ async function syncCase() {
   r.closed.then(() => {
     log.push("closed");
   });
+  let settled = Promise.resolve();
   queueMicrotask(() => {
     log.push("cancel");
-    r.cancel("x").then(
+    settled = r.cancel("x").then(
       () => {
         log.push("cancel resolved");
       },
@@ -72,12 +86,19 @@ async function syncCase() {
       },
     );
   });
-  await new Promise((r) => setTimeout(r, 20));
+  await p0;
+  await settled;
+  open();
   console.log("sync: " + log.join(" "));
 }
 
 async function asyncCase() {
   const log = [];
+  // The pending pull's promise, settled at the end.
+  let open = () => {};
+  const gate = new Promise((r) => {
+    open = r;
+  });
   let p0 = Promise.resolve();
   for (let i = 0; i < 8; i++) {
     const k = i;
@@ -88,7 +109,7 @@ async function asyncCase() {
   const s = new ReadableStream({
     pull: (c) => {
       log.push("pull");
-      return new Promise((r) => setTimeout(r, 1));
+      return gate;
     },
     cancel: async (reason) => {
       log.push("cancelFn");
@@ -101,9 +122,10 @@ async function asyncCase() {
   r.closed.then(() => {
     log.push("closed");
   });
+  let settled = Promise.resolve();
   queueMicrotask(() => {
     log.push("cancel");
-    r.cancel("x").then(
+    settled = r.cancel("x").then(
       () => {
         log.push("cancel resolved");
       },
@@ -112,12 +134,19 @@ async function asyncCase() {
       },
     );
   });
-  await new Promise((r) => setTimeout(r, 20));
+  await p0;
+  await settled;
+  open();
   console.log("async: " + log.join(" "));
 }
 
 async function throwsCase() {
   const log = [];
+  // The pending pull's promise, settled at the end.
+  let open = () => {};
+  const gate = new Promise((r) => {
+    open = r;
+  });
   let p0 = Promise.resolve();
   for (let i = 0; i < 8; i++) {
     const k = i;
@@ -128,7 +157,7 @@ async function throwsCase() {
   const s = new ReadableStream({
     pull: (c) => {
       log.push("pull");
-      return new Promise((r) => setTimeout(r, 1));
+      return gate;
     },
     cancel: (reason) => {
       log.push("cancelFn");
@@ -142,9 +171,10 @@ async function throwsCase() {
   r.closed.then(() => {
     log.push("closed");
   });
+  let settled = Promise.resolve();
   queueMicrotask(() => {
     log.push("cancel");
-    r.cancel("x").then(
+    settled = r.cancel("x").then(
       () => {
         log.push("cancel resolved");
       },
@@ -153,7 +183,9 @@ async function throwsCase() {
       },
     );
   });
-  await new Promise((r) => setTimeout(r, 20));
+  await p0;
+  await settled;
+  open();
   console.log("throws: " + log.join(" "));
 }
 
