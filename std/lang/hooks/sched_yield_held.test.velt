@@ -9,10 +9,10 @@
 //   stored yield's (`storedPoll`).
 import { describe, expect, it } from "velt/test";
 import { hookCall } from "velt/lang/intrinsics";
-import * as m from "./sched_mem";
-import * as t from "./sched_task";
-import { schedYieldDrop } from "./sched_yield";
-import * as ls from "./sched_yield_list";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as t from "velt/lang/hooks/sched_task";
+import { schedYieldDrop } from "velt/lang/hooks/sched_yield";
+import * as ls from "velt/lang/hooks/sched_yield_list";
 
 /** The task polled on this thread. */
 function task(): usize {
