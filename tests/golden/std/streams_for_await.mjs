@@ -88,4 +88,4 @@ async function main() {
   console.log("break: " + log.join(" "));
 }
 
-await main();
+main();

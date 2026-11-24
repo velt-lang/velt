@@ -5,7 +5,9 @@
 // chunks, the pending reads, and the flags of the spec's algorithms (`started`, `pulling`,
 // `pullAgain`, `closeRequested`). Nothing points back from the controller to the stream or a
 // reader, so a stream is freed with its last reference (Velt counts references; a cycle would
-// never be freed). The source's callbacks run in the spec's order: `start` in the constructor,
+// never be freed). The one exception is a `for await` read still waiting: its callbacks in the
+// controller hold the iterator until the read settles or the stream closes, errors or is
+// cancelled. The source's callbacks run in the spec's order: `start` in the constructor,
 // `pull` once `start` has settled (a microtask later) and again while the queue is below its
 // high-water mark or a read is waiting, never two at once; a read takes a queued chunk at once.
 
@@ -177,6 +179,23 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
   }
 
   async return(): Promise<IteratorResult<R>> {
+    this.started = true;
+    // After a `next()` still waiting, as Node's `current.then(returnSteps)`: its read is
+    // answered first, and the steps run in that promise's reaction.
+    const cur = this.current;
+    if (cur == null) {
+      return await this.returnSteps();
+    }
+    return await new Promise<IteratorResult<R>, never>((resolve) => {
+      cur.then(
+        (r) => this.returnSteps().then((x) => resolve(x)),
+        (e) => this.returnSteps().then((x) => resolve(x)),
+      );
+    });
+  }
+
+  // Leaving the loop: the stream is cancelled, let go at once, then the cancel is waited for.
+  private async returnSteps(): Promise<IteratorResult<R>> {
     if (this.done) {
       return { done: true };
     }
