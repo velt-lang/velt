@@ -157,9 +157,14 @@ pub(crate) struct Dispatch {
 impl Dispatch {
     pub(crate) fn new(cx: &Ctx) -> Dispatch {
         let mut virtuals: FxHashMap<(DefId, u32), Vec<DefId>> = FxHashMap::default();
-        for (i, info) in cx.info.iter().enumerate() {
-            let DefInfo::Adt(a) = info else { continue };
-            for (slot, &m) in a.vtable.iter().enumerate() {
+        for i in 0..cx.info.len() {
+            // Slots a vtable the program extended only pads are none (`Ctx::vtable_entries`).
+            let entries = cx.vtable_entries(DefId(i as u32));
+            let own = entries
+                .iter()
+                .enumerate()
+                .filter_map(|(s, m)| Some((s, (*m)?)));
+            for (slot, m) in own {
                 let mut cur = Some(DefId(i as u32));
                 let mut depth = 0;
                 while let Some(c) = cur {
