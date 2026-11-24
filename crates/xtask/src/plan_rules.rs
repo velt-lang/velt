@@ -27,8 +27,10 @@ pub(crate) const DEBUG_VARS_CODE: &[&str] = &[
     "crates/veltc/tests/debug_vars.rs",
 ];
 
-/// The code that loads std on demand: a change compares every golden's VIR in the merge queue too,
-/// where any other change that can reach the comparison checks a sample
+/// The code that loads std on demand: a change compares every golden's VIR in its pull request's
+/// `golden` job ([`Plan::vir_identity_pr`]), and `cargo xtask affected` suggests the same locally
+/// (`VELT_VIR_IDENTITY=all`). The merge queue compares the sample for it as for any other change
+/// that can reach the comparison, and the nightly every golden on Linux
 /// ([`Plan::vir_identity_queue`]). Directories end in `/`.
 pub(crate) const VIR_IDENTITY_CODE: &[&str] = &[
     "crates/velt_loader/",

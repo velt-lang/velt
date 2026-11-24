@@ -245,3 +245,30 @@ export function offsetInZone(key: string, unixSecs: i64): i32 | null {
   }
   return offset;
 }
+
+/**
+ * The system zone's registry key (`TimeZoneKeyName`, "W. Europe Standard Time"), for `Date`'s zone
+ * name (zone_id_win32.velt); null when Windows reports no zone. Read here, with this file's
+ * declarations of the Win32 types, so no other std module declares them again.
+ */
+export function systemZoneKey(): string | null {
+  // SAFETY: calloc has no precondition; its result is checked.
+  const block = unsafe { calloc$time(1, ZONE_BYTES) };
+  if (block === null) {
+    return null;
+  }
+  const at = Ptr.addressOf(block);
+  // SAFETY: `at` holds a zeroed DYNAMIC_TIME_ZONE_INFORMATION, which the call fills.
+  const id = unsafe { GetDynamicTimeZoneInformation(Ptr.orNull(at)) };
+  const units: u16[] = [];
+  for (let i: usize = 0; id !== TIME_ZONE_ID_INVALID && i < ZONE_KEY_UNITS; i++) {
+    // SAFETY: inside the block, whose key name the call filled.
+    units.push(unsafe { addressLoad<u16>(at + ZONE_KEY_NAME + 2 * i) });
+  }
+  // SAFETY: the block calloc gave above, which nothing else has seen.
+  unsafe {
+    free$time(block);
+  }
+  const key = wideText(units);
+  return key.length == 0 ? null : key;
+}

@@ -752,7 +752,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
   }
 
   /** The elements joined by `,` (what `String(xs)` and `${xs}` give). */
-  toString(): string {
+  override toString(): string {
     return this.join(",");
   }
 

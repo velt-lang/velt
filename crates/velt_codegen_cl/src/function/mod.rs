@@ -65,9 +65,15 @@ enum Storage {
     Var(Variable),
     /// Assigned exactly once: the value of that assignment, once translated (`Translator::values`).
     Value(u32),
-    Slot(ir::StackSlot),
+    /// A stack slot, and for a value aligned above the 16 bytes Cranelift aligns a slot to (an
+    /// `@align(32)` struct) that alignment: the slot has room to round its address up to it
+    /// (`Translator::place`), as C code given the address may rely on it (#3539). 0 otherwise.
+    Slot(ir::StackSlot, u32),
     Unit,
 }
+
+/// The most a stack slot is aligned to from the frame's start, in bytes.
+const SLOT_ALIGN_MAX: u32 = 16;
 
 /// A resolved place.
 #[derive(Clone, Copy)]
@@ -375,24 +381,31 @@ fn allocate_locals(
     // slots where their live ranges allow (`slots`).
     let keyed = |i: usize| describe && function.locals[i].debug.is_some();
     let plan = slots::plan(program, function, in_memory, &keyed)?;
-    let memory_slots: Vec<ir::StackSlot> = plan
+    let memory_slots: Vec<(ir::StackSlot, u32)> = plan
         .slots
         .iter()
         .map(|s| {
-            let data = match s.key {
+            // Aligned above what a slot gets: room to round the address up (`Storage::Slot`).
+            let (size, align, over) = match s.align > SLOT_ALIGN_MAX {
+                true => (s.size + s.align - SLOT_ALIGN_MAX, SLOT_ALIGN_MAX, s.align),
+                false => (s.size, s.align, 0),
+            };
+            // Debug info would point at the slot's start, not at the rounded-up value: such a
+            // local goes undescribed rather than shown wrong.
+            let data = match s.key.filter(|_| over == 0) {
                 Some(key) => StackSlotData::new_with_key(
                     StackSlotKind::ExplicitSlot,
-                    s.size,
-                    s.align.trailing_zeros() as u8,
+                    size,
+                    align.trailing_zeros() as u8,
                     StackSlotKey::new(u64::from(key)),
                 ),
                 None => StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
-                    s.size,
-                    s.align.trailing_zeros() as u8,
+                    size,
+                    align.trailing_zeros() as u8,
                 ),
             };
-            builder.create_sized_stack_slot(data)
+            (builder.create_sized_stack_slot(data), over)
         })
         .collect();
     for (i, local) in function.locals.iter().enumerate() {
@@ -400,7 +413,10 @@ fn allocate_locals(
         storage.push(match local.ty {
             Ty::Unit => Storage::Unit,
             _ if in_memory[i] => match plan.local_slot[i] {
-                Some(s) => Storage::Slot(memory_slots[s as usize]),
+                Some(s) => {
+                    let (slot, over) = memory_slots[s as usize];
+                    Storage::Slot(slot, over)
+                }
                 None => bail!("ICE: memory local _{i} has no planned slot"),
             },
             ty if single[i] => {

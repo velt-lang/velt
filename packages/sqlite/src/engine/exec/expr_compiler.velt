@@ -145,7 +145,7 @@ export abstract class ExprCompiler {
     return this.touched.length;
   }
 
-  ev(e: Expr, sc: Scope): Ev {
+  compileEv(e: Expr, sc: Scope): Ev {
     return this.expr(e, sc).ev;
   }
 
@@ -218,7 +218,7 @@ export abstract class ExprCompiler {
       }
       const x = this.expr(e.a!, sc);
       const p = this.expr(e.b!, sc);
-      const esc: Ev | null = e.c == null ? null : this.ev(e.c!, sc);
+      const esc: Ev | null = e.c == null ? null : this.compileEv(e.c!, sc);
       return plain(compileLike(x.ev, p.ev, esc, e.op == "GLOB", e.not));
     }
     if (k == E_CALL) {

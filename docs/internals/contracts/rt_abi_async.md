@@ -1264,8 +1264,7 @@ Standard input is std code: one process-wide read-ahead buffer
 `ReadConsoleW` or `ReadFile` on Windows; none under a JS host), locked with a `Mutex`'s lock
 (`#thread-lock`: std's on a native target, `velt_rt_mutex_lock` elsewhere);
 an async read is the sync one on the executor's blocking pool (std/process/rt_sched.velt), and
-text is decoded lossily. Neither runtime has stdin functions (the fs readers' `LineRead` is in
-§14.7).
+text is decoded lossily. Neither runtime has stdin functions.
 
 ### 14.5 Machine facts (`velt/os`)
 
@@ -1285,6 +1284,8 @@ std/net/dns/rt.velt) fail with `ENOTSUP`.
 
 `VeltFileReader` / `VeltFileWriter` are `Arc`s around a buffered (64 KiB) `std::fs::File`;
 every operation runs on the blocking pool. A writer's last release flushes (errors ignored).
+Lines and text are std code (std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per
+`velt_rt_fs_reader_read`, split at `\n` by `indexOfByte` and decoded there.
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -1292,8 +1293,6 @@ every operation runs on the blocking pool. A writer's last release flushes (erro
 | `velt_rt_fs_open_read_range` | `(const VeltStr* path, u64 start, u64 end) -> VeltFut*` | `IoResult<VeltFileReader>` that reads bytes `start..=end` (both included, as Node's `createReadStream`) and then reports the end of the file; `end` `u64::MAX` = to the end of the file. A `start` past the end of the file, or `end < start`, reads nothing |
 | `velt_rt_fs_reader_opened_stats` | `(VeltFileReader r, IoResult<VeltStat>* out)` | synchronous: the file's `VeltStat` when it was opened (an `fstat` in the open's own blocking call, so no I/O here), whatever its path names now; `size` is the whole file's; `EBADF` once closed |
 | `velt_rt_fs_reader_read` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB |
-| `velt_rt_fs_reader_read_string` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltStr>`, split characters completed on the next call, `""` = EOF |
-| `velt_rt_fs_reader_read_line` | `(VeltFileReader r) -> VeltFut*` | result `typedef struct { IoResult<VeltStr> line; u8 eof; } LineRead;` (64 bytes): a line without its `\n`/`\r\n`, decoded lossily; at the end of the file `eof = 1` and the line is empty |
 | `velt_rt_fs_reader_close` | `(VeltFileReader r)` | |
 | `velt_rt_fs_open_write` | `(const VeltStr* path, u8 append) -> VeltFut*` | `IoResult<VeltFileWriter>`; creates; truncates unless `append` |
 | `velt_rt_fs_writer_write` / `_write_bytes` | `(VeltFileWriter w, const VeltStr* data) -> VeltFut*` / `(VeltFileWriter w, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; data copied |

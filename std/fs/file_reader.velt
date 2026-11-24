@@ -3,13 +3,9 @@
 import { IoError } from "velt/io/error";
 import { unwrapIo } from "velt/native/result";
 import { Stats } from "velt/fs/stats";
-import {
-  velt_rt_fs_reader_close,
-  velt_rt_fs_reader_read,
-  velt_rt_fs_reader_read_line,
-  velt_rt_fs_reader_read_string,
-  velt_rt_fs_reader_opened_stats,
-} from "velt/fs/rt";
+import { DROP, EOF, GOT, op, takeLine } from "velt/fs/line_buffer";
+import { bytesOf, lineOf, textOf } from "velt/fs/line_reads";
+import { velt_rt_fs_reader_close, velt_rt_fs_reader_opened_stats } from "velt/fs/rt";
 
 /** A file open for reading. */
 export struct FileReader {
@@ -17,7 +13,8 @@ export struct FileReader {
 
   /** The next 1..max bytes; empty at end of file (`max` 0 = up to 64 KiB). */
   async read(max: u64 = 0): Promise<u8[]> {
-    return unwrapIo(await velt_rt_fs_reader_read(this.handle, max));
+    // After lines, the bytes read ahead of them come first.
+    return await bytesOf(this.handle, max);
   }
 
   /**
@@ -25,16 +22,19 @@ export struct FileReader {
    * completed by the next call.
    */
   async readString(max: u64 = 0): Promise<string> {
-    return unwrapIo(await velt_rt_fs_reader_read_string(this.handle, max));
+    return await textOf(this.handle, max);
   }
 
-  /** The next line without "\n" / "\r\n", or null at end of file. Don't mix with `readString`. */
+  /** The next line without "\n" / "\r\n", or null at end of file. */
   async readLine(): Promise<string | null> {
-    const r = await velt_rt_fs_reader_read_line(this.handle);
-    if (r.eof) {
+    const t = takeLine(this.handle);
+    if (t.status == GOT) {
+      return t.text;
+    }
+    if (t.status == EOF) {
       return null;
     }
-    return unwrapIo(r.line);
+    return await lineOf(this.handle, t);
   }
 
   /**
@@ -43,11 +43,19 @@ export struct FileReader {
    */
   async *lines(): AsyncGenerator<string, IoError> {
     while (true) {
-      const r = await velt_rt_fs_reader_read_line(this.handle);
-      if (r.eof) {
+      const t = takeLine(this.handle);
+      if (t.status == GOT) {
+        yield t.text;
+        continue;
+      }
+      if (t.status == EOF) {
         return;
       }
-      yield unwrapIo(r.line);
+      const line = await lineOf(this.handle, t);
+      if (line == null) {
+        return;
+      }
+      yield line;
     }
   }
 
@@ -63,6 +71,7 @@ export struct FileReader {
 
   /** Closes the file (reads in flight finish first). */
   close() {
+    op(this.handle, DROP, 0, null);
     velt_rt_fs_reader_close(this.handle);
   }
 }
