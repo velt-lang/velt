@@ -90,6 +90,11 @@ undefined|undefined|3
 {}
 prim|prim|11
 both-text|both-inspect
+[Circular]|[Circular]|[Circular]|[Circular]|{"next":null,"other":null}
+{}|[{}]
+{}
+3
+[{},2]|{}
 éñü → 3€
 日本の語
 🙂 😀

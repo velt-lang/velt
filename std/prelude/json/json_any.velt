@@ -1,8 +1,10 @@
-// Prelude (with `JSON`): `%j` of an `any` in a `console.log` format string (#3662), as Node's
-// `util.format` writes it: `JSON.stringify(v)`, `undefined` for what that gives `undefined` for,
-// and, for a value holding one std's JSON cannot write through `any` yet (a `Set`, a `Map`), the
-// text Node writes (`{}` for those), from the value's runtime type (velt/lang/intrinsics
-// reflection) instead of a panic.
+// Prelude (with `JSON`): `%j` in a `console.log` format string (#3662) of an `any`, or of a value
+// the compiler sends here as one (a nullable, a `Map`, a type that can hold itself), as Node's
+// `util.format` writes it: `JSON.stringify(v)`; `undefined` for what that gives `undefined` for;
+// `[Circular]` for a value that holds itself (Node's `tryStringify`); and, for a value holding
+// one std's JSON cannot write through `any` (a `Set`, a `Map`, a `RegExp`), the text Node writes
+// (`{}` for those), from the value's runtime type (velt/lang/intrinsics reflection) instead of a
+// panic.
 
 import {
   anyReflectCount,
@@ -10,94 +12,157 @@ import {
   anyReflectInfo,
   anyReflectName,
   anyReflectValue,
+  identity,
 } from "velt/lang/intrinsics";
 import { JSON } from "./json";
 
-/**
- * `%j` of `value`: `undefined` for an `undefined`, a symbol or a function, else what
- * `JSON.stringify(value)` gives.
- */
+/** `%j` of `value`. */
 export function jsonAny(value: any): string {
   const t = typeof value;
   if (t === "undefined" || t === "symbol" || t === "function") {
     return "undefined";
   }
-  if (writable(value, 0)) {
+  const path: u64[] = [];
+  const found = scan(value, path);
+  if (found == CIRCULAR) {
+    return "[Circular]";
+  }
+  if (found == PLAIN) {
     return JSON.stringify(value);
   }
-  return write(value, "", 0) ?? "undefined";
+  return write(value, "") ?? "undefined";
 }
 
-/** The kind of what `v` holds (velt/reflect `kindOf`). */
+/** What `scan` found: data std's JSON writes through `any`, */
+const PLAIN: i64 = 0;
+/** a value std's JSON cannot write through `any` (written here), */
+const OWN: i64 = 1;
+/** or a value that holds itself. */
+const CIRCULAR: i64 = 2;
+
+/** The kind and name of what `v` holds (velt/reflect `typeOf`'s first and third fields). */
 function kindOf(v: any): string {
   const info = anyReflectInfo(v);
   return info.slice(0, info.indexOf("|") as i64);
 }
 
-/** Kinds std's JSON cannot write through `any` yet: Node writes `{}` for a `Set` and a `Map`. */
-function opaque(kind: string): boolean {
-  return kind == "set" || kind == "map" || kind == "proxy" || kind == "opaque";
-}
-
-/** Can `JSON.stringify` write `v` through `any` (no `opaque` kind in it)? */
-function writable(v: any, depth: i64): boolean {
-  const kind = kindOf(v);
-  if (opaque(kind)) {
-    return false;
-  }
-  if (depth > 64) {
-    return true;
-  }
-  const n = anyReflectCount(v);
-  for (let i: i64 = 0; i < n; i++) {
-    if (!writable(anyReflectValue(v, i), depth + 1)) {
-      return false;
-    }
-  }
-  return true;
+/** The class name of what `v` holds, without its type arguments. */
+function nameOf(v: any): string {
+  const parts = anyReflectInfo(v).split("|");
+  const name = parts.length > 2 ? parts[2] : "";
+  const angle = name.indexOf("<");
+  return angle >= 0 ? name.slice(0, angle) : name;
 }
 
 /**
- * `v` as `JSON.stringify` writes it under `key`, an `opaque` kind as `{}`; `null` for a value it
- * leaves out (an `undefined`, a symbol, a function).
+ * Is `kind` (with class name `name`) one std's JSON writes through `any`: a primitive, an array,
+ * a tuple, a `shared` cell, a record or an object, a class or a struct but the built-ins with no
+ * data of their own in JSON (Node writes `{}` for a `RegExp`, a `Promise`, a weak collection)?
  */
-function write(v: any, key: string, depth: i64): string | null {
+function known(kind: string, name: string): boolean {
+  if (kind == "class") {
+    return name != "RegExp" &&
+      name != "Promise" &&
+      name != "WeakMap" &&
+      name != "WeakSet" &&
+      name != "WeakRef";
+  }
+  return kind == "number" ||
+    kind == "string" ||
+    kind == "boolean" ||
+    kind == "null" ||
+    kind == "array" ||
+    kind == "tuple" ||
+    kind == "struct" ||
+    kind == "object" ||
+    kind == "record" ||
+    kind == "shared" ||
+    kind == "enum";
+}
+
+/** Is `kind` a container whose entries `scan` and `write` go through? */
+function container(kind: string): boolean {
+  return kind == "array" ||
+    kind == "tuple" ||
+    kind == "struct" ||
+    kind == "object" ||
+    kind == "record" ||
+    kind == "shared" ||
+    kind == "class";
+}
+
+/**
+ * `PLAIN`, `OWN` or `CIRCULAR` for `v`, `path` the identities of the objects it is inside (an
+ * object met again on the way is a cycle).
+ */
+function scan(v: any, path: u64[]): i64 {
+  const kind = kindOf(v);
+  if (kind == "undefined" || kind == "symbol" || kind == "function") {
+    return OWN;
+  }
+  if (!known(kind, nameOf(v))) {
+    return OWN;
+  }
+  if (!container(kind)) {
+    return PLAIN;
+  }
+  const id = identity(v);
+  if (id != 0 && path.includes(id)) {
+    return CIRCULAR;
+  }
+  path.push(id);
+  let found: i64 = PLAIN;
+  const n = anyReflectCount(v);
+  for (let i: i64 = 0; i < n && found != CIRCULAR; i++) {
+    const inner = scan(anyReflectValue(v, i), path);
+    found = inner > found ? inner : found;
+  }
+  path.pop();
+  return found;
+}
+
+/**
+ * `v` as `JSON.stringify` writes it under `key`, a kind std's JSON cannot write through `any` as
+ * `{}`; `null` for a value it leaves out (an `undefined`, a symbol, a function). `v` holds no
+ * cycle (`scan`).
+ */
+function write(v: any, key: string): string | null {
   const kind = kindOf(v);
   if (kind == "undefined" || kind == "symbol" || kind == "function") {
     return null;
   }
-  if (opaque(kind) || depth > 64) {
+  if (!known(kind, nameOf(v))) {
     return "{}";
+  }
+  if (!container(kind)) {
+    return JSON.stringify(v);
   }
   const own = anyReflectHook(v, key);
   if (typeof own !== "undefined") {
-    return write(own, key, depth + 1);
+    return write(own, key);
   }
   if (kind == "shared") {
-    return write(anyReflectValue(v, 0), key, depth + 1);
+    return write(anyReflectValue(v, 0), key);
   }
   const n = anyReflectCount(v);
   if (kind == "array" || kind == "tuple") {
     let out = "[";
     for (let i: i64 = 0; i < n; i++) {
       out += i > 0 ? "," : "";
-      out += write(anyReflectValue(v, i), `${i}`, depth + 1) ?? "null";
+      out += write(anyReflectValue(v, i), `${i}`) ?? "null";
     }
     return out + "]";
   }
-  if (kind == "class" || kind == "struct" || kind == "object" || kind == "record") {
-    let out = "{";
-    let first = true;
-    for (let i: i64 = 0; i < n; i++) {
-      const name = anyReflectName(v, i);
-      const text = write(anyReflectValue(v, i), name, depth + 1);
-      if (text != null) {
-        out += first ? "" : ",";
-        out += JSON.stringify(name) + ":" + text;
-        first = false;
-      }
+  let out = "{";
+  let first = true;
+  for (let i: i64 = 0; i < n; i++) {
+    const name = anyReflectName(v, i);
+    const text = write(anyReflectValue(v, i), name);
+    if (text != null) {
+      out += first ? "" : ",";
+      out += JSON.stringify(name) + ":" + text;
+      first = false;
     }
-    return out + "}";
   }
-  return JSON.stringify(v);
+  return out + "}";
 }

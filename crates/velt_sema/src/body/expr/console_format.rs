@@ -335,14 +335,15 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Can std's `JSON.stringify` write a value of `t` (std/encoding/json/generate/check.velt's
-    /// rules, conservatively: numbers, booleans, strings, literal types, enums, arrays, tuples,
-    /// `T | null`, `Map<string, T>`, `JsonValue`, and classes, structs and object literals with a
-    /// `toJSON()` or with public fields of those)? `seen`: the types being checked (a type that
-    /// holds itself is writable as far as its fields are).
+    /// Can std's `JSON.stringify` write a value of `t` as Node does (std/encoding/json/generate/
+    /// check.velt's rules, conservatively: numbers, booleans, strings, literal types, enums
+    /// without payloads, unions of those, arrays, tuples, `T | null`, `JsonValue`, and classes,
+    /// structs and object literals with a `toJSON()` or with public fields of those, none holding
+    /// itself)? Anything else goes through `any` (`jsonAny`). `seen`: the types being checked.
     fn json_writable(&mut self, t: TyId, seen: &mut Vec<TyId>) -> bool {
+        // A type that can hold itself may hold a cycle: std's `jsonAny` finds it (`[Circular]`).
         if seen.contains(&t) {
-            return true;
+            return false;
         }
         seen.push(t);
         let ok = match self.cx.ty.kind(t).clone() {
@@ -350,21 +351,37 @@ impl FnCx<'_, '_> {
                 true
             }
             TyKind::Option(e, n) => !n.has_undefined() && self.json_writable(e, seen),
-            // Known per instantiation: std's JSON writes it there, as a generic function's
-            // `JSON.stringify(x)` does.
-            TyKind::Param(_) => true,
             TyKind::Array(e) => self.json_writable(e, seen),
             TyKind::Tuple(es) => es.into_iter().all(|e| self.json_writable(e, seen)),
             TyKind::Adt(d, _) if self.cx.is_json_value(d) => true,
-            TyKind::Adt(d, args) if self.cx.prelude_adt("Map") == Some(d) => {
-                args.len() == 2 && args[0] == self.cx.ty.str_ && self.json_writable(args[1], seen)
+            // A `Map` is `{}` in Node; std's JSON writes its entries (`jsonAny` writes `{}`).
+            TyKind::Adt(d, _) if self.cx.prelude_adt("Map") == Some(d) => false,
+            TyKind::Adt(d, args) if self.cx.enum_info(d).is_some() => {
+                self.json_enum_writable(d, &args, seen)
             }
-            TyKind::Adt(d, _) if self.cx.enum_info(d).is_some() => true,
             TyKind::Adt(d, args) => self.json_fields_writable(d, &args, seen),
+            // A type parameter's value, an interface value, a `Set` field: through `any`.
             _ => false,
         };
         seen.pop();
         ok
+    }
+
+    /// [`Self::json_writable`] of an enum or a union type `d<args>`: an enum without payloads
+    /// (its numbers or strings), a union whose every member is writable.
+    fn json_enum_writable(&mut self, d: DefId, args: &[TyId], seen: &mut Vec<TyId>) -> bool {
+        let Some(e) = self.cx.enum_info(d) else {
+            return false;
+        };
+        let union = e.is_union;
+        let payloads: Vec<TyId> = e.variants.iter().flat_map(|v| v.payload.clone()).collect();
+        if !union {
+            return payloads.is_empty();
+        }
+        payloads.into_iter().all(|p| {
+            let p = self.cx.subst(p, args);
+            self.json_writable(p, seen)
+        })
     }
 
     /// [`Self::json_writable`] of a class, struct or object literal type `d<args>`.

@@ -259,6 +259,33 @@ class Both {
 }
 console.log("%s|%O", new Both(), new Both());
 
+// `%j` of a value that holds itself, typed and through `any`, a `RegExp`, a type parameter's
+// `Set`, an array of a union and a `Map`
+class Link {
+  constructor() {
+    this.next = null;
+    this.other = null;
+  }
+}
+const twice = new Link();
+twice.next = twice;
+twice.other = twice;
+const once = new Link();
+once.next = once;
+const anyTwice = twice;
+const anyOnce = once;
+console.log("%j|%j|%j|%j|%j", anyTwice, anyOnce, twice, once, new Link());
+const anyRe = /x/;
+const anyRes = [/x/];
+console.log("%j|%j", anyRe, anyRes);
+function jsonOf(x) {
+  console.log("%j", x);
+}
+jsonOf(new Set([1]));
+jsonOf(3);
+const mixed = [new Set([1]), 2];
+console.log("%j|%j", mixed, new Map([["a", 1]]));
+
 // non-ASCII
 console.log("é%sü → %d€", "ñ", 3);
 console.log("日本%s語", "の");
