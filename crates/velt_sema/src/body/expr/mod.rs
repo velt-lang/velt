@@ -45,6 +45,7 @@ mod cast_member;
 mod chain;
 mod class_bound;
 mod closure;
+mod closure_members;
 mod closure_sig;
 mod coerce;
 mod coerce_generic;
