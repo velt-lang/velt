@@ -2,8 +2,8 @@
 //! (#924; `hir::Program::lock_free_callbacks`). A declared function's properties are module
 //! state the runtime keeps (velt_rt fn_props.rs), and a callback cannot wait for the module lock
 //! while it holds a `Mutex`: lowering takes the module lock before the lock of every call whose
-//! callback may reach them (velt_rt `velt_rt_module_with`). This finds the others, which never
-//! do, so their calls cost what they cost before.
+//! callback may reach them (std/lang/hooks/sched_module.velt `withStart`). This finds the others,
+//! which never do, so their calls cost what they cost before.
 //!
 //! A body may reach a function's properties when it reads, writes, deletes, tests or lists a
 //! member of a value that is or holds `any` / `unknown` (an intrinsic, or a runtime extern, with
