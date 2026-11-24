@@ -150,6 +150,10 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   len)` makes an ASCII string of at most 23 bytes as three word stores, `w2`'s top byte replaced
   by `0x80 | len`. The bytes past `len` are 0, as in every inline string the runtime makes (std
   guarantees it; the words are compared and hashed whole).
+- Generated code also writes the static form: std's intrinsic `strBorrowedWords(ptr, w1)` makes
+  `{ptr, w1, 0}`, and `slice` / `substring` of a static ASCII string use it for the sub-range,
+  exactly as the runtime's slice of a static string returns it (a borrow of the same bytes, with
+  their lifetime).
 - Invariants, checked by a **debug** runtime on every append (each appended piece is canonical
   WTF-8 with the unit and lone counts it is given, and the seam is canonical: O(piece), never a
   recount of the whole string) and in full after every operation by the runtime's own tests: the

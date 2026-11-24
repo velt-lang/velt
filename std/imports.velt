@@ -101,6 +101,13 @@ export const imports: Imports = {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
   },
+  // Whether a child that is a script without a `#!` line (ENOEXEC) runs through `/bin/sh`, as Node
+  // runs it on Linux with glibc (its `execvp`; musl's has no such rule, and Velt has no musl
+  // condition), not on macOS (libuv's `posix_spawn`): spawn_posix.velt and exec_sync.velt.
+  "#script-shell": {
+    linux: "./process/child/script_shell_linux.velt",
+    default: "./process/child/script_shell_none.velt",
+  },
   // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
   // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
   // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.
@@ -351,5 +358,19 @@ export const imports: Imports = {
     win32: "./time/localtime_win32.velt",
     native: "./time/localtime_posix.velt",
     default: "./time/localtime_none.velt",
+  },
+  // The zone local time is in, by its id, for `Date`'s zone name (std/time/zone_name.velt):
+  // `TZ` or `/etc/localtime`'s link on macOS and Linux, `TZ`'s fixed offsets or the system
+  // zone's registry key on Windows, UTC on WebAssembly.
+  "#zone-id": {
+    win32: "./time/zone_id_win32.velt",
+    native: "./time/zone_id_posix.velt",
+    default: "./time/zone_id_none.velt",
+  },
+  // `O_CLOEXEC` for zone_id_posix.velt's `open`, which differs between macOS and Linux (without
+  // velt/os, which a program printing a date need not load).
+  "#zone-cloexec": {
+    darwin: "./time/zone_cloexec_darwin.velt",
+    default: "./time/zone_cloexec_linux.velt",
   },
 };

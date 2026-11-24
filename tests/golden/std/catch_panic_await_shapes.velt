@@ -1,0 +1,107 @@
+// requires: unix
+// In a program that catches panics (it uses `catchPanic`), every shape of `await yieldNow()` a
+// join's children take resumes once its turn comes (#3596): a join that never panics, run
+// first; children that yield inside `try`/`catch`/`finally`; an `async function*` that yields
+// around its `yield`, read with `for await`; an async method writing `this`; an async arrow
+// capturing a local; and a top-level `await` of such a join. Before the fix, the first join
+// printed nothing and the process exited 0; a top-level one ended with exit 13 ("unsettled
+// top-level await").
+import { catchPanic, PanicError } from "velt/task";
+
+async function counts(turns: number): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < turns; i++) {
+    await yieldNow();
+    n++;
+  }
+  return n;
+}
+
+async function guarded(turns: number): Promise<string> {
+  let out = "";
+  try {
+    await yieldNow();
+    out += "try";
+    if (turns > 1) {
+      throw new Error("thrown");
+    }
+  } catch (e) {
+    await yieldNow();
+    out += "+catch";
+  } finally {
+    await yieldNow();
+    out += "+finally";
+  }
+  return out;
+}
+
+async function* ticks(n: number): AsyncGenerator<number> {
+  for (let i = 0; i < n; i++) {
+    await yieldNow();
+    yield i;
+    await yieldNow();
+  }
+}
+
+async function readTicks(n: number): Promise<number> {
+  let sum = 0;
+  for await (const t of ticks(n)) {
+    sum += t;
+  }
+  return sum;
+}
+
+class Counter {
+  total = 0;
+  async add(k: number): Promise<number> {
+    for (let i = 0; i < k; i++) {
+      await yieldNow();
+      this.total += 1;
+    }
+    return this.total;
+  }
+}
+
+function fail(why: string): number {
+  panic(why);
+}
+
+async function dies(): Promise<number> {
+  await yieldNow();
+  return fail("dies");
+}
+
+async function main() {
+  // First, and with nothing panicking: a join of yielding children.
+  const plain = await Promise.all([counts(3), counts(1), counts(2)]);
+  console.log("plain", plain.join(","));
+  const tried = await Promise.all([guarded(1), guarded(2), guarded(1)]);
+  console.log("try/catch/finally", tried.join(" "));
+  const gens = await Promise.all([readTicks(3), readTicks(1), readTicks(2)]);
+  console.log("async generators", gens.join(","));
+  const c = new Counter();
+  const methods = await Promise.all([c.add(2), c.add(1), c.add(3)]);
+  console.log("methods", c.total, methods.length);
+  let seen = 0;
+  const bump = async (k: number): Promise<number> => {
+    for (let i = 0; i < k; i++) {
+      await yieldNow();
+      seen += k;
+    }
+    return seen;
+  };
+  await Promise.all([bump(2), bump(1), bump(3)]);
+  console.log("arrows", seen);
+  // A panic caught in a join, then a join after it.
+  try {
+    await catchPanic(async () => await Promise.all([counts(2), dies(), counts(3)]));
+  } catch (e) {
+    console.log("caught", e instanceof PanicError);
+  }
+  console.log("after", (await Promise.all([counts(2), counts(1)])).join(","));
+}
+
+// A top-level `await` of a join of yielding children; then the rest, from `main`.
+const top = await Promise.all([counts(2), counts(3), counts(1)]);
+console.log("top-level", top.join(","));
+await main();

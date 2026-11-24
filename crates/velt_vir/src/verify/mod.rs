@@ -92,6 +92,71 @@ fn check_math_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
     }
 }
 
+/// An extern's signature is scalar-only (invariant 2), but for a C function's `c_abi` (#2187
+/// layer 3): a struct result in registers is an `Agg` of one to four scalar words of one size,
+/// packed (`CRet::Words`),
+/// and a `byval` or `sret` parameter is a `Ptr`, `sret` the first one, with no result.
+fn check_extern_signature(p: &Program, i: usize, e: &crate::vir::ExternFn, errs: &mut Vec<String>) {
+    use crate::vir::{CParam, CRet};
+    let name = &e.symbol;
+    if e.params.iter().any(|t| !t.is_scalar()) {
+        errs.push(format!("extern#{i} {name}: signature is not scalar-only"));
+    }
+    let Some(c) = &e.c_abi else {
+        if matches!(e.ret, Ty::Agg(_)) {
+            errs.push(format!("extern#{i} {name}: signature is not scalar-only"));
+        }
+        return;
+    };
+    if c.params.len() != e.params.len() {
+        errs.push(format!(
+            "extern#{i} {name}: c_abi has {} parameters, the extern {}",
+            c.params.len(),
+            e.params.len()
+        ));
+    }
+    for (k, (cp, t)) in c.params.iter().zip(&e.params).enumerate() {
+        match cp {
+            CParam::Value => {}
+            CParam::ByVal { .. } | CParam::Sret { .. } if *t != Ty::Ptr => {
+                errs.push(format!("extern#{i} {name}: c_abi parameter {k} is a struct's pointer but has type {t:?}"));
+            }
+            CParam::Sret { .. } if k != 0 || e.ret != Ty::Unit => {
+                errs.push(format!(
+                    "extern#{i} {name}: an sret parameter is the first one, with no result"
+                ));
+            }
+            _ => {}
+        }
+    }
+    match (c.ret, e.ret) {
+        (CRet::Words, Ty::Agg(a)) => {
+            // One to four words of one size, packed: eightbytes, or an AAPCS64 HFA's floats.
+            let ok = p.aggs.get(a.0 as usize).is_some_and(|l| {
+                let size = l.fields.first().and_then(|&(t, _)| t.scalar_size());
+                (1..=4).contains(&l.fields.len())
+                    && size.is_some_and(|size| {
+                        (l.fields.iter().enumerate()).all(|(k, &(t, off))| {
+                            t.scalar_size() == Some(size) && off == size * k as u32
+                        })
+                    })
+            });
+            if !ok {
+                errs.push(format!(
+                    "extern#{i} {name}: a struct result in registers is an Agg of one to four scalar words of one size, packed"
+                ));
+            }
+        }
+        (CRet::Words, t) => errs.push(format!(
+            "extern#{i} {name}: a struct result in registers has type {t:?}"
+        )),
+        (CRet::Value, Ty::Agg(_)) => {
+            errs.push(format!("extern#{i} {name}: signature is not scalar-only"));
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
     verify_program_on(p, crate::parallel::jobs())
 }
@@ -101,12 +166,7 @@ fn verify_program_on(p: &Program, jobs: usize) -> Result<(), Vec<String>> {
     let mut errs = vec![];
     check_aggs(p, &mut errs);
     for (i, e) in p.externs.iter().enumerate() {
-        if e.params.iter().any(|t| !t.is_scalar()) || matches!(e.ret, Ty::Agg(_)) {
-            errs.push(format!(
-                "extern#{i} {}: signature is not scalar-only",
-                e.symbol
-            ));
-        }
+        check_extern_signature(p, i, e, &mut errs);
         check_simd_extern(i, e, &mut errs);
         check_atomic_extern(i, e, &mut errs);
         check_field_extern(i, e, &mut errs);
@@ -144,12 +204,7 @@ pub(crate) fn verify_changed(p: &Program, changed: &[usize]) -> Result<(), Vec<S
     let mut errs = vec![];
     check_aggs(p, &mut errs);
     for (i, e) in p.externs.iter().enumerate() {
-        if e.params.iter().any(|t| !t.is_scalar()) || matches!(e.ret, Ty::Agg(_)) {
-            errs.push(format!(
-                "extern#{i} {}: signature is not scalar-only",
-                e.symbol
-            ));
-        }
+        check_extern_signature(p, i, e, &mut errs);
         check_simd_extern(i, e, &mut errs);
         check_atomic_extern(i, e, &mut errs);
         check_field_extern(i, e, &mut errs);

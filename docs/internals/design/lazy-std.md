@@ -138,11 +138,26 @@ reporting an internal error; the check stops there (`StdLoads::refused`: the bod
 the rounds end, every later demand is refused too), and the driver then throws that check away and loads the program again with the refused modules
 up front (`LoadOptions::preload`, veltc's `sema_stage`; `velt check`'s recovering check and the
 language server do the same). That second check is an ordinary one: a module loaded up front
-may extend what it likes. The TLS client and server (`std/net/tls/fd_client.velt`,
-`fd_server.velt`, with the TLS engine, the certificate checks and the crypto under them) are
-served so (#2392): velt/net's `listenTls` and `connectTls` and `fetch`'s `https:` call them by
-role (`sched_tls_listen`, `sched_tls_connect`, `sched_tls_handshake`), so only a program whose
-live code can listen or connect with TLS loads them, and pays one more check for it.
+may extend what it likes.
+
+The TLS client and server (`std/net/tls/fd_client.velt`, `fd_server.velt`, with the TLS engine,
+the certificate checks and the crypto under them) load on demand (#2392): velt/net's `listenTls`
+and `connectTls` and `fetch` call them by role (`sched_tls_listen`, `sched_tls_connect`,
+`sched_tls_handshake`), so only a program whose live code can listen or connect with TLS loads
+them. None of it breaks the rule any more (#3634):
+`std/net/tcp_sched.velt` reaches the TLS streams' operations through function values the server
+or client installs before its first handle (`std/net/tls/fd_hook.velt`, `fd_reactor.velt`), not
+through an `extend` of a type of its own; the error classes under `Error` and `IoError`
+(`CryptoError`, `TlsFailure`, `CertificateRefused`) load up front with `fd_hook.velt`; and the
+record layer makes its views without `u8[]`'s `subarray` (`std/lang/typed_array/u8_view.velt`),
+whose `extend` of `Array` would break the rule. A call of a function value is checked against its
+type alone, so a program that never loads the TLS code checks none of it. Likewise the engine
+drives the server's handshake through an interface (`std/net/tls/server_steps.velt`), so a
+program that only connects never loads the server's handshake. So a `fetch` that can
+reach `https:`, which is every `fetch` that follows redirects, is checked once, with the client added in the middle of
+the check. velt/simd's `extend`s of the vector types, which the record layer and the crypto use,
+are the one part left: a `fetch` program loads velt/simd up front anyway, but a program that
+reaches TLS only through `connectTls` or `listenTls` doesn't, and is checked again with it.
 
 std code may also call a function hook by its role, `hookCall("role", args…)`
 (`std/lang/intrinsics/hook_call.velt`), instead of importing the hook's module. Checking the call
@@ -267,13 +282,16 @@ and requires no diagnostics, and the nightly benchmark `compile/check_all_std` m
 
 ## Not yet implemented
 
-- **No second check for TLS.** A module that can't be served in place costs a check again: the
-  first stops at the refusal, but the collection and the bodies checked up to it are lost (about
-  20% of a TLS program's build). Serving the TLS client and server in place needs the rule lifted
-  for what they add: the error classes under `Error` and `IoError` (`CryptoError`, `TlsFailure`,
-  `CertificateRefused`), velt/simd's `extend`s of the built-in vector types, `bytes_view`'s of
-  `Array` and `fd_reactor`'s of `TlsServer`. Meanwhile the build cache could remember which
-  modules a program's last build loaded up front.
+- **No second check for `connectTls` and `listenTls`.** A program that reaches TLS without
+  `fetch` loads velt/simd in the middle of its check, whose `extend`s of the vector types the rule
+  refuses, so it is checked again (the first check stops at the refusal, but what it did is lost:
+  about 20% of such a program's build). Loading velt/simd (about 5,700 lines) up front with
+  `tcp_sched` would cost every TCP program; serving it in place needs the rule lifted for
+  `extend`s of the built-in vector types, or the TLS and crypto code declaring the intrinsics it
+  needs directly, as `std/crypto/poly1305.velt` does.
+- **Checking std's TLS once.** A program that reaches TLS still checks, lowers and builds the
+  client (about 50,000 lines) itself; std's units (#2943) would check and compile it once per
+  key and reuse it.
 
 - **Global modules loaded on demand.** The global modules with a `load for:` predicate, such as
   `std/prelude/global/host_async.velt`, move from the loader's syntactic trigger to a demand made

@@ -2,6 +2,8 @@
 // std/imports.velt), which has no OS to ask: what the target is ("wasi", which Node has no
 // name for) and the answers the functions document for "unknown".
 
+import type { CpuInfo } from "./cpu_info";
+
 /** The platform of a WebAssembly build: "wasi". */
 export const PLATFORM: string = "wasi";
 
@@ -18,4 +20,49 @@ export function hostname(): string {
 /** The directory for temporary files: "/tmp". */
 export function tmpdir(): string {
   return "/tmp";
+}
+
+/** The CPUs: none known. */
+export function cpus(): CpuInfo[] {
+  return [];
+}
+
+/** The machine's memory: 0 (unknown). */
+export function totalMemory(): i64 {
+  return 0;
+}
+
+/** The free memory: 0 (unknown). */
+export function freeMemory(): i64 {
+  return 0;
+}
+
+/** The load averages: `[0, 0, 0]` (unknown). */
+export function loadAverage(): f64[] {
+  return [0, 0, 0];
+}
+
+/** The uptime: 0 (unknown). */
+export function uptime(): f64 {
+  return 0;
+}
+
+/** The memory limit: 0 (none known). */
+export function constrainedMemory(): f64 {
+  return 0;
+}
+
+/** The memory the process may still use: 0 (unknown). */
+export function availableMemory(): i64 {
+  return 0;
+}
+
+/** The OS's names: none known, and the build's processor, "wasm32". */
+export function systemNames(): string[] {
+  return ["", "", "", "wasm32"];
+}
+
+/** The process' CPU time: `[0, 0]` (unknown). */
+export function processCpuUsage(): [i64, i64] {
+  return [0, 0];
 }

@@ -1,8 +1,10 @@
 //! The C functions a program declares (`declare c`, docs/internals/design/c-ffi.md) under the
 //! dev JIT: their addresses, from the libraries loaded into the host. On Unix that is every
 //! image (`dlsym(RTLD_DEFAULT)`, what cranelift-jit's own lookup does); on Windows the
-//! executable, the UCRT and kernel32 (cranelift-jit's lookup searches only the first two, so
-//! `GetLastError` was missing). A version checks every C function first
+//! executable and the system DLLs a linked build imports std's C functions from, which the host
+//! loads (cranelift-jit's lookup searches only the executable and the UCRT, so `GetLastError`
+//! was missing, and bcrypt.dll isn't loaded unless someone loads it). A version checks every C
+//! function first
 //! ([`missing_c_functions`]), so a missing one is an error naming its declaration, not a panic
 //! in cranelift-jit's `finalize_definitions`.
 
@@ -181,6 +183,48 @@ mod platform {
         fn GetModuleHandleA(name: *const c_char) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
         fn LoadLibraryA(name: *const c_char) -> *mut c_void;
+        fn LoadLibraryExA(name: *const c_char, file: *mut c_void, flags: u32) -> *mut c_void;
+    }
+
+    /// `LoadLibraryExA`: search only System32, never the current or the executable's directory.
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
+
+    /// The system DLLs a linked debug build gets std's own `declare c("c")` functions from
+    /// (velt_link `system.rs`'s Windows `shared_native_libs`, whose import libraries name them):
+    /// the C library (`msvcrt.lib` brings the UCRT), kernel32, advapi32 (the time zones of
+    /// std/time/localtime_win32.velt), Winsock, ntdll and the synchronization library
+    /// (std/lang/hooks/reactor_afd.velt), and bcrypt (std/lang/random/os_win32.velt's
+    /// `BCryptGenRandom`). The host doesn't have each of them loaded on its own (bcrypt.dll only
+    /// came with the runtime's former TLS library), so it loads them, from System32, once.
+    const SYSTEM_DLLS: [&[u8]; 7] = [
+        b"ucrtbase.dll\0",
+        b"kernel32.dll\0",
+        b"advapi32.dll\0",
+        b"ws2_32.dll\0",
+        b"ntdll.dll\0",
+        b"api-ms-win-core-synch-l1-2-0.dll\0",
+        b"bcrypt.dll\0",
+    ];
+
+    /// The handles of [`SYSTEM_DLLS`] (0: not loaded), loaded on first use and kept for the
+    /// life of the host.
+    fn system_dlls() -> &'static [usize] {
+        static HANDLES: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
+        HANDLES.get_or_init(|| {
+            (SYSTEM_DLLS.iter())
+                .map(|name| {
+                    // SAFETY: the name is NUL-terminated; a system DLL's initializers run, as
+                    // they do in a linked program that imports it.
+                    unsafe {
+                        LoadLibraryExA(
+                            name.as_ptr().cast(),
+                            std::ptr::null_mut(),
+                            LOAD_LIBRARY_SEARCH_SYSTEM32,
+                        ) as usize
+                    }
+                })
+                .collect()
+        })
     }
 
     /// Load library `file` (`None`: not found).
@@ -202,30 +246,33 @@ mod platform {
 
     pub(super) fn loaded(name: &str) -> Option<*const u8> {
         let symbol = CString::new(name).ok()?;
-        // std's own C functions under `VELT_SCHEDULER=std` (std/lang/hooks/reactor_afd.velt) are
-        // Winsock's, ntdll's and the synchronization library's, which the runtime loads too.
-        let modules: [&[u8]; 6] = [
-            b"\0",
-            b"ucrtbase.dll\0",
-            b"kernel32.dll\0",
-            b"ws2_32.dll\0",
-            b"ntdll.dll\0",
-            b"api-ms-win-core-synch-l1-2-0.dll\0",
-        ];
-        modules.iter().find_map(|m| {
-            // SAFETY: the names are NUL-terminated; a module that isn't loaded gives NULL, and
-            // an address found is not called here.
-            let address = unsafe {
-                let module = match m.len() {
-                    1 => GetModuleHandleA(std::ptr::null()),
-                    _ => GetModuleHandleA(m.as_ptr().cast()),
-                };
-                if module.is_null() {
-                    return None;
-                }
-                GetProcAddress(module, symbol.as_ptr())
-            };
-            (!address.is_null()).then_some(address as *const u8)
-        })
+        // The executable first, then the system DLLs a linked build imports std's C functions
+        // from.
+        // SAFETY: NULL names the executable, which is loaded.
+        let exe = unsafe { GetModuleHandleA(std::ptr::null()) } as usize;
+        std::iter::once(exe)
+            .chain(system_dlls().iter().copied())
+            .filter(|&module| module != 0)
+            .find_map(|module| {
+                // SAFETY: `module` is loaded for the life of the host; the name is
+                // NUL-terminated, and an address found is not called here.
+                let address = unsafe { GetProcAddress(module as *mut c_void, symbol.as_ptr()) };
+                (!address.is_null()).then_some(address as *const u8)
+            })
+    }
+
+    /// The system DLLs [`loaded`] searches, by name, with whether each loaded.
+    #[cfg(test)]
+    pub(super) fn system_dll_names() -> Vec<(String, bool)> {
+        (SYSTEM_DLLS.iter().zip(system_dlls()))
+            .map(|(name, &h)| {
+                let name = String::from_utf8_lossy(&name[..name.len() - 1]).into_owned();
+                (name, h != 0)
+            })
+            .collect()
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "c_libraries_tests.rs"]
+mod tests;
