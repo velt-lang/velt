@@ -39,27 +39,77 @@ pub fn report(line: &str) {
     }
 }
 
-/// How a known failure failed, in one line: the first line of its first error and the first line
-/// of the compiler's or the program's stderr, so a failure that changes (wrong output to a
-/// crash) shows.
+/// What a run does with a golden that passed.
+#[derive(Debug, PartialEq)]
+pub enum OnPass {
+    /// Fail the run with this error: an entry marked `units`, which applies only in a run by
+    /// units, so the list of what units still get wrong shrinks (#2943).
+    Fail(String),
+    /// Report this line: another entry, to be taken off the list.
+    Report(String),
+    /// An unlisted golden.
+    Nothing,
+}
+
+/// What a run does with golden `rel`, which passed, listed as `entry`.
+pub fn on_pass(rel: &str, entry: Option<&Known>) -> OnPass {
+    let Some(k) = entry else {
+        return OnPass::Nothing;
+    };
+    let line = format!(
+        "{rel} passes: take it off golden_known_failing.txt ({})",
+        k.issue
+    );
+    match k.units {
+        true => OnPass::Fail(line),
+        false => OnPass::Report(format!("golden: {line}")),
+    }
+}
+
+/// How a known failure failed, in one line: the first line of its first error with output (a
+/// leak check's missing report comes first when the build failed, and says nothing of why), the
+/// first line where the output differs, and the first error line of the compiler's or the
+/// program's stderr, so a failure that changes (wrong output to a crash) shows.
 pub fn how_it_failed(errs: &[String]) -> String {
-    let Some(first) = errs.first() else {
+    let with_output = |e: &&String| e.contains("--- stderr ---\n") || e.contains("--- got ---\n");
+    let Some(err) = errs.iter().find(with_output).or(errs.first()) else {
         return String::new();
     };
-    let head = first.lines().next().unwrap_or_default();
-    // Its first error, else its first line that isn't a check by units' report of writes.
-    let stderr = first.split_once("--- stderr ---\n").and_then(|(_, s)| {
-        let mut lines = s.lines().map(str::trim).filter(|l| !l.is_empty());
-        (lines
-            .clone()
-            .find(|l| l.contains("error") || l.contains("panicked")))
-        .or_else(|| lines.find(|l| !l.starts_with("velt-units")))
-    });
-    let line = match stderr {
-        Some(s) => format!("{head} | {}", s.trim()),
-        None => head.to_string(),
-    };
-    line.chars().take(240).collect()
+    let head = err.lines().next().unwrap_or_default().to_string();
+    let parts: Vec<String> = std::iter::once(head)
+        .chain(first_difference(err))
+        .chain(stderr_line(err).map(str::to_string))
+        .collect();
+    parts.join(" | ").chars().take(400).collect()
+}
+
+/// Where error `err`'s output first differs from the wanted one: "want `a`, got `b`".
+fn first_difference(err: &str) -> Option<String> {
+    let (_, rest) = err.split_once("--- want ---\n")?;
+    let (want, rest) = rest.split_once("--- got ---\n")?;
+    let got = rest.split_once("--- stderr ---\n").map_or(rest, |(g, _)| g);
+    let (mut w, mut g) = (want.lines(), got.lines());
+    loop {
+        match (w.next(), g.next()) {
+            (None, None) => return None,
+            (a, b) if a == b => continue,
+            (a, b) => {
+                let (a, b) = (a.unwrap_or("(end)"), b.unwrap_or("(end)"));
+                return Some(format!("want `{a}`, got `{b}`"));
+            }
+        }
+    }
+}
+
+/// Error `err`'s first stderr line that is an error, else its first that isn't a check by
+/// units' report of writes; from `tests/golden/` on when it names a golden by its full path.
+fn stderr_line(err: &str) -> Option<&str> {
+    let (_, s) = err.split_once("--- stderr ---\n")?;
+    let mut lines = s.lines().map(str::trim).filter(|l| !l.is_empty());
+    let line = (lines.clone())
+        .find(|l| l.contains("error") || l.contains("panicked"))
+        .or_else(|| lines.find(|l| !l.starts_with("velt-units")))?;
+    Some(line.find("tests/golden/").map_or(line, |i| &line[i..]))
 }
 
 /// The entries of known-failing list `text` that apply on `os`, in a run by units when `units`
@@ -162,13 +212,46 @@ fn the_known_failing_list_reads_its_entries_by_os() {
 fn a_known_failure_says_how_it_failed() {
     let ice = "tests/golden/a.velt [debug]: the build failed\n--- stderr ---\n\nvelt-units: writes to frozen definitions\nvelt-units:   2  a.rs:1\nerror: internal compiler error: boom\nmore\n".to_string();
     assert_eq!(
-        how_it_failed(&[ice]),
+        how_it_failed(std::slice::from_ref(&ice)),
         "tests/golden/a.velt [debug]: the build failed | error: internal compiler error: boom"
     );
-    let wrong = "tests/golden/b.velt [release]: exit 0 (want 0)\n--- want ---\n1\n--- got ---\n2\n--- stderr ---\n".to_string();
+    // A leak-checked golden whose build failed: the leak check's error comes first.
+    let leak =
+        "tests/golden/a.velt [debug]: leak check: no `rc stats` report on stderr".to_string();
+    assert_eq!(
+        how_it_failed(&[leak.clone(), ice]),
+        "tests/golden/a.velt [debug]: the build failed | error: internal compiler error: boom"
+    );
+    assert_eq!(how_it_failed(std::slice::from_ref(&leak)), leak);
+    let wrong = "tests/golden/b.velt [release]: exit 0 (want 0)\n--- want ---\n1\n2\n--- got ---\n1\n3\n--- stderr ---\n".to_string();
     assert_eq!(
         how_it_failed(&[wrong]),
-        "tests/golden/b.velt [release]: exit 0 (want 0)"
+        "tests/golden/b.velt [release]: exit 0 (want 0) | want `2`, got `3`"
+    );
+    let short = "tests/golden/b.velt [debug]: exit 1 (want 0)\n--- want ---\n1\n--- got ---\n--- stderr ---\n/home/ci/velt/tests/golden/b.velt:4:2: error: no\n".to_string();
+    assert_eq!(
+        how_it_failed(&[short]),
+        "tests/golden/b.velt [debug]: exit 1 (want 0) | want `1`, got `(end)` | tests/golden/b.velt:4:2: error: no"
     );
     assert_eq!(how_it_failed(&[]), "");
+}
+
+#[test]
+fn a_passing_golden_listed_units_fails_the_run() {
+    let text = "tests/golden/a.velt #12\ntests/golden/c.velt #56 units\n";
+    let list = parse_known_failing(text, "linux", true);
+    let pass = |rel: &str| on_pass(rel, list.get(rel));
+    assert_eq!(
+        pass("tests/golden/c.velt"),
+        OnPass::Fail(
+            "tests/golden/c.velt passes: take it off golden_known_failing.txt (#56)".into()
+        )
+    );
+    assert_eq!(
+        pass("tests/golden/a.velt"),
+        OnPass::Report(
+            "golden: tests/golden/a.velt passes: take it off golden_known_failing.txt (#12)".into()
+        )
+    );
+    assert_eq!(pass("tests/golden/z.velt"), OnPass::Nothing);
 }

@@ -240,7 +240,8 @@ jobs:
   # starts all of std, docs/internals/design/build-architecture.md "Units in sema"). Each golden
   # checks all of std again (12-15G instructions a build, 9-50 times a whole build's), about 2.5
   # hours of one runner over the suite, so it is nightly, not on pull requests, and split into
-  # shards (`VELT_GOLDEN_SHARD`), each building on its own runner. The goldens listed `units` in
+  # shards (`VELT_GOLDEN_SHARD`). Each shard builds the workspace on its own runner first, so a
+  # night costs those eight builds besides the goldens (a shard's goldens took about 27 minutes). The goldens listed `units` in
   # golden_known_failing.txt (#2943's U6 list) only report how they failed; any other failure
   # fails the shard, and so does a listed one that passes, to be taken off the list. The reports
   # go to the job summary (`VELT_GOLDEN_REPORT`).

@@ -174,18 +174,10 @@ fn golden() {
     for ((f, rel), errs) in runnable.iter().zip(results) {
         let entry = known.get(rel.replace('\\', "/").as_str());
         if errs.is_empty() {
-            let take_off = |k: &known_failing::Known| {
-                format!(
-                    "{rel} passes: take it off golden_known_failing.txt ({})",
-                    k.issue
-                )
-            };
-            match entry {
-                // A run by units fails on it, so the list of what units still get wrong
-                // shrinks (#2943).
-                Some(k) if k.units => failures.push(take_off(k)),
-                Some(k) => known_failing::report(&format!("golden: {}", take_off(k))),
-                None => {}
+            match known_failing::on_pass(rel, entry) {
+                known_failing::OnPass::Fail(e) => failures.push(e),
+                known_failing::OnPass::Report(line) => known_failing::report(&line),
+                known_failing::OnPass::Nothing => {}
             }
             continue;
         }
