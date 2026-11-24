@@ -8,6 +8,7 @@ exit: 7 [out] [err]
 signal: 137 [] []
 long PATH entry: 0 [found] []
 long entry then a dir as Node: true
+long last entry: ENOENT
 long dir is ENAMETOOLONG: checked on macOS
 long name is ENAMETOOLONG: checked on macOS
 255-byte name: ENOENT

@@ -96,6 +96,11 @@ function main() {
   cwdTry.set("PATH", `/${"x".repeat(4999)}:${dir}/bin`);
   const ran = execSync("prog", [], { cwd: dir, env: cwdTry, clearEnv: true }).stdout.trim();
   console.log("long entry then a dir as Node:", ran == (LINUX ? "cwd" : "bin"));
+  // As `PATH`'s last entry it is left out on both OSes (glibc stops there, libuv skips it): the
+  // working directory's `prog` is not tried.
+  const lastLong = new Map<string, string>();
+  lastLong.set("PATH", `/nope:/${"x".repeat(4999)}`);
+  console.log("long last entry:", failure("prog", { cwd: dir, env: lastLong, clearEnv: true }));
   // libuv's own rules on macOS: a directory whose name passes `NAME_MAX` (255) ends the lookup
   // with ENAMETOOLONG, and so does a program name longer than `NAME_MAX`, before any lookup.
   // On Linux both are the glibc release's (Node's ENAMETOOLONG and long-name rules changed in

@@ -66,6 +66,8 @@ function main() {
   const cwdTry = { PATH: `/${"x".repeat(4999)}:${dir}/bin` };
   const ran = spawnSync("prog", [], { cwd: dir, env: cwdTry, encoding: "utf8" }).stdout.trim();
   console.log("long entry then a dir as Node:", ran == (LINUX ? "cwd" : "bin"));
+  const lastLong = { PATH: `/nope:/${"x".repeat(4999)}` };
+  console.log("long last entry:", failure("prog", { cwd: dir, env: lastLong }));
   const longDir = `/${"d".repeat(299)}:/usr/bin:/bin`;
   macOnly("long dir is ENAMETOOLONG", () => failure("sh", { env: { PATH: longDir } }));
   const nope = { PATH: "/nope1:/nope2" };
