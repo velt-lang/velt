@@ -14,6 +14,7 @@ import {
 } from "velt/encoding/json/append";
 import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any";
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
+import { recordViewIs } from "velt/lang/intrinsics";
 import { Reader } from "velt/encoding/json/reader";
 import {
   readerFinish,

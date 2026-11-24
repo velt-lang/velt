@@ -146,6 +146,11 @@ export function needsKey(model: Model, id: i64, seen: i64[]): bool {
     }
     return false;
   }
+  // A record with dynamic values may be a view, written as its source, whose `toJSON(key)`
+  // gets the key it is written under (write.velt).
+  if (t.kind == "record") {
+    return isDynamic(model.type(t.args[1]));
+  }
   if (t.kind != "class") {
     return false;
   }

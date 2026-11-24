@@ -1,0 +1,48 @@
+// check: no leaks
+// A record view compared with its source of a static type (#3675): `===`, `!==` and
+// `Object.is` between `x as Record<string, any>` and `x` are identity, as in Node, where the
+// cast is a no-op, for an object literal, a class instance, an array, an interface value and a
+// `Map`; `JSON.stringify` of a statically typed view writes its source (an array as an array).
+// The Node twin is record_view_static.mjs.
+class Point {
+  x: number = 1;
+  y: number = 2;
+}
+
+class D {
+  toJSON(k: string): string {
+    return "key=" + k;
+  }
+}
+
+interface Named {
+  name: string;
+}
+
+function main(): void {
+  const o = { a: 1, b: "x" };
+  const ov = o as Record<string, any>;
+  console.log(`literal: ${ov === o} ${ov !== o} ${Object.is(ov, o)} ${Object.is(o, ov)}`);
+  const p = new Point();
+  const pv = p as any as Record<string, any>;
+  console.log(`class: ${pv === p} ${p === pv} ${pv !== p} ${Object.is(pv, p)}`);
+  const other = new Point();
+  console.log(`other class: ${pv === other} ${Object.is(pv, other)}`);
+  const xs = [1, 2];
+  const xv = xs as any as Record<string, any>;
+  console.log(`array: ${xv === xs} ${Object.is(xv, xs)} ${JSON.stringify(xv)}`);
+  const n: Named = { name: "n" };
+  const nv = n as any as Record<string, any>;
+  console.log(`interface: ${nv === n} ${Object.is(nv, n)}`);
+  const m = new Map<string, number>();
+  const mv = m as any as Record<string, any>;
+  console.log(`map: ${mv === m} ${Object.is(mv, m)}`);
+  console.log(`stringify object: ${JSON.stringify(ov)} ${JSON.stringify(pv)}`);
+  const plain: Record<string, any> = { a: 1 };
+  console.log(`plain record: ${plain === p} ${plain !== p} ${JSON.stringify(plain)}`);
+  console.log(`nested view: ${JSON.stringify({ a: xv })} ${JSON.stringify(mv)}`);
+  const dv = new D() as any as Record<string, any>;
+  console.log(`toJSON key: ${JSON.stringify({ k: dv })} ${JSON.stringify([dv])}`);
+}
+
+main();
