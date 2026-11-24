@@ -1,0 +1,7 @@
+Out { value: 3 }
+{"value":3}
+{}
+4
+Out { value: Point { x: 1.5, y: -2 } }
+-0.5
+Out { value: true }
