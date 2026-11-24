@@ -166,6 +166,13 @@ fn c_source(shapes: &[Vec<&Field>]) -> (String, String) {
     // `Ref<S>` (a `const S *` to a copy): C checks every field; writes through it (casting the
     // `const` away), which reaches the copy only; and takes `NULL` for a `Ref<S> | null`.
     h.push_str("int32_t ref_check(const OS *s, int32_t seed);\nint32_t ref_poke(const OS *s);\nint32_t ref_maybe(const OS *s);\n");
+    // A `Ref` through type aliases (an 8-byte struct, which by value would cross in a register
+    // where C reads a pointer): `type S6Ref = Ref<S6>`, and an alias of `Ref<S6> | null`.
+    h.push_str(
+        "int32_t ref_alias(const S6 *s, int64_t seed);\nint32_t ref_alias_maybe(const S6 *s);\n",
+    );
+    // A `Ref` as the fixed parameter of a variadic C function: a pointer, as any other.
+    h.push_str("#include <stdarg.h>\nint32_t ref_var(const OS *s, int32_t n, ...);\n");
     c.push_str("int64_t late_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, S7 s, int64_t f) {\n  if (a + b + c + d + e + f != 21) return -100;\n  return chk7(s, 3);\n}\n");
     c.push_str("int64_t late_sse(double a, double b, double c, double d, double e, double f, double g, S0 s, double h) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk0(s, 4);\n}\n");
     c.push_str("int64_t late_small_sse(double a, double b, double c, double d, double e, double f, double g, double h, S18 s) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk18(s, 6);\n}\n");
@@ -180,13 +187,18 @@ fn c_source(shapes: &[Vec<&Field>]) -> (String, String) {
     c.push_str("int32_t ref_check(const OS *s, int32_t seed) {\n  if (s->a != (uint8_t)(seed + 1)) return -1;\n  if (s->inner.b != seed * 3) return -2;\n  if (s->inner.c != seed / 4.0) return -3;\n  if (s->d != (uint32_t)(seed * 1000)) return -4;\n  if (!s->flag) return -5;\n  if (s->p != (void *)(uintptr_t)(seed * 16)) return -6;\n  return 1;\n}\n");
     c.push_str("int32_t ref_poke(const OS *s) {\n  ((OS *)s)->a = 99;\n  return s->a;\n}\n");
     c.push_str("int32_t ref_maybe(const OS *s) { return !s ? 0 : s->a; }\n");
+    c.push_str(
+        "int32_t ref_alias(const S6 *s, int64_t seed) { return (int32_t)chk6(*s, seed); }\n",
+    );
+    c.push_str("int32_t ref_alias_maybe(const S6 *s) { return !s ? 0 : 1; }\n");
+    c.push_str("int32_t ref_var(const OS *s, int32_t n, ...) {\n  va_list ap;\n  va_start(ap, n);\n  int32_t sum = s->a;\n  for (int32_t i = 0; i < n; i++) sum += va_arg(ap, int32_t);\n  va_end(ap);\n  return sum;\n}\n");
     c.push_str("NP null_ptr(void) {\n  NP r = { 0, 7 };\n  return r;\n}\n");
     c.push_str("S8 big_after(int64_t a, int64_t b, int64_t c, int64_t d, S7 s) {\n  S8 r = mk8(a + b + c + d);\n  if (chk7(s, 5) != 1) r.f0 = -1;\n  return r;\n}\n");
     (h, c)
 }
 
 fn velt_lib(shapes: &[Vec<&Field>]) -> String {
-    let mut v = String::from("import { Out, Ptr, Ref } from \"velt/ffi\";\n\nfunction ptrOf(a: i64): Ptr<void> | null {\n  // SAFETY: never read through; an address made from a number.\n  return unsafe { Ptr.orNull<void>(a as usize) };\n}\n\n");
+    let mut v = String::from("import { CVarArgs, Out, Ptr, Ref } from \"velt/ffi\";\n\nfunction ptrOf(a: i64): Ptr<void> | null {\n  // SAFETY: never read through; an address made from a number.\n  return unsafe { Ptr.orNull<void>(a as usize) };\n}\n\n");
     for (i, fields) in shapes.iter().enumerate() {
         let _ = write!(v, "export declare c struct S{i} {{");
         for (j, fd) in fields.iter().enumerate() {
@@ -221,7 +233,11 @@ fn velt_lib(shapes: &[Vec<&Field>]) -> String {
     v.push_str("export declare c struct OI { b: i16; c: f64; }\nexport declare c struct OS { a: u8; inner: OI; d: u32; flag: bool; p: Ptr<void> | null; }\n");
     v.push_str("declare c(\"abi\") function out_fill(seed: i32, out: Out<OS>): i32;\ndeclare c(\"abi\") function out_bool(b: Out<bool>): void;\n");
     v.push_str("declare c(\"abi\") function ref_check(s: Ref<OS>, seed: i32): i32;\ndeclare c(\"abi\") function ref_poke(s: Ref<OS>): i32;\ndeclare c(\"abi\") function ref_maybe(s: Ref<OS> | null): i32;\n");
-    v.push_str("export function refs(): string[] {\n  const s: OS = { a: 6, inner: { b: 15, c: 1.25 }, d: 5000, flag: true, p: ptrOf(80) };\n  // SAFETY: each reads the struct during the call and keeps no pointer to it.\n  const [checked, poked, some, none] = unsafe { [ref_check(s, 5), ref_poke(s), ref_maybe(s), ref_maybe(null)] };\n  return [`ref_check ${checked}`, `ref_poke ${poked} ${s.a}`, `ref_maybe ${some} ${none}`];\n}\n");
+    v.push_str("type S6Ref = Ref<S6>;\ntype MaybeS6 = S6Ref | null;\ndeclare c(\"abi\") function ref_alias(s: S6Ref, seed: i64): i32;\ndeclare c(\"abi\") function ref_alias_maybe(s: MaybeS6): i32;\n");
+    v.push_str(
+        "declare c(\"abi\") function ref_var(s: Ref<OS>, n: i32, ...args: CVarArgs): i32;\n",
+    );
+    v.push_str("export function refs(): string[] {\n  const s: OS = { a: 6, inner: { b: 15, c: 1.25 }, d: 5000, flag: true, p: ptrOf(80) };\n  // SAFETY: each reads the struct during the call and keeps no pointer to it.\n  const [checked, poked, some, none] = unsafe { [ref_check(s, 5), ref_poke(s), ref_maybe(s), ref_maybe(null)] };\n  // SAFETY: as above.\n  const [aliased, aliasSome, aliasNone] = unsafe { [ref_alias(make6(3), 3), ref_alias_maybe(make6(3)), ref_alias_maybe(null)] };\n  // SAFETY: as above; the variadic arguments are two `int32_t`s.\n  const summed = unsafe { ref_var(s, 2, 10 as i32, 20 as i32) };\n  return [`ref_check ${checked}`, `ref_poke ${poked} ${s.a}`, `ref_maybe ${some} ${none}`, `ref_alias ${aliased} ${aliasSome} ${aliasNone}`, `ref_var ${summed}`];\n}\n");
     v.push_str("function truth(b: bool): string {\n  return `${b} ${!b} ${b === true}`;\n}\n");
     v.push_str("export function outs(): string[] {\n  const o = new Out<OS>({ a: 0, inner: { b: 0, c: 0 }, d: 0, flag: false, p: null });\n  // SAFETY: `o` is the struct it fills.\n  const r = unsafe { out_fill(5, o) };\n  const s = o.value;\n  const same = r === 5 && s.a === 6 && s.inner.b === 15 && s.inner.c === 1.25 && s.d === 5000 && s.p === ptrOf(80);\n  const b = new Out<bool>(false);\n  // SAFETY: `b` is the bool it sets.\n  unsafe { out_bool(b) };\n  return [`out_struct ${same}`, `out_flag ${truth(s.flag)}`, `out_bool ${truth(b.value)}`];\n}\n\n");
     v.push_str("export function nullField(): i64 {\n  // SAFETY: by value; C leaves `p` NULL.\n  return unsafe { null_ptr() }.n;\n}\n\n");
@@ -338,7 +354,7 @@ fn expected() -> String {
         }
     }
     out.push_str(
-        "late_int 1\nlate_sse 1\nbig_after true\nlate_small_sse 1\nlate_small_int 1\nlate_f3 1\nlate_hfa 1\nlate_pair 1\nlate_f3_float 1\nlate_big 1\nout_struct true\nout_flag true false true\nout_bool true false true\nref_check 1\nref_poke 99 6\nref_maybe 6 0\n",
+        "late_int 1\nlate_sse 1\nbig_after true\nlate_small_sse 1\nlate_small_int 1\nlate_f3 1\nlate_hfa 1\nlate_pair 1\nlate_f3_float 1\nlate_big 1\nout_struct true\nout_flag true false true\nout_bool true false true\nref_check 1\nref_poke 99 6\nref_maybe 6 0\nref_alias 1 1 0\nref_var 36\n",
     );
     out
 }

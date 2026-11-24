@@ -330,17 +330,38 @@ pub(crate) fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
 /// (`StrBytes`, imported) or through a namespace (`ffi.StrBytes`)? A look-alike alias of
 /// `string` does not.
 /// Whether the written type `t` (in `module`) is velt/ffi's `Ref<S>` (`Some(false)`) or
-/// `Ref<S> | null` (`Some(true)`), named as `StrBytes` is ([`is_str_bytes`]).
+/// `Ref<S> | null` (`Some(true)`), named as `StrBytes` is ([`is_str_bytes`]), or through a type
+/// alias of one: an alias of `Ref<S>` resolves to `S`, which would otherwise cross by value.
 fn written_ref(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<bool> {
+    written_ref_in(cx, module, t, 0)
+}
+
+/// [`written_ref`], `depth` aliases deep.
+fn written_ref_in(cx: &Ctx, module: usize, t: &ast::TypeExpr, depth: u32) -> Option<bool> {
+    // An alias cycle is reported where it is expanded; this only stops following it.
+    if depth > 32 {
+        return None;
+    }
     match &t.kind {
-        ast::TypeExprKind::Named { path, args } if args.len() == 1 => {
-            names_ffi_item(cx, module, path, ("Ref", REF_MODULE)).then_some(false)
+        ast::TypeExprKind::Named { path, args } => {
+            if args.len() == 1 && names_ffi_item(cx, module, path, ("Ref", REF_MODULE)) {
+                return Some(false);
+            }
+            // A program's alias (`type SmallRef = Ref<small>`): what it is written as.
+            match path_item(cx, module, path) {
+                Some(crate::ctx::Item::Alias(a)) => {
+                    let alias = &cx.aliases[a as usize];
+                    let std = cx.modules[alias.module].is_std;
+                    (!std).then(|| written_ref_in(cx, alias.module, &alias.decl.ty, depth + 1))?
+                }
+                _ => None,
+            }
         }
         // Exactly `Ref<S> | null`, in either order: any other union isn't a `Ref`, and is
         // checked as the type it is.
         ast::TypeExprKind::Union(parts) => match parts.as_slice() {
             [a, b] | [b, a]
-                if written_ref(cx, module, a) == Some(false)
+                if written_ref_in(cx, module, a, depth + 1) == Some(false)
                     && matches!(b.kind, ast::TypeExprKind::Null) =>
             {
                 Some(true)
@@ -408,17 +429,8 @@ fn names_ffi_item(
     path: &[ast::Ident],
     (alias_name, defining): (&str, &str),
 ) -> bool {
-    let item = match path {
-        [n] => cx.scopes[module].items.get(&n.name).copied(),
-        // `ffi.StrBytes`: what the namespace's module exports under the name.
-        [ns, n] => match cx.scopes[module].namespaces.get(&ns.name) {
-            Some(&m) => super::exports::export_of(cx, m, &n.name),
-            None => return false,
-        },
-        _ => return false,
-    };
     // By the alias's own declaration, so a renamed import (`StrBytes as SB`) is it too.
-    match item {
+    match path_item(cx, module, path) {
         Some(crate::ctx::Item::Alias(a)) => {
             let alias = &cx.aliases[a as usize];
             let m = alias.module;
@@ -427,6 +439,19 @@ fn names_ffi_item(
                 && cx.modules[m].path == defining
         }
         _ => false,
+    }
+}
+
+/// The item `path` (written in `module`) names: a name in scope, or one a namespace's module
+/// exports (`ffi.StrBytes`).
+fn path_item(cx: &Ctx, module: usize, path: &[ast::Ident]) -> Option<crate::ctx::Item> {
+    match path {
+        [n] => cx.scopes[module].items.get(&n.name).copied(),
+        [ns, n] => {
+            let m = *cx.scopes[module].namespaces.get(&ns.name)?;
+            super::exports::export_of(cx, m, &n.name)
+        }
+        _ => None,
     }
 }
 

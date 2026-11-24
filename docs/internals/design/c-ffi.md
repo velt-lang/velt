@@ -190,8 +190,10 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   takes a `string`. The call copies it and C gets the copy's address (`CTy::Ref`), borrowed for
   the call: C must not keep the pointer (the `unsafe` block's promise), and what C does to the
   copy, `const` cast away, never reaches the caller's value. `Ref<S> | null` passes `NULL` for
-  `null`. A `Ref` of anything else, and a C function returning one, are errors at the
-  declaration. Elsewhere `Ref<S>` is just `S`, as `StrBytes` is `string`.
+  `null`. It is recognized through type aliases too (`type R = Ref<S>`, which resolves to `S`
+  and would otherwise cross by value). A `Ref` of anything else, and a C function returning
+  one, are errors at the declaration. Elsewhere `Ref<S>` is just `S`, as `StrBytes` is
+  `string`.
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
@@ -516,7 +518,7 @@ native: {
   | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`; `Out<S>` of a C struct is `S *`, by the definition it names) |
   | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
   | written arrays, `Out<T>` | non-const `T *` only |
-  | `Ref<S>` | `const S *` only, `S` by the definition it names (a non-const one C may write through is `Out<S>` or `Ptr<S>`) |
+  | `Ref<S>` | `const S *` only, `S` by the definition it names (a non-const one C may write through is `Out<S>` or `Ptr<S>`; stricter than read-only arrays, which accept a non-const `T *` because many APIs omit `const` on buffers: a struct pointer without `const` usually means C writes it, and `Ptr<S>` stays for the APIs that only forgot it) |
   | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
 
   A function whose type has a calling convention other than the target's C one (`vectorcall`,
