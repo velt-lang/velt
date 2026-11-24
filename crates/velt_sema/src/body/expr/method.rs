@@ -184,6 +184,9 @@ impl FnCx<'_, '_> {
             .first()
             .map(|&k| candidates[k].clone())?;
         let m = self.cx.extensions[i].methods.get(name).copied()?;
+        if matches!(self.cx.ty.kind(recv), TyKind::Simd(_)) {
+            self.cx.ext_lookup.vector_calls.insert((i, recv));
+        }
         let slots = self.own_generic_slots(m.def, &owner);
         Some(Resolved::Def {
             def: m.def,
@@ -253,16 +256,16 @@ impl FnCx<'_, '_> {
     fn applicable_extensions(&mut self, recv: TyId, name: &str) -> Vec<(usize, Vec<TyId>)> {
         let mut out = vec![];
         let n = self.cx.extensions.len();
-        if self.cx.extension_names.0 != n {
+        if self.cx.ext_lookup.names.0 != n {
             let mut names: rustc_hash::FxHashMap<String, Vec<usize>> = Default::default();
             for (i, x) in self.cx.extensions.iter().enumerate() {
                 for k in x.methods.keys() {
                     names.entry(k.clone()).or_default().push(i);
                 }
             }
-            self.cx.extension_names = (n, names);
+            self.cx.ext_lookup.names = (n, names);
         }
-        let Some(found) = self.cx.extension_names.1.get(name) else {
+        let Some(found) = self.cx.ext_lookup.names.1.get(name) else {
             return out;
         };
         for i in found.clone() {

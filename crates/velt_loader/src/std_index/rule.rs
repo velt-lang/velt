@@ -11,8 +11,9 @@
 //!   and not an alias either (`export type i8x16 = i8x16;` re-exports a built-in vector type);
 //!   or a built-in vector or mask type (`extend u8x16 { … }`, velt/simd) in a block without type
 //!   parameters or `implements`. Such a block only adds methods to a type no module declares,
-//!   which code checked before it cannot have called; the checker makes sure none of them
-//!   shadows a method that type already has (`velt_sema` `collect::vector_extends`).
+//!   which code checked before it cannot have called; where it would take over a call made
+//!   through an earlier block, the checker refuses it after all (`velt_sema`
+//!   `collect::vector_extends`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -261,7 +262,8 @@ fn push_once(violations: &mut Vec<Violation>, v: Violation) {
 
 /// Whether `e` (extending `ty`) only adds methods to a built-in vector or mask type: no type
 /// parameters, no `implements`, and `ty` one of those types' names (module docs). The checker
-/// makes sure the methods shadow none the type already has (`velt_sema` `collect::vector_extends`).
+/// refuses it after all where it would take over a call already checked (`velt_sema`
+/// `collect::vector_extends`).
 fn adds_to_vector_type(e: &ast::ExtendDecl, ty: &str) -> bool {
     e.generics.is_empty() && e.implements.is_empty() && velt_sema::hir::SimdTy::named(ty).is_some()
 }

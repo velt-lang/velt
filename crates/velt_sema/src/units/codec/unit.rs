@@ -121,7 +121,7 @@ unit_fields! {
         thread_local_uses, throw_checks, loop_roots, closure_defs, rec,
     ],
     memo: [
-        marked_aliases, extension_names, impl_index, ext_memo, ext_exists_memo, ext_memo_impls,
+        marked_aliases, ext_lookup, impl_index, ext_memo, ext_exists_memo, ext_memo_impls,
         canon_memo, canon_errors, canon_keys, primitive_statics, classes_below, groups,
         shared_memo, pure_fns, subclasses, native_libraries,
         decorator_scopes, export_memo,

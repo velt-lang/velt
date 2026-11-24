@@ -1,9 +1,8 @@
 //! A std module added in the middle of the check may add methods to a built-in vector type
-//! (velt_loader's (a1) rule, velt/simd's `extend u8x16 { … }`, #3634), but not one the type
-//! already has: a call checked before it would change (velt_sema `collect::vector_extends`). On a
-//! copy of std whose on-demand integer power hook (std/lang/hooks/pow_int.velt, demanded by `**`
-//! on integers) gets an `extend i8x16` block: with a new method the program builds with one
-//! check; with velt/simd's own `sum` it is an internal error.
+//! (velt_loader's (a1) rule, velt/simd's `extend u8x16 { … }`, #3634). Where one would take over a
+//! call checked before it (velt_sema `collect::vector_extends`), the module is refused and the
+//! program checked again with it up front, as for a module the rule refuses; a clash no checked
+//! call went through changes nothing and is served in place.
 
 use std::path::Path;
 
@@ -74,16 +73,55 @@ fn a_mid_check_vector_method_may_not_shadow_one() {
     assert!(ok, "{err}");
     assert_eq!(checks, 1, "{err}");
 
-    // velt/simd's own `sum`: the program's `v.sum()` was checked against it before.
+    // velt/simd's own `sum`: the program's `v.sum()` was checked against velt/simd's block, which
+    // the new one would take over. Refused, checked again with it up front, where the two
+    // equally specific blocks are ambiguous at the call, as when both load up front.
     std::fs::write(
         &hook,
         format!("{original}\nextend i8x16 {{\n  sum(): i8 {{\n    return 0;\n  }}\n}}\n"),
     )
     .unwrap();
-    let (ok, err, _) = build(root, &std);
-    assert!(!ok, "a shadowing method was accepted");
+    let (ok, err, checks) = build(root, &std);
+    assert!(!ok, "a second `sum` of `i8x16` was accepted");
+    assert!(!err.contains("ICE"), "{err}");
     assert!(
-        err.contains("ICE: a std module added during the check gives `i8x16` a method `sum`"),
+        err.contains("ambiguous extension method `sum` on `i8x16`"),
         "{err}"
     );
+    assert_eq!(checks, 2, "checked again with the module up front: {err}");
+}
+
+/// A program's blanket `extend` whose method shares a name with one of velt/simd's (#3696's
+/// review): velt/simd's block for the vector type is the more specific one, and no call on a
+/// vector went through the program's block before velt/simd arrived, so the program builds with
+/// one check and runs as on main, with or without `implements`.
+#[test]
+fn a_blanket_extend_of_the_programs_meets_velt_simd_in_the_middle_of_the_check() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let programs = [
+        (
+            "listen",
+            "import { listenTls } from \"velt/net\";\n\nextend<T> T {\n  max(): string {\n    return \"blanket\";\n  }\n}\n\nasync function main() {\n  const n: i64 = 3;\n  console.log(n.max());\n  try {\n    const s = await listenTls(\"127.0.0.1:0\", { cert: \"c\", key: \"k\" });\n    console.log(s != null);\n  } catch (e) {\n    console.log(\"failed\");\n  }\n}\n",
+        ),
+        (
+            "connect",
+            "import { connectTls } from \"velt/net\";\n\ninterface I {\n  sum(): string;\n}\n\nextend<T> T implements I {\n  sum(): string {\n    return \"blanket\";\n  }\n}\n\nasync function main() {\n  const n: i64 = 3;\n  console.log(n.sum());\n  try {\n    const s = await connectTls(\"127.0.0.1:9\");\n    console.log(s != null);\n  } catch (e) {\n    console.log(\"failed\");\n  }\n}\n",
+        ),
+    ];
+    for (name, src) in programs {
+        std::fs::write(root.join("main.velt"), src).unwrap();
+        let (ok, err, checks) = build(root, &real);
+        assert!(ok, "{name}: {err}");
+        assert_eq!(checks, 1, "{name}: {err}");
+        let out = no_window::command(root.join("main.bin").to_str().unwrap())
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "blanket\nfailed\n",
+            "{name}"
+        );
+    }
 }

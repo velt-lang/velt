@@ -157,9 +157,11 @@ program that only connects never loads the server's handshake. velt/simd's `exte
 built-in vector types, which the record layer and the crypto use, may be added in the middle of a
 check too: the rule allows an `extend` of a built-in vector or mask type without type parameters
 or `implements`, which only adds methods to a type no module declares. Code checked before it
-cannot have called those methods, unless the type had one of the same name already, which a
-more specific block would now take over; the checker reports that as an internal error
-(`crates/velt_sema/src/collect/vector_extends.rs`). So every program that reaches TLS, through a
+cannot have called those methods. It could change such code only by taking over a call it made
+on the vector type through an earlier block with a method of the same name (a program's blanket
+`extend<T> T`, say): the checker records those calls, and where one would change it refuses the
+module, so the program is checked again with it up front, as for a module the rule refuses
+(`crates/velt_sema/src/collect/vector_extends.rs`, `StdLoads::refuse_served`). So every program that reaches TLS, through a
 `fetch` that can reach `https:` (every `fetch` that follows redirects), `connectTls` or
 `listenTls`, is checked once, with the TLS code added in the middle of the check.
 
