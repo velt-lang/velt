@@ -62,27 +62,32 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
-    /// `out` = the zero sign of the `f64` `x` (`1`, `-1` or left `0`), on to `done`.
+    /// `out` = the zero sign of the `f64` `x` (`1`, `-1` or left `0`), on to `done`. The bits
+    /// without the sign bit are tested first, so one compare rules out every number but a zero;
+    /// a second then tells `0` (no bit set) from `-0` (the sign bit).
     fn zero_sign_into(&mut self, x: Operand, out: &Place, done: crate::vir::BlockId) {
         let bits = self.float_bits(x, Ty::F64);
         let bits = Place::local(self.copy_to_temp(bits, Ty::U64));
+        let magnitude = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Shl, Operand::Copy(bits.clone()), cint(1, Ty::U64)),
+        );
+        let zero = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, magnitude, cint(0, Ty::U64)),
+        );
+        let is_zero = self.new_block();
+        self.branch(zero, is_zero, done);
+        self.switch_to(is_zero);
         let pos = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(bits.clone()), cint(0, Ty::U64)),
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(bits), cint(0, Ty::U64)),
         );
-        let (p, not_p) = (self.new_block(), self.new_block());
-        self.branch(pos, p, not_p);
+        let (p, n) = (self.new_block(), self.new_block());
+        self.branch(pos, p, n);
         self.switch_to(p);
         self.assign(out.clone(), Rvalue::Use(cint(1, Ty::I32)));
         self.goto(done);
-        self.switch_to(not_p);
-        let sign = cint(1i128 << 63, Ty::U64);
-        let neg = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(bits), sign),
-        );
-        let n = self.new_block();
-        self.branch(neg, n, done);
         self.switch_to(n);
         self.assign(out.clone(), Rvalue::Use(cint(-1, Ty::I32)));
         self.goto(done);
