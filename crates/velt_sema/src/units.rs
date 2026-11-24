@@ -22,6 +22,7 @@ pub(crate) mod codec;
 pub(crate) mod disk;
 pub(crate) mod modes;
 pub(crate) mod raised;
+pub(crate) mod std_calls;
 
 use crate::ctx::Ctx;
 
