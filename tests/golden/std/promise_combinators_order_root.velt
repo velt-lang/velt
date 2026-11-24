@@ -31,6 +31,42 @@ async function dies(name: string, turns: number): Promise<number> {
   throw new Error(`${name} died after ${turns}`);
 }
 
+/** Yields once, then queues a microtask that logs: it runs before the next yield's turn. */
+async function yieldsThenQueues(name: string): Promise<number> {
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  Promise.resolve(1).then(() => say(`${name}'s microtask`));
+  return 1;
+}
+
+/** Yields once `gate` opened: after a sibling later in the array that opens it yielded. */
+async function yieldsAfter(name: string, gate: Promise<void>): Promise<number> {
+  await gate;
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  return 1;
+}
+
+/** Opens a gate (`open`), then yields once. */
+async function opensThenYields(name: string, open: () => void): Promise<number> {
+  open();
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  return 1;
+}
+
+/** Starts a promise that yields, then yields itself: the started one's turn comes first. */
+async function startsThenYields(name: string): Promise<number> {
+  const p = yields(`${name}'s p`, 1);
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  return 1 + (await p);
+}
+
 /** Resumes from a microtask (after its caller went on), then yields once. */
 async function yieldsLate(name: string): Promise<void> {
   await null;
@@ -172,6 +208,30 @@ async function main() {
   await listed;
   await later;
   flush("the root's yield between a listed and a later yield");
+
+  // Children that yielded once each go on in the order they yielded; a microtask one of them
+  // queues at its turn runs before the next child's turn.
+  const q1 = await Promise.all([yieldsThenQueues("a"), yields("b", 1), yields("c", 1)]);
+  say(`all: ${q1.join(",")}`);
+  flush("all, the first child's turn queues a microtask");
+  const q2 = await Promise.all([yields("a", 1), yieldsThenQueues("b"), yields("c", 1)]);
+  say(`all: ${q2.join(",")}`);
+  flush("all, the second child's turn queues a microtask");
+
+  // The first child in the array yields after the second (which opens its gate): their turns
+  // come in the order they yielded.
+  let open = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  const g = await Promise.all([yieldsAfter("a", gate), opensThenYields("b", () => open())]);
+  say(`all: ${g.join(",")}`);
+  flush("all, the first child yields after the second");
+
+  // A promise a child starts yields between two children's yields: its turn comes between theirs.
+  const sb = await Promise.all([yields("a", 1), startsThenYields("b"), yields("c", 1)]);
+  say(`all: ${sb.join(",")}`);
+  flush("all, a started promise yields between two children");
 
   // Last: after `main`'s root awaited a settled promise, or a `Promise.any` that rejected, the
   // children of its inline alls still take their turns in order (#3611, #3687).

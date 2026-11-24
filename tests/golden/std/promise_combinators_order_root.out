@@ -98,6 +98,40 @@ l yield 1
 root after its yield
 m done
 l done
+-- all, the first child's turn queues a microtask
+a yield 0
+b yield 0
+c yield 0
+a done
+a's microtask
+b done
+c done
+all: 1,1,1
+-- all, the second child's turn queues a microtask
+a yield 0
+b yield 0
+c yield 0
+a done
+b done
+b's microtask
+c done
+all: 1,1,1
+-- all, the first child yields after the second
+b yield 0
+a yield 0
+b done
+a done
+all: 1,1
+-- all, a started promise yields between two children
+a yield 0
+b's p yield 0
+b yield 0
+c yield 0
+a done
+b's p done
+b done
+c done
+all: 1,2,1
 -- all, after a settled await (adopted)
 t yield 0
 u yield 0
