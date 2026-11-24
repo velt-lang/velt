@@ -1,0 +1,419 @@
+// velt/lang/hooks (internal): reads the one-line text `console.log`'s printer wrote for a value
+// and decides how Node's `util.inspect` breaks it, in one pass. The printer's text is regular: a
+// container opens with `{ ` or `[ ` (after a prefix such as `Name `, `Map(2) ` or `<ref *1> `),
+// separates entries with `, ` and closes with ` }` or ` ]`; strings are quoted with their quotes
+// escaped, and other bracketed atoms (`[Circular *1]`, `[Function (anonymous)]`) have no space
+// after `[`. Text a custom inspect wrote (an atom) is plain text, whatever it looks like.
+//
+// A container's layout depends only on its entries as laid out and on its indentation, both known
+// when its closing brace is read, so each is decided there (Node's `reduceToSingleString`,
+// `isBelowBreakLength`, `groupArrayElements`: inspect_layout_container.velt) and written down in
+// preorder; a long string is split where it is read (inspect_layout_string.velt).
+// inspect_layout_render.velt then writes the text. Lengths are measured as byte counts, which they
+// are in printable ASCII; text with any other byte is read again, measured exactly (UTF-16 units,
+// display columns, line breaks).
+
+import { BREAK_LENGTH } from "velt/lang/hooks/inspect_layout_columns";
+import {
+  closeContainer,
+  Layout,
+  N_CLOSE_END,
+  N_MODE,
+  N_OPEN,
+  N_UNITS,
+  N_WIDTH,
+  NODE_WORDS,
+  ONE_LINE,
+} from "velt/lang/hooks/inspect_layout_container";
+import { isMoreAt, isNumberAt } from "velt/lang/hooks/inspect_layout_pieces";
+import { splitString } from "velt/lang/hooks/inspect_layout_string";
+import { displayWidth, utf16Units } from "velt/lang/hooks/inspect_layout_width";
+import {
+  addressLoad,
+  arrayTruncate,
+  share,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+
+/** How an entry ended: at the end of the text, at `, `, or at its container's close. */
+const END_EOF: i64 = 0;
+const END_COMMA: i64 = 1;
+const END_CLOSE: i64 = 2;
+const END_FAIL: i64 = -1;
+
+/**
+ * Reads bytes `start..end` of `src` and lays it out, keeping each of `atoms` (pairs of byte offsets
+ * in `src`, custom inspect text) as plain text; null if the text does not have the printer's shape
+ * (it is then printed as it is).
+ */
+export function parseLayout(src: string, start: u64, end: u64, atoms: u64[]): Layout | null {
+  // The scanner reads the bytes through one address: `src`, this function's parameter, keeps
+  // them there, unchanged, while it runs.
+  const data = strDataAddress(src);
+  if (end <= start) {
+    return null;
+  }
+  let l: Layout | null = new Layout(share(src), data, start, end, atoms, false);
+  if (entry(l!, -1, 0) != END_EOF) {
+    return null;
+  }
+  if (!l!.unplain) {
+    return l;
+  }
+  // Read again, measured exactly; the first reading is given back first.
+  l = null;
+  const exact = new Layout(share(src), data, start, end, atoms, true);
+  if (entry(exact, -1, 0) != END_EOF) {
+    return null;
+  }
+  return exact;
+}
+
+/**
+ * The bytes below 0x80 the scanner stops at, as two masks (bit `b` for byte `b`, then bit `b - 64`):
+ * ` ,:<'"\`{[()`, and the control characters, which (with the bytes past ASCII) make the text not
+ * plain. Everything else is plain text.
+ */
+const SPECIAL_LOW: u64 = 0x14001385ffffffff;
+const SPECIAL_HIGH: u64 = 0x8800000108000000;
+
+/** Is `b` a byte the scanner stops at? */
+function special(b: u8): bool {
+  if (b >= 0x80) {
+    return true;
+  }
+  const bit = b as u64;
+  return ((bit < 64 ? SPECIAL_LOW >> bit : SPECIAL_HIGH >> (bit - 64)) & 1) != 0;
+}
+
+/** Is `c` outside printable ASCII? */
+function unplainByte(c: u8): bool {
+  return c < 0x20 || c >= 0x7f;
+}
+
+/** Byte `k` of the text (below `end`). */
+function byte(l: Layout, k: u64): u8 {
+  // SAFETY: `data` is the address of the text's bytes, alive and unchanged while the scanner
+  // runs (`parseLayout`), and `k` is below its end.
+  return unsafe { addressLoad<u8>(l.data + (k as usize)) };
+}
+
+/** Does the text at `k` start with `lit` (ASCII)? */
+function startsWith(l: Layout, k: u64, lit: string): bool {
+  const n = strByteLen(lit) as u64;
+  if (k + n > l.end) {
+    return false;
+  }
+  for (let j: u64 = 0; j < n; j++) {
+    if (byte(l, k + j) != strByteAt(lit, j)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The end of the atom holding byte `k`, or 0 if none does. */
+function atomEndAt(l: Layout, k: u64): u64 {
+  const a = l.atoms;
+  for (let j: u64 = 0; j + 1 < (a.length as u64); j += 2) {
+    if (a[j] <= k && k < a[j + 1]) {
+      return a[j + 1];
+    }
+  }
+  return 0;
+}
+
+function units(l: Layout, a: u64, b: u64): u64 {
+  return l.exact ? utf16Units(l.src, a, b) : b - a;
+}
+
+function width(l: Layout, a: u64, b: u64): u64 {
+  return l.exact ? displayWidth(l.src, a, b) : b - a;
+}
+
+/** Raw line breaks in bytes `a..b` (atoms' only); none outside exact measuring. */
+function breaks(l: Layout, a: u64, b: u64): u64 {
+  if (!l.exact) {
+    return 0;
+  }
+  let n: u64 = 0;
+  for (let j = a; j < b; j++) {
+    if (byte(l, j) == 0x0a) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/**
+ * One entry, its values at indentation `indent`, up to `, ` or the closing ` }` / ` ]` of its
+ * container (`close`), or to the end of the text for the top-level value (`close` -1). Leaves
+ * it in the `e*` fields; returns how it ended, `END_FAIL` if the text is not the printer's.
+ */
+function entry(l: Layout, close: i64, indent: u64): i64 {
+  const start = l.i;
+  // Where the current value starts (after a key, ` => ` or `<rejected> `).
+  let value = l.i;
+  let parens: u64 = 0;
+  let how = END_FAIL;
+  // What the containers and split strings in it add to its one-line length.
+  let addUnits: u64 = 0;
+  let addWidth: u64 = 0;
+  let lines = false;
+  let onlyText = true;
+  let innerBreaks: u64 = 0;
+  while (true) {
+    while (l.i < l.end && !special(byte(l, l.i))) {
+      l.i += 1;
+    }
+    const i = l.i;
+    if (l.atoms.length != 0) {
+      const atomEnd = atomEndAt(l, i);
+      if (atomEnd != 0) {
+        // Custom inspect text: plain text, whatever it looks like.
+        for (let j = i; j < atomEnd; j++) {
+          l.unplain = l.unplain || unplainByte(byte(l, j));
+        }
+        l.i = atomEnd;
+        continue;
+      }
+    }
+    if (i >= l.end) {
+      if (close >= 0 || parens > 0) {
+        return END_FAIL;
+      }
+      how = END_EOF;
+      break;
+    }
+    const c = byte(l, i);
+    const next = (i + 1 < l.end ? byte(l, i + 1) : 0) as i64;
+    const separates = parens == 0 && close >= 0;
+    if (c == 0x20 && separates && next == close) {
+      l.i += 2;
+      how = END_CLOSE;
+      break;
+    } else if (c == 0x20 && startsWith(l, i, " => ")) {
+      l.i += 4;
+      value = l.i;
+    } else if (c == 0x2c && separates && next == 0x20) {
+      l.i += 2;
+      how = END_COMMA;
+      break;
+    } else if (c == 0x3a && next == 0x20) {
+      l.i += 2;
+      value = l.i;
+    } else if (c == 0x3c && startsWith(l, i, "<rejected> ")) {
+      l.i += 11;
+      value = l.i;
+    } else if (c == 0x27 || c == 0x22 || c == 0x60) {
+      if (!skipQuoted(l)) {
+        return END_FAIL;
+      }
+      if (!startsWith(l, l.i, ": ")) {
+        // A string value (a quoted key stays in the text): split when it is long and has a line
+        // break. Its units are at most its bytes: most strings are ruled out without reading.
+        onlyText = false;
+        const b = l.i;
+        if (b - i > 18 && b - i + indent + 4 > BREAK_LENGTH) {
+          const s = splitString(l.src, i, b, indent);
+          const n = strByteLen(s) as u64;
+          if (n != 0) {
+            addUnits += utf16Units(s, 0, n) - units(l, i, b);
+            addWidth += displayWidth(s, 0, n) - width(l, i, b);
+            lines = true;
+            l.splitAt.push(i);
+            l.splitAt.push(b);
+            l.splitText.push(s);
+            l.changed = true;
+          }
+        }
+        value = l.i;
+      }
+    } else if ((c == 0x7b || c == 0x5b) && next == 0x20) {
+      onlyText = false;
+      const n = container(l, value, indent);
+      if (n < 0) {
+        return END_FAIL;
+      }
+      const r = (n as u64) * NODE_WORDS;
+      const node = l.node;
+      const a = node[r + N_OPEN];
+      const b = node[r + N_CLOSE_END];
+      // A nested container laid out is at least as long as on one line.
+      addUnits += node[r + N_UNITS] - units(l, a, b);
+      addWidth += node[r + N_WIDTH] - width(l, a, b);
+      lines = lines || node[r + N_MODE] != ONE_LINE;
+      innerBreaks += l.nodeBreaks;
+      value = l.i;
+    } else if (c == 0x5b && next != 0x5d) {
+      if (!skipBracketed(l)) {
+        return END_FAIL;
+      }
+    } else if (c == 0x28) {
+      parens += 1;
+      l.i += 1;
+    } else if (c == 0x29) {
+      if (parens == 0) {
+        return END_FAIL;
+      }
+      parens -= 1;
+      l.i += 1;
+    } else {
+      l.unplain = l.unplain || unplainByte(c);
+      l.i += 1;
+    }
+  }
+  const end = how == END_EOF ? l.i : l.i - 2;
+  if (end <= start) {
+    return END_FAIL;
+  }
+  let units = units(l, start, end) + addUnits;
+  let width = width(l, start, end) + addWidth;
+  // Only a custom inspect's text (an atom) holds a raw line break: Node indents its lines after
+  // the first by the value's indentation.
+  const own = breaks(l, start, end) - innerBreaks;
+  if (own > 0) {
+    lines = true;
+    units += own * indent;
+    width += own * indent;
+  }
+  l.eStart = start;
+  l.eEnd = end;
+  l.eUnits = units;
+  l.eWidth = width;
+  l.eLines = lines;
+  l.eNumber = onlyText && isNumberAt(l.data, start, end);
+  l.eMore = onlyText && isMoreAt(l.data, start, end);
+  return how;
+}
+
+/**
+ * A container whose prefix starts at `open` and whose brace is at `l.i`, in an entry at
+ * indentation `indent` (its entries are 2 deeper): its record's index, or -1.
+ */
+function container(l: Layout, open: u64, indent: u64): i64 {
+  const brace = byte(l, l.i);
+  const openEnd = l.i + 1;
+  l.i += 2;
+  const close: u8 = brace == 0x7b ? 0x7d : 0x5d;
+  const index = (l.node.length as u64) / NODE_WORDS;
+  for (let k: u64 = 0; k < NODE_WORDS; k++) {
+    l.node.push(0);
+  }
+  const base = l.pend.length as u64;
+  const plainAtoms = l.atoms.length == 0;
+  while (true) {
+    // Most entries are plain text alone (a number, `true`, `null`), up to `, ` or the close:
+    // taken here without the general reader. Such bytes are printable ASCII, measured as bytes.
+    let j = l.i;
+    while (j < l.end && !special(byte(l, j))) {
+      j += 1;
+    }
+    if (plainAtoms && j > l.i && j + 1 < l.end) {
+      const c = byte(l, j);
+      const nx = byte(l, j + 1);
+      if ((c == 0x2c && nx == 0x20) || (c == 0x20 && nx == close)) {
+        const start = l.i;
+        l.pend.push(start);
+        l.pend.push(j);
+        l.pend.push(j - start);
+        l.pend.push(j - start);
+        l.pend.push(isNumberAt(l.data, start, j) ? 2 : 0);
+        l.i = j + 2;
+        if (c == 0x20) {
+          break;
+        }
+        continue;
+      }
+    }
+    const how = entry(l, close as i64, indent + 2);
+    if (how == END_FAIL) {
+      return -1;
+    }
+    l.pend.push(l.eStart);
+    l.pend.push(l.eEnd);
+    l.pend.push(l.eWidth);
+    l.pend.push(l.eUnits);
+    l.pend.push((l.eLines ? 1 : 0) | (l.eNumber ? 2 : 0) | (l.eMore ? 4 : 0));
+    if (how == END_CLOSE) {
+      break;
+    }
+  }
+  const closeEnd = l.i;
+  closeContainer(
+    l,
+    base,
+    index,
+    open,
+    openEnd,
+    closeEnd,
+    indent,
+    openLen(l, open, openEnd),
+    units(l, open, openEnd),
+    width(l, open, openEnd),
+    units(l, open, closeEnd),
+    width(l, open, closeEnd),
+    close == 0x5d,
+  );
+  l.nodeBreaks = breaks(l, open, closeEnd);
+  arrayTruncate(l.pend, base as usize);
+  return index as i64;
+}
+
+/** Node's `braces[0].length + base.length`: the opening text without the space of a base. */
+function openLen(l: Layout, open: u64, openEnd: u64): u64 {
+  // A custom inspect's `Name ` before the brace (`Headers {`): Node formats the object after it
+  // by itself, where only the brace counts.
+  const braceAt = openEnd - 1;
+  const a = l.atoms;
+  for (let j: u64 = 0; j + 1 < (a.length as u64); j += 2) {
+    if (a[j + 1] == braceAt && a[j] >= open) {
+      return 1;
+    }
+  }
+  const base: u64 = startsWith(l, open, "<ref *") ? 1 : 0;
+  return units(l, open, openEnd) - base;
+}
+
+/** Skips the quoted string at `l.i` (a backslash escapes the next byte); false if open. */
+function skipQuoted(l: Layout): bool {
+  const quote = byte(l, l.i);
+  let j = l.i + 1;
+  while (true) {
+    if (j >= l.end) {
+      return false;
+    }
+    const c = byte(l, j);
+    if (c == 0x5c) {
+      j += 2;
+    } else if (c == quote) {
+      break;
+    } else {
+      l.unplain = l.unplain || unplainByte(c);
+      j += 1;
+    }
+  }
+  l.i = j + 1;
+  return true;
+}
+
+/** Skips the bracketed atom at `l.i` (`[Circular *1]`), nested brackets included. */
+function skipBracketed(l: Layout): bool {
+  let depth: u64 = 0;
+  for (let j = l.i; j < l.end; j++) {
+    const c = byte(l, j);
+    l.unplain = l.unplain || unplainByte(c);
+    if (c == 0x5b) {
+      depth += 1;
+    } else if (c == 0x5d) {
+      depth -= 1;
+      if (depth == 0) {
+        l.i = j + 1;
+        return true;
+      }
+    }
+  }
+  return false;
+}
