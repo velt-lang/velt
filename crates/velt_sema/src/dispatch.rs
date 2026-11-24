@@ -54,7 +54,7 @@ impl Dispatch {
     /// The vtable entries and interface implementations of `Adt(d, args)` and its base classes.
     fn adt_targets(&mut self, cx: &mut Ctx, d: DefId, args: Vec<TyId>, out: &mut Vec<Target>) {
         let chain = class_chain(cx, d, args);
-        let Some(vtable) = cx.adt(d).map(|a| a.vtable.clone()) else {
+        let Some(vtable) = cx.vtable_of(d).map(<[DefId]>::to_vec) else {
             return;
         };
         self.work += vtable.len() as u64;

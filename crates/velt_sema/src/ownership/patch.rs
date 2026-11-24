@@ -235,7 +235,7 @@ pub(super) fn call_target(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Option<Ta
         Callee::Def(d, _) => Some(Target::Fn(*d)),
         Callee::Virtual { slot } => {
             let (class, _) = cx.class_of(args.first()?.ty)?;
-            let m = *cx.adt(class)?.vtable.get(*slot as usize)?;
+            let m = *cx.vtable_of(class)?.get(*slot as usize)?;
             Some(Target::Fn(m))
         }
         Callee::Dyn { slot, .. } => match cx.ty.kind(args.first()?.ty) {

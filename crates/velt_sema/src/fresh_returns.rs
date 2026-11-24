@@ -325,8 +325,8 @@ fn slot_methods(cx: &Ctx, class: DefId, slot: u32) -> Vec<DefId> {
             continue;
         }
         if let Some(&m) = cx
-            .adt(DefId(i as u32))
-            .and_then(|a| a.vtable.get(slot as usize))
+            .vtable_of(DefId(i as u32))
+            .and_then(|v| v.get(slot as usize))
         {
             if seen.insert(m) {
                 out.push(m);
