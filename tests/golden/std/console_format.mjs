@@ -286,6 +286,35 @@ jsonOf(3);
 const mixed = [new Set([1]), 2];
 console.log("%j|%j", mixed, new Map([["a", 1]]));
 
+// `%j` calls a `toJSON()` once, also one that returns its own object, and sees what it returns
+class SelfJ {
+  constructor() {
+    this.v = 1;
+  }
+  toJSON() {
+    return this;
+  }
+}
+class SelfJSet {
+  constructor() {
+    this.s = new Set([1]);
+  }
+  toJSON() {
+    return this;
+  }
+}
+class CycJ {
+  toJSON() {
+    const l = new Link();
+    l.next = l;
+    return l;
+  }
+}
+const anySelfSet = new SelfJSet();
+const anyPair = [new Set([1]), new SelfJ()];
+const anyCyc = new CycJ();
+console.log("%j|%j|%j|%j", anySelfSet, anyPair, anyCyc, new SelfJ());
+
 // non-ASCII
 console.log("é%sü → %d€", "ñ", 3);
 console.log("日本%s語", "の");
