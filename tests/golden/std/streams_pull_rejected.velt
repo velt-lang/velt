@@ -1,0 +1,90 @@
+// check: no leaks
+// A stream's `pull`, `start` or `cancel` whose promise is rejected from a `then` callback
+// errors the stream, as in Node, instead of ending the process (#3644): such a promise is a
+// `Promise<never, Error>`, which converts to the `Promise<void, unknown>` the callback types
+// take, as TypeScript lets a `Promise<never>` stand for any promise. The Node twin is
+// streams_pull_rejected.mjs.
+class Box {
+  v: number = 1;
+}
+
+function untyped(): any {
+  return undefined;
+}
+
+function rejects(): Promise<never, Error> {
+  return Promise.reject(new Error("never widened"));
+}
+
+async function main(): Promise<void> {
+  const s = new ReadableStream<number>({
+    pull: (c) =>
+      Promise.resolve().then(() => {
+        throw new Error("pull boom");
+      }),
+  });
+  try {
+    await s.getReader().read();
+  } catch (e) {
+    console.log("pull caught " + (e as Error).message);
+  }
+
+  const t = new ReadableStream<number>({
+    start: (c) =>
+      Promise.resolve().then(() => {
+        throw new Error("start boom");
+      }),
+  });
+  try {
+    await t.getReader().read();
+  } catch (e) {
+    console.log("start caught " + (e as Error).message);
+  }
+
+  const u = new ReadableStream<number>({
+    pull: (c) => {
+      c.enqueue(1);
+    },
+    cancel: (r) =>
+      Promise.resolve().then(() => {
+        throw new Error("cancel boom");
+      }),
+  });
+  try {
+    await u.cancel("why");
+    console.log("cancel resolved");
+  } catch (e) {
+    console.log("cancel caught " + (e as Error).message);
+  }
+
+  // The conversion itself: a promise that only rejects, as a promise of another value type.
+  const p: Promise<void, unknown> = Promise.resolve().then(() => {
+    throw new Error("void");
+  });
+  const q: Promise<number, unknown> = Promise.reject(new Error("number"));
+  const w: Promise<void> = Promise.resolve().then(() => {
+    throw new Error("void, its error inferred");
+  });
+  // A promise of no value widened to promises of other value types.
+  const n: Promise<number, unknown> = rejects();
+  const t2: Promise<string, unknown> = rejects();
+  const b: Promise<Box, unknown> = rejects();
+  for (const x of [p, q, w, n, t2, b] as Promise<unknown, unknown>[]) {
+    try {
+      await x;
+    } catch (e) {
+      console.log("awaited " + (e as Error).message);
+    }
+  }
+
+  // An `any` result of a `start` is no promise: the callback is a plain one, as in Node.
+  const v = new ReadableStream<number>({
+    pull: (c) => {
+      c.enqueue(1);
+    },
+    start: (c) => untyped(),
+  });
+  console.log("any start read " + (await v.getReader().read()).value);
+}
+
+main();

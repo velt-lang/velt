@@ -1,0 +1,2 @@
+promise_never_widen_error.velt:7:31: error: mismatched types
+promise_never_widen_error.velt:11:30: error: mismatched types

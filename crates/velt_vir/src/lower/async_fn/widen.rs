@@ -1,5 +1,6 @@
 //! `Intrinsic::PromiseWiden`: a `Promise<T, E1>` used where a `Promise<T, E2>` is expected
-//! (`E2` allows every error of `E1`; `E1` may be `never`). The two have different result slots
+//! (`E2` allows every error of `E1`; `E1` may be `never`), or a `Promise<never, E1>` where a
+//! `Promise<U, E2>` is (it gives no value). The two have different result slots
 //! (`T` or `Result<T, E1>` vs `Result<T, E2>`), so the promise is boxed in a small compiled
 //! wrapper. Its state is `{ result: Result<T, E2> @0, inner: VeltFut*, polled: u8 }`; its poll
 //! polls `inner` and, once it is ready, converts the inner slot (a value becomes `Ok`, an `Err`
@@ -235,6 +236,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// The settled value `v` of type `t1` moved into `dst`, of type `t`: the same type, or
     /// `any` / `unknown`, which it is boxed into (a promise awaited through `any`).
     fn widen_value(&mut self, v: Operand, t1: TyId, t: TyId, dst: &Place) {
+        // A `Promise<never, E>` widened to another value type: it gives no value, so this branch
+        // never runs; the slot gets a zero value.
+        if matches!(self.cx.kind(t1), TyKind::Never) {
+            let vt = self.cx.ty(t);
+            let zero = self.zero_value(vt);
+            self.assign(dst.clone(), Rvalue::Use(zero));
+            return;
+        }
         if t1 == t {
             if self.cx.ty(t) != Ty::Unit {
                 self.assign(dst.clone(), Rvalue::Use(v));
