@@ -100,7 +100,7 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   last one for the terminator; empty = no information (vir.rs invariant 8, checked by `verify`).
   Helpers: `Function::loc(block, stmt)`, `term_loc(block)`, `first_loc()`.
 - `velt_vir::lower_with(&hir, &LowerOptions { source_map, std_root, .. })` fills them
-  (`LowerOptions` also holds `native_inits`, `cell_checks`, `debug_info`, `target`, `shapes`,
+  (`LowerOptions` also holds `cell_checks`, `debug_info`, `target`, `shapes`,
   `no_cpu_extensions`, `counted_seed`, `jit` and `heap_hooks`; each defaults to off; the driver
   calls `lower_checked`, the same with errors for what lowering cannot represent yet, see
   hir_encodings.md "Undefined"); `velt_vir::lower` keeps its signature and output (no locations).

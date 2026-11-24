@@ -13,6 +13,9 @@ pub(crate) const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // `bench_programs` compiles every program.
     ("bench/", &["velt_common", "velt_sema"], &["bench_programs"]),
     ("fuzz/", &["velt_fmt"], &[]),
+    // velt_http's roots test compares std's TLS trust anchors with its own (webpki-roots); a std
+    // file, so std's tests run too.
+    ("std/net/tls/x509/roots_table.velt", &["velt_http"], &[]),
     // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
     // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
     ("tests/tscompat-oracle/", &["velt_tscompat"], &["ts_compat"]),

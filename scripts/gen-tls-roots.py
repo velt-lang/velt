@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Writes std/net/tls/x509/roots_table.velt: the trust anchors of the TLS client in Velt, which
 are those of the webpki-roots crate (Mozilla's set of roots trusted for TLS servers, from the
-CCADB).
+CCADB) that velt's own HTTPS client (velt_http) uses, so that both verify against the same roots
+(crates/velt_http/tests/roots_table.rs checks it).
 
-The input is webpki-roots' src/lib.rs at the version below (from crates.io): its
-`TLS_SERVER_ROOTS` holds, for each root, the subject Name's contents, the SubjectPublicKeyInfo's
-contents and the nameConstraints' contents (or none). The script refuses a file whose SHA-256 is
-not the one pinned below; to update the roots, set the new version and hash here and run it
-again, and review the difference in the table's names.
+The input is webpki-roots' src/lib.rs at the version Cargo.lock pins: its `TLS_SERVER_ROOTS`
+holds, for each root, the subject Name's contents, the SubjectPublicKeyInfo's contents and the
+nameConstraints' contents (or none). The script refuses a file whose SHA-256 is not the one
+pinned below; to update the roots, bump webpki-roots, set the new version and hash here and run
+it again, and review the difference in the table's names.
 
     python3 scripts/gen-tls-roots.py ~/.cargo/registry/src/*/webpki-roots-1.0.9/src/lib.rs \
         > std/net/tls/x509/roots_table.velt

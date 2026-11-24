@@ -259,7 +259,7 @@ generator run.
 |---|---|---|
 | `std/encoding/json/generated.velt` | `std/encoding/json/generate/write.velt` | `writeJson`, `writeJsonTop`, `writeJsonKeyed` (`JSON.stringify`) |
 | | `std/encoding/json/generate/read.velt` | `parseJsonTop`, `readJson` (`JSON.parse<T>`, `JSON.parse(text) as T`) |
-| `std/db/generated.velt` | `std/db/generate/rows.velt`, `bind.velt` | `readRowsByColumn`, `readRowByColumn`, `bindValues`, `writeValues` |
+| `std/db/generated.velt` | `std/db/generate/rows.velt`, `bind.velt` | `readRowsByColumn`, `readRowByColumn`, `writeValues` |
 | `std/lang/equal/generated.velt` | `std/lang/equal/generate/` | `equalByContent` (`deepEqual`, `assertEq`, `Map`'s deep comparison), `equalByFields` (`toEqual`) |
 
 What each operation cannot handle is reported by its generator from the model, at the user's

@@ -246,6 +246,12 @@ impl Plan {
                     plan.goldens = Goldens::All;
                     plan.velt_fmt = true;
                     plan.vir_identity = true;
+                    // A std file a crate's own tests read (`READ_BY_TESTS`).
+                    for (prefix, packages, _) in READ_BY_TESTS {
+                        if path == *prefix || (prefix.ends_with('/') && path.starts_with(prefix)) {
+                            plan.packages.extend(packages.iter().map(|p| p.to_string()));
+                        }
+                    }
                 }
                 Effect::ReadByTests(packages, binaries) => {
                     plan.reasons.push(format!("{path}: read by tests"));

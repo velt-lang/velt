@@ -762,3 +762,10 @@ fn skipping_the_webassembly_goldens_leaves_them_out_of_the_tests_only() {
         .unwrap()
         .contains("- binary_id(veltc::wasm_goldens)"));
 }
+
+/// std's TLS trust anchors are compared with velt_http's by velt_http's tests.
+#[test]
+fn the_tls_roots_table_runs_velt_http_s_tests() {
+    let p = plan(&["std/net/tls/x509/roots_table.velt"]);
+    assert!(p.packages.contains("velt_http"), "{:?}", p.packages);
+}
