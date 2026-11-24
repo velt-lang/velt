@@ -13,15 +13,17 @@ export class BodyCell {
   read: bool = false;
   source: i64 = 0;
   text: string = "";
-  // A bytes body (null for any other), so a response without one allocates no array.
+  /** A bytes body (null for any other), so a response without one allocates no array. */
   bytes: u8[] | null = null;
   stream: BodyStream | null = null;
-  // A fetched response's head and body (also of a HEAD request's, whose source is NONE).
+  /** A fetched response's head and body (also of a HEAD request's, whose source is NONE). */
   fetched: Fetched | null = null;
-  // Chunks reading the body hold this cell too (`responseChunks`): the response's drop hook
-  // leaves the fetched body to them, and this cell's closes it when the last holder goes.
+  /**
+   * Chunks reading the body hold this cell too (`responseChunks`): the response's drop hook
+   * leaves the fetched body to them, and this cell's closes it when the last holder goes.
+   */
   shared: bool = false;
-  // A stream of the body read it to its end or was cancelled: later streams are empty.
+  /** A stream of the body read it to its end or was cancelled: later streams are empty. */
   drained: bool = false;
 
   /**
