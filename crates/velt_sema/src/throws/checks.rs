@@ -89,6 +89,18 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
 
 /// `t` with its error-set variables solved (`vars`), when the check has them.
 fn solved(cx: &mut Ctx, t: Option<TyId>) -> Option<TyId> {
+    // A check by units: std's unit keeps its traps' variables, also in the app's rounds without
+    // variables, where a whole-program check has the types its seeds give the traps' sites
+    // (`traps`).
+    if !cx.fn_sites.use_vars && cx.units_stage == crate::units::Stage::App {
+        return match t {
+            Some(t) if cx.mentions_err_var(t) => {
+                let seeded = cx.plain_seeded(t);
+                cx.canon_error(Some(seeded))
+            }
+            _ => t,
+        };
+    }
     if !cx.fn_sites.use_vars || cx.fn_sites.solved.is_empty() {
         return t;
     }
