@@ -271,6 +271,25 @@ pub const WASM_SHARDS: &[(&str, usize)] = &[
     ("macos-latest", 4),
 ];
 
+/// How many jobs run the unit and integration tests in parallel on each OS in the after-merge
+/// gate (.github/workflows/main-gate.yml, `VELT_TEST_SHARD`): each builds and runs every n-th
+/// test of each test binary (nextest's `--partition count:<i>/<n>`), and the first also lints and
+/// runs the steps that aren't nextest tests (doctests, `velt fmt`, std-lint, the VS Code
+/// extension, the smoke test). On one 4-vCPU Windows runner the tests took 48 to 63 minutes
+/// (2026-11-23), after a build of 13 to 22. macOS gets two: its runners are the scarce ones, and
+/// with its golden build and two golden shards that is all five of them.
+pub const TEST_SHARDS: &[(&str, usize)] = &[
+    ("ubuntu-latest", 2),
+    ("windows-latest", 3),
+    ("macos-latest", 2),
+];
+
+/// The after-merge gate's test shards (`VELT_TEST_SHARD` values) on each of the runners `oses`,
+/// as [`golden_shards_json`] gives the goldens'.
+pub fn test_shards_json(oses: &[&str]) -> String {
+    shards_json(TEST_SHARDS, oses)
+}
+
 /// The queue's golden shards (`VELT_GOLDEN_SHARD` values) on each of the runners `oses`, as a
 /// JSON object: `{"ubuntu-latest":["1/3","2/3","3/3"],…}`. A runner without a [`GOLDEN_SHARDS`] entry
 /// gets none, which fails the queue (never a silent skip of its goldens).
@@ -356,7 +375,7 @@ mod tests {
 
     #[test]
     fn every_queue_os_has_at_least_one_golden_shard() {
-        for table in [GOLDEN_SHARDS, WASM_SHARDS] {
+        for table in [GOLDEN_SHARDS, WASM_SHARDS, TEST_SHARDS] {
             for os in QUEUE_OSES {
                 let n = table.iter().find(|(name, _)| name == os).map(|e| e.1);
                 assert!(n.is_some_and(|n| n >= 1), "{os} has no shards");
@@ -380,5 +399,17 @@ mod tests {
             r#"{"ubuntu-latest":["1/2","2/2"]}"#
         );
         assert_eq!(wasm_shards_json(&["other"]), "{}");
+    }
+
+    #[test]
+    fn the_after_merge_tests_get_shards_on_every_os() {
+        let all = test_shards_json(QUEUE_OSES);
+        assert!(
+            all.contains(r#""windows-latest":["1/3","2/3","3/3"]"#),
+            "{all}"
+        );
+        assert!(all.contains(r#""macos-latest":["1/2","2/2"]"#), "{all}");
+        assert!(all.contains(r#""ubuntu-latest":["1/2","2/2"]"#), "{all}");
+        assert_eq!(test_shards_json(&[]), "{}");
     }
 }

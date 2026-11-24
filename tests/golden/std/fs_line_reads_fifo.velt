@@ -1,0 +1,27 @@
+// requires: unix
+// FileReader's lines from a FIFO whose writer stays open (#2196): a line is read as soon as it
+// arrives, not when 64 KiB or the writer's close come. The writer sends "hi", then waits on a
+// second FIFO the reader writes only after it has the line, then sends "bye" and closes: a
+// reader that waited for more would wait forever.
+import { openRead, remove, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { execSync, spawn } from "velt/process/child";
+import { uuidv4 } from "velt/random/uuid";
+
+async function main() {
+  const base = `${tmpdir()}/velt-fs-fifo-${uuidv4()}`;
+  const data = `${base}.data`;
+  const ctl = `${base}.ctl`;
+  execSync("mkfifo", [data, ctl]);
+  const script = 'exec 3>"$1"; printf "hi\\n" >&3; read go < "$2"; printf "bye\\n" >&3';
+  const writer = spawn("sh", ["-c", script, "sh", data, ctl], { stdout: "ignore" });
+  const r = await openRead(data);
+  console.log(await r.readLine());
+  await writeFile(ctl, "go\n");
+  console.log(await r.readLine());
+  console.log(await r.readLine());
+  r.close();
+  console.log("writer exit:", await writer.wait());
+  await remove(data);
+  await remove(ctl);
+}
