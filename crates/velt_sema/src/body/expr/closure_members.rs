@@ -32,7 +32,7 @@ impl FnCx<'_, '_> {
     }
 
     fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        // A member returning a promise, for an expression body that gives one: a `void` member
+        // A member returning a promise, for a body or a `return` that gives one: a `void` member
         // would drop it (`pull: (c) => p.then(...)`, whose rejection must reach the stream).
         let promising = members.iter().any(|&m| self.returns_promise(m));
         for &m in members {

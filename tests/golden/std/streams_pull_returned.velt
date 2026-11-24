@@ -72,6 +72,51 @@ async function main(): Promise<void> {
     console.log("method cancel caught " + (e as Error).message);
   }
 
+  // A promise returned on one path only, nothing on another.
+  let n2 = 0;
+  const mixed = new ReadableStream<number>({
+    pull(c) {
+      n2++;
+      if (n2 > 1) {
+        return Promise.resolve().then(() => {
+          throw new Error("mixed boom");
+        });
+      }
+      c.enqueue(n2);
+    },
+  });
+  const mr = mixed.getReader();
+  try {
+    for (;;) {
+      const x = await mr.read();
+      console.log("mixed read " + x.value);
+    }
+  } catch (e) {
+    console.log("mixed caught " + (e as Error).message);
+  }
+
+  // A synchronous throw before the `return`.
+  let k = 0;
+  const thrown = new ReadableStream<number>({
+    pull(c) {
+      k++;
+      if (k > 1) {
+        throw new Error("sync boom");
+      }
+      c.enqueue(k);
+      return Promise.resolve().then(() => {});
+    },
+  });
+  const tr = thrown.getReader();
+  try {
+    for (;;) {
+      const x = await tr.read();
+      console.log("sync read " + x.value);
+    }
+  } catch (e) {
+    console.log("sync caught " + (e as Error).message);
+  }
+
   // A nested arrow's `return` doesn't make its enclosing callback the promise form.
   let m = 0;
   const u = new ReadableStream<number>({

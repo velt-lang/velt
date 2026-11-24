@@ -4,6 +4,10 @@ method pull read 3, pulls 3
 arrow pull caught then boom
 method start caught start boom
 method cancel caught cancel boom
+mixed read 1
+mixed caught mixed boom
+sync read 1
+sync caught sync boom
 plain pull read 1
 plain pull read 2
 done

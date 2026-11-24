@@ -67,6 +67,49 @@ try {
   console.log("method cancel caught " + e.message);
 }
 
+let n2 = 0;
+const mixed = new ReadableStream({
+  pull(c) {
+    n2++;
+    if (n2 > 1) {
+      return Promise.resolve().then(() => {
+        throw new Error("mixed boom");
+      });
+    }
+    c.enqueue(n2);
+  },
+});
+const mr = mixed.getReader();
+try {
+  for (;;) {
+    const x = await mr.read();
+    console.log("mixed read " + x.value);
+  }
+} catch (e) {
+  console.log("mixed caught " + e.message);
+}
+
+let k = 0;
+const thrown = new ReadableStream({
+  pull(c) {
+    k++;
+    if (k > 1) {
+      throw new Error("sync boom");
+    }
+    c.enqueue(k);
+    return Promise.resolve().then(() => {});
+  },
+});
+const tr = thrown.getReader();
+try {
+  for (;;) {
+    const x = await tr.read();
+    console.log("sync read " + x.value);
+  }
+} catch (e) {
+  console.log("sync caught " + e.message);
+}
+
 let m = 0;
 const u = new ReadableStream({
   pull(c) {
