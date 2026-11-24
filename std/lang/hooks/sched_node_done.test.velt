@@ -1,0 +1,81 @@
+// velt/lang/hooks (tests): a finished promise lets go of its task only when nothing but its owner
+// and its run's caller can reach it (sched_node_done.velt `letGo`, #3498), on a node and a task
+// built by hand, with no other thread. No program in std reaches a finish with a second waker of
+// the node still out (a wake by value hands its reference to the woken stack, and combinators and
+// adoptions poll with their own cx); the count's test guards the case where one is, as an extra
+// waker reference taken by hand here: the node then keeps its reference to its task.
+import { describe, expect, it } from "velt/test";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as dn from "./sched_node_done";
+import * as t from "./sched_task";
+
+/** The bytes of a hand-built node and task: past the fields `letGo` reads. */
+const BLOCK: usize = 256;
+
+/** A finished node of task `task` with `refs` references and flags `extra` besides. */
+function node(task: usize, refs: usize, extra: u32): usize {
+  const n = m.zeroed(BLOCK);
+  m.st(n + nd.N_TASK, task);
+  m.st(n + nd.N_REFS, refs);
+  m.st32(n + nd.N_FLAGS, nd.STARTED | nd.FINISHED | extra);
+  return n;
+}
+
+/** A task with `refs` references. */
+function task(refs: usize): usize {
+  const k = m.zeroed(BLOCK);
+  m.st(k + t.T_REFS, refs);
+  return k;
+}
+
+/** Frees hand-built node `n` and task `k`. */
+function free(n: usize, k: usize): void {
+  m.release(n, BLOCK);
+  m.release(k, BLOCK);
+}
+
+describe("a finished promise's task reference", () => {
+  it("goes back when its owner, its task and the run's caller are all that hold it", () => {
+    const k = task(5);
+    // Its owner's, its task's and the woken stack's.
+    const n = node(k, 3, 0);
+    dn.letGo(k, n, 3);
+    expect(m.ld(n + nd.N_TASK)).toBe(0);
+    expect(m.ld(k + t.T_REFS)).toBe(4);
+    free(n, k);
+  });
+
+  it("stays while a waker of it is out", () => {
+    const k = task(5);
+    // The same, and a waker's: taken as a waker clone takes one.
+    const n = node(k, 3, 0);
+    m.inc(n + nd.N_REFS);
+    dn.letGo(k, n, 3);
+    expect(m.ld(n + nd.N_TASK)).toBe(k);
+    expect(m.ld(k + t.T_REFS)).toBe(5);
+    // Once that waker is dropped, the node's free (not this finish) gives the reference back.
+    m.dec(n + nd.N_REFS);
+    expect(m.ld(n + nd.N_REFS)).toBe(3);
+    free(n, k);
+  });
+
+  it("stays when its owner dropped it, though the count reads as many as an owner's", () => {
+    const k = task(5);
+    // No owner (DETACHED), but a waker: the same count as owner, task and caller.
+    const n = node(k, 3, nd.DETACHED);
+    dn.letGo(k, n, 3);
+    expect(m.ld(n + nd.N_TASK)).toBe(k);
+    expect(m.ld(k + t.T_REFS)).toBe(5);
+    free(n, k);
+  });
+
+  it("stays with a rejection, whose report reads the task", () => {
+    const k = task(5);
+    const n = node(k, 3, nd.REJECTING);
+    dn.letGo(k, n, 3);
+    expect(m.ld(n + nd.N_TASK)).toBe(k);
+    expect(m.ld(k + t.T_REFS)).toBe(5);
+    free(n, k);
+  });
+});
