@@ -91,6 +91,27 @@ it is a later unit changing a finished one; `VELT_UNITS_FREEZE=panic` stops with
 default counts each write by the caller's location and prints the counts at the end of the check,
 so one run over the end-to-end tests lists every place that still writes across the boundary.
 
+Some facts about std's definitions depend on the program, and a whole-program check writes
+them during the passes after the bodies:
+- an override or instance raises a std method's or a std generated function's pass modes
+  (`ownership::mutation`'s groups);
+- a program implementation raises a std interface slot's modes;
+- a program member's errors join a std function's throw group (`throws::infer`).
+
+The app's stage keeps these beside std's definitions instead (`units/raised.rs`). The app's
+passes read them in place of the definitions' own (`modes_of`, the slot and throws readers),
+and they are written onto the definitions once the freeze lifts to build the program, as a
+whole-program check had written them by then. A saved unit holds none.
+
+A std generated function whose instances always modify the same parameters, the generator's
+output or input stream, says so with `@modifies` (`decorators/modifies.rs`; source-generators.md
+"Std's generators"). Those parameters take their final mode where std declares the function, so
+no program's instance raises them; that alone removes the raise nearly every program made (the
+JSON writers' `w`). The list is a floor: an instance also runs the program's own code (a
+`toJSON` that changes its object), which can still raise another parameter, kept beside the
+declaration as above. The vtable slot a program's override adds to a std class is the one write
+still counted (#3684).
+
 ### The std identity oracle
 
 `VELT_STD_SUMMARY=<file>` makes a check append a line per checked std definition: its name, the

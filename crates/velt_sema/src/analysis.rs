@@ -33,6 +33,9 @@ pub(crate) fn analyze(
     // after a check of both units (`units::check_definitions`).
     if cx.units_stage == units::Stage::App {
         cx.thaw_defs();
+        // What the app's passes raised of std's definitions, written as a whole-program
+        // check had written it during them (`units::raised`).
+        units::raised::apply(cx);
     }
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);

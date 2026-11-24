@@ -75,7 +75,7 @@ pub(crate) fn final_hook(
     name: &str,
 ) -> Option<(DefId, TyId)> {
     let (m, ret) = hook(cx, d, args, name)?;
-    let throws = cx.fn_info(m).throws;
+    let throws = cx.fn_throws(m);
     if throws.is_some_and(|t| t != cx.ty.never) {
         return None;
     }

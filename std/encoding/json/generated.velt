@@ -6,6 +6,7 @@
 // `parseJsonTop` (std/prelude/json/json.velt).
 
 import { StringBuilder } from "velt/text/string_builder";
+import { modifies } from "velt/lang/intrinsics/decorators";
 import {
   appendJsonNumber,
   appendJsonString,
@@ -65,6 +66,7 @@ declare function velt_rt_json_reader_over_cursor(cursor: u64, flags: u32, maxDep
 import { recordFromMap } from "velt/lang/hooks/record";
 
 /** Appends what `JSON.stringify(value)` writes to `w` (one function per type, generated). */
+@modifies("w")
 export declare generated("velt/encoding/json/generate/write") function writeJson<T>(
   w: StringBuilder,
   value: T,
@@ -74,6 +76,7 @@ export declare generated("velt/encoding/json/generate/write") function writeJson
  * `writeJson` of the value `JSON.stringify` is given: a dynamic value without a JSON form is a
  * `TypeError` there, where it is `null` in an array.
  */
+@modifies("w")
 export declare generated("velt/encoding/json/generate/write") function writeJsonTop<T>(
   w: StringBuilder,
   value: T,
@@ -116,6 +119,7 @@ export declare generated("velt/encoding/json/generate/read") function parseJsonC
  * Reads one `T` with `r` (one function per type, generated): a `JsonFail` saying what was
  * expected where, when the value is not a `T`.
  */
+@modifies("r")
 export declare generated("velt/encoding/json/generate/read") function readJson<T>(
   r: Reader,
 ): T throws JsonFail;

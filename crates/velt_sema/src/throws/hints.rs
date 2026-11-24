@@ -59,7 +59,7 @@ impl Ctx<'_> {
                 continue;
             }
             todo.extend(f.throw_srcs.iter().cloned());
-            if let Some(t) = f.throws {
+            if let Some(t) = self.fn_throws(d) {
                 grew |= self.add_recursion_hint(d, t);
             }
         }
