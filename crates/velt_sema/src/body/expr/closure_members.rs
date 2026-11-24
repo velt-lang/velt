@@ -1,7 +1,7 @@
 //! An arrow checked against a union of function types (`(() => void) | (() => Promise<void>)`):
 //! the member it is typed by, the first it type-checks against (closure.rs `closure`), each try
-//! rolled back. A `void` member doesn't fit an expression body that gives a promise when another
-//! member returns one: it would drop the promise (#3644).
+//! rolled back. A `void` member doesn't fit an arrow whose body or a `return` gives a promise
+//! when another member returns one: it would drop the promise (#3644, #3710).
 
 use velt_syntax::ast;
 
@@ -58,6 +58,18 @@ impl FnCx<'_, '_> {
         match self.cx.ty.kind(m) {
             hir::TyKind::FnPtr { ret, .. } => self.holds_promise(*ret),
             _ => false,
+        }
+    }
+
+    /// A value of type `t` dropped by the body or a `return` of the arrow being tried
+    /// (`first_fitting`), not of an arrow nested in it: a promise marks the try (#3686, #3710).
+    pub(in crate::body) fn note_dropped(&mut self, t: TyId) {
+        let at = self.f.return_site.closure_at;
+        let promise = self.holds_promise(t);
+        if let Some((tried, dropped)) = &mut self.dropped_promise {
+            if at == Some(*tried) && promise {
+                *dropped = true;
+            }
         }
     }
 

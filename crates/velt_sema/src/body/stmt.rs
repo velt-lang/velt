@@ -704,6 +704,7 @@ impl FnCx<'_, '_> {
             // `return value;` in an arrow whose `void` result comes from its expected type.
             Some(e) if self.f.discards_value => {
                 let h = self.expr_stmt(e);
+                self.note_dropped(h.ty);
                 Self::push(out, S::Expr(h), span);
                 Self::push(out, S::Return(None), span);
             }

@@ -16,9 +16,9 @@ export type ReadableStreamReadResult<R> = IteratorResult<R>;
  * an error it throws errors the stream.
  */
 export interface UnderlyingSource<R> {
-  start?: ((controller: ReadableStreamDefaultController<R>) => void throws unknown) | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown> | undefined);
-  pull?: ((controller: ReadableStreamDefaultController<R>) => void throws unknown) | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown> | undefined);
-  cancel?: ((reason: CancelReason) => void throws unknown) | ((reason: CancelReason) => Promise<void, unknown> | undefined);
+  start?: ((controller: ReadableStreamDefaultController<R>) => void throws unknown) | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown> | undefined throws unknown);
+  pull?: ((controller: ReadableStreamDefaultController<R>) => void throws unknown) | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown> | undefined throws unknown);
+  cancel?: ((reason: CancelReason) => void throws unknown) | ((reason: CancelReason) => Promise<void, unknown> | undefined throws unknown);
 }
 
 /** How many chunks a stream queues before it stops pulling (JS's count queuing strategy). */
@@ -36,8 +36,8 @@ export type Reason = unknown;
 /** A source's `pull` and `cancel`, as the controller keeps them. */
 export type PullCallback<R> =
   | ((controller: ReadableStreamDefaultController<R>) => void throws unknown)
-  | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown> | undefined);
+  | ((controller: ReadableStreamDefaultController<R>) => Promise<void, unknown> | undefined throws unknown);
 
 export type CancelCallback =
   | ((reason: CancelReason) => void throws unknown)
-  | ((reason: CancelReason) => Promise<void, unknown> | undefined);
+  | ((reason: CancelReason) => Promise<void, unknown> | undefined throws unknown);

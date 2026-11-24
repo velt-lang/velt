@@ -1,0 +1,9 @@
+method pull read 1, pulls 1
+method pull read 2, pulls 2
+method pull read 3, pulls 3
+arrow pull caught then boom
+method start caught start boom
+method cancel caught cancel boom
+plain pull read 1
+plain pull read 2
+done
