@@ -1,0 +1,140 @@
+// check: no leaks
+// timing: the timers section sleeps (one sleep at a time, ordered by gates) against yields
+// The children of `Promise.all`, `allSettled`, `race` and `any` take their turns as in Node
+// (#3611): each `yieldNow()` is a turn of its own (an immediate), in the order the yields were
+// made. The children log each step;
+// the output is Node 22's (run with `yieldNow` as `setImmediate`, `sleep` as `setTimeout`).
+// The combinators are awaited in a started promise (`run`), not in `main` itself: one awaited
+// directly by a task's root still takes its children's turns out of Node's order (#3687).
+
+const log: string[] = [];
+
+function say(s: string): void {
+  log.push(s);
+}
+
+async function yields(name: string, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) {
+    say(`${name} yield ${i}`);
+    await yieldNow();
+  }
+  say(`${name} done`);
+  return turns;
+}
+
+async function dies(name: string, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) {
+    say(`${name} yield ${i}`);
+    await yieldNow();
+  }
+  say(`${name} throws`);
+  throw new Error(`${name} died after ${turns}`);
+}
+
+/**
+ * Sleeps `ms` once `start` settles, then yields: `woke` says it woke. Gates order the timers
+ * against the yields, not durations: each sleep runs alone.
+ */
+async function timed(
+  name: string,
+  ms: number,
+  start: Promise<void>,
+  woke: () => void,
+): Promise<number> {
+  await start;
+  say(`${name} sleeps ${ms}`);
+  // Literal delays: Node runs this same source.
+  if (ms == 5) {
+    await sleep(5);
+  } else {
+    await sleep(60);
+  }
+  say(`${name} woke`);
+  woke();
+  await yieldNow();
+  say(`${name} done`);
+  return ms;
+}
+
+/** `yields`, then `done` says it is done. */
+async function yieldsThen(name: string, turns: number, done: () => void): Promise<number> {
+  const n = await yields(name, turns);
+  done();
+  return n;
+}
+
+async function after(name: string, p: Promise<number>): Promise<number> {
+  say(`${name} waits`);
+  const n = await p;
+  say(`${name} got ${n}`);
+  await yieldNow();
+  say(`${name} done`);
+  return n + 1;
+}
+
+/** Lets the children a combinator left running finish: more turns than any child has. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 6; i++) {
+    await yieldNow();
+  }
+}
+
+function flush(title: string): void {
+  console.log(`-- ${title}`);
+  for (const s of log) {
+    console.log(s);
+  }
+  log.length = 0;
+}
+
+async function main() {
+  // Stored, so it is a started promise of its own.
+  const p = run();
+  await p;
+}
+
+async function run(): Promise<void> {
+  // The issue's case: the child with one yield throws before the one with three finishes.
+  try {
+    await Promise.all([yields("w", 3), dies("d", 1)]);
+  } catch (e) {
+    say(`caught: ${(e as Error).message}`);
+  }
+  await settle();
+  flush("all, a child dies");
+
+  const r = await Promise.all([yields("a", 1), yields("b", 3), yields("c", 2)]);
+  say(`all: ${r.join(",")}`);
+  flush("all, three children");
+
+  const s = await Promise.allSettled([yields("a", 2), dies("d", 1), yields("b", 1)]);
+  say(`allSettled: ${s.map((x) => x.status).join(",")}`);
+  await settle();
+  flush("allSettled");
+
+  const first = await Promise.race([yields("a", 3), yields("b", 1), yields("c", 2)]);
+  say(`race: ${first}`);
+  await settle();
+  flush("race");
+
+  const any = await Promise.any([dies("d", 1), yields("a", 2), yields("b", 3)]);
+  say(`any: ${any}`);
+  await settle();
+  flush("any");
+
+  // `t5` sleeps once `y` is done, and `t60` once `t5` woke.
+  const yDone = Promise.withResolvers<void>();
+  const t5Woke = Promise.withResolvers<void>();
+  const t = await Promise.all([
+    timed("t60", 60, t5Woke.promise, () => {}),
+    yieldsThen("y", 2, () => yDone.resolve()),
+    timed("t5", 5, yDone.promise, () => t5Woke.resolve()),
+  ]);
+  say(`all: ${t.join(",")}`);
+  flush("all, timers");
+
+  const shared = yields("p", 2);
+  const w = await Promise.all([after("q", shared), shared, yields("z", 1)]);
+  say(`all: ${w.join(",")}`);
+  flush("all, a child awaits another");
+}
