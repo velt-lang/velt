@@ -76,6 +76,11 @@ pub(crate) type ItemDefs = Vec<DefId>;
 /// (docs/internals/design/source-generators.md §6): their items declared in their own scope
 /// (with their declaring module's names inherited) and their signatures resolved. Returns the
 /// definitions made.
+/// The class class `d` extends.
+pub(crate) fn base_class(cx: &Ctx, d: DefId) -> Option<DefId> {
+    classes::base_of_def(cx, d)
+}
+
 pub(crate) fn collect_generated(cx: &mut Ctx, ms: &[usize]) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_generated(cx, ms, &mut items);
