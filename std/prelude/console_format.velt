@@ -1,8 +1,8 @@
-// Prelude: `%s` of an `any` argument of a literal `console.log` format string (#3662), as Node's
-// `util.format` writes it (`formatWithOptionsInternal` in lib/internal/util/inspect.js). The
-// compiler splits the literal and converts the other arguments itself (velt_sema
-// `console_format.rs`); for an `any` it calls `consoleString` (`%s`) and `consoleNumber` (`%d`)
-// here.
+// Prelude: what the compiler calls for the arguments of a literal `console.log` format string
+// (#3662), as Node's `util.format` writes them (`formatWithOptionsInternal` in
+// lib/internal/util/inspect.js): `%s` and `%d` of an `any` (`consoleString`, `consoleNumber`),
+// `%i` and `%f` of a number (`consoleInteger`, `consoleFloat`). The compiler splits the literal
+// and converts the other arguments itself (velt_sema `console_format.rs`).
 
 import { anyString } from "velt/lang/hooks/any_text";
 import { anyReflectInfo, inspectNested } from "velt/lang/intrinsics";
@@ -40,6 +40,27 @@ export function consoleString(v: any): string {
   let s = "";
   velt_rt_strbuf_finish(b, s);
   return s;
+}
+
+/**
+ * `%i` of a number: `parseInt(String(n))` without parsing, `n` without its fraction (`0` for
+ * `-0`); a number `String` writes with an exponent (`1e+21`, `5e-7`) gives the digit before it.
+ */
+export function consoleInteger(n: number): number {
+  const a = Math.abs(n);
+  if (n != n || a == Infinity) {
+    return NaN;
+  }
+  if (a >= 1e21 || (a < 1e-6 && a != 0)) {
+    const lead = (String(a).charCodeAt(0) - 48) as number;
+    return n < 0 ? -lead : lead;
+  }
+  return n == 0 ? 0 : Math.trunc(n);
+}
+
+/** `%f` of a number: `parseFloat(String(n))`, which is `n`, but `0` for `-0`. */
+export function consoleFloat(n: number): number {
+  return n == 0 ? 0 : n;
 }
 
 /** `%d` of `v`: `Number(v)`, but `NaN` for a symbol (which `Number` would throw for). */

@@ -215,9 +215,23 @@ impl FnCx<'_, '_> {
 
     /// The printed argument `a`, checked as `h` (`printed_expr`), as `console.log` prints it.
     pub(super) fn print_value(&mut self, a: &ast::Expr, h: hir::Expr) -> hir::Expr {
+        self.print_value_with(a, h, true)
+    }
+
+    /// [`Self::print_value`]; `inspect_hook`: a class's own `[INSPECT]()` is called here (else
+    /// the lowering's inspect calls it, as for a value inside a container: `%o`, `%O`).
+    pub(super) fn print_value_with(
+        &mut self,
+        a: &ast::Expr,
+        h: hir::Expr,
+        inspect_hook: bool,
+    ) -> hir::Expr {
         let h = self.read_shared(h);
         // A `Date` prints as its ISO string, like Node.
-        let h = self.own_to_string(h, crate::hooks::INSPECT);
+        let h = match inspect_hook {
+            true => self.own_to_string(h, crate::hooks::INSPECT),
+            false => h,
+        };
         let h = self.narrowed_for_print(h);
         // A literal with accessors prints as Node shows it (`[Getter]`), through `any`.
         let h = self.literal_iface_as_any(h);

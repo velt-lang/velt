@@ -14,12 +14,14 @@ const p: any = new Pt();
 console.log("%s|%d", p, p);
 
 let calls = 0;
+
 class Same extends Error {
   toString(): string {
     calls++;
     return "Error: same";
   }
 }
+
 class Stacked extends Error {
   get stack(): string | undefined {
     return "Error: stacked";
@@ -28,6 +30,7 @@ class Stacked extends Error {
     return "Error: stacked";
   }
 }
+
 const same: any = new Same("same");
 const stacked: any = new Stacked("s");
 console.log("%s|%s", same, stacked);

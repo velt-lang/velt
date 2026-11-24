@@ -209,6 +209,56 @@ ownJson();
 const big = 123n;
 console.log("%s|%d|%i|%f", big, big, big, big);
 
+// `%o` and `%O` of a `Date`, also behind a nullable and an `any`
+const day = new Date(86400000);
+const maybeDay = day;
+const anyDay = day;
+console.log("%o|%O|%O|%O", day, day, maybeDay, anyDay);
+
+// `%j` of what `JSON.stringify` gives `undefined` for, and of a nullable
+const noNumber = undefined;
+const someNumber = 5;
+function optional(x) {
+  console.log("%j|%j", x, x);
+}
+console.log("%j|%j|%j|%j", noNumber, someNumber, Symbol("s"), (n) => n);
+optional();
+optional(7);
+const anyUndefined = undefined;
+const anySymbol = Symbol("t");
+console.log("%j|%j|%j", anyUndefined, anySymbol, anyNumber());
+function anyNumber() {
+  return 3;
+}
+const anySet = new Set([2]);
+console.log("%j|%j|%j", new Set([1]), anySet, new Map([["k", 1]]).size);
+function jsonShape(x) {
+  console.log("%j", x);
+}
+jsonShape(new Sq());
+
+// `%s` of a class with `[Symbol.toPrimitive]`, typed and through `any`
+class Prim {
+  [Symbol.toPrimitive](hint) {
+    return hint === "number" ? 11 : "prim";
+  }
+}
+const prim = new Prim();
+const anyPrim = new Prim();
+console.log("%s|%s|%d", prim, anyPrim, prim);
+
+// `%s` of a class with its own `toString()` and a custom inspect: the `toString()`
+const custom = Symbol.for("nodejs.util.inspect.custom");
+class Both {
+  toString() {
+    return "both-text";
+  }
+  [custom]() {
+    return "both-inspect";
+  }
+}
+console.log("%s|%O", new Both(), new Both());
+
 // non-ASCII
 console.log("é%sü → %d€", "ñ", 3);
 console.log("日本%s語", "の");

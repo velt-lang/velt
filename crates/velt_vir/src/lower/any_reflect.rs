@@ -297,9 +297,10 @@ impl FnLower<'_, '_> {
                 hooks.push(name);
             }
         }
-        // A `toString` no JavaScript built-in declares, which `%s` of an `any` calls (std's
-        // `consoleString`; velt/reflect's `typeOf` leaves the mark out of the hooks it lists).
-        if self.own_to_string(ty) {
+        // A `toString` or `[Symbol.toPrimitive]` no JavaScript built-in declares, which `%s` of an
+        // `any` writes by `String(x)` (std's `consoleString`); velt/reflect's `typeOf` leaves the
+        // mark, always the last, out of the hooks it lists.
+        if self.own_to_string(ty) || self.own_to_primitive(ty) {
             hooks.push("ownToString");
         }
         // An object type (and an object literal with accessors) has no name of its own.

@@ -81,6 +81,15 @@ NaN|NaN|NaN
 1,2
 {"a":1}|5
 123n|123n|123n|123
+1970-01-02T00:00:00.000Z|1970-01-02T00:00:00.000Z|1970-01-02T00:00:00.000Z|1970-01-02T00:00:00.000Z
+undefined|5|undefined|undefined
+undefined|undefined
+7|7
+undefined|undefined|3
+{}|{}|1
+{}
+prim|prim|11
+both-text|both-inspect
 éñü → 3€
 日本の語
 🙂 😀

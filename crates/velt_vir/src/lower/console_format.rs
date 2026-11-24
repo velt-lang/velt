@@ -7,8 +7,9 @@
 //! does, and `%c` writes nothing. A line of numbers, strings and booleans is written piecewise to
 //! the stream, as console.rs writes one; any other is formatted into one builder.
 
+use rustc_hash::FxHashSet;
 use velt_sema::console_format::{split, Piece, BUILTIN_CLASSES};
-use velt_sema::hir::{LitValue, TyId, TyKind};
+use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::hooks::Hook;
 use super::FnLower;
@@ -204,6 +205,44 @@ impl FnLower<'_, '_> {
         let name = self.cx.type_name(owner);
         let name = name.split('<').next().unwrap_or_default();
         !BUILTIN_CLASSES.contains(&name)
+    }
+
+    /// Has the class `ty` (or a base class) a `[Symbol.toPrimitive]` method that no JavaScript
+    /// built-in declares? Node's `hasBuiltInToString` is false for it, so `%s` writes it with
+    /// `String(x)`.
+    pub(super) fn own_to_primitive(&self, ty: TyId) -> bool {
+        let cx = &*self.cx;
+        let classes = cx.to_primitive_classes.get_or_init(|| {
+            let mut out = FxHashSet::default();
+            for def in &cx.hir.defs {
+                let hir::Def::Fn(f) = def else { continue };
+                if !f.name.ends_with(".[Symbol.toPrimitive]") {
+                    continue;
+                }
+                if let Some(&TyKind::Adt(d, _)) = f.self_ty.map(|t| cx.raw_kind(t)) {
+                    out.insert(d);
+                }
+            }
+            out
+        });
+        let mut t = ty;
+        for _ in 0..64 {
+            let TyKind::Adt(d, _) = self.cx.kind(t) else {
+                return false;
+            };
+            if !self.cx.is_class(t) {
+                return false;
+            }
+            let a = self.cx.adt_def(d);
+            if classes.contains(&d) {
+                return !BUILTIN_CLASSES.contains(&a.name.as_str());
+            }
+            match a.base {
+                Some(b) => t = b,
+                None => return false,
+            }
+        }
+        false
     }
 
     /// `%s` of the value at `place`: a primitive as `String(x)` writes it (a number as

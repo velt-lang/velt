@@ -17,15 +17,20 @@ use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::collect::{lookup_method, Found};
 use crate::console_format::{literal_text, split, Piece, BUILTIN_CLASSES};
-use crate::hir::{self, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hir::{self, DefId, ExprKind as H, Intrinsic, TyId, TyKind};
 
 /// std's `%s` of an `any` (std/prelude/console_format.velt).
 const STRING_FN: &str = "consoleString";
 /// std's `%d` of an `any`: `Number(x)`, `NaN` for a symbol.
 const NUMBER_FN: &str = "consoleNumber";
+/// std's `%i` and `%f` of a number: `parseInt(String(n))`, `parseFloat(String(n))`.
+const INTEGER_FN: &str = "consoleInteger";
+const FLOAT_FN: &str = "consoleFloat";
 /// std's `JSON.stringify` by its path (std/prelude/json/json.velt), loaded for a `%j`
 /// (velt_loader `globals/console_json.rs`).
 const JSON_FN: &str = "std/prelude/json/json::jsonText";
+/// std's `%j` of an `any`: `undefined` for what `JSON.stringify` gives it for.
+const JSON_ANY_FN: &str = "std/prelude/json/json_any::jsonAny";
 
 /// A line's arguments after the format string: each one's specifier (`None`: left over) and
 /// expression.
@@ -63,6 +68,25 @@ impl FnCx<'_, '_> {
             })
             .collect();
         let values: Vec<hir::Expr> = more.iter().map(|a| self.printed_expr(a)).collect();
+        // A `%j` of a value std's JSON cannot write yet (a `Set`, an interface value): the line
+        // is printed as without specifiers, its format no literal for the lowering.
+        let unwritable = values
+            .iter()
+            .zip(&specs)
+            .any(|(v, s)| *s == Some(b'j') && self.json_plan(v) == JsonPlan::Unwritable);
+        if unwritable {
+            let ty = p.ty;
+            let block = hir::Block {
+                stmts: vec![],
+                value: Some(Box::new(p)),
+                span,
+            };
+            let mut out = vec![self.mk(H::Block(block), ty, span)];
+            for (a, v) in more.iter().zip(values) {
+                out.push(self.print_value(a, v));
+            }
+            return Ok(self.intrinsic(intr, out, self.cx.ty.unit, span));
+        }
         let args = Args { specs, asts: more };
         // A conversion that may run the program's code waits until every argument is evaluated.
         // Not when an argument holds an `Atomic`: an atomic is used where it is, so it cannot be
@@ -170,8 +194,10 @@ impl FnCx<'_, '_> {
             Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)
         );
         let h = match spec {
-            Some(b'j') => return self.std_call(JSON_FN, h, span),
+            Some(b'j') => return self.format_json(h, span),
             Some(b's') => return self.format_string(a, h),
+            // Inspected by the lowering, a class's own `[INSPECT]()` too (a `Date` unquoted).
+            Some(b'o' | b'O') => return self.print_value_with(a, h, false),
             // A `BigInt` as Node writes a bigint: its digits and `n`; `%f` its number.
             Some(b'd' | b'i') if self.is_bigint(t) => {
                 let text = self.js_text(h, "a `%d` or `%i` argument");
@@ -194,6 +220,14 @@ impl FnCx<'_, '_> {
                 Some(d) => self.number_of(d, h, span),
                 None => h,
             },
+            // A number without parsing its text: `parseFloat(String(x))` is `x` (`0` for
+            // `-0`), `parseInt(String(x))` std's `consoleInteger`.
+            Some(c @ (b'i' | b'f')) if matches!(kind, TyKind::Float(_)) => {
+                let f64 = self.cx.ty.f64;
+                let h = self.coerce(h, f64);
+                let name = if c == b'i' { INTEGER_FN } else { FLOAT_FN };
+                self.std_call(name, h, span)
+            }
             Some(c @ (b'i' | b'f')) => {
                 let name = if c == b'i' { "parseInt" } else { "parseFloat" };
                 let text = self.js_text(h, "a `%i` or `%f` argument");
@@ -217,15 +251,20 @@ impl FnCx<'_, '_> {
             let n = self.str_lit("n", span);
             return self.concat(text, n, span);
         }
-        let h = match self.own_text(t) {
-            true => self.own_to_string(h, "toString"),
-            false => h,
+        let own = self.own_text(t);
+        let h = match own {
+            // Before `print_value`, which would call its `[INSPECT]()` instead.
+            OwnText::ToString => self.own_to_string(h, "toString"),
+            _ => h,
         };
         let p = self.print_value(a, h);
-        let dynamic = matches!(
-            self.cx.dynamic(p.ty),
-            Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)
-        );
+        // A `[Symbol.toPrimitive]` is called by `String(x)` of the `any` (std's dispatch over
+        // the program's classes, which also gives the hint).
+        let dynamic = own == OwnText::ToPrimitive
+            || matches!(
+                self.cx.dynamic(p.ty),
+                Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)
+            );
         match (dynamic, self.any_ty()) {
             (true, Some(any)) => {
                 let p = self.share_if_place(p);
@@ -239,20 +278,134 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Does a `t` class instance have a `toString()` of its own: one a class that is not a
-    /// JavaScript built-in declares (Node's `hasBuiltInToString` is false)?
-    fn own_text(&mut self, t: TyId) -> bool {
+    /// Has a `t` class instance a text of its own (Node's `hasBuiltInToString` is false): a
+    /// `[Symbol.toPrimitive]` or a `toString()` that a class other than a JavaScript built-in
+    /// declares? A class with both its own `toString()` and an `[INSPECT]()` is the case only
+    /// sema sees: the lowering gets the inspect hook's text.
+    fn own_text(&mut self, t: TyId) -> OwnText {
         let Some((d, args)) = self.adt_of(t) else {
+            return OwnText::None;
+        };
+        let own = |lw: &mut Self, name: &str| match lookup_method(lw.cx, d, &args, name) {
+            Some(Found::Class { owner, .. }) => !lw
+                .cx
+                .adt(owner)
+                .is_some_and(|a| BUILTIN_CLASSES.contains(&a.name.as_str())),
+            _ => false,
+        };
+        if own(self, "[Symbol.toPrimitive]") {
+            OwnText::ToPrimitive
+        } else if own(self, "toString") {
+            OwnText::ToString
+        } else {
+            OwnText::None
+        }
+    }
+
+    /// How `%j` writes a value of `v`'s type.
+    fn json_plan(&mut self, v: &hir::Expr) -> JsonPlan {
+        let t = self.cx.widened(v.ty);
+        if matches!(
+            self.cx.ty.kind(t),
+            TyKind::Unit | TyKind::Symbol | TyKind::FnPtr { .. } | TyKind::Closure(_)
+        ) {
+            return JsonPlan::Undefined;
+        }
+        if self.cx.dynamic(t).is_some() {
+            return JsonPlan::Dynamic;
+        }
+        let mut seen = vec![];
+        if self.json_writable(t, &mut seen) {
+            return JsonPlan::Typed;
+        }
+        // Anything else (a nullable `number | undefined`, a `Set`, an interface value) as an
+        // `any`, which std writes as Node does (`undefined`, `{}`, the fields); a value that
+        // cannot be one prints its line without specifiers.
+        let Some(any) = self.any_ty() else {
+            return JsonPlan::Unwritable;
+        };
+        let probe = v.clone();
+        let boxed = self.trial_with(|lw| {
+            let h = lw.share_if_place(probe);
+            lw.coerce(h, any).ty
+        });
+        match boxed {
+            Some(_) => JsonPlan::Dynamic,
+            None => JsonPlan::Unwritable,
+        }
+    }
+
+    /// Can std's `JSON.stringify` write a value of `t` (std/encoding/json/generate/check.velt's
+    /// rules, conservatively: numbers, booleans, strings, literal types, enums, arrays, tuples,
+    /// `T | null`, `Map<string, T>`, `JsonValue`, and classes, structs and object literals with a
+    /// `toJSON()` or with public fields of those)? `seen`: the types being checked (a type that
+    /// holds itself is writable as far as its fields are).
+    fn json_writable(&mut self, t: TyId, seen: &mut Vec<TyId>) -> bool {
+        if seen.contains(&t) {
+            return true;
+        }
+        seen.push(t);
+        let ok = match self.cx.ty.kind(t).clone() {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::Literal(_) => {
+                true
+            }
+            TyKind::Option(e, n) => !n.has_undefined() && self.json_writable(e, seen),
+            // Known per instantiation: std's JSON writes it there, as a generic function's
+            // `JSON.stringify(x)` does.
+            TyKind::Param(_) => true,
+            TyKind::Array(e) => self.json_writable(e, seen),
+            TyKind::Tuple(es) => es.into_iter().all(|e| self.json_writable(e, seen)),
+            TyKind::Adt(d, _) if self.cx.is_json_value(d) => true,
+            TyKind::Adt(d, args) if self.cx.prelude_adt("Map") == Some(d) => {
+                args.len() == 2 && args[0] == self.cx.ty.str_ && self.json_writable(args[1], seen)
+            }
+            TyKind::Adt(d, _) if self.cx.enum_info(d).is_some() => true,
+            TyKind::Adt(d, args) => self.json_fields_writable(d, &args, seen),
+            _ => false,
+        };
+        seen.pop();
+        ok
+    }
+
+    /// [`Self::json_writable`] of a class, struct or object literal type `d<args>`.
+    fn json_fields_writable(&mut self, d: DefId, args: &[TyId], seen: &mut Vec<TyId>) -> bool {
+        if crate::hooks::hook(self.cx, d, args, "toJSON").is_some() {
+            return true;
+        }
+        let Some(a) = self.cx.adt(d) else {
             return false;
         };
-        let owner = match lookup_method(self.cx, d, &args, "toString") {
-            Some(Found::Class { owner, .. }) => owner,
-            _ => return false,
-        };
-        !self
-            .cx
-            .adt(owner)
-            .is_some_and(|a| BUILTIN_CLASSES.contains(&a.name.as_str()))
+        let fields: Vec<(TyId, bool)> = a
+            .fields
+            .iter()
+            .map(|f| (f.ty, f.private_to.is_some()))
+            .collect();
+        fields.into_iter().all(|(ft, private)| {
+            let ft = self.cx.subst(ft, args);
+            !private && self.json_writable(ft, seen)
+        })
+    }
+
+    /// `%j` of `h`: `JSON.stringify(h)`, `undefined` for a value it gives `undefined` for (an
+    /// `undefined`, a symbol, a function), an `any` (or a nullable) by std's `jsonAny`.
+    fn format_json(&mut self, h: hir::Expr, span: Span) -> hir::Expr {
+        match self.json_plan(&h) {
+            JsonPlan::Undefined => {
+                let text = self.str_lit("undefined", span);
+                self.text_after(h, text, span)
+            }
+            JsonPlan::Dynamic => match self.any_ty() {
+                Some(any) => {
+                    let h = self.share_if_place(h);
+                    let h = self.coerce(h, any);
+                    self.note_dyn_members();
+                    self.std_call(JSON_ANY_FN, h, span)
+                }
+                None => self.std_call(JSON_FN, h, span),
+            },
+            // `Unwritable` lines are printed without specifiers (`console_format`).
+            JsonPlan::Typed | JsonPlan::Unwritable => self.std_call(JSON_FN, h, span),
+        }
     }
 
     /// A call of std's function `f` (a prelude name or a `module::name` path) on the value `h`.
@@ -266,16 +419,43 @@ impl FnCx<'_, '_> {
     fn nan_after(&mut self, h: hir::Expr, span: Span) -> hir::Expr {
         let f64 = self.cx.ty.f64;
         let nan = self.mk(H::Lit(hir::Lit::Float(f64::NAN)), f64, span);
+        self.text_after(h, nan, span)
+    }
+
+    /// `value`, after evaluating `h` for its effects.
+    fn text_after(&mut self, h: hir::Expr, value: hir::Expr, span: Span) -> hir::Expr {
+        let ty = value.ty;
         let block = hir::Block {
             stmts: vec![hir::Stmt {
                 kind: hir::StmtKind::Expr(h),
                 span,
             }],
-            value: Some(Box::new(nan)),
+            value: Some(Box::new(value)),
             span,
         };
-        self.mk(H::Block(block), f64, span)
+        self.mk(H::Block(block), ty, span)
     }
+}
+
+/// Which text of its own a class instance has for `%s` ([`FnCx::own_text`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OwnText {
+    None,
+    ToString,
+    ToPrimitive,
+}
+
+/// How `%j` writes a value ([`FnCx::json_plan`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JsonPlan {
+    /// By `JSON.stringify` of its type.
+    Typed,
+    /// `undefined`, as `JSON.stringify` gives for it (an `undefined`, a symbol, a function).
+    Undefined,
+    /// As an `any`, by std's `jsonAny`.
+    Dynamic,
+    /// Not yet: the line is printed without specifiers.
+    Unwritable,
 }
 
 /// An argument of a line converted from temporaries ([`FnCx::format_held`]).

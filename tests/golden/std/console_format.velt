@@ -116,6 +116,7 @@ for (const b of [true, false]) {
 
 // every argument is evaluated before any is converted
 let log: string[] = [];
+
 class Loud {
   name: string;
   constructor(name: string) {
@@ -134,14 +135,17 @@ class Loud {
     return "J" + this.name;
   }
 }
+
 function mk(n: string): Loud {
   log.push("eval " + n);
   return new Loud(n);
 }
+
 function num(n: number): number {
   log.push("evalnum " + n);
   return n;
 }
+
 console.log("%s %s", mk("a"), mk("b"));
 console.log(log.join(", "));
 log = [];
@@ -159,14 +163,17 @@ console.log(log.join(", "));
 interface Named {
   toString(): string;
 }
+
 class Tag implements Named {
   toString(): string {
     return "TAG";
   }
 }
+
 interface Shape {
   area(): number;
 }
+
 class Sq implements Shape {
   area(): number {
     return 4;
@@ -175,24 +182,31 @@ class Sq implements Shape {
     return "SQ";
   }
 }
+
 function viaShape(x: Shape): void {
   console.log("%s", x);
 }
+
 function viaNull(p: Point | null): void {
   console.log("%s", p);
 }
+
 function viaUnion(p: Point | string): void {
   console.log("%s", p);
 }
+
 function viaUndefined(p: Point | undefined): void {
   console.log("%s", p);
 }
+
 function viaInterface(n: Named): void {
   console.log("%s", n);
 }
+
 function viaParam<T>(x: T): void {
   console.log("%s|%j", x, x);
 }
+
 viaNull(new Point(1, 1));
 viaNull(null);
 viaUnion(new Point(2, 2));
@@ -214,11 +228,71 @@ function ownJson(): void {
   const JSON = 5;
   console.log("%j|%d", { a: 1 }, JSON);
 }
+
 ownJson();
 
 // a `BigInt` as Node writes a bigint
 const big = BigInt.fromNumber(123);
 console.log("%s|%d|%i|%f", big, big, big, big);
+
+// `%o` and `%O` of a `Date`, also behind a nullable and an `any`
+const day = new Date(86400000);
+const maybeDay: Date | null = day;
+const anyDay: any = day;
+console.log("%o|%O|%O|%O", day, day, maybeDay, anyDay);
+
+// `%j` of what `JSON.stringify` gives `undefined` for, and of a nullable
+const noNumber: number | undefined = undefined;
+const someNumber: number | undefined = 5;
+
+function optional(x?: number): void {
+  console.log("%j|%j", x, x);
+}
+
+console.log("%j|%j|%j|%j", noNumber, someNumber, Symbol("s"), (n: number): number => n);
+optional();
+optional(7);
+const anyUndefined: any = undefined;
+const anySymbol: any = Symbol("t");
+console.log("%j|%j|%j", anyUndefined, anySymbol, anyNumber());
+
+function anyNumber(): any {
+  return 3;
+}
+
+const anySet: any = new Set([2]);
+console.log("%j|%j|%j", new Set([1]), anySet, new Map([["k", 1]]).size);
+
+function jsonShape(x: Shape): void {
+  console.log("%j", x);
+}
+
+jsonShape(new Sq());
+
+// `%s` of a class with `[Symbol.toPrimitive]`, typed and through `any`
+class Prim {
+  [Symbol.toPrimitive](hint: string): any {
+    return hint === "number" ? 11 : "prim";
+  }
+}
+
+const prim = new Prim();
+const anyPrim: any = new Prim();
+console.log("%s|%s|%d", prim, anyPrim, prim);
+
+// `%s` of a class with its own `toString()` and a custom inspect: the `toString()`
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+class Both {
+  toString(): string {
+    return "both-text";
+  }
+  [custom](): string {
+    return "both-inspect";
+  }
+}
+
+console.log("%s|%O", new Both(), new Both());
 
 // non-ASCII
 console.log("é%sü → %d€", "ñ", 3);
