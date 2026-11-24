@@ -147,6 +147,23 @@ fn the_wide_vector_types_are_generated() {
     }
 }
 
+/// The wide vector files, and the generated part of `Avx2`'s, which std's regex scan imports,
+/// import nothing but `Vector256`: every program using a regular expression parses them, and
+/// velt/simd's three files would add about 3,500 lines to it (#3080).
+#[test]
+fn the_wide_vector_types_import_no_simd_module() {
+    let mut files = vec![vector_file(256), vector_file(512)];
+    files.extend(class_tail(Ext::Avx2X86));
+    for text in files {
+        for line in text.lines().filter(|l| l.starts_with("import ")) {
+            assert!(
+                line.contains("\"velt/arch/x86/vector256\""),
+                "unexpected import: {line}"
+            );
+        }
+    }
+}
+
 /// What the docs and the C index show of a row is one instruction, never the LLVM test's
 /// patterns (`vpermd|vpermps`, `vfmadd*ps`), whose `|` would also split the index's table.
 #[test]

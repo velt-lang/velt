@@ -26,6 +26,7 @@ import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
 import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
+import * as wa from "./sched_wake_away";
 import * as yl from "./sched_yield";
 import * as ls from "./sched_yield_list";
 
@@ -42,6 +43,8 @@ export function run(e: usize, k: usize, mode: u32): void {
     // A new poll: no look found it busy yet (before the state's store, which publishes it).
     m.store32(k + t.T_SKIPPED, 0);
   }
+  // A reference a wake handed this poll goes back before any park counts (sched_wake_away.velt).
+  wa.polled(k, m.ld32(k + t.T_STATE));
   m.store32(k + t.T_STATE, t.RUNNING);
   // After the pop that took it (a release): the monitor reads a lazy worker 0's queue while the
   // poll runs (sched_monitor.velt `lazyDuties`). The only thread at the executor (mode 0, not

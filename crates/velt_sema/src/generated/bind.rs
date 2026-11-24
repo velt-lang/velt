@@ -18,6 +18,9 @@ pub(crate) fn fix_modes(cx: &mut Ctx) {
         .flat_map(|((g, _), body)| [*g, *body])
         .collect();
     for d in defs {
-        cx.fn_info_mut(d).fixed_modes = true;
+        // Std's generated functions, in a later unit, already have it: nothing to write.
+        if !cx.fn_info(d).fixed_modes {
+            cx.fn_info_mut(d).fixed_modes = true;
+        }
     }
 }

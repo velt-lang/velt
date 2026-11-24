@@ -32,11 +32,46 @@ pub struct CVariable {
     pub at: String,
 }
 
+/// A struct or union of the headers, as clang defines it (`RecordDecl`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CRecord {
+    /// Which definition it is: `struct tag` (`union tag`), or clang's id for one without a tag.
+    pub key: String,
+    /// `union`, not `struct`.
+    pub union: bool,
+    /// Defined, not only declared (`struct s;`): only a definition has fields.
+    pub defined: bool,
+    /// `__attribute__((packed))`.
+    pub packed: bool,
+    pub fields: Vec<CField>,
+    /// Where it is declared (defined, for a defined one): the header's file name and line.
+    pub at: String,
+}
+
+/// A field of a [`CRecord`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CField {
+    /// Empty for an anonymous struct or union member.
+    pub name: String,
+    /// Its C type, as written (`const char *`, `int [4]`, `struct point`).
+    pub ty: String,
+    pub bitfield: bool,
+}
+
 /// The functions, variables and typedefs of a translation unit.
 #[derive(Default, Debug)]
 pub struct Headers {
     pub functions: HashMap<String, CFunction>,
     pub variables: HashMap<String, CVariable>,
+    /// Structs and unions with a tag, by tag: the definition if there is one.
+    records: HashMap<String, CRecord>,
+    /// Structs and unions without a tag, by clang's id, until a typedef names them.
+    unnamed_records: HashMap<String, CRecord>,
+    /// Typedef name → the struct or union without a tag it names.
+    typedef_records: HashMap<String, CRecord>,
+    /// The `declare c struct`s checked with these headers, by name: a message about a pointer
+    /// to a struct names the declared one for its definition (`structs`).
+    pub declared: Vec<String>,
     /// Typedef name → the type it names, as written.
     typedefs: HashMap<String, String>,
     /// Enum tag (a typedef's name, for an enum without a tag) → what its width comes from.
@@ -151,6 +186,9 @@ impl Headers {
                     if let Some(def) = self.unnamed_enums.get(id) {
                         self.enums.insert(name.to_string(), def.clone());
                     }
+                    if let Some(r) = self.unnamed_records.get(id) {
+                        self.typedef_records.insert(name.to_string(), r.clone());
+                    }
                     // A transparent union is passed as its first member (glibc's
                     // `__SOCKADDR_ARG`, `struct sockaddr *` to the C ABI): the typedef names that.
                     let ty = self.unnamed_transparent.get(id).map_or(ty, String::as_str);
@@ -162,11 +200,95 @@ impl Headers {
                     let id = node["id"].as_str().unwrap_or_default().to_string();
                     self.unnamed_transparent.insert(id, first);
                 }
+                let id = node["id"].as_str().unwrap_or_default().to_string();
+                self.unnamed_records.insert(id, record_of(node, at.clone()));
                 self.nested_enums(node);
+                self.nested_records(node, place);
+            }
+            Some("RecordDecl") => {
+                self.add_record(node, at.clone());
+                self.nested_enums(node);
+                self.nested_records(node, place);
             }
             _ => self.nested_enums(node),
         }
         visit_places(&node["inner"], place);
+    }
+
+    /// Records the struct or union `node` (with a tag), declared at `at`: a definition replaces
+    /// a declaration, and the first definition wins.
+    fn add_record(&mut self, node: &Value, at: String) {
+        let Some(tag) = node["name"].as_str() else {
+            return;
+        };
+        let r = record_of(node, at);
+        match self.records.get(tag) {
+            Some(old) if old.defined || !r.defined => {}
+            _ => {
+                self.records.insert(tag.to_string(), r);
+            }
+        }
+    }
+
+    /// Structs and unions with a tag defined inside `node`'s fields: their tags are the file's in
+    /// C, as enums' are. `place` is where clang's printing is after `node`'s own locations: a
+    /// copy follows it through the fields, so each nested record gets its own line.
+    fn nested_records(&mut self, node: &Value, place: &Place) {
+        let mut place = place.clone();
+        self.nested_records_in(node, &mut place);
+    }
+
+    fn nested_records_in(&mut self, node: &Value, place: &mut Place) {
+        for inner in node["inner"].as_array().into_iter().flatten() {
+            let line = node_line(inner, place);
+            if inner["kind"] == "RecordDecl" {
+                self.add_record(inner, format!("{}:{line}", short(&place.file)));
+                self.nested_records_in(inner, place);
+            } else {
+                visit_places(&inner["inner"], place);
+            }
+        }
+    }
+
+    /// The struct or union C type `name` (of a `declare c struct`) is: its tag (`struct name`),
+    /// or a typedef naming one; and how C spells the type (`struct name`, `name`).
+    pub fn record(&self, name: &str) -> Option<(&CRecord, String)> {
+        if let Some(r) = self.records.get(name) {
+            return Some((
+                r,
+                format!("{} {name}", if r.union { "union" } else { "struct" }),
+            ));
+        }
+        if let Some(r) = self.typedef_records.get(name) {
+            return Some((r, name.to_string()));
+        }
+        // `typedef struct tag name;`, through typedefs of typedefs.
+        let mut written = self.typedefs.get(name)?.clone();
+        for _ in 0..32 {
+            let base = clean(&written);
+            let words: Vec<&str> = base
+                .split_whitespace()
+                .filter(|w| *w != "const" && *w != "volatile")
+                .collect();
+            if let ["struct" | "union", tag] = words.as_slice() {
+                return self.records.get(*tag).map(|r| (r, name.to_string()));
+            }
+            if let Some(r) = self.typedef_records.get(&words.join(" ")) {
+                return Some((r, name.to_string()));
+            }
+            written = self.typedefs.get(&words.join(" "))?.clone();
+        }
+        None
+    }
+
+    /// Do `a` and `b` (a `declare c struct`'s name, a C type's) name the same struct or union
+    /// definition, each by its tag or a typedef (`point` and `point_t` of `typedef struct point
+    /// { … } point_t;`)?
+    pub fn same_record(&self, a: &str, b: &str) -> bool {
+        match (self.record(a), self.record(b)) {
+            (Some((x, _)), Some((y, _))) => x.key == y.key,
+            _ => false,
+        }
     }
 
     /// Enums `node` defines, inside structs too: their tags are the file's in C.
@@ -335,6 +457,35 @@ impl Headers {
             }
             _ => CType::Unknown(base),
         }
+    }
+}
+
+/// The struct or union `node` (a `RecordDecl`), declared at `at`.
+fn record_of(node: &Value, at: String) -> CRecord {
+    let inner = node["inner"].as_array();
+    let fields = (inner.into_iter().flatten())
+        .filter(|n| n["kind"] == "FieldDecl")
+        .map(|f| CField {
+            name: f["name"].as_str().unwrap_or_default().to_string(),
+            ty: f["type"]["qualType"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            bitfield: f["isBitfield"] == true,
+        })
+        .collect();
+    let union = node["tagUsed"] == "union";
+    let key = match node["name"].as_str() {
+        Some(tag) => format!("{} {tag}", if union { "union" } else { "struct" }),
+        None => node["id"].as_str().unwrap_or_default().to_string(),
+    };
+    CRecord {
+        key,
+        union,
+        defined: node["completeDefinition"] == true,
+        packed: (inner.into_iter().flatten()).any(|n| n["kind"] == "PackedAttr"),
+        fields,
+        at,
     }
 }
 
@@ -535,7 +686,7 @@ fn opening_paren(text: &str) -> Option<usize> {
 
 /// The file and line clang printed last: it leaves either out of a location when it is the
 /// same, in print order (a node's `loc`, then its `range`, then its children).
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Place {
     file: String,
     line: u64,

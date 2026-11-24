@@ -27,8 +27,6 @@
 
 #[path = "../../velt_rt/src/bytes.rs"]
 pub mod bytes;
-#[path = "../../velt_rt/src/bytes_ops.rs"]
-pub mod bytes_ops;
 pub mod cell_owner;
 #[path = "../../velt_rt/src/deep_eq.rs"]
 pub mod deep_eq;

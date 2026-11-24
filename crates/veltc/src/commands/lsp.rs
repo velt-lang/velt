@@ -109,8 +109,7 @@ impl CliLoader {
         listed.unwrap_or_default()
     }
 
-    /// The public modules of the std root (listed on first use), as `velt/` specifiers resolve
-    /// them.
+    /// The std root's public modules (listed on first use), as `velt/` specifiers resolve them.
     fn std_modules(&self) -> Vec<ModuleEntry> {
         let Some(root) = loader::std_root() else {
             return vec![];
@@ -158,8 +157,19 @@ impl ProgramLoader for CliLoader {
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String> {
+        self.load_preloaded(root, overlay, &[], sm, diags)
+    }
+
+    fn load_preloaded(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        preload: &[String],
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Result<LoadedProgram, String> {
         let graph = self.graph_of(root);
-        let opts = load_options(root, overlay, graph.as_deref());
+        let opts = load_options(root, overlay, graph.as_deref(), preload);
         let loaded = loader::load_program(sm, root, opts, diags)?;
         let more: Box<dyn std::any::Any + Send> = Box::new(loaded.state);
         Ok(LoadedProgram {
@@ -181,7 +191,7 @@ impl ProgramLoader for CliLoader {
     ) -> Option<velt_sema::StdBatch> {
         let state = state.downcast_mut::<loader::LoadState>()?;
         let graph = self.graph_of(root);
-        let opts = load_options(root, overlay, graph.as_deref());
+        let opts = load_options(root, overlay, graph.as_deref(), &[]);
         Some(loader::load_more(sm, state, base, demanded, &opts, diags))
     }
 
@@ -473,8 +483,7 @@ mod tests {
         assert_eq!(installed, [app]);
     }
 
-    /// The real loader behind the server: unsaved buffers win over the disk, and imports of
-    /// files that exist only on disk resolve.
+    /// The real loader: unsaved buffers win over the disk; imports of files only on disk resolve.
     #[test]
     fn server_uses_the_cli_loader_with_open_buffers() {
         let dir = tempfile::tempdir().unwrap();

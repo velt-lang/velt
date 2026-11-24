@@ -55,12 +55,13 @@ mod string_hooks;
 mod module_hooks;
 #[macro_use]
 mod decorator_hooks;
+#[macro_use]
+mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then the decorators' (`decorator_hooks.rs`), module state's
-// (`module_hooks.rs`), the string methods' (`string_hooks.rs`) and the weak core's
-// (`weak_hooks.rs`), given to `hooks!` together.
-with_decorator_hooks! {
+// The table: these rows, then TLS's (`tls_hooks.rs`), the decorators', module state's, the string
+// methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+with_tls_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);

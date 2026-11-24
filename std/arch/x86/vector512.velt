@@ -6,9 +6,6 @@
 // CPU; velt/arch/x86's AVX2 and AVX-512 methods take it as one register, behind their
 // class's check.
 
-import "velt/simd/bytes";
-import "velt/simd/floats";
-import "velt/simd/words";
 import { Vector256 } from "velt/arch/x86/vector256";
 
 /**

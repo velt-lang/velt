@@ -6,8 +6,9 @@
 //!   Every home of a value keeps it (the list: that note's §5 "As built in step 6"): heap blocks
 //!   with the layout's alignment, counted boxes and generator objects with a header or lead in
 //!   front, std's task blocks and module blocks rounded up, std slots copied through an
-//!   8-aligned view (slot.rs). Cranelift aligns a stack slot to at most 16 bytes from the
-//!   frame's start, which no Velt code can see: nothing takes a local's address.
+//!   8-aligned view (slot.rs), and stack slots (Cranelift, whose slots are aligned to at most 16
+//!   bytes, rounds the address of one aligned above that up within a larger slot:
+//!   velt_codegen_cl `Storage::Slot`).
 //!
 //! - `void` fields (`IoResult<void>`) are zero-sized: they have no VIR field, so HIR field `i`
 //!   is VIR field [`vir_field`](Cx::vir_field)`(t, i)` (the non-`void` fields before it).
@@ -33,6 +34,8 @@ use crate::vir::{AggId, AggLayout, Ty};
 
 #[derive(Default)]
 pub(super) struct Layouts {
+    /// The aggregates of the words a C struct crosses in (c_struct_call.rs), by their types.
+    pub(super) c_words: FxHashMap<Vec<Ty>, AggId>,
     value: FxHashMap<TyId, AggId>,
     views: FxHashMap<TyId, Vec<AggId>>,
     objs: FxHashMap<TyId, AggId>,

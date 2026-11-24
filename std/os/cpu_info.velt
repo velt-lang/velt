@@ -1,0 +1,22 @@
+// velt/os (internal): what `cpus()` gives for each logical CPU, with the fields of Node's
+// `os.cpus()`.
+
+/**
+ * The time a CPU has spent in each mode since the machine started, in milliseconds (Node's
+ * `os.cpus()[i].times`):
+ * - `user`: running user code.
+ * - `nice`: running user code at a lowered priority (0 on Windows).
+ * - `sys`: running the kernel.
+ * - `idle`: idle.
+ * - `irq`: serving interrupts (0 on macOS).
+ */
+export type CpuTimes = { user: i64; nice: i64; sys: i64; idle: i64; irq: i64 };
+
+/**
+ * One logical CPU (Node's `os.cpus()[i]`):
+ * - `model`: the processor's name as the OS reports it ("unknown" when it doesn't).
+ * - `speed`: its clock in MHz, as the OS reports it now (0 when it doesn't, as in many virtual
+ *   machines).
+ * - `times`: the time it has spent in each mode.
+ */
+export type CpuInfo = { model: string; speed: i64; times: CpuTimes };

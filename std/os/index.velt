@@ -1,5 +1,23 @@
 // velt/os: facts about the machine (a subset of Node's `os` module, rt_abi_async.md §14).
 // https://veltlang.com/docs/std/os/.
 
-export { arch, availableParallelism, eol, hostname, platform, tmpdir } from "velt/os/machine";
+export type { CpuInfo, CpuTimes } from "velt/os/cpu_info";
+export {
+  arch,
+  availableParallelism,
+  cpus,
+  endianness,
+  eol,
+  freemem,
+  hostname,
+  loadavg,
+  machine,
+  platform,
+  release,
+  tmpdir,
+  totalmem,
+  type,
+  uptime,
+  version,
+} from "velt/os/machine";
 export { lastOsError } from "velt/os/rt";
