@@ -67,6 +67,14 @@ export function anyArr_reverse<T>(a: T[], args: any[]): any {
   return a;
 }
 
+export function anyArr_copyWithin<T>(a: T[], args: any[]): any {
+  // Converted in JS's order.
+  const target = anyIntArg(args, 0, 0);
+  const start = anyIntArg(args, 1, 0);
+  a.copyWithin(target, start, anyIntArg(args, 2, 9223372036854775807));
+  return a;
+}
+
 export function anyArr_sort<T>(a: T[], args: any[]): any {
   const f = anyArg(args, 0);
   if (f === undefined) {
