@@ -82,8 +82,11 @@ itself through a union (`type Json = … | Json[]`) is spelled `^` inside itself
 `CheckOptions::units` (`crates/velt_sema/src/units.rs`) checks std as a unit of its own: std is
 collected and every std body checked first, then std's definitions are frozen and the app is
 collected and checked against them. `velt check` turns it on with `VELT_UNITS`; it then loads
-every std file and checks nothing lazily. The passes after the bodies (generated code, ownership,
-throws) still run once over every definition with the freeze lifted.
+every std file and checks nothing lazily (`velt build` and `velt run` don't read it yet: what they
+compile is checked as one program). With `VELT_UNITS=1` the passes after the bodies (generated
+code, ownership, throws) run once over every definition with the freeze lifted; with
+`VELT_UNITS=2` std's unit is finished first and the app's stage runs them over the app with
+std's definitions frozen.
 
 The definition table (`crates/velt_sema/src/ctx/def_table.rs`) is indexed by `DefId` with a
 frozen prefix: a finished unit's definitions. Every way to write checks the mark. A write below
@@ -109,8 +112,10 @@ output or input stream, says so with `@modifies` (`decorators/modifies.rs`; sour
 no program's instance raises them; that alone removes the raise nearly every program made (the
 JSON writers' `w`). The list is a floor: an instance also runs the program's own code (a
 `toJSON` that changes its object), which can still raise another parameter, kept beside the
-declaration as above. The vtable slot a program's override adds to a std class is the one write
-still counted (#3684).
+declaration as above. Of the facts these cover, the vtable slot a program's override adds to a
+std class is the one std's unit still lacks (#3684). Other writes are still counted:
+`units/modes.rs`'s restore of std's own raised modes (#3557 replaces it with a side list) and
+#3543's other sites.
 
 ### The std identity oracle
 

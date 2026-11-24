@@ -148,6 +148,23 @@ pub(crate) fn apply(cx: &mut Ctx) {
     let raised = std::mem::take(&mut cx.unit_sums.raised);
     let mut fns: Vec<_> = raised.fns.into_iter().collect();
     fns.sort_by_key(|(d, _)| *d);
+    // `VELT_UNITS_RAISED=1`: what the program raised of a finished unit's definitions, one line
+    // each, as the `velt-units:` report lists the writes (the tests read it).
+    if std::env::var_os("VELT_UNITS_RAISED").is_some() {
+        for (d, _) in &fns {
+            eprintln!("velt-units-raised: modes {}", cx.fn_info(*d).name);
+        }
+        for (iface, slot) in raised.slots.keys() {
+            let name = cx.iface(*iface).and_then(|i| i.methods.get(*slot as usize));
+            eprintln!(
+                "velt-units-raised: slot {}",
+                name.map_or("?", |m| m.name.as_str())
+            );
+        }
+        for d in raised.throws.keys() {
+            eprintln!("velt-units-raised: throws {}", cx.fn_info(*d).name);
+        }
+    }
     for (d, modes) in fns {
         write_modes(cx, d, &modes);
         // The body's parameters too, which lowering reads, as `ownership::infer`'s
