@@ -105,7 +105,7 @@ export class ArrayBuffer {
 
   /** How `console.log` shows the buffer, like Node: `ArrayBuffer { [Uint8Contents]: <00 ff>, [byteLength]: 2 }`. */
   [INSPECT](): NativeInspect {
-    return { text: inspectBuffer(this.bytes) };
+    return { text: inspectBuffer(this.bytes), cut: "" };
   }
 }
 

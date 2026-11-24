@@ -364,6 +364,18 @@ impl FnLower<'_, '_> {
         obj: Option<Operand>,
         body: impl FnOnce(&mut Self, Operand),
     ) {
+        self.within_depth_by(buf, depth, |lw| lw.push_text(buf, cut), obj, body);
+    }
+
+    /// [`Self::within_depth`], with `cut` writing what is printed past the limit.
+    fn within_depth_by(
+        &mut self,
+        buf: &Operand,
+        depth: &Operand,
+        cut: impl FnOnce(&mut Self),
+        obj: Option<Operand>,
+        body: impl FnOnce(&mut Self, Operand),
+    ) {
         let deep = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Gt, depth.clone(), cint(DEPTH, Ty::U32)),
@@ -382,7 +394,7 @@ impl FnLower<'_, '_> {
                 self.switch_to(cut_bb);
             }
         }
-        self.push_text(buf, cut);
+        cut(self);
         self.goto(done);
         self.switch_to(shallow_bb);
         let child = self.rvalue_temp(
@@ -484,10 +496,27 @@ impl FnLower<'_, '_> {
         if matches!(self.cx.kind(rty), TyKind::Str) {
             self.push_inspect_text(buf, &res);
         } else if self.is_native_inspect(rty) {
-            // What Node prints for one of its own objects (`ArrayBuffer`, `DataView`): the text,
-            // cut to `[ArrayBuffer]` past the depth limit, as Node cuts its objects.
+            // What Node prints for one of its own objects (`ArrayBuffer`, `URL`): the text, cut
+            // past the depth limit to the struct's `cut` (`URL {}`), or, when that is empty, to
+            // `[ArrayBuffer]`, as Node cuts its objects.
             let text = self.field_place(&res, rty, 0);
-            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+            let cut = self.field_place(&res, rty, 1);
+            let cut_text = |lw: &mut Self| {
+                let n = lw.str_len(Operand::Copy(cut.clone()));
+                let given =
+                    lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, n, cint(0, Ty::U64)));
+                let (given_bb, named_bb, done) = (lw.new_block(), lw.new_block(), lw.new_block());
+                lw.branch(given, given_bb, named_bb);
+                lw.switch_to(given_bb);
+                let a = lw.addr(cut.clone());
+                lw.push_str(buf, a);
+                lw.goto(done);
+                lw.switch_to(named_bb);
+                lw.push_text(buf, &format!("[{name}]"));
+                lw.goto(done);
+                lw.switch_to(done);
+            };
+            self.within_depth_by(buf, depth, cut_text, None, |lw, _| {
                 lw.push_inspect_text(buf, &text);
             });
         } else if let TyKind::Array(_) = self.cx.kind(rty) {
