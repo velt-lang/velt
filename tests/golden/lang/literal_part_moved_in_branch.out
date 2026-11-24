@@ -1,0 +1,9 @@
+0 /home/someone/xxxxxxxxxxxxxxxxxxxx 0 
+0 /home/someone/yyyyyyyyyyyyyyyyyyyy 1 
+0 /home/someone/xxxxxxxxxxxxxxxxxxxx /home/someone/yyyyyyyyyyyyyyyyyyyy coordinator zzzzzzzzzzzzzzzzzzzz
+1 /home/someone/xxxxxxxxxxxxxxxxxxxx 0 
+1 /home/someone/yyyyyyyyyyyyyyyyyyyy 1 coordinator zzzzzzzzzzzzzzzzzzzz
+1 /home/someone/xxxxxxxxxxxxxxxxxxxx /home/someone/yyyyyyyyyyyyyyyyyyyy coordinator zzzzzzzzzzzzzzzzzzzz
+2 /home/someone/xxxxxxxxxxxxxxxxxxxx 0 
+2 /home/someone/yyyyyyyyyyyyyyyyyyyy 1 
+2 /home/someone/xxxxxxxxxxxxxxxxxxxx /home/someone/yyyyyyyyyyyyyyyyyyyy coordinator zzzzzzzzzzzzzzzzzzzz
