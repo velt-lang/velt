@@ -9,6 +9,16 @@ import {
   velt_rt_catch_take,
 } from "velt/task/rt";
 
+/**
+ * `take`'s answer when no promise took the arming, which the runtime's catch doesn't tell: its
+ * `take` gives 0 then, so `catchPanic` awaits the body's promise unguarded, as it always has
+ * here (this executor is being retired, #2196).
+ */
+export const NONE: u64 = 1;
+
+/** While `catchPanic` calls its body: nothing here (the runtime keeps its own catch). */
+export function bodyCatching(on: bool): void {}
+
 /** The next promise started on this thread catches panics. Returns 0 (the runtime keeps its own). */
 export function arm(): u64 {
   velt_rt_catch_arm();
