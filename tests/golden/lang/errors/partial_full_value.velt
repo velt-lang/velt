@@ -1,0 +1,60 @@
+// A full `I` where `Partial<I>` is expected: TypeScript converts it keeping the value, which
+// Velt's `Partial<I>` of an interface with methods (an object type of its own) can't yet.
+interface Ctx {
+  url: string;
+  status(code: number): void;
+}
+
+class Impl implements Ctx {
+  url = "/impl";
+  status(code: number): void {
+    console.log(code);
+  }
+}
+
+const full: Ctx = { url: "/lit", status: (c) => console.log(c) };
+
+const fromClass: Partial<Ctx> = new Impl();
+const fromLiteral: Partial<Ctx> = full;
+
+function take(p: Partial<Ctx>): void {
+  console.log(p.url);
+}
+take(full);
+
+const cast = full as Partial<Ctx>;
+
+type Source = string | Partial<Ctx>;
+const source: Source = full;
+
+interface Named {
+  readonly name: string;
+  rename(n: string): void;
+}
+const named: Partial<Named> = { name: "a" };
+named.name = "b";
+
+// Through a dynamic value: `unknown` / `any` into `Partial<Ctx>`, also in a union or as an
+// option; the value would be copied, where Node keeps it.
+const u: unknown = full;
+const fromUnknown = u as Partial<Ctx>;
+const a: any = full;
+const fromAny: Partial<Ctx> = a;
+const inUnion = u as string | Partial<Ctx>;
+const optional: Partial<Ctx> | undefined = a;
+
+// An interface extending `Ctx`, an array of `Ctx` (also read-only), and a function giving one.
+interface Derived extends Ctx {
+  extra: number;
+}
+const derived: Derived = { url: "/d", extra: 1, status: (c) => console.log(c) };
+const fromDerived: Partial<Ctx> = derived;
+const list: Ctx[] = [full];
+const partials: Partial<Ctx>[] = list;
+const frozen: readonly Ctx[] = [full];
+const frozenPartials: readonly Partial<Ctx>[] = frozen;
+const give = (): Ctx => full;
+const givePartial: () => Partial<Ctx> = give;
+console.log(typeof fromUnknown, typeof fromAny, typeof inUnion, typeof optional, typeof fromDerived);
+console.log(partials.length, frozenPartials.length, typeof givePartial);
+
