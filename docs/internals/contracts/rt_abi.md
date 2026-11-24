@@ -480,8 +480,9 @@ Which form runs:
 - **LLVM elsewhere (arm64, wasm32).** Portable IR with 128-bit multiplies (the same interleaved
   Montgomery multiplication); `double` and the ladder return false. Whether to keep the reduced
   result is a secret (a carry), so the optimizer never sees that choice as a `select` it could
-  make a branch: on arm64 it is one inline-asm block of `cmp` and a `csel` per limb, what a
-  `select` compiles to there (veltc's `p256_masks` test reads the optimized arm64 IR). On
+  make a branch: on arm64 the whole final reduction is one inline-asm block, p subtracted (or
+  added) with its borrow and a `csel` per limb on the flags it leaves (veltc's `p256_masks` test
+  reads the optimized arm64 IR). On
   wasm32, which has no inline assembly, it is a `select`, and the engine decides how that
   compiles.
 - **Cranelift.** The same algorithm in Cranelift IR; `double` and the ladder return false.

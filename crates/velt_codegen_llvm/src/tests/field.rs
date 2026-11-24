@@ -299,12 +299,12 @@ fn the_fast_form_is_chosen_by_the_cpu_feature_word() {
     }
 }
 
-/// arm64's portable form chooses the reduced result by `csel`s in assembly
-/// ([`Choice::Csel`]): after clang's optimizer no `select` is left in the module (the
-/// `p256_masks` test refuses one whose condition comes from the secret, and the backend may make
-/// a `select` a branch), and the code has no conditional branch and, in assembly, a `csel` per
-/// limb of each of `add`, `sub`, `mul` and `sqr`, as many as a `select` would give. Run on arm64 by the
-/// reference test above.
+/// arm64's portable form reduces in assembly, choosing by `csel`s on the borrow of p's
+/// subtraction ([`Choice::Csel`], `field_portable::reduce_csel`): after clang's optimizer no
+/// `select` is left in the module (the `p256_masks` test refuses one whose condition comes from
+/// the secret, and the backend may make a `select` a branch), and the code has no conditional
+/// branch and, in assembly, a `csel` per limb of each of `add`, `sub`, `mul` and `sqr`. Run on
+/// arm64 by the reference test above.
 #[test]
 fn the_arm64_choice_is_csels_in_assembly() {
     let Some(clang) = crate::find_clang() else {
@@ -351,7 +351,7 @@ fn the_arm64_choice_is_csels_in_assembly() {
         })
         .collect();
     assert!(branches.is_empty(), "{branches:#?}");
-    // The `csel`s of the asm blocks (the compiler's own may compute `keep` from the flags).
+    // The `csel`s of the asm blocks (the compiler may make its own from other comparisons).
     let mut inside = false;
     let mut csels = 0;
     for l in asm.lines().map(str::trim) {
