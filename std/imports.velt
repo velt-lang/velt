@@ -87,6 +87,13 @@ export const imports: Imports = {
     linux: "./lang/hooks/signal_linux.velt",
     default: "./lang/hooks/signal_none.velt",
   },
+  // The line a bus error from a cut-short mapped file gets (std/fs/mapped_file.velt): a signal
+  // handler on macOS and Linux; elsewhere nothing (no mapping, and no C to link).
+  "#mapped-fault": {
+    darwin: "./fs/mapped_fault_posix.velt",
+    linux: "./fs/mapped_fault_posix.velt",
+    default: "./fs/mapped_fault_none.velt",
+  },
   // The threads of the executor in Velt's workers (std/lang/hooks/sched.velt): `pthread_create`
   // on macOS and Linux, `CreateThread` on Windows; elsewhere none (one worker).
   "#sched-thread": {
