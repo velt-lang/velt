@@ -1,0 +1,15 @@
+-0 over 0: true
+0 over -0: false
+before: false
+behind the view: true
+u8 view, -0 kept: true 9 9
+fill -0 over 0: true
+fill 0 over -0: false
+sort, zeros swap: true false 1
+reverse: false true
+i32 view, -0 written back: true
+i32 view reverse: -0,2,7,-0
+Child sort: -0,-0,0,0
+Child shift: -0,a
+Child read: 0
+Child sort after a change behind: -0,5
