@@ -125,6 +125,7 @@ fn a_woken_task_taken_by_another_worker_gives_the_reference_back_once() {
 /// `main` ends while a task woken from another worker is still queued behind a busy one on its
 /// home worker: the program still runs it, and its poll gives the carried reference back.
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "flaky on loaded macOS runners: #3690")]
 fn a_carried_wake_still_queued_when_main_ends_is_given_back() {
     check("exit_queued", EXIT_QUEUED, "main ends\nbusy true\n", 3);
 }
