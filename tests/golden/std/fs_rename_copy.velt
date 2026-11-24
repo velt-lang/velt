@@ -1,6 +1,7 @@
 // rename, renameSync, copyFile and copyFileSync, and Node's errors for them (`ENOENT: no such
 // file or directory, rename 'a' -> 'b'`). The expected output is Node's, from a twin of this
 // program over node:fs (fs_rename_copy.mjs in the pull request that added it, #2196).
+import { cwd } from "velt/process";
 import {
   copyFile,
   copyFileSync,
@@ -13,12 +14,17 @@ import {
   writeFile,
 } from "velt/fs";
 
+/** The message as Node prints it on Linux: on Windows it names the path absolute, with `\`. */
+function portable(m: string): string {
+  return m.split(`${cwd()}\\`).join("").split("\\").join("/");
+}
+
 async function tryIt(label: string, f: () => Promise<void>) {
   try {
     await f();
     console.log(label, "ok");
   } catch (e) {
-    console.log(label, e.code, e.message);
+    console.log(label, e.code, portable(e.message));
   }
 }
 
@@ -53,7 +59,7 @@ async function main() {
   try {
     copyFileSync(`${d}/nope`, `${d}/x.txt`);
   } catch (e) {
-    console.log("copySync missing", e.code, e.message);
+    console.log("copySync missing", e.code, portable(e.message));
   }
   // A directory is no file to copy (the code differs by system); nothing is left behind.
   try {
@@ -73,7 +79,7 @@ async function main() {
   try {
     renameSync(`${d}/nope`, `${d}/x`);
   } catch (e) {
-    console.log("renameSync missing", e.code, e.message);
+    console.log("renameSync missing", e.code, portable(e.message));
   }
   await tryIt("rename into missing dir", () => rename(`${d}/b2.txt`, `${d}/no/x`));
 

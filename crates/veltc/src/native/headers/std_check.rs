@@ -115,7 +115,6 @@ const CHECKED: &[&str] = &[
     "fs/tree/win_remove.velt",
     "fs/whole/read_all.velt",
     "fs/whole/win32.velt",
-    "fs/whole/win_path.velt",
     "lang/hooks/clock_darwin.velt",
     "lang/hooks/clock_linux.velt",
     "lang/hooks/clock_win32.velt",
