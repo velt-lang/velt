@@ -80,10 +80,7 @@ impl Effects {
                 Callee::Virtual { slot } => {
                     self.callbacks(cx, scope, args, None);
                     let m = args.first().and_then(|r| match cx.ty.kind(r.ty) {
-                        TyKind::Adt(d, _) => match cx.info.get(d.0 as usize) {
-                            Some(DefInfo::Adt(a)) => a.vtable.get(*slot as usize).copied(),
-                            _ => None,
-                        },
+                        TyKind::Adt(d, _) => cx.vtable_of(*d)?.get(*slot as usize).copied(),
                         _ => None,
                     });
                     let name = m.and_then(|m| match cx.info.get(m.0 as usize) {
