@@ -354,18 +354,22 @@ export class ReadableStreamDefaultController<R> {
     if (it != null) {
       return finished(it.return());
     }
+    // The promise settles as Node's does (#3695): a microtask after a `cancel` that gives nothing
+    // or throws, and for one that gives a promise, after that promise is adopted (`adopted`).
     if (cancel == null) {
-      return Promise.resolve();
+      return Promise.resolve().then(() => {});
     }
     try {
       const p = cancel(reason);
       if (p != null) {
-        return p;
+        return new Promise<void, unknown>((resolve, reject) =>
+          adopted(p, () => resolve(), (e) => reject(e)),
+        );
       }
     } catch (e) {
-      return Promise.reject<void>(e);
+      return Promise.reject<void>(e).then(() => {});
     }
-    return Promise.resolve();
+    return Promise.resolve().then(() => {});
   }
 }
 

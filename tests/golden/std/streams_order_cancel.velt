@@ -1,0 +1,171 @@
+// check: no leaks
+// When `reader.cancel(reason)`'s promise settles against other microtasks, as Node 22's (#3695): a
+// microtask after the stream closes for no `cancel` callback, one that gives nothing or one that
+// throws; after the promise it gives is adopted for an `async` one. Each with a pull pending. The
+// Node twin is streams_order_cancel.mjs.
+async function noneCase(): Promise<void> {
+  const log: string[] = [];
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return new Promise<void>((r) => setTimeout(r, 1));
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  queueMicrotask(() => {
+    log.push("cancel");
+    r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await new Promise<void>((r) => setTimeout(r, 20));
+  console.log("none: " + log.join(" "));
+}
+
+async function syncCase(): Promise<void> {
+  const log: string[] = [];
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return new Promise<void>((r) => setTimeout(r, 1));
+    },
+    cancel: (reason) => {
+      log.push("cancelFn");
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  queueMicrotask(() => {
+    log.push("cancel");
+    r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await new Promise<void>((r) => setTimeout(r, 20));
+  console.log("sync: " + log.join(" "));
+}
+
+async function asyncCase(): Promise<void> {
+  const log: string[] = [];
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return new Promise<void>((r) => setTimeout(r, 1));
+    },
+    cancel: async (reason) => {
+      log.push("cancelFn");
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  queueMicrotask(() => {
+    log.push("cancel");
+    r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await new Promise<void>((r) => setTimeout(r, 20));
+  console.log("async: " + log.join(" "));
+}
+
+async function throwsCase(): Promise<void> {
+  const log: string[] = [];
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return new Promise<void>((r) => setTimeout(r, 1));
+    },
+    cancel: (reason) => {
+      log.push("cancelFn");
+      throw new Error("cancel boom");
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  queueMicrotask(() => {
+    log.push("cancel");
+    r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await new Promise<void>((r) => setTimeout(r, 20));
+  console.log("throws: " + log.join(" "));
+}
+
+async function main(): Promise<void> {
+  await noneCase();
+  await syncCase();
+  await asyncCase();
+  await throwsCase();
+}
+
+main();
