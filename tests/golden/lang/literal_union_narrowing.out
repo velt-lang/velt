@@ -7,3 +7,6 @@ c b c a 3 2 c b
 empty a else a
 c b a c a
 none none
+d a d a
+1 a
+2.5 1 [] c

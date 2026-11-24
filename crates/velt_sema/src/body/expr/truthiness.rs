@@ -543,6 +543,8 @@ impl FnCx<'_, '_> {
         let left = self.narrow_operand(left, !is_and);
         let (left, r) = match exp {
             None if number_rhs => self.number_operand(left, r),
+            // `n || d` with `d: number`: the integer literal type is that `number` too.
+            _ if r.ty == self.cx.ty.f64 => (self.int_literal_as_number(left), r),
             _ => (left, r),
         };
         let (then, els) = if is_and { (r, left) } else { (left, r) };
@@ -610,15 +612,17 @@ impl FnCx<'_, '_> {
         if let Some(ty) = joined {
             return (t, f, ty);
         }
+        // Each conversion is tried on a copy: a failed one may give back a changed operand (a
+        // literal no longer written as one), which then no longer converts to `exp` (#3370).
         let tt = t.ty;
-        let f = match self.try_coerce(f, tt) {
+        let f = match self.try_coerce(f.clone(), tt) {
             Ok(f) => return (t, f, tt),
-            Err(f) => f,
+            Err(_) => f,
         };
         let ft = f.ty;
-        let t = match self.try_coerce(t, ft) {
+        let t = match self.try_coerce(t.clone(), ft) {
             Ok(t) => return (t, f, ft),
-            Err(t) => t,
+            Err(_) => t,
         };
         if let Some(e) = exp.filter(|e| *e != error) {
             let t = self.coerce(t, e);

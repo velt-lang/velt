@@ -81,6 +81,26 @@ function nested(i: number, d: Named | undefined): Named | "none" {
   return i == 0 ? "none" : d ?? "none";
 }
 
+// `||` with a non-literal right side against a union, `n || d` with `d: number`, and `&&=`.
+function orObj(s: "" | "a", d: Named): "a" | Named {
+  return s || d;
+}
+function orObjConst(s: "" | "a", d: Named): string {
+  const r: "a" | Named = s || d;
+  return typeof r === "string" ? r : r.name;
+}
+function orArr(s: "" | "a"): "a" | number[] {
+  return s || [1];
+}
+function orNum(n: 0 | 1, d: number): number {
+  return n || d;
+}
+function andAssign(s: "" | "a"): "" | "c" {
+  let x: "" | "a" | "c" = s;
+  x &&= "c";
+  return x;
+}
+
 function main() {
   f("");
   console.log(h(""), k("a"));
@@ -92,4 +112,10 @@ function main() {
   console.log(chain("", ""), chain("", "b"), chain("a", ""), orAssign(""), orAssign("a"));
   const n = nested(1, undefined);
   console.log(typeof n === "string" ? n : n.name, nested(0, { name: "d" }));
+  const d: Named = { name: "d" };
+  const o = orObj("", d);
+  console.log(typeof o === "string" ? o : o.name, orObj("a", d), orObjConst("", d), orObjConst("a", d));
+  const a = orArr("");
+  console.log(typeof a === "string" ? a : a.join(","), orArr("a"));
+  console.log(orNum(0, 2.5), orNum(1, 2.5), `[${andAssign("")}]`, andAssign("a"));
 }
