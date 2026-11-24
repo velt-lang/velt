@@ -53,6 +53,12 @@ pub enum Shape {
         name: String,
         nullable: bool,
     },
+    /// An array of C structs, by name: a pointer to its first element (#2187); `readonly` when C
+    /// only reads it.
+    StructBuf {
+        name: String,
+        readonly: bool,
+    },
     /// A C struct by value, by name: a field of another C struct.
     Struct(String),
     Void,
@@ -106,6 +112,9 @@ pub fn describe(shape: &Shape) -> String {
             name,
             nullable: true,
         } => format!("Ref<{name}> | null"),
+        Shape::StructBuf { name, readonly } => {
+            format!("{}{name}[]", if *readonly { "readonly " } else { "" })
+        }
         Shape::Struct(name) => name.clone(),
         Shape::Void => "void".into(),
     }
@@ -209,6 +218,22 @@ pub fn compare_in(shape: &Shape, c: &CType, h: &Headers) -> Result<(), String> {
                 "C may write through it: declare it `Out<S>` or `Ptr<S>`; a `Ref<S>` is a `const S *`"
                     .into(),
             ),
+            _ => Err(format!("declare {}", velt_for(c))),
+        },
+        // As an array of numbers: `readonly` may be a pointer without `const`, and an array C
+        // writes may not be a `const S *`.
+        Shape::StructBuf { name, readonly } => match c {
+            CType::Pointer {
+                pointee, is_const, ..
+            } => {
+                if !*readonly && *is_const {
+                    return Err("C only reads the array: declare it `readonly`".into());
+                }
+                match &**pointee {
+                    CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
+                    other => Err(format!("the array's elements are {}", velt_for(other))),
+                }
+            }
             _ => Err(format!("declare {}", velt_for(c))),
         },
         Shape::OutPtr(p) => match c {

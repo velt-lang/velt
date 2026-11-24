@@ -18,12 +18,23 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
         CTy::Null => Shape::Null,
         CTy::StrBytes | CTy::CString => Shape::Text,
         CTy::Ptr { .. } => Shape::Ptr(pointee_of_ptr(p, t)),
-        CTy::Buf { readonly } => Shape::Buf {
-            elem: match p.types.kind(t) {
-                TyKind::Array(e) => scalar_of(p, *e).unwrap_or(Scalar::Bool),
-                _ => Scalar::Bool,
+        CTy::Buf { readonly } => match p.types.kind(t) {
+            // An array of C structs (#2187): compared by the definition its elements name.
+            &TyKind::Array(e) if scalar_of(p, e).is_none() => match field_shape(p, e) {
+                Shape::Struct(name) => Shape::StructBuf { name, readonly },
+                _ => Shape::Buf {
+                    elem: Scalar::Bool,
+                    readonly,
+                },
             },
-            readonly,
+            TyKind::Array(e) => Shape::Buf {
+                elem: scalar_of(p, *e).unwrap_or(Scalar::Bool),
+                readonly,
+            },
+            _ => Shape::Buf {
+                elem: Scalar::Bool,
+                readonly,
+            },
         },
         // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094); `Out<S>` of a C
         // struct an `S *` (#2187).

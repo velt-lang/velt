@@ -143,6 +143,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | a `@repr("transparent")` struct (velt/compiler) | its one field's C type | exactly as the field, on every target: `struct Meters { readonly m: f64; }` is a `double`, not a C struct of one (which Windows x64 passes in an integer register) |
 | `null` (as a parameter type) | any pointer | always `NULL` |
 | `readonly T[]`, `T[]` (`T` a number type), views of bytes | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
+| `readonly S[]`, `S[]` (`S` a C struct) | `const S *` / `S *` | the same: the elements are inline at C's layout; `S[]` only when every field of `S` takes any bits C writes (no `bool`, no non-null pointer) |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
 | `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, `Ptr<U> \| null` for a `U **`, or a C struct |
@@ -197,6 +198,14 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   returning one, and a `Ref` in a C struct's field (where it would be `S` inline; a field that
   points is `Ptr<S>`) are errors at the declaration (collect/c_ref.rs). Elsewhere `Ref<S>`
   is just `S`, as `StrBytes` is `string`.
+- **An array of C structs** (#2187) crosses as an array of numbers does (`CTy::Buf`): its
+  elements are inline at C's layout (the struct's aggregate, its size the stride), so the first
+  element's address is a `const S *` (`readonly S[]`) or an `S *` C may write, borrowed for the
+  call. C writing an element writes its bytes as they are, so `S[]` is refused when `S` has a
+  `bool` field (C could write another byte) or a non-null pointer field (C could write `NULL`),
+  also in a nested struct (collect/c_sig.rs `c_unwritable`); `readonly S[]` of them is not, as
+  C promises not to write it. The header check compares the elements by the definition they
+  name.
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
@@ -519,7 +528,7 @@ native: {
   | `bool` | `_Bool` / `bool` only |
   | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them, so a declaration right on one target is right on all |
   | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`; `Out<S>` of a C struct is `S *`, by the definition it names) |
-  | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
+  | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`); an array of C structs `S` by the definition it names |
   | written arrays, `Out<T>` | non-const `T *` only |
   | `Ref<S>` | `const S *` only, `S` by the definition it names (a non-const one C may write through is `Out<S>` or `Ptr<S>`; stricter than read-only arrays, which accept a non-const `T *` because many APIs omit `const` on buffers: a struct pointer without `const` usually means C writes it, and `Ptr<S>` stays for the APIs that only forgot it) |
   | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
@@ -743,7 +752,8 @@ must not depend on code elsewhere.
 - `declare c` calls are synchronous.
 - A C struct crosses by value only on x86-64 (Linux, macOS, Windows) and arm64 Linux and macOS,
   and not in a variadic function's `...` or to an `@export` function. C arrays in structs are not
-  supported, and an array of structs cannot be passed yet.
+  supported. An array of structs C writes (`S[]`) can't hold a `bool` or a non-null pointer
+  field, which C could write as no Velt value; `readonly S[]` can.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -759,8 +769,8 @@ must not depend on code elsewhere.
 ## Not yet implemented
 
 - **C structs by value on the remaining targets** (wasm32, Windows on arm64), in a variadic
-  function's `...` and to an `@export` function; and arrays of structs (`readonly S[]` as
-  `const S *`), as decided on #2187. C arrays become fields once Velt has fixed-size arrays.
+  function's `...` and to an `@export` function. C arrays become fields once Velt has
+  fixed-size arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call

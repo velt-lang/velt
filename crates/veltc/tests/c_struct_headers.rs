@@ -87,6 +87,11 @@ int get_point(point_t *out);
 /* A struct C only reads (#2187): `Ref<point>`, and `Ref<point> | null`. */
 void draw_point(const point_t *p);
 int maybe_point(const struct point *p);
+/* Arrays of structs (#2187): `readonly point[]` C reads (also without `const`), `point[]` C
+   fills. */
+double sum_points(const point_t *ps, int32_t n);
+double sum_loose(struct point *ps, int32_t n);
+void fill_points(struct point *ps, int32_t n);
 /* Every kind of field, with padding before and after small ones and a nested struct with tail
    padding: a slip in any width or alignment shows in the offsets. */
 #include <stdbool.h>
@@ -112,6 +117,9 @@ declare c("geo") function use_pt(p: Ptr<point>): void;
 declare c("geo") function get_point(out: Out<point>): i32;
 declare c("geo") function draw_point(p: Ref<point>): void;
 declare c("geo") function maybe_point(p: Ref<point> | null): i32;
+declare c("geo") function sum_points(ps: readonly point[], n: i32): f64;
+declare c("geo") function sum_loose(ps: readonly point[], n: i32): f64;
+declare c("geo") function fill_points(ps: point[], n: i32): void;
 declare c struct tail { big: i64; small: u8; }
 declare c struct kinds {
   flag: bool; i8: i8; u8: u8; i16: i16; u16: u16; f: f32; i32: i32;
@@ -301,6 +309,26 @@ fn a_ref_struct_is_a_const_struct_pointer() {
     let out = output(&o);
     assert!(!o.status.success(), "{out}");
     for want in ["C may write through it", "its `Ref<S>`: declare"] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+}
+
+/// An array of structs C fills is refused against a `const S *` (C only reads it), and an
+/// array of one struct against a pointer to another.
+#[test]
+fn an_array_of_structs_is_a_struct_pointer() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let header = "#include <stdint.h>\nstruct point { double x; double y; };\nstruct seg { int32_t n; };\nvoid fill_points(const struct point *ps, int32_t n);\nint read_segs(const struct seg *s, int32_t n);\n";
+    let lib = "declare c struct point { x: f64; y: f64; }\ndeclare c struct seg { n: i32; }\ndeclare c(\"geo\") function fill_points(ps: point[], n: i32): void;\ndeclare c(\"geo\") function read_segs(s: readonly point[], n: i32): i32;\n";
+    project(dir.path(), header, lib);
+    let o = check(dir.path(), LINUX);
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    for want in [
+        "C only reads the array: declare it `readonly`",
+        "the array's elements are",
+    ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
 }

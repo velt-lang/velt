@@ -447,6 +447,35 @@ function main() {
     }
 }
 
+/// An array of C structs C writes (`S[]`, an `S *`) is refused when `S` has a field C could
+/// write as no Velt value: a `bool`, or a non-null pointer, also in a nested struct (#2187). A
+/// `readonly` one, and one of other fields, are not.
+#[test]
+fn an_array_of_c_structs_c_writes_takes_any_bits() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c struct Flag { on: bool; n: i32; }\nexport declare c struct Link { next: Ptr<u8>; }\nexport declare c struct Outer { tag: u16; link: Link; }\nexport declare c struct Fine { n: i32; p: Ptr<u8> | null; x: f64; }\n\ndeclare c(\"c\") function flags(xs: Flag[], n: i32): void;\ndeclare c(\"c\") function outers(xs: Outer[], n: i32): void;\ndeclare c(\"c\") function readFlags(xs: readonly Flag[], n: i32): void;\ndeclare c(\"c\") function readOuters(xs: readonly Outer[], n: i32): void;\ndeclare c(\"c\") function fines(xs: Fine[], n: i32): void;\n\nexport function run(): void {\n  // SAFETY: a test of the checks only; never run.\n  unsafe {\n    flags([], 0);\n    outers([], 0);\n    readFlags([], 0);\n    readOuters([], 0);\n    fines([], 0);\n  }\n  ;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  run();\n}\n",
+    );
+    let o = velt(dir.path(), &["check"]);
+    let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(!o.status.success(), "{out}");
+    for want in [
+        "parameter `xs` of C function `flags` is an array of `Flag` C may write, and `Flag` has a `bool` field (`on`)",
+        "parameter `xs` of C function `outers` is an array of `Outer` C may write, and `Outer` has a non-null pointer field (`next`)",
+        "in its field `link`",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+    for unwanted in ["`readFlags`", "`readOuters`", "`fines`"] {
+        assert!(
+            !out.contains(unwanted),
+            "unexpected `{unwanted}` in:\n{out}"
+        );
+    }
+}
+
 /// `Ref<S>` is a `const S *` of a C struct, as a parameter (#2187): a `Ref` of anything else, and
 /// a C function returning one, are errors at the declaration.
 #[test]
