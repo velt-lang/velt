@@ -362,12 +362,13 @@ export class ReadableStreamDefaultController<R> {
     try {
       const p = cancel(reason);
       if (p != null) {
-        return new Promise<void, unknown>((resolve, reject) =>
-          adopted(p, () => resolve(), (e) => reject(e)),
+        return new Promise<void, unknown>(
+          (resolve, reject) => adopted(p, () => resolve(), (e) => reject(e)),
         );
       }
     } catch (e) {
-      return Promise.reject<void>(e).then(() => {});
+      // Typed here, not inferred: `cancel`'s error type is in a recursion (#3695).
+      return new Promise<void, unknown>((resolve, reject) => queueMicrotask(() => reject(e)));
     }
     return Promise.resolve().then(() => {});
   }
