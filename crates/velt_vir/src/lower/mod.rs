@@ -143,6 +143,7 @@ mod literal_accessors;
 mod literal_moves;
 mod match_switch;
 mod matching;
+mod module_lock;
 mod module_state;
 mod narrowed_paths;
 mod operand;
