@@ -493,6 +493,27 @@ fn the_json_pass_reports_in_the_same_order_as_a_whole_program_check() {
     assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
 }
 
+/// A bad `Record` key that a program's generic function brings in through std's (`dec<K>`
+/// parsing a `Record<K, i64>`) is reported with that function named, whichever origin the
+/// fixed point meets first: the order differs in a check by units, where std's functions are
+/// numbered first.
+#[test]
+fn a_bad_record_key_names_the_program_s_function_as_in_a_whole_program_check() {
+    let path = "lang/errors/record_key_errors.velt";
+    let (whole, two) = (check_golden_two(path, false), check_golden_two(path, true));
+    let text = |o: &std::process::Output| String::from_utf8_lossy(&o.stderr).to_string();
+    let lines = |o: &std::process::Output| {
+        text(o)
+            .lines()
+            .filter(|l| !l.starts_with("velt-units"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(text(&whole).contains("required because `dec` uses it as a `Record` key"));
+    assert_eq!(whole.status.code(), two.status.code(), "{path}");
+    assert_eq!(lines(&whole), lines(&two), "{path}");
+}
+
 /// Questions about the whole program are answered from the std code it has
 /// (`lazy_std::units_live_set`), not from all of std's unit: whether it reads a `shared` value
 /// (`units::app_reads_shared`; a `read` callback passing the store's object to a function value

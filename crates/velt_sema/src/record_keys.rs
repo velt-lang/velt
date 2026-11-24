@@ -319,11 +319,19 @@ fn requirements(
 
 /// Report each bad key once per function, preferably where a generic function brought it in.
 fn report(cx: &mut Ctx, concrete: &[((DefId, TyId), Span, DefId)]) {
-    // The first entry per (function, key) that a generic function brought in.
+    // The first entry per (function, key) that a generic function brought in, one of the
+    // program's before std's (which the note doesn't name): which comes first depends on how
+    // the functions are numbered, which a check by units (`crate::units`) does differently.
     let mut brought: FxHashMap<(DefId, TyId), (Span, DefId)> = FxHashMap::default();
     for (fk, span, origin) in concrete {
-        if *origin != fk.0 {
-            brought.entry(*fk).or_insert((*span, *origin));
+        if *origin == fk.0 {
+            continue;
+        }
+        match brought.get(fk) {
+            Some(&(_, o)) if !std_origin(cx, o) || std_origin(cx, *origin) => {}
+            _ => {
+                brought.insert(*fk, (*span, *origin));
+            }
         }
     }
     let mut done: FxHashSet<(DefId, TyId)> = FxHashSet::default();
@@ -344,11 +352,21 @@ fn report(cx: &mut Ctx, concrete: &[((DefId, TyId), Span, DefId)]) {
 /// Where a key that failed at a call comes from: the generic function that uses it, or the
 /// class or struct whose field initializers do (instantiated by `new`).
 fn origin_note(cx: &Ctx, origin: DefId, here: DefId) -> Option<String> {
-    let name = match (&cx.defs[origin.0 as usize], &cx.info[origin.0 as usize]) {
-        (Some(Def::Fn(f)), _) => f.name.as_str(),
-        (_, DefInfo::Adt(a)) => a.name.as_str(),
-        _ => return None,
-    };
-    let std = name.starts_with(velt_common::std_modules::CANONICAL_PREFIX);
-    (origin != here && !std).then(|| format!("required because `{name}` uses it as a `Record` key"))
+    let name = origin_name(cx, origin)?;
+    (origin != here && !std_origin(cx, origin))
+        .then(|| format!("required because `{name}` uses it as a `Record` key"))
+}
+
+fn origin_name<'a>(cx: &'a Ctx, origin: DefId) -> Option<&'a str> {
+    match (&cx.defs[origin.0 as usize], &cx.info[origin.0 as usize]) {
+        (Some(Def::Fn(f)), _) => Some(f.name.as_str()),
+        (_, DefInfo::Adt(a)) => Some(a.name.as_str()),
+        _ => None,
+    }
+}
+
+/// Is `origin` std's (a note doesn't name it)?
+fn std_origin(cx: &Ctx, origin: DefId) -> bool {
+    origin_name(cx, origin)
+        .is_some_and(|n| n.starts_with(velt_common::std_modules::CANONICAL_PREFIX))
 }
