@@ -16,8 +16,9 @@
 # - `golden`: the goldens' build and shards (queue-goldens.yml, `os::GOLDEN_SHARDS`): every golden
 #   in debug and release mode, the bundled-linker goldens and the VIR identity's sample (one golden
 #   in 8, as the single job compared since #3641), from one build packed into an archive.
-# - The WebAssembly goldens stay out, as they did (`VELT_WASM_GOLDENS=skip`): the nightly's
-#   `wasm-goldens` runs them on these OSes.
+# - The WebAssembly goldens stay out, as they did (`VELT_WASM_GOLDENS=skip`, no `wasm_shards`):
+#   the queue ran them before the merge (on Linux, and on Windows and macOS for a change to their
+#   host side, `Plan::wasm_oses`), and the nightly runs them on every OS.
 #
 # The last job, `gate`, passes only when every shard of both passed; otherwise it opens or comments
 # on the issue "main fails on <OS>" (.github/actions/main-failure), "did not finish" when a job was
