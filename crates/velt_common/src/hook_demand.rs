@@ -85,11 +85,16 @@ pub enum Construct {
     /// `**` on integers (`a ** b`, `a **= b` on a declared integer type): std's `powI64`
     /// (std/lang/hooks/pow_int.velt), which only a program that has one loads.
     PowInt,
+    /// A [`Construct::Mutex`] in a build for the `velt dev` JIT: lowering counts the `Mutex` a
+    /// `with` holds for std's module lock (std/lang/hooks/mutex_held.velt, #3467), since code
+    /// swapped in there can reach module state from the callback. Sema sets it for such a build
+    /// only, so other builds demand nothing and count nothing.
+    MutexHeld,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 13] = [
+    pub const ALL: [Construct; 14] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -103,6 +108,7 @@ impl Construct {
         Construct::TextFloat,
         Construct::WriteFloat,
         Construct::PowInt,
+        Construct::MutexHeld,
     ];
 
     /// The construct as the ICE names it.
@@ -121,6 +127,7 @@ impl Construct {
             Construct::TextFloat => "TextFloat (a float to text, or glue that may print one)",
             Construct::WriteFloat => "WriteFloat (console.log of a float)",
             Construct::PowInt => "PowInt (`**` on integers)",
+            Construct::MutexHeld => "MutexHeld (a Mutex's with in a velt dev build)",
         }
     }
 

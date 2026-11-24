@@ -19,7 +19,13 @@ pub(crate) fn path(opts: CheckOptions, found: [bool; 4]) -> Option<PathBuf> {
     let std_key = opts.std_key?;
     let mut h = rustc_hash::FxHasher::default();
     std::hash::Hash::hash(
-        &(std_key, opts.eager_std, opts.native_executor, found),
+        &(
+            std_key,
+            opts.eager_std,
+            opts.native_executor,
+            opts.jit,
+            found,
+        ),
         &mut h,
     );
     std::hash::Hash::hash(codec::FORMAT.as_slice(), &mut h);
