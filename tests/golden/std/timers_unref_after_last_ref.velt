@@ -1,0 +1,23 @@
+// What the last ref'd timer makes `unref()`'d does not run, as in Node (#3576): once its pass
+// ends with nothing ref'd left, the process ends before the check phase and before the next
+// pass, so neither its unref'd immediate nor its unref'd interval runs. The process ends as soon
+// as nothing can still happen; another worker that has not parked yet is not something that can
+// happen. The last ref'd timer is set by another timer's callback, so its pass is one of the
+// loop's, not the one Node runs before its loop starts.
+
+// timing: the test is of which timers run before the process ends.
+function last() {
+  console.log("ref'd timeout, the last ref'd");
+  const i = setImmediate(() => console.log("never: an unref'd immediate"));
+  i.unref();
+  const every = setInterval(() => console.log("never: an unref'd interval"), 1);
+  every.unref();
+}
+
+setTimeout(
+  () => {
+    setTimeout(() => last(), 10);
+  },
+  1,
+);
+console.log("main done");
