@@ -90,6 +90,10 @@ pub struct Plan {
     /// them in full on every OS. `--full` runs them unless `VELT_WASM_GOLDENS=skip`, which the
     /// merge queue sets from the change's plan and the checks after merging always set.
     pub wasm: bool,
+    /// Why the merge queue runs the WebAssembly goldens on Windows and macOS too, when it checks
+    /// them; `None`: on Linux only ([`os::wasm_host_reason`], [`Self::wasm_oses`]). `--full` (a
+    /// merge train) knows no changes and runs them on Linux; the nightly runs them on every OS.
+    pub wasm_host: Option<String>,
     /// `declare c` checked against C headers on every target through the pinned zig: the
     /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` (a dispatched run such
     /// as a merge train's, a pull request labelled `ci:full`) knows no changes, so it runs it: a
@@ -128,6 +132,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: true,
+            wasm_host: None,
             c_headers: true,
         }
     }
@@ -165,6 +170,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: false,
+            wasm_host: None,
             c_headers: false,
         }
     }
@@ -216,6 +222,7 @@ impl Plan {
                         // WebAssembly or changes the toolchain: a lockfile, CI or script change
                         // alone doesn't need them in the queue (about half the test time).
                         wasm: plan.wasm || paths.iter().any(|p| changes_toolchain(p)),
+                        wasm_host: os::wasm_host_reason(&code),
                         c_headers: plan.c_headers,
                         ..everything
                     };
@@ -281,8 +288,22 @@ impl Plan {
         plan.add_source_readers(&changed_crates.union(&comment_crates).cloned().collect());
         plan.other_os = os::other_os_reason(graph, &code, plan.full);
         plan.macos = os::macos_reason(&code);
+        plan.wasm_host = os::wasm_host_reason(&code);
         plan.after_merge = os::after_merge_reason(paths);
         plan
+    }
+
+    /// The runners among `oses` (the merge queue's, Linux first) that run the WebAssembly
+    /// goldens there: none when they don't run ([`Self::wasm`]), else Linux, and the other OSes
+    /// the queue checks only for a change to WebAssembly's host side ([`Self::wasm_host`]): the
+    /// module is the same everywhere, so Linux checks it, and the nightly every OS. Before
+    /// 2026-11-24 every OS the queue checked ran them, and a train's 4 macOS shards waited hours
+    /// for the 5 macOS runners.
+    pub fn wasm_oses<'a>(&self, oses: &[&'a str]) -> Vec<&'a str> {
+        let host = self.wasm_host.is_some();
+        (oses.iter().copied())
+            .filter(|os| self.wasm && (*os == "ubuntu-latest" || host))
+            .collect()
     }
 
     fn all_tests(&mut self, graph: &Graph) {
@@ -593,6 +614,15 @@ impl Plan {
             None => "; no macOS (nothing that differs there changed: the scheduled run)".into(),
         };
         out.push_str(&format!("  merge queue OSes: Linux{windows}{macos}\n"));
+        if self.wasm {
+            let others = match &self.wasm_host {
+                Some(reason) => format!(" and the other OSes it checks ({reason})"),
+                None => " only (the nightly runs every OS)".into(),
+            };
+            out.push_str(&format!(
+                "  WebAssembly goldens in the queue: Linux{others}\n"
+            ));
+        }
         let after = match &self.after_merge {
             Some(reason) => format!("Windows, macOS ({reason})"),
             None => "none (the scheduled run checks Windows and macOS)".into(),

@@ -9,7 +9,8 @@
 # eager_std_identity.rs), each on its share of the sample (one golden in 8): the build packs its
 # test binary.
 #
-# With `wasm_shards` (the queue's plan gives them when a change touches WebAssembly code), the
+# With `wasm_shards` (the queue's plan gives them when a change touches WebAssembly code: on Linux,
+# and on the other OSes it checks only for WebAssembly's host side, `Plan::wasm_oses`), the
 # same build also packs the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) and their
 # runtimes (`--part golden,wasm`), and the `wasm-shard` jobs run them (`--part wasm`,
 # `VELT_WASM_SHARD=<i>/<n>`, `WASM_SHARDS` in os.rs): on a 4-vCPU Windows runner they take about
