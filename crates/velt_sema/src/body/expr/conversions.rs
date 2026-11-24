@@ -32,14 +32,19 @@ impl FnCx<'_, '_> {
     /// `1` / `0` for a boolean, `0` for `null` (`Number()` is `0`), `toNumber()` for a `BigInt`, and
     /// `+x` of it as an `any` for anything else.
     pub(super) fn number_call(&mut self, d: DefId, args: &[ast::Expr], span: Span) -> hir::Expr {
-        let f64 = self.cx.ty.f64;
         if !self.conversion_arity("Number", args, span) {
             return self.error_expr(span);
         }
         let Some(a) = args.first().filter(|a| !is_null_lit(a)) else {
-            return self.mk(H::Lit(hir::Lit::Float(0.0)), f64, span);
+            return self.mk(H::Lit(hir::Lit::Float(0.0)), self.cx.ty.f64, span);
         };
         let h = self.expr(a, None, Want::Borrow);
+        self.number_of(d, h, span)
+    }
+
+    /// `Number(h)` of the checked value `h` ([`Self::number_call`]; `d` is std's `Number`).
+    pub(super) fn number_of(&mut self, d: DefId, h: hir::Expr, span: Span) -> hir::Expr {
+        let f64 = self.cx.ty.f64;
         let h = self.unbrand(h);
         let t = self.cx.widened(h.ty);
         let ty = &self.cx.ty;

@@ -1,0 +1,81 @@
+// Prelude: a `console.log` line whose format string is known only as the program runs (#3662),
+// written one argument at a time (std/prelude/console_format.velt): the format string is read
+// as Node's `util.format` reads it (`formatWithOptionsInternal` in
+// lib/internal/util/inspect.js), up to the specifier the next argument fills.
+
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/**
+ * A line being formatted: its format string, how far it is read and written, the text so far,
+ * and the arguments no specifier took (each after a space).
+ */
+export class ConsoleLine {
+  fmt: string;
+  /** The byte the reading is at. */
+  at: u64 = 0;
+  /** The first byte of the format string not written yet. */
+  last: u64 = 0;
+  /** The line up to `last`, its specifiers filled. */
+  out: string = "";
+  /** The arguments no specifier took, each after a space. */
+  rest: string = "";
+
+  constructor(fmt: string) {
+    this.fmt = fmt;
+  }
+
+  /**
+   * Reads on to the next specifier that takes an argument (`%s %d %i %f %j %o %O %c`) and
+   * returns its letter, the text before it written (`%%` as one `%`); 0 when there is none, so
+   * the argument is left over.
+   */
+  next(): u8 {
+    const n = strByteLen(this.fmt) as u64;
+    while (this.at + 1 < n) {
+      if (strByteAt(this.fmt, this.at) == 37) {
+        this.at += 1;
+        const i = this.at;
+        const c = strByteAt(this.fmt, i);
+        if (c == 37) {
+          this.out += velt_rt_str_byte_slice(this.fmt, this.last, i);
+          this.last = i + 1;
+        } else if (takesArg(c)) {
+          this.out += velt_rt_str_byte_slice(this.fmt, this.last, i - 1);
+          this.last = i + 1;
+          this.at = i + 1;
+          return c;
+        }
+      }
+      this.at += 1;
+    }
+    return 0;
+  }
+
+  /** The whole line: the rest of the format string (`%%` as one `%`), then the leftovers. */
+  end(): string {
+    const n = strByteLen(this.fmt) as u64;
+    while (this.at + 1 < n) {
+      if (strByteAt(this.fmt, this.at) == 37) {
+        this.at += 1;
+        if (strByteAt(this.fmt, this.at) == 37) {
+          this.out += velt_rt_str_byte_slice(this.fmt, this.last, this.at);
+          this.last = this.at + 1;
+        }
+      }
+      this.at += 1;
+    }
+    if (this.last < n) {
+      this.out += velt_rt_str_byte_slice(this.fmt, this.last, n);
+    }
+    return this.out + this.rest;
+  }
+}
+
+/** Does specifier `c` take an argument? */
+function takesArg(c: u8): boolean {
+  // s d i f j o O c
+  return c == 115 || c == 100 || c == 105 || c == 102 || c == 106 || c == 111 || c == 79 ||
+    c == 99;
+}

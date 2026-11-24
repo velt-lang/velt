@@ -437,11 +437,11 @@ fn snapshot_greet() {
     _16 = &_15
     call extern#3 velt_rt_strbuf_new(_14, _16) -> bb1
   bb1:
-    call extern#4 velt_rt_strbuf_push_bytes(_16, static#15, 30064771079_u64) -> bb2
+    call extern#4 velt_rt_strbuf_push_bytes(_16, static#17, 30064771079_u64) -> bb2
   bb2:
-    call extern#11 velt_rt_strbuf_push_str(_16, _0) -> bb3
+    call extern#13 velt_rt_strbuf_push_str(_16, _0) -> bb3
   bb3:
-    call extern#12 velt_rt_strbuf_push_byte(_16, 33_u8) -> bb4
+    call extern#14 velt_rt_strbuf_push_byte(_16, 33_u8) -> bb4
   bb4:
     (*_1 as agg#0) = _15
     return ()

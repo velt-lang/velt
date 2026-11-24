@@ -150,8 +150,10 @@ fn value_if_logical_and_block_exprs() {
     );
     let out = run_src(&src);
     assert_eq!(out.stdout, "1 on the heap lit\ntrue\n9 on the heap!\n");
-    // `heap(1)`, `heap(123)`, `heap(9)` and the concatenation.
-    assert_eq!(out.frees, 4);
+    // `heap(1)`, `heap(123)`, `heap(9)`, the concatenation, and the conditional's value held
+    // by the temporary of the run-time format check (`console.log(k, …)` with a string `k`
+    // that may hold a `%`, #3662).
+    assert_eq!(out.frees, 5);
 }
 
 /// Moving a local inside a loop body declared outside: flagged; reassigned each iteration.

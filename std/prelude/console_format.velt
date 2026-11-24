@@ -1,0 +1,330 @@
+// Prelude: the format specifiers of `console.log(fmt, ...args)` when `fmt` is known only as the
+// program runs (#3662), as Node's `util.format` reads them (`formatWithOptionsInternal` in
+// lib/internal/util/inspect.js). A format string the compiler knows is split when compiling
+// (velt_sema `console_format.rs`). For any other, sema writes
+// `if (consoleHasPercent(fmt)) { const l = consoleLine(fmt); consoleArg…(l, a); …;
+// print(consoleLineEnd(l)) } else <the line as without specifiers>`, with one `consoleArg…` per
+// argument by its type: a number, a string or a boolean is written by its own, any other value
+// as an `any` (`consoleArgAny`; with `JSON` loaded, velt/lang/hooks/console_json's
+// `consoleArgAnyJson`, which writes `%j` by `JSON.stringify`).
+
+import { anyString } from "velt/lang/hooks/any_text";
+import {
+  addressLoad,
+  anyReflectInfo,
+  inline,
+  inspect,
+  inspectNested,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strWord0,
+  strWord1,
+  strWord2,
+} from "velt/lang/intrinsics";
+import { findByte } from "velt/lang/string/byte_scan";
+import { ConsoleLine } from "./console_line";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_rt_strbuf_inspect_layout(buf: string, start: u64);
+
+/**
+ * Does `s` hold a `%`? Only then is a format string known as the program runs formatted; any
+ * other is printed as without specifiers.
+ */
+@inline("always")
+export function consoleHasPercent(s: string): boolean {
+  const w2 = strWord2(s);
+  if (w2 >> 63 != 0) {
+    // An inline string (rt_abi.md "Strings"): its bytes are the value's words, a word at a time.
+    const n = (w2 >> 56) & 31;
+    return (
+      percentIn(strWord0(s), n) ||
+      (n > 8 && percentIn(strWord1(s), n - 8)) ||
+      (n > 16 && percentIn(w2, n - 16))
+    );
+  }
+  const n = strByteLen(s);
+  if (n >= 16) {
+    // Sixteen bytes at a time.
+    return findByte(s, 37, 0, n) >= 0;
+  }
+  const p = strDataAddress(s);
+  for (let i: usize = 0; i < n; i++) {
+    // SAFETY: byte `i` of `s`'s UTF-8 (`i` below its length), `s` alive and unchanged.
+    if (unsafe { addressLoad<u8>(p + i) } == 37) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Does one of the first `n` bytes of the little-endian word `w` (all of them from 8 up) hold a
+ * `%`? A byte that equals it is a zero byte of `w ^ 0x25…`, flagged by its top bit; a borrow
+ * flags bytes above a zero byte only, so a flag among the first `n` has a `%` at or below it.
+ */
+@inline("always")
+function percentIn(w: u64, n: u64): boolean {
+  const x = w ^ 0x2525252525252525;
+  let t = (x - 0x0101010101010101) & ~x & 0x8080808080808080;
+  if (n < 8) {
+    t = t & ((1 << (8 * n)) - 1);
+  }
+  return t != 0;
+}
+
+/** A line formatted by `fmt` (`consoleArg…` fill it, `consoleLineEnd` gives it). */
+export function consoleLine(fmt: string): ConsoleLine {
+  return new ConsoleLine(fmt);
+}
+
+/** The text of line `l`. */
+export function consoleLineEnd(l: ConsoleLine): string {
+  return l.end();
+}
+
+/** Adds `text`: the argument's text for specifier `c`, or (`c` 0) a leftover argument's. */
+function put(l: ConsoleLine, c: u8, text: string): void {
+  if (c == 0) {
+    l.rest += " ";
+    l.rest += text;
+  } else {
+    l.out += text;
+  }
+}
+
+/** The next argument of `l`, a string. */
+export function consoleArgString(l: ConsoleLine, s: string): void {
+  const c = l.next();
+  if (c == 100) {
+    put(l, c, numberText(Number(s)));
+  } else if (c == 105) {
+    put(l, c, numberText(parseInt(s)));
+  } else if (c == 102) {
+    put(l, c, numberText(parseFloat(s)));
+  } else if (c == 106) {
+    put(l, c, jsonQuote(s));
+  } else if (c == 111 || c == 79) {
+    put(l, c, inspect(s));
+  } else if (c != 99) {
+    put(l, c, s);
+  }
+}
+
+/** The next argument of `l`, a number. */
+export function consoleArgNumber(l: ConsoleLine, n: f64): void {
+  const c = l.next();
+  if (c == 105) {
+    put(l, c, numberText(integerPart(n)));
+  } else if (c == 102) {
+    // `parseFloat(String(n))`: `n` itself, but `0` for `-0`.
+    put(l, c, numberText(n == 0 ? 0 : n));
+  } else if (c == 106) {
+    put(l, c, n - n == 0 ? String(n) : "null");
+  } else if (c != 99) {
+    put(l, c, numberText(n));
+  }
+}
+
+/** The next argument of `l`, an integer: its digits for every specifier but `%c`. */
+export function consoleArgInt(l: ConsoleLine, n: i64): void {
+  const c = l.next();
+  if (c != 99) {
+    put(l, c, String(n));
+  }
+}
+
+/** The next argument of `l`, an unsigned integer ([`consoleArgInt`]). */
+export function consoleArgUint(l: ConsoleLine, n: u64): void {
+  const c = l.next();
+  if (c != 99) {
+    put(l, c, String(n));
+  }
+}
+
+/** The next argument of `l`, a boolean. */
+export function consoleArgBool(l: ConsoleLine, b: boolean): void {
+  const c = l.next();
+  if (c == 100) {
+    put(l, c, b ? "1" : "0");
+  } else if (c == 105 || c == 102) {
+    put(l, c, "NaN");
+  } else if (c != 99) {
+    put(l, c, b ? "true" : "false");
+  }
+}
+
+/** The next argument of `l`, any other value; `%j` writes it as `%O` (no `JSON` loaded). */
+export function consoleArgAny(l: ConsoleLine, v: any): void {
+  const c = l.next();
+  if (c == 106) {
+    put(l, c, inspect(v));
+  } else {
+    consoleArgAnyAs(l, c, v);
+  }
+}
+
+/** Adds `any` value `v` for specifier `c` (0: left over; not `%j`). */
+export function consoleArgAnyAs(l: ConsoleLine, c: u8, v: any): void {
+  if (c == 0) {
+    put(l, c, typeof v === "string" ? (v as string) : inspect(v));
+  } else if (c == 115) {
+    put(l, c, consoleString(v));
+  } else if (c == 111 || c == 79) {
+    put(l, c, inspect(v));
+  } else if (c == 99) {
+    return;
+  } else if (typeof v === "symbol") {
+    put(l, c, "NaN");
+  } else if (c == 100) {
+    put(l, c, numberText(Number(v)));
+  } else if (c == 105) {
+    put(l, c, numberText(parseInt(anyString(v, ""))));
+  } else {
+    put(l, c, numberText(parseFloat(anyString(v, ""))));
+  }
+}
+
+/**
+ * `parseInt(String(n))` without parsing: `n` without its fraction, `0` for `-0`; a number
+ * `String` writes with an exponent (`1e+21`, `5e-7`) gives the digit before it.
+ */
+function integerPart(n: number): number {
+  const a = Math.abs(n);
+  if (n != n || a == Infinity) {
+    return NaN;
+  }
+  if (a >= 1e21 || (a < 1e-6 && a != 0)) {
+    const lead = (String(a).charCodeAt(0) - 48) as number;
+    return n < 0 ? -lead : lead;
+  }
+  return n == 0 ? 0 : Math.trunc(n);
+}
+
+/** A number as Node's `%s` and `%d` write it: `String(n)`, but `-0` for negative zero. */
+function numberText(n: number): string {
+  return n == 0 && 1 / n < 0 ? "-0" : String(n);
+}
+
+/** `JSON.stringify(s)`: `s` quoted, `"`, `\` and the control characters escaped. */
+function jsonQuote(s: string): string {
+  let out = "\"";
+  const n = strByteLen(s) as u64;
+  let last: u64 = 0;
+  for (let i: u64 = 0; i < n; i++) {
+    const b = strByteAt(s, i);
+    if (b >= 0x20 && b != 0x22 && b != 0x5c) {
+      continue;
+    }
+    out += byteSlice(s, last, i);
+    out += escapeOf(b);
+    last = i + 1;
+  }
+  out += byteSlice(s, last, n);
+  return out + "\"";
+}
+
+/** How `JSON.stringify` writes byte `b` of a string (a `"`, a `\` or a control character). */
+function escapeOf(b: u8): string {
+  if (b == 0x22) {
+    return "\\\"";
+  }
+  if (b == 0x5c) {
+    return "\\\\";
+  }
+  if (b == 0x08) {
+    return "\\b";
+  }
+  if (b == 0x0c) {
+    return "\\f";
+  }
+  if (b == 0x0a) {
+    return "\\n";
+  }
+  if (b == 0x0d) {
+    return "\\r";
+  }
+  if (b == 0x09) {
+    return "\\t";
+  }
+  const hex = "0123456789abcdef";
+  const d = (b & 15) as i64;
+  return (b >= 16 ? "\\u001" : "\\u000") + hex.slice(d, d + 1);
+}
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/** Bytes `start` to `end` of `s` (at character boundaries). */
+function byteSlice(s: string, start: u64, end: u64): string {
+  return velt_rt_str_byte_slice(s, start, end);
+}
+
+/**
+ * `%s` of `v`: a number as `numberText` writes it, another primitive as `String(v)` does, an
+ * object with a `toString()` of its own by it, and any other object (and `null`) inspected at
+ * depth 0. (No `===` of the `any`: a program comparing `any` values pays for their identity.)
+ */
+export function consoleString(v: any): string {
+  const t = typeof v;
+  if (t === "number") {
+    return numberText(v as number);
+  }
+  if (t !== "object") {
+    return anyString(v, "");
+  }
+  if (ownToString(v)) {
+    return anyString(v, "");
+  }
+  let b = "";
+  velt_rt_strbuf_new(64, b);
+  // Node's depth 0: the value's own entries, the objects in it as `[Object]`.
+  inspectNested(b, v, 2);
+  velt_rt_strbuf_inspect_layout(b, 0);
+  let s = "";
+  velt_rt_strbuf_finish(b, s);
+  return s;
+}
+
+/**
+ * Has the object `v` a `toString()` that is not a built-in's (Node's `hasBuiltInToString` is
+ * false): an object literal's own, or a class's that is not named as a built-in. An `Error` is
+ * a built-in's, even a subclass's with its own `toString()`, which `any` does not tell apart.
+ */
+function ownToString(v: any): boolean {
+  const info = anyReflectInfo(v).split("|");
+  const kind = info[0];
+  if (kind == "object") {
+    return Object.keys(v).includes("toString") && typeof v.toString === "function";
+  }
+  if (kind != "class" && kind != "struct") {
+    return false;
+  }
+  if (!info[3].split(",").includes("toString") || v instanceof Error) {
+    return false;
+  }
+  let name = info[2];
+  const angle = name.indexOf("<");
+  if (angle >= 0) {
+    name = name.slice(0, angle);
+  }
+  return !builtinClass(name);
+}
+
+/**
+ * Is `name` one of the JavaScript built-ins whose `toString` `%s` does not call (Node's
+ * `hasBuiltInToString`)? velt_sema's `console_format::BUILTIN_CLASSES`.
+ */
+function builtinClass(name: string): boolean {
+  const names = [
+    "AggregateError", "Array", "ArrayBuffer", "BigInt", "BigInt64Array", "BigUint64Array",
+    "Boolean", "DataView", "Date", "Error", "EvalError", "FinalizationRegistry", "Float32Array",
+    "Float64Array", "Function", "Int16Array", "Int32Array", "Int8Array", "Iterator", "Map",
+    "Number", "Object", "Promise", "RangeError", "ReferenceError", "RegExp", "Set",
+    "SharedArrayBuffer", "String", "Symbol", "SyntaxError", "TypeError", "URIError",
+    "Uint16Array", "Uint32Array", "Uint8Array", "Uint8ClampedArray", "WeakMap", "WeakRef",
+    "WeakSet",
+  ];
+  return names.includes(name);
+}

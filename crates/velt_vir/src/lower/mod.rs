@@ -92,6 +92,7 @@ mod class_test;
 mod cleanup;
 mod closure;
 mod console;
+mod console_format;
 mod cpu_checks;
 mod ctor_init;
 mod debug_vars;

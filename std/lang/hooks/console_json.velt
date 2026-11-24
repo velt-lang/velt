@@ -1,0 +1,17 @@
+// velt/lang/hooks (internal): `%j` in a `console.log` format string known only as the program
+// runs (#3662), for a program that loads `JSON` (std/prelude/global/console_json.velt): sema
+// calls `consoleArgAnyJson` there instead of the prelude's `consoleArgAny`.
+
+import { consoleArgAnyAs } from "velt/prelude/console_format";
+import { ConsoleLine } from "velt/prelude/console_line";
+import { JSON } from "velt/prelude/json/json";
+
+/** The prelude's `consoleArgAny`, with `%j` written by `JSON.stringify`. */
+export function consoleArgAnyJson(l: ConsoleLine, v: any): void {
+  const c = l.next();
+  if (c == 106) {
+    l.out += JSON.stringify(v);
+  } else {
+    consoleArgAnyAs(l, c, v);
+  }
+}

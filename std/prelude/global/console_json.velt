@@ -1,0 +1,6 @@
+// Global, conditional (crates/velt_loader/src/globals): `%j` in a `console.log` format string
+// known only as the program runs (velt/lang/hooks/console_json), for a program that loads `JSON`;
+// other programs don't load it. It names nothing a program can use: sema writes the calls
+// (velt_sema `body/expr/console_format.rs`).
+// load when std/prelude/json/json uses: console
+import "velt/lang/hooks/console_json";

@@ -1,0 +1,113 @@
+hi!
+1.5|-0|NaN|Infinity
+true|null|undefined
+Symbol(k)
+{ a: [Object], list: [Array] }
+[ 1, [Array] ]
+(1, 2)|Plain { a: 1, inner: [Object] }
+https://example.com/a?b=1
+1970-01-01T00:00:00.000Z
+Shout! loud
+Map(1) { 'k' => [Object] }
+42|-0|1.5|NaN
+12|NaN|1|0
+NaN|NaN|5
+NaN|NaN|NaN
+3|-3|42|0
+1|31
+3.25|1000|0|NaN
+Infinity|NaN
+{"a":1,"b":[true,null,"x"]}
+"str"|5|[1,2]
+{"x":3,"y":4}
+{ a: { b: { c: 1 } }, list: [ 1, [ 2, [Array] ] ] }
+'quoted'|7|-0
+42
+styled text
+100%%
+100% of it
+50%
+one and %s
+1-2-%d
+a b 3 { c: 4 }
+x1y [ 2 ] three
+%x v %y
+50% 1
+%q a
+a%
+5 %s x
+{ a: 1 } %d 2
+box has 3 items
+k=9 extra
+no percent 1 two
+list has 2 items ({"j":1})
+[%s has %d items] [(5, 6)]
+(7, 8)|{ k: [Object] }|-0|12px|[ 1, [Array] ]
+NaN|0|NaN|{"k":{"deep":1}}|'12px'|12
+(7, 8) has -0 items { k: { deep: 1 } }
+-0.5|-0.5|-0|-0.5|-0.5|-0.5|-0.5||
+-0.5|-0.5|-0|-0.5|-0.5|-0.5|-0.5||
+-1e+21|-1e+21|-1|-1e+21|-1e+21|-1e+21|-1e+21||
+-1e+21|-1e+21|-1|-1e+21|-1e+21|-1e+21|-1e+21||
+5e-7|5e-7|5|5e-7|5e-7|5e-7|5e-7||
+5e-7|5e-7|5|5e-7|5e-7|5e-7|5e-7||
+-5e-7|-5e-7|-5|-5e-7|-5e-7|-5e-7|-5e-7||
+-5e-7|-5e-7|-5|-5e-7|-5e-7|-5e-7|-5e-7||
+1e+21|1e+21|1|1e+21|1e+21|1e+21|1e+21||
+1e+21|1e+21|1|1e+21|1e+21|1e+21|1e+21||
+Infinity|Infinity|NaN|Infinity|null|Infinity|Infinity||
+Infinity|Infinity|NaN|Infinity|null|Infinity|Infinity||
+-0|-0|0|0|0|-0|-0||
+-0|-0|0|0|0|-0|-0||
+2.5|2.5|2|2.5|2.5|2.5|2.5||
+2.5|2.5|2|2.5|2.5|2.5|2.5||
+NaN|NaN|NaN|NaN|null|NaN|NaN||
+NaN|NaN|NaN|NaN|null|NaN|NaN||
+12.5px|NaN|12|12.5|"12.5px"|'12.5px'|'12.5px'||
+12.5px|NaN|12|12.5|"12.5px"|'12.5px'|'12.5px'||
+ 42 |42|42|42|" 42 "|' 42 '|' 42 '||
+ 42 |42|42|42|" 42 "|' 42 '|' 42 '||
+|0|NaN|NaN|""|''|''||
+|0|NaN|NaN|""|''|''||
+0x1f|31|31|0|"0x1f"|'0x1f'|'0x1f'||
+0x1f|31|31|0|"0x1f"|'0x1f'|'0x1f'||
+a"b\c
+d|NaN|NaN|NaN|"a\"b\\c\nd\u0001"|'a"b\\c\nd\x01'|'a"b\\c\nd\x01'||
+a"b\c
+d|NaN|NaN|NaN|"a\"b\\c\nd\u0001"|'a"b\\c\nd\x01'|'a"b\\c\nd\x01'||
+-0|-0|-0|-0|"-0"|'-0'|'-0'||
+-0|-0|-0|-0|"-0"|'-0'|'-0'||
+true|1|NaN|NaN|true|true|true||
+true|1|NaN|NaN|true|true|true||
+false|0|NaN|NaN|false|false|false||
+false|0|NaN|NaN|false|false|false||
+1|NaN|NaN|NaN|5|6|7||nine ten 11
+0
+ %d 0
+xxxxxx6
+yyyyyy %d 6
+xxxxxxx7
+yyyyyyy %d 7
+xxxxxxxx8
+yyyyyyyy %d 8
+xxxxxxxxxxxxxx14
+yyyyyyyyyyyyyy %d 14
+xxxxxxxxxxxxxxx15
+yyyyyyyyyyyyyyy %d 15
+xxxxxxxxxxxxxxxx16
+yyyyyyyyyyyyyyyy %d 16
+xxxxxxxxxxxxxxxxxxxx20
+yyyyyyyyyyyyyyyyyyyy %d 20
+xxxxxxxxxxxxxxxxxxxxx21
+yyyyyyyyyyyyyyyyyyyyy %d 21
+xxxxxxxxxxxxxxxxxxxxxx22
+yyyyyyyyyyyyyyyyyyyyyy %d 22
+xxxxxxxxxxxxxxxxxxxxxxx23
+yyyyyyyyyyyyyyyyyyyyyyy %d 23
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx30
+yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy %d 30
+éñü → 3€
+日本の語
+🙂 😀
+info 2
+debug %%

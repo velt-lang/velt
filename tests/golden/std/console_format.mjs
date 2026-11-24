@@ -1,0 +1,141 @@
+// The Node twin of tests/golden/std/console_format.velt: `console.log`'s format specifiers, as
+// Node's `util.format` reads them (#3662).
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  toString() {
+    return `(${this.x}, ${this.y})`;
+  }
+}
+
+class Plain {
+  constructor() {
+    this.a = 1;
+    this.inner = { b: 2 };
+  }
+}
+
+class Shout extends Error {
+  toString() {
+    return `Shout! ${this.message}`;
+  }
+}
+
+function label() {
+  return "%s has %d items";
+}
+
+const nested = { a: { b: { c: 1 } }, list: [1, [2, [3]]] };
+
+// %s
+console.log("%s!", "hi");
+console.log("%s|%s|%s|%s", 1.5, -0, NaN, Infinity);
+console.log("%s|%s|%s", true, null, undefined);
+console.log("%s", Symbol("k"));
+console.log("%s", nested);
+console.log("%s", [1, [2, [3]]]);
+console.log("%s|%s", new Point(1, 2), new Plain());
+console.log("%s", new URL("https://example.com/a?b=1"));
+console.log("%s", new Date(0));
+console.log("%s", new Shout("loud"));
+console.log("%s", new Map([["k", { v: 1 }]]));
+
+// %d %i %f
+console.log("%d|%d|%d|%d", 42, -0, 1.5, NaN);
+console.log("%d|%d|%d|%d", "12", "12px", true, null);
+console.log("%d|%d|%d", undefined, {}, [5]);
+console.log("%d|%i|%f", Symbol("s"), Symbol("s"), Symbol("s"));
+console.log("%i|%i|%i|%i", 3.9, -3.9, "42.5abc", -0);
+console.log("%i|%i", 1e21, "0x1f");
+console.log("%f|%f|%f|%f", 3.25, "1e3x", -0, "abc");
+console.log("%f|%f", Infinity, true);
+
+// %j
+console.log("%j", { a: 1, b: [true, null, "x"] });
+console.log("%j|%j|%j", "str", 5, [1, 2]);
+console.log("%j", new Point(3, 4));
+
+// %o %O
+console.log("%O", nested);
+console.log("%O|%O|%O", "quoted", 7, -0);
+console.log("%o", 42);
+
+// %c
+console.log("%cstyled%c text", "color: red", "font-weight: bold");
+
+// %%
+console.log("100%%");
+console.log("100%% of %s", "it");
+console.log("%d%%", 50);
+
+// missing arguments
+console.log("%s and %s", "one");
+console.log("%d-%d-%d", 1, 2);
+
+// excess arguments
+console.log("%s", "a", "b", 3, { c: 4 });
+console.log("x%sy", 1, [2], "three");
+
+// unknown specifiers and a trailing %
+console.log("%x %s %y", "v");
+console.log("50%", 1);
+console.log("%q", "a");
+console.log("%s%", "a");
+
+// a non-string first argument
+console.log(5, "%s", "x");
+console.log({ a: 1 }, "%d", 2);
+
+// non-literal format strings
+const fmt = label();
+console.log(fmt, "box", 3);
+let pct = "%s=%d";
+console.log(pct, "k", 9, "extra");
+const noPct = ["no", "percent"].join(" ");
+console.log(noPct, 1, "two");
+console.log(fmt + " (%j)", "list", 2, { j: 1 });
+const anything = new Point(5, 6);
+console.log("[%s] [%s]", label(), anything);
+
+// arguments held by `any`
+const dyn = [new Point(7, 8), { k: { deep: 1 } }, -0, "12px", [1, [2]]];
+console.log("%s|%s|%s|%s|%s", dyn[0], dyn[1], dyn[2], dyn[3], dyn[4]);
+console.log("%d|%i|%f|%j|%O|%i", dyn[3], dyn[2], dyn[0], dyn[1], dyn[3], dyn[3]);
+console.log(fmt, dyn[0], dyn[2], dyn[1]);
+
+// numbers for every specifier, the format known when compiling and only as the program runs
+const nums = [-0.5, -1e21, 5e-7, -5e-7, 1e21, Infinity, -0, 2.5, NaN];
+const numFmt = ["%s", "%d", "%i", "%f", "%j", "%o", "%O", "%c"].join("|") + "|";
+for (const n of nums) {
+  console.log("%s|%d|%i|%f|%j|%o|%O|%c|", n, n, n, n, n, n, n, n);
+  console.log(numFmt, n, n, n, n, n, n, n, n);
+}
+const strs = ["12.5px", " 42 ", "", "0x1f", "a\"b\\c\nd\u0001", "-0"];
+for (const s of strs) {
+  console.log("%s|%d|%i|%f|%j|%o|%O|%c|", s, s, s, s, s, s, s, s);
+  console.log(numFmt, s, s, s, s, s, s, s, s);
+}
+for (const b of [true, false]) {
+  console.log("%s|%d|%i|%f|%j|%o|%O|%c|", b, b, b, b, b, b, b, b);
+  console.log(numFmt, b, b, b, b, b, b, b, b);
+}
+console.log(numFmt + "%s", 1, "two", true, "%s", 5, 6, 7, 8, "nine", "ten", 11);
+
+// a `%` at every place of a short (inline) and a long format string, and none
+for (const k of [0, 6, 7, 8, 14, 15, 16, 20, 21, 22, 23, 30]) {
+  console.log("x".repeat(k) + "%d", k);
+  console.log("y".repeat(k), "%d", k);
+}
+
+// non-ASCII
+console.log("é%sü → %d€", "ñ", 3);
+console.log("日本%s語", "の");
+console.log("%s", "🙂", "😀");
+
+// console.error and the other levels
+console.error("err %s %d", "x", 1);
+console.warn("warn %s", "y");
+console.info("info %i", 2.5);
+console.debug("debug %%");

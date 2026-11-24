@@ -27,6 +27,7 @@
 //! module holds module state (`sessionStorage`, `navigator`), which keeps a program's tasks and a
 //! server's connections on one worker.
 
+mod console_json;
 mod in_code;
 
 pub(super) use in_code::in_code;
@@ -209,7 +210,8 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
 
 /// Whether module `module` (its source's `words`) names global `name`: as a whole word of its
 /// source that is in its code (`in_code`, asked only then: [`in_code`]), for `RegExp` also by a
-/// regular expression literal, and for `Proxy` by a literal nothing put where its type may have
+/// regular expression literal, for `JSON` also by a `console.log("%j", x)`
+/// ([`console_json`]), and for `Proxy` by a literal nothing put where its type may have
 /// none (`null!`, `null as any`), which a view of the nothing holds (velt_vir
 /// `lower/any_view.rs`).
 pub(super) fn names_global(
@@ -220,6 +222,10 @@ pub(super) fn names_global(
 ) -> bool {
     (words.has(name) && in_code())
         || (name == "RegExp" && words.src.contains('/') && has_regex(module))
+        || (name == "JSON"
+            && words.has("console")
+            && words.src.contains("%j")
+            && console_json::has_console_json(module))
         || (name == "Proxy"
             && (words.has("null") || words.has("undefined"))
             && has_nothing_slot(module))
