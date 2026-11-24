@@ -1,0 +1,50 @@
+name: main-failure
+description: >-
+  Open the issue "main fails on <OS>", or comment on it when it is open: the after-merge gate or
+  the scheduled run failed or did not finish on that OS (ci.yml's `main (ubuntu-latest)`, and the
+  last job of main-gate.yml). A scheduled run's comment links the commits since the last
+  scheduled run that passed. The job needs `issues: write`.
+inputs:
+  os:
+    description: The OS as the issue's title names it (Linux, Windows, macOS).
+    required: true
+  cancelled:
+    description: >-
+      `true` when a job was cancelled (its time limit, or a person) rather than failed: it
+      checked less than it should have, and gets the issue too.
+    default: "false"
+  details:
+    description: What ran and how it ended, added to the comment.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@v7
+      env:
+        OS: ${{ inputs.os }}
+        CANCELLED: ${{ inputs.cancelled }}
+        DETAILS: ${{ inputs.details }}
+      with:
+        script: |
+          const os = process.env.OS;
+          const title = `main fails on ${os}`;
+          const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+          const how = process.env.CANCELLED === 'true' ? 'did not finish (time limit, or cancelled)' : 'failed';
+          let body = `The gate ${how} on ${os} after ${context.sha.slice(0, 7)}: ${run}`;
+          if (process.env.DETAILS) {
+            body += `\n${process.env.DETAILS}`;
+          }
+          if (context.eventName === 'schedule') {
+            const passed = await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: 'ci.yml', event: 'schedule', status: 'success', per_page: 1 });
+            const last = passed.data.workflow_runs[0];
+            if (last) {
+              body += `\nCommits since the last scheduled run that passed: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/compare/${last.head_sha}...${context.sha}`;
+            }
+          }
+          const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
+          const existing = open.data.find(i => i.title === title && !i.pull_request);
+          if (existing) {
+            await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
+          } else {
+            await github.rest.issues.create({ ...context.repo, title, body });
+          }
