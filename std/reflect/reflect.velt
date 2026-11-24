@@ -35,15 +35,7 @@ const VISIT_SLOTS: u64 = 4;
 export function typeOf(v: any): RuntimeType {
   const info = anyReflectInfo(v);
   const parts = info.split("|");
-  // `ownToString`, always the last, marks a `toString` no JavaScript built-in declares (`%s`'s,
-  // std/prelude/console_format.velt): not a hook of its own.
-  let listed = parts[3];
-  if (listed == "ownToString") {
-    listed = "";
-  } else if (listed.endsWith(",ownToString")) {
-    listed = listed.slice(0, (listed.length - 12) as i64);
-  }
-  const hooks: string[] = listed.length == 0 ? [] : listed.split(",");
+  const hooks: string[] = parts[3].length == 0 ? [] : parts[3].split(",");
   return new RuntimeType(parts[0], parts[1], parts[2], hooks);
 }
 

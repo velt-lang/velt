@@ -71,7 +71,7 @@ export function consoleNumber(v: any): number {
 /**
  * Has the object `v` a `toString()` that is not a built-in's (Node's `hasBuiltInToString` is
  * false): an object literal's own, or one a class declares that is not a JavaScript built-in
- * (the `ownToString` mark of its runtime type, velt_vir `any_reflect.rs`: an `Error` subclass
+ * (the `own` field of its runtime type, velt_vir `any_reflect.rs`: an `Error` subclass
  * without one of its own has `Error`'s).
  */
 function ownToString(v: any): boolean {
@@ -80,5 +80,5 @@ function ownToString(v: any): boolean {
   if (kind == "object") {
     return Object.keys(v).includes("toString") && typeof v.toString === "function";
   }
-  return (kind == "class" || kind == "struct") && info[3].split(",").includes("ownToString");
+  return (kind == "class" || kind == "struct") && info.length > 4 && info[4] == "own";
 }

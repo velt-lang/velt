@@ -35,7 +35,7 @@ pub struct Split<'a> {
 /// inspected instead (a `Date`, an `Error`, an array). A typed array is not one: its `toString`
 /// is `%TypedArray%`'s, which no global names, so `%s` of one is its `toString()` (`1,2`).
 /// The lowering marks the runtime type of a class whose `toString` is not one of theirs for
-/// std's `%s` of an `any` (velt_vir `any_reflect.rs`, `ownToString`).
+/// std's `%s` of an `any` (velt_vir `any_reflect.rs`, the `own` field).
 pub const BUILTIN_CLASSES: &[&str] = &[
     "AggregateError",
     "Array",

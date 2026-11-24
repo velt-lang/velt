@@ -247,7 +247,8 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(cint(v, Ty::U64)));
     }
 
-    /// `"<kind>|<repr>|<name>|<hooks>"` for a value of type `ty`.
+    /// `"<kind>|<repr>|<name>|<hooks>"` for a value of type `ty`, then `"|own"` for a class
+    /// with a text of its own (`%s`, console_format.rs).
     fn reflect_info(&mut self, ty: TyId) -> String {
         let mut repr = String::new();
         let kind = match self.cx.kind(ty) {
@@ -297,12 +298,6 @@ impl FnLower<'_, '_> {
                 hooks.push(name);
             }
         }
-        // A `toString` or `[Symbol.toPrimitive]` no JavaScript built-in declares, which `%s` of an
-        // `any` writes by `String(x)` (std's `consoleString`); velt/reflect's `typeOf` leaves the
-        // mark, always the last, out of the hooks it lists.
-        if self.own_to_string(ty) || self.own_to_primitive(ty) {
-            hooks.push("ownToString");
-        }
         // An object type (and an object literal with accessors) has no name of its own.
         let mut kind = kind;
         let name = match kind {
@@ -317,7 +312,12 @@ impl FnLower<'_, '_> {
                 n => n,
             },
         };
-        format!("{kind}|{repr}|{name}|{}", hooks.join(","))
+        // A `toString` or `[Symbol.toPrimitive]` no JavaScript built-in declares, which `%s` of an
+        // `any` writes by `String(x)` (std's `consoleString`): a fifth field, `own`, which
+        // velt/reflect's `typeOf` does not read.
+        let own = self.own_to_string(ty) || self.own_to_primitive(ty);
+        let own = if own { "|own" } else { "" };
+        format!("{kind}|{repr}|{name}|{}{own}", hooks.join(","))
     }
 
     /// Can an entry of type `t` be boxed into an `any` (`any_into`)?
