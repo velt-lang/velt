@@ -845,10 +845,15 @@ the end of the poll, and every later poll of that task takes it at its start; ou
 synchronous `main`) until `main`'s root starts (std's `schedBlockOn`, `velt_rt_block_on` on
 WebAssembly) or until `main` returns. A program that never
 calls it pays nothing per task (a process-wide flag the first call sets). A `Mutex`'s lock
-keeps the module lock while it blocks; sema rejects module state in a `with` callback. Waiting
-for the module lock while the thread holds an `RwLock` stops with an `ICE:` panic; a held `Mutex`
-is not counted for that check on a native target (its lock is std's, which counts nothing). On
-WebAssembly (one thread) there is no lock.
+keeps the module lock while it blocks; sema rejects module state in a `with` callback. The
+runtime's lock stops with an `ICE:` panic when the thread waits for it while it holds an
+`RwLock`; a held `Mutex` is not counted there on a native target (its lock is std's). Under the
+executor in Velt, std's module lock (sched_module.velt `take`) stops with a panic, not an `ICE:`,
+when the thread waits for it while it holds a `Mutex` (#3467): a `with` counts its `Mutex`
+(std/lang/hooks/mutex_held.velt) only in a build for the `velt dev` JIT. Other builds lower no
+call, and their check is one relaxed load of a flag only the count sets. std's
+lock doesn't count `RwLock` holds, and the runtime's paths (`velt_rt_module_with`, function
+properties) still see only `RwLock`s (#3631). On WebAssembly (one thread) there is no lock.
 
 `uint8_t velt_rt_module_with(void)` and `void velt_rt_module_with_end(uint8_t took)`: the first
 takes the module lock unless the thread holds it and answers whether it took it (1); the second,
