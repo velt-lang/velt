@@ -259,13 +259,14 @@ fn push_once(violations: &mut Vec<Violation>, v: Violation) {
     }
 }
 
-/// [`ExtendMember::ty`] of `e`'s target.
 /// Whether `e` (extending `ty`) only adds methods to a built-in vector or mask type: no type
-/// parameters, no `implements` (module docs). The checker confirms the target is that type.
+/// parameters, no `implements`, and `ty` one of those types' names (module docs). The checker
+/// makes sure the methods shadow none the type already has (`velt_sema` `collect::vector_extends`).
 fn adds_to_vector_type(e: &ast::ExtendDecl, ty: &str) -> bool {
     e.generics.is_empty() && e.implements.is_empty() && velt_sema::hir::SimdTy::named(ty).is_some()
 }
 
+/// [`ExtendMember::ty`] of `e`'s target.
 fn extended_type(e: &ast::ExtendDecl) -> String {
     let name = type_name(&e.target);
     match e.generics.iter().any(|g| g.name.name == name) {

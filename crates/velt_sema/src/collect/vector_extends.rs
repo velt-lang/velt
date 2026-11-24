@@ -10,7 +10,8 @@
 use velt_common::Diagnostic;
 
 use crate::ctx::Ctx;
-use crate::hir::TyKind;
+use crate::defs::Bound;
+use crate::hir::{TyId, TyKind};
 
 pub(super) fn check(cx: &mut Ctx, from: super::Added) {
     for i in from.extensions..cx.extensions.len() {
@@ -42,9 +43,24 @@ pub(super) fn check(cx: &mut Ctx, from: super::Added) {
     }
 }
 
-/// Whether extension `j`'s target pattern applies to `t`.
-fn applies(cx: &mut Ctx, j: usize, t: crate::hir::TyId) -> bool {
+/// Whether extension `j` applies to `t`, as a call decides (`FnCx::applicable_extensions`): its
+/// target pattern has an instance equal to `t`, and its bounds hold for the type arguments that
+/// make it.
+fn applies(cx: &mut Ctx, j: usize, t: TyId) -> bool {
     let pattern = cx.extensions[j].target;
     let mut slots = vec![None; cx.extensions[j].generics.names.len()];
-    cx.match_ty(pattern, t, &mut slots)
+    if !cx.match_ty(pattern, t, &mut slots) || cx.subst_known(pattern, &slots) != t {
+        return false;
+    }
+    let owner: Vec<TyId> = slots.iter().map(|s| s.unwrap_or(cx.ty.error)).collect();
+    let bounds = cx.extensions[j].generics.bounds.clone();
+    bounds.iter().zip(&owner).all(|(bs, &arg)| {
+        bs.iter().all(|b| {
+            let b = Bound {
+                iface: b.iface,
+                args: b.args.iter().map(|a| cx.subst(*a, &owner)).collect(),
+            };
+            cx.satisfies(arg, &b, &[])
+        })
+    })
 }
