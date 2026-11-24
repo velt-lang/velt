@@ -33,6 +33,18 @@ function failure(program, opts) {
   return r.error ? r.error.code : "ran";
 }
 
+const LINUX = platform() == "linux";
+
+function macOnly(label, got) {
+  console.log(`${label}: checked on macOS`);
+  if (!LINUX) {
+    const g = got();
+    if (g != "ENAMETOOLONG") {
+      console.log("  got:", g);
+    }
+  }
+}
+
 function main() {
   const dir = `${tmpdir()}/velt-golden-exec-sync-options-${process.pid}`;
   fs.mkdirSync(dir, { recursive: true });
@@ -48,11 +60,16 @@ function main() {
   run("signal", "sh", ["-c", "kill -9 $$"], {}, dir);
   const long = `${("/" + "b".repeat(99)).repeat(50)}:/usr/bin:/bin`;
   run("long PATH entry", "sh", ["-c", "echo found"], { env: { PATH: long } }, dir);
+  fs.mkdirSync(`${dir}/bin`, { recursive: true });
+  fs.writeFileSync(`${dir}/bin/prog`, "#!/bin/sh\necho bin\n", { mode: 0o755 });
+  fs.writeFileSync(`${dir}/prog`, "#!/bin/sh\necho cwd\n", { mode: 0o755 });
+  const cwdTry = { PATH: `/${"x".repeat(4999)}:${dir}/bin` };
+  const ran = spawnSync("prog", [], { cwd: dir, env: cwdTry, encoding: "utf8" }).stdout.trim();
+  console.log("long entry then a dir as Node:", ran == (LINUX ? "cwd" : "bin"));
   const longDir = `/${"d".repeat(299)}:/usr/bin:/bin`;
-  console.log("long dir:", failure("sh", { env: { PATH: longDir } }));
+  macOnly("long dir is ENAMETOOLONG", () => failure("sh", { env: { PATH: longDir } }));
   const nope = { PATH: "/nope1:/nope2" };
-  const name = failure("p".repeat(256), { env: nope });
-  console.log("long name as Node:", name == (platform() == "linux" ? "ENOENT" : "ENAMETOOLONG"));
+  macOnly("long name is ENAMETOOLONG", () => failure("p".repeat(256), { env: nope }));
   console.log("255-byte name:", failure("p".repeat(255), { env: nope }));
 
   const both = "yes o | head -c 300000; yes e | head -c 300000 >&2; yes o | head -c 300000";

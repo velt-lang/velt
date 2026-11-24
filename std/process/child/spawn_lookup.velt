@@ -5,7 +5,7 @@
 import { CommandSpec } from "velt/process/child/spec";
 import { envPairs } from "#env-sys";
 
-import { DEFAULT_PATH, errno, exists, PATH_MAX } from "#spawn-open";
+import { DEFAULT_PATH, errno, exists, LONG_ENTRY_TRIES_CWD, PATH_MAX } from "#spawn-open";
 import { strByteLen } from "velt/lang/intrinsics";
 
 const ENOENT: i32 = 2;
@@ -49,8 +49,11 @@ export function pathOf(env: string[]): string {
  * bare name, which `posix_spawn` opens there, and which the shell of a script without `#!` is
  * given as glibc gives it (`/bin/sh prog …`, so its `$0` is `prog`). So nothing reads this
  * process' environment outside velt/process' lock, as `posix_spawnp`, which reads its `PATH`,
- * would. An entry of `PATH_MAX` bytes or more is skipped, as libuv skips it (its `execvpe`,
- * musl's: entries as long as `PATH`, at most `PATH_MAX - 1` bytes plus one, are left out).
+ * would. An entry too long to search (as long as `PATH`, at most `PATH_MAX - 1` bytes, plus
+ * one) is left out, as the OS's lookup leaves it out (`#spawn-open`): on macOS skipped, as
+ * libuv's own loop (musl's) skips it; on Linux, where glibc's `execvp` skips it without stepping
+ * past its `:`, an entry that isn't the last becomes the bare name, tried in the working
+ * directory.
  */
 export function candidates(program: string, path: string): string[] {
   if (program.includes("/")) {
@@ -64,6 +67,8 @@ export function candidates(program: string, path: string): string[] {
     const dir = path.slice(from, end < 0 ? (path.length as i64) : end);
     if (strByteLen(dir) <= longest) {
       out.push(dir == "" ? program.clone() : `${dir}/${program}`);
+    } else if (LONG_ENTRY_TRIES_CWD && end >= 0) {
+      out.push(program.clone());
     }
     if (end < 0) {
       return out;

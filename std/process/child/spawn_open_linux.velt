@@ -63,18 +63,26 @@ export const PATH_MAX: usize = 4096;
 export const DEFAULT_PATH = "/bin:/usr/bin";
 
 /**
+ * Is an entry too long to search that isn't `PATH`'s last tried as the bare name in the working
+ * directory? Yes, as glibc's `execvp` (Node's lookup here, through libuv) does on every release:
+ * it skips the entry without stepping past its `:`, so its next round sees an empty entry.
+ */
+export const LONG_ENTRY_TRIES_CWD: bool = true;
+
+/**
  * Does the lookup go on to `PATH`'s next entry after a candidate failed with `e`? glibc's
- * `execvp` (Node's lookup here) does after ENOENT, ENOTDIR, EACCES, ESTALE, ENODEV and
- * ETIMEDOUT (ENAMETOOLONG ends it, as in Node).
+ * `execvp` does after ENOENT, ENOTDIR, EACCES, ESTALE, ENODEV and ETIMEDOUT. ENAMETOOLONG ends
+ * it, as on glibc 2.39 to 2.43 (2.44 goes on after it too).
  */
 export function goesOn(e: i32): bool {
   return e === 2 || e === 20 || e === 13 || e === 116 || e === 19 || e === 110;
 }
 
 /**
- * The error of a program name to look up in `PATH` before any lookup: none here. glibc's check
- * of `NAME_MAX` can't fire (it measures at most `NAME_MAX` bytes), so a long name is looked up
- * and fails as the OS fails it, as in Node.
+ * The error of a program name to look up in `PATH` before any lookup: none here, as on glibc
+ * 2.39 to 2.42, whose check of `NAME_MAX` can't fire (it measures at most `NAME_MAX` bytes), so
+ * a long name is looked up and fails as the OS fails it (2.43 and later fail a name over 255
+ * bytes with ENAMETOOLONG first).
  */
 export function nameError(bytes: usize): i32 {
   return 0;

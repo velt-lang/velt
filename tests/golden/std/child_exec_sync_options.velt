@@ -42,6 +42,29 @@ function failure(program: string, opts: ExecOptions): string {
   }
 }
 
+const LINUX = platform() == "linux";
+
+/** Writes an executable script at `path`. */
+function writeScript(path: string, text: string) {
+  const fd = fs.openSync(path, "w", 0o755);
+  fs.writeSync(fd, text);
+  fs.closeSync(fd);
+}
+
+/**
+ * Prints a fixed line for `label`: on macOS after checking that `got()` is ENAMETOOLONG (what it
+ * got when it isn't), on Linux without running it.
+ */
+function macOnly(label: string, got: () => string) {
+  console.log(`${label}: checked on macOS`);
+  if (!LINUX) {
+    const g = got();
+    if (g != "ENAMETOOLONG") {
+      console.log("  got:", g);
+    }
+  }
+}
+
 function main() {
   const dir = `${tmpdir()}/velt-golden-exec-sync-options-${process.pid}`;
   fs.mkdirSync(dir, { recursive: true });
@@ -58,22 +81,34 @@ function main() {
   run("env alone", "sh", ["-c", script], { env: extra, clearEnv: true }, dir);
   run("exit", "sh", ["-c", "echo out; echo err >&2; exit 7"], {}, dir);
   run("signal", "sh", ["-c", "kill -9 $$"], {}, dir);
-  // A `PATH` entry longer than `PATH_MAX` (1024 on macOS, 4096 on Linux) is skipped, as libuv
-  // skips it, and the program is found in the next.
+  // A `PATH` entry longer than `PATH_MAX` (1024 on macOS, 4096 on Linux) can't be searched: the
+  // program is found in a later entry.
   const long = new Map<string, string>();
   long.set("PATH", `${("/" + "b".repeat(99)).repeat(50)}:/usr/bin:/bin`);
   run("long PATH entry", "sh", ["-c", "echo found"], { env: long, clearEnv: true }, dir);
-  // A directory whose name passes `NAME_MAX` (255) ends the lookup with ENAMETOOLONG, as in
-  // Node on both OSes.
+  // Such an entry before a directory holding `prog`, with another `prog` in the working
+  // directory: on Linux glibc's `execvp` tries the bare name there in the entry's place (every
+  // glibc release), so the working directory's runs; on macOS libuv's loop skips the entry.
+  fs.mkdirSync(`${dir}/bin`, { recursive: true });
+  writeScript(`${dir}/bin/prog`, "#!/bin/sh\necho bin\n");
+  writeScript(`${dir}/prog`, "#!/bin/sh\necho cwd\n");
+  const cwdTry = new Map<string, string>();
+  cwdTry.set("PATH", `/${"x".repeat(4999)}:${dir}/bin`);
+  const ran = execSync("prog", [], { cwd: dir, env: cwdTry, clearEnv: true }).stdout.trim();
+  console.log("long entry then a dir as Node:", ran == (LINUX ? "cwd" : "bin"));
+  // libuv's own rules on macOS: a directory whose name passes `NAME_MAX` (255) ends the lookup
+  // with ENAMETOOLONG, and so does a program name longer than `NAME_MAX`, before any lookup.
+  // On Linux both are the glibc release's (Node's ENAMETOOLONG and long-name rules changed in
+  // 2.43 and 2.44), so these lines check them on macOS only.
   const longDir = new Map<string, string>();
   longDir.set("PATH", `/${"d".repeat(299)}:/usr/bin:/bin`);
-  console.log("long dir:", failure("sh", { env: longDir, clearEnv: true }));
-  // A program name longer than `NAME_MAX`: ENAMETOOLONG before any lookup on macOS (libuv's
-  // check), looked up and not found on Linux (glibc's check can't fire), as in Node.
+  macOnly("long dir is ENAMETOOLONG", () => failure("sh", { env: longDir, clearEnv: true }));
   const nope = new Map<string, string>();
   nope.set("PATH", "/nope1:/nope2");
-  const name = failure("p".repeat(256), { env: nope, clearEnv: true });
-  console.log("long name as Node:", name == (platform() == "linux" ? "ENOENT" : "ENAMETOOLONG"));
+  macOnly(
+    "long name is ENAMETOOLONG",
+    () => failure("p".repeat(256), { env: nope, clearEnv: true }),
+  );
   console.log("255-byte name:", failure("p".repeat(255), { env: nope, clearEnv: true }));
 
   // 300 KB to stdout, then 300 KB to stderr, then 300 KB to stdout again: a parent that read

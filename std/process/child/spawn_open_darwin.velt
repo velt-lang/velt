@@ -83,8 +83,14 @@ export const PATH_MAX: usize = 1024;
 export const DEFAULT_PATH = "/usr/bin:/bin";
 
 /**
+ * Is an entry too long to search that isn't `PATH`'s last tried as the bare name in the working
+ * directory? No: libuv's own loop here (musl's) skips it.
+ */
+export const LONG_ENTRY_TRIES_CWD: bool = false;
+
+/**
  * Does the lookup go on to `PATH`'s next entry after a candidate failed with `e`? libuv's own
- * loop here does after ENOENT, ENOTDIR and EACCES only (ENAMETOOLONG ends it, as in Node).
+ * loop here (Node's lookup) does after ENOENT, ENOTDIR and EACCES only: ENAMETOOLONG ends it.
  */
 export function goesOn(e: i32): bool {
   return e === 2 || e === 20 || e === 13;
