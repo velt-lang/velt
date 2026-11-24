@@ -678,7 +678,11 @@ pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
                     name: f.name.clone(),
                     generics: f.generics.len() as u32,
                     params,
-                    ret: f.ret,
+                    // As the checked body would (`crate::hand_back`).
+                    ret: match crate::hand_back::hands_back(cx, d) {
+                        true => cx.ty.unit,
+                        false => f.ret,
+                    },
                     is_async: f.is_async || f.is_async_gen,
                     is_generator: f.is_generator,
                     self_ty: (f.this.as_ref())

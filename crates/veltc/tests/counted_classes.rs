@@ -262,3 +262,49 @@ fn a_changed_argument_is_counted_only_when_a_later_argument_may_replace_it() {
     let c = counted(&program("pushes[0](p.log, swaps[0](p))"));
     assert!(c.iter().any(|t| t == "f64[]"), "{c:?}");
 }
+
+/// A method returning `this` hands back its receiver at the call site (#3738): `Set.add`,
+/// `Map.set` and a class's own builder methods used on their own line or chained share
+/// nothing, so their classes stay uncounted; only a kept result is another reference.
+#[test]
+fn results_handed_back_unused_or_chained_leave_the_class_uncounted() {
+    let c = counted(
+        "class Box {
+           w = 0;
+           h = 0;
+           width(n: number): this { this.w = n; return this; }
+           height(n: number): this { this.h = n; return this; }
+         }
+         function main() {
+           const s = new Set<number>();
+           const m = new Map<string, number>();
+           for (let i = 0; i < 10; i++) {
+             s.add(i);
+             m.set(String(i), i).set(\"x\", i);
+           }
+           s.add(1).add(2);
+           const t = new Set<number>().add(3).add(4);
+           const b = new Box().width(3).height(4);
+           b.width(5);
+           console.log(s.size, m.size, t.size, b.w, b.h, m.set(\"y\", 1).get(\"y\"));
+         }",
+    );
+    let shared = |name: &str| c.iter().any(|t| t.ends_with(name));
+    assert!(
+        !shared("::Set") && !shared("::Map") && !shared("Box"),
+        "{c:?}"
+    );
+}
+
+#[test]
+fn a_kept_result_handed_back_shares_the_receiver() {
+    let c = counted(
+        "function main() {
+           const s = new Set<number>();
+           const t = s.add(3);
+           t.add(4);
+           console.log(s.size, t.size);
+         }",
+    );
+    assert!(c.iter().any(|t| t.ends_with("::Set")), "{c:?}");
+}

@@ -114,6 +114,7 @@ mod generic_conversions;
 mod generic_member;
 mod generic_spread;
 mod generic_values;
+mod hand_back;
 mod hidden_nothings;
 mod hoist;
 mod hook_call;
@@ -311,6 +312,8 @@ impl FnCx<'_, '_> {
         let h = self.with_lets(temps, h);
         // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).
         let h = self.in_place_value(e, h);
+        // `s.add(x)`: the receiver it hands back, read as `want` says (`hand_back`).
+        let h = self.hand_back_want(h, want);
         // An integer from the standard library is a number in user code (`numbers`).
         let h = self.std_number(h);
         // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an

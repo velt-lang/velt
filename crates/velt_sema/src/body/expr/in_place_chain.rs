@@ -129,6 +129,11 @@ impl FnCx<'_, '_> {
     /// call of `sort`, `reverse`, `fill` or `copyWithin` on an array, the call runs first and the
     /// receiver is the array it changed.
     pub(super) fn in_place_receiver(&mut self, object: &ast::Expr, recv: hir::Expr) -> Receiver {
+        // `s.add(1).add(2)`: the call runs first, then the receiver it hands back is borrowed.
+        let recv = match self.split_hand_back(recv) {
+            Ok((before, recv)) => return Receiver { before, recv },
+            Err(recv) => recv,
+        };
         // `a.sort().reverse()`: the inner chain's statements run first, then this call.
         let (mut before, mut recv) = match recv.kind {
             H::Block(hir::Block {
@@ -339,7 +344,7 @@ fn is_ast_place(e: &ast::Expr) -> bool {
 
 /// A place that reads the same value again without running anything: a local and field or
 /// index projections of one (with a local or literal index).
-fn is_pure_place(e: &hir::Expr) -> bool {
+pub(super) fn is_pure_place(e: &hir::Expr) -> bool {
     match &e.kind {
         H::Local(..) => true,
         H::Field { base, .. } | H::UnwrapSome(base, _) | H::Downcast(base) => is_pure_place(base),

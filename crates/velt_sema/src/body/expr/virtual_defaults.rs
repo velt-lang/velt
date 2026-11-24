@@ -258,6 +258,12 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
     let params = f.params.clone();
     let ret = crate::body::returns::ret_of(cx, m, span);
     cx.fn_info_mut(def).ret = ret;
+    // The entry returns what its slot's methods return: nothing when they hand back their
+    // receiver (`crate::hand_back`).
+    let call_ret = match crate::hand_back::hands_back(cx, m) {
+        true => cx.ty.unit,
+        false => ret,
+    };
     let self_args: Vec<TyId> = (0..names.len() as u32).map(|i| cx.ty.param(i)).collect();
     let defaults: Vec<Option<hir::Expr>> = cx
         .fn_info(m)
@@ -332,11 +338,11 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
             callee: Callee::Def(m, self_args),
             args,
         },
-        ret,
+        call_ret,
         span,
     );
     let unit = g.cx.ty.unit;
-    let kind = match ret == unit {
+    let kind = match call_ret == unit {
         true => hir::StmtKind::Expr(call),
         false => hir::StmtKind::Return(Some(call)),
     };
@@ -348,7 +354,7 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
         name,
         generics: names.len() as u32,
         params: hir_params,
-        ret,
+        ret: call_ret,
         is_async: false,
         is_generator: false,
         self_ty: Some(this_sig.ty),
