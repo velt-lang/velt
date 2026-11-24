@@ -120,7 +120,7 @@ fn the_x25519_ladder_matches_the_reference() {
 
 fn run(clang: &Path, dir: &Path, x86: bool, cpu: &str, fused: bool) {
     let (name, defs, _, _) =
-        crate::field::helper("velt_field_x25519_ladder", x86, false).expect("a helper");
+        crate::field::helper("velt_field_x25519_ladder", x86, false, true).expect("a helper");
     let mut m = defs.join("\n");
     m.push_str(&format!(
         "\ndefine i8 @ladder(ptr %r, i64 %d, i64 %u, i64 %k) {{\n  %v = call i1 {name}(ptr %r, i64 %d, i64 %u, i64 %k)\n  %w = zext i1 %v to i8\n  ret i8 %w\n}}\n"

@@ -26,12 +26,14 @@ use velt_vir::field::FieldOp;
 use velt_vir::vir::Ty;
 
 /// The helper computing field operation `symbol` on target `x86` (x86-64 or not), `adx` where
-/// the build guarantees BMI2 and ADX (`--cpu`): its name, what the module must define for it,
+/// the build guarantees BMI2 and ADX (`--cpu`), `barrier` where the target has inline assembly
+/// for the portable form's masks ([`choose`]): its name, what the module must define for it,
 /// and the extern's signature.
 pub(crate) fn helper(
     symbol: &str,
     x86: bool,
     adx: bool,
+    barrier: bool,
 ) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
     let op = FieldOp::of_symbol(symbol)?;
     let (params, ret) = op.signature();
@@ -75,7 +77,7 @@ pub(crate) fn helper(
                  %rs = call {{ ptr, ptr }} asm sideeffect {text}, \"{ADX_CONSTRAINTS}\"(ptr %pa, ptr %pb, ptr elementtype(ptr) %slot)\n  ret void\n}}"
             ));
         } else {
-            out.push_str(&portable_add_sub(op == FieldOp::P256Add));
+            out.push_str(&portable_add_sub(op == FieldOp::P256Add, barrier));
             out.push_str("  ret void\n}");
         }
         defs.push(out);
@@ -97,7 +99,7 @@ pub(crate) fn helper(
         ));
         defs.extend(has_adx(adx));
     } else {
-        out.push_str(&portable());
+        out.push_str(&portable(barrier));
         out.push_str("  ret void\n}");
     }
     defs.push(out);
@@ -528,8 +530,39 @@ fn adx_double() -> Vec<String> {
     out
 }
 
-/// [`add_sub`] in plain IR, from `%pa`, `%pb` to `%pd`.
-fn portable_add_sub(add: bool) -> String {
+/// IR that sets `{tag}{k}` to `keep ? a[k] : b[k]` for each limb, with no `select` on `keep` where
+/// `barrier` (a target with inline assembly): `keep` is a secret (whether a carry happened), and
+/// LLVM may lower a `select` to a branch. A mask `0 - keep` picks instead, `b ^ ((a ^ b) & m)`,
+/// with the mask through an empty `asm` so that the optimizer can't see it is a comparison and
+/// fold the expression back into a `select` (rt_abi.md "Field arithmetic", constant time;
+/// veltc's `p256_masks` test reads the optimized IR). Without inline assembly (wasm32) it stays a
+/// `select`.
+fn choose(tag: &str, keep: &str, a: &[String], b: &[String], barrier: bool) -> String {
+    let mut ir = String::new();
+    if !barrier {
+        for k in 0..a.len() {
+            ir.push_str(&format!(
+                "  %{tag}{k} = select i1 {keep}, i128 {}, i128 {}\n",
+                a[k], b[k]
+            ));
+        }
+        return ir;
+    }
+    ir.push_str(&format!(
+        "  %{tag}kz = zext i1 {keep} to i64\n  %{tag}kn = sub i64 0, %{tag}kz\n  \
+         %{tag}kb = call i64 asm \"\", \"=r,0\"(i64 %{tag}kn)\n  %{tag}m = sext i64 %{tag}kb to i128\n"
+    ));
+    for k in 0..a.len() {
+        ir.push_str(&format!(
+            "  %{tag}x{k} = xor i128 {}, {}\n  %{tag}y{k} = and i128 %{tag}x{k}, %{tag}m\n  %{tag}{k} = xor i128 {}, %{tag}y{k}\n",
+            a[k], b[k], b[k]
+        ));
+    }
+    ir
+}
+
+/// [`add_sub`] in plain IR, from `%pa`, `%pb` to `%pd` (`barrier`: [`choose`]).
+fn portable_add_sub(add: bool, barrier: bool) -> String {
     let p = velt_vir::field::P256;
     let mut ir = String::new();
     for k in 0..4 {
@@ -567,9 +600,12 @@ fn portable_add_sub(add: bool) -> String {
     } else {
         ir.push_str("  %keep = icmp eq i128 %c3, 0\n");
     }
+    let kept: Vec<String> = (0..4).map(|k| format!("%s{k}")).collect();
+    let reduced: Vec<String> = (0..4).map(|k| format!("%t{k}")).collect();
+    ir.push_str(&choose("r", "%keep", &kept, &reduced, barrier));
     for k in 0..4 {
         ir.push_str(&format!(
-            "  %r{k} = select i1 %keep, i128 %s{k}, i128 %t{k}\n  %w{k} = trunc i128 %r{k} to i64\n  %dp{k} = getelementptr i8, ptr %pd, i64 {}\n  store i64 %w{k}, ptr %dp{k}, align 8\n",
+            "  %w{k} = trunc i128 %r{k} to i64\n  %dp{k} = getelementptr i8, ptr %pd, i64 {}\n  store i64 %w{k}, ptr %dp{k}, align 8\n",
             8 * k
         ));
     }
@@ -715,8 +751,8 @@ pub(crate) fn asm_text(lines: &[String]) -> String {
 }
 
 /// The product in plain IR, from `%pa`, `%pb` to `%pd`: the reference's algorithm, which LLVM
-/// lowers to the target's multiply-high and add-with-carry.
-fn portable() -> String {
+/// lowers to the target's multiply-high and add-with-carry (`barrier`: [`choose`]).
+fn portable(barrier: bool) -> String {
     let mut ir = String::new();
     let mut n = 0usize;
     let mut v = |ir: &mut String, text: String| -> String {
@@ -775,12 +811,10 @@ fn portable() -> String {
     let under = v(&mut ir, format!("icmp ne i128 {borrow}, 0"));
     let top0 = v(&mut ir, format!("icmp eq i128 {}, 0", t[8]));
     let keep = v(&mut ir, format!("and i1 {under}, {top0}"));
-    for (j, dj) in d.iter().enumerate() {
-        let r = v(
-            &mut ir,
-            format!("select i1 {keep}, i128 {}, i128 {dj}", t[4 + j]),
-        );
-        let w = v(&mut ir, format!("trunc i128 {r} to i64"));
+    let kept: Vec<String> = (0..4).map(|j| t[4 + j].clone()).collect();
+    ir.push_str(&choose("fr", &keep, &kept, &d, barrier));
+    for j in 0..4 {
+        let w = v(&mut ir, format!("trunc i128 %fr{j} to i64"));
         let at = v(&mut ir, format!("getelementptr i8, ptr %pd, i64 {}", 8 * j));
         ir.push_str(&format!("  store i64 {w}, ptr {at}, align 8\n"));
     }

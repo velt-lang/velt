@@ -46,7 +46,8 @@ fn module(x86: bool) -> String {
     let mut m = String::new();
     let mut seen = std::collections::BTreeSet::new();
     for op in FieldOp::ALL {
-        let (name, defs, _, _) = crate::field::helper(op.symbol(), x86, false).expect("a helper");
+        let (name, defs, _, _) =
+            crate::field::helper(op.symbol(), x86, false, true).expect("a helper");
         for d in defs {
             if seen.insert(d.clone()) {
                 m.push_str(&d);
@@ -265,7 +266,8 @@ fn the_fast_form_is_chosen_by_the_cpu_feature_word() {
     let mask = velt_vir::simd::Ext::AdxX86.mask();
     assert_eq!(mask, (1 << 24) | (1 << 9), "ADX's bit and BMI2's");
     for op in FieldOp::ALL {
-        let (_, defs, _, _) = crate::field::helper(op.symbol(), true, false).expect("a helper");
+        let (_, defs, _, _) =
+            crate::field::helper(op.symbol(), true, false, true).expect("a helper");
         let text = defs.join("\n");
         assert!(!text.contains("cpuid"), "{op:?} asks CPUID itself");
         if matches!(op, FieldOp::P256Add | FieldOp::P256Sub) {
@@ -277,7 +279,8 @@ fn the_fast_form_is_chosen_by_the_cpu_feature_word() {
             defs.iter().any(|d| d == crate::simd::WORD),
             "{op:?} defines the word"
         );
-        let (_, known, _, _) = crate::field::helper(op.symbol(), true, true).expect("a helper");
+        let (_, known, _, _) =
+            crate::field::helper(op.symbol(), true, true, true).expect("a helper");
         let known = known.join("\n");
         assert!(
             !known.contains("@velt_cpu_word"),
