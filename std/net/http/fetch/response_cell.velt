@@ -1,0 +1,57 @@
+// velt/net/http (internal): `BodyCell`, the body of a `Response` (response.velt), which the chunks
+// reading it share (response_body.velt `ResponseChunks`, `otherChunks`): they hold the body, not
+// the response, as the body's own stream may be such chunks, which made every `Response`
+// cycle-capable (docs/internals/design/cycles.md, #3119).
+
+import { IoError } from "velt/io/error";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
+import { Fetched } from "#http-transport";
+import { NONE } from "velt/net/http/fetch/response_body";
+
+/** A response's body: where it comes from (`source`, response_body.velt), and whether it was read. */
+export class BodyCell {
+  read: bool = false;
+  source: i64 = 0;
+  text: string = "";
+  // A bytes body (null for any other), so a response without one allocates no array.
+  bytes: u8[] | null = null;
+  stream: BodyStream | null = null;
+  // A fetched response's head and body (also of a HEAD request's, whose source is NONE).
+  fetched: Fetched | null = null;
+  // Chunks reading the body hold this cell too (`responseChunks`): the response's drop hook
+  // leaves the fetched body to them, and this cell's closes it when the last holder goes.
+  shared: bool = false;
+  // A stream of the body read it to its end or was cancelled: later streams are empty.
+  drained: bool = false;
+
+  /**
+   * Marks the body read; throws if it was already. A response without a body can be read any
+   * number of times, as in JS.
+   */
+  claim() throws IoError {
+    if (this.source == NONE) {
+      return;
+    }
+    if (this.read) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.read = true;
+  }
+
+  /**
+   * Drop hook: closes the connection of a fetched body nobody finished reading, once neither the
+   * response nor chunks reading it hold it.
+   */
+  [Symbol.dispose]() {
+    this.close();
+  }
+
+  /** Closes the connection of a fetched body nobody finished reading. */
+  close() {
+    const f = this.fetched;
+    if (f != null) {
+      f.close();
+      this.fetched = null;
+    }
+  }
+}

@@ -13,6 +13,8 @@ export class Extra {
   sending: Sending | null = null;
   body: BodyParts | null = null;
   used: bool = false;
+  /** A stream of the body read it to its end or was cancelled: later streams are empty. */
+  drained: bool = false;
   /** The signal of a request made without one, made when `signal` is first read. */
   idle: AbortSignal | null = null;
 }

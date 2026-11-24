@@ -25,6 +25,7 @@ import { Extra } from "velt/net/http/fetch/request_extra";
 import { Sending } from "velt/net/http/fetch/request_sending";
 import {
   noBody,
+  receivedChunks,
   requestBytes,
   requestChunks,
   requestText,
@@ -138,7 +139,7 @@ export class Request {
     if (input.fromServer() != null) {
       // The connection's chunks themselves: `chunks()` claims the body when first read, which
       // this copy's `input` already has by then.
-      const body = BodyStream.adopt(input.received());
+      const body = BodyStream.adopt(receivedChunks(input.#received));
       this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
     } else {
       this.extra().body = input.made();
@@ -181,7 +182,7 @@ export class Request {
     if (body == null || body.kind == 3) {
       // A received body, or a stream: both read it through a tee from here on.
       const s = body == null ? null : body.stream;
-      const source = s == null ? this.received() : s[Symbol.asyncIterator]();
+      const source = s == null ? receivedChunks(this.#received) : s[Symbol.asyncIterator]();
       const [mine, theirs] = tee(source);
       this.extra().body = streamed(mine);
       r.extra().body = streamed(theirs);
@@ -286,6 +287,11 @@ export class Request {
   // `body` is in velt/net/http/fetch/streams, loaded with the streams it gives
   // (std/prelude/global/fetch_body.velt).
 
+  // A new stream of a used body is locked, unless a stream drained it (empty then, as Node's).
+  private bodyLocked(): bool {
+    return this.bodyUsed && !this.extra().drained;
+  }
+
   get bodyUsed(): bool {
     const e = this.#extra;
     return e != null && e.used;
@@ -309,23 +315,6 @@ export class Request {
   // `bytes()` and `arrayBuffer()` are in velt/net/http/fetch/typed, loaded with the typed arrays they
   // give (std/prelude/global/fetch_bytes.velt).
 
-  // A received request's body as the connection receives it, chunk by chunk.
-  private async *received(): AsyncIterator<u8[], IoError | AbortError> {
-    const received = this.#received;
-    if (received == null) {
-      return;
-    }
-    while (true) {
-      const chunk = await received.read();
-      if (chunk == null) {
-        return;
-      }
-      if (chunk.length > 0) {
-        yield chunk;
-      }
-    }
-  }
-
   // Where the body is read from when it is a received request's, unless `clone` teed it: the
   // server's side of the request; null otherwise.
   private fromServer(): RequestSource | null {
@@ -343,7 +332,7 @@ export class Request {
 
   // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
   private chunks(): AsyncIterator<u8[], IoError | AbortError> {
-    return requestChunks(this);
+    return requestChunks(this.extra(), this.#received);
   }
 
   /**
@@ -400,11 +389,11 @@ export class Request {
   }
 
   private claim() throws IoError {
-    if (!this.hasBody()) {
-      return;
-    }
     if (this.bodyUsed) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    if (!this.hasBody()) {
+      return;
     }
     this.extra().used = true;
   }
