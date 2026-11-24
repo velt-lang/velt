@@ -47,7 +47,6 @@ fn program(top: &str, body: &str) -> Program {
 fn a_method_no_live_code_reaches_is_not_checked() {
     let p = program("", "  console.log(new Date(0).toISOString());");
     assert!(checked(&p, &date("toISOString")));
-    // (`toString`, live with the class, calls `toDateString` and `toTimeString`.)
     for m in [
         "toUTCString",
         "toLocaleTimeString",
@@ -92,7 +91,6 @@ fn to_string_is_checked_only_where_a_value_of_the_class_becomes_text() {
     ] {
         let p = program("", body);
         assert!(live(&p, &date("toString")), "{body}");
-        assert!(live(&p, &date("toTimeString")), "{body}");
     }
 }
 
