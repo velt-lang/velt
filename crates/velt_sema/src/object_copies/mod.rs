@@ -768,8 +768,8 @@ fn anon(cx: &Ctx, t: TyId) -> bool {
 /// the compiler's own glue made them, which no literal of the program built.
 fn built_types(cx: &mut Ctx) -> Vec<TyId> {
     struct Lits(FxHashSet<TyId>);
-    impl crate::visit::VisitMut for Lits {
-        fn expr(&mut self, e: &mut crate::hir::Expr) {
+    impl crate::visit_ref::Visit for Lits {
+        fn expr(&mut self, e: &crate::hir::Expr) {
             if let crate::hir::ExprKind::AdtLit { .. } = e.kind {
                 self.0.insert(e.ty);
             }
@@ -782,17 +782,17 @@ fn built_types(cx: &mut Ctx) -> Vec<TyId> {
             _ => false,
         })
         .collect();
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    for (i, d) in cx.defs.iter().enumerate() {
         if let Some(crate::hir::Def::Fn(f)) = d {
             if !generated[i] {
-                crate::visit::block(&mut f.body.block, &mut v);
+                crate::visit_ref::block(&f.body.block, &mut v);
             }
         }
     }
-    for i in cx.info.iter_mut() {
+    for i in cx.info.iter() {
         if let crate::defs::DefInfo::Global(g) = i {
-            if let Some(e) = &mut g.init {
-                crate::visit::expr(e, &mut v);
+            if let Some(e) = &g.init {
+                crate::visit_ref::expr(e, &mut v);
             }
         }
     }

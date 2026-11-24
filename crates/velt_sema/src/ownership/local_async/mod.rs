@@ -403,20 +403,25 @@ fn count_through(cx: &mut Ctx, c: DefId, why: Option<Why>) {
 
 /// Record what was decided for async closure `c`.
 fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
-    let Some(Def::Fn(f)) = &mut cx.defs[c.0 as usize] else {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
     };
-    if !f.is_async || f.is_generator {
+    let (generator, ret, shares) = (f.is_generator, f.ret, f.shares_captures);
+    if !f.is_async || generator {
         // A plain closure whose promise leaves its task (`const go = () => work(c)` with
         // `spawn(go())`): the promise holds what the closure passed on from its captures.
-        let (generator, ret) = (f.is_generator, f.ret);
         if !local && !generator && matches!(cx.ty.kind(ret), TyKind::Promise(..)) {
             report_atomics(cx, c, why, true);
         }
         return;
     }
     if local {
-        f.shares_captures = true;
+        // Already set (std's closures, in a later unit): nothing to write.
+        if !shares {
+            if let Some(Def::Fn(f)) = &mut cx.defs[c.0 as usize] {
+                f.shares_captures = true;
+            }
+        }
         return;
     }
     count_through(cx, c, why);
