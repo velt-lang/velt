@@ -20,7 +20,7 @@ import { describe, expect, it } from "velt/test";
 function fixed(): Dirs {
   return new Dirs(
     () => "C:\\work\\dir",
-    (name) => (name === "=E:" ? "E:\\other\\place" : undefined),
+    (device) => (device === "E:" ? "E:\\other\\place" : undefined),
   );
 }
 

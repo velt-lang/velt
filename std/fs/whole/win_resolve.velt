@@ -11,12 +11,12 @@
 export class Dirs {
   /** The working directory. */
   cwd: () => string;
-  /** An environment variable (`=D:`, the working directory on the drive `D:`), or undefined. */
-  env: (name: string) => string | undefined;
+  /** The working directory on a drive (`D:`), as Node reads it from `=D:`, or undefined. */
+  drive: (device: string) => string | undefined;
 
-  constructor(cwd: () => string, env: (name: string) => string | undefined) {
+  constructor(cwd: () => string, drive: (device: string) => string | undefined) {
     this.cwd = cwd;
-    this.env = env;
+    this.drive = drive;
   }
 }
 
@@ -119,7 +119,7 @@ function normalTail(tail: string, aboveRoot: bool): string {
 
 /** The working directory Node resolves a path on `device` (`D:`) against. */
 function dirOn(device: string, dirs: Dirs): string {
-  const own = dirs.env(`=${device}`);
+  const own = dirs.drive(device);
   const dir = own === undefined || own.length === 0 ? dirs.cwd() : own;
   const other = dir.slice(0, 2).toLowerCase() !== device.toLowerCase();
   return other && dir.length > 2 && dir.charCodeAt(2) === 92 ? `${device}\\` : dir;

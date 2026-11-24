@@ -19,12 +19,11 @@ import {
   shownPath,
 } from "velt/fs/whole/win_resolve";
 import { IoError } from "velt/io/error";
-import { cwd } from "velt/process/cwd_win32";
-import { getEnv } from "velt/process/env_win32";
+import { cwd, driveDir } from "velt/process/cwd_win32";
 
 /** The process' working directories. */
 function dirs(): Dirs {
-  return new Dirs(() => workingDir(), (name) => getEnv(name));
+  return new Dirs(() => workingDir(), (device) => driveDir(device) ?? undefined);
 }
 
 /**
