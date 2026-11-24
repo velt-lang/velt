@@ -1,0 +1,75 @@
+// A conditional or `||` whose value is a literal, against a union holding that literal and
+// other members (#3370): each branch is checked against the declared union, as in TypeScript,
+// with string, number and boolean literals, both branch orders, nested conditionals, `??`, and
+// `||` / a truthy test on a union with a falsy literal member (`"" | "a"`, `0 | 1`), which is
+// the other members when truthy.
+interface Named {
+  name: string;
+}
+
+function pick(i: number, d: Named): Named | "lit" | null {
+  const c: Named | "lit" | null = i == 0 ? "lit" : d;
+  return c;
+}
+
+function pickLast(i: number, d: Named): Named | "lit" {
+  let c: Named | "lit" = i == 0 ? d : "lit";
+  return c;
+}
+
+function nested(i: number, d: Named): Named | "x" | "y" {
+  return i == 0 ? "x" : i == 1 ? "y" : d;
+}
+
+function num(i: number, d: Named): Named | 1 {
+  const c: Named | 1 = i == 0 ? 1 : d;
+  return c;
+}
+
+function flag(i: number, d: Named): Named | true {
+  const c: Named | true = i == 0 ? true : d;
+  return c;
+}
+
+function nullish(s: "a" | undefined): "a" | "c" {
+  return s ?? "c";
+}
+
+function orText(t: "a" | ""): "a" | "c" {
+  const c: "a" | "c" = t || "c";
+  return c;
+}
+
+function truthyText(t: "a" | ""): "a" | "c" {
+  return t ? t : "c";
+}
+
+function orNumber(t: 0 | 1): 1 | 2 {
+  const c: 1 | 2 = t || 2;
+  return c;
+}
+
+function orFlag(t: false | "x"): "x" | "y" {
+  return t || "y";
+}
+
+function show(v: Named | string | number | boolean | null): string {
+  if (v === null) {
+    return "null";
+  }
+  return typeof v === "object" ? `{${v.name}}` : `${v}`;
+}
+
+function showOne(v: Named | 1): string {
+  return typeof v === "object" ? `{${v.name}}` : `${v}`;
+}
+
+function main() {
+  const d: Named = { name: "d" };
+  console.log(show(pick(0, d)), show(pick(1, d)), show(pickLast(0, d)), show(pickLast(1, d)));
+  console.log(show(nested(0, d)), show(nested(1, d)), show(nested(2, d)));
+  console.log(showOne(num(0, d)), showOne(num(1, d)), show(flag(0, d)), show(flag(1, d)));
+  console.log(nullish("a"), nullish(undefined), orText("a"), orText(""));
+  console.log(truthyText("a"), truthyText(""), orNumber(1), orNumber(0));
+  console.log(orFlag("x"), orFlag(false));
+}

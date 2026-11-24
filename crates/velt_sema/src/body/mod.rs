@@ -81,6 +81,7 @@ mod locals;
 mod loops;
 pub(crate) mod moved_const;
 pub(crate) mod narrow;
+mod narrow_falsy;
 mod narrow_generic;
 mod nested_pattern;
 mod object_rest;
