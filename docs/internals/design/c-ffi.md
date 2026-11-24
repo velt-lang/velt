@@ -193,8 +193,9 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   `null`. It is recognized through a program's type aliases too, generic ones included
   (`type R = Ref<S>`, `type Id<T> = T` as `Id<Ref<S>>`, `type M<T> = T | null`): each resolves
   to `S`, which would otherwise cross by value. A `Ref` of anything else, a `Ref` written
-  anywhere else in a C function's signature (`Ref<S>[]`, `Ref<S> | undefined`), and a C
-  function returning one are errors at the declaration (collect/c_ref.rs). Elsewhere `Ref<S>`
+  anywhere else in a C function's signature (`Ref<S>[]`, `Ref<S> | undefined`), a C function
+  returning one, and a `Ref` in a C struct's field (where it would be `S` inline; a field that
+  points is `Ptr<S>`) are errors at the declaration (collect/c_ref.rs). Elsewhere `Ref<S>`
   is just `S`, as `StrBytes` is `string`.
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
