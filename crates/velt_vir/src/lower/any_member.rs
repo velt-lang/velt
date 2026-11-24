@@ -319,12 +319,17 @@ impl FnLower<'_, '_> {
         };
         let imp = self.cx.hir.any_impl.unwrap_or(0);
         let table = self.vtable_addr(VtableKey::Impl(imp, t));
+        let own = table.clone();
         let (data, table) = match self.cx.proxiable(t) {
             true => self.proxy_any_parts(data, table),
             false => (data, table),
         };
         let (data, table) = match self.cx.array_view(t) {
             true => self.view_any_parts(data, table, t),
+            false => (data, table),
+        };
+        let (data, table) = match self.cx.record_view(t) {
+            true => self.record_view_any_parts(data, table, own, t),
             false => (data, table),
         };
         self.assign(proj(out, Proj::Field(0)), Rvalue::Use(data));
