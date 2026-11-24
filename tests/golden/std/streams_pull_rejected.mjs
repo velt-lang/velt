@@ -7,6 +7,10 @@ function untyped() {
   return undefined;
 }
 
+function hang() {
+  return new Promise((resolve) => {});
+}
+
 function rejects() {
   return Promise.reject(new Error("never widened"));
 }
@@ -76,3 +80,7 @@ const v = new ReadableStream({
   start: (c) => untyped(),
 });
 console.log("any start read " + (await v.getReader().read()).value);
+
+const pending = hang();
+const settled = await Promise.race([pending.then(() => "settled"), Promise.resolve("pending")]);
+console.log("never-promise " + settled);

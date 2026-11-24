@@ -172,7 +172,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
     fn widen_slot(&mut self, src: &Place, out: &Place, from: TyId, to: TyId) {
         let to_slot = self.cx.promise_slot(to);
         let TyKind::Result(t, e2) = self.cx.kind(to_slot) else {
-            ice("widened promise without an error type")
+            // A `Promise<never>` (no value, no error) as a `Promise<U>`: nothing ever arrives,
+            // so the slot (a `U`) gets a zero value (#3644).
+            let never = matches!(self.cx.kind(from), TyKind::Promise(v, _) if matches!(self.cx.kind(v), TyKind::Never));
+            if !never {
+                ice("widened promise without an error type");
+            }
+            let vt = self.cx.ty(to_slot);
+            let zero = self.zero_value(vt);
+            self.assign(out.clone(), Rvalue::Use(zero));
+            return;
         };
         let t1 = match self.cx.kind(from) {
             TyKind::Promise(t1, _) => t1,

@@ -12,6 +12,10 @@ function untyped(): any {
   return undefined;
 }
 
+function hang(): Promise<never> {
+  return new Promise<never>((resolve) => {});
+}
+
 function rejects(): Promise<never, Error> {
   return Promise.reject(new Error("never widened"));
 }
@@ -85,6 +89,11 @@ async function main(): Promise<void> {
     start: (c) => untyped(),
   });
   console.log("any start read " + (await v.getReader().read()).value);
+
+  // A promise of no value and no error, as a promise of a value: it never settles.
+  const pending: Promise<number> = hang();
+  const settled = await Promise.race([pending.then(() => "settled"), Promise.resolve("pending")]);
+  console.log("never-promise " + settled);
 }
 
 main();

@@ -507,8 +507,9 @@ impl FnCx<'_, '_> {
     }
 
     /// `Promise<T, E1>` → `Promise<T, E2>`: the same `T` (the wrapper copies the value as it is),
-    /// or a `Promise<never, E1>`, which gives no value, as any `Promise<U, E2>`; and `E2` allows
-    /// every error `E1` can reject with (an unrelated error type is still a mismatch).
+    /// or a `Promise<never, E1>`, which gives no value, as any `Promise<U, E2>` (`E2` may be
+    /// `never` too); and `E2` allows every error `E1` can reject with (an unrelated error type is
+    /// still a mismatch).
     pub(super) fn widens_promise(&mut self, from: TyId, to: TyId) -> bool {
         let (&TyKind::Promise(x, e), &TyKind::Promise(y, f)) =
             (self.cx.ty.kind(from), self.cx.ty.kind(to))
@@ -517,9 +518,7 @@ impl FnCx<'_, '_> {
         };
         // A `Promise<never, E>` (`Promise.resolve().then(() => { throw e; })`) never gives a
         // value, so it is a promise of any value type, as in TypeScript (#3644).
-        // The wrapper (`PromiseWiden`) needs an error type to widen into: a `Promise<never>`
-        // (no errors) of another value type stays a mismatch.
-        let value = x == y || (self.cx.ty.is_bottom(x) && !self.cx.ty.is_bottom(f));
+        let value = x == y || self.cx.ty.is_bottom(x);
         value && (e != f || x != y) && self.cx.error_outside(Some(f), Some(e)).is_none()
     }
 

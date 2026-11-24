@@ -6,13 +6,5 @@ async function main(): Promise<void> {
   const a: Promise<never, A> = Promise.reject(new A("a"));
   const b: Promise<void, B> = a;
   await b;
-  // A promise of no value and no error converts to no other value type: the widening needs an
-  // error type to widen into.
-  const c: Promise<number> = hang();
-  await c;
-}
-
-function hang(): Promise<never> {
-  return new Promise<never>((resolve) => {});
 }
 main();
