@@ -40,6 +40,17 @@ async function yieldsThenQueues(name: string): Promise<number> {
   return 1;
 }
 
+/** Yields, then at its turn queues a microtask that logs and yields again. */
+async function queuesThenYields(name: string): Promise<number> {
+  say(`${name} yield 0`);
+  await yieldNow();
+  Promise.resolve(1).then(() => say(`${name}'s microtask`));
+  say(`${name} yield 1`);
+  await yieldNow();
+  say(`${name} done`);
+  return 2;
+}
+
 /** Yields once `gate` opened: after a sibling later in the array that opens it yielded. */
 async function yieldsAfter(name: string, gate: Promise<void>): Promise<number> {
   await gate;
@@ -217,6 +228,9 @@ async function main() {
   const q2 = await Promise.all([yields("a", 1), yieldsThenQueues("b"), yields("c", 1)]);
   say(`all: ${q2.join(",")}`);
   flush("all, the second child's turn queues a microtask");
+  const q3 = await Promise.all([queuesThenYields("a"), yields("b", 2)]);
+  say(`all: ${q3.join(",")}`);
+  flush("all, a child queues a microtask and yields again at its turn");
 
   // The first child in the array yields after the second (which opens its gate): their turns
   // come in the order they yielded.

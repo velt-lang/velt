@@ -116,6 +116,15 @@ b done
 b's microtask
 c done
 all: 1,1,1
+-- all, a child queues a microtask and yields again at its turn
+a yield 0
+b yield 0
+a yield 1
+a's microtask
+b yield 1
+a done
+b done
+all: 2,2
 -- all, the first child yields after the second
 b yield 0
 a yield 0
