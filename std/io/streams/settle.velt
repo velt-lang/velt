@@ -1,7 +1,7 @@
 // velt/io (internal): how a stream's controller waits for its source's promises (#3643,
 // #3695), as Node's streams settle them, and the error of a stream used in a wrong state.
 
-// Waits for `p`, dropping its result.
+/** Waits for `p`, dropping its result. */
 export async function finished<T>(p: Promise<T>): Promise<void> {
   await p;
 }
