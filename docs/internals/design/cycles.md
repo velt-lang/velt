@@ -103,8 +103,8 @@ reference to a value of `B`":
 | a generic class, struct or union `G<A>` | besides its parts, `A` for each type parameter that none of its fields or payloads mentions: `G` keeps it where its fields don't show, behind the runtime's pointers (std's channel core keeps its items in a block). A parameter a field mentions has its edges through that field, so one only a `shared<T>` or `weak` field mentions adds none (`Map<K, V>` and `Set<T>` keep theirs in fields) |
 | function value of type `F` | the *closures of `F`'s key* (below) and the *generic closures*: environments, counted blocks, with edges to what they capture (a captured variable's cell is counted too) |
 | generic function value | the closures of its interface's key, the generic closures, and its interface's node |
-| interface value of interface `I` | the *`I` node*: its value, possibly a counted box, with edges to every concrete type an `I` table was built for and to the nodes of the interfaces converted to `I` |
-| `any`, `unknown`, `object` | the *dynamics* node: edges to every type an `any` table was built for, the nodes of the interfaces converted to `any`, and the generic closures |
+| interface value of type `I<A>` | the *`I<A>` node*, one per instantiation: its value, possibly a counted box, with edges to every concrete type an `I<A>` table was built for (an implementation is of one instantiation, fixed by the type it is for) and to the nodes of the interface types converted to `I<A>` |
+| `any`, `unknown`, `object` | the *dynamics* node: edges to every type an `any` table was built for, the nodes of every instantiation of the interfaces converted to `any`, and the generic closures |
 | closure environment, in a program that writes properties of functions through `any` | the dynamics node: its properties are `any` values it owns (`f.self = f`; velt_rt `fn_props.rs`) |
 | `Promise<T, E>` | `T`, `E` |
 | generator object (`Generator`, `AsyncGenerator`) | its fields, and every local of the generator functions made at that class type (the state of the function it runs) |
