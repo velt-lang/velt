@@ -42,6 +42,7 @@ mod debug;
 mod eh;
 mod field;
 mod field25519;
+mod field_portable;
 mod function;
 mod half;
 mod inlining;
