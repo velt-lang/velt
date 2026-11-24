@@ -5,8 +5,8 @@
 //!
 //! Any native driver can offer one: it implements [`RowCursor`], registers the cursor with the
 //! runtime (`open_cursor`, `sdk` feature) and hands velt/db's `decodeRows` the handle. std finds
-//! the cursor by it, decodes with `parseJsonCursor<T>` (flag `FLAG_CURSOR` of
-//! `velt_rt_json_reader_new_with`) and gives the handle back to the driver afterwards, which
+//! the cursor by it, decodes with `parseJsonCursor<T>` (by column, or with std's rows reader,
+//! std/encoding/json/rows_reader.velt) and gives the handle back to the driver afterwards, which
 //! takes the cursor back (`close_cursor`), releases what it held and reports a failure the rows
 //! met.
 //!

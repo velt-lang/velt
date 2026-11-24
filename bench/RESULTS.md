@@ -249,7 +249,7 @@ alike; interleaved runs, best of 7: Velt 2748 ms, Rust 4268 ms, Node 2238 ms.
 - **navigate**: `at(i)` and `get(key)` over the parsed document, 20 passes.
 - **edit**: `set` 10k keys into an object, then `delete` them all from the front, 4 times
   (Rust: `shift_remove`, which keeps the order and moves the later members, O(n) per delete).
-  An edit turns the parsed tape into the runtime's tree (`crates/velt_rt/src/json/object.rs`):
+  An edit turns the parsed tape into std's tree (`std/encoding/json/tree_object.velt`):
   deleting is O(1) amortized and `at(i)` after deletes O(log n) (a Fenwick tree of live slots).
 
 `navigate` and `parse_value` are slower than Node; survey
