@@ -283,8 +283,11 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
         // (`velt_eh_try`, `velt_eh_catches`, `velt_eh_personality`) is defined by the backend in
         // each object (docs/internals/design/unwinding.md), never by a runtime. velt/arch's
         // instructions (`velt_arch_*`) are LLVM's too, one per row of `velt_vir::arch`'s table,
-        // whose tests check the declarations.
+        // whose tests check the declarations. The field operations (`velt_field_*`, rt_abi.md
+        // "Field arithmetic") are inline as well; the verifier checks them against
+        // `velt_vir::field`.
         if name.starts_with("velt_simd_")
+            || name.starts_with("velt_field_")
             || name.starts_with("velt_arch_")
             || name.starts_with("velt_math_")
             || name.starts_with("velt_eh_")
