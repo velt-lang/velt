@@ -1,6 +1,8 @@
 // A function value with fewer parameters than a function type's fixed ones, passed where that
 // type ends in a rest typed by a type parameter (#3296): as in TypeScript, the rest is `[]` and
 // the function is called with the arguments it takes, as a callback taking fewer parameters is.
+// A top-level arrow constant, a declared function, an arrow written in the call, one with an
+// optional parameter, and the same inside a function.
 interface Ctx {
   id: string;
 }
@@ -19,10 +21,20 @@ const few = (): string => "few";
 const one = (rq: Ctx): string => `one ${rq.id}`;
 const two = (rq: Ctx, n: number): string => `two ${rq.id} ${n}`;
 
-function main() {
-  const ctx: Ctx = { id: "x" };
-  console.log(wrap(few)(ctx), wrap(one)(ctx), wrap(two)(ctx, 3));
-  console.log(wrap(() => 7)(ctx), wrapTwo(few)(ctx, 1), wrapTwo(one)(ctx, 2));
+function fewDecl(): string {
+  return "decl";
+}
+
+const ctx: Ctx = { id: "x" };
+console.log(wrap(few)(ctx), wrap(fewDecl)(ctx), wrap(one)(ctx), wrap(two)(ctx, 3));
+console.log(wrap((rq?: Ctx): string => `opt ${rq ? rq.id : "none"}`)(ctx));
+
+function inside() {
+  const local = (): string => "local";
+  console.log(wrap(local)(ctx), wrap(fewDecl)(ctx), wrap(() => 7)(ctx));
+  console.log(wrapTwo(few)(ctx, 1), wrapTwo(one)(ctx, 2), wrapTwo(fewDecl)(ctx, 3));
   const later = wrapTwo((rq: Ctx): number => rq.id.length);
   console.log(later({ id: "four" }, 9));
 }
+
+inside();

@@ -1,3 +1,5 @@
-few one x two x 3
-7 few one x
+few decl one x two x 3
+opt x
+local decl 7
+few one x decl
 4
