@@ -8,7 +8,11 @@
 //! the object pointer 8 bytes in: retains and releases through `o - 8` (a release tests the
 //! count for 1 and frees the block), header names `h = o - 8` and `o = h + 8` copied in loops and
 //! diamonds, and the counts folded into the result, so the count and the object, under two
-//! names, must stay together.
+//! names, must stay together. Rarer operations name the object at other offsets (`h = o`,
+//! `h = o + 8`, a clash with `h = o - 8`) and read and write its first word as a `u64`, which
+//! must never be taken for the count. A third of the counted programs give their objects a
+//! vtable, stored by `new` after the fill, and release them through its drop slot, an indirect
+//! call: `devirt`, the direct call, the inlined drop and the replacement after it.
 
 use super::*;
 use crate::interp::{Interp, Memory, Trap};
@@ -16,7 +20,8 @@ use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
 use velt_vir::vir::Ty::*;
 use velt_vir::vir::{
-    AggId, BinOp, BlockId, Callee, ExternFn, Local, Operand, Place, Proj, Rvalue, Stmt,
+    AggId, BinOp, BlockId, Callee, Const, ExternFn, Local, Operand, Place, Proj, Rvalue, StaticId,
+    Stmt,
 };
 
 /// Deterministic xorshift generator.
@@ -79,16 +84,33 @@ struct Gen {
     ptrs: Vec<Local>,
     /// Header names (`h = o - 8`) of the counted variant.
     hdrs: Vec<Local>,
+    /// A name of the counted variant set at several offsets of objects (`p = o - 8`, `p = o`,
+    /// `p = o + 8`) and read through as a `u64`; no object pointer is computed from it.
+    probe: Local,
     acc: Local,
     /// Objects are counted blocks.
     counted: bool,
+    /// The objects' vtable (in their first field; the two numbers follow it), whose drop slot
+    /// a release calls.
+    vtable: Option<StaticId>,
 }
 
 impl Gen {
+    /// Number field `k` (0 or 1) of `w`'s object.
     fn field(&self, w: Local, k: u32) -> Place {
+        let k = k + u32::from(self.vtable.is_some());
         Place {
             local: w,
             proj: vec![Proj::Deref(Ty::Agg(self.obj)), Proj::Field(k)],
+        }
+    }
+
+    /// The object's size: two numbers, after the vtable when there is one.
+    fn obj_size(&self) -> i128 {
+        if self.vtable.is_some() {
+            24
+        } else {
+            16
         }
     }
 
@@ -114,11 +136,17 @@ impl Gen {
 
     /// The block size: the object's, and the count in front of it when counted.
     fn size(&self) -> i128 {
-        if self.counted {
-            24
-        } else {
-            16
-        }
+        self.obj_size() + if self.counted { 8 } else { 0 }
+    }
+
+    /// The zero fill of `w`'s object.
+    fn fill(&mut self, b: BlockId, w: Local) {
+        let fill = Stmt::MemSet {
+            dst: copy_local(w),
+            byte: int(0, U8),
+            len: int(self.obj_size(), U64),
+        };
+        self.fb.push(b, fill);
     }
 
     /// Allocate `w`'s block: `w` itself, or (counted) a block with a count of 1 and `w` 8 bytes
@@ -136,6 +164,16 @@ impl Gen {
         self.fb.push(b, count);
         self.fb
             .assign(b, w, bin(BinOp::PtrAdd, copy_local(base), int(8, I64)));
+        if let Some(vt) = self.vtable {
+            // `new` of a class with a vtable: the fill, then the vtable, before any other use.
+            self.fill(b, w);
+            let first = Place {
+                local: w,
+                proj: vec![Proj::Deref(Ty::Agg(self.obj)), Proj::Field(0)],
+            };
+            let store = Rvalue::Use(Operand::Const(Const::Static(vt), Ptr));
+            self.fb.push(b, Stmt::Assign(first, store));
+        }
         b
     }
 
@@ -171,8 +209,9 @@ impl Gen {
         self.fb.push(b, Stmt::Assign(deref(h, U64), inc));
     }
 
-    /// A release of `w` as lowering emits it: `if (count == 1) free(w - 8) else count -= 1`;
-    /// returns the continuation.
+    /// A release of `w` as lowering emits it: `if (count == 1) free(w - 8) else count -= 1`
+    /// (with a vtable, the last release calls its drop slot, `(*(w.vtable + 64))(w)`, which
+    /// frees); returns the continuation.
     fn release(&mut self, b: BlockId, w: Local) -> BlockId {
         let h = self.header(b, w);
         let (c, one) = (self.fb.local(U64), self.fb.local(Bool));
@@ -181,8 +220,30 @@ impl Gen {
             .assign(b, one, bin(BinOp::Eq, copy_local(c), int(1, U64)));
         let (last, shared, next) = (self.fb.block(), self.fb.block(), self.fb.block());
         self.fb.branch(b, one, last, shared);
-        let args = vec![copy_local(h), int(24, U64), int(8, U64)];
-        let after = self.fb.call(last, Callee::Extern(self.free), args, None);
+        let after = match self.vtable {
+            Some(_) => {
+                let (t, slot, f) = (self.fb.local(Ptr), self.fb.local(Ptr), self.fb.local(Ptr));
+                let first = Place {
+                    local: w,
+                    proj: vec![Proj::Deref(Ty::Agg(self.obj)), Proj::Field(0)],
+                };
+                self.fb.assign(last, t, Rvalue::Use(copy_place(first)));
+                self.fb
+                    .assign(last, slot, bin(BinOp::PtrAdd, copy_local(t), int(64, I64)));
+                self.fb
+                    .assign(last, f, Rvalue::Use(copy_place(deref(slot, Ptr))));
+                let callee = Callee::Ptr {
+                    target: copy_local(f),
+                    params: vec![Ptr],
+                    ret: Unit,
+                };
+                self.fb.call(last, callee, vec![copy_local(w)], None)
+            }
+            None => {
+                let args = vec![copy_local(h), int(self.size(), U64), int(8, U64)];
+                self.fb.call(last, Callee::Extern(self.free), args, None)
+            }
+        };
         self.fb.goto(after, next);
         let dec = bin(BinOp::Sub, copy_local(c), int(1, U64));
         self.fb.push(shared, Stmt::Assign(deref(h, U64), dec));
@@ -191,17 +252,38 @@ impl Gen {
     }
 
     /// One of the header names' operations: `h = w - 8`, `w = h + 8`, or the count at `h`
-    /// folded into the result.
+    /// folded into the result. More rarely the probe is set at the count, the object or its
+    /// second word (offsets that clash within a web) and the `u64` there folded in, or the
+    /// object's first word is read or (without a vtable) written as a `u64`: never the count.
     fn header_op(&mut self, b: BlockId, w: Local) {
         let h = self.hdrs[self.rng.below(PTRS)];
-        match self.rng.below(3) {
-            0 => self
-                .fb
-                .assign(b, h, bin(BinOp::PtrAdd, copy_local(w), int(-8, I64))),
-            1 => self
+        let probe = self.probe;
+        let shift = |by: i128| bin(BinOp::PtrAdd, copy_local(w), int(by, I64));
+        match self.rng.below(18) {
+            0..=3 => self.fb.assign(b, h, shift(-8)),
+            4..=7 => self
                 .fb
                 .assign(b, w, bin(BinOp::PtrAdd, copy_local(h), int(8, I64))),
-            _ => self.fold_count(b, h),
+            8..=10 => self.fold_count(b, h),
+            11 => self.fb.assign(b, probe, shift(-8)),
+            12 => {
+                self.fb.assign(b, probe, Rvalue::Use(copy_local(w)));
+                self.fold_count(b, probe);
+            }
+            13 => {
+                self.fb.assign(b, probe, shift(8));
+                self.fold_count(b, probe);
+            }
+            14 | 15 => self.fold_count(b, probe),
+            16 => self.fold_count(b, w),
+            _ if self.vtable.is_some() => self.fold_count(b, w),
+            _ => {
+                let v = self.value(b);
+                let word = self.fb.local(U64);
+                self.fb.assign(b, word, Rvalue::Cast(copy_local(v), U64));
+                let store = Stmt::Assign(deref(w, U64), Rvalue::Use(copy_local(word)));
+                self.fb.push(b, store);
+            }
         }
     }
 
@@ -209,12 +291,9 @@ impl Gen {
     fn new_obj(&mut self, b: BlockId, w: Local) -> BlockId {
         let (x, y) = (self.value(b), self.value(b));
         let b = self.alloc_obj(b, w);
-        let fill = Stmt::MemSet {
-            dst: copy_local(w),
-            byte: int(0, U8),
-            len: int(16, U64),
-        };
-        self.fb.push(b, fill);
+        if self.vtable.is_none() {
+            self.fill(b, w);
+        }
         let (f0, f1) = (self.field(w, 0), self.field(w, 1));
         self.fb
             .push(b, Stmt::Assign(f0, Rvalue::Use(copy_local(x))));
@@ -332,15 +411,40 @@ impl Gen {
 
 /// `main(n)`: every pointer starts with a fresh object, then `n` iterations of random segments,
 /// then the sum of every object's fields is folded into the result.
-fn random_program(seed: u64, escapes: bool, counted: bool) -> Program {
+fn random_program(seed: u64, escapes: bool, counted: bool, vtable: bool) -> Program {
     let mut pb = ProgramBuilder::new();
     let alloc = pb.ext("velt_rt_alloc", &[U64, U64], Ptr, false);
     let free = pb.ext("velt_rt_free", &[Ptr, U64, U64], Unit, false);
     let keep = pb.ext("keep", &[Ptr, I64], Unit, false);
-    let obj = pb.agg("Pair object", 16, 8, &[(I64, 0), (I64, 8)]);
+    // `main` first (heap_sroa runs on function 0); the drop its vtable names after it.
+    let main = pb.reserve();
+    let (obj, vtable) = if vtable {
+        let obj = pb.agg("Vt object", 24, 8, &[(Ptr, 0), (I64, 8), (I64, 16)]);
+        // drop(w): keep(0, w.y), an effect, then free the block.
+        let mut db = FuncBuilder::internal("drop", &[Ptr], Unit);
+        let (w, y, h) = (db.param(0), db.local(I64), db.local(Ptr));
+        let b = db.block();
+        let second = Place {
+            local: w,
+            proj: vec![Proj::Deref(Ty::Agg(obj)), Proj::Field(2)],
+        };
+        db.assign(b, y, Rvalue::Use(copy_place(second)));
+        let args = vec![int(0, Ptr), copy_local(y)];
+        let b = db.call(b, Callee::Extern(keep), args, None);
+        db.assign(b, h, bin(BinOp::PtrAdd, copy_local(w), int(-8, I64)));
+        let args = vec![copy_local(h), int(32, U64), int(8, U64)];
+        let b = db.call(b, Callee::Extern(free), args, None);
+        db.ret(b, Operand::Const(Const::Unit, Unit));
+        let drop = pb.add(db.finish());
+        let vt = pb.stat_with(&[0; 72], 8, vec![(64, Const::Func(drop))]);
+        (obj, Some(vt))
+    } else {
+        (pb.agg("Pair object", 16, 8, &[(I64, 0), (I64, 8)]), None)
+    };
     let mut fb = FuncBuilder::export("main", &[I64], I64);
     let ptrs = (0..PTRS).map(|_| fb.local(Ptr)).collect();
     let hdrs = (0..PTRS).map(|_| fb.local(Ptr)).collect();
+    let probe = fb.local(Ptr);
     let acc = fb.local(I64);
     let mut g = Gen {
         rng: Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
@@ -351,8 +455,10 @@ fn random_program(seed: u64, escapes: bool, counted: bool) -> Program {
         obj,
         ptrs,
         hdrs,
+        probe,
         acc,
         counted,
+        vtable,
     };
     let n = g.fb.param(0);
     let (i, c) = (g.fb.local(I64), g.fb.local(Bool));
@@ -368,6 +474,12 @@ fn random_program(seed: u64, escapes: bool, counted: bool) -> Program {
         g.fb.push(b, Stmt::Assign(f0, Rvalue::Use(int(k as i128, I64))));
         g.fb.push(b, Stmt::Assign(f1, Rvalue::Use(int(10 * k as i128, I64))));
     }
+    let first = g.ptrs[0];
+    g.fb.assign(
+        b,
+        probe,
+        bin(BinOp::PtrAdd, copy_local(first), int(-8, I64)),
+    );
     let (head, body, exit) = (g.fb.block(), g.fb.block(), g.fb.block());
     g.fb.goto(b, head);
     g.fb.assign(head, c, bin(BinOp::Lt, copy_local(i), copy_local(n)));
@@ -389,16 +501,18 @@ fn random_program(seed: u64, escapes: bool, counted: bool) -> Program {
         }
     }
     g.fb.ret(exit, copy_local(acc));
-    pb.add(g.fb.finish());
+    pb.set(main, g.fb.finish());
     pb.finish()
 }
 
 /// Run `random_program` for 1500 seeds, alone and through the speed pipeline; returns how many
-/// had objects replaced.
-fn check_random_programs(counted: bool) -> usize {
-    let mut replaced = 0;
+/// had objects replaced by the pass alone, and how many of those with a vtable (a third of the
+/// counted ones) allocated fewer objects after the pipeline.
+fn check_random_programs(counted: bool) -> (usize, usize) {
+    let (mut replaced, mut devirtualized) = (0, 0);
     for seed in 0..1500u64 {
-        let original = random_program(seed, seed % 4 == 0, counted);
+        let vtable = counted && seed % 3 == 1;
+        let original = random_program(seed, seed % 4 == 0, counted, vtable);
         let mut alone = original.clone();
         let aggs = alone.aggs.clone();
         let allocator = Allocator::find(&alone);
@@ -408,19 +522,22 @@ fn check_random_programs(counted: bool) -> usize {
         crate::optimize(&mut pipeline, crate::OptLevel::Speed);
         assert_valid(&pipeline);
         for n in [0, 1, 2, 5] {
-            let (want, _, kept) = execute(&original, n);
+            let (want, allocs, kept) = execute(&original, n);
             for p in [&alone, &pipeline] {
                 let (got, _, got_kept) = execute(p, n);
                 assert_eq!((want, &kept), (got, &got_kept), "seed {seed}, n = {n}\n{p}");
             }
+            if vtable && n == 5 && execute(&pipeline, n).1 < allocs {
+                devirtualized += 1;
+            }
         }
     }
-    replaced
+    (replaced, devirtualized)
 }
 
 #[test]
 fn random_programs_keep_their_results() {
-    let replaced = check_random_programs(false);
+    let (replaced, _) = check_random_programs(false);
     // The generator must exercise the rewrite, not only the cases that keep the heap.
     assert!(
         replaced > 300,
@@ -430,12 +547,20 @@ fn random_programs_keep_their_results() {
 
 #[test]
 fn random_counted_programs_keep_their_results() {
-    let replaced = check_random_programs(true);
+    let (replaced, devirtualized) = check_random_programs(true);
     assert!(
         replaced > COUNTED_REPLACED,
         "only {replaced} counted programs had objects replaced"
     );
+    assert!(
+        devirtualized > VTABLE_REPLACED,
+        "only {devirtualized} programs with a vtable had objects replaced"
+    );
 }
 
-/// How many of the 1500 counted programs must have objects replaced (1339 are).
+/// How many of the 1500 counted programs must have objects replaced (1315 are).
 const COUNTED_REPLACED: usize = 1000;
+
+/// How many of the 500 programs with a vtable must allocate fewer objects after the pipeline
+/// (451 do).
+const VTABLE_REPLACED: usize = 300;

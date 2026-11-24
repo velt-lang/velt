@@ -143,14 +143,15 @@ export class Float64Array extends TypedArray implements Iterable<number> {
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
   [Symbol.index](i: number): number {
     // One test per branch, so the compiler knows `i` is in range where it converts it.
+    const n = this.count();
     if (!(i >= 0)) {
-      indexOutOfBounds(this.count(), i);
+      indexOutOfBounds(n, i);
     }
-    if (!(i < this.count())) {
-      indexOutOfBounds(this.count(), i);
+    if (!(i < n)) {
+      indexOutOfBounds(n, i);
     }
     if (i != Math.trunc(i)) {
-      indexOutOfBounds(this.count(), i);
+      indexOutOfBounds(n, i);
     }
     // Inside the view, which is inside its buffer's bytes (`count`).
     const o = this.off + (i as usize) * 8;
