@@ -31,12 +31,14 @@ async function readAll(label: string, body: ReadableStream<Uint8Array> | null) {
   }
 }
 
-// Cancels `body`, then prints whether `used` and what `text` reads.
+// Cancels `body`, then prints whether `used`, what `text` reads, and what a new `body` stream
+// (`again`) holds: nothing, as the cancel drained the body.
 async function cancelThenText(
   label: string,
   body: ReadableStream<Uint8Array> | null,
   used: () => bool,
   text: () => Promise<string, IoError | AbortError>,
+  again: () => ReadableStream<Uint8Array> | null,
 ) {
   if (body != null) {
     try {
@@ -47,6 +49,7 @@ async function cancelThenText(
   }
   console.log(label, "used after cancel:", used());
   await second(`${label} text`, text);
+  await readAll(`${label} body after cancel`, again());
 }
 
 // The same orders on a request and a response made here.
@@ -58,13 +61,27 @@ async function made() {
   await readAll("made request b", b1);
   await readAll("made request again", r1.body);
   const r2 = new Request("http://example.com/", { method: "POST", body: "made" });
-  await cancelThenText("made request", r2.body, () => r2.bodyUsed, async () => await r2.text());
+  await cancelThenText(
+    "made request",
+    r2.body,
+    () => r2.bodyUsed,
+    async () => await r2.text(),
+    () => r2.body,
+  );
   const s1 = new Response("made");
   const a2 = s1.body;
   const b2 = s1.body;
   await readAll("made response a", a2);
   await readAll("made response b", b2);
   await readAll("made response again", s1.body);
+  const s2 = new Response("made");
+  await cancelThenText(
+    "made response",
+    s2.body,
+    () => s2.bodyUsed,
+    async () => await s2.text(),
+    () => s2.body,
+  );
 }
 
 async function main() {
@@ -81,7 +98,13 @@ async function main() {
       await readAll("again second", req.body);
       await second("again text", async () => await req.text());
     } else if (path == "/cancel") {
-      await cancelThenText("received", req.body, () => req.bodyUsed, async () => await req.text());
+      await cancelThenText(
+        "received",
+        req.body,
+        () => req.bodyUsed,
+        async () => await req.text(),
+        () => req.body,
+      );
     } else {
       const taken = path == "/stream" ? req.body : null;
       console.log(path, "first:", await req.text(), req.bodyUsed);

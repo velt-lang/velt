@@ -3,9 +3,13 @@ made request b 0 bytes
 made request again 0 bytes
 made request used after cancel: true
 made request text threw: Body is unusable: Body has already been read
+made request body after cancel 0 bytes
 made response a 4 bytes
 made response b 0 bytes
 made response again 0 bytes
+made response used after cancel: true
+made response text threw: Body is unusable: Body has already been read
+made response body after cancel 0 bytes
 /text first: hello true
 text again threw: Body is unusable: Body has already been read
 /text bodyUsed: true
@@ -34,5 +38,6 @@ again text threw: Body is unusable: Body has already been read
 ok
 received used after cancel: true
 received text threw: Body is unusable: Body has already been read
+received body after cancel 0 bytes
 /cancel bodyUsed: true
 ok
