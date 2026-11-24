@@ -57,8 +57,9 @@ export function run(e: usize, k: usize, mode: u32): void {
     t.flags(k, t.STARTED, 0);
   }
   // One test on the straight path: the root polled, nothing else (a task whose root catches
-  // panics, sched_node_catch.velt `T_CATCHES`, or that made stored yields, polls it in `runOther`).
-  if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED | nc.T_CATCHES | t.FRESH)) === 0) {
+  // panics, sched_node_catch.velt `T_CATCHES`, that made stored yields, or whose root's turn was
+  // placed in the last poll, `ROOT_ALONE`, polls it in `runOther`).
+  if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED | nc.T_CATCHES | t.FRESH | t.ROOT_ALONE)) === 0) {
     pollRunning(e, k);
   } else {
     runOther(e, k, fl);
@@ -120,6 +121,11 @@ function again(e: usize, mode: u32): bool {
 function runOther(e: usize, k: usize, fl: u32): void {
   if (stdUsed("yields")) {
     yl.begin(k, fl);
+    if ((fl & t.ROOT_ALONE) !== 0) {
+      // The root's turn placed in the last poll (kept while its block was parked) is over.
+      t.flags(k, 0, t.ROOT_ALONE);
+      ls.park(k);
+    }
   }
   if ((fl & t.TOUCHED) !== 0) {
     mod.enter();
@@ -176,11 +182,31 @@ function runWoken(e: usize, k: usize, fl: u32): void {
   }
   if (stdUsed("yields") && (fl & t.YIELDS) !== 0) {
     fi.fireYields(e, k);
+    ls.park(k);
+    leftLocals(k);
   }
   if (!t.has(k, t.POLLED)) {
     // After its promises, the root's turn has a budget of its own (sched_budget.velt).
     bd.refill();
     pollRoot(e, k);
+  }
+}
+
+/**
+ * After task `k`'s yields had their turns: with no started promise, no sleep and no yield left
+ * (`T_LOCALS` 0, nothing woken, flags `YIELDS`, `TIMED` and `CARRIED` clear), nothing but its root is
+ * left for its polls, and flag `LOCALS` goes, so they take the straight path again (#3687: a root
+ * whose `Promise.all` children's yields took records). What makes another such job sets it again.
+ */
+@inline("always")
+function leftLocals(k: usize): void {
+  const other = t.YIELDS | t.TIMED | t.CARRIED;
+  if (
+    m.ld(k + t.T_LOCALS) === 0 &&
+    (m.ld32(k + t.T_FLAGS) & other) === 0 &&
+    m.load(k + t.T_WOKEN) === 0
+  ) {
+    t.flags(k, 0, t.LOCALS);
   }
 }
 

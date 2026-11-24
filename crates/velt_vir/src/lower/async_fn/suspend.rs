@@ -326,7 +326,8 @@ impl FnLower<'_, '_> {
     fn await_yield(&mut self) -> Operand {
         let cx = self.poll_cx();
         let std = self.std_sched();
-        // The yield's record on its task's list (#3687), kept across the suspension: the resume
+        // The yield's token (its record on its task's list, or none: rt_abi_async.md
+        // `velt_rt_yield_now`, #3687), kept across the suspension: the resume
         // asks by it whose turn came (the children of an inline `Promise.all` share their
         // parent's cx, and a resume may poll with another cx than the yield's), and the cancel
         // drops it.

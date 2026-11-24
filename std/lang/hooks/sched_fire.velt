@@ -38,7 +38,7 @@ export function fireDue(e: usize, k: usize): void {
       t.flags(k, t.TIMED, 0);
       return;
     }
-    woken = resume(e, k, sl.fire(k, f), false, own, woken);
+    woken = resume(e, k, sl.fire(k, f), false, own, woken, false);
   }
 }
 
@@ -72,7 +72,7 @@ export function fireYields(e: usize, k: usize): void {
       return;
     }
     if (w !== 0) {
-      woken = resume(e, k, w, lent, w !== k && node.ownNode(k, w), woken);
+      woken = resume(e, k, w, lent, w !== k && node.ownNode(k, w), woken, true);
     }
     y = nx;
   }
@@ -106,16 +106,26 @@ function dueNow(e: usize, k: usize): bool {
 /**
  * Resumes waiter `w` (a waker's clone it takes over, or `k` with no reference: `lent`) of a turn
  * of task `k`: its root, its own started promise (`own`), or anything else, woken. Then
- * `between`. Whether the root woke (from `woken` on).
+ * `between`. Whether the root woke (from `woken` on). `yieldTurn`: a yield's turn (`fireYields`),
+ * whose root is polled even when it yielded in this poll (#3687): each of its awaited yields
+ * then holds a record of its own, so only the one whose turn this is goes on.
  */
-function resume(e: usize, k: usize, w: usize, lent: bool, own: bool, woken: bool): bool {
+function resume(
+  e: usize,
+  k: usize,
+  w: usize,
+  lent: bool,
+  own: bool,
+  woken: bool,
+  yieldTurn: bool,
+): bool {
   if (w === k) {
     // The turn's reference first (the executor's keeps `k`): an uncaught error in the poll ends
     // the program, which gives back the references the executor holds (sched_exit.velt).
     if (!lent) {
       wk.release(k);
     }
-    if (m.load32(k + t.T_STATE) === t.YIELDED) {
+    if (!yieldTurn && m.load32(k + t.T_STATE) === t.YIELDED) {
       // It yielded in this poll (in a sleep's turn, behind yields still on the list, whose turn
       // this is): polled again now, it would stay suspended and spend the wake. Its next poll
       // resumes it (`YIELDED` queues the task again).

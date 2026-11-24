@@ -40,22 +40,121 @@ export const ROOT: usize = 1;
 /** A held record's first word (`held`), where a stored yield has its poll and a record 0. */
 export const HELD: usize = 1;
 
+/**
+ * An awaited yield's token (sched_yield.velt `schedYield`, what its suspension keeps, #3687):
+ * - `POLL` (0): its task's root yielded with no record, and it goes on once the poll it yielded in
+ *   is over (`YIELDED`, which lasts exactly that poll), whatever cx asks (`pollReady`);
+ * - `OFF` (1): made off the workers (no task);
+ * - above 1: its held record (`held`), a block's address.
+ */
+export const POLL: usize = 0;
+export const OFF: usize = 1;
+
+/**
+ * Token `POLL` asked with waker `w`, a started promise's (`isNode`) or a foreign one, on the thread
+ * polling task `k` (0: none) (sched_yield.velt `otherReady`; a task's waker asks its state): 1 once
+ * the poll it was made in is over (`YIELDED` of its task: the node's own, else `k`). Asked in that
+ * poll (a detached child of an inline `Promise.all`, now a started promise of its own), it waits for
+ * a turn of its own, since no record wakes `w` (the task's next poll resumes only its root): a
+ * record on `k`'s list, its node flagged `YIELDING` (a second ask adds none), or, asked on another
+ * task's thread, `w` woken to ask again. Asked after the root yielded again in a later poll, it
+ * waits that turn too: one turn late, never early.
+ */
+@noInline
+export function pollReady(k: usize, w: usize, isNode: bool): u32 {
+  const x = isNode ? m.ld(w + node.N_TASK) : k;
+  if (k === 0 || x === 0 || m.load32(x + t.T_STATE) !== t.YIELDED) {
+    return 1;
+  }
+  if (x !== k) {
+    m.wakeByRef(w);
+    return 0;
+  }
+  if (isNode) {
+    if ((m.load32(w + node.N_FLAGS) & node.YIELDING) !== 0) {
+      // Its turn is on the list.
+      return 0;
+    }
+    m.or32(w + node.N_FLAGS, node.YIELDING);
+  }
+  otherTurn(k, w);
+  return 0;
+}
+
+/** `pollReady`'s turn for waker `w` of task `k`, behind the yields made so far. */
+@noInline
+function otherTurn(k: usize, w: usize): void {
+  join(k, record(m.wakerClone(w), nextStamp(block(k))));
+}
+
 // A task's yield block: its list's last yield (0: none), its last stamp, and the stamp of the
 // yield its root waits for with no record (flag `ROOT_ALONE`). A stamp is a yield's generation
 // (the high 32 bits: one more in each poll after one that made stored yields, flag `FRESH`) and
 // its number: stamps grow in the order yields are made.
-const B_LAST: usize = 0;
+export const B_LAST: usize = 0;
 export const B_STAMP: usize = 8;
 export const B_ROOT: usize = 16;
 export const B_SIZE: usize = 24;
 /** One generation in a stamp. */
 export const GEN: usize = 4294967296;
 
-/** Task `k`'s yield block, made now if it has none (on its thread). */
+/**
+ * `T_YIELDS`' top bit, which no address has: the block is parked (`park`), its list empty. The root's yields take the
+ * no-block fast path then (`active`), and whatever needs the block un-parks it (`block`), with
+ * its stamps and generation as they were.
+ */
+export const PARKED: usize = 1 << 63;
+
+/** Task `k`'s yield block, made now if it has none, un-parked if parked (on its thread). */
 @inline("always")
 export function block(k: usize): usize {
   const b = m.ld(k + t.T_YIELDS);
-  return b !== 0 ? b : makeBlock(k);
+  return b - 1 < PARKED - 1 ? b : blockAgain(k, b);
+}
+
+/** `block` for a task with no block (`b` 0) or a parked one. */
+@noInline
+function blockAgain(k: usize, b: usize): usize {
+  if (b === 0) {
+    return makeBlock(k);
+  }
+  const u = b & ~PARKED;
+  m.st(k + t.T_YIELDS, u);
+  if (m.load32(k + t.T_STATE) === t.YIELDED && !t.has(k, t.ROOT_ALONE)) {
+    // Its root yielded in this poll while the block was parked, when no stamp is made: its turn
+    // comes before the yields made from now on, as with a block made now. A turn placed before
+    // the block was parked (`ROOT_ALONE`, of this poll: sched_run.velt `runOther` clears an
+    // earlier poll's) keeps its stamp.
+    m.st(u + B_ROOT, m.ld(u + B_STAMP));
+    t.flags(k, t.ROOT_ALONE, 0);
+  }
+  return u;
+}
+
+/** Task `k`'s yield block, parked or not (0: none), for what reads its stamps. */
+@inline("always")
+export function blockOf(k: usize): usize {
+  return m.ld(k + t.T_YIELDS) & ~PARKED;
+}
+
+/** Task `k`'s yield block unless parked (0: none or parked). */
+@inline("always")
+export function active(k: usize): usize {
+  const b = m.ld(k + t.T_YIELDS);
+  return b < PARKED ? b : 0;
+}
+
+/**
+ * Task `k`'s turns are over and its list is empty: its block is parked, so its root's next yields
+ * take the no-block fast path (#3687: a root whose `Promise.all` children's yields made the block).
+ * A turn its root placed in this poll (`ROOT_ALONE`, `B_ROOT`) stays, for `block`.
+ */
+@inline("always")
+export function park(k: usize): void {
+  const b = m.ld(k + t.T_YIELDS);
+  if (b !== 0 && !t.has(k, t.YIELDS)) {
+    m.st(k + t.T_YIELDS, b | PARKED);
+  }
 }
 
 @noInline
@@ -152,7 +251,7 @@ export function join(k: usize, y: usize): void {
  */
 export function take(k: usize): usize {
   t.flags(k, 0, t.YIELDS);
-  const b = m.ld(k + t.T_YIELDS);
+  const b = blockOf(k);
   const last = b === 0 ? 0 : m.ld(b + B_LAST);
   if (last === 0) {
     return 0;
@@ -179,7 +278,7 @@ export function hasBlock(k: usize): bool {
 /** Task `k`'s yield block goes with the task (its list is empty: the task ended). */
 @noInline
 export function freeBlock(k: usize): void {
-  m.release(m.ld(k + t.T_YIELDS), B_SIZE);
+  m.release(blockOf(k), B_SIZE);
 }
 
 /** The yield after `y` in a list `take` gave. */
