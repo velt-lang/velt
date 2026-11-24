@@ -1,0 +1,4 @@
+array_copy_within_result.velt:5:24: error: expected `f64[]`, found `void`
+  = note: `copyWithin` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.copyWithin(t, s);` on its own line, then use `xs`; a chained call such as `.copyWithin(t, s).join()` works as in TypeScript
+array_copy_within_result.velt:6:19: error: cannot print a value of type `void`
+  = note: `copyWithin` changes the array in place and returns nothing in Velt (TypeScript returns the same array; sharing it would make every array of its type reference counted): call `xs.copyWithin(t, s);` on its own line, then use `xs`; a chained call such as `.copyWithin(t, s).join()` works as in TypeScript
