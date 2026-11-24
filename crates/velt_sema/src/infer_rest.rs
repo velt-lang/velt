@@ -54,7 +54,11 @@ impl Ctx<'_> {
         // The parameters `actual` has before the rest position; with fewer, the rest is empty.
         let k = n.min(ap.len());
         let rest = self.ty.intern(TyKind::Tuple(ap[k..].to_vec()));
-        let x = self.match_all(&pp[..k], &ap[..k], slots) && self.match_ty(pp[n], rest, slots);
+        // The fixed parameters only bind what they hold: `actual`'s may be wider (`rq?: Ctx` for
+        // `rq: Ctx`), as a function value's parameter may be, and the value is converted to the
+        // inferred type (and checked) afterwards.
+        self.match_all(&pp[..k], &ap[..k], slots);
+        let x = self.match_ty(pp[n], rest, slots);
         let y = self.match_error(pt, at, slots);
         self.match_ty(pr, ar, slots) && x && y
     }

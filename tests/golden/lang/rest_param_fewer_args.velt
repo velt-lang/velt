@@ -29,9 +29,17 @@ const ctx: Ctx = { id: "x" };
 console.log(wrap(few)(ctx), wrap(fewDecl)(ctx), wrap(one)(ctx), wrap(two)(ctx, 3));
 console.log(wrap((rq?: Ctx): string => `opt ${rq ? rq.id : "none"}`)(ctx));
 
+// An optional parameter on a function value or a declared function.
+const opt = (rq?: Ctx): string => `optc ${rq ? rq.id : "none"}`;
+function optd(rq?: Ctx): string {
+  return `optd ${rq ? rq.id : "none"}`;
+}
+console.log(wrap(opt)(ctx), wrap(optd)(ctx));
+
 function inside() {
   const local = (): string => "local";
   console.log(wrap(local)(ctx), wrap(fewDecl)(ctx), wrap(() => 7)(ctx));
+  console.log(wrap(opt)(ctx), wrap(optd)(ctx));
   console.log(wrapTwo(few)(ctx, 1), wrapTwo(one)(ctx, 2), wrapTwo(fewDecl)(ctx, 3));
   const later = wrapTwo((rq: Ctx): number => rq.id.length);
   console.log(later({ id: "four" }, 9));
