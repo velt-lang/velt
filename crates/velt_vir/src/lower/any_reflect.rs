@@ -297,6 +297,11 @@ impl FnLower<'_, '_> {
                 hooks.push(name);
             }
         }
+        // A `toString` no JavaScript built-in declares, which `%s` of an `any` calls (std's
+        // `consoleString`; velt/reflect's `typeOf` leaves the mark out of the hooks it lists).
+        if self.own_to_string(ty) {
+            hooks.push("ownToString");
+        }
         // An object type (and an object literal with accessors) has no name of its own.
         let mut kind = kind;
         let name = match kind {
