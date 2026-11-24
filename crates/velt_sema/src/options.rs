@@ -27,6 +27,9 @@ pub struct CheckOptions {
     /// `Ptr<T>`, `usize` and `isize` 8: a read or write through a `Ptr` of a type holding one
     /// isn't C's memory there, and is refused (`Ctx::c_memory_refused`, #3094).
     pub wasm32: bool,
+    /// The build is for the `velt dev` JIT (velt_vir `LowerOptions::jit`), where code is swapped
+    /// in: a `with` counts the `Mutex` it holds for std's module lock (#3467).
+    pub jit: bool,
 }
 
 impl Default for CheckOptions {
@@ -38,6 +41,7 @@ impl Default for CheckOptions {
             units: false,
             std_key: None,
             wasm32: false,
+            jit: false,
         }
     }
 }

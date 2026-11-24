@@ -430,6 +430,7 @@ impl FnLower<'_, '_> {
             }
             false => {
                 self.mutex_lock_call(lock_fn, lock.clone());
+                self.count_held(true);
                 None
             }
         };
@@ -478,6 +479,9 @@ impl FnLower<'_, '_> {
         // A function value stored into the value while the lock was held may be called by
         // another thread next (glue/many.rs).
         self.many_walk(false, value, vty);
+        if !rw {
+            self.count_held(false);
+        }
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
         match unlock_fn {
@@ -508,6 +512,21 @@ impl FnLower<'_, '_> {
             }
             _ => self.call_rt(lock_fn, vec![lock], None),
         }
+    }
+
+    /// Under `velt dev` (`LowerOptions::jit`): the `Mutex` a `with` holds counted for the
+    /// executor's module lock (std/lang/hooks/mutex_held.velt, #3467) after its lock (`locked`),
+    /// or uncounted before its unlock, whichever lock it took (std's inline one, or the runtime's
+    /// checked one). Code swapped in there can reach module state from the callback, which sema
+    /// refuses elsewhere: other builds count nothing and lower no call.
+    fn count_held(&mut self, locked: bool) {
+        if !self.cx.jit || !self.std_sched() {
+            return;
+        }
+        match locked {
+            true => hooks::mutex_held_locked(self, Construct::MutexHeld).emit(self),
+            false => hooks::mutex_held_unlocked(self, Construct::MutexHeld).emit(self),
+        };
     }
 
     /// Does a `Mutex` lock inline with std's hooks? On a native target, when sema demanded them
