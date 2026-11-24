@@ -4,8 +4,8 @@
 //!
 //! A feature is named `<name>-x86` or `<name>-arm` (the name `@targetFeature` takes) and stands
 //! for one bit of the CPU's feature word ([`CpuFeature::raw_bit`]: x86's in the order of the
-//! start-up check's list, rt_abi.md "CPU check", with AES appended; arm64's from bit 32) plus the
-//! features it implies ([`CpuFeature::implies`]: AVX2 implies AVX implies SSE4.2, …). Its
+//! start-up check's list, rt_abi.md "CPU check", with AES and ADX appended; arm64's from bit 32)
+//! plus the features it implies ([`CpuFeature::implies`]: AVX2 implies AVX implies SSE4.2, …). Its
 //! [`CpuFeature::mask`] is all those bits: a check of it is true where the word holds the whole
 //! mask, and code gated on a set of features may take the check of any feature whose mask the
 //! set's mask holds ([`CpuFeatures::covers`]).
@@ -159,6 +159,9 @@ features! {
     Fp16Arm = "fp16-arm", Aarch64, 37, [], "+fullfp16", "+fullfp16", "Fp16", "FP16";
     /// The int8 matrix multiplications (FEAT_I8MM).
     I8mmArm = "i8mm-arm", Aarch64, 38, [], "+i8mm", "+i8mm", "I8mm", "I8MM";
+    /// The x86 two-carry additions (ADX: `adcx`, `adox`), with the BMI2 whose `mulx` they pair
+    /// with: the field operations' fast form (rt_abi.md "Field arithmetic").
+    AdxX86 = "adx-x86", X86_64, 24, [Bmi2X86], "+adx", "+adx,+bmi2", "Adx", "ADX";
 }
 
 impl CpuFeature {
@@ -207,7 +210,7 @@ impl CpuFeature {
     }
 
     /// The bits of the start-up check's x86 list (`velt_codegen_cl::X86_FEATURES`, raw bits 0 to
-    /// 23) that code using it needs; 0 for an arm64 feature.
+    /// 24) that code using it needs; 0 for an arm64 feature.
     pub fn x86_mask(self) -> u32 {
         match self.arch() {
             CpuArch::X86_64 => self.mask() as u32,
