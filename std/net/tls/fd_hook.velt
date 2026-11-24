@@ -81,6 +81,11 @@ const ALPN = new Atomic<shared<(s: u64) => Promise<IoResult<string>>> | null>(nu
 const IDLE_OPEN = new Atomic<shared<(s: u64) => bool> | null>(null);
 const CLOSE = new Atomic<shared<(s: u64) => void> | null>(null);
 
+/** Whether the operations are installed (`setReactorOps`, which sets `CLOSE` last). */
+export function reactorOpsInstalled(): bool {
+  return CLOSE.load("acquire") != null;
+}
+
 /** Sets the operations of the TLS streams and listeners, once (std/net/tls/fd_reactor.velt). */
 export function setReactorOps(fns: ReactorFns): void {
   LISTENER_FD.compareExchange(null, shared(fns.listenerFd), "acqrel");

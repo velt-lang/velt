@@ -10,7 +10,7 @@ import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import * as fs from "velt/net/fd_socket";
 import { CLOSE_NOTIFY, TlsFailure } from "velt/net/tls/alert";
-import { setReactorOps } from "velt/net/tls/fd_hook";
+import { reactorOpsInstalled, setReactorOps } from "velt/net/tls/fd_hook";
 import * as ops from "velt/net/tls/fd_ops";
 
 /**
@@ -48,6 +48,10 @@ export function status(e: unknown): IoStatus {
  * `setReactorOps`): the TLS server and client call it before they make a handle.
  */
 export function installReactorOps(): void {
+  // Every TLS connection calls this: after the first, nothing to build.
+  if (reactorOpsInstalled()) {
+    return;
+  }
   setReactorOps({
     listenerFd,
     closeListener,
