@@ -488,7 +488,12 @@ The copies made during one transfer of a value to another thread are std's, not 
 (std/lang/hooks/transfer.velt, #3584; velt_common `std_hooks` `xfer_*`, lowered from velt_vir
 `lower/transfer_map.rs`): a per-thread map from each counted object copied to its copy, so an
 object reached twice is copied once and a cycle is copied as a cycle (#351, #352). Generated code
-calls the hooks as it calls any std function:
+calls the hooks as it calls any std function. Sema loads the module only for a program whose live
+code can start a transfer (velt_common `Construct::Transfer`: a `spawn`, sema's `Transfer` of a
+stored value, `slotPut` / `slotTransfer`, `shared(x)`, a lock's callback, an async closure that
+copies its captures); in any other no transfer is ever open, and lowering answers the calls below
+other than the begins as outside a transfer (`xferFind` 1, `xferKeeps` 0, `xferDefer` 0,
+`xferSuspend` 0).
 
 | Hook | Signature | Notes |
 |---|---|---|

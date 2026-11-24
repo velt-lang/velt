@@ -15,7 +15,8 @@
 // function value's copy for a task) is not copied again. User code that runs during a transfer (a
 // class's own `clone()`) runs outside it (`xferSuspend` / `xferResume`): its own `.clone()` calls
 // copy as they would anywhere else. Outside a transfer every call returns after reading one
-// thread-local.
+// thread-local. The check loads this module only for a program that can start a transfer
+// (`Construct::Transfer`, velt_common `ON_DEMAND_MODULES`).
 //
 // The state is this thread's: a transfer runs on one thread, with no await in between. The
 // runtime reads it through the process statics table (rt_abi.md "Process statics"): `xferKeeps`

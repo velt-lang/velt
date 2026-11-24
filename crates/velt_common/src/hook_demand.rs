@@ -85,11 +85,18 @@ pub enum Construct {
     /// `**` on integers (`a ** b`, `a **= b` on a declared integer type): std's `powI64`
     /// (std/lang/hooks/pow_int.velt), which only a program that has one loads.
     PowInt,
+    /// A construct that can start a transfer of a value to another thread (std's transfer map,
+    /// std/lang/hooks/transfer.velt, #3584): `spawn` (its arguments, captures and result),
+    /// sema's `Transfer` of a stored value, `slotPut` / `slotTransfer` (channels), `shared(x)`,
+    /// a lock's callback (`Mutex.with`, `RwLock.read` / `write`, a shared read), and an async
+    /// closure that copies its captures for each call. Without one no transfer is ever open,
+    /// and lowering answers the map's other calls as outside a transfer.
+    Transfer,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 13] = [
+    pub const ALL: [Construct; 14] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -103,6 +110,7 @@ impl Construct {
         Construct::TextFloat,
         Construct::WriteFloat,
         Construct::PowInt,
+        Construct::Transfer,
     ];
 
     /// The construct as the ICE names it.
@@ -121,6 +129,9 @@ impl Construct {
             Construct::TextFloat => "TextFloat (a float to text, or glue that may print one)",
             Construct::WriteFloat => "WriteFloat (console.log of a float)",
             Construct::PowInt => "PowInt (`**` on integers)",
+            Construct::Transfer => {
+                "Transfer (a construct that can start a transfer to another thread)"
+            }
         }
     }
 

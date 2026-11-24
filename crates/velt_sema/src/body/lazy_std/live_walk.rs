@@ -43,6 +43,11 @@ pub(super) fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             if f.is_generator {
                 w.generators[f.is_async as usize] = true;
             }
+            // An async closure that copies its captures for each call (velt_vir
+            // `async_fn/ctor.rs` `clone_keeping_identity`), as for a call on another thread.
+            if f.is_async && !f.captures.is_empty() && !f.shares_captures {
+                w.constructs |= Construct::Transfer.bit();
+            }
             w.tasks |= f.is_async;
             crate::visit_ref::exprs(&f.body.block, &mut |e| visit(e, w));
             true
@@ -195,11 +200,28 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             ..
         } => w.constructs |= Construct::Weak.bit(),
         // A `Mutex`'s `with`: std's inline lock (velt_vir `async_fn/sync.rs`). An `RwLock`'s
-        // `write` lowers through the same intrinsic and marks it too, unused.
+        // `write` lowers through the same intrinsic and marks it too, unused. Its callback's
+        // result leaves the lock transferred (`leave_lock`).
         E::Call {
             callee: Callee::Intrinsic(I::MutexWith),
             ..
-        } => w.constructs |= Construct::Mutex.bit(),
+        } => w.constructs |= Construct::Mutex.bit() | Construct::Transfer.bit(),
+        // What can start a transfer of a value to another thread: std's transfer map (velt_vir
+        // `lower/transfer_map.rs`; `transfer_sites` in its tests lists where lowering starts one).
+        E::Call {
+            callee:
+                Callee::Intrinsic(
+                    I::Spawn
+                    | I::SpawnHandled
+                    | I::Transfer
+                    | I::SlotPut
+                    | I::SlotTransfer
+                    | I::SharedNew
+                    | I::SharedRead
+                    | I::LockRead,
+                ),
+            ..
+        } => w.constructs |= Construct::Transfer.bit(),
         // A yield or a sleep is a leaf of the executor (velt_vir `sched_rt`: `schedYieldFut`,
         // `schedSleep`), even kept as a promise in code that is not async.
         E::Call {

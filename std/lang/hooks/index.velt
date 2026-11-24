@@ -2,8 +2,8 @@
 // lowering calls: velt_common's `std_hooks.rs` names each one. No program imports them: the
 // prelude loads this list (std/prelude/hooks.velt), and proxy.velt, which only programs with a
 // `Proxy` need, comes with it (std/prelude/global/proxy.velt). number_text, number_write,
-// number_float, any_record, inspect and inspect_cycles are not listed: the check loads them when
-// it finds them needed (`ON_DEMAND_MODULES`).
+// number_float, any_record, inspect, inspect_cycles and transfer are not listed: the check loads
+// them when it finds them needed (`ON_DEMAND_MODULES`).
 
 import "./adapt";
 import "./any_array_methods";
@@ -25,4 +25,3 @@ import "./process_statics";
 import "./record";
 import "./string";
 import "./syntax";
-import "./transfer";
