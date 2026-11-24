@@ -75,8 +75,9 @@ pub enum CTy {
     },
     /// velt/ffi's `CString` (parameters only): the address of its NUL-terminated bytes.
     CString,
-    /// velt/ffi's `Out<T>`, `T` a number type, `bool` or `Ptr<U> | null` (parameters only): the
-    /// address of its `value`, which C writes (`int *`, `T **`).
+    /// velt/ffi's `Out<T>`, `T` a number type, `bool`, `Ptr<U> | null` or a C struct (parameters
+    /// only): the address of its private field `held`, which C writes (`int *`, `T **`, `S *`) and
+    /// its `value` reads through `Intrinsic::CArrived`.
     Out,
     /// A `declare c struct` by value (#2187 layer 3, additive): the parameter's or result's
     /// type names which; lowering passes it as the target's C calling convention says.
