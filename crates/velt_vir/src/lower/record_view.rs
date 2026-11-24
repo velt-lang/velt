@@ -300,6 +300,66 @@ impl FnLower<'_, '_> {
         self.goto(done);
     }
 
+    /// `ToDyn` of a record of the view type `t` (`data`, owned, with the descriptor `table`): a
+    /// view is its source in an `any`, as in Node, where the view is the object itself. So `===`,
+    /// `Object.is`, `Map`/`Set` keys and their hashes see the source (#3507), and converting the
+    /// `any` back gives the same live view (`record_view_make`). The view's reference is
+    /// released. A plain record is itself, and so is what `proxy_any_parts` made of a `Proxy` a
+    /// variable of type `t` holds: only parts whose descriptor is still the record's own (`own`)
+    /// are read as a record.
+    pub(super) fn record_view_any_parts(
+        &mut self,
+        data: Operand,
+        table: Operand,
+        own: Operand,
+        t: TyId,
+    ) -> (Operand, Operand) {
+        let Some(sty) = self.cx.view_source_ty() else {
+            return (data, table);
+        };
+        let r = Place::local(self.copy_to_temp(data, Ty::Ptr));
+        let (d, tb) = (self.temp(Ty::Ptr), self.temp(Ty::Ptr));
+        self.assign(Place::local(d), Rvalue::Use(Operand::Copy(r.clone())));
+        self.assign(Place::local(tb), Rvalue::Use(table));
+        let mine = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(Place::local(tb)), own),
+        );
+        let (record, join) = (self.new_block(), self.new_block());
+        self.branch(mine, record, join);
+        self.switch_to(record);
+        let word = Operand::Copy(self.field_place(&r, t, VIEW_FIELD));
+        let is = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ne, word.clone(), cint(0, Ty::U64)),
+        );
+        let yes = self.new_block();
+        self.branch(is, yes, join);
+        self.switch_to(yes);
+        let src = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(word, Ty::Ptr));
+        let sp = self.record_place(src);
+        let target = self.field_place(&sp, sty, 0);
+        let any = self.cx.any_ty();
+        let shared = self.share_value(Operand::Copy(target), any);
+        let avt = self.cx.ty(any);
+        let held = Place::local(self.copy_to_temp(shared, avt));
+        self.assign(
+            Place::local(d),
+            Rvalue::Use(Operand::Copy(proj(&held, Proj::Field(0)))),
+        );
+        self.assign(
+            Place::local(tb),
+            Rvalue::Use(Operand::Copy(proj(&held, Proj::Field(1)))),
+        );
+        self.drop_glue(r, t);
+        self.goto(join);
+        self.switch_to(join);
+        (
+            Operand::Copy(Place::local(d)),
+            Operand::Copy(Place::local(tb)),
+        )
+    }
+
     /// Before the record of the view type `ty` at `r` goes to another thread (moved: its only
     /// reference): a view becomes a plain record of its mirror, brought up to date first; its
     /// entry leaves the runtime's table, its source is released and field 4 is 0. As in Node,
