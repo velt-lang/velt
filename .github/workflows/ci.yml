@@ -30,8 +30,10 @@
 # a release (release.yml). Each push to main refreshes the build cache and, on Linux, clang's objects
 # for the goldens, which every other run restores (a cache saved on a pull request or queue branch
 # can't be restored anywhere else), on Windows and
-# macOS too when the toolchain or the dependencies changed, and a commit no passing queue run
-# tested checks every OS.
+# macOS too when the toolchain or the dependencies changed. A commit no passing queue or merge
+# train run tested checks every OS. The whole gate after a push and in the scheduled run runs as
+# parallel jobs per OS (main-gate.yml: test shards, and the goldens' build and shards); which OSes
+# is `cargo xtask main-plan`'s decision (crates/xtask/src/main_plan.rs).
 name: ci
 
 on:
@@ -109,9 +111,13 @@ jobs:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # The golden job also runs the WebAssembly goldens when the change selects them (8 tests of
       # about 11 minutes each, which made the test job up to 2 hours long), and the VIR identity:
-      # it is shorter than the test job, as in the queue.
+      # it is shorter than the test job, as in the queue. It compares every golden when the change
+      # touches the code loading std on demand, which only this plan knows (the queue's `--full`
+      # doesn't), and the sample, one golden in 8, otherwise (`vir_identity_pr`,
+      # `Plan::vir_identity_pr`; crates/veltc/tests/eager_std_identity.rs).
       - name: cargo xtask check --part ${{ matrix.part == 'golden' && 'golden,wasm' || matrix.part }}
         env:
+          VELT_VIR_IDENTITY: ${{ matrix.part == 'golden' && steps.plan.outputs.vir_identity_pr || '' }}
           # `--full` knows no changes, so it leaves the robustness sweep to the environment.
           VELT_ROBUSTNESS: >-
             ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') && 'full' || '' }}
@@ -284,7 +290,9 @@ jobs:
       debug_vars: ${{ steps.plan.outputs.debug_vars }}
       # `skip` unless the change touches WebAssembly code.
       wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
-      # How much of the VIR identity runs: empty for all of it, `sample`, or `skip`.
+      # How much of the VIR identity runs: `sample` (one golden in 8) or `skip`; all of it runs
+      # in the nightly gate on Linux and in the pull request of a change to the code loading std
+      # on demand, never here (`Plan::vir_identity_queue`).
       vir_identity: ${{ steps.plan.outputs.vir_identity }}
       # `true` when the change touches what the header check checks (`c-headers`).
       c_headers: ${{ steps.plan.outputs.c_headers }}
@@ -428,53 +436,95 @@ jobs:
       zig: true
       # The VIR identity runs in the golden shards, beside the goldens: they finish long before
       # this OS's `check` job, after whose unit tests it ran for 20 to 41 minutes until 2026-11.
+      # The sample only, also when a train touches the code loading std on demand: all of it took
+      # Windows shards to their time limit (2026-11-23).
       vir_identity: ${{ needs.queue-plan.outputs.vir_identity }}
       wasm_shards: >-
         ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && '[]'
         || toJSON(fromJSON(needs.queue-plan.outputs.wasm_shards)[matrix.os]) }}
 
-  # Which OSes the push to main checks. Only a commit the merge queue tested (a ci run on it that
-  # passed: the queue's head is the commit that lands) can skip any; a direct push or an admin
-  # merge runs every OS. The queue tested it against its base_sha, which is HEAD^1 here, so
-  # `affected --base HEAD^1` is the queue's plan: Windows and macOS run when the change refreshes
-  # their build cache (crates/xtask/src/os.rs). No plan: every OS.
+  # What the push to main or the scheduled run checks (`cargo xtask main-plan`,
+  # crates/xtask/src/main_plan.rs, which has the rules and their tests). This job only finds the
+  # facts it decides on:
+  # - `tested`: a passing run tested this commit. The merge queue (a `merge_group` run on this
+  #   commit: the queue's head is the commit that lands), or a merge train (a dispatched run on a
+  #   `train-*` branch whose head commit has this commit's tree: the train merged the same pull
+  #   requests onto the same base and ran the whole gate on every OS on exactly these files). Then
+  #   Windows and macOS run only when the change refreshes their build cache, planned from the
+  #   base that run tested on: HEAD^1 for the queue (its base_sha), the train's base for a train
+  #   (the merge base of its head and this commit), so the plan sees every PR the train landed.
+  # - `superseded`: this commit is no longer main's tip (a train lands its PRs one after another,
+  #   seconds apart). It skips the gate: the newer commit's run checks the same code and more.
+  #   Linux's cache and clang's objects still refresh, as on every push. A concurrency group that
+  #   cancels the older run would be simpler, but it would cancel those mid-save too, and report
+  #   the cancelled gate as "main fails".
+  # Any lookup that fails counts as not tested and not superseded: the gate runs.
   main-plan:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       actions: read
       contents: read
     outputs:
-      os: ${{ steps.plan.outputs.main_os }}
-      # The queue run that passed on this commit, whose artifacts hold what clang compiled.
-      queue_run: ${{ steps.queued.outputs.run }}
+      # Whether `main (ubuntu-latest)` builds Linux's cache (every push).
+      cache: ${{ steps.plan.outputs.cache }}
+      # The OSes the gate runs on, and their shards (crates/xtask/src/os.rs).
+      gate_os: ${{ steps.plan.outputs.gate_os }}
+      test_shards: ${{ steps.plan.outputs.test_shards }}
+      golden_shards: ${{ steps.plan.outputs.golden_shards }}
+      # How much of the VIR identity the golden shards compare (`sample`, as in the queue).
+      vir_identity: ${{ steps.plan.outputs.vir_identity }}
+      # The queue or train run that passed on this commit or its tree, whose artifacts hold what
+      # clang compiled.
+      queue_run: ${{ steps.tested.outputs.run }}
     steps:
-      - id: queued
+      # All of main's history: a train's base can be several commits back.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tested
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
         run: |
-          runs= run=
-          for _ in 1 2 3; do
-            found=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&status=success" \
-              --jq '"\(.total_count) \(.workflow_runs[0].id // "")"') && { read -r runs run <<< "$found"; break; }
-            runs=; sleep 10
-          done
-          echo "merge queue runs that passed on $SHA: ${runs:-unknown}"
-          echo "tested=$([ "${runs:-0}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-      - if: steps.queued.outputs.tested == 'true'
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
+          api() { for _ in 1 2 3; do gh api "$@" && return 0; sleep 10; done; return 1; }
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs"
+          tested=no run='' base=''
+          if found=$(api "$runs?head_sha=$SHA&event=merge_group&status=success" \
+              --jq '.workflow_runs[0].id // ""') && [ -n "$found" ]; then
+            tested=queue run=$found base=HEAD^1
+          else
+            tree=$(git rev-parse "$SHA^{tree}")
+            train=$(api "$runs?event=workflow_dispatch&status=success&per_page=100" |
+              jq -r --arg tree "$tree" '[.workflow_runs[]
+                | select((.head_branch // "" | startswith("train-")) and .head_commit.tree_id == $tree)]
+                | first // empty | "\(.id) \(.head_sha) \(.head_branch)"') || train=
+            if [ -n "$train" ]; then
+              read -r run head branch <<< "$train"
+              tested=train
+              base=$(api "repos/$GITHUB_REPOSITORY/compare/$SHA...$head" --jq .merge_base_commit.sha) || base=
+              echo "the merge train $branch (run $run, head $head, base ${base:-unknown}) tested tree $tree"
+            fi
+          fi
+          tip=$(api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha) || tip=
+          superseded=false
+          [ -n "$tip" ] && [ "$tip" != "$SHA" ] && superseded=true
+          echo "tested: $tested ${run:+(run $run)}; main's tip: ${tip:-unknown}"
+          { echo "tested=$tested"; echo "run=$run"; echo "base=$base"; echo "superseded=$superseded"; } >> "$GITHUB_OUTPUT"
       - id: plan
-        if: steps.queued.outputs.tested == 'true'
         env:
           RUSTUP_TOOLCHAIN: stable
-        run: cargo xtask affected --base HEAD^1 --github
+          TESTED: ${{ steps.tested.outputs.tested || 'no' }}
+          BASE: ${{ steps.tested.outputs.base }}
+          SUPERSEDED: ${{ steps.tested.outputs.superseded || 'false' }}
+        run: >-
+          cargo xtask main-plan --event "$GITHUB_EVENT_NAME" --tested "$TESTED"
+          --base "$BASE" --superseded "$SUPERSEDED" --github
 
-  # What clang compiled in the queue run that tested this commit, added to the newest entry and
+  # What clang compiled in the queue run that tested this commit (or the merge train run that
+  # tested its tree), added to the newest entry and
   # saved, so the next queue entry restores it: a queue branch can't save a cache another branch
   # restores (maintaining.md "Merging"). What a queue job uploaded gets no more than a job with
   # nothing else in its workspace, only this script from the commit, and no token in `.git/config`:
@@ -526,87 +576,68 @@ jobs:
             --sort created_at --order desc --limit 100 --json id --jq '.[2:][].id' |
             while read -r id; do gh cache delete "$id"; done
 
-  # After each push to main: on Linux the build cache, saved even when a check fails; on Windows
-  # and macOS the whole gate (and their caches) when main-plan says so. Without a plan (not a queue
-  # commit, or main-plan failed) every OS runs. The scheduled run is Windows and macOS.
+  # After each push to main, Linux's build cache, saved even when a check fails: the queue (or a
+  # train) checked the commit in full, so only build and lint what the gate builds, plus the
+  # WebAssembly runtime the tests build. Tools too, though it runs no tests: the wasmtime cache
+  # saved here is the one every branch can restore. Without a plan (main-plan failed) it runs.
   main:
     needs: main-plan
-    if: ${{ !cancelled() && (github.event_name == 'push' || github.event_name == 'schedule') }}
-    name: main (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: >-
-          ${{ fromJSON((github.event_name == 'schedule' && '["windows-latest","macos-latest"]')
-          || needs.main-plan.outputs.os
-          || '["ubuntu-latest","windows-latest","macos-latest"]') }}
-    runs-on: ${{ matrix.os }}
-    # The whole gate without the WebAssembly goldens took 107 minutes on Windows (2026-11-07), and a
-    # slow runner takes half as long again.
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.main-plan.outputs.cache != 'false' }}
+    name: main (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
       contents: read
       issues: write
     steps:
       - uses: actions/checkout@v4
-      # Tools on Linux too, though it runs no tests: the wasmtime cache saved here is the one
-      # every branch can restore.
       - uses: ./.github/actions/setup
         with:
           save-cache: "true"
           code-cache: "false"
-      # Linux: the queue checked it in full, so only build and lint what the gate builds, plus the
-      # WebAssembly runtime the tests build.
       - name: build the cache (Linux)
-        if: runner.os == 'Linux'
         run: |
           cargo build --workspace --exclude xtask --all-targets
           cargo clippy --workspace --all-targets
           cargo build -p velt_rt_wasm --target wasm32-wasip1
           cargo build -p velt_rt_wasm --target wasm32-unknown-unknown
           cargo build -p xtask
-      # The whole gate builds packages/sqlite's C sources (crates/xtask/src/zig.rs); Linux's
-      # build above doesn't.
-      - uses: ./.github/actions/zig
-        if: runner.os != 'Linux'
+      # A job that hits its time limit ends cancelled, not failed: that gets the issue too.
+      - if: failure() || cancelled()
+        uses: ./.github/actions/main-failure
         with:
-          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-      - name: cargo xtask check --full
-        if: runner.os != 'Linux'
-        shell: bash
-        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        # nightly.yml's wasm-goldens job runs the WebAssembly goldens on these OSes every night. In
-        # this job they take most of an hour: with them, 7 of 20 runs from 2026-11-04 to 2026-11-07
-        # hit the time limit before finishing the goldens.
-        env:
-          VELT_WASM_GOLDENS: skip
-        run: cargo xtask check --full
-      # A job that hits its time limit ends cancelled, not failed, and checked less than it should
-      # have: that gets the issue too. Nothing else cancels these runs but a person.
-      - name: report the failure
-        if: failure() || cancelled()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const os = '${{ runner.os }}';
-            const title = `main fails on ${os}`;
-            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const how = '${{ job.status }}' === 'cancelled' ? 'did not finish (time limit, or cancelled)' : 'failed';
-            let body = `The gate ${how} on ${os} after ${context.sha.slice(0, 7)}: ${run}`;
-            if (context.eventName === 'schedule') {
-              const passed = await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: 'ci.yml', event: 'schedule', status: 'success', per_page: 1 });
-              const last = passed.data.workflow_runs[0];
-              if (last) {
-                body += `\nCommits since the last scheduled run that passed: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/compare/${last.head_sha}...${context.sha}`;
-              }
-            }
-            const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
-            const existing = open.data.find(i => i.title === title && !i.pull_request);
-            if (existing) {
-              await github.rest.issues.createComment({ ...context.repo, issue_number: existing.number, body });
-            } else {
-              await github.rest.issues.create({ ...context.repo, title, body });
-            }
+          os: Linux
+          cancelled: ${{ job.status == 'cancelled' }}
+
+  # The whole gate on each OS main-plan gives (`gate_os`), as parallel jobs: test shards, and the
+  # goldens' build and shards (main-gate.yml, which says how they add up to `cargo xtask check
+  # --full` without the WebAssembly goldens, and opens or comments on "main fails on <OS>" when
+  # they fail or don't finish). The scheduled run: Windows and macOS. A push: every OS when no
+  # passing queue or train run tested the commit, Windows and macOS when one did but the change
+  # refreshes their build cache, none when a newer commit is on main. Without a plan (main-plan
+  # failed): every OS, whose missing shard lists fail the gate instead of skipping it.
+  main-gate:
+    needs: main-plan
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'push' || github.event_name == 'schedule')
+      && needs.main-plan.outputs.gate_os != '[]' }}
+    name: main (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: >-
+          ${{ fromJSON(needs.main-plan.outputs.gate_os
+          || '["ubuntu-latest","windows-latest","macos-latest"]') }}
+    permissions:
+      contents: read
+      actions: write
+      issues: write
+    uses: ./.github/workflows/main-gate.yml
+    with:
+      os: ${{ matrix.os }}
+      test_shards: ${{ toJSON(fromJSON(needs.main-plan.outputs.test_shards || '{}')[matrix.os]) }}
+      golden_shards: ${{ toJSON(fromJSON(needs.main-plan.outputs.golden_shards || '{}')[matrix.os]) }}
+      vir_identity: ${{ needs.main-plan.outputs.vir_identity || 'sample' }}
 
   # `declare c` against C headers, C constants and C `sources` through the pinned zig, for every
   # target from this one Linux job (crates/veltc/tests/c_headers.rs, c_constants.rs,

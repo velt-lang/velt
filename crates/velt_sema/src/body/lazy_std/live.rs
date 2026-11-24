@@ -587,12 +587,12 @@ fn add_methods(cx: &Ctx, by: &mut FxHashMap<DefId, Vec<DefId>>, from: usize) {
 fn defaults(cx: &mut Ctx, d: DefId) {
     let mut w = Walk::default();
     let ty = &cx.ty;
-    if let DefInfo::Adt(a) = &mut cx.info[d.0 as usize] {
-        for e in a.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
-            crate::visit::exprs_in(e, &mut |e| walk_expr(ty, e, &mut w));
+    if let DefInfo::Adt(a) = &cx.info[d.0 as usize] {
+        for e in a.fields.iter().filter_map(|f| f.default.as_ref()) {
+            crate::visit_ref::exprs_in(e, &mut |e| walk_expr(ty, e, &mut w));
         }
-        for e in a.redefined.iter_mut().filter_map(|r| r.init.as_mut()) {
-            crate::visit::exprs_in(e, &mut |e| walk_expr(ty, e, &mut w));
+        for e in a.redefined.iter().filter_map(|r| r.init.as_ref()) {
+            crate::visit_ref::exprs_in(e, &mut |e| walk_expr(ty, e, &mut w));
         }
     }
     cx.lazy.live.texts.extend(&w.texts);
