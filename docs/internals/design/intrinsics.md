@@ -171,6 +171,9 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   `Ptr.read` and `Ptr.write` (c-ffi.md "C structs"): the `S` at element `index` of `p`, `S` a
   number, `bool`, a C pointer or a C struct, checked through a type parameter too. A read stops
   the program at a pointer in the value declared non-null that is NULL.
+- `cArrived<T>(value: T)` is velt/ffi's `Out.value`'s getter (c-ffi.md "What crosses"): `value`,
+  which C wrote, checked as `ptrRead` checks what it reads; a `T` without a non-null pointer
+  passes as it is.
 - `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
   and `addressAtomicCasWeak<T>` do what `Atomic<T>`'s methods do on the integer `T` at an
   address, with the same `velt_atomic_*` operations (`crates/velt_vir/src/atomic.rs`). The

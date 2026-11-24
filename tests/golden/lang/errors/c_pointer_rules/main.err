@@ -5,7 +5,7 @@ _clib/src/lib.velt:115:26: error: field `p` of C struct `Loose` has type `Ptr<u8
 _clib/src/lib.velt:16:36: error: parameter `p` of C function `setNull` has type `Out<Ptr<FILE>>`, which cannot cross to C
   = note: C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`
 _clib/src/lib.velt:17:38: error: parameter `p` of C function `setObject` has type `Out<Holder>`, which cannot cross to C
-  = note: C writes an `Out<T>` of a number, `bool` or `Ptr<T> | null`: anything else C wrote would forge a Velt value (a reference, a symbol)
+  = note: C writes an `Out<T>` of a number, `bool`, `Ptr<T> | null` or a C struct: anything else C wrote would forge a Velt value (a reference, a symbol)
 _clib/src/lib.velt:19:34: error: a C pointer can't point at `string`
   = note: `Ptr<T>` points at a number, `bool`, `void`, a `declare c type`, a `declare c struct` or another pointer: C has no other values
 _clib/src/lib.velt:20:37: error: a C pointer can't point at `string`

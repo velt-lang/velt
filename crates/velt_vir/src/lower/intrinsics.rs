@@ -62,6 +62,7 @@ impl FnLower<'_, '_> {
             }
             (I::PtrRead, [p, i]) => self.ptr_read(p, i, ty),
             (I::PtrWrite, [p, i, v]) => self.ptr_write(p, i, v),
+            (I::CArrived, [v]) => self.c_arrived(v, ty),
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),

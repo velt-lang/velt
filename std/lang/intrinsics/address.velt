@@ -132,6 +132,14 @@ export declare unsafe function ptrRead<S>(p: Ptr<S>, index: usize): S;
 export declare unsafe function ptrWrite<S>(p: Ptr<S>, index: usize, s: Copied<S>): void;
 
 /**
+ * `value`, which C wrote (velt/ffi's `Out.value`): a pointer in it declared non-null that is
+ * `NULL` stops the program, naming the field, as for `ptrRead`. A value holding none passes as it
+ * is, at no cost.
+ */
+@intrinsic
+export declare function cArrived<T>(value: T): T;
+
+/**
  * The address of the C function of `f`, a function decorated `@export("c_name")` (velt/ffi), for
  * a C API that takes a function pointer (`pthread_create`'s start routine, a callback). Unsafe:
  * C calls it with whatever arguments it has, which the exported function's C signature must
