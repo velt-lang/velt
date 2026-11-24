@@ -478,8 +478,8 @@ impl FnCx<'_, '_> {
                     Some(_) if self.f.discards_value => {
                         let h = self.expr_stmt(e);
                         // A promise dropped by the arrow being tried (`first_fitting`).
+                        let promise = self.holds_promise(h.ty);
                         if let Some((at, dropped)) = &mut self.dropped_promise {
-                            let promise = matches!(self.cx.ty.kind(h.ty), hir::TyKind::Promise(..));
                             if *at == span && promise {
                                 *dropped = true;
                             }

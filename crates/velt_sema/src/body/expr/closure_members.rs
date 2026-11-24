@@ -53,10 +53,19 @@ impl FnCx<'_, '_> {
         members[0]
     }
 
-    /// Does the function type `m` return a promise?
+    /// Does the function type `m` return a promise (or a promise or nothing)?
     fn returns_promise(&self, m: TyId) -> bool {
         match self.cx.ty.kind(m) {
-            hir::TyKind::FnPtr { ret, .. } => self.cx.ty.promise_payload(*ret).is_some(),
+            hir::TyKind::FnPtr { ret, .. } => self.holds_promise(*ret),
+            _ => false,
+        }
+    }
+
+    /// Is `t` a promise type, or an optional one (`Promise<void> | undefined`)?
+    pub(super) fn holds_promise(&self, t: TyId) -> bool {
+        match self.cx.ty.kind(t) {
+            hir::TyKind::Promise(..) => true,
+            hir::TyKind::Option(x, _) => matches!(self.cx.ty.kind(*x), hir::TyKind::Promise(..)),
             _ => false,
         }
     }
