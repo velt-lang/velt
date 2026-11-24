@@ -149,10 +149,10 @@ impl FnCx<'_, '_> {
         trailing: Option<usize>,
     ) -> Option<FillTarget> {
         let (s, _) = self.adt_of(recv_ty)?;
-        let a = self.cx.adt(s)?;
-        let key = a.vslots.iter().find(|(_, &v)| v == slot)?.0;
-        let fslot = *a.vslots.get(&fill_key(key, trailing))?;
-        let entry = *a.vtable.get(fslot as usize)?;
+        let slots = self.cx.vslots_of(s)?;
+        let key = slots.iter().find(|(_, &v)| v == slot)?.0;
+        let fslot = *slots.get(&fill_key(key, trailing))?;
+        let entry = *self.cx.vtable_of(s)?.get(fslot as usize)?;
         let positions = self.cx.fills.get(&entry)?.positions.clone();
         let below = self.classes_below(s, slot);
         if below.iter().all(|&(_, m)| m == def) {
@@ -201,10 +201,14 @@ impl FnCx<'_, '_> {
         let mut below: Vec<(DefId, DefId)> = vec![];
         for i in 0..self.cx.info.len() as u32 {
             let c = DefId(i);
-            let Some(a) = self.cx.adt(c).filter(|a| a.kind == hir::AdtKind::Class) else {
+            if !self
+                .cx
+                .adt(c)
+                .is_some_and(|a| a.kind == hir::AdtKind::Class)
+            {
                 continue;
-            };
-            let Some(&m) = a.vtable.get(slot as usize) else {
+            }
+            let Some(&m) = self.cx.vtable_of(c).and_then(|v| v.get(slot as usize)) else {
                 continue;
             };
             if c != s && self.class_extends(c, s) {

@@ -119,7 +119,7 @@ impl FnCx<'_, '_> {
         let (d, args) = self.adt_of(recv)?;
         let found = lookup_method(self.cx, d, &args, name)?;
         let slots = self.own_generic_slots(found.def(), &found.owner_args());
-        if let Some(&slot) = self.cx.adt(d).and_then(|a| a.vslots.get(name)) {
+        if let Some(slot) = self.cx.vslot(d, name) {
             return Some(Resolved::Virtual {
                 def: found.def(),
                 slot,
