@@ -84,7 +84,7 @@ impl Ctx<'_> {
     }
 
     /// The literal type written as `l` (a type annotation); `None` after reporting an error.
-    /// Integers are `i64` and floats `f64` unless suffixed (`1u8`).
+    /// Integers are `i64` (from 2^53 on, `f64`) and floats `f64` unless suffixed (`1u8`).
     pub fn lit_value_of(&mut self, l: &ast::SignedLit, span: Span) -> Option<LitValue> {
         let suffix_ty = |cx: &mut Self, s: &Option<String>| match s {
             Some(s) => cx.ty.primitive(s),
@@ -93,6 +93,13 @@ impl Ctx<'_> {
         match &l.lit {
             ast::Lit::Str(s) if !l.negative => Some(LitValue::Str(s.clone())),
             ast::Lit::Bool(b) if !l.negative => Some(LitValue::Bool(*b)),
+            // An unsuffixed integer from 2^53 on is the double it denotes, as a `number` is in
+            // TypeScript (`9007199254740993` is `9007199254740992`), so it is an `f64` literal:
+            // stored, compared, printed and added to as that double (#3183).
+            ast::Lit::Int {
+                value,
+                suffix: None,
+            } if *value >= 1 << 53 => Some(float_value(FloatTy::F64, *value as f64, l.negative)),
             ast::Lit::Int { value, suffix } => {
                 let t = suffix_ty(self, suffix).unwrap_or(self.ty.i64);
                 match self.ty.kind(t).clone() {
