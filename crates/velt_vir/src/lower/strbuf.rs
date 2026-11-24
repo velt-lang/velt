@@ -138,6 +138,20 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(out))
     }
 
+    /// `strBorrowedWords(ptr, w1)`: the static (borrowed) string `{ptr, w1, 0}` (rt_abi.md
+    /// "Strings"); std makes it only from a sub-range of a static string. No call.
+    pub(super) fn str_borrowed_words(&mut self, ptr: Operand, w1: Operand, ty: TyId) -> Operand {
+        let out = self.temp(Ty::Agg(STR_AGG));
+        for (i, v) in [ptr, w1, cint(0, Ty::U64)].into_iter().enumerate() {
+            self.assign(
+                proj(&Place::local(out), Proj::Field(i as u32)),
+                Rvalue::Use(v),
+            );
+        }
+        self.own_temp(out, ty);
+        Operand::Copy(Place::local(out))
+    }
+
     /// `strbufPushAsciiWords(buf, w0, w1, w2, len)`: append the first `len` (at most 24) bytes
     /// of the words, ASCII, to the builder at `buf`. Fast path as [`Self::push_ascii_inline`]'s
     /// (which says why the bytes after a builder's text are its own), with room for all 24
