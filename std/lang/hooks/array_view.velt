@@ -12,7 +12,7 @@
 // original's elements in order, up to the last one a read reaches, so the elements after it are
 // never converted. Nothing here is called in a program without views.
 
-import { inline, needsDrop } from "velt/lang/intrinsics";
+import { anyIsZero, inline, needsDrop } from "velt/lang/intrinsics";
 
 /** The state of one view: the original array and the mirror of its elements as `T`. */
 export class ArrayView<T> {
@@ -46,14 +46,7 @@ export function arrayViewSync<T>(v: ArrayView<T>) {
   for (let i = 0; i < n; i++) {
     const cur: any = t[i];
     if (i < seen.length) {
-      // Exact before a change of the whole array (a sort, a shift): a zero changed to the other
-      // one behind the view is converted again too, so its write-back keeps the original's sign.
-      let again = !mirrorKeeps(seen[i], cur);
-      if (!again && typeof cur === "number" && (cur as number) === 0) {
-        const had: any = seen[i];
-        again = !Object.is(had, cur);
-      }
-      if (again) {
+      if (!mirrorKeeps(seen[i], cur)) {
         seen[i] = cur as T;
       }
     } else {
@@ -231,9 +224,9 @@ export function arrayViewFlushAt<T>(v: ArrayView<T>, i: usize) {
 /**
  * Whether the mirror's element `had` stays when the original's is `cur` (a read of the view). A
  * plain `T` (a number, a `bool`) is converted again, which is exact (a zero's sign too, #3248)
- * and costs less than a comparison. A `T` that owns something stays when `cur` is `===` to it,
- * so a borrow of it stays valid; `===` doesn't tell `-0` from `0`, so a zero changed to the other
- * one behind such a view isn't seen (#3610).
+ * and costs less than a comparison. A `T` that owns something stays when `cur` is the same as
+ * `Object.is` tells it, so a borrow of it stays valid: `===` first, then for a zero, which
+ * `anyIsZero` tests inline, `Object.is` (a zero changed to the other one behind the view, #3610).
  */
 @inline("always")
 function mirrorKeeps<T>(had: T, cur: any): bool {
@@ -241,7 +234,12 @@ function mirrorKeeps<T>(had: T, cur: any): bool {
     return false;
   }
   const h: any = had;
-  return h === cur;
+  if (h !== cur) {
+    return false;
+  }
+  // A zero changed to the other one behind the view is converted again (#3610): an equal pair
+  // is compared by `Object.is` only when it is a zero, a test lowered inline (`anyIsZero`).
+  return !anyIsZero(cur) || Object.is(h, cur);
 }
 
 /**
