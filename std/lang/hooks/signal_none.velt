@@ -10,7 +10,10 @@ export const FLAGS_AT: usize = 0;
 export const SA_RESTART: i32 = 0;
 /** `SIGUSR1` (the tests raise it). */
 export const SIGUSR1: i32 = 0;
-/** `SIGBUS`: a read of a mapped page that is not in its file any more (std/fs/mapped_fault.velt). */
+/**
+ * `SIGBUS`: a read of a mapped page that is not in its file any more
+ * (std/fs/mapped_fault_posix.velt).
+ */
 export const SIGBUS: i32 = 0;
 /** `SA_SIGINFO`: the handler takes the signal's `siginfo_t` (whose `si_code` is at byte 8). */
 export const SA_SIGINFO: i32 = 0;
