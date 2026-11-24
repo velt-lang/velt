@@ -32,6 +32,7 @@ fn globals_are_rematerialized_constants() {
         is_slot: false,
         c_const: None,
         c_global: None,
+        weak: false,
     }));
     let greeting = pb.add_def(Def::Global(GlobalDef {
         name: "HELLO".into(),
@@ -41,6 +42,7 @@ fn globals_are_rematerialized_constants() {
         is_slot: false,
         c_const: None,
         c_global: None,
+        weak: false,
     }));
     let g = |d, ty| ex(velt_sema::hir::ExprKind::Global(d), ty);
     let mut f = FB::new("main", t.unit);

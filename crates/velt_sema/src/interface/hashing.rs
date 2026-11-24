@@ -284,10 +284,11 @@ impl<'p> Hashing<'p> {
                     is_slot,
                     c_const,
                     c_global,
+                    weak,
                 } = g;
                 // `CConst` and `CGlobal` hold no ids.
                 let c = format!("{c_const:?}{c_global:?}");
-                (name.clone(), finish((4u8, self.ty(*ty), is_slot, c)))
+                (name.clone(), finish((4u8, self.ty(*ty), is_slot, c, weak)))
             }
         })
     }

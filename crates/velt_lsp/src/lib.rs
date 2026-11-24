@@ -87,6 +87,22 @@ pub trait ProgramLoader: Send + Sync {
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String>;
 
+    /// [`Self::load`] with the std modules `preload` (canonical paths) loaded up front: those a
+    /// check of the document demanded that could not be served in the middle of it
+    /// (`velt_sema::StdBatch::refused`), as `velt check` loads them for the check it starts
+    /// again. The default ignores them, for a loader that takes everything up front.
+    fn load_preloaded(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        preload: &[String],
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Result<LoadedProgram, String> {
+        let _ = preload;
+        self.load(root, overlay, sm, diags)
+    }
+
     /// The std modules `demanded` (canonical paths) that the check of the document at `root` found
     /// it needs, and what they import that the load has not loaded yet: what `velt check` does in
     /// the middle of its check, so that the editor and the command line run one demand set

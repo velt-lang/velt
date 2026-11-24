@@ -1,36 +1,32 @@
 // Prelude: Node `Buffer`-style bulk operations on byte arrays (`u8[]`): searches and XOR masking
 // sixteen bytes at a time with SIMD vectors (velt/lang/bytes/search, in Velt so that they are
 // compiled into their caller), filling and concatenating likewise (velt/lang/bytes/copy), text
-// in bytes (velt/lang/bytes/text, and Node's other encodings: velt/lang/bytes/encodings); long
-// copies by memmove in the runtime.
+// in bytes (velt/lang/bytes/text, and Node's other encodings: velt/lang/bytes/encodings);
+// allocation and long copies by the C library's memset and memmove (velt/lang/bytes/raw).
 //
 // A byte array is a plain `u8[]` (Velt has no separate `Uint8Array` type), so every array
 // method works on it too; the methods here replace the generic ones of the same name for `u8[]`.
-// `Buffer.alloc(n)` makes a zeroed array in one allocation (calloc: large arrays cost no
-// memset). Positions follow JS: negative ones count from the end.
+// `Buffer.alloc(n)` makes a zeroed array in one allocation and one memset. Positions follow JS:
+// negative ones count from the end.
 
-import { inline, noInline, strByteLen } from "velt/lang/intrinsics";
+import { hookCall, inline, noInline, strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, lastIndexOfByte, xorMaskRange } from "velt/lang/bytes/search";
 import { received, textEquals } from "velt/lang/bytes/text";
+import { copyOutOfRange, copyPosition } from "velt/lang/bytes/copy_args";
 import { byteLengthIn, textBytes, utf8Bytes } from "velt/lang/bytes/encodings";
 import { fillBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
+import {
+  bytesCopy,
+  bytesCopyWithin,
+  bytesSlice,
+  bytesUninit,
+  bytesZeroed,
+} from "velt/lang/bytes/raw";
 import { ViewBytes } from "velt/lang/bytes/view_bytes";
 import { VIEW_BYTES } from "velt/lang/hooks/keys";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
-declare function velt_rt_bytes_zeroed(n: u64): u8[];
-declare function velt_rt_bytes_uninit(n: u64): u8[];
-declare function velt_rt_bytes_copy(
-  dst: u8[],
-  src: u8[],
-  targetStart: i64,
-  sourceStart: i64,
-  sourceEnd: i64,
-): i64;
-declare function velt_rt_bytes_copy_within(b: u8[], target: i64, start: i64, end: i64);
-declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
-declare function velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string;
 declare function velt_simd_mask8x16_first(m: mask8x16): u64;
 
 // Position `i` in an array of `n` elements as JS reads it: a negative one counts from the end,
@@ -61,30 +57,11 @@ function writeOutOfRange(offset: number, n: usize): never {
   );
 }
 
-// A position of `copy` as Node reads it (its `toInteger`): a whole number as it is, a fraction
-// rounded down, `NaN` and a number beyond the safe integers 0.
-function copyPosition(n: number): number {
-  if (Number.isInteger(n)) {
-    return n;
-  }
-  if (Number.isNaN(n) || n < -9007199254740991 || n > 9007199254740991) {
-    return 0;
-  }
-  return Math.floor(n);
-}
-
-// `copy`'s position `name` out of range (cold): Node's `ERR_OUT_OF_RANGE` message.
-function copyOutOfRange(name: string, must: string, n: number): never {
-  throw new RangeError(
-    `The value of "${name}" is out of range. It must be ${must}. Received ${received(n)}`,
-  );
-}
-
 /** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
 export class Buffer {
   /** `n` zero bytes. */
   static alloc(n: usize): u8[] {
-    return velt_rt_bytes_zeroed(n as u64);
+    return bytesZeroed(n);
   }
 
   /**
@@ -93,7 +70,7 @@ export class Buffer {
    * would write it twice.
    */
   static allocUnsafe(n: usize): u8[] {
-    return velt_rt_bytes_uninit(n as u64);
+    return bytesUninit(n);
   }
 
   /**
@@ -133,7 +110,7 @@ export class Buffer {
     if (data instanceof ViewBytes) {
       return data[VIEW_BYTES]();
     }
-    return velt_rt_bytes_slice(data, 0, data.length as i64);
+    return bytesSlice(data, 0, data.length as i64);
   }
 
   /**
@@ -145,7 +122,7 @@ export class Buffer {
   static concat(list: u8[][], totalLength?: number): u8[] {
     if (list.length == 0) {
       // As Node: an empty list gives an empty array before `totalLength` is looked at.
-      return velt_rt_bytes_zeroed(0);
+      return bytesZeroed(0);
     }
     let n: usize = 0;
     if (totalLength === undefined) {
@@ -155,13 +132,13 @@ export class Buffer {
     } else {
       n = concatLength(totalLength);
     }
-    const out = velt_rt_bytes_uninit(n as u64);
+    const out = bytesUninit(n);
     let at: usize = 0;
     for (const b of list) {
       if (at >= n) {
         break;
       }
-      at += velt_rt_bytes_copy(out, b, at as i64, 0, (n - at) as i64) as usize;
+      at += bytesCopy(out, b, at as i64, 0, (n - at) as i64) as usize;
     }
     fillBytes(out, 0, at, n);
     return out;
@@ -288,7 +265,7 @@ extend Array<u8> {
     }
     // Past `i64`'s range is past any array's end.
     const big = 9.2e18;
-    return velt_rt_bytes_copy(
+    return bytesCopy(
       target,
       this,
       ts > big ? 9223372036854775807 : ts as i64,
@@ -299,19 +276,19 @@ extend Array<u8> {
 
   /** Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine). */
   copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807) {
-    velt_rt_bytes_copy_within(this, target, start, end);
+    bytesCopyWithin(this, target, start, end);
   }
 
   /** The bytes in [start, end) as a new array (JS `slice`: negative positions count from the end). */
   slice(start: i64 = 0, end: i64 = 9223372036854775807): u8[] {
-    return velt_rt_bytes_slice(this, start, end);
+    return bytesSlice(this, start, end);
   }
 
   /** New array with this array's bytes followed by `other`'s. */
   concat(other: u8[]): u8[] {
     const n = this.length;
-    // Past the array length limit, the limit's `RangeError` (`velt_rt_bytes_uninit`).
-    const out = velt_rt_bytes_uninit((n as u64) + (other.length as u64));
+    // Past the array length limit, the limit's `RangeError` (`bytesUninit`).
+    const out = bytesUninit(n + other.length);
     setBytes(out, this, 0);
     setBytes(out, other, n);
     return out;
@@ -350,7 +327,8 @@ extend Array<u8> {
     const n = this.length;
     const from = clamped(start, n);
     const to = clamped(end, n);
-    return velt_rt_bytes_range_to_str_lossy(this, from as i64, (to > from ? to : from) as i64);
+    // By role: the decoder (velt/lang/bytes/range_text) loads only where live code calls this.
+    return hookCall("bytes_range_text", this, from, to > from ? to : from);
   }
 
   /**

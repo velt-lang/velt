@@ -1,7 +1,8 @@
 //! The string methods' rows of the hook table (std/lang/string/, #2198): the searches, `trim`,
 //! `repeat`, `padStart` / `padEnd`, `split`, `replace` / `replaceAll` and the case mapping, which
 //! the prelude's methods call by role (`hookCall`), so a program loads a method's module only
-//! when live code calls it; and `replace` with a function, which sema calls. Those that take and return only strings and numbers are `prebuilt`. Kept
+//! when live code calls it; `replace` with a function, which sema calls; and `Date`'s zone name,
+//! a string the prelude's `toTimeString` gets by role the same way. Those that take and return only strings and numbers are `prebuilt`. Kept
 //! apart from the rest of the table ([`super`]), which [`with_string_hooks`] gives to
 //! `with_weak_hooks!` with these rows after it.
 
@@ -58,6 +59,12 @@ macro_rules! with_string_hooks {
             /// `s.toLowerCase()`, as `string_to_upper`.
             string_to_lower => lang_string_case, "toLowerCase", sig((&string) -> string),
                 bench("string_methods"), prebuilt;
+
+            // velt/lang/bytes/range_text: a byte range as a string (#2196), which the prelude's
+            // `utf8Slice` calls by role, so a program loads the decoder only when live code calls it.
+            /// `b.utf8Slice(start, end)` with its positions clamped (`from <= to <= b.length`).
+            bytes_range_text => lang_bytes_range_text, "rangeText", sig((&[u8], usize, usize) -> string),
+                replaces("velt_rt_bytes_range_to_str_lossy"), bench("bytes_utf8");
             /// `s.repeat(count)` of a count the prelude's method has checked.
             string_repeat => lang_string_fill, "repeat", sig((&string, i64) -> string),
                 replaces("velt_rt_str_repeat"), bench("string_methods"), prebuilt;
@@ -67,6 +74,13 @@ macro_rules! with_string_hooks {
             /// `s.padEnd(target, fill)`.
             string_pad_end => lang_string_fill, "padEnd", sig((&string, i64, &string) -> string),
                 replaces("velt_rt_str_pad_end"), bench("string_methods"), prebuilt;
+
+            // velt/lang/hooks/date_zone_name: the zone name `Date`'s `toString()` and
+            // `toTimeString()` end with (#3152), called by role, so a program loads the table of
+            // names only when live code calls one.
+            /// The local zone's long name at `(t, offset)`, ms since the epoch and the offset there
+            /// in seconds, as Node prints it.
+            date_zone_name => lang_hooks_date_zone_name, "dateZoneName", sig((f64, i64) -> string);
         }
     };
 }

@@ -236,9 +236,10 @@ checks (`velt_sema` `weak_types`: where it may go, its target, its `null`), its 
 `velt doc` TypeScript output, its `--ts-compat` rule (`weak-type`), its slots in the weak core and
 the lowering of a class's `weak` field and of a function's `weak` variable whose target is a class
 (`velt_vir` `weak_fields`), also captured by a closure (`weak_captures`: the capture holds the slot
-with a reference of its own, and a function value that captured one stays on its task). Other
-`weak` references (a module's variable that functions use, object type and interface members,
-interface, array and map targets, a field declared with `?`) are reported as not implemented yet,
+with a reference of its own, and a function value that captured one stays on its task), and of a
+module's `let` (`weak_globals`: its module state slot holds the slot, used by one task at a time
+under the module lock). Other `weak` references (object type and interface members, interface,
+array and map targets, a field declared with `?`) are reported as not implemented yet,
 and so are a transfer or a `clone()` of a value with a `weak` field and a destructuring of one.
 They, the collector, the lint and `clone()` of cyclic graphs are accepted design, described here.
 

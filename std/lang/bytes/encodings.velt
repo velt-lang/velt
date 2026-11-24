@@ -10,8 +10,7 @@
 import { arrayTruncate, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 import { copyText } from "velt/lang/bytes/text";
 import { writeUtf8 } from "velt/lang/bytes/copy";
-
-declare function velt_rt_bytes_uninit(n: u64): u8[];
+import { bytesUninit } from "velt/lang/bytes/raw";
 
 // What `encodingOf` returns for each encoding Node has (an unknown name is -1).
 const UTF8: i32 = 0;
@@ -93,11 +92,11 @@ export function textBytes(s: string, encoding: string): u8[] {
   }
   const n = strLen(s);
   if (e == UTF16LE) {
-    const out = velt_rt_bytes_uninit((n * 2) as u64);
+    const out = bytesUninit(n * 2);
     writeUnits(out, s, true);
     return out;
   }
-  const text = velt_rt_bytes_uninit(n as u64);
+  const text = bytesUninit(n);
   if (n > 0 && strByteLen(s) == n) {
     // ASCII: the string's bytes are its code units.
     copyText(text, s, 0, n);
@@ -113,7 +112,7 @@ export function textBytes(s: string, encoding: string): u8[] {
 
 /** The UTF-8 bytes of `s`, a lone surrogate as U+FFFD's (Node's `Buffer.from(s)`). */
 export function utf8Bytes(s: string): u8[] {
-  const out = velt_rt_bytes_uninit(strByteLen(s) as u64);
+  const out = bytesUninit(strByteLen(s));
   if (out.length > 0) {
     writeUtf8(out, s, 0);
   }

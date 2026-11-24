@@ -10,6 +10,16 @@ pub const DELETED: &[&str] = &[
     // #3222 step 3: the CPU check and the flags of crates/velt_rt/src/cpu.rs, now std's
     // (std/lang/hooks/cpu.velt, std/lang/cpu).
     "velt_rt_check_cpu",
+    // #2196: byte arrays made and copied (std/lang/bytes/raw.velt), which only std called;
+    // `velt_rt_bytes_zeroed` stays for `Buffer.alloc` of 1 MiB or more.
+    "velt_rt_bytes_uninit",
+    "velt_rt_bytes_set",
+    "velt_rt_bytes_copy",
+    "velt_rt_bytes_copy_within",
+    "velt_rt_bytes_slice",
+    // #2196: a byte range as a string (the `bytes_range_text` hook, std/lang/bytes/range_text.velt).
+    "velt_rt_bytes_range_to_str",
+    "velt_rt_bytes_range_to_str_lossy",
     // #2196: standard input (std/process/stdin_buffer.velt over `#stdin-sys`), which only std
     // called.
     "velt_rt_stdin_read_line_sync",

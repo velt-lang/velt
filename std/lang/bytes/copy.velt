@@ -7,15 +7,8 @@
 
 import { strByteLen } from "velt/lang/intrinsics";
 import { copyText, replaceLoneSurrogates, writeText } from "velt/lang/bytes/text";
+import { bytesCopy, bytesSet } from "velt/lang/bytes/raw";
 
-declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
-declare function velt_rt_bytes_copy(
-  dst: u8[],
-  src: u8[],
-  targetStart: i64,
-  sourceStart: i64,
-  sourceEnd: i64,
-): i64;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
@@ -48,7 +41,7 @@ export function setBytes(d: u8[], src: u8[], offset: usize) {
     }
     return;
   }
-  if (!velt_rt_bytes_set(d, src, offset as u64)) {
+  if (!bytesSet(d, src, offset)) {
     panic("RangeError: offset is out of bounds");
   }
 }
@@ -65,7 +58,7 @@ export function copyBytes(
   sourceStart: i64 = 0,
   sourceEnd: i64 = 9223372036854775807,
 ): i64 {
-  const n = velt_rt_bytes_copy(target, src, targetStart, sourceStart, sourceEnd);
+  const n = bytesCopy(target, src, targetStart, sourceStart, sourceEnd);
   if (n < 0) {
     panic("RangeError: copy: a position is out of range");
   }

@@ -67,6 +67,15 @@ impl FnCx<'_, '_> {
             }
             return true;
         }
+        // A `weak` module `let`'s token: no fact about it holds either (`body::weak_globals`).
+        if let Some(name) = self.weak_global_token(l) {
+            let note = super::weak_locals::weak_local_refusal_note(&name);
+            let scope = self.f.scopes.last_mut().expect("ICE: no scope");
+            if !scope.refused.iter().any(|(x, _)| *x == l) {
+                scope.refused.push((l, Refused { note, at: None }));
+            }
+            return true;
+        }
         if let Some((root, path)) = self.token_path(l) {
             let path = path.to_vec();
             if self.through_weak_field(root, &path) {

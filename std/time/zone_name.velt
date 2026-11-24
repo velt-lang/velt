@@ -1,0 +1,188 @@
+// velt/time (internal): the long zone name `Date`'s `toString()` and `toTimeString()` end with,
+// `(Central European Standard Time)`, as Node prints it, from the table generated from Node's
+// ICU (zone_names_table.velt; scripts/gen-zone-names.js says how Node picks the name). The zone
+// is `TZ` where the OS's local time follows it, else the system's (`#zone-id`). `TZ` is read at
+// every call, as macOS' `localtime_r` reads it, so a program that sets it gets the new zone's
+// names (where local time reads it only once, on Windows, so does this: `tzReadOnce`); looking it
+// up is one search of the ids. The system zone is read once per process. A zone the table
+// doesn't know is named by its offset, `(GMT-03:00)`, as Node names one.
+//
+// The name is keyed by the offset the OS gives (`localOffset`), so where the OS's tzdata differs
+// from the tz Node bundles, the name can differ from Node's: Winnipeg in 1900 is asked about in
+// its equivalent year 2035, where the two may disagree on the offset.
+
+import { systemZoneId, tzHonoured, tzReadOnce } from "#zone-id";
+import { processEnv } from "velt/lang/hooks/process";
+import { daysFromCivil, floorDiv, floorMod, isLeapYear, MS_PER_DAY, partsOf } from "./civil";
+import { pad } from "./format";
+import { localOffset } from "./local";
+import {
+  NAME_AT,
+  NAME_AT_WIDTH,
+  NAME_SLOTS,
+  NAMES,
+  OFFSET_BIAS,
+  PAIRS,
+  PAIRS_WIDTH,
+  RECORD_RUNS,
+  RECORD_RUNS_WIDTH,
+  RUN_PAIRS,
+  RUN_PAIRS_WIDTH,
+  RUN_START,
+  RUN_START_WIDTH,
+  ZONE_AT,
+  ZONE_AT_WIDTH,
+  ZONE_IDS,
+  ZONE_RECORD,
+  ZONE_RECORD_WIDTH,
+} from "./zone_names_table";
+
+/** V8's last instant it asks the zone about as it is (`kMaxEpochTimeInMs`, 2038-01-19). */
+const LAST_MS: i64 = 2147483647000;
+
+/** A record: in the table, -1 for a zone it doesn't know, -2 not read yet. */
+const UNREAD: i32 = -2;
+
+/**
+ * The system zone's record, read once per process. Both atomics start at a literal -2 (`UNREAD`):
+ * one started at the constant's name is built anew at every use, so it would keep nothing.
+ */
+const SYSTEM = new Atomic<i32>(-2);
+
+/** Where `tzReadOnce`: the record of the zone local time took at the first call. */
+const FIRST = new Atomic<i32>(-2);
+
+/** The system zone's record. */
+function systemRecord(): i32 {
+  let record = SYSTEM.load("relaxed");
+  if (record == UNREAD) {
+    const id = systemZoneId();
+    record = (id === null ? -1 : zoneRecord(id)) as i32;
+    SYSTEM.store(record, "relaxed");
+  }
+  return record;
+}
+
+/**
+ * The zone id in `TZ`, as ICU reads it: after an optional `:` (POSIX's), and after a `posix/` or
+ * `right/` (tzdata's copies of each zone). A path is no id (`TZ=/usr/share/zoneinfo/…`), nor is
+ * an empty or POSIX `TZ`: the table doesn't know them.
+ */
+export function tzZoneId(tz: string): string {
+  const zone = tz.startsWith(":") ? tz.slice(1) : tz;
+  return zone.startsWith("posix/") || zone.startsWith("right/") ? zone.slice(6) : zone;
+}
+
+/** The record of the zone local time is in now: `TZ`'s where local time follows it, else the system's. */
+function processRecord(): i32 {
+  if (tzReadOnce()) {
+    const first = FIRST.load("relaxed");
+    if (first != UNREAD) {
+      return first;
+    }
+  }
+  const tz = processEnv("TZ");
+  const record =
+    tz !== undefined && tzHonoured(tz) ? zoneRecord(tzZoneId(tz)) as i32 : systemRecord();
+  if (tzReadOnce()) {
+    FIRST.store(record, "relaxed");
+  }
+  return record;
+}
+
+/**
+ * Entry `i` of a table of numbers (zone_names_table.velt): `width` digits of six bits from
+ * `i * width` on, digit `d` the character `35 + d`, one more from `\` (92) on.
+ */
+export function entry(table: string, width: i64, i: i64): i64 {
+  let v: i64 = 0;
+  for (let k: i64 = 0; k < width; k++) {
+    const c = table.charCodeAt(i * width + k);
+    v = v * 64 + (c - 35 - (c > 92 ? 1 : 0));
+  }
+  return v;
+}
+
+/** The table's record of zone `id`, or -1 for a zone it doesn't know. */
+export function zoneRecord(id: string): i64 {
+  if (id.length == 0 || id.includes("\n")) {
+    return -1;
+  }
+  const at = ZONE_IDS.indexOf(`\n${id}\n`);
+  if (at < 0) {
+    return -1;
+  }
+  // The id's index: the one whose `\n` is at `at`.
+  let lo: i64 = 0;
+  let hi: i64 = (ZONE_AT.length as i64) / ZONE_AT_WIDTH;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) / 2;
+    if (entry(ZONE_AT, ZONE_AT_WIDTH, mid) <= at) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return entry(ZONE_RECORD, ZONE_RECORD_WIDTH, lo);
+}
+
+/**
+ * V8's `EquivalentTime` for the zone name: `t` itself from 1970 to `LAST_MS`, else the same UTC
+ * month, day and time in a year of 2008..2035 with `t`'s leap year and weekday of January 1.
+ */
+export function equivalentTime(t: i64): i64 {
+  if (t >= 0 && t <= LAST_MS) {
+    return t;
+  }
+  const days = floorDiv(t, MS_PER_DAY);
+  const p = partsOf(days * MS_PER_DAY, 0);
+  const weekDay = floorMod(daysFromCivil(p.year, 1, 1) + 4, 7);
+  const base: i64 = isLeapYear(p.year) ? 1956 : 1967;
+  const recent = base + ((weekDay * 12) % 28);
+  const year = 2008 + ((recent + 3 * 28 - 2008) % 28);
+  return daysFromCivil(year, p.month, p.day) * MS_PER_DAY + (t - days * MS_PER_DAY);
+}
+
+/** `GMT+05:30`, `GMT-00:36:45`: the name of an offset (seconds) without a name of its own. */
+export function offsetName(offset: i64): string {
+  const abs = offset < 0 ? -offset : offset;
+  const secs = abs % 60;
+  const tail = secs == 0 ? "" : `:${pad(secs, 2)}`;
+  return `GMT${offset < 0 ? "-" : "+"}${pad(abs / 3600, 2)}:${pad((abs / 60) % 60, 2)}${tail}`;
+}
+
+/**
+ * The name, in the zone of record `record` (-1: one the table doesn't know), at `e` (an
+ * `equivalentTime`, so 1970..2038) whose offset is `offset` seconds.
+ */
+export function nameAt(record: i64, e: i64, offset: i64): string {
+  if (record < 0) {
+    return offsetName(offset);
+  }
+  const secs = floorDiv(e, 1000);
+  let run = entry(RECORD_RUNS, RECORD_RUNS_WIDTH, record);
+  const end = entry(RECORD_RUNS, RECORD_RUNS_WIDTH, record + 1);
+  while (run + 1 < end && entry(RUN_START, RUN_START_WIDTH, run + 1) <= secs) {
+    run += 1;
+  }
+  const last = entry(RUN_PAIRS, RUN_PAIRS_WIDTH, run + 1);
+  for (let i = entry(RUN_PAIRS, RUN_PAIRS_WIDTH, run); i < last; i++) {
+    const word = entry(PAIRS, PAIRS_WIDTH, i);
+    if (word / NAME_SLOTS - OFFSET_BIAS == offset) {
+      const n = word % NAME_SLOTS;
+      return NAMES.slice(entry(NAME_AT, NAME_AT_WIDTH, n), entry(NAME_AT, NAME_AT_WIDTH, n + 1));
+    }
+  }
+  return offsetName(offset);
+}
+
+/**
+ * The zone name of the process' local time at `t` (ms since the epoch, not NaN), whose offset is
+ * `offset` seconds: the OS is asked again only for an equivalent time outside 1970..2038.
+ */
+export function localZoneName(t: f64, offset: i64): string {
+  const record = processRecord();
+  const at = t as i64;
+  const e = equivalentTime(at);
+  return nameAt(record as i64, e, e == at ? offset : localOffset(e));
+}

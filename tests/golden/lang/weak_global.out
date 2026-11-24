@@ -1,0 +1,7 @@
+start null null kept
+set a
+temp alive t
+temp gone null null
+??= a
+await w
+a

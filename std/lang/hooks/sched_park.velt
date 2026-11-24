@@ -3,6 +3,7 @@
 // there (sched_end.velt), and a spare asked to retire answers as it leaves (sched_relax.velt).
 
 import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
+import * as dbg from "./sched_debug";
 import * as end from "./sched_end";
 import * as ex from "./sched_exit";
 import * as io from "./sched_io";
@@ -158,6 +159,10 @@ export function park(e: usize): void {
     m.st(e + t.E_PROGRESS, m.load(g + t.E_TICKS));
     if ((mode & t.M_MONITOR) !== 0) {
       mon.kick(g);
+    }
+    if (e === g) {
+      // A test holds worker 0 here, as an OS slow to run it (`VELT_SCHED_HANDLE_PAUSE=wake`).
+      dbg.handlePause(3);
     }
   } else if (m.ld(e + t.E_LAZY) !== 0) {
     // A lazy worker 0 awake again: its polls need watching (sched_monitor.velt `lazyDuties`).

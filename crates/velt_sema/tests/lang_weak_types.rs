@@ -8,7 +8,7 @@ mod common;
 use common::programs::{err_src, ok_src};
 
 const OUTSIDE: &str =
-    "`weak` outside a class's own field or a function's variable is not implemented yet (#3119)";
+    "`weak` outside a class's own field or a variable is not implemented yet (#3119)";
 const NOT_A_CLASS: &str = "`weak` to anything but a class instance is not implemented yet (#3119)";
 const MISPLACED: &str = "`weak` is allowed only at the top of the type of a field or a variable";
 
@@ -63,14 +63,38 @@ fn values_without_an_identity_are_not() {
 
 #[test]
 fn var_is_a_variable() {
-    // A function's `var` is lowered (a `weak` local); a module's that a function uses is not yet.
-    let e = errors(
+    // A function's `var` is lowered (a `weak` local), and so is a module's that a function uses
+    // (a module state slot, `hir::GlobalDef::weak`).
+    ok_src(
         "class Node {}\n\
          var g: weak Node | null = null;\n\
          function f(): void { var l: weak Node | null = null; console.log(l, g); }\n\
          f(); console.log(g);",
     );
+}
+
+#[test]
+fn an_object_type_member_is_not_lowered_yet() {
+    let e = errors(
+        "class Node {}\n\
+         type P = { n: weak Node | null };\n\
+         const p: P = { n: null };\n\
+         console.log(p.n);",
+    );
     assert_eq!(e, [OUTSIDE], "{e:?}");
+}
+
+#[test]
+fn a_module_const_a_function_uses_is_not() {
+    // One evaluated at each use would hold nothing: declare it with `let`.
+    let e = errors(
+        "class Node {}\n\
+         const g: weak Node | null = null;\n\
+         function f(): void { console.log(g); }\n\
+         f();",
+    );
+    let msg = "`weak` on a module's `const` (declare it with `let`) is not implemented yet (#3119)";
+    assert_eq!(e, [msg], "{e:?}");
 }
 
 #[test]

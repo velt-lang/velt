@@ -491,7 +491,10 @@ fn generated_module(
         ast,
         imports: decl.imports.clone(),
         jsx_runtime: None,
-        is_dependency: decl.is_dependency,
+        // The program's, as for a std generator's module (`is_std: false`): lowering builds what a
+        // generated module defines, so its definitions are live roots (velt_sema `live_roots`),
+        // which a dependency package's are not.
+        is_dependency: false,
     })
 }
 

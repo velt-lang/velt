@@ -11,8 +11,8 @@
 //! differ as recorded: one that no longer differs leaves the list, and one that differs
 //! otherwise is looked at again.
 //!
-//! Long, a part of `eager_std_identity`, which `cargo xtask affected` runs with `--ignored`. With
-//! `VELT_VIR_IDENTITY=sample` it compares one program in [`SAMPLE_ONE_IN`].
+//! Long, a part of `eager_std_identity`, which `cargo xtask affected` runs with `--ignored`. As
+//! that test does, it compares one program in [`SAMPLE_ONE_IN`] unless `VELT_VIR_IDENTITY=all`.
 
 use super::{no_window, test_dir};
 use std::path::{Path, PathBuf};
@@ -324,7 +324,7 @@ fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<(Found, Stri
 }
 
 #[test]
-#[ignore = "builds every golden with `Promise` twice: `cargo xtask check` runs it with the identity above"]
+#[ignore = "builds the goldens with `Promise` twice:`cargo xtask check` runs it with the identity above"]
 fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
     let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let root = tests.join("../../../tests");
@@ -345,7 +345,7 @@ fn programs_with_promises_are_the_same_with_and_without_error_set_variables() {
         files.retain(|p| p.to_string_lossy().contains(&f));
     }
     let filtered = std::env::var_os("VELT_GOLDEN").is_some();
-    let sample = std::env::var("VELT_VIR_IDENTITY").is_ok_and(|v| v == "sample");
+    let sample = !super::every_golden();
     if sample {
         files.retain(|p| in_sample(&name_of(p)));
         eprintln!("the sample: {} programs", files.len());

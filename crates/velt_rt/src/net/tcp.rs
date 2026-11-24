@@ -7,7 +7,7 @@
 //! One task can read while another writes. The object behind a stream handle is in `stream.rs`:
 //! a raw socket, or a stream set up by its first operation (TLS, an upgraded HTTP connection).
 
-use super::stream::{Ready, StreamObj, Writing};
+use super::stream::{StreamObj, Writing};
 use super::sys::{TcpListener, TcpStream};
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
@@ -17,20 +17,14 @@ use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use tokio::sync::Notify;
-use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// Default chunk size for `read()` / `readString()` without an explicit maximum.
 pub const DEFAULT_READ: u64 = 64 * 1024;
 
-/// How long a TLS handshake may take.
-const TLS_HANDSHAKE: Duration = Duration::from_secs(10);
-
-/// A listening socket; with `tls`, accepted connections are TLS streams.
+/// A listening socket.
 pub struct ListenerObj {
     listener: TcpListener,
-    tls: Option<TlsAcceptor>,
     /// Set by `close()`, which also wakes the accepts waiting then: they fail with `EBADF`
     /// instead of waiting for a connection that keeps the socket bound and the process alive.
     closed: AtomicBool,
@@ -38,10 +32,9 @@ pub struct ListenerObj {
 }
 
 impl ListenerObj {
-    fn new(listener: TcpListener, tls: Option<TlsAcceptor>) -> ListenerObj {
+    fn new(listener: TcpListener) -> ListenerObj {
         ListenerObj {
             listener,
-            tls,
             closed: AtomicBool::new(false),
             closing: Notify::new(),
         }
@@ -88,52 +81,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
     let addr = text_arg(addr);
     new_leaf(async move {
         let r = crate::dev::bind(addr.as_str()).await;
-        IoResult::from_io(r, |listener| {
-            LISTENERS.insert(ListenerObj::new(listener, None))
-        })
-    })
-}
-
-fn invalid<T: Send + 'static>(message: &str) -> *mut VeltFut {
-    let e = VeltErr::new(crate::result::code::INVALID_INPUT, message);
-    new_leaf(async move { IoResult::<T>::err(e) })
-}
-
-/// The ALPN protocols in a comma-separated list ("" = none).
-unsafe fn alpn_arg(alpn: *const VeltStr) -> Vec<Vec<u8>> {
-    (*alpn)
-        .text_lossy()
-        .split(',')
-        .filter(|p| !p.is_empty())
-        .map(|p| p.as_bytes().to_vec())
-        .collect()
-}
-
-/// `listenTls("host:port", { cert, key, alpn })` → `IoResult<ListenerHandle>`: a listener whose
-/// accepted streams are TLS (PEM certificate chain and private key; `alpn` = the protocols to
-/// offer, comma-separated, "" for none). Bad PEM fails with `EINVAL`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_listen_tls(
-    addr: *const VeltStr,
-    cert_pem: *const VeltStr,
-    key_pem: *const VeltStr,
-    alpn: *const VeltStr,
-) -> *mut VeltFut {
-    let config = crate::tls::server_config_alpn(
-        (*cert_pem).text_lossy().as_bytes(),
-        (*key_pem).text_lossy().as_bytes(),
-        alpn_arg(alpn),
-    );
-    let acceptor = match config {
-        Ok(c) => TlsAcceptor::from(c),
-        Err(msg) => return invalid::<ListenerHandle>(&msg),
-    };
-    let addr = text_arg(addr);
-    new_leaf(async move {
-        let r = crate::dev::bind(addr.as_str()).await;
-        IoResult::from_io(r, |listener| {
-            LISTENERS.insert(ListenerObj::new(listener, Some(acceptor)))
-        })
+        IoResult::from_io(r, |listener| LISTENERS.insert(ListenerObj::new(listener)))
     })
 }
 
@@ -156,9 +104,7 @@ pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
     }
 }
 
-/// `accept()` → `IoResult<StreamHandle>` (TCP_NODELAY enabled). On a TLS listener the handshake
-/// is the stream's setup (its first operation runs it, and reports its failure), so a slow or
-/// silent client does not hold up the next `accept`.
+/// `accept()` → `IoResult<StreamHandle>` (TCP_NODELAY enabled).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
     LISTENERS.op::<StreamHandle>(l, |obj| {
@@ -166,19 +112,7 @@ pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
             let Some(accepted) = obj.accept().await else {
                 return IoResult::err(closed_error());
             };
-            let Some(acceptor) = obj.tls.clone() else {
-                return stream_result(accepted.map(|(s, _)| s));
-            };
-            let r = accepted.and_then(|(s, peer)| s.set_nodelay(true).map(|()| (s, peer)));
-            IoResult::from_io(r, |(stream, peer)| {
-                STREAMS.insert(StreamObj::lazy(Box::pin(async move {
-                    let tls = tokio::time::timeout(TLS_HANDSHAKE, acceptor.accept(stream))
-                        .await
-                        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
-                    let alpn = tls.get_ref().1.alpn_protocol().unwrap_or_default().to_vec();
-                    Ok(Ready::other_alpn(Box::new(tls), Some(peer), alpn))
-                })))
-            })
+            stream_result(accepted.map(|(s, _)| s))
         })
     })
 }
@@ -190,53 +124,6 @@ pub unsafe extern "C" fn velt_rt_tcp_connect(addr: *const VeltStr) -> *mut VeltF
     crate::io::publish_before_handoff();
     let addr = text_arg(addr);
     new_leaf(async move { stream_result(TcpStream::connect(addr.as_str()).await) })
-}
-
-/// The host of a "host:port" address (without the brackets of an IPv6 literal).
-fn host_of(addr: &str) -> &str {
-    let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h);
-    host.trim_start_matches('[').trim_end_matches(']')
-}
-
-/// `connectTls("host:port", { serverName, ca, alpn })` → `IoResult<StreamHandle>` once the TLS
-/// handshake is done. `server_name` "" = the host of `addr`; `ca_pem` = extra trusted PEM CA
-/// certificates ("" = the built-in roots only); `alpn` as for `velt_rt_tcp_listen_tls`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_connect_tls(
-    addr: *const VeltStr,
-    server_name: *const VeltStr,
-    ca_pem: *const VeltStr,
-    alpn: *const VeltStr,
-) -> *mut VeltFut {
-    crate::io::publish_before_handoff();
-    let addr = text_arg(addr);
-    let name = match text_arg(server_name) {
-        n if n.is_empty() => host_of(&addr).to_string(),
-        n => n,
-    };
-    let config = crate::tls::client_config_alpn((*ca_pem).text_lossy().as_bytes(), alpn_arg(alpn));
-    let config = match config {
-        Ok(c) => c,
-        Err(msg) => return invalid::<StreamHandle>(&msg),
-    };
-    let Ok(name) = rustls::pki_types::ServerName::try_from(name) else {
-        return invalid::<StreamHandle>("invalid TLS server name");
-    };
-    new_leaf(async move {
-        let r = async {
-            let tcp = TcpStream::connect(addr.as_str()).await?;
-            tcp.set_nodelay(true)?;
-            let peer = tcp.peer_addr().ok();
-            let connect = TlsConnector::from(config).connect(name, tcp);
-            let tls = tokio::time::timeout(TLS_HANDSHAKE, connect)
-                .await
-                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TLS handshake"))??;
-            let alpn = tls.get_ref().1.alpn_protocol().unwrap_or_default().to_vec();
-            Ok(Ready::other_alpn(Box::new(tls), peer, alpn))
-        }
-        .await;
-        IoResult::from_io(r, |ready| STREAMS.insert(StreamObj::ready(ready)))
-    })
 }
 
 fn chunk_size(max: u64) -> u64 {
@@ -294,17 +181,6 @@ pub unsafe extern "C" fn velt_rt_tcp_read_string(s: StreamHandle, max: u64) -> *
             IoResult::from_io(read_text(&obj, max).await, |t| {
                 VeltStr::from_bytes(t.as_bytes())
             })
-        })
-    })
-}
-
-/// `alpnProtocol()` → `IoResult<VeltStr>` once the stream is set up (a TLS stream's handshake
-/// done): the protocol ALPN chose, "" for none or a plain TCP stream.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_alpn(s: StreamHandle) -> *mut VeltFut {
-    STREAMS.op::<VeltStr>(s, |obj| {
-        new_leaf(async move {
-            IoResult::from_io(obj.alpn_protocol().await, |p| VeltStr::from_bytes(&p))
         })
     })
 }

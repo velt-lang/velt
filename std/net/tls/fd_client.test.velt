@@ -1,0 +1,43 @@
+// velt/net (tests): `hostOf` (fd_client.velt), the name `connectTls` checks the server's
+// certificate against when no `serverName` is given, and `connectTls`'s time limit.
+import { describe, expect, it } from "velt/test";
+import { IoError } from "velt/io/error";
+import { listen } from "velt/net";
+import { connectTls, hostOf } from "velt/net/tls/fd_client";
+
+describe("hostOf", () => {
+  it("takes the host of host:port, an IPv6 address without its brackets", () => {
+    expect(hostOf("example.com:443")).toBe("example.com");
+    expect(hostOf("127.0.0.1:8443")).toBe("127.0.0.1");
+    expect(hostOf("[::1]:443")).toBe("::1");
+    expect(hostOf("[2001:db8::1]:8443")).toBe("2001:db8::1");
+    expect(hostOf("localhost")).toBe("localhost");
+  });
+});
+
+describe("connectTls", () => {
+  it("gives up on a server that accepts and never answers, closing the socket", async () => {
+    const server = await listen("127.0.0.1:0");
+    let code = "";
+    try {
+      await connectTls(`127.0.0.1:${server.port}`, "localhost", "", "", 50);
+    } catch (e) {
+      code = e instanceof IoError ? `${e.code} ${e.message}` : `${e}`;
+    }
+    expect(code).toBe("ETIMEDOUT TLS: the handshake timed out");
+    // The client closed its socket: the server reads the end of the stream, not a ClientHello
+    // followed by a wait.
+    const conn = await server.accept();
+    let got = 0;
+    while (true) {
+      const chunk = await conn.read();
+      if (chunk.length == 0) {
+        break;
+      }
+      got += chunk.length as i64;
+    }
+    expect(got > 0).toBe(true);
+    conn.close();
+    server.close();
+  });
+});

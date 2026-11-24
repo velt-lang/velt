@@ -16,6 +16,7 @@
 ../../../bench/stdport/prng.velt
 ../../../bench/stdport/locale_compare.velt
 ../../../bench/stdport/fnv.velt
+../../../bench/stdport/bytes_utf8.velt
 ../../../bench/stdport/html_escape.velt
 ../../../bench/stdport/html_escape_jsx.velt
 ../../../bench/stdport/clock_now.velt

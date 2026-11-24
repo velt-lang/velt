@@ -807,6 +807,16 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   slot up at the end of the scope. Sema narrows nothing through it. A closure's capture local of
   one is `weak` too (its reads are `WeakRead`s): a capture by value or in a cell holds the slot
   with a reference of its own, and sema refuses one crossing to another task or a lock.
+- `GlobalDef::weak` (additive, #3119): a module-level `let` or `var` declared `weak T | null`
+  with `T` a class, a slot of the module state (`is_slot`). `ty` is the read type; the slot holds
+  its target's slot, as a `weak` local's storage does. Its `init` and the values assigned to it
+  are borrowed. Every read of it is `Intrinsic::WeakRead` with the bare `Global` as its operand, so
+  a bare `Global` of one is only that operand or an `Assign`'s place. Lowering stores the
+  initializer's slot into the zeroed block, swaps slots on an assignment, and gives the slot up
+  in the state's drop at exit (`Work::ModuleDrop` in place of the state tuple's drop glue when a
+  slot is weak). Module state is used by the tasks that reach it one at a time, under the module
+  lock, so the slot stays on one task at a time. Sema narrows nothing through it, and refuses
+  `weak` on a module `const` that functions use.
 - `AdtDef::private_fields` (additive): some field, own or inherited, is `private` (or `#x`).
   `JSON.parse` cannot build such a type: decoding does not run the constructor (the decoder's
   generator reports it, std/encoding/json/generate/parse_check.velt).
