@@ -17,9 +17,8 @@ pub enum Intrinsic {
     /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt/test`
     /// reports a failed test with it.
     ErrorText,
-    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw`
-    /// on this thread, as an uncaught report ends, or `""` when not known (read it first thing
-    /// in the `catch`).
+    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw` on this
+    /// thread, as an uncaught report ends, or `""` when not known (read it first in the `catch`).
     ThrowLoc,
     /// `(x: borrow T) -> string` (`inspect`): `x` as Node's `util.inspect` writes
     /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
@@ -236,8 +235,7 @@ pub enum Intrinsic {
     MayHoldPrimitive,
     /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type
     /// `T` is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The
-    /// condition of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type
-    /// parameter").
+    /// condition of the `if` that writes a `T` value's text (hir_encodings.md, type parameters).
     HoldsDynamic,
     /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a
     /// class: the condition of the text of a `T` value in a string `+`, which asks a class
@@ -733,6 +731,8 @@ pub enum Intrinsic {
     /// std only: `(x: borrow any) -> bool`: does `x` hold an `any[]` itself (not a view, a proxy or
     /// another array)? A comparison of its descriptor.
     AnyIsList,
+    /// std only: `(x: borrow any) -> i32`: `1` for a `0`, `-1` for a `-0`, else `0`. Inline.
+    AnyZeroSign,
     /// std only: `(name: string literal)`: nothing runs. Where it is lowered, the program can reach
     /// this code, so `StdUsed(name)` is true for the whole program.
     NoteStdUse,

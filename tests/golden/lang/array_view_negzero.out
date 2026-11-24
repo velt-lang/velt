@@ -13,3 +13,9 @@ Child sort: -0,-0,0,0
 Child shift: -0,a
 Child read: 0
 Child sort after a change behind: -0,5
+Child read behind: false true
+Child for...of behind: false true
+Child read: 0
+Child reverse after a change behind: 5,-0
+Child read: true
+Child back to +0: false
