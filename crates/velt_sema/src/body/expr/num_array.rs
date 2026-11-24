@@ -15,7 +15,7 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
-use crate::body::{FnCx, Want};
+use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
@@ -46,13 +46,15 @@ impl FnCx<'_, '_> {
                     continue;
                 }
             }
-            let h = match e.negative() {
+            // A literal an integer array's element converts (`256`, `-1`, `2.5` in a `u8[]`,
+            // #3182) as the unpacked literal is (`element_lit_coerce`).
+            let h = match e.negative() || self.number_stores_into(elem) {
                 false => {
                     crate::check_work::add_expr_check();
                     let h = self.lit(&e.lit(), Some(elem), e.span(file), false);
                     self.coerce(h, elem)
                 }
-                true => self.expr_coerce(&e.expr(id, file), elem, Want::Move),
+                true => self.element_lit_coerce(&e.expr(id, file), elem),
             };
             id.0 += e.id_count();
             match &mut hs {
