@@ -280,7 +280,8 @@ fn cswap(ir: &mut String, tag: &str, mask: &str) {
 }
 
 /// Slot `s` (below 2^256) reduced mod 2^255 - 19 and stored at `base + off`, as one i256: bit 255
-/// folded in as 19, then p subtracted when the value plus 19 reaches 2^255. One fold is enough:
+/// folded in as 19, then p subtracted when the value plus 19 reaches 2^255, chosen by a mask
+/// behind a value barrier, as `field_portable::choose` does, since whether to subtract is a secret. One fold is enough:
 /// after it the value `v` is below 2^255 + 19, and `v + 19 >= 2^255` is `v >= p`, where `v - p`
 /// is below 38.
 fn freeze(ir: &mut String, tag: &str, s: usize, base: &str, off: usize) {
@@ -306,7 +307,10 @@ fn freeze(ir: &mut String, tag: &str, s: usize, base: &str, off: usize) {
     ir.push_str(&format!(
         "  %{tag}plus = add i256 {v}, 19\n  %{tag}over = lshr i256 %{tag}plus, 255\n  \
          %{tag}ge = icmp ne i256 %{tag}over, 0\n  %{tag}minus = and i256 %{tag}plus, {low}\n  \
-         %{tag}r = select i1 %{tag}ge, i256 %{tag}minus, i256 {v}\n"
+         %{tag}gz = zext i1 %{tag}ge to i64\n  %{tag}gn = sub i64 0, %{tag}gz\n  \
+         %{tag}gb = call i64 asm \"\", \"=r,0\"(i64 %{tag}gn)\n  %{tag}gm = sext i64 %{tag}gb to i256\n  \
+         %{tag}gx = xor i256 %{tag}minus, {v}\n  %{tag}gy = and i256 %{tag}gx, %{tag}gm\n  \
+         %{tag}r = xor i256 {v}, %{tag}gy\n"
     ));
     for k in 0..4 {
         ir.push_str(&format!(

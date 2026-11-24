@@ -42,12 +42,12 @@ fn elements() -> Vec<[u64; 4]> {
 
 /// The module: the helpers, a setter of the CPU byte (x86-64) and one exported function per
 /// operation calling its helper on an array header.
-fn module(x86: bool) -> String {
+fn module(x86: bool, barrier: bool) -> String {
     let mut m = String::new();
     let mut seen = std::collections::BTreeSet::new();
     for op in FieldOp::ALL {
         let (name, defs, _, _) =
-            crate::field::helper(op.symbol(), x86, false, true).expect("a helper");
+            crate::field::helper(op.symbol(), x86, false, barrier).expect("a helper");
         for d in defs {
             if seen.insert(d.clone()) {
                 m.push_str(&d);
@@ -166,8 +166,10 @@ fn field_helpers_match_the_reference() {
         }
     }
     let _cleanup = Cleanup(&dir);
-    // The plain IR runs on every host; x86-64 also runs both assembly forms.
-    run(&clang, &dir, false, &["1"]);
+    // The plain IR runs on every host, both with the masks' value barrier (arm64) and with the
+    // `select` wasm32 keeps; x86-64 also runs both assembly forms.
+    run(&clang, &dir, false, true, &["1"]);
+    run(&clang, &dir, false, false, &["1"]);
     #[cfg(target_arch = "x86_64")]
     {
         let mut forms = vec!["1"];
@@ -175,14 +177,15 @@ fn field_helpers_match_the_reference() {
         {
             forms.push("2");
         }
-        run(&clang, &dir, true, &forms);
+        run(&clang, &dir, true, true, &forms);
     }
 }
 
-/// Compiles the helpers (the assembly forms when `x86`), runs `forms` and compares.
-fn run(clang: &Path, dir: &Path, x86: bool, forms: &[&str]) {
+/// Compiles the helpers (the assembly forms when `x86`; the portable form's masks behind the
+/// value barrier when `barrier`), runs `forms` and compares.
+fn run(clang: &Path, dir: &Path, x86: bool, barrier: bool, forms: &[&str]) {
     let (ll, c, exe) = (dir.join("f.ll"), dir.join("d.c"), dir.join("f.exe"));
-    std::fs::write(&ll, module(x86)).expect("write .ll");
+    std::fs::write(&ll, module(x86, barrier)).expect("write .ll");
     std::fs::write(&c, DRIVER).expect("write driver");
     let built = Command::new(clang)
         .args(["-O2", "-w", "-o"])

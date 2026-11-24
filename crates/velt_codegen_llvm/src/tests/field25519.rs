@@ -405,3 +405,62 @@ fn the_step_operations_fold_every_carry() {
         }
     }
 }
+
+/// The ladder's final freeze subtracts p by a mask behind a value barrier, never by a `select`
+/// on whether the reduced coordinate reached p, which is a secret: in the helper's IR as made,
+/// and after clang's optimizer, no `select` takes the freeze's comparison (`%xge`, `%zge`) as
+/// its condition. The only selects left pick the scalar's limb by the bit position, which is
+/// public.
+#[test]
+fn the_freeze_chooses_by_a_mask() {
+    let (_, defs, _, _) =
+        crate::field::helper("velt_field_x25519_ladder", true, false, true).expect("a helper");
+    let text = defs.join("\n");
+    let on_ge = |ir: &str| -> Vec<String> {
+        ir.lines()
+            .map(str::trim)
+            .filter(|l| {
+                l.split_once(" = select i1 ").is_some_and(|(_, rest)| {
+                    rest.split(',').next().is_some_and(|c| c.contains("ge"))
+                })
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    assert!(on_ge(&text).is_empty(), "{:?}", on_ge(&text));
+    if !cfg!(target_arch = "x86_64") || cfg!(windows) {
+        return;
+    }
+    let Some(clang) = crate::find_clang() else {
+        eprintln!("note: clang not available; skipping the optimized freeze");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("velt_freeze_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let ll = dir.join("f.ll");
+    let out = dir.join("f.opt.ll");
+    let module = format!(
+        "{text}\ndefine i8 @ladder(ptr %r, i64 %d, i64 %u, i64 %k) {{\n  %v = call i1 @velt.field.x25519_ladder(ptr %r, i64 %d, i64 %u, i64 %k)\n  %w = zext i1 %v to i8\n  ret i8 %w\n}}\n"
+    );
+    std::fs::write(&ll, module).expect("write .ll");
+    let st = Command::new(&clang)
+        .args(["-O2", "-S", "-emit-llvm", "-w", "-x", "ir"])
+        .arg(&ll)
+        .arg("-o")
+        .arg(&out)
+        .status()
+        .expect("clang");
+    assert!(st.success(), "clang failed");
+    let optimized = std::fs::read_to_string(&out).expect("optimized IR");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        optimized.contains("x25519_ladder"),
+        "the helper is in the optimized IR"
+    );
+    let found = on_ge(&optimized);
+    assert!(
+        found.is_empty(),
+        "the freeze selects on the secret:\n{}",
+        found.join("\n")
+    );
+}
