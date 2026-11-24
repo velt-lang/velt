@@ -1,0 +1,27 @@
+// A property of `globalThis` keyed by a `Symbol.for` constant, through
+// `globalThis as Record<symbol, V>` (sigx's once-per-process hint, which a symbol from the
+// registry keeps one across copies of a module). The registry gives every `Symbol.for("k")` the
+// same symbol, so two constants of one key name one property, as in Node.
+const HINTED = Symbol.for("demo.unconfiguredHint");
+const ALSO_HINTED = Symbol.for("demo.unconfiguredHint");
+const COUNT = Symbol.for("demo.count");
+
+function hintOnce(): boolean {
+  const seam = globalThis as Record<symbol, boolean | undefined>;
+  if (seam[HINTED]) {
+    return false;
+  }
+  seam[HINTED] = true;
+  return true;
+}
+
+function bump(): number {
+  const g = globalThis as Record<symbol, number | undefined>;
+  g[COUNT] = (g[COUNT] ?? 0) + 1;
+  return g[COUNT]!;
+}
+
+console.log((globalThis as Record<symbol, boolean | undefined>)[ALSO_HINTED]);
+console.log(hintOnce(), hintOnce(), hintOnce());
+console.log((globalThis as Record<symbol, boolean | undefined>)[ALSO_HINTED]);
+console.log(bump(), bump(), bump());
