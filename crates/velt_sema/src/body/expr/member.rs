@@ -348,6 +348,9 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         if optional {
             return self.chain_with(exp, object, span, |s, v| {
+                if let Some(h) = s.match_group_read(&v, index, want, span) {
+                    return h;
+                }
                 if want != Want::BorrowMut {
                     s.array_used_in_place(&v);
                 }
