@@ -142,27 +142,49 @@ class ResponseChunks implements AsyncIterator<u8[], IoError | AbortError> {
       return made;
     }
     const b = this.body;
-    b.claim();
-    const s = b.source == STREAM ? b.stream : null;
-    b.stream = s == null ? b.stream : null;
-    const opened = s != null ? s[Symbol.asyncIterator]() : otherChunks(b);
+    let opened: AsyncIterator<u8[], IoError | AbortError>;
+    if (b.read) {
+      // Drained by another stream (read to its end, or cancelled): nothing more, as Node's one
+      // closed stream; read any other way (`text()`, a stream still reading): locked.
+      if (!b.drained) {
+        throw new IoError("EINVAL", "Invalid state: ReadableStream is locked");
+      }
+      opened = noChunks();
+    } else {
+      b.claim();
+      const s = b.source == STREAM ? b.stream : null;
+      b.stream = s == null ? b.stream : null;
+      opened = s != null ? s[Symbol.asyncIterator]() : otherChunks(b);
+    }
     this.chunks = opened;
     return opened;
   }
 
   async next(): Promise<IteratorResult<u8[]>, IoError | AbortError> {
-    return await this.open().next();
+    const r = await this.open().next();
+    if (r.done) {
+      this.body.drained = true;
+    }
+    return r;
   }
 
   async return(): Promise<IteratorResult<u8[]>> {
+    let opened: AsyncIterator<u8[], IoError | AbortError> | null = null;
     try {
-      await this.open().return();
+      opened = this.open();
     } catch (e) {
-      // Already read: nothing to end.
+      // Used by another read: nothing of this stream's to end.
+    }
+    if (opened != null) {
+      await opened.return();
+      this.body.drained = true;
     }
     return { done: true };
   }
 }
+
+// A drained body's chunks: none.
+async function* noChunks(): AsyncGenerator<u8[], IoError | AbortError> {}
 
 async function* otherChunks(b: BodyCell): AsyncGenerator<u8[], IoError | AbortError> {
   const f = b.fetched;

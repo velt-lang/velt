@@ -287,6 +287,11 @@ export class Request {
   // `body` is in velt/net/http/fetch/streams, loaded with the streams it gives
   // (std/prelude/global/fetch_body.velt).
 
+  // A new stream of a used body is locked, unless a stream drained it (empty then, as Node's).
+  private bodyLocked(): bool {
+    return this.bodyUsed && !this.extra().drained;
+  }
+
   get bodyUsed(): bool {
     const e = this.#extra;
     return e != null && e.used;
@@ -383,7 +388,6 @@ export class Request {
     return this.#received;
   }
 
-  // Before `hasBody()`: a received body that was read has none left, but is still used.
   private claim() throws IoError {
     if (this.bodyUsed) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");

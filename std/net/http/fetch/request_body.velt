@@ -57,24 +57,81 @@ export async function requestBytes(r: Request): Promise<u8[], IoError | AbortErr
 }
 
 /**
- * A request's body chunk by chunk, for `BodyStream`; reading them uses the body up. It takes the
- * request's state `e` and its server side `received`, not the request: the body it reads may be a
- * stream of these chunks' own type, which would make a cycle of every `Request`
+ * A request's body chunk by chunk, for `BodyStream`; reading them uses the body up. They hold the
+ * request's state `e` and its server side `received`, not the request: the body they read may be
+ * a stream of such chunks, which would make a cycle of every `Request`
  * (docs/internals/design/cycles.md, #3119). Both are read at the first chunk, so a `clone()`
- * before that tees what it reads, as when the request held them.
+ * before that tees what they read, as when the request held them.
  */
-export async function* requestChunks(
+export function requestChunks(
   e: Extra,
   received: RequestSource | null,
 ): AsyncIterator<u8[], IoError | AbortError> {
-  // `used` before whether a body is left: a received body that was read has none, but is used.
-  if (e.used) {
-    throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+  return new RequestChunks(e, received);
+}
+
+// `requestChunks`. The body is claimed at the first `next`, or at `return` (a stream cancelled
+// before its first read uses the body up too, as in Node).
+class RequestChunks implements AsyncIterator<u8[], IoError | AbortError> {
+  private e: Extra;
+  private received: RequestSource | null;
+  private chunks: AsyncIterator<u8[], IoError | AbortError> | null = null;
+
+  constructor(e: Extra, received: RequestSource | null) {
+    this.e = e;
+    this.received = received;
   }
-  const body = e.body;
-  if (body == null ? received != null && received.hasBody() : true) {
-    e.used = true;
+
+  // A body another stream drained (read to its end, or cancelled) gives nothing more, as Node's
+  // one closed stream; one used any other way (`text()`, a stream still reading) is locked.
+  // `used` comes before whether a body is left: a received body that was read has none.
+  private open(): AsyncIterator<u8[], IoError | AbortError> throws IoError {
+    const made = this.chunks;
+    if (made != null) {
+      return made;
+    }
+    const e = this.e;
+    if (e.used && !e.drained) {
+      throw new IoError("EINVAL", "Invalid state: ReadableStream is locked");
+    }
+    const body = e.drained ? null : e.body;
+    const received = e.drained ? null : this.received;
+    if (body == null ? received != null && received.hasBody() : true) {
+      e.used = true;
+    }
+    const opened = bodyChunks(body, received);
+    this.chunks = opened;
+    return opened;
   }
+
+  async next(): Promise<IteratorResult<u8[]>, IoError | AbortError> {
+    const r = await this.open().next();
+    if (r.done) {
+      this.e.drained = true;
+    }
+    return r;
+  }
+
+  async return(): Promise<IteratorResult<u8[]>> {
+    let opened: AsyncIterator<u8[], IoError | AbortError> | null = null;
+    try {
+      opened = this.open();
+    } catch (e) {
+      // Used by another read: nothing of this stream's to end.
+    }
+    if (opened != null) {
+      await opened.return();
+      this.e.drained = true;
+    }
+    return { done: true };
+  }
+}
+
+// The chunks of a made body, or of the connection's for a received one.
+async function* bodyChunks(
+  body: BodyParts | null,
+  received: RequestSource | null,
+): AsyncIterator<u8[], IoError | AbortError> {
   if (body == null) {
     while (received != null) {
       const chunk = await received.read();

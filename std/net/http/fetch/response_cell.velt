@@ -21,6 +21,8 @@ export class BodyCell {
   // Chunks reading the body hold this cell too (`responseChunks`): the response's drop hook
   // leaves the fetched body to them, and this cell's closes it when the last holder goes.
   shared: bool = false;
+  // A stream of the body read it to its end or was cancelled: later streams are empty.
+  drained: bool = false;
 
   /**
    * Marks the body read; throws if it was already. A response without a body can be read any

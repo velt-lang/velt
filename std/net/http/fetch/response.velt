@@ -284,6 +284,12 @@ export class Response {
     return !(none || code == 304 || this.cell.source == NONE);
   }
 
+  // Whether a new stream of the body is locked: the body was read, but no stream drained it
+  // (a drained body gives an empty stream, as Node's one closed stream).
+  private bodyLocked(): bool {
+    return this.cell.read && !this.cell.drained;
+  }
+
   /** Whether the body has been read. */
   get bodyUsed(): bool {
     return this.cell.read;
@@ -356,7 +362,7 @@ export class Response {
       statusText: this.statusText,
       headers: this.headers,
       // As Node shows a body stream (printed without loading velt/io/streams/streams).
-      body: this.streams() ? BodyStream.adopt(this.chunks(), this.cell.read) : null,
+      body: this.streams() ? BodyStream.adopt(this.chunks(), this.bodyLocked()) : null,
       bodyUsed: this.bodyUsed,
       ok: this.ok,
       redirected: this.redirected,

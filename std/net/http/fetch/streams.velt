@@ -20,7 +20,7 @@ extend Response {
     if (!this.streams()) {
       return null;
     }
-    return bodyStream(this.chunks(), this.bodyUsed);
+    return bodyStream(this.chunks(), this.bodyLocked());
   }
 }
 
@@ -34,7 +34,7 @@ extend Request {
     if (!this.bodyUsed && !this.hasBody()) {
       return null;
     }
-    return bodyStream(this.chunks(), this.bodyUsed);
+    return bodyStream(this.chunks(), this.bodyLocked());
   }
 }
 

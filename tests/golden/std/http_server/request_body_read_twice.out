@@ -1,17 +1,38 @@
+made request a 4 bytes
+made request b 0 bytes
+made request again 0 bytes
+made request used after cancel: true
+made request text threw: Body is unusable: Body has already been read
+made response a 4 bytes
+made response b 0 bytes
+made response again 0 bytes
 /text first: hello true
 text again threw: Body is unusable: Body has already been read
 /text bodyUsed: true
 ok
-/buffer first: world true
+/buffer first: hello true
 arrayBuffer threw: Body is unusable: Body has already been read
 /buffer bodyUsed: true
 ok
-/stream first: again true
-stream taken first threw: Body is unusable: Body has already been read
+/stream first: hello true
+stream taken first threw: Invalid state: ReadableStream is locked
 /stream bodyUsed: true
 ok
-/after first: later true
+/after first: hello true
 body after the read is null: false
 stream after threw: Invalid state: ReadableStream is locked
 /after bodyUsed: true
+ok
+two a 5 bytes
+two b 0 bytes
+/two bodyUsed: true
+ok
+again first 5 bytes
+again second 0 bytes
+again text threw: Body is unusable: Body has already been read
+/again bodyUsed: true
+ok
+received used after cancel: true
+received text threw: Body is unusable: Body has already been read
+/cancel bodyUsed: true
 ok
