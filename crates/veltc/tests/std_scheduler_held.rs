@@ -133,12 +133,22 @@ fn a_finished_promise_kept_in_module_state_is_freed_off_its_task() {
 /// A promise that finished, and let go of its task, is shared after: its owner reads it
 /// through a holder and hands another holder to worker 3, which reads it too. Its hub takes
 /// it for another task's and settles at the first holder's poll. Before, every run left
-/// 340 blocks. It guards the let-go itself; how the hub takes the node (`AWAY`, or
-/// `HUB_HERE` as for a node of the sharing task) makes no difference to it, as a finished
-/// node held by its hub is never listed (its count is 1).
+/// 340 blocks. It guards the let-go itself; the hub's choice of `AWAY` is guarded by the
+/// one below.
 #[test]
 fn a_finished_promise_shared_after_it_let_go_of_its_task_is_read() {
     check("share_finished", SHARE_FINISHED, "parked 40, read 40\n", 3);
+}
+
+/// A promise that finished, and let go of its task, is shared after on that task, and its
+/// original holder is handed to worker 3, which reads it after the sharing task read and
+/// dropped its copy. The hub must take the node for another task's (`AWAY`): taken as
+/// `HUB_HERE`, the original's drop (sched_share.velt `holderDrop`, the `ORIG_GONE` path)
+/// would leave the free to a finish still to come, and for a finished node none comes.
+/// Before, every run left 80 blocks; with `HUB_HERE` for such a node, 40.
+#[test]
+fn a_finished_promise_shared_after_it_let_go_with_its_original_handed_over_is_freed() {
+    check("share_orig_handed", SHARE_ORIG_HANDED, "read 80\n", 3);
 }
 
 /// As the one above, with the holders kept in module state and dropped one at a time by
@@ -445,6 +455,62 @@ async function main() {
   }
   KEPT.length = 0;
   console.log(`parked ${PARKED.load()}, read ${READ.load()}`);
+}
+"#;
+
+/// The program of [`a_finished_promise_shared_after_it_let_go_with_its_original_handed_over_is_freed`].
+const SHARE_ORIG_HANDED: &str = r#"// #3498 review: a promise that finished, and so let go of its task, is shared after on that
+// task, and its original holder is handed to a task on worker 3, which reads it there after the
+// sharing task has read and dropped its copy. The original's drop is the last, and it frees the
+// hub: the hub took the node for another task's (`AWAY`), as a finished node has none. Taken for
+// a node of this task (`HUB_HERE`), that drop would leave the free to a finish that already ran.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const READ = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 2;
+}
+
+async function reader(h: Holder): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await yieldNow();
+  }
+  READ.add((await h.p) as i64);
+}
+
+async function maker(): Promise<void> {
+  const f = soon();
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  const h = new Holder(f);
+  const h2 = new Holder(h.p);
+  void spawn(reader(h), { worker: 3 });
+  READ.add((await h2.p) as i64);
+  DONE.add(1);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (DONE.load() < n || READ.load() < 4 * n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  console.log(`read ${READ.load()}`);
 }
 "#;
 
