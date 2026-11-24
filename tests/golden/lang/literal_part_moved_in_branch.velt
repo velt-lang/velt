@@ -10,7 +10,8 @@ type Item = { id: string; dir: string; role?: string; tags?: string[] };
 type Cmd = { dir: string; tags: string[]; system: string };
 
 function queue(cmds: Cmd[], s: Item, start: boolean): void {
-  // Moving a part of `s` makes `s` the function's own.
+  // In Velt, taking `s.tags` by value moves it out of `s`, which makes `s` the function's own
+  // (the caller passes a copy); a borrowed `s` takes another path that was always correct.
   const tags = s.tags ?? [];
   cmds.push({ dir: s.dir, tags, system: start ? s.role ?? "" : "" });
 }
@@ -33,7 +34,7 @@ for (let i = 0; i < 3; i++) {
     }
   }
   for (const c of cmds) {
-    console.log(i, c.dir, c.tags.length, c.system);
+    console.log(i, c.dir, c.tags.length, `[${c.system}]`);
   }
   // Dropping the commands must leave the items' strings alive.
   cmds = [];
