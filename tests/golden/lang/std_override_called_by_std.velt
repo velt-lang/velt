@@ -1,0 +1,29 @@
+// std's own code calling a program's override of a std method, in every mode of checking
+// (#3684): `new Map(entries)` adds through the overridden `set`, a call through a `Map`
+// reaches it too, and `Error`'s `toString` reads an overridden `name`.
+let sets = 0;
+
+class Doubled extends Map<string, number> {
+  override set(k: string, v: number) {
+    sets++;
+    super.set(k, v * 2);
+  }
+}
+
+class Tagged extends Error {
+  override get name(): string {
+    return "Tagged";
+  }
+}
+
+function main() {
+  const m = new Doubled([
+    ["a", 1],
+    ["b", 2],
+  ]);
+  console.log(sets, m.get("a"), m.get("b"));
+  const base: Map<string, number> = m;
+  base.set("c", 3);
+  console.log(sets, m.get("c"), m.size);
+  console.log(String(new Tagged("bad")), `${new Tagged("worse")}`);
+}
