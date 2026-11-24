@@ -182,7 +182,7 @@ impl FnCx<'_, '_> {
     }
 
     /// [`map_members`](Self::map_members) over the variants `live` (`None`: all).
-    pub(super) fn map_members_in(
+    pub(crate) fn map_members_in(
         &mut self,
         h: hir::Expr,
         exp: TyId,

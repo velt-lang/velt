@@ -374,10 +374,26 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let b = self.cx.ty.bool_;
         let is_and = op == ast::BinaryOp::And;
-        // `s || "c"` on a union local with a falsy literal member (`"" | "a"`) is `s ? s : "c"`,
-        // so the left value is the truthy `s`, narrowed to its other members (#3370).
-        if !is_and && exp != Some(b) && self.falsy_member_facts(lhs).is_some() {
-            return self.ternary(lhs, lhs, rhs, exp, span);
+        // `a || b || c` is `a || (b || c)`, the same value: the inner chain gets the expected
+        // type, and each left side is one operand, narrowed as it is tested (#3370).
+        if let ast::ExprKind::Binary {
+            op: inner,
+            lhs: a,
+            rhs: m,
+        } = &super::object_builtins::strip_parens(lhs).kind
+        {
+            if *inner == op && exp.is_some_and(|e| e != b) {
+                let right = ast::Expr {
+                    kind: ast::ExprKind::Binary {
+                        op,
+                        lhs: m.clone(),
+                        rhs: Box::new(rhs.clone()),
+                    },
+                    span: m.span.to(rhs.span),
+                    ..rhs.clone()
+                };
+                return self.logical(op, a, &right, exp, want, span);
+            }
         }
         let (when_true, when_false) = self.narrowing(lhs);
         // The right side runs when the left one is truthy (`&&`) / falsy (`||`).
@@ -414,10 +430,14 @@ impl FnCx<'_, '_> {
             Test::Option(p) => p,
             _ => l.ty,
         };
+        // A literal type's number (`n: 0 | 1`) is a `number` beside an untyped one (#3370).
+        let literal = self.cx.widened(value_ty) != value_ty;
         let value_ty = self.cx.widened(value_ty);
         let rhint = match exp {
             Some(e) => Some(e),
-            None if super::ops::untyped(rhs) && self.cx.ty.is_numeric(value_ty) => Some(value_ty),
+            None if super::ops::untyped(rhs) && self.cx.ty.is_numeric(value_ty) => {
+                Some(if literal { self.cx.ty.f64 } else { value_ty })
+            }
             None => None,
         };
         if test == Test::Object && !is_and {
@@ -449,7 +469,8 @@ impl FnCx<'_, '_> {
             let r = self.coerce(r, b);
             return self.logic_op(is_and, l, r, span);
         }
-        self.operand_value(is_and, l, r, exp, span)
+        let number_rhs = super::ops::untyped(rhs);
+        self.operand_value(is_and, l, r, exp, number_rhs, span)
     }
 
     fn logic_op(&self, is_and: bool, l: hir::Expr, r: hir::Expr, span: Span) -> hir::Expr {
@@ -475,6 +496,7 @@ impl FnCx<'_, '_> {
         l: hir::Expr,
         r: hir::Expr,
         exp: Option<TyId>,
+        number_rhs: bool,
         span: Span,
     ) -> hir::Expr {
         let (lty, lspan) = (l.ty, l.span);
@@ -516,6 +538,13 @@ impl FnCx<'_, '_> {
             }
             _ => take,
         };
+        // The left side is the value only when truthy (`||`) / falsy (`&&`): a union with a falsy
+        // literal member is then only some members (`s || "c"` with `s: "" | "a"` is `"a" | "c"`).
+        let left = self.narrow_operand(left, !is_and);
+        let (left, r) = match exp {
+            None if number_rhs => self.number_operand(left, r),
+            _ => (left, r),
+        };
         let (then, els) = if is_and { (r, left) } else { (left, r) };
         let (then, els, ty) = self.join_operands(then, els, exp, span);
         let kind = H::If {
@@ -525,6 +554,38 @@ impl FnCx<'_, '_> {
         };
         let e = self.mk(kind, ty, span);
         self.with_temps_value(stmts, e)
+    }
+
+    /// `a || 5` / `a && 5` with no expected type: the unannotated integer is a `number`, as in
+    /// TypeScript, unless `a` is an integer variable; an integer literal type `a` (`n: 0 | 1`)
+    /// becomes a `number` with it, so the result is one (`(n || 7) / 2` is `3.5`, #3370).
+    fn number_operand(&mut self, left: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        let ty = &self.cx.ty;
+        if ty.is_int(left.ty) {
+            return (left, r);
+        }
+        let f64 = self.cx.ty.f64;
+        let r = match self.cx.ty.is_int(r.ty) {
+            true => self.coerce(r, f64),
+            false => r,
+        };
+        if r.ty != f64 {
+            return (left, r);
+        }
+        let left = self.int_literal_as_number(left);
+        (left, r)
+    }
+
+    /// A value of an integer literal type (`1`) as the `number` constant it denotes; anything
+    /// else as it is.
+    pub(super) fn int_literal_as_number(&mut self, h: hir::Expr) -> hir::Expr {
+        match self.cx.lit_value(h.ty) {
+            Some(hir::LitValue::Int(_, n)) => {
+                let v = hir::LitValue::Float(hir::FloatTy::F64, (n as f64).to_bits());
+                self.lit_to_base(h, &v)
+            }
+            _ => h,
+        }
     }
 
     /// The type of `a || b` / `a && b` from its two possible values: theirs when one converts

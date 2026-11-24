@@ -114,12 +114,18 @@ impl FnCx<'_, '_> {
                 optional: false, ..
             } => match self.truthy_discriminant(cond) {
                 Some(facts) => facts,
-                None => (self.truthy_facts(cond), vec![]),
+                None => {
+                    let (lt, lf) = self.falsy_member_facts(cond).unwrap_or_default();
+                    let mut t = self.truthy_facts(cond);
+                    t.extend(lt);
+                    (t, lf)
+                }
             },
             ast::ExprKind::Ident(_) => {
+                let (lt, lf) = self.falsy_member_facts(cond).unwrap_or_default();
                 let mut t = self.truthy_facts(cond);
-                t.extend(self.falsy_member_facts(cond).unwrap_or_default());
-                (t, vec![])
+                t.extend(lt);
+                (t, lf)
             }
             ast::ExprKind::Member { .. } | ast::ExprKind::Assign { op: None, .. } => {
                 (self.truthy_facts(cond), vec![])
