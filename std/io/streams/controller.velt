@@ -9,7 +9,7 @@ import {
   UnderlyingSource,
 } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
-import { adopted, finished } from "velt/io/streams/settle";
+import { adopted, finished, invalidState } from "velt/io/streams/settle";
 
 /** The states of a stream. */
 export const READABLE: u8 = 0;
@@ -28,11 +28,6 @@ struct Request<R> {
 struct CloseWait {
   resolve: (value: void) => void;
   reject: (reason: unknown) => void;
-}
-
-/** `TypeError: Invalid state: <what>`, Node's message for a stream used in a wrong state. */
-export function invalidState(what: string): TypeError {
-  return new TypeError(`Invalid state: ${what}`);
 }
 
 /**
@@ -283,16 +278,24 @@ export class ReadableStreamDefaultController<R> {
   // `reader.read()`, done at once as in JS (a queued chunk is taken, a pull started); the
   // promise settles with the chunk, or when one arrives.
   private read(): Promise<ReadableStreamReadResult<R>, unknown> {
-    // A queued chunk without the callbacks: a read per chunk is the hot path (a streamed body).
-    if (this.state != ERRORED && this.queued() > 0) {
+    // The field itself, not a copy in a local: such a copy is freed too early (#1140).
+    if (this.state == ERRORED) {
+      return Promise.reject<ReadableStreamReadResult<R>>(this.stored);
+    }
+    if (this.queued() > 0) {
       return Promise.resolve<ReadableStreamReadResult<R>>({ value: this.take(), done: false });
     }
+    if (this.state == CLOSED) {
+      return Promise.resolve<ReadableStreamReadResult<R>>({ done: true });
+    }
+    // Its own waiting read, not `readSteps`: a read per chunk is a streamed body's hot path.
     const {
       promise,
       resolve,
       reject,
     } = Promise.withResolvers<ReadableStreamReadResult<R>, unknown>();
-    this.readSteps(resolve, reject);
+    this.requests.push({ resolve: resolve, reject: reject });
+    this.callPullIfNeeded();
     return promise;
   }
 

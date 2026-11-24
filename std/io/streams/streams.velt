@@ -15,13 +15,9 @@ import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task/errors";
 import { BYTE_CHUNKS, ByteSource } from "velt/io/streams/byte_source";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
-import {
-  CLOSED,
-  invalidState,
-  READABLE,
-  ReadableStreamDefaultController,
-} from "velt/io/streams/controller";
+import { CLOSED, READABLE, ReadableStreamDefaultController } from "velt/io/streams/controller";
 import { ReadableStreamDefaultReader } from "velt/io/streams/reader";
+import { invalidState } from "velt/io/streams/settle";
 import { CancelReason, QueuingStrategy, Reason, UnderlyingSource } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
 

@@ -1,5 +1,5 @@
 // velt/io (internal): how a stream's controller waits for its source's promises (#3643,
-// #3695), as Node's streams settle them.
+// #3695), as Node's streams settle them, and the error of a stream used in a wrong state.
 
 // Waits for `p`, dropping its result.
 export async function finished<T>(p: Promise<T>): Promise<void> {
@@ -14,4 +14,9 @@ export async function finished<T>(p: Promise<T>): Promise<void> {
  */
 export function adopted(p: Promise<void, unknown>, ok: () => void, bad: (e: unknown) => void) {
   queueMicrotask(() => p.then(() => queueMicrotask(ok), (e) => queueMicrotask(() => bad(e))));
+}
+
+/** `TypeError: Invalid state: <what>`, Node's message for a stream used in a wrong state. */
+export function invalidState(what: string): TypeError {
+  return new TypeError(`Invalid state: ${what}`);
 }
