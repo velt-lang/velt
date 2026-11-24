@@ -213,7 +213,7 @@ fn number_of(node: &serde_json::Value, prefix: &str) -> Option<usize> {
 }
 
 /// The value of the `ConstantExpr` under `node`.
-fn constant_expr(node: &serde_json::Value) -> Option<i64> {
+pub(super) fn constant_expr(node: &serde_json::Value) -> Option<i64> {
     if node["kind"] == "ConstantExpr" {
         return node["value"].as_str()?.parse().ok();
     }

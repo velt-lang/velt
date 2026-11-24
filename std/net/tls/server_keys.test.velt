@@ -18,7 +18,8 @@ import { ClientHandshake, FINISHED_DONE, HANDSHAKE_KEYS } from "velt/net/tls/cli
 import { ClientHandshake12, DONE12, SEND12 } from "velt/net/tls/client_handshake12";
 import { clientHello, HelloInput, preferredSuites, X25519 } from "velt/net/tls/client_hello";
 import { parseClientHello } from "velt/net/tls/client_hello_parse";
-import { S_DONE, S_SEND_FLIGHT, ServerHandshake } from "velt/net/tls/server_handshake";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { S_DONE, S_SEND_FLIGHT } from "velt/net/tls/server_steps";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { ServerKey, serverKey } from "velt/net/tls/server_key";
 import { chooseScheme, schemeNames } from "velt/net/tls/server_signer";

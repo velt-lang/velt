@@ -632,3 +632,148 @@ fn interface_values_have_the_sites_of_the_values_they_hold() {
         .unwrap_or_else(|| panic!("no sites for `App` interface values:\n{out}"));
     assert!(line.contains("main.velt:3:"), "{line}");
 }
+
+#[test]
+fn a_type_argument_a_field_shows_closes_a_cycle_through_that_field() {
+    // `Box<A>` holds its `A` in a field: the edge `Box<A> -> A` is that field's (cycles.rs
+    // `owned_tys`), and the cycle `A -> Box<A> -> A` is found through it.
+    let out = debug_out(
+        "class Box<T> {
+           item: T | null = null;
+         }
+         class A {
+           b: Box<A> = new Box<A>();
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           a.b.item = a;
+           console.log(a.name, a.b.item?.name ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+}
+
+#[test]
+fn a_type_argument_no_field_shows_is_an_edge() {
+    // A class whose fields never mention `T` may keep its `T`s where they don't show (behind the
+    // runtime's pointers, as std's channel core does): `Handle<A> -> A` stays an edge.
+    let out = debug_out(
+        "class Handle<T> {
+           id: u64 = 0;
+         }
+         class A {
+           h: Handle<A> = new Handle<A>();
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           const keep = [a, a];
+           console.log(a.name, a.h.id, keep.length);
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+}
+
+#[test]
+fn a_type_argument_only_a_shared_field_shows_is_no_edge() {
+    // `Held<T>` keeps its `T` in a `shared<T>`, which is no edge (a copy with an atomic count):
+    // `Held<A>` reaches no `A`, and `A -> Held<A>` closes no cycle (std/sync/epoch/reclaim.velt
+    // `Held`, which put `Retired` values in every program's set).
+    let out = debug_out(
+        "class Held<T> {
+           value: shared<T>;
+           constructor(value: shared<T>) {
+             this.value = value;
+           }
+         }
+         class A {
+           h: Held<A> | null = null;
+           name: string = \"a\";
+         }
+         function main() {
+           const a = new A();
+           const other = new A();
+           a.h = new Held<A>(shared(other));
+           const keep = [a, a];
+           console.log(a.name, keep.length, a.h?.value.name ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(!has(line, "class A"), "{out}");
+    assert!(!has(line, "class Held"), "{out}");
+}
+
+#[test]
+fn two_instantiations_of_an_interface_that_point_at_each_other_are_a_cycle() {
+    // Interface nodes are per instantiation (cycles.rs `Node::Iface`): `Slot<string>` holds the
+    // `A`s converted to it, `Slot<i64>` the `B`s. Each holds the other instantiation, so the cycle
+    // runs through both nodes.
+    let out = debug_out(
+        "interface Slot<T> { take(): T; }
+         class A implements Slot<string> {
+           other: Slot<i64> | null = null;
+           take(): string { return \"a\"; }
+         }
+         class B implements Slot<i64> {
+           other: Slot<string> | null = null;
+           take(): i64 { return 1; }
+         }
+         function main() {
+           const a = new A();
+           const b = new B();
+           a.other = b;
+           b.other = a;
+           console.log(a.take(), b.take());
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or("")
+        .trim();
+    assert!(has(line, "class A"), "{out}");
+    assert!(has(line, "class B"), "{out}");
+}
+
+#[test]
+fn an_instantiation_that_does_not_reach_back_is_no_cycle() {
+    // An `A` is a `Slot<string>` holding a `Slot<i64>`, whose only values are `B`s, which hold
+    // nothing: no cycle. With one node for every `Slot`, `A -> Slot -> A` was one.
+    let out = debug_out(
+        "interface Slot<T> { take(): T; }
+         class A implements Slot<string> {
+           other: Slot<i64> | null = null;
+           take(): string { return \"a\"; }
+         }
+         class B implements Slot<i64> {
+           take(): i64 { return 1; }
+         }
+         class Holder {
+           s: Slot<string> | null = null;
+         }
+         function main() {
+           const a = new A();
+           const b = new B();
+           a.other = b;
+           const h = new Holder();
+           h.s = a;
+           console.log(a.take(), b.take(), h.s?.take() ?? \"\");
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(!has(line, "class A"), "{out}");
+}

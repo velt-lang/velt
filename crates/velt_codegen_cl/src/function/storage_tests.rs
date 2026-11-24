@@ -55,7 +55,7 @@ fn described_scalars_keep_registers_and_get_a_shadow() {
         panic!("a described local assigned twice is a variable")
     };
     assert!(shadows.by_var.contains_key(&var.index()));
-    assert!(matches!(storage[2], Storage::Slot(_)));
+    assert!(matches!(storage[2], Storage::Slot(_, 0)));
     assert!(!shadows.by_local.contains_key(&2));
     let Storage::Var(plain) = storage[3] else {
         panic!("an undescribed scalar is a variable")

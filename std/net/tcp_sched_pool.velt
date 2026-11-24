@@ -11,10 +11,8 @@ import * as fio from "velt/net/fd_io";
 import * as pool from "velt/net/fd_pool";
 import * as rt from "velt/net/rt";
 import * as lat from "velt/net/rt_later";
-import { isTls, TlsServer } from "velt/net/tls/fd_hook";
-
-// The TLS operations (std/net/tls/fd_reactor.velt), or stubs when the program loaded none.
-const TLS: TlsServer = {};
+import { isTls } from "velt/net/tls/fd_hook";
+import * as tlsOps from "velt/net/tls/fd_hook";
 
 export function parkStream(s: u64, key: string) {
   // `fetch` parks here: it then dials plain TCP and TLS on the reactor (fetch/client/conn.velt
@@ -46,7 +44,7 @@ export function unparkStream(key: string, settled: u32): u64 {
       return rt.velt_rt_tcp_unpark(key, settled);
     }
     const tls = stdUsed("reactorTls") && isTls(taken.h);
-    if (tls ? TLS.idleOpen(taken.h) : pool.idleOpen(taken.h)) {
+    if (tls ? tlsOps.idleOpen(taken.h) : pool.idleOpen(taken.h)) {
       return taken.h;
     }
     closeOurs(taken.h);
@@ -56,7 +54,7 @@ export function unparkStream(key: string, settled: u32): u64 {
 // Closes stream `s` of the reactor's: a TLS stream or a socket.
 function closeOurs(s: u64) {
   if (stdUsed("reactorTls") && isTls(s)) {
-    TLS.close(s);
+    tlsOps.close(s);
   } else {
     fio.close(s);
   }

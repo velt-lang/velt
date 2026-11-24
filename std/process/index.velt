@@ -8,7 +8,10 @@
 
 export { args, argv } from "velt/process/args";
 export { chdir, cwd, envAll, removeEnv, setEnv } from "velt/process/env";
+export type { CpuUsage } from "velt/process/cpu_usage";
+export { cpuUsage } from "velt/process/cpu_usage";
 export { exit } from "velt/process/exit";
+export { availableMemory, constrainedMemory } from "velt/process/memory_limits";
 export { pid } from "velt/process/pid";
 export { Stderr, stderr } from "velt/process/stderr";
 export {

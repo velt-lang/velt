@@ -1,0 +1,111 @@
+// velt/fs (internal): the reads of a `FileReader` that wait (#2196): a line, bytes or text the
+// buffer (std/fs/line_buffer.velt) doesn't hold yet. The task that `op` answers `CLAIMED` reads
+// from the runtime and hands the chunk back with `FILL_*`; a task answered `WAIT` yields to the
+// others and asks again, so a buffer's runtime reads never overlap and its bytes keep their order.
+
+import { unwrapIo } from "velt/native/result";
+import { Took } from "velt/fs/took";
+import {
+  BYTES,
+  CHUNK,
+  CLAIMED,
+  CLOSED,
+  EOF,
+  FAILED,
+  FILL_LINE,
+  FILL_TEXT,
+  GOT,
+  takeLine,
+  RELEASE,
+  TEXT,
+  WAIT,
+  op,
+} from "velt/fs/line_buffer";
+import { velt_rt_fs_reader_read } from "velt/fs/rt";
+
+/** Reader `h` was closed while it was read: the runtime's next read reports it (`EBADF`). */
+async function closedRead(h: u64): Promise<void> {
+  unwrapIo(await velt_rt_fs_reader_read(h, CHUNK));
+}
+
+/** Reader `h`'s next line, or null at the end of the file (`first`: what `takeLine` answered). */
+export async function lineOf(h: u64, first: Took): Promise<string | null> {
+  let t = first;
+  while (true) {
+    if (t.status == GOT) {
+      return t.text;
+    }
+    if (t.status == EOF) {
+      return null;
+    }
+    if (t.status == WAIT) {
+      await yieldNow();
+      t = takeLine(h);
+      continue;
+    }
+    const r = await velt_rt_fs_reader_read(h, CHUNK);
+    if (r.code != 0) {
+      op(h, FAILED, 0, null);
+      unwrapIo(r);
+    }
+    // Handed over in an array of its own (see `op`): this task keeps no reference to the chunk.
+    const hand: u8[][] = [unwrapIo(r)];
+    t = op(h, FILL_LINE, 0, hand);
+    if (t.status == CLOSED) {
+      await closedRead(h);
+      return null;
+    }
+  }
+}
+
+/** `read(max)` of reader `h`: the bytes read ahead first. */
+export async function bytesOf(h: u64, max: u64): Promise<u8[]> {
+  let t = op(h, BYTES, max, null);
+  while (true) {
+    const got = t.bytes;
+    if (t.status == GOT && got != null) {
+      return got;
+    }
+    if (t.status == WAIT) {
+      await yieldNow();
+      t = op(h, BYTES, max, null);
+      continue;
+    }
+    const r = await velt_rt_fs_reader_read(h, max);
+    if (t.status == CLAIMED) {
+      op(h, RELEASE, 0, null);
+    }
+    return unwrapIo(r);
+  }
+}
+
+/** `readString(max)` of reader `h`: the bytes read ahead first. */
+export async function textOf(h: u64, max: u64): Promise<string> {
+  let t = op(h, TEXT, max, null);
+  while (true) {
+    if (t.status == GOT) {
+      return t.text;
+    }
+    if (t.status == EOF) {
+      return "";
+    }
+    if (t.status == WAIT) {
+      await yieldNow();
+      t = op(h, TEXT, max, null);
+      continue;
+    }
+    // A raw read into the buffer, as for lines, so no decoder holds a byte back from the reads
+    // after this one.
+    const r = await velt_rt_fs_reader_read(h, CHUNK);
+    if (r.code != 0) {
+      op(h, FAILED, 0, null);
+      unwrapIo(r);
+    }
+    const hand: u8[][] = [unwrapIo(r)];
+    t = op(h, FILL_TEXT, max, hand);
+    if (t.status == CLOSED) {
+      await closedRead(h);
+      return "";
+    }
+  }
+}

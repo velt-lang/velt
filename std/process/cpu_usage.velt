@@ -1,0 +1,24 @@
+// velt/process (internal): the CPU time this process has spent (`cpuUsage`), as Node's
+// `process.cpuUsage()` gives it (std/os's `#os-sys` reads it).
+
+import * as sys from "#os-sys";
+
+/**
+ * CPU time in microseconds (Node's `process.cpuUsage()`):
+ * - `user`: spent running the process' own code, on every thread.
+ * - `system`: spent in the kernel on its behalf.
+ */
+export type CpuUsage = { user: i64; system: i64 };
+
+/**
+ * The CPU time this process has spent since it started, in microseconds (Node's
+ * `process.cpuUsage()`): `getrusage` on Linux and macOS, `GetProcessTimes` on Windows; 0 on
+ * WebAssembly. With `previous` (an earlier result), the time spent since then.
+ */
+export function cpuUsage(previous?: CpuUsage): CpuUsage {
+  const now = sys.processCpuUsage();
+  if (previous === undefined) {
+    return { user: now[0], system: now[1] };
+  }
+  return { user: now[0] - previous.user, system: now[1] - previous.system };
+}

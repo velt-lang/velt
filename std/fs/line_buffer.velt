@@ -1,0 +1,409 @@
+// velt/fs (internal): the bytes a `FileReader` has read ahead of its lines (#2196). `readLine()`
+// and `lines()` split them here, the newline found by `indexOfByte` (velt/lang/bytes/search), so a
+// line already read ahead costs one lock, a search of the few open readers' buffers and one copy
+// into its string, and a refill is one 64 KiB `read` of the runtime's reader.
+//
+// Lines split only at "\n"; a "\r" before it is dropped, a lone "\r" stays in the line, and the
+// last line needs no "\n". Text is UTF-8, an invalid sequence as U+FFFD.
+//
+// The buffers sit in a table by the runtime's reader handle, behind a `Mutex` in a static atomic
+// (as velt/lang/symbol's registry): a handle is unique per open, so two readers of one file never
+// share a buffer, and copies of one `FileReader` (a handle struct) share one. The table is an
+// array searched from where the last search found a buffer (`Buffers.find`): a program has few
+// readers open, and a `Map` costs every program that reads lines a fifth more compile time.
+// Every operation is one call under the table's lock, never held across an `await`; a task that
+// reads from the
+// runtime for a buffer first sets the buffer's `busy` flag (`CLAIMED`), and the others wait for
+// it to clear (`WAIT`, std/fs/line_reads.velt), so copies reading in two tasks each get whole
+// lines, in order, and `read` / `readString` keep the bytes' order.
+
+import { copyBytes } from "velt/lang/bytes/copy";
+import { indexOfByte } from "velt/lang/bytes/search";
+import { Took } from "velt/fs/took";
+
+/** Bytes per refill. */
+export const CHUNK: u64 = 65536;
+
+/** A line, text or bytes. */
+export const GOT: u8 = 0;
+/** The end of the file (reported once; the next read asks the runtime again). */
+export const EOF: u8 = 1;
+/** Nothing read ahead: the caller set `busy` and reads from the runtime, then calls `FILL_*`. */
+export const CLAIMED: u8 = 2;
+/** Another task reads from the runtime for this buffer: wait, then try again. */
+export const WAIT: u8 = 3;
+/** No buffer (nothing read ahead for this reader): read from the runtime directly. */
+export const NONE: u8 = 4;
+/** The buffer is gone: the reader was closed. */
+export const CLOSED: u8 = 5;
+/** Nothing read ahead for this request (internal to the buffer's methods). */
+const NEED: u8 = 6;
+
+/** Operations (`op`). */
+export const FILL_LINE: u8 = 1;
+export const BYTES: u8 = 2;
+export const TEXT: u8 = 3;
+export const FILL_TEXT: u8 = 4;
+export const RELEASE: u8 = 5;
+export const FAILED: u8 = 6;
+export const DROP: u8 = 7;
+
+/**
+ * One reader's bytes read ahead: the unread ones are `carry[0..carried]` (the start of a line
+ * the last chunk did not finish, no "\n" in it), then `data[start..end]` (the last chunk the
+ * runtime read, kept as it came).
+ */
+export class LineBuffer {
+  /** The runtime's reader handle. */
+  handle: u64;
+  data: u8[] = [];
+  start: usize = 0;
+  end: usize = 0;
+  /** A line's start from earlier chunks (grown by doubling, so a long line is copied O(n)). */
+  carry: u8[] = [];
+  carried: usize = 0;
+  /** The unread bytes of `data` before this offset hold no "\n": a search starts here. */
+  scanned: usize = 0;
+  /** The runtime's reader reported the end of the file (since a line read last reported it). */
+  eof: bool = false;
+  /** A task reads from the runtime for this buffer. */
+  busy: bool = false;
+
+  constructor(handle: u64) {
+    this.handle = handle;
+  }
+
+  /** The next line if all of it is read ahead (`GOT`), the end of the file (`EOF`), or `NEED`. */
+  line(): Took {
+    if (this.end > this.start) {
+      const from = this.scanned > this.start ? this.scanned : this.start;
+      // A "\n" just past the unread bytes stops the search there: the array's spare room is
+      // never searched, and a long line's refills search only their own bytes.
+      if (this.end < this.data.length) {
+        this.data[this.end] = 10u8;
+      }
+      const found = indexOfByte(this.data, 10u8, from);
+      const nl = found < 0 ? this.end : (found as usize);
+      if (nl < this.end) {
+        let text = "";
+        if (this.carried == 0) {
+          let stop = nl;
+          if (stop > this.start && this.data[stop - 1] == 13u8) {
+            stop -= 1;
+          }
+          text = this.data.utf8Slice(this.start as i64, stop as i64);
+        } else {
+          text = this.carriedLine(nl, true);
+        }
+        this.start = nl + 1;
+        this.scanned = this.start;
+        return { status: GOT, text: text, bytes: null };
+      }
+      this.scanned = this.end;
+    }
+    if (this.eof && (this.carried > 0 || this.end > this.start)) {
+      // The last line, without a "\n".
+      const text =
+        this.carried == 0
+          ? this.data.utf8Slice(this.start as i64, this.end as i64)
+          : this.carriedLine(this.end, false);
+      this.start = this.end;
+      this.scanned = this.end;
+      return { status: GOT, text: text, bytes: null };
+    }
+    if (this.eof) {
+      this.eof = false;
+      return { status: EOF, text: "", bytes: null };
+    }
+    return { status: NEED, text: "", bytes: null };
+  }
+
+  /**
+   * The line that starts in `carry` and ends at `data[stop]` (`ended`: at a "\n", so a "\r"
+   * before it is dropped); the carry is emptied.
+   */
+  private carriedLine(stop: usize, ended: bool): string {
+    this.carryAdd(this.start, stop);
+    let len = this.carried;
+    if (ended && len > 0 && this.carry[len - 1] == 13u8) {
+      len -= 1;
+    }
+    this.carried = 0;
+    return this.carry.utf8Slice(0, len as i64);
+  }
+
+  /** Copies `data[from..to]` to the end of the carry, which grows by doubling. */
+  private carryAdd(from: usize, to: usize) {
+    const k = to - from;
+    if (k == 0) {
+      return;
+    }
+    const cap = this.carry.length;
+    if (cap - this.carried < k) {
+      const bigger = Buffer.allocUnsafe(cap * 2 > this.carried + k ? cap * 2 : this.carried + k);
+      copyBytes(this.carry, bigger, 0, 0, this.carried as i64);
+      this.carry = bigger;
+    }
+    copyBytes(this.data, this.carry, this.carried as i64, from as i64, to as i64);
+    this.carried += k;
+  }
+
+  /** Puts the carry and the unread bytes of `data` in one array (`data`), for `drain`. */
+  private joined() {
+    if (this.carried == 0) {
+      return;
+    }
+    this.carryAdd(this.start, this.end);
+    const all = this.carry;
+    this.data = all;
+    this.start = 0;
+    this.end = this.carried;
+    this.scanned = 0;
+    this.carry = [];
+    this.carried = 0;
+  }
+
+  /**
+   * Up to `max` unread bytes (0: up to 64 KiB) as bytes, or as text with a character split at
+   * their end held back (a character longer than `max` comes whole); `NEED` when none are left,
+   * or (text) the only ones left start a character the next chunk completes.
+   */
+  drain(max: u64, asText: bool): Took {
+    this.joined();
+    if (this.end == this.start) {
+      return { status: NEED, text: "", bytes: null };
+    }
+    const unread = this.end - this.start;
+    const want = (max == 0 ? CHUNK : max) as usize;
+    let stop = this.start + (want < unread ? want : unread);
+    if (!asText) {
+      const out = this.data.slice(this.start as i64, stop as i64);
+      this.start = stop;
+      return { status: GOT, text: "", bytes: out };
+    }
+    // Back to the start of a character the bytes after `stop` would complete.
+    let i = stop;
+    while (i > this.start && stop - i < 4) {
+      i -= 1;
+      if ((this.data[i] & 0xc0u8) != 0x80u8) {
+        if (i + charLength(this.data[i]) > stop) {
+          stop = i;
+        }
+        break;
+      }
+    }
+    if (stop == this.start) {
+      // The first character is longer than `max` (it comes whole), or not complete yet.
+      const len = charLength(this.data[this.start]);
+      if (this.start + len <= this.end) {
+        stop = this.start + len;
+      } else if (this.eof) {
+        stop = this.end;
+      } else {
+        return { status: NEED, text: "", bytes: null };
+      }
+    }
+    const text = this.data.utf8Slice(this.start as i64, stop as i64);
+    this.start = stop;
+    return { status: GOT, text: text, bytes: null };
+  }
+
+  /**
+   * Adds a chunk the runtime read (an empty one is the end of the file). The chunk becomes
+   * `data` as it is, not copied: the reading task handed it over (`op`'s `hand`), so the buffer
+   * holds the only reference. The unread bytes of the chunk before it, the start of a line it
+   * did not finish, go to the carry.
+   */
+  append(chunk: u8[]) {
+    const n = chunk.length;
+    if (n == 0) {
+      this.eof = true;
+      return;
+    }
+    if (this.end > this.start) {
+      this.carryAdd(this.start, this.end);
+    }
+    this.data = chunk;
+    this.start = 0;
+    this.end = n;
+    this.scanned = 0;
+  }
+
+  /** `r`, or what a caller that found nothing read ahead does: `CLAIMED` (and busy) or `WAIT`. */
+  orClaim(r: Took): Took {
+    if (r.status != NEED) {
+      return r;
+    }
+    if (this.busy) {
+      return { status: WAIT, text: "", bytes: null };
+    }
+    this.busy = true;
+    return { status: CLAIMED, text: "", bytes: null };
+  }
+}
+
+/** The length of the UTF-8 character lead byte `b` starts (1 for a byte that starts none). */
+function charLength(b: u8): usize {
+  return b < 0xc0u8 ? 1 : b >= 0xf0u8 ? 4 : b >= 0xe0u8 ? 3 : 2;
+}
+
+/** The buffers, and where the last search found one: the next search starts there. */
+class Buffers {
+  list: LineBuffer[] = [];
+  hint: usize = 0;
+
+  /**
+   * The index of reader `h`'s buffer, or -1: the one found last first, then the one after it
+   * (readers read in turn), then all of them.
+   */
+  find(h: u64): i64 {
+    const n = this.list.length;
+    if (n == 0) {
+      return -1;
+    }
+    let i = this.hint < n ? this.hint : 0;
+    if (this.list[i].handle == h) {
+      return i as i64;
+    }
+    i = i + 1 < n ? i + 1 : 0;
+    if (this.list[i].handle != h) {
+      i = 0;
+      while (i < n && this.list[i].handle != h) {
+        i += 1;
+      }
+      if (i == n) {
+        return -1;
+      }
+    }
+    this.hint = i;
+    return i as i64;
+  }
+
+  /** Removes the buffer at `i` (the last one takes its place). */
+  removeAt(i: i64) {
+    const last = this.list.length - 1;
+    if ((i as usize) != last) {
+      this.list[i] = this.list[last];
+    }
+    this.list.pop();
+    this.hint = 0;
+  }
+
+  /** A new buffer for reader `h`, claimed by the caller (`busy`). */
+  made(h: u64): Took {
+    const b = new LineBuffer(h);
+    b.busy = true;
+    this.list.push(b);
+    this.hint = this.list.length - 1;
+    return status(CLAIMED);
+  }
+}
+
+type Table = Mutex<Buffers>;
+
+/** The process's buffers, made on first use. */
+const TABLE = new Atomic<shared<Table> | null>(null);
+
+function table(): shared<Table> {
+  const found = TABLE.load("acquire");
+  if (found != null) {
+    return found;
+  }
+  // Two first calls race: one table wins, the other is dropped.
+  TABLE.compareExchange(null, shared(new Mutex<Buffers>(new Buffers())), "acqrel");
+  const made = TABLE.load("acquire");
+  if (made == null) {
+    panic("ICE: the line buffer table is set once and never cleared");
+  }
+  return made;
+}
+
+/** A status with nothing else. */
+function status(s: u8): Took {
+  return { status: s, text: "", bytes: null };
+}
+
+/**
+ * Reader `h`'s next line if it is read ahead, `EOF`, or `CLAIMED` / `WAIT` (the buffer made on
+ * first use): the path every line read takes, in a closure of its own, so a line read ahead costs
+ * the search and `line()`, nothing of `op`'s other operations.
+ */
+export function takeLine(h: u64): Took {
+  return table().with((bs): Took => {
+    const i = bs.find(h);
+    if (i < 0) {
+      return bs.made(h);
+    }
+    const b = bs.list[i];
+    const r = b.line();
+    return b.orClaim(r);
+  });
+}
+
+/**
+ * Operation `o` on reader `h`'s buffer, under the table's lock (`max`: a read's limit; `hand`:
+ * for `FILL_*`, the chunk the runtime read, alone in an array the caller keeps no other
+ * reference to: it is taken out (`pop`) under the lock, so the buffer gets the only reference
+ * and no array is shared between the caller's thread and the table's):
+ * - `FILL_LINE` (busy): the chunk added, then the next line or `EOF` (busy cleared), or `CLAIMED`;
+ * - `BYTES`: bytes read ahead, `CLAIMED` / `WAIT`, or `NONE` (no buffer: read the runtime);
+ * - `TEXT`: text read ahead, or `CLAIMED` / `WAIT` (the buffer made on first use);
+ * - `FILL_TEXT` (busy): the chunk added, then text (busy cleared), or `CLAIMED` to read more; at
+ *   the end of the file with nothing read ahead, `EOF` (busy cleared);
+ * - `RELEASE`: busy cleared; `FAILED`: the same, the buffer dropped if nothing is read ahead
+ *   (a read after `close` leaves none behind, and bytes read ahead are never lost); `DROP`: the
+ *   buffer dropped (`close`).
+ * `CLOSED` when the buffer is gone (a `FILL_*` for a reader closed meanwhile).
+ */
+export function op(h: u64, o: u8, max: u64, hand: u8[][] | null): Took {
+  if (o != TEXT && TABLE.load("acquire") == null) {
+    return status(NONE);
+  }
+  return table().with((bs): Took => {
+    const i = bs.find(h);
+    if (i < 0) {
+      if (o == TEXT) {
+        // Text goes through the buffer from its first read, so no decoder holds a byte back
+        // from the lines read after it.
+        return bs.made(h);
+      }
+      return status(o == FILL_LINE || o == FILL_TEXT ? CLOSED : NONE);
+    }
+    const b = bs.list[i];
+    if (o == DROP || (o == FAILED && b.start == b.end && b.carried == 0)) {
+      bs.removeAt(i);
+      return status(GOT);
+    }
+    if (o == FILL_LINE) {
+      const chunk = hand != null ? hand.pop() : undefined;
+      if (chunk != undefined) {
+        b.append(chunk);
+      }
+      const r = b.line();
+      if (r.status == NEED) {
+        return status(CLAIMED);
+      }
+      b.busy = false;
+      return r;
+    }
+    if (o == BYTES || o == TEXT) {
+      const r = b.drain(max, o == TEXT);
+      return b.orClaim(r);
+    }
+    if (o == FILL_TEXT) {
+      const chunk = hand != null ? hand.pop() : undefined;
+      const ended = chunk == undefined || chunk.length == 0;
+      if (chunk != undefined) {
+        b.append(chunk);
+      }
+      const r = b.drain(max, true);
+      if (r.status != NEED || ended) {
+        b.busy = false;
+        return r.status != NEED ? r : status(EOF);
+      }
+      return status(CLAIMED);
+    }
+    b.busy = false;
+    return status(GOT);
+  });
+}

@@ -1,0 +1,59 @@
+// velt/os (internal): the machine's memory, load and uptime on Linux, from the /proc files
+// libuv reads for Node's `os.totalmem()`, `os.freemem()`, `os.loadavg()` and `os.uptime()`:
+// /proc/meminfo's `MemTotal` and `MemAvailable`, /proc/loadavg's first three fields and
+// /proc/uptime's first. Each is 0 when its file can't be read (no /proc mounted), where libuv
+// would ask `sysinfo` instead.
+
+import { integer, keyed, read, words } from "./proc_text";
+
+/** The bytes of /proc/meminfo's `key` line in `text` ("MemTotal:  16473744 kB"), or 0. */
+export function meminfoBytes(text: string, key: string): i64 {
+  const value = keyed(text, key);
+  if (value === null) {
+    return 0;
+  }
+  const w = words(value);
+  const n = w.length === 0 ? null : integer(w[0]);
+  if (n === null || n < 0) {
+    return 0;
+  }
+  return w.length > 1 && w[1] === "kB" ? n * 1024 : n;
+}
+
+/** The machine's memory in bytes (`MemTotal`). */
+export function linuxTotalMemory(): i64 {
+  return meminfoBytes(read("/proc/meminfo"), "MemTotal");
+}
+
+/**
+ * The memory the kernel can give programs without swapping, in bytes (`MemAvailable`, which
+ * counts the page cache it can drop, as Node's `os.freemem()` does); `MemFree` on kernels older
+ * than 3.14, which have no `MemAvailable`.
+ */
+export function linuxFreeMemory(): i64 {
+  const text = read("/proc/meminfo");
+  return keyed(text, "MemAvailable") === null
+    ? meminfoBytes(text, "MemFree")
+    : meminfoBytes(text, "MemAvailable");
+}
+
+/** The first `count` fields of `text` as numbers (0 for each missing or not a number). */
+export function leadingNumbers(text: string, count: i64): f64[] {
+  const w = words(text.trim());
+  const out: f64[] = [];
+  for (let i: i64 = 0; i < count; i++) {
+    const v = i < (w.length as i64) ? parseFloat(w[i]) : 0;
+    out.push(Number.isFinite(v) && v >= 0 ? v : 0);
+  }
+  return out;
+}
+
+/** The 1, 5 and 15 minute load averages (/proc/loadavg). */
+export function linuxLoadAverage(): f64[] {
+  return leadingNumbers(read("/proc/loadavg"), 3);
+}
+
+/** Seconds since the machine started (/proc/uptime, to a hundredth of a second). */
+export function linuxUptime(): f64 {
+  return leadingNumbers(read("/proc/uptime"), 1)[0];
+}

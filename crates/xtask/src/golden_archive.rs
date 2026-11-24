@@ -124,7 +124,12 @@ pub fn test_binary(messages: &str, name: &str) -> Option<String> {
 
 /// `VELT_WASM_SHARD`'s `<i>/<n>` (1 <= i <= n).
 pub fn parse_shard(value: &str) -> Result<(usize, usize), String> {
-    let bad = || format!("VELT_WASM_SHARD={value}: expected <i>/<n> with 1 <= i <= n");
+    parse_shard_of("VELT_WASM_SHARD", value)
+}
+
+/// The `<i>/<n>` (1 <= i <= n) of the shard variable `var`.
+pub fn parse_shard_of(var: &str, value: &str) -> Result<(usize, usize), String> {
+    let bad = || format!("{var}={value}: expected <i>/<n> with 1 <= i <= n");
     let (i, n) = value.split_once('/').ok_or_else(bad)?;
     let i: usize = i.trim().parse().map_err(|_| bad())?;
     let n: usize = n.trim().parse().map_err(|_| bad())?;

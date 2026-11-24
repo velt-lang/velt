@@ -55,8 +55,9 @@ pub struct Plan {
     /// (`veltc::eager_std_identity`, lazy-std.md "Loading on demand"): when what reads the
     /// sources, sema, the loader, lowering or std changes ([`VIR_IDENTITY_CRATES`]).
     pub vir_identity: bool,
-    /// The merge queue compares every golden too, not a sample: the code that loads std on demand
-    /// changed ([`VIR_IDENTITY_CODE`]).
+    /// The code that loads std on demand changed ([`VIR_IDENTITY_CODE`]): the pull request's
+    /// `golden` job compares every golden ([`Self::vir_identity_pr`]), the queue the sample
+    /// ([`Self::vir_identity_queue`]), and the report suggests every golden locally too.
     pub vir_identity_all: bool,
     /// The native crates of the repository's packages (`packages/<name>/native`, outside the
     /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
@@ -89,6 +90,10 @@ pub struct Plan {
     /// them in full on every OS. `--full` runs them unless `VELT_WASM_GOLDENS=skip`, which the
     /// merge queue sets from the change's plan and the checks after merging always set.
     pub wasm: bool,
+    /// Why the merge queue runs the WebAssembly goldens on Windows and macOS too, when it checks
+    /// them; `None`: on Linux only ([`os::wasm_host_reason`], [`Self::wasm_oses`]). `--full` (a
+    /// merge train) knows no changes and runs them on Linux; the nightly runs them on every OS.
+    pub wasm_host: Option<String>,
     /// `declare c` checked against C headers on every target through the pinned zig: the
     /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` (a dispatched run such
     /// as a merge train's, a pull request labelled `ci:full`) knows no changes, so it runs it: a
@@ -116,7 +121,8 @@ impl Plan {
             goldens: Goldens::All,
             velt_fmt: true,
             vir_identity: true,
-            vir_identity_all: true,
+            // (Only a hint for a known change: without one there is nothing to tell its author.)
+            vir_identity_all: false,
             native_crates: true,
             difftest: true,
             vscode: true,
@@ -126,6 +132,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: true,
+            wasm_host: None,
             c_headers: true,
         }
     }
@@ -163,6 +170,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: false,
+            wasm_host: None,
             c_headers: false,
         }
     }
@@ -214,6 +222,7 @@ impl Plan {
                         // WebAssembly or changes the toolchain: a lockfile, CI or script change
                         // alone doesn't need them in the queue (about half the test time).
                         wasm: plan.wasm || paths.iter().any(|p| changes_toolchain(p)),
+                        wasm_host: os::wasm_host_reason(&code),
                         c_headers: plan.c_headers,
                         ..everything
                     };
@@ -279,8 +288,22 @@ impl Plan {
         plan.add_source_readers(&changed_crates.union(&comment_crates).cloned().collect());
         plan.other_os = os::other_os_reason(graph, &code, plan.full);
         plan.macos = os::macos_reason(&code);
+        plan.wasm_host = os::wasm_host_reason(&code);
         plan.after_merge = os::after_merge_reason(paths);
         plan
+    }
+
+    /// The runners among `oses` (the merge queue's, Linux first) that run the WebAssembly
+    /// goldens there: none when they don't run ([`Self::wasm`]), else Linux, and the other OSes
+    /// the queue checks only for a change to WebAssembly's host side ([`Self::wasm_host`]): the
+    /// module is the same everywhere, so Linux checks it, and the nightly every OS. Before
+    /// 2026-11-24 every OS the queue checked ran them, and a train's 4 macOS shards waited hours
+    /// for the 5 macOS runners.
+    pub fn wasm_oses<'a>(&self, oses: &[&'a str]) -> Vec<&'a str> {
+        let host = self.wasm_host.is_some();
+        (oses.iter().copied())
+            .filter(|os| self.wasm && (*os == "ubuntu-latest" || host))
+            .collect()
     }
 
     fn all_tests(&mut self, graph: &Graph) {
@@ -455,16 +478,32 @@ impl Plan {
         }
     }
 
-    /// `VELT_VIR_IDENTITY` for the merge queue, which runs `--full` and so knows no changes. A
-    /// change that can break the comparison already ran it on every golden in its pull request's
-    /// `test` job, so the queue, which adds only what landed since, runs all of it for the code
-    /// loading std on demand, a sample (`sample`) for the rest of [`Self::vir_identity`], and
-    /// nothing (`skip`) otherwise. The nightly gate leaves it unset: every golden.
+    /// `VELT_VIR_IDENTITY` for the merge queue and merge trains, which run `--full` and so know no
+    /// changes: the sample (`sample`, one golden in 8 chosen by a hash of its name,
+    /// crates/veltc/tests/eager_std_identity.rs) whenever [`Self::vir_identity`], even for the code
+    /// loading std on demand ([`Self::vir_identity_all`]), and nothing (`skip`) otherwise. Every
+    /// golden (`all`) only in the nightly gate on Linux, which sets it itself, and in the pull
+    /// request of such a change ([`Self::vir_identity_pr`]): a train of ten pull
+    /// requests nearly always touches `std/lang/hooks/` or the loader, and the whole comparison
+    /// took 11 to 20 minutes of each Windows golden shard and 30 of the Windows job after merging
+    /// (2026-11-23). It compares the order std loads in, which doesn't depend on the OS.
     pub fn vir_identity_queue(&self) -> &'static str {
-        match (self.vir_identity_all, self.vir_identity) {
-            (true, _) => "",
-            (false, true) => "sample",
-            (false, false) => "skip",
+        if self.vir_identity {
+            "sample"
+        } else {
+            "skip"
+        }
+    }
+
+    /// `VELT_VIR_IDENTITY` for a pull request's `golden` job, whose plan knows its changes and
+    /// which runs on Linux only: every golden (`all`) when the change touches the code loading std
+    /// on demand ([`Self::vir_identity_all`]), as the queue no longer does; otherwise as
+    /// [`Self::vir_identity_queue`].
+    pub fn vir_identity_pr(&self) -> &'static str {
+        if self.vir_identity && self.vir_identity_all {
+            "all"
+        } else {
+            self.vir_identity_queue()
         }
     }
 
@@ -543,11 +582,15 @@ impl Plan {
             yes(self.velt_fmt)
         ));
         out.push_str(&format!(
-            "  VIR identity, std loaded up front and on demand: {}, in the merge queue {}\n",
-            yes(self.vir_identity),
-            match self.vir_identity_queue() {
-                "" => "every golden",
-                value => value,
+            "  VIR identity, std loaded up front and on demand: {}\n",
+            match (self.vir_identity, self.vir_identity_all) {
+                (false, _) => "no",
+                (true, false) => "yes, one golden in 8 (VELT_VIR_IDENTITY=all: every golden)",
+                (true, true) => {
+                    "yes, the code loading std on demand changed: every golden in the pull \
+                     request's golden job, one golden in 8 here and in the merge queue (run \
+                     every golden before pushing: VELT_VIR_IDENTITY=all)"
+                }
             }
         ));
         out.push_str(&format!(
@@ -571,6 +614,15 @@ impl Plan {
             None => "; no macOS (nothing that differs there changed: the scheduled run)".into(),
         };
         out.push_str(&format!("  merge queue OSes: Linux{windows}{macos}\n"));
+        if self.wasm {
+            let others = match &self.wasm_host {
+                Some(reason) => format!(" and the other OSes it checks ({reason})"),
+                None => " only (the nightly runs every OS)".into(),
+            };
+            out.push_str(&format!(
+                "  WebAssembly goldens in the queue: Linux{others}\n"
+            ));
+        }
         let after = match &self.after_merge {
             Some(reason) => format!("Windows, macOS ({reason})"),
             None => "none (the scheduled run checks Windows and macOS)".into(),
