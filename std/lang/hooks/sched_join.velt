@@ -11,6 +11,7 @@ import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as mk from "./sched_make";
 import * as nc from "./sched_node_catch";
+import * as lf from "./sched_share_leaf";
 import * as t from "./sched_task";
 import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
@@ -254,8 +255,12 @@ export function panickedEnd(e: usize, k: usize, kind: u32): void {
   const s = mk.lockJoin(k, kind);
   // The join raises the panic from a poll that may unwind: `joinPoll`, `joinPollSolo` and
   // `joinPollLazy` are C's (`@export`), whose frames end any unwinding (rt_abi.md), so the
-  // handle's header gets `joinPanicked`.
-  m.st(k + t.T_JOIN, fnAddress(joinPanicked));
+  // handle's header gets `joinPanicked`. A shared handle's header is its holder's
+  // (sched_share_leaf.velt): its record, which the driver polls through, gets it instead.
+  const f = k + t.T_JOIN;
+  if (m.ld(f) !== fnAddress(lf.leafPoll) || !lf.panicked(f, fnAddress(joinPanicked))) {
+    m.st(f, fnAddress(joinPanicked));
+  }
   const joiner = m.ld(k + t.T_JOINER);
   m.st(k + t.T_JOINER, 0);
   mk.unlockJoin(k, s | t.J_DONE | nc.J_PANICKED, kind);
