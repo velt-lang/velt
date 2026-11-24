@@ -1,5 +1,6 @@
-// JSON.parse<T> / JSON.stringify of tuples (fixed-length arrays) and Map<string, V> (objects
-// with arbitrary keys, insertion order) (issue #17).
+// JSON.parse<T> / JSON.stringify of tuples (fixed-length arrays), and JSON.parse<T> of
+// Map<string, V> (objects with arbitrary keys, insertion order) (issue #17). JSON.stringify writes
+// a Map as `{}`, as Node does (#3625); `Object.fromEntries(m)` writes its entries.
 type Pair = [string, i64];
 type Row = { id: i64, at: [f64, f64], tag: [string, "x", bool] };
 function showRow(text: string) {
@@ -42,7 +43,8 @@ function maps() {
   m.set("y", 2);
   m.delete("z");
   m.set("x", 3);
-  console.log(JSON.stringify(m), JSON.stringify(JSON.parse<Map<string, f64>>(JSON.stringify(m))));
+  const text = JSON.stringify(Object.fromEntries(m));
+  console.log(text, JSON.stringify(Object.fromEntries(JSON.parse<Map<string, f64>>(text))));
 }
 
 function main() {

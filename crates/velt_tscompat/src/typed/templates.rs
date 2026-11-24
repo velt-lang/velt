@@ -1,12 +1,9 @@
-//! Rules on turning values into text: template literals of promises (`object-in-template`),
-//! and `JSON.stringify` of a `Map` (`json-map`; a `Set` has no JSON form in Velt).
+//! Rules on turning values into text: template literals of promises (`object-in-template`).
+//! (`JSON.stringify` writes a `Map` as `{}` in Velt too, as JavaScript does: no rule.)
 
-use std::collections::HashSet;
+use velt_sema::ide::{TypeRef, TypeView};
+use velt_syntax::ast;
 
-use velt_sema::ide::{NamedKind, TypeRef, TypeView};
-use velt_syntax::ast::{self, ExprKind as E};
-
-use super::numbers::is_global;
 use super::Typed;
 use crate::Severity;
 
@@ -68,55 +65,4 @@ fn printed(ty: &TypeRef, t: &Typed, depth: u32) -> Printed {
         // Velt.
         _ => Printed::Same,
     }
-}
-
-/// `JSON.stringify(v)` where `v` holds a `Map`.
-pub(super) fn call(callee: &ast::Expr, args: &[ast::Expr], t: &mut Typed) {
-    let E::Member { object, prop, .. } = &callee.kind else {
-        return;
-    };
-    if prop.name != "stringify" || !is_global(object, "JSON", t) {
-        return;
-    }
-    let Some(arg) = args.first() else { return };
-    let Some(ty) = t.type_of(arg) else { return };
-    if !holds_map(&ty, t, &mut HashSet::new()) {
-        return;
-    }
-    let message =
-        "`JSON.stringify` writes a `Map` as an object in Velt, as `{}` in JavaScript".to_string();
-    t.cx.report(
-        "json-map",
-        Severity::Error,
-        arg.span,
-        message,
-        &[
-            "Velt writes a `Map` as an object of its entries; JavaScript's `JSON.stringify` \
-             sees no own properties and writes `{}`",
-            "write its entries (`[...m.entries()]`), or use an object type instead of a `Map`",
-        ],
-        None,
-    );
-}
-
-/// Whether `ty` holds a `Map` (itself, in a field, an element, a union member).
-fn holds_map(ty: &TypeRef, t: &Typed, seen: &mut HashSet<String>) -> bool {
-    if !seen.insert(t.program.analysis.show_type(ty)) || seen.len() > 64 {
-        return false;
-    }
-    match t.view(ty) {
-        TypeView::Map(..) => true,
-        TypeView::Nullable(x) | TypeView::Array(x) | TypeView::Shared(x) => holds_map(&x, t, seen),
-        TypeView::Tuple(xs) | TypeView::Union(xs) => xs.iter().any(|x| holds_map(x, t, seen)),
-        TypeView::Record => fields_hold_map(ty, t, seen),
-        TypeView::Named(n) if !n.is_std && n.kind != NamedKind::Enum => {
-            fields_hold_map(ty, t, seen)
-        }
-        _ => false,
-    }
-}
-
-fn fields_hold_map(ty: &TypeRef, t: &Typed, seen: &mut HashSet<String>) -> bool {
-    let fields = t.program.analysis.fields(ty);
-    fields.iter().any(|f| holds_map(&f.ty, t, seen))
 }
