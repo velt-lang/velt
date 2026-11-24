@@ -6,10 +6,6 @@
 // CPU; velt/arch/x86's AVX2 and AVX-512 methods take it as one register, behind their
 // class's check.
 
-import "velt/simd/bytes";
-import "velt/simd/floats";
-import "velt/simd/words";
-
 /**
  * 256 bits of lanes `T`: the bytes of its 128-bit parts (`lo`, `hi`), low lanes first.
  */
@@ -29,97 +25,137 @@ export struct Vector256<T> {
 
   /** The 32 lanes of `from` from `at` on. */
   static loadU8(from: u8[], at: usize = 0): Vector256<u8> {
-    return Vector256.fromU8x16(u8x16.load(from, at), u8x16.load(from, at + 16));
+    if (!velt_simd_u8x16_fits(from, at as u64) || !velt_simd_u8x16_fits(from, (at + 16) as u64)) {
+      panic("RangeError: u8x16.load: range is out of bounds");
+    }
+    const lo = velt_simd_u8x16_load(from, at as u64);
+    return Vector256.fromU8x16(lo, velt_simd_u8x16_load(from, (at + 16) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 15) and `hi`'s (16 to 31). */
   static fromI8x16(lo: i8x16, hi: i8x16): Vector256<i8> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_i8x16_as_u8x16(lo), hi: velt_simd_i8x16_as_u8x16(hi) };
   }
 
   /** The 32 lanes of `from` from `at` on. */
   static loadI8(from: i8[], at: usize = 0): Vector256<i8> {
-    return Vector256.fromI8x16(i8x16.load(from, at), i8x16.load(from, at + 16));
+    if (!velt_simd_i8x16_fits(from, at as u64) || !velt_simd_i8x16_fits(from, (at + 16) as u64)) {
+      panic("RangeError: i8x16.load: range is out of bounds");
+    }
+    const lo = velt_simd_i8x16_load(from, at as u64);
+    return Vector256.fromI8x16(lo, velt_simd_i8x16_load(from, (at + 16) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 7) and `hi`'s (8 to 15). */
   static fromU16x8(lo: u16x8, hi: u16x8): Vector256<u16> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_u16x8_as_u8x16(lo), hi: velt_simd_u16x8_as_u8x16(hi) };
   }
 
   /** The 16 lanes of `from` from `at` on. */
   static loadU16(from: u16[], at: usize = 0): Vector256<u16> {
-    return Vector256.fromU16x8(u16x8.load(from, at), u16x8.load(from, at + 8));
+    if (!velt_simd_u16x8_fits(from, at as u64) || !velt_simd_u16x8_fits(from, (at + 8) as u64)) {
+      panic("RangeError: u16x8.load: range is out of bounds");
+    }
+    const lo = velt_simd_u16x8_load(from, at as u64);
+    return Vector256.fromU16x8(lo, velt_simd_u16x8_load(from, (at + 8) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 7) and `hi`'s (8 to 15). */
   static fromI16x8(lo: i16x8, hi: i16x8): Vector256<i16> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_i16x8_as_u8x16(lo), hi: velt_simd_i16x8_as_u8x16(hi) };
   }
 
   /** The 16 lanes of `from` from `at` on. */
   static loadI16(from: i16[], at: usize = 0): Vector256<i16> {
-    return Vector256.fromI16x8(i16x8.load(from, at), i16x8.load(from, at + 8));
+    if (!velt_simd_i16x8_fits(from, at as u64) || !velt_simd_i16x8_fits(from, (at + 8) as u64)) {
+      panic("RangeError: i16x8.load: range is out of bounds");
+    }
+    const lo = velt_simd_i16x8_load(from, at as u64);
+    return Vector256.fromI16x8(lo, velt_simd_i16x8_load(from, (at + 8) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 3) and `hi`'s (4 to 7). */
   static fromU32x4(lo: u32x4, hi: u32x4): Vector256<u32> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_u32x4_as_u8x16(lo), hi: velt_simd_u32x4_as_u8x16(hi) };
   }
 
   /** The 8 lanes of `from` from `at` on. */
   static loadU32(from: u32[], at: usize = 0): Vector256<u32> {
-    return Vector256.fromU32x4(u32x4.load(from, at), u32x4.load(from, at + 4));
+    if (!velt_simd_u32x4_fits(from, at as u64) || !velt_simd_u32x4_fits(from, (at + 4) as u64)) {
+      panic("RangeError: u32x4.load: range is out of bounds");
+    }
+    const lo = velt_simd_u32x4_load(from, at as u64);
+    return Vector256.fromU32x4(lo, velt_simd_u32x4_load(from, (at + 4) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 3) and `hi`'s (4 to 7). */
   static fromI32x4(lo: i32x4, hi: i32x4): Vector256<i32> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_i32x4_as_u8x16(lo), hi: velt_simd_i32x4_as_u8x16(hi) };
   }
 
   /** The 8 lanes of `from` from `at` on. */
   static loadI32(from: i32[], at: usize = 0): Vector256<i32> {
-    return Vector256.fromI32x4(i32x4.load(from, at), i32x4.load(from, at + 4));
+    if (!velt_simd_i32x4_fits(from, at as u64) || !velt_simd_i32x4_fits(from, (at + 4) as u64)) {
+      panic("RangeError: i32x4.load: range is out of bounds");
+    }
+    const lo = velt_simd_i32x4_load(from, at as u64);
+    return Vector256.fromI32x4(lo, velt_simd_i32x4_load(from, (at + 4) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 1) and `hi`'s (2 to 3). */
   static fromU64x2(lo: u64x2, hi: u64x2): Vector256<u64> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_u64x2_as_u8x16(lo), hi: velt_simd_u64x2_as_u8x16(hi) };
   }
 
   /** The 4 lanes of `from` from `at` on. */
   static loadU64(from: u64[], at: usize = 0): Vector256<u64> {
-    return Vector256.fromU64x2(u64x2.load(from, at), u64x2.load(from, at + 2));
+    if (!velt_simd_u64x2_fits(from, at as u64) || !velt_simd_u64x2_fits(from, (at + 2) as u64)) {
+      panic("RangeError: u64x2.load: range is out of bounds");
+    }
+    const lo = velt_simd_u64x2_load(from, at as u64);
+    return Vector256.fromU64x2(lo, velt_simd_u64x2_load(from, (at + 2) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 1) and `hi`'s (2 to 3). */
   static fromI64x2(lo: i64x2, hi: i64x2): Vector256<i64> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_i64x2_as_u8x16(lo), hi: velt_simd_i64x2_as_u8x16(hi) };
   }
 
   /** The 4 lanes of `from` from `at` on. */
   static loadI64(from: i64[], at: usize = 0): Vector256<i64> {
-    return Vector256.fromI64x2(i64x2.load(from, at), i64x2.load(from, at + 2));
+    if (!velt_simd_i64x2_fits(from, at as u64) || !velt_simd_i64x2_fits(from, (at + 2) as u64)) {
+      panic("RangeError: i64x2.load: range is out of bounds");
+    }
+    const lo = velt_simd_i64x2_load(from, at as u64);
+    return Vector256.fromI64x2(lo, velt_simd_i64x2_load(from, (at + 2) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 3) and `hi`'s (4 to 7). */
   static fromF32x4(lo: f32x4, hi: f32x4): Vector256<f32> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_f32x4_as_u8x16(lo), hi: velt_simd_f32x4_as_u8x16(hi) };
   }
 
   /** The 8 lanes of `from` from `at` on. */
   static loadF32(from: f32[], at: usize = 0): Vector256<f32> {
-    return Vector256.fromF32x4(f32x4.load(from, at), f32x4.load(from, at + 4));
+    if (!velt_simd_f32x4_fits(from, at as u64) || !velt_simd_f32x4_fits(from, (at + 4) as u64)) {
+      panic("RangeError: f32x4.load: range is out of bounds");
+    }
+    const lo = velt_simd_f32x4_load(from, at as u64);
+    return Vector256.fromF32x4(lo, velt_simd_f32x4_load(from, (at + 4) as u64));
   }
 
   /** The vector of `lo`'s lanes (0 to 1) and `hi`'s (2 to 3). */
   static fromF64x2(lo: f64x2, hi: f64x2): Vector256<f64> {
-    return { lo: lo.asU8x16(), hi: hi.asU8x16() };
+    return { lo: velt_simd_f64x2_as_u8x16(lo), hi: velt_simd_f64x2_as_u8x16(hi) };
   }
 
   /** The 4 lanes of `from` from `at` on. */
   static loadF64(from: f64[], at: usize = 0): Vector256<f64> {
-    return Vector256.fromF64x2(f64x2.load(from, at), f64x2.load(from, at + 2));
+    if (!velt_simd_f64x2_fits(from, at as u64) || !velt_simd_f64x2_fits(from, (at + 2) as u64)) {
+      panic("RangeError: f64x2.load: range is out of bounds");
+    }
+    const lo = velt_simd_f64x2_load(from, at as u64);
+    return Vector256.fromF64x2(lo, velt_simd_f64x2_load(from, (at + 2) as u64));
   }
 }
 
@@ -136,169 +172,279 @@ extend Vector256<u8> {
 
   /** Stores its 32 lanes in `to` from `at` on. */
   store(to: u8[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 16);
+    if (!velt_simd_u8x16_fits(to, at as u64)) {
+      panic("RangeError: u8x16.store: range is out of bounds");
+    }
+    velt_simd_u8x16_store(this.lower(), to, at as u64);
+    if (!velt_simd_u8x16_fits(to, (at + 16) as u64)) {
+      panic("RangeError: u8x16.store: range is out of bounds");
+    }
+    velt_simd_u8x16_store(this.upper(), to, (at + 16) as u64);
   }
 }
 
 extend Vector256<i8> {
   /** Lanes 0 to 15. */
   lower(): i8x16 {
-    return this.lo.asI8x16();
+    return velt_simd_u8x16_as_i8x16(this.lo);
   }
 
   /** Lanes 16 to 31. */
   upper(): i8x16 {
-    return this.hi.asI8x16();
+    return velt_simd_u8x16_as_i8x16(this.hi);
   }
 
   /** Stores its 32 lanes in `to` from `at` on. */
   store(to: i8[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 16);
+    if (!velt_simd_i8x16_fits(to, at as u64)) {
+      panic("RangeError: i8x16.store: range is out of bounds");
+    }
+    velt_simd_i8x16_store(this.lower(), to, at as u64);
+    if (!velt_simd_i8x16_fits(to, (at + 16) as u64)) {
+      panic("RangeError: i8x16.store: range is out of bounds");
+    }
+    velt_simd_i8x16_store(this.upper(), to, (at + 16) as u64);
   }
 }
 
 extend Vector256<u16> {
   /** Lanes 0 to 7. */
   lower(): u16x8 {
-    return this.lo.asU16x8();
+    return velt_simd_u8x16_as_u16x8(this.lo);
   }
 
   /** Lanes 8 to 15. */
   upper(): u16x8 {
-    return this.hi.asU16x8();
+    return velt_simd_u8x16_as_u16x8(this.hi);
   }
 
   /** Stores its 16 lanes in `to` from `at` on. */
   store(to: u16[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 8);
+    if (!velt_simd_u16x8_fits(to, at as u64)) {
+      panic("RangeError: u16x8.store: range is out of bounds");
+    }
+    velt_simd_u16x8_store(this.lower(), to, at as u64);
+    if (!velt_simd_u16x8_fits(to, (at + 8) as u64)) {
+      panic("RangeError: u16x8.store: range is out of bounds");
+    }
+    velt_simd_u16x8_store(this.upper(), to, (at + 8) as u64);
   }
 }
 
 extend Vector256<i16> {
   /** Lanes 0 to 7. */
   lower(): i16x8 {
-    return this.lo.asI16x8();
+    return velt_simd_u8x16_as_i16x8(this.lo);
   }
 
   /** Lanes 8 to 15. */
   upper(): i16x8 {
-    return this.hi.asI16x8();
+    return velt_simd_u8x16_as_i16x8(this.hi);
   }
 
   /** Stores its 16 lanes in `to` from `at` on. */
   store(to: i16[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 8);
+    if (!velt_simd_i16x8_fits(to, at as u64)) {
+      panic("RangeError: i16x8.store: range is out of bounds");
+    }
+    velt_simd_i16x8_store(this.lower(), to, at as u64);
+    if (!velt_simd_i16x8_fits(to, (at + 8) as u64)) {
+      panic("RangeError: i16x8.store: range is out of bounds");
+    }
+    velt_simd_i16x8_store(this.upper(), to, (at + 8) as u64);
   }
 }
 
 extend Vector256<u32> {
   /** Lanes 0 to 3. */
   lower(): u32x4 {
-    return this.lo.asU32x4();
+    return velt_simd_u8x16_as_u32x4(this.lo);
   }
 
   /** Lanes 4 to 7. */
   upper(): u32x4 {
-    return this.hi.asU32x4();
+    return velt_simd_u8x16_as_u32x4(this.hi);
   }
 
   /** Stores its 8 lanes in `to` from `at` on. */
   store(to: u32[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 4);
+    if (!velt_simd_u32x4_fits(to, at as u64)) {
+      panic("RangeError: u32x4.store: range is out of bounds");
+    }
+    velt_simd_u32x4_store(this.lower(), to, at as u64);
+    if (!velt_simd_u32x4_fits(to, (at + 4) as u64)) {
+      panic("RangeError: u32x4.store: range is out of bounds");
+    }
+    velt_simd_u32x4_store(this.upper(), to, (at + 4) as u64);
   }
 }
 
 extend Vector256<i32> {
   /** Lanes 0 to 3. */
   lower(): i32x4 {
-    return this.lo.asI32x4();
+    return velt_simd_u8x16_as_i32x4(this.lo);
   }
 
   /** Lanes 4 to 7. */
   upper(): i32x4 {
-    return this.hi.asI32x4();
+    return velt_simd_u8x16_as_i32x4(this.hi);
   }
 
   /** Stores its 8 lanes in `to` from `at` on. */
   store(to: i32[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 4);
+    if (!velt_simd_i32x4_fits(to, at as u64)) {
+      panic("RangeError: i32x4.store: range is out of bounds");
+    }
+    velt_simd_i32x4_store(this.lower(), to, at as u64);
+    if (!velt_simd_i32x4_fits(to, (at + 4) as u64)) {
+      panic("RangeError: i32x4.store: range is out of bounds");
+    }
+    velt_simd_i32x4_store(this.upper(), to, (at + 4) as u64);
   }
 }
 
 extend Vector256<u64> {
   /** Lanes 0 to 1. */
   lower(): u64x2 {
-    return this.lo.asU64x2();
+    return velt_simd_u8x16_as_u64x2(this.lo);
   }
 
   /** Lanes 2 to 3. */
   upper(): u64x2 {
-    return this.hi.asU64x2();
+    return velt_simd_u8x16_as_u64x2(this.hi);
   }
 
   /** Stores its 4 lanes in `to` from `at` on. */
   store(to: u64[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 2);
+    if (!velt_simd_u64x2_fits(to, at as u64)) {
+      panic("RangeError: u64x2.store: range is out of bounds");
+    }
+    velt_simd_u64x2_store(this.lower(), to, at as u64);
+    if (!velt_simd_u64x2_fits(to, (at + 2) as u64)) {
+      panic("RangeError: u64x2.store: range is out of bounds");
+    }
+    velt_simd_u64x2_store(this.upper(), to, (at + 2) as u64);
   }
 }
 
 extend Vector256<i64> {
   /** Lanes 0 to 1. */
   lower(): i64x2 {
-    return this.lo.asI64x2();
+    return velt_simd_u8x16_as_i64x2(this.lo);
   }
 
   /** Lanes 2 to 3. */
   upper(): i64x2 {
-    return this.hi.asI64x2();
+    return velt_simd_u8x16_as_i64x2(this.hi);
   }
 
   /** Stores its 4 lanes in `to` from `at` on. */
   store(to: i64[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 2);
+    if (!velt_simd_i64x2_fits(to, at as u64)) {
+      panic("RangeError: i64x2.store: range is out of bounds");
+    }
+    velt_simd_i64x2_store(this.lower(), to, at as u64);
+    if (!velt_simd_i64x2_fits(to, (at + 2) as u64)) {
+      panic("RangeError: i64x2.store: range is out of bounds");
+    }
+    velt_simd_i64x2_store(this.upper(), to, (at + 2) as u64);
   }
 }
 
 extend Vector256<f32> {
   /** Lanes 0 to 3. */
   lower(): f32x4 {
-    return this.lo.asF32x4();
+    return velt_simd_u8x16_as_f32x4(this.lo);
   }
 
   /** Lanes 4 to 7. */
   upper(): f32x4 {
-    return this.hi.asF32x4();
+    return velt_simd_u8x16_as_f32x4(this.hi);
   }
 
   /** Stores its 8 lanes in `to` from `at` on. */
   store(to: f32[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 4);
+    if (!velt_simd_f32x4_fits(to, at as u64)) {
+      panic("RangeError: f32x4.store: range is out of bounds");
+    }
+    velt_simd_f32x4_store(this.lower(), to, at as u64);
+    if (!velt_simd_f32x4_fits(to, (at + 4) as u64)) {
+      panic("RangeError: f32x4.store: range is out of bounds");
+    }
+    velt_simd_f32x4_store(this.upper(), to, (at + 4) as u64);
   }
 }
 
 extend Vector256<f64> {
   /** Lanes 0 to 1. */
   lower(): f64x2 {
-    return this.lo.asF64x2();
+    return velt_simd_u8x16_as_f64x2(this.lo);
   }
 
   /** Lanes 2 to 3. */
   upper(): f64x2 {
-    return this.hi.asF64x2();
+    return velt_simd_u8x16_as_f64x2(this.hi);
   }
 
   /** Stores its 4 lanes in `to` from `at` on. */
   store(to: f64[], at: usize = 0) {
-    this.lower().store(to, at);
-    this.upper().store(to, at + 2);
+    if (!velt_simd_f64x2_fits(to, at as u64)) {
+      panic("RangeError: f64x2.store: range is out of bounds");
+    }
+    velt_simd_f64x2_store(this.lower(), to, at as u64);
+    if (!velt_simd_f64x2_fits(to, (at + 2) as u64)) {
+      panic("RangeError: f64x2.store: range is out of bounds");
+    }
+    velt_simd_f64x2_store(this.upper(), to, (at + 2) as u64);
   }
 }
+
+// velt/simd's externs for the 128-bit parts (its `asU8x16`, `load` and `store` call them).
+declare function velt_simd_u8x16_fits(xs: u8[], at: u64): bool;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+declare function velt_simd_i8x16_as_u8x16(v: i8x16): u8x16;
+declare function velt_simd_u8x16_as_i8x16(v: u8x16): i8x16;
+declare function velt_simd_i8x16_fits(xs: i8[], at: u64): bool;
+declare function velt_simd_i8x16_load(from: i8[], at: u64): i8x16;
+declare function velt_simd_i8x16_store(v: i8x16, to: i8[], at: u64);
+declare function velt_simd_u16x8_as_u8x16(v: u16x8): u8x16;
+declare function velt_simd_u8x16_as_u16x8(v: u8x16): u16x8;
+declare function velt_simd_u16x8_fits(xs: u16[], at: u64): bool;
+declare function velt_simd_u16x8_load(from: u16[], at: u64): u16x8;
+declare function velt_simd_u16x8_store(v: u16x8, to: u16[], at: u64);
+declare function velt_simd_i16x8_as_u8x16(v: i16x8): u8x16;
+declare function velt_simd_u8x16_as_i16x8(v: u8x16): i16x8;
+declare function velt_simd_i16x8_fits(xs: i16[], at: u64): bool;
+declare function velt_simd_i16x8_load(from: i16[], at: u64): i16x8;
+declare function velt_simd_i16x8_store(v: i16x8, to: i16[], at: u64);
+declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
+declare function velt_simd_u8x16_as_u32x4(v: u8x16): u32x4;
+declare function velt_simd_u32x4_fits(xs: u32[], at: u64): bool;
+declare function velt_simd_u32x4_load(from: u32[], at: u64): u32x4;
+declare function velt_simd_u32x4_store(v: u32x4, to: u32[], at: u64);
+declare function velt_simd_i32x4_as_u8x16(v: i32x4): u8x16;
+declare function velt_simd_u8x16_as_i32x4(v: u8x16): i32x4;
+declare function velt_simd_i32x4_fits(xs: i32[], at: u64): bool;
+declare function velt_simd_i32x4_load(from: i32[], at: u64): i32x4;
+declare function velt_simd_i32x4_store(v: i32x4, to: i32[], at: u64);
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_fits(xs: u64[], at: u64): bool;
+declare function velt_simd_u64x2_load(from: u64[], at: u64): u64x2;
+declare function velt_simd_u64x2_store(v: u64x2, to: u64[], at: u64);
+declare function velt_simd_i64x2_as_u8x16(v: i64x2): u8x16;
+declare function velt_simd_u8x16_as_i64x2(v: u8x16): i64x2;
+declare function velt_simd_i64x2_fits(xs: i64[], at: u64): bool;
+declare function velt_simd_i64x2_load(from: i64[], at: u64): i64x2;
+declare function velt_simd_i64x2_store(v: i64x2, to: i64[], at: u64);
+declare function velt_simd_f32x4_as_u8x16(v: f32x4): u8x16;
+declare function velt_simd_u8x16_as_f32x4(v: u8x16): f32x4;
+declare function velt_simd_f32x4_fits(xs: f32[], at: u64): bool;
+declare function velt_simd_f32x4_load(from: f32[], at: u64): f32x4;
+declare function velt_simd_f32x4_store(v: f32x4, to: f32[], at: u64);
+declare function velt_simd_f64x2_as_u8x16(v: f64x2): u8x16;
+declare function velt_simd_u8x16_as_f64x2(v: u8x16): f64x2;
+declare function velt_simd_f64x2_fits(xs: f64[], at: u64): bool;
+declare function velt_simd_f64x2_load(from: f64[], at: u64): f64x2;
+declare function velt_simd_f64x2_store(v: f64x2, to: f64[], at: u64);
