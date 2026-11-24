@@ -393,6 +393,7 @@ async function main() {{
 /// runs. The gaps (5 ms against 400 ms, 400 ms against 2 s) leave room for a loaded CI runner,
 /// where a pinned 5 ms timer came after a 60 ms one (#2883).
 #[test]
+#[cfg_attr(target_os = "macos", ignore = "flaky on loaded macOS runners: #3690")]
 fn a_pinned_spawn_runs_its_timers() {
     if !std_builds_here() {
         return;
