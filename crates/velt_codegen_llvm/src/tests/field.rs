@@ -46,7 +46,7 @@ fn module(x86: bool) -> String {
     let mut m = String::new();
     let mut seen = std::collections::BTreeSet::new();
     for op in FieldOp::ALL {
-        let (name, defs, _, _) = crate::field::helper(op.symbol(), x86).expect("a helper");
+        let (name, defs, _, _) = crate::field::helper(op.symbol(), x86, false).expect("a helper");
         for d in defs {
             if seen.insert(d.clone()) {
                 m.push_str(&d);
@@ -73,7 +73,7 @@ fn module(x86: bool) -> String {
         ));
     }
     if x86 {
-        m.push_str("define void @set_cpu(i8 %v) {\n  store i8 %v, ptr @velt.field.cpu, align 1\n  ret void\n}\n");
+        m.push_str("define void @set_cpu(i8 %v) {\n  %y = icmp eq i8 %v, 2\n  %w = select i1 %y, i64 16777728, i64 0\n  store i64 %w, ptr @velt_cpu_word, align 8\n  ret void\n}\n");
     } else {
         m.push_str("define void @set_cpu(i8 %v) {\n  ret void\n}\n");
     }
@@ -256,4 +256,33 @@ fn run(clang: &Path, dir: &Path, x86: bool, forms: &[&str]) {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// The fast form's check is the CPU feature word's BMI2 and ADX bits (so `VELT_CPU_DISABLE`
+/// turns it off), or nothing where `--cpu` guarantees both; never a CPUID of its own.
+#[test]
+fn the_fast_form_is_chosen_by_the_cpu_feature_word() {
+    let mask = velt_vir::simd::Ext::AdxX86.mask();
+    assert_eq!(mask, (1 << 24) | (1 << 9), "ADX's bit and BMI2's");
+    for op in FieldOp::ALL {
+        let (_, defs, _, _) = crate::field::helper(op.symbol(), true, false).expect("a helper");
+        let text = defs.join("\n");
+        assert!(!text.contains("cpuid"), "{op:?} asks CPUID itself");
+        if matches!(op, FieldOp::P256Add | FieldOp::P256Sub) {
+            continue;
+        }
+        assert!(text.contains("load i64, ptr @velt_cpu_word"), "{op:?}");
+        assert!(text.contains(&format!("and i64 %w, {mask}")), "{op:?}");
+        assert!(
+            defs.iter().any(|d| d == crate::simd::WORD),
+            "{op:?} defines the word"
+        );
+        let (_, known, _, _) = crate::field::helper(op.symbol(), true, true).expect("a helper");
+        let known = known.join("\n");
+        assert!(
+            !known.contains("@velt_cpu_word"),
+            "{op:?} reads the word under `--cpu`"
+        );
+        assert!(known.contains("define internal i1 @velt.field.has_adx() alwaysinline nounwind {\nentry:\n  ret i1 true"));
+    }
 }

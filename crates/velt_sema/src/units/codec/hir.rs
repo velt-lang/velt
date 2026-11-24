@@ -334,6 +334,7 @@ enums! {
         30 => Sha3Arm,
         31 => Fp16Arm,
         32 => I8mmArm,
+        33 => AdxX86,
     }
     DynMemberKind {
         0 => Method,

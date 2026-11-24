@@ -29,7 +29,7 @@ pub const DEFAULT_X86_CPU: &str = "x86-64-v2";
 /// and the Cranelift ISA flag (`None`: Cranelift does not use the feature). The order is the
 /// feature word's x86 bits (velt_common `cpu_features`, std/lang/cpu), part of rt_abi.md "CPU
 /// check".
-pub const X86_FEATURES: [(&str, Option<&str>); 24] = [
+pub const X86_FEATURES: [(&str, Option<&str>); 25] = [
     ("SSE3", Some("has_sse3")),
     ("SSSE3", Some("has_ssse3")),
     ("SSE4.1", Some("has_sse41")),
@@ -54,6 +54,7 @@ pub const X86_FEATURES: [(&str, Option<&str>); 24] = [
     ("SHA", None),
     ("PCLMULQDQ", None),
     ("AES", None),
+    ("ADX", None),
 ];
 
 /// The bits of [`X86_FEATURES`] a CPU feature needs (`velt_vir::simd::Ext`, velt_common's
@@ -65,7 +66,7 @@ pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
 
 /// The macro clang defines (`clang -dM -E -march=<cpu>`) for each feature of [`X86_FEATURES`], in
 /// its order: how the LLVM backend learns what a named CPU lets clang use.
-pub const X86_FEATURE_MACROS: [&str; 24] = [
+pub const X86_FEATURE_MACROS: [&str; 25] = [
     "__SSE3__",
     "__SSSE3__",
     "__SSE4_1__",
@@ -90,6 +91,7 @@ pub const X86_FEATURE_MACROS: [&str; 24] = [
     "__SHA__",
     "__PCLMUL__",
     "__AES__",
+    "__ADX__",
 ];
 
 /// The features of [`X86_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.

@@ -14,7 +14,7 @@
 // The generators name limb `k` of each operand and register `k` of the product by index.
 #![allow(clippy::needless_range_loop)]
 
-use crate::field::{adx_product, adx_square_product, asm_text, Ops, CPU_BYTE, HAS_ADX, T};
+use crate::field::{adx_product, adx_square_product, asm_text, has_adx, Ops, T};
 
 /// The scratch area's slots (32 bytes each).
 const X1: usize = 0;
@@ -155,7 +155,7 @@ fn step() -> Vec<String> {
 }
 
 /// The helper (module docs): `(r, d, u, k) -> i1`.
-pub(crate) fn ladder_helper(name: &str, x86: bool) -> Vec<String> {
+pub(crate) fn ladder_helper(name: &str, x86: bool, adx: bool) -> Vec<String> {
     if !x86 {
         return vec![format!(
             "define internal i1 {name}(ptr %r, i64 %d, i64 %u, i64 %k) alwaysinline nounwind {{\n  ret i1 false\n}}"
@@ -209,10 +209,7 @@ pub(crate) fn ladder_helper(name: &str, x86: bool) -> Vec<String> {
          %sw = xor i64 %prev, %bit\n  %mask = sub i64 0, %sw\n",
     );
     cswap(&mut ir, "l", "%mask");
-    ir.push_str(&format!(
-        "  %rs = call {{ ptr, ptr }} asm sideeffect \"{}\", \"={{rsi}},={{rdi}},0,1,~{{rax}},~{{rdx}},~{{rcx}},~{{r8}},~{{r9}},~{{r10}},~{{r11}},~{{r12}},~{{r13}},~{{r14}},~{{r15}},~{{memory}},~{{dirflag}},~{{fpsr}},~{{flags}}\"(ptr %s, ptr %s)\n",
-        asm_text(&step())
-    ));
+    ir.push_str(&on_scratch(&step()));
     ir.push_str(
         "  %next = sub i64 %pos, 1\n  %more = icmp ne i64 %pos, 0\n  \
          br i1 %more, label %loop, label %done\n\
@@ -222,7 +219,46 @@ pub(crate) fn ladder_helper(name: &str, x86: bool) -> Vec<String> {
     freeze(&mut ir, "x", X2, "%pd", 0);
     freeze(&mut ir, "z", Z2, "%pd", 32);
     ir.push_str("  ret i1 true\n}");
-    vec![HAS_ADX.to_string(), CPU_BYTE.to_string(), ir]
+    let mut defs = has_adx(adx);
+    defs.push(ir);
+    defs
+}
+
+/// The assembly `lines` run on the scratch area at `%s` (RSI, and RDI as a second pointer).
+fn on_scratch(lines: &[String]) -> String {
+    format!(
+        "  %rs = call {{ ptr, ptr }} asm sideeffect \"{}\", \"={{rsi}},={{rdi}},0,1,~{{rax}},~{{rdx}},~{{rcx}},~{{r8}},~{{r9}},~{{r10}},~{{r11}},~{{r12}},~{{r13}},~{{r14}},~{{r15}},~{{memory}},~{{dirflag}},~{{fpsr}},~{{flags}}\"(ptr %s, ptr %s)\n",
+        asm_text(lines)
+    )
+}
+
+/// Test entry points (tests/field25519.rs) for the step's operations on their own, whose rare
+/// carries random ladders don't reach: `@piece_<op>(ptr %s)` computes slot 2 from slots 0 and 1
+/// of a scratch area (`add`, `sub`, `mul`, `sqr`, `a24`), and `@piece_freeze(ptr %s)` reduces
+/// slot 0 into slot 2.
+#[cfg(test)]
+pub(crate) fn pieces() -> String {
+    type Piece = fn(&mut Vec<String>);
+    let mut m = String::new();
+    let ops: [(&str, Piece); 5] = [
+        ("add", |o| add_sub(o, true, 2, 0, 1)),
+        ("sub", |o| add_sub(o, false, 2, 0, 1)),
+        ("mul", |o| mul(o, 2, 0, 1)),
+        ("sqr", |o| sqr(o, 2, 0)),
+        ("a24", |o| mul_a24(o, 2, 0)),
+    ];
+    for (name, op) in ops {
+        let mut lines = vec![];
+        op(&mut lines);
+        m.push_str(&format!(
+            "define void @piece_{name}(ptr %s) {{\n{}  ret void\n}}\n",
+            on_scratch(&lines)
+        ));
+    }
+    m.push_str("define void @piece_freeze(ptr %s) {\n");
+    freeze(&mut m, "x", 0, "%s", 64);
+    m.push_str("  ret void\n}\n");
+    m
 }
 
 /// Swaps (X2, Z2) with (X3, Z3) in the scratch area where `mask` is all ones, without a branch.
@@ -243,8 +279,10 @@ fn cswap(ir: &mut String, tag: &str, mask: &str) {
     }
 }
 
-/// Slot `s` (below 2^256) reduced mod 2^255 - 19 and stored at `base + off`: bit 255 folded in as
-/// 19 twice, then p subtracted when the value plus 19 reaches 2^255, all as one i256.
+/// Slot `s` (below 2^256) reduced mod 2^255 - 19 and stored at `base + off`, as one i256: bit 255
+/// folded in as 19, then p subtracted when the value plus 19 reaches 2^255. One fold is enough:
+/// after it the value `v` is below 2^255 + 19, and `v + 19 >= 2^255` is `v >= p`, where `v - p`
+/// is below 38.
 fn freeze(ir: &mut String, tag: &str, s: usize, base: &str, off: usize) {
     let low = "57896044618658097711785492504343953926634992332820282019728792003956564819967";
     let mut v = format!("%{tag}v0");
@@ -260,13 +298,11 @@ fn freeze(ir: &mut String, tag: &str, s: usize, base: &str, off: usize) {
         ));
         v = format!("%{tag}v{}", k + 1);
     }
-    for round in 0..2 {
-        ir.push_str(&format!(
-            "  %{tag}top{round} = lshr i256 {v}, 255\n  %{tag}m{round} = mul i256 %{tag}top{round}, 19\n  \
-             %{tag}lo{round} = and i256 {v}, {low}\n  %{tag}f{round} = add i256 %{tag}lo{round}, %{tag}m{round}\n"
-        ));
-        v = format!("%{tag}f{round}");
-    }
+    ir.push_str(&format!(
+        "  %{tag}top = lshr i256 {v}, 255\n  %{tag}m = mul i256 %{tag}top, 19\n  \
+         %{tag}lo = and i256 {v}, {low}\n  %{tag}f = add i256 %{tag}lo, %{tag}m\n"
+    ));
+    v = format!("%{tag}f");
     ir.push_str(&format!(
         "  %{tag}plus = add i256 {v}, 19\n  %{tag}over = lshr i256 %{tag}plus, 255\n  \
          %{tag}ge = icmp ne i256 %{tag}over, 0\n  %{tag}minus = and i256 %{tag}plus, {low}\n  \

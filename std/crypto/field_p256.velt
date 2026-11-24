@@ -1,13 +1,15 @@
 // velt/crypto (internal): arithmetic mod p = 2^256 - 2^224 + 2^192 + 2^96 - 1 (NIST P-256) in
-// four 64-bit limbs, little-endian, in the Montgomery domain (x stands for x * 2^256 mod p), as
-// ring: a product (or a square, with its 10 distinct limb products) is reduced in four rounds
-// whose multiplier is the low limb itself (p = -1 mod 2^64), with p's sparse limbs as shifts.
-// Each limb product is a 128-bit value from `*` and `Math.umulh`; carries and borrows are
-// `(s < a) as u64`, never a ternary; the final subtraction of p is a masked select. Constant
-// time: nothing branches on or indexes by a limb's value.
+// four 64-bit limbs, little-endian, in the Montgomery domain (x stands for x * 2^256 mod p).
+// Each operation is a `velt_field_p256_*` intrinsic that the backends emit inline: the
+// reference, the forms per target and how one is chosen are velt_vir's `field.rs` and rt_abi.md
+// "Field arithmetic", which is also where the constant-time property lives now (nothing branches
+// on or indexes by a limb's value). This file keeps the rest, built on them: loading, copying and
+// zeroing registers, the register checks, repeated squaring and inversion, the constant-time
+// swap, blend and zero test, and decoding and encoding with the Montgomery domain's entry and
+// exit.
 //
 // Elements live in registers (four limbs each) of one array inside `FeP256`, like `Fe25519`:
-// operations name registers by number, load operands into locals and store the result once,
+// operations name registers by number, and each reads its operands before it writes its result,
 // so `mul(a, a, b)` works in place (#2403). Every result is fully reduced (below p).
 
 import { inline, noInline } from "velt/lang/intrinsics";

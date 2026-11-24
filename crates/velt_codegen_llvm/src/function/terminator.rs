@@ -348,8 +348,11 @@ impl Emitter<'_> {
             }
             return Some(name);
         }
+        // BMI2 and ADX where `--cpu` guarantees them: the helpers take their fast form without
+        // reading the CPU feature word.
+        let adx = self.baseline_has(velt_vir::simd::Ext::AdxX86);
         if let Some((name, definitions, want_params, want_ret)) =
-            crate::field::helper(&e.symbol, self.simd == crate::simd::Arch::Sse2)
+            crate::field::helper(&e.symbol, self.simd == crate::simd::Arch::Sse2, adx)
         {
             if params != want_params || ret != want_ret {
                 return None;

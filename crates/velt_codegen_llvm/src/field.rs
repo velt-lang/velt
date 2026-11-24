@@ -5,9 +5,10 @@
 //! multi-word product in flags poorly. A CPU with BMI2 and ADX (every x86-64 CPU since about
 //! 2014) runs the form with `mulx`, which leaves the flags alone, and two carry chains at once
 //! (`adcx` on CF for the low halves, `adox` on OF for the high ones): about 130 instructions. Any
-//! other x86-64 CPU runs the form with `mul`, about 180. The helper asks CPUID once and keeps the
-//! answer in a byte of its own (`@velt.field.cpu`). Every other target computes the same product
-//! in plain IR with 128-bit multiplies.
+//! other x86-64 CPU runs the form with `mul`, about 180. The choice reads the CPU's feature word
+//! (rt_abi.md "CPU check": BMI2 and ADX, so `VELT_CPU_DISABLE` turns the form off), or is made
+//! at compile time where `--cpu` guarantees both ([`has_adx`]). Every other target computes the
+//! same product in plain IR with 128-bit multiplies.
 //!
 //! Both assembly forms are one interleaved Montgomery multiplication: for each limb `b_i` of
 //! the second operand, the accumulator `x` (five limbs and a carry limb) gains `a * b_i`, and
@@ -24,19 +25,24 @@
 use velt_vir::field::FieldOp;
 use velt_vir::vir::Ty;
 
-/// The helper computing field operation `symbol` on target `x86` (x86-64 or not): its name,
-/// what the module must define for it, and the extern's signature.
-pub(crate) fn helper(symbol: &str, x86: bool) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
+/// The helper computing field operation `symbol` on target `x86` (x86-64 or not), `adx` where
+/// the build guarantees BMI2 and ADX (`--cpu`): its name, what the module must define for it,
+/// and the extern's signature.
+pub(crate) fn helper(
+    symbol: &str,
+    x86: bool,
+    adx: bool,
+) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
     let op = FieldOp::of_symbol(symbol)?;
     let (params, ret) = op.signature();
     let name = format!("@velt.field.{}", op.symbol().strip_prefix("velt_field_")?);
     if op == FieldOp::P256Double {
-        return Some((name.clone(), double_helper(&name, x86), params, ret));
+        return Some((name.clone(), double_helper(&name, x86, adx), params, ret));
     }
     if op == FieldOp::X25519Ladder {
         return Some((
             name.clone(),
-            crate::field25519::ladder_helper(&name, x86),
+            crate::field25519::ladder_helper(&name, x86, adx),
             params,
             ret,
         ));
@@ -80,17 +86,16 @@ pub(crate) fn helper(symbol: &str, x86: bool) -> Option<(String, Vec<String>, Ve
             FieldOp::P256Sqr => adx_sqr(Ops::STANDALONE),
             _ => adx_mul(Ops::STANDALONE),
         };
-        let adx = format!("\"{}\"", asm_text(&adx_lines));
+        let fast = format!("\"{}\"", asm_text(&adx_lines));
         let plain = format!("\"{}\"", asm_text(&mul_rows()));
         out.push_str(&format!(
             "  %slot = alloca ptr, align 8\n  store ptr %pd, ptr %slot, align 8\n  \
              %fast = call i1 @velt.field.has_adx()\n  \
              br i1 %fast, label %adx, label %plain\n\
-             adx:\n  %ra = call {{ ptr, ptr }} asm sideeffect {adx}, \"{ADX_CONSTRAINTS}\"(ptr %pa, ptr %pb, ptr elementtype(ptr) %slot)\n  ret void\n\
+             adx:\n  %ra = call {{ ptr, ptr }} asm sideeffect {fast}, \"{ADX_CONSTRAINTS}\"(ptr %pa, ptr %pb, ptr elementtype(ptr) %slot)\n  ret void\n\
              plain:\n  %rp = call {{ ptr, ptr }} asm sideeffect {plain}, \"{CONSTRAINTS}\"(ptr %pa, ptr %pb, ptr %pd)\n  ret void\n}}"
         ));
-        defs.push(HAS_ADX.to_string());
-        defs.push(CPU_BYTE.to_string());
+        defs.extend(has_adx(adx));
     } else {
         out.push_str(&portable());
         out.push_str("  ret void\n}");
@@ -357,7 +362,7 @@ fn add_sub(add: bool, o: Ops) -> Vec<String> {
 /// The fused doubling's helper: on x86-64 with BMI2 and ADX, the point copied into a scratch
 /// area, [`adx_double`], the result copied out, and true; false elsewhere. Out of line: it is
 /// two thousand instructions, and its callers double in a loop.
-fn double_helper(name: &str, x86: bool) -> Vec<String> {
+fn double_helper(name: &str, x86: bool, adx: bool) -> Vec<String> {
     if !x86 {
         return vec![format!(
             "define internal i1 {name}(ptr %r, i64 %d, i64 %p) alwaysinline nounwind {{\n  ret i1 false\n}}"
@@ -399,7 +404,9 @@ fn double_helper(name: &str, x86: bool) -> Vec<String> {
         }
     }
     ir.push_str("  ret i1 true\n}");
-    vec![HAS_ADX.to_string(), CPU_BYTE.to_string(), ir]
+    let mut defs = has_adx(adx);
+    defs.push(ir);
+    defs
 }
 
 /// `2^k a` (k >= 1), or `3 a` (`triple`), at `d`: the value stays in `T[0..4]` from one doubling
@@ -569,42 +576,27 @@ fn portable_add_sub(add: bool) -> String {
     ir
 }
 
-/// Whether the CPU has BMI2 and ADX: CPUID leaf 7, EBX bits 8 and 19 (where leaf 0 says leaf 7
-/// exists), asked once and kept in `@velt.field.cpu` (0: not asked, 1: no, 2: yes). A race asks
-/// twice and stores the same answer.
-pub(crate) const HAS_ADX: &str = "define internal i1 @velt.field.has_adx() alwaysinline nounwind {
-entry:
-  %k = load atomic i8, ptr @velt.field.cpu monotonic, align 1
-  %known = icmp ne i8 %k, 0
-  br i1 %known, label %done, label %ask
-ask:
-  %v = call i8 @velt.field.ask_cpu()
-  br label %done
-done:
-  %w = phi i8 [ %k, %entry ], [ %v, %ask ]
-  %r = icmp eq i8 %w, 2
-  ret i1 %r
+/// `@velt.field.has_adx()`, whether the CPU has BMI2 and ADX, and what it needs: `true` where the
+/// build guarantees both (`known`, from `--cpu`), else the CPU feature word's two bits
+/// (`adx-x86`'s mask, rt_abi.md "CPU check"), which std's start-up hook set before any Velt code
+/// runs, read as invariant.
+pub(crate) fn has_adx(known: bool) -> Vec<String> {
+    if known {
+        return vec![
+            "define internal i1 @velt.field.has_adx() alwaysinline nounwind {\nentry:\n  ret i1 true\n}"
+                .to_string(),
+        ];
+    }
+    let mask = velt_vir::simd::Ext::AdxX86.mask();
+    vec![
+        format!(
+            "define internal i1 @velt.field.has_adx() alwaysinline nounwind {{\nentry:\n  \
+             %w = load i64, ptr @velt_cpu_word, align 8, !invariant.load !{{}}\n  \
+             %m = and i64 %w, {mask}\n  %r = icmp eq i64 %m, {mask}\n  ret i1 %r\n}}"
+        ),
+        crate::simd::WORD.to_string(),
+    ]
 }
-define internal i8 @velt.field.ask_cpu() noinline cold nounwind {
-ask:
-  %l0 = call { i32, i64, i32, i32 } asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\", \"={ax},={si},={cx},={dx},0,2,~{dirflag},~{fpsr},~{flags}\"(i32 0, i32 0)
-  %max = extractvalue { i32, i64, i32, i32 } %l0, 0
-  %has7 = icmp uge i32 %max, 7
-  br i1 %has7, label %leaf7, label %store
-leaf7:
-  %l7 = call { i32, i64, i32, i32 } asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\", \"={ax},={si},={cx},={dx},0,2,~{dirflag},~{fpsr},~{flags}\"(i32 7, i32 0)
-  %ebx = extractvalue { i32, i64, i32, i32 } %l7, 1
-  %both = and i64 %ebx, 524544
-  %yes = icmp eq i64 %both, 524544
-  %v7 = select i1 %yes, i8 2, i8 1
-  br label %store
-store:
-  %v = phi i8 [ 1, %ask ], [ %v7, %leaf7 ]
-  store atomic i8 %v, ptr @velt.field.cpu monotonic, align 1
-  ret i8 %v
-}";
-
-pub(crate) const CPU_BYTE: &str = "@velt.field.cpu = internal global i8 0, align 1";
 
 /// The six accumulator registers, rotated: limb `k` of row `i` is `ACC[(i + k) % 6]`.
 const ACC: [&str; 6] = ["%r8", "%r9", "%r10", "%r11", "%r12", "%r13"];

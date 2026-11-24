@@ -120,13 +120,13 @@ fn the_x25519_ladder_matches_the_reference() {
 
 fn run(clang: &Path, dir: &Path, x86: bool, cpu: &str, fused: bool) {
     let (name, defs, _, _) =
-        crate::field::helper("velt_field_x25519_ladder", x86).expect("a helper");
+        crate::field::helper("velt_field_x25519_ladder", x86, false).expect("a helper");
     let mut m = defs.join("\n");
     m.push_str(&format!(
         "\ndefine i8 @ladder(ptr %r, i64 %d, i64 %u, i64 %k) {{\n  %v = call i1 {name}(ptr %r, i64 %d, i64 %u, i64 %k)\n  %w = zext i1 %v to i8\n  ret i8 %w\n}}\n"
     ));
     m.push_str(match x86 {
-        true => "define void @set_cpu(i8 %v) {\n  store i8 %v, ptr @velt.field.cpu, align 1\n  ret void\n}\n",
+        true => "define void @set_cpu(i8 %v) {\n  %y = icmp eq i8 %v, 2\n  %w = select i1 %y, i64 16777728, i64 0\n  store i64 %w, ptr @velt_cpu_word, align 8\n  ret void\n}\n",
         false => "define void @set_cpu(i8 %v) {\n  ret void\n}\n",
     });
     let (ll, c, exe) = (dir.join("x.ll"), dir.join("d.c"), dir.join("x.exe"));
@@ -180,4 +180,228 @@ fn run(clang: &Path, dir: &Path, x86: bool, cpu: &str, fused: bool) {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+// A little-endian number of any length, for the reference below.
+type Big = Vec<u64>;
+
+fn add_big(a: &[u64], b: &[u64]) -> Big {
+    let n = a.len().max(b.len()) + 1;
+    let mut out = vec![0; n];
+    let mut carry = 0u128;
+    for (i, o) in out.iter_mut().enumerate() {
+        let s = carry + *a.get(i).unwrap_or(&0) as u128 + *b.get(i).unwrap_or(&0) as u128;
+        *o = s as u64;
+        carry = s >> 64;
+    }
+    out
+}
+
+fn mul_big(a: &[u64], b: &[u64]) -> Big {
+    let mut out = vec![0u64; a.len() + b.len()];
+    for (i, &x) in a.iter().enumerate() {
+        let mut carry = 0u128;
+        for (j, &y) in b.iter().enumerate() {
+            let t = out[i + j] as u128 + x as u128 * y as u128 + carry;
+            out[i + j] = t as u64;
+            carry = t >> 64;
+        }
+        out[i + b.len()] = carry as u64;
+    }
+    out
+}
+
+/// `x` mod 2^255 - 19, fully reduced: the limbs above 2^256 folded in as 38 until four are left,
+/// then p subtracted while the value is at least p.
+fn modp(x: &[u64]) -> [u64; 4] {
+    let mut x: Big = x.to_vec();
+    while x.len() > 4 && x[4..].iter().any(|&w| w != 0) {
+        let hi = mul_big(&x[4..], &[38]);
+        x = add_big(&x[..4], &hi);
+    }
+    let mut v = [x[0], x[1], x[2], x[3]];
+    let ge = |v: &[u64; 4]| {
+        (0..4)
+            .rev()
+            .find(|&i| v[i] != P25519[i])
+            .is_none_or(|i| v[i] > P25519[i])
+    };
+    while ge(&v) {
+        let mut borrow = 0u128;
+        for i in 0..4 {
+            let d = (v[i] as u128).wrapping_sub(P25519[i] as u128 + borrow);
+            v[i] = d as u64;
+            borrow = (d >> 127) & 1;
+        }
+    }
+    v
+}
+
+/// `p - y` for `y` below p.
+fn p_minus(y: [u64; 4]) -> [u64; 4] {
+    let mut out = [0u64; 4];
+    let mut borrow = 0u128;
+    for i in 0..4 {
+        let d = (P25519[i] as u128).wrapping_sub(y[i] as u128 + borrow);
+        out[i] = d as u64;
+        borrow = (d >> 127) & 1;
+    }
+    out
+}
+
+/// `(2^256 k - 1) / d`, rounded down (`k`, `d` below 2^32): a number whose product with `d` has
+/// its low 256 bits just under 2^256 and `k - 1` above them.
+fn just_under(k: u64, d: u64) -> [u64; 4] {
+    let n: Big = vec![u64::MAX, u64::MAX, u64::MAX, u64::MAX, k - 1];
+    let mut out = [0u64; 5];
+    let mut rem = 0u128;
+    for i in (0..5).rev() {
+        let cur = (rem << 64) | n[i] as u128;
+        out[i] = (cur / d as u128) as u64;
+        rem = cur % d as u128;
+    }
+    assert_eq!(out[4], 0, "below 2^256");
+    [out[0], out[1], out[2], out[3]]
+}
+
+/// Runs `(op, a, b)` cases through the step's operations (`pieces`): op 0 add, 1 sub, 2 mul,
+/// 3 sqr, 4 a24, 5 freeze; writes each result (slot 2).
+const PIECES_DRIVER: &str = r#"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+void piece_add(uint64_t *); void piece_sub(uint64_t *); void piece_mul(uint64_t *);
+void piece_sqr(uint64_t *); void piece_a24(uint64_t *); void piece_freeze(uint64_t *);
+int main(int argc, char **argv) {
+  FILE *in = fopen(argv[1], "rb"), *out = fopen(argv[2], "wb");
+  uint64_t n; fread(&n, 8, 1, in);
+  for (uint64_t i = 0; i < n; i++) {
+    uint64_t c[9]; fread(c, 8, 9, in);
+    uint64_t s[12]; memset(s, 0, sizeof s);
+    memcpy(s, c + 1, 32); memcpy(s + 4, c + 5, 32);
+    switch (c[0]) {
+      case 0: piece_add(s); break;
+      case 1: piece_sub(s); break;
+      case 2: piece_mul(s); break;
+      case 3: piece_sqr(s); break;
+      case 4: piece_a24(s); break;
+      default: piece_freeze(s); break;
+    }
+    fwrite(s + 8, 8, 4, out);
+  }
+  fclose(out);
+  return 0;
+}
+"#;
+
+/// The step's operations on operands that force their rare second carries and borrows, which a
+/// random ladder reaches with a probability near 2^-250: a sum just over 2^256 - 38, a
+/// difference of 0 and 2^256 - 1, a product by a24 whose low half is just under 2^256 with a big
+/// carry limb (the fold's second 38), and values near 2^256 for the freeze. Each result must be
+/// congruent to the reference (the freeze's equal to it: fully reduced).
+#[test]
+fn the_step_operations_fold_every_carry() {
+    if cfg!(windows) || !cfg!(target_arch = "x86_64") {
+        eprintln!("note: skipping the X25519 step operations off x86-64 Linux and macOS");
+        return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    let adx =
+        std::arch::is_x86_feature_detected!("bmi2") && std::arch::is_x86_feature_detected!("adx");
+    #[cfg(not(target_arch = "x86_64"))]
+    let adx = false;
+    if !adx {
+        eprintln!("note: this CPU has no BMI2 and ADX; skipping the X25519 step operations");
+        return;
+    }
+    let Some(clang) = crate::find_clang() else {
+        eprintln!("note: clang not available; skipping the X25519 step operations");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("velt_x25519_pieces_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    struct Cleanup<'a>(&'a Path);
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.0);
+        }
+    }
+    let _cleanup = Cleanup(&dir);
+    let p = P25519;
+    let m = u64::MAX;
+    let edges: Vec<[u64; 4]> = vec![
+        [0, 0, 0, 0],
+        [1, 0, 0, 0],
+        [38, 0, 0, 0],
+        [p[0] - 1, p[1], p[2], p[3]],
+        p,
+        [m, m, m, 0x7fff_ffff_ffff_ffff],
+        [0, 0, 0, 1 << 63],
+        [m - 37, m, m, m],
+        [m - 29, m, m, m],
+        [m - 1, m, m, m],
+        [m, m, m, m],
+        just_under(100_000, 121_665),
+        just_under(121_664, 121_665),
+    ];
+    let mut cases: Vec<(u64, [u64; 4], [u64; 4])> = vec![];
+    for &a in &edges {
+        for &b in &edges {
+            cases.push((0, a, b));
+            cases.push((1, a, b));
+            cases.push((2, a, b));
+        }
+        cases.push((3, a, a));
+        cases.push((4, a, a));
+        cases.push((5, a, a));
+    }
+    let mut path = dir.join("cases.bin");
+    let mut bytes = (cases.len() as u64).to_le_bytes().to_vec();
+    for (op, a, b) in &cases {
+        bytes.extend(op.to_le_bytes());
+        for w in a.iter().chain(b) {
+            bytes.extend(w.to_le_bytes());
+        }
+    }
+    std::fs::write(&path, bytes).expect("cases");
+    let ll = dir.join("pieces.ll");
+    std::fs::write(&ll, crate::field25519::pieces()).expect("module");
+    let c = dir.join("driver.c");
+    std::fs::write(&c, PIECES_DRIVER).expect("driver");
+    let exe = dir.join("pieces");
+    let st = Command::new(&clang)
+        .args(["-O1", "-w"])
+        .arg(&ll)
+        .arg(&c)
+        .arg("-o")
+        .arg(&exe)
+        .status()
+        .expect("clang");
+    assert!(st.success(), "clang failed");
+    let out = dir.join("out.bin");
+    let st = Command::new(&exe)
+        .arg(&path)
+        .arg(&out)
+        .status()
+        .expect("run");
+    assert!(st.success(), "the driver failed");
+    path = out;
+    let got = std::fs::read(&path).expect("results");
+    for (i, (op, a, b)) in cases.iter().enumerate() {
+        let r: [u64; 4] = std::array::from_fn(|k| {
+            u64::from_le_bytes(got[32 * i + 8 * k..32 * i + 8 * k + 8].try_into().unwrap())
+        });
+        let want = match op {
+            0 => modp(&add_big(a, b)),
+            1 => modp(&add_big(&modp(a), &p_minus(modp(b)))),
+            2 | 3 => modp(&mul_big(a, b)),
+            4 => modp(&mul_big(a, &[121_665])),
+            _ => modp(a),
+        };
+        match op {
+            5 => assert_eq!(r, want, "freeze of {a:x?}"),
+            _ => assert_eq!(modp(&r), want, "op {op} of {a:x?} and {b:x?}: {r:x?}"),
+        }
+    }
 }
