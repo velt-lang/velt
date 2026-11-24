@@ -1,0 +1,16 @@
+// A handler runs on other threads, each with a copy of what it captures, and a `Response` owns a
+// resource (its fetched body's connection) without `clone()`: capturing one is refused, and the
+// error names `Response`, not a type inside it the program cannot change (std/net/http/fetch
+// response_cell.velt).
+import { serve } from "http-server";
+
+async function main() {
+  const r = new Response("x");
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    console.log(r.status);
+    return new Response("ok");
+  });
+  server.close();
+}
+
+await main();

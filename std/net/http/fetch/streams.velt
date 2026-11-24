@@ -20,20 +20,21 @@ extend Response {
     if (!this.streams()) {
       return null;
     }
-    return bodyStream(this.chunks(), this.bodyUsed);
+    return bodyStream(this.chunks(), this.bodyLocked());
   }
 }
 
 extend Request {
   /**
    * The body as a `ReadableStream` of `Uint8Array`s; null without a body. Reading it uses the
-   * body up, as `text()` does.
+   * body up, as `text()` does. A body that was read is a used stream, whose read throws, as in
+   * Node: also a received one, which has nothing left.
    */
   get body(): ReadableStream<Uint8Array> | null {
-    if (!this.hasBody()) {
+    if (!this.bodyUsed && !this.hasBody()) {
       return null;
     }
-    return bodyStream(this.chunks(), this.bodyUsed);
+    return bodyStream(this.chunks(), this.bodyLocked());
   }
 }
 
