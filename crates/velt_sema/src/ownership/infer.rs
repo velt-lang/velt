@@ -485,13 +485,18 @@ fn shares_param(
         return false;
     }
     let mut next = Vec::new();
-    let shares = with_body(cx, f, |cx, def| {
+    // Read in place: `f` may be a finished unit's function (std's, in a check by units).
+    let shares = (|| {
+        let cx: &Ctx = cx;
+        let Some(Def::Fn(def)) = cx.defs.get(f.0 as usize).and_then(|d| d.as_ref()) else {
+            return false;
+        };
         let Some(local) = def.params.get(param).map(|p| p.local) else {
             return false;
         };
         let is_param = |a: &Expr| matches!(a.kind, E::Local(l, _) if l == local);
         let mut shares = false;
-        visit::exprs_mut(&mut def.body.block, &mut |x: &mut Expr| match &x.kind {
+        crate::visit_ref::exprs(&def.body.block, &mut |x: &Expr| match &x.kind {
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::Share),
                 args,
@@ -510,7 +515,7 @@ fn shares_param(
             _ => {}
         });
         shares
-    });
+    })();
     shares || next.into_iter().any(|(g, i)| shares_param(cx, g, i, seen))
 }
 
