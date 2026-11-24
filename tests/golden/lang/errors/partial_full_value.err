@@ -1,0 +1,14 @@
+partial_full_value.velt:17:33: error: a value of type `Impl` cannot convert to `Partial<Ctx>` yet
+partial_full_value.velt:18:35: error: a value of type `Ctx` cannot convert to `Partial<Ctx>` yet
+partial_full_value.velt:23:6: error: a value of type `Ctx` cannot convert to `Partial<Ctx>` yet
+partial_full_value.velt:25:14: error: a value of type `Ctx` cannot convert to `Partial<Ctx>` yet
+partial_full_value.velt:28:24: error: a value of type `Ctx` cannot convert to `string | Partial<Ctx>` yet
+partial_full_value.velt:35:7: error: cannot assign to `name`: it is a readonly field
+partial_full_value.velt:40:21: error: a value of type `unknown` cannot convert to `Partial<Ctx>` yet
+partial_full_value.velt:42:31: error: a value of type `any` cannot convert to `Partial<Ctx>` yet
+partial_full_value.velt:43:17: error: a value of type `unknown` cannot convert to `string | Partial<Ctx>` yet
+partial_full_value.velt:44:44: error: a value of type `any` cannot convert to `Partial<Ctx> | undefined` yet
+partial_full_value.velt:51:35: error: a value of type `Derived` cannot convert to `Partial<Ctx>` yet
+partial_full_value.velt:53:34: error: a value of type `Ctx[]` cannot convert to `Partial<Ctx>[]` yet
+partial_full_value.velt:55:49: error: a value of type `Ctx[]` cannot convert to `readonly Partial<Ctx>[]` yet
+partial_full_value.velt:57:41: error: a value of type `() => Ctx` cannot convert to `() => Partial<Ctx>` yet
