@@ -137,9 +137,13 @@ not a reason for another round.
   `GOLDEN_SHARDS` in `crates/xtask/src/os.rs`: 4 on Windows, 3 on Linux, 2 on macOS), Linux
   always, Windows when the change touches OS-specific code, and macOS only when it touches code that
   really can differ there (`crates/xtask/src/os.rs`, below). For a change to WebAssembly code the
-  same build also packs the WebAssembly goldens, which then run in shards of their own
-  (`WASM_SHARDS` in `os.rs`: 4 on Windows and macOS, 2 on Linux) instead of in the lint-and-test
-  job, where on Windows they would take about 45 minutes. Enable it with `gh pr merge <n> --auto` in
+  Linux build also packs the WebAssembly goldens, which then run in shards of their own
+  (`WASM_SHARDS` in `os.rs`: 2 on Linux) instead of in the lint-and-test job. The module is the
+  same on every OS, so Windows and macOS run them in the queue (4 shards each) only for a change to
+  WebAssembly's host side, the tools that build and run the module (`WASM_HOST_PATHS` in `os.rs`:
+  the wasm linker and LLVM tool lookups, starting wasmtime, the test harness, the toolchain), and
+  only when the queue checks that OS anyway; a merge train (`--full`) runs them on Linux only. The
+  nightly runs them on every OS. Enable it with `gh pr merge <n> --auto` in
   the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
   session links, machine paths and review-process wording; editing the description re-runs it. It
@@ -148,7 +152,7 @@ not a reason for another round.
   `main` and runs its checks again.
 - A nightly workflow runs the whole gate with PostgreSQL and Redis (and the parser's robustness
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
-  goldens, which pull requests and the queue run only for WebAssembly changes), the differential
+  goldens, which pull requests and the queue run only for WebAssembly changes, on Linux), the differential
   tests against Node (`tests/difftest`), `declare c` checked against C headers (`c-headers`,
   through the pinned zig), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and

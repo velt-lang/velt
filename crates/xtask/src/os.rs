@@ -206,6 +206,36 @@ pub fn after_merge_reason(paths: &[String]) -> Option<String> {
         .map(|p| format!("{p} changed: refresh the build cache"))
 }
 
+/// The host side of the WebAssembly goldens: what finds and runs the tools that turn a program
+/// into a `.wasm` module and run it. The module is the same on every OS (the guest: the
+/// runtime `velt_rt_wasm`, the WebAssembly code generation, std, the goldens); what differs by
+/// OS is only the host's tooling: the paths and `.exe` names of LLVM's `opt`/`llc` and of
+/// `rust-lld` (`VELT_LLVM_BIN` on Windows, Homebrew's LLVM on macOS), the wasi-libc in the
+/// toolchain, how wasmtime and node are started, and the test that drives them all. The pinned
+/// toolchain (and its configuration) ships those tools per host. A change here runs the
+/// WebAssembly goldens on Windows and macOS too, when the queue checks that OS
+/// ([`other_os_reason`], [`macos_reason`]); any other WebAssembly change runs them on Linux only,
+/// and the nightly's `wasm-goldens` runs them on every OS.
+pub(crate) const WASM_HOST_PATHS: &[&str] = &[
+    "rust-toolchain.toml",
+    ".cargo/",
+    "crates/velt_link/src/wasm.rs",
+    "crates/velt_codegen_llvm/src/llc.rs",
+    "crates/veltc/src/commands/wasm.rs",
+    "crates/veltc/tests/wasm_goldens.rs",
+    "crates/veltc/tests/wasm_tools/",
+];
+
+/// Why the merge queue runs the WebAssembly goldens on the other OSes it checks, or `None` when
+/// Linux is enough ([`WASM_HOST_PATHS`]). Documentation never counts.
+pub fn wasm_host_reason(paths: &[String]) -> Option<String> {
+    paths
+        .iter()
+        .filter(|p| !p.ends_with(".md"))
+        .find(|p| WASM_HOST_PATHS.iter().any(|w| p.starts_with(w)))
+        .map(|p| format!("{p} runs WebAssembly's host tools"))
+}
+
 /// The runners the merge queue checks on: Linux always (first), the others when a change needs
 /// them ([`other_os_reason`], [`macos_reason`]).
 pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-latest"];
@@ -227,7 +257,8 @@ pub const GOLDEN_SHARDS: &[(&str, usize)] = &[
 ];
 
 /// How many jobs check the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) in parallel
-/// on each OS, in the merge queue when a change touches WebAssembly code and in the nightly, from
+/// on each OS, in the merge queue when a change touches WebAssembly code (on Windows and macOS
+/// only for its host side, [`WASM_HOST_PATHS`]) and in the nightly, from
 /// the build of the goldens' job (.github/workflows/queue-goldens.yml). They take about as long
 /// as all the other tests together: on a 4-vCPU Windows runner about 45 minutes in one job. The
 /// test splits them into 8 functions of about 330 s there, which the shards share (two each on
