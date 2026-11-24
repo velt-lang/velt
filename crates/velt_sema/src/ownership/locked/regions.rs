@@ -12,7 +12,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::Span;
 
 use crate::ctx::Ctx;
-use crate::hir::{Callee, DefId, Expr, ExprKind as E, FnDef, LocalId, Pat, PatKind, TyId, TyKind};
+use crate::hir::{
+    Callee, Def, DefId, Expr, ExprKind as E, FnDef, LocalId, Pat, PatKind, TyId, TyKind,
+};
 use crate::visit;
 
 /// May reach the locked value.
@@ -280,13 +282,13 @@ impl Regions {
 /// What a value of `e` may reach: the union of `local(l)` over the locals it mentions (through
 /// the captured variables of a closure it makes, `captured(n)`). Copy values and strings
 /// (immutable, with atomic counts) reach nothing.
-pub(super) fn reach(
-    cx: &mut Ctx,
+pub(super) fn reach<F: Facts + ?Sized>(
+    cx: &mut F,
     e: &Expr,
     local: &dyn Fn(LocalId) -> u64,
     captured: &dyn Fn(DefId) -> Vec<LocalId>,
 ) -> u64 {
-    if cx.is_copy(e.ty) || cx.is_string_value(e.ty) {
+    if cx.inert(e.ty) {
         return 0;
     }
     match &e.kind {
@@ -312,13 +314,121 @@ pub(super) fn reach(
         E::Call {
             callee: Callee::Def(g, _),
             ..
-        } if Some(*g) == cx.prelude_fn("structuredClone") => 0,
+        } if Some(*g) == cx.structured_clone() => 0,
         _ => {
             let mut kids = vec![];
             children(e, &mut kids);
             kids.iter()
                 .fold(0, |b, k| b | reach(cx, k, local, captured))
         }
+    }
+}
+
+/// Where [`reach`] and the summary walk (`super::summary`) read the facts about a body's types:
+/// `Ctx`, which computes them as asked (interning types and filling caches, so the body is taken
+/// out of `Ctx::defs` meanwhile), or [`TypeFacts`] learned beforehand, so the body is read in
+/// place (a finished unit's, in a check by units: `crate::units`).
+pub(super) trait Facts {
+    /// Copy values and strings reach nothing.
+    fn inert(&mut self, t: TyId) -> bool;
+    /// Does a value of call type `t` hold a promise ([`Ctx::holds_promise`])?
+    fn holds_promise(&mut self, t: TyId) -> bool;
+    /// May a value of argument type `t` hold a shared value ([`holds_shared`])?
+    fn holds_shared(&mut self, t: TyId) -> bool;
+    fn structured_clone(&self) -> Option<DefId>;
+}
+
+impl Facts for Ctx<'_> {
+    fn inert(&mut self, t: TyId) -> bool {
+        self.is_copy(t) || self.is_string_value(t)
+    }
+
+    fn holds_promise(&mut self, t: TyId) -> bool {
+        Ctx::holds_promise(self, t)
+    }
+
+    fn holds_shared(&mut self, t: TyId) -> bool {
+        holds_shared(self, t)
+    }
+
+    fn structured_clone(&self) -> Option<DefId> {
+        self.prelude_fn("structuredClone")
+    }
+}
+
+/// The facts about the types of some bodies, learned beforehand ([`Facts`]).
+pub(super) struct TypeFacts {
+    inert: FxHashMap<TyId, bool>,
+    /// For the types of calls.
+    promise: FxHashMap<TyId, bool>,
+    /// For the types of call arguments.
+    shared: FxHashMap<TyId, bool>,
+    structured_clone: Option<DefId>,
+}
+
+impl TypeFacts {
+    pub(super) fn new(cx: &Ctx) -> Self {
+        TypeFacts {
+            inert: FxHashMap::default(),
+            promise: FxHashMap::default(),
+            shared: FxHashMap::default(),
+            structured_clone: cx.prelude_fn("structuredClone"),
+        }
+    }
+
+    /// Learn the facts about the types in function `d`'s body.
+    pub(super) fn learn(&mut self, cx: &mut Ctx, d: DefId) {
+        let (mut all, mut calls, mut args) = (vec![], vec![], vec![]);
+        let Some(Def::Fn(f)) = cx.defs.get(d.0 as usize).and_then(|x| x.as_ref()) else {
+            return;
+        };
+        crate::visit_ref::exprs(&f.body.block, &mut |e| {
+            all.push(e.ty);
+            if let E::Call { args: xs, .. } = &e.kind {
+                calls.push(e.ty);
+                args.extend(xs.iter().map(|x| x.ty));
+            }
+        });
+        for t in all {
+            self.inert.entry(t).or_insert_with(|| Facts::inert(cx, t));
+        }
+        for t in calls {
+            self.promise
+                .entry(t)
+                .or_insert_with(|| Facts::holds_promise(cx, t));
+        }
+        for t in args {
+            self.shared
+                .entry(t)
+                .or_insert_with(|| Facts::holds_shared(cx, t));
+        }
+    }
+}
+
+impl Facts for TypeFacts {
+    fn inert(&mut self, t: TyId) -> bool {
+        *self
+            .inert
+            .get(&t)
+            .expect("ICE: a type the summary walk did not learn")
+    }
+
+    fn holds_promise(&mut self, t: TyId) -> bool {
+        *self
+            .promise
+            .get(&t)
+            .expect("ICE: a call type the summary walk did not learn")
+    }
+
+    fn holds_shared(&mut self, t: TyId) -> bool {
+        *self
+            .shared
+            .get(&t)
+            .expect("ICE: an argument type the summary walk did not learn")
+    }
+
+    fn structured_clone(&self) -> Option<DefId> {
+        self.structured_clone
     }
 }
 
