@@ -396,6 +396,6 @@ export async function velt_rt_tcp_connect_tls(
   alpn: string,
 ): Promise<IoResult<u64>> {
   // The client in Velt (std/net/tls/fd_client.velt), by role, over a socket of the reactor's, or
-  // of the runtime's where there is none: loaded only when live code can connect with reactorOps().
+  // of the runtime's where there is none: loaded only when live code can connect with TLS.
   return await hookCall("sched_tls_connect", addr, serverName, ca, alpn);
 }

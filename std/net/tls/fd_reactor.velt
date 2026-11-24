@@ -1,8 +1,9 @@
 // velt/net (internal): the TLS operations of std/net/tcp_sched.velt on the reactor under the
-// executor in Velt (#2649), `ReactorOps`, for the TLS streams of both `listenTls` and
-// `connectTls`. The TLS server and client (std/net/tls/fd_server.velt, fd_client.velt) load this
-// file and install them before their first handle (`installReactorOps`); a program loads them
-// only when live code can listen or connect with TLS (fd_hook.velt).
+// executor in Velt (#2649), as the function values of `ReactorFns` (std/net/tls/fd_hook.velt),
+// for the TLS streams of both `listenTls` and `connectTls`. The TLS server and client
+// (std/net/tls/fd_server.velt, fd_client.velt) load this file and install them before their first
+// handle (`installReactorOps`); a program loads them only when live code can listen or connect
+// with TLS (fd_hook.velt).
 
 import { IoError } from "velt/io/error";
 import { IoResult } from "velt/native/result";
