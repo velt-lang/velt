@@ -5,9 +5,8 @@
 // the lock is held (it spins a little, then parks the thread) or when threads are parked (the
 // unlock wakes one). `with` callbacks never await and are short, so a thread that holds the lock
 // releases it soon on the thread that took it.
-// The lock no longer counts the `Mutex`es a thread holds for the runtime's module lock (velt_rt
-// `task/local/module_state.rs`): its executor is wasm's alone now, where lowering calls the
-// runtime as before.
+// The lock counts no `Mutex`es for the module lock (sched_module.velt never read the count); a
+// wasm build keeps the runtime's lock, where lowering calls the runtime as before.
 
 import { addressAtomicCas, inline } from "velt/lang/intrinsics";
 
