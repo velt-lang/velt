@@ -91,6 +91,13 @@ a yield 2
 b done
 c done
 a done
+-- the root's yield between a listed and a later yield
+l yield 0
+m resumed
+l yield 1
+root after its yield
+m done
+l done
 -- all, after a settled await (adopted)
 t yield 0
 u yield 0

@@ -31,6 +31,14 @@ async function dies(name: string, turns: number): Promise<number> {
   throw new Error(`${name} died after ${turns}`);
 }
 
+/** Resumes from a microtask (after its caller went on), then yields once. */
+async function yieldsLate(name: string): Promise<void> {
+  await null;
+  say(`${name} resumed`);
+  await yieldNow();
+  say(`${name} done`);
+}
+
 /**
  * Sleeps `ms` once `start` settles, then yields: `woke` says it woke. Gates order the timers
  * against the yields, not durations: each sleep runs alone.
@@ -153,6 +161,17 @@ async function main() {
     await yieldNow();
   }
   flush("all, a throw at once beside three yielders");
+
+  // The root's own yield, made while a started promise's yield is listed, takes its turn behind
+  // that one and ahead of a yield that another started promise makes later in the same poll
+  // (resuming from a microtask after the root yielded).
+  const listed = yields("l", 2);
+  const later = yieldsLate("m");
+  await yieldNow();
+  say("root after its yield");
+  await listed;
+  await later;
+  flush("the root's yield between a listed and a later yield");
 
   // Last: after `main`'s root awaited a settled promise, or a `Promise.any` that rejected, the
   // children of its inline alls still take their turns in order (#3611, #3687).
