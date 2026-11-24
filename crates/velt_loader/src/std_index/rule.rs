@@ -8,7 +8,11 @@
 //!   whatever it is written with.
 //! - `extend`: a class, struct, interface or enum declared in this module, or an interface of
 //!   one of its namespaces (`N.I`; a namespace holds only interfaces, aliases and namespaces),
-//!   and not an alias either (`export type i8x16 = i8x16;` re-exports a built-in vector type).
+//!   and not an alias either (`export type i8x16 = i8x16;` re-exports a built-in vector type);
+//!   or a built-in vector or mask type (`extend u8x16 { … }`, velt/simd) in a block without type
+//!   parameters or `implements`. Such a block only adds methods to a type no module declares,
+//!   which code checked before it cannot have called; the checker makes sure none of them
+//!   shadows a method that type already has (`velt_sema` `collect::vector_extends`).
 
 use std::collections::{HashMap, HashSet};
 
@@ -161,7 +165,8 @@ impl<'a> Visit<'a> for Rule<'a, '_> {
                     || matches!(
                         self.lookup(&ty, e.target.span),
                         Some(Declared::Class | Declared::OtherType)
-                    );
+                    )
+                    || adds_to_vector_type(e, &ty);
                 if !own {
                     push_once(self.violations, Violation::ExtendsForeignType { ty });
                 }
@@ -255,6 +260,12 @@ fn push_once(violations: &mut Vec<Violation>, v: Violation) {
 }
 
 /// [`ExtendMember::ty`] of `e`'s target.
+/// Whether `e` (extending `ty`) only adds methods to a built-in vector or mask type: no type
+/// parameters, no `implements` (module docs). The checker confirms the target is that type.
+fn adds_to_vector_type(e: &ast::ExtendDecl, ty: &str) -> bool {
+    e.generics.is_empty() && e.implements.is_empty() && velt_sema::hir::SimdTy::named(ty).is_some()
+}
+
 fn extended_type(e: &ast::ExtendDecl) -> String {
     let name = type_name(&e.target);
     match e.generics.iter().any(|g| g.name.name == name) {
