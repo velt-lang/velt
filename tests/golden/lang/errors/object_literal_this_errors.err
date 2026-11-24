@@ -20,38 +20,38 @@ object_literal_this_errors.velt:67:29: error: the method `get` uses `this`, so i
   = note: TypeScript allows this, but `this` is then the object the function is called on, if any (`undefined` for a plain call, which throws a TypeError in strict mode)
   = note: call the method on its object, or wrap the call in an arrow function: `(...) => o.get(...)`
 
-object_literal_this_errors.velt:72:31: error: the method `c.m` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it from a method or an arrow function: `(...) => c.m(...)`, or write the method in the literal
+object_literal_this_errors.velt:89:19: error: `C.s` uses `this` or `super`, so it cannot be used as a value
+  = note: a static method taken as a value has no `this` (JavaScript calls it with `this` undefined)
+  = note: call it as `C.s()`, or wrap the call: `() => C.s()`
 
-object_literal_this_errors.velt:79:31: error: the method `lit.m` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it from a method or an arrow function: `(...) => lit.m(...)`, or write the method in the literal
+object_literal_this_errors.velt:72:31: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => c.m(...args)`, or a method `m(...) { ... }`
 
-object_literal_this_errors.velt:80:25: error: the method `c.m` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it from a method or an arrow function: `(...) => c.m(...)`, or write the method in the literal
+object_literal_this_errors.velt:79:31: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => lit.m(...args)`, or a method `m(...) { ... }`
 
-object_literal_this_errors.velt:84:25: error: the method `m` of `C` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it on its object from a method or an arrow function, or write the method in the literal
+object_literal_this_errors.velt:80:25: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => c.m(...args)`, or a method `m(...) { ... }`
 
-object_literal_this_errors.velt:85:25: error: the method `m` of `C` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it on its object from a method or an arrow function, or write the method in the literal
+object_literal_this_errors.velt:84:25: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => ...`, or a method `m(...) { ... }`
 
-object_literal_this_errors.velt:86:25: error: the method `m` of `C` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it on its object from a method or an arrow function, or write the method in the literal
+object_literal_this_errors.velt:85:25: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => ...`, or a method `m(...) { ... }`
 
-object_literal_this_errors.velt:87:31: error: the method `m` of `C` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it on its object from a method or an arrow function, or write the method in the literal
+object_literal_this_errors.velt:86:25: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => ...`, or a method `m(...) { ... }`
 
-object_literal_this_errors.velt:88:25: error: the method `m` of `C` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it on its object from a method or an arrow function, or write the method in the literal
+object_literal_this_errors.velt:87:31: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => ...`, or a method `m(...) { ... }`
 
-object_literal_this_errors.velt:89:19: error: the method `C.s` may use `this`, so it cannot be the value of an object-literal property
-  = note: TypeScript allows this, but `this` is then the object the property is called on (`o.m()` calls it with `o`), while Velt keeps the object the method was read from
-  = note: call it from a method or an arrow function: `(...) => C.s(...)`, or write the method in the literal
+object_literal_this_errors.velt:88:25: error: the value of property `m` is a function not written in the literal, and a method named `m` may use `this`, so it is not supported yet
+  = note: Node calls it with the literal as `this` (`o.m()`), while Velt keeps the object a method read as a value was read from
+  = note: write the function in the literal: `m: (...args) => ...`, or a method `m(...) { ... }`

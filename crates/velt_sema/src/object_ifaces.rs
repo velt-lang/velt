@@ -69,6 +69,9 @@ pub(crate) struct ObjectImpls {
     /// aside so that a rollback keeps them with the functions; run with the others.
     pub(crate) throw_checks: Vec<crate::throws::ThrowCheck>,
     pub(crate) fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
+    /// Interface methods read as object-literal properties' values, and the slots literals fill
+    /// with methods reading `this` (`crate::iface_method_values`).
+    pub method_values: crate::iface_method_values::MethodValues,
 }
 
 impl ObjectImpls {
@@ -775,6 +778,6 @@ fn dynamic_object_impl(cx: &mut Ctx, t: TyId, iface: DefId, args: &[TyId]) {
 crate::units::codec::structs! {
     ObjectImpls {
         made, sources, seen, targets, generic_targets, param_fillable, assign_setters, kept_fns,
-        throw_checks, fresh_checks, downcast_from, widen,
+        throw_checks, fresh_checks, downcast_from, widen, method_values,
     }
 }

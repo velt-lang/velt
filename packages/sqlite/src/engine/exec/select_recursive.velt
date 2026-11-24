@@ -72,8 +72,8 @@ export function compileRecursive(sel: SelectCompiler, def: CteDef): Query {
     q.refCol.push(-2);
   }
   // LIMIT and OFFSET name no column (SQLite's empty name context).
-  const limitEv: Ev | null = s.limit == null ? null : sel.ev(s.limit!, new Scope());
-  const offsetEv: Ev | null = s.offset == null ? null : sel.ev(s.offset!, new Scope());
+  const limitEv: Ev | null = s.limit == null ? null : sel.compileEv(s.limit!, new Scope());
+  const offsetEv: Ev | null = s.offset == null ? null : sel.compileEv(s.offset!, new Scope());
   const distinct = op == C_UNION;
   const colls: u8[] = [];
   for (const c of qi.colls) {
