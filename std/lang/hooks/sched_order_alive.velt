@@ -1,0 +1,46 @@
+// velt/lang/hooks (internal): whether a phase of Node's timer order under the executor in Velt
+// (sched_order.velt, #2649) runs on after the last ref'd timer, for the process lifetime
+// (sched_end.velt). Node decides whether the process stays alive only after each timers pass of
+// its loop: once an iteration (a check phase and the pass after it, or a pass alone) began while a
+// ref'd timer kept the process alive, every immediate of its check phase and every timer due by
+// its pass's `now` runs, `unref()`'d or not, also after the last ref'd one ran or was unref'd
+// (#3186). An iteration notes whether it began alive when its first turn is granted
+// (sched_order_pass.velt `commit`, `O_ALIVE`).
+
+import * as l from "./sched_order_list";
+import * as m from "./sched_mem";
+import * as t from "./sched_task";
+
+/**
+ * Was the timer that asks whether the process ends (sched_end.velt `unrefPoll`) given its turn in
+ * this poll (the task being polled on worker `e` holds the order's loop: it took the last turn) in
+ * a phase that began alive? Then its callback runs. The phase cannot change while this poll holds
+ * the loop, and the grant stored `O_ALIVE` under the order's lock before this task took the turn
+ * (sched_order.velt `turnPoll`), so it is read without the lock. A question asked again later
+ * (after a park) is not answered here: its poll holds no turn.
+ */
+export function inLivePhase(e: usize): bool {
+  const b = l.order();
+  if (b === 0 || m.ld(b + l.O_ALIVE) === 0) {
+    return false;
+  }
+  const cur = m.ld(e + t.E_CURRENT);
+  return cur !== 0 && m.ld(b + l.O_HOLDER) === cur;
+}
+
+/**
+ * Does the timers pass under way, which began alive, still have a timer to run: one due by the
+ * pass's clock in whole milliseconds that waits for the rest of its whole delay (`O_WAKE_AT`
+ * within the pass's millisecond: sched_order_move.velt `choose`; any other time the loop waits for
+ * is a later millisecond)? Its turn is the pass's, so the process does not end before it. Read
+ * without the lock, as the rest of the end's scan (sched_end.velt `quiet` checks that no worker
+ * was woken meanwhile).
+ */
+export function passWaits(): bool {
+  const b = l.order();
+  if (b === 0 || m.load(b + l.O_ALIVE) === 0 || m.load(b + l.O_PASS_SET) === 0) {
+    return false;
+  }
+  const w = m.load(b + l.O_WAKE_AT);
+  return w !== 0 && w < (m.load(b + l.O_PASS) + 1) * 1000000;
+}

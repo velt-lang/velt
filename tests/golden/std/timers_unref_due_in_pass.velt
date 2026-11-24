@@ -1,0 +1,52 @@
+// An `unref()`'d timer due in the same timers pass as the last ref'd timer runs, as in Node
+// (#3186): Node decides whether the process stays alive only after each pass of its loop, so
+// a pass that began while a ref'd timer kept the process alive runs every timer due by its
+// clock, ref'd or not. `setup` (a ref'd timer, so its pass is one of the loop's, not the one
+// before the loop starts) makes the timers below and spins until all of them are due: they fall
+// in the next pass together, in Node's order: the lists by expiry (5, 10, 15 ms), each in the
+// order its timers were made. In that pass `a` is the last ref'd timer, and it unrefs `d`, which
+// is due too; after `a`, the unref'd timeout `b`, `d`, the unref'd interval's first run and the
+// unref'd 15 ms timeout still run. What the pass makes is not in it: a timeout `a` sets (due a
+// millisecond later) and the interval's next run do not run, as in Node.
+
+// timing: the test is of which due timers run before the process ends; `setup` spins until all
+// of them are due, so the next pass finds them due.
+function spin(ms: number) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {}
+}
+
+function setup() {
+  let d: Timer | null = null;
+  let runs = 0;
+  const before = setTimeout(() => console.log("unref'd 5 ms timeout, due before a"), 5);
+  before.unref();
+  const a = setTimeout(
+    () => {
+      console.log("a: the last ref'd timer");
+      if (d != null) {
+        d.unref();
+      }
+      setTimeout(() => console.log("never: a timeout a sets"), 0).unref();
+    },
+    10,
+  );
+  const b = setTimeout(() => console.log("unref'd timeout due with a"), 10);
+  b.unref();
+  d = setTimeout(() => console.log("d, unref'd by a while due"), 10);
+  const every = setInterval(
+    () => {
+      runs = runs + 1;
+      console.log("unref'd interval run", runs);
+    },
+    10,
+  );
+  every.unref();
+  const later = setTimeout(() => console.log("unref'd 15 ms timeout, due in the same pass"), 15);
+  later.unref();
+  spin(50);
+  console.log("setup done");
+}
+
+setTimeout(() => setup(), 1);
+console.log("main done");
