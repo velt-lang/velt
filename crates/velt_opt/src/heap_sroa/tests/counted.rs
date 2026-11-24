@@ -660,10 +660,9 @@ fn an_object_filled_again_keeps_its_vtable_loads() {
     assert!(named.iter().filter(|&&s| s == vtable).count() == 1, "{p}");
 }
 
-#[test]
-fn an_object_read_before_its_vtable_is_stored_keeps_its_vtable_loads() {
-    // A program that reads the vtable word before `new` stores it (read zero) must not see the
-    // vtable there: the store-first check of the allocation's block fails.
+/// `vt_program` without `new`'s zero fill (a class whose fields are all stored), and with a read
+/// of the vtable word into a new local where the fill was when `read` is set.
+fn vt_program_unfilled(read: bool) -> Program {
     let VtProgram { mut program, .. } = vt_program(|_, _, _, _, _| {});
     let main = program.funcs.last_mut().expect("main");
     let vt = program.aggs.len() as u32 - 1;
@@ -678,15 +677,33 @@ fn an_object_read_before_its_vtable_is_stored_keeps_its_vtable_loads() {
             _ => None,
         })
         .expect("the allocation");
-    let read = Stmt::Assign(
-        Place::local(x),
-        Rvalue::Use(copy_place(Place {
-            local: w,
-            proj: vec![Proj::Deref(Ty::Agg(AggId(vt))), Proj::Field(0)],
-        })),
-    );
-    // After the count, the pointer and the fill, before the vtable store.
-    main.blocks[alloc_next.0 as usize].stmts.insert(3, read);
-    let (done, _) = vt_run(&mut program);
-    assert!(!done.vtables && !done.replaced, "{program}");
+    let stmts = &mut main.blocks[alloc_next.0 as usize].stmts;
+    assert!(matches!(stmts[2], Stmt::MemSet { .. }), "the fill");
+    if read {
+        // After the count and the pointer, before the vtable store.
+        stmts[2] = Stmt::Assign(
+            Place::local(x),
+            Rvalue::Use(copy_place(Place {
+                local: w,
+                proj: vec![Proj::Deref(Ty::Agg(AggId(vt))), Proj::Field(0)],
+            })),
+        );
+    } else {
+        stmts.remove(2);
+    }
+    program
+}
+
+#[test]
+fn an_object_read_before_its_vtable_is_stored_keeps_its_vtable_loads() {
+    // A program that reads the vtable word before `new` stores it must not see the vtable
+    // there: the store-first check of the allocation's block fails. Without a zero fill the
+    // fill check (only `new`'s fill may cover the vtable word) does not keep the loads in its
+    // place; the same program without the read has its loads folded.
+    let mut unread = vt_program_unfilled(false);
+    let (done, _) = vt_run(&mut unread);
+    assert!(done.vtables && !done.replaced, "{unread}");
+    let mut read = vt_program_unfilled(true);
+    let (done, _) = vt_run(&mut read);
+    assert!(!done.vtables && !done.replaced, "{read}");
 }

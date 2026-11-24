@@ -288,18 +288,41 @@ impl Gen {
     }
 
     /// `w = new Obj(x, y)` as lowering emits it; returns the continuation.
+    ///
+    /// With a vtable, the object is made on both sides of a diamond on the low bit of `acc`
+    /// (its numbers swapped on one), so every later load of its vtable is past the join where
+    /// the two allocations meet: out of `vtable_loads`' reach, where `devirt` is needed.
     fn new_obj(&mut self, b: BlockId, w: Local) -> BlockId {
         let (x, y) = (self.value(b), self.value(b));
-        let b = self.alloc_obj(b, w);
         if self.vtable.is_none() {
+            let b = self.alloc_obj(b, w);
             self.fill(b, w);
+            self.set_fields(b, w, x, y);
+            return b;
         }
+        let (bit, cond) = (self.fb.local(I64), self.fb.local(Bool));
+        let acc = self.acc;
+        self.fb
+            .assign(b, bit, bin(BinOp::BitAnd, copy_local(acc), int(1, I64)));
+        self.fb
+            .assign(b, cond, bin(BinOp::Ne, copy_local(bit), int(0, I64)));
+        let (then, els, join) = (self.fb.block(), self.fb.block(), self.fb.block());
+        self.fb.branch(b, cond, then, els);
+        for (side, (a, c)) in [(then, (x, y)), (els, (y, x))] {
+            let end = self.alloc_obj(side, w);
+            self.set_fields(end, w, a, c);
+            self.fb.goto(end, join);
+        }
+        join
+    }
+
+    /// `w.0 = x; w.1 = y`
+    fn set_fields(&mut self, b: BlockId, w: Local, x: Local, y: Local) {
         let (f0, f1) = (self.field(w, 0), self.field(w, 1));
         self.fb
             .push(b, Stmt::Assign(f0, Rvalue::Use(copy_local(x))));
         self.fb
             .push(b, Stmt::Assign(f1, Rvalue::Use(copy_local(y))));
-        b
     }
 
     /// The drop of `w` as lowering emits it: `t = w; if (w != null) free(t)` (counted: a
@@ -507,7 +530,7 @@ fn random_program(seed: u64, escapes: bool, counted: bool, vtable: bool) -> Prog
 
 /// Run `random_program` for 1500 seeds, alone and through the speed pipeline; returns how many
 /// had objects replaced by the pass alone, and how many of those with a vtable (a third of the
-/// counted ones) allocated fewer objects after the pipeline.
+/// counted ones) allocated fewer objects after the pipeline than after it with `devirt` off.
 fn check_random_programs(counted: bool) -> (usize, usize) {
     let (mut replaced, mut devirtualized) = (0, 0);
     for seed in 0..1500u64 {
@@ -522,14 +545,30 @@ fn check_random_programs(counted: bool) -> (usize, usize) {
         crate::optimize(&mut pipeline, crate::OptLevel::Speed);
         assert_valid(&pipeline);
         for n in [0, 1, 2, 5] {
-            let (want, allocs, kept) = execute(&original, n);
+            let (want, _, kept) = execute(&original, n);
             for p in [&alone, &pipeline] {
                 let (got, _, got_kept) = execute(p, n);
                 assert_eq!((want, &kept), (got, &got_kept), "seed {seed}, n = {n}\n{p}");
             }
-            if vtable && n == 5 && execute(&pipeline, n).1 < allocs {
-                devirtualized += 1;
-            }
+        }
+        if vtable {
+            let mut without = original.clone();
+            super::devirt::OFF.with(|off| off.set(true));
+            crate::optimize(&mut without, crate::OptLevel::Speed);
+            super::devirt::OFF.with(|off| off.set(false));
+            let (want, allocs, kept) = execute(&original, 5);
+            let (got, without_allocs, got_kept) = execute(&without, 5);
+            assert_eq!(
+                (want, &kept),
+                (got, &got_kept),
+                "seed {seed}, no devirt\n{without}"
+            );
+            let (_, with_allocs, _) = execute(&pipeline, 5);
+            assert!(
+                with_allocs <= without_allocs && without_allocs <= allocs,
+                "seed {seed}"
+            );
+            devirtualized += usize::from(with_allocs < without_allocs);
         }
     }
     (replaced, devirtualized)
@@ -554,7 +593,7 @@ fn random_counted_programs_keep_their_results() {
     );
     assert!(
         devirtualized > VTABLE_REPLACED,
-        "only {devirtualized} programs with a vtable had objects replaced"
+        "only {devirtualized} programs with a vtable had objects replaced thanks to devirt"
     );
 }
 
@@ -562,5 +601,5 @@ fn random_counted_programs_keep_their_results() {
 const COUNTED_REPLACED: usize = 1000;
 
 /// How many of the 500 programs with a vtable must allocate fewer objects after the pipeline
-/// (451 do).
-const VTABLE_REPLACED: usize = 300;
+/// than after it with `devirt` off (127 do).
+const VTABLE_REPLACED: usize = 80;

@@ -14,7 +14,8 @@
 //! - nothing else stores into the first field but `S`, nothing stores the whole object, and no
 //!   fill but the one right after an allocation covers it;
 //! - the calls given the object are calls through its class's vtable or through a function
-//!   value, and only `new` writes an object's vtable: no method or function changes it.
+//!   value, and only `new` writes an object's vtable: no method or function changes it (the
+//!   contract in docs/internals/contracts/rt_abi.md, "The vtable word").
 
 use velt_vir::vir::{
     Callee, Const, Function, Local, Operand, Place, Proj, Rvalue, StaticId, Stmt, Terminator, Ty,
@@ -24,9 +25,19 @@ use super::webs::{moved, Webs};
 use super::Allocator;
 use crate::visit::{stmt_operands, stmt_operands_mut, term_operands_mut};
 
+#[cfg(test)]
+thread_local! {
+    /// Tests switch the pass off to measure what it contributes (`random_tests`).
+    pub(super) static OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Turn the first-field reads of the objects in `webs.vtable_of` into their vtable; returns
 /// whether anything changed.
 pub(super) fn run(allocator: Allocator, func: &mut Function, webs: &Webs) -> bool {
+    #[cfg(test)]
+    if OFF.with(|off| off.get()) {
+        return false;
+    }
     let mut vtable_of = webs.vtable_of.clone();
     let groups = |l: Local, of: &[Option<StaticId>]| of.get(l.0 as usize).copied().flatten();
     let clear = |of: &mut [Option<StaticId>], s: StaticId| {
