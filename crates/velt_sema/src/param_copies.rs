@@ -29,36 +29,40 @@ use crate::SourceModule;
 /// The prefix of a renamed parameter (module docs).
 pub(crate) const PREFIX: &str = "<param ";
 
-/// `diags` with each renamed parameter (`<param x>`) shown by its source name (`x`): a
-/// diagnostic about the parameter names it as written.
-pub(crate) fn source_names(diags: &mut [velt_common::Diagnostic]) {
+/// `diags` with each parameter the rewrite renamed (`<param x>`, `x` in `renamed`) shown by its
+/// source name (`x`): a diagnostic about the parameter names it as written. Other text, such as
+/// a string literal that spells `<param q>`, is kept.
+pub(crate) fn source_names(diags: &mut [velt_common::Diagnostic], renamed: &FxHashSet<String>) {
+    if renamed.is_empty() {
+        return;
+    }
     for d in diags {
         let texts = std::iter::once(&mut d.message)
             .chain(d.labels.iter_mut().map(|l| &mut l.message))
             .chain(d.notes.iter_mut());
         for t in texts {
             if t.contains(PREFIX) {
-                *t = source_name(t);
+                *t = source_name(t, renamed);
             }
         }
     }
 }
 
-/// Text `t` with each `<param x>` written `x`.
-fn source_name(t: &str) -> String {
+/// Text `t` with each `<param x>` whose `x` is in `renamed` written `x`.
+fn source_name(t: &str, renamed: &FxHashSet<String>) -> String {
     let mut out = String::with_capacity(t.len());
     let mut rest = t;
     while let Some(i) = rest.find(PREFIX) {
         out.push_str(&rest[..i]);
         let after = &rest[i + PREFIX.len()..];
-        match after.find('>') {
+        match after.find('>').filter(|&j| renamed.contains(&after[..j])) {
             Some(j) => {
                 out.push_str(&after[..j]);
                 rest = &after[j + 1..];
             }
             None => {
-                out.push_str(&rest[i..]);
-                rest = "";
+                out.push_str(PREFIX);
+                rest = after;
             }
         }
     }
@@ -66,8 +70,15 @@ fn source_name(t: &str) -> String {
     out
 }
 
+/// The program with its arrows' assigned parameters copied, and the source names of the
+/// parameters renamed (for [`source_names`]).
+pub(crate) struct Copied {
+    pub(crate) modules: Vec<SourceModule>,
+    pub(crate) renamed: FxHashSet<String>,
+}
+
 /// The program with its arrows' assigned parameters copied (`None`: no arrow assigns one).
-pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
+pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Copied> {
     // Std is not scanned: none of its arrows assigns a parameter, which was an error before.
     let found = crate::par::map(modules, crate::par::module_weight(modules), |m| {
         !m.is_std && found_in(&m.ast)
@@ -78,13 +89,13 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
     let work: Vec<(&SourceModule, bool)> = modules.iter().zip(found).collect();
     let done = crate::par::map(&work, crate::par::module_weight(modules), |&(m, found)| {
         let mut items = m.ast.items.clone();
+        let mut rw = Rw::default();
         if found {
-            let mut rw = Rw;
             for i in &mut items {
                 rw.item(i);
             }
         }
-        SourceModule {
+        let module = SourceModule {
             path: m.path.clone(),
             is_std: m.is_std,
             is_dependency: m.is_dependency,
@@ -97,9 +108,17 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> Option<Vec<SourceModule>> {
             },
             imports: m.imports.clone(),
             jsx_runtime: m.jsx_runtime.clone(),
-        }
+        };
+        (module, rw.renamed)
     });
-    Some(done)
+    let mut renamed = FxHashSet::default();
+    let modules = (done.into_iter())
+        .map(|(m, names)| {
+            renamed.extend(names);
+            m
+        })
+        .collect();
+    Some(Copied { modules, renamed })
 }
 
 fn found_in(m: &ast::Module) -> bool {
@@ -286,8 +305,11 @@ fn strip(e: &ast::Expr) -> &ast::Expr {
     }
 }
 
-/// The rewrite of every arrow in a module (module docs).
-struct Rw;
+/// The rewrite of every arrow in a module (module docs), with the source names it renamed.
+#[derive(Default)]
+struct Rw {
+    renamed: Vec<String>,
+}
 
 impl Rw {
     fn item(&mut self, item: &mut ast::Item) {
@@ -421,7 +443,7 @@ impl Rw {
             }
             E::Arrow { params, body, .. } => {
                 if !renames.is_empty() {
-                    copy_params(params, body, &renames, e.span);
+                    copy_params(params, body, &renames, e.span, &mut self.renamed);
                 }
                 self.arrow_inside(params, body);
                 return;
@@ -481,12 +503,14 @@ fn copy_params(
     body: &mut ast::ArrowBody,
     renames: &[usize],
     span: Span,
+    renamed: &mut Vec<String>,
 ) {
     let mut lets = vec![];
     for &i in renames {
         let p = &mut params[i];
         let name = p.name.clone();
         p.name.name = format!("{PREFIX}{}>", name.name);
+        renamed.push(name.name.clone());
         let init = ast::Expr {
             id: ast::NodeId(u32::MAX),
             kind: E::Ident(p.name.clone()),

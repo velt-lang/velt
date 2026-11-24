@@ -1,1 +1,4 @@
 closure_param_assign_untyped.velt:3:12: error: type annotations needed for parameter `x`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+closure_param_assign_untyped.velt:11:24: error: mismatched types
+  = note: expected "<param q>", found "z"
