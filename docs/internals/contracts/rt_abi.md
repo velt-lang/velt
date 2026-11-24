@@ -476,13 +476,14 @@ Which form runs:
   ("CPU check": `adx-x86`'s mask, ADX's bit 24 with BMI2's bit 9), so `VELT_CPU_DISABLE=ADX` or
   `BMI2` selects the other form; where `--cpu` guarantees both, the check is folded away. `add`
   and `sub` are one form (`add`/`adc`, `sub`/`sbb`) on every x86-64 CPU. The ladder's final
-  reduction subtracts p by a mask behind the same value barrier.
+  reduction subtracts p by a mask behind an empty inline-asm value barrier.
 - **LLVM elsewhere (arm64, wasm32).** Portable IR with 128-bit multiplies (the same interleaved
-  Montgomery multiplication); `double` and the ladder return false. The reduced result is chosen
-  by a mask that goes through an empty inline-asm value barrier, so the optimizer can't turn the
-  choice into a `select` on the secret carry (veltc's `p256_masks` test reads the optimized
-  arm64 IR). On wasm32, which has no inline assembly for the barrier, it is a `select`, and the
-  engine decides how that compiles.
+  Montgomery multiplication); `double` and the ladder return false. Whether to keep the reduced
+  result is a secret (a carry), so the optimizer never sees that choice as a `select` it could
+  make a branch: on arm64 it is one inline-asm block of `cmp` and a `csel` per limb, what a
+  `select` compiles to there (veltc's `p256_masks` test reads the optimized arm64 IR). On
+  wasm32, which has no inline assembly, it is a `select`, and the engine decides how that
+  compiles.
 - **Cranelift.** The same algorithm in Cranelift IR; `double` and the ladder return false.
 
 ## Math operations

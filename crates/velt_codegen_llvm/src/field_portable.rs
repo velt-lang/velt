@@ -5,39 +5,96 @@
 // The generators name limb `k` of each operand by index.
 #![allow(clippy::needless_range_loop)]
 
-/// IR that sets `{tag}{k}` to `keep ? a[k] : b[k]` for each limb, with no `select` on `keep` where
-/// `barrier` (a target with inline assembly): `keep` is a secret (whether a carry happened), and
-/// LLVM may lower a `select` to a branch. A mask `0 - keep` picks instead, `b ^ ((a ^ b) & m)`,
-/// with the mask through an empty `asm` so that the optimizer can't see it is a comparison and
-/// fold the expression back into a `select` (rt_abi.md "Field arithmetic", constant time;
-/// veltc's `p256_masks` test reads the optimized IR). Without inline assembly (wasm32) it stays a
-/// `select`.
-pub(crate) fn choose(tag: &str, keep: &str, a: &[String], b: &[String], barrier: bool) -> String {
-    let mut ir = String::new();
-    if !barrier {
-        for k in 0..a.len() {
-            ir.push_str(&format!(
-                "  %{tag}{k} = select i1 {keep}, i128 {}, i128 {}\n",
-                a[k], b[k]
-            ));
+/// How [`choose`] picks the reduced result without the optimizer seeing a choice it may turn into
+/// a branch or a load through a selected address: whether to keep it is a secret (whether a
+/// carry happened). rt_abi.md "Field arithmetic", constant time; veltc's `p256_masks` test reads
+/// the optimized IR and finds any `select` whose condition comes from the secret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Choice {
+    /// arm64: `cmp` and a `csel` per limb in one inline-asm block, what a `select` compiles to
+    /// there, where the optimizer can't see it. A mask per limb (`Mask`) cost ECDH 10% on arm64.
+    Csel,
+    /// Another target with inline assembly (x86-64, which only takes the portable form in
+    /// tests): a mask `0 - keep` through an empty `asm` value barrier, `b ^ ((a ^ b) & m)`.
+    Mask,
+    /// No inline assembly (wasm32): a `select`, which the engine compiles as it likes.
+    Select,
+}
+
+impl Choice {
+    /// The form for code generation on `arch`.
+    pub(crate) fn of(arch: crate::simd::Arch) -> Choice {
+        match arch {
+            crate::simd::Arch::Neon => Choice::Csel,
+            crate::simd::Arch::Sse2 => Choice::Mask,
+            crate::simd::Arch::Wasm => Choice::Select,
         }
-        return ir;
     }
-    ir.push_str(&format!(
-        "  %{tag}kz = zext i1 {keep} to i64\n  %{tag}kn = sub i64 0, %{tag}kz\n  \
-         %{tag}kb = call i64 asm \"\", \"=r,0\"(i64 %{tag}kn)\n  %{tag}m = sext i64 %{tag}kb to i128\n"
-    ));
-    for k in 0..a.len() {
-        ir.push_str(&format!(
-            "  %{tag}x{k} = xor i128 {}, {}\n  %{tag}y{k} = and i128 %{tag}x{k}, %{tag}m\n  %{tag}{k} = xor i128 {}, %{tag}y{k}\n",
-            a[k], b[k], b[k]
-        ));
+}
+
+/// IR that sets `{tag}{k}` to `keep ? a[k] : b[k]` for each limb (64-bit values in `i128`s), by
+/// `how`.
+pub(crate) fn choose(tag: &str, keep: &str, a: &[String], b: &[String], how: Choice) -> String {
+    let mut ir = String::new();
+    let n = a.len();
+    match how {
+        Choice::Select => {
+            for k in 0..n {
+                ir.push_str(&format!(
+                    "  %{tag}{k} = select i1 {keep}, i128 {}, i128 {}\n",
+                    a[k], b[k]
+                ));
+            }
+        }
+        Choice::Mask => {
+            ir.push_str(&format!(
+                "  %{tag}kz = zext i1 {keep} to i64\n  %{tag}kn = sub i64 0, %{tag}kz\n  \
+                 %{tag}kb = call i64 asm \"\", \"=r,0\"(i64 %{tag}kn)\n  %{tag}m = sext i64 %{tag}kb to i128\n"
+            ));
+            for k in 0..n {
+                ir.push_str(&format!(
+                    "  %{tag}x{k} = xor i128 {}, {}\n  %{tag}y{k} = and i128 %{tag}x{k}, %{tag}m\n  %{tag}{k} = xor i128 {}, %{tag}y{k}\n",
+                    a[k], b[k], b[k]
+                ));
+            }
+        }
+        Choice::Csel => {
+            // Outputs $0..n tied to a's limbs, then b's limbs at $2n.., then the condition at $3n.
+            ir.push_str(&format!("  %{tag}kz = zext i1 {keep} to i64\n"));
+            let mut text = format!("cmp ${}, #0", 3 * n);
+            for k in 0..n {
+                text.push_str(&format!("\\0Acsel ${k}, ${k}, ${}, ne", 2 * n + k));
+                ir.push_str(&format!(
+                    "  %{tag}a{k} = trunc i128 {} to i64\n  %{tag}b{k} = trunc i128 {} to i64\n",
+                    a[k], b[k]
+                ));
+            }
+            let outs = vec!["=r"; n].join(",");
+            let tied: Vec<String> = (0..n).map(|k| k.to_string()).collect();
+            let rs = vec!["r"; n + 1].join(",");
+            let tys = vec!["i64"; n].join(", ");
+            let args: Vec<String> = (0..n)
+                .map(|k| format!("i64 %{tag}a{k}"))
+                .chain((0..n).map(|k| format!("i64 %{tag}b{k}")))
+                .chain(std::iter::once(format!("i64 %{tag}kz")))
+                .collect();
+            ir.push_str(&format!(
+                "  %{tag}cs = call {{ {tys} }} asm \"{text}\", \"{outs},{},{rs},~{{cc}}\"({})\n",
+                tied.join(","),
+                args.join(", ")
+            ));
+            for k in 0..n {
+                ir.push_str(&format!(
+                    "  %{tag}w{k} = extractvalue {{ {tys} }} %{tag}cs, {k}\n  %{tag}{k} = zext i64 %{tag}w{k} to i128\n"
+                ));
+            }
+        }
     }
     ir
 }
 
-/// `field.rs`'s `add_sub` in plain IR, from `%pa`, `%pb` to `%pd` (`barrier`: [`choose`]).
-pub(crate) fn add_sub(add: bool, barrier: bool) -> String {
+/// `field.rs`'s `add_sub` in plain IR, from `%pa`, `%pb` to `%pd` (`how`: [`choose`]).
+pub(crate) fn add_sub(add: bool, how: Choice) -> String {
     let p = velt_vir::field::P256;
     let mut ir = String::new();
     for k in 0..4 {
@@ -77,7 +134,7 @@ pub(crate) fn add_sub(add: bool, barrier: bool) -> String {
     }
     let kept: Vec<String> = (0..4).map(|k| format!("%s{k}")).collect();
     let reduced: Vec<String> = (0..4).map(|k| format!("%t{k}")).collect();
-    ir.push_str(&choose("r", "%keep", &kept, &reduced, barrier));
+    ir.push_str(&choose("r", "%keep", &kept, &reduced, how));
     for k in 0..4 {
         ir.push_str(&format!(
             "  %w{k} = trunc i128 %r{k} to i64\n  %dp{k} = getelementptr i8, ptr %pd, i64 {}\n  store i64 %w{k}, ptr %dp{k}, align 8\n",
@@ -88,8 +145,8 @@ pub(crate) fn add_sub(add: bool, barrier: bool) -> String {
 }
 
 /// The product in plain IR, from `%pa`, `%pb` to `%pd`: the reference's algorithm, which LLVM
-/// lowers to the target's multiply-high and add-with-carry (`barrier`: [`choose`]).
-pub(crate) fn product(barrier: bool) -> String {
+/// lowers to the target's multiply-high and add-with-carry (`how`: [`choose`]).
+pub(crate) fn product(how: Choice) -> String {
     let mut ir = String::new();
     let mut n = 0usize;
     let mut v = |ir: &mut String, text: String| -> String {
@@ -149,7 +206,7 @@ pub(crate) fn product(barrier: bool) -> String {
     let top0 = v(&mut ir, format!("icmp eq i128 {}, 0", t[8]));
     let keep = v(&mut ir, format!("and i1 {under}, {top0}"));
     let kept: Vec<String> = (0..4).map(|j| t[4 + j].clone()).collect();
-    ir.push_str(&choose("fr", &keep, &kept, &d, barrier));
+    ir.push_str(&choose("fr", &keep, &kept, &d, how));
     for j in 0..4 {
         let w = v(&mut ir, format!("trunc i128 %fr{j} to i64"));
         let at = v(&mut ir, format!("getelementptr i8, ptr %pd, i64 {}", 8 * j));

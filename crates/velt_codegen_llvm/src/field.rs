@@ -26,14 +26,14 @@ use velt_vir::field::FieldOp;
 use velt_vir::vir::Ty;
 
 /// The helper computing field operation `symbol` on target `x86` (x86-64 or not), `adx` where
-/// the build guarantees BMI2 and ADX (`--cpu`), `barrier` where the target has inline assembly
-/// for the portable form's masks ([`crate::field_portable::choose`]): its name, what the module must define for it,
+/// the build guarantees BMI2 and ADX (`--cpu`), `how` the portable form chooses its
+/// reduced result ([`crate::field_portable::choose`]): its name, what the module must define for it,
 /// and the extern's signature.
 pub(crate) fn helper(
     symbol: &str,
     x86: bool,
     adx: bool,
-    barrier: bool,
+    how: crate::field_portable::Choice,
 ) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
     let op = FieldOp::of_symbol(symbol)?;
     let (params, ret) = op.signature();
@@ -77,10 +77,7 @@ pub(crate) fn helper(
                  %rs = call {{ ptr, ptr }} asm sideeffect {text}, \"{ADX_CONSTRAINTS}\"(ptr %pa, ptr %pb, ptr elementtype(ptr) %slot)\n  ret void\n}}"
             ));
         } else {
-            out.push_str(&crate::field_portable::add_sub(
-                op == FieldOp::P256Add,
-                barrier,
-            ));
+            out.push_str(&crate::field_portable::add_sub(op == FieldOp::P256Add, how));
             out.push_str("  ret void\n}");
         }
         defs.push(out);
@@ -102,7 +99,7 @@ pub(crate) fn helper(
         ));
         defs.extend(has_adx(adx));
     } else {
-        out.push_str(&crate::field_portable::product(barrier));
+        out.push_str(&crate::field_portable::product(how));
         out.push_str("  ret void\n}");
     }
     defs.push(out);

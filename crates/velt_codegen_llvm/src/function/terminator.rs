@@ -355,8 +355,7 @@ impl Emitter<'_> {
             &e.symbol,
             self.simd == crate::simd::Arch::Sse2,
             adx,
-            // Inline assembly for the portable form's masks: every target but wasm32.
-            matches!(self.simd, crate::simd::Arch::Sse2 | crate::simd::Arch::Neon),
+            crate::field_portable::Choice::of(self.simd),
         ) {
             if params != want_params || ret != want_ret {
                 return None;

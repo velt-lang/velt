@@ -181,8 +181,7 @@ pub(crate) fn ladder_helper(name: &str, x86: bool, adx: bool) -> Vec<String> {
     // X1 = X3 = u; X2 = 1, Z2 = 0, Z3 = 1.
     for k in 0..4 {
         ir.push_str(&format!(
-            "  %up{k} = getelementptr i8, ptr %pu, i64 {o}\n  %u{k} = load i64, ptr %up{k}, align 8\n  \
-             %kp{k} = getelementptr i8, ptr %pk, i64 {o}\n  %k{k} = load i64, ptr %kp{k}, align 8\n",
+            "  %up{k} = getelementptr i8, ptr %pu, i64 {o}\n  %u{k} = load i64, ptr %up{k}, align 8\n",
             o = 8 * k
         ));
         for (s, v) in [
@@ -197,14 +196,14 @@ pub(crate) fn ladder_helper(name: &str, x86: bool, adx: bool) -> Vec<String> {
         }
     }
     ir.push_str("  br label %loop\n");
-    // The loop: bit `pos` of the scalar (pos from 254 down to 0; its limb by a public index).
+    // The loop: bit `pos` of the scalar (pos from 254 down to 0; its limb loaded at
+    // a public index, never a select of the four, which `x25519_masks` refuses).
     ir.push_str(
         "loop:\n  %pos = phi i64 [ 254, %go ], [ %next, %loop ]\n  \
          %prev = phi i64 [ 0, %go ], [ %bit, %loop ]\n  \
          %limb = lshr i64 %pos, 6\n  \
-         %is0 = icmp eq i64 %limb, 0\n  %is1 = icmp eq i64 %limb, 1\n  %is2 = icmp eq i64 %limb, 2\n  \
-         %w23 = select i1 %is2, i64 %k2, i64 %k3\n  %w123 = select i1 %is1, i64 %k1, i64 %w23\n  \
-         %w = select i1 %is0, i64 %k0, i64 %w123\n  \
+         %wo = shl i64 %limb, 3\n  %wp = getelementptr i8, ptr %pk, i64 %wo\n  \
+         %w = load i64, ptr %wp, align 8\n  \
          %sh = and i64 %pos, 63\n  %ws = lshr i64 %w, %sh\n  %bit = and i64 %ws, 1\n  \
          %sw = xor i64 %prev, %bit\n  %mask = sub i64 0, %sw\n",
     );
@@ -281,7 +280,7 @@ fn cswap(ir: &mut String, tag: &str, mask: &str) {
 
 /// Slot `s` (below 2^256) reduced mod 2^255 - 19 and stored at `base + off`, as one i256: bit 255
 /// folded in as 19, then p subtracted when the value plus 19 reaches 2^255, chosen by a mask
-/// behind a value barrier, as `field_portable::choose` does, since whether to subtract is a secret. One fold is enough:
+/// behind a value barrier, as `field_portable::Choice::Mask` does, since whether to subtract is a secret. One fold is enough:
 /// after it the value `v` is below 2^255 + 19, and `v + 19 >= 2^255` is `v >= p`, where `v - p`
 /// is below 38.
 fn freeze(ir: &mut String, tag: &str, s: usize, base: &str, off: usize) {

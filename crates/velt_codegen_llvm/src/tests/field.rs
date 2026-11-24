@@ -9,6 +9,8 @@ use std::process::Command;
 
 use velt_vir::field::{double_p256, FieldOp, P256};
 
+use crate::field_portable::Choice;
+
 /// Edge values and pseudo-random elements below p.
 fn elements() -> Vec<[u64; 4]> {
     let pm = |k: u64| [P256[0] - k, P256[1], P256[2], P256[3]];
@@ -42,12 +44,12 @@ fn elements() -> Vec<[u64; 4]> {
 
 /// The module: the helpers, a setter of the CPU byte (x86-64) and one exported function per
 /// operation calling its helper on an array header.
-fn module(x86: bool, barrier: bool) -> String {
+fn module(x86: bool, how: Choice) -> String {
     let mut m = String::new();
     let mut seen = std::collections::BTreeSet::new();
     for op in FieldOp::ALL {
         let (name, defs, _, _) =
-            crate::field::helper(op.symbol(), x86, false, barrier).expect("a helper");
+            crate::field::helper(op.symbol(), x86, false, how).expect("a helper");
         for d in defs {
             if seen.insert(d.clone()) {
                 m.push_str(&d);
@@ -166,10 +168,14 @@ fn field_helpers_match_the_reference() {
         }
     }
     let _cleanup = Cleanup(&dir);
-    // The plain IR runs on every host, both with the masks' value barrier (arm64) and with the
-    // `select` wasm32 keeps; x86-64 also runs both assembly forms.
-    run(&clang, &dir, false, true, &["1"]);
-    run(&clang, &dir, false, false, &["1"]);
+    // The plain IR runs on every host with each way of choosing the reduced result it has: the
+    // masks behind the value barrier, the `select` wasm32 keeps, and on arm64 the `csel`s in
+    // assembly; x86-64 also runs both assembly forms.
+    run(&clang, &dir, false, Choice::Mask, &["1"]);
+    run(&clang, &dir, false, Choice::Select, &["1"]);
+    if cfg!(target_arch = "aarch64") {
+        run(&clang, &dir, false, Choice::Csel, &["1"]);
+    }
     #[cfg(target_arch = "x86_64")]
     {
         let mut forms = vec!["1"];
@@ -177,15 +183,15 @@ fn field_helpers_match_the_reference() {
         {
             forms.push("2");
         }
-        run(&clang, &dir, true, true, &forms);
+        run(&clang, &dir, true, Choice::Mask, &forms);
     }
 }
 
-/// Compiles the helpers (the assembly forms when `x86`; the portable form's masks behind the
-/// value barrier when `barrier`), runs `forms` and compares.
-fn run(clang: &Path, dir: &Path, x86: bool, barrier: bool, forms: &[&str]) {
+/// Compiles the helpers (the assembly forms when `x86`; the portable form choosing `how`), runs
+/// `forms` and compares.
+fn run(clang: &Path, dir: &Path, x86: bool, how: Choice, forms: &[&str]) {
     let (ll, c, exe) = (dir.join("f.ll"), dir.join("d.c"), dir.join("f.exe"));
-    std::fs::write(&ll, module(x86, barrier)).expect("write .ll");
+    std::fs::write(&ll, module(x86, how)).expect("write .ll");
     std::fs::write(&c, DRIVER).expect("write driver");
     let built = Command::new(clang)
         .args(["-O2", "-w", "-o"])
@@ -270,7 +276,7 @@ fn the_fast_form_is_chosen_by_the_cpu_feature_word() {
     assert_eq!(mask, (1 << 24) | (1 << 9), "ADX's bit and BMI2's");
     for op in FieldOp::ALL {
         let (_, defs, _, _) =
-            crate::field::helper(op.symbol(), true, false, true).expect("a helper");
+            crate::field::helper(op.symbol(), true, false, Choice::Mask).expect("a helper");
         let text = defs.join("\n");
         assert!(!text.contains("cpuid"), "{op:?} asks CPUID itself");
         if matches!(op, FieldOp::P256Add | FieldOp::P256Sub) {
@@ -283,7 +289,7 @@ fn the_fast_form_is_chosen_by_the_cpu_feature_word() {
             "{op:?} defines the word"
         );
         let (_, known, _, _) =
-            crate::field::helper(op.symbol(), true, true, true).expect("a helper");
+            crate::field::helper(op.symbol(), true, true, Choice::Mask).expect("a helper");
         let known = known.join("\n");
         assert!(
             !known.contains("@velt_cpu_word"),
@@ -291,4 +297,70 @@ fn the_fast_form_is_chosen_by_the_cpu_feature_word() {
         );
         assert!(known.contains("define internal i1 @velt.field.has_adx() alwaysinline nounwind {\nentry:\n  ret i1 true"));
     }
+}
+
+/// arm64's portable form chooses the reduced result by `csel`s in assembly
+/// ([`Choice::Csel`]): after clang's optimizer no `select` is left in the module (the
+/// `p256_masks` test refuses one whose condition comes from the secret, and the backend may make
+/// a `select` a branch), and the code has no conditional branch and, in assembly, a `csel` per
+/// limb of each of `add`, `sub`, `mul` and `sqr`, as many as a `select` would give. Run on arm64 by the
+/// reference test above.
+#[test]
+fn the_arm64_choice_is_csels_in_assembly() {
+    let Some(clang) = crate::find_clang() else {
+        eprintln!("note: clang not available; skipping");
+        return;
+    };
+    let target = "--target=aarch64-unknown-linux-gnu";
+    let compile = |emit: &[&str]| -> Option<String> {
+        let dir = std::env::temp_dir().join(format!("velt_csel_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let ll = dir.join("f.ll");
+        std::fs::write(&ll, module(false, Choice::Csel)).expect("write .ll");
+        let out = Command::new(&clang)
+            .args(["-O2", "-w", target, "-S", "-o", "-"])
+            .args(emit)
+            .arg(&ll)
+            .output()
+            .expect("run clang");
+        let _ = std::fs::remove_dir_all(&dir);
+        let err = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() && err.contains("unable to create target") {
+            return None;
+        }
+        assert!(out.status.success(), "clang failed:\n{err}");
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let Some(ir) = compile(&["-emit-llvm"]) else {
+        eprintln!("note: this clang has no aarch64; skipping");
+        return;
+    };
+    let selects: Vec<&str> = ir.lines().filter(|l| l.contains(" select ")).collect();
+    assert!(selects.is_empty(), "{selects:#?}");
+    let asm = compile(&[]).expect("aarch64 again");
+    let code: Vec<&str> = asm
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('.') && !l.starts_with("//") && !l.ends_with(':'))
+        .collect();
+    let branches: Vec<&&str> = code
+        .iter()
+        .filter(|l| {
+            let op = l.split_whitespace().next().unwrap_or("");
+            op.starts_with("b.") || ["cbz", "cbnz", "tbz", "tbnz"].contains(&op)
+        })
+        .collect();
+    assert!(branches.is_empty(), "{branches:#?}");
+    // The `csel`s of the asm blocks (the compiler's own may compute `keep` from the flags).
+    let mut inside = false;
+    let mut csels = 0;
+    for l in asm.lines().map(str::trim) {
+        match l {
+            "//APP" => inside = true,
+            "//NO_APP" => inside = false,
+            _ if inside && l.starts_with("csel") => csels += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(csels, 4 * 4, "{asm}");
 }

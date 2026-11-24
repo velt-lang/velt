@@ -119,8 +119,13 @@ fn the_x25519_ladder_matches_the_reference() {
 }
 
 fn run(clang: &Path, dir: &Path, x86: bool, cpu: &str, fused: bool) {
-    let (name, defs, _, _) =
-        crate::field::helper("velt_field_x25519_ladder", x86, false, true).expect("a helper");
+    let (name, defs, _, _) = crate::field::helper(
+        "velt_field_x25519_ladder",
+        x86,
+        false,
+        crate::field_portable::Choice::Mask,
+    )
+    .expect("a helper");
     let mut m = defs.join("\n");
     m.push_str(&format!(
         "\ndefine i8 @ladder(ptr %r, i64 %d, i64 %u, i64 %k) {{\n  %v = call i1 {name}(ptr %r, i64 %d, i64 %u, i64 %k)\n  %w = zext i1 %v to i8\n  ret i8 %w\n}}\n"
@@ -409,12 +414,16 @@ fn the_step_operations_fold_every_carry() {
 /// The ladder's final freeze subtracts p by a mask behind a value barrier, never by a `select`
 /// on whether the reduced coordinate reached p, which is a secret: in the helper's IR as made,
 /// and after clang's optimizer, no `select` takes the freeze's comparison (`%xge`, `%zge`) as
-/// its condition. The only selects left pick the scalar's limb by the bit position, which is
-/// public.
+/// its condition.
 #[test]
 fn the_freeze_chooses_by_a_mask() {
-    let (_, defs, _, _) =
-        crate::field::helper("velt_field_x25519_ladder", true, false, true).expect("a helper");
+    let (_, defs, _, _) = crate::field::helper(
+        "velt_field_x25519_ladder",
+        true,
+        false,
+        crate::field_portable::Choice::Mask,
+    )
+    .expect("a helper");
     let text = defs.join("\n");
     let on_ge = |ir: &str| -> Vec<String> {
         ir.lines()
