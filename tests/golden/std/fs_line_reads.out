@@ -1,0 +1,21 @@
+["a","b","","c\rd","last"]
+[]
+["x"]
+["a�b","�"]
+[ 70000, 65535, 5 ] false after
+one
+[ 116, 119, 111 ]
+""
+"three\nfour"
+null
+x
+65537 true -1
+65535 65535 -1 é end
+x é a [ 98 ]
+a null
+b null
+after close: EBADF
+a éb c
+mixed tasks: true
+one one two two
+100000 100000 true true

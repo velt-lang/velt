@@ -1,0 +1,238 @@
+// FileReader's lines, read in std (#2196): "\r\n", a lone "\r" (kept), a last line without "\n",
+// an empty file, empty lines, invalid UTF-8 (as U+FFFD), lines longer than a 64 KiB refill (one
+// with its "\r" and "\n" in two refills), `read` and `readString` after lines (the bytes keep
+// their order, a character split between refills completed, `readString(1)` on a two-byte
+// character), the end of the file read again once reported, a read after `close`, two readers
+// of one file, and two
+// tasks reading lines through copies of one reader at once: every line whole, exactly once, in
+// order. The Node twin is fs_line_reads.mjs.
+import { FileReader, openRead, openWrite, remove } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function fileOf(parts: u8[][]): Promise<string> {
+  const path = `${tmpdir()}/velt-fs-lines-${uuidv4()}.txt`;
+  const w = await openWrite(path);
+  for (const p of parts) {
+    await w.writeBytes(p);
+  }
+  await w.close();
+  return path;
+}
+
+function text(s: string): u8[] {
+  return Buffer.from(s);
+}
+
+function repeat(byte: u8, n: i64): u8[] {
+  const out: u8[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(byte);
+  }
+  return out;
+}
+
+async function allLines(path: string): Promise<string[]> {
+  const r = await openRead(path);
+  const out: string[] = [];
+  for await (const line of r.lines()) {
+    out.push(line);
+  }
+  r.close();
+  return out;
+}
+
+async function lineBytes(r: FileReader): Promise<i64> {
+  let n: i64 = 0;
+  let line = await r.readLine();
+  while (line != null) {
+    n += (Buffer.from(line).length as i64) + 1;
+    line = await r.readLine();
+  }
+  return n;
+}
+
+async function chunkBytes(r: FileReader): Promise<i64> {
+  let n: i64 = 0;
+  let b = await r.read(777);
+  while (b.length > 0) {
+    n += b.length as i64;
+    b = await r.read(777);
+  }
+  return n;
+}
+
+async function readAll(r: FileReader): Promise<string[]> {
+  const out: string[] = [];
+  let line = await r.readLine();
+  while (line != null) {
+    out.push(line);
+    line = await r.readLine();
+  }
+  return out;
+}
+
+async function main() {
+  const paths: string[] = [];
+
+  const basic = await fileOf([text("a\r\nb\n\nc\rd\nlast")]);
+  paths.push(basic);
+  console.log(JSON.stringify(await allLines(basic)));
+
+  const empty = await fileOf([]);
+  paths.push(empty);
+  console.log(JSON.stringify(await allLines(empty)));
+
+  const one = await fileOf([text("x\n")]);
+  paths.push(one);
+  console.log(JSON.stringify(await allLines(one)));
+
+  const bad = await fileOf([[97u8, 255u8, 98u8, 10u8, 195u8, 10u8]]);
+  paths.push(bad);
+  console.log(JSON.stringify(await allLines(bad)));
+
+  const long = await fileOf([
+    repeat(122u8, 70000),
+    text("\n"),
+    repeat(121u8, 65535),
+    text("\r\nafter"),
+  ]);
+  paths.push(long);
+  const longLines = await allLines(long);
+  console.log(longLines.map((l) => l.length), longLines[1].endsWith("\r"), longLines[2]);
+
+  const mixed = await fileOf([text("one\ntwo\nthree\nfour")]);
+  paths.push(mixed);
+  const m = await openRead(mixed);
+  console.log(await m.readLine());
+  console.log(await m.read(3));
+  console.log(JSON.stringify(await m.readLine()));
+  console.log(JSON.stringify(await m.readString()));
+  console.log(await m.readLine());
+  m.close();
+
+  const split = await fileOf([text("x\n"), repeat(97u8, 65533), text("éend")]);
+  paths.push(split);
+  const s = await openRead(split);
+  console.log(await s.readLine());
+  let rest = "";
+  let piece = await s.readString();
+  while (piece != "") {
+    rest += piece;
+    piece = await s.readString();
+  }
+  console.log(rest.length, rest.endsWith("aéend"), rest.indexOf("�"));
+  s.close();
+
+  // The second chunk ends inside "é": `readString` holds its first byte back, and the line read
+  // after it starts with the character whole.
+  const held = await fileOf([
+    repeat(120u8, 65535),
+    text("\n"),
+    repeat(98u8, 65535),
+    text("é\nend"),
+  ]);
+  paths.push(held);
+  const h = await openRead(held);
+  const xs = await h.readLine();
+  const bs = await h.readString();
+  console.log(xs?.length, bs.length, bs.indexOf("�"), await h.readLine(), await h.readLine());
+  h.close();
+
+  const narrow = await fileOf([text("x\néab")]);
+  paths.push(narrow);
+  const n = await openRead(narrow);
+  console.log(await n.readLine(), await n.readString(1), await n.readString(1), await n.read(5));
+  n.close();
+
+  // The end of the file is reported, then read again: a line written since is read.
+  const grows = await fileOf([text("a\n")]);
+  paths.push(grows);
+  const g = await openRead(grows);
+  console.log(await g.readLine(), await g.readLine());
+  const more = await openWrite(grows, { append: true });
+  await more.write("b\n");
+  await more.close();
+  console.log(await g.readLine(), await g.readLine());
+  g.close();
+  try {
+    await g.readLine();
+  } catch (e) {
+    console.log("after close:", e.code);
+  }
+
+  // `readString` before any line: a character split by its limit is read whole by the line.
+  const early = await fileOf([text("aéb\nc\n")]);
+  paths.push(early);
+  const e = await openRead(early);
+  console.log(await e.readString(2), await e.readLine(), await e.readLine());
+  e.close();
+
+  // One task reads lines while another reads 777 bytes at a time, through copies of one reader:
+  // every byte is read once (each line counts its "\n").
+  const mixedLines: u8[][] = [];
+  let mixedSize: i64 = 0;
+  for (let i = 0; i < 60000; i++) {
+    const l = text(`line ${i} ${"-".repeat(i % 40)}\n`);
+    mixedSize += l.length as i64;
+    mixedLines.push(l);
+  }
+  const mixedFile = await fileOf(mixedLines);
+  paths.push(mixedFile);
+  const mr = await openRead(mixedFile);
+  const counts = await Promise.all([spawn(lineBytes(mr)), spawn(chunkBytes(mr))]);
+  console.log("mixed tasks:", counts[0] + counts[1] == mixedSize);
+  mr.close();
+
+  const two = await fileOf([text("one\ntwo\nthree\n")]);
+  paths.push(two);
+  const r1 = await openRead(two);
+  const r2 = await openRead(two);
+  console.log(await r1.readLine(), await r2.readLine(), await r1.readLine(), await r2.readLine());
+  r1.close();
+  r2.close();
+
+  // Eight tasks share one reader: without the refill token, two refills at once split lines.
+  const lines: u8[][] = [];
+  for (let i = 0; i < 100000; i++) {
+    lines.push(text(`line ${i} ${"-".repeat(i % 50)}\n`));
+  }
+  const shared = await fileOf(lines);
+  paths.push(shared);
+  const r = await openRead(shared);
+  const tasks: Promise<string[]>[] = [];
+  for (let t = 0; t < 8; t++) {
+    tasks.push(spawn(readAll(r)));
+  }
+  const got = await Promise.all(tasks);
+  const seen = new Set<string>();
+  let total = 0;
+  let ordered = true;
+  let whole = true;
+  for (const mine of got) {
+    let prev = -1;
+    for (const line of mine) {
+      total++;
+      const parts = line.split(" ");
+      if (parts.length != 3 || parts[0] != "line") {
+        whole = false;
+        continue;
+      }
+      const n = parseInt(parts[1]);
+      if (parts[2] != "-".repeat(n % 50)) {
+        whole = false;
+      }
+      if (n <= prev) {
+        ordered = false;
+      }
+      prev = n;
+      seen.add(line);
+    }
+  }
+  console.log(total, seen.size, whole, ordered);
+  r.close();
+
+  for (const p of paths) {
+    await remove(p);
+  }
+}

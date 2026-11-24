@@ -1,0 +1,137 @@
+// velt/os (internal): the CPUs, memory and uptime on Windows (sys_win32.velt), as libuv reads them
+// for Node's `os` module: `GetSystemInfo` for the CPUs of the calling thread's processor group,
+// ntdll's `NtQuerySystemInformation` for their times, the registry's
+// `HARDWARE\DESCRIPTION\System\CentralProcessor\<n>` for each one's name and clock,
+// `GlobalMemoryStatusEx` and `GetTickCount64`. Windows has no load average.
+//
+// Where this differs from libuv: a CPU whose registry key can't be read has the model "unknown"
+// and speed 0, where libuv fails the whole call (and Node's `os.cpus()` gives no CPUs).
+
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import type { CpuInfo } from "./cpu_info";
+import { registryNumber, registryText } from "./win_registry";
+
+/** Win32's `SYSTEM_INFO` (its tag, as the headers declare the function with it). */
+declare c type _SYSTEM_INFO;
+/** Win32's `MEMORYSTATUSEX` (its tag, as above). */
+declare c type _MEMORYSTATUSEX;
+
+declare c("c") function GetSystemInfo(info: Ptr<_SYSTEM_INFO> | null): void;
+declare c("c") function NtQuerySystemInformation(
+  infoClass: i32,
+  info: i64[],
+  length: u32,
+  returned: Out<u32>,
+): i32;
+declare c("c") function GlobalMemoryStatusEx(status: Ptr<_MEMORYSTATUSEX> | null): i32;
+declare c("c") function GetTickCount64(): u64;
+
+/** `sizeof(SYSTEM_INFO)` on 64-bit Windows. */
+const SYSTEM_INFO_SIZE: usize = 48;
+/** `dwNumberOfProcessors`' offset in `SYSTEM_INFO` (`wProcessorArchitecture` is at 0). */
+const PROCESSORS_AT: usize = 32;
+/** `SystemProcessorPerformanceInformation`. */
+const PROCESSOR_PERFORMANCE: i32 = 8;
+/**
+ * `SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION`, in `i64`s: the idle, kernel (idle included), user,
+ * DPC and interrupt times in 100 ns units, then a count.
+ */
+const PERFORMANCE_WORDS: i64 = 6;
+/** `sizeof(MEMORYSTATUSEX)`. */
+const MEMORY_STATUS_SIZE: usize = 64;
+
+/**
+ * `GetSystemInfo`'s `[dwNumberOfProcessors, wProcessorArchitecture]`: the logical processors of
+ * the calling thread's processor group, and the processor's architecture
+ * (`PROCESSOR_ARCHITECTURE_*`).
+ */
+export function systemInfo(): [i64, i64] {
+  const p = rawAlloc(SYSTEM_INFO_SIZE);
+  let n: u32 = 0;
+  let arch: u16 = 0;
+  // SAFETY: `p` holds a `SYSTEM_INFO`, which the call fills; the block is freed once, after the
+  // reads.
+  unsafe {
+    GetSystemInfo(Ptr.orNull<_SYSTEM_INFO>(p));
+    n = addressLoad<u32>(p + PROCESSORS_AT);
+    arch = addressLoad<u16>(p);
+    rawFree(p, SYSTEM_INFO_SIZE);
+  }
+  return [n as i64, arch as i64];
+}
+
+/** The registry key of processor `cpu`. */
+function processorKey(cpu: i64): string {
+  return `HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\${cpu}`;
+}
+
+/**
+ * The CPUs of the calling thread's processor group, with their times in milliseconds: user, kernel
+ * less idle (`sys`), idle and interrupt; Windows has no `nice`.
+ */
+export function windowsCpus(): CpuInfo[] {
+  const n = systemInfo()[0];
+  const out: CpuInfo[] = [];
+  if (n <= 0) {
+    return out;
+  }
+  const perf: i64[] = new Array<i64>(n * PERFORMANCE_WORDS).fill(0);
+  const returned = new Out<u32>(0);
+  let status: i32 = -1;
+  // SAFETY: room for `n` records, the length passed in bytes.
+  unsafe {
+    status = NtQuerySystemInformation(
+      PROCESSOR_PERFORMANCE,
+      perf,
+      (n * PERFORMANCE_WORDS * 8) as u32,
+      returned,
+    );
+  }
+  if (status < 0) {
+    return out;
+  }
+  const filled = (returned.value as i64) / (PERFORMANCE_WORDS * 8);
+  for (let i: i64 = 0; i < n && i < filled; i++) {
+    const at = i * PERFORMANCE_WORDS;
+    const model = registryText(processorKey(i), "ProcessorNameString");
+    const mhz = registryNumber(processorKey(i), "~MHz");
+    out.push({
+      model: model.length === 0 ? "unknown" : model,
+      speed: mhz === null ? 0 : mhz,
+      times: {
+        user: perf[at + 2] / 10000,
+        nice: 0,
+        sys: (perf[at + 1] - perf[at]) / 10000,
+        idle: perf[at] / 10000,
+        irq: perf[at + 4] / 10000,
+      },
+    });
+  }
+  return out;
+}
+
+/** `[ullTotalPhys, ullAvailPhys]` from `GlobalMemoryStatusEx`, `[0, 0]` when it fails. */
+export function windowsMemory(): [i64, i64] {
+  const p = rawAlloc(MEMORY_STATUS_SIZE);
+  let total: i64 = 0;
+  let available: i64 = 0;
+  // SAFETY: `p` holds a `MEMORYSTATUSEX` whose `dwLength` says so; the call fills the rest; the
+  // block is freed once, after the reads.
+  unsafe {
+    addressStore<u32>(p, MEMORY_STATUS_SIZE as u32);
+    if (GlobalMemoryStatusEx(Ptr.orNull<_MEMORYSTATUSEX>(p)) !== 0) {
+      total = addressLoad<u64>(p + 8) as i64;
+      available = addressLoad<u64>(p + 16) as i64;
+    }
+    rawFree(p, MEMORY_STATUS_SIZE);
+  }
+  return [total, available];
+}
+
+/** Seconds since the machine started, to the millisecond (`GetTickCount64`). */
+export function windowsUptime(): f64 {
+  // SAFETY: no precondition.
+  return (unsafe { GetTickCount64() } as f64) / 1000;
+}

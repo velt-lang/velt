@@ -1,12 +1,13 @@
 # The goldens on one OS, in parallel shards: called by ci.yml's `queue-golden` for each OS the
-# merge queue checks, and by the nightly's `wasm-goldens` for the WebAssembly goldens on Windows
-# and macOS. One job builds what the goldens run and packs it (`cargo xtask check --part golden
+# merge queue checks, by the after-merge gate (main-gate.yml) for each OS it runs on, and by the
+# nightly's `wasm-goldens` for the WebAssembly goldens on Windows and macOS. One job builds what the goldens run and packs it (`cargo xtask check --part golden
 # --pack`, crates/xtask/src/golden_archive.rs); then each shard downloads the archive and checks
 # every n-th golden (`--archive`, `VELT_GOLDEN_SHARD=<i>/<n>`), on its own runner, without
 # building. The shards per OS are in crates/xtask/src/os.rs (`GOLDEN_SHARDS`). Together the
 # shards check every golden once, in debug and release mode, and the bundled-linker goldens; with
 # `vir_identity` other than `skip` they also run the VIR identity (crates/veltc/tests/
-# eager_std_identity.rs), each on its share of the goldens: the build packs its test binary.
+# eager_std_identity.rs), each on its share of the sample (one golden in 8): the build packs its
+# test binary.
 #
 # With `wasm_shards` (the queue's plan gives them when a change touches WebAssembly code), the
 # same build also packs the WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) and their
@@ -54,8 +55,10 @@ on:
         default: false
       vir_identity:
         description: >-
-          `VELT_VIR_IDENTITY` for the build and the shards: empty compares every golden, `sample`
-          one in 8, `skip` none (`Plan::vir_identity_queue` in crates/xtask/src/plan.rs).
+          `VELT_VIR_IDENTITY` for the build and the shards: `sample` compares one golden in 8,
+          `skip` none (`Plan::vir_identity_queue` in crates/xtask/src/plan.rs). Every golden
+          (`all`) runs in the nightly gate on Linux and in the pull request of a change to the
+          code loading std on demand, not here.
         type: string
         default: skip
       fail-fast:
@@ -64,6 +67,18 @@ on:
           independent).
         type: boolean
         default: true
+      shard-timeout:
+        description: >-
+          A golden shard's time limit in minutes; 0 for the queue's (55, 65 on macOS). The
+          after-merge gate (main-gate.yml) gives its shards more room for a slow runner.
+        type: number
+        default: 0
+    outputs:
+      cancelled:
+        description: >-
+          `true` when the build or a shard was cancelled (its time limit, or a person) rather
+          than failed: the after-merge gate's issue says "did not finish".
+        value: ${{ jobs.goldens.outputs.cancelled }}
 
 env:
   CARGO_INCREMENTAL: "0"
@@ -146,9 +161,14 @@ jobs:
     # merge queue shards from 2026-11-13 to 11-16 took, at the median / 95th percentile / most:
     # Linux 16 / 24 / 30 minutes (one cancelled at 30), Windows 19 / 24 / 26, macOS 23 / 29 / 37.
     # A third macOS shard would need another scarce macOS runner per run instead.
-    # The VIR identity, when the queue runs all of it, adds its share: about 33 minutes of a
-    # 4-vCPU Linux runner in all, 41 on Windows and 25 on macOS (2026-11-18), split over the shards.
-    timeout-minutes: ${{ startsWith(inputs.os, 'macos') && 65 || 55 }}
+    # The VIR identity adds its share of the sample. All of it took 11 to 20 minutes of each of
+    # three Windows shards and about 17 of a macOS shard (2026-11-23), and a train nearly always
+    # touched the code that ran all of it, so the queue runs the sample only, and the nightly all
+    # of it on Linux. Windows has a 4th shard since its goldens alone reached 31 to 33 minutes per
+    # shard (crates/xtask/src/os.rs).
+    timeout-minutes: >-
+      ${{ inputs.shard-timeout > 0 && inputs.shard-timeout
+      || (startsWith(inputs.os, 'macos') && 65 || 55) }}
     permissions:
       contents: read
       actions: write
@@ -177,14 +197,19 @@ jobs:
           # 2026-11-16). A hang still fails well within the job's limit.
           VELT_GOLDEN_TIMEOUT: ${{ startsWith(inputs.os, 'macos') && '300' || '180' }}
         run: cargo xtask check --full --part golden --archive golden.tar
-      # For the push to main that follows (ci.yml's `clang-objects`): a failure here must not fail the entry.
+      # For the push to main that follows (ci.yml's `clang-objects`): a failure here must not fail
+      # the entry. A dispatched run too: a merge train's, whose tree the push may carry.
       - name: the objects clang compiled (Linux)
-        if: runner.os == 'Linux' && github.event_name == 'merge_group'
+        if: >-
+          runner.os == 'Linux'
+          && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         timeout-minutes: 5
         run: bash .github/actions/setup/clang-objects.sh pack clang-objects.tar
       - uses: actions/upload-artifact@v4
-        if: runner.os == 'Linux' && github.event_name == 'merge_group'
+        if: >-
+          runner.os == 'Linux'
+          && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch')
         continue-on-error: true
         timeout-minutes: 5
         with:
@@ -244,7 +269,16 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      cancelled: ${{ steps.cancelled.outputs.cancelled }}
     steps:
+      - name: was anything cancelled
+        id: cancelled
+        env:
+          RESULTS: ${{ needs.build.result }} ${{ needs.shard.result }} ${{ needs.wasm-shard.result }}
+        run: |
+          case " $RESULTS " in *" cancelled "*) c=true ;; *) c=false ;; esac
+          echo "cancelled=$c" >> "$GITHUB_OUTPUT"
       - name: the build and every shard passed
         env:
           BUILD: ${{ needs.build.result }}

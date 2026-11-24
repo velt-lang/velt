@@ -19,9 +19,10 @@ mod probe;
 mod record;
 mod shape;
 mod std_check;
+mod structs;
 mod variables;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -50,6 +51,9 @@ struct Decl {
     /// A C variable (`declare c("lib") let`, or `const`: `Some(false)`), not a function: `ret`
     /// is its type and `params` are empty.
     variable: Option<bool>,
+    /// A C struct (`declare c struct`), not a function: its fields and layout (`params` are
+    /// empty, `ret` is `Void`).
+    structure: Option<Box<structs::StructDecl>>,
     span: Span,
 }
 
@@ -93,6 +97,8 @@ pub fn check(
     let Some(graph) = graph else { return checked };
     // (package root, library) → its declarations.
     let mut groups: BTreeMap<(PathBuf, String), (&GraphPackage, Vec<Decl>)> = BTreeMap::new();
+    // Per group, the C structs its declarations reach, checked with it (`structs`).
+    let mut reached: BTreeMap<(PathBuf, String), BTreeSet<hir::DefId>> = BTreeMap::new();
     for def in &p.defs {
         let Some((library, decl)) = decl_of(p, def) else {
             continue;
@@ -107,11 +113,21 @@ pub fn check(
         if library != "c" && !package.c_libraries.contains_key(library) {
             continue;
         }
+        let key = (package.root.clone(), library.to_string());
+        let structs = reached.entry(key.clone()).or_default();
+        for t in decl_types(def) {
+            structs::reached(p, t, structs);
+        }
         groups
-            .entry((package.root.clone(), library.to_string()))
+            .entry(key)
             .or_insert_with(|| (package, Vec::new()))
             .1
             .push(decl);
+    }
+    for (key, structs) in reached {
+        if let Some((_, decls)) = groups.get_mut(&key) {
+            decls.extend(structs.into_iter().filter_map(|d| structs::decl(p, d)));
+        }
     }
     for ((root, library), (package, decls)) in groups {
         let (headers, unchecked, defines) = match package.c_libraries.get(&library) {
@@ -157,6 +173,7 @@ fn decl_of<'p>(p: &'p hir::Program, def: &'p Def) -> Option<(&'p str, Decl)> {
                 ret: shape(p, f.ret, c.ret),
                 variadic: c.variadic,
                 variable: None,
+                structure: None,
                 span: f.span,
             };
             Some((&c.library, decl))
@@ -169,11 +186,21 @@ fn decl_of<'p>(p: &'p hir::Program, def: &'p Def) -> Option<(&'p str, Decl)> {
                 ret: shape(p, g.ty, c.ty),
                 variadic: false,
                 variable: Some(c.writable),
+                structure: None,
                 span: g.span,
             };
             Some((&c.library, decl))
         }
         _ => None,
+    }
+}
+
+/// The types of C declaration `def`'s parameters and result (a variable's type).
+fn decl_types(def: &Def) -> Vec<hir::TyId> {
+    match def {
+        Def::ExternFn(f) => f.params.iter().copied().chain([f.ret]).collect(),
+        Def::Global(g) => vec![g.ty],
+        _ => vec![],
     }
 }
 
@@ -228,7 +255,7 @@ fn check_library(
     }
     let parsed =
         velt_toolchain::zig::zig(&home).and_then(|zig| parse(&zig, &home, root, read, zig_target));
-    let (parsed, read) = match parsed {
+    let (mut parsed, read) = match parsed {
         Ok(parsed) => parsed,
         Err(e) => {
             diags.push(
@@ -245,13 +272,53 @@ fn check_library(
             return None;
         }
     };
+    parsed.declared = (decls.iter())
+        .filter(|d| d.structure.is_some())
+        .map(|d| d.name.clone())
+        .collect();
     let windows = target.contains("windows");
+    let long_bits = if windows { 32 } else { 64 };
     let before = diags.len();
+    let mut layouts = vec![];
     for d in decls {
-        check_decl(d, &parsed, headers, windows, diags);
+        match &d.structure {
+            Some(s) => {
+                let spelling = structs::check_fields(d, s, &parsed, (headers, long_bits), diags);
+                layouts.extend(spelling.map(|sp| (d, sp)));
+            }
+            None => check_decl(d, &parsed, headers, windows, diags),
+        }
     }
     if diags.len() != before {
         return None;
+    }
+    if !layouts.is_empty() {
+        let dir = work_dir(&home);
+        let laid_out = std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))
+            .and_then(|()| velt_toolchain::zig::zig(&home))
+            .and_then(|zig| {
+                let read = LibraryHeaders { headers, defines };
+                structs::check_layouts(
+                    &zig,
+                    &dir,
+                    root,
+                    read,
+                    (zig_target, target),
+                    &layouts,
+                    diags,
+                )
+            });
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(e) = laid_out {
+            diags.push(Diagnostic::error(
+                format!("the C structs of C library `{library}` can't be checked against its headers: {e}"),
+                first,
+            ));
+        }
+        if diags.len() != before {
+            return None;
+        }
     }
     let Some(read) = read
         .iter()
@@ -381,7 +448,7 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &
         return;
     }
     for (i, (shape, written)) in d.params.iter().zip(&c.params).enumerate() {
-        if let Err(note) = compare::compare(shape, &h.resolve(written, long_bits)) {
+        if let Err(note) = compare::compare_in(shape, &h.resolve(written, long_bits), h) {
             diags.push(
                 Diagnostic::error(
                     format!(
@@ -397,7 +464,7 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &
             );
         }
     }
-    if let Err(note) = compare::compare(&d.ret, &h.resolve(&c.ret, long_bits)) {
+    if let Err(note) = compare::compare_in(&d.ret, &h.resolve(&c.ret, long_bits), h) {
         diags.push(
             Diagnostic::error(
                 format!(
@@ -436,6 +503,9 @@ fn cache_key(root: &Path, read: LibraryHeaders, decls: &[Decl], target: &str) ->
         h.update(format!("\0{}{:?}{:?}", d.name, d.params, d.ret));
         if let Some(writable) = d.variable {
             h.update(format!("\0variable {writable}"));
+        }
+        if let Some(s) = &d.structure {
+            h.update(format!("\0struct {s:?}"));
         }
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
@@ -625,139 +695,5 @@ fn split_quoted(line: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clang_s_command_line_splits_into_words() {
-        assert_eq!(
-            split_quoted(r#" "/z/zig" "-cc1" "-I/a b" "-DX=\"y\"""#),
-            ["/z/zig", "-cc1", "-I/a b", "-DX=\"y\""]
-        );
-    }
-
-    #[test]
-    fn the_include_directory_reaches_clang_without_the_verbatim_prefix() {
-        assert_eq!(include_arg(Path::new(r"\\?\C:\x")), r"-IC:\x");
-        assert_eq!(
-            include_arg(Path::new(r"\\?\UNC\server\share")),
-            r"-I\\server\share"
-        );
-        assert_eq!(include_arg(Path::new("/pkg/sqlite")), "-I/pkg/sqlite");
-        assert_eq!(include_arg(Path::new(r"E:\velt\x")), r"-IE:\velt\x");
-    }
-
-    #[test]
-    fn clang_s_dependency_list_gives_the_files_read() {
-        // A file outside the parse's directory, as an absolute path of this host (a drive
-        // letter on Windows), with spaces escaped as clang does.
-        let dir = tempfile::tempdir().unwrap();
-        let outside = dir.path().parent().unwrap().join("a.h");
-        let listed = outside.to_str().unwrap().replace(' ', "\\ ");
-        assert_eq!(
-            files_read(dir.path(), &format!("deps: headers.c {listed}\n")),
-            [outside]
-        );
-    }
-
-    /// A remembered check holds while every file it read is the same; an older entry, without
-    /// the files, doesn't.
-    #[test]
-    fn a_remembered_check_holds_while_its_files_do() {
-        let dir = tempfile::tempdir().unwrap();
-        let (outer, inner) = (dir.path().join("t.h"), dir.path().join("inner.h"));
-        std::fs::write(&outer, "#include \"inner.h\"\n").unwrap();
-        std::fs::write(&inner, "int f(int a);\n").unwrap();
-        let remembered = dir.path().join("remembered");
-        assert!(still_holds(&remembered).is_none());
-        let read = [outer, inner.clone()].map(|f| {
-            let digest = file_digest(&f).unwrap();
-            (f, digest)
-        });
-        std::fs::write(&remembered, remembered_text(&read).unwrap()).unwrap();
-        assert_eq!(still_holds(&remembered).unwrap(), read);
-        std::fs::write(&inner, "int f(long a);\n").unwrap();
-        assert!(still_holds(&remembered).is_none());
-        std::fs::remove_file(&inner).unwrap();
-        assert!(still_holds(&remembered).is_none());
-        std::fs::write(&remembered, "checked\n").unwrap();
-        assert!(still_holds(&remembered).is_none());
-        std::fs::write(&remembered, "").unwrap();
-        assert!(still_holds(&remembered).is_none());
-    }
-
-    /// Remembering replaces the file rather than writing into it: what another name of the old
-    /// file reads stays whole (as a reader in the middle of the write would see it).
-    #[test]
-    fn remembering_replaces_the_file_whole() {
-        let dir = tempfile::tempdir().unwrap();
-        let header = dir.path().join("a.h");
-        std::fs::write(&header, "int f(int a);\n").unwrap();
-        let remembered = dir.path().join("remembered");
-        std::fs::write(&remembered, "old\n").unwrap();
-        let other_name = dir.path().join("other");
-        std::fs::hard_link(&remembered, &other_name).unwrap();
-        let read = [(header.clone(), file_digest(&header).unwrap())];
-        remember(&remembered, &read);
-        assert_eq!(std::fs::read_to_string(&other_name).unwrap(), "old\n");
-        assert_eq!(still_holds(&remembered).unwrap(), read);
-    }
-
-    /// What the stamp gets: the package headers each check read, by digest; not one the
-    /// package doesn't have.
-    #[test]
-    fn the_stamp_has_the_package_files_a_check_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let header = dir.path().join("native/own.h");
-        std::fs::create_dir(dir.path().join("native")).unwrap();
-        std::fs::write(&header, "int f(int a);\n").unwrap();
-        let mut checked = Checked::new();
-        let record = LibraryRecord {
-            declarations: Default::default(),
-            headers: BTreeMap::from([
-                ("native/own.h".to_string(), String::new()),
-                ("native/gone.h".to_string(), String::new()),
-            ]),
-            defines: String::new(),
-        };
-        checked
-            .entry(dir.path().to_path_buf())
-            .or_default()
-            .insert("own".into(), record);
-        let mut inputs = Vec::new();
-        stamp_inputs(&checked, &mut inputs);
-        let hash = vpm::probe::content_hash(b"int f(int a);\n");
-        let path = vpm::relpath::absolute(&header);
-        assert_eq!(inputs, [format!("file {hash}\t{}", path.display())]);
-    }
-
-    #[test]
-    fn each_parse_has_its_own_directory() {
-        let home = Path::new("/h");
-        assert_ne!(work_dir(home), work_dir(home));
-    }
-
-    #[test]
-    fn a_package_s_headers_are_included_by_their_path_in_it() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("native")).unwrap();
-        std::fs::write(dir.path().join("native/a.h"), "").unwrap();
-        let headers = ["native/a.h".to_string(), "<string.h>".to_string()];
-        assert_eq!(
-            includes(dir.path(), &headers).unwrap(),
-            "#include \"native/a.h\"\n#include <string.h>\n"
-        );
-        let missing = includes(dir.path(), &["native/b.h".to_string()]).unwrap_err();
-        assert_eq!(missing, "header `native/b.h` is not in the package");
-    }
-
-    #[test]
-    fn targets_map_to_zig_s() {
-        assert_eq!(
-            zig_target("x86_64-pc-windows-msvc"),
-            Some("x86_64-windows-gnu")
-        );
-        assert_eq!(zig_target("aarch64-apple-darwin"), Some("aarch64-macos"));
-        assert_eq!(zig_target("wasm32-wasip1"), None);
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

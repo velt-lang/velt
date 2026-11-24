@@ -1,0 +1,91 @@
+// velt/os (internal): the text of Linux's /proc and /sys files and the numbers in it, for the
+// readers of the CPU quota (cgroup.velt), the memory limits (cgroup_memory.velt), the CPUs
+// (cpus_linux.velt) and the memory and load figures (meminfo_linux.velt).
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { readText } from "#fs-whole";
+
+/** The text of `path` (a /sys or /proc path, no 0 in it), or null when it can't be read. */
+export function readOrNull(path: string): string | null {
+  const c = utf8Encode(path);
+  c.push(0);
+  return readText(c, path).value;
+}
+
+/** The text of `path`, or "" when it can't be read. */
+export function read(path: string): string {
+  const text = readOrNull(path);
+  return text === null ? "" : text;
+}
+
+/**
+ * The integer `s` spells, spaces around it aside (digits, an optional leading "-"), or null. More
+ * than 18 digits read as null, so the 19-digit "no limit" of a cgroup v1 file (2^63 less a page)
+ * is no number either.
+ */
+export function integer(s: string): i64 | null {
+  const t = s.trim();
+  const negative = t.startsWith("-");
+  const digits = negative ? t.slice(1) : t;
+  if (digits.length === 0 || digits.length > 18) {
+    return null;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (digits.length as i64); i++) {
+    const c = digits.charCodeAt(i) as i64;
+    if (c < 48 || c > 57) {
+      return null;
+    }
+    n = n * 10 + (c - 48);
+  }
+  return negative ? -n : n;
+}
+
+/** The words of `line`: its runs of characters that are not spaces or tabs. */
+export function words(line: string): string[] {
+  const out: string[] = [];
+  let start: i64 = -1;
+  const n = line.length as i64;
+  for (let i: i64 = 0; i <= n; i++) {
+    const c = i < n ? line.charCodeAt(i) : 32;
+    const blank = c === 32 || c === 9;
+    if (blank && start >= 0) {
+      out.push(line.slice(start, i));
+      start = -1;
+    } else if (!blank && start < 0) {
+      start = i;
+    }
+  }
+  return out;
+}
+
+/**
+ * The value after `key` and its colon in `text` ("MemTotal:  16473744 kB", "model name\t: Intel"),
+ * spaces around it aside, from the first line that starts with `key`, then spaces or tabs, then
+ * ":"; null when no line does.
+ */
+export function keyed(text: string, key: string): string | null {
+  for (const line of text.split("\n")) {
+    const value = keyedLine(line, key);
+    if (value !== null) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/** The value of `line` if it is `key`'s ("<key> : <value>"), else null. */
+export function keyedLine(line: string, key: string): string | null {
+  if (!line.startsWith(key)) {
+    return null;
+  }
+  let i = key.length as i64;
+  const n = line.length as i64;
+  while (i < n && (line.charCodeAt(i) === 32 || line.charCodeAt(i) === 9)) {
+    i++;
+  }
+  if (i >= n || line.charCodeAt(i) !== 58) {
+    return null;
+  }
+  return line.slice(i + 1).trim();
+}

@@ -78,6 +78,9 @@ pub enum CTy {
     /// velt/ffi's `Out<T>`, `T` a number type, `bool` or `Ptr<U> | null` (parameters only): the
     /// address of its `value`, which C writes (`int *`, `T **`).
     Out,
+    /// A `declare c struct` by value (#2187 layer 3, additive): the parameter's or result's
+    /// type names which; lowering passes it as the target's C calling convention says.
+    Struct,
     /// `void` (results only).
     Void,
 }
