@@ -1,0 +1,58 @@
+// #3498 review, item 1: a promise of a task on worker 1 is handed to a task on worker 2, which
+// shares it there (its hub is `AWAY`: the promise is another task's). The first holder to wait,
+// in a race against a quick promise, leaves the hub's waiters after the promise finished (and let
+// go of its task), with a `Promise.all` holder waiting behind it: that one still gets the value.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const GOT = new Atomic<i64>(0);
+
+async function soon(): Promise<number> {
+  for (let y = 0; y < 3; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function quick(): Promise<number> {
+  await yieldNow();
+  return 0;
+}
+
+async function behind(h: Holder): Promise<void> {
+  const rs = await Promise.all([h.p]);
+  GOT.add(rs[0] as i64);
+}
+
+async function sharer(p: Promise<number>): Promise<void> {
+  const h = new Holder(p);
+  const first = Promise.race([h.p, quick()]);
+  const b = behind(new Holder(h.p));
+  await first;
+  await b;
+}
+
+async function maker(): Promise<void> {
+  for (let i = 0; i < 30; i++) {
+    void spawn(sharer(soon()), { worker: 2 });
+  }
+}
+
+async function main() {
+  const n: i64 = 8;
+  for (let k: i64 = 0; k < n; k++) {
+    await spawn(maker(), { worker: 1 });
+  }
+  while (GOT.load() < 30 * n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 100; y++) {
+    await yieldNow();
+  }
+  console.log(`got ${GOT.load()}`);
+}

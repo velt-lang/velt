@@ -1,0 +1,33 @@
+// 200 TLS 1.3 handshakes of `startTls` (the client in Velt) against the runtime's `listenTls`
+// in the same process, each with a one-byte round trip and close_notify both ways: the client's
+// handshake cost (X25519, HKDF, the transcript hashes, the record layer) for base/head
+// instruction counts (`bench/program_instr.sh`). The server's share is the same on both sides.
+import { connect, listenTls, startTls, TcpStream } from "velt/net";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../tests/golden/std/_tls";
+
+async function main() {
+  const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const accepting = l;
+  let total: usize = 0;
+  for (let i = 0; i < 200; i++) {
+    const server = spawn(async () => {
+      const conn: TcpStream = await accepting.accept();
+      const got = await conn.read();
+      await conn.writeBytes(got);
+      await conn.read();
+      conn.close();
+      return got.length as usize;
+    });
+    const tls = await startTls(await connect(`127.0.0.1:${l.port}`), {
+      serverName: "localhost",
+      ca: TEST_CA,
+    });
+    await tls.writeBytes([42]);
+    total += (await tls.read()).length;
+    await tls.shutdown();
+    total += await server;
+    tls.close();
+  }
+  l.close();
+  console.log(`${total}`);
+}

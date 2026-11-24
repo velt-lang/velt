@@ -1,0 +1,47 @@
+// #3498 review, item 1: promises of a task on worker 1, handed to tasks on other workers while
+// still pending: worker 2 awaits each through `Promise.all`, and worker 3 drops others unawaited,
+// each at about the moment it finishes (and lets go of its task). Every value arrives, and
+// nothing is left.
+
+const GOT = new Atomic<i64>(0);
+const DROPPED = new Atomic<i64>(0);
+
+async function soon(i: i64): Promise<number> {
+  for (let y: i64 = 0; y < i % 3; y++) {
+    await yieldNow();
+  }
+  return 1;
+}
+
+async function viaAll(p: Promise<number>): Promise<void> {
+  const rs = await Promise.all([p]);
+  GOT.add(rs[0] as i64);
+}
+
+async function dropper(p: Promise<number>, i: i64): Promise<void> {
+  for (let y: i64 = 0; y < i % 3; y++) {
+    await yieldNow();
+  }
+  DROPPED.add(1);
+}
+
+async function maker(k: i64): Promise<void> {
+  for (let i: i64 = 0; i < 30; i++) {
+    void spawn(viaAll(soon(i)), { worker: 2 });
+    void spawn(dropper(soon(i + k), i), { worker: 3 });
+  }
+}
+
+async function main() {
+  const n: i64 = 8;
+  for (let k: i64 = 0; k < n; k++) {
+    await spawn(maker(k), { worker: 1 });
+  }
+  while (GOT.load() < 30 * n || DROPPED.load() < 30 * n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 100; y++) {
+    await yieldNow();
+  }
+  console.log(`got ${GOT.load()}, dropped ${DROPPED.load()}`);
+}

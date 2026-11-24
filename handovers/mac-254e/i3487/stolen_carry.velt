@@ -1,0 +1,54 @@
+// #3487 (b): tasks woken by value from worker 3 while their home worker (0) runs synchronous code,
+// so other workers may take them from its queue: each wake hands its reference to the woken
+// task's next poll, wherever that runs, and it goes back once. Then each waits for ever and is
+// found parked for ever.
+
+const READY = new Atomic<i64>(0);
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function waiter(p: Promise<number>): Promise<number> {
+  READY.add(1);
+  const v = await p;
+  PARKED.add(1);
+  return v + (await dead());
+}
+
+async function settle(rs: ((v: number) => void)[], n: i64): Promise<void> {
+  while (READY.load() < n) {
+    await yieldNow();
+  }
+  for (const r of rs) {
+    r(1);
+  }
+}
+
+async function main() {
+  const n: i64 = 40;
+  const rs: ((v: number) => void)[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    const { promise, resolve } = Promise.withResolvers<number>();
+    rs.push(resolve);
+    void spawn(waiter(promise));
+  }
+  while (READY.load() < n) {
+    await yieldNow();
+  }
+  void spawn(settle(rs, n), { worker: 3 });
+  rs.length = 0;
+  // Worker 0 busy while the wakes come.
+  let x: i64 = 0;
+  for (let i: i64 = 0; i < 20000000; i++) {
+    x += i;
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  console.log(`parked ${PARKED.load()} ${x > 0}`);
+}

@@ -1,0 +1,57 @@
+// #3498 review: a promise that finished, and so let go of its task, is shared into two holders
+// kept in module state, which `main` drops one at a time, off the task and under the module lock.
+// Its hub is not taken for a hub on the task (it has none), so no drop tries to list it there,
+// and every task is found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const SHARED: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 3;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const f = soon();
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  const h = new Holder(f);
+  SHARED.push(h);
+  SHARED.push(new Holder(h.p));
+  PARKED.add(1);
+  return await d.p;
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  while (SHARED.length > 0) {
+    SHARED.pop();
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}

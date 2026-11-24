@@ -1,0 +1,62 @@
+// #3487 second review: as ns_waiting_shared, then the owner hands a holder of `side` (shared by
+// then, and listed) to worker 3, and later a holder of the first shared promise: `side` leaves
+// the list through its own hub, is listed again as a shared promise, and leaves it again as the
+// first promise leaves it.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function user(h: Holder): Promise<void> {
+  await yieldNow();
+  await yieldNow();
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const side = inner(d);
+  const r = inner(d);
+  await yieldNow();
+  await yieldNow();
+  const s = new Holder(side);
+  KEPT.push(s);
+  const q = s.p;
+  await yieldNow();
+  void spawn(user(new Holder(q)), { worker: 3 });
+  await yieldNow();
+  await yieldNow();
+  await yieldNow();
+  void spawn(user(new Holder(d.p)), { worker: 3 });
+  PARKED.add(1);
+  return (await d.p) + (await r) + (await q);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let i: i64 = 0; i < n; i++) {
+    void spawn(maker(), { worker: 1 + (i % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}

@@ -1,0 +1,52 @@
+// A holder handed to worker 2 is awaited once there (a promise that settles), then the task
+// keeps a second holder of a dead promise in module state, which main drops later, off its task.
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 1;
+}
+
+async function user(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function maker(): Promise<number> {
+  const live = new Holder(soon());
+  const got = await spawn(user(live), { worker: 2 });
+  const d = new Holder(dead());
+  KEPT.push(d);
+  PARKED.add(1);
+  return got + (await d.p);
+}
+
+async function main() {
+  const n: i64 = 30;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  let dropped: i64 = 0;
+  while (KEPT.length > 0) {
+    KEPT.pop();
+    dropped += 1;
+  }
+  console.log(`dropped ${dropped}`);
+}

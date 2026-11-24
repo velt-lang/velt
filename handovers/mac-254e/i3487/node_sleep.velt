@@ -1,0 +1,45 @@
+// #3487 probe: a promise of the task (`p`, not adopted: its owner yields first) sleeps 1 ms, so
+// its node's waker is woken by value by the timer; then it waits for ever. Its owner awaits it after. Every task should be found parked for ever.
+
+const RES: ((v: number) => void)[] = [];
+const READY = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
+
+async function waitOnce(): Promise<number> {
+  await sleep(1);
+  const a = 1;
+  DONE.add(1);
+  return a + (await new Promise<number>((resolve) => {}));
+}
+
+async function maker(): Promise<number> {
+  const p = waitOnce();
+  await yieldNow();
+  READY.add(1);
+  return await p;
+}
+
+async function resolver(n: i64): Promise<void> {
+  let done: i64 = 0;
+  while (done < n) {
+    if (READY.load() > done && RES.length > 0) {
+      RES.shift()!(1);
+      done += 1;
+    }
+    await yieldNow();
+  }
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (DONE.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  console.log(`done ${DONE.load()}`);
+}

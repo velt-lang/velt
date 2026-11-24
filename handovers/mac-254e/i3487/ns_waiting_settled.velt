@@ -1,0 +1,62 @@
+// #3487: as ns_waiting_handed, but the task on worker 3 that gets the holder settles the shared
+// promise too: `side`, listed while the root and it waited in the hub and taken off the list by
+// the hand-over, is woken through its entry and gets the value, as the root does.
+
+class Box {
+  f: ((v: number) => void)[] = [];
+}
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const SUM = new Atomic<i64>(0);
+
+async function source(b: Box): Promise<number> {
+  return await new Promise<number>((resolve) => {
+    b.f.push(resolve);
+  });
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function user(h: Holder, b: Box): Promise<void> {
+  await yieldNow();
+  await yieldNow();
+  b.f[0](1);
+}
+
+async function later(h: Holder, b: Box): Promise<number> {
+  await yieldNow();
+  await yieldNow();
+  void spawn(user(h, b), { worker: 3 });
+  return 1;
+}
+
+async function maker(): Promise<number> {
+  const b = new Box();
+  const d = new Holder(source(b));
+  const side = inner(d);
+  void later(new Holder(d.p), b);
+  const v = (await d.p) + (await side);
+  SUM.add(v as i64);
+  return v;
+}
+
+async function main() {
+  const n: i64 = 20;
+  const ps: Promise<number>[] = [];
+  for (let r: i64 = 0; r < n; r++) {
+    ps.push(spawn(maker(), { worker: 1 + (r % 2) }));
+  }
+  let s = 0;
+  for (const p of ps) {
+    s += await p;
+  }
+  console.log(`sum ${s}, ${SUM.load()}`);
+}

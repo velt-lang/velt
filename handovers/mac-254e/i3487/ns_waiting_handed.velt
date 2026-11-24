@@ -1,0 +1,54 @@
+// #3487: as ns_waiting_in_hub, but a third promise of the task hands a second holder to a task
+// on worker 3 a few turns after the root and `side` wait in the hub, on the task's own thread:
+// that takes the shared promise off the list, and `side` with it, until the holder is dropped
+// there. Every task is still found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const USED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function user(h: Holder): Promise<void> {
+  await yieldNow();
+  USED.add(1);
+}
+
+async function later(h: Holder): Promise<number> {
+  await yieldNow();
+  await yieldNow();
+  void spawn(user(h), { worker: 3 });
+  return 1;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  const side = inner(d);
+  void later(new Holder(d.p));
+  return (await d.p) + (await side);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (USED.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  console.log(`used ${USED.load()}`);
+}

@@ -1,0 +1,41 @@
+// #3487 (b): `main` ends while a task woken by value from another worker is still queued: its
+// home worker (1) is busy in a long synchronous loop, so the wake (from worker 3, carrying the
+// waker's reference) leaves it queued, and `main` returns before worker 1 polls it.
+
+const WOKEN = new Atomic<i64>(0);
+const READY = new Atomic<i64>(0);
+
+async function waiter(p: Promise<number>): Promise<number> {
+  READY.add(1);
+  return await p;
+}
+
+async function busy(): Promise<void> {
+  while (WOKEN.load() === 0) {
+    // Spins until the wake below happened, then a while longer.
+  }
+  let x: i64 = 0;
+  for (let i: i64 = 0; i < 50000000; i++) {
+    x += i;
+  }
+  console.log(`busy ${x > 0}`);
+}
+
+async function settle(r: (v: number) => void): Promise<void> {
+  while (READY.load() === 0) {
+    await yieldNow();
+  }
+  r(1);
+  WOKEN.add(1);
+}
+
+async function main() {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  void spawn(waiter(promise), { worker: 1 });
+  void spawn(settle(resolve), { worker: 3 });
+  void spawn(busy(), { worker: 1 });
+  while (WOKEN.load() === 0) {
+    await yieldNow();
+  }
+  console.log("main ends");
+}

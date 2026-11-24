@@ -1,0 +1,57 @@
+// #3498: as held_plain, but the finished promise is handed to a task on worker 3 before the root
+// parks: a promise another task holds is not counted as held by this one, so the park doesn't say
+// yes early, and the task is found parked for ever once worker 3 has dropped it.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+const USED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 1;
+}
+
+async function user(p: Promise<number>): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    await yieldNow();
+  }
+  USED.add((await p) as i64);
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const f = soon();
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  void spawn(user(f), { worker: 3 });
+  PARKED.add(1);
+  return await d.p;
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n || USED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}, used ${USED.load()}`);
+}

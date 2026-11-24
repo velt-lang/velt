@@ -1,0 +1,49 @@
+// #3498 review: a promise of the task (`inner`) races a promise a task on worker 3 resolves
+// against one of its own. Worker 3's resolve wakes `inner` by value from another thread, which
+// read `inner`'s task and pauses there (`VELT_SCHED_WAKE_PAUSE`) before it takes a reference to
+// the task; meanwhile the local promise wins and `inner` finishes, and the task ends. `inner`
+// must not let go of its task while that waker's reference is out, or the task is freed under
+// the paused waker.
+
+const STARTED = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
+
+async function settle(r: (v: number) => void): Promise<void> {
+  await yieldNow();
+  STARTED.add(1);
+  r(1);
+}
+
+async function local(): Promise<number> {
+  while (STARTED.load() === 0) {
+    await yieldNow();
+  }
+  await yieldNow();
+  return 2;
+}
+
+async function inner(p: Promise<number>): Promise<number> {
+  return await Promise.race([p, local()]);
+}
+
+async function maker(): Promise<number> {
+  const { promise, resolve } = Promise.withResolvers<number>();
+  void spawn(settle(resolve), { worker: 3 });
+  const v = await inner(promise);
+  DONE.add(1);
+  return v;
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (DONE.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  console.log(`done ${DONE.load()}`);
+}

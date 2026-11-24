@@ -1,0 +1,49 @@
+// #3462 review's p_two_roots shape: the root awaits two holders in turn (the first settles), and a
+// promise of the task awaits a third holder of a dead promise kept in module state.
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 1;
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function maker(): Promise<number> {
+  const a = new Holder(soon());
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const side = inner(d);
+  const x = await a.p;
+  PARKED.add(1);
+  return x + (await d.p) + (await side);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}

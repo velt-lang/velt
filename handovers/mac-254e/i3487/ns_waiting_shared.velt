@@ -1,0 +1,50 @@
+// #3487 review: as ns_waiting_moved, but the owner shares `side` once it is listed: a holder of
+// it goes in module state, which main drops at the end, and the owner reads it (the read shares
+// it). It stays listed, now as a shared promise, and the task is found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const side = inner(d);
+  const r = inner(d);
+  await yieldNow();
+  await yieldNow();
+  const s = new Holder(side);
+  KEPT.push(s);
+  const q = s.p;
+  PARKED.add(1);
+  return (await d.p) + (await r) + (await q);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let i: i64 = 0; i < n; i++) {
+    void spawn(maker(), { worker: 1 + (i % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}

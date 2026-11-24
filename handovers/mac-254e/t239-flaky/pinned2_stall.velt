@@ -1,0 +1,32 @@
+const FIRED = new Atomic<i64>(0);
+const WORKER_FIRED = new Atomic<i64>(0);
+
+async function pinned(): Promise<i64> {
+  await new Promise<void>((resolve) => setTimeout(() => resolve(), 5));
+  console.log("pinned timeout fired");
+  const s = Date.now();
+  while (Date.now() - s < 500) {
+  }
+  setTimeout(() => {
+    console.log("pinned fire-and-forget");
+    FIRED.store(1);
+  }, 5);
+  await sleep(2000);
+  while (WORKER_FIRED.load() === 0) {
+    await yieldNow();
+  }
+  console.log("pinned slept 2000");
+  return 2;
+}
+
+async function main() {
+  const p = spawn(pinned(), { worker: 1 });
+  while (FIRED.load() === 0) {
+    await yieldNow();
+  }
+  setTimeout(() => {
+    console.log("worker timeout 400");
+    WORKER_FIRED.store(1);
+  }, 400);
+  console.log(await p);
+}

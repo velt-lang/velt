@@ -1,0 +1,40 @@
+// #3487 probe: a promise of the task (`p`, not adopted: its owner yields first) waits on a promise
+// whose resolve function it hands to a task on worker 3 (no module state, so no module lock), which
+// calls it: `p`'s node waker is woken by value from worker 3. Then `p` waits for ever. Its owner
+// awaits it after. Every task should be found parked for ever.
+
+const DONE = new Atomic<i64>(0);
+
+async function settle(r: (v: number) => void): Promise<void> {
+  await yieldNow();
+  await yieldNow();
+  r(1);
+}
+
+async function waitOnce(): Promise<number> {
+  const a = await new Promise<number>((resolve) => {
+    void spawn(settle(resolve), { worker: 3 });
+  });
+  DONE.add(1);
+  return a + (await new Promise<number>((resolve) => {}));
+}
+
+async function maker(): Promise<number> {
+  const p = waitOnce();
+  await yieldNow();
+  return await p;
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (DONE.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  console.log(`done ${DONE.load()}`);
+}

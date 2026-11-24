@@ -1,0 +1,54 @@
+// #3498: as held_plain, but the finished promise is also kept in module state, which `main` drops
+// at the end, off its task: it leaves the task's count as it is freed there, and every task is
+// still found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const DONE: Promise<number>[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 1;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const f = soon();
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  DONE.push(f);
+  PARKED.add(1);
+  return await d.p;
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  DONE.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}

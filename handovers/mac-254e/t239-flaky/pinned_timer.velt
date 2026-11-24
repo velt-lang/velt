@@ -1,0 +1,14 @@
+async function pinned(): Promise<i64> {
+  await new Promise<void>((resolve) => setTimeout(() => resolve(), 5));
+  console.log("pinned timeout fired");
+  setTimeout(() => console.log("pinned fire-and-forget"), 5);
+  await sleep(2000);
+  console.log("pinned slept 2000");
+  return 2;
+}
+
+async function main() {
+  setTimeout(() => console.log("worker timeout 400"), 400);
+  const n = await spawn(pinned(), { worker: 1 });
+  console.log(n);
+}

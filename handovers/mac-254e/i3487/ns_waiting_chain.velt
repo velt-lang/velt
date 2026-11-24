@@ -1,0 +1,50 @@
+// #3487: as ns_waiting_in_hub, with a chain of two: a third promise of the task, `q`, awaits
+// `side`, which waits in the hub of the shared promise nobody settles. Every task is still
+// found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function outer(p: Promise<number>): Promise<number> {
+  return await p;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const side = inner(d);
+  const q = outer(side);
+  await yieldNow();
+  PARKED.add(1);
+  return (await d.p) + (await q);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}

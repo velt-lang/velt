@@ -1,0 +1,57 @@
+// #3498: a promise that finished, and so let go of its task, is shared after: its owner reads it
+// through a holder, and hands a second holder to a task on worker 3, which reads it there. Then
+// the task parks for ever: every value arrives and every task is found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+const READ = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(): Promise<number> {
+  await yieldNow();
+  return 2;
+}
+
+async function reader(h: Holder): Promise<void> {
+  await yieldNow();
+  READ.add((await h.p) as i64);
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const f = soon();
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  const h = new Holder(f);
+  const v = await h.p;
+  void spawn(reader(new Holder(h.p)), { worker: 3 });
+  PARKED.add(v as i64);
+  return v + (await d.p);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < 2 * n || READ.load() < 2 * n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}, read ${READ.load()}`);
+}

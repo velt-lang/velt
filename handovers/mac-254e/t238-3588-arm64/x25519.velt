@@ -1,0 +1,14 @@
+// 1000 X25519 agreements with fixed keys (RFC 7748 §6.1's private keys).
+import { x25519, x25519PublicKey } from "velt/crypto";
+import { hexDecode } from "velt/encoding";
+
+function main() {
+  const a = hexDecode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
+  const b = hexDecode("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
+  const pb = x25519PublicKey(b);
+  let sum = 0;
+  for (let i = 0; i < 1000; i++) {
+    sum += x25519(a, pb)[i % 32] as i64;
+  }
+  console.log(`${sum}`);
+}

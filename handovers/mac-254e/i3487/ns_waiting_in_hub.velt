@@ -1,0 +1,45 @@
+// #3487: a promise of the task (`side`, not the root) waits in the hub of a shared promise nobody
+// settles, and the root waits there too, after a yield; a holder is kept in module state, which
+// main drops at the end. Every task is found parked for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const side = inner(d);
+  await yieldNow();
+  PARKED.add(1);
+  return (await d.p) + (await side);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}

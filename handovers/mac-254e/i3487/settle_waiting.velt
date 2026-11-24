@@ -1,0 +1,59 @@
+// #3487: a promise of the task waits in the hub of a shared promise that does settle after all,
+// from a task on worker 3, which resolves it as soon as the root waits too (so the settle can
+// come while the waiting promise is being listed): every task gets its value, nothing is left.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const RESOLVE: ((v: number) => void)[] = [];
+const WAITING = new Atomic<i64>(0);
+const SUM = new Atomic<i64>(0);
+
+async function later(): Promise<number> {
+  return await new Promise<number>((resolve) => {
+    RESOLVE.push(resolve);
+  });
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(later());
+  const side = inner(d);
+  await yieldNow();
+  WAITING.add(1);
+  const v = (await d.p) + (await side);
+  SUM.add(v as i64);
+  return v;
+}
+
+async function resolver(n: i64): Promise<void> {
+  let done: i64 = 0;
+  while (done < n) {
+    if (WAITING.load() > done && RESOLVE.length > 0) {
+      RESOLVE.shift()!(1);
+      done += 1;
+    }
+    await yieldNow();
+  }
+}
+
+async function main() {
+  const n: i64 = 20;
+  const ps: Promise<number>[] = [];
+  for (let r: i64 = 0; r < n; r++) {
+    ps.push(spawn(maker(), { worker: 1 + (r % 2) }));
+  }
+  await spawn(resolver(n), { worker: 3 });
+  let s = 0;
+  for (const p of ps) {
+    s += await p;
+  }
+  console.log(`sum ${s}, ${SUM.load()}`);
+}

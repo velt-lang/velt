@@ -1,0 +1,53 @@
+// #3487 review: a promise of the task (`side`) is listed while it waits in a shared promise's hub,
+// its owner still running: a second promise of the task waits there too, which lists the shared
+// promise and `side` with it. Then the owner hands `side` to a task on worker 3, which drops it
+// there, and waits for ever itself. `side` leaves the list as it is handed over.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const USED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function inner(h: Holder): Promise<number> {
+  return await h.p;
+}
+
+async function user(p: Promise<number>): Promise<void> {
+  await yieldNow();
+  USED.add(1);
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const side = inner(d);
+  const r = inner(d);
+  await yieldNow();
+  await yieldNow();
+  void spawn(user(side), { worker: 3 });
+  return (await d.p) + (await r);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let i: i64 = 0; i < n; i++) {
+    void spawn(maker(), { worker: 1 + (i % 2) });
+  }
+  while (USED.load() < n) {
+    await yieldNow();
+  }
+  for (let y = 0; y < 200; y++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`used ${USED.load()}`);
+}

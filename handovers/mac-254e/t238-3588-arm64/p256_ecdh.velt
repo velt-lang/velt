@@ -1,0 +1,14 @@
+// 300 ECDH agreements on P-256 with fixed scalars (RFC 5903 §8.1's private keys).
+import { p256Ecdh, p256PublicKey } from "velt/crypto";
+import { hexDecode } from "velt/encoding";
+
+function main() {
+  const a = hexDecode("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433");
+  const b = hexDecode("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53");
+  const pb = p256PublicKey(b);
+  let sum = 0;
+  for (let i = 0; i < 300; i++) {
+    sum += p256Ecdh(a, pb)[i % 32] as i64;
+  }
+  console.log(`${sum}`);
+}
