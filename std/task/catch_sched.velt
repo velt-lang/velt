@@ -24,6 +24,7 @@ import * as m from "velt/lang/hooks/sched_mem";
 import * as node from "velt/lang/hooks/sched_node";
 import * as aw from "velt/lang/hooks/sched_node_await";
 import * as nc from "velt/lang/hooks/sched_node_catch";
+import * as ml from "velt/lang/hooks/sched_module";
 import * as t from "velt/lang/hooks/sched_task";
 import { catchPanicAt } from "./unwind";
 
@@ -119,8 +120,9 @@ function settledDrop(f: usize): void {}
 /**
  * The executor's catching poll on worker `e`: polls the state at `a + 8` with its poll at `a`
  * and `cx` through `catchUnwindAt`; 0 pending, 1 ready, 2 panicked with the exception stored at
- * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way) is
- * restored then. `a` is the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
+ * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way, the
+ * module lock a `with` callback took: sched_module.velt `restore`) is restored then. `a` is the
+ * worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
  * (`pollArgs`) is called at its address with `a`: no closure, no function value.
  */
 function caughtPoll(a: usize, cx: usize): u32 {
@@ -128,6 +130,7 @@ function caughtPoll(a: usize, cx: usize): u32 {
   const catching = m.ld(e + nc.E_CATCHING);
   const adopting = m.ld(e + t.E_ADOPTING);
   const guarded = m.ld(e + nc.E_GUARDED);
+  const holds = ml.holds();
   m.st(e + nc.E_CATCHING, catching + 2);
   m.st(a + 16, cx);
   // SAFETY: `pollArgs` takes one number; the exception object is kept by the panicked promise
@@ -139,6 +142,7 @@ function caughtPoll(a: usize, cx: usize): u32 {
     // A `catchPanic` in the poll that panicked between its `arm` and its `take` never put the
     // promise guarded for the enclosing one back: it is what it was before the poll.
     m.st(e + nc.E_GUARDED, guarded);
+    ml.restore(holds);
     m.st(a + 16, x);
     return 2;
   }

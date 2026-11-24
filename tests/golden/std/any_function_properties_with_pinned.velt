@@ -1,0 +1,66 @@
+// check: no leaks
+// check: also with VELT_THREADS=4
+// A program that gives a declared function properties through `any` takes the module lock
+// around every `with` whose callback may reach them (#2196 9c). A task pinned to worker 1 runs
+// such callbacks, which read a member of an `any` object and reach no function's properties and
+// no module state: each callback's hold of the lock must go after the unlock, or the tasks on the
+// other workers, which update module state, wait for it for good.
+import { workerCount } from "velt/task";
+
+function decl(): number {
+  return 1;
+}
+
+class C {
+  n: number = 0;
+}
+
+class K {
+  k: number = 1;
+}
+
+let counter = 0;
+
+async function alone(m: shared<Mutex<C>>, rounds: number): Promise<number> {
+  const obj: any = new K();
+  let s = 0;
+  for (let i = 0; i < rounds; i++) {
+    s += m.with((c) => {
+      c.n += obj.k as number;
+      return c.n;
+    });
+    await yieldNow();
+  }
+  return s > 0 ? rounds : 0;
+}
+
+async function updates(rounds: number): Promise<number> {
+  for (let i = 0; i < rounds; i++) {
+    counter += 1;
+    await yieldNow();
+  }
+  return rounds;
+}
+
+/** Worker `i`'s place among the workers from 2 on (worker 0 when there are fewer). */
+function away(i: i64): i64 {
+  const w = workerCount();
+  return w > 2 ? 2 + (i % (w - 2)) : 0;
+}
+
+async function main() {
+  const d: any = decl;
+  d.hits = 1;
+  const m = shared(new Mutex<C>(new C()));
+  const a = spawn(alone(m, 200), { worker: workerCount() > 1 ? 1 : 0 });
+  const us: Promise<number>[] = [];
+  for (let i: i64 = 0; i < 4; i++) {
+    us.push(spawn(updates(200), { worker: away(i) }));
+  }
+  let total = await a;
+  for (const u of us) {
+    total += await u;
+  }
+  console.log("total", total, "counter", counter, "hits", d.hits as number);
+  console.log("with", m.with((c) => c.n));
+}
