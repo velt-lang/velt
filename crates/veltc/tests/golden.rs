@@ -18,7 +18,10 @@
 //!   tracks the failure, and optionally the OSes it fails on, or `units` for one that fails only
 //!   in a run by units) are run too, but their failures only fail the test with
 //!   `VELT_GOLDEN_STRICT=1`: the executor in Velt's fix list since #2649's switch. One that
-//!   passes is reported, to be taken off the list.
+//!   passes is reported, to be taken off the list; one marked `units` that passes fails the run
+//!   by units. A known failure is reported with how it failed (its first error line and stderr
+//!   line), and `VELT_GOLDEN_REPORT=<file>` appends these reports to a file as well (libtest
+//!   shows a passing test's output only with `--nocapture`).
 //! - `VELT_UNITS=2` runs every golden by units (velt_sema `units`, #2943): `velt check`, `build`
 //!   and `run` check std as a unit of its own and the program against it, and the program built
 //!   is the one checked that way.
@@ -169,17 +172,28 @@ fn golden() {
     let mut pending_failures = 0;
     let mut known_failures = 0;
     for ((f, rel), errs) in runnable.iter().zip(results) {
-        let issue = known.get(rel.replace('\\', "/").as_str());
+        let entry = known.get(rel.replace('\\', "/").as_str());
         if errs.is_empty() {
-            if let Some(issue) = issue {
-                println!("golden: {rel} passes: take it off golden_known_failing.txt ({issue})");
+            let take_off = |k: &known_failing::Known| {
+                format!(
+                    "{rel} passes: take it off golden_known_failing.txt ({})",
+                    k.issue
+                )
+            };
+            match entry {
+                // A run by units fails on it, so the list of what units still get wrong
+                // shrinks (#2943).
+                Some(k) if k.units => failures.push(take_off(k)),
+                Some(k) => known_failing::report(&format!("golden: {}", take_off(k))),
+                None => {}
             }
             continue;
         }
         if !strict && is_pending(f, &root) {
             pending_failures += 1;
-        } else if let (false, Some(issue)) = (strict, issue) {
-            println!("golden: {rel} fails, known ({issue})");
+        } else if let (false, Some(k)) = (strict, entry) {
+            let how = known_failing::how_it_failed(&errs);
+            known_failing::report(&format!("golden: {rel} fails, known ({}): {how}", k.issue));
             known_failures += 1;
         } else {
             failures.extend(errs);

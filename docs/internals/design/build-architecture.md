@@ -81,9 +81,25 @@ itself through a union (`type Json = … | Json[]`) is spelled `^` inside itself
 
 `CheckOptions::units` (`crates/velt_sema/src/units.rs`) checks std as a unit of its own: std is
 collected and every std body checked first, then std's definitions are frozen and the app is
-collected and checked against them. `velt check` turns it on with `VELT_UNITS`; it then loads
-every std file and checks nothing lazily. The passes after the bodies (generated code, ownership,
-throws) still run once over every definition with the freeze lifted.
+collected and checked against them. `velt check`, `velt build`, `velt run` and `velt test` turn
+it on with `VELT_UNITS` (`crates/veltc/src/driver/all_std.rs`); they then load every std file and
+check nothing lazily. The passes after the bodies (generated code, ownership, throws) still run
+once over every definition with the freeze lifted.
+
+A build by units lowers the program that check produced, so the program built is the one checked
+by units, with three differences from a whole-program build:
+- It lowers and starts all of std, not only what the program reaches: every std file is a root,
+  so hello's release VIR grows from 8 functions to 228 and its `velt_main` runs the initializers
+  of std modules it never imports. Its size, start-up and run-time instruction counts aren't
+  comparable with a whole-program build's, and a program can fail by units for a std module's
+  initializer rather than for sema. Lowering only what the program reaches is U5's program set.
+- It links no prebuilt std objects: those are built from the whole-program check's std, so std
+  is compiled with the program.
+- A source generator's host (`sess.generator_build`) is still built as one program, as a check
+  by units builds it.
+
+The nightly's `golden-units` runs every end-to-end test this way; the goldens that fail only by
+units are listed `units` in `crates/veltc/tests/golden_known_failing.txt` (#2943's U6 list).
 
 The definition table (`crates/velt_sema/src/ctx/def_table.rs`) is indexed by `DefId` with a
 frozen prefix: a finished unit's definitions. Every way to write checks the mark. A write below
