@@ -1,0 +1,78 @@
+// velt/process/child (internal): what `posix_spawn` is given besides the program's arguments
+// (std/process/child/spawn_posix.velt): the child's environment, and the paths its program is
+// looked up at in the child's `PATH`, as libuv looks it up for Node.
+
+import { CommandSpec } from "velt/process/child/spec";
+import { envPairs } from "#env-sys";
+
+/**
+ * The child's environment as `[name, value, …]`: the parent's unless cleared (a copy, made
+ * under velt/process' environment lock), then the spec's.
+ */
+export function environment(spec: CommandSpec): string[] {
+  const names: string[] = [];
+  const values: string[] = [];
+  if (!spec.clearEnv) {
+    const all = envPairs();
+    for (let i: usize = 0; i + 1 < all.length; i += 2) {
+      names.push(all[i]);
+      values.push(all[i + 1]);
+    }
+  }
+  for (let i: usize = 0; i + 1 < spec.env.length; i += 2) {
+    const at = names.indexOf(spec.env[i]);
+    if (at >= 0) {
+      values[at as usize] = spec.env[i + 1];
+    } else {
+      names.push(spec.env[i]);
+      values.push(spec.env[i + 1]);
+    }
+  }
+  const out: string[] = [];
+  for (let i: usize = 0; i < names.length; i++) {
+    out.push(names[i]);
+    out.push(values[i]);
+  }
+  return out;
+}
+
+/** `[name, value, …]` as the "name=value" strings `posix_spawn` takes. */
+export function lines(env: string[]): string[] {
+  const out: string[] = [];
+  for (let i: usize = 0; i + 1 < env.length; i += 2) {
+    out.push(`${env[i]}=${env[i + 1]}`);
+  }
+  return out;
+}
+
+/** Where a program is looked up when the child's environment has no `PATH` (libuv's). */
+const DEFAULT_PATH = "/usr/bin:/bin";
+
+/** The child's `PATH` (libuv's default when it has none). */
+export function pathOf(env: string[]): string {
+  for (let i: usize = 0; i + 1 < env.length; i += 2) {
+    if (env[i] == "PATH") {
+      return env[i + 1];
+    }
+  }
+  return DEFAULT_PATH;
+}
+
+/**
+ * The paths to try for the program, in order: as written when it holds a `/`; else in each entry
+ * of the child's `PATH`, as libuv does for Node. An empty entry is the working directory: the
+ * bare name, which `posix_spawn` opens there, and which the shell of a script without `#!` is
+ * given as glibc gives it (`/bin/sh prog …`, so its `$0` is `prog`). So nothing reads this
+ * process' environment outside velt/process' lock, as `posix_spawnp`, which reads its `PATH`,
+ * would.
+ */
+export function candidates(program: string, path: string): string[] {
+  if (program.includes("/")) {
+    return [program];
+  }
+  const out: string[] = [];
+  for (const dir of path.split(":")) {
+    out.push(dir == "" ? program.clone() : `${dir}/${program}`);
+  }
+  return out;
+}

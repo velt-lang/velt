@@ -152,6 +152,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("slotTransfer", Op(I::SlotTransfer)),
     // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
+    ("strBorrowedWords", Op(I::StrBorrowedWords)),
     ("strByteAt", Op(I::StrByteAt)),
     ("strByteLen", Op(I::StrByteLen)),
     ("strCharCodeAt", Op(I::StrCharCodeAt)),

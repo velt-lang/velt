@@ -58,6 +58,7 @@ fn an_object_gone_from_the_cache_by_the_link_is_still_linked() {
             host: None,
             c_decl: None,
             variadic: false,
+            c_abi: None,
         }],
         ..vir::Program::default()
     };

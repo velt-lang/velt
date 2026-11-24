@@ -1,0 +1,33 @@
+iface_method_value_this.velt:316:24: error: `Counter2.current` uses `this` or `super`, so it cannot be used as a value
+iface_method_value_this.velt:16:36: error: the value of property `greet` is a function not written in the literal, and a method named `greet` may use `this`, so it is not supported yet
+iface_method_value_this.velt:36:17: error: the value of property `inc` is a function not written in the literal, and a method named `inc` may use `this`, so it is not supported yet
+iface_method_value_this.velt:67:36: error: the value of property `named` is a function not written in the literal, and a method named `named` may use `this`, so it is not supported yet
+iface_method_value_this.velt:92:36: error: the value of property `title` is a function not written in the literal, and a method named `title` may use `this`, so it is not supported yet
+iface_method_value_this.velt:108:22: error: the value of property `value` is a function not written in the literal, and a method named `value` may use `this`, so it is not supported yet
+iface_method_value_this.velt:131:35: error: the value of property `setKey` is a function not written in the literal, and a method named `setKey` may use `this`, so it is not supported yet
+iface_method_value_this.velt:131:56: error: the value of property `show` is a function not written in the literal, and a method named `show` may use `this`, so it is not supported yet
+iface_method_value_this.velt:150:35: error: the value of property `area` is a function not written in the literal, and a method named `area` may use `this`, so it is not supported yet
+iface_method_value_this.velt:170:36: error: the value of property `label` is a function not written in the literal, and a method named `label` may use `this`, so it is not supported yet
+iface_method_value_this.velt:257:54: error: the value of property `viaClosure` is a function not written in the literal, and a method named `viaClosure` may use `this`, so it is not supported yet
+iface_method_value_this.velt:259:48: error: the value of property `viaSatisfies` is a function not written in the literal, and a method named `viaSatisfies` may use `this`, so it is not supported yet
+iface_method_value_this.velt:260:34: error: the value of property `viaOr` is a function not written in the literal, and a method named `viaOr` may use `this`, so it is not supported yet
+iface_method_value_this.velt:261:40: error: the value of property `viaAlias` is a function not written in the literal, and a method named `viaAlias` may use `this`, so it is not supported yet
+iface_method_value_this.velt:262:36: error: the value of property `viaLet` is a function not written in the literal, and a method named `viaLet` may use `this`, so it is not supported yet
+iface_method_value_this.velt:264:42: error: the value of property `viaModule` is a function not written in the literal, and a method named `viaModule` may use `this`, so it is not supported yet
+iface_method_value_this.velt:265:44: error: the value of property `viaCondVar` is a function not written in the literal, and a method named `viaCondVar` may use `this`, so it is not supported yet
+iface_method_value_this.velt:278:34: error: the value of property `shout` is a function not written in the literal, and a method named `shout` may use `this`, so it is not supported yet
+iface_method_value_this.velt:314:42: error: the value of property `viaReturn` is a function not written in the literal, and a method named `viaReturn` may use `this`, so it is not supported yet
+iface_method_value_this.velt:315:40: error: the value of property `viaArray` is a function not written in the literal, and a method named `viaArray` may use `this`, so it is not supported yet
+iface_method_value_this.velt:317:20: error: the value of property `tag` is a function not written in the literal, and a method named `tag` may use `this`, so it is not supported yet
+iface_method_value_this.velt:365:31: error: the value of property `greet3` is a function not written in the literal, and a method named `greet3` may use `this`, so it is not supported yet
+iface_method_value_this.velt:369:31: error: the value of property `greet3` is a function not written in the literal, and a method named `greet3` may use `this`, so it is not supported yet
+iface_method_value_this.velt:358:10: error: the value of property `run` is a function not written in the literal, and a method named `greet3` may use `this`, so it is not supported yet
+iface_method_value_this.velt:48:36: error: the value of property `hello` is a function not written in the literal, and a method named `hello` may use `this`, so it is not supported yet
+iface_method_value_this.velt:203:37: error: the value of property `greet2` is a function not written in the literal, and a method named `greet2` may use `this`, so it is not supported yet
+iface_method_value_this.velt:199:35: error: the value of property `greet2` is a function not written in the literal, and a method named `greet2` may use `this`, so it is not supported yet
+iface_method_value_this.velt:195:36: error: the value of property `greet2` is a function not written in the literal, and a method named `greet2` may use `this`, so it is not supported yet
+iface_method_value_this.velt:192:36: error: the value of property `greet2` is a function not written in the literal, and a method named `greet2` may use `this`, so it is not supported yet
+iface_method_value_this.velt:346:28: error: the value of property `run` is a function not written in the literal, and a method named `greet3` may use `this`, so it is not supported yet
+iface_method_value_this.velt:349:28: error: the value of property `run` is a function not written in the literal, and a method named `shout3` may use `this`, so it is not supported yet
+iface_method_value_this.velt:353:28: error: the value of property `run` is a function not written in the literal, and it has the type of method `greet`, which may use `this`, so it is not supported yet
+iface_method_value_this.velt:378:28: error: the value of property `run` is a function not written in the literal, and it has the type of method `greet`, which may use `this`, so it is not supported yet

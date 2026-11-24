@@ -1,0 +1,172 @@
+# The whole gate on one OS after a push to main and in the scheduled run, as parallel jobs
+# (called by ci.yml's `main (<os>)` for each OS `cargo xtask main-plan` gives it,
+# crates/xtask/src/main_plan.rs). Until 2026-11 one runner ran `cargo xtask check --full` in
+# sequence, which grew to 155-170 minutes on Windows and ran into its 180-minute limit (#3635).
+# Together these jobs run what that command ran, each step once:
+#
+# - `test`, one job per test shard (`os::TEST_SHARDS`): each builds and runs every n-th unit and
+#   integration test of each test binary (`--part test` with `VELT_TEST_SHARD=<i>/<n>`,
+#   crates/xtask/src/check/shard.rs). Shard 1 also lints (`--part lint,test`: cargo fmt, the
+#   timing lint, clippy, tests/difftest's and the packages' native crates') and runs the steps
+#   that aren't nextest tests: doctests, tests/difftest's unit tests, the VS Code extension,
+#   `velt fmt --check`, std-lint and (not on Windows) the smoke test. Each shard builds for itself:
+#   the unit tests read the whole target directory (test binaries of every crate, build-script
+#   outputs, the runtimes, and tests that run cargo themselves), which is far too large to pass
+#   between jobs, unlike what the goldens run.
+# - `golden`: the goldens' build and shards (queue-goldens.yml, `os::GOLDEN_SHARDS`): every golden
+#   in debug and release mode, the bundled-linker goldens and the VIR identity's sample (one golden
+#   in 8, as the single job compared since #3641), from one build packed into an archive.
+# - The WebAssembly goldens stay out, as they did (`VELT_WASM_GOLDENS=skip`, no `wasm_shards`):
+#   the queue ran them before the merge (on Linux, and on Windows and macOS for a change to their
+#   host side, `Plan::wasm_oses`), and the nightly runs them on every OS.
+#
+# The last job, `gate`, passes only when every shard of both passed; otherwise it opens or comments
+# on the issue "main fails on <OS>" (.github/actions/main-failure), "did not finish" when a job was
+# cancelled (its time limit) rather than failed.
+name: main-gate
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: The runner (e.g. windows-latest).
+        type: string
+        required: true
+      test_shards:
+        description: The test shards, a JSON list of VELT_TEST_SHARD values (e.g. ["1/3","2/3","3/3"]).
+        type: string
+        required: true
+      golden_shards:
+        description: The golden shards, a JSON list of VELT_GOLDEN_SHARD values.
+        type: string
+        required: true
+      vir_identity:
+        description: >-
+          `VELT_VIR_IDENTITY` for the golden shards (`sample` or `skip`; queue-goldens.yml).
+        type: string
+        default: sample
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fails closed: a missing or partial list (main-plan failed, or an OS without an entry in
+  # os.rs) fails the gate instead of skipping tests.
+  shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: the shards cover every test and every golden
+        env:
+          TESTS: ${{ inputs.test_shards }}
+          GOLDENS: ${{ inputs.golden_shards }}
+        run: |
+          covers='type == "array" and length > 0 and
+              (length as $n | map(split("/") | map(tonumber)) == [range(1; $n + 1) | [., $n]])'
+          for list in "$TESTS" "$GOLDENS"; do
+            if ! jq -e "$covers" <<< "$list" > /dev/null 2>&1; then
+              echo "::error::no shards for ${{ inputs.os }} (got: $list); see TEST_SHARDS and GOLDEN_SHARDS in crates/xtask/src/os.rs"
+              exit 1
+            fi
+          done
+
+  test:
+    needs: shards
+    name: test ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.test_shards) }}
+    runs-on: ${{ inputs.os }}
+    # Shard 1 of 3 on Windows: a build of 13 to 22 minutes, clippy, a third of 48 to 63 minutes
+    # of tests and the doctests (2026-11-23); a slow runner takes half as long again.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # Shard 1 builds what the single job built (every target, and clippy's), so it saves the
+      # Windows and macOS build caches when their key changed. Linux's is `main (ubuntu-latest)`'s.
+      - uses: ./.github/actions/setup
+        with:
+          save-cache: ${{ startsWith(matrix.shard, '1/') && runner.os != 'Linux' }}
+      # The whole gate builds packages/sqlite's C sources (crates/xtask/src/zig.rs).
+      - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      # The Worker test under the pinned workerd, as in the queue's `check` job.
+      - name: npm ci (tests/workerd, Linux)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}/tests/workerd
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: cargo xtask check --full --part ${{ startsWith(matrix.shard, '1/') && 'lint,test' || 'test' }}
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_TEST_SHARD: ${{ matrix.shard }}
+          VELT_WASM_GOLDENS: skip
+          VELT_WORKERD: ${{ runner.os == 'Linux' && '1' || '' }}
+        run: >-
+          cargo xtask check --full
+          --part ${{ startsWith(matrix.shard, '1/') && 'lint,test' || 'test' }}
+
+  golden:
+    needs: shards
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/queue-goldens.yml
+    with:
+      os: ${{ inputs.os }}
+      shards: ${{ inputs.golden_shards }}
+      zig: true
+      # The VIR identity's sample, one golden in 8, as the queue compares (`vir_identity` from
+      # `cargo xtask main-plan`: `Plan::vir_identity_queue` of `--full`); the nightly gate
+      # compares every golden on Linux.
+      vir_identity: ${{ inputs.vir_identity }}
+      # Each shard finishes its share; one failure doesn't cancel the others or the tests.
+      fail-fast: false
+      # Room for a slow runner beyond the queue's 55 minutes: a failure here is a red main and an
+      # issue, not a dropped queue entry, and a cancelled shard checked nothing it didn't finish.
+      shard-timeout: 80
+
+  gate:
+    needs: [shards, test, golden]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: every test shard and every golden shard passed
+        id: result
+        env:
+          SHARDS: ${{ needs.shards.result }}
+          TESTS: ${{ needs.test.result }}
+          GOLDENS: ${{ needs.golden.result }}
+          GOLDENS_CANCELLED: ${{ needs.golden.outputs.cancelled }}
+        run: |
+          details="shard lists: $SHARDS, tests: $TESTS, goldens: $GOLDENS"
+          echo "$details"
+          echo "details=$details" >> "$GITHUB_OUTPUT"
+          cancelled=false
+          if [ "$TESTS" = cancelled ] || [ "$GOLDENS" = cancelled ] || [ "$GOLDENS_CANCELLED" = true ]; then
+            cancelled=true
+          fi
+          echo "cancelled=$cancelled" >> "$GITHUB_OUTPUT"
+          [ "$SHARDS" = success ] && [ "$TESTS" = success ] && [ "$GOLDENS" = success ]
+      - if: failure() || cancelled()
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions/main-failure
+          persist-credentials: false
+      - if: failure() || cancelled()
+        uses: ./.github/actions/main-failure
+        with:
+          os: >-
+            ${{ startsWith(inputs.os, 'windows') && 'Windows'
+            || startsWith(inputs.os, 'macos') && 'macOS' || 'Linux' }}
+          cancelled: ${{ steps.result.outputs.cancelled || 'true' }}
+          details: ${{ steps.result.outputs.details }}

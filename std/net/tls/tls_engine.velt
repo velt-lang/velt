@@ -40,8 +40,8 @@ import {
   S_SEND_FLIGHT,
   S_SEND_PLAIN,
   S_SEND_RETRY,
-  ServerHandshake,
-} from "velt/net/tls/server_handshake";
+  ServerSteps,
+} from "velt/net/tls/server_steps";
 import { DONE12, SEND12 } from "velt/net/tls/client_handshake12";
 import { afterHandshake12 } from "velt/net/tls/suites12";
 
@@ -139,7 +139,7 @@ export class TlsEngine {
    * transport that can): true once it is done. What goes out is queued on the transport for the
    * task's next wait; when false, wait for the transport to be readable and call again.
    */
-  tryServerHandshake(h: ServerHandshake): bool {
+  tryServerHandshake(h: ServerSteps): bool {
     const t = this.out.tryTransport();
     const r = this.r;
     r.peer = "client";

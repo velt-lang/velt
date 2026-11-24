@@ -13,6 +13,8 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
         CTy::F64 => Shape::Scalar(Scalar::F64),
         CTy::Bool => Shape::Scalar(Scalar::Bool),
         CTy::Void => Shape::Void,
+        // A C struct by value (#2187 layer 3): compared by the definition it names.
+        CTy::Struct => field_shape(p, t),
         CTy::Null => Shape::Null,
         CTy::StrBytes | CTy::CString => Shape::Text,
         CTy::Ptr { .. } => Shape::Ptr(pointee_of_ptr(p, t)),
@@ -100,4 +102,24 @@ fn pointee(p: &hir::Program, t: TyId) -> Pointee {
         TyKind::Option(inner, _) => pointee(p, *inner),
         _ => Pointee::Void,
     }
+}
+
+/// What a field of type `t` of a C struct holds: a number, `bool`, a pointer or another C
+/// struct (sema allowed only these).
+pub(super) fn field_shape(p: &hir::Program, t: TyId) -> Shape {
+    if let Some(s) = scalar_of(p, t) {
+        return Shape::Scalar(s);
+    }
+    match p.types.kind(t) {
+        TyKind::Adt(d, _) => match p.def(*d) {
+            Def::Adt(a) => Shape::Struct(short_name(&a.name)),
+            _ => Shape::Void,
+        },
+        _ => Shape::Ptr(pointee_of_ptr(p, t)),
+    }
+}
+
+/// A declaration's name without its module (`app::geom::Point` → `Point`): C's name.
+pub(super) fn short_name(name: &str) -> String {
+    name.rsplit("::").next().unwrap_or(name).to_string()
 }

@@ -15,6 +15,7 @@ import {
   velt_rt_child_wait,
   velt_rt_child_write,
 } from "#child-rt";
+import { startedOr } from "velt/process/child/spawn_error";
 import { SpawnOptions } from "velt/process/child/spawn_options";
 import { specOf, stdioBits } from "velt/process/child/spec";
 
@@ -109,6 +110,6 @@ export struct ChildProcess {
 export function spawn(program: string, args: string[] = [], opts: SpawnOptions = {}): ChildProcess {
   const stdio = stdioBits(opts.stdin, 0) | stdioBits(opts.stdout, 2) | stdioBits(opts.stderr, 4);
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, stdio);
-  const handle = unwrapIo(velt_rt_child_spawn(spec));
+  const handle = startedOr(velt_rt_child_spawn(spec), program, args, false);
   return { pid: velt_rt_child_pid(handle), handle: handle };
 }

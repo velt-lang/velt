@@ -35,7 +35,7 @@ export function valuesCore(
     }
     const evs: Ev[] = [];
     for (const e of r) {
-      evs.push(c.ev(e, sc));
+      evs.push(c.compileEv(e, sc));
     }
     rows.push(evs);
   }
@@ -52,8 +52,8 @@ export function valuesCore(
     em.results.push(() => nullVal());
     em.colls.push(BINARY);
   }
-  const limitEv: Ev | null = tail.limit == null ? null : c.ev(tail.limit!, new Scope());
-  const offsetEv: Ev | null = tail.offset == null ? null : c.ev(tail.offset!, new Scope());
+  const limitEv: Ev | null = tail.limit == null ? null : c.compileEv(tail.limit!, new Scope());
+  const offsetEv: Ev | null = tail.offset == null ? null : c.compileEv(tail.offset!, new Scope());
   const need = q.need;
   q.body = () => {
     let limit = limitValue(limitEv, -1);
