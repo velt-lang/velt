@@ -524,11 +524,25 @@ impl Cx<'_> {
                     true => self.adt_edge_tys(t),
                     false => self.part_types(t),
                 };
-                // What a standard-library container keeps behind its own pointers; but a weak
-                // collection's entries are the runtime's (the ephemeron edges stand for them),
-                // while its fields and a subclass's are its own.
+                // What a type keeps behind the runtime's pointers: an argument for a parameter no
+                // field shows (a `Mutex<T>`, a runtime handle's element). A parameter a field
+                // shows has its edges in that field's type, which leaves out what is no edge
+                // there (`shared<T>`, a `weak` field). A weak collection's entries are the
+                // runtime's (the ephemeron edges stand for them), while its fields and a
+                // subclass's are its own.
                 if self.weak_class(t).is_none() {
-                    tys.extend(args);
+                    let fields: Vec<TyId> = match self.hir.def(d) {
+                        velt_sema::hir::Def::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                        velt_sema::hir::Def::Enum(e) => {
+                            e.variants.iter().flat_map(|v| v.payload.clone()).collect()
+                        }
+                        _ => vec![],
+                    };
+                    for (i, a) in args.into_iter().enumerate() {
+                        if !fields.iter().any(|&f| self.mentions_param(f, i as u32)) {
+                            tys.push(a);
+                        }
+                    }
                 }
                 if self.is_class(t) && self.has_header(d) {
                     // It may be an object of any subclass that was built, which owns what the
@@ -551,6 +565,33 @@ impl Cx<'_> {
 }
 
 impl Cx<'_> {
+    /// Does `t`, a type as a definition writes it, mention its type parameter `i`?
+    fn mentions_param(&self, t: TyId, i: u32) -> bool {
+        match self.raw_kind(t) {
+            TyKind::Param(n) => *n == i,
+            TyKind::Adt(_, ts) | TyKind::Dyn(_, ts) | TyKind::Tuple(ts) | TyKind::Op(_, ts) => {
+                ts.iter().any(|&x| self.mentions_param(x, i))
+            }
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => {
+                self.mentions_param(*e, i)
+            }
+            TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+                self.mentions_param(*a, i) || self.mentions_param(*b, i)
+            }
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+                ..
+            } => {
+                params.iter().any(|&x| self.mentions_param(x, i))
+                    || self.mentions_param(*ret, i)
+                    || self.mentions_param(*throws, i)
+            }
+            _ => false,
+        }
+    }
+
     /// Does the class `sub` extend `sup`, directly or not (and is not `sup` itself)?
     pub(in crate::lower) fn strict_subclass(&self, mut sub: DefId, sup: DefId) -> bool {
         while let Some(b) = self.adt_def(sub).base {

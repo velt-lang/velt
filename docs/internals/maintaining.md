@@ -133,11 +133,12 @@ not a reason for another round.
   the checks its changes need: `cargo xtask check`, rules in `crates/xtask/src/plan.rs`; the label
   `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
   merged with the latest `main`, then squash-merges: per OS a lint-and-test job and the goldens
-  (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`), Linux
+  (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`,
+  `GOLDEN_SHARDS` in `crates/xtask/src/os.rs`: 4 on Windows, 3 on Linux, 2 on macOS), Linux
   always, Windows when the change touches OS-specific code, and macOS only when it touches code that
   really can differ there (`crates/xtask/src/os.rs`, below). For a change to WebAssembly code the
   same build also packs the WebAssembly goldens, which then run in shards of their own
-  (`WASM_SHARDS` in `os.rs`: 4 on Windows, 2 on Linux and macOS) instead of in the lint-and-test
+  (`WASM_SHARDS` in `os.rs`: 4 on Windows and macOS, 2 on Linux) instead of in the lint-and-test
   job, where on Windows they would take about 45 minutes. Enable it with `gh pr merge <n> --auto` in
   the same step as the approving review, never before it.
 - The description becomes the commit message. `hygiene` fails on generated footers, trailers,
@@ -188,20 +189,36 @@ not a reason for another round.
   to the list.
 - `ci.yml`'s scheduled run checks the whole gate on Windows and macOS once a day (without the
   WebAssembly goldens, which the nightly's `wasm-goldens` runs there), and opens or updates the
-  issue "main fails on <OS>" when that fails or doesn't finish in the job's 180 minutes, with the
-  commits since the last run that passed; fix it first. A tag runs the same gate before the release
-  publishes (`release.yml`). A push to `main` (the `main` jobs in `ci.yml`) refreshes the build
-  cache: on Linux every time, on Windows and macOS with the gate when the change touches the
-  toolchain or the dependencies (`main-plan`: `cargo xtask affected --base HEAD^1`, the queue's own
-  plan, since the queue tested the commit on its parent; rules in `crates/xtask/src/os.rs`). A
-  commit no passing merge queue run tested (a direct push or an admin merge) runs every OS. Pull
-  request and merge queue runs restore the cache but never save their own.
+  issue "main fails on <OS>" when that fails or doesn't finish in its jobs' time limits, with the
+  commits since the last run that passed; fix it first. The gate after a push and in the scheduled
+  run is parallel jobs per OS (`main (<os>)`, `.github/workflows/main-gate.yml`): test shards, each
+  building and running every n-th test (shard 1 also lints and runs the doctests, `velt fmt`,
+  std-lint and the smoke test), and the goldens' build and shards (`queue-goldens.yml`, with the
+  VIR identity); together they run what `cargo xtask check --full` runs, each step once. A tag
+  runs the whole gate before the release publishes (`release.yml`). A push to `main` refreshes the
+  build cache: on Linux every time (`main (ubuntu-latest)`), on Windows and macOS with the gate.
+  Which OSes the gate runs on is `cargo xtask main-plan`'s (`crates/xtask/src/main_plan.rs`, fed by
+  `ci.yml`'s `main-plan` job):
+  - a commit a passing run tested runs it only when the change touches the toolchain or the
+    dependencies, for the caches (rules in `crates/xtask/src/os.rs`). Tested means a merge queue
+    run that passed on the commit (planned from `HEAD^1`, the queue's base), or a merge train's:
+    a dispatched run on a `train-*` branch that passed with a head commit whose tree is this
+    commit's tree (planned from the train's base, so every PR the train landed counts). A train
+    whose PRs land as squash merges onto the base it tested ends on exactly that tree;
+  - a commit that is no longer `main`'s tip when the plan runs (the earlier PRs of a train
+    landing, seconds apart) skips the gate: the newer commit's run checks the same code. Linux's
+    cache and clang's objects still refresh;
+  - a commit nothing tested (a direct push, an admin merge outside a train, a train landed onto a
+    `main` that moved) runs the gate on every OS, Linux included.
+
+  Pull request and merge queue runs restore the cache but never save their own.
 - Clang's objects (`velt-clang-objects-<os>-<arch>-<run id>`, Linux) are a cache of their own. The
   golden shards and the `check` job restore the newest entry; a day-old entry makes shards about
   twice as slow as a fresh one, and a `check` job 190-360 s slower. The nightly gate saves one from
   an empty cache, which drops what no program uses any more. A queue entry saves no cache: its
   shards and `check` job upload what they added as artifacts (`clang-objects.sh`, kept a day), and
-  the push to `main` from that entry adds them to the newest entry and saves it (the `clang-objects`
+  the push to `main` from that entry (or of a merge train's last PR, from the train's dispatched
+  run, which uploads them too) adds them to the newest entry and saves it (the `clang-objects`
   job). That job takes only files named as objects, and only adds them. So what ran in a queue entry
   reaches a cache `main` restores, and the one check is that the queue run passed on the commit that
   landed: a key's content can't be verified without compiling it. The cache is Linux-only, so this
@@ -214,16 +231,24 @@ not a reason for another round.
   limit. GitHub evicts what was used least recently once the total passes that limit, which can
   reach entries idle for only a few hours, so a key that every job restores stays and one that sits
   idle doesn't.
-- The VIR identity (`veltc::eager_std_identity`, every golden built twice) runs whole in a pull
-  request's `golden` job when the change can break it, and in the nightly gate; it is part of the
-  gate's `golden` part, beside the goldens, because the golden jobs and shards finish long before
-  the test jobs (after the unit tests it would make the `check` jobs 20 to 41 minutes longer). In
-  the queue each golden shard compares its share. The queue runs all of it only when the code
-  loading std on demand changed (`VIR_IDENTITY_CODE` in `crates/xtask/src/plan.rs`), one golden in 8
-  for the rest of what can reach it, and nothing otherwise (`Plan::vir_identity_queue`,
-  `VELT_VIR_IDENTITY`). What it can still miss there is a difference that only appears against what
-  landed after the pull request's last run, on a golden outside the sample: the nightly finds that
-  one.
+- The VIR identity (`veltc::eager_std_identity`, each golden built twice, with std loaded up front
+  and on demand) compares a fixed sample everywhere but the nightly: one golden in 8, chosen by a
+  hash of the golden's path, so a new golden moves no other in or out and every machine picks the
+  same ones. It is part of the gate's `golden` part, beside the goldens, because the golden jobs
+  and shards finish long before the test jobs (after the unit tests it would make the `check` jobs
+  20 to 41 minutes longer). The queue and merge trains (each golden shard its share), the
+  `main (windows/macos)` job after merging and a local `cargo xtask check` run the sample when the
+  change can reach the comparison, and nothing otherwise (`Plan::vir_identity_queue`,
+  `VELT_VIR_IDENTITY`). A pull request's `golden` job (Linux) runs the sample too, except for a
+  change to the code loading std on demand (`VIR_IDENTITY_CODE` in
+  `crates/xtask/src/plan_rules.rs`), which its own plan knows: then every golden
+  (`Plan::vir_identity_pr`). The queue's `--full` plan knows no changes, and until 2026-11-23 it ran
+  all of it whenever that code changed anywhere in the train, which a train of ten pull requests
+  nearly always did; that took the Windows golden shards to their 55-minute limit. The nightly gate
+  on Linux compares every golden (`VELT_VIR_IDENTITY=all`): what it checks, the order std loads in,
+  doesn't depend on the OS. Locally, `cargo xtask affected` suggests every golden for such a change:
+  `VELT_VIR_IDENTITY=all cargo xtask check --part golden`. What the sample misses shows up in the
+  next nightly.
 - A check the selection missed shows up in the merge queue; tighten the rule in
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.
