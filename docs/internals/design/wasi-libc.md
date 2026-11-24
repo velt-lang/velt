@@ -106,7 +106,12 @@ declarations.
   32-bit integer: the argument is truncated at the call and a result is widened back (`c_vir`
   and `narrow` in `c_call.rs`). Every other C type crosses unchanged.
 - **`errno`.** WebAssembly has no `errno` source in `c_abi::errno_source`, so `capture_errno`
-  emits nothing there. A declaration that asks for `errno` still compiles.
+  emits nothing there. A declaration that asks for `errno` still compiles. std code that needs a
+  failed call's error reads wasi-libc's `errno` right after the call with velt/ffi's `errno()`
+  (`#errno-location`'s WASI variant, std/ffi/errno_wasi.velt: wasi-libc's `__errno_location`).
+  wasi-libc's values are WASI's numbers (`ENOENT` is 44); `errno()` gives the Linux number of
+  the same name and `setErrno` stores WASI's, so std code (`lastOsError()` after
+  `keepOsError()`, std/fs/errors.velt's `osError`) reads Linux's numbering under WASI.
 - **Linking.** No change: `libc.a` is on every `wasm32-wasip1` link line, and library `c` adds
   nothing to the libraries a program links.
 - **Header check.** std's declarations in the files `crates/veltc/src/native/headers/std_check.rs`
@@ -117,7 +122,9 @@ declarations.
   `aarch64-apple-darwin` as `u64`, and checks the refusals and their notes.
   `crates/veltc/tests/c_functions.rs` checks that a package's C call is refused on both
   WebAssembly targets. `crates/veltc/tests/wasm_goldens.rs` runs the `std/random`, `std/crypto`,
-  `std/crypto_random_int` and `std/uuid` goldens under WASI;
+  `std/crypto_random_int` and `std/uuid` goldens under WASI, and `std/fs_rename_copy`,
+  `std/fs_links_errors` and `std/fs_symlinks` (velt/fs's renaming, copying and links over
+  wasi-libc, std/fs/paths/wasi.velt, with Node's errors from `errno()`);
   `crypto_random_bytes_fill_large_draws_on_webassembly` draws up to 200,000 bytes on both targets,
   past the JS host's 65,536 bytes a call; `math_random_seeds_each_run_on_webassembly` runs a program twice under wasmtime and twice
   in the browser glue under Node and expects different numbers; `a_failed_wasi_seed_panics` runs
