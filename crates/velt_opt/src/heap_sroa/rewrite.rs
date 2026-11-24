@@ -10,7 +10,7 @@ use velt_vir::vir::{
 };
 
 use super::flow::Update;
-use super::webs::Webs;
+use super::webs::{moved, Webs};
 use super::Allocator;
 use crate::srclocs::{prepend_stmts, push_stmt, rewrite_stmts};
 use crate::sroa::zero;
@@ -26,6 +26,8 @@ pub(super) fn apply(
 ) {
     let mut zeros = Zeros::default();
     let mut objs: Vec<Option<(Local, AggId)>> = vec![None; func.locals.len()];
+    // The count in front of a counted object (`(*h as u64)`), per local of a counted web.
+    let mut rcs: Vec<Option<Local>> = vec![None; func.locals.len()];
     let mut entry = Vec::new();
     for (i, slot) in objs.iter_mut().enumerate() {
         let Some(obj) = webs.obj(Local(i as u32)) else {
@@ -41,13 +43,28 @@ pub(super) fn apply(
         });
         *slot = Some((l, obj));
         entry.push((l, obj));
+        if webs.counted(Local(i as u32)) {
+            let name = func.locals[i].name.as_ref().map(|n| format!("{n}.rc"));
+            rcs[i] = Some(Local(func.locals.len() as u32));
+            func.locals.push(LocalDecl {
+                debug: None,
+                ..LocalDecl::new(Ty::U64, name)
+            });
+        }
     }
-    let entry: Vec<Stmt> = entry
+    let mut entry: Vec<Stmt> = entry
         .into_iter()
         .map(|(l, obj)| zeros.assign(aggs, func, l, obj))
         .collect();
+    entry.extend(rcs.iter().flatten().map(|&rc| set_zero(rc)));
     let obj_of = |l: Local| objs.get(l.0 as usize).copied().flatten();
     let obj_local = |l: Local| obj_of(l).expect("ICE: heap_sroa update outside a web").0;
+    let rc_of = |l: Local| rcs.get(l.0 as usize).copied().flatten();
+    // `d`'s object (and count) become `s`'s.
+    let copies = |d: Local, s: Local| {
+        let rc = rc_of(d).zip(rc_of(s)).map(|(d, s)| copy(d, s));
+        std::iter::once(copy(obj_local(d), obj_local(s))).chain(rc)
+    };
     let mut pending = updates.iter().peekable();
     for bi in 0..func.blocks.len() {
         let mut at = 0;
@@ -55,24 +72,29 @@ pub(super) fn apply(
             match web_stmt(&s, &obj_of) {
                 WebStmt::Copy(dst, src) => {
                     out.push(s);
-                    out.push(copy(dst, src));
+                    out.extend(copies(dst, src));
                 }
                 WebStmt::Fill(l, obj) => out.push(zeros.fill(l, obj)),
                 WebStmt::Other => out.push(s),
             }
             while let Some(u) = pending.next_if(|u| (u.block, u.stmt) == (bi, at)) {
-                out.push(copy(obj_local(u.dst), obj_local(u.src)));
+                out.extend(copies(u.dst, u.src));
             }
             at += 1;
         });
-        rewrite_term(allocator, func, bi, &obj_of, &zeros);
+        rewrite_term(allocator, func, bi, &obj_of, &zeros, rc_of);
     }
     places_mut(func, &mut |p| {
-        if let (Some((l, _)), Some(Proj::Deref(_))) = (obj_of(p.local), p.proj.first()) {
-            *p = Place {
-                local: l,
-                proj: p.proj[1..].to_vec(),
-            };
+        let count = matches!(p.proj.as_slice(), [Proj::Deref(Ty::U64)]);
+        match (obj_of(p.local), rc_of(p.local), p.proj.first()) {
+            (Some(_), Some(rc), _) if count => *p = Place::local(rc),
+            (Some((l, _)), _, Some(Proj::Deref(_))) => {
+                *p = Place {
+                    local: l,
+                    proj: p.proj[1..].to_vec(),
+                }
+            }
+            _ => {}
         }
     });
     let mut inits = std::mem::take(&mut zeros.inits);
@@ -82,7 +104,8 @@ pub(super) fn apply(
 
 /// How a statement involves the webs.
 enum WebStmt {
-    /// `d = w`: copy the object along (`d.obj = w.obj`).
+    /// `d = w` or `d = w + c` (the same block): copy the object (and count) along, between
+    /// the pointer locals named.
     Copy(Local, Local),
     /// `memset w, 0, size`: the object becomes zero.
     Fill(Local, AggId),
@@ -92,14 +115,15 @@ enum WebStmt {
 
 fn web_stmt(s: &Stmt, obj_of: &impl Fn(Local) -> Option<(Local, AggId)>) -> WebStmt {
     match s {
-        Stmt::Assign(dst, Rvalue::Use(Operand::Copy(src)))
-            if dst.proj.is_empty() && src.proj.is_empty() =>
-        {
-            match (obj_of(dst.local), obj_of(src.local)) {
-                (Some((d, _)), Some((w, _))) if d != w => WebStmt::Copy(d, w),
-                _ => WebStmt::Other,
+        Stmt::Assign(dst, rv) if dst.proj.is_empty() => match moved(rv) {
+            Some((src, _)) if src.proj.is_empty() && dst.local != src.local => {
+                match (obj_of(dst.local), obj_of(src.local)) {
+                    (Some(_), Some(_)) => WebStmt::Copy(dst.local, src.local),
+                    _ => WebStmt::Other,
+                }
             }
-        }
+            _ => WebStmt::Other,
+        },
         Stmt::MemSet {
             dst: Operand::Copy(p),
             ..
@@ -109,6 +133,13 @@ fn web_stmt(s: &Stmt, obj_of: &impl Fn(Local) -> Option<(Local, AggId)>) -> WebS
         },
         _ => WebStmt::Other,
     }
+}
+
+fn set_zero(l: Local) -> Stmt {
+    Stmt::Assign(
+        Place::local(l),
+        Rvalue::Use(Operand::Const(Const::Int(0), Ty::U64)),
+    )
 }
 
 fn copy(dst: Local, src: Local) -> Stmt {
@@ -125,6 +156,7 @@ fn rewrite_term(
     bi: usize,
     obj_of: &impl Fn(Local) -> Option<(Local, AggId)>,
     zeros: &Zeros,
+    rc_of: impl Fn(Local) -> Option<Local>,
 ) {
     let whole = |p: &Place| p.proj.is_empty().then_some(p.local);
     let (next, alloc) = match &func.blocks[bi].term {
@@ -153,6 +185,9 @@ fn rewrite_term(
         let token = Rvalue::Use(Operand::Const(Const::Int(1), Ty::Ptr));
         push_stmt(func, bi, Stmt::Assign(Place::local(w), token), at);
         push_stmt(func, bi, zeros.fill(l, obj), at);
+        if let Some(rc) = rc_of(w) {
+            push_stmt(func, bi, set_zero(rc), at);
+        }
     }
     func.blocks[bi].term = Terminator::Goto(next);
 }

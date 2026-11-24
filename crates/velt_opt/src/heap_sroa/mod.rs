@@ -8,21 +8,37 @@
 //! allocation, the zero fill and the free, as escape analysis does in JIT compilers, but at
 //! compile time.
 //!
-//! **Webs.** Pointer locals connected by copies (`a = b`) form a *web*; the objects a web
-//! holds are the ones its allocations created. A web is replaced only when every mention of
-//! its locals is one of:
-//! - `w = velt_rt_alloc(size, align)`, `w = null` or `w = v` (`v` in the same web);
-//! - a place through the pointer, `(*w as Obj)…`, read or written (always as the same object
-//!   aggregate `Obj`, with constant sizes matching it);
+//! **Webs.** Pointer locals connected by copies (`a = b`) and constant offsets (`a = b + 8`) form
+//! a *web*; the objects a web holds are the ones its allocations created. A web is replaced only
+//! when every mention of its locals is one of:
+//! - `w = velt_rt_alloc(size, align)`, `w = null`, `w = v` or `w = v + c` (`v` in the same web);
+//! - a place through the pointer, `(*w as Obj)…`, read or written (as the object aggregate `Obj`
+//!   or one laid out as it, `Uint8Array` read as its base `BufferView`, at one offset in the
+//!   block, with constant sizes matching it);
+//! - for a counted object (the block is a `u64` count, then the object, #1718): `(*h as u64)`
+//!   with `h` at the start of the block, read or written whole (a retain, a release, the count's
+//!   flag bits tested), and `velt_rt_free(h, 8 + size(Obj), align)`;
 //! - `memset w, 0, size(Obj)` (the zero fill of `new`), `velt_rt_free(w, size, align)`;
 //! - `w == null` / `w != null` (drop guards; the pointer stays as a non-null token).
 //!
-//! So the pointer is never stored in memory, passed to a call, returned, offset, compared
-//! with another pointer (identity is not observable) or turned into the address of a field:
-//! the object does not escape, and its reference count, if it had one, would be observable
-//! only through those (counted objects are reached through an offset pointer anyway). A field
-//! holding a counted value is no exception: lowering drops and shares a pointer field through
-//! the address of a copy (`old = (*w).f; drop(&old)`), a read of the field.
+//! So the pointer is never stored in memory, passed to a call, returned, compared with another
+//! pointer (identity is not observable) or turned into the address of a field: the object does
+//! not escape. Its count is then data like its fields, read and written only by this function's
+//! retains and releases: it moves into a local (`w.rc`) next to the object's (`w.obj`), and the
+//! tests of its last reference fold away once it is constant. What holds an object by its address
+//! (a weak table, a `WeakRef`, the cycle collector's buffer, another thread) is given it in a call,
+//! so such an object stays on the heap. A field holding a counted value is no exception: lowering
+//! drops and shares a pointer field through the address of a copy (`old = (*w).f; drop(&old)`), a
+//! read of the field, so the object's own counted fields (a view's buffer) are released where
+//! the object would have died.
+//!
+//! **Known vtables** (`devirt`). A counted object's drop and its virtual getters run as calls
+//! through its vtable that are given the object; when every object of an otherwise replaceable
+//! web got the same vtable, its loads become that vtable, the calls become direct (`vtable_loads`,
+//! `constfold`, in the same round), the next round inlines them and the one after replaces the
+//! object. **Cost** (`cost`): a counted web whose copies sit in deeper loops than all of its
+//! allocations (an error object a hot loop carries a pointer for) stays on the heap, where a copy
+//! is a pointer's and not the object's.
 //!
 //! **Value semantics.** After the rewrite each local of a web carries its own copy of the
 //! object (`w_obj`), and `a = b` copies it. That equals the reference semantics as long as
@@ -43,6 +59,8 @@
 //! every object there.
 
 mod aliases;
+mod cost;
+mod devirt;
 mod flow;
 mod rewrite;
 mod webs;
@@ -75,20 +93,45 @@ impl Allocator {
     }
 }
 
-/// Replace the non-escaping heap objects of `func`; returns whether anything changed.
-pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut Function) -> bool {
+/// What [`run`] did to a function.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub(crate) struct Done {
+    /// Objects were replaced.
+    pub replaced: bool,
+    /// Vtables of objects kept on the heap became known (`devirt`): `vtable_loads` and
+    /// `constfold` can make their calls direct now, for the next round to inline.
+    pub vtables: bool,
+}
+
+impl Done {
+    pub fn any(self) -> bool {
+        self.replaced || self.vtables
+    }
+}
+
+/// Replace the non-escaping heap objects of `func`.
+pub(crate) fn run(aggs: &[AggLayout], allocator: Option<Allocator>, func: &mut Function) -> Done {
     let Some(allocator) = allocator else {
-        return false;
+        return Done::default();
     };
     let Some(mut webs) = webs::scan(aggs, allocator, func) else {
-        return false;
+        return Done::default();
     };
-    let updates = flow::check(allocator, func, &mut webs);
-    if !webs.any() {
-        return false;
+    let vtables = devirt::run(allocator, func, &webs);
+    let depths = cost::Depths::new(func, &webs);
+    if let Some(d) = &depths {
+        cost::check(allocator, func, d, &mut webs, &[]);
     }
-    rewrite::apply(aggs, allocator, func, &webs, &updates);
-    true
+    let mut updates = flow::check(allocator, func, &mut webs);
+    if let Some(d) = &depths {
+        cost::check(allocator, func, d, &mut webs, &updates);
+    }
+    updates.retain(|u| webs.obj(u.dst).is_some() && webs.obj(u.src).is_some());
+    let replaced = webs.any();
+    if replaced {
+        rewrite::apply(aggs, allocator, func, &webs, &updates);
+    }
+    Done { replaced, vtables }
 }
 
 #[cfg(test)]

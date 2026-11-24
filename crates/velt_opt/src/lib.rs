@@ -429,9 +429,15 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
             });
             let mut budget = inline::Budget::for_program(program);
             let mut specs = const_fields::Specializations::default();
-            for _ in 0..MAX_ROUNDS {
-                if !speed_round(program, &mut budget, &mut specs, served, t) {
+            for round in 0..MAX_ROUNDS {
+                let done = speed_round(program, &mut budget, &mut specs, served, t);
+                if !done.changed {
                     break;
+                }
+                // Calls the last round made direct through known vtables (`heap_sroa::devirt`)
+                // get one more round, to be inlined and their objects replaced.
+                if round + 1 == MAX_ROUNDS && done.vtables {
+                    speed_round(program, &mut budget, &mut specs, served, t);
                 }
             }
             // What inlining left without callers, before the passes below go over every function.
@@ -590,14 +596,21 @@ fn promote_memory(program: &mut vir::Program, served: Served, t: &mut PassTiming
     });
 }
 
-/// One round of the `Speed` pipeline; returns whether anything changed.
+/// What one round of the `Speed` pipeline did.
+struct Round {
+    changed: bool,
+    /// `heap_sroa` made vtables known, and so calls direct that are not inlined yet.
+    vtables: bool,
+}
+
+/// One round of the `Speed` pipeline.
 fn speed_round(
     program: &mut vir::Program,
     budget: &mut inline::Budget,
     specs: &mut const_fields::Specializations,
     served: Served,
     t: &mut PassTimings,
-) -> bool {
+) -> Round {
     let mut changed = t.time("inline", || inline::run(program, budget, served));
     changed |= t.time("const_fields", || const_fields::run(program, specs));
     let signatures = t.time("signatures", || callgraph::signatures(program));
@@ -609,6 +622,7 @@ fn speed_round(
     let funcs = (program.funcs.iter_mut().zip(live))
         .filter(|(f, l)| *l && !f.blocks.is_empty() && served.optimizes(f));
     let (aggs, statics) = (&program.aggs, &program.statics);
+    let vtables = std::sync::atomic::AtomicBool::new(false);
     changed |= each_function(funcs.map(|(f, _)| f), t, |t, func| {
         let mut changed = t.time("vtable_loads", || {
             vtable_loads::run(aggs, statics, allocator, func)
@@ -616,7 +630,16 @@ fn speed_round(
         changed |= t.time("constfold", || constfold::run(&fold, func));
         changed |= t.time("copyprop", || copyprop::run(func));
         changed |= t.time("addr_forward", || addr_forward::run(aggs, func));
-        changed |= t.time("heap_sroa", || heap_sroa::run(aggs, allocator, func));
+        let sroa = t.time("heap_sroa", || heap_sroa::run(aggs, allocator, func));
+        if sroa.vtables {
+            vtables.store(true, std::sync::atomic::Ordering::Relaxed);
+            // Their calls direct in this round, for the next one to inline.
+            t.time("vtable_loads", || {
+                vtable_loads::run(aggs, statics, allocator, func)
+            });
+            t.time("constfold", || constfold::run(&fold, func));
+        }
+        changed |= sroa.any();
         changed |= t.time("enum_sroa", || enum_sroa::run(aggs, func));
         changed |= t.time("sroa", || sroa::run(aggs, func));
         changed |= t.time("dce", || dce::run(aggs, func));
@@ -624,5 +647,8 @@ fn speed_round(
         changed |= t.time("simplify_cfg", || simplify_cfg::run(func));
         changed
     });
-    changed
+    Round {
+        changed,
+        vtables: vtables.into_inner(),
+    }
 }
