@@ -1,0 +1,18 @@
+missing spawn ENOENT -2 spawn velt-no-such-program velt-no-such-program ["arg 1","two"]
+   spawn velt-no-such-program ENOENT
+missing exec ENOENT -2 spawn velt-no-such-program velt-no-such-program ["arg 1","two"]
+   spawn velt-no-such-program ENOENT
+missing execSync ENOENT -2 spawnSync velt-no-such-program velt-no-such-program ["arg 1","two"]
+   spawnSync velt-no-such-program ENOENT
+not executable spawn EACCES -13 spawn ./plain ./plain ["arg 1","two"]
+   spawn ./plain EACCES
+not executable exec EACCES -13 spawn ./plain ./plain ["arg 1","two"]
+   spawn ./plain EACCES
+not executable execSync EACCES -13 spawnSync ./plain ./plain ["arg 1","two"]
+   spawnSync ./plain EACCES
+not executable in PATH spawn EACCES -13 spawn plain plain ["arg 1","two"]
+   spawn plain EACCES
+not executable in PATH exec EACCES -13 spawn plain plain ["arg 1","two"]
+   spawn plain EACCES
+not executable in PATH execSync EACCES -13 spawnSync plain plain ["arg 1","two"]
+   spawnSync plain EACCES
