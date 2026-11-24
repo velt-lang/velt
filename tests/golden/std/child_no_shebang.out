@@ -1,0 +1,6 @@
+execSync: checked on Linux, not on macOS (#3573)
+execSync absolute: checked on Linux, not on macOS (#3573)
+execSync in PATH: checked on Linux, not on macOS (#3573)
+exec as Node: true
+exec in PATH as Node: true
+spawn as Node: true

@@ -7,10 +7,13 @@ import { export as cExport } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
 import { clearStdoutWritten, stdoutWrittenSince } from "./process";
 import * as io from "./sched_io";
+import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as nc from "./sched_node_catch";
 import * as q from "./sched_queue";
 import * as tk from "./sched_task";
+import * as wa from "./sched_wake_away";
+import * as wp from "./sched_wake_pause";
 import * as yl from "./sched_yield_list";
 
 declare function velt_rt_flush(): void;
@@ -28,17 +31,33 @@ export function wakerWake(w: usize): void {
     countedWake(w);
     return;
   }
-  wake(w);
-  release(w);
+  wakeGiving(w);
 }
 
 /** `wakerWake` with the block counters on: counted until the reference is back. */
 @noInline
 function countedWake(w: usize): void {
   WAKING.add(1);
+  wakeGiving(w);
+  WAKING.sub(1);
+}
+
+/**
+ * Wakes task `w` and gives back the waker's reference. With the locks on (several workers) the
+ * woken task may run and park on another thread before a reference given back after the wake
+ * goes, and that park counts it, so nothing polls the task again once it goes (#3487): the wake
+ * hands the reference to the task's next poll instead (sched_wake_away.velt `wakeAway`). With the
+ * locks off (one worker) the window stays: a thread of the runtime's or the blocking pool wakes
+ * worker 0's task, as before.
+ */
+@inline("always")
+function wakeGiving(w: usize): void {
+  if (lk.mode() === lk.LK_ON) {
+    wa.wakeAway(w);
+    return;
+  }
   wake(w);
   release(w);
-  WAKING.sub(1);
 }
 
 @cExport("std_sched_waker_wake_by_ref")
@@ -66,6 +85,7 @@ const COUNTING = new Atomic<u64>(0);
 
 /** The executor starts with the block counters on (sched_workers.velt): wakes are counted. */
 export function countWakes(): void {
+  wp.read();
   COUNTING.store(1, "relaxed");
 }
 
@@ -104,12 +124,14 @@ export function wake(t: usize): void {
       const was = m.cas32(t + tk.T_STATE, tk.IDLE, tk.SCHEDULED);
       if (was === tk.IDLE) {
         schedule(t);
+        wp.afterWake();
         return;
       }
       s = was;
     } else if (s === tk.RUNNING) {
       const was = m.cas32(t + tk.T_STATE, tk.RUNNING, tk.NOTIFIED);
       if (was === tk.RUNNING) {
+        wp.afterWake();
         return;
       }
       s = was;

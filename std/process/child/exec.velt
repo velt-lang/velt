@@ -1,7 +1,7 @@
 // velt/process/child (internal): running a command to completion (`exec`, `execShell` and their `*Sync`
 // twins).
 
-import { unwrapIo } from "velt/native/result";
+import { startedOr } from "velt/process/child/spawn_error";
 import { platform } from "velt/os/machine";
 import { ExecOptions } from "velt/process/child/exec_options";
 import { ExecResult } from "velt/process/child/exec_result";
@@ -17,13 +17,14 @@ export async function exec(
   opts: ExecOptions = {},
 ): Promise<ExecResult> {
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, 0);
-  return resultOf(unwrapIo(await velt_rt_child_output(spec, opts.input ?? "")));
+  const out = await velt_rt_child_output(spec, opts.input ?? "");
+  return resultOf(startedOr(out, program, args, false));
 }
 
 /** `exec` that blocks the calling thread (for scripts and CLIs). */
 export function execSync(program: string, args: string[] = [], opts: ExecOptions = {}): ExecResult {
   const spec = specOf(program, args, opts.cwd, opts.env, opts.clearEnv ?? false, 0);
-  return resultOf(unwrapIo(outputSync(spec, opts.input ?? "")));
+  return resultOf(startedOr(outputSync(spec, opts.input ?? ""), program, args, true));
 }
 
 function shellArgs(command: string): string[] {

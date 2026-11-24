@@ -1,0 +1,55 @@
+// Records copied out of a mapped file into a buffer that is used again: 2,000,000 copies of a
+// 64-byte record from computed offsets of a 64 KiB file, four ways (argument 1):
+//   copy   `m.copy(record, 0, at, at + 64)`: MappedFile's, one copy
+//   words  `m.copy(words, 0, at, at + 64)`: the same into a `u32[]` of 16, counted in bytes
+//   bytes  `m.bytes.copy(record, 0, at, at + 64)`: `u8[]`'s, on the mapping's bytes
+//   loop   64 `record[i] = m.bytes[at + i]`, each with its bounds check
+// Each prints a checksum, the same for all four. Any other argument copies nothing: what
+// writing and opening the file cost.
+//
+//   velt build --release bench/fs/mapped_copy.velt -o /tmp/mc && /tmp/mc copy
+import * as fs from "velt/fs";
+
+function main() {
+  const mode = process.argv[2] ?? "copy";
+  const path = `mapped-copy-${process.pid}.tmp`;
+  let text = "";
+  for (let i = 0; i < 65536; i++) {
+    text += String.fromCharCode(48 + (i % 64));
+  }
+  fs.writeFileSync(path, text);
+  const m = fs.MappedFile.open(path);
+  const record = Buffer.alloc(64);
+  let sum = 0;
+  if (mode == "copy") {
+    for (let i = 0; i < 2000000; i++) {
+      const at = ((i * 13) % 1023) * 64;
+      m.copy(record, 0, at, at + 64);
+      sum += record[i % 64];
+    }
+  } else if (mode == "words") {
+    const words: u32[] = new Array<u32>(16).fill(0);
+    for (let i = 0; i < 2000000; i++) {
+      const at = ((i * 13) % 1023) * 64;
+      m.copy(words, 0, at, at + 64);
+      sum += (words[(i % 64) >> 2] >> (((i % 64) & 3) * 8)) & 0xff;
+    }
+  } else if (mode == "bytes") {
+    for (let i = 0; i < 2000000; i++) {
+      const at = ((i * 13) % 1023) * 64;
+      m.bytes.copy(record, 0, at, at + 64);
+      sum += record[i % 64];
+    }
+  } else if (mode == "loop") {
+    const bytes = m.bytes;
+    for (let i = 0; i < 2000000; i++) {
+      const at = ((i * 13) % 1023) * 64;
+      for (let k = 0; k < 64; k++) {
+        record[k] = bytes[at + k];
+      }
+      sum += record[i % 64];
+    }
+  }
+  console.log(sum);
+  fs.rmSync(path);
+}

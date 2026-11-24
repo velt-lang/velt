@@ -43,6 +43,9 @@ impl fmt::Display for Program {
             if e.variadic {
                 params.push_str(if e.params.is_empty() { "..." } else { ", ..." });
             }
+            if let Some(c) = &e.c_abi {
+                params.push_str(&format!(" c_abi {c:?}"));
+            }
             let host = e
                 .host
                 .as_ref()

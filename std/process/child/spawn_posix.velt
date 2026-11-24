@@ -1,8 +1,10 @@
 // velt/process/child (internal): starting a child process with `posix_spawn` (macOS and Linux),
 // for the executor in Velt's child processes (std/process/child/child_sched.velt, #2649 step 4):
-// the program looked up in the child's `PATH` as libuv does, its arguments and environment as C
-// arrays, its working directory, its standard streams (inherited, piped, or the null device) and
-// SIGPIPE back at its default (the runtime ignores it, as Rust programs do).
+// the program looked up in the child's `PATH` as libuv does (spawn_lookup.velt), its arguments
+// and environment as C arrays, its working directory, its standard streams (inherited, piped, or
+// the null device) and SIGPIPE back at its default (the runtime ignores it, as Rust programs do).
+// On Linux a file the OS can't execute (`ENOEXEC`: no `#!` line) runs through `/bin/sh`, as Node
+// runs it there (`throughShell`, `#script-shell`); on macOS it fails with ENOEXEC, as in Node.
 //
 // Pipes are close-on-exec from the start where the OS can (`pipe2` on Linux); on macOS, which
 // can't, every child is spawned with `POSIX_SPAWN_CLOEXEC_DEFAULT` and keeps only the descriptors
@@ -21,10 +23,11 @@ import { utf8Encode } from "velt/encoding/utf8";
 import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import { addOpen } from "#spawn-open";
+import { ENOEXEC, SCRIPT_SHELL, SHELL } from "#script-shell";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as wk from "velt/lang/hooks/sched_wake";
 import { CommandSpec } from "velt/process/child/spec";
-import { envPairs } from "#env-sys";
+import { candidates, environment, lines, pathOf } from "velt/process/child/spawn_lookup";
 
 // The headers' types (`velt native headers --std` checks this file:
 // crates/veltc/src/native/headers/std_check.rs); `posix_spawn_file_actions_addopen`, whose
@@ -161,76 +164,6 @@ function freeArray(a: usize): void {
   m.release(a, 8 * (n + 1));
 }
 
-/**
- * The child's environment as `[name, value, …]`: the parent's unless cleared (a copy, made
- * under velt/process' environment lock), then the spec's.
- */
-function environment(spec: CommandSpec): string[] {
-  const names: string[] = [];
-  const values: string[] = [];
-  if (!spec.clearEnv) {
-    const all = envPairs();
-    for (let i: usize = 0; i + 1 < all.length; i += 2) {
-      names.push(all[i]);
-      values.push(all[i + 1]);
-    }
-  }
-  for (let i: usize = 0; i + 1 < spec.env.length; i += 2) {
-    const at = names.indexOf(spec.env[i]);
-    if (at >= 0) {
-      values[at as usize] = spec.env[i + 1];
-    } else {
-      names.push(spec.env[i]);
-      values.push(spec.env[i + 1]);
-    }
-  }
-  const out: string[] = [];
-  for (let i: usize = 0; i < names.length; i++) {
-    out.push(names[i]);
-    out.push(values[i]);
-  }
-  return out;
-}
-
-/** `[name, value, …]` as the "name=value" strings `posix_spawn` takes. */
-function lines(env: string[]): string[] {
-  const out: string[] = [];
-  for (let i: usize = 0; i + 1 < env.length; i += 2) {
-    out.push(`${env[i]}=${env[i + 1]}`);
-  }
-  return out;
-}
-
-/** Where a program is looked up when the child's environment has no `PATH` (libuv's). */
-const DEFAULT_PATH = "/usr/bin:/bin";
-
-/** The child's `PATH` (libuv's default when it has none). */
-function pathOf(env: string[]): string {
-  for (let i: usize = 0; i + 1 < env.length; i += 2) {
-    if (env[i] == "PATH") {
-      return env[i + 1];
-    }
-  }
-  return DEFAULT_PATH;
-}
-
-/**
- * The paths to try for the program, in order: as written when it holds a `/`; else in each entry
- * of the child's `PATH` (an empty one is the working directory), as libuv does for Node. So
- * nothing reads this process' environment outside velt/process' lock, as `posix_spawnp`, which
- * reads its `PATH`, would.
- */
-function candidates(program: string, path: string): string[] {
-  if (program.includes("/")) {
-    return [program];
-  }
-  const out: string[] = [];
-  for (const dir of path.split(":")) {
-    out.push(`${dir == "" ? "." : dir}/${program}`);
-  }
-  return out;
-}
-
 /** Closes `fd` if it is one (not -1). */
 export function closeFd(fd: i32): void {
   if (fd >= 0) {
@@ -239,6 +172,42 @@ export function closeFd(fd: i32): void {
       close$child(fd);
     }
   }
+}
+
+/**
+ * Spawns `SHELL` to run `file` (the program found, which gave `ENOEXEC`) with `args`, as
+ * `execvp` does: argv `[SHELL, file, …args]`, the same file actions, attributes and environment.
+ * 0 with the process id in `pid`, or the error.
+ */
+function throughShell(
+  pid: Ptr<i32> | null,
+  file: string,
+  args: string[],
+  fa: Ptr<posix_spawn_file_actions_t> | null,
+  attr: Ptr<posix_spawnattr_t> | null,
+  env: Ptr<Ptr<u8>> | null,
+): i32 {
+  const argv: string[] = [SHELL, file];
+  for (const a of args) {
+    argv.push(a);
+  }
+  const cArgv = cArray(argv);
+  if (cArgv === 0) {
+    return EINVAL;
+  }
+  let rc: i32 = EINVAL;
+  try {
+    const shell = new CString(SHELL);
+    // SAFETY: as in `start`: initialized file actions and attributes, a NULL-terminated `envp`;
+    // `cArgv` is a NULL-terminated array of NUL-terminated strings, freed after.
+    unsafe {
+      rc = posix_spawn(pid, shell, fa, attr, m.ptrTo<Ptr<u8>>(cArgv), env);
+    }
+  } catch (e) {
+    // `SHELL` holds no NUL.
+  }
+  freeArray(cArgv);
+  return rc;
 }
 
 /**
@@ -383,6 +352,8 @@ export function start(spec: CommandSpec, modes: u32): Started {
     // A relative candidate resolves in the child's working directory, after the chdir.
     let rc: i32 = ENOENT;
     let denied = false;
+    // The candidate tried last.
+    let at: usize = 0;
     for (const file of files) {
       // SAFETY: as above; `pid` has room for a `pid_t`.
       unsafe {
@@ -394,6 +365,12 @@ export function start(spec: CommandSpec, modes: u32): Started {
       if (rc !== ENOENT && rc !== ENOTDIR && rc !== EACCES) {
         break;
       }
+      at++;
+    }
+    if (rc === ENOEXEC && SCRIPT_SHELL) {
+      // On Linux, an executable without a `#!` line or a binary format is a script for
+      // `/bin/sh` (glibc's `execvp`, which Node follows there): `/bin/sh <file> <args…>`.
+      rc = throughShell(pidAt, paths[at], spec.args, faAt, attrAt, envAt);
     }
     if (rc !== 0 && denied && (rc === ENOENT || rc === ENOTDIR)) {
       rc = EACCES;
