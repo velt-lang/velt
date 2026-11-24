@@ -24,6 +24,7 @@
 import { atomicAddress, hookCall, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as m from "./sched_mem";
+import * as mh from "./mutex_held";
 import * as t from "./sched_task";
 
 /** The lock: 0 free, 1 held, 2 held with threads waiting. */
@@ -126,6 +127,11 @@ export function dropAtExit(): void {
  * for the tasks as the runtime's lock made it).
  */
 function take(e: usize): void {
+  // Counted in a `velt dev` build only (mutex_held.velt): `USED` stays 0 in any other, which
+  // reads no count.
+  if (mh.USED.load("relaxed") !== 0 && mh.held() !== 0) {
+    mutexHeld();
+  }
   lock();
   if (e === 0) {
     HELD.set(OUTSIDE);
@@ -138,6 +144,19 @@ function take(e: usize): void {
   } else {
     HELD.set(OUTSIDE);
   }
+}
+
+/**
+ * About to wait for the module lock while this thread holds a `Mutex` (mutex_held.velt): that
+ * could wait for a thread that holds the module lock and waits for the `Mutex`, for ever. Sema
+ * refuses module state in a `with` callback, so only code `velt dev` swapped in gets here; it
+ * stops, as the runtime's lock did (#3467).
+ */
+@noInline
+function mutexHeld(): void {
+  panic(
+    "module state reached while a `Mutex` is held (in a `with` callback): this could wait for ever for a thread that holds module state and waits for that `Mutex`",
+  );
 }
 
 /** Does this thread hold the module lock (for a task's poll, or outside a task)? */
