@@ -36,8 +36,6 @@ export {
   velt_rt_fs_reader_close,
   velt_rt_fs_reader_opened_stats,
   velt_rt_fs_reader_read,
-  velt_rt_fs_reader_read_line,
-  velt_rt_fs_reader_read_string,
   velt_rt_fs_writer_close,
   velt_rt_fs_writer_flush,
   velt_rt_fs_writer_write,

@@ -1,0 +1,36 @@
+missing spawn ENOENT -4058 spawn velt-no-such-program velt-no-such-program ["arg 1","two"]
+   spawn velt-no-such-program ENOENT
+missing exec ENOENT -4058 spawn velt-no-such-program velt-no-such-program ["arg 1","two"]
+   spawn velt-no-such-program ENOENT
+missing execSync ENOENT -4058 spawnSync velt-no-such-program velt-no-such-program ["arg 1","two"]
+   spawnSync velt-no-such-program ENOENT
+not an exe spawn UNKNOWN -4094 spawn none none
+   spawn UNKNOWN
+not an exe exec UNKNOWN -4094 spawn none none
+   spawn UNKNOWN
+not an exe execSync UNKNOWN -4094 spawnSync .\fake.exe .\fake.exe ["arg 1","two"]
+   spawnSync .\fake.exe UNKNOWN
+not an exe in PATH spawn UNKNOWN -4094 spawn none none
+   spawn UNKNOWN
+not an exe in PATH exec UNKNOWN -4094 spawn none none
+   spawn UNKNOWN
+not an exe in PATH execSync UNKNOWN -4094 spawnSync fake fake ["arg 1","two"]
+   spawnSync fake UNKNOWN
+text file spawn EFTYPE -4028 spawn none none
+   spawn EFTYPE
+text file exec EFTYPE -4028 spawn none none
+   spawn EFTYPE
+text file execSync EFTYPE -4028 spawnSync .\plain.txt .\plain.txt ["arg 1","two"]
+   spawnSync .\plain.txt EFTYPE
+batch file spawn EINVAL -4071 spawn none none
+   spawn EINVAL
+batch file exec EINVAL -4071 spawn none none
+   spawn EINVAL
+batch file execSync EINVAL -4071 spawnSync .\x.bat .\x.bat ["arg 1","two"]
+   spawnSync .\x.bat EINVAL
+directory spawn ENOENT -4058 spawn .\subdir .\subdir ["arg 1","two"]
+   spawn .\subdir ENOENT
+directory exec ENOENT -4058 spawn .\subdir .\subdir ["arg 1","two"]
+   spawn .\subdir ENOENT
+directory execSync ENOENT -4058 spawnSync .\subdir .\subdir ["arg 1","two"]
+   spawnSync .\subdir ENOENT

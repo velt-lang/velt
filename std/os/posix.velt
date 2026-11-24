@@ -1,9 +1,19 @@
 // velt/os (internal): the machine facts macOS and Linux read the same way, through the C library
-// (`#os-sys`' darwin and linux variants: sys_darwin.velt, sys_linux.velt).
+// (`#os-sys`' darwin and linux variants: sys_darwin.velt, sys_linux.velt): the host name, the
+// OS's names (`uname`) and this process' CPU time (`getrusage`).
 
 import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
+
+/** C's `struct utsname`: the OS's names, in fields of a fixed size each. */
+declare c type utsname;
+/** C's `struct rusage`, which starts with the user and system times (two `struct timeval`s). */
+declare c type rusage;
 
 declare c("c") function gethostname(name: u8[], len: usize): i32;
+declare c("c") function uname(names: Ptr<utsname> | null): i32;
+declare c("c") function getrusage(who: i32, usage: Ptr<rusage> | null): i32;
 
 /** The longest host name POSIX promises room for (`HOST_NAME_MAX` is 255 on Linux and macOS). */
 const NAME_ROOM: usize = 256;
@@ -18,4 +28,85 @@ export function hostname(): string {
   // A name that fills the buffer may come without its NUL: it ends at the buffer's end.
   const end = buf.indexOf(0);
   return utf8DecodeLossy(end < 0 ? buf : buf.slice(0, end));
+}
+
+/** Room for a `struct utsname` on macOS (5 fields of 256 bytes) and Linux (6 of 65). */
+const UTSNAME_ROOM: usize = 1536;
+
+/** The text of the NUL-terminated field of at most `size` bytes at `at`. */
+function field(at: usize, size: usize): string {
+  const bytes: u8[] = [];
+  for (let i: usize = 0; i < size; i++) {
+    // SAFETY: inside the field, inside the block `names` holds.
+    const b = unsafe { addressLoad<u8>(at + i) };
+    if (b === 0) {
+      break;
+    }
+    bytes.push(b);
+  }
+  return utf8DecodeLossy(bytes);
+}
+
+/**
+ * `[sysname, release, version, machine]` of `uname`, whose fields are `size` bytes each (65 on
+ * Linux, 256 on macOS); four "" when it fails.
+ */
+export function names(size: usize): string[] {
+  const p = rawAlloc(UTSNAME_ROOM);
+  for (let at: usize = 0; at < UTSNAME_ROOM; at += 8) {
+    // SAFETY: inside the block just allocated.
+    unsafe {
+      addressStore<u64>(p + at, 0);
+    }
+  }
+  let r: i32 = -1;
+  // SAFETY: `p` holds more than a `struct utsname` on this target, zeroed.
+  unsafe {
+    r = uname(Ptr.orNull<utsname>(p));
+  }
+  // The fields: sysname, nodename, release, version, machine.
+  const out =
+    r === 0
+      ? [
+        field(p, size),
+        field(p + 2 * size, size),
+        field(p + 3 * size, size),
+        field(p + 4 * size, size),
+      ]
+      : ["", "", "", ""];
+  // SAFETY: the block rawAlloc gave above, which nothing uses after.
+  unsafe {
+    rawFree(p, UTSNAME_ROOM);
+  }
+  return out;
+}
+
+/** `RUSAGE_SELF` on macOS and Linux. */
+const RUSAGE_SELF: i32 = 0;
+/**
+ * Room for a `struct rusage`: 144 bytes with glibc and on macOS, 272 with musl (which reserves
+ * more after the fields).
+ */
+const RUSAGE_SIZE: usize = 512;
+
+/**
+ * `[user, system]`: the CPU time this process has spent in user code and in the kernel, in
+ * microseconds (`getrusage`; `[0, 0]` when it fails). A `struct timeval` is 16 bytes on both,
+ * its microseconds (`suseconds_t`, a `long` on Linux and an `int` on macOS) at 8: they are under
+ * a million, so their low 32 bits are the value on both.
+ */
+export function cpuUsage(): [i64, i64] {
+  const p = rawAlloc(RUSAGE_SIZE);
+  let user: i64 = 0;
+  let system: i64 = 0;
+  // SAFETY: `p` holds a `struct rusage`, which the call fills; the block is freed once, after
+  // the reads.
+  unsafe {
+    if (getrusage(RUSAGE_SELF, Ptr.orNull<rusage>(p)) === 0) {
+      user = addressLoad<i64>(p) * 1000000 + (addressLoad<i32>(p + 8) as i64);
+      system = addressLoad<i64>(p + 16) * 1000000 + (addressLoad<i32>(p + 24) as i64);
+    }
+    rawFree(p, RUSAGE_SIZE);
+  }
+  return [user, system];
 }

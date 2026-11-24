@@ -1,10 +1,11 @@
 // velt/lang/intrinsics (tests): white-box tests of `strWord0`, `strWord1`, `strWord2` and
-// `strDataAddress` (#2778), run by `velt test std/`: each form of a string value as
+// `strDataAddress` (#2778), and `strBorrowedWords` (#3469), run by `velt test std/`: each form of a string value as
 // docs/internals/contracts/rt_abi.md "Strings" lays it out (inline, static, heap, a slice), and
 // the bytes read through the data address against `strByteAt`.
 import { describe, expect, it } from "velt/test";
 import {
   addressLoad,
+  strBorrowedWords,
   strByteAt,
   strByteLen,
   strDataAddress,
@@ -91,5 +92,31 @@ describe("strDataAddress", () => {
     const last = unsafe { addressLoad<u8>(at + 5) };
     expect(first).toBe(104);
     expect(last).toBe(105);
+  });
+});
+
+describe("strBorrowedWords", () => {
+  it("makes the static string of a literal's sub-range, sharing its bytes", () => {
+    const lit = "a static literal that is too long to be inline";
+    const at = strWord0(lit) + 2;
+    const s = strBorrowedWords(at, (6 << 32) | 6);
+    expect(s).toBe("static");
+    expect(s.length).toBe(6);
+    expect(strWord0(s)).toBe(at);
+    expect(strWord2(s)).toBe(0);
+  });
+
+  it("gives the empty string for (0, 0)", () => {
+    const s = strBorrowedWords(0, 0);
+    expect(s).toBe("");
+    expect(s.length).toBe(0);
+  });
+
+  it("is what slice gives for a literal, in the static form", () => {
+    const lit = "a static literal that is too long to be inline";
+    const s = lit.slice(9, -3);
+    expect(strWord2(s)).toBe(0);
+    expect(strWord0(s)).toBe(strWord0(lit) + 9);
+    expect(s).toBe("literal that is too long to be inl");
   });
 });

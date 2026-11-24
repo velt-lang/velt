@@ -1,0 +1,96 @@
+// velt/os (internal): `cpus()` on Linux, as libuv's `uv_cpu_info` reads it for Node's
+// `os.cpus()`: one entry per `cpuN` line of /proc/stat (the online CPUs, in its order) with that
+// line's times, the model of the processor block of /proc/cpuinfo with the same number ("model
+// name"; on arm64 the name of its "CPU part", arm_parts.velt), and the clock of
+// /sys/devices/system/cpu/cpuN/cpufreq/scaling_cur_freq (0 where there is none, as in many
+// virtual machines: Node reads no other source either).
+
+import { ARCH } from "#os-arch";
+import { armPartName } from "./arm_parts";
+import type { CpuInfo, CpuTimes } from "./cpu_info";
+import { integer, keyedLine, read, words } from "./proc_text";
+
+/** A `cpuN` line of /proc/stat: the CPU's number and its times. */
+export type StatLine = { cpu: i64; times: CpuTimes };
+
+/**
+ * The `cpuN` lines of /proc/stat's `text`, in order, their ticks turned into milliseconds
+ * (`msPerTick`: 1000 over the kernel's `USER_HZ`). A line's fields are user, nice, system, idle,
+ * iowait and irq ticks, and more; iowait is left out, as libuv does. The summary line ("cpu ",
+ * no number) and lines with fewer fields are skipped.
+ */
+export function statLines(text: string, msPerTick: i64): StatLine[] {
+  const out: StatLine[] = [];
+  for (const line of text.split("\n")) {
+    const w = words(line);
+    if (w.length < 7 || !w[0].startsWith("cpu")) {
+      continue;
+    }
+    const cpu = integer(w[0].slice(3));
+    const user = integer(w[1]);
+    const nice = integer(w[2]);
+    const sys = integer(w[3]);
+    const idle = integer(w[4]);
+    const irq = integer(w[6]);
+    if (cpu === null || user === null || nice === null || sys === null || idle === null) {
+      continue;
+    }
+    out.push({
+      cpu,
+      times: {
+        user: user * msPerTick,
+        nice: nice * msPerTick,
+        sys: sys * msPerTick,
+        idle: idle * msPerTick,
+        irq: irq === null ? 0 : irq * msPerTick,
+      },
+    });
+  }
+  return out;
+}
+
+/**
+ * The model of each processor block of /proc/cpuinfo's `text`, by its number ("processor : N"):
+ * its "model name", or with `armParts` (an arm64 build) the name of its "CPU part". A block
+ * without one has no entry.
+ */
+export function cpuinfoModels(text: string, armParts: bool): Map<i64, string> {
+  const models = new Map<i64, string>();
+  const key = armParts ? "CPU part" : "model name";
+  let cpu: i64 = -1;
+  for (const line of text.split("\n")) {
+    const processor = keyedLine(line, "processor");
+    if (processor !== null) {
+      const n = integer(processor);
+      cpu = n === null ? -1 : n;
+      continue;
+    }
+    const value = cpu < 0 ? null : keyedLine(line, key);
+    if (value !== null && !models.has(cpu)) {
+      models.set(cpu, armParts ? armPartName(value) : value);
+    }
+  }
+  return models;
+}
+
+/** CPU `cpu`'s clock in MHz from its cpufreq directory, or 0 when there is none. */
+function speedOf(cpu: i64): i64 {
+  const khz = integer(read(`/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_cur_freq`));
+  return khz === null || khz < 0 ? 0 : khz / 1000;
+}
+
+/** The online CPUs (an empty array when /proc/stat can't be read). */
+export function linuxCpus(msPerTick: i64): CpuInfo[] {
+  const lines = statLines(read("/proc/stat"), msPerTick);
+  const models = cpuinfoModels(read("/proc/cpuinfo"), ARCH === "arm64");
+  const out: CpuInfo[] = [];
+  for (const line of lines) {
+    const model = models.get(line.cpu);
+    out.push({
+      model: model === undefined ? "unknown" : model,
+      speed: speedOf(line.cpu),
+      times: line.times,
+    });
+  }
+  return out;
+}

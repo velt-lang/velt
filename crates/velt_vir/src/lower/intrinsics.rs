@@ -271,6 +271,10 @@ impl FnLower<'_, '_> {
                 let len = self.expr_as_u64(len);
                 self.str_ascii_words(words, len, ty)
             }
+            (I::StrBorrowedWords, [ptr, w1]) => {
+                let (ptr, w1) = (self.expr(ptr), self.expr(w1));
+                self.str_borrowed_words(ptr, w1, ty)
+            }
             (I::StrbufPushAsciiWord, [buf, w, len]) => {
                 let w = self.expr(w);
                 let len = self.expr_as_u64(len);

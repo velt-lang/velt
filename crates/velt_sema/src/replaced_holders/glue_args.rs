@@ -186,6 +186,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrAsciiWords
+        | I::StrBorrowedWords
         | I::StrbufPushAsciiWords
         | I::StrbufPushAsciiWord
         | I::StrLoadU8x16

@@ -1,0 +1,5 @@
+// velt/time (internal): `O_CLOEXEC` on macOS (`#zone-cloexec`'s darwin variant, std/imports.velt),
+// for zone_id_posix.velt's `open`.
+
+/** `O_CLOEXEC` in macOS' fcntl.h. */
+export const O_CLOEXEC: i32 = 0x1000000;

@@ -592,7 +592,8 @@ enums! {
         221 => PtrRead,
         222 => PtrWrite,
         223 => WeakRead,
-        224 => CArrived,
+        224 => StrBorrowedWords,
+        225 => CArrived,
     }
 }
 
