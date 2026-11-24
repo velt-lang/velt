@@ -52,7 +52,11 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   layout), and so is a borrowed view that long.
 - The all-zero value is the empty static string. Literals are built by lowering as
   `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
-  static strings may borrow them (same lifetime).
+  static strings may borrow them (same lifetime). A static string may also point into a heap
+  buffer that something else keeps alive for as long as the string and its copies are used: the
+  JSON reader's borrowed keys, and the views `velt_opt` gives a family of locals over a heap ASCII
+  string it proves alive and unchanged (design/strings.md "Views"). Such a string is never stored,
+  returned or passed where it could be kept, and it is ASCII unless it is a JSON key.
 - Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
   byte (of the buffer's own string; a slice's `ptr` points further in, see below), and the count
   is always the 8 bytes before the buffer's first byte:

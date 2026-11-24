@@ -59,6 +59,10 @@
 //!   counted pointers (`const data = this.db.data`, an array or class object): no count
 //!   increment and release when no call that may free a counted object runs while the copy is
 //!   used, and the reference never leaves it (#1715).
+//! - `string_views`: right after it, the families that slice their strings (`rest = text;
+//!   rest = rest.slice(n)`) start with a static view of a heap ASCII source instead of a clone,
+//!   when the source stays alive and unchanged and no view can leave: slicing and dropping a
+//!   view cost no call and no count (#3469, `borrowed_copies/views.rs`).
 //! - `noalias`: once the rounds are done, scalar fields behind `noalias` params (modified arrays
 //!   and structs) are kept in locals (loaded once, stored back around calls that receive the
 //!   param), followed by one scalar cleanup round.
@@ -480,6 +484,11 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
                 }) {
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(aggs, func));
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+                if t.time("string_views", || {
+                    borrowed_copies::run_views(aggs, &runtime, func)
+                }) {
                     t.time("simplify_cfg", || simplify_cfg::run(func));
                 }
                 if t.time("numrep", || numrep::run(&env, func)) {
