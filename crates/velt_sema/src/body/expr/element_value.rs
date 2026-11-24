@@ -5,9 +5,10 @@
 //! given it (converted when it is an `any`), and the temporary is the result:
 //!
 //! - `(b[i] = v)`: `{ const <new> = v; b[i] = <new>; <new> }`;
-//! - `(b[i] op= v)` with an `any` `v`: `{ const <old> = b[i]; const <new> = <old> op v;
-//!   b[i] = <new>; <new> }`, the element read before `v` is evaluated (with a `v` of another
-//!   type, the compound assignment itself and the element read back, which is its value);
+//! - `(b[i] op= v)` with an `any` or a `number` `v` (a `number` computed as one, #3182):
+//!   `{ const <old> = b[i]; const <new> = <old> op v; b[i] = <new>; <new> }`, the element read
+//!   before `v` is evaluated (with a `v` of another type, the compound assignment itself and
+//!   the element read back, which is its value);
 //! - `(b[i] ||= v)` (`&&=`, `??=`): `if (!b[i]) { const <new> = v; b[i] = <new>; <new> } else
 //!   { b[i] }`, `v` evaluated only when the element doesn't decide (#3435).
 //!
@@ -69,7 +70,8 @@ impl FnCx<'_, '_> {
         let target = &self.object_bound(target, value, &mut outer);
         let e = match w {
             ElementWrite::Plain => {
-                let v = self.expr(value, Some(elem), Want::Move);
+                let hint = self.value_hint(elem, None, value);
+                let v = self.expr(value, Some(hint), Want::Move);
                 let v = self.element_typed(v, elem);
                 self.kept_store(elem, target, v, &mut outer, span)
             }
@@ -83,11 +85,73 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block(outer, Some(e), span)), ty, span)
     }
 
-    /// `v` as it is when it is an `any`, else at the element's type.
+    /// Is `++b[i]` / `--b[i]` on `place` an update of an element that converts a `number`
+    /// ([`Self::element_update_value`])?
+    pub(crate) fn int_update(&self, place: &hir::Expr) -> bool {
+        self.logical_element_store(place) && self.number_stores_into(place.ty)
+    }
+
+    /// `++b[i]` / `--b[i]` used as a value: `(b[i] += 1)` / `(b[i] -= 1)`, the number the element
+    /// becomes before the store converts it (`++b[1]` at 255 is 256, as in JavaScript), with a
+    /// computed index evaluated once (`assign_value` binds it).
+    pub(crate) fn element_update_value(
+        &mut self,
+        op: ast::UpdateOp,
+        target: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let one = synth(
+            ast::ExprKind::Lit(ast::Lit::Int {
+                value: 1,
+                suffix: None,
+            }),
+            span,
+        );
+        let bop = match op {
+            ast::UpdateOp::Inc => ast::BinaryOp::Add,
+            ast::UpdateOp::Dec => ast::BinaryOp::Sub,
+        };
+        self.assign_value(Some(bop), target, &one, None, span)
+    }
+
+    /// The right side `v` of `b[i] op= v` used as a value on an element of type `elem` that
+    /// converts a `number`: an integer of up to 32 bits as a `number`, so the value is
+    /// JavaScript's (`(b[2] += o[0])` at 255 + 255 is 510, the element 254); `v` as it is
+    /// otherwise.
+    fn as_number_operand(&mut self, v: hir::Expr, elem: TyId) -> hir::Expr {
+        use crate::hir::{IntTy, TyKind};
+        let small = matches!(
+            self.cx.ty.kind(v.ty),
+            TyKind::Int(IntTy::U8 | IntTy::I8 | IntTy::U16 | IntTy::I16 | IntTy::U32 | IntTy::I32)
+        );
+        if !small || !self.number_stores_into(elem) {
+            return v;
+        }
+        let (f64_, span) = (self.cx.ty.f64, v.span);
+        self.mk(H::Cast(Box::new(v)), f64_, span)
+    }
+
+    /// `v` as it is when it is an `any`, or a `number` an element of type `elem` converts
+    /// (element_store.rs, #3182), else at the element's type.
     fn element_typed(&mut self, v: hir::Expr, elem: TyId) -> hir::Expr {
-        match self.cx.dynamic(v.ty) == Some(Dynamic::Any) {
+        match self.cx.dynamic(v.ty) == Some(Dynamic::Any) || self.number_value(&v, elem) {
             true => v,
             false => self.coerce(v, elem),
+        }
+    }
+
+    /// Is `v` a `number` that a store into an element of type `elem` converts?
+    fn number_value(&self, v: &hir::Expr, elem: TyId) -> bool {
+        v.ty == self.cx.ty.f64 && self.number_stores_into(elem)
+    }
+
+    /// The type `value` of `e = value` (`op`: `e op= value`) on an element of type `elem` is
+    /// checked at: `number` for a literal the element's arithmetic doesn't compute as
+    /// JavaScript does (`FnCx::stores_as_number`), else `elem`.
+    fn value_hint(&self, elem: TyId, op: Option<ast::BinaryOp>, value: &ast::Expr) -> TyId {
+        match self.stores_as_number(elem, op, value) {
+            true => self.cx.ty.f64,
+            false => elem,
         }
     }
 
@@ -131,8 +195,16 @@ impl FnCx<'_, '_> {
         stmts: &mut Vec<hir::Stmt>,
         span: Span,
     ) -> hir::Expr {
-        let v = self.expr(value, Some(elem), Want::Borrow);
-        if self.cx.dynamic(v.ty) != Some(Dynamic::Any) {
+        // Used as a value, `op=` with literals gives JavaScript's number (`(b[1] += 1)` at 255 is
+        // 256), not the element stored.
+        let hint = match super::element_store::literal_only(value) {
+            true if self.number_stores_into(elem) => self.cx.ty.f64,
+            _ => self.value_hint(elem, Some(op), value),
+        };
+        let v = self.expr(value, Some(hint), Want::Borrow);
+        let v = self.as_number_operand(v, elem);
+        let any = self.cx.dynamic(v.ty) == Some(Dynamic::Any);
+        if !any && !self.number_value(&v, elem) {
             // The compound assignment as a statement, then the element read back.
             let Some(AssignTarget::Place(place)) = self.assign_target(target, span) else {
                 return self.error_expr(span);
@@ -147,6 +219,15 @@ impl FnCx<'_, '_> {
         let old = self.bind_temp(OLD, cur, stmts);
         let cur = self.mk(H::Local(old, hir::UseMode::Copy), old_ty, span);
         let r = match op {
+            _ if !any => {
+                // A `number` `v`: computed as a number, the element read as one (#3182).
+                let f64_ = self.cx.ty.f64;
+                let cur = self.mk(H::Cast(Box::new(cur)), f64_, span);
+                let Some(r) = self.storage_op(cur, op, v, span) else {
+                    return self.error_expr(span);
+                };
+                self.coerce(r, f64_)
+            }
             ast::BinaryOp::Add => self.dynamic_concat(cur, v, span),
             _ => self.dynamic_arith(op, cur, v, span),
         };
