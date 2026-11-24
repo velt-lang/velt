@@ -5,10 +5,10 @@
 // adoptions poll with their own cx); the count's test guards the case where one is, as an extra
 // waker reference taken by hand here: the node then keeps its reference to its task.
 import { describe, expect, it } from "velt/test";
-import * as m from "./sched_mem";
-import * as nd from "./sched_node";
-import * as dn from "./sched_node_done";
-import * as t from "./sched_task";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as nd from "velt/lang/hooks/sched_node";
+import * as dn from "velt/lang/hooks/sched_node_done";
+import * as t from "velt/lang/hooks/sched_task";
 
 /** The bytes of a hand-built node and task: past the fields `letGo` reads. */
 const BLOCK: usize = 256;
