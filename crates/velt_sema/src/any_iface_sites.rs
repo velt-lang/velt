@@ -25,7 +25,7 @@ use velt_common::{Diagnostic, Span};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
-use crate::visit;
+use crate::visit_ref as visit;
 
 /// A generic interface method called through an interface value or a bound, in unit `.0`: the
 /// interface, the slot, the interface arguments, the method's own type arguments, where.
@@ -291,7 +291,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     // The receivers and slots of the calls through class vtables.
     let mut virtuals: Vec<(TyId, u32)> = vec![];
     let tys = &cx.ty;
-    let mut scan = |at: usize, u: &mut Unit, e: &mut Expr| match &e.kind {
+    let mut scan = |at: usize, u: &mut Unit, e: &Expr| match &e.kind {
         E::Call {
             callee: Callee::Intrinsic(Intrinsic::AnyTo),
             ..
@@ -378,22 +378,23 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
     };
     let mut out = vec![];
     let mut seen = FxHashSet::default();
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    // Read in place (a finished unit's, in a check by units, is never written).
+    for (i, d) in cx.defs.iter().enumerate() {
         let mut u = Unit::default();
         let at = out.len();
         match d {
-            Some(Def::Fn(f)) => visit::exprs_mut(&mut f.body.block, &mut |e| scan(at, &mut u, e)),
-            Some(Def::Global(g)) => visit::exprs_in(&mut g.init, &mut |e| scan(at, &mut u, e)),
+            Some(Def::Fn(f)) => visit::exprs(&f.body.block, &mut |e| scan(at, &mut u, e)),
+            Some(Def::Global(g)) => visit::exprs_in(&g.init, &mut |e| scan(at, &mut u, e)),
             _ => continue,
         }
         seen.insert(i);
         out.push((DefId(i as u32), u));
     }
-    for (i, info) in cx.info.iter_mut().enumerate() {
+    for (i, info) in cx.info.iter().enumerate() {
         let at = out.len();
         // A module constant (or a static field) whose initializer is not moved to `defs` yet.
         if let DefInfo::Global(g) = info {
-            if let (Some(init), false) = (g.init.as_mut(), seen.contains(&i)) {
+            if let (Some(init), false) = (g.init.as_ref(), seen.contains(&i)) {
                 let mut u = Unit::default();
                 visit::exprs_in(init, &mut |e| scan(at, &mut u, e));
                 out.push((DefId(i as u32), u));
@@ -403,10 +404,8 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
         let DefInfo::Adt(a) = info else { continue };
         let mut u = Unit::default();
         let start = a.own_fields_start;
-        let own = a.fields[start..]
-            .iter_mut()
-            .filter_map(|x| x.default.as_mut());
-        let redefined = a.redefined.iter_mut().filter_map(|r| r.init.as_mut());
+        let own = a.fields[start..].iter().filter_map(|x| x.default.as_ref());
+        let redefined = a.redefined.iter().filter_map(|r| r.init.as_ref());
         for e in own.chain(redefined) {
             visit::exprs_in(e, &mut |e| scan(at, &mut u, e));
         }

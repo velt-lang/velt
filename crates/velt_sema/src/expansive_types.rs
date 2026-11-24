@@ -27,7 +27,6 @@ use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
 use crate::instantiation_cycles::Graph;
 use crate::types::{children, collect_params};
-use crate::visit;
 
 /// An expansive definition: its type with its own parameters (`L<T>`) and the growing mention
 /// that makes it so (`L<T[]>`), as messages show them.
@@ -294,14 +293,14 @@ fn first_mention(
         .collect();
     let mut first: Option<(Span, TyId)> = None;
     let mut call: Option<(Span, TyId, DefId)> = None;
-    if let Some(Some(Def::Fn(f))) = cx.defs.get_mut(d.0 as usize) {
+    if let Some(Some(Def::Fn(f))) = cx.defs.get(d.0 as usize) {
         let tys = &cx.ty;
         let hit = |t: TyId| {
             let mut found = false;
             named_in_types(tys, t, &mut |g| found |= bad.contains_key(&g));
             found
         };
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+        crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| {
             if call.is_some() {
                 return;
             }

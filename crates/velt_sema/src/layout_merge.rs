@@ -403,24 +403,25 @@ fn given_fields(cx: &mut Ctx, base: DefId) -> Vec<String> {
     let added: Vec<String> = (cx.objects.layouts.families[&base].added.iter())
         .map(|f| f.name.clone())
         .collect();
+    // Read in place (a finished unit's, in a check by units, is never written).
     let mut scan = GivenScan::default();
-    for def in cx.defs.iter_mut().flatten() {
+    for def in cx.defs.iter().flatten() {
         match def {
-            Def::Fn(f) => visit::block(&mut f.body.block, &mut scan),
-            Def::Global(g) => visit::expr(&mut g.init, &mut scan),
+            Def::Fn(f) => crate::visit_ref::block(&f.body.block, &mut scan),
+            Def::Global(g) => crate::visit_ref::expr(&g.init, &mut scan),
             _ => {}
         }
     }
-    for info in cx.info.iter_mut() {
+    for info in cx.info.iter() {
         match info {
             crate::defs::DefInfo::Global(g) => {
-                if let Some(e) = &mut g.init {
-                    visit::expr(e, &mut scan);
+                if let Some(e) = &g.init {
+                    crate::visit_ref::expr(e, &mut scan);
                 }
             }
             crate::defs::DefInfo::Adt(a) => {
-                for d in a.fields.iter_mut().filter_map(|f| f.default.as_mut()) {
-                    visit::expr(d, &mut scan);
+                for d in a.fields.iter().filter_map(|f| f.default.as_ref()) {
+                    crate::visit_ref::expr(d, &mut scan);
                 }
             }
             _ => {}
@@ -457,8 +458,8 @@ struct GivenScan {
     dynamic: Vec<TyId>,
 }
 
-impl VisitMut for GivenScan {
-    fn expr(&mut self, e: &mut Expr) {
+impl crate::visit_ref::Visit for GivenScan {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::AdtLit { def, fields, .. } => {
                 let present = fields.iter().map(|f| !is_absent(f)).collect();
