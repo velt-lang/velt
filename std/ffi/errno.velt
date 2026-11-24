@@ -2,7 +2,7 @@
 // (docs/internals/design/c-ffi.md "Errors: `errno` and `GetLastError`"). Each target's C library
 // gives its address through a function of its own (`#errno-location`).
 
-import { errnoLocation } from "#errno-location";
+import { errnoLocation, fromCErrno, toCErrno } from "#errno-location";
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore } from "velt/lang/intrinsics/address";
 
@@ -10,7 +10,9 @@ import { addressLoad, addressStore } from "velt/lang/intrinsics/address";
  * The calling thread's C `errno` now. A C function's error is read right after its call with
  * `lastOsError()` and `{ errno: true }`; this is the live value, which any C call (and the
  * runtime) may change: drops between a call and this read may run `free`. 0 on a target without
- * a C library.
+ * a C library. Under WASI, whose C library numbers its errors as WASI does (`ENOENT` is 44), the
+ * value is the Linux number of the same name, so std reads one numbering on every target but
+ * macOS and Windows (whose own numbers std knows).
  *
  * Unsafe: raw access to the C library's state, for code that saves and restores it.
  */
@@ -20,13 +22,14 @@ export unsafe function errno(): i32 {
     return 0;
   }
   // SAFETY: the C library's own function gave the address of this thread's `errno`, an `int`.
-  return addressLoad<i32>(Ptr.addressOf(p));
+  return fromCErrno(addressLoad<i32>(Ptr.addressOf(p)));
 }
 
 /**
  * Sets the calling thread's C `errno` to `value`: a signal handler restores the `errno` it found
  * before returning, so the code it interrupted still sees its own. Does nothing on a target
- * without a C library.
+ * without a C library. `value` is numbered as `errno()` returns it (Linux's under WASI), and is
+ * stored as the C library's own number.
  *
  * Unsafe: it changes the C library's state, which C code reads.
  */
@@ -36,5 +39,5 @@ export unsafe function setErrno(value: i32): void {
     return;
   }
   // SAFETY: as in `errno`; the thread's own `errno` is written by no other thread.
-  addressStore<i32>(Ptr.addressOf(p), value);
+  addressStore<i32>(Ptr.addressOf(p), toCErrno(value));
 }
