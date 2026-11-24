@@ -177,17 +177,24 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
   async return(): Promise<IteratorResult<R>> {
     this.started = true;
     // After a `next()` still waiting, as Node's `current.then(returnSteps)`: its read is
-    // answered first, and the steps run in that promise's reaction.
+    // answered first, and the steps run in that promise's reaction. The return becomes the
+    // current promise, so a `next()` or `return()` after it waits for its cancel.
     const cur = this.current;
+    let q: Promise<IteratorResult<R>, never>;
     if (cur == null) {
-      return await this.returnSteps();
+      q = this.returnSteps();
+    } else {
+      q = new Promise<IteratorResult<R>, never>((resolve) => {
+        cur.then(
+          (r) => this.returnSteps().then((x) => resolve(x)),
+          (e) => this.returnSteps().then((x) => resolve(x)),
+        );
+      });
     }
-    return await new Promise<IteratorResult<R>, never>((resolve) => {
-      cur.then(
-        (r) => this.returnSteps().then((x) => resolve(x)),
-        (e) => this.returnSteps().then((x) => resolve(x)),
-      );
+    this.current = new Promise<IteratorResult<R>, unknown>((resolve) => {
+      q.then((x) => resolve(x));
     });
+    return await q;
   }
 
   // Leaving the loop: the stream is cancelled, let go at once, then the cancel is waited for.

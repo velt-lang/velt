@@ -86,6 +86,54 @@ async function main() {
   log.push("after locked " + s.locked);
   await null;
   console.log("break: " + log.join(" "));
+
+  // An error after a value: the loop throws it in Node's turn, and the stream is let go.
+  const elog = [];
+  const et = ticks(elog);
+  const es = new ReadableStream({
+    start: (c) => {
+      c.enqueue(1);
+    },
+    pull: (c) => {
+      c.error(new Error("boom"));
+    },
+  });
+  try {
+    for await (const v of es) {
+      elog.push("v" + v);
+    }
+  } catch (e) {
+    elog.push(`caught ${e} locked ${es.locked}`);
+  }
+  await et;
+  console.log("error: " + elog.join(" "));
+
+  // A `return()` is the current promise: a second `return()` and a `next()` after it settle
+  // once its cancel has.
+  const rlog = [];
+  const rs = new ReadableStream({
+    start: (c) => {
+      c.enqueue(1);
+    },
+    cancel: (reason) => {
+      rlog.push("cancel");
+    },
+  });
+  const it = rs[Symbol.asyncIterator]();
+  const r1 = it.return();
+  const r2 = it.return();
+  const r3 = it.next();
+  r3.then((r) => {
+    rlog.push("next done " + r.done);
+  });
+  r2.then((r) => {
+    rlog.push("return 2");
+  });
+  r1.then((r) => {
+    rlog.push("return 1");
+  });
+  await Promise.all([r1, r2, r3]);
+  console.log("return twice: " + rlog.join(" "));
 }
 
 main();
