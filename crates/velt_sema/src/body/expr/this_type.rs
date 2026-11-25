@@ -150,11 +150,15 @@ fn defaulted(p: &ast::Pattern, under: bool, out: &mut rustc_hash::FxHashSet<Span
         P::Ident(_) | P::Wildcard => {}
         P::Object { fields, rest } => {
             fields.iter().for_each(|(_, p)| defaulted(p, under, out));
-            rest.iter().filter(|_| under).for_each(|r| _ = out.insert(r.span));
+            rest.iter()
+                .filter(|_| under)
+                .for_each(|r| _ = out.insert(r.span));
         }
         P::Array { elems, rest } => {
             elems.iter().for_each(|p| defaulted(p, under, out));
-            rest.iter().filter(|_| under).for_each(|r| _ = out.insert(r.span));
+            rest.iter()
+                .filter(|_| under)
+                .for_each(|r| _ = out.insert(r.span));
         }
         P::Default { pattern, .. } => defaulted(pattern, true, out),
     }
