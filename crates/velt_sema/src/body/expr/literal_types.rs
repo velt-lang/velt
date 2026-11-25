@@ -234,6 +234,22 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// The operand of a unary `-`, `+` or `~`: a value of a number literal type or a union of
+    /// them as its base, which the operators take. An integer one (`n: 0 | 1`, an `i64`
+    /// underneath) is the `number` it is in TypeScript, so `-n` of 0 is `-0` and `~n` is
+    /// JavaScript's 32-bit not (#3784). Any other value as it is.
+    pub(super) fn unary_literal_operand(&mut self, h: hir::Expr) -> hir::Expr {
+        let w = self.cx.widened(h.ty);
+        if w == h.ty || !self.cx.ty.is_numeric(w) {
+            return h;
+        }
+        let base = self.widen_value(h);
+        match base.ty == self.cx.ty.i64 {
+            true => self.int_to_float(base, self.cx.ty.f64),
+            false => base,
+        }
+    }
+
     /// Is `t` a number literal type or a union of them, of `i64`s (`1 | 2`)?
     fn number_literal(&mut self, t: TyId) -> bool {
         let w = self.cx.widened(t);

@@ -638,6 +638,7 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
             is_getter: m.is_getter,
             generics: own,
             throws,
+            rest: m.sig.params.last().is_some_and(|p| p.rest),
         });
     }
     let DefInfo::Iface(i) = &mut cx.info[d.0 as usize] else {

@@ -3,6 +3,7 @@
 // operand (`ToString` after `ToPrimitive`), and `xs.join(sep)` of an array held. Each takes the
 // call site its `TypeError`s name (`at`), which velt_vir's `track_caller` fills in.
 
+import { anyIsPromise } from "velt/lang/intrinsics";
 import { anyNullProto } from "./class_object";
 
 /**
@@ -40,7 +41,13 @@ export function anyConcatPlain(v: any, at: string): string {
   if (typeof v === "symbol") {
     panic(`TypeError: Cannot convert a Symbol value to a string at ${at}`);
   }
-  if (typeof v === "object" && v !== null && !Array.isArray(v) && anyOwnFn(v, "valueOf")) {
+  if (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    !anyIsPromise(v) &&
+    anyOwnFn(v, "valueOf")
+  ) {
     const p = anyPrimTry(v.valueOf(), at);
     if (p !== null) {
       return p;
@@ -92,9 +99,10 @@ export function anyOwnFn(v: any, k: string): boolean {
 /**
  * `String(v)` of an `any` (or `unknown`, `object`) `v` that holds no class instance with a
  * `[Symbol.toPrimitive]` or `toString()` (`anyString` calls those): an array as JavaScript's
- * `Array.prototype.toString` writes it (`anyJoin`), an object literal by its own `toString`
- * (else its own `valueOf` when `toString` returns an object), another object as
- * `Object.prototype.toString` does (`[object Object]`), a number with `ToString` (`-0` is `0`).
+ * `Array.prototype.toString` writes it (`anyJoin`), a promise as `[object Promise]`, an object
+ * literal by its own `toString` (else its own `valueOf` when `toString` returns an object),
+ * another object as `Object.prototype.toString` does (`[object Object]`), a number with
+ * `ToString` (`-0` is `0`).
  */
 export function anyText(v: any, at: string): string {
   const t = typeof v;
@@ -125,6 +133,10 @@ export function anyText(v: any, at: string): string {
   }
   if (Array.isArray(v)) {
     return anyJoin(v, ",", at);
+  }
+  // A promise has no own `toString`: `Object.prototype.toString`'s text (#924).
+  if (anyIsPromise(v)) {
+    return "[object Promise]";
   }
   if (anyOwnFn(v, "toString")) {
     const p = anyPrimTry(v.toString(), at);

@@ -96,6 +96,10 @@ pub(super) struct Boxing {
     /// `any`): every `any` table has the `ToNumber` slot, not only those of primitives
     /// (any_number.rs).
     pub(super) any_number: bool,
+    /// The program calls a value held as `any` (`SLOT_APPLY`, any_member.rs `any_slot`): only then
+    /// does a function's apply slot call one that returns a promise, whose table, glue and
+    /// executor a program that never calls it would carry for nothing (any_glue.rs).
+    pub(super) any_applies: bool,
     /// The method names called through `any` with a key known at compile time (`""`: a key
     /// known only at run time, which may name any): the built-in methods the `AnyCall` slots
     /// of strings, arrays, numbers and booleans look for (any_builtin.rs).
@@ -325,6 +329,8 @@ pub(super) struct Facts {
     any_reflect: bool,
     /// An `any` is converted to a number.
     any_number: bool,
+    /// A value held as `any` is called.
+    any_applies: bool,
     /// Method names called through `any`.
     any_call_keys: BTreeSet<String>,
     /// Capture types of the closure environments built (transfers.rs).
@@ -402,6 +408,7 @@ impl Cx<'_> {
         next.any_keys |= self.facts.any_keys;
         next.any_reflect |= self.facts.any_reflect;
         next.any_number |= self.facts.any_number;
+        next.any_applies |= self.facts.any_applies;
         next.any_call_keys
             .extend(self.facts.any_call_keys.iter().cloned());
         next.dyn_to_any
@@ -571,6 +578,7 @@ impl Boxing {
             any_keys,
             any_reflect,
             any_number,
+            any_applies,
             any_call_keys,
             recursive,
             transferred,

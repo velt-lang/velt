@@ -13,3 +13,6 @@ pub mod rows;
 
 pub use params::{parse_param_list, parse_params, DbValue, Params};
 pub use rows::{push_byte_array, RowWriter};
+
+#[cfg(test)]
+mod tests;

@@ -69,3 +69,20 @@ p done
 q got 2
 q done
 all: 3,2,1
+-- all, after a settled await (adopted)
+t yield 0
+u yield 0
+t yield 1
+u done
+t yield 2
+t done
+all: 3,1
+-- all, after a rejected any (adopted)
+any rejected
+v yield 0
+w yield 0
+v yield 1
+w done
+v yield 2
+v done
+all: 3,1
