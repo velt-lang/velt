@@ -113,6 +113,11 @@ impl Cx<'_> {
         self.facts.any_number = true;
     }
 
+    /// Record that a value held as `any` is called.
+    pub(in crate::lower) fn note_any_apply(&mut self) {
+        self.facts.any_applies = true;
+    }
+
     /// Do closures need an identity of their own (see [`Boxing::fn_identity`])?
     pub(in crate::lower) fn fn_identity(&self) -> bool {
         self.boxing.fn_identity
