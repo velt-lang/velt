@@ -53,6 +53,7 @@ import * as mv from "./sched_order_move";
 import * as ow from "./sched_order_wait";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 /** A turn's future: its timer after the header. */
 const F_TIMER: usize = 16;
@@ -85,7 +86,9 @@ function inserted(b: usize, e: usize, h: usize, k: u32): void {
   let cur: usize = 0;
   if (k !== lk.LK_NONE) {
     cur = m.ld(e + t.E_CURRENT);
-    m.st(h + l.H_TASK, cur);
+    if (cur !== 0) {
+      l.name(h, cur);
+    }
   }
   const sooner = lower(b, e, h, cur, k);
   l.unlock(b, k);
@@ -165,6 +168,10 @@ export function timerFree(h: usize): void {
   if (w !== 0) {
     m.wakerDrop(w);
   }
+  if (wk.counting() && m.ld(h + l.H_TASK) !== 0) {
+    // Out of the lists, it names no task: its task's list of named timers no longer holds it.
+    panic("ICE: a timer is freed while it names a task");
+  }
   m.release(h, l.H_SIZE);
 }
 
@@ -178,9 +185,10 @@ export function timerFree(h: usize): void {
  * `TimerState`'s lock: std/prelude/timers.velt) puts a timer in the order, and every write after
  * it (a grant, a turn taken, a `clear`) leaves the state other than `IDLE` or the waker set until
  * the last of its stores (a grant goes from `QUEUED` to `GRANTED` without passing `IDLE`:
- * sched_order_list.velt `take`). A timer out of the order is read by no look, so the task it
- * names (`H_TASK`) may end and be freed: a look reads only the tasks of queued timers
- * (sched_order_pass.velt `busy`), and `inserted` names the task again.
+ * sched_order_list.velt `take`). A timer out of the order names no task (`take` unnames it), and
+ * `inserted` names the task again; one that stays queued past its task's end is unnamed at that
+ * end (sched_order_list.velt `forget`): a look reads only the tasks of queued timers
+ * (sched_order_pass.velt `busy`), which are alive.
  */
 @inline("always")
 function leave(h: usize): usize {
