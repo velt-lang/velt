@@ -114,7 +114,8 @@ pub(crate) fn compile(
     #[cfg(not(unix))]
     let _ = debug_info;
     let address = |id| module.get_finalized_function(id) as usize;
-    let code = built.funcs.iter().map(|id| id.map(address)).collect();
+    let code: Vec<Option<usize>> = built.funcs.iter().map(|id| id.map(address)).collect();
+    super::note_jit_names(program, &code);
     let trampolines = names
         .iter()
         .zip(&built.references)

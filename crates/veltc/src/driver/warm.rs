@@ -33,6 +33,13 @@ pub fn compile_for_jit_warm(
         sess.warm_refused = Some("no kept check".into());
         return Ok(None);
     };
+    if let Some(p) = std::env::var_os("VELT_DIAG_FILE") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let owns = kept.borrows_only_what_it_owns();
+            let _ = writeln!(f, "DIAG pid {} warm reload: owns {owns}", std::process::id());
+        }
+    }
     // The kept check moves to the pipeline thread and back (it is not `Sync`). A panic in the
     // warm path (an internal error) takes the cold front end instead, without the kept check,
     // which the panic may have left half-changed: the cold build keeps a new one.

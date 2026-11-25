@@ -134,7 +134,8 @@ unsafe fn place(address: u64) -> String {
         "no module (JIT code without unwind info: trampoline?)".into()
     } else {
         let begin = base + (*entry).BeginAddress as u64;
-        format!("JIT code (function at {begin:#x}+{:#x})", address - begin)
+        let name = velt_codegen_cl::jit_function_name(begin as usize).unwrap_or_default();
+        format!("JIT code (function at {begin:#x}+{:#x}) {name}", address - begin)
     }
 }
 

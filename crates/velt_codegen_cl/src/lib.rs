@@ -60,7 +60,7 @@ pub use cpu::{
     required_features, x86_features_from_macros, ARM_FEATURES, DEFAULT_X86_CPU, X86_FEATURES,
     X86_FEATURE_MACROS,
 };
-pub use dev::{DevSession, JitProgram, Reload};
+pub use dev::{jit_function_name, DevSession, JitProgram, Reload};
 pub use isa::has_thread_local_data;
 
 /// Internal result type: errors are human-readable messages.

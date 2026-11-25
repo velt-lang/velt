@@ -81,6 +81,32 @@ pub struct DevSession {
 /// code those slots hold (#2811: the old initializers, so a changed initial value was lost for
 /// good). The other existing keys last.
 pub(crate) fn store_order(trampolines: &[Option<usize>], desc_funcs: &[usize]) -> Vec<usize> {
+    store_order_impl(trampolines, desc_funcs)
+}
+
+/// Every version's functions by the address of their code (for a crash report).
+static JIT_NAMES: std::sync::Mutex<Vec<(usize, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Records the addresses of a version's functions (`code`, by `program.funcs`).
+pub(crate) fn note_jit_names(program: &vir::Program, code: &[Option<usize>]) {
+    let Ok(mut names) = JIT_NAMES.lock() else {
+        return;
+    };
+    for (f, a) in program.funcs.iter().zip(code) {
+        if let Some(a) = a {
+            names.push((*a, f.symbol.clone()));
+        }
+    }
+}
+
+/// The symbol of the JIT function whose code starts at `address` (the latest version's), if
+/// known and the table is free (a crash report must not wait).
+pub fn jit_function_name(address: usize) -> Option<String> {
+    let names = JIT_NAMES.try_lock().ok()?;
+    names.iter().rev().find(|(a, _)| *a == address).map(|(_, n)| n.clone())
+}
+
+fn store_order_impl(trampolines: &[Option<usize>], desc_funcs: &[usize]) -> Vec<usize> {
     let all = 0..trampolines.len();
     let new = all.clone().filter(|&i| trampolines[i].is_some());
     let desc = desc_funcs

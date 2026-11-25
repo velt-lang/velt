@@ -354,6 +354,13 @@ fn check_program(
         // `h.loads` are the generated modules and the `StdLoads` that check was given, moved here
         // unchanged (`generate::check`, `check_offered`).
         let adopted = unsafe { h.pending.adopt(input, h.sources, h.loads) };
+        if let (Ok(k), Some(p)) = (&adopted, std::env::var_os("VELT_DIAG_FILE")) {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+                let owns = k.borrows_only_what_it_owns();
+                let _ = writeln!(f, "DIAG pid {} adopt: owns {owns}", std::process::id());
+            }
+        }
         sess.kept = match (&hir, adopted) {
             (Ok(_), Ok(kept)) => Some(kept),
             _ => None,
