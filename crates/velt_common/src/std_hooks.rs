@@ -630,7 +630,7 @@ with_tls_hooks! {
     // json_replace.velt: loaded on demand (`std_hooks/on_demand.rs`).
     /// `JSON.stringify(value, replacer)` with a replacer function, called by role from the
     /// prelude's `jsonStringifyReplaced` (std/prelude/json/layout.velt).
-    json_stringify_replaced => lang_hooks_json_replace, "jsonStringifyReplaced", sig(<A>(&A, &Fn((string, JsonValue) -> or_undefined(JsonValue))) -> string throws union(RangeError, TypeError));
+    json_stringify_replaced => lang_hooks_json_replace, "jsonStringifyReplaced", sig(<A>(&A, &mut Fn((string, JsonValue) -> or_undefined(JsonValue))) -> string throws union(RangeError, TypeError));
 
     // proxy.velt: the operations on `any` that ask a proxy, used once a program has loaded `Proxy`
     // (std/prelude/global/proxy.velt).
