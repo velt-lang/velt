@@ -10,18 +10,20 @@ import {
 } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
 import { adopted, finished, invalidState, settled } from "velt/io/streams/settle";
+import { ReadFlags, readAnswered } from "velt/io/streams/read_flags";
 
 /** The states of a stream. */
 export const READABLE: u8 = 0;
 
 export const CLOSED: u8 = 1;
 
-const ERRORED: u8 = 2;
+export const ERRORED: u8 = 2;
 
-// A read waiting for a chunk: how to settle it.
+// A read waiting for a chunk: how to settle it, and a `for await` read's flags (read_flags.velt).
 struct Request<R> {
   resolve: (value: ReadableStreamReadResult<R>) => void;
   reject: (reason: unknown) => void;
+  flags: ReadFlags | null;
 }
 
 // A wait for the stream to close (`reader.closed`).
@@ -89,6 +91,7 @@ export class ReadableStreamDefaultController<R> {
     if (this.requests.length > 0) {
       const r = this.requests.shift();
       if (r != null) {
+        readAnswered(this, r.flags, false);
         r.resolve({ value: chunk, done: false });
       }
     } else {
@@ -249,6 +252,7 @@ export class ReadableStreamDefaultController<R> {
     const requests = this.requests;
     this.requests = [];
     for (const r of requests) {
+      readAnswered(this, r.flags, true);
       r.resolve({ done: true });
     }
   }
@@ -271,6 +275,7 @@ export class ReadableStreamDefaultController<R> {
     const requests = this.requests;
     this.requests = [];
     for (const r of requests) {
+      readAnswered(this, r.flags, true);
       r.reject(e);
     }
   }
@@ -288,13 +293,13 @@ export class ReadableStreamDefaultController<R> {
     if (this.state == CLOSED) {
       return Promise.resolve<ReadableStreamReadResult<R>>({ done: true });
     }
-    // Its own waiting read, not `readSteps`: a read per chunk is a streamed body's hot path.
+    // Its own waiting read, not `readFor`: a read per chunk is a streamed body's hot path.
     const {
       promise,
       resolve,
       reject,
     } = Promise.withResolvers<ReadableStreamReadResult<R>, unknown>();
-    this.requests.push({ resolve: resolve, reject: reject });
+    this.requests.push({ resolve: resolve, reject: reject, flags: null });
     this.callPullIfNeeded();
     return promise;
   }
@@ -311,26 +316,6 @@ export class ReadableStreamDefaultController<R> {
     return value;
   }
 
-  // A read as the spec's read request: `chunk` gets the result at once when one is queued (or
-  // the stream has closed), else when one arrives; `fail` gets the error (the `for await`
-  // iterator's steps, `StreamIterator`).
-  private readSteps(chunk: (r: ReadableStreamReadResult<R>) => void, fail: (e: unknown) => void) {
-    // The field itself, not a copy in a local: such a copy is freed too early (#1140).
-    if (this.state == ERRORED) {
-      fail(this.stored);
-      return;
-    }
-    if (this.queued() > 0) {
-      chunk({ value: this.take(), done: false });
-      return;
-    }
-    if (this.state == CLOSED) {
-      chunk({ done: true });
-      return;
-    }
-    this.requests.push({ resolve: chunk, reject: fail });
-    this.callPullIfNeeded();
-  }
 
   // Rejects `reader.closed` and the waiting reads (in that order, as Node): their reader
   // released the stream.
@@ -344,6 +329,7 @@ export class ReadableStreamDefaultController<R> {
     const requests = this.requests;
     this.requests = [];
     for (const r of requests) {
+      readAnswered(this, r.flags, true);
       r.reject(invalidState("Releasing reader"));
     }
   }

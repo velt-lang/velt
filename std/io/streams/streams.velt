@@ -5,11 +5,11 @@
 // chunks, the pending reads, and the flags of the spec's algorithms (`started`, `pulling`,
 // `pullAgain`, `closeRequested`). Nothing points back from the controller to the stream or a
 // reader, so a stream is freed with its last reference (Velt counts references; a cycle would
-// never be freed). The one exception is a `for await` read still waiting: its callbacks in the
-// controller hold the iterator until the read settles or the stream closes, errors or is
-// cancelled. The source's callbacks run in the spec's order: `start` in the constructor,
-// `pull` once `start` has settled (a microtask later) and again while the queue is below its
-// high-water mark or a read is waiting, never two at once; a read takes a queued chunk at once.
+// never be freed); a `for await` read waiting in the controller holds only its promise's
+// resolvers and flags (read_flags.velt). The source's callbacks run in the spec's order: `start`
+// in the constructor, `pull` once `start` has settled (a microtask later) and again while the
+// queue is below its high-water mark or a read is waiting, never two at once; a read takes a
+// queued chunk at once.
 
 import { IoError } from "velt/io/error";
 import { AbortError } from "velt/task/errors";
@@ -17,6 +17,7 @@ import { BYTE_CHUNKS, ByteSource } from "velt/io/streams/byte_source";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { CLOSED, READABLE, ReadableStreamDefaultController } from "velt/io/streams/controller";
 import { ReadableStreamDefaultReader } from "velt/io/streams/reader";
+import { ReadFlags, readFor } from "velt/io/streams/read_flags";
 import { invalidState } from "velt/io/streams/settle";
 import { CancelReason, QueuingStrategy, Reason, UnderlyingSource } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
@@ -119,13 +120,30 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
   private current: Promise<IteratorResult<R>, unknown> | null = null;
   private started: bool = false;
   private done: bool = false;
+  // The read waiting in the controller, until its answer is caught up with (read_flags.velt).
+  private reading: ReadFlags | null = null;
 
   constructor(reader: ReadableStreamDefaultReader<R>, ctl: ReadableStreamDefaultController<R>) {
     this.reader = reader;
     this.ctl = ctl;
   }
 
+  // The read request's steps for an answered read, as they ran when the controller answered it:
+  // the current promise is cleared, and an answer that ended the loop ends it here too (the
+  // controller already let go of the stream). Before anything reads `current` or `done`.
+  private caughtUp() {
+    const f = this.reading;
+    if (f != null && f.answered) {
+      this.reading = null;
+      this.current = null;
+      if (f.finished) {
+        this.done = true;
+      }
+    }
+  }
+
   next(): Promise<IteratorResult<R>, Reason> {
+    this.caughtUp();
     if (!this.started) {
       // The first read waits a microtask, as in Node.
       this.current = Promise.resolve<IteratorResult<R>>({ done: true });
@@ -146,37 +164,25 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
 
   // One read, as the spec's read request: its result clears the current promise.
   private nextSteps(): Promise<IteratorResult<R>, unknown> {
+    this.caughtUp();
     if (this.done) {
       return Promise.resolve<IteratorResult<R>>({ done: true });
     }
     const ctl = this.ctl;
     if (ctl.state == READABLE && ctl.queued() > 0) {
-      // A queued chunk answers the read at once, as `readSteps` would, without its callbacks.
+      // A queued chunk answers the read at once, as `readFor` would.
       this.current = null;
       return Promise.resolve<IteratorResult<R>>({ value: ctl.take(), done: false });
     }
     const { promise, resolve, reject } = Promise.withResolvers<IteratorResult<R>, unknown>();
-    this.ctl.readSteps(
-      (r) => {
-        this.current = null;
-        if (r.done) {
-          // The loop has ended: the stream is released, as in JS.
-          this.done = true;
-          this.reader.releaseLock();
-        }
-        resolve(r as IteratorResult<R>);
-      },
-      (e) => {
-        this.current = null;
-        this.done = true;
-        this.reader.releaseLock();
-        reject(e);
-      },
-    );
+    const flags = new ReadFlags();
+    this.reading = flags;
+    readFor(ctl, resolve, reject, flags);
     return promise;
   }
 
   return(): Promise<IteratorResult<R>> {
+    this.caughtUp();
     this.started = true;
     // Node's `current.then(returnSteps)`: after a `next()` still waiting, so its read is
     // answered first; the return is the current promise from then on.
@@ -195,6 +201,7 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
   // Node's `returnSteps` awaits the cancel in an async function; as one `then` it takes Node's
   // turns, where the async form let the code after the loop run a turn early (#3741).
   private returnSteps(): Promise<IteratorResult<R>> {
+    this.caughtUp();
     if (this.done) {
       return Promise.resolve<IteratorResult<R>>({ done: true });
     }
