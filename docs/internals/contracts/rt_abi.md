@@ -908,9 +908,6 @@ typedef struct {
     uint64_t size;        // bytes of the table; the runtime reads only the slots it covers
     uint64_t drop;        // address of: void (*)(void), releasing the static atomics' references; or 0
     uint64_t str_epoch;   // address of: _Atomic uint64_t, std's STR_EPOCH; or 0
-    uint64_t xfer_keeps;  // address of: uint8_t (*)(void), std's xferKeeps; or 0
-    uint64_t xfer_mark;   // address of: uint64_t (*)(void), std's xferMark; or 0
-    uint64_t xfer_forget_since; // address of: void (*)(uint64_t mark), std's xferForgetSince; or 0
 } VeltStatics;            // later slots are appended: an older table has a smaller size
 void velt_rt_statics(const VeltStatics *t);
 ```
@@ -919,8 +916,8 @@ Each address takes an 8-byte slot on every target: on wasm32 it is the slot's fi
 second half zero (as in the symbol registry's table), so the layout is the same everywhere
 (`velt_rt` `statics.rs` asserts the offsets).
 
-`velt_main` calls it first thing, before anything can free a string or start a transfer, with a
-read-only table in the program's data. No call when every field would be NULL.
+`velt_main` calls it first thing, before anything can free a string, with a read-only table in
+the program's data. No call when every field would be NULL.
 
 - `drop`: in a program with static atomics holding a reference (a module `const X = new
   Atomic<shared<T> | null>(null)`, hir_encodings.md "Static atomics"), a generated function that
@@ -934,20 +931,6 @@ read-only table in the program's data. No call when every field would be NULL.
   before and uses it from then on: it bumps the word when a buffer the cache may remember is freed
   or moved. The word is Velt's, so the runtime needs no symbol of the program (the shared runtime
   of debug builds is linked before the program exists).
-- `xfer_keeps`, `xfer_mark`, `xfer_forget_since` (#3584): the functions of std's transfer map
-  (std/lang/hooks/transfer.velt; velt_common `std_hooks` `xfer_keeps`, `xfer_mark`,
-  `xfer_forget_since`; rt_abi_async.md "Transfers") that the runtime calls, since the state of a
-  transfer under way is std's, per thread: read mode's `velt_rt_lk_leave` asks `xfer_keeps`
-  (rt_abi_async.md §9.1), and the runtime's own catch of a Velt panic in a poll (`velt_rt`
-  `panic.rs`) takes `xfer_mark` before the poll and calls `xfer_forget_since(mark)` after a caught
-  panic, which ends the transfers the poll opened (their copies forgotten, what they deferred
-  released) and lets those open before it go on. Each takes and returns scalars, so a Velt
-  function is called with the C calling convention. Any program with std fills them in; a NULL
-  slot (a program built without std, or a table from before them, 24 bytes) means no transfer is
-  ever under way: `xfer_keeps` answers 0 and there is nothing to forget. A prebuilt std object or
-  the std cache never holds the table: `velt_main` is generated for each program, so a program
-  and its table always come from the same compiler. The WebAssembly runtime reads `xfer_keeps`
-  alone.
 
 ## Breadcrumbs
 

@@ -24,14 +24,9 @@ pub(in crate::lower) const NO_TRANSFER: i128 = 1;
 impl FnLower<'_, '_> {
     /// Can a transfer be open where this call runs? Not in a program built without std, nor in
     /// one whose live code starts none (sema demanded no transfer hook): then each call but a
-    /// begin is its answer outside a transfer. When one can, the call about to be emitted makes
-    /// the program one whose statics table hands the runtime the map's functions
-    /// (static_atomic.rs `xfer_fill`).
+    /// begin is its answer outside a transfer.
     fn has_xfer(&mut self) -> bool {
-        let has =
-            self.has_std_xfer() && (self.cx.hir.hooks_demanded).contains(hook_index::xfer_begin);
-        self.cx.xfer_used |= has;
-        has
+        self.has_std_xfer() && (self.cx.hir.hooks_demanded).contains(hook_index::xfer_begin)
     }
 
     /// Is std's transfer map in the program at all (not a program built without std)? A begin
@@ -43,7 +38,6 @@ impl FnLower<'_, '_> {
     /// The start of a transfer (nested ones nest).
     pub(in crate::lower) fn xfer_begin(&mut self) {
         if self.has_std_xfer() {
-            self.cx.xfer_used = true;
             _ = hooks::xfer_begin(self, Construct::Transfer).emit(self);
         }
     }
@@ -51,7 +45,6 @@ impl FnLower<'_, '_> {
     /// The start of a transfer keeping what a `read` callback's caller holds (caller_stores.rs).
     pub(in crate::lower) fn xfer_keep_begin(&mut self) {
         if self.has_std_xfer() {
-            self.cx.xfer_used = true;
             _ = hooks::xfer_keep_begin(self, Construct::Transfer).emit(self);
         }
     }
@@ -59,7 +52,6 @@ impl FnLower<'_, '_> {
     /// The start of a transfer keeping what a `read` callback made (leave_levels.rs).
     pub(in crate::lower) fn xfer_share_begin(&mut self) {
         if self.has_std_xfer() {
-            self.cx.xfer_used = true;
             _ = hooks::xfer_share_begin(self, Construct::Transfer).emit(self);
         }
     }

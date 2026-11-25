@@ -87,8 +87,7 @@ export unsafe function catchPanicAt(code: usize, arg: usize): usize {
 }
 
 /**
- * After a caught panic: the state the panicked code left open on this thread is closed, as the
- * runtime's own catch does (`velt_rt::panic::catch`, through `xferForgetSince`).
+ * After a caught panic: the state the panicked code left open on this thread is closed.
  */
 function caught() {
   // A panic inside a transfer (a value going to `spawn` that can't, a copy that failed) left its

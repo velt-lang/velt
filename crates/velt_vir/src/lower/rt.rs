@@ -268,7 +268,7 @@ impl Rt {
             Rt::DeepEqEnter => f("velt_rt_deep_eq_enter", vec![U64, U64], U8),
             Rt::DeepEqLeave => f("velt_rt_deep_eq_leave", vec![], Unit),
             Rt::LkWrite => f("velt_rt_lk_write", vec![Ptr], Unit),
-            Rt::LkLeave => f("velt_rt_lk_leave", vec![Ptr, Ptr, Ptr], Unit),
+            Rt::LkLeave => f("velt_rt_lk_leave", vec![Ptr, Ptr, Ptr, U8], Unit),
             Rt::LkLeaveTo => f("velt_rt_lk_leave_to", vec![U64], U64),
             Rt::LkKeepMade => f("velt_rt_lk_keep_made", vec![Ptr], Unit),
             Rt::LkShareMade => f("velt_rt_lk_share_made", vec![Ptr, Ptr, Ptr], Unit),

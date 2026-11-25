@@ -43,9 +43,9 @@ pub(super) fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             if f.is_generator {
                 w.generators[f.is_async as usize] = true;
             }
-            // An async closure that copies its captures for each call (velt_vir
-            // `async_fn/ctor.rs` `clone_keeping_identity`), as for a call on another thread.
-            if f.is_async && !f.captures.is_empty() && !f.shares_captures {
+            // An async closure that copies its captures for each call, as for a call on another
+            // thread (`crate::transfer_starts`).
+            if crate::transfer_starts::copies_captures(f) {
                 w.constructs |= Construct::Transfer.bit();
             }
             w.tasks |= f.is_async;
@@ -203,25 +203,16 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         // `write` lowers through the same intrinsic and marks it too, unused. Its callback's
         // result leaves the lock transferred (`leave_lock`).
         E::Call {
-            callee: Callee::Intrinsic(I::MutexWith),
+            callee: Callee::Intrinsic(i @ I::MutexWith),
             ..
-        } => w.constructs |= Construct::Mutex.bit() | Construct::Transfer.bit(),
-        // What can start a transfer of a value to another thread: std's transfer map (velt_vir
-        // `lower/transfer_map.rs`; `transfer_sites` in its tests lists where lowering starts one).
+        } => w.constructs |= Construct::Mutex.bit() | transfer_bit(*i),
+        // What can start a transfer of a value to another thread: std's transfer map
+        // (`crate::transfer_starts`; velt_vir's `transfer_sites` test lists where lowering starts
+        // one, with the intrinsic that covers it).
         E::Call {
-            callee:
-                Callee::Intrinsic(
-                    I::Spawn
-                    | I::SpawnHandled
-                    | I::Transfer
-                    | I::SlotPut
-                    | I::SlotTransfer
-                    | I::SharedNew
-                    | I::SharedRead
-                    | I::LockRead,
-                ),
+            callee: Callee::Intrinsic(i),
             ..
-        } => w.constructs |= Construct::Transfer.bit(),
+        } if crate::transfer_starts::intrinsic(*i) => w.constructs |= transfer_bit(*i),
         // A yield or a sleep is a leaf of the executor (velt_vir `sched_rt`: `schedYieldFut`,
         // `schedSleep`), even kept as a promise in code that is not async.
         E::Call {
@@ -248,5 +239,14 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.types.extend(method_type_args.iter().chain(iface_args));
         }
         kind => w.constructs |= constructs::pow_bit(ty, kind),
+    }
+}
+
+/// `Construct::Transfer` for a call of intrinsic `i` that starts a transfer
+/// (`crate::transfer_starts::intrinsic`), else nothing.
+fn transfer_bit(i: I) -> velt_common::std_hooks::ConstructSet {
+    match crate::transfer_starts::intrinsic(i) {
+        true => Construct::Transfer.bit(),
+        false => 0,
     }
 }

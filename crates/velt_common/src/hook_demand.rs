@@ -101,7 +101,7 @@ pub enum Construct {
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 14] = [
+    pub const ALL: [Construct; 15] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,

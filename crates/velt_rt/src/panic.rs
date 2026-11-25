@@ -184,17 +184,15 @@ pub(crate) fn may_catch() -> bool {
 
 /// Run `poll`, stopping a Velt panic that unwinds out of it: `Err(message)`. Any other panic
 /// (a runtime bug, which ends the process in the hook before it unwinds) keeps unwinding.
+/// Nothing reaches it any more: only `velt_rt_catch_arm` arms it ([`enable_catching`]), which
+/// std calls from `#task-catch`'s runtime variant (std/task/catch_rt.velt), and native builds
+/// take the executor in Velt's (catch_sched.velt), whose `caught` ends the transfers a panic
+/// left open (std/task/unwind.velt). It goes with the runtime's executor (#2196).
 pub(crate) fn catch<R>(poll: impl FnOnce() -> R) -> Result<R, Box<[u8]>> {
-    let open = crate::statics::xfer_mark();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(poll)) {
         Ok(r) => Ok(r),
         Err(payload) => match payload.downcast::<VeltPanic>() {
-            Ok(p) => {
-                // The panic may have left a transfer of this poll's open on this thread: it ends,
-                // releasing what it deferred (std/lang/hooks/transfer.velt).
-                crate::statics::xfer_forget_since(open);
-                Err(p.0)
-            }
+            Ok(p) => Err(p.0),
             Err(other) => std::panic::resume_unwind(other),
         },
     }
@@ -393,51 +391,5 @@ mod catch_tests {
             catch(|| -> u32 { std::panic::resume_unwind(Box::new(5u8)) })
         });
         assert!(r.is_err(), "a non-Velt panic keeps unwinding past `catch`");
-    }
-
-    thread_local! {
-        /// What the stand-ins for std's transfer map saw on this thread: marks taken, and the
-        /// mark each `xferForgetSince` was given.
-        static MARKS: Cell<u64> = const { Cell::new(0) };
-        static FORGOT: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
-    }
-
-    extern "C" fn mark() -> u64 {
-        MARKS.with(|m| m.set(m.get() + 1));
-        0x7_0000_0002
-    }
-
-    extern "C" fn forget_since(mark: u64) {
-        FORGOT.with(|f| f.borrow_mut().push(mark));
-    }
-
-    extern "C" fn keeps() -> u8 {
-        0
-    }
-
-    #[test]
-    fn a_caught_panic_ends_the_transfers_its_poll_opened() {
-        // The table `velt_main` hands over with std's transfer map (rt_abi.md "Process statics").
-        let word = |f: usize| f as u64;
-        let table = crate::statics::Statics {
-            size: 48,
-            drop: 0,
-            str_epoch: 0,
-            xfer_keeps: word(keeps as *const () as usize),
-            xfer_mark: word(mark as *const () as usize),
-            xfer_forget_since: word(forget_since as *const () as usize),
-        };
-        // SAFETY: the stand-ins have the signatures their fields say, and live for the process.
-        unsafe { crate::statics::adopt_transfer_map(&table) };
-        let _c = Catching::enter();
-        assert_eq!(catch(|| 5u32).ok(), Some(5));
-        assert!(
-            FORGOT.with(|f| f.borrow().is_empty()),
-            "nothing to end without a panic"
-        );
-        let caught = catch(|| -> u32 { unwind(b"boom".to_vec().into_boxed_slice()) });
-        assert!(caught.is_err());
-        assert_eq!(MARKS.with(Cell::get), 2, "each poll takes a mark first");
-        assert_eq!(FORGOT.with(|f| f.borrow().clone()), vec![0x7_0000_0002]);
     }
 }
