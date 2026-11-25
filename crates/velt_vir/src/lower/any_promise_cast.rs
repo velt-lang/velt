@@ -96,6 +96,120 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 
+    /// `await (v as Promise<T>)` of a `v` of the dynamic type `from` (`inner` is the cast, its
+    /// type `ty`): a typed `Promise<T>` that `v` holds (the commonest) is awaited itself, as
+    /// before the cast converted, with no wrapper; anything else is cast (`any_to_promise`) and
+    /// that awaited. Both take the same turns: a wrapper polls the promise it holds itself.
+    /// `None` when the cast is no such cast, or the cast's type is the held one's.
+    pub(in crate::lower) fn await_any_promise_cast(
+        &mut self,
+        inner: &hir::Expr,
+    ) -> Option<Operand> {
+        let hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::AnyTo),
+            args,
+        } = &inner.kind
+        else {
+            return None;
+        };
+        let [a] = args.as_slice() else {
+            return None;
+        };
+        let (from, ty) = (self.sub(a.ty), self.sub(inner.ty));
+        let TyKind::Promise(t, _) = self.cx.kind(ty) else {
+            return None;
+        };
+        let never = self.cx.intern(TyKind::Never);
+        let plain = self.cx.intern(TyKind::Promise(t, never));
+        if plain == ty
+            || !self.cx.is_dynamic(from)
+            || self.cx.mentions_ph(ty)
+            || !self.cx.executor_loaded()
+            || matches!(a.kind, hir::ExprKind::ToDyn { .. })
+        {
+            return None;
+        }
+        let imp = self.cx.hir.any_impl?;
+        // An `any` read where it stays (`for (const p of held)`): its promise is shared out of
+        // the box it stays in, with no copy of the box (any_borrowed.rs).
+        let borrowed = match &a.kind {
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::Share),
+                args,
+            } => match args.as_slice() {
+                [x] => {
+                    let xt = self.sub(x.ty);
+                    (self.cx.is_dynamic(xt) && !self.frozen_root(x)).then_some(x)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let v = match borrowed {
+            Some(x) => self.expr(x),
+            None => self.consume(a),
+        };
+        let vt = self.cx.ty(t);
+        if self.dead() {
+            return Some(self.zero_value(vt));
+        }
+        let fvt = self.cx.ty(from);
+        let p = match borrowed {
+            Some(_) => self.place_of(v, from),
+            None => Place::local(self.copy_to_temp(v, fvt)),
+        };
+        let out = (vt != Ty::Unit).then(|| Place::local(self.temp(vt)));
+        let desc = Operand::Copy(proj(&p, Proj::Field(1)));
+        let table = self.vtable_addr(super::VtableKey::Impl(imp, plain));
+        let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc, table));
+        let (held, cast, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(same, held, cast);
+        self.switch_to(held);
+        let data = Operand::Copy(proj(&p, Proj::Field(0)));
+        let fut = match borrowed {
+            Some(_) => {
+                let pt = self.cx.ty(plain);
+                let dp = self.operand_place(data, Ty::Ptr);
+                self.share_value(Operand::Copy(proj(&dp, Proj::Deref(pt))), plain)
+            }
+            None => self.dyn_box_take(data, plain),
+        };
+        let r = self.await_heap(fut, plain);
+        self.settled_into(r, out.as_ref(), done);
+        self.switch_to(cast);
+        let p = match borrowed {
+            Some(_) => {
+                let copy = self.share_value(Operand::Copy(p), from);
+                Place::local(self.copy_to_temp(copy, fvt))
+            }
+            None => p,
+        };
+        let fut = self.any_unbox(&p, from, ty);
+        if !self.dead() {
+            let r = self.await_heap(fut, ty);
+            self.settled_into(r, out.as_ref(), done);
+        }
+        self.switch_to(done);
+        Some(match out {
+            Some(out) => self.own_value(Operand::Copy(out), t),
+            None => super::unit(),
+        })
+    }
+
+    /// The owned awaited result `r` moved into `out` (none for `void`), then on to `done`.
+    fn settled_into(&mut self, r: Operand, out: Option<&Place>, done: BlockId) {
+        if self.dead() {
+            return;
+        }
+        if let Some(out) = out {
+            if let Operand::Copy(q) = &r {
+                self.take_temp(q);
+            }
+            self.assign(out.clone(), Rvalue::Use(r));
+        }
+        self.goto(done);
+    }
+
     /// Do the `any` descriptors `xa` and `xb` both belong to promise types (Bool operand)?
     pub(super) fn any_both_promises(&mut self, xa: &Operand, xb: &Operand) -> Operand {
         let want = cint(PROMISE_ID as i128, Ty::U64);
