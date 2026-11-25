@@ -5,7 +5,6 @@
 //! free or a use after free.
 
 use super::fake::{block_on_state, yield_once};
-use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start};
 use crate::task::shared::velt_rt_fut_share;
 use crate::task::{drop_fut, poll_fut, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 use std::ffi::c_void;
@@ -39,17 +38,21 @@ unsafe extern "C-unwind" fn drop_result(slot: *mut u8) {
     free_box(*(slot as *const *mut i64));
 }
 
-// async function value(v: i64): Promise<Box> { await yieldNow(); return new Box(v); }
+// A runtime future that yields once, then finishes with `new Box(v)`: its header, its result
+// slot at +16, its state.
 #[repr(C)]
 struct Value {
+    hdr: VeltFut,
     result: *mut i64,
     tag: u32,
     v: i64,
     y: *mut VeltFut,
 }
 
-unsafe extern "C-unwind" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    let st = &mut *(s as *mut Value);
+const _: () = assert!(std::mem::offset_of!(Value, result) == FUT_RESULT_OFFSET);
+
+unsafe extern "C-unwind" fn value_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+    let st = &mut *(f as *mut Value);
     if st.tag == 0 {
         st.y = yield_once();
         st.tag = 1;
@@ -64,25 +67,26 @@ unsafe extern "C-unwind" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C-unwind" fn value_drop(s: *mut u8) {
-    let st = &mut *(s as *mut Value);
+/// Frees the future; never its result (whoever saw `READY` moved it out).
+unsafe extern "C-unwind" fn value_drop(f: *mut VeltFut) {
+    let st = Box::from_raw(f as *mut Value);
     if !st.y.is_null() {
         drop_fut(st.y);
     }
 }
 
-/// `const p = value(v);`: a started promise.
-unsafe fn value(v: i64) -> *mut VeltFut {
-    let init = Value {
+/// `const p = value(v);`: a promise that runs when it is awaited.
+fn value(v: i64) -> *mut VeltFut {
+    Box::into_raw(Box::new(Value {
+        hdr: VeltFut {
+            poll: value_poll,
+            drop: value_drop,
+        },
         result: null_mut(),
         tag: 0,
         v,
         y: null_mut(),
-    };
-    let p = &init as *const Value as *const u8;
-    let f = velt_rt_fut_box(value_poll, value_drop, p, size_of::<Value>() as u64, 8);
-    velt_rt_fut_start(f, Some(drop_result));
-    f
+    })) as *mut VeltFut
 }
 
 unsafe fn share(f: *mut VeltFut) -> *mut VeltFut {
@@ -153,8 +157,9 @@ fn await_both() {
 }
 
 // async function main() { const p = value(5); const q = p; await yieldNow(); }
-// Both holders are dropped before the promise settles, the original first: the last one gives
-// the promise back its own drop, and it runs to completion and drops its result.
+// The second holder starts waiting (it drives the promise to its first suspension), then both
+// holders are dropped before the promise settles, the original first: the last one gives the
+// promise back its own drop, which cancels it mid-way, and no result is ever made.
 #[repr(C)]
 struct DropUnsettled {
     tag: u32,
@@ -166,6 +171,7 @@ unsafe extern "C-unwind" fn drop_unsettled_poll(s: *mut u8, cx: *mut c_void) -> 
     if st.tag == 0 {
         let p = value(5);
         let q = share(p);
+        assert_eq!(poll_fut(q, cx), PENDING);
         drop_fut(p);
         drop_fut(q);
         st.y = yield_once();
@@ -197,11 +203,6 @@ fn run_all() {
     await_both();
     assert_eq!(LIVE.load(Ordering::SeqCst), before, "a result box leaked");
     drop_unsettled();
-    // The dropped promise finishes on the runtime; wait for its result to be dropped.
-    let t = std::time::Instant::now();
-    while LIVE.load(Ordering::SeqCst) != before && t.elapsed().as_secs() < 5 {
-        std::thread::yield_now();
-    }
     assert_eq!(LIVE.load(Ordering::SeqCst), before, "a result box leaked");
 }
 

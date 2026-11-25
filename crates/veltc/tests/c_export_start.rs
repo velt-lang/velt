@@ -78,8 +78,55 @@ async function main() {
 }
 "#;
 
+/// A promise shared on the C library's thread (#3782): the export keeps a promise in two places.
+/// Such a share isn't handed to the executor yet, so it stops the program with a message saying
+/// so, never a crash or a hang.
+const SHARE_LIB: &str = r#"import { Ptr, export as cExport } from "velt/ffi";
+
+declare c("early") function early_run(): i64;
+
+async function later(): Promise<i64> {
+  await sleep(1);
+  return 7;
+}
+
+async function report(p: Promise<i64>, q: Promise<i64>): Promise<void> {
+  console.log(`got ${await p} ${await q}`);
+}
+
+/** Runs on the C library's thread: `p` and `q` share one promise. */
+@cExport("early_worker")
+function worker(arg: Ptr<void> | null): Ptr<void> | null {
+  const p = later();
+  const q = p;
+  spawn(report(p, q));
+  return arg;
+}
+
+export function runEarly(): i64 {
+  // SAFETY: it starts a thread on `early_worker` and joins it.
+  return unsafe { early_run() };
+}
+"#;
+
+const SHARE_MAIN: &str = r#"import { runEarly } from "early";
+
+async function main() {
+  await yieldNow();
+  console.log("main");
+  runEarly();
+  await sleep(20);
+  console.log("not reached");
+}
+"#;
+
 /// `dir/early`, its C library, and `dir/app` (`main`), which allows it.
 fn project(dir: &Path) -> PathBuf {
+    project_with(dir, LIB, MAIN)
+}
+
+/// [`project`] with the library's `lib` and the app's `main`.
+fn project_with(dir: &Path, lib: &str, main: &str) -> PathBuf {
     let pkg = dir.join("early");
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(pkg.join("native")).unwrap();
@@ -88,7 +135,7 @@ fn project(dir: &Path) -> PathBuf {
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"early\", version: \"0.1.0\", native: { c: { early: { sources: [\"native/early.c\"], headers: [\"native/early.h\"] } } } };\n",
     )
     .unwrap();
-    std::fs::write(pkg.join("src/lib.velt"), LIB).unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), lib).unwrap();
     std::fs::write(pkg.join("native/early.h"), HEADER).unwrap();
     std::fs::write(pkg.join("native/early.c"), SOURCE).unwrap();
     let app = dir.join("app");
@@ -98,7 +145,7 @@ fn project(dir: &Path) -> PathBuf {
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"early\"],\n  dependencies: { early: { path: \"../early\" } },\n};\n",
     )
     .unwrap();
-    std::fs::write(app.join("src/main.velt"), MAIN).unwrap();
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
     app
 }
 
@@ -188,5 +235,30 @@ fn a_spawn_on_a_c_thread_before_the_executor_started_leaves_main_on_worker_0() {
         }
         let at = |l: &str| lines.iter().position(|x| *x == l);
         assert!(at("main") < at("slept"), "{out}");
+    }
+}
+
+#[test]
+fn a_promise_shared_on_a_c_thread_stops_the_program_with_its_reason() {
+    let Some(_zig) = zig_env::zig("build C sources calling exported functions") else {
+        return;
+    };
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let home = home(dir.path());
+    let app = project_with(dir.path(), SHARE_LIB, SHARE_MAIN);
+    let (code, out) = velt(&app, &home, &["build", "--release"], &[]);
+    assert_eq!(code, Some(0), "{out}");
+    for env in [&[][..], &[("VELT_THREADS", "1")][..]] {
+        let (code, out) = velt(&app, &home, &["run", "--release"], env);
+        // Stopped by the panic (not killed by the time limit, not a crash), after `main` began.
+        assert_eq!(code, Some(101), "{env:?}: {out}");
+        assert!(out.contains("main\n"), "{env:?}: {out}");
+        assert!(
+            out.contains("a promise cannot be shared on a C library's own thread yet (#3782)"),
+            "{env:?}: {out}"
+        );
+        assert!(!out.contains("got 7 7"), "{env:?}: {out}");
+        assert!(!out.contains("not reached"), "{env:?}: {out}");
     }
 }

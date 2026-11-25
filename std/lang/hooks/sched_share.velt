@@ -19,10 +19,9 @@
 // the hub is only ever touched by the task it is shared on. A lazy node is driven by its first
 // waiter. A promise that isn't a node (a spawned task's join handle, a `sleep` kept as a value, a
 // race, a runtime leaf) is shared through a lazy node of this task that drives it, and becomes
-// that node's holder in place (sched_share_leaf.velt). Shared outside any task (a C library's
-// thread), a promise goes to the runtime's hub, whose outside home keeps it on one task
-// (rt_abi_async.md §1.2). Dropping a holder never cancels
-// the promise; the last role drops the settled result, or gives the node back its entries and
+// that node's holder in place (sched_share_leaf.velt). A share outside any task (a C library's
+// thread) is refused for now (`refuseOffTask`, #3782). Dropping a holder never cancels the
+// promise; the last role drops the settled result, or gives the node back its entries and
 // drops it, so it runs to completion and its own result drop reports an unhandled rejection, as
 // for any dropped promise (sched_share_drop.velt).
 //
@@ -37,14 +36,12 @@
 // so for every holder `f - 8` holds its hub (for the original, the node's `N_HUB` word); a handle
 // handed to another task has a hub word of 0 and its proxy in its forward word.
 
-import { fnAddress, futDrop, futPoll, inline, statePoll } from "velt/lang/intrinsics";
+import { fnAddress, futDrop, futPoll, inline, noInline, statePoll } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nc from "./sched_node_catch";
-import * as jn from "./sched_join";
 import * as nd from "./sched_node";
 import * as loc from "./sched_node_loc";
-import * as off from "./sched_off";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as away from "./sched_share_away";
@@ -112,12 +109,25 @@ export const HUB_HERE: u32 = 65536;
 export const FRONT: usize = 32;
 
 /**
+ * A promise shared outside any task: on a C library's own thread, in an exported function it
+ * calls. Refused until such a share can be handed to the executor (#3782).
+ */
+@noInline
+function refuseOffTask(): void {
+  panic(
+    "a promise cannot be shared on a C library's own thread yet (#3782): " +
+      "share it inside an async function that the call starts",
+  );
+}
+
+/**
  * `velt_rt_fut_share` (the hook lowering calls under `VELT_SCHEDULER=std`): another holder of
  * promise `f` (0: none), a handle of its own. `size` is the result's size, `share` its
  * `SharePoll` glue (0: copied as it is), `rdrop` its drop glue (0: nothing to drop). On a task,
  * a node of this executor is shared as itself, and any other promise (a join handle, a `sleep`, a
  * race, a runtime leaf) through a lazy node that drives it, whose holder it becomes in place
- * (sched_share_leaf.velt). Outside any task (a C library's thread) the runtime's hub shares it.
+ * (sched_share_leaf.velt). Outside any task (a C library's own thread) it is refused
+ * ([`refuseOffTask`]).
  */
 @inline("always")
 export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usize {
@@ -148,9 +158,7 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
     f = fwd;
   }
   if (task === 0) {
-    // Shared outside any task (a C library's thread): the runtime's hub, whose identities the
-    // runtime keeps (`schedFutId`).
-    return off.share(f, size, share, rdrop);
+    refuseOffTask();
   }
   let leaf: usize = 0;
   if (m.ld(f) !== fnAddress(nd.nodePoll)) {
@@ -230,12 +238,9 @@ export function schedFutId(f: usize): u64 {
     }
     g = a;
   }
-  if (g === 0 || m.ld(g) === fnAddress(nd.nodePoll) || lf.isLeaf(g) || jn.isJoin(g)) {
-    return g as u64;
-  }
-  // A future of the runtime's: a holder of its hub (shared on a C library's thread) has the
-  // identity of the runtime's original; anything else is its own.
-  return off.futId(g);
+  // Anything else (a node, a join handle, a runtime leaf) is its own identity: a holder of the
+  // runtime's hub exists only in a program without this executor.
+  return g as u64;
 }
 
 /**
