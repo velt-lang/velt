@@ -25,6 +25,18 @@ class B {
 const holder = { b: new B(1) };
 const arr = [new B(1), new B(2), new B(3)];
 
+// A method returning `this` with an argument, for an argument that assigns the receiver's
+// variable.
+class C {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+  m(n: number): this {
+    return this;
+  }
+}
+
 class Holder {
   s = new Set<number>();
 }
@@ -90,6 +102,19 @@ function main() {
   const w = box.m.set("b", resetMap());
   console.log(w.size, box.m.size, w === box.m);
   console.log(box.m.set("c", resetMap()).size);
+
+  // An argument assigns the receiver's variable: the result is the object the call ran on.
+  let s2 = new Set<number>();
+  const other = new Set<number>();
+  const t2 = s2.add((s2 = other).size + 1);
+  console.log(t2.size, s2.size, t2 === s2);
+  let c = new C(1);
+  const r = c.m((c = new C(2)).id);
+  console.log(r.id, c.id);
+
+  // A chain on a field with arguments that run nothing.
+  h.s.add(7).add(8);
+  console.log(h.s.has(7), h.s.has(8));
 
   console.log(keptOutlives(), receiverOutlives());
 }
