@@ -267,12 +267,51 @@ impl FnLower<'_, '_> {
         self.assign(mirror, Rvalue::Use(Operand::Copy(fresh)));
     }
 
+    /// The key of the view of the source the `any` at `p` holds in the runtime's view table:
+    /// the object's address with bit 0 set, or for a function its identity (fn_wrappers.rs
+    /// `fn_root`, any_fn_props.rs): the environment of the function its wrappers lead to, given
+    /// one when it has none (a declared function's value gets the runtime's identity for its
+    /// code). Each boxing of a function into `any` has its own data pointer, so that pointer
+    /// would make a view per conversion (#3507).
+    fn record_view_key(&mut self, p: &Place) -> Operand {
+        let data = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(0)))));
+        let out = Place::local(self.temp(Ty::Ptr));
+        let key = self.proxy_tag(data.clone());
+        self.assign(out.clone(), Rvalue::Use(key));
+        // A function value (`{code, env}`), as its table says (`FN_VALUE_ID`, which a program
+        // with record views gives every function type's table); a class instance that is a
+        // function (a function expression with `this`, an array method's value) is keyed by its
+        // address, as any other object.
+        let is_fn = self.any_is_fn_value(Operand::Copy(proj(p, Proj::Field(1))));
+        let (yes, join) = (self.new_block(), self.new_block());
+        self.branch(is_fn, yes, join);
+        self.switch_to(yes);
+        let ca = self.cx.closure_agg();
+        let fp = self.operand_place(data, Ty::Ptr);
+        let root = self.fn_root(&proj(&fp, Proj::Deref(Ty::Agg(ca))));
+        self.fn_identity_into(&root);
+        let env = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(&root, Proj::Field(1)))),
+        );
+        // A function with no identity (a generic closure without captures has no code and no
+        // environment) keeps the address key.
+        let has = self.non_null(env.clone());
+        let named = self.new_block();
+        self.branch(has, named, join);
+        self.switch_to(named);
+        let key = self.proxy_tag(env);
+        self.assign(out.clone(), Rvalue::Use(key));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(out)
+    }
+
     /// In `AnyTo` the view type `ty` of the `any` at `p` (owned) holding an object: the object's
     /// live view (a new reference; the `any` is released), or a new one, which becomes its live
     /// view, moved into `out`, and on to `done`.
     pub(super) fn record_view_make(&mut self, p: &Place, ty: TyId, out: &Place, done: BlockId) {
-        let data = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(0)))));
-        let key = self.proxy_tag(data);
+        let key = self.record_view_key(p);
         let live = Place::local(self.temp(Ty::Ptr));
         self.call_rt(Rt::ViewGet, vec![key.clone()], Some(live.clone()));
         let has = self.non_null(Operand::Copy(live.clone()));
@@ -377,11 +416,7 @@ impl FnLower<'_, '_> {
             lw.view_resync(src.clone(), mirror, ty);
             let sp = lw.record_place(src);
             let target = lw.field_place(&sp, sty, 0);
-            let data = lw.rvalue_temp(
-                Ty::Ptr,
-                Rvalue::Use(Operand::Copy(proj(&target, Proj::Field(0)))),
-            );
-            let key = lw.proxy_tag(data);
+            let key = lw.record_view_key(&target);
             lw.call_rt(Rt::ViewRemove, vec![key, me], None);
             lw.drop_glue(sp, sty);
             let slot = lw.field_place(&at, ty, VIEW_FIELD);
@@ -402,11 +437,7 @@ impl FnLower<'_, '_> {
         self.when_view(r, ty, |lw, src, _| {
             let sp = lw.record_place(src);
             let target = lw.field_place(&sp, sty, 0);
-            let data = lw.rvalue_temp(
-                Ty::Ptr,
-                Rvalue::Use(Operand::Copy(proj(&target, Proj::Field(0)))),
-            );
-            let key = lw.proxy_tag(data);
+            let key = lw.record_view_key(&target);
             lw.call_rt(Rt::ViewRemove, vec![key, me], None);
             lw.drop_glue(sp, sty);
         });
