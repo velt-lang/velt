@@ -67,6 +67,14 @@ pub struct Summaries {
     /// check resolved them to, before any program stored into them: the app's rounds give a
     /// closure made for one what their seeds give the site (`Ctx::app_trap_error`).
     pub(crate) trap_sites: Vec<(velt_common::Span, crate::hir::TyId)>,
+    /// std's method calls whose trailing arguments take the callee's default (left out, or
+    /// `undefined` written for them), by the call's span: the number of arguments written
+    /// (`std_calls`, #3789).
+    pub(crate) left_out_calls: rustc_hash::FxHashMap<velt_common::Span, u32>,
+    /// std's method calls where an argument before those may be `undefined` for a parameter
+    /// with a default, or that take std's own general fill slot: no slot a program adds can
+    /// apply an override's default there (#3789; a test keeps std without them).
+    pub(crate) left_out_general: rustc_hash::FxHashSet<velt_common::Span>,
     /// What the app's passes raise of the unit's definitions, kept beside them while they are
     /// frozen (`raised`); empty in a saved unit.
     pub(crate) raised: raised::Raised,
@@ -76,7 +84,7 @@ pub struct Summaries {
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
-        declared_modes, declared_now, trap_sites, raised,
+        declared_modes, declared_now, trap_sites, left_out_calls, left_out_general, raised,
     }
 }
 
