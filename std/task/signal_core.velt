@@ -341,6 +341,7 @@ export function reason(s: usize): string {
   // SAFETY: an aborted signal's slot holds its reason; put back before the lock goes.
   const r = unsafe { slotTake<string>(s + S_REASON) };
   const out = r.slice(0);
+  // SAFETY: the slot is empty again (taken above) and has room for a string.
   unsafe {
     slotPut<string>(s + S_REASON, r);
   }
@@ -378,4 +379,3 @@ export function link(src: usize, child: usize): bool {
   unlock(src);
   return true;
 }
-

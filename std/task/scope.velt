@@ -3,12 +3,7 @@
 
 import { DEFAULT_REASON } from "velt/task/errors";
 import { TaskGroup } from "velt/task/group";
-import {
-  signalAbort,
-  signalFree,
-  signalNew,
-  signalRetain,
-} from "#task-signal";
+import { signalAbort, signalFree, signalNew, signalRetain } from "#task-signal";
 import { ABORT_ERROR, AbortSignal, signalCell } from "velt/task/signal";
 import { spawnHandled } from "velt/lang/intrinsics";
 

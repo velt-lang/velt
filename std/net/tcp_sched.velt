@@ -265,9 +265,7 @@ export async function velt_rt_tcp_readable_within(
   }
   // Whichever ends first ends the other (dropped). Not `timed`: the socket's wait keeps the
   // process alive. A runtime stream (`velt dev`) is given no signal: the signal is std's.
-  const within = runtime
-    ? rt.velt_rt_tcp_readable_within(s, ms, 0)
-    : fio.readableWithin(s, ms);
+  const within = runtime ? rt.velt_rt_tcp_readable_within(s, ms, 0) : fio.readableWithin(s, ms);
   await Promise.race([within.then((_) => {}), signalWait(signal, false)]);
   if (signalAborted(signal)) {
     return fs.value(0);
