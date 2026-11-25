@@ -309,6 +309,19 @@ pub fn tls_module(path: &str) -> bool {
     TLS_MODULES.contains(&path)
 }
 
+/// The module of `JSON.stringify(value, replacer)` with a replacer function, which the prelude's
+/// `jsonStringifyReplaced` demands with a `hookCall` of `json_stringify_replaced` (#3774). Not
+/// loaded up front with the rest (`load_up_front`): it imports the prelude's JSON modules, which
+/// only a program that names `JSON` loads, so a program without a replacer function has none of
+/// it either way.
+const JSON_REPLACE_MODULES: &[&str] = &[velt_common::std_module!(lang_hooks_json_replace)];
+
+/// Is `path` (a canonical std module path) the module of `JSON.stringify`'s replacer function,
+/// which a caller with std up front (`VELT_EAGER_STD`) still lets a check demand, as without it?
+pub fn json_replace_module(path: &str) -> bool {
+    JSON_REPLACE_MODULES.contains(&path)
+}
+
 /// Is `path` (a canonical std module path) one of the executor in Velt's modules, which a caller
 /// with std up front may still serve on demand (`LoadOptions::demand_executor`)?
 pub fn executor_module(path: &str) -> bool {

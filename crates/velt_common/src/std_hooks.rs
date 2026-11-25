@@ -627,7 +627,8 @@ with_tls_hooks! {
     // (std/prelude/global/json.velt).
     /// `JSON.parse(text)` with its type from the context (`velt_sema` `static_call.rs`).
     json_parse_from_context => lang_hooks_json, "jsonParseFromContext", sig(<A>(&string, &or_null(object("{ unknownKeys?: \"ignore\" | \"reject\", maxDepth?: i64, comments?: \"error\" | \"skip\", trailingCommas?: boolean }"))) -> A throws JsonError);
-    // json_replace.velt: loaded on demand (`std_hooks/on_demand.rs`).
+    // json_replace.velt: demanded by its `hookCall`, with std up front too (velt_loader
+    // `more.rs`, `JSON_REPLACE_MODULES`).
     /// `JSON.stringify(value, replacer)` with a replacer function, called by role from the
     /// prelude's `jsonStringifyReplaced` (std/prelude/json/layout.velt).
     json_stringify_replaced => lang_hooks_json_replace, "jsonStringifyReplaced", sig(<A>(&mut A, &Fn((string, JsonValue) -> or_undefined(JsonValue))) -> string throws union(RangeError, TypeError));
