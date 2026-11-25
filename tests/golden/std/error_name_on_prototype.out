@@ -1,0 +1,17 @@
+R1 R1: r1 r1 R1: r1
+R2 R2: r2 r2 R2: r2
+R3 R3: r3 r3 R3: r3
+R4 R4: r4 r4 R4: r4
+R5 R5: r5 r5 R5: r5
+R6 R6: r6 r6 R6: r6
+R7 R7: r7 r7 R7: r7
+P P: pp pp P: pp
+setter called with Q
+TypeError TypeError: t t TypeError: t
+URIError URIError: u u URIError: u
+Renamed Renamed: renamed renamed Renamed: renamed
+InvalidCharacterError 5 InvalidCharacterError: dm
+AppError: m
+Later: late
+RangeError: kept -> RangeError: kept | After: changed
+custom stack

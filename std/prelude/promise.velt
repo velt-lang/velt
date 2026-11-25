@@ -17,10 +17,13 @@ export type PromiseSettledResult<T, E> =
 
 /** Thrown by `Promise.any` when no promise fulfills (JS: `AggregateError`). */
 export class AggregateError extends Error {
+  // Its `name`, as on its prototype in JavaScript: set with the class's initializers (in
+  // `Error`'s `#name`), never through the accessor a subclass may override.
+  name = "AggregateError";
+
   /** An error with the given `message`. */
   constructor(message: string) {
     super(message);
-    this.name = "AggregateError";
   }
 }
 

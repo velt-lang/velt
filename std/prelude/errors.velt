@@ -16,8 +16,13 @@ export class Error {
   message: string;
 
   // `name`, kept out of what `console.log` and `JSON.stringify` show (as in Node, where it is
-  // on the prototype unless assigned, and then shown by the stack's first line).
+  // on the prototype unless assigned, and then shown by the stack's first line). The built-in
+  // subclasses keep their own (`TypeError`'s "TypeError"): a constructor never assigns `name`
+  // through the accessor, which a program's subclass may override (#3792).
   #name: string = "Error";
+
+  // `stack`, once read or assigned: V8 writes its first line on the first read and keeps it.
+  #stack: string | undefined = undefined;
 
   /** An error with the given `message`. */
   constructor(message: string = "") {
@@ -38,12 +43,20 @@ export class Error {
   }
 
   /**
-   * The error's stack as Node starts it: `toString()`'s text (with the `name` a subclass
-   * assigned in its constructor). Velt keeps no call frames, so the `    at …` lines Node adds
-   * after it are not there.
+   * The error's stack as Node starts it: `toString()`'s text, written on the first read (with
+   * the `name` a subclass assigned in its constructor) and kept after, as V8 keeps it. Velt
+   * keeps no call frames, so the `    at …` lines Node adds after it are not there.
    */
   get stack(): string | undefined {
-    return errorText(this.name, this.message);
+    if (this.#stack === undefined) {
+      this.#stack = errorText(this.name, this.message);
+    }
+    return this.#stack;
+  }
+
+  /** Replaces the stack, as assigning Node's own `stack` property does. */
+  set stack(value: string | undefined) {
+    this.#stack = value;
   }
 
   /** `"<name>: <message>"`, just the name without a message, or just the message without a name. */
@@ -54,54 +67,72 @@ export class Error {
 
 /** A value is not of the expected type (thrown by the runtime in JavaScript). */
 export class TypeError extends Error {
+  // Its `name`, as on its prototype in JavaScript: set with the class's initializers (in
+  // `Error`'s `#name`), never through the accessor a subclass may override.
+  name = "TypeError";
+
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "TypeError";
   }
 }
 
 /** A number is outside the range of allowed values. */
 export class RangeError extends Error {
+  // Its `name`, as on its prototype in JavaScript: set with the class's initializers (in
+  // `Error`'s `#name`), never through the accessor a subclass may override.
+  name = "RangeError";
+
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "RangeError";
   }
 }
 
 /** Text could not be parsed. */
 export class SyntaxError extends Error {
+  // Its `name`, as on its prototype in JavaScript: set with the class's initializers (in
+  // `Error`'s `#name`), never through the accessor a subclass may override.
+  name = "SyntaxError";
+
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "SyntaxError";
   }
 }
 
 /** A name that does not exist was referenced. */
 export class ReferenceError extends Error {
+  // Its `name`, as on its prototype in JavaScript: set with the class's initializers (in
+  // `Error`'s `#name`), never through the accessor a subclass may override.
+  name = "ReferenceError";
+
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "ReferenceError";
   }
 }
 
 /** Kept for compatibility with JavaScript, which no longer throws it. */
 export class EvalError extends Error {
+  // Its `name`, as on its prototype in JavaScript: set with the class's initializers (in
+  // `Error`'s `#name`), never through the accessor a subclass may override.
+  name = "EvalError";
+
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "EvalError";
   }
 }
 
 /** A URI-handling function was given a malformed URI. */
 export class URIError extends Error {
+  // Its `name`, as on its prototype in JavaScript: set with the class's initializers (in
+  // `Error`'s `#name`), never through the accessor a subclass may override.
+  name = "URIError";
+
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "URIError";
   }
 }
