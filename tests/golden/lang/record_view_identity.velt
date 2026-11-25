@@ -1,0 +1,62 @@
+// check: no leaks
+// A record view (`x as Record<string, any>`) is its source, as in Node, where the cast is a
+// no-op (#3507): `===`, `!==`, `Object.is` and `Map`/`Set` keys between a view and its source,
+// for an object literal, a class instance, an array and a `Map`, and for a view passed to a
+// callee. Converting the view to `any` and back gives the same view. The Node twin is
+// record_view_identity.mjs.
+class Point {
+  x: number = 1;
+  y: number = 2;
+}
+
+function sameBag(bag: Record<string, any>, o: any): boolean {
+  return bag === o;
+}
+
+function toAny(v: Record<string, any>): any {
+  return v;
+}
+
+function row(label: string, o: any): void {
+  const r = o as Record<string, any>;
+  const m = new Map<any, number>();
+  m.set(o, 7);
+  const s = new Set<any>();
+  s.add(r);
+  const back = (r as any) as Record<string, any>;
+  console.log(
+    `${label}: === ${r === o} !== ${r !== o} is ${Object.is(r, o)} map ${m.get(r) ?? 0} ` +
+      `set ${s.has(o)} callee ${sameBag(r, o)} back ${back === r}`,
+  );
+}
+
+function main(): void {
+  row("literal", { a: 1, b: "x" });
+  row("class", new Point());
+  row("array", [1, 2, 3]);
+  row("map", new Map<string, number>());
+  const o: any = { k: 1 };
+  const r1 = o as Record<string, any>;
+  const r2 = o as Record<string, any>;
+  console.log(`two views: ${r1 === r2} ${Object.is(r1, r2)}`);
+  r1["k"] = 5;
+  console.log(`write through the view: ${o.k}`);
+  const other: any = { k: 1 };
+  console.log(`other object: ${(other as Record<string, any>) === o}`);
+  const pt: any = new Point();
+  console.log(`last reference: ${toAny(pt as Record<string, any>) === pt}`);
+  const p: any = new Proxy({ a: 1 }, {});
+  const pr = p as Record<string, any>;
+  const pa: any = pr;
+  console.log(`proxy: ${pa === p} ${pa.a}`);
+  const pv: any = new Point();
+  console.log((pv as Record<string, any>) as any);
+  const o2: any = { q: 1 };
+  const list: Record<string, any>[] = [o2 as Record<string, any>];
+  const la: any = list;
+  console.log(`through an any element: ${la[0] === o2}`);
+  const xs: any = [1, 2];
+  console.log(`isArray: ${Array.isArray((xs as Record<string, any>) as any)}`);
+}
+
+main();

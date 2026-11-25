@@ -6,14 +6,16 @@
 // `parseJsonTop` (std/prelude/json/json.velt).
 
 import { StringBuilder } from "velt/text/string_builder";
+import { modifies } from "velt/lang/intrinsics/decorators";
 import {
   appendJsonNumber,
   appendJsonString,
   appendJsonUint,
   appendJsonValue,
 } from "velt/encoding/json/append";
-import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any";
+import { checkJsonTop, jsonPresent, writeJsonAny, writeJsonResult } from "velt/encoding/json/any";
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
+import { recordViewIs } from "velt/lang/intrinsics";
 import { Reader } from "velt/encoding/json/reader";
 import {
   readerFinish,
@@ -59,12 +61,10 @@ struct RowsU8 {
   v: u8;
 }
 
-// The runtime's reader over a native driver's rows (its cursor's address): the reader's address.
-declare function velt_rt_json_reader_over_cursor(cursor: u64, flags: u32, maxDepth: u32): u64;
-
 import { recordFromMap } from "velt/lang/hooks/record";
 
 /** Appends what `JSON.stringify(value)` writes to `w` (one function per type, generated). */
+@modifies("w")
 export declare generated("velt/encoding/json/generate/write") function writeJson<T>(
   w: StringBuilder,
   value: T,
@@ -74,6 +74,7 @@ export declare generated("velt/encoding/json/generate/write") function writeJson
  * `writeJson` of the value `JSON.stringify` is given: a dynamic value without a JSON form is a
  * `TypeError` there, where it is `null` in an array.
  */
+@modifies("w")
 export declare generated("velt/encoding/json/generate/write") function writeJsonTop<T>(
   w: StringBuilder,
   value: T,
@@ -103,19 +104,21 @@ export declare generated("velt/encoding/json/generate/read") function parseJsonT
 /**
  * What velt/db's `decodeRows<T>` / `decodeRow<T>` return for a native driver's row cursor (its
  * address): read by column when `T` is a row of plain fields or an array of them (velt/db's
- * generate/columns.velt), else decoded as `JSON.parse<T>` decodes the rows' JSON text, from the
- * runtime's reader over the cursor. A row that does not fit throws `JsonError`.
+ * generate/columns.velt), else decoded as `JSON.parse<T>` decodes the rows' JSON text, by a
+ * reader over the rows (rows_reader.velt). A row that does not fit throws `JsonError`.
  */
 export declare generated("velt/encoding/json/generate/read") function parseJsonCursor<T>(
   cursor: u64,
   flags: i64,
   maxDepth: i64,
+  overCursor: (cursor: u64, flags: u32, maxDepth: u32) => Reader,
 ): T throws JsonError;
 
 /**
  * Reads one `T` with `r` (one function per type, generated): a `JsonFail` saying what was
  * expected where, when the value is not a `T`.
  */
+@modifies("r")
 export declare generated("velt/encoding/json/generate/read") function readJson<T>(
   r: Reader,
 ): T throws JsonFail;
@@ -123,4 +126,33 @@ export declare generated("velt/encoding/json/generate/read") function readJson<T
 /** A recursive object type's value seen again while it is being written. */
 function jsonCircular(): never {
   panic("JSON.stringify: converting circular structure to JSON (an object contains itself)");
+}
+
+/**
+ * How many values that can contain themselves the typed writers are inside. The cycle check
+ * (velt/reflect's visits) starts past `JSON_SHALLOW` of them: a cycle repeats, so it is still found,
+ * a few levels deeper, and a value nested less deep, as most data is, pays for the count only.
+ */
+const JSON_DEPTH = new ThreadLocal<u64>(0);
+const JSON_SHALLOW: u64 = 16;
+
+/** Starts writing a value that can contain itself, whose identity is `id`. */
+function jsonEnter(id: u64): void {
+  const d = JSON_DEPTH.get();
+  JSON_DEPTH.set(d + 1);
+  if (d >= JSON_SHALLOW && !beginVisit(id)) {
+    jsonCircular();
+  }
+}
+
+/** Ends what `jsonEnter` started. */
+function jsonLeave(): void {
+  const d = JSON_DEPTH.get();
+  if (d == 0) {
+    return;
+  }
+  JSON_DEPTH.set(d - 1);
+  if (d - 1 >= JSON_SHALLOW) {
+    endVisit();
+  }
 }

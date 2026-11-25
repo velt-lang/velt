@@ -11,7 +11,7 @@ use super::{cint, unit, FnLower};
 use crate::vir::{Operand, Place, Ty, STR_AGG};
 
 /// Initial capacity of a `console.log` line builder: most lines fit without growing.
-const LINE_CAP: u64 = 64;
+pub(super) const LINE_CAP: u64 = 64;
 
 impl FnLower<'_, '_> {
     /// Write a literal text to `stream`.
@@ -41,6 +41,20 @@ impl FnLower<'_, '_> {
             _ = hooks::stdout_written(self).emit(self);
         }
         let stream = cint(stream, Ty::U32);
+        // A literal format string with specifiers (console_format.rs, #3662).
+        let fmt = match (args.first(), vals.first()) {
+            (Some(a), Some(_)) if vals.len() > 1 => velt_sema::console_format::literal_text(a)
+                .filter(|s| s.contains('%'))
+                .map(str::to_string),
+            _ => None,
+        };
+        let vals = match fmt {
+            Some(fmt) => match self.print_with_format(&stream, &fmt, vals) {
+                Ok(()) => return unit(),
+                Err(vals) => vals,
+            },
+            None => vals,
+        };
         let direct = |lw: &Self, t: TyId| lw.writes_directly(t) || lw.option_scalar(t).is_some();
         if vals.iter().all(|&(_, t)| direct(self, t)) {
             self.print_direct(stream, vals);
@@ -51,7 +65,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Types the fast path writes without the format glue.
-    fn writes_directly(&self, t: TyId) -> bool {
+    pub(super) fn writes_directly(&self, t: TyId) -> bool {
         matches!(
             self.cx.kind(t),
             TyKind::Int(_)
@@ -151,7 +165,7 @@ impl FnLower<'_, '_> {
 
     /// A number in JS formatting and the byte after it, through std's writers
     /// (std/lang/hooks/number_text.velt, number_write.velt).
-    fn write_number(&mut self, stream: Operand, v: Operand, t: TyId, end: u8) {
+    pub(super) fn write_number(&mut self, stream: Operand, v: Operand, t: TyId, end: u8) {
         let (s, from) = (ty::U32::arg(stream), self.cx.ty(t));
         let e = ty::U8::arg(cint(end as i128, Ty::U8));
         let c = Construct::Format;

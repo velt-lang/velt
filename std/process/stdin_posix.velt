@@ -1,5 +1,6 @@
-// velt/process (internal): reading standard input on macOS and Linux (`#stdin-sys`' native
-// variant): `read` on fd 0, again after `EINTR`.
+// velt/process (internal): reading standard input on macOS, Linux and WASI (`#stdin-sys`' native
+// and wasi variant): `read` on fd 0, again after `EINTR`. Under WASI `lastOsError()` after
+// `keepOsError()` gives wasi-libc's error as its Linux number (std/ffi/errno_wasi.velt).
 
 import { IoError } from "velt/io/error";
 import { Ptr } from "velt/ffi/ptr";

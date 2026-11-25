@@ -1,0 +1,22 @@
+self {"v":1} 1 0
+sub {"v":1,"w":2} 1 0
+sub as base {"v":1,"w":2} 1 0
+data {"data":3,"kind":"data"} 1 -1
+outer {"x":4} 1 -3
+holder {"self":{"v":1,"w":2},"list":[{"v":1},{"v":1,"w":2}],"data":{"data":3,"kind":"data"},"outer":{"x":4}} 5 4,1,1,-1,-3
+array [{"v":1},{"v":1,"w":2},{"v":1}] 3 1,1,1
+keys {"self":{"v":1},"list":[{"v":1}]} 2 4,1
+indent {
+ "a": {
+  "v": 1,
+  "w": 2
+ }
+} 1 1
+any result {"x":4} 1 -4
+union result [{"x":4},"text"] 2 -5,-5
+option result [{"x":4},null] 2 -6,-6
+dynamic {"x":4} 1 -3
+dynamic sub {"v":1,"w":2} 1 0
+date result {} 1 -7
+proxy result [{"y":5},{"y":50},{}] 3 -8,-9,-11
+any proxy result {"y":5} 1 -10

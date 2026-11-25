@@ -168,15 +168,16 @@ function reported(model: Model, id: i64, out: Output): bool {
 }
 
 /**
- * The generator of `parseJsonCursor<T>(cursor: u64, flags: i64, maxDepth: i64): T throws
+ * The generator of `parseJsonCursor<T>(cursor, flags, maxDepth, overCursor): T throws
  * JsonError`: a native driver's rows (velt/db's `decodeRows`), read by column when `T` is a row
  * of plain fields or an array of them (velt/db/generate/columns), else by the reader over the
- * runtime's row reader, as `parseJsonTop` reads text.
+ * rows that `overCursor` makes (rows_ops.velt's `readerOverCursor`), as `parseJsonTop` reads text.
+ * velt/db passes it, so only a program that decodes rows loads the rows reader.
  */
 export function parseJsonCursor(req: InstanceRequest, out: Output): void {
   const model = req.model;
   const id = req.args[0];
-  const [cursor, flags, depth] = [req.params[0], req.params[1], req.params[2]];
+  const [cursor, flags, depth, over] = [req.params[0], req.params[1], req.params[2], req.params[3]];
   if (reported(model, id, out)) {
     return;
   }
@@ -208,10 +209,8 @@ export function parseJsonCursor(req: InstanceRequest, out: Output): void {
     }
     return;
   }
-  // The runtime's reader reads the cursor's rows as a document.
-  out.line(
-    `const r = Reader.overRows(velt_rt_json_reader_over_cursor(${cursor}, ${flags} as u32, ${depth} as u32));`,
-  );
+  // The rows reader reads the cursor's rows as a document.
+  out.line(`const r = ${over}(${cursor}, ${flags} as u32, ${depth} as u32);`);
   out.line(`try {`);
   readInto(out, model, id, "v");
   out.line(`if (!readerFinish(r)) { throw jsonFailed("end of input"); }`);

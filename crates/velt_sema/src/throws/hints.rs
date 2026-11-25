@@ -18,7 +18,7 @@ impl Ctx<'_> {
             if !self.collected(d) {
                 continue;
             }
-            let Some(t) = self.fn_info(d).throws else {
+            let Some(t) = self.fn_throws(d) else {
                 continue;
             };
             let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())
@@ -59,7 +59,7 @@ impl Ctx<'_> {
                 continue;
             }
             todo.extend(f.throw_srcs.iter().cloned());
-            if let Some(t) = f.throws {
+            if let Some(t) = self.fn_throws(d) {
                 grew |= self.add_recursion_hint(d, t);
             }
         }

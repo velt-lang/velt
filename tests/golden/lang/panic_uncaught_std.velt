@@ -1,7 +1,13 @@
 // An error thrown inside the standard library reports its dynamic class (`IoError`, though the
 // function below declares the base `Error`), Node's message (`CODE: description, syscall
 // 'path'`) and the location of the user's call into the standard library, not a line in std.
+import { cwd } from "velt/process";
 import { removeSync } from "velt/fs";
+
+/** The message as Node prints it on Linux: on Windows it names the path absolute, with `\`. */
+function portable(m: string): string {
+  return m.split(`${cwd()}\\`).join("").split("\\").join("/");
+}
 
 function cleanUp(path: string): void throws Error {
   removeSync(path);
@@ -11,7 +17,7 @@ function main(): void {
   try {
     cleanUp("velt-missing-file-a");
   } catch (e) {
-    console.log(`caught: ${e.message}`);
+    console.log(`caught: ${portable(e.message)}`);
   }
   cleanUp("velt-missing-file-b");
   console.log("unreachable");

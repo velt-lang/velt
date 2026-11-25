@@ -96,7 +96,7 @@ mod tests {
     fn via_json(v: f64) -> Cell<'static> {
         let mut text = Vec::new();
         match v.is_finite() {
-            true => crate::fmt::push_f64(&mut text, v),
+            true => velt_text::fmt::push_f64(&mut text, v),
             false => text.extend_from_slice(b"null"),
         }
         match parse_params(&text).unwrap() {

@@ -1,0 +1,14 @@
+// A `Symbol` parameter of an arrow inside an arrow parameter's default value turns `Symbol.for`
+// keys off for the module too (Node prints `undefined`).
+type S = { for(s: string): string };
+const R = Symbol.for("k");
+(globalThis as Record<symbol, number | undefined>)[R] = 7;
+const run = (
+  make = (Symbol: S): number | undefined => {
+    const K = Symbol.for("k");
+    return (globalThis as unknown as Record<string, number | undefined>)[K];
+  },
+): void => {
+  console.log(make({ for: (s: string): string => s }));
+};
+run();

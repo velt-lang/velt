@@ -11,7 +11,8 @@ use crate::hir::{self, DefId, TyId, TyKind};
 
 /// The roots: the program's own definitions (its root module's, whether or not in std), and the
 /// free functions lowering looks up by name ([`seed_std`]). Methods are lowering's only where it
-/// has a value of their type: live with it. A dependency package's definitions are live, as std's,
+/// has a value of their type: live with it, those that only a call reaches where one is
+/// ([`super::class_methods`]). A dependency package's definitions are live, as std's,
 /// once live code reaches them (they are checked whole either way), but for the functions C calls
 /// (`@export`), which lowering builds whatever the program calls: so what a package can do and
 /// the program never asks of it (`http-server`'s TLS server for options without `tls`) loads no
@@ -35,6 +36,8 @@ pub(super) fn seed(cx: &mut Ctx) {
         };
         let of_live = any_live_type && owner.is_some_and(|o| cx.lazy.live.adts.contains(&o));
         let d = DefId(i as u32);
+        // A method made for a live class is live with it, unless only a call names it.
+        let of_live = of_live && owner.is_some_and(|o| super::class_methods::live_with(cx, o, d));
         if program[module] || of_live || slot || exported.contains(&d) {
             mark(cx, d);
         }

@@ -2,7 +2,8 @@
 //! parameters one by one, as TypeScript infers it: `wrap((rq: Ctx, a: number, b: string) => …)`
 //! for `wrap<A extends unknown[]>(f: (rq: Ctx, ...args: A) => R)` gives `A = [number, string]`.
 //! A function type whose rest parameter is a tuple is those parameters (`Types::intern`), so the
-//! callback is checked as `(rq: Ctx, a: number, b: string) => R`.
+//! callback is checked as `(rq: Ctx, a: number, b: string) => R`. One with fewer parameters
+//! than those before the rest (`() => …`, a function declared so) gives `A = []` (#3296).
 
 use velt_syntax::ast;
 
@@ -57,13 +58,21 @@ impl FnCx<'_, '_> {
                 ..
             } = self.cx.ty.kind(t).clone()
             {
-                if ap.len() >= fixed && !ap.iter().any(|&t| self.cx.ty.has_error(t)) {
-                    known[k] = Some(self.cx.ty.intern(TyKind::Tuple(ap[fixed..].to_vec())));
+                // With fewer parameters than the fixed ones the rest is empty (#3296).
+                if !ap.iter().any(|&t| self.cx.ty.has_error(t)) {
+                    let rest = ap.get(fixed..).unwrap_or_default().to_vec();
+                    known[k] = Some(self.cx.ty.intern(TyKind::Tuple(rest)));
                 }
             }
             return;
         };
-        if !type_params.is_empty() || params.len() < fixed {
+        if !type_params.is_empty() {
+            return;
+        }
+        // Fewer parameters than the fixed ones (`() => …`): the rest is empty, as in TypeScript,
+        // and the arrow is called with the arguments it takes (#3296).
+        if params.len() < fixed {
+            known[k] = Some(self.cx.ty.intern(TyKind::Tuple(vec![])));
             return;
         }
         // Each one plain: an optional or defaulted one, or the arrow's own rest parameter, has a

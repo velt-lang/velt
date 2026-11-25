@@ -30,9 +30,9 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
         if let Some(b) = &g.bound {
             for &m in &g.members {
                 let t = super::groups::member_bound(cx, b, m);
-                // A std member, in a later unit, already has it: nothing to write.
-                if cx.fn_info(m).throws != t {
-                    cx.fn_info_mut(m).throws = t;
+                // A finished unit's member keeps it beside it (`units::raised`).
+                if cx.fn_throws(m) != t {
+                    cx.raise_throws(m, t);
                 }
             }
         }
@@ -285,10 +285,11 @@ fn push_member(out: &mut Vec<(TyId, u64)>, m: TyId, bits: u64) {
 }
 
 fn set_throws(cx: &mut Ctx, d: DefId, t: Option<TyId>) -> bool {
-    if cx.fn_info(d).throws == t {
+    if cx.fn_throws(d) == t {
         return false;
     }
-    cx.fn_info_mut(d).throws = t;
+    // A finished unit's function keeps it beside it (`units::raised`).
+    cx.raise_throws(d, t);
     true
 }
 
@@ -341,7 +342,10 @@ fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<T
             visited.leave();
             return acc;
         }
-        ThrowSrc::Call(g, targs, _) => (cx.try_fn(*g).and_then(|f| f.throws), targs.clone()),
+        // A finished unit's function as the app's passes raised it (`units::raised`).
+        ThrowSrc::Call(g, targs, _) => {
+            (cx.try_fn(*g).and_then(|_| cx.fn_throws(*g)), targs.clone())
+        }
         ThrowSrc::Slot {
             iface, slot, args, ..
         } if super::slot_clause(cx, *iface, *slot).is_some() => {
@@ -364,7 +368,7 @@ pub(super) fn slot_group_final(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<
         .slot_group(iface, slot)
         .and_then(|g| groups.list[g].members.first().copied());
     let t = match member {
-        Some(m) => cx.fn_info(m).throws,
+        Some(m) => cx.fn_throws(m),
         None => bound_of_slot(cx, iface, slot),
     };
     // A generic group error type is reported once, where it is inferred (checks.rs).

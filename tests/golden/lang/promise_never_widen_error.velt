@@ -1,0 +1,10 @@
+// A promise that only rejects converts to a promise of another value type (#3644), but its
+// error type still has to fit: an `A` rejection is no `B` one.
+class A extends Error {}
+class B extends Error {}
+async function main(): Promise<void> {
+  const a: Promise<never, A> = Promise.reject(new A("a"));
+  const b: Promise<void, B> = a;
+  await b;
+}
+main();

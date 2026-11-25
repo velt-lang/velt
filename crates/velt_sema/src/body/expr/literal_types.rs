@@ -64,8 +64,9 @@ impl FnCx<'_, '_> {
                     value,
                     suffix: None,
                 },
+                // Not `i64`, an unsuffixed literal's own type (from 2^53 on, an `f64`).
                 Some(LitValue::Int(it, _)),
-            ) => {
+            ) if *it != crate::hir::IntTy::I64 => {
                 let name = crate::types::int_name(*it);
                 ast::SignedLit {
                     lit: ast::Lit::Int {

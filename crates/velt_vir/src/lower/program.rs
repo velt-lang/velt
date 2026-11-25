@@ -40,6 +40,7 @@ impl<'h> Cx<'h> {
             std_fns: std::cell::OnceCell::new(),
             prelude_defs: std::cell::OnceCell::new(),
             weak_targets: std::cell::OnceCell::new(),
+            to_primitive_classes: std::cell::OnceCell::new(),
             uses_placement: false,
             cell_checks: false,
             heap_hooks: false,

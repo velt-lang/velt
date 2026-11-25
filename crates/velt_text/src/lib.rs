@@ -72,7 +72,7 @@ impl Out for velt_native::StrBuf {
     }
 }
 
-/// Bytes (binary rows, [`rows`]) written into a Velt `u8[]` itself.
+/// Bytes written into a Velt `u8[]` itself.
 #[cfg(feature = "sdk")]
 impl Out for velt_native::Array<u8> {
     #[inline]

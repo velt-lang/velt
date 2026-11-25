@@ -141,7 +141,7 @@ impl<S: StateStore> Drop for Compiled<S> {
         if self.live {
             let (drop, state) = (self.drop, self.state.ptr());
             // SAFETY: cancelled before completion: the state owns live locals.
-            self.locals.drop_with(|| unsafe { drop(state) });
+            unsafe { drop(state) };
         }
     }
 }

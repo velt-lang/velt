@@ -139,7 +139,6 @@ unsafe fn find(entries: &[(VeltStr, Box<AnyValue>)], key: *const VeltStr) -> Opt
 /// `env` is a live environment and `key` a valid string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_get(env: *const u8, key: *const VeltStr) -> *const u8 {
-    reach(env);
     with(|t| match t.get(&(env as usize)) {
         Some(p) => match find(&p.entries, key) {
             Some(i) => &*p.entries[i].1 as *const AnyValue as *const u8,
@@ -156,7 +155,6 @@ pub unsafe extern "C" fn velt_rt_fnprop_get(env: *const u8, key: *const VeltStr)
 /// `env` is a live counted environment, `key` a valid string, `v` an owned `any`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_set(env: *mut u8, key: *const VeltStr, v: *const u8) {
-    reach(env);
     let value = *(v as *const AnyValue);
     let identity = is_identity(env);
     let old = with(|t| {
@@ -191,7 +189,6 @@ pub unsafe extern "C" fn velt_rt_fnprop_set(env: *mut u8, key: *const VeltStr, v
 /// `env` is a live environment and `key` a valid string.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_delete(env: *const u8, key: *const VeltStr) -> u8 {
-    reach(env);
     let gone = with(|t| {
         let p = t.get_mut(&(env as usize))?;
         let i = find(&p.entries, key)?;
@@ -213,7 +210,6 @@ pub unsafe extern "C" fn velt_rt_fnprop_delete(env: *const u8, key: *const VeltS
 /// `env` is a live environment.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_len(env: *const u8) -> u64 {
-    reach(env);
     with(|t| t.get(&(env as usize)).map_or(0, |p| p.entries.len() as u64))
 }
 
@@ -224,7 +220,6 @@ pub unsafe extern "C" fn velt_rt_fnprop_len(env: *const u8) -> u64 {
 /// `env` is a live environment with more than `i` properties; `out` is writable.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fnprop_key(env: *const u8, i: u64, out: *mut VeltStr) {
-    reach(env);
     let name = with(|t| {
         t.get(&(env as usize))
             .and_then(|p| p.entries.get(i as usize))
@@ -242,8 +237,9 @@ const EMPTY_BLOCK: u64 = 32;
 /// in every task. Its entries change no count (it lives as long as the process), so any thread
 /// may hold it, and a value holding it takes it along to another task: the function there is
 /// the same, for `===` and `Map` keys too. Its properties are not atomic, so they are module
-/// state (rt_abi "Module state"): reaching them takes the module lock, as an access of a
-/// module-level `let` does, and the task keeps it in its polls from then on.
+/// state (rt_abi "Module state"): the code reaching them takes the module lock first, as an
+/// access of a module-level `let` does, and the task keeps it in its polls from then on
+/// (std/lang/hooks/sched_module.velt `touch`; this table's lock is taken after it).
 type Identities = ByAddr<usize>;
 
 static IDENTITIES: Mutex<Identities> = Mutex::new(HashMap::with_hasher(BuildHasherDefault::new()));
@@ -333,16 +329,6 @@ unsafe extern "C" fn identity_clone(env: *mut u8) -> *mut u8 {
 /// pointer, the many-threads check, has nothing to check either).
 unsafe extern "C" fn identity_transfer(env: *mut u8) -> *mut u8 {
     (env as usize & !1) as *mut u8
-}
-
-/// Before the properties of the function whose environment is `env` are reached: a declared
-/// function's are module state, so the module lock comes first (the table's lock is taken
-/// after it, never the other way round).
-#[inline]
-unsafe fn reach(env: *const u8) {
-    if is_identity(env) {
-        crate::task::local::module_touch();
-    }
 }
 
 /// The drop entry of an environment with properties: with its last reference the entry goes

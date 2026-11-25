@@ -31,7 +31,12 @@ export class Type {
   arms: i64[] = [];
   /** Fields of objects, classes and structs, inherited ones first. */
   fields: Field[] = [];
-  /** A class's base class (-1: none) and the classes of the program that extend it. */
+  /**
+   * A class's base class (-1: none) and the classes of the program that extend it, also those
+   * that extend a `map` or a `set`, directly or not. A generic subclass is listed when each of
+   * its type parameters is solved from the base type's arguments; one with a parameter that does
+   * not appear there (`class P<T> extends Map<string, number> { x: T }`) is not.
+   */
   base: i64 = -1;
   subclasses: i64[] = [];
   /** Members of an enum. */

@@ -185,6 +185,9 @@ pub(crate) struct Lazy {
     /// The program runs on the executor in Velt (a native target, `CheckOptions::native_executor`):
     /// live code that runs something on it demands [`SCHED_HOOKS`].
     pub native_executor: bool,
+    /// The build is for the `velt dev` JIT (`CheckOptions::jit`): a `with` demands the hooks that
+    /// count its `Mutex` (`Construct::MutexHeld`).
+    pub jit: bool,
     /// Per module: how it is checked (empty while off).
     modules: Vec<Mode>,
     /// Per class: the classes that extend it directly.
@@ -242,6 +245,7 @@ impl Lazy {
             on: std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
             check_all: false,
             native_executor: true,
+            jit: false,
             modules: vec![],
             subclasses: FxHashMap::default(),
             user_record: false,
@@ -492,6 +496,9 @@ pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_module_state),
     velt_common::std_hook!(sched_module_block),
     velt_common::std_hook!(sched_module_ready),
+    velt_common::std_hook!(sched_module_touch),
+    velt_common::std_hook!(sched_module_with),
+    velt_common::std_hook!(sched_module_with_end),
     velt_common::std_hook!(sched_task_id),
 ];
 
@@ -725,7 +732,7 @@ mod tests;
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Lazy {
-        on, check_all, native_executor, modules, subclasses, user_record, generic_any,
+        on, check_all, native_executor, jit, modules, subclasses, user_record, generic_any,
         record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, dyn_held,
         dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable, module_hooks,
         units_live_memo,

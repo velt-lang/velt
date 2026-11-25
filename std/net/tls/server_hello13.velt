@@ -6,6 +6,7 @@ import { ByteWriter } from "velt/net/tls/byte_writer";
 import { SERVER_HELLO } from "velt/net/tls/client_handshake";
 import { EXT_KEY_SHARE, EXT_SUPPORTED_VERSIONS } from "velt/net/tls/client_hello";
 import { HRR_RANDOM } from "velt/net/tls/server_hello";
+import { EXT_PRE_SHARED_KEY } from "velt/net/tls/client_hello_parse";
 import {
   AES_128_GCM_SHA256,
   AES_256_GCM_SHA384,
@@ -35,13 +36,17 @@ export function chooseSuite(offered: usize[], hasAes: bool): usize {
   );
 }
 
-/** The ServerHello message for `suite` with the key share `share` of `group`. */
+/**
+ * The ServerHello message for `suite` with the key share `share` of `group`, and pre_shared_key
+ * selecting the client's PSK `psk` when it is not negative (a resumption).
+ */
 export function serverHello13(
   random: u8[],
   sessionId: u8[],
   suite: usize,
   group: usize,
   share: u8[],
+  psk: i64 = -1,
 ): u8[] {
   const w = new ByteWriter();
   w.u8(SERVER_HELLO);
@@ -64,6 +69,11 @@ export function serverHello13(
   w.put(share);
   w.end(k, 2);
   w.end(ks, 2);
+  if (psk >= 0) {
+    w.u16(EXT_PRE_SHARED_KEY);
+    w.u16(2);
+    w.u16(psk as usize);
+  }
   w.end(exts, 2);
   w.end(b, 3);
   return w.bytes;
