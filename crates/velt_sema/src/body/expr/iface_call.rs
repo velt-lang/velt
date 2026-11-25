@@ -207,10 +207,14 @@ impl FnCx<'_, '_> {
         let kind = H::Call { callee, args: all };
         let call = self.mk(kind, ret, span);
         // `t.step(1)` with `T extends Fluent` and `step(): this`: the result is `t` itself, as a
-        // `T` (`crate::hand_back`).
-        if s.on_param && crate::hand_back::iface_returns_this(self.cx, s.iface, &s.method.name) {
+        // `T` (`crate::hand_back`). So it is on a value of an interface that extends the one
+        // declaring it (`Totalled extends Fluent`), as that interface; on a `Fluent` value the
+        // slot's result is already the receiver's type.
+        if crate::hand_back::iface_returns_this(self.cx, s.iface, &s.method.name) {
             let to = self.recv_type_of(&call);
-            return self.hand_back_call(call, None, to);
+            if s.on_param || !self.cx.same_ty(to, call.ty) {
+                return self.hand_back_call(call, None, to);
+            }
         }
         call
     }
