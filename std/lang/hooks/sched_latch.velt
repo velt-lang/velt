@@ -2,7 +2,10 @@
 // `velt_rt_latch_new` / `_free` / `_open` / `_wait`'s jobs, the waking half of `new Promise`
 // (std/lang/promise/settle.velt keeps the settled value). Opening queues a waiter of the task
 // being polled in its microtask queue at once, with credit (sched_micro.velt), as Node queues a
-// promise's reactions inside `resolve`; other waiters are woken.
+// promise's reactions inside `resolve`; other waiters are woken. A waiter that is a started
+// promise of that task, at rest, is not queued but run on at once (`settleNow`): the function of
+// a `new Promise` takes its settlement and finishes, so the promise is settled when `resolve`
+// returns, as in Node, and whoever awaits it later finds it so.
 //
 // A latch: its reference count (the handle, each wait), whether it is open, and its waits (a
 // list linked through them). A wait is a heap future (rt_abi_async.md §1): its header, then its
@@ -16,6 +19,7 @@ import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as lk from "./sched_lock";
+import * as nd from "./sched_node";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
@@ -144,6 +148,10 @@ function openAs(a: usize, lkind: u32): void {
   let more: usize = 0;
   let n: usize = 0;
   let cap: usize = 0;
+  // The latch's one waiter, when it is a promise of the task being polled that is at rest: run
+  // on after the lock is given back (`settleNow`). Several waiters are queued in their order.
+  const alone = w !== 0 && m.ld(w + W_NEXT) === 0;
+  let own: usize = 0;
   while (w !== 0) {
     const next = m.ld(w + W_NEXT);
     m.st(w + W_NEXT, 1);
@@ -151,7 +159,11 @@ function openAs(a: usize, lkind: u32): void {
     m.st(w + W_WAKER, 0);
     if (k !== 0) {
       if (current !== 0 && wk.taskOf(k) === current) {
-        m.st(w + W_TICKET, micro.enqueue(current, k, true) as usize);
+        if (alone && k !== current && atRest(k)) {
+          own = k;
+        } else {
+          m.st(w + W_TICKET, micro.enqueue(current, k, true) as usize);
+        }
       } else if (!shared) {
         m.wakeOwned(k);
       } else if (first === 0) {
@@ -176,9 +188,64 @@ function openAs(a: usize, lkind: u32): void {
     w = next;
   }
   unlock(a, lkind);
+  if (own !== 0) {
+    settleNow(current, own);
+  }
   if (first !== 0) {
     wakeAfter(first, more, n, cap);
   }
+}
+
+/**
+ * Is started promise `n` at rest: not running (a `resolve` called from inside its own poll), not
+ * about to be run or resumed by something else (woken, yielding, under a catch's adoption), not
+ * given up by its owner? Only then does the opening run it on; any other waiter is queued.
+ */
+@inline("always")
+function atRest(n: usize): bool {
+  const busy =
+    nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED | nd.CATCHES | nd.ADOPTED | nd.YIELDING;
+  return (m.load32(n + nd.N_FLAGS) & (nd.STARTED | busy)) === nd.STARTED;
+}
+
+/**
+ * Runs promise `n` of task `task` (being polled here) on from its wait on the latch just opened,
+ * with the waker reference the wait held, in place of a queue entry for it.
+ *
+ * For the function of a `new Promise` (std/lang/promise/settle.velt `settlement`), which waits
+ * for nothing else: it takes its settlement and finishes, so the promise is settled before
+ * `resolve` returns, and the reactions of those who await it are queued now, in the order they
+ * started waiting, as Node queues them inside `resolve`, each at the back of the queue (the task
+ * has no credit to give then: a waiter an entry resumed takes its credit with its `await`'s
+ * step, before any of its code, and so any `resolve`, runs). With an entry of its own, the
+ * settling waited for that entry's turn: whoever came to await the promise meanwhile took the
+ * entry's place and ran ahead of everything queued since the `resolve`, where Node queues a
+ * reaction attached to a settled promise behind it (#3775), and those already waiting on a
+ * shared promise were queued a turn late when another awaiter came in between.
+ *
+ * For a function that awaits such a promise as its owner (it polls the promise's function with
+ * its own waker, sched_node.velt `pollNode`), the run takes the settlement in and stops at the
+ * `await`'s own step, which is queued at the back as the entry would have been: its code goes
+ * on in the same turn as before.
+ */
+@noInline
+function settleNow(task: usize, n: usize): void {
+  // The task's await word raised, as for a started promise's first run (sched_node.velt
+  // `firstRun`): synchronous code goes on after this, so an `await` in `n` takes its step, and
+  // what the settling wakes is queued and not left to a poll that would come first only if
+  // nothing else ran (sched_all.velt `allWakeByRef`).
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
+  // A run of `n`'s own, also when `resolve` was called from code an owner is polling (an
+  // adoption, sched_node.velt `pollNode`): with that mark left set, `n` could not poll the
+  // promise it awaits itself, which would be left without an awaiter for `n`'s next run
+  // (sched_node_lost.velt `nested`), and no entry is queued here to bring that run about.
+  const e = t.here();
+  const adopting = m.ld(e + t.E_ADOPTING);
+  m.st(e + t.E_ADOPTING, 0);
+  nd.run(task, n, false, 1);
+  m.st(e + t.E_ADOPTING, adopting);
+  m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
+  nd.release(n);
 }
 
 /**
