@@ -1,0 +1,26 @@
+// The text of a promise held as `any` (#924 step 3), as in Node: `String`, a template and `+`
+// give `Object.prototype.toString`'s `[object Promise]`, as do its `toString()` and
+// `Object.prototype.toString.call`; its `valueOf()` is itself; other operators take that text
+// (`-` is `NaN`); `JSON.stringify` writes it as `{}`; `console.log` shows its state, before and
+// after it settles. The same for a promise read from a field.
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+
+async function main(): Promise<void> {
+  const v: any = later(1);
+  console.log(String(v), `${v}`, "p: " + v);
+  console.log(v.toString(), Object.prototype.toString.call(v));
+  console.log(v.valueOf() === v);
+  console.log(v + 1, v - 1, v == "[object Promise]", v < 1);
+  const w: any = "x";
+  console.log(w + v);
+  console.log(JSON.stringify(v), JSON.stringify({ p: v }));
+  console.log(v);
+  await v;
+  console.log(v);
+  const o: any = { inner: later(14) };
+  console.log(`${o.inner}`, String(o.inner));
+  await o.inner;
+}
+main();

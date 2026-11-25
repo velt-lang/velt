@@ -1,0 +1,20 @@
+literal 14 4
+class 2
+interface 21
+cast 15
+object function true
+then 14
+written 6
+optional undefined 3
+void undefined
+caught no
+p,n
+array 2
+tuple 1 2
+any[] 5 2
+map 3
+Reflect.get 4
+values 4 1
+entries inner 4
+proxy 5
+trap 6

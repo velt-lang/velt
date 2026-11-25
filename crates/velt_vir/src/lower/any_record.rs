@@ -5,8 +5,9 @@
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
-use super::any_glue::{Ready, OBJECT_PROTO};
+use super::any_glue::OBJECT_PROTO;
 use super::any_member::{SLOT_APPLY, ST_OK, ST_UNSUPPORTED};
+use super::any_ready::Ready;
 use super::glue::VtableKey;
 use super::operand::proj;
 use super::{cint, FnLower};
