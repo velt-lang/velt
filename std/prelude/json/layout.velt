@@ -2,15 +2,10 @@
 // is `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
 // the indent `jsonGapOfString` made of a string `space` (empty: no whitespace).
 
-import {
-  JSON_CALLBACK_DEPTH,
-  jsonCallbackTooDeep,
-  pushRevived,
-  setRevived,
-} from "velt/encoding/json/value_ops";
 import { JSON } from "velt/prelude/json/json";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { propertyList, relayout } from "velt/encoding/json/relayout";
+import { hookCall } from "velt/lang/intrinsics";
 
 // `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
 // `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
@@ -19,62 +14,17 @@ import { propertyList, relayout } from "velt/encoding/json/relayout";
  * A replacer function of `JSON.stringify(value, replacer, space)`: called with each key and the
  * JSON form of its value (the value passed itself under the key `""` first), it returns the
  * value to write there, or `undefined` to leave a member out (an array element is then `null`).
+ * As in JavaScript, a value's `toJSON(key)` runs just before the replacer is called for its
+ * key, so the replacer of a parent sees its members before their `toJSON` (a `Date` as `{}`).
  */
 export type JsonReplacer = (key: string, value: JsonValue) => JsonValue | undefined;
 
-// `JSON.stringify(value, replacer)` (the compiler calls it): `text` is `JSON.stringify(value)`,
-// which `replacer` rewrites as JavaScript applies it, from the top: its result for a key is
-// what is written there, and the members of that result are replaced in turn. `undefined` for
+// `JSON.stringify(value, replacer)` (the compiler calls it): `value` walked as JavaScript walks
+// it, `toJSON` and the replacer per key (velt/encoding/json/replace_ops.velt). `undefined` for
 // the value itself throws a `TypeError` (JavaScript returns `undefined`; this returns a string).
-function jsonReplaceWith(text: string, replacer: JsonReplacer): string {
-  let root = JsonValue.of(null);
-  try {
-    // At any depth: `stringify` writes values nested deeper than the default limit too.
-    root = JsonValue.parse(text, { maxDepth: 4294967295 });
-  } catch (e) {
-    // `text` is `JSON.stringify`'s own output.
-    panic(`ICE: JSON.stringify wrote text it cannot read back: ${e.message}`);
-  }
-  const out = jsonReplaced("", root, replacer, 0);
-  if (out == undefined) {
-    throw new TypeError(
-      "JSON.stringify: the replacer returned undefined for the value itself (JavaScript would return undefined; Velt's JSON.stringify returns a string)",
-    );
-  }
-  return out.stringify();
-}
-
-function jsonReplaced(
-  key: string,
-  value: JsonValue,
-  replacer: JsonReplacer,
-  depth: i64,
-): JsonValue | undefined {
-  if (depth > JSON_CALLBACK_DEPTH) {
-    throw jsonCallbackTooDeep();
-  }
-  const r = replacer(key, value);
-  if (r == undefined) {
-    return undefined;
-  }
-  if (r.isArray()) {
-    const out = JsonValue.array();
-    const n = r.len();
-    for (let i: i64 = 0; i < n; i++) {
-      const e = jsonReplaced(String(i), r.at(i)!, replacer, depth + 1);
-      pushRevived(out, e);
-    }
-    return out;
-  }
-  if (r.isObject()) {
-    const out = JsonValue.object();
-    for (const k of r.keys()) {
-      const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
-      setRevived(out, k, e);
-    }
-    return out;
-  }
-  return r;
+// By role: only a program that passes a replacer function loads the walk (#3807).
+function jsonStringifyReplaced<T>(value: T, replacer: JsonReplacer): string {
+  return hookCall("json_stringify_replaced", value, replacer);
 }
 
 function jsonRelayout(text: string, keys: string, filter: bool, gap: string): string {

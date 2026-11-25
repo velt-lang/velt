@@ -153,6 +153,12 @@ up front (`LoadOptions::preload`, veltc's `sema_stage`; `velt check`'s recoverin
 language server do the same). That second check is an ordinary one: a module loaded up front
 may extend what it likes.
 
+The walk of `JSON.stringify(value, replacer)` with a replacer function
+(`std/lang/hooks/json_replace.velt`, #3774) loads on demand in the same way: the prelude's
+`jsonStringifyReplaced` calls it by role (`json_stringify_replaced`). It is not loaded with std
+up front (`VELT_EAGER_STD`) either, where the check still demands it: it imports the prelude's
+JSON modules, which only a program that names `JSON` loads.
+
 The TLS client and server (`std/net/tls/fd_client.velt`, `fd_server.velt`, with the TLS engine,
 the certificate checks and the crypto under them) load on demand (#2392): velt/net's `listenTls`
 and `connectTls` and `fetch` call them by role (`sched_tls_listen`, `sched_tls_connect`,

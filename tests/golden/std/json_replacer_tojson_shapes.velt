@@ -1,0 +1,65 @@
+// `JSON.stringify(value, replacer)` calls `toJSON(key)` just before the replacer for that key, as
+// Node does (#3774), in every shape a value can be written from: a union's member, a record, a
+// tuple, an optional field, a `Map` member (`{}`), a subclass seen as its base, an `any` holding
+// a class, a generic caller, and with `space`. An absent optional field is not visited:
+// Node passes `undefined`, which a replacer given a `JsonValue` can't get (#924). The Node twin
+// is json_replacer_tojson_shapes.mjs.
+
+class Hook {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  toJSON(key: string): string {
+    console.log(`  toJSON ${this.name} key=${JSON.stringify(key)}`);
+    return this.name;
+  }
+}
+
+class Base {
+  kind: string = "base";
+  toJSON(key: string): string {
+    console.log(`  toJSON base key=${JSON.stringify(key)}`);
+    return "base";
+  }
+}
+
+class Derived extends Base {
+  extra: Hook = new Hook("x");
+  override toJSON(key: string): string {
+    console.log(`  toJSON derived key=${JSON.stringify(key)}`);
+    return "derived";
+  }
+}
+
+class Shapes {
+  either: string | Hook = new Hook("u");
+  plain: string | Hook = "s";
+  rec: Record<string, Hook> = { r1: new Hook("r1"), r2: new Hook("r2") };
+  pair: [Hook, number] = [new Hook("t0"), 7];
+  missing?: Hook;
+  present?: Hook = new Hook("o");
+  map: Map<string, Hook> = new Map<string, Hook>([["m", new Hook("m")]]);
+  base: Base = new Derived();
+  dyn: any = new Hook("i");
+}
+
+function logged(k: string, v: JsonValue): JsonValue | undefined {
+  console.log(`  replacer ${JSON.stringify(k)} ${v.stringify()}`);
+  return v;
+}
+
+function generic<T>(x: T): string {
+  return JSON.stringify(x, logged);
+}
+
+function main(): void {
+  console.log("shapes:");
+  console.log(JSON.stringify(new Shapes(), logged));
+  console.log("generic:");
+  console.log(generic<Hook[]>([new Hook("g")]));
+  console.log("space:");
+  console.log(JSON.stringify({ k: new Hook("sp") }, logged, "-"));
+}
+
+main();
