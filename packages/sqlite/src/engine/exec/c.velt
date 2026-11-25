@@ -19,7 +19,7 @@ export struct C {
 
 /** An expression without affinity or collation. */
 export function plain(ev: Ev): C {
-  return { ev: ev, aff: AFF_NONE, coll: -1, explicit: false };
+  return { ev: () => ev(), aff: AFF_NONE, coll: -1, explicit: false };
 }
 
 /** The value of a constant expression. */
@@ -53,10 +53,10 @@ export function binaryColl(x: C, y: C): u8 {
 /** An operator's result: it keeps an explicit COLLATE of an operand (SQLite's EP_Collate). */
 export function joinedColl(ev: Ev, x: C, y: C): C {
   if (x.explicit) {
-    return { ev: ev, aff: AFF_NONE, coll: x.coll, explicit: true };
+    return { ev: () => ev(), aff: AFF_NONE, coll: x.coll, explicit: true };
   }
   if (y.explicit) {
-    return { ev: ev, aff: AFF_NONE, coll: y.coll, explicit: true };
+    return { ev: () => ev(), aff: AFF_NONE, coll: y.coll, explicit: true };
   }
   return plain(ev);
 }

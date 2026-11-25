@@ -42,8 +42,10 @@ pub struct ModelType {
     pub arms: Vec<u32>,
     /// Fields of `object`, `class` and `struct` types, inherited ones first.
     pub fields: Vec<ModelField>,
-    /// A class's base class and the classes of the program that extend it (directly or not;
-    /// generic subclasses are not listed yet).
+    /// A class's base class and the classes of the program that extend it, also those that
+    /// extend a `Map` or a `Set`, directly or not. A generic subclass is listed when each of its
+    /// type parameters is solved from the base type's arguments; one with a parameter that does
+    /// not appear there (`class P<T> extends Map<string, number> { x: T }`) is not.
     pub base: Option<u32>,
     pub subclasses: Vec<u32>,
     /// Members of an `enum`.
@@ -276,6 +278,14 @@ impl Builder {
             m.args = args.iter().map(|t| self.id(*t)).collect();
             if name == "Set" {
                 m.private_field = std_private_field(cx, d).unwrap_or_default();
+            }
+            // A `Map` or `Set` value may be a subclass's instance, which `JSON.stringify` writes
+            // as that class.
+            if name != "Record" {
+                for t in subclasses(cx, d, args) {
+                    let id = self.id(t);
+                    m.subclasses.push(id);
+                }
             }
             return;
         }

@@ -1,0 +1,316 @@
+// check: no leaks
+// String views (#3469): `let rest = text; rest = rest.slice(n)` may make `rest` a view of
+// `text`'s bytes, with no count. A view must never outlive `text`, so every way a value can
+// leave the function is tested here: each `via*` slices a heap ASCII string in a loop, then
+// lets the result out one way. The caller then frees the source and refills the heap with
+// strings of the same size; a view that got out would print the new letters instead.
+
+/** A heap ASCII string of `n` letters from `seed` (built at run time, so not a literal). */
+function heap(seed: number, n: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(String.fromCharCode(97 + ((seed + i) % 26)));
+  }
+  return parts.join("");
+}
+
+/** Allocates and frees strings of `n` bytes, so freed buffers of that size are reused. */
+function churn(n: number): number {
+  let s = 0;
+  for (let k = 0; k < 64; k++) {
+    s += heap(k + 7, n).charCodeAt(3);
+  }
+  return s;
+}
+
+/** The last 40 letters of `text`, by slicing one at a time (a view when nothing escapes). */
+function tail(text: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return rest;
+}
+
+function viaReturn(text: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return rest;
+}
+
+function viaPush(text: string, out: string[]): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  out.push(rest);
+}
+
+class Holder {
+  value = "";
+}
+
+function viaField(text: string, h: Holder): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  h.value = rest;
+}
+
+function viaMapKey(text: string, m: Map<string, number>): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  m.set(rest, rest.length);
+}
+
+function viaMapValue(text: string, m: Map<number, string>): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  m.set(1, rest);
+}
+
+function viaClosure(text: string): () => string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  // Captured by a closure made after the loop: the capture is the escape.
+  return () => rest;
+}
+
+function viaThrow(text: string): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  throw new Error(rest);
+}
+
+function id(s: string): string {
+  return s;
+}
+
+function pick(first: boolean, a: string, b: string): string {
+  return first ? a : b;
+}
+
+function viaIdentity(text: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  const same = id(rest);
+  return same;
+}
+
+// `rest` is read after the copy, so the copy is a clone, not a move: a clone of a view is a
+// bitwise copy, which must count as one.
+function viaCopy(text: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  const copy = rest;
+  rest = rest.slice(1);
+  return rest.length === 39 ? copy : "";
+}
+
+function viaIdentityInUse(text: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  const same = id(rest);
+  rest = rest.slice(2);
+  return rest.length === 38 ? same : "";
+}
+
+function viaPick(text: string, other: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return pick(rest.length > 0, rest, other);
+}
+
+function viaPiece(text: string, out: string[]): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  out.push(rest.slice(0, 20));
+}
+
+function viaTrim(text: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return rest.trim();
+}
+
+function viaArrayLiteral(text: string): string[] {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return [rest, "x"];
+}
+
+function viaSpread(text: string, before: string[]): string[] {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return [...before, rest];
+}
+
+function viaObjectLiteral(text: string): { k: string } {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return { k: rest };
+}
+
+function viaAny(text: string): any {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  const boxed: any = rest;
+  return boxed;
+}
+
+const kept: any[] = [];
+
+function keepAny(x: any): void {
+  kept.push(x);
+}
+
+function viaAnyParam(text: string): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  keepAny(rest);
+}
+
+function viaUnknown(text: string): unknown {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  const u: unknown = rest;
+  return u;
+}
+
+function viaDestructuring(text: string): string {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  const [a, b] = [rest, "y"];
+  return a + b.slice(1);
+}
+
+function gather(...xs: string[]): string[] {
+  return xs;
+}
+
+function viaRestParam(text: string): string[] {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return gather(rest, "z");
+}
+
+let saved = "";
+
+function viaModuleLet(text: string): void {
+  let rest = text;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  saved = rest;
+}
+
+/** Runs `route` on a fresh source, frees the source, churns the heap, then prints. */
+function check(name: string, route: (text: string) => string): void {
+  let src = heap(1, 200);
+  const got = route(src);
+  src = heap(2, 200);
+  const noise = churn(200);
+  const ok = got === tail(heap(1, 200));
+  console.log(name, ok, got.length, src.length > 0 && noise > 0);
+}
+
+function main() {
+  check("return", (t) => viaReturn(t));
+  check("push", (t) => {
+    const out: string[] = [];
+    viaPush(t, out);
+    return out[0];
+  });
+  check("field", (t) => {
+    const h = new Holder();
+    viaField(t, h);
+    return h.value;
+  });
+  check("map key", (t) => {
+    const m = new Map<string, number>();
+    viaMapKey(t, m);
+    let k = "";
+    for (const key of m.keys()) {
+      k = key;
+    }
+    return k;
+  });
+  check("map value", (t) => {
+    const m = new Map<number, string>();
+    viaMapValue(t, m);
+    return m.get(1) ?? "";
+  });
+  check("closure", (t) => viaClosure(t)());
+  check("throw", (t) => {
+    try {
+      viaThrow(t);
+      return "";
+    } catch (e) {
+      return (e as Error).message;
+    }
+  });
+  check("identity", (t) => viaIdentity(t));
+  check("copy in use", (t) => viaCopy(t));
+  check("identity in use", (t) => viaIdentityInUse(t));
+  check("pick", (t) => viaPick(t, "other"));
+  check("piece", (t) => {
+    const out: string[] = [];
+    viaPiece(t, out);
+    return out[0] + tail(heap(1, 200)).slice(20);
+  });
+  check("trim", (t) => viaTrim(t));
+  check("array literal", (t) => viaArrayLiteral(t)[0]);
+  check("spread", (t) => viaSpread(t, ["a", "b"])[2]);
+  check("object literal", (t) => viaObjectLiteral(t).k);
+  check("any", (t) => viaAny(t) as string);
+  check("any parameter", (t) => {
+    viaAnyParam(t);
+    return kept[kept.length - 1] as string;
+  });
+  check("unknown", (t) => viaUnknown(t) as string);
+  check("destructuring", (t) => viaDestructuring(t));
+  check("rest parameter", (t) => viaRestParam(t)[0]);
+  check("module let", (t) => {
+    viaModuleLet(t);
+    return saved;
+  });
+}

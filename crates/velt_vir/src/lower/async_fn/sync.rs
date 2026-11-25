@@ -19,6 +19,7 @@ use velt_sema::hir::{self, IntTy, Intrinsic, TyId, TyKind};
 
 use crate::atomic::{AtomicCall, Order, Rmw};
 use crate::lower::hook_calls::{self as hooks, ty, Construct, HookTy};
+use crate::lower::module_state::Access;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, ice, FnLower};
@@ -396,17 +397,18 @@ impl FnLower<'_, '_> {
         let ret = self.sub(ty);
         // A callback that may reach a declared function's properties held as `any`, which are
         // module state (velt_rt fn_props.rs): the module lock comes first, so the callback
-        // never waits for it while it holds the lock. Sema lists the callbacks that never
-        // reach them (`Program::lock_free_callbacks`).
+        // never waits for it while it holds the lock (std/lang/hooks/sched_module.velt
+        // `withStart`; WebAssembly has one thread and no lock). Sema lists the callbacks that
+        // never reach them (`Program::lock_free_callbacks`).
         let lock_free = match &f.kind {
             hir::ExprKind::Closure(d) | hir::ExprKind::FnRef(d, _) => {
                 self.cx.hir.lock_free_callbacks.contains(d)
             }
             _ => false,
         };
-        let module_took = (self.cx.boxing.fn_props && !lock_free).then(|| {
+        let module_took = (self.cx.boxing.fn_props && !lock_free && self.std_sched()).then(|| {
             let took = Place::local(self.temp(Ty::U8));
-            self.call_rt(Rt::ModuleWith, vec![], Some(took.clone()));
+            self.module_lock(Access::With, vec![], Some(took.clone()));
             took
         });
         // An `RwLock`'s lock takes this thread's reader state (0: it looks it up) and says how
@@ -430,6 +432,7 @@ impl FnLower<'_, '_> {
             }
             false => {
                 self.mutex_lock_call(lock_fn, lock.clone());
+                self.count_held(true);
                 None
             }
         };
@@ -478,6 +481,9 @@ impl FnLower<'_, '_> {
         // A function value stored into the value while the lock was held may be called by
         // another thread next (glue/many.rs).
         self.many_walk(false, value, vty);
+        if !rw {
+            self.count_held(false);
+        }
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
         match unlock_fn {
@@ -490,7 +496,7 @@ impl FnLower<'_, '_> {
             _ => self.call_rt(unlock_fn, unlock_args, None),
         }
         if let Some(took) = module_took {
-            self.call_rt(Rt::ModuleWithEnd, vec![Operand::Copy(took)], None);
+            self.module_lock(Access::WithEnd, vec![Operand::Copy(took)], None);
         }
         r
     }
@@ -508,6 +514,21 @@ impl FnLower<'_, '_> {
             }
             _ => self.call_rt(lock_fn, vec![lock], None),
         }
+    }
+
+    /// Under `velt dev` (`LowerOptions::jit`): the `Mutex` a `with` holds counted for the
+    /// executor's module lock (std/lang/hooks/mutex_held.velt, #3467) after its lock (`locked`),
+    /// or uncounted before its unlock, whichever lock it took (std's inline one, or the runtime's
+    /// checked one). Code swapped in there can reach module state from the callback, which sema
+    /// refuses elsewhere: other builds count nothing and lower no call.
+    fn count_held(&mut self, locked: bool) {
+        if !self.cx.jit || !self.std_sched() {
+            return;
+        }
+        match locked {
+            true => hooks::mutex_held_locked(self, Construct::MutexHeld).emit(self),
+            false => hooks::mutex_held_unlocked(self, Construct::MutexHeld).emit(self),
+        };
     }
 
     /// Does a `Mutex` lock inline with std's hooks? On a native target, when sema demanded them

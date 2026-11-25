@@ -1,10 +1,11 @@
 //! When a family's text may still be read, and what may change a clone's source then.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use velt_vir::vir::{Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty};
+use velt_vir::vir::{Callee, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator, Ty};
 
 use super::{Cx, Family, Point, Source};
+use crate::locals::Usage;
 use crate::visit::{derefs, rvalue_operands, successors, term_operands};
 
 impl Cx<'_> {
@@ -82,6 +83,14 @@ impl Cx<'_> {
                     }
                 }
                 self.gen_operand(index, &args[0], live);
+            } else if self.views && self.rt.is(callee, self.rt.slice) && args.len() == 4 {
+                // A slice into a member defines it and reads its input's text (`views.rs`).
+                if let Some(m) = self.addr_of_local(&args[3]) {
+                    if let Some(&i) = index.get(&m) {
+                        live[i] = false;
+                    }
+                }
+                self.gen_operand(index, &args[0], live);
             } else if self.rt.reads_only(callee) {
                 for a in args {
                     self.gen_operand(index, a, live);
@@ -131,8 +140,21 @@ impl Cx<'_> {
         }
     }
 
+    /// Whether place `p` holds a pointer (or a 64-bit word, which could be one).
+    fn pointer_typed(&self, p: &Place) -> bool {
+        matches!(
+            crate::locals::place_ty(self.aggs, self.func, p),
+            Some(Ty::Ptr | Ty::U64 | Ty::I64) | None
+        )
+    }
+
     /// Where the source pointer `s` points.
     fn source(&self, s: Local) -> Source {
+        // Views mode: a parameter (written once, its address never taken) points at a string the
+        // caller holds, never at one of this function's locals.
+        if self.views && self.outside_locals(s, 0) && (s.0 as usize) < self.func.params.len() {
+            return Source::Caller;
+        }
         if (s.0 as usize) < self.func.params.len() || self.usage.get(s).defs != 1 {
             return Source::Unknown;
         }
@@ -203,7 +225,8 @@ impl Cx<'_> {
 
     /// Whether the code at `at` may change a source (see the module doc).
     fn clobbers(&self, f: &Family, sources: &[Source], at: Point) -> bool {
-        let known = sources.iter().all(|s| matches!(s, Source::Field { .. }));
+        // Writes to this function's locals cannot reach a source outside them.
+        let known = (sources.iter()).all(|s| matches!(s, Source::Field { .. } | Source::Caller));
         let block = &self.func.blocks[at.0];
         let local_write =
             |l: Local| known || !self.usage.get(l).address_taken || f.members.contains(&l);
@@ -216,7 +239,7 @@ impl Cx<'_> {
             };
             sources.iter().any(|s| match s {
                 Source::Field { start: s0 } => start < s0 + 24 && *s0 < start + size,
-                Source::Unknown => true,
+                Source::Caller | Source::Unknown => true,
             })
         };
         match block.stmts.get(at.1) {
@@ -247,10 +270,76 @@ impl Cx<'_> {
                     if rt.is(callee, rt.drop) && args.len() == 1 {
                         return !local_arg(0);
                     }
+                    // A slice allocates or shares, and writes only its output (`views.rs`).
+                    if self.views && rt.is(callee, rt.slice) && args.len() == 4 {
+                        return !local_arg(3);
+                    }
+                    // A string the caller holds stays put during this call (semantics.md "Borrows
+                    // through counted objects": a borrowed argument is stabilized), so a call can
+                    // change it only through a pointer that may lead to it: one that is not the
+                    // address of a local of this function.
+                    let caller = sources.iter().all(|s| matches!(s, Source::Caller));
+                    if caller && !sources.is_empty() {
+                        let leads = |a: &Operand| match a {
+                            Operand::Copy(p) => {
+                                derefs(p)
+                                    || !self.local_addresses.contains(&p.local)
+                                        && self.pointer_typed(p)
+                            }
+                            _ => false,
+                        };
+                        let target = matches!(callee, Callee::Ptr { .. });
+                        return target || args.iter().any(leads);
+                    }
                     true
                 }
                 _ => false,
             },
+        }
+    }
+}
+
+/// The registers that only ever hold the address of one of `func`'s locals: every definition is
+/// `&x…` with `x` not a parameter, or a copy of such a register (the largest such set, so
+/// registers copied around a loop count).
+pub(super) fn local_address_registers(func: &Function, usage: &Usage) -> FxHashSet<Local> {
+    let params = func.params.len();
+    let register = |l: Local| (l.0 as usize) >= params && usage.is_register(l);
+    // Each candidate's definitions: `None` for one that disqualifies it, else the register it
+    // copies (if any).
+    let mut copies: FxHashMap<Local, Vec<Local>> = FxHashMap::default();
+    let mut out: FxHashSet<Local> = FxHashSet::default();
+    let mut bad: FxHashSet<Local> = FxHashSet::default();
+    for block in &func.blocks {
+        for s in &block.stmts {
+            let Stmt::Assign(d, rv) = s else { continue };
+            if !d.proj.is_empty() || !register(d.local) {
+                continue;
+            }
+            match rv {
+                Rvalue::AddrOf(a) if (a.local.0 as usize) >= params && !derefs(a) => {}
+                Rvalue::Use(Operand::Copy(q)) if q.proj.is_empty() && register(q.local) => {
+                    copies.entry(d.local).or_default().push(q.local);
+                }
+                _ => {
+                    bad.insert(d.local);
+                }
+            }
+            out.insert(d.local);
+        }
+        if let Terminator::Call { dest: Some(d), .. } = &block.term {
+            bad.insert(d.local);
+        }
+    }
+    out.retain(|l| !bad.contains(l));
+    loop {
+        let before = out.len();
+        let kept: Vec<Local> = (out.iter().copied())
+            .filter(|l| copies.get(l).into_iter().flatten().all(|q| out.contains(q)))
+            .collect();
+        out = kept.into_iter().collect();
+        if out.len() == before {
+            return out;
         }
     }
 }

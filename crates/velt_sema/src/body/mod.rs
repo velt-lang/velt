@@ -81,6 +81,7 @@ mod locals;
 mod loops;
 pub(crate) mod moved_const;
 pub(crate) mod narrow;
+mod narrow_falsy;
 mod narrow_generic;
 mod nested_pattern;
 mod object_rest;
@@ -295,9 +296,6 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object-literal method written at `.0` takes the object it is called on, of type
     /// `.1`, as its `this` parameter (`expr/literal_this.rs`).
     pub method_this: Option<(Span, TyId)>,
-    /// The property read written at this span is the value of an object-literal property
-    /// (`expr/literal_this.rs` `stored_value`).
-    pub stored_prop: Option<Span>,
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
@@ -319,6 +317,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The member of a union of function types each arrow (by span) was typed by, for the
     /// members it was tried against and the types of the locals it names (`expr/closure.rs`).
     pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<NamedLocal>), TyId>,
+    /// While an arrow (by span) is tried against a `void` member of a union of function types:
+    /// whether its expression body gave a promise, which that member would drop (#3644).
+    pub dropped_promise: Option<(Span, bool)>,
     /// How many remembered trials (`expr/trial_memo.rs`) are running, what each answered, and the
     /// types of the arrows checked inside them.
     pub memo_trials: u32,
@@ -353,6 +354,10 @@ pub(crate) struct FnCx<'a, 'm> {
     pub c_args: bool,
     /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
     pub proxy_keys_inner: bool,
+    /// Checking the branch of the typed proxy hooks taken when `x` is one (`proxy.rs`
+    /// `proxy_split`): `x`, a proxy, holds none of its type's fields, so it may become an `any`
+    /// even when the type holds a lock.
+    pub typed_proxy_branch: bool,
     /// How many `unsafe { … }` blocks and expressions enclose the code being
     /// checked, lexically: closures inside one are unsafe code too, a nested function
     /// declaration is not (`unsafe_code.rs`).
@@ -490,7 +495,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             promise_callback: false,
             literal_slot: None,
             method_this: None,
-            stored_prop: None,
             call_temps: vec![],
             held_recheck: Vec::new(),
             callee_effects: None,
@@ -498,6 +502,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             packed_rest: None,
             task_callback: None,
             member_choices: FxHashMap::default(),
+            dropped_promise: None,
             memo_trials: 0,
             trial_answers: FxHashMap::default(),
             trial_closures: FxHashMap::default(),
@@ -512,6 +517,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             system_args: false,
             c_args: false,
             proxy_keys_inner: false,
+            typed_proxy_branch: false,
             unsafe_depth: 0,
             explicit_type_spans: None,
             optional_slots: vec![],

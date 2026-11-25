@@ -1,0 +1,12 @@
+then 2
+both ok 1
+chain 15
+caught boom
+reason boom
+passed 1
+typeof function function function
+same true
+read same true
+plain undefined
+spread 1
+typed 1, any 1, typed 2, any 2

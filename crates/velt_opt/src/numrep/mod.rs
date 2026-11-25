@@ -172,11 +172,18 @@ fn folds(op: MathOp) -> bool {
 pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
     let mut changed = false;
     let (flow, mut elements) = analyse(env, func);
+    // The facts of `func` as `analyse` found it, while nothing has changed it: the first
+    // narrowing (`arrays::choose` narrows `func` as given before any retyped copy) takes them
+    // instead of computing the same `Flow` again.
+    let mut unchanged = None;
     if let Some(flow) = flow {
         if simplify::run(env, &flow, func) {
             changed = true;
+        } else {
+            unchanged = Some(flow);
         }
     }
+    let unchanged = std::cell::Cell::new(unchanged);
     if changed {
         crate::simplify_cfg::run(func);
         // Simplifying keeps every value the function stores, so the elements' facts hold
@@ -185,7 +192,9 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
             elements = analyse(env, func).1;
         }
     }
-    changed |= arrays::choose(env, func, &elements, |f| narrow_locals(env, f, &elements));
+    changed |= arrays::choose(env, func, &elements, |f| {
+        narrow_locals(env, f, &elements, unchanged.take())
+    });
     changed |= int32::guarded_sums(func);
     // Last: only the comparisons narrowing left in doubles.
     changed |= int_compare::run(env, func);
@@ -193,13 +202,20 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
 }
 
 /// Narrow the locals of `func` (the plan and rewrite of `run`), its elements' facts `elements`
-/// (computed before `arrays` retyped any); returns whether anything changed.
-fn narrow_locals(env: &Env, func: &mut Function, elements: &arrays::Elements) -> bool {
+/// (computed before `arrays` retyped any); returns whether anything changed. `known`: the
+/// `Flow` [`analyse`] computed for `func` as it is now (with these elements), if any.
+fn narrow_locals(
+    env: &Env,
+    func: &mut Function,
+    elements: &arrays::Elements,
+    known: Option<Flow>,
+) -> bool {
     let tracked = tracked(env, func, &elements.groups);
     if tracked.is_empty() && !constant_to_int32(func) {
         return false;
     }
-    let Some(flow) = Flow::compute(func, env, &tracked, elements.per_local()) else {
+    let flow = known.or_else(|| Flow::compute(func, env, &tracked, elements.per_local()));
+    let Some(flow) = flow else {
         return false;
     };
     let plan = narrow::plan(env, &flow, func);

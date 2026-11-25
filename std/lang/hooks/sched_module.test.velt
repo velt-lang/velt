@@ -1,0 +1,89 @@
+// velt/lang/hooks (tests): how a thread holds the executor's module lock (sched_module.velt)
+// around a `with` callback and for a function's properties, run by `velt test std/`. Each case
+// runs in a task of its own that reaches no module state, so its poll starts without the lock; a
+// case that leaves the lock held for its poll gives it back when the poll ends, or the next case
+// waits for it for good.
+import { describe, expect, it } from "velt/test";
+import {
+  holds,
+  held,
+  IN_POLL,
+  IN_WITH,
+  NOT_HELD,
+  restore,
+  touch,
+  withEnd,
+  withStart,
+} from "velt/lang/hooks/sched_module";
+
+describe("a callback's hold", () => {
+  it("is taken before the lock and given back after its unlock, by the outermost", async () => {
+    const seen = await spawn(async () => {
+      const out: u32[] = [holds()];
+      const outer = withStart();
+      out.push(outer as u32, holds(), held() ? 1 : 0);
+      const inner = withStart();
+      out.push(inner as u32);
+      withEnd(inner);
+      out.push(holds());
+      withEnd(outer);
+      out.push(holds());
+      return out;
+    });
+    expect(seen).toEqual([NOT_HELD, 1, IN_WITH, 0, 0, IN_WITH, NOT_HELD]);
+  });
+
+  it("is kept for the poll once the callback reaches module state", async () => {
+    const seen = await spawn(async () => {
+      const took = withStart();
+      touch();
+      const out: u32[] = [holds(), held() ? 1 : 0];
+      withEnd(took);
+      out.push(holds());
+      return out;
+    });
+    expect(seen).toEqual([IN_POLL, 1, IN_POLL]);
+  });
+
+  it("is free again for another task", async () => {
+    const took = await spawn(async () => {
+      const t = withStart();
+      withEnd(t);
+      return t as u32;
+    });
+    expect(took).toBe(1);
+  });
+});
+
+describe("touch", () => {
+  it("takes the lock for the poll", async () => {
+    const seen = await spawn(async () => {
+      const out: u32[] = [holds()];
+      touch();
+      out.push(holds());
+      touch();
+      out.push(holds());
+      return out;
+    });
+    expect(seen).toEqual([NOT_HELD, IN_POLL, IN_POLL]);
+  });
+});
+
+describe("a caught panic", () => {
+  it("gives back the hold of a callback it abandoned", async () => {
+    const seen = await spawn(async () => {
+      const saved = holds();
+      withStart();
+      restore(saved);
+      const out: u32[] = [holds()];
+      // A panic caught inside the callback leaves the callback's own hold.
+      const took = withStart();
+      restore(holds());
+      out.push(holds());
+      withEnd(took);
+      out.push(holds());
+      return out;
+    });
+    expect(seen).toEqual([NOT_HELD, IN_WITH, NOT_HELD]);
+  });
+});

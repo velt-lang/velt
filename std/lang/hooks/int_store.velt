@@ -1,0 +1,64 @@
+// velt/lang/hooks (internal): a `number` stored into an element of an integer array (`buf[i] =
+// n` on a `Buffer` or `u8[]`, `xs[i] += n` on an `i32[]`, #3182), converted as a JavaScript typed
+// array stores it: JavaScript's ToUint8, ToInt8, ToUint16, ToInt16, ToUint32 and ToInt32. The
+// fraction is dropped and the result taken modulo 2^N; `NaN`, the infinities and `-0` are 0, and
+// a number past 2^53 converts exactly. Sema calls these where such a store has a `number` (velt_sema
+// element_store.rs); a value already of the element's type is stored as it is. Not loaded with the
+// prelude: a program loads this module only where it has such a store.
+//
+// A number in range takes two compares and the cast. Any other goes through JavaScript's ToInt32,
+// `v | 0`, which is exact for every number (modulo 2^32, which 2^8 and 2^16 divide), then the
+// low bits.
+
+import { inline } from "velt/lang/intrinsics";
+
+/** `v` as a `Uint8Array` stores it (ToUint8). */
+@inline("always")
+export function toUint8(v: number): u8 {
+  if (v >= 0 && v < 256) {
+    return v as u8;
+  }
+  return ((v | 0) & 255) as u8;
+}
+
+/** `v` as an `Int8Array` stores it (ToInt8). */
+@inline("always")
+export function toInt8(v: number): i8 {
+  if (v >= -128 && v < 128) {
+    return v as i8;
+  }
+  return (((v | 0) as i32) as u8) as i8;
+}
+
+/** `v` as a `Uint16Array` stores it (ToUint16). */
+@inline("always")
+export function toUint16(v: number): u16 {
+  if (v >= 0 && v < 65536) {
+    return v as u16;
+  }
+  return ((v | 0) & 65535) as u16;
+}
+
+/** `v` as an `Int16Array` stores it (ToInt16). */
+@inline("always")
+export function toInt16(v: number): i16 {
+  if (v >= -32768 && v < 32768) {
+    return v as i16;
+  }
+  return (((v | 0) as i32) as u16) as i16;
+}
+
+/** `v` as a `Uint32Array` stores it (ToUint32). */
+@inline("always")
+export function toUint32(v: number): u32 {
+  if (v >= 0 && v < 4294967296) {
+    return v as u32;
+  }
+  return ((v | 0) as i32) as u32;
+}
+
+/** `v` as an `Int32Array` stores it (ToInt32). */
+@inline("always")
+export function toInt32(v: number): i32 {
+  return (v | 0) as i32;
+}

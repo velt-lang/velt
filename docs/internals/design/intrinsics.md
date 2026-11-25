@@ -44,6 +44,7 @@ the checked, saturating and wrapping arithmetic of the integer types is prelude 
 | arch | `velt_vir::simd` (`ExtOp`, `Ext`) | SHA, carry-less multiply, AES rounds | none: behind a CPU check |
 | atomic | `velt_vir::atomic` (`AtomicCall`) | loads, stores, read-modify-writes, CAS, fences | none: always inline |
 | tls | `velt_vir::tls` (`TlsCall`) | thread-local reads and writes | none |
+| field | `velt_vir::field` (`FieldOp`) | P-256 Montgomery multiply, square, add, subtract and point doubling; the X25519 ladder (rt_abi.md "Field arithmetic") | none: always inline; the fast x86-64 form behind the CPU feature word's BMI2 and ADX |
 
 `velt_vir::math::effects` is the one list of what a runtime function may do to memory (anything,
 read-only, read-caching, none, cold); LLVM's declarations and `velt_opt` both read it.
