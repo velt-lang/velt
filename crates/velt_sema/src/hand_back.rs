@@ -59,6 +59,18 @@ pub(crate) fn hands_back(cx: &Ctx, def: DefId) -> bool {
     true
 }
 
+/// Is interface `iface`'s method `name` declared with the result `this` (typed as the interface
+/// itself, `collect::sigs`)? A call through a type parameter bounded by it gives the receiver,
+/// as the parameter's type (`body::expr::hand_back`).
+pub(crate) fn iface_returns_this(cx: &Ctx, iface: DefId, name: &str) -> bool {
+    let Some(decl) = cx.iface(iface).and_then(|i| i.decl) else {
+        return false;
+    };
+    decl.methods.iter().any(|m| {
+        m.sig.name.name == name && m.sig.ret.as_ref().is_some_and(crate::defs::is_this_type)
+    })
+}
+
 /// The method a table calls for `def`'s result: `def` itself, or for a method that hands back
 /// its receiver, a method of its class (`C.<value m>`) that calls it with the same parameters
 /// and modes and returns `this`.

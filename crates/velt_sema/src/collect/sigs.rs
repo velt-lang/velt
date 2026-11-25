@@ -604,6 +604,11 @@ fn iface_methods(cx: &mut Ctx, d: DefId) {
             cx.note_written_type(name.span, t.span);
         }
         let mut ret = match &m.sig.ret {
+            // `step(): this`: the interface, through an interface value (#3771).
+            Some(t) if crate::defs::is_this_type(t) => {
+                let args = (0..generics.len() as u32).map(|i| cx.ty.param(i)).collect();
+                cx.ty.intern(TyKind::Dyn(d, args))
+            }
             Some(t) => cx.resolve_type(t, &env),
             None => cx.ty.unit,
         };

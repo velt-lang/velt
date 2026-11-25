@@ -1,0 +1,18 @@
+// An implementation of an interface method declared `: this` returns `this`, as TypeScript
+// requires (TS2416): a call through a type parameter bounded by the interface gives the
+// receiver itself, typed as the parameter.
+interface Fluent {
+  step(n: number): this;
+}
+
+class Counter implements Fluent {
+  n = 0;
+  step(n: number): Counter {
+    this.n += n;
+    return this;
+  }
+}
+
+function main() {
+  console.log(new Counter().step(1).n);
+}

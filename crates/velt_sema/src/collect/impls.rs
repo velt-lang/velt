@@ -315,7 +315,9 @@ fn impl_method(
                 owner_args: &owner_args,
                 self_ty: p.self_ty,
             };
+            let before = cx.diags.len();
             let want = check_method_sig(cx, def, &owner_args, m, &full_args, &p.iname, Some(imp));
+            this_result_impl(cx, p, m, def, before);
             cx.fn_info_mut(def).fixed_modes = true;
             let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
             let entry = match slot {
@@ -386,6 +388,34 @@ fn field_accessor(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
         }
         false => super::getters::field_getter(cx, p.d, p.self_ty, i, ty),
     })
+}
+
+/// An interface method declared `: this` is implemented by a method returning `this`, as in
+/// TypeScript (TS2416): a call through a type parameter gives the receiver itself. When the
+/// signature check already reported the method (its diagnostics start at `before`), that
+/// error gets the note instead of a second one.
+fn this_result_impl(cx: &mut Ctx, p: &Pair, m: &IfaceMethod, def: DefId, before: usize) {
+    if !crate::hand_back::iface_returns_this(cx, p.bound.iface, &m.name)
+        || cx.fn_info(def).returns_this()
+    {
+        return;
+    }
+    let span = cx.fn_info(def).name_span;
+    let message = format!(
+        "method `{}` has a different signature than required by `{}`",
+        m.name, p.iname
+    );
+    let note = format!(
+        "TypeScript's TS2416: `{}.{}` returns `this`, the type that implements it; declare the result as `this` and return `this`",
+        p.iname, m.name
+    );
+    let reported = cx.diags[before..].iter_mut().find(|d| {
+        d.is_error() && d.message == message && d.labels.first().is_some_and(|l| l.span == span)
+    });
+    match reported {
+        Some(d) => d.notes.push(note),
+        None => cx.error(Diagnostic::error(message, span).with_note(note)),
+    }
 }
 
 /// Does method `def` always mutate `this` (setters, `[Symbol.dispose]`)? Other methods start borrowing
