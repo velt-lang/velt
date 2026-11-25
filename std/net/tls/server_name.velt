@@ -1,0 +1,50 @@
+// velt/net (internal): what a server's DNS name must look like before a certificate is checked
+// against it: the rules of rustls's `DnsName` (pki-types' `validate`), so a name rustls would
+// refuse when the connection is set up is refused here too, not carried to the matcher to match
+// nothing.
+
+/**
+ * Whether `name` can be a server's DNS name: at most 253 bytes; labels of 1 to 63 letters,
+ * digits, hyphens and underscores that neither start nor end with a hyphen, separated by dots,
+ * with one dot allowed at the end; and a last label that is not all digits (that is an IP
+ * address, or nothing).
+ */
+export function dnsServerNameOk(name: string): bool {
+  const n = name.length;
+  if (n == 0 || n > 253) {
+    return false;
+  }
+  // The current label: its length, whether it is all digits so far, whether it ends in a hyphen.
+  let len: usize = 0;
+  let numeric = false;
+  let hyphen = false;
+  for (let i: usize = 0; i < n; i++) {
+    const c = name.charCodeAt(i as i64);
+    if (c == 46) {
+      // A dot ends a label that is not empty and does not end with a hyphen.
+      if (len == 0 || hyphen) {
+        return false;
+      }
+      len = 0;
+      hyphen = false;
+      continue;
+    }
+    const digit = c >= 48 && c <= 57;
+    const letter = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95;
+    if (len == 0) {
+      if (!digit && !letter) {
+        return false;
+      }
+      numeric = digit;
+    } else {
+      if (len >= 63 || (!digit && !letter && c != 45)) {
+        return false;
+      }
+      numeric = numeric && digit;
+    }
+    hyphen = c == 45;
+    len++;
+  }
+  // The name may end with a dot (`len` is 0 then, and `numeric` still describes the last label).
+  return !hyphen && !numeric;
+}

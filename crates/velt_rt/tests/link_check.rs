@@ -281,50 +281,26 @@ fn staticlib_links_and_runs() {
 
     let exe = build("json", JSON).unwrap();
     let out = run(&exe);
-    assert_eq!(
-        text(&out.stdout),
-        "{\"name\":\"ann\",\"age\":30}\nexpected string at $.name\n"
-    );
+    assert_eq!(text(&out.stdout), "{\"name\":\"ann\",\"age\":30}\n");
 }
 
-/// String builder and the JSON reader's error path from C, like generated code for
-/// tests/golden/m4/json.velt.
+/// The string builder from C, building a JSON object's text as generated code does.
 const JSON: &str = r#"
-typedef struct Reader Reader;
 void velt_rt_strbuf_new(uint64_t, VeltStr*);
 void velt_rt_strbuf_push_str(VeltStr*, const VeltStr*);
-void velt_rt_strbuf_push_json_str(VeltStr*, const VeltStr*);
 void velt_rt_strbuf_push_byte(VeltStr*, uint8_t);
 void velt_rt_strbuf_finish(VeltStr*, VeltStr*);
-uint8_t velt_rt_str_eq(const VeltStr*, const VeltStr*);
-Reader* velt_rt_json_reader_new(const VeltStr*);
-void velt_rt_json_reader_free(Reader*);
-uint8_t velt_rt_json_reader_expect_object_start(Reader*);
-uint8_t velt_rt_json_reader_next_key(Reader*, VeltStr*);
-uint8_t velt_rt_json_reader_read_string(Reader*, VeltStr*);
-void velt_rt_json_error(const Reader*, const VeltStr*, const VeltStr*, VeltStr*);
 int32_t velt_main(void) {
-    VeltStr b, s, k, e, name = LIT("ann"), p1 = LIT("{\"name\":"), p2 = LIT(",\"age\":");
-    VeltStr doc = LIT("{\"name\": 1}"), want = LIT("name"), ex = LIT("string"), path = LIT("$.name");
-    Reader* r;
+    VeltStr b, s, name = LIT("\"ann\""), p1 = LIT("{\"name\":"), p2 = LIT(",\"age\":");
     velt_rt_strbuf_new(0, &b);
     velt_rt_strbuf_push_str(&b, &p1);
-    velt_rt_strbuf_push_json_str(&b, &name);
+    velt_rt_strbuf_push_str(&b, &name);
     velt_rt_strbuf_push_str(&b, &p2);
     velt_rt_strbuf_push_byte(&b, '3'); velt_rt_strbuf_push_byte(&b, '0');
     velt_rt_strbuf_push_byte(&b, '}');
     velt_rt_strbuf_finish(&b, &s);
     velt_rt_write_str(1, &s); velt_rt_write_byte(1, '\n');
     velt_rt_str_drop(&s);
-    r = velt_rt_json_reader_new(&doc);
-    if (velt_rt_json_reader_expect_object_start(r) && velt_rt_json_reader_next_key(r, &k) == 1
-        && velt_rt_str_eq(&k, &want) && !velt_rt_json_reader_read_string(r, &s)) {
-        velt_rt_json_error(r, &ex, &path, &e);
-        velt_rt_write_str(1, &e); velt_rt_write_byte(1, '\n');
-        velt_rt_str_drop(&e);
-    }
-    velt_rt_str_drop(&k);
-    velt_rt_json_reader_free(r);
     return 0;
 }
 "#;

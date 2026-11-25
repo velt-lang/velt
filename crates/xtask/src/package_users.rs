@@ -34,8 +34,9 @@ pub(crate) const USERS: &[Users] = &[
         // against the packages without native code, and reads packages/http-server's README and
         // docs), and tests that write manifests depending on it: hot reload's servers (`reload`)
         // and the `api` and `websocket` templates' projects (`templates`), the `--host` builds
-        // of `serve` (`workers`), and a kept-alive connection served under the executor in Velt
-        // (`std_scheduler_net`).
+        // of `serve` (`workers`), a kept-alive connection served under the executor in Velt
+        // (`std_scheduler_net`), and a plain `serve` that must build no TLS server
+        // (`std_scheduler_tls`).
         binaries: &[
             "std_tests",
             "bench_programs",
@@ -47,6 +48,7 @@ pub(crate) const USERS: &[Users] = &[
             "workers",
             "workerd",
             "std_scheduler_net",
+            "std_scheduler_tls",
         ],
     },
     // `--host` builds (`workers`, `cloudflare` and `workerd` copy it beside their fixtures) and

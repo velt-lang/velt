@@ -1,0 +1,70 @@
+// A `number` stored into an element of an integer array converts as the matching JavaScript
+// typed array stores it (#3182): ToUint8 for `u8[]` (a `Buffer`), ToInt8, ToUint16, ToInt16,
+// ToUint32 and ToInt32 for `i8[]`, `u16[]`, `i16[]`, `u32[]` and `i32[]`: the fraction dropped,
+// modulo 2^N, `NaN`, the infinities and `-0` as 0, numbers past 2^53 exactly. Plain stores and
+// compound ones (`+=`, `-=`, `*=`, `|=`) past the range, then typed arrays made from number lists
+// (`new Uint8Array([257, -1])`, `Uint8Array.from`, `set`). The Node twin is
+// int_array_number_store.mjs, with typed arrays.
+const VALUES: number[] = [
+  0, 1, 127, 128, 255, 256, 257, -1, -128, -129, 127.9, -0.5, 300.7, 65535, 65536, -32769,
+  2147483648, 4294967296, 4294967301, -2147483649, 9007199254740992, 9007199254740994,
+  18446744073709551616, 1e300, -1e300, NaN, Infinity, -Infinity, -0,
+];
+
+function main() {
+  const u8s: u8[] = [];
+  const i8s: i8[] = [];
+  const u16s: u16[] = [];
+  const i16s: i16[] = [];
+  const u32s: u32[] = [];
+  const i32s: i32[] = [];
+  for (let i = 0; i < VALUES.length; i++) {
+    u8s.push(0);
+    i8s.push(0);
+    u16s.push(0);
+    i16s.push(0);
+    u32s.push(0);
+    i32s.push(0);
+  }
+  for (let i = 0; i < VALUES.length; i++) {
+    const v = VALUES[i];
+    u8s[i] = v;
+    i8s[i] = v;
+    u16s[i] = v;
+    i16s[i] = v;
+    u32s[i] = v;
+    i32s[i] = v;
+  }
+  console.log(`u8: ${u8s.join(",")}`);
+  console.log(`i8: ${i8s.join(",")}`);
+  console.log(`u16: ${u16s.join(",")}`);
+  console.log(`i16: ${i16s.join(",")}`);
+  console.log(`u32: ${u32s.join(",")}`);
+  console.log(`i32: ${i32s.join(",")}`);
+
+  const b = Buffer.alloc(4);
+  const ten: number = 10;
+  const big: number = 1000.5;
+  b[0] = 250;
+  b[0] += ten;
+  b[1] -= ten;
+  b[2] = 7;
+  b[2] *= big;
+  b[3] = 1;
+  b[3] |= big;
+  console.log(`Buffer op=: ${b.join(",")}`);
+  const s: i16[] = [32767, -32768];
+  const one: number = 1;
+  s[0] += one;
+  s[1] -= one;
+  console.log(`i16 op=: ${s.join(",")}`);
+
+  const nums: number[] = [257, -1, 300.7, NaN];
+  console.log(`new Uint8Array: ${new Uint8Array([257, -1, 300.7]).join(",")}`);
+  console.log(`Uint8Array.from: ${Uint8Array.from(nums).join(",")}`);
+  const t = new Uint8Array(4);
+  t.set(nums);
+  console.log(`set: ${t.join(",")}`);
+}
+
+main();

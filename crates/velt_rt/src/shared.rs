@@ -131,7 +131,7 @@ const HOW: u64 = 7;
 const _: () = assert!(std::mem::align_of::<crate::hazard::Reader>() > HOW as usize);
 
 /// `rw.read(f)`: read the value beside other readers (waiting while a writer writes; callbacks
-/// never await). Readers hold no module lock either (task/local/module_state.rs). `reader` is
+/// never await). Readers hold no module lock either (std/lang/hooks/sched_module.velt). `reader` is
 /// this thread's state, as an earlier read on this thread returned it (generated code keeps it
 /// within one call of a function, which never changes threads), or 0.
 ///
@@ -159,7 +159,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, reader: u64) -> u64 {
             s.store(p, Ordering::SeqCst);
             if w.state.load(Ordering::SeqCst) == 0 {
                 r.read_depth.set(1);
-                return entered(reader | FAST as u64);
+                return reader | FAST as u64;
             }
             // A writer revokes the bias and may wait for this slot (the read has read nothing).
             s.store(std::ptr::null_mut(), Ordering::Release);
@@ -176,24 +176,7 @@ pub unsafe extern "C" fn velt_rt_rwlock_read(p: *mut u64, reader: u64) -> u64 {
     if n.is_multiple_of(LOOK_EVERY) {
         return read_looking(p, reader);
     }
-    entered(reader | TOOK as u64)
-}
-
-/// A read went in (`how`): count the lock for the module lock's check, when the program has
-/// module state.
-#[inline(always)]
-fn entered(how: u64) -> u64 {
-    if crate::task::local::module_used() {
-        return entered_counted(how);
-    }
-    how
-}
-
-#[cold]
-#[inline(never)]
-fn entered_counted(how: u64) -> u64 {
-    crate::task::local::mutex_locked();
-    how
+    reader | TOOK as u64
 }
 
 /// `velt_rt_rwlock_read` without this thread's state at hand.
@@ -233,7 +216,7 @@ unsafe fn read_claiming(p: *mut u64, reader: u64) -> u64 {
 unsafe fn read_nested(p: *mut u64, reader: u64) -> u64 {
     let r = &*(reader as *const crate::hazard::Reader);
     let how = read_slow(r, p, &*(p as *const Words));
-    entered(reader | how as u64)
+    reader | how as u64
 }
 
 /// An outermost read whose `lock` is held by a writer. One that waited looks at the bias at once (waiting
@@ -247,7 +230,7 @@ unsafe fn read_waiting(p: *mut u64, reader: u64) -> u64 {
     r.read_depth.set(1);
     r.holds.set(p as usize);
     look(r, w);
-    entered(reader | TOOK as u64)
+    reader | TOOK as u64
 }
 
 /// Every `LOOK_EVERY`th outermost read holding `lock` (it reads the clock, which costs as
@@ -259,7 +242,7 @@ unsafe fn read_looking(p: *mut u64, reader: u64) -> u64 {
         &*(reader as *const crate::hazard::Reader),
         &*(p as *const Words),
     );
-    entered(reader | TOOK as u64)
+    reader | TOOK as u64
 }
 
 /// An outermost read holding `lock`, after waiting for it or on every `LOOK_EVERY`th: is the bias back
@@ -394,16 +377,6 @@ fn read_slow(r: &crate::hazard::Reader, p: *mut u64, w: &Words) -> u8 {
 /// The end of the innermost `velt_rt_rwlock_read`, which returned `how`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_read_unlock(p: *mut u64, how: u64) {
-    if crate::task::local::module_used() {
-        return read_unlock_counted(p, how);
-    }
-    read_unlock(p, how)
-}
-
-#[cold]
-#[inline(never)]
-unsafe fn read_unlock_counted(p: *mut u64, how: u64) {
-    crate::task::local::mutex_unlocked();
     read_unlock(p, how)
 }
 

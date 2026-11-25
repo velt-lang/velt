@@ -63,11 +63,13 @@ fn warm_inner(
 ) -> Result<Option<vir::Program>, BuildError> {
     {
         let scope = CheckScope {
+            preload: vec![],
             require_main: true,
             extra_roots: vec![],
             eager_std: false,
             units: false,
             prebuilt: false,
+            jit: true,
         };
         let sema_opts = velt_sema::CheckOptions {
             require_main: scope.require_main,
@@ -76,6 +78,7 @@ fn warm_inner(
             std_key: None,
             native_executor: super::native_executor(opts),
             wasm32: super::wasm32(opts),
+            jit: scope.jit,
         };
         let t = Instant::now();
         match reparsed(sess, kept, cold_files, &edited, sema_opts) {

@@ -56,7 +56,7 @@
 //! - `glue_slots`: a dev build keeps every table entry (`GlueSlots::keep_all`).
 //! - `lay` but the three above: layouts per type and class hierarchy (`value`, `views`,
 //!   `objs`, `boxes`, `headers`, `extended`, `class_ids`, `fn_wrapper_env`, `array`, `text`,
-//!   `closure`, `dyn_value`, `all_wrap`, `settle_wraps`, `race_boxes`, `widen_boxes`,
+//!   `closure`, `dyn_value`, `poll_cx`, `all_wrap`, `settle_wraps`, `race_boxes`, `widen_boxes`,
 //!   `adopt_boxes`, `vtables`, `slot_tables`, `generic_slots`, `drop_memo`, `foreign`).
 //! - `prelude_proxy`, `view_fn`, `std_fns`, `prelude_error`, `prelude_type_error`,
 //!   `tla_marks`, `ffi_hooks`: std's definitions. (`prelude_defs`, the prelude's definitions by

@@ -1,0 +1,4 @@
+literal_type_past_2_53_display.velt:5:18: error: mismatched types
+  = note: expected 1, found 9007199254740992
+literal_type_past_2_53_display.velt:7:18: error: mismatched types
+  = note: expected 2, found 1e+23

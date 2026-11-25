@@ -2,10 +2,13 @@
 // native one): the `default` variant of `#fetch-dial` (std/imports.velt; the other is
 // dial_sched.velt). conn.velt's `dial` calls `dialPlain` only where std/net/tcp_sched.velt's pool
 // is compiled, never in this build: every connection is the runtime's, and so is the keep-alive
-// pool (crates/velt_rt/src/net/park.rs).
+// pool (crates/velt_rt/src/net/park.rs). The TLS client in Velt needs the executor in Velt, so
+// this build (WebAssembly, which has no network either) has no `https:`.
 
 import { IoError } from "velt/io/error";
 import { TcpStream } from "velt/net";
+import { TlsOn } from "velt/net/http/fetch/client/target";
+import { velt_rt_tcp_close } from "#net-tcp";
 import { AbortError, AbortSignal } from "velt/task";
 
 /** Whether the executor's reactor runs: no reactor in this build. */
@@ -19,4 +22,32 @@ export async function dialPlain(
   signal: AbortSignal | null,
 ): Promise<TcpStream, IoError | AbortError> {
   panic("ICE: fetch dials on the reactor only with the executor in Velt");
+}
+
+/** Not reached in this build. */
+export async function dialTls(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  tls: TlsOn,
+  signal: AbortSignal | null,
+): Promise<TcpStream, IoError | AbortError> {
+  panic("ICE: fetch dials on the reactor only with the executor in Velt");
+}
+
+/** No TLS in this build: closes `fd` and fails with `ENOTSUP`. */
+export async function tlsOn(
+  fd: u64,
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+  left: i64,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
+  // The runtime's close, not `TcpStream`'s: a `TcpStream` reachable from the function `fetch`
+  // stores (`TlsOn`) made a JS host's check of a Worker that serves and fetches take minutes.
+  velt_rt_tcp_close(fd);
+  throw new IoError("ENOTSUP", `fetch failed: no TLS in this build (connecting to ${addr})`);
 }

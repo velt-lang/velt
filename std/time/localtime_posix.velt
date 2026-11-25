@@ -74,3 +74,8 @@ export function localOffsetSeconds(epochMs: i64): i32 {
 export function offsetInZone(key: string, unixSecs: i64): i32 | null {
   return null;
 }
+
+/** Windows' system zone key (localtime_win32.velt): none here. */
+export function systemZoneKey(): string | null {
+  return null;
+}

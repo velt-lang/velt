@@ -1,7 +1,7 @@
 //! Whether what a `declare c` parameter or result passes matches the C type the header gives it
 //! (docs/internals/design/c-ffi.md "Checking declarations against C headers").
 
-use super::ctype::CType;
+use super::ctype::{CType, Headers};
 
 /// A number as it crosses.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +45,24 @@ pub enum Shape {
     Out(Scalar),
     /// `Out<Ptr<T> | null>`: a `T **` C writes.
     OutPtr(Pointee),
+    /// `Out<S>` of a C struct, by name: an `S *` C writes (#2187).
+    OutStruct(String),
+    /// `Ref<S>` of a C struct, by name: a `const S *` C reads (#2187); `Ref<S> | null` if
+    /// `nullable`.
+    RefStruct {
+        name: String,
+        nullable: bool,
+    },
+    /// An array of C structs, by name: a pointer to its first element (#2187); `readonly` when C
+    /// only reads it. `const_only`: the struct has a field C writing could make no Velt value (a
+    /// `bool`, a non-null pointer), so C must take a `const S *` (or `const void *`), as `Ref<S>`.
+    StructBuf {
+        name: String,
+        readonly: bool,
+        const_only: bool,
+    },
+    /// A C struct by value, by name: a field of another C struct.
+    Struct(String),
     Void,
 }
 
@@ -87,6 +105,19 @@ pub fn describe(shape: &Shape) -> String {
         }
         Shape::Out(s) => format!("Out<{}>", scalar(s)),
         Shape::OutPtr(p) => format!("Out<Ptr<{}> | null>", pointee(p)),
+        Shape::OutStruct(name) => format!("Out<{name}>"),
+        Shape::RefStruct {
+            name,
+            nullable: false,
+        } => format!("Ref<{name}>"),
+        Shape::RefStruct {
+            name,
+            nullable: true,
+        } => format!("Ref<{name}> | null"),
+        Shape::StructBuf { name, readonly, .. } => {
+            format!("{}{name}[]", if *readonly { "readonly " } else { "" })
+        }
+        Shape::Struct(name) => name.clone(),
         Shape::Void => "void".into(),
     }
 }
@@ -101,14 +132,26 @@ fn is_pointer_sized(names: &[String]) -> bool {
     })
 }
 
-/// `Err(note)` when `shape` doesn't match `c`; the note says what to declare.
+/// `Err(note)` when `shape` doesn't match `c`; the note says what to declare. Structs are
+/// compared by name alone: [`compare_in`] knows the headers' typedefs of them.
 pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
+    compare_in(shape, c, &Headers::default())
+}
+
+/// [`compare`] in the headers `h`: a struct a declaration names (`point`) matches the C type
+/// when both name the same definition, under its tag or a typedef (`struct point`, `point_t`).
+pub fn compare_in(shape: &Shape, c: &CType, h: &Headers) -> Result<(), String> {
     match shape {
         Shape::Void => match c {
             CType::Void => Ok(()),
             _ => Err(format!("declare the result as {}", velt_for(c))),
         },
         Shape::Scalar(s) => scalar(s, c),
+        Shape::Struct(name) => match c {
+            CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
+            CType::Named(n) => Err(format!("declare C struct `{n}`")),
+            _ => Err(format!("declare {}", velt_for(c))),
+        },
         Shape::Null => match c {
             CType::Pointer { .. } | CType::FunctionPointer => Ok(()),
             _ => Err(format!(
@@ -124,7 +167,7 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
                 pointee,
                 pointee_names,
                 ..
-            } => self::pointee(p, pointee, pointee_names),
+            } => self::pointee(p, pointee, pointee_names, h),
             _ => Err(format!("declare {}", velt_for(c))),
         },
         Shape::Text => match c {
@@ -156,6 +199,57 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
             CType::Pointer { .. } => Err("C only reads it: it is no out-parameter".into()),
             _ => Err(format!("declare {}", velt_for(c))),
         },
+        Shape::OutStruct(name) => match c {
+            CType::Pointer {
+                pointee, is_const, ..
+            } if !*is_const => match &**pointee {
+                CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
+                other => Err(format!("its `Out<T>`: declare {}", velt_for(other))),
+            },
+            CType::Pointer { .. } => Err("C only reads it: it is no out-parameter".into()),
+            _ => Err(format!("declare {}", velt_for(c))),
+        },
+        Shape::RefStruct { name, .. } => match c {
+            CType::Pointer {
+                pointee, is_const, ..
+            } if *is_const => match &**pointee {
+                CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
+                other => Err(format!("its `Ref<S>`: declare {}", velt_for(other))),
+            },
+            CType::Pointer { .. } => Err(
+                "C may write through it: declare it `Out<S>` or `Ptr<S>`; a `Ref<S>` is a `const S *`"
+                    .into(),
+            ),
+            _ => Err(format!("declare {}", velt_for(c))),
+        },
+        // As an array of numbers: an array C writes may not be a `const S *`, and `void *`
+        // matches. A `readonly` one may be a pointer without `const`, unless C writing an
+        // element could make no Velt value (`const_only`): then it is `const S *` only, as
+        // `Ref<S>`.
+        Shape::StructBuf {
+            name,
+            readonly,
+            const_only,
+        } => match c {
+            CType::Pointer {
+                pointee, is_const, ..
+            } => {
+                if !*readonly && *is_const {
+                    return Err("C only reads the array: declare it `readonly`".into());
+                }
+                if *const_only && !*is_const {
+                    return Err(format!(
+                        "C may write through it, and `{name}` has a `bool` or a non-null pointer field C writing could make no Velt value: an array C only reads is a `const {name} *`"
+                    ));
+                }
+                match &**pointee {
+                    CType::Void => Ok(()),
+                    CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
+                    other => Err(format!("the array's elements are {}", velt_for(other))),
+                }
+            }
+            _ => Err(format!("declare {}", velt_for(c))),
+        },
         Shape::OutPtr(p) => match c {
             CType::Pointer {
                 pointee, is_const, ..
@@ -164,7 +258,7 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
                     pointee,
                     pointee_names,
                     ..
-                } => self::pointee(p, pointee, pointee_names),
+                } => self::pointee(p, pointee, pointee_names, h),
                 other => Err(format!("C writes {} there, not a pointer", velt_for(other))),
             },
             _ => Err(format!("declare {}", velt_for(c))),
@@ -213,14 +307,16 @@ fn scalar(s: &Scalar, c: &CType) -> Result<(), String> {
     }
 }
 
-fn pointee(p: &Pointee, c: &CType, names: &[String]) -> Result<(), String> {
+fn pointee(p: &Pointee, c: &CType, names: &[String], h: &Headers) -> Result<(), String> {
     // `void *` takes and gives any pointer, as in C.
     if matches!(p, Pointee::Void) || matches!(c, CType::Void) {
         return Ok(());
     }
     let ok = match (p, c) {
         (Pointee::Scalar(s), _) => scalar(s, c).is_ok(),
-        (Pointee::CType(name), CType::Named(tag)) => name == tag || names.iter().any(|n| n == name),
+        (Pointee::CType(name), CType::Named(tag)) => {
+            name == tag || names.iter().any(|n| n == name) || h.same_record(name, tag)
+        }
         (Pointee::CType(name), _) => names.iter().any(|n| n == name),
         (
             Pointee::Ptr(inner),
@@ -229,15 +325,31 @@ fn pointee(p: &Pointee, c: &CType, names: &[String]) -> Result<(), String> {
                 pointee_names,
                 ..
             },
-        ) => self::pointee(inner, pointee, pointee_names).is_ok(),
+        ) => self::pointee(inner, pointee, pointee_names, h).is_ok(),
         _ => false,
     };
     match (ok, c) {
         (true, _) => Ok(()),
-        (false, CType::Named(n)) => Err(format!(
-            "it points at C type `{n}`: declare `Ptr<{n}>`, with `declare c type {n};`"
-        )),
+        (false, CType::Named(n)) => Err(named_pointee_note(n, h)),
         (false, _) => Err(format!("it points at {}", velt_for(c))),
+    }
+}
+
+/// What to declare for a pointer to the C struct or union `n` (a name the header writes): a
+/// defined struct is a `declare c struct`, the one already declared for its definition if there
+/// is one; anything else (a struct only declared, a union) is a `declare c type`.
+fn named_pointee_note(n: &str, h: &Headers) -> String {
+    match h.record(n) {
+        Some((r, _)) if r.defined && !r.union => {
+            match h.declared.iter().find(|d| h.same_record(d, n)) {
+                Some(d) if d == n => format!("it points at C struct `{n}`: declare `Ptr<{n}>`"),
+                Some(d) => format!("it points at C struct `{n}`, declared as `{d}`: declare `Ptr<{d}>`"),
+                None => format!(
+                    "it points at C struct `{n}`: declare `Ptr<{n}>`, with `declare c struct {n} {{ … }}`"
+                ),
+            }
+        }
+        _ => format!("it points at C type `{n}`: declare `Ptr<{n}>`, with `declare c type {n};`"),
     }
 }
 
@@ -274,7 +386,7 @@ pub(super) fn velt_for(c: &CType) -> String {
             CType::Void => "a `Ptr<void>`".into(),
             _ => "a pointer (`Ptr<T>`, an array, `Out<T>`)".into(),
         },
-        CType::Named(n) => format!("struct `{n}` by value, which can't cross yet"),
+        CType::Named(n) => format!("C struct `{n}` by value (`declare c struct {n} {{ … }}`)"),
         CType::FunctionPointer => "a `Ptr<void>` (a function pointer, until `CFunction`)".into(),
         CType::Unknown(n) => format!("`{n}`, which can't cross"),
     }

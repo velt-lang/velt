@@ -67,17 +67,28 @@ pub enum CTy {
     /// `StrBytes` (velt/ffi; parameters only): a `string`'s UTF-8 bytes, borrowed for the call,
     /// without a NUL; one that may hold a lone surrogate is passed as a copy with U+FFFD.
     StrBytes,
-    /// An array of numbers (`u8[]`, `readonly f64[]`; parameters only): the address of its first
-    /// element, borrowed for the call. `readonly`: C only reads it. A `u8[]` parameter also
-    /// takes a view of bytes (a typed array, a `DataView`, a `subarray`).
+    /// An array of numbers (`u8[]`, `readonly f64[]`) or of C structs (`readonly S[]`, #2187;
+    /// parameters only): the address of its first element, borrowed for the call. `readonly`: C
+    /// only reads it. A `u8[]` parameter also takes a view of bytes (a typed array, a
+    /// `DataView`, a `subarray`).
     Buf {
         readonly: bool,
     },
     /// velt/ffi's `CString` (parameters only): the address of its NUL-terminated bytes.
     CString,
-    /// velt/ffi's `Out<T>`, `T` a number type, `bool` or `Ptr<U> | null` (parameters only): the
-    /// address of its `value`, which C writes (`int *`, `T **`).
+    /// velt/ffi's `Out<T>`, `T` a number type, `bool`, `Ptr<U> | null` or a C struct (parameters
+    /// only): the address of its private field `held`, which C writes (`int *`, `T **`, `S *`) and
+    /// its `value` reads through `Intrinsic::CArrived`.
     Out,
+    /// velt/ffi's `Ref<S>` of a C struct (parameters only, #2187, additive): the address of a copy
+    /// of the struct the call passes, borrowed for the call (`const S *`); `nullable` for
+    /// `Ref<S> | null`, which passes `NULL` for `null`.
+    Ref {
+        nullable: bool,
+    },
+    /// A `declare c struct` by value (#2187 layer 3, additive): the parameter's or result's
+    /// type names which; lowering passes it as the target's C calling convention says.
+    Struct,
     /// `void` (results only).
     Void,
 }

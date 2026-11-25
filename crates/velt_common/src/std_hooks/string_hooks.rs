@@ -1,7 +1,9 @@
-//! The string methods' rows of the hook table (std/lang/string/, #2198): the searches, `trim`,
+//! The string methods' rows of the hook table (std/lang/string/, #2198), and a byte range as a
+//! string and a number stored into an integer array (#2196, #3182): the searches, `trim`,
 //! `repeat`, `padStart` / `padEnd`, `split`, `replace` / `replaceAll` and the case mapping, which
 //! the prelude's methods call by role (`hookCall`), so a program loads a method's module only
-//! when live code calls it; and `replace` with a function, which sema calls. Those that take and return only strings and numbers are `prebuilt`. Kept
+//! when live code calls it; `replace` with a function, which sema calls; and `Date`'s zone name,
+//! a string the prelude's `toTimeString` gets by role the same way. Those that take and return only strings and numbers are `prebuilt`. Kept
 //! apart from the rest of the table ([`super`]), which [`with_string_hooks`] gives to
 //! `with_weak_hooks!` with these rows after it.
 
@@ -64,6 +66,22 @@ macro_rules! with_string_hooks {
             /// `b.utf8Slice(start, end)` with its positions clamped (`from <= to <= b.length`).
             bytes_range_text => lang_bytes_range_text, "rangeText", sig((&[u8], usize, usize) -> string),
                 replaces("velt_rt_bytes_range_to_str_lossy"), bench("bytes_utf8");
+
+            // velt/lang/hooks/int_store: a `number` stored into an element of an integer array,
+            // converted as a typed array stores it (#3182; `velt_sema` `element_store.rs` calls
+            // them, and only a program with such a store loads the module).
+            /// `buf[i] = n` on a `u8[]` (ToUint8).
+            number_to_u8 => lang_hooks_int_store, "toUint8", sig((f64) -> u8);
+            /// `xs[i] = n` on an `i8[]` (ToInt8).
+            number_to_i8 => lang_hooks_int_store, "toInt8", sig((f64) -> i8);
+            /// `xs[i] = n` on a `u16[]` (ToUint16).
+            number_to_u16 => lang_hooks_int_store, "toUint16", sig((f64) -> u16);
+            /// `xs[i] = n` on an `i16[]` (ToInt16).
+            number_to_i16 => lang_hooks_int_store, "toInt16", sig((f64) -> i16);
+            /// `xs[i] = n` on a `u32[]` (ToUint32).
+            number_to_u32 => lang_hooks_int_store, "toUint32", sig((f64) -> u32);
+            /// `xs[i] = n` on an `i32[]` (ToInt32).
+            number_to_i32 => lang_hooks_int_store, "toInt32", sig((f64) -> i32);
             /// `s.repeat(count)` of a count the prelude's method has checked.
             string_repeat => lang_string_fill, "repeat", sig((&string, i64) -> string),
                 replaces("velt_rt_str_repeat"), bench("string_methods"), prebuilt;
@@ -73,6 +91,13 @@ macro_rules! with_string_hooks {
             /// `s.padEnd(target, fill)`.
             string_pad_end => lang_string_fill, "padEnd", sig((&string, i64, &string) -> string),
                 replaces("velt_rt_str_pad_end"), bench("string_methods"), prebuilt;
+
+            // velt/lang/hooks/date_zone_name: the zone name `Date`'s `toString()` and
+            // `toTimeString()` end with (#3152), called by role, so a program loads the table of
+            // names only when live code calls one.
+            /// The local zone's long name at `(t, offset)`, ms since the epoch and the offset there
+            /// in seconds, as Node prints it.
+            date_zone_name => lang_hooks_date_zone_name, "dateZoneName", sig((f64, i64) -> string);
         }
     };
 }

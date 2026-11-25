@@ -5,7 +5,7 @@
 // record allocate nothing; each transport read allocates its view of the buffer (3 blocks, all
 // freed).
 
-import "velt/lang/typed_array/bytes_view";
+import { u8View } from "velt/lang/typed_array/u8_view";
 import { ByteStream, TryStream } from "velt/net/byte_stream";
 import {
   alertName,
@@ -62,7 +62,9 @@ export class RecordReader {
 
   constructor(t: ByteStream) {
     this.t = t;
-    this.buf = Buffer.alloc(BUFFER);
+    // Not zeroed: only bytes read from the stream are ever looked at, and the pages a
+    // handshake-only connection never fills are never touched.
+    this.buf = Buffer.allocUnsafe(BUFFER);
     this.cstart = 0;
     this.cend = 0;
     this.rstart = 0;
@@ -290,11 +292,29 @@ export class RecordReader {
   // Reads more of the transport behind the unread records: false at its end.
   private async readMore(): Promise<bool> {
     this.makeRoom();
-    const got = await this.t.readInto(this.buf.subarray(this.rend as number, BUFFER as number));
+    // `u8View`, not `subarray`, whose `extend` of `Array` can't load in the middle of a check.
+    const got = await this.t.readInto(u8View(this.buf, this.rend, BUFFER - this.rend));
     if (got == null) {
       return false;
     }
     this.rend += got as usize;
+    return true;
+  }
+
+  /**
+   * Appends `b[start..end]`, transport bytes read elsewhere, behind the unread records, as
+   * `tryMore` appends what it reads: false when there is no room for them.
+   */
+  takeIn(b: u8[], start: usize, end: usize): bool {
+    this.makeRoom();
+    const n = end - start;
+    if (this.rend + n > BUFFER) {
+      return false;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      this.buf[this.rend + i] = b[start + i];
+    }
+    this.rend += n;
     return true;
   }
 

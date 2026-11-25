@@ -303,7 +303,7 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
             Some(match slot {
                 Some(slot) => trampoline(cx, p.d, p.self_ty, &f, (slot, want)),
-                None => def,
+                None => crate::hand_back::value_entry(cx, def),
             })
         }
         _ => {
@@ -398,7 +398,7 @@ fn trampoline(
     };
     let qual = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
     let host = Host::adt(cx, d);
-    synth_method(
+    let entry = synth_method(
         cx,
         &host,
         self_ty,
@@ -407,7 +407,12 @@ fn trampoline(
         ret,
         mutates_this(cx, def),
         Target::Slot(slot),
-    )
+    );
+    // The slot's methods return nothing; the entry returns the receiver.
+    if crate::hand_back::hands_back(cx, def) {
+        crate::hand_back::return_receiver(cx, entry);
+    }
+    entry
 }
 
 /// Checks `def` against interface method `m`; returns `m`'s result type in the implementing

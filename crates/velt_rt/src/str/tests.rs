@@ -256,7 +256,9 @@ fn strbuf_pushes_carry_units() {
         velt_rt_strbuf_push_bytes(&mut b.0, "-42€ ".as_ptr(), 7);
         velt_rt_strbuf_push_bool(&mut b.0, 1);
         let s = VeltStr::from_static("😀".as_bytes());
-        velt_rt_strbuf_push_json_str(&mut b.0, &s);
+        velt_rt_strbuf_push_byte(&mut b.0, b'"');
+        velt_rt_strbuf_push_str(&mut b.0, &s);
+        velt_rt_strbuf_push_byte(&mut b.0, b'"');
         velt_rt_strbuf_push_str(&mut b.0, &s);
         let p: *mut VeltStr = &mut b.0;
         velt_rt_strbuf_push_str(p, p);

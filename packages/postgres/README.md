@@ -112,21 +112,25 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
     other answer, and any failed handshake, is `"ETLS"`: plain text comes only from an `N`. This
     works with any server version, and with a self-signed certificate such as Debian and Ubuntu
     install.
-  - `verify-ca` and `verify-full` use PostgreSQL 17's direct TLS (ALPN `postgresql`, which the
-    server must agree to) with the certificate checked against Mozilla's roots and the PEM file
-    named by `sslrootcert`. Both check the host name too: unlike libpq, `verify-ca` is as strict
-    as `verify-full`, so a connection by IP address or by an alias needs a certificate whose
-    subject alternative names include it. They need PostgreSQL 17 or later; an older server, or a
-    proxy without direct TLS, fails with `"ETLS"` and a message that says so: a certificate check
-    after `SSLRequest` is not supported
-    ([#2392](https://github.com/velt-lang/velt/issues/2392)). There, `require` encrypts without
-    the check.
+  - `verify-ca` and `verify-full` send `SSLRequest` too, and check the server's certificate in
+    the handshake that follows (velt/net's `startTls`), so they work with every server version.
+    The certificate must be within its validity and chain to a trusted root. `verify-full`
+    trusts the PEM file named by `sslrootcert` and Mozilla's roots, and requires the certificate
+    to be for the host in the URL, a name or an IP address among its subject alternative names
+    (the common name does not count). `verify-ca` takes a certificate for any host, as libpq
+    does, so it trusts the `sslrootcert` file alone and needs one: without it connecting fails
+    with `"ETLS"` before anything is sent. A server that answers `N`, a certificate that does not
+    verify and any failed handshake are `"ETLS"`.
+  - `sslnegotiation=direct` with `verify-ca` or `verify-full` skips `SSLRequest` and starts TLS at
+    once (ALPN `postgresql`, which the server must agree to), as PostgreSQL 17 and later accept.
+    This path goes through velt/net's `connectTls`, which checks the host name under both modes,
+    so here `verify-ca` is as strict as `verify-full`. An older server, or a proxy without direct
+    TLS, fails with `"ETLS"` and a message that says so.
 
   The answer to `SSLRequest` is read one byte at a time, so nothing sent in plain text after it is
   taken for part of the encrypted stream (libpq's CVE-2021-23222). The handshake ends by the
   connection's deadline: `connect_timeout`, else 30 seconds for the whole opening of each host.
-  `sslnegotiation` is accepted and changes nothing: `prefer` and `require` always ask first, and the
-  checked modes always go direct. A server that refuses a TLS connection (`hostnossl`) is not tried
+  `sslnegotiation=direct` changes nothing under `prefer` and `require`, which always ask first. A server that refuses a TLS connection (`hostnossl`) is not tried
   again in plain text. SCRAM channel binding isn't offered.
 - **SCRAM** has no SASLprep, since std has no Unicode normalization: a password goes as its own UTF-8
   bytes. ASCII passwords and those already in Unicode's compatibility normal form (NFKC) work. One
@@ -195,10 +199,12 @@ back.
 
 A pool looks at an idle connection's socket before it hands it out (a read that doesn't wait), so
 one whose session the server ended while it was idle (its FATAL `"57P01"` has come, or the socket
-closed) is dropped and another taken or opened. Under `prefer` and `require`, anything unread
-on a TLS connection's socket (a notification too) drops the connection, since reading it through
-TLS would cost more than most queries. Under `verify-ca` and `verify-full` the check first waits on
-the socket for a moment that ends at once, which lets velt/net's TLS take what has come. A
+closed) is dropped and another taken or opened. On a TLS connection made after `SSLRequest` (every
+mode but `sslnegotiation=direct`), the look reads one byte of the socket, and a byte that came goes
+to the TLS stream, so what it can decrypt is looked at as on a plain connection: a notification is
+kept and the connection handed out, a FATAL drops it, and part of a record waits for the next read.
+With `sslnegotiation=direct` the check first waits on the socket for a moment that ends at once, which
+lets velt/net's TLS take what has come. A
 statement is never sent twice: a session that ends after that check, or a reply lost after the
 server ran the statement, fails the call with `"57P01"`, `"ECONNRESET"` or the like, and the server
 may have run and committed it.
@@ -222,7 +228,7 @@ reads its own reply.
   `connection.velt` (requests), `ops.velt` (what `Client` and `Pool` share), `builder.velt`,
   `encoder.velt` and `binary_values.velt` (a request's bytes), `input.velt`, `read_buffer.velt` and `reply.velt` (a reply, and
   rows through velt/db's `readRows`), `drain.velt` (after a task went away), `startup.velt`,
-  `socket.velt`, `unchecked_tls.velt` (TLS without a certificate check), `transport.velt` and `tls_read.velt` (the stream
+  `socket.velt`, `upgraded_tls.velt` (TLS after `SSLRequest`, checked as the mode says), `transport.velt` and `tls_read.velt` (the stream
   under it), `config.velt`, `describe.velt`, `prepared.velt`
   and `statement_cache.velt` (statements), `copy_state.velt`.
 - The pool: `pool_state.velt` (the state behind its lock), `grant.velt`, `taken.velt`,

@@ -9,17 +9,27 @@
 // time (sched_fire.velt `fireYields`): each wakes what waits for it and runs it, then the task's
 // microtasks, the promises they woke and its root if it woke run before the next. On the list:
 // - an awaited yield of a started promise or of a join's child: a record with a clone of its
-//   waker. A started promise that yielded is flagged `YIELDING` until its turn: its owner does not
-//   adopt it meanwhile (sched_node.velt `pollNode`), and its yield does not go on.
+//   waker (`ls.held`), which the yield's suspension holds as its token until its resume or its
+//   cancel takes it: the resume goes on once that record's turn came, whatever cx polls it, and
+//   a resume with another cx than the yield's (an owner that adopted the state, or a child that
+//   was detached to run on its own) has the record wake that cx instead. So the children of an
+//   inline `Promise.all`, which yield with their parent's cx, take their turns in the order they
+//   yielded, as in Node (#3611, #3687). A started promise that yielded is flagged `YIELDING`
+//   until a turn of its: its owner does not adopt it meanwhile (sched_node.velt `pollNode`).
 // - a stored `yieldNow()` (a heap future, a leaf its waiter polls) that its task polled in the
 //   poll that made it, for a waiter other than the root.
 // A stored yield joins the list only then. Made in an earlier generation of its task (one more in
 // each poll after one that made stored yields: flag `FRESH`), its turn has passed: it is ready.
 // Polled by another task first, its turn is that task's, from that task's poll then.
-// A root that yields turns `YIELDED`: queued again, and held back if this poll polls the root
-// again for its microtasks; its next poll's `RUNNING` lets it go on. It waits on the list only
-// behind yields already on it; otherwise it has no record, and flag `ROOT_ALONE` gives it one
-// first if yields made after it join the list in this poll.
+// A root that yields turns `YIELDED`: queued again for its next poll. Each of its awaited
+// yields takes a turn of its own (#3687): a record on the list, behind the yields made before
+// it, which it goes on by, and the root is polled at that turn even if it yielded again meanwhile
+// (sched_fire.velt `resume`). So the children of an inline `Promise.all` the root awaits, which
+// yield with its cx, take their turns in the order they yielded. The fast path, the first yield
+// of a poll in a task with no yield block in use (none, or one parked: sched_yield_list.velt
+// `park`) or with nothing listed, has no record: it goes on in a later poll (`YIELDED`,
+// which a poll's `RUNNING` ends), and flag `ROOT_ALONE` gives it a record first if yields made
+// after it join the list in this poll.
 // Off the workers (a C library's thread, no task current), a yield wakes at once, as before.
 // Only a program that yields compiles the list's turns (`stdUsed("yields")`).
 
@@ -27,6 +37,7 @@ import { fnAddress, inline, noInline, noteStdUse } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as ls from "./sched_yield_list";
+import * as tn from "./sched_yield_turn";
 import * as t from "./sched_task";
 
 /** The task being polled on this thread (0: none, or off the workers). */
@@ -38,120 +49,232 @@ function current(): usize {
 
 /**
  * `await yieldNow()`: what polls with `cx` runs again at its turn, after the other ready tasks.
- * The root's yield, the common one, inlines where it is awaited; the rest is out of line.
+ * Its record on the task's list, the token its suspension holds until a resume or its cancel
+ * takes it (`schedYieldReady`, `schedYieldDrop`; encoded as `ls.POLL` says). The root's yield,
+ * the common one, inlines where it is awaited; the rest is out of line.
  */
 @inline("always")
-export function schedYield(cx: usize): void {
+export function schedYield(cx: usize): usize {
   noteStdUse("yields");
   const w = m.ld(cx + 8);
   if (cx === w + t.T_CX) {
-    rootYield(w, 0);
-  } else {
-    otherYield(w);
+    return rootYield(w, 0);
   }
+  return otherYield(w);
 }
 
 /**
  * `await yieldNow()` with waker `w` and a cx that is not a task's own (`schedYield`;
  * sched_task.velt `T_CX`): a task's waker in another cx (the runtime's, around a leaf) is still
- * its root's yield.
+ * its root's yield. Otherwise a record held by the yield (`ls.held`), on its task's list.
  */
 @noInline
-function otherYield(w: usize): void {
+function otherYield(w: usize): usize {
   const vt = m.ld(w);
   if (vt === t.main() + t.E_VT) {
-    rootYield(w, 0);
-    return;
+    return sharedRootYield(w);
   }
   const k = current();
   if (k === 0) {
     m.wakeByRef(w);
-    return;
+    return ls.POLL;
   }
   if (vt === t.main() + t.E_NODE_VT) {
     m.or32(w + node.N_FLAGS, node.YIELDING);
   }
-  ls.join(k, ls.record(m.wakerClone(w), ls.nextStamp(ls.block(k))));
+  const r = ls.held(m.wakerClone(w), k, ls.nextStamp(ls.block(k)));
+  ls.join(k, r);
+  return r;
 }
 
 /**
- * The root of task `k` (running) yields: for yield `y` (stored), or an awaited one (0). Its turn
- * comes once in this poll whatever it waits for: a second yield's is the first one's.
+ * The root of task `k` (running) yields: for yield `y` (stored), or an awaited one (0). Each
+ * awaited yield takes a turn of its own: its record (the token its resume asks by, #3687), unless
+ * it is the poll's first in a task with no yield block, which only marks the root `YIELDED` (0).
+ * The children of an inline `Promise.all` the root awaits yield with its cx, and take their turns
+ * in the order they yielded, as in Node. A stored yield shares the root's turn in this poll.
  */
 @inline("always")
-function rootYield(k: usize, y: usize): void {
+function rootYield(k: usize, y: usize): usize {
   // Polled again once this poll returns, at the back of the queue. While it runs, only a wake
   // changes its state, from RUNNING to NOTIFIED: a store, not a swap.
   const b = m.ld(k + t.T_YIELDS);
-  if (b === 0) {
-    // No yield block: no list, no yield made, so nothing to order it against (a second yield
-    // in this poll stores the same).
-    m.store32(k + t.T_STATE, t.YIELDED);
-  } else {
-    rootYieldInOrder(k, y, b);
+  if (y !== 0) {
+    storedRootYield(k, y, ls.blockOf(k));
+    return 0;
   }
+  if (b === 0) {
+    // No yield block in use (none, or one parked): nothing listed, and no other yield of this
+    // poll with this cx (the children of an inline `Promise.all` yield with a copy of it,
+    // `sharedRootYield`), so no record: it goes on once this poll is over (`ls.POLL`).
+    m.store32(k + t.T_STATE, t.YIELDED);
+    return ls.POLL;
+  }
+  return rootYieldBlock(k, b);
 }
 
-/** `rootYield` for a task with a yield block `b`: the root's turn keeps its place in the order. */
+/**
+ * The root's awaited yield with its own cx in a task with yield block `b` in use. It may be a second
+ * one in this poll: the root is polled at each yield's turn, even after it yielded (sched_fire.velt
+ * `resume`).
+ */
 @noInline
-function rootYieldInOrder(k: usize, y: usize, b: usize): void {
+function rootYieldBlock(k: usize, b: usize): usize {
+  // Only this thread stores `YIELDED` (a wake stores `NOTIFIED`): a relaxed read.
+  if (m.load32Relaxed(k + t.T_STATE) === t.YIELDED) {
+    return rootYieldAgain(k);
+  }
+  m.store32(k + t.T_STATE, t.YIELDED);
+  return rootYieldFirst(k, b);
+}
+
+/**
+ * The root's awaited yield with a task's waker in another cx: a child of an inline `Promise.all`
+ * the root awaits, polled with a copy of the root's cx (velt_vir `await_all_inline`, rt_abi_async.md
+ * `velt_rt_yield_now`), so its siblings' yields in this poll may come before or after it. In line
+ * in `otherYield`'s task branch: one call per child's yield.
+ */
+@inline("always")
+function sharedRootYield(k: usize): usize {
+  if (m.load32Relaxed(k + t.T_STATE) === t.YIELDED) {
+    return rootYieldAgain(k);
+  }
+  m.store32(k + t.T_STATE, t.YIELDED);
+  const b = m.ld(k + t.T_YIELDS);
+  return b === 0 ? ls.POLL : rootYieldFirst(k, b);
+}
+
+/** The poll's first awaited root yield, in a task with yield block `b` in use. */
+function rootYieldFirst(k: usize, b: usize): usize {
+  if (t.has(k, t.YIELDS)) {
+    return rootRecordFirst(k, b);
+  }
+  // Nothing listed: its stamp the last one made, so a yield made after it in this poll gives it a
+  // record first (`ROOT_ALONE`, `ls.join`). No record: it goes on once this poll is over.
+  m.st(b + ls.B_ROOT, m.ld(b + ls.B_STAMP));
+  t.flags(k, t.ROOT_ALONE, 0);
+  return ls.POLL;
+}
+
+/**
+ * Another awaited root yield in this poll (a child of an inline `Promise.all` the root awaits):
+ * the block made now if there is none, which gives the first its turn first (`ROOT_ALONE`), and a
+ * record of its own behind it.
+ */
+@noInline
+function rootYieldAgain(k: usize): usize {
+  return rootRecord(k, ls.block(k));
+}
+
+/** The poll's first awaited root yield, behind yields already listed: a record of its own. */
+@noInline
+function rootRecordFirst(k: usize, b: usize): usize {
+  // A mark left from an earlier poll would add a record for a turn that has passed.
+  t.flags(k, 0, t.ROOT_ALONE);
+  return rootRecord(k, b);
+}
+
+/** An awaited root yield's record on task `k`'s list (block `b`), behind the yields before it. */
+function rootRecord(k: usize, b: usize): usize {
+  const r = ls.held(ls.ROOT, k, ls.nextStamp(b));
+  // A first yield of this poll with no record yet (`ROOT_ALONE`) gets one first.
+  ls.join(k, r);
+  return r;
+}
+
+/**
+ * Stored yield `y` of task `k`'s root (block `b`, parked or not, 0: none): it shares the root's
+ * turn in this poll.
+ */
+@noInline
+function storedRootYield(k: usize, y: usize, b: usize): void {
   if (m.load32(k + t.T_STATE) === t.YIELDED) {
     return;
   }
   m.store32(k + t.T_STATE, t.YIELDED);
+  if (b === 0) {
+    return;
+  }
   if (!t.has(k, t.YIELDS)) {
-    // Its stamp, for a record if yields join after it: an awaited yield's is the last one made
-    // (that one, made before it, comes before it).
-    m.st(b + ls.B_ROOT, y !== 0 ? m.ld(y + ls.Y_STAMP) : m.ld(b + ls.B_STAMP));
+    // Its stamp, for a record if yields join after it.
+    m.st(b + ls.B_ROOT, m.ld(y + ls.Y_STAMP));
     t.flags(k, t.ROOT_ALONE, 0);
     return;
   }
-  // Its record goes on the list now (a mark left from an earlier poll would add a second).
+  // Its record goes on the list now (a mark left from an earlier poll would add a second),
+  // behind the yields made before it.
   t.flags(k, 0, t.ROOT_ALONE);
-  // Behind the yields made before it.
-  if (y === 0) {
-    ls.join(k, ls.record(ls.ROOT, ls.nextStamp(b)));
-  } else {
-    m.st(y + ls.Y_WAKER, ls.ROOT);
-    ls.join(k, y);
-  }
+  m.st(y + ls.Y_WAKER, ls.ROOT);
+  ls.join(k, y);
 }
 
 /**
  * `await yieldNow()` resumes: 1 to go on, 0 to stay suspended. The poll that yielded may poll the
  * yield again for its microtasks (a microtask's entry resumes the root or runs a started promise
  * directly, and an inline `Promise.all` polls every child it has); a yield goes on only once its
- * wake had its turn:
- * - polled with its task's cx: in a later poll (`YIELDED`, which a poll's `RUNNING` ends; another
- *   yield of the root in this poll holds it back as well: one poll late at most, never early);
- * - polled with a started promise's: once its turn on the list came (`YIELDING`), or, off the
- *   workers, once the promise ran from its task's woken stack (`ls.QUEUED`, sched_node.velt `run`);
- * - with any other waker (a ls.join's child: only children that woke are polled): at once.
+ * own turn came:
+ * - with a record (`record`, from `otherYield` or `rootRecord`): once the record's turn came, whatever cx polls it
+ *   (`heldPoll`), which frees it then. The children of an inline `Promise.all` yield with their
+ *   parent's cx, and a state may be polled with another cx than the one it yielded with (its
+ *   owner adopted it, or it was detached to run on its own): its record wakes that cx then, so
+ *   the turns come in the order the yields were made, as in Node (#3611, #3687);
+ * - with no record (`ls.POLL`: the root's first yield in a poll, with no block in use or nothing
+ *   listed): in a later poll (`YIELDED`, which a poll's `RUNNING` ends), whatever cx asks
+ *   (`ls.pollReady`);
+ * - off the workers (`ls.POLL`, no task): once the promise ran from its task's woken stack (`ls.QUEUED`,
+ *   sched_node.velt `run`), or at once with any other waker.
  */
 @inline("always")
-export function schedYieldReady(cx: usize): u32 {
+export function schedYieldReady(cx: usize, record: usize): u32 {
   const w = m.ld(cx + 8);
+  if (record !== 0) {
+    return ls.heldPoll(record, w, current());
+  }
   if (cx === w + t.T_CX) {
-    // The task's own cx, the common one: no table to load.
+    // The task's own cx, the common one: `YIELDED` lasts exactly the poll it yielded in, and no
+    // table is loaded.
     return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
   }
   return otherReady(w);
 }
 
-/** `schedYieldReady` with waker `w` and a cx that is not a task's own. */
+/** `schedYieldReady` with waker `w` and `record`, but for the task's own cx with no record. */
 @noInline
 function otherReady(w: usize): u32 {
   const vt = m.ld(w);
   if (vt === t.main() + t.E_VT) {
-    return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
+    // A task's waker in another cx: its state, as with its own cx. Going on, it is a waiter of
+    // the turn polling the root, if one is (`tn.nextTurn`).
+    if (m.load32(w + t.T_STATE) === t.YIELDED) {
+      return 0;
+    }
+    if (w === current()) {
+      tn.taken(w);
+    }
+    return 1;
   }
-  if (
-    vt === t.main() + t.E_NODE_VT &&
-    (m.load32(w + node.N_FLAGS) & (node.QUEUED | node.YIELDING)) !== 0
-  ) {
+  const isNode = vt === t.main() + t.E_NODE_VT;
+  if (isNode && (m.load32(w + node.N_FLAGS) & (node.QUEUED | node.YIELDING)) !== 0) {
+    // Its started promise runs again (queued), or its turn is on the list.
     return 0;
   }
-  return 1;
+  return ls.pollReady(current(), w, isNode);
+}
+
+/**
+ * The cancel of a state suspended at `await yieldNow()`: its record (0: none) goes, as a stored
+ * yield's drop does (`storedDrop`: one still waiting is freed by the list at its turn).
+ */
+export function schedYieldDrop(record: usize): void {
+  if (record === 0) {
+    // No record: nothing to drop.
+    return;
+  }
+  if (m.ld(record + ls.Y_TASK) === current()) {
+    // On its task's thread, where its turn would take the waker: the node it flags lets go.
+    ls.letGo(m.ld(record + ls.Y_WAKER));
+  }
+  storedDrop(record);
 }
 
 /**
@@ -217,7 +340,7 @@ function storedPoll(f: usize, cx: usize): u32 {
   if (old > ls.ROOT) {
     m.wakerDrop(old);
   }
-  if (settled(f) === ls.FIRED) {
+  if (ls.settled(f) === ls.FIRED) {
     const again = m.swap(f + ls.Y_WAKER, 0);
     if (again > ls.ROOT) {
       m.wakerDrop(again);
@@ -256,7 +379,7 @@ function storedDrop(f: usize): void {
     // Still on its task's list, which frees it at its turn.
     return;
   }
-  settled(f);
+  ls.settled(f);
   m.release(f, ls.Y_SIZE);
 }
 
@@ -278,7 +401,7 @@ function pollNew(f: usize, w: usize): u32 {
     }
     made(f, j);
     k = j;
-  } else if (m.ld(f + ls.Y_STAMP) / ls.GEN !== m.ld(m.ld(k + t.T_YIELDS) + ls.B_STAMP) / ls.GEN) {
+  } else if (m.ld(f + ls.Y_STAMP) / ls.GEN !== m.ld(ls.blockOf(k) + ls.B_STAMP) / ls.GEN) {
     return 1;
   }
   if (w === k) {
@@ -290,27 +413,29 @@ function pollNew(f: usize, w: usize): u32 {
   return 0;
 }
 
-/** Stored yield `f`'s state once its turn, if it is taking place, has taken its waker. */
-function settled(f: usize): usize {
-  let s = m.load(f + ls.Y_STATE);
-  while (s === ls.FIRING) {
-    // A few steps on the owner's thread, with no wait.
-    m.yieldCore();
-    s = m.load(f + ls.Y_STATE);
-  }
-  return s;
-}
-
+/**
+ * A stored yield made off the workers: its word at +16 is 0 until it yields, then its record + 1
+ * (`schedYield`, 0 off the workers): a record when it is polled on a worker, which its drop
+ * gives back if no resume took it.
+ */
 function yieldPoll(f: usize, cx: usize): u32 {
-  if (m.ld(f + 16) !== 0) {
-    return schedYieldReady(cx);
+  const yielded = m.ld(f + 16);
+  if (yielded !== 0) {
+    const r = schedYieldReady(cx, yielded - 1);
+    if (r !== 0) {
+      m.st(f + 16, 1);
+    }
+    return r;
   }
-  m.st(f + 16, 1);
-  schedYield(cx);
+  m.st(f + 16, schedYield(cx) + 1);
   return 0;
 }
 
 function yieldDrop(f: usize): void {
+  const yielded = m.ld(f + 16);
+  if (yielded > 1) {
+    schedYieldDrop(yielded - 1);
+  }
   m.release(f, 24);
 }
 
@@ -323,7 +448,7 @@ export function begin(k: usize, fl: u32): void {
   if ((fl & t.FRESH) !== 0) {
     t.flags(k, 0, t.FRESH);
     // A new generation: the next stamp is above every one made so far.
-    const b = m.ld(k + t.T_YIELDS);
+    const b = ls.blockOf(k);
     m.st(b + ls.B_STAMP, (m.ld(b + ls.B_STAMP) / ls.GEN + 1) * ls.GEN);
   }
 }

@@ -102,7 +102,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      same object on every path and are read later (a variable and an inlined method's
      `this`). When another name may hold the object on some paths only, it stays on the heap.
      Fields holding counted values qualify too: lowering drops and shares a pointer field
-     from a copy of it, never through the field's address.
+     from a copy of it, never through the field's address. So do counted objects (a view made
+     by `subarray` or `new DataView`, #1718): their count becomes a local beside the object,
+     and their drops and getters, calls through a vtable every object of the group got, become
+     direct calls for the next round to inline. A counted object whose copies sit in deeper
+     loops than its allocations (an error object a hot loop carries) stays on the heap.
    - `sroa` then splits those aggregate locals, and others whose address is never taken, into
      one local per field.
    - `numrep` stores a `number` (`f64`) as an `i32` or `i64` where its facts (interval, whole, never
@@ -147,8 +151,8 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 The **runtime** (`velt_rt`) is a Rust static library: memory allocation (mimalloc), strings,
 formatting, JSON, regular expressions, promise combinators, and the tokio-based I/O the standard
-library builds on (file system, sockets, timers, processes, TLS through rustls). HTTP is written in
-Velt (`std/net/http`), and the database drivers are packages (`packages/sqlite`,
+library builds on (file system, sockets, timers, processes). TLS (`std/net/tls`) and HTTP are
+written in Velt (`std/net/http`), and the database drivers are packages (`packages/sqlite`,
 `packages/postgres`, `packages/redis`). On native targets the executor that runs tasks, microtasks
 and timers is written in Velt (`std/lang/hooks/sched.velt`): lowering calls its hooks where it would
 call the runtime's executor (`crates/velt_vir/src/lower/sched.rs`), and the runtime's I/O wakes its
@@ -173,7 +177,7 @@ own executor.
 | `velt_rt_wasm` | the WebAssembly runtime and its JavaScript glue |
 | `velt_rt_host` | the runtime's sources built as an rlib, which hosts JIT-compiled programs in `velt dev` |
 | `velt_text` | Velt's string encoding, number formatting and database JSON, shared by the runtime and std's native libraries |
-| `velt_tls` | the TLS client setup (rustls, Mozilla's roots, extra CAs), shared by the runtime and native libraries |
+| `velt_tls` | a rustls client setup (Mozilla's roots, extra CAs) for native libraries (`packages/postgres/native`); programs' TLS is Velt's, std/net/tls/ |
 | `velt_build_cache` | the machine-wide build cache: compiled code keyed by content, bounded in size |
 | `velt_fmt` | formatter |
 | `velt_lsp` | language server |
@@ -264,6 +268,8 @@ whether it is implemented, partly implemented, accepted or proposed.
 - [Standard library layout](design/std-layout.md): `velt/<area>` imports and the rules
   `std-lint` enforces.
 - [Standard library checked and loaded on demand](design/lazy-std.md).
+- [Call variants](design/call-variants.md): `@variant`, a call whose literal argument shows it
+  needs less taking a plainer function (`fetch("http://…")` without the TLS client).
 - [Compiling std's Velt code once](design/std-object.md).
 - [Printing typed values](design/inspect-shapes.md).
 - [Source generators](design/source-generators.md): Velt code that generates Velt code at
@@ -293,7 +299,9 @@ whether it is implemented, partly implemented, accepted or proposed.
   messages. `examples/*.velt` with a `.out` are included.
   Directories marked `.pending` (such as `tests/golden/bugs/`, known bugs) and the goldens listed
   in `crates/veltc/tests/golden_known_failing.txt` (each with its issue) are run, but their
-  failures fail the run only with `VELT_GOLDEN_STRICT=1`. The WebAssembly goldens
+  failures fail the run only with `VELT_GOLDEN_STRICT=1`. An entry marked `units` fails only in a
+  run by units (`VELT_UNITS=2`, the nightly's `golden-units`, #2943): there it is reported with how
+  it failed, and it fails the run once it passes, to be taken off the list. The WebAssembly goldens
   (`crates/veltc/tests/wasm_goldens.rs`) run most of the M1-M4 and `lang` goldens on WebAssembly.
 - **Documentation tests**: every `ts` code block in the repository's own user-facing Markdown (the
   README, the docs of `packages/http-server` and `packages/web`) is compiled

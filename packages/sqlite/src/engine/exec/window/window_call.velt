@@ -127,10 +127,10 @@ function windowCallIn(
   f.end = r.w.end;
   f.exclude = r.w.exclude;
   if (r.w.startExpr != null) {
-    f.startN = c.ev(r.w.startExpr!, base);
+    f.startN = c.compileEv(r.w.startExpr!, base);
   }
   if (r.w.endExpr != null) {
-    f.endN = c.ev(r.w.endExpr!, base);
+    f.endN = c.compileEv(r.w.endExpr!, base);
   }
   w.fns.push(f);
   const slot: usize = w.fns.length - 1;

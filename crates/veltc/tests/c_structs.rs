@@ -238,23 +238,68 @@ function main() {
     }
 }
 
+/// A C struct crosses to C by value where lowering has the target's C calling convention (x86-64
+/// System V and Win64, arm64 Linux and macOS, #2187 layer 3; tests/c_struct_by_value.rs calls
+/// such functions), and is an error at the declaration on the other targets (Windows on arm64)
+/// until theirs come.
 #[test]
-fn a_c_struct_crosses_to_c_by_value_only_in_a_later_layer() {
+fn a_c_struct_by_value_is_an_error_where_the_target_has_no_convention_yet() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "export declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function give(): P;\n\nexport const x = 1;\n",
-        "import { x } from \"geom\";\n\nfunction main() {\n  console.log(x);\n}\n",
+        "export declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function give(): P;\n\nexport function run(): f64 {\n  // SAFETY: a test of the build only; never run.\n  unsafe { take(give()); }\n  return 1;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  console.log(run());\n}\n",
     );
     let o = velt(dir.path(), &["check"]);
     let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{out}");
+    let o = velt(
+        dir.path(),
+        &[
+            "build",
+            "--target",
+            "aarch64-pc-windows-msvc",
+            "--emit",
+            "vir",
+        ],
+    );
+    let out = String::from_utf8_lossy(&o.stderr).to_string();
     assert!(!o.status.success(), "{out}");
     for want in [
-        "C function `take` can't take or return C struct `P` by value yet",
-        "C function `give` can't take or return C struct `P` by value yet",
+        "C function `take` takes or returns a C struct by value, which is not supported on aarch64-pc-windows-msvc yet",
+        "C function `give` takes or returns a C struct by value, which is not supported on aarch64-pc-windows-msvc yet",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
+}
+
+/// A C function declared once with a struct by value and once without it is two calling
+/// conventions for one symbol, a clash, even where their VIR types agree: a 24-byte struct goes
+/// on the stack as a pointer to a copy, as a `Ptr<P>` parameter is a pointer (#2187 layer 3).
+#[test]
+fn a_struct_by_value_and_a_pointer_declaration_of_one_symbol_clash() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c struct P { a: i64; b: i64; c: i64; }\n\ndeclare c(\"c\") function take(p: P): void;\ndeclare c(\"c\") function take$ptr(p: Ptr<P>): void;\n\nexport function run(): void {\n  const p: P = { a: 1, b: 2, c: 3 };\n  // SAFETY: a test of the build only; never run.\n  unsafe {\n    take(p);\n    take$ptr(Ptr.at<P>(16));\n  }\n  ;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  run();\n}\n",
+    );
+    let o = velt(
+        dir.path(),
+        &[
+            "build",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+            "--emit",
+            "vir",
+        ],
+    );
+    let out = String::from_utf8_lossy(&o.stderr).to_string();
+    assert!(!o.status.success(), "{out}");
+    assert!(
+        out.contains("C function `take` has two signatures"),
+        "{out}"
+    );
 }
 
 /// `any`, `Set<any>`, `Map<any>` and `includes` compare a C struct's content as the struct's
@@ -399,5 +444,63 @@ function main() {
             "false true false true\nfalse false true true true true true\ntrue true false false\ntrue false true false\n",
             "velt {args:?}:\n{stderr}"
         );
+    }
+}
+
+/// An array of C structs C writes (`S[]`, an `S *`) is refused when `S` has a field C could
+/// write as no Velt value: a `bool`, or a non-null pointer, also in a nested struct (#2187). A
+/// `readonly` one, and one of other fields, are not.
+#[test]
+fn an_array_of_c_structs_c_writes_takes_any_bits() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c struct Flag { on: bool; n: i32; }\nexport declare c struct Link { next: Ptr<u8>; }\nexport declare c struct Outer { tag: u16; link: Link; }\nexport declare c struct Fine { n: i32; p: Ptr<u8> | null; x: f64; }\n\ndeclare c(\"c\") function flags(xs: Flag[], n: i32): void;\ndeclare c(\"c\") function outers(xs: Outer[], n: i32): void;\ndeclare c(\"c\") function readFlags(xs: readonly Flag[], n: i32): void;\ndeclare c(\"c\") function readOuters(xs: readonly Outer[], n: i32): void;\ndeclare c(\"c\") function fines(xs: Fine[], n: i32): void;\ntype ROFlags = readonly Flag[];\ndeclare c(\"c\") function aliasFlags(xs: ROFlags, n: i32): void;\n\nexport function run(): void {\n  // SAFETY: a test of the checks only; never run.\n  unsafe {\n    flags([], 0);\n    outers([], 0);\n    readFlags([], 0);\n    readOuters([], 0);\n    fines([], 0);\n    aliasFlags([], 0);\n  }\n  ;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  run();\n}\n",
+    );
+    let o = velt(dir.path(), &["check"]);
+    let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(!o.status.success(), "{out}");
+    for want in [
+        "parameter `xs` of C function `flags` is an array of `Flag` C may write, and `Flag` has a `bool` field (`on`)",
+        "parameter `xs` of C function `outers` is an array of `Outer` C may write, and `Outer` has a non-null pointer field (`next`)",
+        "in its field `link`",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+    for unwanted in ["`readFlags`", "`readOuters`", "`fines`", "`aliasFlags`"] {
+        assert!(
+            !out.contains(unwanted),
+            "unexpected `{unwanted}` in:\n{out}"
+        );
+    }
+}
+
+/// `Ref<S>` is a `const S *` of a C struct, as a parameter (#2187): a `Ref` of anything else, and
+/// a C function returning one, are errors at the declaration.
+#[test]
+fn a_ref_is_a_c_struct_parameter() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ref } from \"velt/ffi\";\n\nexport declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function takes(n: Ref<i32>): void;\ndeclare c(\"c\") function gives(): Ref<P>;\ndeclare c(\"c\") function maybe(m: Ref<P> | undefined): void;\ntype Id<T> = T;\nexport declare c struct Holder { n: i32; r: Ref<P>; s: Id<Ref<P>>; }\ndeclare c(\"c\") function listed(ps: Ref<P>[]): void;\ndeclare c(\"c\") function gives2(): Id<Ref<P>>;\n\nexport function run(): void {\n  const p: P = { x: 1, y: 2 };\n  // SAFETY: a test of the checks only; never run.\n  unsafe {\n    takes(3);\n    gives();\n    maybe(p);\n  }\n  ;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  run();\n}\n",
+    );
+    let o = velt(dir.path(), &["check"]);
+    let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(!o.status.success(), "{out}");
+    for want in [
+        "parameter `n` of C function `takes` is a `Ref` of `i32`, which is no C struct",
+        "C function `gives` can't return a `Ref<S>`",
+        // Only `Ref<S> | null` is a nullable `Ref`; a `Ref` anywhere else in a parameter or
+        // result would cross as the struct, so it is refused.
+        "parameter `m` of C function `maybe` has a `Ref` that isn't its whole type",
+        "parameter `ps` of C function `listed` has a `Ref` that isn't its whole type",
+        "C function `gives2` can't return a `Ref<S>`",
+        // In a C struct, `Ref<P>` would be `P` inline where C has a pointer.
+        "field `r` of C struct `Holder` has a `Ref`",
+        "field `s` of C struct `Holder` has a `Ref`",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
 }

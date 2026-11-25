@@ -26,17 +26,33 @@ A std body is checked once it is *live*, or once a checked call asks for its res
 a walk over checked code that checks each definition as it enters the set:
 
 - the program's own definitions, and every module slot, whose initializer lowering runs whether
-  or not code reads it;
+  or not code reads it. A dependency package's definitions are live, as std's, once live code
+  names them (they are checked whole either way), except the functions C calls (`@export`), which
+  lowering builds whatever the program calls: what a package can do and the program never asks
+  of it demands nothing (`http-server`'s TLS server, for options written without `tls`);
 - what lowering looks up by name ([Roots](#roots));
 - closed over: every definition live code names (a call, a function value, a closure, a constant);
-- the methods, static methods and constructors of each class or struct a live type mentions, with
-  its fields' types, its base classes and its subclasses, transitively. A live type is the type of
+- the methods lowering builds for each class or struct a live type mentions, with its fields'
+  types, its base classes and its subclasses, transitively
+  (`crates/velt_sema/src/body/lazy_std/live_methods.rs`): its constructor, the methods with a slot
+  in its table (lowering fills every slot of a class's table), its getters and setters, the
+  methods of its interface implementations, the methods glue calls by name (`toJSON`, `clone`, and
+  the protocols sema's desugarings call) or by a symbol key (`[INSPECT]()`, std's keyed methods),
+  and what sema made for it. Its `toString()` (own or inherited) is live where live code converts
+  a value whose type holds the class to text (`String(x)`, a template, `+` with a string), every
+  class's where such a value's type holds a type parameter, and an `Error`'s always: the text glue
+  is its only caller. A method or static method with a plain name that no glue calls is live only
+  where live code names it (a call, a function value), so a program that uses `Date` but never
+  calls `toLocaleString` doesn't check it or load what it needs. Once the
+  program reads, calls or writes a member of an `any`, the `any` tables call every class's methods
+  by name (`Program::dyn_members`), and every method of a live class is live;
+  `VELT_LIVE_ALL_METHODS=1` asks for that in any program. A live type is the type of
   an expression, local or result in live code, or a type argument of one of its calls
   (`probe<Gadget>()`, whose body monomorphization builds with `Gadget`'s methods). Subclasses count
   because lowering's glue for a class value (printing, `JSON.stringify`, a member of `any`)
   dispatches over every class in the program that extends the value's class, constructed or not
-  (`velt_vir` `any_subclass_dispatch`, `json_descendants`): printing an `Error` checks the methods
-  of every `Error` subclass the program loads;
+  (`velt_vir` `any_subclass_dispatch`, `json_descendants`): printing an `Error` checks those
+  methods of every `Error` subclass the program loads;
 - the interface implementations of a live interface for a live type: lowering calls them through
   a bound or a table without checked code naming them. Every interface counts as live once live
   code holds an `any`, whose tables reach them;
@@ -128,6 +144,33 @@ the module (`Ctx::demand_std`, `crates/velt_sema/src/std_load.rs`):
   starts from the program's modules and takes the kept batches in the order they were served. A
   round that assumes definitions demands some earlier, so it finds them by name, and a hint by
   `DefId` holds only where its span matches.
+
+A module that breaks the rule is not added in the middle of the check. With the driver's
+`LoadOptions::refuse_out_of_rule` the loader refuses it (`StdBatch::refused`) instead of
+reporting an internal error; the check stops there (`StdLoads::refused`: the bodies' walk and
+the rounds end, every later demand is refused too), and the driver then throws that check away and loads the program again with the refused modules
+up front (`LoadOptions::preload`, veltc's `sema_stage`; `velt check`'s recovering check and the
+language server do the same). That second check is an ordinary one: a module loaded up front
+may extend what it likes.
+
+The TLS client and server (`std/net/tls/fd_client.velt`, `fd_server.velt`, with the TLS engine,
+the certificate checks and the crypto under them) load on demand (#2392): velt/net's `listenTls`
+and `connectTls` and `fetch` call them by role (`sched_tls_listen`, `sched_tls_connect`,
+`sched_tls_handshake`), so only a program whose live code can listen or connect with TLS loads
+them. None of it breaks the rule any more (#3634):
+`std/net/tcp_sched.velt` reaches the TLS streams' operations through function values the server
+or client installs before its first handle (`std/net/tls/fd_hook.velt`, `fd_reactor.velt`), not
+through an `extend` of a type of its own; the error classes under `Error` and `IoError`
+(`CryptoError`, `TlsFailure`, `CertificateRefused`) load up front with `fd_hook.velt`; and the
+record layer makes its views without `u8[]`'s `subarray` (`std/lang/typed_array/u8_view.velt`),
+whose `extend` of `Array` would break the rule. A call of a function value is checked against its
+type alone, so a program that never loads the TLS code checks none of it. Likewise the engine
+drives the server's handshake through an interface (`std/net/tls/server_steps.velt`), so a
+program that only connects never loads the server's handshake. So a `fetch` that can
+reach `https:`, which is every `fetch` that follows redirects, is checked once, with the client added in the middle of
+the check. velt/simd's `extend`s of the vector types, which the record layer and the crypto use,
+are the one part left: a `fetch` program loads velt/simd up front anyway, but a program that
+reaches TLS only through `connectTls` or `listenTls` doesn't, and is checked again with it.
 
 std code may also call a function hook by its role, `hookCall("role", args…)`
 (`std/lang/intrinsics/hook_call.velt`), instead of importing the hook's module. Checking the call
@@ -251,6 +294,17 @@ uses. `crates/veltc/tests/bench_programs.rs` `all_of_std_checks_without_diagnost
 and requires no diagnostics, and the nightly benchmark `compile/check_all_std` measures it.
 
 ## Not yet implemented
+
+- **No second check for `connectTls` and `listenTls`.** A program that reaches TLS without
+  `fetch` loads velt/simd in the middle of its check, whose `extend`s of the vector types the rule
+  refuses, so it is checked again (the first check stops at the refusal, but what it did is lost:
+  about 20% of such a program's build). Loading velt/simd (about 5,700 lines) up front with
+  `tcp_sched` would cost every TCP program; serving it in place needs the rule lifted for
+  `extend`s of the built-in vector types, or the TLS and crypto code declaring the intrinsics it
+  needs directly, as `std/crypto/poly1305.velt` does.
+- **Checking std's TLS once.** A program that reaches TLS still checks, lowers and builds the
+  client (about 50,000 lines) itself; std's units (#2943) would check and compile it once per
+  key and reuse it.
 
 - **Global modules loaded on demand.** The global modules with a `load for:` predicate, such as
   `std/prelude/global/host_async.velt`, move from the loader's syntactic trigger to a demand made

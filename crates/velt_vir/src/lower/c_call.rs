@@ -28,6 +28,9 @@ enum CArg {
     Str(Operand),
     /// An object (`Out`): the address of its field `name` is taken at the call.
     Field(Place, TyId, &'static str),
+    /// A C struct by value, of the type: passed as the C calling convention says
+    /// (c_struct_call.rs).
+    Struct(Operand, TyId),
 }
 
 /// The first C declaration of a symbol: where it is and how it reads, for the error of a second
@@ -145,7 +148,7 @@ impl FnLower<'_, '_> {
             }
             if let CTy::CString = t {
                 // Its bytes (read-only, NUL-terminated), held for the statement. A proxy's `get`
-                // trap could give other bytes, without the NUL: refused, as for `Out`'s field.
+                // trap could give other bytes, without the NUL: refused.
                 let v = self.expr(a);
                 let obj = self.operand_place(v, Ty::Ptr);
                 self.proxy_guard(&obj);
@@ -157,9 +160,21 @@ impl FnLower<'_, '_> {
                 continue;
             }
             if let CTy::Out = t {
+                let (at, out) = (self.cx.user_span(a.span), self.sub(a.ty));
+                self.cx.check_out_alignment(out, at);
                 let v = self.expr(a);
                 let obj = self.operand_place(v, Ty::Ptr);
-                vals.push(CArg::Field(obj, self.sub(a.ty), "value"));
+                vals.push(CArg::Field(obj, self.sub(a.ty), "held"));
+                continue;
+            }
+            if let CTy::Ref { nullable } = *t {
+                let v = self.ref_arg(a, nullable);
+                vals.push(CArg::Ready(v));
+                continue;
+            }
+            if let CTy::Struct = t {
+                let v = self.expr(a);
+                vals.push(CArg::Struct(v, self.sub(a.ty)));
                 continue;
             }
             let v = match t {
@@ -199,9 +214,15 @@ impl FnLower<'_, '_> {
             vals.push(CArg::Ready(v));
         }
         let mut cargs = vec![];
+        let mut structs = vec![];
         for v in vals {
+            structs.push(match &v {
+                CArg::Struct(_, t) => Some(*t),
+                _ => None,
+            });
             cargs.push(match v {
                 CArg::Ready(o) => o,
+                CArg::Struct(o, _) => o,
                 CArg::Buffer(arg) => {
                     let view = match &arg {
                         Arg::Value(p, t) | Arg::Sub { place: p, t, .. } => {
@@ -226,6 +247,15 @@ impl FnLower<'_, '_> {
                 }
             });
         }
+        if c.ret == CTy::Struct || structs.iter().any(Option::is_some) {
+            let call = super::c_struct_call::StructCall {
+                def,
+                symbol: &symbol,
+                ret,
+                span: x.span,
+            };
+            return self.c_call_by_value(call, &c, (ctys, cargs, structs));
+        }
         let cret = c_vir(c.ret, wasm);
         let link = base_symbol(&symbol);
         let decl = (self.cx.locs.as_ref())
@@ -248,25 +278,30 @@ impl FnLower<'_, '_> {
                     c_vir(CTy::Int(IntTy::USize), wasm),
                     c_vir(CTy::Int(IntTy::ISize), wasm),
                 ];
+                // A declaration passing C structs by value (c_struct_call.rs) fixed the symbol's
+                // calling convention beyond its VIR types: no plain declaration shares it.
+                let by_value = (self.cx.extern_map.get(link))
+                    .is_some_and(|id| self.cx.externs[id.0 as usize].c_abi.is_some());
                 let other = self.cx.c_symbols.get(link);
-                let compatible = same_vir
-                    || match other {
-                        Some(o) => o.sig.same(&sig),
-                        // The compiler's own use: a word for a pointer it passes.
-                        None => {
-                            v == c.variadic
-                                && ps.len() == fixed
-                                && (ps
-                                    .iter()
-                                    .zip(&c.params)
-                                    .zip(&ctys)
-                                    .chain([((&r, &c.ret), &cret)]))
-                                .all(|((&have, &t), &want)| {
-                                    have == want
-                                        || (class(t) == CClass::Word && words.contains(&have))
-                                })
-                        }
-                    };
+                let compatible = !by_value
+                    && (same_vir
+                        || match other {
+                            Some(o) => o.sig.same(&sig),
+                            // The compiler's own use: a word for a pointer it passes.
+                            None => {
+                                v == c.variadic
+                                    && ps.len() == fixed
+                                    && (ps
+                                        .iter()
+                                        .zip(&c.params)
+                                        .zip(&ctys)
+                                        .chain([((&r, &c.ret), &cret)]))
+                                    .all(|((&have, &t), &want)| {
+                                        have == want
+                                            || (class(t) == CClass::Word && words.contains(&have))
+                                    })
+                            }
+                        });
                 if !compatible {
                     self.c_clash(def, (link, &shown, &sig), x.span);
                     return match cret {
@@ -289,7 +324,7 @@ impl FnLower<'_, '_> {
             shown,
             sig,
         });
-        let id = self.cx.extern_sym_c(link, vparams, vret, c.variadic);
+        let id = self.cx.extern_sym_c(link, vparams, vret, c.variadic, None);
         self.cx.externs[id.0 as usize].c_decl = Some(decl);
         let dest = (vret != Ty::Unit).then(|| self.temp(vret));
         self.call(
@@ -349,7 +384,7 @@ impl FnLower<'_, '_> {
     /// The error for C declaration `def` (at `at`) of `link` (`shown`, C signature `sig`), whose
     /// symbol another declaration or the compiler's runtime calls with another C signature:
     /// once per declaration, naming the other one and what differs.
-    fn c_clash(
+    pub(super) fn c_clash(
         &mut self,
         def: DefId,
         (link, shown, sig): (&str, &str, &CSig),
@@ -522,10 +557,15 @@ pub(super) fn c_vir(t: CTy, wasm32: bool) -> Ty {
         CTy::F32 => Ty::F32,
         CTy::F64 => Ty::F64,
         CTy::Bool => Ty::Bool,
-        CTy::Ptr { .. } | CTy::Null | CTy::StrBytes | CTy::Buf { .. } | CTy::CString | CTy::Out => {
-            Ty::Ptr
-        }
-        CTy::Void => Ty::Unit,
+        CTy::Ptr { .. }
+        | CTy::Null
+        | CTy::StrBytes
+        | CTy::Buf { .. }
+        | CTy::CString
+        | CTy::Out
+        | CTy::Ref { .. } => Ty::Ptr,
+        // Expanded at the call (c_struct_call.rs): no one VIR type.
+        CTy::Void | CTy::Struct => Ty::Unit,
     }
 }
 
@@ -543,6 +583,8 @@ pub(crate) enum CClass {
     F64,
     /// `_Bool`.
     Bool,
+    /// A C struct by value.
+    Struct,
     Void,
 }
 
@@ -555,11 +597,13 @@ fn class(t: CTy) -> CClass {
         | CTy::StrBytes
         | CTy::Buf { .. }
         | CTy::CString
-        | CTy::Out => CClass::Word,
+        | CTy::Out
+        | CTy::Ref { .. } => CClass::Word,
         CTy::Int(i) => CClass::Int(i),
         CTy::F32 => CClass::F32,
         CTy::F64 => CClass::F64,
         CTy::Bool => CClass::Bool,
+        CTy::Struct => CClass::Struct,
         CTy::Void => CClass::Void,
     }
 }
@@ -620,7 +664,7 @@ impl Cx<'_> {
 }
 
 impl CSig {
-    fn of(c: &hir::CImport) -> CSig {
+    pub(super) fn of(c: &hir::CImport) -> CSig {
         CSig {
             params: c.params.iter().map(|t| class(*t)).collect(),
             ret: class(c.ret),
@@ -681,7 +725,7 @@ fn promoted(t: CTy, wasm32: bool) -> Option<Ty> {
 }
 
 /// How a C function's declaration reads, for messages: `abs$u8(u8): i32`.
-fn shown_signature(declared: &str, c: &hir::CImport) -> String {
+pub(super) fn shown_signature(declared: &str, c: &hir::CImport) -> String {
     let mut ps: Vec<&str> = c.params.iter().map(|t| c_name(*t)).collect();
     if c.variadic {
         ps.push("...");
@@ -715,12 +759,15 @@ fn c_name(t: CTy) -> &'static str {
         CTy::Buf { readonly: false } => "array",
         CTy::CString => "CString",
         CTy::Out => "Out",
+        CTy::Ref { nullable: false } => "Ref",
+        CTy::Ref { nullable: true } => "Ref | null",
+        CTy::Struct => "struct",
         CTy::Void => "void",
     }
 }
 
 /// The link symbol of a declaration named `declared`: without a `$suffix`, so one module can
 /// declare one C function with several signatures (`objc_msgSend$rect`).
-fn base_symbol(declared: &str) -> &str {
+pub(super) fn base_symbol(declared: &str) -> &str {
     c_abi::base_name(declared)
 }

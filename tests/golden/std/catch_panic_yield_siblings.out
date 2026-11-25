@@ -1,0 +1,26 @@
+a yield 0
+p yield 0
+b yield 0
+a yield 1
+started flat: caught true
+started flat: after
+c yield 0
+d yield 0
+q yield 0
+c yield 1
+d yield 1
+started nested: caught true
+started nested: after
+a yield 0
+p yield 0
+b yield 0
+a yield 1
+main flat: caught true
+main flat: after
+c yield 0
+d yield 0
+q yield 0
+c yield 1
+d yield 1
+main nested: caught true
+main nested: after

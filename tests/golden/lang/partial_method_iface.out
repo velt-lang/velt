@@ -1,0 +1,4 @@
+detached status 404
+own status 201
+/a /detached { u: 1 } []
+true true false

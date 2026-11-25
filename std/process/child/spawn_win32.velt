@@ -10,8 +10,8 @@
 // never inherits this one's pipe ends (it would hold a pipe open, and the reader would never see
 // its end). The parent's ends are never inheritable.
 //
-// As Node does, a program named `*.bat` or `*.cmd` is refused (`EINVAL`): Windows would run it
-// through `cmd.exe`, which parses the command line by other rules; `execShell` runs one.
+// As Node does, a program named `*.bat` or `*.cmd` is refused (`spawn EINVAL`): Windows would run
+// it through `cmd.exe`, which parses the command line by other rules; `execShell` runs one.
 //
 // `STARTUPINFOW`, `STARTUPINFOEXW` and `PROCESS_INFORMATION` are laid out in raw memory at the
 // Windows SDK's offsets for 64-bit Windows (winbase.h, processthreadsapi.h).
@@ -87,8 +87,6 @@ const OPEN_EXISTING: u32 = 3;
 const PIPE_SIZE: u32 = 65536;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 export const ERROR_INVALID_PARAMETER: u32 = 87;
-/** Why a batch file doesn't start. */
-const BATCH: string = "batch files run only through a shell (execShell)";
 
 // `STARTUPINFOEXW`: `cb`, `dwFlags`, the three handles, the attribute list.
 const SI_CB: usize = 0;
@@ -250,7 +248,6 @@ export function failure(program: string, got: Started): IoStatus {
 export function resolve(spec: CommandSpec, env: string[], out: Started): string | null {
   if (cl.isBatch(spec.program)) {
     out.error = ERROR_INVALID_PARAMETER;
-    out.message = BATCH;
     return null;
   }
   if (holdsNul(spec)) {
@@ -265,7 +262,6 @@ export function resolve(spec: CommandSpec, env: string[], out: Started): string 
   }
   if (cl.isBatch(program)) {
     out.error = ERROR_INVALID_PARAMETER;
-    out.message = BATCH;
     return null;
   }
   return program;

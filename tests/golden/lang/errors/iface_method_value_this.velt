@@ -1,0 +1,380 @@
+// An interface's method read as an object-literal property's value stays refused when one of
+// its implementations reads `this`: a class's method, or an object literal's.
+interface Greeter {
+  name: string;
+  greet(): string;
+}
+
+class Person implements Greeter {
+  name = "p";
+  greet(): string {
+    return "hi " + this.name;
+  }
+}
+
+function wrap(g: Greeter) {
+  return { name: "wrapper", greet: g.greet };
+}
+
+console.log(wrap(new Person()).greet());
+
+interface Counter {
+  n: number;
+  inc(): void;
+}
+
+function literalCounter(): Counter {
+  return {
+    n: 0,
+    inc() {
+      this.n++;
+    },
+  };
+}
+
+function detach(c: Counter) {
+  return { inc: c.inc };
+}
+
+detach(literalCounter()).inc();
+
+// Through an adapter: a literal of its own interface, of another interface of the same shape,
+// a class implementing another interface, a generic interface.
+interface Hello {
+  name: string;
+  hello(): string;
+}
+function wrapHello(g: Hello) {
+  return { name: "wrapper", hello: g.hello };
+}
+const own = {
+  name: "o",
+  hello() {
+    return "hi " + this.name;
+  },
+};
+console.log(wrapHello(own).hello());
+
+interface Named {
+  name: string;
+  named(): string;
+}
+interface Naming {
+  name: string;
+  named(): string;
+}
+function wrapNamed(g: Naming) {
+  return { name: "wrapper", named: g.named };
+}
+const named: Named = {
+  name: "o",
+  named() {
+    return "hi " + this.name;
+  },
+};
+console.log(wrapNamed(named).named());
+
+interface Titled {
+  name: string;
+  title(): string;
+}
+interface Titling {
+  name: string;
+  title(): string;
+}
+class Book implements Titled {
+  name = "b";
+  title(): string {
+    return "hi " + this.name;
+  }
+}
+function wrapTitle(g: Titling) {
+  return { name: "wrapper", title: g.title };
+}
+const book: Titled = new Book();
+console.log(wrapTitle(book).title());
+
+interface Cell<T> {
+  v: T;
+  value(): T;
+}
+const cell = {
+  v: 1,
+  value() {
+    return this.v;
+  },
+};
+function wrapCell<T>(c: Cell<T>, v: T) {
+  return { v, value: c.value };
+}
+console.log(wrapCell(cell, 2).value());
+
+// sigx's shape, with one `this`.
+interface Handle {
+  key: string;
+  setKey(k: string): void;
+  show(): string;
+}
+function make(): Handle {
+  const h = {
+    key: "a",
+    setKey(k: string) {
+      this.key = k;
+    },
+    show() {
+      return this.key;
+    },
+  };
+  return h;
+}
+const handle = make();
+const api = { key: "lit", setKey: handle.setKey, show: handle.show };
+api.setKey("b");
+console.log(handle.show(), api.show());
+
+// A subclass's method: of an abstract implementer, an override.
+interface Shape {
+  name: string;
+  area(): string;
+}
+abstract class Base implements Shape {
+  name = "a";
+  abstract area(): string;
+}
+class Square extends Base {
+  area(): string {
+    return "hi " + this.name;
+  }
+}
+function wrapShape(g: Shape) {
+  return { name: "wrapper", area: g.area };
+}
+console.log(wrapShape(new Square()).area());
+
+interface Labeled {
+  name: string;
+  label(): string;
+}
+class Plain implements Labeled {
+  name = "p";
+  label(): string {
+    return "plain";
+  }
+}
+class Fancy extends Plain {
+  override label(): string {
+    return "hi " + this.name;
+  }
+}
+function wrapLabel(g: Labeled) {
+  return { name: "wrapper", label: g.label };
+}
+const fancy: Labeled = new Fancy();
+console.log(wrapLabel(fancy).label());
+
+// The read inside a wrapper that keeps its value (each arm of `?:`, `as`), and a variable that
+// holds the method, read directly or by destructuring, stored as the property: Node calls the
+// function with the literal as `this`. (The variable alone keeps the method bound, #746.)
+interface Greeter2 {
+  name: string;
+  greet2(): string;
+}
+const g2: Greeter2 = {
+  name: "o",
+  greet2() {
+    return "hi " + this.name;
+  },
+};
+function pick(s: string): boolean {
+  return s.length > 0;
+}
+function wrapCond(g: Greeter2): Greeter2 {
+  return { name: "w-cond", greet2: pick("x") ? g.greet2 : g.greet2 };
+}
+function wrapCast(g: Greeter2): Greeter2 {
+  return { name: "w-cast", greet2: g.greet2 as () => string };
+}
+function wrapDestructure(g: Greeter2): Greeter2 {
+  const { greet2 } = g;
+  return { name: "w-destructure", greet2 };
+}
+function wrapLocal(g: Greeter2): Greeter2 {
+  const f = g.greet2;
+  return { name: "w-local", greet2: f };
+}
+console.log(wrapCond(g2).greet2(), wrapCast(g2).greet2());
+console.log(wrapDestructure(g2).greet2(), wrapLocal(g2).greet2());
+
+// More forms of the same kind: `satisfies`, `||`, a variable set from another, a `let` assigned,
+// a variable of the enclosing function or of the module, a `?:` initializer whose other arm
+// reads no `this`, and a class's method held in a variable.
+interface Forms {
+  name: string;
+  viaSatisfies(): string;
+  viaOr(): string;
+  viaAlias(): string;
+  viaLet(): string;
+  viaClosure(): string;
+  viaModule(): string;
+  viaCondVar(): string;
+}
+const forms: Forms = {
+  name: "forms",
+  viaSatisfies() {
+    return this.name;
+  },
+  viaOr() {
+    return this.name;
+  },
+  viaAlias() {
+    return this.name;
+  },
+  viaLet() {
+    return this.name;
+  },
+  viaClosure() {
+    return this.name;
+  },
+  viaModule() {
+    return this.name;
+  },
+  viaCondVar() {
+    return this.name;
+  },
+};
+const plain = (): string => "plain";
+interface Other {
+  other(): string;
+}
+const other: Other = { other: () => "other" };
+const heldAtModule = forms.viaModule;
+function storeForms(f: Forms, useForms: boolean) {
+  const alias = f.viaAlias;
+  const alias2 = alias;
+  let assigned = plain;
+  assigned = f.viaLet;
+  const captured = f.viaClosure;
+  const make = () => ({ name: "closure", viaClosure: captured });
+  const either = useForms ? f.viaCondVar : other.other;
+  const a = { name: "satisfies", viaSatisfies: f.viaSatisfies satisfies () => string };
+  const b = { name: "or", viaOr: f.viaOr || plain };
+  const c = { name: "alias", viaAlias: alias2 };
+  const d = { name: "let", viaLet: assigned };
+  const e = make();
+  const g = { name: "module", viaModule: heldAtModule };
+  const h = { name: "condvar", viaCondVar: either };
+  return [a.name, b.name, c.name, d.name, e.name, g.name, h.name];
+}
+console.log(storeForms(forms, true).join(" "));
+
+class Kept {
+  name = "kept";
+  shout(): string {
+    return this.name;
+  }
+}
+function storeClassMethod(k: Kept) {
+  const f = k.shout;
+  return { name: "class", shout: f };
+}
+console.log(storeClassMethod(new Kept()).shout());
+
+// A method value that escapes through a function's result or an array, a static method that
+// reads `this`, and a class's method in each arm of `?:`: refused by the name, wherever the
+// value came from.
+interface Esc {
+  name: string;
+  viaReturn(): string;
+  viaArray(): string;
+}
+const esc: Esc = {
+  name: "esc",
+  viaReturn() {
+    return this.name;
+  },
+  viaArray() {
+    return this.name;
+  },
+};
+function getReturn(e: Esc): () => string {
+  return e.viaReturn;
+}
+class Counter2 {
+  static count = 1;
+  static current(): number {
+    return this.count;
+  }
+  label = "c2";
+  tag(): string {
+    return this.label;
+  }
+}
+function storeEscapes(e: Esc, c: Counter2, d: Counter2, b: boolean) {
+  const held = [e.viaArray];
+  const r = { name: "return", viaReturn: getReturn(e) };
+  const a = { name: "array", viaArray: held[0] };
+  const s = { current: Counter2.current };
+  const t = { tag: b ? c.tag : d.tag };
+  return [r.name, a.name, typeof s, typeof t];
+}
+console.log(storeEscapes(esc, new Counter2(), new Counter2(), true).join(" "));
+
+// A method that reads `this`, stored under another property's name: read directly (from an
+// interface value or a class instance), through a variable, or beside the literal's own method
+// of that name; and a value of a type parameter or of `any` under such a method's name.
+interface Gr3 {
+  name: string;
+  greet3(): string;
+}
+interface Runner {
+  name: string;
+  run(): string;
+}
+const gr3: Gr3 = {
+  name: "o",
+  greet3() {
+    return "hi " + this.name;
+  },
+};
+class K3 {
+  name = "k";
+  shout3(): string {
+    return "hi " + this.name;
+  }
+}
+function renamedRead(g: Gr3): Runner {
+  return { name: "w", run: g.greet3 };
+}
+function renamedClassRead(k: K3): Runner {
+  return { name: "w", run: k.shout3 };
+}
+function renamedVar(g: Gr3): Runner {
+  const f = g.greet3;
+  return { name: "w", run: f };
+}
+function renamedBesideOwn(g: Gr3) {
+  return {
+    name: "w",
+    run: g.greet3,
+    greet3() {
+      return "own " + this.name;
+    },
+  };
+}
+function generic<T>(f: T): { name: string; greet3: T } {
+  return { name: "w", greet3: f };
+}
+function viaAny(): Gr3 {
+  const x: any = gr3.greet3;
+  return { name: "w", greet3: x };
+}
+console.log(renamedRead(gr3).run(), renamedClassRead(new K3()).run(), renamedVar(gr3).run());
+console.log(renamedBesideOwn(gr3).run(), typeof generic(gr3.greet3), viaAny().greet3());
+
+// The same inside a cast to a discriminated union, whose literal is rebuilt from temporaries.
+type Job = { kind: "a"; run: () => string } | { kind: "b"; run: () => string; extra: number };
+function castRenamed(g: Gr3): Job {
+  const f = g.greet3;
+  return { kind: "a", run: f } as Job;
+}
+console.log(typeof castRenamed(gr3));

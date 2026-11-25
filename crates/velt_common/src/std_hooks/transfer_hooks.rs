@@ -3,13 +3,13 @@
 //! transfer and clone glue (velt_vir `lower/transfer_map.rs`) of a program with a construct
 //! that can start a transfer (`Construct::Transfer`), which loads the module. Three of them also
 //! go to the runtime in the process statics table (`velt_rt_statics`, rt_abi.md "Process
-//! statics"). Kept apart from the rest of the table ([`super`]), which [`with_transfer_hooks`] gives to `hooks!`
-//! with these rows after it.
+//! statics"). Kept apart from the rest of the table ([`super`]), which [`with_transfer_hooks`] gives
+//! to `with_yield_hooks!` with these rows after it.
 
-/// `hooks!` over the rows given, then the transfer map's.
+/// `with_yield_hooks!` over the rows given, then the transfer map's.
 macro_rules! with_transfer_hooks {
     ($($rows:tt)*) => {
-        hooks! {
+        with_yield_hooks! {
             $($rows)*
             // transfer.velt: the transfer map (#3584).
             /// The start of a transfer (nested ones nest).

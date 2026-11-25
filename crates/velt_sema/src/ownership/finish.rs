@@ -26,6 +26,44 @@ use super::evidence;
 pub(super) fn demote_fn_values(cx: &mut Ctx) {
     let values: Vec<DefId> = cx.fn_values.iter().map(|(d, ..)| *d).collect();
     for d in values {
+        // A finished unit's function (its modes as the app's passes raised them, or its own):
+        // demoted beside it, its body's locals marked when the freeze lifts (`units::raised`).
+        if cx.is_frozen(d) {
+            let info = cx.fn_info(d);
+            let skip = usize::from(info.this.is_some());
+            let mut modes: Vec<PassMode> = match cx.raised_modes_of(d) {
+                Some(m) => m.clone(),
+                None => (info.this.iter().map(|t| t.mode))
+                    .chain(info.params.iter().map(|p| p.mode))
+                    .collect(),
+            };
+            let mut demoted = vec![];
+            for (k, m) in modes.iter_mut().enumerate().skip(skip) {
+                if *m == PassMode::BorrowMut {
+                    *m = PassMode::Borrow;
+                    demoted.push(k - skip);
+                }
+            }
+            if !demoted.is_empty() {
+                cx.raise_modes(d, modes);
+                cx.unit_sums
+                    .raised
+                    .demoted
+                    .entry(d)
+                    .or_default()
+                    .extend(demoted);
+            }
+            continue;
+        }
+        // Already demoted (std's functions, in a later unit): nothing to write.
+        if !cx
+            .fn_info(d)
+            .params
+            .iter()
+            .any(|p| p.mode == PassMode::BorrowMut)
+        {
+            continue;
+        }
         let info = cx.fn_info_mut(d);
         let mut demoted = vec![];
         for (k, p) in info.params.iter_mut().enumerate() {

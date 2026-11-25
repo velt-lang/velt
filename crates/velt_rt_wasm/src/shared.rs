@@ -21,16 +21,6 @@ pub unsafe extern "C" fn velt_rt_rc_dec(p: *mut u64) -> u8 {
 #[no_mangle]
 pub extern "C" fn velt_rt_thread_yield() {}
 
-/// `velt_rt_module_with`: one thread, no module lock.
-#[no_mangle]
-pub extern "C" fn velt_rt_module_with() -> u8 {
-    0
-}
-
-/// `velt_rt_module_with_end`: nothing was taken.
-#[no_mangle]
-pub extern "C" fn velt_rt_module_with_end(_took: u8) {}
-
 /// `velt_rt_statics` (rt_abi.md "Process statics"): the WebAssembly runtime has no leak counters,
 /// so the drop function goes unused; the position cache takes std's epoch, and read mode the
 /// transfer map's `xferKeeps`, as the native runtime's do.

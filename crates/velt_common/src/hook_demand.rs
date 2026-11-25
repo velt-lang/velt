@@ -92,6 +92,11 @@ pub enum Construct {
     /// closure that copies its captures for each call. Without one no transfer is ever open,
     /// and lowering answers the map's other calls as outside a transfer.
     Transfer,
+    /// A [`Construct::Mutex`] in a build for the `velt dev` JIT: lowering counts the `Mutex` a
+    /// `with` holds for std's module lock (std/lang/hooks/mutex_held.velt, #3467), since code
+    /// swapped in there can reach module state from the callback. Sema sets it for such a build
+    /// only, so other builds demand nothing and count nothing.
+    MutexHeld,
 }
 
 impl Construct {
@@ -111,6 +116,7 @@ impl Construct {
         Construct::WriteFloat,
         Construct::PowInt,
         Construct::Transfer,
+        Construct::MutexHeld,
     ];
 
     /// The construct as the ICE names it.
@@ -132,6 +138,7 @@ impl Construct {
             Construct::Transfer => {
                 "Transfer (a construct that can start a transfer to another thread)"
             }
+            Construct::MutexHeld => "MutexHeld (a Mutex's with in a velt dev build)",
         }
     }
 

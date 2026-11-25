@@ -6,25 +6,21 @@
 // `connect` and `listen` open non-blocking sockets on the executor's reactor
 // (std/lang/hooks/sched_io.velt): their handles have the top bit set (sched_io_table.velt), and
 // every operation on such a handle runs here (std/net/fd_socket.velt, std/net/fd_io.velt), on the
-// worker, with no Rust in between. `listenTls` does the same with the TLS server in Velt
-// (std/net/tls/fd_server.velt, whose handles are ours too) for a P-256 key, in a program that
-// loaded it (std/net/tls/fd_hook.velt); only a program that can listen with it tests for TLS
-// handles (`stdUsed("reactorTls")`, a constant the server's `listen` sets). Everything else is
-// handed to the runtime: `listenTls` with another key (RSA, P-384, Ed25519), `connectTls` (it
-// needs the built-in roots and RSA, #2392 step 3; TLS in Velt over a plain stream is `startTls`),
-// listeners under `velt dev` (the supervisor hands them over, `devHandover`), and every socket on
-// an OS without a reactor (std/lang/hooks/reactor_none.velt). `fetch`'s keep-alive pool
-// (`park`/`unpark`) is Velt's for the plain sockets of ours (std/net/fd_pool.velt: its `http:`
-// connections, std/net/http/fetch/client/dial_sched.velt) and the runtime's for its handles
-// (`https:`); a TLS stream of ours is closed instead. What a runtime stream defers (`writeLater`)
-// waits in Velt and is handed to the runtime's `write` (std/net/rt_later.velt): the runtime sends
-// its own deferred bytes only after polls of its own tasks, which never run on this executor's
-// worker.
+// worker, with no Rust in between. TLS is the client and server in Velt (std/net/tls/), called by
+// role (`hookCall`) so that a program loads them only when live code listens or connects with TLS,
+// and their handles are ours too; only a program with TLS tests for them (`stdUsed("reactorTls")`,
+// std/net/tls/fd_hook.velt's operations). Their sockets are the reactor's, or the runtime's for listeners
+// under `velt dev` (the supervisor hands them over, `devHandover`) and on an OS without a reactor
+// (std/lang/hooks/reactor_none.velt). `fetch`'s keep-alive pool (`park`/`unpark`) is Velt's for
+// streams of ours (std/net/tcp_sched_pool.velt) and the runtime's for its handles. What a runtime
+// stream defers (`writeLater`) waits in Velt and is handed to the runtime's `write`
+// (std/net/rt_later.velt): the runtime sends its own deferred bytes only after polls of its own
+// tasks, which never run on this executor's worker.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { utf8Encode } from "velt/encoding/utf8";
-import { noteStdUse, stdUsed } from "velt/lang/intrinsics";
+import { hookCall, noteStdUse, stdUsed } from "velt/lang/intrinsics";
 import { schedStays, schedWorkerCount } from "velt/lang/hooks/sched";
 import { processEnv } from "velt/lang/hooks/process";
 import * as io from "velt/lang/hooks/sched_io";
@@ -34,12 +30,10 @@ import * as pool from "velt/net/fd_pool";
 import * as fs from "velt/net/fd_socket";
 import { readableUntil } from "velt/net/fd_until";
 import * as rt from "velt/net/rt";
+import { parkStream, unparkStream } from "velt/net/tcp_sched_pool";
 import * as lat from "velt/net/rt_later";
-import { isTls, TlsServer } from "velt/net/tls/fd_hook";
-
-// The TLS server's operations (std/net/tls/fd_server.velt), or stubs when the program didn't load
-// it (std/net/tls/fd_hook.velt).
-const TLS: TlsServer = {};
+import { isTls } from "velt/net/tls/fd_hook";
+import * as tlsOps from "velt/net/tls/fd_hook";
 
 declare function velt_rt_signal_aborted(s: u64): bool;
 declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
@@ -65,12 +59,15 @@ export function velt_rt_tcp_listener_port(l: u64): u32 {
   if (!tb.ours(l)) {
     return rt.velt_rt_tcp_listener_port(l);
   }
-  return fs.portOf(stdUsed("reactorTls") && isTls(l) ? TLS.listenerFd(l) : l);
+  // A TLS listener's socket is the reactor's, or the runtime's (`velt dev`, no reactor).
+  return stdUsed("reactorTls") && isTls(l)
+    ? velt_rt_tcp_listener_port(tlsOps.listenerFd(l))
+    : fs.portOf(l);
 }
 
 export function velt_rt_tcp_listener_close(l: u64) {
   if (stdUsed("reactorTls") && isTls(l)) {
-    TLS.closeListener(l);
+    tlsOps.closeListener(l);
   } else if (tb.ours(l)) {
     fs.closeListener(l);
   } else {
@@ -92,8 +89,8 @@ export function listenerWorkers(l: u64): u64 {
 /**
  * May a server spread its connections over the workers (velt/net `spreadsConnections`)? Not in a
  * program whose tasks stay on their worker (std/lang/hooks/sched.velt `schedStays`): one that may
- * give a declared function properties through `any`, which the runtime keeps under a lock only
- * worker 0 holds, so a connection served on another worker that reaches them never answers.
+ * give a declared function properties through `any`, placed as when the runtime's module lock,
+ * which only worker 0 held, guarded them.
  */
 export function connectionsSpread(): bool {
   return !schedStays();
@@ -103,7 +100,7 @@ export async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>> {
   if (!tb.ours(l)) {
     return await rt.velt_rt_tcp_accept(l);
   }
-  return stdUsed("reactorTls") && isTls(l) ? await TLS.accept(l) : await fs.accept(l);
+  return stdUsed("reactorTls") && isTls(l) ? await tlsOps.accept(l) : await fs.accept(l);
 }
 
 export async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>> {
@@ -117,7 +114,7 @@ export async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>
   if (!tb.ours(s)) {
     return await rt.velt_rt_tcp_read(s, max);
   }
-  return stdUsed("reactorTls") && isTls(s) ? await TLS.read(s, max) : await fio.read(s, max);
+  return stdUsed("reactorTls") && isTls(s) ? await tlsOps.read(s, max) : await fio.read(s, max);
 }
 
 export async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResult<string>> {
@@ -125,7 +122,7 @@ export async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResul
     return await rt.velt_rt_tcp_read_string(s, max);
   }
   return stdUsed("reactorTls") && isTls(s)
-    ? await TLS.readString(s, max)
+    ? await tlsOps.readString(s, max)
     : await fio.readString(s, max);
 }
 
@@ -138,7 +135,7 @@ export async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus>
   }
   if (stdUsed("reactorTls") && isTls(s)) {
     const b = utf8Encode(data);
-    return await TLS.writeRange(s, b, 0, b.length as u64);
+    return await tlsOps.writeRange(s, b, 0, b.length as u64);
   }
   return await fio.writeText(s, data);
 }
@@ -152,7 +149,7 @@ export async function velt_rt_tcp_write_bytes(s: u64, data: u8[]): Promise<IoSta
   }
   // One expression: a branch the compiler leaves out moves `data` in no drop flag.
   return stdUsed("reactorTls") && isTls(s)
-    ? await TLS.writeRange(s, data, 0, data.length as u64)
+    ? await tlsOps.writeRange(s, data, 0, data.length as u64)
     : await fio.writeRange(s, data, 0, data.length as u64);
 }
 
@@ -166,7 +163,7 @@ export function velt_rt_tcp_try_write(s: u64, data: u8[]): u64 {
     return rt.velt_rt_tcp_try_write(s, data);
   }
   if (stdUsed("reactorTls") && isTls(s)) {
-    return TLS.tryWriteRange(s, data, 0, data.length as u64);
+    return tlsOps.tryWriteRange(s, data, 0, data.length as u64);
   }
   return fio.tryWriteRange(s, data, 0, data.length as u64);
 }
@@ -176,7 +173,7 @@ export function velt_rt_tcp_try_read_into(s: u64, data: u8[], start: u64, end: u
     return rt.velt_rt_tcp_try_read_into(s, data, start, end);
   }
   return stdUsed("reactorTls") && isTls(s)
-    ? TLS.tryReadInto(s, data, start, end)
+    ? tlsOps.tryReadInto(s, data, start, end)
     : fio.tryReadInto(s, data, start, end);
 }
 
@@ -184,7 +181,7 @@ export async function velt_rt_tcp_readable(s: u64): Promise<IoStatus> {
   if (!tb.ours(s)) {
     return await rt.velt_rt_tcp_readable(s);
   }
-  return stdUsed("reactorTls") && isTls(s) ? await TLS.readable(s) : await fio.readable(s);
+  return stdUsed("reactorTls") && isTls(s) ? await tlsOps.readable(s) : await fio.readable(s);
 }
 
 export function velt_rt_tcp_write_later(s: u64, data: string): IoResult<u64> {
@@ -193,7 +190,7 @@ export function velt_rt_tcp_write_later(s: u64, data: string): IoResult<u64> {
   }
   if (stdUsed("reactorTls") && isTls(s)) {
     const b = utf8Encode(data);
-    return TLS.writeLaterRange(s, b, 0, b.length as u64);
+    return tlsOps.writeLaterRange(s, b, 0, b.length as u64);
   }
   return fio.writeLaterText(s, data);
 }
@@ -208,7 +205,7 @@ export function velt_rt_tcp_write_later_range(
     return lat.writeLaterRange(s, data, start, end);
   }
   if (stdUsed("reactorTls") && isTls(s)) {
-    return TLS.writeLaterRange(s, data, start, end);
+    return tlsOps.writeLaterRange(s, data, start, end);
   }
   return fio.writeLaterRange(s, data, start, end);
 }
@@ -220,7 +217,9 @@ export async function velt_rt_tcp_drained(s: u64, max: u64): Promise<IoStatus> {
     }
     return await rt.velt_rt_tcp_drained(s, max);
   }
-  return stdUsed("reactorTls") && isTls(s) ? await TLS.drained(s, max) : await fio.drained(s, max);
+  return stdUsed("reactorTls") && isTls(s)
+    ? await tlsOps.drained(s, max)
+    : await fio.drained(s, max);
 }
 
 // `velt_rt_tcp_readable_within` of TLS stream `s`: readable when a `tryRead` would find something.
@@ -229,7 +228,7 @@ export async function velt_rt_tcp_drained(s: u64, max: u64): Promise<IoStatus> {
 async function tlsReadableWithin(s: u64, ms: i64, signal: u64): Promise<IoResult<u8>> {
   const until = (Date.now() as number) + (ms as number);
   for (let waited = false;; waited = true) {
-    const fd = TLS.readyOrFd(s);
+    const fd = tlsOps.readyOrFd(s);
     if (fd.code !== 0) {
       return fs.failed({ code: fd.code, message: fd.message }, 0);
     }
@@ -288,7 +287,7 @@ export async function velt_rt_tcp_write_range(
     return await rt.velt_rt_tcp_write_range(s, data, start, end);
   }
   return stdUsed("reactorTls") && isTls(s)
-    ? await TLS.writeRange(s, data, start, end)
+    ? await tlsOps.writeRange(s, data, start, end)
     : await fio.writeRange(s, data, start, end);
 }
 
@@ -302,13 +301,13 @@ export function velt_rt_tcp_try_write_range(s: u64, data: u8[], start: u64, end:
     return rt.velt_rt_tcp_try_write_range(s, data, start, end);
   }
   return stdUsed("reactorTls") && isTls(s)
-    ? TLS.tryWriteRange(s, data, start, end)
+    ? tlsOps.tryWriteRange(s, data, start, end)
     : fio.tryWriteRange(s, data, start, end);
 }
 
 export function velt_rt_tcp_shutdown(s: u64): IoStatus {
   if (tb.ours(s)) {
-    return stdUsed("reactorTls") && isTls(s) ? TLS.shutdown(s) : fio.shutdown(s);
+    return stdUsed("reactorTls") && isTls(s) ? tlsOps.shutdown(s) : fio.shutdown(s);
   }
   if (stdUsed("rt-later")) {
     return lat.shutdown(s);
@@ -320,12 +319,14 @@ export function velt_rt_tcp_peer_addr(s: u64): string {
   if (!tb.ours(s)) {
     return rt.velt_rt_tcp_peer_addr(s);
   }
-  return fs.peerOf(stdUsed("reactorTls") && isTls(s) ? TLS.fdOf(s) : s);
+  return stdUsed("reactorTls") && isTls(s) ? velt_rt_tcp_peer_addr(tlsOps.fdOf(s)) : fs.peerOf(s);
 }
 
 export function velt_rt_tcp_abort(s: u64) {
-  if (tb.ours(s)) {
-    fio.abort(stdUsed("reactorTls") && isTls(s) ? TLS.fdOf(s) : s);
+  if (stdUsed("reactorTls") && isTls(s)) {
+    velt_rt_tcp_abort(tlsOps.fdOf(s));
+  } else if (tb.ours(s)) {
+    fio.abort(s);
   } else {
     if (stdUsed("rt-later")) {
       lat.abort(s);
@@ -337,7 +338,7 @@ export function velt_rt_tcp_abort(s: u64) {
 
 export function velt_rt_tcp_close(s: u64) {
   if (stdUsed("reactorTls") && isTls(s)) {
-    TLS.close(s);
+    tlsOps.close(s);
   } else if (tb.ours(s)) {
     fio.close(s);
   } else {
@@ -355,44 +356,37 @@ export async function velt_rt_tcp_listen_tls(
   key: string,
   alpn: string,
 ): Promise<IoResult<u64>> {
-  // Under `velt dev` the supervisor keeps the listener, as for `listen`: the runtime's.
+  // The TLS server in Velt (std/net/tls/fd_server.velt), by role: a program loads it only when
+  // live code can listen with TLS (#2392).
   if (io.supported() && !devHandover()) {
-    const ours = await TLS.listen(addr, cert, key, alpn);
-    if (ours != null) {
-      return ours;
-    }
+    return await hookCall("sched_tls_listen", addr, cert, key, alpn, 0);
   }
-  return await rt.velt_rt_tcp_listen_tls(addr, cert, key, alpn);
+  // Under `velt dev` the supervisor keeps the listener, as for `listen`: the runtime's plain
+  // listener (also where there is no reactor), with the TLS server in Velt on its streams.
+  const plain = await rt.velt_rt_tcp_listen(addr);
+  if (plain.code !== 0) {
+    return plain;
+  }
+  const ours = await hookCall("sched_tls_listen", addr, cert, key, alpn, plain.value);
+  if (ours.code !== 0) {
+    rt.velt_rt_tcp_listener_close(plain.value);
+  }
+  return ours;
 }
 
 export async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>> {
-  if (!tb.ours(s)) {
-    return await rt.velt_rt_tcp_alpn(s);
-  }
-  return stdUsed("reactorTls") && isTls(s) ? await TLS.alpn(s) : fs.value("");
+  // A TLS stream is the Velt client's or server's (`isTls`), on a socket of either kind.
+  return stdUsed("reactorTls") && isTls(s) ? await tlsOps.alpn(s) : fs.value("");
 }
 
+/** Keeps idle stream `s` in `fetch`'s keep-alive pool under `key` (std/net/tcp_sched_pool.velt). */
 export function velt_rt_tcp_park(s: u64, key: string) {
-  // `fetch` parks here: it then dials plain TCP on the reactor (fetch/client/conn.velt `dial`).
-  noteStdUse("fetch-pool-reactor");
-  if (stdUsed("reactorTls") && isTls(s)) {
-    TLS.close(s);
-  } else if (tb.ours(s)) {
-    pool.park(s, key);
-  } else {
-    if (stdUsed("rt-later")) {
-      lat.park(s, key);
-    } else {
-      rt.velt_rt_tcp_park(s, key);
-    }
-  }
+  parkStream(s, key);
 }
 
+/** A usable idle stream of `key` from the pool, or 0 (std/net/tcp_sched_pool.velt). */
 export function velt_rt_tcp_unpark(key: string, settled: u32): u64 {
-  // A key's streams are all of one kind (an `http:` origin's ours, an `https:` one's the
-  // runtime's): the runtime is asked only when Velt's pool has none.
-  const h = pool.unpark(key, settled !== 0);
-  return h !== 0 ? h : rt.velt_rt_tcp_unpark(key, settled);
+  return unparkStream(key, settled);
 }
 
 export async function velt_rt_tcp_connect_tls(
@@ -401,5 +395,7 @@ export async function velt_rt_tcp_connect_tls(
   ca: string,
   alpn: string,
 ): Promise<IoResult<u64>> {
-  return await rt.velt_rt_tcp_connect_tls(addr, serverName, ca, alpn);
+  // The client in Velt (std/net/tls/fd_client.velt), by role, over a socket of the reactor's, or
+  // of the runtime's where there is none: loaded only when live code can connect with TLS.
+  return await hookCall("sched_tls_connect", addr, serverName, ca, alpn);
 }

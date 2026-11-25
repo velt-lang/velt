@@ -7,6 +7,7 @@
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
+use super::c_ref::{mentions_ref, misplaced_ref, ref_param, written_ref};
 use crate::ctx::Ctx;
 use crate::defs::{FnKind, ParamSig};
 use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
@@ -15,7 +16,7 @@ use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
 const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
                        `Ptr<T>` and `Ptr<T> | null` (velt/ffi), a `@repr(\"transparent\")` struct of \
                        one of them, and for a parameter `null`, \
-                       `StrBytes`, `CString`, `Out<T>` of a number, `bool` or `Ptr<T> | null` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
+                       `StrBytes`, `CString`, `Out<T>` of a number, `bool`, `Ptr<T> | null` or a C struct (velt/ffi), arrays of numbers (`u8[]`, `readonly f64[]`) and arrays of C structs (`readonly S[]`, `S[]`)";
 
 /// The module of std's `StrBytes` (std/ffi/str_bytes.velt).
 const STR_BYTES_MODULE: &str = velt_common::std_module!(ffi_str_bytes);
@@ -105,6 +106,15 @@ fn c_import(
         .zip(ps)
         .map(|(p, s)| param(cx, module, name, p, s.ty))
         .collect();
+    if let Some(t) = sig.ret.as_ref().filter(|t| mentions_ref(cx, module, t)) {
+        cx.error(
+            Diagnostic::error(
+                format!("C function `{name}` can't return a `Ref<S>`: C reads a `Ref` through a parameter"),
+                t.span,
+            )
+            .with_note("a C function returning a struct returns it by value (`S`) or as a pointer (`Ptr<S>`)"),
+        );
+    }
     let ret_ty = match cx.ty.kind(ret) {
         TyKind::Unit => Some(CTy::Void),
         _ => crossing_ty(cx, ret),
@@ -113,8 +123,7 @@ fn c_import(
         let shown = cx.display(ret);
         let span = sig.ret.as_ref().map_or(sig.name.span, |t| t.span);
         if cx.is_c_struct_ty(ret) {
-            struct_by_value(cx, name, &shown, span);
-            return CTy::Void;
+            return CTy::Struct;
         }
         cx.error(
             Diagnostic::error(
@@ -161,6 +170,13 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
         );
         return CTy::Void;
     }
+    if let Some(nullable) = written_ref(cx, module, &p.ty) {
+        return ref_param(cx, (name, p), ty, nullable);
+    }
+    if mentions_ref(cx, module, &p.ty) {
+        misplaced_ref(cx, name, &format!("parameter `{}`", p.name.name), &p.ty);
+        return CTy::Void;
+    }
     if let Some(t) = crossing_ty(cx, ty) {
         return t;
     }
@@ -190,12 +206,31 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
                 readonly: super::sigs::written_readonly(&p.ty),
             };
         }
+        // An array of C structs (#2187): its elements are inline at C's layout, so its first
+        // element's address is a `const S *` (`readonly S[]`) or an `S *` C writes.
+        &TyKind::Array(e) if cx.is_c_struct_ty(e) => {
+            let readonly = super::c_ref::written_readonly_array(cx, module, &p.ty);
+            if let Some(why) = (!readonly).then(|| c_unwritable(cx, e, 0)).flatten() {
+                let shown = cx.display(e);
+                cx.error(
+                    Diagnostic::error(
+                        format!(
+                            "parameter `{}` of C function `{name}` is an array of `{shown}` C may write, and `{shown}` has {why}",
+                            p.name.name
+                        ),
+                        p.ty.span,
+                    )
+                    .with_note("an array C only reads is `readonly S[]` (`const S *`), written so at the parameter or in a type alias of it; C writing these fields would forge a Velt value"),
+                );
+                return CTy::Void;
+            }
+            return CTy::Buf { readonly };
+        }
         _ => {}
     }
     let shown = cx.display(ty);
     if cx.is_c_struct_ty(ty) {
-        struct_by_value(cx, name, &shown, p.ty.span);
-        return CTy::Void;
+        return CTy::Struct;
     }
     let d = Diagnostic::error(
         format!(
@@ -210,18 +245,6 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
     };
     cx.error(d);
     CTy::Void
-}
-
-/// The error for C struct `shown` passed to or returned from C function `name` by value, which
-/// waits for the target's C calling convention in both backends (#2187, layer 3 of C structs).
-fn struct_by_value(cx: &mut Ctx, name: &str, shown: &str, at: velt_common::Span) {
-    cx.error(
-        Diagnostic::error(
-            format!("C function `{name}` can't take or return C struct `{shown}` by value yet"),
-            at,
-        )
-        .with_note("passing C structs by value, in each target's C calling convention, comes in a later layer of #2187; a `Ptr<S>` crosses now"),
-    );
 }
 
 impl Ctx<'_> {
@@ -346,20 +369,19 @@ fn names_ffi_alias(
     let ast::TypeExprKind::Named { path, args } = &t.kind else {
         return false;
     };
-    if !args.is_empty() {
-        return false;
-    }
-    let item = match path.as_slice() {
-        [n] => cx.scopes[module].items.get(&n.name).copied(),
-        // `ffi.StrBytes`: what the namespace's module exports under the name.
-        [ns, n] => match cx.scopes[module].namespaces.get(&ns.name) {
-            Some(&m) => super::exports::export_of(cx, m, &n.name),
-            None => return false,
-        },
-        _ => return false,
-    };
+    args.is_empty() && names_ffi_item(cx, module, path, (alias_name, defining))
+}
+
+/// Does `path` (written in `module`) name the std alias `alias_name` declared in std module
+/// `defining`, directly or through a namespace?
+pub(super) fn names_ffi_item(
+    cx: &Ctx,
+    module: usize,
+    path: &[ast::Ident],
+    (alias_name, defining): (&str, &str),
+) -> bool {
     // By the alias's own declaration, so a renamed import (`StrBytes as SB`) is it too.
-    match item {
+    match path_item(cx, module, path) {
         Some(crate::ctx::Item::Alias(a)) => {
             let alias = &cx.aliases[a as usize];
             let m = alias.module;
@@ -369,6 +391,40 @@ fn names_ffi_alias(
         }
         _ => false,
     }
+}
+
+/// The item `path` (written in `module`) names: a name in scope, or one a namespace's module
+/// exports (`ffi.StrBytes`).
+pub(super) fn path_item(cx: &Ctx, module: usize, path: &[ast::Ident]) -> Option<crate::ctx::Item> {
+    match path {
+        [n] => cx.scopes[module].items.get(&n.name).copied(),
+        [ns, n] => {
+            let m = *cx.scopes[module].namespaces.get(&ns.name)?;
+            super::exports::export_of(cx, m, &n.name)
+        }
+        _ => None,
+    }
+}
+
+/// Why C may not write C struct `s` in place (an element of an `S[]` C writes), `depth` structs
+/// deep: a `bool` field, which C could write as another byte, or a non-null pointer field, which C
+/// could write `NULL` into. `None` when every field takes any bits C writes.
+fn c_unwritable(cx: &Ctx, s: TyId, depth: u32) -> Option<String> {
+    let TyKind::Adt(d, _) = cx.ty.kind(s) else {
+        return None;
+    };
+    let fields: Vec<(String, TyId)> = (cx.adt(*d)?.fields.iter())
+        .map(|f| (f.name.clone(), f.declared))
+        .collect();
+    fields.into_iter().find_map(|(name, t)| match cx.ty.kind(t) {
+        TyKind::Bool => Some(format!("a `bool` field (`{name}`)")),
+        _ if is_c_ptr(cx, t) => Some(format!(
+            "a non-null pointer field (`{name}`), which C could write `NULL` into: declare it `Ptr<T> | null`"
+        )),
+        _ if depth < 32 && cx.is_c_struct_ty(t) => c_unwritable(cx, t, depth + 1)
+            .map(|why| format!("{why} in its field `{name}`")),
+        _ => None,
+    })
 }
 
 /// Is `ty` a number type an array of which C reads as a C array (integers, `f32`, `f64`)?
@@ -431,19 +487,20 @@ fn out_refusal(cx: &Ctx, ty: TyId) -> Option<&'static str> {
     Some(if is_c_ptr(cx, value) {
         "C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`"
     } else {
-        "C writes an `Out<T>` of a number, `bool` or `Ptr<T> | null`: anything else C wrote would forge a Velt value (a reference, a symbol)"
+        "C writes an `Out<T>` of a number, `bool`, `Ptr<T> | null` or a C struct: anything else C wrote would forge a Velt value (a reference, a symbol)"
     })
 }
 
 /// May C write the `value` of an `Out<T>` of type `ty`? A number, a `bool`, or a pointer that may
 /// be `NULL` (`T **`: `Out<Ptr<T> | null>`, #3094). Not a non-null `Ptr<T>`, since C may write
 /// `NULL` into it; not a class reference, a `symbol` or a `shared<T>`, one word too, which C
-/// writing would forge a counted reference.
+/// writing would forge a counted reference. A C struct too (`S *`, #2187): its fields are C's, and
+/// its non-null pointers are checked where `value` is read (std/ffi/out.velt).
 fn out_value(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
         TyKind::Bool => true,
         TyKind::Option(inner, n) => *n != Nothing::Both && is_c_ptr(cx, *inner),
-        _ => is_number(cx, ty),
+        _ => is_number(cx, ty) || cx.is_c_struct_ty(ty),
     }
 }
 

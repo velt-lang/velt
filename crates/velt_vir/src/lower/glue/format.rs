@@ -54,7 +54,7 @@ impl FnLower<'_, '_> {
 
     fn format_top_as(&mut self, buf: &Operand, place: &Place, ty: TyId, log: bool) {
         if let Some(strings) = self.enum_strings(ty) {
-            return self.push_enum_str(buf, place, &strings, false, false);
+            return self.push_enum_str(buf, place, &strings, false);
         }
         match self.cx.kind(ty) {
             TyKind::Str => {
@@ -99,6 +99,9 @@ impl FnLower<'_, '_> {
                 self.push_inspect_float(buf, Operand::Copy(place.clone()), ty)
             }
             TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
+            // `String(p)` and `${p}` of a promise are `Object.prototype.toString`'s text, as in
+            // JavaScript; `console.log` shows its state (`format_promise`).
+            TyKind::Promise(..) if !log => self.push_text(buf, "[object Promise]"),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
             // A string held by an `any` prints as itself at the top level (lower/any.rs).
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => {
@@ -121,26 +124,40 @@ impl FnLower<'_, '_> {
     /// The top-level text of a value that may hold containers; for any value, Node's
     /// `util.inspect` (a string quoted, as inside an array: `Intrinsic::Inspect`).
     pub(in crate::lower) fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
-        {
-            {
-                // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
-                // printed on one line, then broken across lines like node if too long.
-                let end = self.inspect_begin();
-                let start = self.temp(Ty::U64);
-                let len = Some(Place::local(start));
-                self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
-                self.format_nested(buf, place, ty, &top_depth());
-                let start = Operand::Copy(Place::local(start));
-                self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
-                if let Some(end) = end {
-                    _ = end.emit(self);
-                }
-            }
+        self.format_top_inspect_at(buf, place, ty, &top_depth());
+    }
+
+    /// [`Self::format_top_inspect`] with the value at Node's depth `depth` (a `u32` operand):
+    /// at [`DEPTH`], its own entries are shown and the containers in them cut (`[Object]`), as
+    /// `util.inspect` with `depth: 0` writes it (`console.log("%s", x)`).
+    pub(in crate::lower) fn format_top_inspect_at(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        depth: &Operand,
+    ) {
+        // Node numbers the `<ref *N>` of cycles once per top-level value; the value is printed
+        // on one line, then broken across lines like node if too long.
+        let end = self.inspect_begin();
+        let start = self.temp(Ty::U64);
+        let len = Some(Place::local(start));
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
+        self.format_nested(buf, place, ty, depth);
+        let start = Operand::Copy(Place::local(start));
+        self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
+        if let Some(end) = end {
+            _ = end.emit(self);
         }
     }
 
+    /// Node's depth past which a container is cut (`[Object]`), as a `u32` operand.
+    pub(in crate::lower) fn shallow_depth() -> Operand {
+        cint(DEPTH, Ty::U32)
+    }
+
     /// Types whose text has no containers (numbers, strings, enums), so it never breaks.
-    fn prints_scalar(&self, ty: TyId) -> bool {
+    pub(in crate::lower) fn prints_scalar(&self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
             TyKind::Int(_)
             | TyKind::Float(_)
@@ -197,7 +214,7 @@ impl FnLower<'_, '_> {
                 if !self.cx.is_class(ty) && self.is_enum(ty) && self.cx.is_c_like_enum(d) =>
             {
                 match self.enum_strings(ty) {
-                    Some(strings) => self.push_enum_str(buf, place, &strings, true, false),
+                    Some(strings) => self.push_enum_str(buf, place, &strings, true),
                     None => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
                 }
             }
@@ -364,6 +381,18 @@ impl FnLower<'_, '_> {
         obj: Option<Operand>,
         body: impl FnOnce(&mut Self, Operand),
     ) {
+        self.within_depth_by(buf, depth, |lw| lw.push_text(buf, cut), obj, body);
+    }
+
+    /// [`Self::within_depth`], with `cut` writing what is printed past the limit.
+    fn within_depth_by(
+        &mut self,
+        buf: &Operand,
+        depth: &Operand,
+        cut: impl FnOnce(&mut Self),
+        obj: Option<Operand>,
+        body: impl FnOnce(&mut Self, Operand),
+    ) {
         let deep = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Gt, depth.clone(), cint(DEPTH, Ty::U32)),
@@ -382,7 +411,7 @@ impl FnLower<'_, '_> {
                 self.switch_to(cut_bb);
             }
         }
-        self.push_text(buf, cut);
+        cut(self);
         self.goto(done);
         self.switch_to(shallow_bb);
         let child = self.rvalue_temp(
@@ -484,10 +513,27 @@ impl FnLower<'_, '_> {
         if matches!(self.cx.kind(rty), TyKind::Str) {
             self.push_inspect_text(buf, &res);
         } else if self.is_native_inspect(rty) {
-            // What Node prints for one of its own objects (`ArrayBuffer`, `DataView`): the text,
-            // cut to `[ArrayBuffer]` past the depth limit, as Node cuts its objects.
+            // What Node prints for one of its own objects (`ArrayBuffer`, `URL`): the text, cut
+            // past the depth limit to the struct's `cut` (`URL {}`), or, when that is empty, to
+            // `[ArrayBuffer]`, as Node cuts its objects.
             let text = self.field_place(&res, rty, 0);
-            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+            let cut = self.field_place(&res, rty, 1);
+            let cut_text = |lw: &mut Self| {
+                let n = lw.str_len(Operand::Copy(cut.clone()));
+                let given =
+                    lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, n, cint(0, Ty::U64)));
+                let (given_bb, named_bb, done) = (lw.new_block(), lw.new_block(), lw.new_block());
+                lw.branch(given, given_bb, named_bb);
+                lw.switch_to(given_bb);
+                let a = lw.addr(cut.clone());
+                lw.push_str(buf, a);
+                lw.goto(done);
+                lw.switch_to(named_bb);
+                lw.push_text(buf, &format!("[{name}]"));
+                lw.goto(done);
+                lw.switch_to(done);
+            };
+            self.within_depth_by(buf, depth, cut_text, None, |lw, _| {
                 lw.push_inspect_text(buf, &text);
             });
         } else if let TyKind::Array(_) = self.cx.kind(rty) {

@@ -74,8 +74,6 @@ pub(super) enum Rt {
     FnPropKey,
     FnPropIdentity,
     FnPropIdentityOf,
-    ModuleWith,
-    ModuleWithEnd,
     /// Hands the runtime the table of the process statics (#2779): the function releasing the
     /// static atomics' references at exit, and std's process statics.
     Statics,
@@ -145,7 +143,6 @@ pub(super) enum Rt {
     StrbufInspectLayout,
     StrbufPushBool,
     StrbufPushByte,
-    StrbufPushJsonStr,
     StrbufPushInspectStr,
     StrbufPushInspectKey,
     StrbufFinish,
@@ -225,8 +222,6 @@ impl Rt {
             Rt::FnPropKey => f("velt_rt_fnprop_key", vec![Ptr, U64, Ptr], Unit),
             Rt::FnPropIdentity => f("velt_rt_fnprop_identity", vec![Ptr], Ptr),
             Rt::FnPropIdentityOf => f("velt_rt_fnprop_identity_of", vec![Ptr], Ptr),
-            Rt::ModuleWith => f("velt_rt_module_with", vec![], U8),
-            Rt::ModuleWithEnd => f("velt_rt_module_with_end", vec![U8], Unit),
             Rt::Statics => f("velt_rt_statics", vec![Ptr], Unit),
             Rt::ViewGet => f("velt_rt_view_get", vec![Ptr], Ptr),
             Rt::ViewPut => f("velt_rt_view_put", vec![Ptr, Ptr], Unit),
@@ -310,7 +305,6 @@ impl Rt {
             Rt::StrbufInspectLayout => f("velt_rt_strbuf_inspect_layout", vec![Ptr, U64], Unit),
             Rt::StrbufPushBool => f("velt_rt_strbuf_push_bool", vec![Ptr, Bool], Unit),
             Rt::StrbufPushByte => f("velt_rt_strbuf_push_byte", vec![Ptr, U8], Unit),
-            Rt::StrbufPushJsonStr => f("velt_rt_strbuf_push_json_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectStr => f("velt_rt_strbuf_push_inspect_str", vec![Ptr, Ptr], Unit),
             Rt::StrbufPushInspectKey => f("velt_rt_strbuf_push_inspect_key", vec![Ptr, Ptr], Unit),
             Rt::StrbufFinish => f("velt_rt_strbuf_finish", vec![Ptr, Ptr], Unit),

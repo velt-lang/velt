@@ -3,12 +3,15 @@
 // once among its task's woken nodes (holding a reference) and wakes the task.
 
 import { export as cExport } from "velt/ffi";
-import { noInline } from "velt/lang/intrinsics";
+import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
+import * as lk from "./sched_lock";
 import * as nd from "./sched_node";
 import * as wn from "./sched_node_woken";
 import * as t from "./sched_task";
+import * as wa from "./sched_wake_away";
 import * as wk from "./sched_wake";
+import * as wp from "./sched_wake_pause";
 
 @cExport("std_sched_node_clone")
 export function nodeClone(w: usize): usize {
@@ -22,17 +25,68 @@ export function nodeWake(w: usize): void {
     countedWake(w);
     return;
   }
-  wake(w);
-  nd.release(w);
+  wakeGiving(w);
 }
 
 /** `nodeWake` with the block counters on: counted until the reference is back (sched_wake.velt). */
 @noInline
 function countedWake(w: usize): void {
   wk.wakingStarts();
-  wake(w);
-  nd.release(w);
+  wakeGiving(w);
   wk.wakingEnds();
+}
+
+/**
+ * Wakes node `n` and gives back the waker's reference. On the thread polling its task, in that
+ * order: the node's poll comes after. From any other thread, with the locks on, the node may be
+ * polled, and park with that reference still counted (so it is not counted owner-only), before a
+ * release after the wake gives it back, and nothing polls it again (#3487): there the reference
+ * goes to the task's woken nodes in place of a new one (`give`), and the task is woken as
+ * sched_node_lost.velt `handBack` does, under a reference of its own that goes with the wake
+ * (sched_wake_away.velt `wakeAway`).
+ */
+@inline("always")
+function wakeGiving(n: usize): void {
+  if (lk.mode() === lk.LK_ON) {
+    const task = m.ld(n + nd.N_TASK);
+    const e = t.here();
+    if (!(e !== 0 && m.ld(e + t.E_CURRENT) === task)) {
+      wakeAway(task, n);
+      return;
+    }
+  }
+  wake(n);
+  nd.release(n);
+}
+
+@noInline
+function wakeAway(task: usize, n: usize): void {
+  const fl = m.load32(n + nd.N_FLAGS);
+  if ((fl & nd.FINISHED) !== 0 || (fl & nd.STARTED) === 0) {
+    // Nothing to wake, as `wake` finds.
+    nd.release(n);
+    return;
+  }
+  wp.beforeTaskRef();
+  if (wk.counting()) {
+    taskHeld(task, n);
+  }
+  // The node holds a reference to its task, and this one to the node: the task is alive.
+  m.inc(task + t.T_REFS);
+  give(n);
+  wa.wakeAway(task);
+}
+
+/**
+ * The check `wakeAway` makes in counted runs: node `n` still holds its reference to `task`. An
+ * ICE when its finish let go of the task while a wake of it by value was under way
+ * (sched_node_done.velt `letGo` keeps it while a waker is out; sched_node_wake.test.velt).
+ */
+@noInline
+export function taskHeld(task: usize, n: usize): void {
+  if (m.ld(n + nd.N_TASK) !== task) {
+    panic("ICE: a promise let go of its task while a wake of it by value was under way");
+  }
 }
 
 @cExport("std_sched_node_wake_by_ref")

@@ -311,7 +311,13 @@ export function loopWoke(b: usize): void {
 
 /**
  * The timer the last look chose takes its turn: the loop moves on to its phase. The lists the
- * look passed over get their new places first.
+ * look passed over get their new places first. An iteration of Node's loop that begins notes
+ * whether a keep-alive reference is held (`O_ALIVE`): Node decides whether the process stays
+ * alive only after each timers pass, so an iteration that began alive runs every immediate of its
+ * check phase and every timer due by its pass's `now`, `unref()`'d ones too, after the last ref'd
+ * one ran (sched_order_alive.velt). An iteration begins with a check phase, or with a pass that
+ * no check phase came before (a pass right after one is in the check phase's iteration: libuv runs
+ * the check phase, then the timers, then decides).
  */
 export function commit(b: usize): void {
   if (m.ld(b + P_NEXT) === 0) {
@@ -321,12 +327,24 @@ export function commit(b: usize): void {
     rekeyPassed(b, m.ld(b + P_NOW), m.ld(b + P_LIST));
   }
   if (m.ld(b + P_PHASE) === PASS) {
+    if (m.ld(b + P_FRESH) !== 0 && m.ld(b + l.O_CHECK_SET) === 0) {
+      began(b);
+    }
     m.st(b + l.O_PASS, m.ld(b + P_VAL));
     m.st(b + l.O_PASS_SET, 1);
     m.st(b + l.O_CHECK_SET, 0);
   } else {
+    if (m.ld(b + l.O_CHECK_SET) === 0 || m.ld(b + l.O_CHECK) !== m.ld(b + P_VAL)) {
+      began(b);
+    }
     m.st(b + l.O_PASS_SET, 0);
     m.st(b + l.O_CHECK, m.ld(b + P_VAL));
     m.st(b + l.O_CHECK_SET, 1);
   }
+}
+
+/** An iteration of order `b` begins: whether a keep-alive reference is held now (`O_ALIVE`). */
+@noInline
+function began(b: usize): void {
+  m.st(b + l.O_ALIVE, m.load(t.main() + t.E_KEEP) !== 0 ? 1 : 0);
 }

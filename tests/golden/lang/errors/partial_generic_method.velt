@@ -1,0 +1,9 @@
+// `Partial<I>` of an interface with a generic method is not supported yet: no function type of
+// fixed types holds the method.
+interface Store {
+  name: string;
+  get<T>(key: string, fallback: T): T;
+}
+
+const p: Partial<Store> = { name: "s" };
+console.log(p.name);

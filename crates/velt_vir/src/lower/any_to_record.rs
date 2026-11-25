@@ -13,7 +13,7 @@
 use velt_sema::hir::{DefId, TyId, TyKind};
 
 use super::any::TAG_OBJECT;
-use super::any_glue::Ready;
+use super::any_ready::Ready;
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::{cint, FnLower};
@@ -56,7 +56,17 @@ impl FnLower<'_, '_> {
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
         let tag = self.any_tag_of(desc);
         let obj = cint(TAG_OBJECT as i128, Ty::U64);
-        let is_obj = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, obj));
+        let is_obj = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag.clone(), obj));
+        // A function is an object too, as in JavaScript: a view type views it (#3507; its own
+        // properties are the ones written through `any`, any_fn_props.rs).
+        let is_obj = match of_any && self.cx.record_view(ty) {
+            true => {
+                let fun = cint(super::any::TAG_FUNCTION as i128, Ty::U64);
+                let is_fn = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, fun));
+                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, is_obj, is_fn))
+            }
+            false => is_obj,
+        };
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(is_obj, yes, no);
         self.switch_to(yes);

@@ -1,0 +1,148 @@
+// velt/encoding/json (internal): the JSON text of what a `RowsReader` (rows_reader.velt) reads
+// whole (`value`, for a `JsonValue`): the rows, a row or a cell as the JSON they stand for, into a
+// string builder (as `JSON.stringify` writes: generated code can't be used here, which the
+// generators themselves build on).
+
+import { AT_BYTE, AT_ROW, AT_TOP, AT_VAL, RowsReader } from "velt/encoding/json/rows_reader";
+import {
+  CELL_BLOB,
+  CELL_BOOL,
+  CELL_FLOAT,
+  CELL_INT,
+  CELL_JSON,
+  CELL_NONE,
+  CELL_TEXT,
+  RowCells,
+} from "velt/encoding/json/rows_cells";
+import { TreeWriter } from "velt/encoding/json/tree_text";
+import { OUT_CAP, putLiteral, putNumber } from "velt/encoding/json/tape_write";
+import { T_FALSE, T_NULL, T_TRUE } from "velt/encoding/json/tape";
+import { pushI64 } from "velt/lang/number/integer";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+
+/**
+ * Appends to the builder `buf` the JSON text of the value `rr` is at (the rows, a row, a cell or a
+ * blob's byte), leaving `rr` there (a live cursor's rows are read, though: `rr` skips them next):
+ * false when it is at none.
+ */
+export function rowsJsonText(rr: RowsReader, buf: string): bool {
+  // Bytes gathered in a buffer handed to the builder in chunks, as a tree is written
+  // (tree_text.velt): punctuation, numbers and short strings cost stores, not a call each.
+  let w = rr.writer;
+  if (w == null) {
+    w = new TreeWriter();
+    rr.writer = w;
+  }
+  let ok = false;
+  const at = rr.at;
+  const cells = rr.cells;
+  if (at == AT_TOP) {
+    if (cells.single) {
+      ok = cells.rowAhead();
+      if (ok) {
+        putRow(cells, w, buf);
+      }
+    } else {
+      // Every row from here, without moving a copy's current row.
+      const from = cells.row;
+      w.byte(91);
+      let first = true;
+      while (cells.rowAhead()) {
+        if (!first) {
+          w.byte(44);
+        }
+        first = false;
+        putRow(cells, w, buf);
+        cells.rowDone();
+      }
+      cells.row = from;
+      w.byte(93);
+      ok = true;
+    }
+  } else if (at == AT_ROW) {
+    putRow(cells, w, buf);
+    ok = true;
+  } else if (at == AT_VAL) {
+    ok = rr.kind != CELL_NONE;
+    if (ok) {
+      putCell(cells, w, buf, rr.col);
+    }
+  } else if (at == AT_BYTE && rr.blobAt < rr.blob.length) {
+    w.n = putNumber(w.buf, w.n, rr.blob[rr.blobAt] as f64);
+    ok = true;
+  }
+  w.flush(buf);
+  return ok;
+}
+
+// Puts the current row of `cells` as a JSON object into `w` (the builder `buf` takes what
+// overflows).
+function putRow(cells: RowCells, w: TreeWriter, buf: string): void {
+  const names = cells.names;
+  if (w.n > OUT_CAP) {
+    w.flush(buf);
+  }
+  w.byte(123);
+  for (let col: usize = 0; col < names.length; col++) {
+    if (col > 0) {
+      w.byte(44);
+    }
+    const name = names[col];
+    w.text(buf, name);
+    w.byte(58);
+    putCell(cells, w, buf, col);
+    if (w.n > OUT_CAP) {
+      w.flush(buf);
+    }
+  }
+  w.byte(125);
+}
+
+/** 2^53: integers below it in size print as their double does. */
+const EXACT: i64 = 9007199254740992;
+
+// Puts cell `col` of the current row of `cells` as JSON text into `w` (or the builder `buf`).
+function putCell(cells: RowCells, w: TreeWriter, buf: string, col: usize): void {
+  const k = cells.kind(col);
+  if (k == CELL_BOOL) {
+    w.n = putLiteral(w.buf, w.n, cells.bool(col) ? T_TRUE : T_FALSE);
+  } else if (k == CELL_INT) {
+    cells.i64(col);
+    const v = cells.int;
+    if (v > -EXACT && v < EXACT) {
+      w.n = putNumber(w.buf, w.n, v as f64);
+    } else {
+      w.flush(buf);
+      pushI64(buf, v);
+    }
+  } else if (k == CELL_FLOAT) {
+    cells.f64(col);
+    w.n = putNumber(w.buf, w.n, cells.num);
+  } else if (k == CELL_TEXT) {
+    // Escaped by std's writer, as a tree's strings are.
+    cells.textAt(col);
+    w.text(buf, cells.text);
+  } else if (k == CELL_JSON) {
+    cells.jsonAt(col);
+    const t = cells.text;
+    w.flush(buf);
+    velt_rt_strbuf_push_str(buf, t);
+    w.last = 0;
+  } else if (k == CELL_BLOB) {
+    const bytes = cells.blob(col);
+    w.byte(91);
+    for (let i: usize = 0; i < bytes.length; i++) {
+      if (w.n > OUT_CAP) {
+        w.flush(buf);
+      }
+      if (i > 0) {
+        w.byte(44);
+      }
+      w.n = putNumber(w.buf, w.n, bytes[i] as f64);
+    }
+    w.byte(93);
+  } else {
+    w.n = putLiteral(w.buf, w.n, T_NULL);
+  }
+}

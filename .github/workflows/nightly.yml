@@ -6,7 +6,8 @@
 # stress.ps1) on Linux and Windows, the `tsc` oracle for `velt check --ts-compat`
 # (tests/tscompat-oracle), the benchmarks' instruction counts against the last accepted ones
 # (bench/nightly.sh), the build-speed yardstick (bench/compile/scale/yardstick.py), the
-# WebAssembly goldens on Windows and macOS, and the deletion of superseded build caches
+# WebAssembly goldens on Windows and macOS, every golden by units (`golden-units`, `VELT_UNITS=2`,
+# #2943, in shards), and the deletion of superseded build caches
 # (`cache-prune`). At 05:07 UTC, when the macOS runners are less busy, a second run
 # has only the timing-sensitive tests, run many times on Windows and macOS (`flake`). A manual run
 # can pick one job: `gh workflow run nightly -f only=stress` (`all` includes `flake`). `c-headers`
@@ -24,7 +25,7 @@ on:
       only:
         description: Run only one job (all = every job, flake included).
         type: choice
-        options: [all, gate, stress, oracle, workerd, bench, yardstick, wasm, flake, cache, headers]
+        options: [all, gate, stress, oracle, workerd, bench, yardstick, wasm, flake, cache, headers, units]
         default: all
       bench_baseline:
         description: >-
@@ -71,6 +72,10 @@ jobs:
       VELT_ROBUSTNESS: full
       # Every golden with variables described, not a sample (crates/veltc/tests/debug_vars.rs).
       VELT_DEBUG_VARS: all
+      # Every golden's VIR with std loaded up front and on demand, not the sample the queue and the
+      # checks after merging compare (crates/veltc/tests/eager_std_identity.rs). On Linux only: what
+      # it checks, the order std loads in, doesn't depend on the OS.
+      VELT_VIR_IDENTITY: all
     steps:
       # The whole gate fills the runner's disk (2026-11-05: "No space left on device", which kills
       # the runner itself and leaves no log). Remove what the image carries and this job never uses.
@@ -165,7 +170,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) on Windows and macOS: the queue
-  # skips them unless a change touches WebAssembly code, and ci.yml's scheduled run of these OSes
+  # runs them there only for a change to WebAssembly's host side (`WASM_HOST_PATHS` in
+  # crates/xtask/src/os.rs; Linux checks the rest), and ci.yml's scheduled run of these OSes
   # leaves them out, so this is where every change meets them there. As in the
   # queue, one job per OS builds them and shards run them (queue-goldens.yml, `WASM_SHARDS` in
   # crates/xtask/src/os.rs, which `wasm-plan` reads); a failed shard leaves the other jobs of this
@@ -224,10 +230,73 @@ jobs:
       - name: declarations against headers, C constants and sources, every target
         env:
           VELT_ZIG_TESTS: "1"
-        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export --test c_struct_pointers -- --nocapture
+        run: cargo test --workspace --test c_headers --test c_constants --test c_sources --test c_export --test c_struct_pointers --test c_struct_headers --test c_struct_by_value -- --nocapture
       # The pin itself: the release still downloads and matches its SHA-256.
       - name: the pinned zig downloads
         run: env -u VELT_ZIG cargo test -p velt_toolchain zig -- --ignored
+
+  # Every golden by units (`VELT_UNITS=2`, #2943): std checked as a unit of its own and frozen,
+  # the program checked against it, and the program built from that check (which lowers and
+  # starts all of std, docs/internals/design/build-architecture.md "Units in sema"). Each golden
+  # checks all of std again (12-15G instructions a build, 9-50 times a whole build's), about 2.5
+  # hours of one runner over the suite, so it is nightly, not on pull requests, and split into
+  # shards (`VELT_GOLDEN_SHARD`). Each shard builds the workspace on its own runner first, so a
+  # night costs those eight builds besides the goldens (a shard's goldens took about 27 minutes). The goldens listed `units` in
+  # golden_known_failing.txt (#2943's U6 list) only report how they failed; any other failure
+  # fails the shard, and so does a listed one that passes, to be taken off the list. The reports
+  # go to the job summary (`VELT_GOLDEN_REPORT`).
+  golden-units:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'units')
+    name: golden-units (${{ matrix.shard }}/8)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - name: the runtime
+        run: cargo build -p velt_rt
+      - name: every golden of the shard by units
+        env:
+          VELT_UNITS: "2"
+          VELT_GOLDEN_SHARD: ${{ matrix.shard }}/8
+        run: VELT_GOLDEN_REPORT="$GITHUB_STEP_SUMMARY" cargo test --workspace --test golden
+
+  # The differential test of C structs by value natively on each convention CI can run but the
+  # pull request gate doesn't (Windows runners are scarce, #2901): Win64, Apple's arm64 variant,
+  # and arm64 Linux (ci.yml's c-struct-abi runs that one on pull requests too).
+  c-struct-abi:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'headers')
+    name: c-struct-abi (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      - name: the runtime
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo build -p velt_rt
+      - name: C structs by value, against C
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          VELT_ZIG_TESTS: "1"
+        run: cargo test --workspace --test c_struct_by_value -- --nocapture
 
   tsc-oracle:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'oracle')

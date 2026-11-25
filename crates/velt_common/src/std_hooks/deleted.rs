@@ -7,6 +7,10 @@
 /// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
 /// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
+    // #2196 9c: the module lock around a callback (std/lang/hooks/sched_module.velt `withStart`,
+    // `withEnd`), with the rest of the runtime's module lock.
+    "velt_rt_module_with",
+    "velt_rt_module_with_end",
     // #3222 step 3: the CPU check and the flags of crates/velt_rt/src/cpu.rs, now std's
     // (std/lang/hooks/cpu.velt, std/lang/cpu).
     "velt_rt_check_cpu",
@@ -153,4 +157,7 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_push_json_f64",
     "velt_rt_write_f64",
     "velt_rt_bytes_put_f64",
+    // #3530: JSON string escaping, std's (std/encoding/json/writer.velt): velt/db's rows text is
+    // read with `velt_rt_rows_str` and escaped by std's writer.
+    "velt_rt_strbuf_push_json_str",
 ];

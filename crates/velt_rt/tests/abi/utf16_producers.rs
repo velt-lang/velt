@@ -12,7 +12,7 @@
 use super::utf16_model::{show, wtf8_encode};
 use super::utf16_props::{gen_string, run, to_rt, units, Rng, Rt, ALL_ALPHABETS};
 use crate::str::{wtf8, VeltStr};
-use crate::strbuf::{velt_rt_strbuf_push_inspect_str, velt_rt_strbuf_push_json_str};
+use crate::strbuf::velt_rt_strbuf_push_inspect_str;
 
 /// A starting string in a random form: empty, a builder with room, static, inline or heap.
 fn start(rng: &mut Rng, s: &[u16]) -> Rt {
@@ -58,7 +58,7 @@ fn push_wtf8_keeps_counts_and_layout() {
 
 #[test]
 fn formatting_producers_count_what_they_write() {
-    run("inspect / JSON escaping", ALL_ALPHABETS, 4_000, |rng| {
+    run("inspect escaping", ALL_ALPHABETS, 4_000, |rng| {
         let s = gen_string(rng, ALL_ALPHABETS);
         let rs = to_rt(rng, &s);
         // Appended to a builder that may already hold text (a join at the opening quote is
@@ -67,52 +67,9 @@ fn formatting_producers_count_what_they_write() {
         let mut b = start(rng, &prefix);
         unsafe {
             velt_rt_strbuf_push_inspect_str(&mut b.0, &rs.0);
-            velt_rt_strbuf_push_json_str(&mut b.0, &rs.0);
         }
         // `units` checks the stored counts against the bytes.
         units(&b.0);
-        Ok(())
-    });
-}
-
-/// A JSON string literal of the units `s`, as source code units: each unit raw or as a `\uXXXX`
-/// escape at random (quotes, backslashes and controls always escaped). Raw halves next to each
-/// other become a pair when the source is encoded, as in a Velt string.
-fn json_literal(rng: &mut Rng, s: &[u16]) -> Vec<u16> {
-    let mut out = vec![b'"' as u16];
-    for &u in s {
-        if u < 0x20 || u == b'"' as u16 || u == b'\\' as u16 || rng.chance(40) {
-            out.extend(format!("\\u{u:04x}").encode_utf16());
-        } else {
-            out.push(u);
-        }
-    }
-    out.push(b'"' as u16);
-    out
-}
-
-#[test]
-fn json_strings_decode_to_their_code_units() {
-    use crate::json::reader_abi::*;
-    use std::mem::MaybeUninit;
-    run("JSON string decoding", ALL_ALPHABETS, 4_000, |rng| {
-        let s = gen_string(rng, ALL_ALPHABETS);
-        let src = json_literal(rng, &s);
-        let rsrc = to_rt(rng, &src);
-        unsafe {
-            // The pull reader (`JSON.parse<string>`).
-            let r = velt_rt_json_reader_new(&rsrc.0);
-            let mut out = MaybeUninit::<VeltStr>::uninit();
-            let ok = velt_rt_json_reader_read_string(r as u64, out.as_mut_ptr()) == 1;
-            velt_rt_json_reader_free(r as u64);
-            if !ok {
-                return Err(format!("reader refused {}", show(&src)));
-            }
-            let got = units(&Rt(out.assume_init_read()).0);
-            if got != s {
-                return Err(format!("reader: {} gave {}", show(&src), show(&got)));
-            }
-        }
         Ok(())
     });
 }

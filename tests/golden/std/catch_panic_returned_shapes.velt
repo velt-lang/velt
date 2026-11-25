@@ -1,0 +1,53 @@
+// check: no leaks
+// requires: unix
+// `catchPanic` catches a panic however the body hands its promise back (#3223), as Node's
+// `try { await f() } catch` does: a typed promise returned as `Promise<any>` (also a typed body
+// passed where `() => Promise<any>` is wanted), and a spawned task's handle returned without
+// awaiting it. Each panic is caught, and the program goes on. (Not yet, #3223: a body that
+// panics before it makes its promise, one that returns a promise made before `catchPanic` was
+// called, and a spawned task's handle held as `Promise<any>`.)
+import { catchPanic, PanicError } from "velt/task";
+
+function fail(why: string): string {
+  panic(why);
+}
+
+async function boom(why: string): Promise<string> {
+  await yieldNow();
+  return fail(why);
+}
+
+async function fine(v: string): Promise<string> {
+  await yieldNow();
+  return v;
+}
+
+async function report(label: string, run: () => Promise<any>): Promise<void> {
+  try {
+    console.log(label, "result", await catchPanic(run));
+  } catch (e) {
+    const why = e instanceof PanicError ? e.message.split(" at ")[0] : "";
+    console.log(label, "caught", e instanceof PanicError, why);
+  }
+}
+
+async function main() {
+  // A typed body, held as `() => Promise<any>`.
+  await report("typed", (): Promise<string> => boom("typed"));
+  await report("awaited spawn", async () => await spawn(boom("awaited")));
+  // A typed promise returned as `Promise<any>`.
+  await report("as any", (): Promise<any> => boom("as any"));
+  // A spawned task's handle, returned without awaiting it (typed: `report` would hold it as
+  // `Promise<any>`).
+  try {
+    console.log("spawn handle result", await catchPanic(() => spawn(boom("handle"))));
+  } catch (e) {
+    const why = e instanceof PanicError ? e.message.split(" at ")[0] : "";
+    console.log("spawn handle caught", e instanceof PanicError, why);
+  }
+  // Bodies that don't panic give their results, in each shape.
+  await report("ok typed", () => fine("a"));
+  await report("ok as any", (): Promise<any> => fine("b"));
+  await report("ok spawn handle", () => spawn(fine("c")));
+  console.log("done");
+}

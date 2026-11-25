@@ -1,6 +1,5 @@
 //! Database-agnostic JSON plumbing shared by the database drivers (`packages/postgres`, and any
-//! client/server driver that binds parameters and returns rows the same way; `packages/sqlite` binds
-//! its parameters here and writes its rows in binary form, `json/rows_bin.rs`).
+//! client/server driver that binds parameters and returns rows the same way).
 //!
 //! std passes query parameters as `JSON.stringify(params)` of a user object or array, and
 //! decodes result rows with the compile-time generated `JSON.parse<T[]>`, so the runtime never
@@ -14,3 +13,6 @@ pub mod rows;
 
 pub use params::{parse_param_list, parse_params, DbValue, Params};
 pub use rows::{push_byte_array, RowWriter};
+
+#[cfg(test)]
+mod tests;

@@ -27,6 +27,7 @@
 //! module holds module state (`sessionStorage`, `navigator`), which keeps a program's tasks and a
 //! server's connections on one worker.
 
+mod console_json;
 mod in_code;
 
 pub(super) use in_code::in_code;
@@ -225,6 +226,16 @@ pub(super) fn names_global(
             && has_nothing_slot(module))
         || (name == THIS_FN && words.has("this") && has_this_fn(module))
         || (name == ASYNC_HOST && words.has("host") && has_async_host(module))
+}
+
+/// Whether module `module` (its source's `words`) needs global `name` for code the compiler
+/// writes, whatever the module binds itself: `JSON` for a `console.log("%j", x)`, whose `%j`
+/// sema writes through std's `jsonText` ([`console_json`]).
+pub(super) fn compiler_needs_global(words: &Words, module: &ast::Module, name: &str) -> bool {
+    name == "JSON"
+        && words.has("console")
+        && words.src.contains("%j")
+        && console_json::has_console_json(module)
 }
 
 /// Whether `src` writes `globalThis.<name>` (a type or value that names the global past the

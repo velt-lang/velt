@@ -12,6 +12,7 @@ use crate::junit;
 use crate::plan::{Goldens, Plan, DIFFTEST};
 
 mod archive;
+mod shard;
 
 /// The parts of the gate to run: `all`, or a comma-separated list of `lint` (`cargo fmt`,
 /// clippy), `test` (build, unit and integration tests, doctests, `velt fmt --check`, the VS Code
@@ -118,6 +119,12 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     let mut build_ws = ws.clone();
     build_ws.extend(["--exclude".into(), "xtask".into()]);
     let part = opts.parts;
+    // `VELT_TEST_SHARD`: one of the after-merge gate's test shards (check/shard.rs).
+    let test_shard = match part.has(Part::Test) {
+        true => shard::from_env()?,
+        false => None,
+    };
+    let others = shard::runs_the_other_steps(test_shard);
     if part.has(Part::Lint) {
         gate.step(
             "cargo fmt --check",
@@ -168,9 +175,9 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         gate.native_crates_lint()?;
     }
     if part.has(Part::Test) {
-        gate.tests(plan, graph, &ws)?;
+        gate.tests(plan, graph, &ws, test_shard)?;
     }
-    if part.has(Part::Test) && plan.difftest {
+    if part.has(Part::Test) && plan.difftest && others {
         let mut tests = cargo(&["test"]);
         tests.arg("--manifest-path").arg(difftest_manifest(root));
         gate.step("tests/difftest unit tests", &mut tests)?;
@@ -212,17 +219,23 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         if identity {
             let test = archived(&manifest, |m| m.identity.clone(), "golden")?;
             let mut identity = vir_identity_test(root, &ws, test.as_deref());
+            let which = match std::env::var("VELT_VIR_IDENTITY").as_deref() {
+                Ok("all") => "every golden",
+                _ => "one golden in 8",
+            };
             let name = match std::env::var("VELT_GOLDEN_SHARD") {
-                Ok(shard) => format!("VIR identity (std up front, std on demand), shard {shard}"),
-                Err(_) => "VIR identity (std up front, std on demand)".to_string(),
+                Ok(shard) => {
+                    format!("VIR identity (std up front, std on demand), {which}, shard {shard}")
+                }
+                Err(_) => format!("VIR identity (std up front, std on demand), {which}"),
             };
             gate.step(&name, &mut identity)?;
         }
     }
-    if part.has(Part::Test) && plan.vscode {
+    if part.has(Part::Test) && plan.vscode && others {
         gate.vscode()?;
     }
-    if part.has(Part::Test) && plan.velt_fmt {
+    if part.has(Part::Test) && plan.velt_fmt && others {
         let velt = target_dir(root).join("debug").join(exe("velt"));
         let mut fmt = Command::new(&velt);
         fmt.args(["fmt", "--check", "std", "examples", "packages"]);
@@ -237,7 +250,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         }
         gate.step("std-lint", &mut lint)?;
     }
-    if part.has(Part::Test) && plan.full && opts.smoke && !cfg!(windows) {
+    if part.has(Part::Test) && plan.full && opts.smoke && !cfg!(windows) && others {
         let velt = target_dir(root).join("debug/velt");
         let mut smoke = Command::new("sh");
         smoke.arg("scripts/smoke.sh").arg(velt);
@@ -283,10 +296,10 @@ fn golden_test(root: &Path, ws: &[String], test: Option<&str>) -> Command {
 /// veltc's test of the VIR identity (crates/veltc/tests/eager_std_identity.rs).
 const IDENTITY_TEST: &str = "eager_std_identity";
 
-/// The VIR identity's long tests (every golden built with std loaded up front and on demand, and
-/// with and without error-set variables): through cargo, or the binary `test` (relative to
-/// `root`) from an archive. `VELT_VIR_IDENTITY` and `VELT_GOLDEN_SHARD` pass through from the
-/// environment.
+/// The VIR identity's long tests (the sample of the goldens, or every golden with
+/// `VELT_VIR_IDENTITY=all`, built with std loaded up front and on demand, and with and without
+/// error-set variables): through cargo, or the binary `test` (relative to `root`) from an archive.
+/// `VELT_VIR_IDENTITY` and `VELT_GOLDEN_SHARD` pass through from the environment.
 fn vir_identity_test(root: &Path, ws: &[String], test: Option<&str>) -> Command {
     let mut c = match test {
         Some(test) => Command::new(root.join(test)),
@@ -408,10 +421,19 @@ impl Gate<'_> {
         self.step(&name, &mut run)
     }
 
-    fn tests(&mut self, plan: &Plan, graph: &Graph, ws: &[String]) -> Result<(), String> {
+    fn tests(
+        &mut self,
+        plan: &Plan,
+        graph: &Graph,
+        ws: &[String],
+        test_shard: Option<(usize, usize)>,
+    ) -> Result<(), String> {
         let Some(filterset) = plan.filterset() else {
             return Ok(());
         };
+        if test_shard.is_some() && !self.dry_run && !has_nextest() {
+            return Err("VELT_TEST_SHARD needs cargo-nextest (its `--partition`)".into());
+        }
         // The tests that check through zig for every target run only where asked for: the
         // `c-headers` job, or a machine with `VELT_ZIG_TESTS=1`. `VELT_ZIG` alone (a job whose
         // tests build C sources) doesn't run them.
@@ -423,6 +445,7 @@ impl Gate<'_> {
         let mut tests = if has_nextest() {
             let mut c = cargo(&["nextest", "run"]);
             c.args(ws).args(["--no-tests", "pass", "-E", &filterset]);
+            c.args(shard::partition_args(test_shard));
             if std::env::var_os("CI").is_some() {
                 let profile = junit::ci_profile(std::env::var("VELT_NEXTEST_PROFILE").ok())?;
                 c.args(["--profile", profile]);
@@ -447,12 +470,16 @@ impl Gate<'_> {
         if let Some(report) = &junit {
             let _ = std::fs::remove_file(report);
         }
-        let result = self.step("unit + integration tests", &mut tests);
+        let name = match test_shard {
+            Some((i, n)) => format!("unit + integration tests, shard {i}/{n}"),
+            None => "unit + integration tests".to_string(),
+        };
+        let result = self.step(&name, &mut tests);
         if let (Err(_), Some(report)) = (&result, &junit) {
             junit::summarize_failed_tests(report);
         }
         result?;
-        if plan.rust {
+        if plan.rust && shard::runs_the_other_steps(test_shard) {
             let crates = doctests::crates_with_doctests(self.root, &graph.dirs);
             let selected: Vec<&String> = crates
                 .iter()

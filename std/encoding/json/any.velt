@@ -11,6 +11,7 @@
 import { StringBuilder } from "velt/text/string_builder";
 import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
 import { JsonValue } from "velt/prelude/json/json_value";
+import { anyIsPromise } from "velt/lang/intrinsics";
 import {
   beginVisit,
   callToJSON,
@@ -19,7 +20,6 @@ import {
   entryName,
   entryValue,
   identity,
-  RuntimeType,
   typeOf,
 } from "velt/reflect";
 
@@ -81,8 +81,11 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     writeJsonAny(w, entryValue(v, 0), key);
     endVisit();
   } else if (kind == "class" && t.hasHook("toJSON")) {
-    writeHooked(w, v, t, key);
-  } else if (kind == "object" || kind == "class" || kind == "struct" || kind == "map") {
+    writeHooked(w, v, key);
+  } else if (kind == "map" || kind == "set") {
+    // No enumerable own properties, as in Node.
+    w.append("{}");
+  } else if (kind == "object" || kind == "class" || kind == "struct") {
     enter(v);
     writeMembers(w, v, null);
     endVisit();
@@ -90,6 +93,9 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     enter(v);
     writeMembers(w, v, recordOrder(v));
     endVisit();
+  } else if (anyIsPromise(v)) {
+    // An object with no own enumerable members, as Node writes it (#924).
+    w.append("{}");
   } else {
     unsupported();
   }
@@ -118,16 +124,25 @@ function writeNumber(w: StringBuilder, v: any, repr: string): void {
   }
 }
 
-/** What a class instance's `toJSON(key)` returns, written; its fields when that is itself. */
-function writeHooked(w: StringBuilder, v: any, t: RuntimeType, key: string): void {
-  const r = callToJSON(v, key);
-  const rt = typeOf(r);
-  if (rt.kind == t.kind && rt.name == t.name) {
-    // `toJSON() { return this; }`: the fields of the result, as JavaScript writes them.
-    enter(r);
-    writeMembers(w, r, null);
-    endVisit();
-    return;
+/** What a class instance's `toJSON(key)` returns, written ([`writeJsonResult`]). */
+function writeHooked(w: StringBuilder, v: any, key: string): void {
+  writeJsonResult(w, callToJSON(v, key), key);
+}
+
+/**
+ * Appends `r`, what a `toJSON(key)` returned, as JavaScript writes it: the result's own `toJSON`
+ * is not called (#3732), so an instance of a class with one (the value itself, after
+ * `return this`, or another) is written by its members; anything else as `writeJsonAny` writes it.
+ */
+export function writeJsonResult(w: StringBuilder, r: any, key: string): void {
+  if (jsonPresent(r) && !holdsJsonValue(r)) {
+    const t = typeOf(r);
+    if (t.kind == "class" && t.hasHook("toJSON")) {
+      enter(r);
+      writeMembers(w, r, null);
+      endVisit();
+      return;
+    }
   }
   writeJsonAny(w, r, key);
 }
@@ -147,10 +162,16 @@ function writeElements(w: StringBuilder, v: any): void {
   w.append("]");
 }
 
-/** The members of an object, a class instance, a struct, a `Map` or a record, in `order`. */
+/** The members of an object, a class instance, a struct or a record, in `order`. */
 function writeMembers(w: StringBuilder, v: any, order: i64[] | null): void {
   const n = entryCount(v);
   if (n < 0) {
+    // std's `WeakMap` and `WeakSet` keep their entries out of sight: `{}`, as in Node.
+    const name = typeOf(v).name;
+    if (name == "WeakMap" || name == "WeakSet") {
+      w.append("{}");
+      return;
+    }
     unsupported();
   }
   w.append("{");

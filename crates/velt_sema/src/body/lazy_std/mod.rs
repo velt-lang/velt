@@ -185,6 +185,9 @@ pub(crate) struct Lazy {
     /// The program runs on the executor in Velt (a native target, `CheckOptions::native_executor`):
     /// live code that runs something on it demands [`SCHED_HOOKS`].
     pub native_executor: bool,
+    /// The build is for the `velt dev` JIT (`CheckOptions::jit`): a `with` demands the hooks that
+    /// count its `Mutex` (`Construct::MutexHeld`).
+    pub jit: bool,
     /// Per module: how it is checked (empty while off).
     modules: Vec<Mode>,
     /// Per class: the classes that extend it directly.
@@ -242,6 +245,7 @@ impl Lazy {
             on: std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
             check_all: false,
             native_executor: true,
+            jit: false,
             modules: vec![],
             subclasses: FxHashMap::default(),
             user_record: false,
@@ -398,6 +402,10 @@ pub(crate) fn reach(cx: &mut Ctx) {
         return;
     }
     loop {
+        // A refused demand throws the check away (`Ctx::load_refused`): check no more of it.
+        if cx.load_refused() {
+            return;
+        }
         let defs_before = cx.info.len();
         let texts = live::step(cx);
         let mut found = vec![];
@@ -451,6 +459,7 @@ pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_yield),
     velt_common::std_hook!(sched_yield_fut),
     velt_common::std_hook!(sched_yield_ready),
+    velt_common::std_hook!(sched_yield_drop),
     velt_common::std_hook!(sched_finish),
     velt_common::std_hook!(sched_box),
     velt_common::std_hook!(sched_start),
@@ -488,6 +497,9 @@ pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_module_state),
     velt_common::std_hook!(sched_module_block),
     velt_common::std_hook!(sched_module_ready),
+    velt_common::std_hook!(sched_module_touch),
+    velt_common::std_hook!(sched_module_with),
+    velt_common::std_hook!(sched_module_with_end),
     velt_common::std_hook!(sched_task_id),
 ];
 
@@ -671,7 +683,11 @@ pub(crate) fn stub_unreached(cx: &mut Ctx) -> FxHashSet<DefId> {
                     name: f.name.clone(),
                     generics: f.generics.len() as u32,
                     params,
-                    ret: f.ret,
+                    // As the checked body would (`crate::hand_back`).
+                    ret: match crate::hand_back::hands_back(cx, d) {
+                        true => cx.ty.unit,
+                        false => f.ret,
+                    },
                     is_async: f.is_async || f.is_async_gen,
                     is_generator: f.is_generator,
                     self_ty: (f.this.as_ref())
@@ -721,7 +737,7 @@ mod tests;
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Lazy {
-        on, check_all, native_executor, modules, subclasses, user_record, generic_any,
+        on, check_all, native_executor, jit, modules, subclasses, user_record, generic_any,
         record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, dyn_held,
         dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable, module_hooks,
         units_live_memo,

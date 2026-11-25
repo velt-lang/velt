@@ -1,0 +1,10 @@
+// velt/process/child (internal): `#script-shell` everywhere but Linux. On macOS Node (libuv's
+// `posix_spawn`) fails an executable without a `#!` line with ENOEXEC, and so does Velt; Windows
+// and WebAssembly have no such scripts.
+
+/** Does a program that fails to start with ENOEXEC run again as `SHELL <file> <args…>`? */
+export const SCRIPT_SHELL: bool = false;
+/** `ENOEXEC` (8 on macOS and Linux): a file the OS can't execute. */
+export const ENOEXEC: i32 = 8;
+/** The shell that runs an executable without a `#!` line. */
+export const SHELL = "/bin/sh";

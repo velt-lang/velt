@@ -1,0 +1,146 @@
+// check: no leaks
+// A stream source's non-async `pull`, `start` or `cancel` that returns a promise from a block body
+// (`return p.then(...)`, a promise that can't reject or rejects with something other than
+// `unknown`) is the promise form: the stream waits for the promise and a rejection errors it, as
+// in Node (#3710). The Node twin is streams_pull_returned.mjs.
+function none(): Promise<void> | undefined {
+  return undefined;
+}
+
+async function main(): Promise<void> {
+  let n = 0;
+  const s = new ReadableStream<number>({
+    pull(c) {
+      return Promise.resolve().then(() => {
+        n++;
+        c.enqueue(n);
+        if (n == 3) {
+          c.close();
+        }
+      });
+    },
+  });
+  const r = s.getReader();
+  for (;;) {
+    const x = await r.read();
+    if (x.done) {
+      break;
+    }
+    console.log("method pull read " + x.value + ", pulls " + n);
+  }
+
+  const t = new ReadableStream<number>({
+    pull: (c) => {
+      return Promise.resolve().then(() => {
+        throw new Error("then boom");
+      });
+    },
+  });
+  try {
+    await t.getReader().read();
+  } catch (e) {
+    console.log("arrow pull caught " + (e as Error).message);
+  }
+
+  const st = new ReadableStream<number>({
+    start(c) {
+      return Promise.resolve().then(() => {
+        throw new Error("start boom");
+      });
+    },
+  });
+  try {
+    await st.getReader().read();
+  } catch (e) {
+    console.log("method start caught " + (e as Error).message);
+  }
+
+  const cs = new ReadableStream<number>({
+    pull(c) {
+      c.enqueue(1);
+    },
+    cancel(reason) {
+      return Promise.resolve().then(() => {
+        throw new Error("cancel boom");
+      });
+    },
+  });
+  try {
+    await cs.cancel("why");
+    console.log("cancel resolved");
+  } catch (e) {
+    console.log("method cancel caught " + (e as Error).message);
+  }
+
+  // A promise returned on one path only, nothing on another.
+  let n2 = 0;
+  const mixed = new ReadableStream<number>({
+    pull(c) {
+      n2++;
+      if (n2 > 1) {
+        return Promise.resolve().then(() => {
+          throw new Error("mixed boom");
+        });
+      }
+      c.enqueue(n2);
+    },
+  });
+  const mr = mixed.getReader();
+  try {
+    for (;;) {
+      const x = await mr.read();
+      console.log("mixed read " + x.value);
+    }
+  } catch (e) {
+    console.log("mixed caught " + (e as Error).message);
+  }
+
+  // A synchronous throw before the `return`.
+  let k = 0;
+  const thrown = new ReadableStream<number>({
+    pull(c) {
+      k++;
+      if (k > 1) {
+        throw new Error("sync boom");
+      }
+      c.enqueue(k);
+      return Promise.resolve().then(() => {});
+    },
+  });
+  const tr = thrown.getReader();
+  try {
+    for (;;) {
+      const x = await tr.read();
+      console.log("sync read " + x.value);
+    }
+  } catch (e) {
+    console.log("sync caught " + (e as Error).message);
+  }
+
+  // A nested arrow's `return` doesn't make its enclosing callback the promise form.
+  let m = 0;
+  const u = new ReadableStream<number>({
+    pull(c) {
+      [1].forEach((x) => {
+        return none();
+      });
+      m++;
+      if (m > 2) {
+        c.close();
+      } else {
+        c.enqueue(m);
+      }
+    },
+  });
+  const ur = u.getReader();
+  for (;;) {
+    const x = await ur.read();
+    if (x.done) {
+      break;
+    }
+    console.log("plain pull read " + x.value);
+  }
+  console.log("done");
+}
+
+main();

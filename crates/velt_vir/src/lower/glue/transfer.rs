@@ -731,6 +731,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// (a `Promise.all` over one, #212). A result with nothing counted needs no glue (null), but
     /// the runtime still hears of the promise: a holder of a shared one is handed over.
     fn transfer_promise(&mut self, place: &Place, ty: TyId) {
+        // A program that runs no async code holds no promise (a `Promise<T> | null` field of a
+        // value held as `any` is `null` there): nothing to hand over, and no executor to call.
+        if !self.cx.executor_loaded() {
+            return;
+        }
         let slot = self.cx.promise_slot(ty);
         let f = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(place.clone())));
         let done = self.new_block();

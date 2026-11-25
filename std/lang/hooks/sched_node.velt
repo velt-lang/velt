@@ -35,9 +35,12 @@
 
 import { inline, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
+import * as dn from "./sched_node_done";
+import * as dr from "./sched_node_drop";
 import * as m from "./sched_mem";
 import * as loc from "./sched_node_loc";
 import * as lost from "./sched_node_lost";
+import * as lk from "./sched_lock";
 import * as micro from "./sched_micro";
 import * as aw from "./sched_node_await";
 import * as al from "./sched_share_alias";
@@ -192,6 +195,7 @@ function pollNode(f: usize, cx: usize, claim: bool): u32 {
   if (
     (fl & (RUNNING | QUEUED | YIELDING)) === 0 &&
     m.ld(e + t.E_ADOPTING) === 0 &&
+    task !== 0 &&
     wk.taskOf(m.ld(cx + 8)) === task
   ) {
     if ((fl & CATCHES) !== 0 || m.ld(e + nc.E_CATCHING) >= 2) {
@@ -236,6 +240,7 @@ export function adoptedDone(task: usize, n: usize, fl: u32): void {
   if (w !== 0) {
     m.wakerDrop(w);
   }
+  dn.letGo(task, n, 2);
   // The task's reference.
   release(n);
 }
@@ -253,32 +258,20 @@ export function nodeDrop(f: usize): void {
         stateDrop(m.ld(n + N_DROP), f + 16);
       }
     }
-  } else if (!aw.ownSide(n)) {
-    // The finish may run on another worker meanwhile (sched_node_await.velt): the one that comes
-    // second drops the result. DELIVERED is the owner's own (this thread's).
-    const prev = m.or32(n + N_FLAGS, DETACHED);
-    if ((prev & (FINISHED | DELIVERED)) === FINISHED) {
-      rp.dropResult(n);
+    dr.dropDone(n);
+  } else {
+    let own = false;
+    if (lk.mode() === lk.LK_NONE) {
+      // One worker, but the owner may be a thread that isn't one (sched_foreign.velt `start`).
+      own = t.here() !== 0;
+    } else if (wk.counting()) {
+      // Out of line, so the pause costs the common path no saved registers.
+      return dr.dropPaused(n, fl);
+    } else {
+      own = aw.ownSide(n, fl);
     }
-    const w = m.swap(n + aw.N_AWAITER, 0);
-    if (w !== 0) {
-      m.wakerDrop(w);
-    }
-    lost.droppedAway(n);
-    return;
-  } else if ((fl & FINISHED) === 0) {
-    setFlags(n, DETACHED);
-    if (m.load(n + N_REFS) === 2 || lost.isProxy(n)) {
-      return lost.dropPending(n);
-    }
-  } else if ((fl & DELIVERED) === 0) {
-    rp.dropResult(n);
+    dr.dropStarted(n, fl, own);
   }
-  const w = aw.takePlain(n);
-  if (w !== 0) {
-    m.wakerDrop(w);
-  }
-  release(n);
 }
 
 export function setFlags(n: usize, f: u32): void {
@@ -312,7 +305,7 @@ export function start(
   bind(task, n, rdrop, rejecting);
   // `firstRun`, written out: its call of `run` stays inlined here.
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
-  run(task, n, false);
+  run(task, n, false, 0);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 
@@ -338,7 +331,7 @@ export function bind(task: usize, n: usize, rdrop: usize, rejecting: bool): void
 @inline("always")
 export function firstRun(task: usize, n: usize): void {
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
-  run(task, n, false);
+  run(task, n, false, 0);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 
@@ -365,9 +358,10 @@ export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
  * task's woken stack (sched_node_woken.velt `takeWoken`) leaves QUEUED: one run from elsewhere
  * (a microtask, its start) may still be on the stack, and a wake must not push it there twice.
  * A poll that leaves it suspended with its owner gone looks whether anything can still wake it
- * (`parked`).
+ * (`parked`). `lent`: the references its caller holds for the run (the woken stack's, a microtask
+ * entry's; 0 at its start).
  */
-export function run(task: usize, n: usize, taken: bool): void {
+export function run(task: usize, n: usize, taken: bool, lent: usize): void {
   if (taken) {
     m.and32(n + N_FLAGS, ~QUEUED);
   }
@@ -423,6 +417,7 @@ export function run(task: usize, n: usize, taken: bool): void {
       }
     }
   }
+  dn.letGo(task, n, 2 + lent);
   release(n);
 }
 

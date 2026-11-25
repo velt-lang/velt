@@ -1,0 +1,94 @@
+// velt/process/child (internal): what `posix_spawn` is given besides the program's arguments
+// (std/process/child/spawn_posix.velt): the child's environment, and the paths its program is
+// looked up at in the child's `PATH`, as libuv looks it up for Node, and which of them exist.
+
+import { CommandSpec } from "velt/process/child/spec";
+import { envPairs } from "#env-sys";
+
+import { DEFAULT_PATH, errno, exists, LONG_ENTRY_TRIES_CWD, PATH_MAX } from "#spawn-open";
+import { strByteLen } from "velt/lang/intrinsics";
+
+const ENOENT: i32 = 2;
+const ENOTDIR: i32 = 20;
+
+/**
+ * The child's environment as `[name, value, …]`: the parent's unless cleared (a copy, made
+ * under velt/process' environment lock), then the spec's.
+ */
+export function environment(spec: CommandSpec): string[] {
+  const out: string[] = spec.clearEnv ? [] : envPairs();
+  for (let i: usize = 0; i + 1 < spec.env.length; i += 2) {
+    const name = spec.env[i];
+    let at: usize = 0;
+    while (at + 1 < out.length && out[at] != name) {
+      at += 2;
+    }
+    if (at + 1 < out.length) {
+      out[at + 1] = spec.env[i + 1];
+    } else {
+      out.push(name);
+      out.push(spec.env[i + 1]);
+    }
+  }
+  return out;
+}
+
+/** The child's `PATH` (the OS's default lookup path when it has none, `#spawn-open`). */
+export function pathOf(env: string[]): string {
+  for (let i: usize = 0; i + 1 < env.length; i += 2) {
+    if (env[i] == "PATH") {
+      return env[i + 1];
+    }
+  }
+  return DEFAULT_PATH;
+}
+
+/**
+ * The paths to try for the program, in order: as written when it holds a `/`; else in each entry
+ * of the child's `PATH`, as libuv does for Node. An empty entry is the working directory: the
+ * bare name, which `posix_spawn` opens there, and which the shell of a script without `#!` is
+ * given as glibc gives it (`/bin/sh prog …`, so its `$0` is `prog`). So nothing reads this
+ * process' environment outside velt/process' lock, as `posix_spawnp`, which reads its `PATH`,
+ * would. An entry too long to search (as long as `PATH`, at most `PATH_MAX - 1` bytes, plus
+ * one) is left out, as the OS's lookup leaves it out (`#spawn-open`): on macOS skipped, as
+ * libuv's own loop (musl's) skips it; on Linux, where glibc's `execvp` skips it without stepping
+ * past its `:`, an entry that isn't the last becomes the bare name, tried in the working
+ * directory.
+ */
+export function candidates(program: string, path: string): string[] {
+  if (program.includes("/")) {
+    return [program];
+  }
+  const out: string[] = [];
+  const longest = strByteLen(path) < PATH_MAX - 1 ? strByteLen(path) : PATH_MAX - 1;
+  let from: i64 = 0;
+  while (true) {
+    const end = path.indexOf(":", from);
+    const dir = path.slice(from, end < 0 ? (path.length as i64) : end);
+    if (strByteLen(dir) <= longest) {
+      out.push(dir == "" ? program.clone() : `${dir}/${program}`);
+    } else if (LONG_ENTRY_TRIES_CWD && end >= 0) {
+      out.push(program.clone());
+    }
+    if (end < 0) {
+      return out;
+    }
+    from = end + 1;
+  }
+}
+
+/**
+ * ENOENT or ENOTDIR when absolute candidate `path` (at address `file`, NUL-terminated) does not
+ * exist, which `posix_spawn` would fail with too; 0 to try it. A failed `posix_spawn` costs
+ * about as much as a started one on macOS (the kernel makes the process first), and a program
+ * found late in `PATH` fails at every entry before. The check uses the effective ids, as the
+ * kernel's exec does (a setuid program). Relative candidates resolve in the child's working
+ * directory, after its chdir: always tried.
+ */
+export function absent(path: string, file: usize): i32 {
+  if (!path.startsWith("/") || exists(file) === 0) {
+    return 0;
+  }
+  const e = errno();
+  return e === ENOENT || e === ENOTDIR ? e : 0;
+}

@@ -1,0 +1,174 @@
+// check: no leaks
+// String views (#3469) across suspensions: a value of a family that slices a string must not
+// stay a view of it across an `await` or a `yield`, or leave by `spawn` or a channel send,
+// because the source can be replaced and freed before the value is read again. Each case
+// slices a heap ASCII string held by a `Doc`, suspends or sends, lets the source be replaced
+// and the heap refilled with strings of the same size, then reads the value. A view that
+// survived the suspension would print the new letters. Velt-only (`spawn`, channels).
+import { channel } from "velt/sync";
+import type { Channel } from "velt/sync";
+
+/** A heap ASCII string of `n` letters from `seed` (built at run time, so not a literal). */
+function heap(seed: number, n: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(String.fromCharCode(97 + ((seed + i) % 26)));
+  }
+  return parts.join("");
+}
+
+/** Allocates and frees strings of `n` bytes, so freed buffers of that size are reused. */
+function churn(n: number): number {
+  let s = 0;
+  for (let k = 0; k < 64; k++) {
+    s += heap(k + 7, n).charCodeAt(3);
+  }
+  return s;
+}
+
+/** The last 40 letters of `text`. */
+function tail(text: string): string {
+  return text.slice(text.length - 40);
+}
+
+class Doc {
+  src: string;
+  constructor(src: string) {
+    this.src = src;
+  }
+}
+
+/**
+ * `rest` is live across an `await` of a gate that `replaceThenOpen` opens after replacing
+ * `d.src`: nothing else in the loop could stop a view.
+ */
+async function awaitAcross(d: Doc, gate: Promise<number>): Promise<string> {
+  let rest = d.src;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  await gate;
+  return rest;
+}
+
+/** The same with the `await` inside the slicing loop. */
+async function awaitInLoop(d: Doc, gate: Promise<number>): Promise<string> {
+  let rest = d.src;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+    if (rest.length === 41) {
+      await gate;
+    }
+  }
+  return rest;
+}
+
+/** Replaces `d.src`, refills the heap, then opens the gate. */
+async function replaceThenOpen(d: Doc, seed: number, open: (n: number) => void): Promise<string> {
+  d.src = heap(seed, 200);
+  churn(200);
+  open(1);
+  return "";
+}
+
+/** `rest` is live between two `next()` calls. */
+function* liveAcrossYield(d: Doc): Generator<string> {
+  let rest = d.src;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  yield "first";
+  yield rest;
+}
+
+/** `rest` itself is yielded. */
+function* yielded(d: Doc): Generator<string> {
+  let rest = d.src;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  yield rest;
+}
+
+async function useLater(s: string, gate: Channel<number>): Promise<string> {
+  await gate.receive();
+  return s;
+}
+
+/** `rest` is handed to a spawned task. */
+function viaSpawn(d: Doc, gate: Channel<number>): Promise<string> {
+  let rest = d.src;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  return spawn(useLater(rest, gate));
+}
+
+/** `rest` is sent on a channel. */
+async function viaSend(d: Doc, ch: Channel<string>): Promise<void> {
+  let rest = d.src;
+  while (rest.length > 40) {
+    rest = rest.slice(1);
+  }
+  await ch.send(rest);
+}
+
+function report(name: string, got: string, want: string): void {
+  console.log(name, got === want, got.length);
+}
+
+async function main(): Promise<void> {
+  {
+    // `Promise.all` starts `awaitAcross` first: it slices and waits at the gate, and only then
+    // does `replaceThenOpen` run.
+    const d = new Doc(heap(1, 200));
+    const want = tail(d.src);
+    const { promise, resolve } = Promise.withResolvers<number>();
+    const got = await Promise.all([awaitAcross(d, promise), replaceThenOpen(d, 2, resolve)]);
+    report("await", got[0], want);
+  }
+  {
+    const d = new Doc(heap(3, 200));
+    const want = tail(heap(3, 200));
+    const { promise, resolve } = Promise.withResolvers<number>();
+    const got = await Promise.all([awaitInLoop(d, promise), replaceThenOpen(d, 4, resolve)]);
+    report("await in loop", got[0], want);
+  }
+  {
+    const d = new Doc(heap(5, 200));
+    const want = tail(d.src);
+    const g = liveAcrossYield(d);
+    g.next();
+    d.src = heap(6, 200);
+    churn(200);
+    report("live across yield", g.next().value ?? "", want);
+  }
+  {
+    const d = new Doc(heap(7, 200));
+    const want = tail(d.src);
+    const g = yielded(d);
+    const got = g.next().value ?? "";
+    d.src = heap(8, 200);
+    churn(200);
+    report("yielded", got, want);
+  }
+  {
+    const d = new Doc(heap(9, 200));
+    const want = tail(d.src);
+    const gate = channel<number>(1);
+    const h = viaSpawn(d, gate);
+    d.src = heap(10, 200);
+    churn(200);
+    await gate.send(1);
+    report("spawn", await h, want);
+  }
+  {
+    const d = new Doc(heap(11, 200));
+    const want = tail(d.src);
+    const ch = channel<string>(1);
+    await viaSend(d, ch);
+    d.src = heap(12, 200);
+    churn(200);
+    report("send", (await ch.receive()) ?? "", want);
+  }
+}

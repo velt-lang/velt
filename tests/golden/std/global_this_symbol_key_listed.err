@@ -1,0 +1,2 @@
+global_this_symbol_key_listed.velt:7:36: error: the property name `[Symbol.for("k")]` of `globalThis` is not supported: Velt uses names starting with `[Symbol.` for symbol keys
+global_this_symbol_key_listed.velt:7:11: error: `globalThis` as a value is not supported yet

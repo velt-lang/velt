@@ -333,12 +333,17 @@ impl FnLower<'_, '_> {
             _ => VtableKey::Impl(impl_index, cty),
         };
         let vtable = self.vtable_addr(key);
+        let own = vtable.clone();
         let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.proxiable(cty) {
             true => self.proxy_any_parts(data, vtable),
             false => (data, vtable),
         };
         let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.array_view(cty) {
             true => self.view_any_parts(data, vtable, cty),
+            false => (data, vtable),
+        };
+        let (data, vtable) = match self.cx.is_any_impl(impl_index) && self.cx.record_view(cty) {
+            true => self.record_view_any_parts(data, vtable, own, cty),
             false => (data, vtable),
         };
         self.build_agg(ty, vec![data, vtable])

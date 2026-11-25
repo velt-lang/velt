@@ -1,7 +1,7 @@
 // Shared by the tests that need no PostgreSQL: a fake server on a free port that speaks just enough
 // of the protocol, sending what a test scripts, so that what a real server never sends can be sent.
 
-import { listen, TcpStream } from "velt/net";
+import { connect, listen, listenTls, TcpStream } from "velt/net";
 
 /** A backend message. */
 export function msg(tag: string, body: u8[] = []): u8[] {
@@ -224,6 +224,82 @@ async function tlsProbe(s: TcpStream, probes: shared<Mutex<TlsProbes>>, answer: 
     while ((await s.read()).length > 0) {}
     return;
   }
+}
+
+// Everything `from` sends goes to `to`, until either ends.
+async function pump(from: TcpStream, to: TcpStream) {
+  try {
+    while (true) {
+      const chunk = await from.read();
+      if (chunk.length == 0) {
+        break;
+      }
+      await to.writeBytes(chunk);
+    }
+  } catch (e) {
+    // The other side left.
+  }
+  from.close();
+  to.close();
+}
+
+/**
+ * A server that has TLS as PostgreSQL has it, for `count` connections: it answers `SSLRequest`
+ * with "S", does the handshake with `cert` and `key`, and lets the client in. The handshake is
+ * velt/net's `listenTls` on a second port, which the first hands the connection's bytes to and
+ * from after its "S". Its port.
+ */
+export async function serveTls(cert: string, key: string, count: i64): Promise<number> {
+  const inner = await listenTls("127.0.0.1:0", { cert: cert, key: key });
+  const front = await listen("127.0.0.1:0");
+  const innerPort = inner.port;
+  spawn(async () => {
+    for (let i: i64 = 0; i < count; i++) {
+      try {
+        const s = await inner.accept();
+        spawn(async () => {
+          try {
+            await letIn(s);
+            while ((await s.read()).length > 0) {}
+          } catch (e) {
+            // The client left.
+          }
+          s.close();
+        });
+      } catch (e) {
+        // A handshake the client gave up on (it refused the certificate).
+      }
+    }
+    inner.close();
+  });
+  spawn(async () => {
+    for (let i: i64 = 0; i < count; i++) {
+      const c = await front.accept();
+      spawn(async () => {
+        try {
+          // SSLRequest: eight bytes, which may come in pieces.
+          let got: u64 = 0;
+          while (got < 8) {
+            const piece = await c.read(8 - got);
+            if (piece.length == 0) {
+              throw new Error("the client left before its SSLRequest");
+            }
+            got += piece.length as u64;
+          }
+          await c.write("S");
+          const to = await connect(`127.0.0.1:${innerPort}`);
+          spawn(async () => {
+            await pump(to, c);
+          });
+          await pump(c, to);
+        } catch (e) {
+          c.close();
+        }
+      });
+    }
+    front.close();
+  });
+  return front.port;
 }
 
 /** A URL for a server on `port`. */

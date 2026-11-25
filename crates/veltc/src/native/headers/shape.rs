@@ -13,20 +13,46 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
         CTy::F64 => Shape::Scalar(Scalar::F64),
         CTy::Bool => Shape::Scalar(Scalar::Bool),
         CTy::Void => Shape::Void,
+        // A C struct by value (#2187 layer 3): compared by the definition it names.
+        CTy::Struct => field_shape(p, t),
         CTy::Null => Shape::Null,
         CTy::StrBytes | CTy::CString => Shape::Text,
         CTy::Ptr { .. } => Shape::Ptr(pointee_of_ptr(p, t)),
-        CTy::Buf { readonly } => Shape::Buf {
-            elem: match p.types.kind(t) {
-                TyKind::Array(e) => scalar_of(p, *e).unwrap_or(Scalar::Bool),
-                _ => Scalar::Bool,
+        CTy::Buf { readonly } => match p.types.kind(t) {
+            // An array of C structs (#2187): compared by the definition its elements name.
+            &TyKind::Array(e) if scalar_of(p, e).is_none() => match field_shape(p, e) {
+                Shape::Struct(name) => Shape::StructBuf {
+                    name,
+                    readonly,
+                    const_only: readonly && c_unwritable(p, e, 0),
+                },
+                _ => Shape::Buf {
+                    elem: Scalar::Bool,
+                    readonly,
+                },
             },
-            readonly,
+            TyKind::Array(e) => Shape::Buf {
+                elem: scalar_of(p, *e).unwrap_or(Scalar::Bool),
+                readonly,
+            },
+            _ => Shape::Buf {
+                elem: Scalar::Bool,
+                readonly,
+            },
         },
-        // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094).
+        // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094); `Out<S>` of a C
+        // struct an `S *` (#2187).
+        // `Ref<S>`: a `const S *` C reads (#2187), `t` being `S` (or `S | null`).
+        CTy::Ref { nullable } => match field_shape(p, option_inner(p, t)) {
+            Shape::Struct(name) => Shape::RefStruct { name, nullable },
+            other => other,
+        },
         CTy::Out => match first_arg(p, t) {
             Some(a) if ptr_target(p, a).is_some() => Shape::OutPtr(pointee_of_ptr(p, a)),
-            Some(a) => Shape::Out(scalar_of(p, a).unwrap_or(Scalar::Bool)),
+            Some(a) => match field_shape(p, a) {
+                Shape::Struct(name) => Shape::OutStruct(name),
+                _ => Shape::Out(scalar_of(p, a).unwrap_or(Scalar::Bool)),
+            },
             None => Shape::Out(Scalar::Bool),
         },
     }
@@ -57,6 +83,30 @@ fn scalar_of(p: &hir::Program, t: TyId) -> Option<Scalar> {
         TyKind::Float(hir::FloatTy::F64) => Some(Scalar::F64),
         TyKind::Bool => Some(Scalar::Bool),
         _ => None,
+    }
+}
+
+/// Does C struct `t` (`depth` structs deep) have a field C writing could make no Velt value: a
+/// `bool` (another byte) or a non-null pointer (`NULL`)? As sema's rule for an array C writes
+/// (velt_sema collect/c_sig.rs `c_unwritable`).
+fn c_unwritable(p: &hir::Program, t: TyId, depth: u32) -> bool {
+    match p.types.kind(t) {
+        TyKind::Bool | TyKind::Ptr(_) => true,
+        TyKind::Adt(d, _) if depth < 32 => match p.def(*d) {
+            Def::Adt(a) if a.c_struct => {
+                (a.fields.iter()).any(|f| c_unwritable(p, f.ty, depth + 1))
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// The `T` of `T | null` `t`, or `t`.
+fn option_inner(p: &hir::Program, t: TyId) -> TyId {
+    match p.types.kind(t) {
+        TyKind::Option(inner, _) => *inner,
+        _ => t,
     }
 }
 
@@ -100,4 +150,24 @@ fn pointee(p: &hir::Program, t: TyId) -> Pointee {
         TyKind::Option(inner, _) => pointee(p, *inner),
         _ => Pointee::Void,
     }
+}
+
+/// What a field of type `t` of a C struct holds: a number, `bool`, a pointer or another C
+/// struct (sema allowed only these).
+pub(super) fn field_shape(p: &hir::Program, t: TyId) -> Shape {
+    if let Some(s) = scalar_of(p, t) {
+        return Shape::Scalar(s);
+    }
+    match p.types.kind(t) {
+        TyKind::Adt(d, _) => match p.def(*d) {
+            Def::Adt(a) => Shape::Struct(short_name(&a.name)),
+            _ => Shape::Void,
+        },
+        _ => Shape::Ptr(pointee_of_ptr(p, t)),
+    }
+}
+
+/// A declaration's name without its module (`app::geom::Point` → `Point`): C's name.
+pub(super) fn short_name(name: &str) -> String {
+    name.rsplit("::").next().unwrap_or(name).to_string()
 }

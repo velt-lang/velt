@@ -1,0 +1,143 @@
+// `JSON.stringify` writes a `Map` as `{}`, as Node does (it has no enumerable own properties),
+// typed or behind `any`, at the top or inside a value; also a `Set`, a `WeakMap` and a
+// `WeakSet`. A subclass writes its own fields, or what its `toJSON()` returns, also seen as the
+// base collection.
+// `Object.fromEntries(map)` writes a map's entries, and `JSON.parse<Map<string, T>>` still
+// reads an object (#3625). The Node twin is json_stringify_map.mjs.
+
+struct Point {
+  x: number;
+  tags: Map<string, number>;
+}
+
+class Holder {
+  name: string = "h";
+  counts: Map<string, number> = new Map<string, number>();
+}
+
+type Doc = { title: string; counts: Map<string, number>; nested: { inner: Map<string, string> } };
+
+class Tagged extends Map<string, number> {
+  label: string = "t";
+}
+
+class Listed extends Map<string, number> {
+  toJSON(): [string, number][] {
+    return [...this.entries()];
+  }
+}
+
+class Bag extends Set<string> {
+  owner: string = "me";
+}
+
+class Wrap {
+  toJSON(): Map<string, number> {
+    const m = new Map<string, number>();
+    m.set("a", 1);
+    return m;
+  }
+}
+
+class Key {
+  id: number = 1;
+}
+
+function sample(): Map<string, number> {
+  const m = new Map<string, number>();
+  m.set("a", 1);
+  m.set("b", 2);
+  return m;
+}
+
+function typed() {
+  const m = sample();
+  console.log(JSON.stringify(m));
+  const p: Point = { x: 1, tags: sample() };
+  console.log(JSON.stringify(p));
+  const h = new Holder();
+  h.counts.set("k", 3);
+  console.log(JSON.stringify(h));
+  console.log(JSON.stringify([m, m]));
+  const inner = new Map<string, string>([["x", "y"]]);
+  const d: Doc = { title: "d", counts: m, nested: { inner: inner } };
+  console.log(JSON.stringify(d));
+  console.log(JSON.stringify({ m: m, n: 2 }));
+  const byNumber = new Map<number, string>();
+  byNumber.set(1, "one");
+  console.log(JSON.stringify(byNumber));
+  const opt: Map<string, number> | null = m;
+  console.log(JSON.stringify({ opt: opt }));
+}
+
+function dynamic() {
+  const a: any = sample();
+  console.log(JSON.stringify(a));
+  const o: any = { m: sample(), n: 2 };
+  console.log(JSON.stringify(o));
+  const arr: any = [sample(), new Set<number>([1, 2])];
+  console.log(JSON.stringify(arr));
+}
+
+function others() {
+  const s = new Set<number>([1, 2]);
+  console.log(JSON.stringify(s));
+  console.log(JSON.stringify({ s: s }));
+  const sa: any = s;
+  console.log(JSON.stringify(sa));
+  const wm = new WeakMap<Key, number>();
+  const k = new Key();
+  wm.set(k, 1);
+  console.log(JSON.stringify(wm));
+  const wma: any = wm;
+  console.log(JSON.stringify(wma));
+  const ws = new WeakSet<Key>();
+  ws.add(k);
+  console.log(JSON.stringify(ws));
+  const t = new Tagged();
+  t.set("a", 1);
+  console.log(JSON.stringify(t));
+  const l = new Listed();
+  l.set("a", 1);
+  console.log(JSON.stringify(l));
+  const b = new Bag();
+  b.add("x");
+  console.log(JSON.stringify(b));
+  console.log(JSON.stringify(new Wrap()));
+  console.log(JSON.stringify({ w: new Wrap() }));
+  // A subclass's instance seen as the base collection is written as its class.
+  const tm: Map<string, number> = t;
+  console.log(JSON.stringify(tm), JSON.stringify({ m: tm }));
+  const lm: Map<string, number> = l;
+  console.log(JSON.stringify(lm), JSON.stringify([lm]));
+  const bs: Set<string> = b;
+  console.log(JSON.stringify(bs), JSON.stringify({ s: bs }));
+}
+
+function options() {
+  const m = sample();
+  const d: Doc = { title: "d", counts: m, nested: { inner: new Map<string, string>() } };
+  console.log(JSON.stringify(m, null, 2));
+  console.log(JSON.stringify(d, null, 2));
+  console.log(JSON.stringify(d, ["title", "counts", "a"]));
+  console.log(JSON.stringify(d, (k, v: JsonValue) => v));
+  console.log(JSON.stringify(d, (k, v: JsonValue) => (k == "counts" ? undefined : v)));
+  console.log(JSON.stringify(m, (k, v: JsonValue) => v, 1));
+}
+
+function entries() {
+  const m = sample();
+  console.log(JSON.stringify(Object.fromEntries(m)));
+  console.log(JSON.stringify({ counts: Object.fromEntries(m) }));
+  const back = JSON.parse<Map<string, number>>('{"a":1,"b":2}');
+  console.log(back.size, back.get("b"));
+  console.log(JSON.stringify(Object.fromEntries(back)));
+}
+
+function main() {
+  typed();
+  dynamic();
+  others();
+  options();
+  entries();
+}
