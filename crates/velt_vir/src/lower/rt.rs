@@ -82,8 +82,6 @@ pub(super) enum Rt {
     FnPropKey,
     FnPropIdentity,
     FnPropIdentityOf,
-    ModuleWith,
-    ModuleWithEnd,
     /// Hands the runtime the table of the process statics (#2779): the function releasing the
     /// static atomics' references at exit, and std's process statics.
     Statics,
@@ -243,8 +241,6 @@ impl Rt {
             Rt::FnPropKey => f("velt_rt_fnprop_key", vec![Ptr, U64, Ptr], Unit),
             Rt::FnPropIdentity => f("velt_rt_fnprop_identity", vec![Ptr], Ptr),
             Rt::FnPropIdentityOf => f("velt_rt_fnprop_identity_of", vec![Ptr], Ptr),
-            Rt::ModuleWith => f("velt_rt_module_with", vec![], U8),
-            Rt::ModuleWithEnd => f("velt_rt_module_with_end", vec![U8], Unit),
             Rt::Statics => f("velt_rt_statics", vec![Ptr], Unit),
             Rt::ViewGet => f("velt_rt_view_get", vec![Ptr], Ptr),
             Rt::ViewPut => f("velt_rt_view_put", vec![Ptr, Ptr], Unit),

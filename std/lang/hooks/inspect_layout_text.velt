@@ -1,0 +1,114 @@
+// velt/lang/hooks (internal): `console.log`'s line breaking. The printer writes a value on one
+// line into the line's builder; this re-reads that text from where the value starts and lays it
+// out again the way Node's `util.inspect` breaks it (inspect_layout_parse.velt reads and decides,
+// inspect_layout_render.velt writes), only when it may need breaking: a short value costs a length
+// check and a scan of at most 71 bytes. Node's `depth` and `maxArrayLength` limits are the
+// printer's, applied as it writes the value.
+
+import { parseLayout } from "velt/lang/hooks/inspect_layout_parse";
+import { renderLayout } from "velt/lang/hooks/inspect_layout_render";
+import { addressLoad, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+
+/**
+ * A value whose one-line text is at most this long needs no breaking unless it has an array of
+ * more than six entries: Node keeps a container on one line while its text plus 9 columns fits in
+ * 80, and splits a string only when it is longer than 76.
+ */
+export const FITS: u64 = 71;
+
+/** Units unknown to `velt_rt_strbuf_push_u8s`: the runtime counts them. */
+const UNITS_UNKNOWN: u64 = 0xffffffffffffffff;
+
+/**
+ * Is the value at bytes `start..` of `text` short enough to stay as it is: at most `FITS` bytes,
+ * fewer than six commas and no line break? (A custom inspect's multi-line text is laid out at any
+ * length, to be indented where it is nested.)
+ */
+export function fitsAsIs(text: string, start: u64): bool {
+  const end = strByteLen(text) as u64;
+  if (end - start > FITS) {
+    return false;
+  }
+  const data = strDataAddress(text) as u64;
+  let commas: u64 = 0;
+  let i = start;
+  // Byte by byte up to an 8-byte boundary, then 8 bytes at a time, then the rest.
+  while (i < end && ((data + i) & 7) != 0) {
+    const c = byteOf(data, i);
+    if (c == 0x0a) {
+      return false;
+    }
+    commas += c == 0x2c ? 1 : 0;
+    i += 1;
+  }
+  while (i + 8 <= end) {
+    // SAFETY: `text`, a parameter, holds its bytes at `data`; this reads an aligned word of them.
+    const w = unsafe { addressLoad<u64>((data + i) as usize) };
+    if (zeroBytes(w ^ 0x0a0a0a0a0a0a0a0a) != 0) {
+      return false;
+    }
+    commas += ((zeroBytes(w ^ 0x2c2c2c2c2c2c2c2c) >> 7) * 0x0101010101010101) >> 56;
+    i += 8;
+  }
+  while (i < end) {
+    const c = byteOf(data, i);
+    if (c == 0x0a) {
+      return false;
+    }
+    commas += c == 0x2c ? 1 : 0;
+    i += 1;
+  }
+  return commas < 6;
+}
+
+/** Byte `i` of the text whose bytes are at `data`. */
+function byteOf(data: u64, i: u64): u8 {
+  // SAFETY: `fitsAsIs` passes its text's bytes, alive while it runs, and offsets inside them.
+  return unsafe { addressLoad<u8>((data + i) as usize) };
+}
+
+/** The high bit of each byte of `w` that is zero, exactly (no borrow between bytes). */
+function zeroBytes(w: u64): u64 {
+  const low = 0x7f7f7f7f7f7f7f7f;
+  return ~(((w & low) + low) | w) & 0x8080808080808080;
+}
+
+/**
+ * The value at bytes `start..` of `text` laid out as Node breaks it, or "" when it stays as it
+ * is: short, laid out the same, or not the printer's text. `atoms` holds pairs of byte offsets in
+ * `text`, the ranges custom inspects wrote, which are kept as they are.
+ */
+export function layoutText(text: string, start: u64, atoms: u64[]): string {
+  if (fitsAsIs(text, start)) {
+    return "";
+  }
+  const end = strByteLen(text) as u64;
+  // A `<ref *N> ` inserted after a custom inspect wrote its text moves that text: an atom past
+  // the end is ignored.
+  const l = parseLayout(text, start, end, atoms.length == 0 ? atoms : keptAtoms(atoms, start, end));
+  // Nothing breaks and nothing splits: the text stays as printed.
+  if (l == null || !l.changed) {
+    return "";
+  }
+  // Room for the text and its indentation, so the output rarely grows.
+  const out: u8[] = [];
+  out.reserve(((end - start) * 2 + 64) as usize);
+  renderLayout(l, text, out);
+  let s: string = "";
+  velt_rt_strbuf_push_u8s(s, out, out.length as u64, UNITS_UNKNOWN);
+  return s;
+}
+
+/** The pieces of `atoms` within bytes `start..end`. */
+function keptAtoms(atoms: u64[], start: u64, end: u64): u64[] {
+  const kept: u64[] = [];
+  for (let j: u64 = 0; j + 1 < (atoms.length as u64); j += 2) {
+    if (atoms[j] >= start && atoms[j + 1] <= end) {
+      kept.push(atoms[j]);
+      kept.push(atoms[j + 1]);
+    }
+  }
+  return kept;
+}

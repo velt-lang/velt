@@ -1,0 +1,9 @@
+// A key that a mapped type lists, spelled as a symbol's key, read through a variable of that
+// key type: refused as a written one is, where Node keeps the string apart from the symbol.
+const K = Symbol.for("k");
+type T = { [P in '[Symbol.for("k")]' | 'b']: number | undefined };
+(globalThis as Record<symbol, number | undefined>)[K] = 1;
+function rd(k: '[Symbol.for("k")]' | 'b'): number | undefined {
+  return (globalThis as unknown as T)[k];
+}
+console.log(rd('[Symbol.for("k")]'));

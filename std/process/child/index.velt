@@ -5,11 +5,15 @@
 // with configurable stdio and returns a `ChildProcess` whose pipes are read and written with
 // promises. Programs are found through `PATH`; arguments are passed as-is (no shell quoting).
 // A non-zero exit code is not an error (check `code`); failing to start the program throws
-// `IoError` (e.g. code "ENOENT", message "spawn <program>: …").
+// `SpawnError`, an `IoError` with Node's message and fields (code "ENOENT", message "spawn
+// <program> ENOENT"; "spawnSync <program> ENOENT" from `execSync`). As in Node, an executable
+// without a `#!` line runs through `/bin/sh` on Linux and fails with ENOEXEC on macOS, whether
+// `spawn`, `exec` or `execSync` starts it.
 // https://veltlang.com/docs/std/process/child/.
 
 export { ChildProcess, spawn } from "velt/process/child/child_process";
 export { exec, execShell, execShellSync, execSync } from "velt/process/child/exec";
 export { ExecOptions } from "velt/process/child/exec_options";
 export { ExecResult } from "velt/process/child/exec_result";
+export { SpawnError } from "velt/process/child/spawn_error";
 export { SpawnOptions } from "velt/process/child/spawn_options";

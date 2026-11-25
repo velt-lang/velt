@@ -1,0 +1,12 @@
+literal: === true !== false is true map 7 set true callee true back true
+class: === true !== false is true map 7 set true callee true back true
+array: === true !== false is true map 7 set true callee true back true
+map: === true !== false is true map 7 set true callee true back true
+two views: true true
+write through the view: 5
+other object: false
+last reference: true
+proxy: true 1
+Point { x: 1, y: 2 }
+through an any element: true
+isArray: true

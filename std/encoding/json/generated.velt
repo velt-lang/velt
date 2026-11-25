@@ -60,9 +60,6 @@ struct RowsU8 {
   v: u8;
 }
 
-// The runtime's reader over a native driver's rows (its cursor's address): the reader's address.
-declare function velt_rt_json_reader_over_cursor(cursor: u64, flags: u32, maxDepth: u32): u64;
-
 import { recordFromMap } from "velt/lang/hooks/record";
 
 /** Appends what `JSON.stringify(value)` writes to `w` (one function per type, generated). */
@@ -106,13 +103,14 @@ export declare generated("velt/encoding/json/generate/read") function parseJsonT
 /**
  * What velt/db's `decodeRows<T>` / `decodeRow<T>` return for a native driver's row cursor (its
  * address): read by column when `T` is a row of plain fields or an array of them (velt/db's
- * generate/columns.velt), else decoded as `JSON.parse<T>` decodes the rows' JSON text, from the
- * runtime's reader over the cursor. A row that does not fit throws `JsonError`.
+ * generate/columns.velt), else decoded as `JSON.parse<T>` decodes the rows' JSON text, by a
+ * reader over the rows (rows_reader.velt). A row that does not fit throws `JsonError`.
  */
 export declare generated("velt/encoding/json/generate/read") function parseJsonCursor<T>(
   cursor: u64,
   flags: i64,
   maxDepth: i64,
+  overCursor: (cursor: u64, flags: u32, maxDepth: u32) => Reader,
 ): T throws JsonError;
 
 /**

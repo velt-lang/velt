@@ -89,39 +89,6 @@ impl FnCx<'_, '_> {
         self.void_task = t.void_task;
     }
 
-    /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
-    /// the first one, whose errors the real check then reports.
-    fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        // Remembered per arrow, members and the types of the enclosing locals it names, as
-        // narrowed here: an arrow nested in one being tried is tried once, not once per try of
-        // each enclosing arrow (exponential in the nesting), unless a local it uses has another
-        // type in this try (`(x) => { const y = x; show(() => y); }`, `x` a number, then a string). Locals
-        // it doesn't name (the enclosing arrows' other locals) don't change how it checks.
-        let key = (e.span, members.to_vec(), self.named_local_types(e));
-        if let Some(&m) = self.member_choices.get(&key) {
-            return m;
-        }
-        let m = self.first_fitting(e, members, escaping);
-        self.member_choices.insert(key, m);
-        m
-    }
-
-    fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        for &m in members {
-            let mark = crate::body::recheck::Mark::here(self.cx);
-            let frames = self.trial_frames();
-            let diags = self.cx.diags.len();
-            let h = self.closure(e, Some(m), escaping);
-            let ok = self.cx.diags.len() == diags && h.ty == m;
-            mark.rollback(self.cx);
-            self.restore_trial_frames(frames);
-            if ok {
-                return m;
-            }
-        }
-        members[0]
-    }
-
     /// An arrow function (`e` is an `ast::ExprKind::Arrow`) where a value of type `exp` is
     /// expected; `escaping` when it is stored or returned rather than passed to a call.
     pub(crate) fn closure(
@@ -508,7 +475,17 @@ impl FnCx<'_, '_> {
         match body {
             ast::ArrowBody::Expr(e) => {
                 let h = match self.f.ret {
-                    Some(_) if self.f.discards_value => self.expr_stmt(e),
+                    Some(_) if self.f.discards_value => {
+                        let h = self.expr_stmt(e);
+                        // A promise dropped by the arrow being tried (`first_fitting`).
+                        if let Some((at, dropped)) = &mut self.dropped_promise {
+                            let promise = matches!(self.cx.ty.kind(h.ty), hir::TyKind::Promise(..));
+                            if *at == span && promise {
+                                *dropped = true;
+                            }
+                        }
+                        h
+                    }
                     // `(): void => void e` is `e;`, as in TypeScript.
                     Some(r) if r == self.cx.ty.unit && void_op(e).is_some() => {
                         self.expr_stmt(void_op(e).unwrap_or(e))

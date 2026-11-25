@@ -4,7 +4,8 @@
 //! → `string`, subclass → base class (`Upcast`), concrete type → interface value (`ToDyn`,
 //! moves the value), `i8`..`i32`, `u8`..`u32` and `f32` → `number` (`expr::numbers`), `never`
 //! → anything, and `Promise<T, E1>` → `Promise<T, E2>` when `E2` allows every error of `E1`
-//! (`never` included: `Promise<T>` → `Promise<T, E>`; `Intrinsic::PromiseWiden`), `T | null` →
+//! (`never` included: `Promise<T>` → `Promise<T, E>`; and `Promise<never, E1>` → `Promise<U, E2>`;
+//! `Intrinsic::PromiseWiden`), `T | null` →
 //! `U | null` when `T` converts to `U`, a fresh array or object to a wider one (`widen_fresh`),
 //! an object type to one with some of its fields, or the same ones in another order
 //! (`object_copy`), and a generic interface value to the same interface with `unknown` or `any`
@@ -506,15 +507,19 @@ impl FnCx<'_, '_> {
     }
 
     /// `Promise<T, E1>` → `Promise<T, E2>`: the same `T` (the wrapper copies the value as it is),
-    /// and `E2` allows every error `E1` can reject with (an unrelated error type is still a
-    /// mismatch).
+    /// or a `Promise<never, E1>`, which gives no value, as any `Promise<U, E2>` (`E2` may be
+    /// `never` too); and `E2` allows every error `E1` can reject with (an unrelated error type is
+    /// still a mismatch).
     pub(super) fn widens_promise(&mut self, from: TyId, to: TyId) -> bool {
         let (&TyKind::Promise(x, e), &TyKind::Promise(y, f)) =
             (self.cx.ty.kind(from), self.cx.ty.kind(to))
         else {
             return false;
         };
-        x == y && e != f && self.cx.error_outside(Some(f), Some(e)).is_none()
+        // A `Promise<never, E>` (`Promise.resolve().then(() => { throw e; })`) never gives a
+        // value, so it is a promise of any value type, as in TypeScript (#3644).
+        let value = x == y || self.cx.ty.is_bottom(x);
+        value && (e != f || x != y) && self.cx.error_outside(Some(f), Some(e)).is_none()
     }
 
     fn upcast(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {

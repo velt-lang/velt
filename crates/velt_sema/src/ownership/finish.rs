@@ -55,6 +55,15 @@ pub(super) fn demote_fn_values(cx: &mut Ctx) {
             }
             continue;
         }
+        // Already demoted (std's functions, in a later unit): nothing to write.
+        if !cx
+            .fn_info(d)
+            .params
+            .iter()
+            .any(|p| p.mode == PassMode::BorrowMut)
+        {
+            continue;
+        }
         let info = cx.fn_info_mut(d);
         let mut demoted = vec![];
         for (k, p) in info.params.iter_mut().enumerate() {

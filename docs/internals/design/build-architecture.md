@@ -113,9 +113,8 @@ no program's instance raises them; that alone removes the raise nearly every pro
 JSON writers' `w`). The list is a floor: an instance also runs the program's own code (a
 `toJSON` that changes its object), which can still raise another parameter, kept beside the
 declaration as above. Of the facts these cover, the vtable slot a program's override adds to a
-std class is the one std's unit still lacks (#3684). Other writes are still counted:
-`units/modes.rs`'s restore of std's own raised modes (#3557 replaces it with a side list) and
-#3543's other sites.
+std class is the one std's unit still lacks (#3684). Other writes are still counted: #3543's
+other sites.
 
 ### The std identity oracle
 

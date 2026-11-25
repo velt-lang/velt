@@ -24,8 +24,23 @@ import * as m from "velt/lang/hooks/sched_mem";
 import * as node from "velt/lang/hooks/sched_node";
 import * as aw from "velt/lang/hooks/sched_node_await";
 import * as nc from "velt/lang/hooks/sched_node_catch";
+import * as ml from "velt/lang/hooks/sched_module";
 import * as t from "velt/lang/hooks/sched_task";
 import { catchPanicAt } from "./unwind";
+
+/** `take`'s answer when no promise took the arming (no handle: nodes are aligned addresses). */
+export const NONE: u64 = 1;
+
+/**
+ * While `catchPanic` calls its body (`on`, then off again): every promise started and every task
+ * spawned there catches, as in a catching poll (`caughtPoll`), so one that wraps the guarded
+ * promise (a `Promise<any>`'s conversion) catches the panic it raises again too.
+ */
+export function bodyCatching(on: bool): void {
+  const e = t.exec();
+  const c = m.ld(e + nc.E_CATCHING);
+  m.st(e + nc.E_CATCHING, on ? c + 2 : c - 2);
+}
 
 /**
  * The next promise started on this worker catches panics. Returns what `take` gets back: the
@@ -47,9 +62,12 @@ export function arm(): u64 {
 }
 
 /**
- * The promise that took the arming, as a handle (0: none did, or it already finished without a
- * panic, as a handler that never waits does: then `catchPanic` just takes its result); disarms.
- * The handle's node gets its settled future (`settled`). `outer`: what `arm` returned.
+ * The promise that took the arming, as a handle; disarms. 0: it already finished without a
+ * panic, as a handler that never waits does (then `catchPanic` just takes its result). `NONE`:
+ * no promise took it, or the one that did is shared, as when the body returns a promise held as
+ * `Promise<any>` or a spawned task's handle (then `catchPanic` guards a promise of its own that
+ * awaits the result). The
+ * handle's node gets its settled future (`settled`). `outer`: what `arm` returned.
  */
 export function take(outer: u64): u64 {
   const e = t.exec();
@@ -58,11 +76,19 @@ export function take(outer: u64): u64 {
   // The enclosing `catchPanic`'s promise again, for its own `take` (`arm`).
   m.st(e + nc.E_GUARDED, outer as usize);
   if (f === 0) {
-    return 0;
+    return NONE;
   }
   if (nc.finishedWell(f)) {
     nc.releasePromise(f);
     return 0;
+  }
+  if (m.ld(f) !== fnAddress(node.nodePoll)) {
+    // Shared (a `Promise<any>`'s conversion holds it: sharing gives its handle the holders'
+    // poll, sched_share.velt `schedShare`): its finish settles the hub, which wakes the holders,
+    // not the awaiter `settled` would wait as, and a hub on another task waits as that awaiter
+    // itself. So `catchPanic` guards a promise of its own that awaits the body's (#3223).
+    nc.releasePromise(f);
+    return NONE;
   }
   const s = node.nodeOf(f) + nc.N_SETTLE;
   m.st(s, fnAddress(settledPoll));
@@ -119,8 +145,9 @@ function settledDrop(f: usize): void {}
 /**
  * The executor's catching poll on worker `e`: polls the state at `a + 8` with its poll at `a`
  * and `cx` through `catchUnwindAt`; 0 pending, 1 ready, 2 panicked with the exception stored at
- * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way) is
- * restored then. `a` is the worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
+ * `a + 16`. What the poll left on this worker (the catching depth, an adoption under way, the
+ * module lock a `with` callback took: sched_module.velt `restore`) is restored then. `a` is the
+ * worker's `E_CATCH_ARGS`, so the worker is found without a lookup, and the polled function
  * (`pollArgs`) is called at its address with `a`: no closure, no function value.
  */
 function caughtPoll(a: usize, cx: usize): u32 {
@@ -128,6 +155,7 @@ function caughtPoll(a: usize, cx: usize): u32 {
   const catching = m.ld(e + nc.E_CATCHING);
   const adopting = m.ld(e + t.E_ADOPTING);
   const guarded = m.ld(e + nc.E_GUARDED);
+  const holds = ml.holds();
   m.st(e + nc.E_CATCHING, catching + 2);
   m.st(a + 16, cx);
   // SAFETY: `pollArgs` takes one number; the exception object is kept by the panicked promise
@@ -139,6 +167,7 @@ function caughtPoll(a: usize, cx: usize): u32 {
     // A `catchPanic` in the poll that panicked between its `arm` and its `take` never put the
     // promise guarded for the enclosing one back: it is what it was before the poll.
     m.st(e + nc.E_GUARDED, guarded);
+    ml.restore(holds);
     m.st(a + 16, x);
     return 2;
   }

@@ -30,7 +30,8 @@ function viaBytes(all: u8[]): number {
 }
 
 function main() {
-  const rounds = Number(process.argv[2]);
+  // 10 rounds without an argument, as `run` (_pages.velt).
+  const rounds = Number(process.argv[2] ?? "10");
   const all = build();
   const bytes = all.toBytes();
   let check = 0;

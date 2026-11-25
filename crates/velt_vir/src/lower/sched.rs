@@ -147,8 +147,8 @@ impl FnLower<'_, '_> {
 
     /// `velt_main`'s root task `poll` with its state at `state`, run to completion. The third
     /// argument is 1 when tasks must stay on their worker: a program that may give a declared
-    /// function properties through `any` reaches them in the runtime (fn_props.rs), under the
-    /// runtime's module lock, which worker 0 keeps.
+    /// function properties through `any`, placed as when the runtime's module lock guarded them
+    /// and worker 0 kept it (the lock is std's now, sched_module.velt; #2196 9c).
     pub(super) fn sched_block_on(&mut self, poll: Operand, state: Operand) {
         let (poll, state) = (self.as_usize(poll), self.as_usize(state));
         let stay = cint(i128::from(self.cx.boxing.fn_props), Ty::U64);
@@ -323,9 +323,15 @@ impl FnLower<'_, '_> {
             return Err((args, dest));
         }
         // Likewise a promise's identity and its aliases: without the executor no holder of its
-        // hub exists.
-        if matches!(r, Rt::FutId | Rt::FutAlias | Rt::FutViews) && !self.sched_share_live() {
-            return Err((args, dest));
+        // hub exists. The runtime keeps only the identity of a holder of its own hub
+        // (`velt_rt_fut_id`), and nothing of a converted promise: with no holder in Velt's hub
+        // there is nothing to alias (#2196 9e).
+        if !self.sched_share_live() {
+            match r {
+                Rt::FutId => return Err((args, dest)),
+                Rt::FutAlias | Rt::FutViews => return Ok(()),
+                _ => {}
+            }
         }
         let ret = r.sig().2;
         if matches!(r, Rt::FutStart | Rt::FutStartRejecting | Rt::FutDetach) {

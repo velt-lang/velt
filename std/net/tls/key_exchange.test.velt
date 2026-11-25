@@ -29,12 +29,8 @@ import {
   groupSupported,
   pointFormOk,
 } from "velt/net/tls/key_exchange";
-import {
-  S_DONE,
-  S_SEND_FLIGHT,
-  S_SEND_RETRY,
-  ServerHandshake,
-} from "velt/net/tls/server_handshake";
+import { ServerHandshake } from "velt/net/tls/server_handshake";
+import { S_DONE, S_SEND_FLIGHT, S_SEND_RETRY } from "velt/net/tls/server_steps";
 import { ServerHandshake12 } from "velt/net/tls/server_handshake12";
 import { serverKey } from "velt/net/tls/server_key";
 import { describe, expect, it } from "velt/test";
