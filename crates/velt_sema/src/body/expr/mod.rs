@@ -255,6 +255,7 @@ mod truthiness;
 mod tuple_text;
 mod type_tests;
 mod typeof_member;
+mod unary;
 mod union_coerce;
 mod union_compound;
 mod union_iface;

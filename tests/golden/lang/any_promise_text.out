@@ -1,0 +1,9 @@
+[object Promise] [object Promise] p: [object Promise]
+[object Promise] [object Promise]
+true
+[object Promise]1 NaN true false
+x[object Promise]
+{} {"p":{}}
+Promise { <pending> }
+Promise { 1 }
+[object Promise] [object Promise]

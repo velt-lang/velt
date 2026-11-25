@@ -157,7 +157,9 @@ not a reason for another round.
   through the pinned zig), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
   Windows, the WebAssembly goldens on Windows and macOS (built once per OS, then run in shards,
-  as in the queue), and the `tsc` oracle for
+  as in the queue), every golden by units (`golden-units`: `VELT_UNITS=2`, #2943, in eight shards;
+  the goldens listed `units` in `golden_known_failing.txt` report how they fail and fail the shard
+  once they pass), and the `tsc` oracle for
   `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
   pinned in `tests/tscompat-oracle`), a Worker under workerd with its start-up and CPU budgets
   (`crates/veltc/tests/workerd.rs` with `VELT_WORKERD_TIMINGS=1`, the Miniflare pinned in
@@ -179,7 +181,7 @@ not a reason for another round.
   files no issue for either guard.
   An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
   bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
-  `gate`, `oracle`, `workerd`, `bench`, `yardstick`, `wasm`, `flake`, `cache`, `headers`).
+  `gate`, `oracle`, `workerd`, `bench`, `yardstick`, `wasm`, `flake`, `cache`, `headers`, `units`).
 - macOS has its own rule (`macos_reason`, `MACOS_PATHS` in `crates/xtask/src/os.rs`), for the queue
   and for the pull request's `lint (macos-latest)`: the runtime, linking and the toolchain, code
   generation, the parts of the standard library that talk to the OS, and the few other files with
@@ -256,6 +258,31 @@ not a reason for another round.
 - A check the selection missed shows up in the merge queue; tighten the rule in
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.
+
+### Merge trains
+
+When runners are scarce (a few concurrent jobs, macOS the tightest), the queue's one-run-per-PR
+crawls. A maintainer can instead land approved pull requests in **trains**: several approved PRs
+merged together onto `main`, one full gate run (`ci` by `workflow_dispatch`, every OS), then each
+PR squash-merged in order. The scripts are in `.claude/scripts/`:
+
+- `train.sh <pr> <pr> …` builds `train-<mmdd-hhmm>` from `main` plus each PR's current head,
+  pushes it and starts the full run. It refuses a draft or a conflicting PR. Its record (branch,
+  base, each PR's head, the run id) goes in `$VELT_TRAINS_DIR` (default `~/.velt-trains`). Set
+  `VELT_TRAIN_SSH` to build the merge on another machine where checking out the tree is slow.
+- `train-land.sh <train>` lands a green train: it squash-merges the PRs in order (admin: the full
+  gate passed on exactly this tree) and deletes the branch. It skips a PR whose head changed since
+  the train or that was closed, and stops at a merge conflict. `main` may have moved since the
+  base only on files the train doesn't touch (trains on disjoint files run side by side).
+- `trains.sh <run>:<train> …` watches several trains as a Monitor: one status call per train
+  every 5 minutes; green → `train-land.sh`; failed → rerun the failed jobs once; failed again →
+  report. It exits after 29 minutes (a Monitor's expiry doesn't kill it), so re-arm it.
+- `whyfail.sh <run>` prints each failed or cancelled job's failing step and FAIL/error lines,
+  including the real failure behind a fail-fast cancellation.
+
+Rules: only approved PRs; never push to a branch that is in a train (its head would change and
+the PR is skipped at landing); after a failure, rebuild the train without the failing PR rather
+than waiting on it. Fewer, bigger trains use fewer runners than many small ones.
 
 ## Keeping the machinery healthy
 

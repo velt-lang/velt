@@ -1,12 +1,12 @@
-// velt/lang/hooks (internal): the built-in methods of strings, numbers and booleans called through `any`
+// velt/lang/hooks (internal): the built-in methods of strings, numbers, booleans and promises called through `any`
 // (issue #924, https://veltlang.com/docs/reference/types/ "any and unknown"). A call `x.name(args)` on an `any`
 // is one call through the descriptor of the value held (`AnyCall`); for a string it runs
 // `anyStr_<name>(s, args)`, for an array of `T` `anyArr_<name><T>(a, args)`, for a number
-// `anyNum_<name>(n, args)` and for a boolean `anyBool_<name>(b, args)` (velt_vir
-// any_builtin.rs finds them by name). The arguments come as an `any[]` and are converted as
-// JavaScript converts them (`ToString`, `ToIntegerOrInfinity`); the result goes back as an
-// `any`. A name without a function here is a `TypeError` naming #924. Arrays' and maps' are in
-// any_array_methods.velt.
+// `anyNum_<name>(n, args)`, for a boolean `anyBool_<name>(b, args)` and for a promise
+// `anyPromise_<name><T, E>(p, args)` (velt_vir any_builtin.rs finds them by name). The
+// arguments come as an `any[]` and are converted as JavaScript converts them (`ToString`,
+// `ToIntegerOrInfinity`); the result goes back as an `any`. A name without a function here is a
+// `TypeError` naming #924. Arrays' and maps' are in any_array_methods.velt.
 
 import { hookCall } from "velt/lang/intrinsics";
 import { anyString, anyText } from "./any_text";
@@ -241,4 +241,14 @@ export function anyBool_toString(b: boolean, args: any[]): any {
 
 export function anyBool_valueOf(b: boolean, args: any[]): any {
   return b;
+}
+
+/** A promise's `toString()`: `Object.prototype.toString`'s text for it, as in JavaScript. */
+export function anyPromise_toString<T, E>(p: Promise<T, E>, args: any[]): any {
+  return "[object Promise]";
+}
+
+/** A promise's `valueOf()`: the promise itself, as in JavaScript. */
+export function anyPromise_valueOf<T, E>(p: Promise<T, E>, args: any[]): any {
+  return p;
 }

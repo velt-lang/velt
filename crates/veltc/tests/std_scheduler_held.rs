@@ -7,6 +7,8 @@
 //! at 4 and 8 workers: exit 0, its output, and every block freed.
 
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use no_window::command;
 
@@ -59,12 +61,70 @@ fn all_freed(err: &str) -> bool {
 /// Builds `src` and runs it `runs` times at 4 and at 8 workers, counted: exit 0, `want` printed,
 /// every block freed.
 fn check(name: &str, src: &str, want: &str, runs: usize) {
-    check_at(name, src, want, runs, &["4", "8"], true);
+    check_at(name, src, want, runs, &["4", "8"], true, &[]);
+}
+
+/// [`check`] with `VELT_SCHED_TASK_PAUSE` (std/lang/hooks/sched_wake_pause.velt): a reader off
+/// a node's task gives its core away between reading the node unfinished and reading its task,
+/// so the node finishes there, and lets go of its task, in between.
+fn check_paused(name: &str, src: &str, want: &str, runs: usize) {
+    check_at(
+        name,
+        src,
+        want,
+        runs,
+        &["4", "8"],
+        true,
+        &[("VELT_SCHED_TASK_PAUSE", "2000")],
+    );
+}
+
+/// Runs `exe` at `threads` workers, counted, with `env`, killed after a minute (a lost wake
+/// waits for ever): its exit code (`None` when killed), stdout and stderr.
+fn run(exe: &Path, threads: &str, env: &[(&str, &str)]) -> (Option<i32>, String, String) {
+    let mut child = command(exe)
+        .env("VELT_THREADS", threads)
+        .env("VELT_RT_DEBUG_ALLOC", "1")
+        .env("VELT_RC_STATS", "1")
+        .env_remove("VELT_RESCUE")
+        .env_remove("VELT_SCHEDULER")
+        .envs(env.iter().copied())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    let code = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status.code();
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        // timing: polls the child for its exit under a one-minute cap, assumes no timing
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let o = child.wait_with_output().unwrap();
+    (
+        code,
+        String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n"),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
 }
 
 /// [`check`] at the worker counts `workers` (a program that pins no task runs at 1 worker too),
-/// every block freed when `freed`.
-fn check_at(name: &str, src: &str, want: &str, runs: usize, workers: &[&str], freed: bool) {
+/// every block freed when `freed`, with `env` set.
+fn check_at(
+    name: &str,
+    src: &str,
+    want: &str,
+    runs: usize,
+    workers: &[&str],
+    freed: bool,
+    env: &[(&str, &str)],
+) {
     if !has_threads() {
         return;
     }
@@ -74,20 +134,10 @@ fn check_at(name: &str, src: &str, want: &str, runs: usize, workers: &[&str], fr
     let mut bad = Vec::new();
     for threads in workers {
         for i in 0..runs {
-            let o = command(&exe)
-                .env("VELT_THREADS", threads)
-                .env("VELT_RT_DEBUG_ALLOC", "1")
-                .env("VELT_RC_STATS", "1")
-                .env_remove("VELT_RESCUE")
-                .env_remove("VELT_SCHEDULER")
-                .output()
-                .unwrap();
-            let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
-            let err = String::from_utf8_lossy(&o.stderr);
-            if o.status.code() != Some(0) || out != want || (freed && !all_freed(&err)) {
+            let (code, out, err) = run(&exe, threads, env);
+            if code != Some(0) || out != want || (freed && !all_freed(&err)) {
                 bad.push(format!(
-                    "{threads} workers, run {i}: exit {:?}, stdout {out:?}, stderr {err}",
-                    o.status.code()
+                    "{threads} workers, run {i}: exit {code:?}, stdout {out:?}, stderr {err}"
                 ));
             }
         }
@@ -159,23 +209,27 @@ fn a_finished_promise_shared_into_module_state_is_dropped_off_its_task() {
     check("share_kept", SHARE_KEPT, "parked 20\n", 3);
 }
 
-/// Promises handed to other workers while still pending: one awaits each through
-/// `Promise.all`, another drops others unawaited, each at about the moment it finishes and
-/// lets go of its task (sched_node_await.velt `awaitWith` and `ownSide`, sched_node.velt
-/// `pollNode`, which read the task: task 0 is no task to them). A guard: it passes on main
-/// too.
+/// Promises handed to another worker while still pending: one is awaited there through a
+/// `Promise.all` join (whose waker maps to no task), the next dropped unawaited, each finishing,
+/// and letting go of its task, inside the paused window between the owner's load of its flags
+/// and of its task (sched_node_await.velt `awaitWith` and `ownSide`: task 0 is no task to them).
+/// With task 0 taken for the join's own, the await stored its waker with no second look at the
+/// flags, and nothing woke it: every run ended with nothing printed and blocks left. With task 0
+/// taken for the dropper's own side, its stale flags left the result undropped: 30 blocks left
+/// in every run.
 #[test]
 fn promises_handed_over_pending_and_awaited_or_dropped_there_as_they_finish() {
-    check("handed_all", HANDED_ALL, "got 240, dropped 240\n", 3);
+    check_paused("handed_all", HANDED_ALL, "got 30, dropped 30\n", 3);
 }
 
 /// A promise handed to worker 2 and shared there (its hub is `AWAY`): the first holder to
-/// wait leaves in a race after the promise finished and let go of its task, and a
-/// `Promise.all` holder waiting behind it still gets the value. A guard: it passes on main
-/// too.
+/// wait leaves in a race as the promise finishes and lets go of its task, and the hub then
+/// awaits it for the next waiter, a `Promise.all` join (sched_share_away.velt `watch`,
+/// sched_node_await.velt `awaitWith`). With task 0 taken for the join's own, that waiter was
+/// never woken: every run ended with nothing printed and blocks left.
 #[test]
 fn a_shared_promise_whose_first_waiter_leaves_after_it_finished_still_wakes_the_next() {
-    check("away_first_leaves", AWAY_FIRST_LEAVES, "got 240\n", 3);
+    check_paused("away_first_leaves", AWAY_FIRST_LEAVES, "got 30\n", 3);
 }
 
 /// The program of [`a_task_holding_a_promise_that_finished_unawaited_is_found_parked_for_ever`].
@@ -575,46 +629,65 @@ async function main() {
 "#;
 
 /// The program of [`promises_handed_over_pending_and_awaited_or_dropped_there_as_they_finish`].
-const HANDED_ALL: &str = r#"// #3498 review, item 1: promises of a task on worker 1, handed to tasks on other workers while
-// still pending: worker 2 awaits each through `Promise.all`, and worker 3 drops others unawaited,
-// each at about the moment it finishes (and lets go of its task). Every value arrives, and
-// nothing is left.
+const HANDED_ALL: &str = r#"// #3498 review, item 1: promises of a task on worker 1, handed to tasks on worker 2 while still
+// pending, one at a time: one is awaited there through `Promise.all`, the next dropped unawaited.
+// Each waits for its gate, which the task it was handed to opens right before its await or its
+// drop: with `VELT_SCHED_TASK_PAUSE`, the promise finishes, and lets go of its task, between that
+// reader's load of its flags and its load of its task. Every value arrives, and nothing is left.
 
+class Box {
+  v: i64;
+  constructor(v: i64) {
+    this.v = v;
+  }
+}
+
+const GATE = new Atomic<i64>(0);
+const DONE = new Atomic<i64>(0);
 const GOT = new Atomic<i64>(0);
 const DROPPED = new Atomic<i64>(0);
 
-async function soon(i: i64): Promise<number> {
-  for (let y: i64 = 0; y < i % 3; y++) {
+async function opener(i: i64): Promise<number> {
+  while (GATE.load() < i) {
     await yieldNow();
   }
   return 1;
 }
 
-async function viaAll(p: Promise<number>): Promise<void> {
-  const rs = await Promise.all([p]);
-  GOT.add(rs[0] as i64);
+// Suspended, and not queued, until its gate opens: it waits for a task on worker 3.
+async function gated(i: i64): Promise<Box> {
+  const v = await spawn(opener(i), { worker: 3 });
+  DONE.add(1);
+  return new Box(v as i64);
 }
 
-async function dropper(p: Promise<number>, i: i64): Promise<void> {
-  for (let y: i64 = 0; y < i % 3; y++) {
-    await yieldNow();
-  }
+async function viaAll(p: Promise<Box>, i: i64): Promise<void> {
+  GATE.store(i);
+  // Not an array literal: the join polls it with a waker of its own, which maps to no task.
+  const ps: Promise<Box>[] = [p];
+  const rs = await Promise.all(ps);
+  GOT.add(rs[0].v);
+}
+
+async function dropper(p: Promise<Box>, i: i64): Promise<void> {
   DROPPED.add(1);
+  GATE.store(i);
 }
 
-async function maker(k: i64): Promise<void> {
-  for (let i: i64 = 0; i < 30; i++) {
-    void spawn(viaAll(soon(i)), { worker: 2 });
-    void spawn(dropper(soon(i + k), i), { worker: 3 });
+async function maker(i: i64): Promise<void> {
+  if (i % 2 === 0) {
+    await spawn(viaAll(gated(i), i), { worker: 2 });
+  } else {
+    await spawn(dropper(gated(i), i), { worker: 2 });
   }
 }
 
 async function main() {
-  const n: i64 = 8;
-  for (let k: i64 = 0; k < n; k++) {
-    await spawn(maker(k), { worker: 1 });
+  const n: i64 = 60;
+  for (let i: i64 = 1; i <= n; i++) {
+    await spawn(maker(i), { worker: 1 });
   }
-  while (GOT.load() < 30 * n || DROPPED.load() < 30 * n) {
+  while (DONE.load() < n) {
     await yieldNow();
   }
   for (let y = 0; y < 100; y++) {
@@ -626,9 +699,11 @@ async function main() {
 
 /// The program of [`a_shared_promise_whose_first_waiter_leaves_after_it_finished_still_wakes_the_next`].
 const AWAY_FIRST_LEAVES: &str = r#"// #3498 review, item 1: a promise of a task on worker 1 is handed to a task on worker 2, which
-// shares it there (its hub is `AWAY`: the promise is another task's). The first holder to wait,
-// in a race against a quick promise, leaves the hub's waiters after the promise finished (and let
-// go of its task), with a `Promise.all` holder waiting behind it: that one still gets the value.
+// shares it there (its hub is `AWAY`: the promise is another task's). The first holder to wait, in
+// a race, leaves the hub's waiters when a quick promise wins; that quick promise opened the shared
+// one's gate, so with `VELT_SCHED_TASK_PAUSE` the shared promise finishes, and lets go of its task,
+// before the hub hands its watch to the next waiter, a `Promise.all` holder: that one still gets
+// the value. One promise at a time.
 
 class Holder {
   p: Promise<number>;
@@ -637,49 +712,50 @@ class Holder {
   }
 }
 
+const GATE = new Atomic<i64>(0);
 const GOT = new Atomic<i64>(0);
 
-async function soon(): Promise<number> {
-  for (let y = 0; y < 3; y++) {
+async function gated(i: i64): Promise<number> {
+  while (GATE.load() < i) {
     await yieldNow();
   }
   return 1;
 }
 
-async function quick(): Promise<number> {
+async function quick(i: i64): Promise<number> {
   await yieldNow();
+  GATE.store(i);
   return 0;
 }
 
+async function firstOf(h: Holder, i: i64): Promise<number> {
+  return await Promise.race([h.p, quick(i)]);
+}
+
 async function behind(h: Holder): Promise<void> {
-  const rs = await Promise.all([h.p]);
+  // Not an array literal: the join waits in the hub with a waker of its own, of no task.
+  const ps: Promise<number>[] = [h.p];
+  const rs = await Promise.all(ps);
   GOT.add(rs[0] as i64);
 }
 
-async function sharer(p: Promise<number>): Promise<void> {
+async function sharer(p: Promise<number>, i: i64): Promise<void> {
   const h = new Holder(p);
-  const first = Promise.race([h.p, quick()]);
+  // Started now: its race's holder is the hub's first waiter, `behind`'s the second.
+  const first = firstOf(h, i);
   const b = behind(new Holder(h.p));
   await first;
   await b;
 }
 
-async function maker(): Promise<void> {
-  for (let i = 0; i < 30; i++) {
-    void spawn(sharer(soon()), { worker: 2 });
-  }
+async function maker(i: i64): Promise<void> {
+  await spawn(sharer(gated(i), i), { worker: 2 });
 }
 
 async function main() {
-  const n: i64 = 8;
-  for (let k: i64 = 0; k < n; k++) {
-    await spawn(maker(), { worker: 1 });
-  }
-  while (GOT.load() < 30 * n) {
-    await yieldNow();
-  }
-  for (let y = 0; y < 100; y++) {
-    await yieldNow();
+  const n: i64 = 30;
+  for (let i: i64 = 1; i <= n; i++) {
+    await spawn(maker(i), { worker: 1 });
   }
   console.log(`got ${GOT.load()}`);
 }

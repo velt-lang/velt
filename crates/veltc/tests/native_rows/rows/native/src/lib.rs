@@ -41,13 +41,18 @@ impl RowCursor for Rows {
 
 /// Rows of the other cell kinds: `ok` (a boolean), `data` (a blob), `meta` (a nested value, as
 /// its JSON text), `raw` (text that is not UTF-8), `whole` (a float that is an integer) and
-/// `maybe` (null in odd rows, else ASCII text).
+/// `maybe` (null in odd rows; else ASCII text, or in every third even row non-ASCII text that
+/// needs escapes, short, or long in rows 6, 12, ...: over 64 UTF-16 units).
 struct Mixed {
     header: Vec<u8>,
     n: usize,
     row: usize,
     meta: String,
+    long: Vec<u8>,
 }
+
+/// Short non-ASCII text with characters JSON escapes.
+const SHORT: &str = "s\"é\t😀";
 
 impl RowCursor for Mixed {
     fn header(&self) -> &[u8] {
@@ -72,6 +77,8 @@ impl RowCursor for Mixed {
             3 => Cell::Text(b"caf\xe9 \"q\""),
             4 => Cell::Float(self.row as f64 * 2.0),
             _ if self.row % 2 == 1 => Cell::Null,
+            _ if self.row % 6 == 4 => Cell::Text(SHORT.as_bytes()),
+            _ if self.row % 6 == 0 => Cell::Text(&self.long),
             _ => Cell::Ascii(b"set"),
         }
     }
@@ -125,6 +132,7 @@ fn velt_rows__mixed(n: u32, single: bool) -> u64 {
         n: n as usize,
         row: 0,
         meta: String::new(),
+        long: format!("{}\"\n", "é".repeat(66)).into_bytes(),
     }))
 }
 

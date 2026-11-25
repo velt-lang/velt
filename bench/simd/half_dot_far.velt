@@ -24,8 +24,9 @@ function run<T>(passes: usize, at: usize, kernels: ((a: T[], b: T[]) => number)[
 }
 
 function main() {
-  const kernel = process.argv[2];
-  const passes = Number(process.argv[3]) as usize;
+  // Without arguments: f16_bulk 10, so bench/compiler_ab.sh measures a run.
+  const kernel = process.argv[2] ?? "f16_bulk";
+  const passes = Number(process.argv[3] ?? "10") as usize;
   const n: usize = 1000000;
   if (kernel.startsWith("f16")) {
     const a = f16Weights(n);
