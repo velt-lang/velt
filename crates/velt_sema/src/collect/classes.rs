@@ -34,7 +34,7 @@ pub(super) fn check_classes(cx: &mut Ctx, from: u32) {
     }
     let (overridden, overrides) = overridden_methods(cx, &adts);
     // The slots the program's overrides add to a finished unit's classes, kept beside them.
-    super::program_slots::add(cx, &overridden);
+    super::program_slots::add(cx, &overridden, &overrides);
     for d in order {
         // A base class of a finished unit (`crate::units`): its vtable and constructor are final
         // (the slots the program adds are beside it).
