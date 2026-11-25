@@ -162,7 +162,8 @@ export class Event {
 
   /** Also stops the target's later listeners from running, in this and any later dispatch. */
   stopImmediatePropagation(): void {
-    this.stopped = true;
+    // Through `stopPropagation`, which a subclass may override, as Node does.
+    this.stopPropagation();
     this.stoppedNow = true;
   }
 

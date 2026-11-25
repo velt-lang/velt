@@ -1,14 +1,9 @@
-// `returnValue` reads and sets the event's own canceled flag, as the DOM spec (and Node) does:
-// a subclass's `defaultPrevented` and `preventDefault` are never called through it (#3792).
-// `dispatchEvent`'s result does read `defaultPrevented`, in Node too. A passive listener's
-// `returnValue = false` cancels nothing, as its `preventDefault()` doesn't.
-
 class Loud extends Event {
-  override get defaultPrevented(): boolean {
+  get defaultPrevented() {
     console.log("  Loud.defaultPrevented");
     return true;
   }
-  override preventDefault(): void {
+  preventDefault() {
     console.log("  Loud.preventDefault");
   }
 }
@@ -28,16 +23,55 @@ plain.returnValue = false;
 console.log("plain:", plain.returnValue, plain.defaultPrevented);
 
 const t = new EventTarget();
-t.addEventListener("z", (e: Event) => {
+t.addEventListener("z", (e) => {
   e.returnValue = false;
 });
 console.log("dispatch:", t.dispatchEvent(new Loud("z", { cancelable: true })));
 t.addEventListener(
   "p",
-  (e: Event) => {
+  (e) => {
     e.returnValue = false;
     console.log("passive listener:", e.returnValue, e.defaultPrevented);
   },
   { passive: true },
 );
 console.log("passive dispatch:", t.dispatchEvent(new Event("p", { cancelable: true })));
+let log = [];
+class Typed extends Event {
+  get type() {
+    log.push("get type");
+    return "other";
+  }
+  stopPropagation() {
+    log.push("stopPropagation");
+  }
+}
+const t3 = new EventTarget();
+let seen = "";
+t3.addEventListener("x", () => {
+  seen += "x";
+});
+t3.addEventListener("other", (e) => {
+  seen += "other";
+  e.stopImmediatePropagation();
+});
+t3.addEventListener("other", () => {
+  seen += "+second";
+});
+log = [];
+console.log(t3.dispatchEvent(new Typed("x")), seen, "|", log.join(","));
+log = [];
+new Typed("y").stopImmediatePropagation();
+console.log("stopImmediatePropagation:", log.join(","));
+const t4 = new EventTarget();
+t4.addEventListener("other", (e) => {
+  log = [];
+  try {
+    t4.dispatchEvent(e);
+  } catch (err) {
+    if (err instanceof Error) {
+      console.log("again:", err.message, "|", log.join(","));
+    }
+  }
+});
+t4.dispatchEvent(new Typed("z"));

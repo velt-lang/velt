@@ -11,3 +11,6 @@ plain: false true
 dispatch: false
 passive listener: true false
 passive dispatch: true
+true other | get type,stopPropagation
+stopImmediatePropagation: stopPropagation
+again: The event "other" is already being dispatched | get type
