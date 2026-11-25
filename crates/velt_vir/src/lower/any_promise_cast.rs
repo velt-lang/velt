@@ -51,6 +51,13 @@ impl FnLower<'_, '_> {
         if !self.cx.executor_loaded() {
             return;
         }
+        // A `Promise<void>` that can't reject (a field's or parameter's type written so, not a
+        // cast's: that one rejects with `unknown`) has no result to convert into, and the
+        // wrapper no slot for it: only its own table converts, as before.
+        let slot = self.cx.promise_slot(ty);
+        if self.cx.ty(slot) == Ty::Unit {
+            return;
+        }
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
         // The commonest held type, a promise of the same value type that doesn't reject (a
         // typed `Promise<T>`): taken out of its box and widened, one wrapper with no conversion.
@@ -114,7 +121,11 @@ impl FnLower<'_, '_> {
     /// Does the wrapper from the promise type `from` to `to` convert a promise awaited through
     /// `any` (`Promise<unknown, unknown>`) to a cast's type (module docs), not widen?
     pub(in crate::lower) fn narrows(&mut self, from: TyId, to: TyId) -> bool {
-        if from == to || from != self.cx.awaited_any_promise() {
+        // Every widening asks: a program without `any` has no `Promise<unknown, unknown>`.
+        let TyKind::Promise(t1, _) = self.cx.kind(from) else {
+            return false;
+        };
+        if from == to || !self.cx.is_dynamic(t1) || from != self.cx.awaited_any_promise() {
             return false;
         }
         let TyKind::Promise(t, _) = self.cx.kind(to) else {
@@ -156,10 +167,11 @@ impl FnLower<'_, '_> {
         match self.cx.promise_error(to) {
             Some(e2) => self.narrow_settled(e, unknown, (e2, true), to, out, done),
             None => {
-                // A written `Promise<T, never>` can't hold a rejection.
+                // A type that can't reject (`Promise<T, never>` written so, or a field's or
+                // parameter's `Promise<T>` that nothing rejecting is stored into) can't hold it.
                 let name = self.any_target_name(to);
                 self.panic_msg(&format!(
-                    "TypeError: the promise asserted as {name} rejected, which that type does not allow"
+                    "TypeError: a promise held as `any` and used as a {name} rejected, which that type does not allow"
                 ));
                 self.terminate(Terminator::Unreachable);
             }
