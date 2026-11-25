@@ -36,7 +36,6 @@ use futures_util::task::AtomicWaker;
 
 mod loc;
 mod owner;
-mod panicked;
 mod transfer;
 mod waker;
 
@@ -46,9 +45,6 @@ pub(super) use self::waker::{firing_end, firing_start, local_awaiter, queue};
 pub(super) use self::loc::of as loc_of;
 pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
 use self::owner::{started_drop, started_poll};
-pub(super) use self::panicked::{
-    catch_panics, catches_here, is_panicked, panic_message, panicked_message,
-};
 use self::transfer::run_transfer;
 use self::waker::NODE_WAKER;
 use super::set::Shared;
@@ -59,8 +55,6 @@ use crate::task::{DropFn, PollFn, VeltFut, READY};
 pub(super) const DONE: u32 = 1;
 /// The owner dropped its handle: the set disposes of the result.
 pub(super) const DETACHED: u32 = 2;
-/// The promise can reject (`velt_rt_fut_start_rejecting`): its result is a `Result`, tag first.
-const REJECTABLE: u32 = 4;
 /// The driving task was dropped before the state finished (the state was cancelled).
 pub(super) const CANCELLED: u32 = 8;
 /// In the set's ready queue.
@@ -71,18 +65,11 @@ pub(super) const STARTED: u32 = 32;
 const SET_REF: u32 = 64;
 /// Its owner drives it (see [`started_poll`]): its leaves hold the owner's wakers.
 const ADOPTED: u32 = 128;
-/// A combinator handles its outcome ([`mark_handled`]).
-const HANDLED: u32 = 256;
 /// It finished with the location of a `throw`, kept in a side table (loc.rs).
 const LOC: u32 = 512;
 /// Its owner handed it to another task (`velt_rt_fut_transfer`): the task driving it no longer
 /// reports its rejection at a checkpoint, the task holding it now awaits it or gives it up.
 const HANDED_OVER: u32 = 1024;
-/// Its poll catches Velt panics (`catchPanic`, panic.rs), also when nothing up the stack does.
-const CATCHES: u32 = 4096;
-/// A Velt panic stopped at its poll: it counts as finished, its state and result slot are never
-/// touched again, and the node is never freed ([`panicked`]). Its owner's await raises the panic.
-const PANICKED: u32 = 8192;
 /// A timer that wakes it is among those its task fires now (timers.rs `fire`).
 const FIRING: u32 = 16384;
 
@@ -106,8 +93,7 @@ pub(super) struct Head {
     pub poll: PollFn,
     pub drop: DropFn,
     /// Drops an unclaimed result (started nodes; null when the result needs no drop). A
-    /// `ResultDropFn`; atomic because [`mark_handled`] may replace it while another task drives
-    /// the node.
+    /// `ResultDropFn`, atomic as the node may be driven on another task.
     result_drop: AtomicPtr<()>,
     pub state_size: u32,
     pub flags: AtomicU32,
@@ -272,9 +258,7 @@ pub(super) unsafe fn mark_started(
     let h = head_mut(f);
     h.set = Arc::as_ptr(shared);
     h.result_drop = AtomicPtr::new(drop_fn_ptr(result_drop));
-    // A node `catchPanic` guards keeps catching.
-    let catches = h.flags.load(Ordering::Relaxed) & CATCHES;
-    h.flags.store(STARTED | catches, Ordering::Relaxed);
+    h.flags.store(STARTED, Ordering::Relaxed);
     (*f).poll = started_poll;
     (*f).drop = started_drop;
 }
@@ -287,9 +271,7 @@ pub(super) unsafe fn poll_state(f: *mut VeltFut, word: *const u32) -> bool {
     let mut cx = Context::from_waker(&w);
     let h = head(f);
     loc::polled(f, || {
-        panicked::caught(f, || {
-            (h.poll)(state(f), crate::task::raw_cx_with(&mut cx, word).ptr()) == READY
-        })
+        (h.poll)(state(f), crate::task::raw_cx_with(&mut cx, word).ptr()) == READY
     })
 }
 
@@ -309,9 +291,7 @@ pub(super) unsafe fn poll_first(f: *mut VeltFut, word: *const u32) -> bool {
     });
     let mut first = std::pin::pin!(crate::task::coop::unconstrained(first));
     loc::polled(f, || {
-        panicked::caught(f, || {
-            first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
-        })
+        first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
     })
 }
 
@@ -330,13 +310,6 @@ pub(super) unsafe fn finish_first(f: *mut VeltFut) {
     if prev & QUEUED != 0 {
         count_set(f);
     }
-    watch_rejection(f, prev);
-}
-
-/// Started node `f` can reject: an unclaimed rejection is reported at the task's next microtask
-/// checkpoint (unhandled.rs).
-pub(super) unsafe fn mark_rejectable(f: *mut VeltFut) {
-    head(f).flags.fetch_or(REJECTABLE, Ordering::Relaxed);
 }
 
 /// The owner of started node `f` hands it to another task (no-op for any other future): from
@@ -344,48 +317,6 @@ pub(super) unsafe fn mark_rejectable(f: *mut VeltFut) {
 pub(super) unsafe fn mark_handed_over(f: *mut VeltFut) {
     if is_started(f) {
         head(f).flags.fetch_or(HANDED_OVER, Ordering::Release);
-    }
-}
-
-/// Node `f` finished with flags `prev` (before `DONE`) and nobody waits for it: if it rejected
-/// and nothing handles it, it is reported at the next checkpoint unless its owner awaits it
-/// before then, as Node reports a rejection without a handler (unhandled.rs).
-unsafe fn watch_rejection(f: *mut VeltFut, prev: u32) {
-    if prev & (REJECTABLE | DETACHED | HANDLED) == REJECTABLE && *state(f) != 0 {
-        super::unhandled::watch(f);
-    }
-}
-
-/// Is `f`'s rejection (see [`watch_rejection`]) still unclaimed: its owner neither awaited it
-/// nor gave it up or handed it to a combinator or another task?
-/// Could the rejection of started node `f`, watched since it finished, still be unclaimed at the
-/// checkpoint ([`rejection_unclaimed`] without registering anything)?
-pub(super) unsafe fn rejection_open(f: *mut VeltFut) -> bool {
-    let h = head(f);
-    let fl = h.flags.load(Ordering::Acquire);
-    fl & (DETACHED | HANDLED | ADOPTED | HANDED_OVER) == 0
-        && h.owner.get() & OWNER_DELIVERED == 0
-        && h.transfer.load(Ordering::Acquire).is_null()
-}
-
-pub(super) unsafe fn rejection_unclaimed(f: *mut VeltFut) -> bool {
-    let h = head(f);
-    let fl = h.flags.load(Ordering::Acquire);
-    // A promise handed to another task is that task's to claim: its owner bits and awaiter are
-    // the other task's, touched on another thread meanwhile, and a report here would race with
-    // that task claiming the same result (two reports, the error freed twice).
-    if fl & (DETACHED | HANDLED | ADOPTED | HANDED_OVER) != 0
-        || h.owner.get() & OWNER_DELIVERED != 0
-        || !h.transfer.load(Ordering::Acquire).is_null()
-    {
-        return false;
-    }
-    match h.awaiter.take() {
-        Some(w) => {
-            h.awaiter.register(&w);
-            false
-        }
-        None => true,
     }
 }
 
@@ -399,11 +330,7 @@ pub(super) unsafe fn finish(f: *mut VeltFut) -> Option<Waker> {
         drop_result(f);
         return None;
     }
-    let w = h.awaiter.take();
-    if w.is_none() {
-        watch_rejection(f, prev);
-    }
-    w
+    h.awaiter.take()
 }
 
 /// The driving task went away before `f` finished: cancel the state.
@@ -420,25 +347,8 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
     d.map_or(std::ptr::null_mut(), |d| d as *mut ())
 }
 
-/// Dispose of the unclaimed result of `f` (unhandled.rs).
+/// Dispose of the unclaimed result of `f`.
 unsafe fn drop_result(f: *mut VeltFut) {
-    if panicked::is_panicked(f) {
-        // Its slot holds nothing (panicked.rs).
-        return;
-    }
-    let d = head(f).result_drop.load(Ordering::Acquire);
-    if !d.is_null() {
-        // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
-        let d = std::mem::transmute::<*mut (), ResultDropFn>(d);
-        loc::with_loc(f, || super::unhandled::drop_result(f, d));
-    }
-}
-
-/// Dispose of the unclaimed result of `f` now (a deferred rejection is reported).
-pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
-    if panicked::is_panicked(f) {
-        return;
-    }
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
@@ -447,27 +357,10 @@ pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
     }
 }
 
-/// Someone handles started node `f`'s outcome (`Promise.race` and the other combinators, like
-/// JS attaching handlers): an unclaimed result is dropped with `quiet_drop` from now on instead
-/// of being reported as an unhandled rejection. No-op for any other future.
-pub(super) unsafe fn mark_handled(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
-    // A panicked node's slot holds nothing to drop (panicked.rs).
-    if !is_started(f) || panicked::is_panicked(f) {
-        return;
-    }
-    let h = head(f);
-    h.result_drop
-        .store(drop_fn_ptr(quiet_drop), Ordering::Release);
-    h.flags.fetch_or(HANDLED, Ordering::Relaxed);
-}
-
 /// Is the result of node `f` in its slot, for its owner to look at without claiming it
 /// (`velt_rt_fut_peek`)? A started node that finished, or a lazy one its owner polled to the
 /// end; false for any other future.
 pub(super) unsafe fn peek(f: *mut VeltFut) -> bool {
-    if panicked::is_panicked(f) {
-        return false;
-    }
     if is_lazy(f) {
         return head(f).owner.get() & OWNER_DONE != 0;
     }
@@ -482,27 +375,6 @@ pub(super) unsafe fn peek(f: *mut VeltFut) -> bool {
 /// Record that node `f` started running (its first poll, or its start) during task turn `turn`.
 pub(super) unsafe fn stamp(f: *mut VeltFut, turn: u32) {
     head(f).owner.set(turn << TURN_SHIFT);
-}
-
-/// Did node `f` start running during task turn `turn` (and is its result unclaimed)? Lazy
-/// nodes are stamped by their first poll, started ones when they start: that is when they are
-/// created, for the promises a combinator gives up.
-pub(super) unsafe fn created_in(f: *mut VeltFut, turn: u32) -> bool {
-    turn != 0 && head(f).owner.get() >> TURN_SHIFT == turn
-}
-
-/// Is started node `f` an unfinished member of the set `shared` (so it holds a reference of
-/// the set's)?
-pub(super) unsafe fn running_in(f: *mut VeltFut, shared: &Arc<Shared>) -> bool {
-    let h = head(f);
-    std::ptr::eq(h.set, Arc::as_ptr(shared))
-        && h.member.load(Ordering::Relaxed) != NO_MEMBER
-        && h.flags.load(Ordering::Acquire) & (DONE | CANCELLED) == 0
-}
-
-/// Is started node `f` in its set's ready queue?
-pub(super) unsafe fn is_queued(f: *mut VeltFut) -> bool {
-    head(f).flags.load(Ordering::Acquire) & QUEUED != 0
 }
 
 /// The waker registered to resume started node `f`'s owner, taken.

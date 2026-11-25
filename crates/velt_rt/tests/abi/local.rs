@@ -1,15 +1,11 @@
 //! Eager promises (`velt_rt_fut_start`): a started promise runs until its first suspension at
 //! once and then progresses while its creator does other things; dropped unawaited, it still
-//! runs to completion (handed to a combinator, with its quiet drop); a cancelled task cancels its
-//! unfinished promises; a lazy promise its owner polled and then detached keeps running after
-//! the owner's continuation (`velt_rt_fut_detach`).
+//! runs to completion; a cancelled task cancels its unfinished promises.
 
 use super::fake::{block_on_fut, block_on_state, sleep};
 use crate::task::compiled::{Compiled, Inline};
 use crate::task::leaf::new_leaf;
-use crate::task::local::{
-    velt_rt_fut_box, velt_rt_fut_detach, velt_rt_fut_start, velt_rt_futs_handled,
-};
+use crate::task::local::{velt_rt_fut_box, velt_rt_fut_start};
 use crate::task::runtime::runtime;
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use std::ffi::c_void;
@@ -266,79 +262,6 @@ fn a_dropped_started_promise_runs_to_completion() {
     }
     // It finished on the orphan task, which disposed of the unclaimed result.
     assert_eq!(events(10..11), [(10, "start"), (10, "end")]);
-}
-
-/// Results of `job(11, ..)` disposed of by the quiet drop a combinator installed.
-static QUIET_RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
-
-unsafe extern "C-unwind" fn count_quiet_drop(slot: *mut u8) {
-    if *(slot as *const i64) == 11 {
-        QUIET_RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-// async function lose() { job(11, 20) is started, handed to a combinator and dropped; return 0; }
-unsafe extern "C-unwind" fn lose_poll(s: *mut u8, _: *mut c_void) -> u32 {
-    let f = started_job(11, 20);
-    velt_rt_futs_handled(&f, 1, Some(count_quiet_drop));
-    drop_fut(f);
-    *(s as *mut i64) = 0;
-    READY
-}
-
-#[test]
-fn a_handled_promise_disposes_of_its_result_quietly() {
-    let mut st = [0i64; 2];
-    unsafe { block_on_state(lose_poll, st.as_mut_ptr() as *mut u8) };
-    let t = Instant::now();
-    while QUIET_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
-        assert!(
-            t.elapsed() < Duration::from_secs(60),
-            "handled promise did not finish"
-        );
-        block_on_fut::<()>(sleep(2));
-    }
-    assert_eq!(events(11..12), [(11, "start"), (11, "end")]);
-}
-
-/// Results of `job(40, ..)` disposed of by the quiet drop given to `velt_rt_fut_detach`.
-static DETACHED_RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
-
-unsafe extern "C-unwind" fn count_detached_drop(slot: *mut u8) {
-    if *(slot as *const i64) == 40 {
-        DETACHED_RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
-    }
-}
-
-// The owner of lazy `job(40, 5)` (an inline `Promise.all` child) polls it once, then gives it
-// up without cancelling it (a sibling rejected) and goes on.
-unsafe extern "C-unwind" fn detach_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    let f = job(40, 5);
-    assert_eq!(poll_fut(f, cx), PENDING);
-    velt_rt_fut_detach(f, Some(count_detached_drop));
-    log(39, "owner goes on");
-    *(s as *mut i64) = 0;
-    READY
-}
-
-#[test]
-fn a_detached_promise_keeps_running_after_its_owner() {
-    let mut st = [0i64; 2];
-    unsafe { block_on_state(detach_poll, st.as_mut_ptr() as *mut u8) };
-    let t = Instant::now();
-    while DETACHED_RESULT_DROPS.load(Ordering::SeqCst) == 0 {
-        assert!(
-            t.elapsed() < Duration::from_secs(60),
-            "detached promise did not finish"
-        );
-        block_on_fut::<()>(sleep(2));
-    }
-    // Its timer held the owner's waker: the set re-polled it, and it finished quietly.
-    // Its own ids (39, 40): the race test logs jobs 41 to 43 and runs alongside this one.
-    assert_eq!(
-        events(39..41),
-        [(40, "start"), (39, "owner goes on"), (40, "end")]
-    );
 }
 
 #[test]

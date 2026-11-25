@@ -1,5 +1,6 @@
-//! A task's microtask queue: the steps of `await` (`velt_rt_await_tick`), the callbacks of
-//! `then`, `catch` and `finally`, and `queueMicrotask` (std/prelude/promise.velt), in JS's order.
+//! A task's microtask queue: the waiters `resolve` queues on this task (latch.rs, a shared
+//! promise's hub), in JS's order. The steps of `await` and the prelude's microtasks are the
+//! executor in Velt's (std/lang/hooks/sched_micro.velt).
 //!
 //! The queue is drained at every job boundary of the task, after the root's poll and after each
 //! local promise the task runs from its ready queue (local/set.rs `drain`): the entries run first
@@ -11,34 +12,21 @@
 //! polled earlier for another reason (an owner polling an adopted promise, the root woken by
 //! something else): it goes on only once the drain got to its ticket.
 //!
-//! **The await word.** Every `await` in user code takes one step through the queue after its
-//! operand settled, as in Node. The step can only be observed when something else could run
-//! first: an entry is queued, or synchronous code waits to go on (the first run of a started
-//! promise, `velt_rt_fut_start`; a promise run from inside another poll, `set::run_now`). The
-//! task's word counts both, and generated code reads it through `cx` at every `await` (rt_abi_async.md
-//! §1): 0 goes straight on, anything else calls `velt_rt_await_tick`.
-//!
-//! **Credit.** `resolve` called later on this task (a latch opened, latch.rs) queues the waiter
-//! at once, as Node queues the reactions inside `resolve`. That entry is the waiter's step: the
-//! first step taken while it runs (`velt_rt_await_tick`, or the prelude's `velt_rt_microtask`)
-//! goes on at once.
+//! **The await word.** The task's word counts the queued entries and the synchronous code that
+//! waits to go on (the first run of a started promise, `velt_rt_fut_start`; a promise run from
+//! inside another poll, `set::run_now`); a shared promise's hub reads it ([`step_free`]), and
+//! generated code through `cx` (rt_abi_async.md §1).
 
 use std::collections::VecDeque;
-use std::ffi::c_void;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::task::{Context, Poll, Waker};
+use std::task::Waker;
 
 use super::set::{self, Driver};
 use super::TaskCx;
-use crate::task::{leaf, with_context, VeltFut};
 
 /// One entry: whom to run when the queue reaches it.
 struct Entry {
     waker: Option<Waker>,
-    /// The entry is a waiter's step already (see the module docs).
-    credit: bool,
 }
 
 /// A task's queue (lives with its local set, `SetPtr`).
@@ -72,11 +60,8 @@ impl Queue {
         self.entries.len()
     }
 
-    fn push(&mut self, waker: Waker, credit: bool) -> u64 {
-        self.entries.push_back(Entry {
-            waker: Some(waker),
-            credit,
-        });
+    fn push(&mut self, waker: Waker) -> u64 {
+        self.entries.push_back(Entry { waker: Some(waker) });
         self.head + self.entries.len() as u64 - 1
     }
 
@@ -111,9 +96,9 @@ fn queue_or_new<'a>() -> Option<&'a mut Queue> {
 }
 
 /// Queue `waker` in the task being polled (`t`): its ticket.
-fn push(t: &TaskCx, q: &mut Queue, waker: Waker, credit: bool) -> u64 {
+fn push(t: &TaskCx, q: &mut Queue, waker: Waker) -> u64 {
     t.word.set(t.word.get() + 1);
-    q.push(waker, credit)
+    q.push(waker)
 }
 
 /// Synchronous code of task `t` waits to go on until [`sync_exit`]: a step taken meanwhile is
@@ -139,18 +124,9 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         let Some(w) = e.waker else {
             continue;
         };
-        // The credit is for the step the waiter's `await` takes on resuming, which it takes
-        // only while the word is not 0; with the queue empty it goes on without one, and the
-        // credit must not pass to a later `await` of the same run.
-        t.credit.set(e.credit && t.word.get() != 0);
         t.micro_jobs.set(t.micro_jobs.get() + 1);
         set::resume(d, w);
         t.micro_jobs.set(t.micro_jobs.get() - 1);
-        t.credit.set(false);
-    }
-    // Rejections nobody handles, reported now that the queue is empty (unhandled.rs).
-    if super::unhandled::waiting(d.set) {
-        super::unhandled::flush(d.set);
     }
 }
 
@@ -169,20 +145,6 @@ pub(super) fn timer_turn_free(t: &TaskCx) -> bool {
     t.word.get() == 0 && t.micro_jobs.get() == 0
 }
 
-/// The job being polled resumes as the reaction of a promise that settled now, ahead of the
-/// waiters queued after it (a shared promise, task/shared.rs): its next step goes on at once,
-/// as when it was the only waiter and the task's word was 0.
-pub(crate) fn grant_step() {
-    if let Some(t) = tcx() {
-        t.credit.set(true);
-    }
-}
-
-/// Take the waiter's credit (see the module docs): true when this step is already taken.
-fn take_credit(t: &TaskCx) -> bool {
-    t.credit.replace(false)
-}
-
 /// Waiter `w` of a promise settled now by `resolve` / `reject` (latch.rs): when it belongs to the
 /// task being polled (one of its local promises, or its root), it is queued now with credit
 /// (Node queues the reactions inside `resolve`) and the entry's ticket is returned: the wait
@@ -199,7 +161,7 @@ pub(crate) fn settled(w: Waker) -> u64 {
     let local = w.will_wake(unsafe { &*t.waker })
         || set.is_some_and(|s| unsafe { super::node::local_awaiter(&w, &s.shared) }.is_some());
     match queue_or_new() {
-        Some(q) if local => push(t, q, w, true),
+        Some(q) if local => push(t, q, w),
         _ => {
             w.wake();
             0
@@ -223,113 +185,15 @@ pub(crate) fn ticket_pending(ticket: u64, w: &Waker) -> bool {
     }
 }
 
-/// The step of an `await` (rt_abi_async.md §1), called when the task's word is not 0: 0 to go
-/// on now (nothing else can run first, or the step is taken already), else the ticket of the
-/// entry queued for the caller, which then suspends and goes on once `velt_rt_await_ready`
-/// says the queue reached it.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_await_tick(cx: *mut c_void) -> u64 {
-    let Some(t) = tcx() else {
-        return 0;
-    };
-    if take_credit(t) || t.word.get() == 0 {
-        return 0;
-    }
-    match queue_or_new() {
-        Some(q) => push(t, q, with_context(cx, |c| c.waker().clone()), false),
-        None => 0,
-    }
-}
-
-/// Has the queue reached `ticket` (from `velt_rt_await_tick`)? 1 to go on; 0 while it waits
-/// (the caller suspends again: whoever polls now is resumed when it is reached).
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_await_ready(ticket: u64, cx: *mut c_void) -> u32 {
-    // SAFETY: the set of the task being polled, used only by this task's polls.
-    let Some(q) = (unsafe { super::current_set().as_mut() }).map(|s| &mut s.micro) else {
-        return 1;
-    };
-    match q.waiting(ticket) {
-        None => 1,
-        Some(e) => {
-            with_context(cx, |c| {
-                let w = c.waker();
-                if !e.waker.as_ref().is_some_and(|x| x.will_wake(w)) {
-                    e.waker = Some(w.clone());
-                }
-            });
-            0
-        }
-    }
-}
-
-/// The future of `velt_rt_microtask`.
-struct Microtask {
-    /// The ticket of its entry (0 before the first poll).
-    ticket: u64,
-}
-
-impl Future for Microtask {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if self.ticket != 0 {
-            // SAFETY: the set of the task being polled, used only by this task's polls.
-            let q = unsafe { super::current_set().as_mut() }.map(|s| &mut s.micro);
-            return match q.and_then(|q| q.waiting(self.ticket)) {
-                None => Poll::Ready(()),
-                Some(e) => {
-                    // Polled again before its turn (by an owner that adopted the promise): the
-                    // turn resumes whoever polls it now.
-                    e.waker = Some(cx.waker().clone());
-                    Poll::Pending
-                }
-            };
-        }
-        let Some(t) = tcx() else {
-            // Outside a task: nothing else runs meanwhile.
-            return Poll::Ready(());
-        };
-        if take_credit(t) {
-            return Poll::Ready(());
-        }
-        let Some(q) = queue_or_new() else {
-            return Poll::Ready(());
-        };
-        self.ticket = push(t, q, cx.waker().clone(), false);
-        Poll::Pending
-    }
-}
-
-/// `await` one microtask: completes (unit result) once the queue of the task that polls it
-/// reached it, after the microtasks queued before it. Outside a task it completes at once.
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_microtask() -> *mut VeltFut {
-    leaf::new_inner_leaf(Microtask { ticket: 0 })
-}
-
 #[cfg(test)]
 mod tests {
-    use std::task::{Context, Waker};
-
-    use crate::task::{drop_fut, poll_fut, raw_cx, READY};
-
-    #[test]
-    fn a_microtask_outside_a_task_is_ready_at_once() {
-        let f = super::velt_rt_microtask();
-        let mut cx = Context::from_waker(Waker::noop());
-        // SAFETY: a live leaf, polled and dropped once.
-        unsafe {
-            assert_eq!(poll_fut(f, raw_cx(&mut cx).ptr()), READY);
-            drop_fut(f);
-        }
-    }
+    use std::task::Waker;
 
     #[test]
     fn tickets_tell_their_queue_apart() {
         let mut a = super::Queue::new();
         let b = super::Queue::new();
-        let t = a.push(Waker::noop().clone(), false);
+        let t = a.push(Waker::noop().clone());
         assert!(a.waiting(t).is_some());
         assert!(a.waiting(b.base).is_none());
         assert!(a.pop().is_some());
