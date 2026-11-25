@@ -556,3 +556,11 @@ function other(): number { return 1; }
         (Ok(_), _) => panic!("the optimizer took a changed parameter fact"),
     }
 }
+
+/// Warm reloads are off unless asked for with `VELT_DEV_WARM=1` (#3822).
+#[test]
+fn warm_reloads_are_off_unless_turned_on() {
+    if std::env::var_os("VELT_DEV_WARM").is_none() {
+        assert!(!super::warm_enabled());
+    }
+}
