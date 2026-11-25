@@ -5,7 +5,7 @@ import { unwrapIo } from "velt/native/result";
 import { Stats } from "velt/fs/stats";
 import { DROP, EOF, GOT, op, takeLine } from "velt/fs/line_buffer";
 import { bytesOf, lineOf, textOf } from "velt/fs/line_reads";
-import { velt_rt_fs_reader_close, velt_rt_fs_reader_opened_stats } from "velt/fs/rt";
+import { velt_rt_fs_reader_close, velt_rt_fs_reader_opened_stats } from "#fs-rt";
 
 /** A file open for reading. */
 export struct FileReader {

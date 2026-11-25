@@ -1,0 +1,8 @@
+// velt/fs (internal): what a file writer released with its file still open leaves
+// (std/fs/stream_table.velt): its buffer to write, then its file to close.
+
+/** A released writer's file (0: nothing to do) and the bytes still to write to it. */
+export struct StreamLeft {
+  os: u64;
+  bytes: u8[];
+}

@@ -106,7 +106,12 @@ export function isDirectory(w: readonly u16[]): bool {
 }
 
 /** `CreateFileW` of `w`: the handle, or null (`lastWin32()`). */
-export function open(w: readonly u16[], access: u32, disposition: u32, flags: u32): Ptr<void> | null {
+export function open(
+  w: readonly u16[],
+  access: u32,
+  disposition: u32,
+  flags: u32,
+): Ptr<void> | null {
   // SAFETY: `w` is NUL-terminated; no security attributes and no template.
   const h = unsafe { CreateFileW(w, access, SHARE_ALL, null, disposition, flags, null) };
   // INVALID_HANDLE_VALUE is what a failed open returns.
@@ -197,7 +202,12 @@ export function statsOfInfo(info: u32[], link: bool): Stats {
 }
 
 /** Writes all of `bytes[start..end]` to `h`: null, or the error (Node's, naming `write`). */
-export function writeAllWin(h: Ptr<void>, bytes: readonly u8[], start: usize, end: usize): IoError | null {
+export function writeAllWin(
+  h: Ptr<void>,
+  bytes: readonly u8[],
+  start: usize,
+  end: usize,
+): IoError | null {
   let at = start;
   while (at < end) {
     const n = end - at > MOST ? MOST : end - at;

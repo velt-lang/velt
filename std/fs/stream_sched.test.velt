@@ -51,9 +51,11 @@ describe("stream_sched", () => {
     const r = await openRead(path);
     r.close();
     r.close();
-    expect(await codeOf(async () => {
-      const b = await r.read();
-    })).toBe("EBADF");
+    expect(
+      await codeOf(async () => {
+        const b = await r.read();
+      }),
+    ).toBe("EBADF");
     await remove(path);
   });
 
@@ -96,9 +98,11 @@ describe("stream_sched", () => {
     await w.close();
     await w.close();
     expect(await readFile(path)).toBe(want);
-    expect(await codeOf(async () => {
-      await w.write("late");
-    })).toBe("EBADF");
+    expect(
+      await codeOf(async () => {
+        await w.write("late");
+      }),
+    ).toBe("EBADF");
     await remove(path);
   });
 

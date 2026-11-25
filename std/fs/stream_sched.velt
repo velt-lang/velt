@@ -22,7 +22,9 @@ import { Done } from "velt/fs/whole/done";
 import { OsFile } from "velt/fs/stream_os/os_file";
 import { closeOs, openReadOs, openWriteOs, readOs, writeOs } from "#fs-stream-os";
 import { utf8Encode } from "velt/encoding/utf8";
-import { CLOSED, Left, Streams, Turn, WAIT } from "velt/fs/stream_table";
+import { StreamLeft } from "velt/fs/stream_left";
+import { StreamTable } from "velt/fs/stream_table";
+import { CLOSED, StreamTurn, WAIT } from "velt/fs/stream_turn";
 
 /** A writer's buffer: writes smaller than this are gathered until it would overflow. */
 const BUFFER: usize = 65536;
@@ -31,15 +33,15 @@ const DEFAULT_READ: u64 = 65536;
 const MOST_READ: u64 = 16777216;
 
 /** The process's streams, made on first use. */
-const TABLE = new Atomic<shared<Mutex<Streams>> | null>(null);
+const TABLE = new Atomic<shared<Mutex<StreamTable>> | null>(null);
 
-function table(): shared<Mutex<Streams>> {
+function table(): shared<Mutex<StreamTable>> {
   const found = TABLE.load("acquire");
   if (found != null) {
     return found;
   }
   // Two first calls race: one table wins, the other is dropped.
-  TABLE.compareExchange(null, shared(new Mutex<Streams>(new Streams())), "acqrel");
+  TABLE.compareExchange(null, shared(new Mutex<StreamTable>(new StreamTable())), "acqrel");
   const made = TABLE.load("acquire");
   if (made == null) {
     panic("ICE: the file stream table is set once and never cleared");
@@ -53,7 +55,7 @@ function closed(): IoStatus {
 }
 
 /** Takes handle `h`'s turn: its entry's state then, waiting while another operation has it. */
-async function turn(h: u64): Promise<Turn> {
+async function turn(h: u64): Promise<StreamTurn> {
   while (true) {
     const t = table().with((s) => s.claim(h));
     if (t.status != WAIT) {
@@ -109,7 +111,11 @@ export function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats> {
   const st = table().with((s) => s.statsOf(r));
   if (st === null) {
     const c = closed();
-    return { code: c.code, message: c.message, value: { size: 0, mtimeMs: 0, file: false, dir: false, symlink: false } };
+    return {
+      code: c.code,
+      message: c.message,
+      value: { size: 0, mtimeMs: 0, file: false, dir: false, symlink: false },
+    };
   }
   return { code: 0, message: "", value: st };
 }
@@ -242,7 +248,7 @@ export function velt_rt_fs_writer_free(w: u64) {
 }
 
 /** What a released writer left: its buffer written (errors lost) and its file closed. */
-function settle(left: Left) {
+function settle(left: StreamLeft) {
   if (left.os != 0) {
     const ignored = writeOs(left.os, left.bytes, 0, left.bytes.length as usize);
     closeOs(left.os);
