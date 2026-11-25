@@ -1,0 +1,35 @@
+// check: no leaks
+// A method returning `this` may return a `const` holding `this`, or holding the result of a
+// `this`-returning call on `this`: TypeScript types such a `const` as `this` (#3772).
+class A {
+  n = 0;
+  bump(): this {
+    const r = this;
+    r.n++;
+    return r;
+  }
+  twice(): this {
+    const r = this.bump();
+    return r.bump();
+  }
+  thrice(): this {
+    const me = this;
+    if (me.n > 100) {
+      return me;
+    }
+    me.twice();
+    return me.bump();
+  }
+}
+
+class B extends A {
+  tag = "b";
+}
+
+function main() {
+  console.log(new A().bump().bump().n);
+  const b = new B().twice();
+  console.log(b.n, b.tag);
+  const c = new B().thrice().bump();
+  console.log(c.n, c.tag);
+}

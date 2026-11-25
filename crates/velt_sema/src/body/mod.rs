@@ -450,6 +450,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Calls of methods that hand back their receiver (`expr/hand_back.rs`), by span: whether
     /// the block's value reads the receiver's place again (else a temporary holding it).
     pub handed_back: rustc_hash::FxHashMap<Span, bool>,
+    /// `const r = this` (or a `this`-returning call on `this`): `r` is `this` itself, which a
+    /// method returning `this` may return (`expr/this_type.rs`).
+    pub this_aliases: rustc_hash::FxHashSet<hir::LocalId>,
     /// The expression statement being checked, whose value is discarded (`expr_stmt`).
     pub discard_at: Option<Span>,
     /// The member of a recursive closure group whose arrow is about to be checked: group,
@@ -544,6 +547,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_trial: false,
             this_calls: Default::default(),
             handed_back: Default::default(),
+            this_aliases: Default::default(),
             discard_at: None,
             pending_member: None,
             adapting: false,

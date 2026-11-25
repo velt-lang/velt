@@ -57,7 +57,10 @@ impl FnCx<'_, '_> {
     /// Is `h` the method's `this` (or a `this`-returning method's result on it)?
     fn is_this_value(&self, h: &hir::Expr) -> bool {
         match &h.kind {
-            H::Local(l, _) => self.outer.is_empty() && self.local_kind(*l) == LocalKind::This,
+            H::Local(l, _) => {
+                self.outer.is_empty()
+                    && (self.local_kind(*l) == LocalKind::This || self.this_aliases.contains(l))
+            }
             H::Upcast(x) | H::Downcast(x) => self.is_this_value(x),
             H::Call { .. } => self.this_calls.contains(&h.span),
             // A call that hands back its receiver (`hand_back`), the receiver being `this`.
@@ -65,6 +68,19 @@ impl FnCx<'_, '_> {
                 b.value.as_deref().is_some_and(|v| self.is_this_value(v))
             }
             _ => false,
+        }
+    }
+
+    /// `const local = init` (`kind`): a `const` holding `this` is `this` (TypeScript types it
+    /// `this`), so a method returning `this` may return it.
+    pub(crate) fn note_this_alias(
+        &mut self,
+        local: hir::LocalId,
+        kind: LocalKind,
+        init: Option<&hir::Expr>,
+    ) {
+        if kind == LocalKind::Const && init.is_some_and(|h| self.is_this_value(h)) {
+            self.this_aliases.insert(local);
         }
     }
 
