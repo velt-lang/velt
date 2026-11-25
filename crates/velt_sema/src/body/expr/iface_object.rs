@@ -268,6 +268,10 @@ impl FnCx<'_, '_> {
                 }
                 (Written::Value(v), Some(slot), _) if !methods[slot].is_getter => {
                     let m = &methods[slot];
+                    // A method declared `: this` returns the literal itself.
+                    if !self.literal_returns_this(&key, v, (iface, &iname)) {
+                        ok = false;
+                    }
                     if let Some(raw) = m.raw.clone() {
                         // A generic method: a generic function value (`generic_values.rs`),
                         // which the implementation calls at its own type arguments.
