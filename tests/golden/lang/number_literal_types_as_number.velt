@@ -2,7 +2,7 @@
 // An integer literal type, or a union of them, is a `number` where one is expected (#3747), as
 // in TypeScript and Node: a value of type `5` or `0 | 1` (an `i64` underneath) converts to
 // `number` alone, in a union holding `number` and in a `number | null`, through `||`, `??` and
-// `?:`, as an argument, a return value and an array element.
+// `?:`, as an argument, a return value, an array element and in a compound assignment.
 
 type Bit = 0 | 1;
 type Named = { name: string };
@@ -56,4 +56,26 @@ function run() {
   console.log("named", describe(named));
 }
 
+// Compound assignment to a `number` place: a local and a class field.
+class Acc {
+  total = 0.5;
+}
+
+function compound(): void {
+  const bits: Bit[] = [0, 1, 1];
+  let x = 0.25;
+  const acc = new Acc();
+  for (const n of bits) {
+    x += n;
+    x -= n / 2;
+    x *= n + 1;
+    acc.total += n;
+  }
+  const five: 5 = 5;
+  let y = 1;
+  y += five;
+  console.log("compound", x, acc.total, y);
+}
+
 run();
+compound();

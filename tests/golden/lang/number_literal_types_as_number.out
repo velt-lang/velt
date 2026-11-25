@@ -13,3 +13,4 @@ pick 2 22
 fallback 3.5 1 0
 single true 2.5
 named named n
+compound 4 2.5 6

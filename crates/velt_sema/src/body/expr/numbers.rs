@@ -279,6 +279,15 @@ impl FnCx<'_, '_> {
             let f64_ = self.cx.ty.f64;
             return self.int_to_float(v, f64_);
         }
+        // An integer literal type, or a union of them, is a `number` too (`x += n` with
+        // `n: 0 | 1`, #3747).
+        let v = match place.ty == self.cx.ty.f64 {
+            true => match self.int_literal_as_number(v, place.ty) {
+                Ok(n) => return n,
+                Err(v) => v,
+            },
+            false => v,
+        };
         // An `f16`/`bf16` added to an `f32` place converts to `f32`, exactly (`sum += w`, #2049).
         if matches!(self.cx.ty.kind(place.ty), TyKind::Float(hir::FloatTy::F32))
             && self.cx.ty.is_storage_float(v.ty)
