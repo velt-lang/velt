@@ -1,0 +1,116 @@
+// check: no leaks
+// `Set.add`, `Map.set`, `WeakSet.add` and `WeakMap.set` return the collection, as in
+// JavaScript (#3738), and so does any method declared `: this`. The call hands back its
+// receiver: chained on a variable or on a temporary, kept, returned or passed on, it is the same
+// object. A result nobody uses costs nothing.
+class Upper extends Set<string> {
+  override add(x: string): this {
+    return super.add(x.toUpperCase());
+  }
+}
+
+let sets = 0;
+
+class Counting extends Map<string, number> {
+  override set(k: string, v: number): this {
+    sets++;
+    return super.set(k, v);
+  }
+}
+
+class Box {
+  w = 0;
+  h = 0;
+  width(n: number): this {
+    this.w = n;
+    return this;
+  }
+  height(n: number): this {
+    this.h = n;
+    return this;
+  }
+}
+
+class Key {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+interface Adder {
+  add(x: number): Set<number>;
+}
+
+class AddingSet extends Set<number> implements Adder {}
+
+function withZero(s: Set<number>): Set<number> {
+  return s.add(0);
+}
+
+function first(): number {
+  return 0;
+}
+
+function sizeOf(s: Set<number>): number {
+  return s.size;
+}
+
+function main() {
+  // Chains on a temporary and on a variable.
+  const s = new Set<number>().add(1).add(2).add(2);
+  console.log(s.size, [...s].join(","));
+  console.log(s.add(5).has(5), s.size);
+  const m = new Map<string, number>().set("a", 1).set("b", 2);
+  console.log(m.set("c", 3).get("c"), m.size);
+
+  // A kept result is the same object as the receiver.
+  const t = s.add(3);
+  t.add(4);
+  console.log(t === s, s.size, t.size);
+
+  // Returned and passed on.
+  const z = withZero(s);
+  console.log(z === s, sizeOf(s.add(9)), s.size);
+
+  // On an element found by a call: the element itself, changed.
+  const group = [new Set<number>()];
+  const e = group[first()].add(5).add(6);
+  console.log(e === group[0], group[0].size);
+
+  // Through an interface and through `any`.
+  const a = new AddingSet();
+  const adder: Adder = a;
+  console.log(adder.add(11) === a, a.has(11));
+  const loose: any = s;
+  console.log(loose.add(12) === s, s.has(12));
+
+  // Discarded results.
+  s.add(7);
+  m.set("d", 4);
+  console.log(s.size, m.size);
+
+  // Overrides written as TypeScript requires, called directly and through the base type.
+  const u = new Upper().add("a").add("b");
+  console.log([...u].join(","));
+  const b: Set<string> = u;
+  b.add("c").add("a");
+  console.log([...u].join(","), b === u);
+  const c = new Counting().set("x", 1).set("y", 2);
+  const asMap: Map<string, number> = c;
+  asMap.set("z", 3);
+  console.log(sets, c.size, c.get("z"));
+
+  // A builder of its own.
+  const box = new Box().width(3).height(4);
+  const same = box.width(5);
+  console.log(box.w, box.h, same === box);
+
+  // The weak collections.
+  const k1 = new Key("k1");
+  const k2 = new Key("k2");
+  const ws = new WeakSet<Key>().add(k1).add(k2);
+  console.log(ws.has(k1), ws.has(k2));
+  const wm = new WeakMap<Key, number>();
+  console.log(wm.set(k1, 10).set(k2, 20).get(k2), wm.get(k1));
+}

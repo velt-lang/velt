@@ -1,0 +1,353 @@
+// velt/lang/hooks (internal): a promise that isn't a node of the executor in Velt, shared on a task
+// (sched_share.velt `schedShare`): a spawned task's join handle, a `sleep(ms)` or `yieldNow()`
+// kept as a value, a race, a runtime leaf (#2196 9e). Sharing it changes nothing for a holder
+// that never shares: the work is done at the first share, in place, as for a node.
+//
+// - The original pointer stays its holder's, so the leaf's header becomes the leaf holder's
+//   (`leafPoll`, `leafDrop`) and its own entries go to a record, found by the leaf's address in a
+//   table that holds only shared leaves (`find`).
+// - A lazy node of this executor, the driver, polls the leaf through its saved poll and moves its
+//   result into its own slot (`driverPoll`). The driver is shared as any node is (its hub), so
+//   every other holder is a handle of that hub, and the original forwards to the driver's own
+//   holder role (`R_ROLE`). A lazy node is driven by its first waiter with that waiter's context,
+//   as the runtime's hub drove a leaf.
+// - The leaf's memory is the driver's (the leaf's state, until it finishes), the original holder's
+//   (its header) and the hub's (its address is every holder's identity): whichever of the three
+//   lets go last runs the leaf's own drop (`unref`), which cancels a leaf that has not finished.
+//   So the leaf stays allocated while any holder lives (rt_abi_async.md §1.3), and no later
+//   promise takes its address meanwhile.
+// - Its identity stays the leaf's address (`schedFutId`, the hub's `H_LEAF` record), the one it
+//   had before the share, so a `Set` or `Map` key taken before stays valid.
+// - A join handle's header changes under its slot's lock: its task may panic meanwhile on another
+//   worker (sched_join.velt `panickedEnd`), which then gives the record its new poll instead.
+
+import { fnAddress, futDrop, futPoll, noInline, stateDrop, statePoll } from "velt/lang/intrinsics";
+import * as jn from "./sched_join";
+import * as mk from "./sched_make";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as sh from "./sched_share";
+import * as t from "./sched_task";
+
+/** A record: the leaf, its own poll and drop, the role it forwards to, the references, the size. */
+const R_LEAF: usize = 0;
+const R_POLL: usize = 8;
+const R_DROP: usize = 16;
+/** The driver's original holder (sched_share.velt's layout), which the leaf's holder awaits. */
+export const R_ROLE: usize = 24;
+/** The leaf's users (the driver's run, the leaf's holder, the hub); the last one drops it. */
+const R_REFS: usize = 32;
+const R_SIZE: usize = 40;
+const R_BYTES: usize = 48;
+
+/** The table of shared leaves: its lock, capacity, used slots (tombstones too), slots. */
+const T_LOCK: usize = 0;
+const T_CAP: usize = 8;
+const T_USED: usize = 16;
+const T_LIVE: usize = 24;
+const T_SLOTS: usize = 32;
+const T_BYTES: usize = 40;
+/** A slot's key once its leaf left the table (a key is a heap address, never 1). */
+const GONE: usize = 1;
+
+/** The table, made by the first share of a leaf (0 until then). */
+const TABLE = new Atomic<u64>(0);
+
+/**
+ * Leaf `f` (not a node, not a holder) shared on this task: a lazy driver node polling it, with
+ * room for a result of `size` bytes, and `f` its holder in place. The driver, which the caller
+ * shares (sched_share.velt, which then names its role: `forwardTo`), is returned.
+ */
+export function adopt(f: usize, size: u64): usize {
+  const r = m.alloc(R_BYTES);
+  m.st(r + R_LEAF, f);
+  m.st(r + R_ROLE, 0);
+  m.st(r + R_REFS, 3);
+  m.st(r + R_SIZE, size as usize);
+  // The driver's state: the record while it waits, the result (at offset 0) once it finished.
+  const ss = (((size as usize) > 8 ? (size as usize) : 8) + 15) & ~15;
+  const st = m.zeroed(ss);
+  m.st(st, r);
+  const d = nd.boxed(
+    fnAddress(driverPoll),
+    fnAddress(driverDrop),
+    st,
+    ss as u64,
+    fnAddress(nd.nodePoll),
+    fnAddress(nd.nodeDrop),
+  );
+  m.release(st, ss);
+  if (!jn.isJoin(f)) {
+    swap(f, r);
+    return d;
+  }
+  // A join handle: its task may panic on another worker meanwhile (sched_join.velt
+  // `panickedEnd`, which swaps the header under the same lock).
+  const k = f - t.T_JOIN;
+  const kind = jn.kindFor(k);
+  const s = mk.lockJoin(k, kind);
+  swap(f, r);
+  mk.unlockJoin(k, s, kind);
+  return d;
+}
+
+/** Leaf `f`'s entries go to record `r`, which goes into the table, and `f` becomes its holder. */
+function swap(f: usize, r: usize): void {
+  m.st(r + R_POLL, m.ld(f));
+  m.st(r + R_DROP, m.ld(f + 8));
+  insert(f, r);
+  m.st(f, fnAddress(leafPoll));
+  m.st(f + 8, fnAddress(leafDrop));
+}
+
+/**
+ * Join handle `f`, a shared leaf's holder, whose task panicked (sched_join.velt `panickedEnd`, its
+ * slot locked): the driver polls it through `poll` from now on, and true; false when its record
+ * left already (its last user drops the handle right now), whose header then takes `poll`.
+ */
+export function panicked(f: usize, poll: usize): bool {
+  const tb = table();
+  m.spinLock(tb + T_LOCK);
+  const s = slotOf(tb, f);
+  if (s !== 0) {
+    m.st(m.ld(s + 8) + R_POLL, poll);
+  }
+  m.store32(tb + T_LOCK, 0);
+  return s !== 0;
+}
+
+/**
+ * Leaf holder `f`'s record, once the driver is shared: the role it forwards to is `role`. The
+ * record, which the hub keeps (`hubFreed`), is returned.
+ */
+export function forwardTo(f: usize, role: usize): usize {
+  const r = find(f);
+  m.st(r + R_ROLE, role);
+  return r;
+}
+
+/** The leaf of record `r` (its identity). */
+export function leafOf(r: usize): usize {
+  return m.ld(r + R_LEAF);
+}
+
+/**
+ * The hub of record `r`'s driver is freed (sched_share_drop.velt `free`): it lets go of the leaf.
+ * Out of line: every shared node's free reaches the call, which only a leaf's takes.
+ */
+@noInline
+export function hubFreed(r: usize): void {
+  unref(r);
+}
+
+/** Is `f` a shared leaf's holder (its header's poll is `leafPoll`)? */
+export function isLeaf(f: usize): bool {
+  return m.ld(f) === fnAddress(leafPoll);
+}
+
+/** The role leaf holder `f` forwards to (the driver's original holder, sched_share.velt). */
+export function roleOf(f: usize): usize {
+  return m.ld(find(f) + R_ROLE);
+}
+
+/**
+ * `velt_rt_fut_peek` of leaf holder `f` (what `console.log` prints): its role's settled result,
+ * copied into `f`'s slot for the formatter to read, claiming nothing; false while pending.
+ */
+export function peek(f: usize): bool {
+  const r = find(f);
+  const g = m.ld(r + R_ROLE);
+  if (!sh.peek(g)) {
+    return false;
+  }
+  // Settled, so the leaf finished and its slot is free.
+  m.copy(f + 16, g + 16, m.ld(r + R_SIZE));
+  return true;
+}
+
+/** The poll of a shared leaf's holder: awaits the driver's role, then copies the result. */
+export function leafPoll(f: usize, cx: usize): u32 {
+  const r = find(f);
+  if (m.ld(r + R_POLL) === fnAddress(jn.joinPanicked)) {
+    // A join handle whose task panicked (`panicked`): raised in this holder's awaiter, as for a
+    // handle never shared.
+    return jn.joinPanicked(f, cx);
+  }
+  const g = m.ld(r + R_ROLE);
+  // SAFETY: the role, a holder this holder owns.
+  if (unsafe { futPoll(g, cx) } !== 1) {
+    return 0;
+  }
+  // The leaf finished (the driver did), so its slot is this holder's to fill.
+  m.copy(f + 16, g + 16, m.ld(r + R_SIZE));
+  return 1;
+}
+
+/** The drop of a shared leaf's holder: its role goes, and the leaf if the others let go too. */
+export function leafDrop(f: usize): void {
+  const r = find(f);
+  // SAFETY: the role, a holder this holder owns; the last role drops the driver (`driverDrop`).
+  unsafe {
+    futDrop(m.ld(r + R_ROLE));
+  }
+  unref(r);
+}
+
+/** The driver's state poll: polls the leaf, then moves its result into the driver's state. */
+function driverPoll(state: usize, cx: usize): u32 {
+  const r = m.ld(state);
+  // SAFETY: the leaf's own poll on the leaf, which has not finished.
+  if (unsafe { statePoll(m.ld(r + R_POLL), m.ld(r + R_LEAF), cx) } !== 1) {
+    return 0;
+  }
+  m.copy(state, m.ld(r + R_LEAF) + 16, m.ld(r + R_SIZE));
+  unref(r);
+  return 1;
+}
+
+/** The driver's state drop (it has not finished): it lets go of the leaf. */
+function driverDrop(state: usize): void {
+  unref(m.ld(state));
+}
+
+/**
+ * The driver's run, the leaf's holder or the hub lets go of the leaf of record `r`: the last one
+ * takes it out of the table and runs the leaf's own drop (its result, if any, was moved out), which
+ * cancels it if it has not finished.
+ */
+function unref(r: usize): void {
+  if (m.dec(r + R_REFS) !== 1) {
+    return;
+  }
+  take(m.ld(r + R_LEAF));
+  // SAFETY: the leaf's own drop on the leaf, which nobody uses any more.
+  unsafe {
+    stateDrop(m.ld(r + R_DROP), m.ld(r + R_LEAF));
+  }
+  m.release(r, R_BYTES);
+}
+
+/** The table, made on first use. */
+function table(): usize {
+  const tb = TABLE.load("acquire") as usize;
+  if (tb !== 0) {
+    return tb;
+  }
+  return makeTable();
+}
+
+@noInline
+function makeTable(): usize {
+  const tb = m.lastingZeroed(T_BYTES);
+  m.st(tb + T_CAP, 16);
+  m.st(tb + T_SLOTS, m.lastingZeroed(16 * 16));
+  const was = TABLE.compareExchange(0, tb as u64, "acqrel");
+  if (was !== 0) {
+    m.lastingRelease(m.ld(tb + T_SLOTS));
+    m.lastingRelease(tb);
+    return was as usize;
+  }
+  return tb;
+}
+
+/** The first slot to probe for key `f` in a table of capacity `cap` (a power of two). */
+function home(f: usize, cap: usize): usize {
+  const h = ((f as u64) >> 4).wrappingMul(0x9e3779b97f4a7c15) >> 40;
+  return (h as usize) & (cap - 1);
+}
+
+/** The slot holding key `f` (the table locked), or 0. */
+function slotOf(tb: usize, f: usize): usize {
+  const cap = m.ld(tb + T_CAP);
+  const slots = m.ld(tb + T_SLOTS);
+  let i = home(f, cap);
+  for (let n: usize = 0; n < cap; n++) {
+    const s = slots + 16 * i;
+    const k = m.ld(s);
+    if (k === f) {
+      return s;
+    }
+    if (k === 0) {
+      return 0;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+  return 0;
+}
+
+/** Leaf `f`'s record. */
+function find(f: usize): usize {
+  const tb = table();
+  m.spinLock(tb + T_LOCK);
+  const s = slotOf(tb, f);
+  const r = s !== 0 ? m.ld(s + 8) : 0;
+  m.store32(tb + T_LOCK, 0);
+  if (r === 0) {
+    panic("ICE: a shared leaf without its record");
+  }
+  return r;
+}
+
+/** Leaf `f`'s record leaves the table (its last user lets go). */
+function take(f: usize): void {
+  const tb = table();
+  m.spinLock(tb + T_LOCK);
+  const s = slotOf(tb, f);
+  if (s !== 0) {
+    m.st(s, GONE);
+    m.st(s + 8, 0);
+    m.st(tb + T_LIVE, m.ld(tb + T_LIVE) - 1);
+  }
+  m.store32(tb + T_LOCK, 0);
+  if (s === 0) {
+    panic("ICE: a shared leaf without its record");
+  }
+}
+
+/** Leaf `f`'s record `r` goes into the table. */
+function insert(f: usize, r: usize): void {
+  const tb = table();
+  m.spinLock(tb + T_LOCK);
+  if (2 * (m.ld(tb + T_USED) + 1) > m.ld(tb + T_CAP)) {
+    regrow(tb);
+  }
+  const cap = m.ld(tb + T_CAP);
+  const slots = m.ld(tb + T_SLOTS);
+  let i = home(f, cap);
+  while (m.ld(slots + 16 * i) > GONE) {
+    i = (i + 1) & (cap - 1);
+  }
+  const s = slots + 16 * i;
+  if (m.ld(s) === 0) {
+    m.st(tb + T_USED, m.ld(tb + T_USED) + 1);
+  }
+  m.st(s, f);
+  m.st(s + 8, r);
+  m.st(tb + T_LIVE, m.ld(tb + T_LIVE) + 1);
+  m.store32(tb + T_LOCK, 0);
+}
+
+/** Rebuilds the slots without tombstones, twice as many when more than a quarter are live. */
+@noInline
+function regrow(tb: usize): void {
+  const cap = m.ld(tb + T_CAP);
+  const old = m.ld(tb + T_SLOTS);
+  const live = m.ld(tb + T_LIVE);
+  const ncap = 4 * (live + 1) > cap ? 2 * cap : cap;
+  const slots = m.lastingZeroed(16 * ncap);
+  for (let i: usize = 0; i < cap; i++) {
+    const k = m.ld(old + 16 * i);
+    if (k > GONE) {
+      let j = home(k, ncap);
+      while (m.ld(slots + 16 * j) !== 0) {
+        j = (j + 1) & (ncap - 1);
+      }
+      m.st(slots + 16 * j, k);
+      m.st(slots + 16 * j + 8, m.ld(old + 16 * i + 8));
+    }
+  }
+  m.lastingRelease(old);
+  m.st(tb + T_SLOTS, slots);
+  m.st(tb + T_CAP, ncap);
+  m.st(tb + T_USED, live);
+}

@@ -1,0 +1,24 @@
+// A number literal type past 2^53 (#3183) is the double it denotes, as in TypeScript:
+// `9007199254740993` and `9007199254740992` are one value. Stored, printed (alone, in an array,
+// through `any` and in JSON), compared with `===` and with the other spelling, and added to as
+// that double; negative ones too.
+type T = 9007199254740993 | 0.5;
+type U = 9007199254740993 | "x";
+
+function main() {
+  const exact: T = 9007199254740993;
+  console.log([exact], exact as any, exact);
+  const u: U = 9007199254740993;
+  console.log(u, [u]);
+  const plain = 9007199254740993;
+  console.log(plain, exact === plain, exact === 9007199254740992, exact + 1, exact - 1);
+  console.log(JSON.stringify({ exact, u }), JSON.stringify([exact]));
+  const big: 18014398509481985 = 18014398509481985;
+  console.log(big, big === 18014398509481984, `${big}`);
+  const same: 9007199254740992 = 9007199254740993;
+  console.log(same, same * 2);
+  const neg: -9007199254740993 = -9007199254740993;
+  console.log(neg, [neg]);
+  const small: 9007199254740991 | 1 = 9007199254740991;
+  console.log(small, small + 1, small + 2);
+}

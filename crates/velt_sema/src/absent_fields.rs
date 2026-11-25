@@ -30,7 +30,6 @@ use crate::any::Dynamic;
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, Lit, TyId, TyKind, UseMode};
-use crate::visit;
 
 /// Report the `in` tests of optional fields that a stored `undefined` would answer wrongly.
 pub(crate) fn check(cx: &mut Ctx) {
@@ -44,16 +43,17 @@ pub(crate) fn check(cx: &mut Ctx) {
         .into_iter()
         .filter(|(n, _)| names.contains(n))
         .collect();
-    for i in 0..cx.defs.len() {
-        if let Some(Def::Fn(mut f)) = cx.defs[i].take() {
-            let mut w = Walk::new(cx, &names);
-            visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| w.expr(e));
+    // Read in place (a finished unit's, in a check by units, is never written).
+    let rd: &Ctx = cx;
+    for i in 0..rd.defs.len() {
+        if let Some(Def::Fn(f)) = rd.defs.get(i).and_then(|d| d.as_ref()) {
+            let mut w = Walk::new(rd, &names);
+            crate::visit_ref::exprs(&f.body.block, &mut |e: &Expr| w.expr(e));
             stores.append(&mut w.stores);
-            cx.defs[i] = Some(Def::Fn(f));
-        } else if let DefInfo::Global(g) = &cx.info[i] {
-            if let Some(mut init) = g.init.clone() {
-                let mut w = Walk::new(cx, &names);
-                visit::expr(&mut init, &mut Exprs(&mut |e: &mut Expr| w.expr(e)));
+        } else if let DefInfo::Global(g) = &rd.info[i] {
+            if let Some(init) = &g.init {
+                let mut w = Walk::new(rd, &names);
+                crate::visit_ref::exprs_in(init, &mut |e: &Expr| w.expr(e));
                 stores.append(&mut w.stores);
             }
         }
@@ -126,14 +126,6 @@ fn place_of(shown: &str) -> String {
     }
 }
 
-struct Exprs<'a>(&'a mut dyn FnMut(&mut Expr));
-
-impl visit::VisitMut for Exprs<'_> {
-    fn expr(&mut self, e: &mut Expr) {
-        (self.0)(e);
-    }
-}
-
 /// The stores of a possibly-null value into a field named in `names`, in one body.
 struct Walk<'a, 'm> {
     cx: &'a Ctx<'m>,
@@ -172,7 +164,7 @@ impl<'a, 'm> Walk<'a, 'm> {
         self.names.get(f.name.as_str()).map(String::as_str)
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::AdtLit { def, fields, .. } => {
                 for (i, v) in fields.iter().enumerate() {

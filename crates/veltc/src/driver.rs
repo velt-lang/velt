@@ -14,6 +14,7 @@ use crate::backend::Backend;
 use crate::cli::Emit;
 use velt_loader as loader;
 
+pub(crate) mod all_std;
 mod cpu_check;
 mod executable;
 mod heap_hooks;
@@ -167,6 +168,8 @@ pub struct CheckScope {
     /// std modules loaded up front (velt_loader `LoadOptions::preload`): those an earlier check
     /// of the program demanded that could not be served in the middle of it ([`sema_stage`]).
     pub preload: Vec<String>,
+    /// The program is checked for the `velt dev` JIT (`velt_sema::CheckOptions::jit`).
+    pub jit: bool,
 }
 
 /// What a successful build produced.
@@ -445,14 +448,22 @@ fn compile_to_vir_linking(
     opts: &BuildOptions,
     dest: VirFor,
 ) -> Result<vir::Program, BuildError> {
-    let scope = CheckScope {
+    let mut scope = CheckScope {
         preload: vec![],
         require_main: true,
         extra_roots: vec![],
         eager_std: false,
         units: false,
         prebuilt: dest == VirFor::Link && opts.emit == Emit::Exe,
+        jit: dest == VirFor::Jit,
     };
+    // A build by units lowers what a check by units checks (`all_std`); std's prebuilt objects
+    // are built from the whole-program check's std, so such a build compiles std with the program.
+    // A source generator's host is built apart, as a check by units builds it (`all_std`).
+    if std::env::var_os("VELT_UNITS").is_some() && !sess.generator_build {
+        scope = all_std::with_all_std(scope, opts)?;
+        scope.prebuilt = false;
+    }
     let checked = check_program(sess, opts, &scope)?;
     lower_checked(sess, opts, dest, checked)
 }

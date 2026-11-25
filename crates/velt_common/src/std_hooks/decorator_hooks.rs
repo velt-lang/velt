@@ -34,6 +34,10 @@ macro_rules! with_decorator_hooks {
             /// `@align(n)` on a struct: its values aligned to `n`, its size a multiple of it
             /// (`velt_vir` `layout.rs`).
             decorator_align => lang_intrinsics_decorators, "align", decorator;
+            /// `@modifies("w")` on std's `declare generated` functions: the parameters every
+            /// instance modifies, given their final mode where the function is declared
+            /// (`velt_sema` `decorators/modifies.rs`; #3543).
+            decorator_modifies => lang_intrinsics_decorators, "modifies", decorator;
             // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
             // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
             /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C

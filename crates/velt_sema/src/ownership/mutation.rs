@@ -24,7 +24,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
-use crate::defs::{DefInfo, FnKind};
+use crate::defs::FnKind;
 use crate::hir::{DefId, FnDef, LocalId, PassMode};
 
 use super::evidence::{self, Evidence};
@@ -348,14 +348,8 @@ fn join_group(
             continue;
         }
         changed.push(m);
-        let f = cx.fn_info_mut(m);
-        let mut it = own.into_iter();
-        if let Some(t) = f.this.as_mut() {
-            t.mode = it.next().expect("ICE: joined this");
-        }
-        for (p, j) in f.params.iter_mut().zip(it) {
-            p.mode = j;
-        }
+        // A finished unit's method keeps them beside it (`units::raised`).
+        cx.raise_modes(m, own);
     }
 }
 
@@ -420,15 +414,17 @@ fn iface_slots(cx: &Ctx) -> Vec<Group> {
 /// An interface method slot: the join over the default and every implementation. Returns
 /// whether the slot's modes changed.
 fn join_iface_slot(cx: &mut Ctx, iface: DefId, slot: usize, methods: &[DefId]) -> bool {
-    let Some(m) = cx.iface(iface).map(|i| &i.methods[slot]) else {
+    // A finished unit's slot as the app's passes raised it so far (`units::raised`).
+    let Some((mut_this, params)) = cx.slot_modes(iface, slot) else {
         return false;
     };
-    let mut join: Vec<PassMode> = std::iter::once(match m.mut_this {
+    let before: Vec<PassMode> = std::iter::once(match mut_this {
         true => PassMode::BorrowMut,
         false => PassMode::Borrow,
     })
-    .chain(m.params.iter().map(|p| p.mode))
+    .chain(params)
     .collect();
+    let mut join = before.clone();
     for &method in methods {
         let mut modes = modes_of(cx, method);
         // A generic closure implementing a generic function type (`crate::generic_fns`): its
@@ -438,23 +434,15 @@ fn join_iface_slot(cx: &mut Ctx, iface: DefId, slot: usize, methods: &[DefId]) -
         }
         join_into(&mut join, &modes);
     }
-    let DefInfo::Iface(info) = &mut cx.info[iface.0 as usize] else {
-        unreachable!("ICE: iface")
-    };
-    let m = &mut info.methods[slot];
-    let mut changed = false;
+    // The join only grows, over as many parameters as the slot has.
+    let n = before.len();
+    join.truncate(n);
+    if join == before {
+        return false;
+    }
     let this_mut = join[0] == PassMode::BorrowMut;
-    if this_mut != m.mut_this {
-        m.mut_this = this_mut;
-        changed = true;
-    }
-    for (p, j) in m.params.iter_mut().zip(&join[1..]) {
-        if p.mode != *j {
-            p.mode = *j;
-            changed = true;
-        }
-    }
-    changed
+    cx.raise_slot(iface, slot, this_mut, join[1..].to_vec());
+    true
 }
 
 #[cfg(test)]

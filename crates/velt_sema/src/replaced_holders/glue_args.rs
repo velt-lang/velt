@@ -94,6 +94,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::PtrToAddress
         | I::PtrRead
         | I::PtrWrite
+        | I::CArrived
         | I::ExportedAddress
         | I::Exit
         | I::Panic
@@ -153,6 +154,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::MayHoldPrimitive
         | I::AnyMethodCalled
         | I::AnyIsList
+        | I::AnyZeroSign
         | I::NoteStdUse
         | I::StdUsed
         | I::HoldsDynamic

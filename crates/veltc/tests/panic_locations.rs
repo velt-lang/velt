@@ -88,7 +88,7 @@ const CASES: &[(&str, i32, &str)] = &[
     (
         "panic_uncaught_std",
         1,
-        "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.velt:7:3",
+        "Uncaught IoError: ENOENT: no such file or directory, lstat 'velt-missing-file-b' at tests/golden/lang/panic_uncaught_std.velt:13:3",
     ),
     // Reported once (#1497): the task that started the promise used to report it too.
     (
@@ -135,7 +135,13 @@ fn panics_report_their_source_location() {
             let r = crate::no_window::command(&exe)
                 .output()
                 .expect("run program");
-            let stderr = String::from_utf8_lossy(&r.stderr).replace("\r\n", "\n");
+            let mut stderr = String::from_utf8_lossy(&r.stderr).replace("\r\n", "\n");
+            if cfg!(windows) {
+                // Node's fs errors name a path resolved on Windows (`lstat 'C:\work\x'`): the
+                // working directory is taken off, as the expected texts name it relative.
+                let dir = std::env::current_dir().expect("working directory");
+                stderr = stderr.replace(&format!("{}\\", dir.display()), "");
+            }
             let code = r.status.code().unwrap_or(-1);
             // Reported once: a second report (another task failing at the same time) would
             // follow the first before the process ends.

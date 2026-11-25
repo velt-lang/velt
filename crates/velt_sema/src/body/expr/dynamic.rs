@@ -64,8 +64,8 @@ impl FnCx<'_, '_> {
             (None, None) => Err(h),
             (None, Some(d)) if !self.takes_static(d, h.ty) => Err(h),
             // A lock's value is read only under its lock, and what `any` holds is read (printed,
-            // compared, written as JSON) without it.
-            (None, Some(d)) if self.cx.holds_lock(h.ty) => {
+            // compared, written as JSON) without it. A typed proxy holds none of its fields.
+            (None, Some(d)) if !self.typed_proxy_branch && self.cx.holds_lock(h.ty) => {
                 let (tn, to) = (self.cx.display(h.ty), d.name());
                 self.cx.error(
                     velt_common::Diagnostic::error(
@@ -472,6 +472,14 @@ impl FnCx<'_, '_> {
     /// A dynamic value as `exp`: checked at run time (`Intrinsic::AnyTo`).
     pub(super) fn unbox_dynamic(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
         let span = h.span;
+        // `Partial<I>` of an interface with methods: the value would be copied into a new
+        // object, where JavaScript keeps the one value (`utility_partial.rs`).
+        if let Some(iface) = self.cx.partial_target(exp) {
+            let f = self.cx.display(h.ty);
+            let d = self.cx.partial_limit_error(&f, exp, iface, span);
+            self.cx.error(d);
+            return self.error_expr(span);
+        }
         // An array of another element type becomes a view, which reads the array through `any`
         // (array_view_cast.rs).
         self.note_array_view_target(exp);

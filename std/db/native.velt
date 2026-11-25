@@ -13,6 +13,7 @@
 // `T` being built, and parameters go to the driver value by value, without JSON text in between.
 
 import { parseJsonCursor } from "velt/encoding/json/generated";
+import { readerOverCursor } from "velt/encoding/json/rows_ops";
 import { bindValues } from "velt/db/generated";
 import { RowError } from "velt/db/errors";
 import { velt_rt_db_cursor, velt_rt_db_sink } from "velt/db/rt";
@@ -27,7 +28,7 @@ import { velt_rt_db_cursor, velt_rt_db_sink } from "velt/db/rt";
 export function decodeRows<T>(cursor: u64): T[] {
   const raw = openCursor(cursor);
   try {
-    return parseJsonCursor<T[]>(raw, 0, 0);
+    return parseJsonCursor<T[]>(raw, 0, 0, readerOverCursor);
   } catch (e) {
     throw new RowError(e.message);
   }
@@ -41,7 +42,7 @@ export function decodeRows<T>(cursor: u64): T[] {
 export function decodeRow<T>(cursor: u64): T {
   const raw = openCursor(cursor);
   try {
-    return parseJsonCursor<T>(raw, 0, 0);
+    return parseJsonCursor<T>(raw, 0, 0, readerOverCursor);
   } catch (e) {
     throw new RowError(e.message);
   }

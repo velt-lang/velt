@@ -777,3 +777,60 @@ fn an_instantiation_that_does_not_reach_back_is_no_cycle() {
         .trim();
     assert!(!has(line, "class A"), "{out}");
 }
+
+#[test]
+fn an_abort_error_keeps_errors_out_of_the_set() {
+    // An `AbortError`'s cause is the string reason `abort(reason)` gave (std/task/errors.velt),
+    // not a dynamic value that could hold the error back: a program that throws one from
+    // `throwIfAborted` and reads its reason has no `Error` (nor dynamic values) on a cycle, so
+    // none of its errors pays for the collector (#3119).
+    let out = debug_out(
+        "import { AbortError } from \"velt/task\";
+         function main() {
+           const c = new AbortController();
+           c.abort(\"stop\");
+           try {
+             c.signal.throwIfAborted();
+           } catch (e) {
+             if (e instanceof AbortError) {
+               console.log(e.message, e.cause ?? \"none\");
+             }
+           }
+           console.log(c.signal.reason);
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(!has(line, "class std/prelude/errors::Error"), "{out}");
+    assert!(!has(line, "dynamic values"), "{out}");
+}
+
+#[test]
+fn a_streams_controller_keeps_closures_out_of_the_set() {
+    // The controller waits for its source's `start` and `pull` promises with an async method of
+    // its own (std/io/streams/controller.velt `settled`), not with `then` callbacks over it: those closures' environments are the type of every `() => void`
+    // and `(e: unknown) => void` in the program, and kept in the promise a source returned they
+    // reach the controller, whose pending reads hold callbacks of those types (#3119).
+    let out = debug_out(
+        "async function* letters(): AsyncGenerator<string, never> { yield \"b\"; }
+         async function main() {
+           const s = new ReadableStream<string>({
+             start: async (ctl) => { ctl.enqueue(\"a\"); },
+             pull: async (ctl) => { ctl.close(); },
+           });
+           const it = ReadableStream.from(letters());
+           const r = s.getReader();
+           console.log((await r.read()).value);
+           for await (const v of it) { console.log(v); }
+         }
+         await main();",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(!has_closures(line), "{out}");
+    assert!(!line.contains("CloseWait[]"), "{out}");
+}

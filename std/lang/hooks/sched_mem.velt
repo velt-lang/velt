@@ -4,168 +4,39 @@
 // block's size when it is freed), the C library's for the blocks that live as long as the
 // worker (which the leak counters would otherwise report), and the calls through a waker's table (rt_abi_async.md §1: clone, wake,
 // wake_by_ref, drop at offsets 0, 8, 16, 24 of the table the header's first word points to).
-// Every address passed here is one the executor allocated, or a waker header from a `cx`.
+// Every address passed here is one the executor allocated, or a waker header from a `cx`. The
+// plain helpers (pointers, the allocators, words one thread owns) are mem_raw.velt's, which code
+// that runs no task imports without this file.
 
-import { Ptr } from "velt/ffi";
 import {
   addressAtomicCas,
   addressAtomicLoad,
   addressAtomicRmw,
   addressAtomicStore,
   addressCall,
-  addressLoad,
-  addressStore,
   inline,
   noInline,
-  rawAlloc,
-  rawFree,
   stateDrop,
 } from "velt/lang/intrinsics";
+import { ld, st } from "./mem_raw";
 import * as os from "#sched-os";
 
-// Pointers are `Ptr`s, as in every other C declaration of these symbols (a program's own, velt/
-// ffi's `memcpy`): one C symbol has one signature in a program, and a pointer is `Ptr` there.
-declare c("c") function calloc$sched(n: usize, size: usize): Ptr<u8> | null;
-declare c("c") function free$sched(p: Ptr<u8> | null): void;
-declare c("c") function memcpy$sched(
-  dst: Ptr<u8> | null,
-  src: Ptr<u8> | null,
-  n: usize,
-): Ptr<u8> | null;
-declare c("c") function memset$sched(dst: Ptr<u8> | null, c: i32, n: usize): Ptr<u8> | null;
-
-/**
- * Address `a` as a C pointer argument; 0 passes `NULL` (#3094: std's own addresses, which only C
- * reads, so no check: `Ptr.at`'s would make every caller track its call site).
- */
-@inline("always")
-export function ptr(a: usize): Ptr<u8> | null {
-  // SAFETY: only passed to a C function, whose call site states what is at `a`.
-  return unsafe { Ptr.orNull<u8>(a) };
-}
-
-/** As `ptr`, a pointer to a `T` (`declare c type`, or a number type). */
-@inline("always")
-export function ptrTo<T>(a: usize): Ptr<T> | null {
-  // SAFETY: as `ptr`'s.
-  return unsafe { Ptr.orNull<T>(a) };
-}
-
-/** The address a C function returned; 0 for `NULL`. */
-@inline("always")
-export function addr(p: Ptr<u8> | null): usize {
-  return Ptr.addressOf(p);
-}
-
-/** `n` (> 0) bytes, aligned to 8 (every value's alignment); `release(p, n)` gives them back. */
-@inline("always")
-export function alloc(n: usize): usize {
-  return rawAlloc(n);
-}
-
-/** `n` (> 0) bytes set to 0, aligned to 8; `release(p, n)` gives them back. */
-@inline("always")
-export function zeroed(n: usize): usize {
-  const p = rawAlloc(n);
-  // SAFETY: `p` holds `n` bytes.
-  unsafe {
-    memset$sched(ptr(p), 0, n);
-  }
-  return p;
-}
-
-/**
- * Gives back the `n` bytes at `p`, which `alloc(n)` or `zeroed(n)` gave and nothing uses after. A
- * call, not inlined: a free is the cold end of every reference count's release, which stays
- * small enough to inline where it is hot (a task's waker wake and drop).
- */
-export function release(p: usize, n: usize): void {
-  // SAFETY: as the doc says.
-  unsafe {
-    rawFree(p, n);
-  }
-}
-
-/**
- * `n` bytes set to 0, aligned to 16, from the C library: for a block that lives as long as the
- * worker (the executor, its I/O block, reactor and handle table), freed with `lastingRelease`.
- */
-export function lastingZeroed(n: usize): usize {
-  // SAFETY: calloc has no precondition; its result is checked.
-  const p = addr(unsafe { calloc$sched(1, n) });
-  if (p === 0) {
-    panic("out of memory");
-  }
-  return p;
-}
-
-/** This thread's scratch buffer (`scratch`; 0 before its first use). */
-const SCRATCH = new ThreadLocal<u64>(0);
-
-/**
- * 64 bytes of this thread's, which live as long as the thread (from the C library, so outside
- * the block counts): the buffer of an OS call on a thread of the executor's that may still be
- * inside it when the process ends (the stall monitor's nap) or that runs while the counts are
- * taken; one caller at a time.
- */
-export function scratch(): usize {
-  let p = SCRATCH.get() as usize;
-  if (p === 0) {
-    p = lastingZeroed(64);
-    SCRATCH.set(p as u64);
-  }
-  return p;
-}
-
-/** Frees what `lastingZeroed` gave. */
-export function lastingRelease(p: usize): void {
-  // SAFETY: `p` came from calloc and is not used after.
-  unsafe {
-    free$sched(ptr(p));
-  }
-}
-
-/**
- * Copies `n` bytes from `src` to `dst` (which do not overlap). Inlined: every async call copies
- * its initial state with it (sched_node.velt `boxed`), a constant size at the call, so the copy
- * is a few moves there; a program split into codegen units keeps it so only when marked (#3097).
- */
-@inline("always")
-export function copy(dst: usize, src: usize, n: usize): void {
-  // SAFETY: both hold `n` bytes; a task's slot or state and the state lowering handed over.
-  unsafe {
-    memcpy$sched(ptr(dst), ptr(src), n);
-  }
-}
-
-/** The word at `a`, which only the worker writes. */
-@inline("always")
-export function ld(a: usize): usize {
-  // SAFETY: an executor or task field (module docs).
-  return unsafe { addressLoad<usize>(a) };
-}
-
-@inline("always")
-export function st(a: usize, v: usize): void {
-  // SAFETY: as `ld`.
-  unsafe {
-    addressStore<usize>(a, v);
-  }
-}
-
-@inline("always")
-export function ld32(a: usize): u32 {
-  // SAFETY: as `ld`.
-  return unsafe { addressLoad<u32>(a) };
-}
-
-@inline("always")
-export function st32(a: usize, v: u32): void {
-  // SAFETY: as `ld`.
-  unsafe {
-    addressStore<u32>(a, v);
-  }
-}
+export {
+  addr,
+  alloc,
+  copy,
+  lastingRelease,
+  lastingZeroed,
+  ld,
+  ld32,
+  ptr,
+  ptrTo,
+  release,
+  scratch,
+  st,
+  st32,
+  zeroed,
+} from "./mem_raw";
 
 /** The word at `a`, read atomically: other threads change it. */
 @inline("always")

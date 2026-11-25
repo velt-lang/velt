@@ -1,0 +1,14 @@
+// requires: unix
+// check: no leaks
+// check: heap blocks at most 400
+// `execSync` of a child that writes 20,000 short lines, one `write` each, reads them into one
+// buffer that grows by doubling: the heap blocks it allocates don't grow with the number of
+// reads (#3573: a buffer per read took 559 MB for these 40 KB, and over 12,000 blocks; this
+// takes about 90).
+import { execSync } from "velt/process/child";
+
+function main() {
+  const script = "i=0; while [ $i -lt 20000 ]; do echo x; i=$((i+1)); done";
+  const r = execSync("sh", ["-c", script]);
+  console.log("code", r.code, "bytes", r.stdout.length, "stderr", r.stderr.length);
+}

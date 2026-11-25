@@ -1,5 +1,9 @@
 // velt/process/child (internal): starting a child process with `posix_spawn` (macOS and Linux),
-// for the executor in Velt's child processes (std/process/child/child_sched.velt, #2649 step 4):
+// for the executor in Velt's child processes (std/process/child/child_sched.velt, #2649 step 4)
+// and `execSync` (exec_sync_posix.velt, which runs without the executor: this file uses nothing
+// of it but plain raw memory, mem_raw.velt, and loads no reactor file: its OS calls are
+// `#spawn-open`'s; the caller hands off the program's output before a child that inherits it
+// starts, child_record.velt's `startChild`):
 // the program looked up in the child's `PATH` as libuv does (spawn_lookup.velt), its arguments
 // and environment as C arrays, its working directory, its standard streams (inherited, piped, or
 // the null device) and SIGPIPE back at its default (the runtime ignores it, as Rust programs do).
@@ -8,26 +12,24 @@
 //
 // Pipes are close-on-exec from the start where the OS can (`pipe2` on Linux); on macOS, which
 // can't, every child is spawned with `POSIX_SPAWN_CLOEXEC_DEFAULT` and keeps only the descriptors
-// its file actions name (`#reactor`'s `pipeCloexec`, `SPAWN_FLAGS`, `spawnInherit`), so a pipe of
-// another child spawned at the same time never reaches it (that child would never see its stdin
-// end). The parent's end of each pipe is non-blocking, for the reactor; the child's end becomes
-// the child's descriptor 0, 1 or 2 through a `dup2` file action (which clears the flag on the
-// copy).
+// its file actions name (`#spawn-open`'s `pipeCloexec`, `SPAWN_FLAGS`, `spawnInherit`), so a
+// pipe of another child spawned at the same time never reaches it (that child would never see
+// its stdin end). The parent's end of each pipe is non-blocking, for the reactor (or `execSync`'s `poll`);
+// the child's end becomes the child's descriptor 0, 1 or 2 through a `dup2` file action (which
+// clears the flag on the copy), after moving above 2 if it is one of them (`pipeFor`).
 //
 // The opaque C types (`posix_spawnattr_t`, `posix_spawn_file_actions_t`, `sigset_t`) live in
 // zeroed blocks larger than any of these OSes needs.
 
-import { CString } from "velt/ffi/c_string";
 import { Ptr } from "velt/ffi/ptr";
-import { utf8Encode } from "velt/encoding/utf8";
-import { addressLoad, addressStore } from "velt/lang/intrinsics";
-import * as r from "#reactor";
-import { addOpen } from "#spawn-open";
+import { strBytesOf } from "velt/ffi/str_bytes";
+import { addressStore, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import * as r from "#spawn-open";
+import { addOpen, goesOn, nameError } from "#spawn-open";
 import { ENOEXEC, SCRIPT_SHELL, SHELL } from "#script-shell";
-import * as m from "velt/lang/hooks/sched_mem";
-import * as wk from "velt/lang/hooks/sched_wake";
+import * as m from "velt/lang/hooks/mem_raw";
 import { CommandSpec } from "velt/process/child/spec";
-import { candidates, environment, lines, pathOf } from "velt/process/child/spawn_lookup";
+import { absent, candidates, environment, pathOf } from "velt/process/child/spawn_lookup";
 
 // The headers' types (`velt native headers --std` checks this file:
 // crates/veltc/src/native/headers/std_check.rs); `posix_spawn_file_actions_addopen`, whose
@@ -50,7 +52,7 @@ declare c("c") function posix_spawn_file_actions_adddup2(
 ): i32;
 declare c("c") function posix_spawn_file_actions_addchdir_np(
   fa: Ptr<posix_spawn_file_actions_t> | null,
-  path: CString,
+  path: Ptr<u8> | null,
 ): i32;
 declare c("c") function posix_spawnattr_init(attr: Ptr<posix_spawnattr_t> | null): i32;
 declare c("c") function posix_spawnattr_destroy(attr: Ptr<posix_spawnattr_t> | null): i32;
@@ -71,15 +73,14 @@ declare c("c") function sigaddset(set: Ptr<sigset_t> | null, sig: i32): i32;
 // `argv` and `envp`: NULL-terminated arrays of NUL-terminated strings (`char *const []`).
 declare c("c") function posix_spawn(
   pid: Ptr<i32> | null,
-  path: CString,
+  path: Ptr<u8> | null,
   fa: Ptr<posix_spawn_file_actions_t> | null,
   attr: Ptr<posix_spawnattr_t> | null,
   argv: Ptr<Ptr<u8>> | null,
   envp: Ptr<Ptr<u8>> | null,
 ): i32;
 declare c("c") function close$child(fd: i32): i32;
-/** The address of a byte array's elements (a copy of nothing returns its destination). */
-declare c("c") function memset$bytes(dst: u8[], c: i32, n: usize): Ptr<u8>;
+declare c("c") function memchr$spawn(s: Ptr<u8> | null, c: i32, n: usize): Ptr<u8> | null;
 
 /** Room for any of these OSes' opaque spawn types and `sigset_t`. */
 const OPAQUE: usize = 512;
@@ -89,7 +90,6 @@ const SIGPIPE: i32 = 13;
 const O_RDWR: i32 = 2;
 const ENOENT: i32 = 2;
 const EACCES: i32 = 13;
-const ENOTDIR: i32 = 20;
 /** `EINVAL`: a string holding a NUL (as Rust refuses it). */
 export const EINVAL: i32 = 22;
 
@@ -103,65 +103,78 @@ export class Started {
   stderr: i32 = -1;
 }
 
-/** The address of `bytes`' first byte. */
-function bytesAt(bytes: u8[]): usize {
-  // SAFETY: a copy of nothing; `bytes` is borrowed for the call.
-  return Ptr.addressOf(unsafe { memset$bytes(bytes, 0, 0) });
-}
-
-/** `s` as a NUL-terminated copy in raw memory (released by `freeArray`), or 0 if it holds a NUL. */
-function cCopy(s: string): usize {
-  const bytes = utf8Encode(s);
-  if (bytes.includes(0)) {
+/**
+ * Copies `s`'s UTF-8 bytes (a lone surrogate as U+FFFD) to `at`: the address after them, or 0
+ * when `s` holds a NUL (which C would cut it at).
+ */
+function put(at: usize, s: string): usize {
+  const text = strBytesOf(s);
+  const n = strByteLen(text);
+  if (n === 0) {
+    return at;
+  }
+  const from = strDataAddress(text);
+  // SAFETY: `text`'s `n` bytes, alive for the call.
+  if (m.addr(unsafe { memchr$spawn(m.ptr(from), 0, n) }) !== 0) {
     return 0;
   }
-  const n = bytes.length;
-  const p = m.alloc(n + 1);
-  if (n > 0) {
-    m.copy(p, bytesAt(bytes), n);
-  }
-  // SAFETY: `p` has `n + 1` bytes.
-  unsafe {
-    addressStore<u8>(p + n, 0);
-  }
-  return p;
+  m.copy(at, from, n);
+  return at + n;
 }
 
-/** A NULL-terminated C array of copies of `items`, or 0 when one holds a NUL. */
-function cArray(items: string[]): usize {
-  const a = m.zeroed(8 * (items.length + 1));
-  for (let i: usize = 0; i < items.length; i++) {
-    const p = cCopy(items[i]);
-    if (p === 0) {
-      freeCopies(a);
-      m.release(a, 8 * (items.length + 1));
-      return 0;
+/**
+ * A NULL-terminated C array of NUL-terminated copies of `items` (with `pairs`, of each name and
+ * value of `[name, value, …]` as `name=value`), or 0 when one holds a NUL. The copies share one
+ * block, whose address and size follow the NULL (`freeArray`): two allocations, whatever the
+ * count.
+ */
+function cArray(items: string[], pairs: bool): usize {
+  const k = pairs ? items.length / 2 : items.length;
+  const count = pairs ? 2 * k : k;
+  // The NULs and the `=`s, then the strings (a lone surrogate's U+FFFD has its byte length).
+  let size: usize = count + 1;
+  for (let i: usize = 0; i < count; i++) {
+    size += strByteLen(items[i]);
+  }
+  const a = m.zeroed(8 * (k + 3));
+  const text = m.alloc(size);
+  m.st(a + 8 * (k + 1), text);
+  m.st(a + 8 * (k + 2), size);
+  let at = text;
+  for (let j: usize = 0; j < k && at !== 0; j++) {
+    m.st(a + 8 * j, at);
+    at = put(at, items[pairs ? 2 * j : j]);
+    if (pairs && at !== 0) {
+      // SAFETY: `size` counts a byte for this `=`.
+      unsafe {
+        addressStore<u8>(at, 0x3d);
+      }
+      at = put(at + 1, items[2 * j + 1]);
     }
-    m.st(a + 8 * i, p);
+    if (at !== 0) {
+      // SAFETY: `size` counts a byte for this NUL.
+      unsafe {
+        addressStore<u8>(at, 0);
+      }
+      at++;
+    }
+  }
+  if (at === 0) {
+    m.release(text, size);
+    m.release(a, 8 * (k + 3));
+    return 0;
   }
   return a;
 }
 
-/** The copies in `a` up to its first NULL, freed: how many there were. */
-function freeCopies(a: usize): usize {
-  let i: usize = 0;
-  while (m.ld(a + 8 * i) !== 0) {
-    const p = m.ld(a + 8 * i);
-    let n: usize = 0;
-    // SAFETY: a `cCopy`, NUL-terminated.
-    while (unsafe { addressLoad<u8>(p + n) } !== 0) {
-      n++;
-    }
-    m.release(p, n + 1);
-    i++;
-  }
-  return i;
-}
-
-/** Frees a `cArray`. */
+/** Frees a `cArray`: its block's address and size follow its NULL. */
 function freeArray(a: usize): void {
-  const n = freeCopies(a);
-  m.release(a, 8 * (n + 1));
+  let k: usize = 0;
+  while (m.ld(a + 8 * k) !== 0) {
+    k++;
+  }
+  m.release(m.ld(a + 8 * (k + 1)), m.ld(a + 8 * (k + 2)));
+  m.release(a, 8 * (k + 3));
 }
 
 /** Closes `fd` if it is one (not -1). */
@@ -191,20 +204,16 @@ function throughShell(
   for (const a of args) {
     argv.push(a);
   }
-  const cArgv = cArray(argv);
+  const cArgv = cArray(argv, false);
   if (cArgv === 0) {
     return EINVAL;
   }
   let rc: i32 = EINVAL;
-  try {
-    const shell = new CString(SHELL);
-    // SAFETY: as in `start`: initialized file actions and attributes, a NULL-terminated `envp`;
-    // `cArgv` is a NULL-terminated array of NUL-terminated strings, freed after.
-    unsafe {
-      rc = posix_spawn(pid, shell, fa, attr, m.ptrTo<Ptr<u8>>(cArgv), env);
-    }
-  } catch (e) {
-    // `SHELL` holds no NUL.
+  // SAFETY: as in `start`: initialized file actions and attributes, a NULL-terminated `envp`;
+  // `cArgv` is a NULL-terminated array of NUL-terminated strings, freed after, whose first is
+  // `SHELL`'s path.
+  unsafe {
+    rc = posix_spawn(pid, m.ptr(m.ld(cArgv)), fa, attr, m.ptrTo<Ptr<u8>>(cArgv), env);
   }
   freeArray(cArgv);
   return rc;
@@ -212,20 +221,37 @@ function throughShell(
 
 /**
  * Makes a pipe for the child's descriptor `target` (0 reads, 1 and 2 write) with `fa`'s `dup2`:
- * the parent's end, or -1 with `errno` set.
+ * the parent's end, or the error negated.
+ *
+ * With 0, 1 or 2 closed, pipe ends land there; the child's end moves above them (as libuv moves
+ * one below its target): on its target, `dup2` would leave it close-on-exec on macOS, and below
+ * it, another stream's file action would replace it first. The low number stays taken until the
+ * child started (closed with the child's ends, in the tail's words 3-5), as one of its own pipes.
  */
 function pipeFor(fa: usize, target: i32): i32 {
   const fds = m.zeroed(16);
   if (r.pipeCloexec(fds) !== 0) {
+    const e = r.errno();
     m.release(fds, 16);
-    return -1;
+    return -e;
   }
   const readEnd = m.ld32(fds) as i32;
   const writeEnd = m.ld32(fds + 4) as i32;
   m.release(fds, 16);
-  const child = target === 0 ? readEnd : writeEnd;
+  let child = target === 0 ? readEnd : writeEnd;
   const parent = target === 0 ? writeEnd : readEnd;
-  r.prepare(parent);
+  if (child < 3) {
+    const moved = r.dupAboveStdio(child);
+    if (moved < 0) {
+      const e = r.errno();
+      closeFd(child);
+      closeFd(parent);
+      return -e;
+    }
+    m.st32(fa + OPAQUE + 4 * (3 + target as usize), child as u32);
+    child = moved;
+  }
+  r.nonBlocking(parent);
   // SAFETY: `fa` is an initialized file-actions object.
   unsafe {
     posix_spawn_file_actions_adddup2(m.ptrTo<posix_spawn_file_actions_t>(fa), child, target);
@@ -245,55 +271,35 @@ export function start(spec: CommandSpec, modes: u32): Started {
   const out = new Started();
   const env = environment(spec);
   const paths = candidates(spec.program, pathOf(env));
-  if (((modes >> 2) & 3) === 0 || ((modes >> 4) & 3) === 0) {
-    // The child's output comes after what this program printed before starting it.
-    wk.handOffOutput();
-  }
   const argv: string[] = [spec.program];
   for (const a of spec.args) {
     argv.push(a);
   }
-  const cArgv = cArray(argv);
+  const cArgv = cArray(argv, false);
   // Always a copy, made under velt/process' environment lock (`envPairs`, std/process/
   // env_posix.velt): C's own `environ` may be reallocated by another worker's `setEnv` while
   // `posix_spawn` reads it.
-  const cEnv = cArray(lines(env));
-  const files: CString[] = [];
-  let devNull: CString | null = null;
-  let cwd: CString | null = null;
-  try {
-    devNull = new CString("/dev/null");
-    for (const p of paths) {
-      files.push(new CString(p));
-    }
-    if (spec.cwd != "") {
-      cwd = new CString(spec.cwd);
-    }
-  } catch (e) {
-    out.error = EINVAL;
-  }
+  const cEnv = cArray(env, true);
+  const cFiles = cArray(paths, false);
+  // The null device's path, then the working directory's ("": the parent's).
+  const cDirs = cArray(["/dev/null", spec.cwd], false);
   // A NUL in any of them (the cwd too: without it the child would run in this directory).
-  if (
-    cArgv === 0 ||
-    cEnv === 0 ||
-    files.length < paths.length ||
-    devNull == null ||
-    (spec.cwd != "" && cwd == null)
-  ) {
-    if (cArgv !== 0) {
-      freeArray(cArgv);
-    }
-    if (cEnv !== 0) {
-      freeArray(cEnv);
+  if (cArgv === 0 || cEnv === 0 || cFiles === 0 || cDirs === 0) {
+    for (const a of [cArgv, cEnv, cFiles, cDirs]) {
+      if (a !== 0) {
+        freeArray(a);
+      }
     }
     out.error = EINVAL;
     return out;
   }
-  const fa = m.zeroed(OPAQUE + 16);
+  const devNull = m.ld(cDirs);
+  const cwd = spec.cwd != "" ? m.ld(cDirs + 8) : 0;
+  const fa = m.zeroed(OPAQUE + 32);
   const attr = m.zeroed(OPAQUE);
   const set = m.zeroed(OPAQUE);
-  // Each child end -1 until a pipe makes one.
-  for (let i: usize = 0; i < 3; i++) {
+  // Each child end, and each low number one left (`pipeFor`), -1 until a pipe makes one.
+  for (let i: usize = 0; i < 6; i++) {
     m.st32(fa + OPAQUE + 4 * i, 0xffffffff);
   }
   // SAFETY: zeroed blocks larger than each opaque type, initialized before use and destroyed
@@ -317,7 +323,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
     if (mode === 1) {
       const parent = pipeFor(fa, i);
       if (parent < 0) {
-        out.error = r.errno();
+        out.error = -parent;
         failed = true;
         break;
       }
@@ -329,15 +335,24 @@ export function start(spec: CommandSpec, modes: u32): Started {
         out.stderr = parent;
       }
     } else if (mode === 2) {
-      addOpen(fa, i, devNull!, O_RDWR, 0);
-    } else {
+      addOpen(fa, i, devNull, O_RDWR, 0);
+    }
+  }
+  // Inherited streams, after the pipes: the program's descriptor (close-on-exec too, as from
+  // Node), not one of this child's own pipe ends on the free number (it gets that one closed).
+  for (let i: i32 = 0; i < 3 && !failed; i++) {
+    let own = i === out.stdin || i === out.stdout || i === out.stderr;
+    for (let j: usize = 3; j < 6; j++) {
+      own = own || i === (m.ld32(fa + OPAQUE + 4 * j) as i32);
+    }
+    if (((modes >> (2 * (i as u32))) & 3) === 0 && !own) {
       r.spawnInherit(fa, i);
     }
   }
-  if (!failed && cwd != null) {
+  if (!failed && cwd !== 0) {
     // SAFETY: as above.
     unsafe {
-      posix_spawn_file_actions_addchdir_np(m.ptrTo<posix_spawn_file_actions_t>(fa), cwd);
+      posix_spawn_file_actions_addchdir_np(m.ptrTo<posix_spawn_file_actions_t>(fa), m.ptr(cwd));
     }
   }
   if (!failed) {
@@ -347,22 +362,33 @@ export function start(spec: CommandSpec, modes: u32): Started {
     const attrAt = m.ptrTo<posix_spawnattr_t>(attr);
     const argvAt = m.ptrTo<Ptr<u8>>(cArgv);
     const envAt = m.ptrTo<Ptr<u8>>(cEnv);
-    // Each candidate in turn, as libuv: the next one after ENOENT, ENOTDIR or EACCES (a
-    // directory of that name, a file that isn't executable), EACCES at the end if one gave it.
-    // A relative candidate resolves in the child's working directory, after the chdir.
+    // Each candidate in turn, as Node's lookup on this OS (`#spawn-open`'s `goesOn`): the next
+    // one after ENOENT, ENOTDIR or EACCES (a directory of that name, a file that isn't
+    // executable) and the OS's other such errors, EACCES at the end if one gave it. A relative
+    // candidate resolves in the child's working directory, after the chdir. A name too long to
+    // look up fails first.
     let rc: i32 = ENOENT;
     let denied = false;
     // The candidate tried last.
     let at: usize = 0;
-    for (const file of files) {
-      // SAFETY: as above; `pid` has room for a `pid_t`.
-      unsafe {
-        rc = posix_spawn(pidAt, file, faAt, attrAt, argvAt, envAt);
+    const named = spec.program.includes("/") ? 0 : nameError(strByteLen(spec.program));
+    if (named !== 0) {
+      rc = named;
+      at = paths.length;
+    }
+    while (at < paths.length) {
+      const file = m.ld(cFiles + 8 * at);
+      rc = absent(paths[at], file);
+      if (rc === 0) {
+        // SAFETY: as above; `pid` has room for a `pid_t`.
+        unsafe {
+          rc = posix_spawn(pidAt, m.ptr(file), faAt, attrAt, argvAt, envAt);
+        }
       }
       if (rc === EACCES) {
         denied = true;
       }
-      if (rc !== ENOENT && rc !== ENOTDIR && rc !== EACCES) {
+      if (!goesOn(rc)) {
         break;
       }
       at++;
@@ -372,7 +398,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
       // `/bin/sh` (glibc's `execvp`, which Node follows there): `/bin/sh <file> <args…>`.
       rc = throughShell(pidAt, paths[at], spec.args, faAt, attrAt, envAt);
     }
-    if (rc !== 0 && denied && (rc === ENOENT || rc === ENOTDIR)) {
+    if (rc !== 0 && denied && goesOn(rc)) {
       rc = EACCES;
     }
     if (rc === 0) {
@@ -382,7 +408,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
     }
     m.release(pid, 16);
   }
-  for (let i: usize = 0; i < 3; i++) {
+  for (let i: usize = 0; i < 6; i++) {
     closeFd(m.ld32(fa + OPAQUE + 4 * i) as i32);
   }
   if (out.pid === 0) {
@@ -398,10 +424,12 @@ export function start(spec: CommandSpec, modes: u32): Started {
     posix_spawn_file_actions_destroy(m.ptrTo<posix_spawn_file_actions_t>(fa));
     posix_spawnattr_destroy(m.ptrTo<posix_spawnattr_t>(attr));
   }
-  m.release(fa, OPAQUE + 16);
+  m.release(fa, OPAQUE + 32);
   m.release(attr, OPAQUE);
   m.release(set, OPAQUE);
   freeArray(cArgv);
   freeArray(cEnv);
+  freeArray(cFiles);
+  freeArray(cDirs);
   return out;
 }

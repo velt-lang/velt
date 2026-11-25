@@ -1,0 +1,60 @@
+// check: no leaks
+// A function behind `object` or `any` viewed as a `Record<string, any>` (#3507): as in Node,
+// where a function is an object, it has no own keys until a program writes some, the view is
+// the function (`===`), two conversions are one view, and properties written through the
+// function or the view are seen through the other. The Node twin is record_view_function.mjs.
+function hello(): number {
+  return 1;
+}
+
+function makeThis(n: number): any {
+  return function (this: any): number {
+    return n;
+  };
+}
+
+function counter(start: number): () => number {
+  let n = start;
+  return () => {
+    n++;
+    return n;
+  };
+}
+
+function main(): void {
+  const f: object = hello;
+  const r = f as Record<string, any>;
+  const r2 = f as Record<string, any>;
+  console.log(`declared: keys ${Object.keys(r).length} same ${r === (f as any)} twice ${r === r2}`);
+  const g: any = () => 2;
+  const gr = g as Record<string, any>;
+  console.log(`closure: keys ${Object.keys(gr).length} same ${gr === g}`);
+  g.tag = "x";
+  console.log(`written through the function: ${gr["tag"]} keys ${Object.keys(gr).join(",")}`);
+  gr["k"] = 5;
+  console.log(`written through the view: ${g.k} ${"k" in gr}`);
+  console.log(`still callable: ${g()}`);
+  const h1: any = hello;
+  const h2: any = hello;
+  console.log(`two boxings: ${(h1 as Record<string, any>) === (h2 as Record<string, any>)}`);
+  const c: any = counter(3);
+  const c1 = c as Record<string, any>;
+  const c2 = c as Record<string, any>;
+  console.log(`closure with captures: ${c1 === c2} ${c1 === c}`);
+  const t1 = makeThis(1);
+  const t2 = makeThis(2);
+  const tr1 = t1 as Record<string, any>;
+  const tr2 = t2 as Record<string, any>;
+  console.log(`this functions: ${tr1 === tr2} ${tr2 === t2} ${tr1 === (t1 as Record<string, any>)}`);
+  const xs = [1, 2, 3];
+  const mapFn: any = Reflect.get(xs, "map");
+  const popFn: any = Reflect.get(xs, "pop");
+  const rm = mapFn as Record<string, any>;
+  const rp = popFn as Record<string, any>;
+  console.log(`array methods: ${rm === rp} ${rm === mapFn}`);
+  const ga: unknown = <T>(x: T): T => x;
+  const gb: unknown = <T>(x: T): T[] => [x];
+  console.log(`generic closures: ${(ga as Record<string, any>) === (gb as Record<string, any>)}`);
+}
+
+main();

@@ -189,9 +189,50 @@ impl FnLower<'_, '_> {
             _ => ice("a C struct result without a place"),
         };
         let s = self.cx.type_name(st);
-        self.stop_on_null(&place, st, (&s, Some(link)), "");
+        self.stop_on_null(
+            &place,
+            st,
+            (&s, super::ptr_memory::Arrived::Returned(link)),
+            "",
+        );
         let out = self.temp(ret_vt);
         self.assign(Place::local(out), Rvalue::Use(Operand::Copy(place)));
+        Operand::Copy(Place::local(out))
+    }
+
+    /// A `Ref<S>` argument `a` (`Ref<S> | null` if `nullable`, #2187): the address of a copy of
+    /// the struct, borrowed for the call, so nothing C does reaches the caller's value; 0 for
+    /// `null`.
+    pub(super) fn ref_arg(&mut self, a: &hir::Expr, nullable: bool) -> Operand {
+        let t = self.sub(a.ty);
+        let v = self.expr(a);
+        if !nullable {
+            let vt = self.cx.ty(t);
+            let copy = self.temp(vt);
+            self.assign(Place::local(copy), Rvalue::Use(v));
+            return self.addr(Place::local(copy));
+        }
+        let hir::TyKind::Option(inner, _) = self.cx.kind(t) else {
+            ice("a `Ref<S> | null` that isn't an option")
+        };
+        let ot = self.cx.ty(t);
+        let opt = self.operand_place(v, ot);
+        let present = self.option_is_some(&opt, t);
+        let out = self.temp(Ty::Ptr);
+        let (some, none, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(present, some, none);
+        self.switch_to(some);
+        let payload = self.some_payload(&opt, t);
+        let it = self.cx.ty(inner);
+        let copy = self.temp(it);
+        self.assign(Place::local(copy), Rvalue::Use(Operand::Copy(payload)));
+        let at = self.addr(Place::local(copy));
+        self.assign(Place::local(out), Rvalue::Use(at));
+        self.goto(join);
+        self.switch_to(none);
+        self.assign(Place::local(out), Rvalue::Use(super::cint(0, Ty::Ptr)));
+        self.goto(join);
+        self.switch_to(join);
         Operand::Copy(Place::local(out))
     }
 

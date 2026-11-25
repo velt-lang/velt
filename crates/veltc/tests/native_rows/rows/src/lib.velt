@@ -4,6 +4,8 @@ import { bindParams, decodeRow, decodeRows } from "velt/db";
 
 declare function velt_rows__cursor(n: u32, single: bool): u64;
 declare function velt_rows__close(cursor: u64): u32;
+declare function velt_rows__mixed(n: u32, single: bool): u64;
+declare function velt_rows__close_mixed(cursor: u64): u32;
 declare function velt_rows__sink(): u64;
 declare function velt_rows__taken(sink: u64): string;
 
@@ -25,6 +27,46 @@ export function one<T>(): T {
   } finally {
     velt_rows__close(cursor);
   }
+}
+
+/** The `n` rows of a cursor of the other cell kinds as `T`s. */
+export function mixed<T>(n: u32): T[] {
+  const cursor = velt_rows__mixed(n, false);
+  try {
+    return decodeRows<T>(cursor);
+  } finally {
+    velt_rows__close_mixed(cursor);
+  }
+}
+
+/** The row of a one-row cursor of the other cell kinds as a `T`. */
+export function mixedOne<T>(): T {
+  const cursor = velt_rows__mixed(1, true);
+  try {
+    return decodeRow<T>(cursor);
+  } finally {
+    velt_rows__close_mixed(cursor);
+  }
+}
+
+/**
+ * The `n` rows of a cursor read as one value `T` (an array type, or a union of whole results,
+ * which reads the rows again: they are copied out of the cursor first).
+ */
+export function whole<T>(n: u32): T {
+  const cursor = velt_rows__cursor(n, false);
+  try {
+    return decodeRow<T>(cursor);
+  } finally {
+    velt_rows__close(cursor);
+  }
+}
+
+/** The rows a cursor of `n` rows stepped over when given back after `decodeRows<T>`. */
+export function stepped<T>(n: u32): u32 {
+  const cursor = velt_rows__cursor(n, false);
+  decodeRows<T>(cursor);
+  return velt_rows__close(cursor);
 }
 
 /** What a sink was handed for `params`, or "json: <text>" when they went as JSON. */

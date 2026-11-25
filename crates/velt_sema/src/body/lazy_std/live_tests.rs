@@ -226,6 +226,8 @@ fn a_program_with_every_construct_keeps_them_all() {
             c.name()
         );
     }
+    // A build that isn't for `velt dev` counts no `Mutex` (`CheckOptions::jit`).
+    assert_eq!(present & Construct::MutexHeld.bit(), 0, "{present:#b}");
 }
 
 #[test]

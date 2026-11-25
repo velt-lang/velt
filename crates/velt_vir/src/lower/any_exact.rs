@@ -6,7 +6,7 @@ use velt_sema::hir::{self, TyId, TyKind};
 
 use super::glue::VtableKey;
 use super::operand::proj;
-use super::FnLower;
+use super::{cint, FnLower};
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
@@ -23,6 +23,74 @@ impl FnLower<'_, '_> {
         let imp = self.cx.hir.any_impl.unwrap_or(0);
         let want = self.vtable_addr(VtableKey::Impl(imp, list));
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc, want))
+    }
+
+    /// `AnyZeroSign(a)`: `1` when `a` holds a `0`, `-1` for a `-0`, `0` for anything else. A
+    /// `number` (`f64`) is read in place after one compare of the descriptor and tested by its
+    /// bits (a `0` has none set, a `-0` only the sign bit), so a zero's sign is two compares;
+    /// another number type (an `f32`, an `i32`, tag `number`) goes through its descriptor's
+    /// number slot.
+    pub(super) fn any_zero_sign(&mut self, a: &hir::Expr) -> Operand {
+        let t = self.sub(a.ty);
+        let v = self.expr(a);
+        if self.dead() {
+            return cint(0, Ty::I32);
+        }
+        let (data, desc) = self.any_parts(v, t);
+        let out = Place::local(self.temp(Ty::I32));
+        self.assign(out.clone(), Rvalue::Use(cint(0, Ty::I32)));
+        let f64_ = self.cx.intern(TyKind::Float(hir::FloatTy::F64));
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let want = self.vtable_addr(VtableKey::Impl(imp, f64_));
+        let is_f64 = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), want));
+        let (num, other, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(is_f64, num, other);
+        self.switch_to(num);
+        let d = self.copy_to_temp(data.clone(), Ty::Ptr);
+        let vp = self.any_value_place(d, f64_);
+        self.zero_sign_into(Operand::Copy(vp), &out, done);
+        self.switch_to(other);
+        let tag = self.any_tag_of(desc.clone());
+        let numt = cint(super::any::TAG_NUMBER as i128, Ty::U64);
+        let is_num = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, numt));
+        let slow = self.new_block();
+        self.branch(is_num, slow, done);
+        self.switch_to(slow);
+        let x = self.any_slot_call(desc, super::any::SLOT_NUMBER, vec![data], Ty::F64);
+        self.zero_sign_into(x, &out, done);
+        self.switch_to(done);
+        Operand::Copy(out)
+    }
+
+    /// `out` = the zero sign of the `f64` `x` (`1`, `-1` or left `0`), on to `done`. The bits
+    /// without the sign bit are tested first, so one compare rules out every number but a zero;
+    /// a second then tells `0` (no bit set) from `-0` (the sign bit).
+    fn zero_sign_into(&mut self, x: Operand, out: &Place, done: crate::vir::BlockId) {
+        let bits = self.float_bits(x, Ty::F64);
+        let bits = Place::local(self.copy_to_temp(bits, Ty::U64));
+        let magnitude = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Shl, Operand::Copy(bits.clone()), cint(1, Ty::U64)),
+        );
+        let zero = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, magnitude, cint(0, Ty::U64)),
+        );
+        let is_zero = self.new_block();
+        self.branch(zero, is_zero, done);
+        self.switch_to(is_zero);
+        let pos = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(bits), cint(0, Ty::U64)),
+        );
+        let (p, n) = (self.new_block(), self.new_block());
+        self.branch(pos, p, n);
+        self.switch_to(p);
+        self.assign(out.clone(), Rvalue::Use(cint(1, Ty::I32)));
+        self.goto(done);
+        self.switch_to(n);
+        self.assign(out.clone(), Rvalue::Use(cint(-1, Ty::I32)));
+        self.goto(done);
     }
 
     /// `AnyToExact(a)` of type `ty` (an option of a function type): a new reference to the
