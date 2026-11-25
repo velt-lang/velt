@@ -198,6 +198,10 @@ fn add_slots(cx: &mut Ctx, origin: DefId, keys: &[String], frozen: &[DefId], o: 
             }
             slots.insert(a.slot_key.clone(), entries.len() as u32);
             entries.push(def);
+            if a.fill.is_some() {
+                let fill = (c, a.slot_key.clone());
+                cx.unit_sums.raised.added_fills.insert(fill);
+            }
         }
         cx.unit_sums.raised.vtables.insert(c, (entries, slots));
     }
