@@ -84,8 +84,11 @@ function dotFast(x: f16[], y: f16[], z: f16[]): u64 {
 function main() {
   const names = ["axpy", "axpy_fast", "act", "act_fast", "dot", "dot_fast"];
   const kernels = [axpy, axpyFast, act, actFast, dot, dotFast];
-  const found = process.argv.length == 4 ? names.indexOf(process.argv[2]) : -1;
-  const count = process.argv.length == 4 ? Number(process.argv[3]) : -1;
+  // Without arguments: dot 10, so bench/compiler_ab.sh measures a run.
+  const none = process.argv.length == 2;
+  const found =
+    none ? names.indexOf("dot") : process.argv.length == 4 ? names.indexOf(process.argv[2]) : -1;
+  const count = none ? 10 : process.argv.length == 4 ? Number(process.argv[3]) : -1;
   if (found < 0 || !Number.isInteger(count) || count < 0) {
     console.error(`usage: half_arith.velt <${names.join("|")}> <passes>`);
     process.exit(2);

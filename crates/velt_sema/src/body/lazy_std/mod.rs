@@ -459,6 +459,7 @@ pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_yield),
     velt_common::std_hook!(sched_yield_fut),
     velt_common::std_hook!(sched_yield_ready),
+    velt_common::std_hook!(sched_yield_drop),
     velt_common::std_hook!(sched_finish),
     velt_common::std_hook!(sched_box),
     velt_common::std_hook!(sched_start),

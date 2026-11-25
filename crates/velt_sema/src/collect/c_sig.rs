@@ -16,7 +16,7 @@ use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
 const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
                        `Ptr<T>` and `Ptr<T> | null` (velt/ffi), a `@repr(\"transparent\")` struct of \
                        one of them, and for a parameter `null`, \
-                       `StrBytes`, `CString`, `Out<T>` of a number, `bool`, `Ptr<T> | null` or a C struct (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
+                       `StrBytes`, `CString`, `Out<T>` of a number, `bool`, `Ptr<T> | null` or a C struct (velt/ffi), arrays of numbers (`u8[]`, `readonly f64[]`) and arrays of C structs (`readonly S[]`, `S[]`)";
 
 /// The module of std's `StrBytes` (std/ffi/str_bytes.velt).
 const STR_BYTES_MODULE: &str = velt_common::std_module!(ffi_str_bytes);
@@ -206,6 +206,26 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
                 readonly: super::sigs::written_readonly(&p.ty),
             };
         }
+        // An array of C structs (#2187): its elements are inline at C's layout, so its first
+        // element's address is a `const S *` (`readonly S[]`) or an `S *` C writes.
+        &TyKind::Array(e) if cx.is_c_struct_ty(e) => {
+            let readonly = super::c_ref::written_readonly_array(cx, module, &p.ty);
+            if let Some(why) = (!readonly).then(|| c_unwritable(cx, e, 0)).flatten() {
+                let shown = cx.display(e);
+                cx.error(
+                    Diagnostic::error(
+                        format!(
+                            "parameter `{}` of C function `{name}` is an array of `{shown}` C may write, and `{shown}` has {why}",
+                            p.name.name
+                        ),
+                        p.ty.span,
+                    )
+                    .with_note("an array C only reads is `readonly S[]` (`const S *`), written so at the parameter or in a type alias of it; C writing these fields would forge a Velt value"),
+                );
+                return CTy::Void;
+            }
+            return CTy::Buf { readonly };
+        }
         _ => {}
     }
     let shown = cx.display(ty);
@@ -384,6 +404,27 @@ pub(super) fn path_item(cx: &Ctx, module: usize, path: &[ast::Ident]) -> Option<
         }
         _ => None,
     }
+}
+
+/// Why C may not write C struct `s` in place (an element of an `S[]` C writes), `depth` structs
+/// deep: a `bool` field, which C could write as another byte, or a non-null pointer field, which C
+/// could write `NULL` into. `None` when every field takes any bits C writes.
+fn c_unwritable(cx: &Ctx, s: TyId, depth: u32) -> Option<String> {
+    let TyKind::Adt(d, _) = cx.ty.kind(s) else {
+        return None;
+    };
+    let fields: Vec<(String, TyId)> = (cx.adt(*d)?.fields.iter())
+        .map(|f| (f.name.clone(), f.declared))
+        .collect();
+    fields.into_iter().find_map(|(name, t)| match cx.ty.kind(t) {
+        TyKind::Bool => Some(format!("a `bool` field (`{name}`)")),
+        _ if is_c_ptr(cx, t) => Some(format!(
+            "a non-null pointer field (`{name}`), which C could write `NULL` into: declare it `Ptr<T> | null`"
+        )),
+        _ if depth < 32 && cx.is_c_struct_ty(t) => c_unwritable(cx, t, depth + 1)
+            .map(|why| format!("{why} in its field `{name}`")),
+        _ => None,
+    })
 }
 
 /// Is `ty` a number type an array of which C reads as a C array (integers, `f32`, `f64`)?
