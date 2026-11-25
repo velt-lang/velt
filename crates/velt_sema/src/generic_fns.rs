@@ -508,6 +508,14 @@ impl Ctx<'_> {
             }
             None => vec![],
         };
+        // A check by units: std's unit keeps its traps' variables, also in the app's rounds
+        // without variables, where a whole-program check has the types its seeds give the
+        // traps' sites (`throws::traps`).
+        let app = self.units_stage == crate::units::Stage::App;
+        let e = match app && !self.fn_sites.use_vars {
+            true => self.plain_seeded(e),
+            false => e,
+        };
         let (unit, never) = (self.ty.unit, self.ty.never);
         let extra: Vec<TyId> = (self.error_members(e).into_iter())
             .filter(|m| *m != unit && *m != never && !have.contains(m))

@@ -140,6 +140,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
     let mut checked: FxHashSet<(TyId, Span, Need)> = FxHashSet::default();
     // The types and spans a C pointer rule was reported at (`no_ptr`).
     let mut ptr_reported: FxHashSet<(TyId, Span)> = FxHashSet::default();
+    let reported = cx.diags.len();
     while let Some(i) = rounds.pop() {
         let (f, u) = &uses[i];
         work += u.size();
@@ -192,10 +193,22 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
             rounds.changed(*f);
         }
     }
+    // In source order: the round that finds a requirement depends on how the functions are
+    // numbered, which a check by units (std's needs from its summary) does differently.
+    sort_by_span(&mut cx.diags[reported..]);
     add_work(Pass::Json, work);
     if cx.units_stage == crate::units::Stage::Std {
         cx.unit_sums.json_needs = JsonNeeds(needs);
     }
+}
+
+/// `diags` in the order of their primary spans (a stable sort: one span's keep theirs).
+fn sort_by_span(diags: &mut [Diagnostic]) {
+    diags.sort_by_key(|d| {
+        d.labels
+            .first()
+            .map(|l| (l.span.file.0, l.span.lo, l.span.hi))
+    });
 }
 
 /// The types a function needs: those it gives the JSON intrinsics, those of the generic

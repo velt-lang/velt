@@ -402,6 +402,121 @@ fn a_proxy_trap_s_errors_reach_the_program_as_in_a_whole_program_check() {
     }
 }
 
+/// A property written on an `any` may run a proxy's `set` trap, so an async function that writes
+/// one rejects with std's trap variables in its promise's error type. In the app's rounds
+/// without variables, those are the only variables left (std's unit keeps them,
+/// `throws::traps`), and such a promise converts as written: where the program's traps throw
+/// nothing, it is a `Promise<number>` that never rejects, as in a whole-program check.
+#[test]
+fn a_promise_rejecting_with_std_s_trap_variables_converts_as_in_a_whole_program_check() {
+    let src = "async function put(p: any, n: number): Promise<number> {\n  p.g = n;\n  return n;\n}\n\nasync function main() {\n  const p: Promise<number> = put({} as any, 1);\n  const ps: Promise<number>[] = [spawn(put({} as any, 2))];\n  console.log(await p, ps.length);\n}\n";
+    let whole = check_in(None, src);
+    let two = check_in(Some("2"), src);
+    assert!(
+        whole.status.success(),
+        "{}",
+        String::from_utf8_lossy(&whole.stderr)
+    );
+    assert!(
+        two.status.success(),
+        "{}",
+        String::from_utf8_lossy(&two.stderr)
+    );
+    // A wrong program is refused alike.
+    let bad = src.replace(
+        "console.log(await p, ps.length);",
+        "const s: string = await p;\n  console.log(s);",
+    );
+    let (whole, two) = (check_in(None, &bad), check_in(Some("2"), &bad));
+    assert!(!whole.status.success(), "{bad}");
+    assert_eq!(error_lines(&whole), error_lines(&two), "{bad}");
+    let path = "lang/any_function_properties_life.velt";
+    let (whole, two) = (check_golden_two(path, false), check_golden_two(path, true));
+    assert_eq!(whole.status.code(), two.status.code(), "{path}");
+    assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+}
+
+/// The app's collection makes its intersections as a whole program's does: std's collection
+/// left the made interfaces flattened, so an intersection with an app interface
+/// (`Base<T> & { … }`) was filled before `Base`'s methods were in it, and its values no longer
+/// converted to the same intersection written at concrete arguments.
+#[test]
+fn an_app_intersection_waits_for_the_app_s_interfaces_to_be_flattened() {
+    let path = "lang/union_view_assigned.velt";
+    let (whole, two) = (check_golden_two(path, false), check_golden_two(path, true));
+    assert!(
+        whole.status.success(),
+        "{}",
+        String::from_utf8_lossy(&whole.stderr)
+    );
+    assert_eq!(
+        whole.status.code(),
+        two.status.code(),
+        "{}",
+        String::from_utf8_lossy(&two.stderr)
+    );
+    assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+}
+
+/// A closure stored into a generic function type throws std's trap variables in the app's
+/// rounds without variables (std's unit keeps them, `throws::traps`): the errors stored into
+/// the type (`add_generic_errors`) and those checked against its method's (`throws::checks`)
+/// are what this round's seeds give the traps' sites, as in a whole-program check.
+#[test]
+fn a_closure_stored_into_a_generic_function_type_throws_what_the_seeds_give_std_s_traps() {
+    let src = "type Len = <K extends string>(name: K) => number;\n\nfunction lengths(f: Len): void {\n  console.log(f(\"abc\"));\n}\n\nfunction main(): void {\n  lengths(<K2 extends string>(name: K2): number => name.length);\n  lengths((name) => name.length + 1);\n}\n";
+    let whole = check_in(None, src);
+    let two = check_in(Some("2"), src);
+    assert!(
+        whole.status.success(),
+        "{}",
+        String::from_utf8_lossy(&whole.stderr)
+    );
+    assert!(
+        two.status.success(),
+        "{}",
+        String::from_utf8_lossy(&two.stderr)
+    );
+    let path = "lang/generic_fn_values_forms.velt";
+    let (whole, two) = (check_golden_two(path, false), check_golden_two(path, true));
+    assert_eq!(whole.status.code(), two.status.code(), "{path}");
+    assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+}
+
+/// The json pass's reports (a C pointer or a lock reaching generic code through a type
+/// parameter) come in source order: which round of its fixed point finds a requirement depends
+/// on how the functions are numbered, and std's needs come from its summary in a check by
+/// units. The same errors in the same order, as in a whole-program check.
+#[test]
+fn the_json_pass_reports_in_the_same_order_as_a_whole_program_check() {
+    let path = "lang/errors/c_pointer_rules/main.velt";
+    let (whole, two) = (check_golden_two(path, false), check_golden_two(path, true));
+    assert!(!whole.status.success());
+    assert_eq!(whole.status.code(), two.status.code(), "{path}");
+    assert_eq!(error_lines(&whole), error_lines(&two), "{path}");
+}
+
+/// A bad `Record` key that a program's generic function brings in through std's (`dec<K>`
+/// parsing a `Record<K, i64>`) is reported with that function named, whichever origin the
+/// fixed point meets first: the order differs in a check by units, where std's functions are
+/// numbered first.
+#[test]
+fn a_bad_record_key_names_the_program_s_function_as_in_a_whole_program_check() {
+    let path = "lang/errors/record_key_errors.velt";
+    let (whole, two) = (check_golden_two(path, false), check_golden_two(path, true));
+    let text = |o: &std::process::Output| String::from_utf8_lossy(&o.stderr).to_string();
+    let lines = |o: &std::process::Output| {
+        text(o)
+            .lines()
+            .filter(|l| !l.starts_with("velt-units"))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert!(text(&whole).contains("required because `dec` uses it as a `Record` key"));
+    assert_eq!(whole.status.code(), two.status.code(), "{path}");
+    assert_eq!(lines(&whole), lines(&two), "{path}");
+}
+
 /// Questions about the whole program are answered from the std code it has
 /// (`lazy_std::units_live_set`), not from all of std's unit: whether it reads a `shared` value
 /// (`units::app_reads_shared`; a `read` callback passing the store's object to a function value

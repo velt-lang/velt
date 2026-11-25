@@ -17,6 +17,10 @@ impl FnCx<'_, '_> {
     ) -> Result<hir::Expr, hir::Expr> {
         // A check by units: std's unit keeps the variables its traps had in std's check, also
         // in the app's rounds without variables, where a check of the whole program has none.
+        // Those are the only variables the app's rounds without variables have, so they convert
+        // as for the traps.
+        let app = self.cx.units_stage == crate::units::Stage::App;
+        let traps = traps || (app && !self.cx.fn_sites.use_vars);
         let vars = self.cx.fn_sites.use_vars || (traps && self.cx.units);
         if !vars || !(self.cx.mentions_err_var(h.ty) || self.cx.mentions_err_var(exp)) {
             return Err(h);

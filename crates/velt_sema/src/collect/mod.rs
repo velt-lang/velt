@@ -180,6 +180,10 @@ fn collect_added_in(cx: &mut Ctx, ms: &[usize], unit: Option<bool>) -> Added {
     let app = unit == Some(false);
     if app {
         cx.bodies_ok = false;
+        // An intersection or `Pick` the app's signatures make waits for the app's interfaces
+        // to be flattened, as in a whole program's collection: std's left them flattened, so it
+        // would be filled from an interface whose inherited members aren't in it yet.
+        cx.unflatten_synth_ifaces();
     }
     declare::declare_added(cx, ms, &mut items);
     // A utility type in a field type asks for fields while shapes are being resolved.
