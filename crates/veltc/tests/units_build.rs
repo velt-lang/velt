@@ -88,3 +88,32 @@ fn a_run_by_units_runs_a_json_program() {
     );
     assert_eq!(String::from_utf8_lossy(&ran.stdout), PRINTS);
 }
+
+/// A build by units for Windows lowers no std code a Windows program can't link: it loads every
+/// std file but the import map's unselected variants, and the POSIX-only signal hook
+/// (`#sched-signal-hook`, whose `@export`ed handler calls C `write`) is one there. Checked
+/// through the VIR, so it runs on any OS.
+#[test]
+fn a_build_by_units_for_windows_lowers_no_posix_only_std_code() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.velt"), PROGRAM).unwrap();
+    let args = [
+        "build",
+        "main.velt",
+        "--target",
+        "x86_64-pc-windows-msvc",
+        "--emit",
+        "vir",
+    ];
+    let built = velt_by_units(dir.path(), &args);
+    let stderr = String::from_utf8_lossy(&built.stderr);
+    assert!(built.status.success(), "{stderr}");
+    assert!(checked_by_units(&stderr), "not checked by units:\n{stderr}");
+    let vir = String::from_utf8_lossy(&built.stdout);
+    for name in ["sched_signal", "sched__signal"] {
+        assert!(
+            !vir.contains(name),
+            "the POSIX signal hook was lowered ({name})"
+        );
+    }
+}

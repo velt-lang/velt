@@ -87,6 +87,15 @@ export const imports: Imports = {
     linux: "./lang/hooks/signal_linux.velt",
     default: "./lang/hooks/signal_none.velt",
   },
+  // The executor in Velt's signals themselves (`watch`, `next`): through `sigaction` and a
+  // self-pipe on macOS and Linux; elsewhere none can be watched, and nothing names the POSIX
+  // calls a Windows C library doesn't have (a build loading every std file, as one by units does,
+  // would link them otherwise).
+  "#sched-signal-hook": {
+    darwin: "./lang/hooks/sched_signal.velt",
+    linux: "./lang/hooks/sched_signal.velt",
+    default: "./lang/hooks/sched_signal_none.velt",
+  },
   // The threads of the executor in Velt's workers (std/lang/hooks/sched.velt): `pthread_create`
   // on macOS and Linux, `CreateThread` on Windows; elsewhere none (one worker).
   "#sched-thread": {
