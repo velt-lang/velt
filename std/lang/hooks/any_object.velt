@@ -4,7 +4,7 @@
 // program that loads `Proxy` calls the versions in proxy_ops.velt instead, which ask a proxy's
 // traps (velt_sema `body/expr/proxy.rs`).
 
-import { anyDelete } from "velt/lang/intrinsics";
+import { anyDelete, anyIsPromise } from "velt/lang/intrinsics";
 import { arrayIndex } from "./record";
 import { RECORD_SET } from "velt/lang/hooks/keys";
 
@@ -164,6 +164,9 @@ export function anyObjectTag(v: any): string {
   }
   if (t === "symbol") {
     return "[object Symbol]";
+  }
+  if (anyIsPromise(v)) {
+    return "[object Promise]";
   }
   return "[object Object]";
 }
