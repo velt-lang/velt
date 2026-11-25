@@ -7,6 +7,7 @@
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
+use super::c_ref::{mentions_ref, misplaced_ref, ref_param, written_ref};
 use crate::ctx::Ctx;
 use crate::defs::{FnKind, ParamSig};
 use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
@@ -105,6 +106,15 @@ fn c_import(
         .zip(ps)
         .map(|(p, s)| param(cx, module, name, p, s.ty))
         .collect();
+    if let Some(t) = sig.ret.as_ref().filter(|t| mentions_ref(cx, module, t)) {
+        cx.error(
+            Diagnostic::error(
+                format!("C function `{name}` can't return a `Ref<S>`: C reads a `Ref` through a parameter"),
+                t.span,
+            )
+            .with_note("a C function returning a struct returns it by value (`S`) or as a pointer (`Ptr<S>`)"),
+        );
+    }
     let ret_ty = match cx.ty.kind(ret) {
         TyKind::Unit => Some(CTy::Void),
         _ => crossing_ty(cx, ret),
@@ -158,6 +168,13 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
             format!("C function `{name}` cannot have {what}: C takes every argument"),
             p.span,
         );
+        return CTy::Void;
+    }
+    if let Some(nullable) = written_ref(cx, module, &p.ty) {
+        return ref_param(cx, (name, p), ty, nullable);
+    }
+    if mentions_ref(cx, module, &p.ty) {
+        misplaced_ref(cx, name, &format!("parameter `{}`", p.name.name), &p.ty);
         return CTy::Void;
     }
     if let Some(t) = crossing_ty(cx, ty) {
@@ -332,20 +349,19 @@ fn names_ffi_alias(
     let ast::TypeExprKind::Named { path, args } = &t.kind else {
         return false;
     };
-    if !args.is_empty() {
-        return false;
-    }
-    let item = match path.as_slice() {
-        [n] => cx.scopes[module].items.get(&n.name).copied(),
-        // `ffi.StrBytes`: what the namespace's module exports under the name.
-        [ns, n] => match cx.scopes[module].namespaces.get(&ns.name) {
-            Some(&m) => super::exports::export_of(cx, m, &n.name),
-            None => return false,
-        },
-        _ => return false,
-    };
+    args.is_empty() && names_ffi_item(cx, module, path, (alias_name, defining))
+}
+
+/// Does `path` (written in `module`) name the std alias `alias_name` declared in std module
+/// `defining`, directly or through a namespace?
+pub(super) fn names_ffi_item(
+    cx: &Ctx,
+    module: usize,
+    path: &[ast::Ident],
+    (alias_name, defining): (&str, &str),
+) -> bool {
     // By the alias's own declaration, so a renamed import (`StrBytes as SB`) is it too.
-    match item {
+    match path_item(cx, module, path) {
         Some(crate::ctx::Item::Alias(a)) => {
             let alias = &cx.aliases[a as usize];
             let m = alias.module;
@@ -354,6 +370,19 @@ fn names_ffi_alias(
                 && cx.modules[m].path == defining
         }
         _ => false,
+    }
+}
+
+/// The item `path` (written in `module`) names: a name in scope, or one a namespace's module
+/// exports (`ffi.StrBytes`).
+pub(super) fn path_item(cx: &Ctx, module: usize, path: &[ast::Ident]) -> Option<crate::ctx::Item> {
+    match path {
+        [n] => cx.scopes[module].items.get(&n.name).copied(),
+        [ns, n] => {
+            let m = *cx.scopes[module].namespaces.get(&ns.name)?;
+            super::exports::export_of(cx, m, &n.name)
+        }
+        _ => None,
     }
 }
 

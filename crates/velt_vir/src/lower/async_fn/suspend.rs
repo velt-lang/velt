@@ -15,7 +15,9 @@
 //! - a direct call of a compiled async function embeds the child state (a VIR local that the
 //!   spill pass moves into this state) — no allocation;
 //! - `yieldNow()` calls the executor's `schedYield(cx)` (`velt_rt_yield_now` on WebAssembly) and
-//!   suspends once;
+//!   suspends once; the record it returns (its token) is kept across the suspension, handed to
+//!   `schedYieldReady(cx, record)` when it resumes, and to `schedYieldDrop` by its cancel
+//!   (#3687);
 //! - an async generator's resume and close poll its state (generator.rs);
 //! - anything else is a promise value (`VeltFut*`: rt leaf futures, join handles, boxed
 //!   promises), polled through its header (raw_memory.rs `fut_poll_call`), result at `+16`.
@@ -324,9 +326,15 @@ impl FnLower<'_, '_> {
     fn await_yield(&mut self) -> Operand {
         let cx = self.poll_cx();
         let std = self.std_sched();
-        if std {
-            self.sched_yield(cx);
-        } else {
+        // The yield's record on its task's list (#3687), kept across the suspension: the resume
+        // asks by it whose turn came (the children of an inline `Promise.all` share their
+        // parent's cx, and a resume may poll with another cx than the yield's), and the cancel
+        // drops it.
+        let token = std.then(|| {
+            let t = self.sched_yield(cx.clone());
+            self.copy_to_temp(t, Ty::U64)
+        });
+        if !std {
             self.call_rt(Rt::YieldNow, vec![cx], None);
         }
         let (k, resume) = self.suspension();
@@ -337,11 +345,15 @@ impl FnLower<'_, '_> {
         self.switch_to(suspend);
         self.set_tag(k);
         self.terminate(Terminator::Return(cint(0, Ty::U32)));
-        self.cancel_block(k, |_| {});
+        self.cancel_block(k, |lw| {
+            if let Some(token) = token {
+                lw.sched_yield_drop(Operand::Copy(Place::local(token)));
+            }
+        });
         self.switch_to(resume);
-        if std {
+        if let Some(token) = token {
             let cx = self.poll_cx();
-            let ready = self.sched_yield_ready(cx);
+            let ready = self.sched_yield_ready(cx, Operand::Copy(Place::local(token)));
             let go = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, ready, cint(0, Ty::U32)));
             let (go_bb, wait_bb) = (self.new_block(), self.new_block());
             self.branch(go, go_bb, wait_bb);

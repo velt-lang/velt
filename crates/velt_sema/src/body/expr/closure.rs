@@ -477,13 +477,7 @@ impl FnCx<'_, '_> {
                 let h = match self.f.ret {
                     Some(_) if self.f.discards_value => {
                         let h = self.expr_stmt(e);
-                        // A promise dropped by the arrow being tried (`first_fitting`).
-                        if let Some((at, dropped)) = &mut self.dropped_promise {
-                            let promise = matches!(self.cx.ty.kind(h.ty), hir::TyKind::Promise(..));
-                            if *at == span && promise {
-                                *dropped = true;
-                            }
-                        }
+                        self.note_dropped(h.ty);
                         h
                     }
                     // `(): void => void e` is `e;`, as in TypeScript.

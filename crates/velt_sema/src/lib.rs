@@ -26,6 +26,7 @@
 
 #[cfg(test)] // by its name, for the integration tests' loader (`script_locals_tests.rs`)
 extern crate self as velt_sema;
+pub mod console_format;
 pub mod hir;
 pub mod js_protos;
 
@@ -78,6 +79,7 @@ mod generic_fns;
 mod generic_override_sites;
 mod generic_spread;
 mod global_this;
+mod hand_back;
 #[cfg(test)]
 mod hasher_tests;
 mod holds_promise;
@@ -137,6 +139,7 @@ mod overload_adapter;
 mod overloads;
 mod ownership;
 mod par;
+mod param_copies;
 mod program;
 mod promise_copies;
 pub mod property_order;
@@ -287,6 +290,34 @@ fn check_timed(
     loads: Option<Loads>,
     stack_budget: usize,
 ) -> script_locals::Checked {
+    let mut renamed = rustc_hash::FxHashSet::default();
+    let mut out = check_renaming(
+        modules,
+        root,
+        opts,
+        recovered,
+        gen,
+        loads,
+        stack_budget,
+        &mut renamed,
+    );
+    // A parameter `param_copies` renamed is shown by its own name.
+    param_copies::source_names(&mut (out.0).1, &renamed);
+    out
+}
+
+/// [`check_timed`], with the parameters `param_copies` renamed put in `renamed`.
+#[allow(clippy::too_many_arguments)]
+fn check_renaming(
+    modules: &[SourceModule],
+    root: usize,
+    opts: CheckOptions,
+    recovered: &[(usize, &str)],
+    gen: Option<generated::GenArgs>,
+    loads: Option<Loads>,
+    stack_budget: usize,
+    renamed: &mut rustc_hash::FxHashSet<String>,
+) -> script_locals::Checked {
     // Outlives every `Ctx` below, with the modules the driver generates during the check.
     let generator = gen.and_then(|g| g.generate).map(generated::Generator::new);
     let input = modules;
@@ -343,6 +374,11 @@ fn check_timed(
     let (brands, branded) =
         timings::pass("rewrite: defined_props", || defined_props::rewrite(modules));
     let modules = branded.as_deref().unwrap_or(modules);
+    let copied = timings::pass("rewrite: param_copies", || param_copies::rewrite(modules));
+    if let Some(c) = &copied {
+        renamed.extend(c.renamed.iter().cloned());
+    }
+    let modules = copied.as_ref().map_or(modules, |c| &c.modules[..]);
     let closures = timings::pass("rewrite: nested_closures", || {
         nested_closures::rewrite(modules)
     });

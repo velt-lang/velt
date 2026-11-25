@@ -9,7 +9,7 @@ import {
   UnderlyingSource,
 } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
-import { settled } from "velt/io/streams/settle";
+import { adopted, settled } from "velt/io/streams/settle";
 
 /** The states of a stream. */
 export const READABLE: u8 = 0;
@@ -355,18 +355,22 @@ export class ReadableStreamDefaultController<R> {
     if (it != null) {
       return finished(it.return());
     }
+    // The promise settles as Node's does (#3695): a microtask after a `cancel` that gives nothing
+    // or throws, and for one that gives a promise, after that promise is adopted
+    // (`adopted`, settle.velt).
     if (cancel == null) {
-      return Promise.resolve();
+      return Promise.resolve().then(() => {});
     }
     try {
       const p = cancel(reason);
       if (p != null) {
-        return p;
+        return adopted(p);
       }
     } catch (e) {
-      return Promise.reject<void>(e);
+      // Typed here, not inferred: `cancel`'s error type is in a recursion (#3695).
+      return new Promise<void, unknown>((resolve, reject) => queueMicrotask(() => reject(e)));
     }
-    return Promise.resolve();
+    return Promise.resolve().then(() => {});
   }
 }
 

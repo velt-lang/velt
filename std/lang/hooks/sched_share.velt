@@ -168,6 +168,8 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
   m.st(h + H_ROLES, 1);
   const fl = m.load32(n + nd.N_FLAGS);
   if ((fl & nd.STARTED) !== 0) {
+    // A finished node that let go of its task (0, sched_node_done.velt) is taken as another
+    // task's: with HUB_HERE, `holderDrop`'s ORIG_GONE path would leave the free to its finish.
     if (m.ld(n + nd.N_TASK) === task) {
       nd.setFlags(n, HUB_HERE);
     } else {

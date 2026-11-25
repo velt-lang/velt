@@ -262,3 +262,101 @@ fn a_changed_argument_is_counted_only_when_a_later_argument_may_replace_it() {
     let c = counted(&program("pushes[0](p.log, swaps[0](p))"));
     assert!(c.iter().any(|t| t == "f64[]"), "{c:?}");
 }
+
+/// A method returning `this` hands back its receiver at the call site (#3738): `Set.add`,
+/// `Map.set` and a class's own builder methods used on their own line or chained share
+/// nothing, so their classes stay uncounted; only a kept result is another reference.
+#[test]
+fn results_handed_back_unused_or_chained_leave_the_class_uncounted() {
+    let c = counted(
+        "class Box {
+           w = 0;
+           h = 0;
+           width(n: number): this { this.w = n; return this; }
+           height(n: number): this { this.h = n; return this; }
+         }
+         function main() {
+           const s = new Set<number>();
+           const m = new Map<string, number>();
+           for (let i = 0; i < 10; i++) {
+             s.add(i);
+             m.set(String(i), i).set(\"x\", i);
+           }
+           s.add(1).add(2);
+           const t = new Set<number>().add(3).add(4);
+           const b = new Box().width(3).height(4);
+           b.width(5);
+           console.log(s.size, m.size, t.size, b.w, b.h, m.set(\"y\", 1).get(\"y\"));
+         }",
+    );
+    let shared = |name: &str| c.iter().any(|t| t.ends_with(name));
+    assert!(
+        !shared("::Set") && !shared("::Map") && !shared("Box"),
+        "{c:?}"
+    );
+}
+
+#[test]
+fn a_kept_result_handed_back_shares_the_receiver() {
+    let c = counted(
+        "function main() {
+           const s = new Set<number>();
+           const t = s.add(3);
+           t.add(4);
+           console.log(s.size, t.size);
+         }",
+    );
+    assert!(c.iter().any(|t| t.ends_with("::Set")), "{c:?}");
+}
+
+/// A kept result is another reference to the receiver: when both stay in use, that alias is
+/// what makes the class counted (no other share in the program), and an alias that outlives
+/// a replaced receiver keeps its object (`lang/this_result_receiver_replaced` checks the counts).
+#[test]
+fn only_a_kept_result_counts_the_class() {
+    let program = |body: &str| {
+        format!(
+            "class Cell {{
+               v = 0;
+               bump(): this {{ this.v++; return this; }}
+             }}
+             function main() {{ {body} }}"
+        )
+    };
+    let c = counted(&program(
+        "const c = new Cell(); c.bump().bump(); c.bump(); console.log(c.v);",
+    ));
+    assert!(!c.iter().any(|t| t == "class Cell"), "{c:?}");
+    let c = counted(&program(
+        "const c = new Cell(); const k = c.bump(); k.bump(); c.bump(); console.log(c.v, k.v);",
+    ));
+    assert!(c.iter().any(|t| t == "class Cell"), "{c:?}");
+}
+
+/// A chain of `Set.add` / `Map.set` on a field or an element, with arguments that run nothing,
+/// re-reads the place between the calls: no user code runs that could replace it, so the
+/// receiver needs no share (`body/expr/hand_back.rs`, `contained_call`).
+#[test]
+fn chains_on_a_field_or_element_leave_set_and_map_uncounted() {
+    let c = counted(
+        "class Owner {
+           s = new Set<number>();
+           m = new Map<string, number>();
+           run(i: number) {
+             this.s.add(i).add(i + 1);
+             this.m.set(\"a\", i).set(\"b\", i * 2);
+           }
+         }
+         function main() {
+           const o = new Owner();
+           const sets = [new Set<number>()];
+           for (let i = 0; i < 10; i++) {
+             o.run(i);
+             sets[0].add(i).add(i + 2);
+           }
+           console.log(o.s.size, o.m.size, sets[0].size);
+         }",
+    );
+    let shared = |name: &str| c.iter().any(|t| t.ends_with(name));
+    assert!(!shared("::Set") && !shared("::Map"), "{c:?}");
+}

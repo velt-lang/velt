@@ -22,6 +22,7 @@ impl FnCx<'_, '_> {
         let (when_true, when_false) = self.narrowing(cond);
         let c = self.cond(cond);
         let exp = exp.or_else(|| self.nothings_conditional_ty(then, els));
+        let outer = exp;
         let branch = |s: &mut Self,
                       e: &ast::Expr,
                       narrow: &[crate::body::narrow::Fact],
@@ -34,6 +35,15 @@ impl FnCx<'_, '_> {
                 ..e.clone()
             });
             let h = s.expr(lit.as_ref().unwrap_or(e), hint, Want::Move);
+            // A local the condition narrowed to some members of its union converts to the
+            // expected type as those members, which only holds here (`s ? s : "c"` with
+            // `s: "" | "a" | "b"` against `"a" | "b" | "c"`, #3370).
+            let h = match outer {
+                Some(t) if !narrow.is_empty() && h.ty != t => {
+                    s.try_coerce(h.clone(), t).unwrap_or(h)
+                }
+                _ => h,
+            };
             s.pop_scope();
             h
         };
@@ -83,6 +93,10 @@ impl FnCx<'_, '_> {
         let kept = const_arms
             && self.string_literals(t.ty).is_some()
             && self.string_literals(f.ty).is_some();
+        let (t, f) = match exp {
+            None => self.number_branches(t, f, then, els),
+            Some(_) => (t, f),
+        };
         let (t, f, ty) = match kept {
             true if t.ty != f.ty => {
                 let u = self.cx.union_of(&[t.ty, f.ty], false, span);
@@ -142,6 +156,45 @@ impl FnCx<'_, '_> {
             }
             _ => None,
         }
+    }
+
+    /// Branches with no expected type where one is an unannotated integer (`s ? s : 5`, and
+    /// `s || 5` / `n || 7`, which are checked as such a conditional): the integer is a `number`,
+    /// as in TypeScript, unless the other branch is an integer variable (`c ? 0 : k`, #1527).
+    /// An integer literal type in the other branch (`n` narrowed to `1`) is a `number` too, so
+    /// the conditional is one and `/` divides as JavaScript does (#3370).
+    fn number_branches(
+        &mut self,
+        t: hir::Expr,
+        f: hir::Expr,
+        then: &ast::Expr,
+        els: &ast::Expr,
+    ) -> (hir::Expr, hir::Expr) {
+        let int_lit = |s: &Self, h: &hir::Expr, e: &ast::Expr| {
+            untyped(e)
+                && (s.cx.ty.is_int(h.ty)
+                    || matches!(s.cx.lit_value(h.ty), Some(hir::LitValue::Int(..))))
+        };
+        let (lt, lf) = (int_lit(self, &t, then), int_lit(self, &f, els));
+        if lt == lf {
+            return (t, f);
+        }
+        let f64 = self.cx.ty.f64;
+        let other = if lt { &f } else { &t };
+        if self.cx.ty.is_int(other.ty) {
+            // An integer variable keeps the literal an integer.
+            return (t, f);
+        }
+        let other_int_lit = matches!(self.cx.lit_value(other.ty), Some(hir::LitValue::Int(..)));
+        let widen = |s: &mut Self, h: hir::Expr, lit: bool| match lit {
+            true if s.cx.lit_value(h.ty).is_some() => s.int_literal_as_number(h),
+            true => s.coerce(h, f64),
+            false if other_int_lit => s.int_literal_as_number(h),
+            false => h,
+        };
+        let t = widen(self, t, lt);
+        let f = widen(self, f, lf);
+        (t, f)
     }
 
     /// Expected type of the second-checked branch: the context's, else the first branch's
@@ -208,15 +261,17 @@ impl FnCx<'_, '_> {
         if let Some(ty) = joined {
             return (t, f, ty);
         }
+        // A failed conversion may give back a changed branch (a literal no longer written as
+        // one), so each is tried on a copy: the branch as checked still converts to `exp` (#3370).
         let tt = t.ty;
-        let f = match self.try_coerce(f, tt) {
+        let f = match self.try_coerce(f.clone(), tt) {
             Ok(f) => return (t, f, tt),
-            Err(f) => f,
+            Err(_) => f,
         };
         let ft = f.ty;
-        let t = match self.try_coerce(t, ft) {
+        let t = match self.try_coerce(t.clone(), ft) {
             Ok(t) => return (t, f, ft),
-            Err(t) => t,
+            Err(_) => t,
         };
         if let Some(e) = exp.filter(|e| *e != error) {
             let t = self.coerce(t, e);

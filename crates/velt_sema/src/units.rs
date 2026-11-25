@@ -21,6 +21,7 @@
 pub(crate) mod codec;
 pub(crate) mod disk;
 pub(crate) mod modes;
+pub(crate) mod raised;
 
 use crate::ctx::Ctx;
 
@@ -65,13 +66,16 @@ pub struct Summaries {
     /// check resolved them to, before any program stored into them: the app's rounds give a
     /// closure made for one what their seeds give the site (`Ctx::app_trap_error`).
     pub(crate) trap_sites: Vec<(velt_common::Span, crate::hir::TyId)>,
+    /// What the app's passes raise of the unit's definitions, kept beside them while they are
+    /// frozen (`raised`); empty in a saved unit.
+    pub(crate) raised: raised::Raised,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
-        declared_modes, declared_now, trap_sites,
+        declared_modes, declared_now, trap_sites, raised,
     }
 }
 

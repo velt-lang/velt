@@ -48,8 +48,8 @@ export class WeakMap<K, V> {
     return weakMapValue<V>(w);
   }
 
-  /** Stores `value` for `key` (replacing a value stored before). */
-  set(key: K, value: V): WeakMap<K, V> {
+  /** Stores `value` for `key` (replacing a value stored before); returns the map, as in JS. */
+  set(key: K, value: V): this {
     this.#id = weakMapSet(this.#id, key, value);
     return this;
   }

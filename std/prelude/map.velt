@@ -92,17 +92,17 @@ export class Map<K, V> {
   }
 
   /**
-   * Inserts or replaces. On replace the new key is dropped and the entry keeps its position
-   * (JS semantics: re-setting a key does not move it to the end).
+   * Inserts or replaces (a replaced entry keeps its key and position, as in JS); returns the map.
    */
-  set(key: K, value: V) {
+  set(key: K, value: V): this {
     const p = hash(key) * FIB;
     const e = this.lookup(key, p);
     if (e >= 0) {
       this.entryValues[e as usize] = value;
-      return;
+      return this;
     }
     mapAppend(this, key, value, p, e);
+    return this;
   }
 
   /**
