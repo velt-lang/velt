@@ -146,7 +146,7 @@ fn members_of_values_and_types() {
     assert_eq!(greet.2, "(greeting: string) => string");
     let map = a.members_of_type_at(file, at(PROGRAM, "m.set", 0, 0));
     let set = map.iter().find(|(n, _, _)| n == "set").expect("Map.set");
-    assert_eq!(set.2, "(key: string, value: i64) => void");
+    assert_eq!(set.2, "(key: string, value: i64) => Map<string, i64>");
     assert!(map.iter().any(|(n, _, t)| n == "size" && t == "usize"));
     assert!(
         !map.iter().any(|(n, _, _)| n == "slots"),
