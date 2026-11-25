@@ -1,0 +1,399 @@
+// velt/task (internal): the abort signal behind `AbortSignal` under the executor in Velt
+// (signal_sched.velt), in raw memory: a reference count, a flag, the reason, the waits for it and
+// the signals derived from it (`AbortSignal.any`). Cancellation is cooperative: an abort only sets
+// the flag and wakes the waits; Velt code reacts. A derived signal holds references to its
+// sources until it is aborted (a source reaches it only through a link it owns), so a source
+// aborted through another reference aborts it, and no cycle forms.
+//
+// A wait is a heap future (rt_abi_async.md §1: poll, drop; no result) that completes once the
+// signal is aborted. A pending wait is linked into its signal's list (any number per signal;
+// dropped, it leaves in constant time); the abort wakes the waits in the order they began, as Node
+// calls a signal's listeners, and aborts the derived signals in the order they were made. The
+// signal's spin lock guards its lists, the waits' wakers and its reason; no waker is woken or
+// dropped under it (either may end a task that owns another wait for the same signal, whose drop
+// takes the lock).
+//
+// A wait `timed` (a timer may abort its signal: an `AbortSignal.timeout`, or an `AbortSignal.any`
+// of one) holds a keep-alive reference while it is pending, so it keeps the process alive as a
+// wait for a timer does (Node unrefs that timer, but then nothing awaiting the signal would run);
+// a signal only `abort()` can abort leaves that to whoever may call it.
+
+import { fnAddress, inline, noInline, slotPut, slotSize, slotTake } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/sched_mem";
+
+declare function velt_rt_keep_alive_acquire();
+declare function velt_rt_keep_alive_release();
+
+// A signal: its spin lock (a u32), whether it is aborted, its references, the first wait linked
+// into it, the first link to a signal derived from it (`AbortSignal.any`), its own links to the
+// signals it was derived from (until it is aborted or freed), whether it holds a reason, the last
+// wait and the last link of its two lists (new ones are appended), the reason (a string slot,
+// `slotSize<string>()` bytes).
+export const S_LOCK: usize = 0;
+export const S_ABORTED: usize = 8;
+export const S_REFS: usize = 16;
+export const S_WAITERS: usize = 24;
+export const S_CHILDREN: usize = 32;
+export const S_LINKS: usize = 40;
+export const S_HAS_REASON: usize = 48;
+const S_LAST_WAITER: usize = 56;
+const S_LAST_CHILD: usize = 64;
+export const S_REASON: usize = 72;
+
+// A wait: the heap future's header (poll, drop, an unused result word), its signal (a reference
+// of its own), its place in the signal's list, its waker, whether it is linked, whether it is
+// `timed`, whether it holds a keep-alive reference.
+const W_SIG: usize = 24;
+const W_PREV: usize = 32;
+const W_NEXT: usize = 40;
+const W_WAKER: usize = 48;
+const W_LINKED: usize = 56;
+const W_TIMED: usize = 64;
+const W_KEPT: usize = 72;
+const W_SIZE: usize = 80;
+
+/** Takes signal `s`'s lock. */
+@inline("always")
+export function lock(s: usize): void {
+  if (m.cas32(s + S_LOCK, 0, 1) !== 0) {
+    m.spinLock(s + S_LOCK);
+  }
+}
+
+/** Gives signal `s`'s lock back. */
+@inline("always")
+export function unlock(s: usize): void {
+  m.store32(s + S_LOCK, 0);
+}
+
+/** Is signal `s` aborted? An acquire: what the abort wrote before is seen. */
+@inline("always")
+export function isAborted(s: usize): bool {
+  return m.load(s + S_ABORTED) !== 0;
+}
+
+/**
+ * A wait for signal `s` (a live handle; the wait takes a reference of its own): a heap future,
+ * for `promiseAt<void>` or a waiter that polls it beside its own source
+ * (std/net/fd_until.velt).
+ */
+export function waitFuture(s: usize, timed: bool): usize {
+  m.inc(s + S_REFS);
+  const f = m.alloc(W_SIZE);
+  m.st(f, fnAddress(waitPoll));
+  m.st(f + 8, fnAddress(waitDrop));
+  m.st(f + 16, 0);
+  m.st(f + W_SIG, s);
+  m.st(f + W_PREV, 0);
+  m.st(f + W_NEXT, 0);
+  m.st(f + W_WAKER, 0);
+  m.st(f + W_LINKED, 0);
+  m.st(f + W_TIMED, timed ? 1 : 0);
+  m.st(f + W_KEPT, 0);
+  return f;
+}
+
+/**
+ * Wakes every wait linked into signal `s` (locked and aborted; unlocked when this returns), the
+ * first that began first: each is unlinked and its waker taken under the lock, so a wait dropped
+ * later finds nothing to undo, and woken without it. No wait joins meanwhile: the signal is
+ * aborted.
+ */
+export function wakeAll(s: usize): void {
+  let w = m.ld(s + S_WAITERS);
+  while (w !== 0) {
+    unlinkLocked(w, s);
+    const k = m.ld(w + W_WAKER);
+    m.st(w + W_WAKER, 0);
+    unlock(s);
+    if (k !== 0) {
+      m.wakeOwned(k);
+    }
+    lock(s);
+    w = m.ld(s + S_WAITERS);
+  }
+  unlock(s);
+}
+
+function waitPoll(f: usize, cx: usize): u32 {
+  const s = m.ld(f + W_SIG);
+  if (isAborted(s)) {
+    done(f, s);
+    return 1;
+  }
+  lock(s);
+  if (isAborted(s)) {
+    unlock(s);
+    done(f, s);
+    return 1;
+  }
+  const w = m.ld(cx + 8);
+  const old = m.ld(f + W_WAKER);
+  if (old !== w) {
+    m.st(f + W_WAKER, m.wakerClone(w));
+  }
+  if (m.ld(f + W_LINKED) === 0) {
+    const last = m.ld(s + S_LAST_WAITER);
+    m.st(f + W_PREV, last);
+    m.st(f + W_NEXT, 0);
+    if (last !== 0) {
+      m.st(last + W_NEXT, f);
+    } else {
+      m.st(s + S_WAITERS, f);
+    }
+    m.st(s + S_LAST_WAITER, f);
+    m.st(f + W_LINKED, 1);
+  }
+  unlock(s);
+  // Dropped without the lock: the last reference to a task ends it, and it may own another wait
+  // for this signal, whose drop takes the lock.
+  if (old !== w && old !== 0) {
+    m.wakerDrop(old);
+  }
+  if (m.ld(f + W_TIMED) !== 0 && m.ld(f + W_KEPT) === 0) {
+    m.st(f + W_KEPT, 1);
+    velt_rt_keep_alive_acquire();
+  }
+  return 0;
+}
+
+/** Wait `f` completes: out of its signal's list, its keep-alive reference given back. */
+@noInline
+function done(f: usize, s: usize): void {
+  lock(s);
+  unlinkLocked(f, s);
+  unlock(s);
+  unkeep(f);
+}
+
+/** Takes wait `f` out of signal `s`'s list (locked), if it is there. */
+function unlinkLocked(f: usize, s: usize): void {
+  if (m.ld(f + W_LINKED) === 0) {
+    return;
+  }
+  const prev = m.ld(f + W_PREV);
+  const next = m.ld(f + W_NEXT);
+  if (prev === 0) {
+    m.st(s + S_WAITERS, next);
+  } else {
+    m.st(prev + W_NEXT, next);
+  }
+  if (next !== 0) {
+    m.st(next + W_PREV, prev);
+  } else {
+    m.st(s + S_LAST_WAITER, prev);
+  }
+  m.st(f + W_LINKED, 0);
+}
+
+/** Gives wait `f`'s keep-alive reference back, if it holds one. */
+function unkeep(f: usize): void {
+  if (m.ld(f + W_KEPT) !== 0) {
+    m.st(f + W_KEPT, 0);
+    velt_rt_keep_alive_release();
+  }
+}
+
+function waitDrop(f: usize): void {
+  const s = m.ld(f + W_SIG);
+  lock(s);
+  unlinkLocked(f, s);
+  // Unlinked: nothing else reaches its waker now.
+  const k = m.ld(f + W_WAKER);
+  m.st(f + W_WAKER, 0);
+  unlock(s);
+  if (k !== 0) {
+    m.wakerDrop(k);
+  }
+  unkeep(f);
+  m.release(f, W_SIZE);
+  release(s);
+}
+
+// ---- Signals. ----
+
+// A link from a source signal to one derived from it (`AbortSignal.any`), owned by the derived
+// one: the derived signal, the source (a reference of its own), its place in the source's list,
+// whether it is there, the derived signal's next link.
+const L_CHILD: usize = 0;
+const L_SOURCE: usize = 8;
+const L_NEXT: usize = 16;
+const L_PREV: usize = 24;
+const L_LINKED: usize = 32;
+const L_OWN: usize = 40;
+const L_SIZE: usize = 48;
+
+/** A signal's size: the reason's slot comes last. */
+@inline("always")
+function signalSize(): usize {
+  return S_REASON + slotSize<string>();
+}
+
+/** A new signal that is not aborted, with one reference. */
+export function create(): usize {
+  const s = m.zeroed(signalSize());
+  m.st(s + S_REFS, 1);
+  return s;
+}
+
+/** One more reference to signal `s`. */
+export function retain(s: usize): void {
+  m.inc(s + S_REFS);
+}
+
+/** Gives a reference to signal `s` back; the last frees it. */
+export function release(s: usize): void {
+  if (m.dec(s + S_REFS) === 1) {
+    destroy(s);
+  }
+}
+
+/**
+ * One more reference to signal `s` unless it is being freed (its count reached 0): for a source
+ * that reaches it through a link, under the source's lock, which its end waits for.
+ */
+function tryRetain(s: usize): bool {
+  let n = m.load(s + S_REFS);
+  while (n !== 0) {
+    const was = m.cas(s + S_REFS, n, n + 1);
+    if (was === n) {
+      return true;
+    }
+    n = was;
+  }
+  return false;
+}
+
+// The last reference went: no wait holds one, and a source aborting reaches it only through a
+// link under that source's lock, where it takes no reference any more.
+@noInline
+function destroy(s: usize): void {
+  unlinkSources(s);
+  if (m.ld(s + S_HAS_REASON) !== 0) {
+    // SAFETY: the slot holds the reason (the flag says so), taken once and dropped here.
+    const gone = unsafe { slotTake<string>(s + S_REASON) };
+  }
+  m.release(s, signalSize());
+}
+
+/**
+ * Takes signal `s`'s links out of its sources and gives their references back: at its abort,
+ * which needs them no more, and at its end.
+ */
+function unlinkSources(s: usize): void {
+  let l = m.swap(s + S_LINKS, 0);
+  while (l !== 0) {
+    const next = m.ld(l + L_OWN);
+    const src = m.ld(l + L_SOURCE);
+    lock(src);
+    if (m.ld(l + L_LINKED) !== 0) {
+      const prev = m.ld(l + L_PREV);
+      const after = m.ld(l + L_NEXT);
+      if (prev === 0) {
+        m.st(src + S_CHILDREN, after);
+      } else {
+        m.st(prev + L_NEXT, after);
+      }
+      if (after !== 0) {
+        m.st(after + L_PREV, prev);
+      } else {
+        m.st(src + S_LAST_CHILD, prev);
+      }
+      m.st(l + L_LINKED, 0);
+    }
+    unlock(src);
+    m.release(l, L_SIZE);
+    release(src);
+    l = next;
+  }
+}
+
+/**
+ * Aborts signal `s` with `reason` (a no-op if it is aborted already) and every signal derived
+ * from it, with the same reason; wakes the waits for each.
+ */
+export function abort(s: usize, reason: string): void {
+  // Made before the lock: nothing allocates under it but the list of derived signals.
+  const kept = reason.slice(0);
+  const kids: usize[] = [];
+  lock(s);
+  if (isAborted(s)) {
+    unlock(s);
+    return;
+  }
+  // SAFETY: the slot holds no reason yet (the signal was not aborted); has room for a string.
+  unsafe {
+    slotPut<string>(s + S_REASON, kept);
+  }
+  m.st(s + S_HAS_REASON, 1);
+  m.storeRelease(s + S_ABORTED, 1);
+  let l = m.ld(s + S_CHILDREN);
+  m.st(s + S_CHILDREN, 0);
+  m.st(s + S_LAST_CHILD, 0);
+  while (l !== 0) {
+    const next = m.ld(l + L_NEXT);
+    m.st(l + L_LINKED, 0);
+    const c = m.ld(l + L_CHILD);
+    if (tryRetain(c)) {
+      kids.push(c);
+    }
+    l = next;
+  }
+  // Its own waits first, then the derived signals' (in the order they were made).
+  wakeAll(s);
+  unlinkSources(s);
+  for (const c of kids) {
+    abort(c, reason);
+    release(c);
+  }
+}
+
+/** Signal `s`'s reason (`""` while it is not aborted). */
+export function reason(s: usize): string {
+  if (!isAborted(s)) {
+    return "";
+  }
+  lock(s);
+  // SAFETY: an aborted signal's slot holds its reason; put back before the lock goes.
+  const r = unsafe { slotTake<string>(s + S_REASON) };
+  const out = r.slice(0);
+  // SAFETY: the slot is empty again (taken above) and has room for a string.
+  unsafe {
+    slotPut<string>(s + S_REASON, r);
+  }
+  unlock(s);
+  return out;
+}
+
+/**
+ * Aborts signal `child` (made by `AbortSignal.any`, and not aborted by anything else but its
+ * sources) with `src`: at once with its reason if `src` is aborted already (then false), else
+ * when it is. The link holds a reference to `src` until `child` is aborted or freed.
+ */
+export function link(src: usize, child: usize): bool {
+  const l = m.alloc(L_SIZE);
+  lock(src);
+  if (isAborted(src)) {
+    unlock(src);
+    m.release(l, L_SIZE);
+    abort(child, reason(src));
+    return false;
+  }
+  m.inc(src + S_REFS);
+  m.st(l + L_CHILD, child);
+  m.st(l + L_SOURCE, src);
+  const last = m.ld(src + S_LAST_CHILD);
+  m.st(l + L_PREV, last);
+  m.st(l + L_NEXT, 0);
+  if (last !== 0) {
+    m.st(last + L_NEXT, l);
+  } else {
+    m.st(src + S_CHILDREN, l);
+  }
+  m.st(src + S_LAST_CHILD, l);
+  m.st(l + L_LINKED, 1);
+  // A source linked before may abort `child` now, on another thread (`unlinkSources`).
+  m.pushStack(child + S_LINKS, l, L_OWN);
+  unlock(src);
+  return true;
+}

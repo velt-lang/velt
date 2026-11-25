@@ -1,24 +1,16 @@
-//! `velt_rt_signal_*`: the runtime half of `AbortController` / `AbortSignal` (std/task/signal.velt,
-//! https://veltlang.com/docs/std/task/). A signal is a reference-counted object: a flag, the abort reason, the tasks
-//! waiting for it, and the signals derived from it (`AbortSignal.any`). Cancellation is
-//! cooperative: aborting only sets the flag and wakes the waiters; Velt code reacts. No code
-//! pointers are stored (rt_abi_async.md §13.5). `AbortSignal.timeout`'s timer is std's, one of
-//! Node's timers (std/task/signal_timeout.velt, #3029), which aborts the signal through
-//! `velt_rt_signal_abort`; std tells a wait for such a signal that a timer may abort it
-//! (`velt_rt_signal_wait`'s `timed`).
-//!
-//! A derived signal holds strong references to its sources until it is aborted (a source holds
-//! only a weak one back), so a source aborted through another reference aborts it, and no cycle
-//! forms.
+//! The runtime's own abort signal: what `velt dev`'s graceful stop hands a server that joined it
+//! (dev/shutdown.rs; std/dev/stop.velt waits for it and aborts the server's `AbortSignal`), and
+//! what a runtime wait that takes a signal races (net/views.rs). `AbortController` and
+//! `AbortSignal` themselves are std's (std/task/signal_core.velt). A signal is a
+//! reference-counted object: a flag, the abort reason and the tasks waiting for it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
 
 use super::leaf::{new_inner_leaf, new_leaf};
 use super::VeltFut;
-use crate::array::VeltArray;
 use crate::handle::Handle;
 use crate::str::VeltStr;
 
@@ -34,10 +26,6 @@ pub struct Signal {
     aborted: AtomicBool,
     reason: Mutex<Reason>,
     notify: Notify,
-    /// Signals that abort with this one (`AbortSignal.any`).
-    children: Mutex<Vec<Weak<Signal>>>,
-    /// The signals this one was derived from (`AbortSignal.any`), until it is aborted.
-    sources: Mutex<Vec<Arc<Signal>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -63,11 +51,6 @@ impl Signal {
             self.aborted.store(true, Ordering::Release);
         }
         self.notify.notify_waiters();
-        drop(std::mem::take(&mut *lock(&self.sources)));
-        let children = std::mem::take(&mut *lock(&self.children));
-        for c in children.iter().filter_map(Weak::upgrade) {
-            c.abort(reason);
-        }
     }
 
     fn is_aborted(&self) -> bool {
@@ -76,20 +59,6 @@ impl Signal {
 
     fn reason(&self) -> Reason {
         lock(&self.reason).clone()
-    }
-
-    /// Abort `child` with this signal (at once if this one is already aborted).
-    fn link(self: &Arc<Self>, child: &Arc<Signal>) {
-        let mut cs = lock(&self.children);
-        if self.is_aborted() {
-            drop(cs);
-            child.abort(&self.reason());
-            return;
-        }
-        cs.retain(|w| w.strong_count() > 0);
-        cs.push(Arc::downgrade(child));
-        drop(cs);
-        lock(&child.sources).push(self.clone());
     }
 }
 
@@ -116,21 +85,6 @@ pub(crate) unsafe fn signal_of(h: u64) -> Option<Arc<Signal>> {
     (!h.is_null()).then(|| h.clone_arc())
 }
 
-/// A new signal that is not aborted.
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_signal_new() -> Handle<Signal> {
-    Handle::from_arc(Arc::new(Signal::default()))
-}
-
-/// Another reference to the same signal (for a holder that releases it on its own).
-///
-/// # Safety
-/// `h` must be a live signal handle.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_signal_retain(h: Handle<Signal>) -> Handle<Signal> {
-    Handle::from_arc(h.clone_arc())
-}
-
 /// Releases a handle.
 ///
 /// # Safety
@@ -138,26 +92,6 @@ pub unsafe extern "C-unwind" fn velt_rt_signal_retain(h: Handle<Signal>) -> Hand
 #[no_mangle]
 pub unsafe extern "C-unwind" fn velt_rt_signal_free(h: Handle<Signal>) {
     h.release();
-}
-
-/// Aborts the signal with `reason` (a no-op if it is aborted already) and every signal derived
-/// from it; wakes the tasks waiting for it.
-///
-/// # Safety
-/// `h` must be a live signal handle; `reason` a valid string.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_signal_abort(h: Handle<Signal>, reason: *const VeltStr) {
-    let text = (*reason).text_lossy().into_owned();
-    h.obj().abort(&Reason { text });
-}
-
-/// Whether the signal is aborted.
-///
-/// # Safety
-/// `h` must be a live signal handle.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_signal_aborted(h: Handle<Signal>) -> bool {
-    h.obj().is_aborted()
 }
 
 /// The abort reason ("" while not aborted).
@@ -196,99 +130,5 @@ pub unsafe extern "C-unwind" fn velt_rt_signal_wait(
         new_leaf(wait)
     } else {
         new_inner_leaf(wait)
-    }
-}
-
-/// `AbortSignal.any(signals)`: a new signal aborted as soon as any of the signals in the
-/// borrowed `u64[]` is (at once if one already is), with that signal's reason. It keeps the
-/// signals alive until then.
-///
-/// # Safety
-/// `signals` must be a valid array of live signal handles.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_signal_any(
-    signals: *const VeltArray<u64>,
-) -> Handle<Signal> {
-    let child = Arc::new(Signal::default());
-    let a = &*signals;
-    for i in 0..a.len as usize {
-        Handle::<Signal>::from_ptr(*a.ptr.add(i) as usize as *const Signal)
-            .clone_arc()
-            .link(&child);
-    }
-    Handle::from_arc(child)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::task::{drop_fut, poll_fut, raw_cx, PENDING, READY};
-    use std::task::{Context, Waker};
-
-    fn poll(f: *mut VeltFut) -> u32 {
-        let mut cx = Context::from_waker(Waker::noop());
-        // SAFETY: a live leaf future.
-        unsafe { poll_fut(f, raw_cx(&mut cx).ptr()) }
-    }
-
-    #[test]
-    fn abort_publishes_this_threads_output_first() {
-        use crate::io::handoff_probe::{buffer_output, published};
-        let reason = VeltStr::from_vec(b"stop".to_vec());
-        // SAFETY: the handle is live until freed.
-        unsafe {
-            let s = velt_rt_signal_new();
-            buffer_output();
-            velt_rt_signal_abort(s, &reason);
-            assert!(published());
-            velt_rt_signal_free(s);
-        }
-    }
-
-    #[test]
-    fn abort_wakes_waiters_and_derived_signals() {
-        let reason = VeltStr::from_vec(b"stop".to_vec());
-        // SAFETY: handles are live until freed; futures are owned here.
-        unsafe {
-            let a = velt_rt_signal_new();
-            let b = velt_rt_signal_new();
-            let hs = VeltArray::from_vec(vec![a.bits(), b.bits()]);
-            let any = velt_rt_signal_any(&hs);
-            let wait = velt_rt_signal_wait(any, false);
-            assert_eq!(poll(wait), PENDING);
-            velt_rt_signal_abort(b, &reason);
-            assert!(velt_rt_signal_aborted(any));
-            assert!(!velt_rt_signal_aborted(a));
-            assert_eq!(poll(wait), READY);
-            assert_eq!(h_reason(any), "stop");
-            drop_fut(wait);
-            for h in [a, b, any] {
-                velt_rt_signal_free(h);
-            }
-        }
-    }
-
-    unsafe fn h_reason(h: Handle<Signal>) -> String {
-        h.obj().reason().text
-    }
-
-    #[test]
-    fn a_derived_signal_keeps_its_sources_alive() {
-        let reason = VeltStr::from_vec(b"late".to_vec());
-        // SAFETY: handles are live until freed.
-        unsafe {
-            let t = velt_rt_signal_new();
-            let other = velt_rt_signal_retain(t);
-            let hs = VeltArray::from_vec(vec![t.bits()]);
-            let any = velt_rt_signal_any(&hs);
-            // The derived signal's reference keeps the source linked after this handle goes:
-            // aborting it through the other one aborts the derived signal.
-            velt_rt_signal_free(t);
-            velt_rt_signal_abort(other, &reason);
-            assert!(velt_rt_signal_aborted(any));
-            assert_eq!(h_reason(any), "late");
-            velt_rt_signal_free(other);
-            velt_rt_signal_free(any);
-        }
     }
 }
