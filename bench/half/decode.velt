@@ -20,7 +20,8 @@ import {
 } from "velt/half";
 
 function main() {
-  const mode = process.argv[2];
+  // Without an argument: decode, so bench/compiler_ab.sh measures a run.
+  const mode = process.argv[2] ?? "decode";
   const reps: usize = 10;
   const n: usize = 64 * 1024 * 1024;
   const bytes: u8[] = Buffer.alloc(n);
