@@ -157,7 +157,9 @@ not a reason for another round.
   through the pinned zig), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
   Windows, the WebAssembly goldens on Windows and macOS (built once per OS, then run in shards,
-  as in the queue), and the `tsc` oracle for
+  as in the queue), every golden by units (`golden-units`: `VELT_UNITS=2`, #2943, in eight shards;
+  the goldens listed `units` in `golden_known_failing.txt` report how they fail and fail the shard
+  once they pass), and the `tsc` oracle for
   `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
   pinned in `tests/tscompat-oracle`), a Worker under workerd with its start-up and CPU budgets
   (`crates/veltc/tests/workerd.rs` with `VELT_WORKERD_TIMINGS=1`, the Miniflare pinned in
@@ -179,7 +181,7 @@ not a reason for another round.
   files no issue for either guard.
   An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
   bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
-  `gate`, `oracle`, `workerd`, `bench`, `yardstick`, `wasm`, `flake`, `cache`, `headers`).
+  `gate`, `oracle`, `workerd`, `bench`, `yardstick`, `wasm`, `flake`, `cache`, `headers`, `units`).
 - macOS has its own rule (`macos_reason`, `MACOS_PATHS` in `crates/xtask/src/os.rs`), for the queue
   and for the pull request's `lint (macos-latest)`: the runtime, linking and the toolchain, code
   generation, the parts of the standard library that talk to the OS, and the few other files with

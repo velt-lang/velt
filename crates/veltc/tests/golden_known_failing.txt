@@ -1,11 +1,102 @@
 # Goldens that fail under the executor in Velt since #2649's switch: the fix list, each with the
 # issue that tracks it. golden.rs runs them; their failures don't fail the run unless
 # VELT_GOLDEN_STRICT=1, and one that passes is reported, to be taken off this list.
+# An entry marked `units` fails only in a run by units (`VELT_UNITS=2 cargo test --test golden`,
+# #2943's U6 list).
 #
-# <path from the repository root> #<issue> [os=macos,linux,windows]
+# <path from the repository root> #<issue> [os=macos,linux,windows] [units]
 
 tests/golden/lang/promise_race_running_call.velt                   #3079
 tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=macos,windows
 tests/golden/std/abort_signal_identity.velt                        #3011
 tests/golden/std/fetch_abort_custom_reason.velt                    #3005
 tests/golden/std/timer_spawned_busy.velt                           #2916 os=macos,windows
+tests/golden/lang/std_typed_receiver_override.velt                 #3684 units
+
+# Fail in a run by units (VELT_UNITS=2) on main 667cfae77, a sample of ~410 goldens (#2943's U6 list):
+tests/golden/lang/class_local_ctor.velt                            #2943 units
+tests/golden/lang/class_object_call.velt                           #2943 units
+tests/golden/lang/class_object_print.velt                          #2943 units
+tests/golden/lang/class_object_statics.velt                        #2943 units
+tests/golden/lang/class_objects.velt                               #2943 units
+tests/golden/lang/class_objects_switch.velt                        #2943 units
+tests/golden/lang/class_value_init_order.velt                      #2943 units
+tests/golden/lang/class_value_init_order_import.velt               #2943 units
+tests/golden/lang/generic_fn_rest_null.velt                        #2943 units
+tests/golden/lang/generic_fn_values_forms.velt                     #2943 units
+tests/golden/lang/iface_any_args_write_check.velt                  #2943 units
+tests/golden/lang/iface_from_unknown_class.velt                    #2943 units
+tests/golden/lang/iface_nested_receivers.velt                      #2943 units
+tests/golden/lang/iface_nested_writes.velt                         #2943 units
+tests/golden/lang/proxy_getter_brand_receiver.velt                 #2943 units
+tests/golden/lang/proxy_throws.velt                                #2943 units
+tests/golden/lang/proxy_throws_catch.velt                          #2943 units
+tests/golden/lang/proxy_throws_reason_mix.velt                     #2943 units
+tests/golden/lang/proxy_throws_reason_one.velt                     #2943 units
+tests/golden/lang/proxy_throws_reason_two.velt                     #2943 units
+tests/golden/lang/proxy_throws_recheck.velt                        #2943 units
+tests/golden/lang/proxy_throws_settled.velt                        #2943 units
+tests/golden/lang/proxy_throws_settled_own.velt                    #2943 units
+tests/golden/lang/proxy_throws_three_traps.velt                    #2943 units
+tests/golden/lang/proxy_throws_two_traps.velt                      #2943 units
+tests/golden/lang/proxy_throws_typed.velt                          #2943 units
+tests/golden/lang/proxy_trap_throws_string.velt                    #2943 units
+tests/golden/lang/proxy_trap_throws_through_helpers.velt           #2943 units
+tests/golden/std/db_rows_source_throws.velt                        #2943 units
+
+# Fail in a run by units, from the whole suite (the nightly's golden-units, run 45498934030 on
+# 5d06f3628, all eight shards). std's own calls of a std method a program's override gives a
+# slot (#3684):
+tests/golden/std/date_subclass_text.velt                           #3684 units
+tests/golden/std/error_name_getter.velt                            #3684 units
+tests/golden/std/error_name_getter_uncaught.velt                   #3684 units
+# The others (#2943's U6 list):
+examples/apps/todo-api/demo.velt                                   #2943 units
+examples/apps/todo-api/demo_sqlite.velt                            #2943 units
+tests/golden/lang/any_apply_list_throws.velt                       #2943 units
+tests/golden/lang/any_function_properties_life.velt                #2943 units
+tests/golden/lang/any_function_properties_mutex.velt               #2943 units
+tests/golden/lang/any_not_fn_catch.velt                            #2943 units
+tests/golden/lang/any_operators_objects.velt                       #2943 units
+tests/golden/lang/any_string_array.velt                            #2943 units
+tests/golden/lang/any_text_lists.velt                              #2943 units
+tests/golden/lang/any_to_primitive.velt                            #2943 units
+tests/golden/lang/any_to_primitive_object_class.velt               #2943 units
+tests/golden/lang/any_to_primitive_ops.velt                        #2943 units
+tests/golden/lang/any_to_primitive_order.velt                      #2943 units
+tests/golden/lang/any_to_primitive_symbol.velt                     #2943 units
+tests/golden/lang/any_to_union_object_member_panics.velt           #2943 units
+tests/golden/lang/assign_target_optional_callbacks.velt            #2943 units
+tests/golden/lang/assign_target_replaced_holder_fix.velt           #2943 units
+tests/golden/lang/assign_value_indexes.velt                        #2943 units
+tests/golden/lang/catch_panic_drops_state.velt                     #2943 units
+tests/golden/lang/catch_panic_nested.velt                          #2943 units
+tests/golden/lang/catch_panic_promise_freed.velt                   #2943 units
+tests/golden/lang/concat_lists_params.velt                         #2943 units
+tests/golden/lang/default_export_of_import.velt                    #2943 units
+tests/golden/lang/function_call_this.velt                          #2943 units
+tests/golden/lang/literal_view_record_fill.velt                    #2943 units
+tests/golden/lang/number_of_any.velt                               #2943 units
+tests/golden/lang/param_text_any.velt                              #2943 units
+tests/golden/lang/rwlock_read_caught_error.velt                    #2943 units
+tests/golden/lang/sort_comparator_any.velt                         #2943 units
+tests/golden/lang/union_view_assigned.velt                         #2943 units
+tests/golden/lang/union_view_live.velt                             #2943 units
+tests/golden/std/bigint_errors.velt                                #2943 units
+tests/golden/std/catch_panic.velt                                  #2943 units
+tests/golden/std/catch_panic_after_timer.velt                      #2943 units
+tests/golden/std/catch_panic_in_clone.velt                         #2943 units
+tests/golden/std/catch_panic_in_clone_cycle.velt                   #2943 units
+tests/golden/std/catch_panic_promises.velt                         #2943 units
+tests/golden/std/catch_panic_task_freed.velt                       #2943 units
+tests/golden/std/catch_panic_with.velt                             #2943 units
+tests/golden/std/http_server/http_request_after_handler.velt       #2943 units
+tests/golden/std/http_server/http_request_body_after_response.velt #2943 units
+tests/golden/std/inspect_custom_panic.velt                         #2943 units
+tests/golden/std/shared_fn_panic_caught.velt                       #2943 units
+tests/golden/std/shared_fn_panic_caught_generator_interface.velt   #2943 units
+tests/golden/std/shared_fn_panic_caught_resource_any.velt          #2943 units
+tests/golden/std/shared_fn_panic_caught_resource_interface.velt    #2943 units
+tests/golden/std/shared_fn_spawn_after_caught_transfer_panic.velt  #2943 units
+tests/golden/std/shared_fn_walk_after_caught_transfer_panic.velt   #2943 units
+tests/golden/std/simd_half_range.velt                              #2943 units
