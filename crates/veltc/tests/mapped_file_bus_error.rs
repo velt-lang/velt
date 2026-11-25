@@ -114,7 +114,14 @@ fn a_bus_signal_another_process_sends_ends_the_program_without_the_line() {
     let (status, err) = bus_signal_sent("");
     let sigbus = if cfg!(target_os = "macos") { 10 } else { 7 };
     assert_eq!(status.signal(), Some(sigbus), "{status:?}\n{err}");
-    assert!(!err.contains("bus error") && !err.contains("done"), "{err}");
+    assert!(!err.contains("done"), "{err}");
+    // Without the line on Linux only: there a sent `SIGBUS` has `si_code` `SI_USER` (0) or
+    // `SI_TKILL` (-6). macOS's kernel fills a `SIGBUS` handler's `siginfo_t` the same way
+    // whoever sent it (XNU `sendsig`: `si_code` is `BUS_ADRALN` on arm64 and `BUS_ADRERR` on
+    // x86-64, `si_pid` 0), so there a sent one gets the line too.
+    if cfg!(target_os = "linux") {
+        assert!(!err.contains("bus error"), "{err}");
+    }
 }
 
 #[test]

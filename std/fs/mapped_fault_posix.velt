@@ -9,7 +9,10 @@
 // `@export`ed function that, for a fault, writes one line to standard error. It then puts the
 // default action back and raises the signal again: the signal is blocked while its handler
 // runs, so it is delivered when the handler returns and ends the program, with the status it
-// always had. That holds for a `SIGBUS` another process sent as well, which gets no line.
+// always had. That holds for a `SIGBUS` another process sent as well, which on Linux gets no
+// line (its `si_code` is not a fault's). On macOS it gets the line too: the kernel fills a
+// `SIGBUS` handler's `siginfo_t` the same way whoever sent it (XNU `sendsig`: `si_code`
+// `BUS_ADRALN` on arm64, `BUS_ADRERR` on x86-64, `si_pid` 0), so nothing tells the two apart.
 //
 // The handler is installed only over the default action: a program that ignores `SIGBUS`, or
 // has a handler of its own (the runtime's debug allocator, VELT_RT_DEBUG_ALLOC), keeps it.
@@ -86,8 +89,8 @@ export function reportBusErrors(): void {
 
 /**
  * The handler: for a fault (`si_code` 1 to 3: `BUS_ADRALN`, `BUS_ADRERR`, `BUS_OBJERR`, on macOS
- * and Linux; a signal a process sent has another code) the line to standard error, once. Then
- * the default action, and the signal again.
+ * and Linux; on Linux a signal a process sent has another code, on macOS the same) the line to
+ * standard error, once. Then the default action, and the signal again.
  */
 @cExport("std_fs_mapped_bus_error")
 function onBusError(sig: i32, info: usize, context: usize): void {
