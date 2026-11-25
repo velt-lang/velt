@@ -1,0 +1,218 @@
+// requires: unix
+// A program with descriptor 0, 1 or 2 closed starts children whose streams work (#3632). The
+// pipes it makes take the free low numbers, and a child's end that lands on its own target
+// (stdin's read end on 0) or below it (stderr's write end on 1) moves above 2 first, as libuv
+// moves it; before, `dup2(0, 0)` left the end close-on-exec on macOS (`cat: stdin: Bad file
+// descriptor`), and a lower end was replaced by another stream's file action. An inherited
+// stream is the program's descriptor even when it is close-on-exec (a file opened on a closed
+// stdout, the usual redirect), as in Node; one of the child's own pipe ends, or the runtime's
+// kqueue (which macOS refused to hand over: `spawn EBADF`), is closed in the child, and a closed
+// one stays closed on Linux and fails the spawn on macOS (EBADF), as in Node on each.
+// Each check runs in a copy of this program that closes the descriptors first
+// (`fs.closeSync`, or `sh`'s `exec 0<&-` before it starts: "start 0") and reports on a stream
+// it kept open. This program prints what child_closed_stdio.mjs prints under `node` on macOS
+// and Linux.
+import { execSync, spawn, SpawnOptions } from "velt/process/child";
+import { argv, args } from "velt/process";
+import * as fs from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+
+const BOTH = "echo out; echo err >&2";
+
+/** The rest of a spawned child's stdout (`fd` 1) or stderr (2), and its exit code. */
+async function collect(program: string, a: string[], opts: SpawnOptions, fd: i32): Promise<string> {
+  const p = spawn(program, a, opts);
+  if (program == "cat") {
+    await p.write("xyz");
+    await p.closeStdin();
+  }
+  let text = "";
+  let chunk = fd == 1 ? await p.readStdout() : await p.readStderr();
+  while (chunk != "") {
+    text += chunk;
+    chunk = fd == 1 ? await p.readStdout() : await p.readStderr();
+  }
+  const code = await p.wait();
+  p.close();
+  return `${code} [${text.trim()}]`;
+}
+
+/** Runs check `name` and gives its result. */
+async function check(name: string): Promise<string> {
+  if (name == "execSync input") {
+    const r = execSync("cat", [], { input: "abc" });
+    return `${r.code} [${r.stdout}] [${r.stderr.trim()}]`;
+  }
+  if (name == "execSync") {
+    const r = execSync("sh", ["-c", BOTH]);
+    return `${r.code} [${r.stdout.trim()}] [${r.stderr.trim()}]`;
+  }
+  if (name == "spawn pipes") {
+    return await collect("cat", [], { stdin: "pipe", stdout: "pipe", stderr: "pipe" }, 1);
+  }
+  if (name == "spawn stdout") {
+    return await collect(
+      "sh",
+      ["-c", BOTH],
+      { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+      1,
+    );
+  }
+  if (name == "spawn inherit") {
+    const opts: SpawnOptions = { stdin: "inherit", stdout: "pipe", stderr: "inherit" };
+    return await collect("sh", ["-c", "echo out"], opts, 1);
+  }
+  return await collect(
+    "sh",
+    ["-c", BOTH],
+    { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+    2,
+  );
+}
+
+/**
+ * The usual redirect, with descriptor `k` (1 or 2) closed: a file opened lands on it
+ * (close-on-exec, as `openSync` opens every file), and a child that inherits its streams writes
+ * to it. Gives where the file landed, the child's exit code and what the file holds.
+ */
+async function redirect(k: i32): Promise<string> {
+  const path = `${tmpdir()}/velt-golden-closed-stdio-${process.pid}`;
+  const fd = fs.openSync(path, "w");
+  const p = spawn("sh", ["-c", `echo child-wrote >&${k}`]);
+  const code = await p.wait();
+  p.close();
+  fs.closeSync(fd);
+  const text = fs.readFileSync(path).trim();
+  fs.unlinkSync(path);
+  return `fd ${fd}, ${code} [${text}]`;
+}
+
+/**
+ * With 0 and 1 closed, stdin's pipe takes both: the child's end on 0 (moved above 2) and the
+ * parent's on 1. A child that inherits stdout must not get that write end of its own stdin (it
+ * would never read the end of it): it copies its input to a file, to the end. Killed after
+ * 5 s ("hung") should it wait for ever.
+ */
+async function ownEnd(): Promise<string> {
+  const path = `${tmpdir()}/velt-golden-closed-stdio-own-${process.pid}`;
+  // One process (`exec`), so that a kill leaves nothing behind holding this copy's output;
+  // `cp` writes the file itself, keeping the stdout it inherited (`dd` and `>` replace it).
+  const script = `exec cp /dev/stdin ${path}`;
+  const p = spawn("sh", ["-c", script], { stdin: "pipe", stdout: "inherit", stderr: "inherit" });
+  let hung = false;
+  // timing: a guard timer that fires only when the child would never finish (a broken build).
+  const timer = setTimeout(
+    () => {
+      hung = true;
+      p.kill("SIGKILL");
+    },
+    5000,
+  );
+  let wrote = "";
+  try {
+    await p.write("xyz");
+    await p.closeStdin();
+  } catch (err) {
+    // A child without its stdin (a broken build) still gets waited for, or killed: left
+    // running, it would keep this copy's output open for the outer program.
+    wrote = `, write: ${err.code}`;
+  }
+  const code = await p.wait();
+  clearTimeout(timer);
+  p.close();
+  const text = fs.existsSync(path) ? fs.readFileSync(path).trim() : "";
+  if (fs.existsSync(path)) {
+    fs.unlinkSync(path);
+  }
+  return hung ? `hung${wrote}` : `${code} [${text}]${wrote}`;
+}
+
+/**
+ * With 1 closed, a child that inherits every stream: on macOS `posix_spawn` refuses the closed
+ * slot (`spawn EBADF`, as from Node), on Linux the child runs with it closed (its `echo` fails).
+ */
+async function closedSlot(): Promise<string> {
+  const path = `${tmpdir()}/velt-golden-closed-stdio-slot-${process.pid}`;
+  let got = "";
+  try {
+    const p = spawn("sh", ["-c", `echo hi 2>/dev/null; echo rc=$? > ${path}`]);
+    await p.wait();
+    p.close();
+    got = `ran, ${fs.readFileSync(path).trim()}`;
+    fs.unlinkSync(path);
+  } catch (err) {
+    got = `threw ${err.code}`;
+  }
+  const want = platform() == "linux" ? "ran, rc=1" : "threw EBADF";
+  return got == want ? "as Node on this OS" : `unexpected: ${got}`;
+}
+
+/** The copy: closes the descriptors in `closed` ("0,1"), runs `name`, reports on 1 or 2. */
+async function copy(closed: string, name: string) {
+  const fds = closed.split(",");
+  if (name == "spawn own pipe end") {
+    // A first child makes the descriptors of `spawn` itself (on Linux the reactor's epoll and
+    // eventfd), so that they don't take the numbers closed below, which the pipe should get.
+    const first = spawn("true");
+    await first.wait();
+    first.close();
+  }
+  if (!closed.startsWith("start")) {
+    for (const fd of fds) {
+      fs.closeSync(parseInt(fd) as i32);
+    }
+  }
+  let result = "";
+  if (name == "spawn redirect") {
+    result = await redirect(parseInt(closed) as i32);
+  } else if (name == "spawn own pipe end") {
+    result = await ownEnd();
+  } else if (name == "spawn closed slot") {
+    result = await closedSlot();
+  } else {
+    result = await check(name);
+  }
+  if (fds.includes("1")) {
+    console.error(result);
+  } else {
+    console.log(result);
+  }
+}
+
+async function main() {
+  const a = args();
+  if (a.length > 0) {
+    await copy(a[0], a[1]);
+    return;
+  }
+  const self = argv()[0].clone();
+  const checks = [
+    "execSync input",
+    "execSync",
+    "spawn pipes",
+    "spawn stdout",
+    "spawn stderr",
+    "spawn inherit",
+  ];
+  for (const closed of ["0", "1", "2", "0,1", "0,2", "start 0", "start 2"]) {
+    for (const name of checks) {
+      const r =
+        closed.startsWith("start")
+          ? execSync("sh", ["-c", `exec ${closed.slice(6)}<&-; exec "$0" "$@"`, self, closed, name])
+          : execSync(self, [closed, name]);
+      console.log(`closed ${closed}, ${name}: ${r.code} ${(r.stdout + r.stderr).trim()}`);
+    }
+  }
+  const last = [
+    ["1", "spawn redirect"],
+    ["2", "spawn redirect"],
+    ["0,1", "spawn own pipe end"],
+    ["1", "spawn closed slot"],
+  ];
+  for (const [closed, name] of last) {
+    const r = execSync(self, [closed, name]);
+    console.log(`closed ${closed}, ${name}: ${r.code} ${(r.stdout + r.stderr).trim()}`);
+  }
+}
+
+main();
