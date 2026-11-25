@@ -163,8 +163,56 @@ async function ticks(): Promise<void> {
   console.log(conv.join(", "));
 }
 
+interface Box {
+  p: Promise<number>;
+}
+
+function take(p: Promise<number>): Promise<number> {
+  return p;
+}
+
+async function ret(v: any): Promise<number> {
+  return v as Promise<number>;
+}
+
+async function retAwait(v: any): Promise<number> {
+  return await (v as Promise<number>);
+}
+
+// The cast stored where a `Promise<number>` is written: it may reject, and so may those.
+async function stores(): Promise<void> {
+  const v: any = num(1);
+  const p: Promise<number> = v as Promise<number>;
+  console.log("annotated", await p);
+  console.log("param", await take(v as Promise<number>));
+  console.log("return", await ret(num(2)), await retAwait(anyRes()));
+  const arr: Promise<number>[] = [];
+  arr.push(v as Promise<number>);
+  arr.push((v as Promise<number>));
+  console.log("pushed", await arr[0], await arr[1]);
+  console.log("all", (await Promise.all([v as Promise<number>, num(5)])).join(","));
+  const xs: any = [num(1), anyRes()];
+  const ps = xs as Promise<number>[];
+  console.log("array of", await ps[0], await ps[1]);
+  const o: any = { p: anyRes() };
+  console.log("member", await (o as Box).p);
+  try {
+    await ret(Promise.reject(new Error("x")));
+  } catch (e) {
+    console.log("returned rejection", (e as Error).message);
+  }
+  const bad: Promise<number>[] = [];
+  bad.push(Promise.reject(new Error("y")) as any as Promise<number>);
+  try {
+    await bad[0];
+  } catch (e) {
+    console.log("pushed rejection", (e as Error).message);
+  }
+}
+
 async function main(): Promise<void> {
   await shapes();
+  await stores();
   await identity();
   await ticks();
 }

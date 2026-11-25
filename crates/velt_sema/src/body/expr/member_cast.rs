@@ -181,14 +181,21 @@ impl FnCx<'_, '_> {
         // A cast gets past `readonly` (#3061).
         let inner = self.readonly_cast_operand(inner, target);
         // `v as Promise<T>` of a dynamic `v` may reject with anything (any_promise_cast.rs).
-        let target = match open && self.cx.dynamic(inner.ty).is_some() {
+        let open = open && self.cx.dynamic(inner.ty).is_some();
+        let target = match open {
             true => self.open_promise_error(target),
             false => target,
         };
-        match self.assert_value(inner, target, span) {
+        let h = match self.assert_value(inner, target, span) {
             Ok(h) => h,
             Err(h) => (self.related_iface_cast(h, target, span))
                 .unwrap_or_else(|h| self.cast_error(h, target, span)),
+        };
+        // The cast's own span, which names the site a `push` argument is stored into
+        // (`throws::promise_sites`): its rejections go there.
+        match open {
+            true => hir::Expr { span, ..h },
+            false => h,
         }
     }
 

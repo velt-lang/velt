@@ -12,6 +12,15 @@ optional 3
 class 7
 array 2
 void
+annotated 1
+param 1
+return 2 3
+pushed 1 1
+all 1,5
+array of 1 3
+member 3
+returned rejection x
+pushed rejection y
 same true true true true true
 set true true true
 typed, cast, any, widen, typed again
