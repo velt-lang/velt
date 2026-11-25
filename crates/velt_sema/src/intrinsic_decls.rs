@@ -75,6 +75,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("hash", Op(I::Hash)),
     ("includesEq", Op(I::IncludesEq)),
     ("keyEq", Op(I::KeyEq)),
+    ("keyOf", Op(I::KeyOf)),
     // generator.velt
     ("asyncGeneratorDispose", Op(I::AsyncGeneratorDispose)),
     ("asyncGeneratorResume", Op(I::AsyncGeneratorResume)),

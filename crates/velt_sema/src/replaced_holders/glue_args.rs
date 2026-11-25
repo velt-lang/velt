@@ -130,6 +130,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ParamOrdering
         | I::Hash
         | I::KeyEq
+        | I::KeyOf
         | I::IncludesEq
         | I::Same
         | I::SameValue

@@ -3,6 +3,7 @@
 // (`deepEqual`, `assertEq` and `toEqual` are generated in Velt: velt/lang/equal.)
 
 import { intrinsic } from "./decorators";
+import type { Owned } from "./modes";
 
 /**
  * A hash agreeing with `keyEq` (`Map` and `Set` keys): numbers, bool and strings by value,
@@ -18,6 +19,14 @@ export declare function hash<T>(value: T): u64;
  */
 @intrinsic
 export declare function keyEq<T>(a: T, b: T): bool;
+
+/**
+ * The key a `Map` stores for `value` (and a `Set` its element), as JavaScript stores it: a float
+ * `-0` becomes `0` (`keyEq` finds either already, so only what iteration shows changes); any
+ * other value is `value` itself.
+ */
+@intrinsic
+export declare function keyOf<T>(value: Owned<T>): T;
 
 /**
  * JavaScript's `Array.prototype.includes` comparison: `===`, except that a number `NaN` equals

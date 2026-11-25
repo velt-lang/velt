@@ -123,6 +123,9 @@ pub enum Intrinsic {
     /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero (`keyEq`, `Map`/`Set` keys): `Same`,
     /// but float `NaN` equals itself and `0` equals `-0`; objects by identity (as `Hash` does).
     KeyEq,
+    /// `(x: own T) -> T` the key a `Map` stores for `x` (`keyOf`): a float `-0` becomes `+0`, as JS
+    /// stores a `Map` key or `Set` element (`KeyEq` already finds either); any other value is `x`.
+    KeyOf,
     /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes` (`includesEq`): `Same`,
     /// except that a number `NaN` equals `NaN` (a number held by an `any` or an option too). Tuples
     /// and the other parts compare as `Same` does.

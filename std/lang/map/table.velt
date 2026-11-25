@@ -7,6 +7,7 @@ import {
   arrayTruncate,
   arrayWithCapacity,
   holdsNull,
+  keyOf,
   nullAs,
   share,
 } from "velt/lang/intrinsics";
@@ -171,7 +172,8 @@ export function mapAppend<K, V>(m: Map<K, V>, key: K, value: V, p: u64, s: i64) 
     panic("Map: too many entries");
   }
   const word = (p & ~POS_MASK) | (m.entryKeys.length as u64 + 1);
-  m.entryKeys.push(key);
+  // JS stores a `-0` key as `0` (`keyEq` finds it either way).
+  m.entryKeys.push(keyOf(key));
   m.entryValues.push(value);
   shiftIn(m.slots, (-s - 1) as usize, word);
   m._size++;
