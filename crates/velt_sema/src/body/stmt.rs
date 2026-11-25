@@ -350,6 +350,12 @@ impl FnCx<'_, '_> {
                 self.cx.note_written_type(name.span, t.span);
             }
             self.decl_keeping_arms(v, name, ann, span, out);
+            // `const f = () => …`: a function with no `this` of its own (`literal_this.rs`).
+            if v.kind == ast::VarKind::Const && v.init.as_ref().is_some_and(super::expr::is_arrow) {
+                if let Some(l) = self.declared_local(&name.name) {
+                    self.f.arrow_consts.insert(l);
+                }
+            }
             return self.note_named_fn(v, name);
         }
         let Some(e) = &v.init else {
@@ -704,6 +710,7 @@ impl FnCx<'_, '_> {
             // `return value;` in an arrow whose `void` result comes from its expected type.
             Some(e) if self.f.discards_value => {
                 let h = self.expr_stmt(e);
+                self.note_dropped(h.ty);
                 Self::push(out, S::Expr(h), span);
                 Self::push(out, S::Return(None), span);
             }

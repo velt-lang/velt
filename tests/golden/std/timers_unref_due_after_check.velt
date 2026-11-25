@@ -1,0 +1,33 @@
+// An `unref()`'d timer due in the pass that follows the check phase of the last ref'd immediate
+// runs, as in Node (#3186): one iteration of Node's loop runs the check phase (the immediates),
+// then the timers due, and decides whether the process stays alive only after that pass. The
+// timer callback below makes an unref'd 2 ms timeout, a ref'd immediate (the last ref'd thing)
+// and an unref'd one, and spins until the timeout is due: the iteration that runs the immediates
+// began alive, so the unref'd immediate and then the timeout still run. What the timeout makes is
+// in the next iteration, which is not alive: its own timeout does not run.
+
+// timing: the test is of which due timers run before the process ends; the callback spins until
+// the timeout is due, so the pass after the check phase finds it due.
+function spin(ms: number) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {}
+}
+
+setTimeout(
+  () => {
+    const due = setTimeout(
+      () => {
+        console.log("unref'd timeout, due in the check phase's pass");
+        setTimeout(() => console.log("never: a timeout it sets"), 0).unref();
+      },
+      2,
+    );
+    due.unref();
+    setImmediate(() => console.log("ref'd immediate, the last ref'd"));
+    setImmediate(() => console.log("unref'd immediate in the same check phase")).unref();
+    spin(20);
+    console.log("callback done");
+  },
+  1,
+);
+console.log("main done");

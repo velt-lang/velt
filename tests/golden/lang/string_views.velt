@@ -1,0 +1,138 @@
+// check: no leaks
+// String views (#3469): a parser that consumes its input from the front (`rest = rest.slice(n)`)
+// over a heap ASCII string gets views of the input's bytes, with no call and no count per
+// slice. The results must not depend on that: the same parsers run over heap ASCII text (views),
+// non-ASCII text and short and literal text (the clone they had before), and twice over a
+// source that is replaced while the loop runs (no views, since the source changes). Each parser
+// reads `text` again after its loop, so `text` stays the caller's and `rest = text` is a copy
+// the compiler can make a view (crates/veltc/tests/string_views_vir.rs checks that it does).
+
+/** A heap string of `n` pieces (built at run time, so not a literal). */
+function heap(piece: string, n: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(i % 3 === 0 ? `${piece}${i} ` : `${piece}, `);
+  }
+  return parts.join("");
+}
+
+function isWord(c: number): boolean {
+  return (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 95;
+}
+
+/** Words, numbers and a checksum of `text`, consuming it from the front. */
+function scan(text: string): string {
+  let rest = text;
+  let words = 0;
+  let numbers = 0;
+  let sum = 0;
+  while (rest.length > 0) {
+    const c = rest.charCodeAt(0);
+    if (c >= 48 && c <= 57) {
+      let i = 1;
+      while (i < rest.length && rest.charCodeAt(i) >= 48 && rest.charCodeAt(i) <= 57) {
+        i++;
+      }
+      numbers++;
+      sum += i;
+      rest = rest.slice(i);
+    } else if (isWord(c)) {
+      let i = 1;
+      while (i < rest.length && isWord(rest.charCodeAt(i))) {
+        i++;
+      }
+      words++;
+      sum += i * 3;
+      rest = rest.slice(i);
+    } else {
+      sum += c;
+      rest = rest.slice(1);
+    }
+  }
+  return `${words} ${numbers} ${sum} ${text.length}`;
+}
+
+/** The same with `substring`, and a test against a literal on every step. */
+function commas(text: string): number {
+  let rest = text;
+  let n = 0;
+  while (rest.length > 0) {
+    if (rest.substring(0, 2) === ", ") {
+      n++;
+    }
+    rest = rest.substring(1);
+  }
+  return n * 100000 + text.length;
+}
+
+/** Two families over one source, one sliced from the end. */
+function ends(text: string): string {
+  let front = text;
+  let back = text;
+  let k = 0;
+  while (front.length > 10 && back.length > 10) {
+    front = front.slice(3);
+    back = back.slice(0, -2);
+    k++;
+  }
+  return `${k} ${front.length} ${back.length} ${front.charCodeAt(0)} ${back.charCodeAt(back.length - 1)} ${text.length}`;
+}
+
+/** The source is replaced while the loop runs: the old text must still be read correctly. */
+function replaced(n: number): string {
+  let text = heap("abc", n);
+  let rest = text;
+  let sum = 0;
+  let k = 0;
+  while (rest.length > 0) {
+    sum += rest.charCodeAt(0);
+    rest = rest.slice(1);
+    k++;
+    if (k === 50) {
+      text = heap("zzz", n);
+    }
+  }
+  return `${sum} ${text.length}`;
+}
+
+class Doc {
+  src: string;
+  constructor(src: string) {
+    this.src = src;
+  }
+
+  /** A field as the source; a method call during the loop replaces it. */
+  count(): number {
+    let rest = this.src;
+    let n = 0;
+    while (rest.length > 0) {
+      if (rest.charCodeAt(0) === 44) {
+        n++;
+      }
+      rest = rest.slice(1);
+      if (n === 5) {
+        this.reset();
+      }
+    }
+    return n;
+  }
+
+  reset(): void {
+    this.src = heap("qq", 40);
+  }
+}
+
+function main() {
+  const ascii = heap("name_x", 400);
+  const wide = heap("nämé_ẍ", 400);
+  console.log("ascii", scan(ascii), commas(ascii), ends(ascii));
+  console.log("non-ascii", scan(wide), commas(wide), ends(wide));
+  console.log("short", scan("ab 12, c"), commas("ab, cd, "), ends("abcdefghijklmnopqrstu"));
+  const lit = "a literal that is long enough to be static, with 123 and 45, and words";
+  console.log("literal", scan(lit), commas(lit), ends(lit));
+  console.log("replaced", replaced(300));
+  const d = new Doc(heap("ab", 200));
+  console.log("field", d.count(), d.src.length);
+  // The source is used again after the parsers: it is still whole.
+  console.log("source", ascii.length, ascii.slice(0, 12), wide.length);
+}

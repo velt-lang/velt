@@ -390,8 +390,11 @@ async function main() {{
 /// promise, and one nothing awaits, both run (std: the runtime boxes and starts the callbacks'
 /// promises off the worker, sched_off.velt), and the worker's timer prints between them and the
 /// pinned task's sleep (std: the worker writes its stdout out before it waits). Two threads, 20
-/// runs. The gaps (5 ms against 400 ms, 400 ms against 2 s) leave room for a loaded CI runner,
-/// where a pinned 5 ms timer came after a 60 ms one (#2883).
+/// runs. The order between the threads is set by the program, not by the timers' gaps: the
+/// worker's timer starts once the fire-and-forget callback ran, and the pinned task prints after
+/// its sleep once the worker's timer ran. Wall-clock gaps alone (5 ms against 400 ms) failed on
+/// loaded macOS runners, where the pinned task resumed after the worker's timer (#2883, #3690).
+/// The worker's 400 ms still leaves the pinned worker time to go idle and write its line out.
 #[test]
 fn a_pinned_spawn_runs_its_timers() {
     if !std_builds_here() {
@@ -399,19 +402,34 @@ fn a_pinned_spawn_runs_its_timers() {
     }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
-    let src = "async function pinned(): Promise<i64> {
+    let src = "const FIRED = new Atomic<i64>(0);
+const WORKER_FIRED = new Atomic<i64>(0);
+
+async function pinned(): Promise<i64> {
   await new Promise<void>((resolve) => setTimeout(() => resolve(), 5));
   console.log(\"pinned timeout fired\");
-  setTimeout(() => console.log(\"pinned fire-and-forget\"), 5);
+  setTimeout(() => {
+    console.log(\"pinned fire-and-forget\");
+    FIRED.store(1);
+  }, 5);
   await sleep(2000);
+  while (WORKER_FIRED.load() === 0) {
+    await yieldNow();
+  }
   console.log(\"pinned slept 2000\");
   return 2;
 }
 
 async function main() {
-  setTimeout(() => console.log(\"worker timeout 400\"), 400);
-  const n = await spawn(pinned(), { worker: 1 });
-  console.log(n);
+  const p = spawn(pinned(), { worker: 1 });
+  while (FIRED.load() === 0) {
+    await yieldNow();
+  }
+  setTimeout(() => {
+    console.log(\"worker timeout 400\");
+    WORKER_FIRED.store(1);
+  }, 400);
+  console.log(await p);
 }
 ";
     let want =

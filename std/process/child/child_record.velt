@@ -12,6 +12,7 @@ import * as io from "velt/lang/hooks/sched_io";
 import * as m from "velt/lang/hooks/sched_mem";
 import * as tb from "velt/lang/hooks/sched_io_table";
 import * as wt from "velt/lang/hooks/sched_io_wait";
+import * as wk from "velt/lang/hooks/sched_wake";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
 import * as sp from "velt/process/child/spawn_posix";
@@ -234,6 +235,10 @@ function spawnError(program: string, errno: i32): IoStatus {
 
 /** Starts `spec` with stdio `modes`: the counted record (the caller's count), or the failure. */
 export function startChild(spec: CommandSpec, modes: u32): IoResult<usize> {
+  if (((modes >> 2) & 3) === 0 || ((modes >> 4) & 3) === 0) {
+    // The child's output comes after what this program printed before starting it.
+    wk.handOffOutput();
+  }
   const got = sp.start(spec, modes);
   if (got.pid === 0) {
     return fs.failed(spawnError(spec.program, got.error), 0);

@@ -16,18 +16,6 @@ pub const DEPTH: u32 = 2;
 /// `... n more items`.
 pub const MAX_ARRAY_LENGTH: usize = 100;
 
-/// Append node's `, ... n more items` (`... 1 more item`) after the shown entries of a
-/// container with `remaining` more.
-pub fn push_more_items(out: &mut Vec<u8>, remaining: u64) {
-    out.extend_from_slice(b", ... ");
-    velt_text::fmt::push_u64(out, remaining);
-    out.extend_from_slice(if remaining == 1 {
-        b" more item"
-    } else {
-        b" more items"
-    });
-}
-
 /// An object key as `util.inspect` prints it: bare when it is an identifier of ASCII letters,
 /// digits and `_` not starting with a digit (`a`, `_x1`), else quoted like a string (`'a b'`,
 /// `'1'`, `'$'`, `'é'`, `''`), as node does.

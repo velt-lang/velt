@@ -1,28 +1,154 @@
-// velt/process/child (internal): `#spawn-open` on Linux: `posix_spawn_file_actions_addopen`, whose
-// `mode_t` is 32 bits here (std/process/child/spawn_posix.velt spawns the children).
+// velt/process/child (internal): `#spawn-open` on Linux: what differs from macOS for starting a
+// child: `posix_spawn_file_actions_addopen`, whose `mode_t` is 32 bits here
+// (std/process/child/spawn_posix.velt spawns the children), `faccessat`'s constants and
+// `PATH_MAX` (spawn_lookup.velt), and `poll`, whose `nfds_t` is 64 bits here
+// (exec_sync_posix.velt waits on the pipes), and the few OS calls starting a child needs
+// (`errno`, its pipes, the descriptors it keeps), so that `execSync` loads no reactor file. One
+// C symbol has one signature in a program: these declarations are the reactor's
+// (std/lang/hooks/reactor_epoll.velt).
 
-import { CString } from "velt/ffi/c_string";
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
-import * as m from "velt/lang/hooks/sched_mem";
+import * as m from "velt/lang/hooks/mem_raw";
 
-/** C's `posix_spawn_file_actions_t`. */
+declare c("c") function __errno_location(): Ptr<i32>;
+declare c("c") function pipe2(fds: Ptr<i32> | null, flags: i32): i32;
+declare c("c") function fcntl$spawn(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+
+/** `errno`'s values a non-blocking pipe and an interrupted call give. */
+export const EAGAIN: i32 = 11;
+export const EINTR: i32 = 4;
+/** `posix_spawnattr_setflags`' extra flags for a child process: none (pipes are `pipe2`'s). */
+export const SPAWN_FLAGS: i16 = 0;
+const O_CLOEXEC: i32 = 0x80000;
+const F_SETFL: i32 = 4;
+const O_NONBLOCK: i32 = 0x800;
+const F_GETFD: i32 = 1;
+const FD_CLOEXEC: i32 = 1;
+/** `F_DUPFD_CLOEXEC` (<fcntl.h>). */
+const F_DUPFD_CLOEXEC: i32 = 1030;
+
+/** The calling thread's `errno`. */
+export function errno(): i32 {
+  // SAFETY: `__errno_location` returns the thread's errno slot.
+  return m.ld32(Ptr.addressOf(unsafe { __errno_location() })) as i32;
+}
+
+/**
+ * A pipe at `fds` (read end, write end), both close-on-exec from the start, so a child another
+ * thread spawns meanwhile gets neither; 0, or -1 with `errno` set.
+ */
+export function pipeCloexec(fds: usize): i32 {
+  // SAFETY: room for two descriptors.
+  return unsafe { pipe2(Ptr.orNull<i32>(fds), O_CLOEXEC) };
+}
+
+/** Makes the parent's end of a pipe non-blocking; 0 or errno. */
+export function nonBlocking(fd: i32): i32 {
+  // SAFETY: F_SETFL takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$spawn(fd, F_SETFL, O_NONBLOCK) } < 0 ? errno() : 0;
+}
+
+/** A close-on-exec copy of `fd` numbered 3 or above: the copy, or -1 with `errno` set. */
+export function dupAboveStdio(fd: i32): i32 {
+  // SAFETY: F_DUPFD_CLOEXEC takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$spawn(fd, F_DUPFD_CLOEXEC, 3 as i32) };
+}
+
+declare c("c") function posix_spawn_file_actions_adddup2$spawn(
+  fa: Ptr<posix_spawn_file_actions_t> | null,
+  fd: i32,
+  to: i32,
+): i32;
+
+/**
+ * Keeps descriptor `fd` the child's in file actions `fa`, even close-on-exec (a file opened on a
+ * closed stdout), as libuv clears the flag in its child: with a `dup2` onto itself, which clears
+ * it (glibc 2.29 and later, and musl since 2019; an older C library leaves it, and the child
+ * gets the stream closed). A closed `fd` stays closed.
+ */
+export function spawnInherit(fa: usize, fd: i32): void {
+  // SAFETY: F_GETFD takes no argument.
+  const flags = unsafe { fcntl$spawn(fd, F_GETFD) };
+  if (flags >= 0 && (flags & FD_CLOEXEC) !== 0) {
+    // SAFETY: `fa` is an initialized file-actions object.
+    unsafe {
+      posix_spawn_file_actions_adddup2$spawn(m.ptrTo<posix_spawn_file_actions_t>(fa), fd, fd);
+    }
+  }
+}
+
+/** C's `posix_spawn_file_actions_t` and `struct pollfd`. */
 declare c type posix_spawn_file_actions_t;
+declare c type pollfd;
+
+declare c("c") function poll(fds: Ptr<pollfd> | null, nfds: u64, timeout: i32): i32;
+
+declare c("c") function faccessat(fd: i32, path: Ptr<u8> | null, mode: i32, flag: i32): i32;
+
+/** `AT_FDCWD` and `AT_EACCESS` (<fcntl.h>), and `PATH_MAX` (<linux/limits.h>). */
+const AT_FDCWD: i32 = -100;
+const AT_EACCESS: i32 = 0x200;
+export const PATH_MAX: usize = 4096;
+/** Where a program is looked up when the child's environment has no `PATH` (glibc's). */
+export const DEFAULT_PATH = "/bin:/usr/bin";
+
+/**
+ * Is an entry too long to search that isn't `PATH`'s last tried as the bare name in the working
+ * directory? Yes, as glibc's `execvp` (Node's lookup here, through libuv) does on every release:
+ * it skips the entry without stepping past its `:`, so its next round sees an empty entry.
+ */
+export const LONG_ENTRY_TRIES_CWD: bool = true;
+
+/**
+ * Does the lookup go on to `PATH`'s next entry after a candidate failed with `e`? glibc's
+ * `execvp` does after ENOENT, ENOTDIR, EACCES, ESTALE, ENODEV and ETIMEDOUT. ENAMETOOLONG ends
+ * it, as on glibc 2.39 to 2.43 (2.44 goes on after it too).
+ */
+export function goesOn(e: i32): bool {
+  return e === 2 || e === 20 || e === 13 || e === 116 || e === 19 || e === 110;
+}
+
+/**
+ * The error of a program name to look up in `PATH` before any lookup: none here, as on glibc
+ * 2.39 to 2.42, whose check of `NAME_MAX` can't fire (it measures at most `NAME_MAX` bytes), so
+ * a long name is looked up and fails as the OS fails it (2.43 and later fail a name over 255
+ * bytes with ENAMETOOLONG first).
+ */
+export function nameError(bytes: usize): i32 {
+  return 0;
+}
+
+/**
+ * Whether the NUL-terminated path at address `path` exists (`faccessat`'s `F_OK` with the
+ * effective ids, as the kernel checks an exec): 0, or -1 with `errno` set.
+ */
+export function exists(path: usize): i32 {
+  // SAFETY: the caller's NUL-terminated path.
+  return unsafe { faccessat(AT_FDCWD, m.ptr(path), 0, AT_EACCESS) };
+}
+
+/** `poll` on the `n` `struct pollfd`s at address `fds`, at most `timeoutMs` (-1: no limit). */
+export function pollFds(fds: usize, n: usize, timeoutMs: i32): i32 {
+  // SAFETY: the caller's `n` initialized `struct pollfd`s.
+  return unsafe { poll(m.ptrTo<pollfd>(fds), n as u64, timeoutMs) };
+}
 
 declare c("c") function posix_spawn_file_actions_addopen(
   fa: Ptr<posix_spawn_file_actions_t> | null,
   fd: i32,
-  path: CString,
+  path: Ptr<u8> | null,
   flags: i32,
   mode: u32,
 ): i32;
 
 /** `posix_spawn_file_actions_addopen` on the file-actions object at address `fa`. */
-export function addOpen(fa: usize, fd: i32, path: CString, flags: i32, mode: u32): i32 {
+export function addOpen(fa: usize, fd: i32, path: usize, flags: i32, mode: u32): i32 {
   // SAFETY: the caller's initialized file-actions object and a NUL-terminated path.
   return unsafe { posix_spawn_file_actions_addopen(
     m.ptrTo<posix_spawn_file_actions_t>(fa),
     fd,
-    path,
+    m.ptr(path),
     flags,
     mode,
   ) };

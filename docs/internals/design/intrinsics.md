@@ -44,6 +44,7 @@ the checked, saturating and wrapping arithmetic of the integer types is prelude 
 | arch | `velt_vir::simd` (`ExtOp`, `Ext`) | SHA, carry-less multiply, AES rounds | none: behind a CPU check |
 | atomic | `velt_vir::atomic` (`AtomicCall`) | loads, stores, read-modify-writes, CAS, fences | none: always inline |
 | tls | `velt_vir::tls` (`TlsCall`) | thread-local reads and writes | none |
+| field | `velt_vir::field` (`FieldOp`) | P-256 Montgomery multiply, square, add, subtract and point doubling; the X25519 ladder (rt_abi.md "Field arithmetic") | none: always inline; the fast x86-64 form behind the CPU feature word's BMI2 and ADX |
 
 `velt_vir::math::effects` is the one list of what a runtime function may do to memory (anything,
 read-only, read-caching, none, cold); LLVM's declarations and `velt_opt` both read it.
@@ -171,6 +172,9 @@ comment. velt/ffi's unsafe functions are the public surface ([c-ffi.md](c-ffi.md
   `Ptr.read` and `Ptr.write` (c-ffi.md "C structs"): the `S` at element `index` of `p`, `S` a
   number, `bool`, a C pointer or a C struct, checked through a type parameter too. A read stops
   the program at a pointer in the value declared non-null that is NULL.
+- `cArrived<T>(value: T)` is velt/ffi's `Out.value`'s getter (c-ffi.md "What crosses"): `value`,
+  which C wrote, checked as `ptrRead` checks what it reads; a `T` without a non-null pointer
+  passes as it is.
 - `addressAtomicLoad<T>`, `addressAtomicStore<T>`, `addressAtomicRmw<T>`, `addressAtomicCas<T>`
   and `addressAtomicCasWeak<T>` do what `Atomic<T>`'s methods do on the integer `T` at an
   address, with the same `velt_atomic_*` operations (`crates/velt_vir/src/atomic.rs`). The

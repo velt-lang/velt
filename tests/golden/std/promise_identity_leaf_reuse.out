@@ -1,0 +1,8 @@
+sleep copy true
+sleep collisions 0 true
+race copy true
+race 1
+race collisions 0 true
+join copy true
+join 7
+join collisions 0 true

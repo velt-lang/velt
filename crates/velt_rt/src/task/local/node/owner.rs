@@ -34,9 +34,6 @@ pub(super) unsafe extern "C-unwind" fn started_poll(f: *mut VeltFut, cx: *mut c_
         super::panicked::raise(f);
     }
     h.owner.set(OWNER_DELIVERED);
-    if fl & super::ALIASED != 0 {
-        super::alias_claimed(f);
-    }
     // Its error, if it rejected, was thrown where the node says (loc.rs).
     super::loc::claim(f);
     READY
@@ -53,9 +50,6 @@ pub(in crate::task::local) unsafe fn poll_unadopted(f: *mut VeltFut, cx: *mut c_
 /// The owner of finished node `f` claims its result (a shared promise's hub, under its lock).
 pub(in crate::task::local) unsafe fn deliver_unadopted(f: *mut VeltFut) {
     head(f).owner.set(OWNER_DELIVERED);
-    if super::is_aliased(f) {
-        super::alias_claimed(f);
-    }
 }
 
 /// Has started node `f` finished (its result is in the slot)?
@@ -142,8 +136,5 @@ pub(super) unsafe extern "C-unwind" fn started_drop(f: *mut VeltFut) {
     if done && h.owner.get() & OWNER_DELIVERED == 0 {
         drop_result(f);
     }
-    // After the result's fate is settled: a finished node may wait in its set's queue until the
-    // task next yields, and its record goes now when nothing needs it any more.
-    super::forget_alias(f, fl | (done as u32 * DONE));
     release(f);
 }

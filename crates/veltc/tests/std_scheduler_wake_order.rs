@@ -287,10 +287,13 @@ async function main() {
 /// The program of [`a_carried_wake_still_queued_when_main_ends_is_given_back`].
 const EXIT_QUEUED: &str = r#"// #3487 (b): `main` ends while a task woken by value from another worker is still queued: its
 // home worker (1) is busy in a long synchronous loop, so the wake (from worker 3, carrying the
-// waker's reference) leaves it queued, and `main` returns before worker 1 polls it.
+// waker's reference) leaves it queued, and `main` returns before worker 1 polls it. The busy
+// task spins until `main` has printed (#3690: a spin for a fixed count let it print first when
+// the main thread was descheduled on a loaded machine).
 
 const WOKEN = new Atomic<i64>(0);
 const READY = new Atomic<i64>(0);
+const MAIN_DONE = new Atomic<i64>(0);
 
 async function waiter(p: Promise<number>): Promise<number> {
   READY.add(1);
@@ -298,8 +301,8 @@ async function waiter(p: Promise<number>): Promise<number> {
 }
 
 async function busy(): Promise<void> {
-  while (WOKEN.load() === 0) {
-    // Spins until the wake below happened, then a while longer.
+  while (MAIN_DONE.load() === 0) {
+    // Spins until the wake below happened and `main` printed, then a while longer.
   }
   let x: i64 = 0;
   for (let i: i64 = 0; i < 50000000; i++) {
@@ -325,5 +328,6 @@ async function main() {
     await yieldNow();
   }
   console.log("main ends");
+  MAIN_DONE.add(1);
 }
 "#;

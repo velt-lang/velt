@@ -29,13 +29,20 @@
 //! Then each clone becomes a plain copy of the source's words, and each drop becomes the zeroing
 //! it would have done. The source keeps its own reference, and so the text alive, for as long as
 //! the family reads it.
+//!
+//! The same analysis has a views mode (`views.rs`, run after this one): slices of the family
+//! join it, its drops stay, and a clone that starts it gives the family a static view of a heap
+//! ASCII source instead of a borrow.
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod views_tests;
 
 pub(crate) mod counted;
 mod live;
 mod read_only;
+mod views;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -55,12 +62,15 @@ const STR_CLONE: &str = "velt_rt_str_clone";
 const STR_DROP: &str = "velt_rt_str_drop";
 /// `velt_rt_alloc(size, align)`: fresh memory, nothing else written.
 const ALLOC: &str = "velt_rt_alloc";
+/// `velt_rt_str_slice(s, start, end, out)`: a slice of the string at `s` in `*out` (`views.rs`).
+const STR_SLICE: &str = "velt_rt_str_slice";
 
 /// The runtime functions this pass knows, by id in one program.
 pub(crate) struct Runtime {
     clone: Option<ExternId>,
     drop: Option<ExternId>,
     alloc: Option<ExternId>,
+    slice: Option<ExternId>,
     read_only: FxHashSet<ExternId>,
     /// Velt functions that write nothing their callers can see (`read_only.rs`).
     read_only_fns: FxHashSet<FuncId>,
@@ -84,6 +94,7 @@ impl Runtime {
             clone: ext(STR_CLONE),
             drop: ext(STR_DROP),
             alloc: ext(ALLOC),
+            slice: ext(STR_SLICE),
             read_only_fns: read_only::read_only_functions(program, &read_only),
             read_only,
         }
@@ -104,6 +115,20 @@ impl Runtime {
 
 /// Borrow every family of `func` that allows it; returns whether anything changed.
 pub(crate) fn run(aggs: &[AggLayout], rt: &Runtime, func: &mut Function) -> bool {
+    run_mode(aggs, rt, func, false)
+}
+
+/// Make the families of `func` that allow it string views (`views.rs`); returns whether
+/// anything changed.
+/// A view only pays where a family slices, and every slice of a string that is not static calls
+/// the runtime's slice: a function with no such call has nothing for this mode that the copy
+/// mode, run before it, did not take.
+pub(crate) fn run_views(aggs: &[AggLayout], rt: &Runtime, func: &mut Function) -> bool {
+    let slices = |b: &velt_vir::vir::BasicBlock| matches!(&b.term, Terminator::Call { callee, .. } if rt.is(callee, rt.slice));
+    rt.slice.is_some() && func.blocks.iter().any(slices) && run_mode(aggs, rt, func, true)
+}
+
+fn run_mode(aggs: &[AggLayout], rt: &Runtime, func: &mut Function, views: bool) -> bool {
     let clones = |b: &velt_vir::vir::BasicBlock| matches!(&b.term, Terminator::Call { callee, .. } if rt.is(callee, rt.clone));
     if !func.blocks.iter().any(clones) {
         return false;
@@ -117,12 +142,15 @@ pub(crate) fn run(aggs: &[AggLayout], rt: &Runtime, func: &mut Function) -> bool
             }
         }
     }
+    let local_addresses = live::local_address_registers(func, &usage);
     let cx = Cx {
         aggs,
         rt,
         func,
         usage: &usage,
         addrs: &addrs,
+        views,
+        local_addresses: &local_addresses,
     };
     let mut done: FxHashSet<Local> = FxHashSet::default();
     // Members of the families borrowed so far: a family that shares one with them is left as
@@ -146,7 +174,10 @@ pub(crate) fn run(aggs: &[AggLayout], rt: &Runtime, func: &mut Function) -> bool
         return false;
     }
     for e in edits {
-        apply(func, e);
+        match e {
+            Edit::Demote { block, m, src } => views::demote(func, block, m, src),
+            e => apply(func, e),
+        }
     }
     true
 }
@@ -157,6 +188,9 @@ enum Edit {
     Copy { block: usize, m: Local, src: Local },
     /// The drop in block `block` becomes zeroing `m`.
     Zero { block: usize, m: Local },
+    /// The clone in block `block` becomes a static view of `*src` when that is a heap ASCII
+    /// string, and stays the clone otherwise (`views.rs`).
+    Demote { block: usize, m: Local, src: Local },
 }
 
 fn apply(func: &mut Function, e: Edit) {
@@ -182,6 +216,7 @@ fn apply(func: &mut Function, e: Edit) {
             };
             (block, (0..3).map(zero).collect())
         }
+        Edit::Demote { .. } => panic!("ICE: borrowed_copies applies a demotion as a copy"),
     };
     let at = func.term_loc(bi);
     let Terminator::Call { next, .. } = func.blocks[bi].term else {
@@ -225,6 +260,9 @@ impl Family {
 enum Source {
     /// Bytes `start..start + 24` of a class object (`agg`).
     Field { start: u64 },
+    /// A string the caller holds (views mode): reached through a parameter, so never one of this
+    /// function's locals, but possibly anywhere else.
+    Caller,
     /// Anywhere (a parameter, a local's address, ...).
     Unknown,
 }
@@ -236,6 +274,12 @@ struct Cx<'a> {
     usage: &'a Usage,
     /// The place each local's first `l = &place` takes the address of.
     addrs: &'a FxHashMap<Local, &'a Place>,
+    /// Views mode (`views.rs`): members may also hold views and owned strings, slices of them
+    /// join, drops stay, and the clones that start a family become demotions.
+    views: bool,
+    /// The registers that only ever hold the address of one of this function's locals
+    /// (`live::local_address_registers`).
+    local_addresses: &'a FxHashSet<Local>,
 }
 
 /// A program point: block, then statement index (`stmts.len()` = the terminator).
@@ -378,9 +422,10 @@ impl Cx<'_> {
                 | Rvalue::Unary(UnOp::Not, _)
         );
         let carries = (tainted && !flag) || addr;
-        if dst.proj.is_empty() && f.pointers.contains(&dst.local) && !carries {
+        if !self.views && dst.proj.is_empty() && f.pointers.contains(&dst.local) && !carries {
             // A family pointer that also holds other values: they could be another string's
-            // words, which the family would then take for its own.
+            // words, which the family would then take for its own (and not drop). Views mode
+            // keeps every drop, so tracking more than the family's values is only conservative.
             f.bail = true;
             return;
         }
@@ -437,7 +482,12 @@ impl Cx<'_> {
                 callee, args, dest, ..
             } => {
                 if let Some(d) = dest {
-                    if self.writes_family(f, d) || f.pointers.contains(&d.local) {
+                    // In views mode a call may define a whole member or a tracked register
+                    // (`views.rs`: tracking more than the family's values is only conservative
+                    // there); a write through a family pointer still lets nothing be borrowed.
+                    let defines = self.views && d.proj.is_empty() && f.tracked(d.local);
+                    let pointer = !self.views && f.pointers.contains(&d.local);
+                    if (self.writes_family(f, d) && !defines) || pointer {
                         f.bail = true;
                     }
                 }
@@ -449,6 +499,11 @@ impl Cx<'_> {
                     f.bail |= self.tainted(f, target);
                 }
                 if self.rt.is(callee, self.rt.clone) && args.len() == 2 {
+                    if self.views && marked[0] {
+                        // A clone of a family value is a bitwise copy of a view: it joins.
+                        self.join_out(f, &args[1]);
+                        return;
+                    }
                     if marked[1] {
                         // A clone into the family: its source must be a plain pointer local.
                         let into = self
@@ -459,10 +514,11 @@ impl Cx<'_> {
                                 if s.proj.is_empty() && !f.tracked(s.local) =>
                             {
                                 f.sources.push(s.local);
-                                f.edits.push(Edit::Copy {
-                                    block: bi,
-                                    m,
-                                    src: s.local,
+                                let src = s.local;
+                                f.edits.push(if self.views {
+                                    Edit::Demote { block: bi, m, src }
+                                } else {
+                                    Edit::Copy { block: bi, m, src }
                                 });
                             }
                             _ => f.bail = true,
@@ -477,14 +533,30 @@ impl Cx<'_> {
                             .addr_of_local(&args[0])
                             .filter(|m| f.members.contains(m))
                         {
-                            Some(m) => f.edits.push(Edit::Zero { block: bi, m }),
+                            // A member's drop stays in views mode: it may hold an owned string.
+                            Some(m) if !self.views => f.edits.push(Edit::Zero { block: bi, m }),
+                            Some(_) => {}
                             None => f.bail = true,
                         }
                     }
                     return;
                 }
+                if self.views && self.rt.is(callee, self.rt.slice) && args.len() == 4 {
+                    // A slice of a family value may be a view of the same bytes: it joins. Its
+                    // positions are numbers, never family values.
+                    if marked[0] {
+                        self.join_out(f, &args[3]);
+                    }
+                    f.bail |= marked[1] || marked[2];
+                    return;
+                }
                 if marked.contains(&true) && !self.rt.reads_only(callee) {
                     f.bail = true;
+                }
+                if self.views && marked.contains(&true) {
+                    if let Some(d) = dest {
+                        self.call_result(f, callee, d);
+                    }
                 }
             }
             t => term_operands(t, &mut |op| {
@@ -501,6 +573,11 @@ impl Cx<'_> {
     /// Every whole write of a member is a clone (seen in `term`), a move from the family, or a
     /// plain copy of a clone's source.
     fn check_member_defs(&self, f: &mut Family) {
+        if self.views {
+            // Members may hold any string (their drops stay): a demotion is all that is needed.
+            f.bail |= !f.edits.iter().any(|e| matches!(e, Edit::Demote { .. }));
+            return;
+        }
         for block in &self.func.blocks {
             for s in &block.stmts {
                 let Stmt::Assign(dst, rv) = s else { continue };
@@ -525,6 +602,17 @@ impl Cx<'_> {
         }
         if !f.edits.iter().any(|e| matches!(e, Edit::Copy { .. })) {
             f.bail = true;
+        }
+    }
+
+    /// Views mode: the string written through out-pointer `op` joins the family; an out-pointer
+    /// that is not a string local's address lets a view out.
+    fn join_out(&self, f: &mut Family, op: &Operand) {
+        match self.addr_of_local(op).filter(|m| self.is_string_local(*m)) {
+            Some(m) => {
+                f.members.insert(m);
+            }
+            None => f.bail = true,
         }
     }
 }

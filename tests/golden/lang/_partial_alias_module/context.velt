@@ -1,0 +1,7 @@
+// The interface with a method and an alias holding its `Partial`, imported by
+// `partial_alias_module`.
+export interface Ctx {
+  url: string;
+  status(code: number): void;
+}
+export type CtxInit = Request | Partial<Ctx>;

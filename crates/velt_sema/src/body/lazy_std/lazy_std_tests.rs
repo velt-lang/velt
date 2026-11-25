@@ -153,8 +153,13 @@ fn every_std_definition_lowering_names_is_a_root() {
     );
     const INTERFACES: &[(&str, &str)] = &[("std/db/row_source", "RowSource")];
     // Names lowering compares the callee of a call with (it compiles such a call its own way),
-    // never looks up: a call of one is checked code calling a checked function.
-    const RECOGNIZED: &[(&str, &str)] = &[("std/text/string_builder", "StringBuilder.append")];
+    // or a value's type with (`RegExpMatch`: its `AnyIndex` reads `at`, a member live with the
+    // type's `any` table), never looks up: a call of one is checked code calling a checked
+    // function.
+    const RECOGNIZED: &[(&str, &str)] = &[
+        ("std/text/string_builder", "StringBuilder.append"),
+        ("std/text/regex/regexp_match", "RegExpMatch"),
+    ];
     let missing: Vec<_> = (names.iter())
         .filter(|(m, name)| !INTERFACES.contains(&(m.as_str(), name.as_str())))
         .filter(|(m, name)| !RECOGNIZED.contains(&(m.as_str(), name.as_str())))

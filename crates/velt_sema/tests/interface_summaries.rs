@@ -150,9 +150,16 @@ fn reading_a_member_of_an_any_changes_the_dynamic_tables() {
     let main = "function main() { f(1); }";
     let before = format!("function f(x: any) {{ console.log(x); }}\n{main}");
     let after = format!("function f(x: any) {{ console.log(x.a); }}\n{main}");
+    // The `any` tables' member slots call every live class's methods by name, so std methods
+    // only a call reached before are checked now (lazy_std `live_methods.rs`, #3580).
     assert_eq!(
         changes(&before, &after),
-        vec![Change::Fact("dynamic members")]
+        vec![
+            Change::Fact("declarations"),
+            Change::Fact("type tables"),
+            Change::Fact("reached std"),
+            Change::Fact("dynamic members"),
+        ]
     );
 }
 

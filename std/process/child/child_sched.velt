@@ -4,7 +4,8 @@
 // (std/process/child/rt.velt). Each calls its twin of the executor's (child_reactor.velt, which
 // passes to its OS's) by role (`hookCall`, velt_common `std_hooks.rs`): a program loads the
 // executor only when live code starts or uses a child (#2882).
-// `execSync` (`velt_rt_child_output_sync`) stays the runtime's: it blocks its thread anyway.
+// `execSync` (`velt_rt_child_output_sync`) doesn't come here: macOS and Linux run it in std
+// without the executor (exec_sync_posix.velt), Windows and WebAssembly in the runtime.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";

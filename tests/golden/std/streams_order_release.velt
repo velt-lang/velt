@@ -1,0 +1,24 @@
+// check: no leaks
+// A stream's microtask order against a chain of `then`s, as Node 22's (#3643): `releaseLock()` with
+// reads pending: `closed` rejects before the reads. The Node twin is streams_order_release.mjs.
+async function main(): Promise<void> {
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      console.log("pull");
+    },
+  });
+  let p = Promise.resolve();
+  for (let i = 0; i < 12; i++) {
+    const k = i;
+    p = p.then(() => {
+      console.log("t" + k);
+    });
+  }
+  const r = s.getReader();
+  r.read().then(() => console.log("read ok"), () => console.log("read0 rejected"));
+  r.closed.then(() => console.log("closed ok"), () => console.log("closed rejected"));
+  r.read().then(() => console.log("read ok"), () => console.log("read1 rejected"));
+  r.releaseLock();
+}
+
+main();

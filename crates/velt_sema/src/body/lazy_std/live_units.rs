@@ -5,7 +5,7 @@
 use rustc_hash::FxHashSet;
 
 use super::roots::{seed_units, seed_units_named};
-use super::{fn_module, mark, methods, Live};
+use super::{fn_module, mark, Live};
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::DefId;
@@ -156,15 +156,16 @@ pub(crate) fn units_loaded_modules(cx: &Ctx) -> Vec<bool> {
     loaded
 }
 
-/// [`walk_units_program`] loaded the `new` modules: the methods there of the
-/// live classes and structs are live now, and the implementations there are considered again.
+/// [`walk_units_program`] loaded the `new` modules: the methods there of the live classes and
+/// structs that are live with them ([`super::class_methods`]) are live now, and the
+/// implementations there are considered again.
 fn units_loaded_more(cx: &mut Ctx, loaded: &[bool], new: &[bool]) {
     cx.lazy.live.units_loaded = loaded.to_vec();
     cx.lazy.live.opened = None;
     let adts: Vec<DefId> = cx.lazy.live.adts.iter().copied().collect();
     let mut found = vec![];
     for d in adts {
-        let ms = methods(cx).get(&d).cloned().unwrap_or_default();
+        let ms = super::class_methods::with_class(cx, d);
         found.extend(ms.into_iter().filter(|&m| {
             fn_module(cx, m).is_some_and(|module| new.get(module).copied().unwrap_or(false))
         }));

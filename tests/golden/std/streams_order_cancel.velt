@@ -1,0 +1,253 @@
+// check: no leaks
+// When `reader.cancel(reason)`'s promise settles against other microtasks, as Node 22's (#3695): a
+// microtask after the stream closes for no `cancel` callback, one that gives nothing or one that
+// throws; after the promise it gives is adopted for an `async` one, resolved or rejected. Each with
+// a pull pending. The Node twin is streams_order_cancel.mjs.
+async function noneCase(): Promise<void> {
+  const log: string[] = [];
+  // The pending pull's promise, settled at the end.
+  let open: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return gate;
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  let settled: Promise<void> = Promise.resolve();
+  queueMicrotask(() => {
+    log.push("cancel");
+    settled = r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await p0;
+  await settled;
+  open();
+  console.log("none: " + log.join(" "));
+}
+
+async function syncCase(): Promise<void> {
+  const log: string[] = [];
+  // The pending pull's promise, settled at the end.
+  let open: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return gate;
+    },
+    cancel: (reason) => {
+      log.push("cancelFn");
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  let settled: Promise<void> = Promise.resolve();
+  queueMicrotask(() => {
+    log.push("cancel");
+    settled = r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await p0;
+  await settled;
+  open();
+  console.log("sync: " + log.join(" "));
+}
+
+async function asyncCase(): Promise<void> {
+  const log: string[] = [];
+  // The pending pull's promise, settled at the end.
+  let open: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return gate;
+    },
+    cancel: async (reason) => {
+      log.push("cancelFn");
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  let settled: Promise<void> = Promise.resolve();
+  queueMicrotask(() => {
+    log.push("cancel");
+    settled = r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await p0;
+  await settled;
+  open();
+  console.log("async: " + log.join(" "));
+}
+
+async function asyncThrowCase(): Promise<void> {
+  const log: string[] = [];
+  // The pending pull's promise, settled at the end.
+  let open: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return gate;
+    },
+    cancel: async (reason) => {
+      log.push("cancelFn");
+      throw new Error("async boom");
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  let settled: Promise<void> = Promise.resolve();
+  queueMicrotask(() => {
+    log.push("cancel");
+    settled = r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await p0;
+  await settled;
+  open();
+  console.log("asyncThrow: " + log.join(" "));
+}
+
+async function throwsCase(): Promise<void> {
+  const log: string[] = [];
+  // The pending pull's promise, settled at the end.
+  let open: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 8; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return gate;
+    },
+    cancel: (reason) => {
+      log.push("cancelFn");
+      throw new Error("cancel boom");
+    },
+  });
+  const r = s.getReader();
+  r.read().then((v) => {
+    log.push("read done=" + v.done);
+  });
+  r.closed.then(() => {
+    log.push("closed");
+  });
+  let settled: Promise<void> = Promise.resolve();
+  queueMicrotask(() => {
+    log.push("cancel");
+    settled = r.cancel("x").then(
+      () => {
+        log.push("cancel resolved");
+      },
+      (e) => {
+        log.push("cancel rejected " + (e as Error).message);
+      },
+    );
+  });
+  await p0;
+  await settled;
+  open();
+  console.log("throws: " + log.join(" "));
+}
+
+async function main(): Promise<void> {
+  await noneCase();
+  await syncCase();
+  await asyncCase();
+  await asyncThrowCase();
+  await throwsCase();
+}
+
+main();

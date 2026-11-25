@@ -1,0 +1,14 @@
+// `Partial<I>` of an interface with methods through an alias of another module (sigx's
+// `ServerFnContextInit`): the alias can be expanded before the interface's methods are
+// collected, and its `Partial<Ctx>` is still the one with `status?`, so a value narrowed from it
+// is a `Partial<Ctx>` (#379, sigx testing.ts:83).
+import { Ctx, CtxInit } from "./_partial_alias_module/context";
+
+function make(init?: CtxInit): string {
+  if (init) {
+    const source: Partial<Ctx> = init instanceof Request ? { url: init.url } : init;
+    return String(source.url) + " " + typeof source.status;
+  }
+  return "none";
+}
+console.log(make({ url: "/a", status: (c: number) => {} }), make(new Request("http://x/b")), make());

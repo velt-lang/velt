@@ -249,6 +249,37 @@ pub unsafe extern "C" fn velt_rt_rows_str(st: u64, col: u64, out: *mut VeltStr) 
     OK
 }
 
+/// A nested value's JSON text (`Cell::Json`) as a string: what std's rows reader
+/// (std/encoding/json/rows_reader.velt) reads with a text reader. Text that is not UTF-8 gets
+/// U+FFFD (a driver's JSON is UTF-8).
+///
+/// # Safety
+/// As the module says; `out` is writable.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_json(st: u64, col: u64, out: *mut VeltStr) -> u8 {
+    let t = match cell(st, col) {
+        Cell::Json(t) => t,
+        Cell::Null => return NULL,
+        _ => return MISMATCH,
+    };
+    out.write(match std::str::from_utf8(t) {
+        Ok(text) => VeltStr::from_text(text),
+        Err(_) => VeltStr::from_text(&String::from_utf8_lossy(t)),
+    });
+    OK
+}
+
+/// The rows' header as a `u8[]` (`velt_text::rows`' layout: `single: u8`, `columns: u16`, then
+/// each name with its length in front): std's rows reader takes `single` and the column names
+/// from it.
+///
+/// # Safety
+/// As the module says; `out` is writable.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_rows_header(st: u64, out: *mut VeltBytes) {
+    out.write(VeltBytes::from_vec(state(st).cursor.header().to_vec()));
+}
+
 /// What column `col` of the current row holds, numbered as std/db's `CellKind`: 0 NULL, 1 a
 /// boolean, 2 an integer, 3 a float, 4 text, 5 a blob, 6 a nested value (JSON).
 #[no_mangle]
@@ -275,31 +306,6 @@ pub unsafe extern "C" fn velt_rt_rows_blob(st: u64, col: u64, out: *mut VeltByte
         _ => Vec::new(),
     };
     out.write(VeltBytes::from_vec(bytes));
-}
-
-/// The JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field`
-/// (`row` -1: the single row, `$`; `field` empty: the row itself).
-///
-/// # Safety
-/// The strings are valid; `out` is writable.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_rows_fail(
-    expected: *const VeltStr,
-    row: i64,
-    field: *const VeltStr,
-    out: *mut VeltStr,
-) {
-    let mut path = String::from("$");
-    if row >= 0 {
-        path.push_str(&format!("[{row}]"));
-    }
-    let field = (*field).text_lossy();
-    if !field.is_empty() {
-        path.push('.');
-        path.push_str(&field);
-    }
-    let msg = crate::json::error::mismatch_message(&(*expected).text_lossy(), &path);
-    out.write(VeltStr::from_vec(msg.into_bytes()));
 }
 
 #[cfg(test)]

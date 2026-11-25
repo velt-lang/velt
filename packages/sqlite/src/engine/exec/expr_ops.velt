@@ -36,7 +36,7 @@ export function compileUnary(c: ExprCompiler, e: Expr, sc: Scope): C {
   }
   if (e.op == "+") {
     // +x has no affinity but keeps x's collation.
-    return { ev: xe, aff: AFF_NONE, coll: x.coll, explicit: x.explicit };
+    return { ev: () => xe(), aff: AFF_NONE, coll: x.coll, explicit: x.explicit };
   }
   if (e.op == "~") {
     return plain(() => bitOp(BIT_NOT, xe(), xe()));
@@ -180,7 +180,7 @@ export function compileInList(c: ExprCompiler, e: Expr, sc: Scope): C {
   }
   const items: Ev[] = [];
   for (const a of e.args) {
-    items.push(c.ev(a, sc));
+    items.push(c.compileEv(a, sc));
   }
   return plain(() => {
     const v = xe();

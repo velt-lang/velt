@@ -33,6 +33,9 @@ pub(crate) fn analyze(
     // after a check of both units (`units::check_definitions`).
     if cx.units_stage == units::Stage::App {
         cx.thaw_defs();
+        // What the app's passes raised of std's definitions, written as a whole-program
+        // check had written it during them (`units::raised`).
+        units::raised::apply(cx);
     }
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
@@ -110,6 +113,9 @@ pub(crate) fn analyze_after_phase(cx: &mut ctx::Ctx) {
     // Every implementation exists now: those of interfaces whose methods are written get their
     // method setters (`iface_method_writes`).
     cx.finish_method_setters();
+    timings::pass("iface_method_values::check", || {
+        crate::iface_method_values::check(cx)
+    });
     timings::pass("check_adapter_writes", || cx.check_adapter_writes());
     timings::pass("check_adapted_array_reads", || {
         cx.check_adapted_array_reads()

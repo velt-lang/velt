@@ -684,15 +684,24 @@ impl FnCx<'_, '_> {
         if let Some(ty) = joined {
             return (v, d, ty);
         }
-        let d = match self.try_coerce(d, payload) {
+        // Each conversion is tried on a copy: a failed one may give back a changed value (a
+        // literal no longer written as one), which then no longer converts to `exp` (#3370).
+        let d = match self.try_coerce(d.clone(), payload) {
             Ok(d) => return (v, d, payload),
-            Err(d) => d,
+            Err(_) => d,
         };
         let dty = d.ty;
-        let v = match self.try_coerce(v, dty) {
+        let v = match self.try_coerce(v.clone(), dty) {
             Ok(v) => return (v, d, dty),
-            Err(v) => v,
+            Err(_) => v,
         };
+        // Both as the expected type (`d ?? "none"` against `Named | "none"`).
+        if let Some(e) = exp.filter(|e| *e != self.cx.ty.error) {
+            if let (Ok(cv), Ok(cd)) = (self.try_coerce(v.clone(), e), self.try_coerce(d.clone(), e))
+            {
+                return (cv, cd, e);
+            }
+        }
         let span = d.span;
         let union = self.cx.union_of(&[payload, dty], false, span);
         if union == self.cx.ty.error {

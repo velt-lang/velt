@@ -97,8 +97,8 @@ export function jsonValueOf(x: string | f64 | bool | null): JsonValue {
   return new JsonValue(JsonTree.scalar(TREE_BOOL, x ? 1 : 0));
 }
 
-// The value a database driver's row gave (the runtime's row reader, which goes with #2563), as
-// its JSON text: a tape of it.
+// The value a database driver's rows gave (rows_reader.velt), as its JSON text: a tape of it.
+// The text is made from the rows' cells and the driver's own well-formed JSON cells.
 function rowsValue(text: string): JsonValue {
   const t = parseTape(text, 0);
   if (t instanceof TapeError) {
