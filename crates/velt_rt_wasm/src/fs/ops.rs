@@ -52,14 +52,6 @@ pub fn open(path: &Path, opts: &fs::OpenOptions) -> io::Result<fs::File> {
     })
 }
 
-/// Milliseconds since the Unix epoch of a modification `d` after it, as Node computes `mtimeMs`
-/// (`sec * 1e3 + nsec / 1e6`) and std's `stat` does: the same float, so a file `stat` looked at
-/// compares equal to the one `openRead` opened (`http-server`'s `serveFile`, #3785).
-/// `as_secs_f64() * 1000.0` rounds differently in the last bits.
-fn mtime_ms(d: std::time::Duration) -> f64 {
-    d.as_secs() as f64 * 1000.0 + d.subsec_nanos() as f64 / 1e6
-}
-
 /// `Stats` of metadata (`is_symlink` is only ever set for `lstat`'s).
 pub fn stats_of(m: fs::Metadata) -> VeltStat {
     VeltStat {
@@ -68,22 +60,13 @@ pub fn stats_of(m: fs::Metadata) -> VeltStat {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0.0, mtime_ms),
+            // Node's `mtimeMs` (`sec * 1e3 + nsec / 1e6`), as std's `stat` computes it: the same
+            // float for the same file (#3785); `as_secs_f64() * 1000.0` differs in the last bits.
+            .map_or(0.0, |d| {
+                d.as_secs() as f64 * 1000.0 + d.subsec_nanos() as f64 / 1e6
+            }),
         is_file: m.is_file() as u8,
         is_dir: m.is_dir() as u8,
         is_symlink: m.file_type().is_symlink() as u8,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::mtime_ms;
-    use std::time::Duration;
-
-    #[test]
-    fn mtime_is_nodes_float() {
-        // A Windows mtime (100 ns ticks) where the two formulas differ (#3785).
-        let d = Duration::new(1_795_618_165, 992_060_800);
-        assert_eq!(mtime_ms(d), 1_795_618_165.0 * 1000.0 + 992_060_800.0 / 1e6);
     }
 }
