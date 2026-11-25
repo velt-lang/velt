@@ -1,0 +1,160 @@
+-- all, a child dies
+w yield 0
+d yield 0
+w yield 1
+d throws
+caught: d died after 1
+w yield 2
+w done
+-- all, three children
+a yield 0
+b yield 0
+c yield 0
+a done
+b yield 1
+c yield 1
+b yield 2
+c done
+b done
+all: 1,3,2
+-- allSettled
+a yield 0
+d yield 0
+b yield 0
+a yield 1
+d throws
+b done
+a done
+allSettled: fulfilled,rejected,fulfilled
+-- race
+a yield 0
+b yield 0
+c yield 0
+a yield 1
+b done
+race: 1
+c yield 1
+a yield 2
+c done
+a done
+-- any
+d yield 0
+a yield 0
+b yield 0
+d throws
+a yield 1
+b yield 1
+a done
+any: 2
+b yield 2
+b done
+-- all, timers
+y yield 0
+y yield 1
+y done
+t5 sleeps 5
+t5 woke
+t60 sleeps 60
+t5 done
+t60 woke
+t60 done
+all: 60,2,5
+-- all, a child awaits another
+p yield 0
+q waits
+z yield 0
+p yield 1
+z done
+p done
+q got 2
+q done
+all: 3,2,1
+-- all, a throw at once beside two yielders
+b yield 0
+t throws
+c yield 0
+caught t
+b yield 1
+c yield 1
+b done
+c done
+-- all, a throw at once beside three yielders
+a yield 0
+b yield 0
+t throws
+c yield 0
+caught t
+a yield 1
+b yield 1
+c yield 1
+a yield 2
+b done
+c done
+a done
+-- the root's yield between a listed and a later yield
+l yield 0
+m resumed
+l yield 1
+root after its yield
+m done
+l done
+-- all, the first child's turn queues a microtask
+a yield 0
+b yield 0
+c yield 0
+a done
+a's microtask
+b done
+c done
+all: 1,1,1
+-- all, the second child's turn queues a microtask
+a yield 0
+b yield 0
+c yield 0
+a done
+b done
+b's microtask
+c done
+all: 1,1,1
+-- all, a child queues a microtask and yields again at its turn
+a yield 0
+b yield 0
+a yield 1
+a's microtask
+b yield 1
+a done
+b done
+all: 2,2
+-- all, the first child yields after the second
+b yield 0
+a yield 0
+b done
+a done
+all: 1,1
+-- all, a started promise yields between two children
+a yield 0
+b's p yield 0
+b yield 0
+c yield 0
+a done
+b's p done
+b done
+c done
+all: 1,2,1
+-- all, after a settled await (adopted)
+t yield 0
+u yield 0
+t yield 1
+u done
+t yield 2
+t done
+all: 3,1
+-- all, after a rejected any (adopted)
+any rejected
+v yield 0
+w yield 0
+v yield 1
+w done
+v yield 2
+v done
+all: 3,1
