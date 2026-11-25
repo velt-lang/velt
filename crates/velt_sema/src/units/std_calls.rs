@@ -125,17 +125,11 @@ fn dispatches(
     if cx.super_calls.contains(&e.span) {
         return None;
     }
-    // The receiver before its upcast to the method's class: its static class decides.
-    let recv = args.first()?;
-    let inner = match &recv.kind {
-        H::Upcast(inner) => &**inner,
-        _ => recv,
-    };
+    let (c, inner) = receiver_class(cx, args.first()?);
     if matches!(inner.kind, H::New { .. }) {
         return None;
     }
-    let (c, _) = cx.class_of(inner.ty)?;
-    let slot = *targets.get(&(c, *m))?;
+    let slot = *targets.get(&(c?, *m))?;
     Some((slot, *m))
 }
 
@@ -155,12 +149,12 @@ fn fills_left_out(
         return None;
     };
     let written = *cx.unit_sums.left_out_calls.get(&e.span)? as usize;
-    let recv = args.first()?;
-    let inner = match &recv.kind {
-        H::Upcast(inner) => &**inner,
-        _ => recv,
-    };
-    let (c, _) = cx.class_of(inner.ty)?;
+    // A receiver just constructed runs its own class's method with std's defaults, as in Node.
+    let (c, inner) = receiver_class(cx, args.first()?);
+    if matches!(inner.kind, H::New { .. }) {
+        return None;
+    }
+    let c = c?;
     let slots = cx.vslots_of(c)?;
     let key = slots.iter().find(|(_, &s)| s == *slot)?.0;
     let fill = crate::collect::fill_defaults::fill_key(key, Some(written));
@@ -168,4 +162,19 @@ fn fills_left_out(
         return None;
     }
     Some((*slots.get(&fill)?, written, fill))
+}
+
+/// The static class of a call's receiver `recv` and the receiver before its upcasts: its own
+/// class, or for a value of a type parameter bounded by a class (`p: T` with `T extends
+/// PBase`), the bound it is upcast to (`class_bound`); the innermost class decides.
+fn receiver_class<'e>(cx: &Ctx, recv: &'e Expr) -> (Option<DefId>, &'e Expr) {
+    let mut class = cx.class_of(recv.ty).map(|(c, _)| c);
+    let mut inner = recv;
+    while let H::Upcast(e) = &inner.kind {
+        inner = e;
+        if let Some((c, _)) = cx.class_of(inner.ty) {
+            class = Some(c);
+        }
+    }
+    (class, inner)
 }

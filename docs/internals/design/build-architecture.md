@@ -147,12 +147,15 @@ freeze lifts, such a call becomes a call through the slot (`units/std_calls.rs`)
 program's override can run: not a `super.m()` call, not a receiver just constructed, and not a
 receiver whose class no overriding program class extends. A call that left out arguments, or
 wrote `undefined` for them, had std's defaults placed at the call. The check of std's bodies
-records how many arguments such a call writes (`Summaries::left_out_calls`). When the program
-adds the default-filling slot of that many arguments to the receiver's class, the call becomes a
-call through it, so the override that runs applies its own defaults. A call that passes a value
-that may be `undefined` before written arguments can't be redone through a slot. It is listed
-(`Summaries::left_out_general`, `VELT_UNITS_RAISED`'s `unfillable call` lines), and a test keeps
-std without one (`crates/veltc/tests/units_defaults.rs`, #3789). Without a slot the program
+records how many arguments such a call writes (`Summaries::left_out_calls`; a spread of a tuple
+counts as its elements). The receiver's class is its static class, or for a value of a type
+parameter the class bounding it. When the program adds the default-filling slot of that many
+arguments to the receiver's class, the call becomes a call through it, so the override that
+runs applies its own defaults (a rest parameter after them takes no elements). Some calls can't
+be redone through a slot: one that passes a value that may be `undefined` among its written
+arguments, one with a spread of an unknown length that may fill a parameter with a default, and
+one through std's own general fill slot. They are listed (`Summaries::left_out_general`, `VELT_UNITS_RAISED`'s `unfillable
+call` lines), and a test keeps std without one (`crates/veltc/tests/units_defaults.rs`, #3789). Without a slot the program
 added, nothing changes. **The lowering cache's key** (U8) and prebuilt std objects must therefore
 see this program fact. A std function whose calls are rewritten so takes into its lowering key
 the program's set of overriding methods for those calls, and their defaults. Otherwise it is
