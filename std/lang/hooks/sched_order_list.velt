@@ -1,6 +1,6 @@
 // velt/lang/hooks (internal): the lists of Node's timer order under the executor in Velt
-// (sched_order.velt, #2649), in the order's block, as the runtime's (velt_rt
-// task/local/order.rs) and Node's (lib/internal/timers.js): one list of timers per delay in whole
+// (sched_order.velt, #2649), in the order's block, as the runtime's Rust
+// order it replaced and Node's (lib/internal/timers.js): one list of timers per delay in whole
 // milliseconds, in the order they were inserted, each with an expiry (its first timer's start
 // plus the delay) and an id (the next number when it was made or moved); the lists in
 // (expiry, id) order in one chain. The immediates (`setImmediate`, delay 0) have a list of their
