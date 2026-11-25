@@ -107,6 +107,9 @@ pub(crate) struct Live {
     int_text: FxHashMap<TyId, bool>,
     /// Live code prints a float: `console.log`'s float writer is needed (`number_text.rs`).
     pub(super) prints_float: bool,
+    /// Live code prints a value that may hold containers at the top level: `console.log`'s line
+    /// breaking is needed ([`super::live_constructs::demand_gated`]).
+    pub(super) prints_containers: bool,
     /// Live code runs on the executor ([`Walk::tasks`]): the executor in Velt's hooks are needed
     /// (#2649 P3(a)).
     pub(super) tasks: bool,
@@ -162,6 +165,12 @@ struct Walk {
     formats: Vec<TyId>,
     /// `console.log` or `console.error` of a float.
     prints_float: bool,
+    /// A value that may hold containers printed at the top level (`console.log`, `util.inspect`,
+    /// text of it): its line breaking's hooks are needed ([`super::live_constructs`]).
+    prints_containers: bool,
+    /// Throws of a value that may hold containers, which is printed when not caught. Only the
+    /// program's count: std throws its error classes in nearly every program.
+    thrown_containers: u32,
     /// The interfaces whose methods it calls on a type parameter's value.
     ifaces: Vec<DefId>,
     /// The kinds ([`kind_bit`]) of its scalar types, which are not recorded as types.
@@ -326,6 +335,7 @@ fn walk_set(cx: &mut Ctx) {
                 super::check_found(cx, d);
             }
             let start = w.start();
+            let thrown = w.thrown_containers;
             if !walk_def(cx, d, &mut w) {
                 pending.push(d);
                 continue;
@@ -333,6 +343,7 @@ fn walk_set(cx: &mut Ctx) {
             super::hook_stubs::demand_hook_calls(cx, d);
             if program_code(cx, d) {
                 constructs::note_program_code(cx, &w, start);
+                cx.lazy.live.prints_containers |= w.thrown_containers > thrown;
             }
         }
         evaluate(cx, &w);

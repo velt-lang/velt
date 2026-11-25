@@ -3,7 +3,7 @@
 // `getStringWidth(text, false)` counts them, and the column plans of `groupArrayElements`, read
 // from Node's output for arrays of strings of those widths. Run by `velt test std/`.
 import { describe, expect, it } from "velt/test";
-import { strByteLen } from "velt/lang/intrinsics";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 import { codePointWidth, displayWidth, utf16Units } from "velt/lang/hooks/inspect_layout_width";
 import { planColumns } from "velt/lang/hooks/inspect_layout_columns";
 
@@ -86,6 +86,50 @@ function repeat(n: u64, f: (i: u64) => u64): u64[] {
   }
   return xs;
 }
+
+/** Does byte `i` of `s` start a character (not a UTF-8 continuation byte)? */
+function starts(s: string, i: u64): bool {
+  return i == strByteLen(s) as u64 || (strByteAt(s, i) & 0xc0) != 0x80;
+}
+
+/** Both measures of bytes `a..b` of `s`, summed one character at a time (never 8 bytes at a time). */
+function slowly(s: string, a: u64, b: u64): u64[] {
+  let u: u64 = 0;
+  let w: u64 = 0;
+  let from = a;
+  for (let i = a + 1; i <= b; i++) {
+    if (starts(s, i)) {
+      u += utf16Units(s, from, i);
+      w += displayWidth(s, from, i);
+      from = i;
+    }
+  }
+  return [u, w];
+}
+
+describe("8 bytes at a time", () => {
+  it("measures as one character at a time does, at every alignment", () => {
+    // Printable runs longer than a word, broken by a tab, DEL, a control byte and wider
+    // characters at varied offsets.
+    const s =
+      "abcdefgh\tijklmnop\x7fqrstuvwxyz漢ABCDEFGHIJ🦀KLMNOPQRSTé0123456789abcdef\u001fghijklmnopqrstuvw";
+    const n = strByteLen(s) as u64;
+    let checked = 0;
+    for (let a: u64 = 0; a < 24; a++) {
+      for (let b = a; b <= n; b++) {
+        if (starts(s, a) && starts(s, b)) {
+          const want = slowly(s, a, b);
+          expect(utf16Units(s, a, b)).toBe(want[0]);
+          expect(displayWidth(s, a, b)).toBe(want[1]);
+          checked += 1;
+        }
+      }
+    }
+    expect(checked > 1500).toBe(true);
+    expect(utf16Units(s, 0, n)).toBe(86);
+    expect(displayWidth(s, 0, n)).toBe(84);
+  });
+});
 
 describe("planColumns", () => {
   // Each expected plan is Node 22's: the column count, then each column's width, read from

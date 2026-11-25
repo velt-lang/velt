@@ -1,0 +1,23 @@
+// check: no leaks
+// The custom inspect pieces of a value that stays on one line are dropped with it, also when it is
+// the last value printed: nothing is left for the end of the program. Output from node 22.
+
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+class Tag {
+  [custom](): string {
+    return "Tag<a custom inspect's text, long enough to make the value break>";
+  }
+}
+
+class Short {
+  [custom](): string {
+    return "S";
+  }
+}
+
+function main() {
+  console.log({ first: new Tag(), second: [1, 2, 3], third: new Tag() });
+  console.log([new Short(), new Short()]);
+  console.log({ s: new Short() });
+}
