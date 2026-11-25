@@ -1,0 +1,262 @@
+// velt/lang/hooks (internal): a value `console.log` breaks across lines, as the scanner
+// (inspect_layout_parse.velt) reads it: its containers in preorder, their entries, and how each
+// container is laid out. A container's layout is decided when its closing brace is read, from its
+// entries as laid out and its indentation (Node's `reduceToSingleString`, `isBelowBreakLength`
+// and `groupArrayElements` in lib/internal/util/inspect.js): on one line while it fits in 80
+// columns, else one entry per line with 2-space indentation, or an array's short entries in
+// columns. inspect_layout_render.velt writes what is decided here.
+
+import { BREAK_LENGTH, planColumnsIn } from "velt/lang/hooks/inspect_layout_columns";
+import { arrayMove, arraySetLen } from "velt/lang/intrinsics";
+
+/** A container stays on one line, has one entry per line, or its entries in columns. */
+export const ONE_LINE: u64 = 0;
+export const BROKEN: u64 = 1;
+export const GROUPED: u64 = 2;
+
+/** The words of a container's record in `Layout.node`, in preorder. */
+export const NODE_WORDS: u64 = 12;
+/** Where its prefix starts, where its opening brace ends, where its closing brace ends. */
+export const N_OPEN: u64 = 0;
+export const N_OPEN_END: u64 = 1;
+export const N_CLOSE_END: u64 = 2;
+/** Its first entry in `Layout.ent`, and how many. */
+export const N_FIRST: u64 = 3;
+export const N_COUNT: u64 = 4;
+/** `ONE_LINE`, `BROKEN` or `GROUPED`; for `GROUPED`, its columns and their widths in `widest`. */
+export const N_MODE: u64 = 5;
+export const N_COLUMNS: u64 = 6;
+export const N_WIDEST: u64 = 7;
+/** Bit 0: its shown entries are numbers (right-aligned); bit 1: its last is `... n more items`. */
+export const N_FLAGS: u64 = 8;
+/** The record after its last descendant's. */
+export const N_SUBTREE_END: u64 = 9;
+/** Its length laid out, in UTF-16 units and display columns. */
+export const N_UNITS: u64 = 10;
+export const N_WIDTH: u64 = 11;
+
+/**
+ * The words of an entry's record, on the scanner's stack while its container is open and then in
+ * `Layout.ent`: its text's bytes, its display width and UTF-16 units laid out, and flags (1: spans
+ * lines, 2: a number, 4: `... n more items`).
+ */
+export const ENT_WORDS: u64 = 5;
+export const PEND_WORDS: u64 = ENT_WORDS;
+
+/**
+ * A value being read and laid out (inspect_layout_parse.velt), then written
+ * (inspect_layout_render.velt): one object for the scanner's state, what it decides, and the
+ * writer's place.
+ */
+export class Layout {
+  /** The containers, `NODE_WORDS` each, in preorder. */
+  node: u64[] = [];
+  /** The entries, `ENT_WORDS` each, each container's together. */
+  ent: u64[] = [];
+  /** The columns' widths of grouped containers. */
+  widest: u64[] = [];
+  /** The split strings, in order: their bytes, and their text laid out. */
+  splitAt: u64[] = [];
+  splitText: string[] = [];
+  /** The top-level value's bytes. */
+  topStart: u64;
+  topEnd: u64;
+  /** Whether lengths are measured exactly (not all printable ASCII): line breaks may be atoms'. */
+  exact: bool;
+  /** Does the layout differ from the one-line text (a container breaks, a string splits)? */
+  changed: bool = false;
+
+  /** The printed text, and the address of its bytes, which the scanner reads. */
+  src: string;
+  data: usize;
+  end: u64;
+  /** Custom inspect text: pairs of byte offsets. */
+  atoms: u64[];
+  /** Where the scanner is. */
+  i: u64;
+  /** Measuring bytes, a byte was met that needs exact measuring. */
+  unplain: bool = false;
+  /** The entries of the open containers, `PEND_WORDS` each. */
+  pend: u64[] = [];
+  /** The last entry read: its bytes and its length laid out, whether it spans lines. */
+  eStart: u64 = 0;
+  eEnd: u64 = 0;
+  eUnits: u64 = 0;
+  eWidth: u64 = 0;
+  eLines: bool = false;
+  /** Is it a number, or `... n more items` (an entry of plain text alone)? */
+  eNumber: bool = false;
+  eMore: bool = false;
+  /** Raw line breaks in the last container read (exact only). */
+  nodeBreaks: u64 = 0;
+  /** The writer's next container and next split string. */
+  wNode: u64 = 0;
+  wSplit: u64 = 0;
+  /**
+   * A lower bound on the capacity of `ent`, which grows only by `reserve`: that makes exactly the
+   * room asked for, so a container that outgrows it asks for at least double what it holds.
+   */
+  entRoom: usize = 0;
+
+  constructor(src: string, data: usize, start: u64, end: u64, atoms: u64[], exact: bool) {
+    this.src = src;
+    this.data = data;
+    this.topStart = start;
+    this.topEnd = end;
+    this.end = end;
+    this.atoms = atoms;
+    this.i = start;
+    this.exact = exact;
+    // Room by the text's bytes up to 2 KB, what most values need, so they don't grow while
+    // read. A larger value's arrays grow as its containers and entries arrive, by what they
+    // need, not by its bytes.
+    const n = (end - start < 2048 ? end - start : 2048) as usize;
+    this.node.reserve(n + 32);
+    this.ent.reserve(2 * n + 16);
+    this.entRoom = 2 * n + 16;
+    this.pend.reserve(n + 16);
+  }
+}
+
+/**
+ * Decides the layout of container `index` of `l`, closed at `closeEnd`: its prefix and brace at
+ * `open..openEnd` (`openLen` as Node counts it, `openUnits` / `openWidth` its length), its one-line
+ * length `lineUnits` / `lineWidth`, in an entry at indentation `indent`; its entries are on
+ * `l.pend` from `base` (`PEND_WORDS` each).
+ */
+export function closeContainer(
+  l: Layout,
+  base: u64,
+  index: u64,
+  open: u64,
+  openEnd: u64,
+  closeEnd: u64,
+  indent: u64,
+  openLen: u64,
+  openUnits: u64,
+  openWidth: u64,
+  lineUnits: u64,
+  lineWidth: u64,
+  isArray: bool,
+): void {
+  const count = ((l.pend.length as u64) - base) / PEND_WORDS;
+  let sumUnits: u64 = 0;
+  let sumWidth: u64 = 0;
+  let anyLines = false;
+  let numbers = true;
+  let numbersBefore = true;
+  let lastMore = false;
+  for (let e: u64 = 0; e < count; e++) {
+    const p = base + e * PEND_WORDS;
+    const flags = l.pend[p + 4];
+    sumWidth += l.pend[p + 2];
+    sumUnits += l.pend[p + 3];
+    anyLines = anyLines || (flags & 1) != 0;
+    numbersBefore = numbers;
+    numbers = numbers && (flags & 2) != 0;
+    lastMore = (flags & 4) != 0;
+  }
+  // Its entries, together: the records on the stack, moved in one copy.
+  const first = (l.ent.length as u64) / ENT_WORDS;
+  const words = (count * ENT_WORDS) as usize;
+  const at = l.ent.length as usize;
+  if (at + words > l.entRoom) {
+    const extra = words > at ? words : at;
+    l.ent.reserve(extra);
+    l.entRoom = at + extra;
+  }
+  arraySetLen(l.ent, at + words);
+  arrayMove(l.ent, at, l.pend, base as usize, words);
+  // Node groups an array's entries without its `... n more items`, which follows the rows.
+  const more: u64 = isArray && lastMore ? 1 : 0;
+  const shown = count - more;
+  const allNumbers = more == 1 ? numbersBefore : numbers;
+  const r = index * NODE_WORDS;
+  const node = l.node;
+  node[r + N_OPEN] = open;
+  node[r + N_OPEN_END] = openEnd;
+  node[r + N_CLOSE_END] = closeEnd;
+  node[r + N_FIRST] = first;
+  node[r + N_COUNT] = count;
+  node[r + N_FLAGS] = (allNumbers ? 1 : 0) | (more << 1);
+  node[r + N_SUBTREE_END] = (node.length as u64) / NODE_WORDS;
+  if (isArray && count > 6) {
+    // The entries' display widths are word 2 of their records; the columns' widths go to `widest`.
+    const at = l.widest.length as u64;
+    const c = planColumnsIn(l.pend, base + 2, PEND_WORDS, shown, count, indent, l.widest);
+    if (c > 0) {
+      node[r + N_MODE] = GROUPED;
+      node[r + N_COLUMNS] = c;
+      node[r + N_WIDEST] = at;
+      measureGrouped(l, base, r, shown, more, allNumbers, openUnits, openWidth, indent);
+      l.changed = true;
+      return;
+    }
+  }
+  // Node's `isBelowBreakLength`: the entries, their count and where the container starts.
+  const start = count + indent + openLen + 10;
+  if (!anyLines && 2 * count + start <= BREAK_LENGTH && count + start + sumUnits <= BREAK_LENGTH) {
+    // On one line it is its text as printed.
+    node[r + N_MODE] = ONE_LINE;
+    node[r + N_UNITS] = lineUnits;
+    node[r + N_WIDTH] = lineWidth;
+    return;
+  }
+  node[r + N_MODE] = BROKEN;
+  l.changed = true;
+  const pad = indent + 2;
+  // `open\n<pad>entry,\n<pad>entry\n<indent>close`: a line break is a unit and no column.
+  node[r + N_UNITS] = openUnits + 1 + pad + sumUnits + (count - 1) * (2 + pad) + 1 + indent + 1;
+  node[r + N_WIDTH] = openWidth + pad + sumWidth + (count - 1) * (1 + pad) + indent + 1;
+}
+
+/** The length of a grouped container (record at `r`), as inspect_layout_render.velt writes it. */
+function measureGrouped(
+  l: Layout,
+  base: u64,
+  r: u64,
+  shown: u64,
+  more: u64,
+  numbers: bool,
+  openUnits: u64,
+  openWidth: u64,
+  indent: u64,
+): void {
+  const cols = l.node[r + N_COLUMNS];
+  const at = l.node[r + N_WIDEST];
+  const pad = indent + 2;
+  let units = openUnits + 1 + pad;
+  let width = openWidth + pad;
+  for (let j: u64 = 0; j < shown; j++) {
+    const p = base + j * PEND_WORDS;
+    const column = j % cols;
+    const lastInRow = column + 1 == cols || j + 1 == shown;
+    if (j > 0 && column == 0) {
+      units += 2 + pad;
+      width += 1 + pad;
+    }
+    const w = l.pend[p + 2];
+    const fill = l.widest[at + column] - w;
+    units += l.pend[p + 3];
+    width += w;
+    if (numbers) {
+      units += fill;
+      width += fill;
+    }
+    if (!lastInRow) {
+      units += 2;
+      width += 2;
+      if (!numbers) {
+        units += fill;
+        width += fill;
+      }
+    }
+  }
+  if (more == 1) {
+    const p = base + shown * PEND_WORDS;
+    units += 2 + pad + l.pend[p + 3];
+    width += 1 + pad + l.pend[p + 2];
+  }
+  l.node[r + N_UNITS] = units + 1 + indent + 1;
+  l.node[r + N_WIDTH] = width + indent + 1;
+}
