@@ -56,7 +56,8 @@ function run() {
   console.log("named", describe(named));
 }
 
-// Compound assignment to a `number` place: a local and a class field.
+// Compound assignment to a `number` place: arithmetic on a local and a class field, and the
+// bitwise ones.
 class Acc {
   total = 0.5;
 }
@@ -65,16 +66,25 @@ function compound(): void {
   const bits: Bit[] = [0, 1, 1];
   let x = 0.25;
   const acc = new Acc();
+  let flags = 4;
+  let shifted = 3;
+  let mixed = 12;
   for (const n of bits) {
     x += n;
     x -= n / 2;
     x *= n + 1;
     acc.total += n;
+    flags |= n;
+    shifted <<= n;
+    mixed ^= n;
+    mixed >>= n;
+    mixed >>>= n;
   }
   const five: 5 = 5;
   let y = 1;
   y += five;
   console.log("compound", x, acc.total, y);
+  console.log("bitwise", flags, shifted, mixed);
 }
 
 run();

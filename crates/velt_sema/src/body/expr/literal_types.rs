@@ -191,6 +191,16 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// `v`, the operand of a compound assignment to a place of type `place`: a value of an
+    /// integer literal type or a union of them as the `number` it is when the place is a `number`
+    /// (`x += n`, `x |= n` with `n: 0 | 1`), else `v` as it is.
+    pub(super) fn compound_literal_operand(&mut self, place: TyId, v: hir::Expr) -> hir::Expr {
+        if place != self.cx.ty.f64 {
+            return v;
+        }
+        self.int_literal_as_number(v, place).unwrap_or_else(|v| v)
+    }
+
     /// Can a `number` convert to `t`: `number` itself, or a union or an option holding one
     /// (`depth` bounds the nesting looked into)?
     fn holds_number(&mut self, t: TyId, depth: u32) -> bool {
