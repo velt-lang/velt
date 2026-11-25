@@ -1,8 +1,9 @@
 //! Chaining on the in-place array methods: `xs.sort().join(",")`, `xs.reverse().length`,
-//! `s.split(",").sort().map(f)`. In JS `sort`, `reverse` and `fill` return the array itself; in
-//! Velt they return nothing, since returning the array would share it, which makes every array
-//! of its type reference counted (std/prelude/array.velt). Used as the receiver of a member
-//! access, though, the result is only borrowed, so the chain reads the array they changed:
+//! `s.split(",").sort().map(f)`. In JS `sort`, `reverse`, `fill` and `copyWithin` return the
+//! array itself; in Velt they return nothing, since returning the array would share it, which
+//! makes every array of its type reference counted (std/prelude/array.velt). Used as the
+//! receiver of a member access, though, the result is only borrowed, so the chain reads the
+//! array they changed:
 //! - on a place (`xs`, `this.items`, `rows[i]`) the place is read again after the call;
 //! - on a temporary (`s.split(",")`) the temporary is kept in a local of a block expression,
 //!   changed there and then borrowed, and dropped at the end of the block.
@@ -125,8 +126,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `recv`, checked from `object`, as the receiver of a member access: when `object` is a
-    /// call of `sort`, `reverse` or `fill` on an array, the call runs first and the receiver is
-    /// the array it changed.
+    /// call of `sort`, `reverse`, `fill` or `copyWithin` on an array, the call runs first and the
+    /// receiver is the array it changed.
     pub(super) fn in_place_receiver(&mut self, object: &ast::Expr, recv: hir::Expr) -> Receiver {
         // `a.sort().reverse()`: the inner chain's statements run first, then this call.
         let (mut before, mut recv) = match recv.kind {
@@ -176,9 +177,9 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `h`, checked from `e`: when `e` calls `sort`, `reverse` or `fill` on a temporary array
-    /// (`Object.keys(r).sort()`, `[...xs].sort(cmp)`), the array it changed, as in
-    /// JavaScript. Nothing else holds the temporary, so returning it shares nothing. On a
+    /// `h`, checked from `e`: when `e` calls `sort`, `reverse`, `fill` or `copyWithin` on a
+    /// temporary array (`Object.keys(r).sort()`, `[...xs].sort(cmp)`), the array it changed, as
+    /// in JavaScript. Nothing else holds the temporary, so returning it shares nothing. On a
     /// place (`xs.sort()`) the result stays `void` (`in_place_note`).
     pub(super) fn in_place_value(&mut self, e: &ast::Expr, h: hir::Expr) -> hir::Expr {
         let unit = self.cx.ty.unit;
@@ -235,8 +236,9 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// The note for code that uses the result of `xs.sort()`, `xs.reverse()` or `xs.fill(v)`
-    /// on an array (`h`, checked from `e`) as a value other than a receiver, as in TypeScript.
+    /// The note for code that uses the result of `xs.sort()`, `xs.reverse()`, `xs.fill(v)` or
+    /// `xs.copyWithin(t, s)` on an array (`h`, checked from `e`) as a value other than a
+    /// receiver, as in TypeScript.
     pub(crate) fn in_place_note(&self, e: &ast::Expr, h: &hir::Expr) -> Option<String> {
         let call = match &h.kind {
             H::Block(hir::Block {
@@ -254,10 +256,10 @@ impl FnCx<'_, '_> {
             return None;
         }
         let (object, m) = in_place_call(e)?;
-        let call = if m == "fill" {
-            "fill(v)"
-        } else {
-            &format!("{m}()")
+        let call = match m {
+            "fill" => "fill(v)",
+            "copyWithin" => "copyWithin(t, s)",
+            _ => &format!("{m}()"),
         };
         let what = format!(
             "`{m}` changes the array in place and returns nothing in Velt (TypeScript returns the \
@@ -298,8 +300,8 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// The receiver and method name of `x.sort(…)`, `x.reverse()` or `x.fill(…)` (possibly
-/// parenthesized).
+/// The receiver and method name of `x.sort(…)`, `x.reverse()`, `x.fill(…)` or
+/// `x.copyWithin(…)` (possibly parenthesized).
 fn in_place_call(e: &ast::Expr) -> Option<(&ast::Expr, &str)> {
     match &e.kind {
         ast::ExprKind::Paren(inner) => in_place_call(inner),
@@ -308,7 +310,11 @@ fn in_place_call(e: &ast::Expr) -> Option<(&ast::Expr, &str)> {
                 object,
                 prop,
                 optional: false,
-            } if matches!(prop.name.as_str(), "sort" | "reverse" | "fill") => {
+            } if matches!(
+                prop.name.as_str(),
+                "sort" | "reverse" | "fill" | "copyWithin"
+            ) =>
+            {
                 Some((object, prop.name.as_str()))
             }
             _ => None,
