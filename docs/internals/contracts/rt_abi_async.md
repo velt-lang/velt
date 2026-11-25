@@ -260,6 +260,10 @@ shares a promise never calls it, and its futures are unchanged.
   home's set moves to an orphan task, which drives it (and keeps the process alive) until its
   promises finish. In a program with module state the home's polls take the module lock, here
   and in the orphan, as any touched task's do.
+- On native targets a promise shared on a C library's own thread (in an exported function it
+  calls) stops the program with a panic naming #3782, whatever the executor's workers run
+  meanwhile and before the executor started too, until such a share can be handed to the
+  executor in Velt (std/lang/hooks/sched_share.velt `offWorker`).
 - A started original's result is claimed (`OWNER_DELIVERED`) only under the hub's lock, by the
   hub's waker on the promise's task or by the holder that saw it finish, whichever comes first;
   the other finds it settled.
