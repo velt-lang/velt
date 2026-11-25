@@ -55,7 +55,6 @@ velt_rt velt_rt_fs_writer_flush
 velt_rt velt_rt_fs_writer_free
 velt_rt velt_rt_fs_writer_write
 velt_rt velt_rt_fs_writer_write_bytes
-velt_rt velt_rt_fut_alias
 velt_rt velt_rt_fut_box
 velt_rt velt_rt_fut_detach
 velt_rt velt_rt_fut_id
@@ -64,7 +63,6 @@ velt_rt velt_rt_fut_share
 velt_rt velt_rt_fut_start
 velt_rt velt_rt_fut_start_rejecting
 velt_rt velt_rt_fut_transfer
-velt_rt velt_rt_fut_views
 velt_rt velt_rt_futs_handled
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
@@ -122,8 +120,6 @@ velt_rt velt_rt_math_to_int32
 velt_rt velt_rt_math_trunc
 velt_rt velt_rt_math_umulh
 velt_rt velt_rt_microtask
-velt_rt velt_rt_module_with
-velt_rt velt_rt_module_with_end
 velt_rt velt_rt_mutex_init
 velt_rt velt_rt_mutex_lock_checked
 velt_rt velt_rt_mutex_lock_slow
@@ -369,8 +365,6 @@ velt_rt_wasm velt_rt_microtask
 velt_rt_wasm velt_rt_module_block
 velt_rt_wasm velt_rt_module_ready
 velt_rt_wasm velt_rt_module_state
-velt_rt_wasm velt_rt_module_with
-velt_rt_wasm velt_rt_module_with_end
 velt_rt_wasm velt_rt_mutex_init
 velt_rt_wasm velt_rt_mutex_lock
 velt_rt_wasm velt_rt_mutex_lock_checked

@@ -9,8 +9,7 @@ import {
   UnderlyingSource,
 } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
-
-declare async function velt_rt_microtask(): Promise<void>;
+import { settled } from "velt/io/streams/settle";
 
 /** The states of a stream. */
 export const READABLE: u8 = 0;
@@ -128,8 +127,9 @@ export class ReadableStreamDefaultController<R> {
 
   // ─── the stream's side (std only) ───
 
-  // A new stream's state: runs `start`, then pulls a microtask after it settles. A `start` that
-  // throws makes the constructor throw, as in JS.
+  // A new stream's state: runs `start`, then pulls a microtask after it returns, or, when it
+  // gives a promise, after that promise is adopted (`settled`). A `start` that throws makes the
+  // constructor throw, as in JS.
   private static make<R>(
     source: UnderlyingSource<R>,
     hwm: number,
@@ -144,33 +144,9 @@ export class ReadableStreamDefaultController<R> {
     if (p == null) {
       queueMicrotask(() => c.begun());
     } else {
-      const settling = c.settled(p, true);
+      const settling = settled(c, p, true, true);
     }
     return c;
-  }
-
-  // `start`'s promise (`start`) or `pull`'s, or a `ReadableStream.from` step, settled: `p.then(ok,
-  // err)` written out (std/prelude/promise.velt `promiseThenElse`: the step runs at a microtask's
-  // turn after it settles). Closures over the controller, kept in the source's promise, made the
-  // controller a cycle (#3119).
-  private async settled(p: Promise<void, unknown>, start: bool) {
-    try {
-      await p;
-    } catch (e) {
-      await velt_rt_microtask();
-      if (start) {
-        this.error(e);
-      } else {
-        this.fail(e);
-      }
-      return;
-    }
-    await velt_rt_microtask();
-    if (start) {
-      this.begun();
-    } else {
-      this.pulled();
-    }
   }
 
   private begun() {
@@ -218,7 +194,7 @@ export class ReadableStreamDefaultController<R> {
     this.pulling = true;
     const it = this.iter;
     if (it != null) {
-      const settling = this.settled(this.pullFrom(it), false);
+      const settling = settled(this, this.pullFrom(it), false, false);
       return;
     }
     const pull = this.pullFn;
@@ -231,7 +207,7 @@ export class ReadableStreamDefaultController<R> {
       if (p == null) {
         queueMicrotask(() => this.pulled());
       } else {
-        const settling = this.settled(p, false);
+        const settling = settled(this, p, false, true);
       }
     } catch (e) {
       queueMicrotask(() => this.fail(e));
@@ -269,15 +245,16 @@ export class ReadableStreamDefaultController<R> {
   private finishClose() {
     this.state = CLOSED;
     this.clearCallbacks();
-    const requests = this.requests;
-    this.requests = [];
-    for (const r of requests) {
-      r.resolve({ done: true });
-    }
+    // `closed` first, then the pending reads, as Node settles them (#3643).
     const waits = this.closeWaits;
     this.closeWaits = [];
     for (const w of waits) {
       w.resolve();
+    }
+    const requests = this.requests;
+    this.requests = [];
+    for (const r of requests) {
+      r.resolve({ done: true });
     }
   }
 
@@ -290,15 +267,16 @@ export class ReadableStreamDefaultController<R> {
     this.clearCallbacks();
     this.queue = [];
     this.head = 0;
-    const requests = this.requests;
-    this.requests = [];
-    for (const r of requests) {
-      r.reject(e);
-    }
+    // `closed` first, then the pending reads, as Node settles them (#3643).
     const waits = this.closeWaits;
     this.closeWaits = [];
     for (const w of waits) {
       w.reject(e);
+    }
+    const requests = this.requests;
+    this.requests = [];
+    for (const r of requests) {
+      r.reject(e);
     }
   }
 
@@ -331,18 +309,19 @@ export class ReadableStreamDefaultController<R> {
     return promise;
   }
 
-  // Rejects the waiting reads and `reader.closed`: their reader released the stream.
+  // Rejects `reader.closed` and the waiting reads (in that order, as Node): their reader
+  // released the stream.
   private release() {
     this.locked = false;
-    const requests = this.requests;
-    this.requests = [];
-    for (const r of requests) {
-      r.reject(invalidState("Releasing reader"));
-    }
     const waits = this.closeWaits;
     this.closeWaits = [];
     for (const w of waits) {
       w.reject(invalidState("Reader released"));
+    }
+    const requests = this.requests;
+    this.requests = [];
+    for (const r of requests) {
+      r.reject(invalidState("Releasing reader"));
     }
   }
 
