@@ -16,12 +16,16 @@
 //
 // A `RegExp`'s program never changes once compiled, and `lastIndex` is an `Atomic` in a shared
 // object of the regex's own, so no method needs a receiver it may change.
+//
+// An object of a class that extends `RegExp` may have an `exec` of its own, which JavaScript's
+// methods call: where `isExactClass(this)` is false they take the steps of exec_calls.velt.
 
 import { Pattern } from "velt/text/regex/pattern";
 import { assemble } from "velt/text/regex/assemble";
 import { RegExpError } from "velt/text/regex/errors";
+import { foundByExec, replaceFound, splitting } from "velt/text/regex/exec_calls";
 import { find, findAll } from "velt/text/regex/find";
-import { MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
+import { CURSOR, MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
 import { positionOf, textOf, unitOf } from "velt/text/regex/offsets";
 import { Program } from "velt/text/regex/program";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
@@ -31,7 +35,7 @@ import { Cursor, keepTables, memoryOf } from "velt/text/regex/cursor";
 import { Search } from "velt/text/regex/search";
 // The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
-import { arrayWithCapacity, noInline, strByteLen } from "velt/lang/intrinsics";
+import { arrayWithCapacity, isExactClass, noInline, strByteLen } from "velt/lang/intrinsics";
 
 /** The program of `pattern` with `flags`, and the names of its groups in `names`. */
 function compile(pattern: string, flags: string, names: string[]): Program {
@@ -75,6 +79,9 @@ export class RegExp implements Pattern {
    */
   @noInline
   test(s: string, from?: usize): bool {
+    if (!isExactClass(this)) {
+      return this.exec(s, from) != null;
+    }
     if (from == null && (this.global || this.sticky)) {
       return this.exec(s) != null;
     }
@@ -100,6 +107,9 @@ export class RegExp implements Pattern {
    * when there is none (JS `exec`); other regexes start at 0.
    */
   exec(s: string, from?: usize): RegExpMatch | null {
+    if (!isExactClass(this)) {
+      return this.execOwn(s, from);
+    }
     if (from != null || !(this.global || this.sticky)) {
       return this.execAt(s, from ?? 0);
     }
@@ -143,6 +153,9 @@ export class RegExp implements Pattern {
    * `lastIndex` changes as in JS.
    */
   replace(s: string, replacement: string): string {
+    if (!isExactClass(this)) {
+      return replaceFound(s, foundByExec(this, s), (m, s) => m.substitute(s, replacement));
+    }
     if (this.global) {
       this.#cursor.at.store(0);
     }
@@ -170,6 +183,9 @@ export class RegExp implements Pattern {
    * ones `replace` replaces.
    */
   replaceWith<E>(s: string, f: (m: RegExpMatch) => string throws E): string throws E {
+    if (!isExactClass(this)) {
+      return replaceFound(s, foundByExec(this, s), (m, _s) => f(m));
+    }
     let out = "";
     let last: number = 0;
     for (const m of this.replaced(s)) {
@@ -186,6 +202,9 @@ export class RegExp implements Pattern {
     s: string,
     f: (m: RegExpMatch, s: string) => string throws E,
   ): string throws E {
+    if (!isExactClass(this)) {
+      return replaceFound(s, foundByExec(this, s), f);
+    }
     let out = "";
     let last: number = 0;
     for (const m of this.replaced(s)) {
@@ -248,14 +267,8 @@ export class RegExp implements Pattern {
 
   /** JS `s.split(re, limit)`: no limit when null, `[]` for 0. */
   [SPLIT](s: string, limit: number | null | undefined): string[] {
-    if (limit == null) {
-      return this.split(s);
-    }
-    const n = limit as i64;
-    if (n == 0) {
-      return [];
-    }
-    return this.split(s, n > 0 ? n as usize : 0);
+    const n = limit == null ? -1 : limit as i64;
+    return n == 0 ? [] : splitMatches(this.#prog, s, n > 0 ? n as usize : 0);
   }
 
   /** JS `s.split(re, limit)`: captured groups are included in the result; `limit` 0 = none. */
@@ -274,6 +287,11 @@ export class RegExp implements Pattern {
 
   set lastIndex(value: number) {
     this.#cursor.at.store(value);
+  }
+
+  /** The cursor: its `lastIndex` is the regex's own, whatever a subclass declares. */
+  [CURSOR](): shared<Cursor> {
+    return this.#cursor;
   }
 
   /** Number of capture groups (not counting the whole match). */
@@ -333,6 +351,28 @@ export class RegExp implements Pattern {
     }
     const m = this.memory(stride);
     const found = find(prog, m, s, at as usize, sticky);
+    this.keep(m);
+    return found ? this.matchOf(s, m.slots, 0) : null;
+  }
+
+  // The built-in `exec` of an object of a subclass: as `exec`, and for the regex a `split` is
+  // running on (exec_calls.velt) exactly at `lastIndex`, as its sticky copy does in JavaScript.
+  private execOwn(s: string, from?: usize): RegExpMatch | null {
+    const split = from == null && splitting(this);
+    if (!split && (from != null || !(this.global || this.sticky))) {
+      return this.execAt(s, from ?? 0);
+    }
+    const start = this.#cursor.at.load() as usize;
+    const m = start > s.length ? null : split ? this.execStuck(s, start) : this.execAt(s, start);
+    this.#cursor.at.store(m == null ? 0 : m.end);
+    return m;
+  }
+
+  // `execAt` as a sticky regex: the match that starts exactly at `from`.
+  private execStuck(s: string, from: usize): RegExpMatch | null {
+    const prog = this.#prog;
+    const m = this.memory(2 * (prog.groups as usize) + 2);
+    const found = find(prog, m, s, positionOf(s, from, prog.units), true);
     this.keep(m);
     return found ? this.matchOf(s, m.slots, 0) : null;
   }

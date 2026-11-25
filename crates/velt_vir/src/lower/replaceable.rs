@@ -514,6 +514,7 @@ fn runs_nothing(i: hir::Intrinsic) -> bool {
             i,
             I::Share
                 | I::HoldsNull
+                | I::IsExactClass
                 | I::NullAs
                 | I::Panic
                 | I::StrConcat

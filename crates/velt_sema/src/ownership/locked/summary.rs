@@ -294,6 +294,7 @@ impl<F: Facts + ?Sized> Walk<'_, '_, F> {
                     | Intrinsic::MayAlias
                     | Intrinsic::IsUnique
                     | Intrinsic::HoldsNull
+                    | Intrinsic::IsExactClass
                     | Intrinsic::MayHoldPrimitive
                     | Intrinsic::AnyMethodCalled
                     | Intrinsic::NoteStdUse

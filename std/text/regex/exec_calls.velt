@@ -1,0 +1,200 @@
+// velt/text (internal): `RegExp`'s methods as JavaScript's specification writes them, through
+// the regex's own `exec` (RegExpExec), for an object of a class that extends `RegExp`: its
+// `exec` may be the class's own, and `s.match`, `s.matchAll`, `s.replace`, `s.search` and
+// `s.split` call it wherever the specification does, with the `lastIndex` its steps leave (the
+// regex's own, in its cursor: the own data property JavaScript has, whatever the class
+// declares). A
+// `RegExp` itself never comes here (string_methods.velt and regexp.velt test `isExactClass`):
+// its `exec` is known, and each method has a search of its own that builds no match it does
+// not need.
+//
+// `split` and `matchAll` run on a copy in JavaScript, `new C(re, flags)` with `C` the regex's
+// class. Velt cannot construct the class of an object it is given, so the regex itself plays
+// the copy and gets its `lastIndex` back at the end: `exec` is called with the same subject and
+// finds the same `lastIndex` as on the copy, and for `split` the built-in `exec` matches exactly
+// at `lastIndex`, as the copy's `y` flag makes it. What differs: the class's constructor does
+// not run again, and the fields `exec` sees are the regex's own (its `flags` and `sticky` too).
+
+import { identity } from "velt/lang/intrinsics";
+import { CURSOR } from "velt/text/regex/keys";
+import { RegExp } from "velt/text/regex/regexp";
+import { RegExpMatch } from "velt/text/regex/regexp_match";
+
+/** The identity of the regex whose `split` is running on this thread, 0 when none is. */
+const splitter = new ThreadLocal<u64>(0);
+
+/** Is `re` the regex a `split` of this thread is calling `exec` on? Its built-in `exec` then
+ * matches exactly at `lastIndex`, whatever its flags. */
+export function splitting(re: RegExp): bool {
+  return splitter.get() == identity(re);
+}
+
+/** Does `re` match code points (the `u` or `v` flag), so that an empty match moves on past a
+ * whole surrogate pair? */
+function unicode(re: RegExp): bool {
+  return re.flags.includes("u") || re.flags.includes("v");
+}
+
+/** JavaScript's ToLength of a `lastIndex`: a whole number, at least 0. */
+function toLength(index: number): number {
+  return index > 0 ? Math.trunc(index) : 0;
+}
+
+/** JavaScript's AdvanceStringIndex: the position after `index` in `s`, past a whole surrogate
+ * pair for a pattern of code points (`pairs`). */
+function advance(s: string, index: number, pairs: bool): number {
+  if (!pairs || index + 1 >= (s.length as number)) {
+    return index + 1;
+  }
+  const high = s.charCodeAt(index as i64);
+  const low = s.charCodeAt(index as i64 + 1);
+  const pair = high >= 0xd800 && high < 0xdc00 && low >= 0xdc00 && low < 0xe000;
+  return index + (pair ? 2 : 1);
+}
+
+/** Every match `re.exec(s)` gives until it gives none, from its `lastIndex` on, which moves on
+ * by one position after an empty match: the loop of a global `@@match` and `@@replace` and of
+ * `matchAll`'s iterator. */
+function execAll(re: RegExp, s: string): RegExpMatch[] {
+  const pairs = unicode(re);
+  const cursor = re[CURSOR]();
+  const out: RegExpMatch[] = [];
+  while (true) {
+    const m = re.exec(s);
+    if (m == null) {
+      return out;
+    }
+    if (m.value == "") {
+      cursor.at.store(advance(s, toLength(cursor.at.load()), pairs));
+    }
+    out.push(m);
+  }
+}
+
+/** `s.match(re)` of a global `re`: the text of every match `exec` gives from 0, null if none. */
+export function matchByExec(re: RegExp, s: string): string[] | null {
+  re[CURSOR]().at.store(0);
+  const texts: string[] = [];
+  for (const m of execAll(re, s)) {
+    texts.push(m.value);
+  }
+  return texts.length == 0 ? null : texts;
+}
+
+/** `s.matchAll(re)` of a global `re`: every match `exec` gives from `lastIndex` on, which the
+ * regex gets back (JavaScript moves a copy's). */
+export function matchAllByExec(re: RegExp, s: string): RegExpMatch[] {
+  const cursor = re[CURSOR]();
+  const from = cursor.at.load();
+  const found = execAll(re, s);
+  cursor.at.store(from);
+  return found;
+}
+
+/** `s.search(re)`: where `re.exec(s)` matches with `lastIndex` 0, or -1; `lastIndex` is put
+ * back. */
+export function searchByExec(re: RegExp, s: string): i64 {
+  const cursor = re[CURSOR]();
+  const previous = cursor.at.load();
+  if (previous != 0) {
+    cursor.at.store(0);
+  }
+  const m = re.exec(s);
+  if (cursor.at.load() != previous) {
+    cursor.at.store(previous);
+  }
+  return m == null ? -1 : m.index as i64;
+}
+
+/** What `s.replace(re, …)` replaces: every match `exec` gives from 0 when `re` is global, else
+ * the one it gives. */
+export function foundByExec(re: RegExp, s: string): RegExpMatch[] {
+  if (re.global) {
+    re[CURSOR]().at.store(0);
+    return execAll(re, s);
+  }
+  const m = re.exec(s);
+  return m == null ? [] : [m];
+}
+
+/** The end of `s.replace(re, …)`: `s` with each of `found` (`foundByExec`) replaced by `f` of
+ * it. A match that starts before the previous one ended is left out, after `f` was called for
+ * it, and a position outside `s` counts as its nearest end. */
+export function replaceFound<E>(
+  s: string,
+  found: RegExpMatch[],
+  f: (m: RegExpMatch, s: string) => string throws E,
+): string throws E {
+  let out = "";
+  let next: number = 0;
+  for (const m of found) {
+    const position = Math.max(Math.min(Math.trunc(m.index), s.length as number), 0);
+    const replacement = f(m, s);
+    if (position >= next) {
+      out += s.slice(next as i64, position as i64);
+      out += replacement;
+      next = position + (m.value.length as number);
+    }
+  }
+  if (next < (s.length as number)) {
+    out += s.slice(next as i64);
+  }
+  return out;
+}
+
+/** `s.split(re, limit)` (no limit when undefined, `[]` for 0): `re.exec(s)` at each position of
+ * `s` in turn, with `re` as the specification's sticky copy (the module's comment). */
+export function splitByExec(re: RegExp, s: string, limit: number | undefined): string[] {
+  const n = limit == null ? -1 : limit as i64;
+  if (n == 0) {
+    return [];
+  }
+  const cursor = re[CURSOR]();
+  const saved = cursor.at.load();
+  const outer = splitter.get();
+  splitter.set(identity(re));
+  const out = splitParts(re, s, n > 0 ? n as usize : 0);
+  splitter.set(outer);
+  cursor.at.store(saved);
+  return out;
+}
+
+/** The parts of `splitByExec`, at most `limit` of them (0: no limit). */
+function splitParts(re: RegExp, s: string, limit: usize): string[] {
+  const out: string[] = [];
+  const cursor = re[CURSOR]();
+  const size = s.length as number;
+  if (size == 0) {
+    cursor.at.store(0);
+    if (re.exec(s) == null) {
+      out.push("");
+    }
+    return out;
+  }
+  const pairs = unicode(re);
+  let p: number = 0;
+  let q: number = 0;
+  while (q < size) {
+    cursor.at.store(q);
+    const z = re.exec(s);
+    const e = z == null ? p : Math.min(toLength(cursor.at.load()), size);
+    if (z == null || e == p) {
+      q = advance(s, q, pairs);
+      continue;
+    }
+    out.push(s.slice(p as i64, q as i64));
+    if (out.length == limit) {
+      return out;
+    }
+    p = e;
+    for (const c of z.captures) {
+      out.push(c ?? "");
+      if (out.length == limit) {
+        return out;
+      }
+    }
+    q = p;
+  }
+  out.push(s.slice(p as i64, size as i64));
+  return out;
+}

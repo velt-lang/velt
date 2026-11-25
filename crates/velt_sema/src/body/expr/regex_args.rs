@@ -155,9 +155,16 @@ impl FnCx<'_, '_> {
             }
             _ => self.peek_ty(e),
         };
-        ty.is_some_and(|t| {
-            self.is_std_class(t, velt_common::std_item!(text_regex_regexp, "RegExp"))
-        })
+        // A class that extends `RegExp` is one too: the hooks take it as a `RegExp`, and its
+        // own `exec` is called as JavaScript calls it (std/text/regex/exec_calls.velt).
+        let mut ty = ty;
+        while let Some(t) = ty {
+            if self.is_std_class(t, velt_common::std_item!(text_regex_regexp, "RegExp")) {
+                return true;
+            }
+            ty = self.cx.base_of(t);
+        }
+        false
     }
 
     /// Is `t` the std class with the qualified name `qual`?
