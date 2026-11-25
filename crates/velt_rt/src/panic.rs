@@ -90,15 +90,6 @@ pub unsafe extern "C-unwind" fn velt_rt_panic(msg: *const VeltStr) -> ! {
     die(&text)
 }
 
-/// Velt panics stopped at a catching promise so far (the leak-check report, str/stats.rs).
-static CAUGHT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// How many Velt panics were stopped at a catching promise (the debug runtime's report).
-#[cfg(debug_assertions)]
-pub(crate) fn caught_count() -> u64 {
-    CAUGHT.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 thread_local! {
     /// Location suffix (` at <path>:<line>:<col>`, a static string) of the last `throw`.
     static THROW_LOC: Cell<*const VeltStr> = const { Cell::new(std::ptr::null()) };
