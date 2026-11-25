@@ -1,0 +1,1 @@
+handler_captures_response.velt:9:43: error: this function captures `r`, and it runs on other threads, each with a copy of it: each copy would copy `r`, but `Response` owns a resource (`[Symbol.dispose]`) and has no `clone()`
