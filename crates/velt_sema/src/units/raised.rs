@@ -35,6 +35,10 @@ pub struct Raised {
     /// The (origin class, method key) of each slot the program's overrides added, whose calls in
     /// std's bodies dispatch once the freeze lifts (`units::std_calls`).
     pub(crate) added: Vec<(DefId, String)>,
+    /// The (std class, fill key) of each default-filling slot the program's overrides added
+    /// (`collect::program_slots`): std's calls that leave out the arguments it fills take it
+    /// once the freeze lifts (`units::std_calls`, #3789).
+    pub(crate) added_fills: rustc_hash::FxHashSet<(DefId, String)>,
 }
 
 /// A class's vtable entries and the slot of each method key, as `AdtInfo` holds them.
@@ -50,7 +54,8 @@ impl super::codec::Codec for Raised {
                 && self.throws.is_empty()
                 && self.demoted.is_empty()
                 && self.vtables.is_empty()
-                && self.added.is_empty(),
+                && self.added.is_empty()
+                && self.added_fills.is_empty(),
             "ICE: a unit saved with raised definitions"
         );
     }
@@ -214,7 +219,7 @@ pub(crate) fn apply(cx: &mut Ctx) {
         a.vtable = entries;
         a.vslots = slots;
     }
-    super::std_calls::redispatch(cx, &raised.added);
+    super::std_calls::redispatch(cx, &raised.added, &raised.added_fills);
     for (d, modes) in fns {
         write_modes(cx, d, &modes);
         // The body's parameters too, which lowering reads, as `ownership::infer`'s
@@ -264,6 +269,12 @@ fn report(cx: &Ctx, raised: &Raised) {
         keys.sort_unstable();
         let name = cx.adt(*d).map_or("?", |a| a.qual_name.as_str());
         lines.push(format!("vtable {name} {}", keys.join(",")));
+    }
+    // Std's calls no program slot can give an override's default (#3789): none in std today.
+    for s in &cx.unit_sums.left_out_general {
+        let m = cx.modules.iter().find(|m| m.file == s.file);
+        let path = m.map_or("?", |m| m.path.as_str());
+        lines.push(format!("unfillable call {path}@{}", s.lo));
     }
     lines.sort();
     lines.dedup();

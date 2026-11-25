@@ -255,6 +255,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub constraints: Vec<Option<TyId>>,
     /// Name of the enclosing top-level function (for closure names).
     pub fn_name: String,
+    /// The arguments that may be `undefined` for a parameter with a default, in std's bodies
+    /// checked by units, until their call takes them (`expr::default_args`, #3789).
+    pub undefined_args: Vec<velt_common::Span>,
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
     /// its `private` members are accessible.
     pub owner: Option<DefId>,
@@ -485,6 +488,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             bounds: vec![],
             constraints: vec![],
             fn_name: String::new(),
+            undefined_args: vec![],
             owner: None,
             body_def: None,
             static_this: None,
