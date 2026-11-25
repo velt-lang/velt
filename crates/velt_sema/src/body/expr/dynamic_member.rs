@@ -7,6 +7,7 @@
 use super::setters::synth;
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
+use velt_syntax::js_number;
 
 use crate::any::Dynamic;
 use crate::body::places::set_place_mode;
@@ -743,18 +744,3 @@ const ARRAY_RESULTS: &[&str] = &[
     "toSpliced",
     "with",
 ];
-
-/// A non-negative number as JavaScript prints it (`String(n)`): `1e+21`, `1e-7`, `0.5`, `3`.
-fn js_number(f: f64) -> String {
-    if f == 0.0 {
-        return "0".into();
-    }
-    if !(1e-6..1e21).contains(&f.abs()) {
-        let t = format!("{f:e}");
-        return match t.split_once('e') {
-            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
-            _ => t,
-        };
-    }
-    f.to_string()
-}

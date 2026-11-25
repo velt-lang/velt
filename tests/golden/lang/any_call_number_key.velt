@@ -1,0 +1,11 @@
+// A member called through `any` with a number key that holds no function stops with Node's
+// `TypeError`, which names the call with the key spelled as `String(n)` (#3769): Node prints
+// `o[1658206780088562.2]`, the shortest digits that round-trip, where Rust's float text gives
+// `…562.3`. The other spellings (exponent forms, `-0`) are velt_sema's lang_dynamic_members.
+function main(): void {
+  const o: any = {};
+  console.log("before");
+  o[1658206780088562.25]();
+}
+
+main();
