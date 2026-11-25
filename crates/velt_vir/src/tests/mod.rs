@@ -56,6 +56,7 @@ mod start_up_allocs;
 mod std_src;
 mod verifier;
 mod vir_ext;
+mod vtable_word;
 mod yield_cancel;
 
 use velt_sema::hir;
