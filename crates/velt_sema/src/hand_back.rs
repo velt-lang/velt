@@ -14,8 +14,8 @@
 use crate::collect::forwarders::{synth_method, Host, Target};
 use crate::ctx::Ctx;
 use crate::hir::{
-    self, AdtKind, Callee, Def, DefId, ExprKind as H, Intrinsic, LocalId, PassMode, StmtKind as S,
-    TyId, TyKind, UseMode,
+    self, AdtKind, Callee, Def, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId,
+    TyKind, UseMode,
 };
 
 /// Does method `def` hand back its receiver? A class method returning `this` (not a getter, an
@@ -96,7 +96,7 @@ pub(crate) fn value_entry(cx: &mut Ctx, def: DefId) -> DefId {
 
 /// Makes synthesized method `entry`, whose body is `return callee(this, p1, …);` with a callee
 /// that hands back its receiver, `callee(this, p1, …); return this;`: the call returns nothing
-/// and `this` is shared (as the declared result's class). Each argument is passed as the callee
+/// and the entry returns `this` (as the declared result's class). Each argument is passed as the callee
 /// takes it (synthesized after the callee's modes are inferred, `any::dyn_members`).
 pub(crate) fn return_receiver(cx: &mut Ctx, entry: DefId) {
     let unit = cx.ty.unit;
@@ -131,16 +131,10 @@ pub(crate) fn return_receiver(cx: &mut Ctx, entry: DefId) {
     for (p, mode) in cx.fn_info_mut(entry).params.iter_mut().zip(modes) {
         p.mode = mode;
     }
-    let this = hir::Expr {
-        kind: H::Local(LocalId(0), UseMode::Borrow),
-        ty: self_ty,
-        span,
-    };
+    // The borrowed `this` returned is shared where it is returned, as for any method that
+    // returns `this` (so a table that calls this entry is what counts the class).
     let mut value = hir::Expr {
-        kind: H::Call {
-            callee: Callee::Intrinsic(Intrinsic::Share),
-            args: vec![this],
-        },
+        kind: H::Local(LocalId(0), UseMode::Borrow),
         ty: self_ty,
         span,
     };

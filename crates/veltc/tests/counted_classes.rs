@@ -308,3 +308,27 @@ fn a_kept_result_handed_back_shares_the_receiver() {
     );
     assert!(c.iter().any(|t| t.ends_with("::Set")), "{c:?}");
 }
+
+/// A kept result is another reference to the receiver: when both stay in use, that alias is
+/// what makes the class counted (no other share in the program), and an alias that outlives
+/// a replaced receiver keeps its object (`lang/this_result_receiver_replaced` checks the counts).
+#[test]
+fn only_a_kept_result_counts_the_class() {
+    let program = |body: &str| {
+        format!(
+            "class Cell {{
+               v = 0;
+               bump(): this {{ this.v++; return this; }}
+             }}
+             function main() {{ {body} }}"
+        )
+    };
+    let c = counted(&program(
+        "const c = new Cell(); c.bump().bump(); c.bump(); console.log(c.v);",
+    ));
+    assert!(!c.iter().any(|t| t == "class Cell"), "{c:?}");
+    let c = counted(&program(
+        "const c = new Cell(); const k = c.bump(); k.bump(); c.bump(); console.log(c.v, k.v);",
+    ));
+    assert!(c.iter().any(|t| t == "class Cell"), "{c:?}");
+}
