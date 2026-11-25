@@ -16,10 +16,9 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
-use super::in_place_chain::is_pure_place;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, DefId, ExprKind as H, PassMode, StmtKind as S, TyId, UseMode};
+use crate::hir::{self, DefId, ExprKind as H, LocalId, PassMode, StmtKind as S, TyId, UseMode};
 use crate::visit::{self, VisitMut};
 
 impl FnCx<'_, '_> {
@@ -36,9 +35,10 @@ impl FnCx<'_, '_> {
         let H::Call { args, .. } = &mut call.kind else {
             return call;
         };
-        let Some(recv) = args.first_mut().map(unconverted) else {
+        let Some((first, rest)) = args.split_first_mut() else {
             return call;
         };
+        let recv = unconverted(first);
         // The call is an expression statement: nothing to give back.
         if self.discard_at == Some(span) {
             call.ty = unit;
@@ -51,7 +51,7 @@ impl FnCx<'_, '_> {
             return self.mk(H::Block(block), unit, span);
         }
         let mut stmts = vec![];
-        let place = self.rereadable(recv);
+        let place = self.stays(recv, rest);
         let value = if place {
             let mut again = recv.clone();
             set_place_mode(&mut again, UseMode::Move);
@@ -94,20 +94,18 @@ impl FnCx<'_, '_> {
         self.mk(H::Block(block), ty, span)
     }
 
-    /// Does `e` read the same value again without running anything: a local or a module
-    /// constant, and field or element paths of one (with a local or literal index)? A module
-    /// `let` is not: the call may assign it.
-    fn rereadable(&self, e: &hir::Expr) -> bool {
-        match &e.kind {
-            H::Global(d) => self.cx.global(*d).is_some_and(|g| !g.mutable),
-            H::Field { base, .. } | H::UnwrapSome(base, _) | H::Downcast(base) => {
-                self.rereadable(base)
-            }
-            H::UnwrapVariant { expr, .. } => self.rereadable(expr),
-            H::Index { base, index, .. } => {
-                self.rereadable(base) && matches!(index.kind, H::Local(..) | H::Lit(_))
-            }
-            _ => is_pure_place(e),
+    /// Does `recv`, the receiver of a call with arguments `args`, still hold the receiver once
+    /// the call returns, so that reading it again gives the receiver? `this`, a module
+    /// constant, or a local that no closure and no argument assigns: nothing the call runs can
+    /// assign them. A field or element (or a module `let`) can be assigned by the method, by a
+    /// closure it calls or by an argument, so the receiver is kept as it was read, before the
+    /// arguments.
+    fn stays(&self, recv: &hir::Expr, args: &mut [hir::Expr]) -> bool {
+        match recv.kind {
+            H::Global(d) => self.cx.global(d).is_some_and(|g| !g.mutable),
+            H::Local(l, _) if self.local_kind(l) == LocalKind::This => true,
+            H::Local(l, _) => self.closure_assignment(l).is_none() && !assigns(args, l),
+            _ => false,
         }
     }
 
@@ -322,6 +320,19 @@ fn is_receiver(e: &hir::Expr) -> bool {
         H::Upcast(x) | H::Downcast(x) => is_receiver(x),
         _ => false,
     }
+}
+
+/// Does one of `args` assign local `l` itself (`s.add(s = other)`)?
+fn assigns(args: &mut [hir::Expr], l: LocalId) -> bool {
+    let mut found = false;
+    for a in args {
+        visit::exprs_in(a, &mut |e| {
+            if let H::Assign { place, .. } | H::CompoundAssign { place, .. } = &e.kind {
+                found |= matches!(place.kind, H::Local(p, _) if p == l);
+            }
+        });
+    }
+    found
 }
 
 /// How place `e` is read (`None`: `e` is no place).
