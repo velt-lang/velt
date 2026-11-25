@@ -10,6 +10,7 @@ import * as node from "velt/lang/hooks/sched_node";
 import * as t from "velt/lang/hooks/sched_task";
 import { schedYield, schedYieldReady } from "velt/lang/hooks/sched_yield";
 import * as ls from "velt/lang/hooks/sched_yield_list";
+import * as tn from "velt/lang/hooks/sched_yield_turn";
 import { channel } from "velt/sync/channel";
 
 /** The task polled on this thread. */
@@ -219,5 +220,70 @@ describe("the root's turns in one poll", () => {
       return log.join(",");
     });
     expect(order).toBe("a,c,b");
+  });
+
+  it(
+    "leave a started promise woken without a microtask to go on before the next child's turn",
+    async () => {
+      // In a task's root: a child's turn sends on a channel that a started promise of the task
+      // waits on (a wake of that promise, no microtask); it goes on before the second child's turn,
+      // as a resolver's channel orders it in Node.
+      const order = await spawn(async (): Promise<string> => {
+        const log: string[] = [];
+        const ch = channel<number>(1);
+        const waits = (async (): Promise<void> => {
+          await ch.receive();
+          log.push("c");
+        })();
+        const sends = async (): Promise<void> => {
+          await yieldNow();
+          log.push("a");
+          ch.trySend(1);
+        };
+        const later = async (): Promise<void> => {
+          await yieldNow();
+          log.push("b");
+        };
+        await Promise.all([sends(), later()]);
+        await waits;
+        return log.join(",");
+      });
+      expect(order).toBe("a,c,b");
+    },
+  );
+
+  it("leave a record held for another waker to its own turn when the root polls it", async () => {
+    // A held record whose turn is next goes on in this turn's poll of the root only if its turn
+    // would wake the root: one that held another waker (a started promise the root adopts) must
+    // let go of that waker, which its own turn does and a merge would not.
+    const k = task();
+    const b = ls.block(k);
+    // A stand-in started promise of this task, flagged as waiting for a yield's turn.
+    const n = m.zeroed(node.N_HEAD + 16);
+    m.st(n, t.main() + t.E_NODE_VT);
+    m.st(n + node.N_REFS, 2);
+    m.st(n + node.N_TASK, k);
+    m.store32(n + node.N_FLAGS, node.YIELDING);
+    const mine = ls.held(ls.ROOT, k, ls.nextStamp(b));
+    const theirs = ls.held(n, k, ls.nextStamp(b));
+    ls.join(k, mine);
+    ls.join(k, theirs);
+    // A turn polls the root: its waiter went on, and `mine`'s turn is next. `mine` goes on now.
+    tn.turnNext(k, mine);
+    tn.taken(k);
+    expect(ls.heldPoll(mine, k, k)).toBe(1 as u32);
+    expect(m.ld(mine + ls.Y_STATE)).toBe(ls.DROPPED);
+    // `theirs` is next now, but it held the stand-in: the root holds it instead, to its own turn,
+    // and the stand-in lost its flag and the reference the record had.
+    expect(ls.heldPoll(theirs, k, k)).toBe(0 as u32);
+    expect(m.ld(theirs + ls.Y_STATE)).toBe(ls.QUEUED);
+    expect(m.ld(theirs + ls.Y_WAKER)).toBe(ls.ROOT);
+    expect((m.load32(n + node.N_FLAGS) & node.YIELDING) === 0).toBe(true);
+    expect(m.load(n + node.N_REFS)).toBe(1 as usize);
+    tn.turnOver(k);
+    m.release(n, node.N_HEAD + 16);
+    // Its turn comes before this yield's; then its resume takes it.
+    await yieldNow();
+    expect(ls.heldPoll(theirs, k, k)).toBe(1 as u32);
   });
 });
