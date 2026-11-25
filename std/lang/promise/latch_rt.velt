@@ -1,0 +1,9 @@
+// velt/lang/promise (internal): `#promise-latch` where the executor is the runtime's (WebAssembly,
+// velt_rt_wasm): a `new Promise`'s latch is a plain one.
+
+declare function velt_rt_latch_new(): u64;
+
+/** A new latch for a `new Promise`'s slot (settle.velt `PromiseSlot`). */
+export function promiseLatch(): u64 {
+  return velt_rt_latch_new();
+}

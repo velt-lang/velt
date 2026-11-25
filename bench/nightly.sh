@@ -78,7 +78,7 @@ BENCHES=("${programs[@]}")
 for name in await_chain await_deep hot_loop fanout_all fanout_all_throwing all_small_stored \
   spawn_many channel_pipeline timers_fire timers_due_join timers_due_stored timers_due_in_promise \
   timers_due_reversed top_level_await timer_await timer_await_top \
-  promise_identity_loop root_yields root_yields_after_all inline_all_yields; do
+  promise_identity_loop root_yields root_yields_after_all inline_all_yields promise_settle; do
   BENCHES+=("$ROOT/bench/async/$name.velt")
 done
 

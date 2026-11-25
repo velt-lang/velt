@@ -1,0 +1,65 @@
+// velt/lang/hooks (tests): a `new Promise`'s latch (sched_latch.velt `latchSettles`, #3709). Its
+// promise, waiting on it, runs in the opening; one that cannot run then (running, finished) is
+// queued as any waiter, its wake kept.
+import { describe, expect, it } from "velt/test";
+import * as lt from "velt/lang/hooks/sched_latch";
+import { latchSettles } from "velt/lang/hooks/sched_latch_mark";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as micro from "velt/lang/hooks/sched_micro";
+import * as node from "velt/lang/hooks/sched_node";
+import * as t from "velt/lang/hooks/sched_task";
+
+/** The task polled on this thread. */
+function task(): usize {
+  return m.ld(t.here() + t.E_CURRENT);
+}
+
+describe("a settling latch's opening", () => {
+  it("queues a running promise waiting on it, which would not run now", async () => {
+    const k = task();
+    // A stand-in started promise of this task, running: its table, two references.
+    const n = m.zeroed(node.N_HEAD + 16);
+    m.st(n, t.main() + t.E_NODE_VT);
+    m.st(n + node.N_REFS, 2);
+    m.st(n + node.N_TASK, k);
+    m.store32(n + node.N_FLAGS, node.STARTED | node.RUNNING);
+    const l = lt.latchNew();
+    latchSettles(l);
+    // Its wait, polled with the stand-in's cx: it holds a reference of the stand-in.
+    const w = lt.latchWait(l, 0, 0);
+    const cx = m.zeroed(16);
+    m.st(cx, k + t.T_WORD);
+    m.st(cx + 8, n);
+    expect(lt.waitPoll(w, cx)).toBe(0 as u32);
+    expect(m.load(n + node.N_REFS)).toBe(3 as usize);
+    // Opened: the stand-in can't run, so it is queued, the queue holding that reference.
+    lt.latchOpen(l);
+    expect(m.load(n + node.N_REFS)).toBe(3 as usize);
+    // Its microtask (run before the next turn) finds it running, and gives the reference back.
+    await yieldNow();
+    expect(m.load(n + node.N_REFS)).toBe(2 as usize);
+    lt.waitDrop(w);
+    lt.latchFree(l);
+    m.release(cx, 16);
+    m.release(n, node.N_HEAD + 16);
+  });
+
+  it("queues the task's root waiting on it, which is no started promise", async () => {
+    const k = task();
+    const l = lt.latchNew();
+    latchSettles(l);
+    // Its wait, polled with the task's own cx (the root's, which awaited the promise itself).
+    const w = lt.latchWait(l, 0, 0);
+    expect(lt.waitPoll(w, k + t.T_CX)).toBe(0 as u32);
+    // The root yielded in this poll: the task's state word reads as no running or finished flag.
+    m.store32(k + t.T_STATE, t.YIELDED);
+    expect(micro.pending(k)).toBe(false);
+    lt.latchOpen(l);
+    // Queued, as any waiter of the task: its microtask polls the root.
+    expect(micro.pending(k)).toBe(true);
+    m.store32(k + t.T_STATE, t.RUNNING);
+    await yieldNow();
+    lt.waitDrop(w);
+    lt.latchFree(l);
+  });
+});

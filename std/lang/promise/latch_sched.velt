@@ -1,0 +1,15 @@
+// velt/lang/promise (internal): `#promise-latch` under the executor in Velt: a `new Promise`'s
+// latch is marked as one (std/lang/hooks/sched_latch.velt `latchSettles`), so its opening in
+// `resolve` settles the promise at once when nothing else waits in between, and the promise's
+// reactions are queued there, as Node queues them (#3709).
+
+import { latchSettles } from "velt/lang/hooks/sched_latch_mark";
+
+declare function velt_rt_latch_new(): u64;
+
+/** A new latch for a `new Promise`'s slot (settle.velt `PromiseSlot`). */
+export function promiseLatch(): u64 {
+  const l = velt_rt_latch_new();
+  latchSettles(l);
+  return l;
+}

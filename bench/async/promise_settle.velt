@@ -1,0 +1,31 @@
+// 200,000 `new Promise`s resolved by their resolver: each reacted to twice (shared: its promise
+// runs in `resolve` and queues the reactions there, #3709), then each awaited once (its awaiter
+// adopts it, and runs in `resolve` too).
+async function main() {
+  let s = 0;
+  for (let i = 0; i < 100000; i++) {
+    let open: (n: number) => void = (n: number) => {};
+    const p = new Promise<number>((resolve) => {
+      open = resolve;
+    });
+    p.then((n) => {
+      s += n;
+    });
+    p.then((n) => {
+      s += 1;
+    });
+    open(i);
+    await p;
+  }
+  for (let i = 0; i < 100000; i++) {
+    let open: (n: number) => void = (n: number) => {};
+    const r = (async () => {
+      return await new Promise<number>((resolve) => {
+        open = resolve;
+      });
+    })();
+    Promise.resolve().then(() => open(i));
+    s += await r;
+  }
+  console.log(s);
+}

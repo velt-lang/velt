@@ -1,0 +1,18 @@
+// velt/lang/hooks (internal): the mark of a `new Promise`'s latch (sched_latch.velt, #3709), apart
+// from the latch's code so that std/lang/promise/latch_sched.velt reaches nothing else of the
+// executor (a source generator's `new Promise` must not reach its clock).
+
+import * as m from "./sched_mem";
+
+/** A latch's word that is 1 for a `new Promise`'s (`latchSettles`), else 0. */
+export const L_SETTLES: usize = 32;
+
+/**
+ * Latch `l` is a `new Promise`'s, which only that promise awaits (std/lang/promise/settle.velt
+ * `settlement`): opened in a poll of its task, the promise runs in the opening (sched_latch.velt
+ * `runNow`). Not an async generator's call queue (std/prelude/async_generator.velt), whose next
+ * call must not run inside the call that opens its latch.
+ */
+export function latchSettles(l: u64): void {
+  m.st((l as usize) + L_SETTLES, 1);
+}

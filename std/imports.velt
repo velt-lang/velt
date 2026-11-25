@@ -118,6 +118,13 @@ export const imports: Imports = {
     "std-scheduler": "./lang/promise/race_step_sched.velt",
     default: "./lang/promise/race_step_rt.velt",
   },
+  // A `new Promise`'s latch (std/lang/promise/settle.velt): the executor in Velt's is marked as
+  // one, so `resolve` settles the promise in place and queues its reactions as Node does (#3709;
+  // std/lang/hooks/sched_latch.velt); the runtime's (WebAssembly) is a plain latch.
+  "#promise-latch": {
+    "std-scheduler": "./lang/promise/latch_sched.velt",
+    default: "./lang/promise/latch_rt.velt",
+  },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
   // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and
