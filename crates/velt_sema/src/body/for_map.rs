@@ -1,5 +1,8 @@
 //! `for...of` over a `Map` (or its `keys()`, `values()`, `entries()`) held in a place iterates
-//! live, as in JS: entries added by the body are visited, deleted ones are not (#624). The loop
+//! live, as in JS: entries added by the body are visited, deleted ones are not (#624). So does one
+//! over a `Set`'s `values()`, `keys()` or `entries()` (velt/collections), whose class declares the
+//! same cursor methods over its map (a `for...of` over the set itself goes through its iterator,
+//! which walks the same cursor). The array those methods return is a snapshot (#3842). The loop
 //! is desugared into a cursor walk over the map's entries (std/prelude/map.velt; "Live
 //! iteration" in std/lang/map/layout.velt):
 //!
@@ -123,17 +126,20 @@ impl FnCx<'_, '_> {
         else {
             return None;
         };
-        let read = match prop.name.as_str() {
-            "keys" => velt_common::std_key!(map_key_at),
-            "values" => velt_common::std_key!(map_value_at),
-            "entries" => velt_common::std_key!(map_entry_at),
-            _ => return None,
-        };
         let H::Call { args: hargs, .. } = &it.kind else {
             return None;
         };
         let recv = hargs.first()?;
-        let live = args.is_empty() && liftable(object) && self.is_prelude_map(recv.ty);
+        // A `Set` (velt/collections) declares the cursor methods over its map, a set's
+        // `values()` being its keys and `entries()` each one twice (std/collections/set.velt).
+        let set = self.is_std_set(recv.ty);
+        let read = match (prop.name.as_str(), set) {
+            ("keys", _) | ("values", true) => velt_common::std_key!(map_key_at),
+            ("values", false) => velt_common::std_key!(map_value_at),
+            ("entries", _) => velt_common::std_key!(map_entry_at),
+            _ => return None,
+        };
+        let live = args.is_empty() && liftable(object) && (set || self.is_prelude_map(recv.ty));
         let fixed = self.fixed_source(recv);
         live.then_some((&**object, read, fixed))
     }
