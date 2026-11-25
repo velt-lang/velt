@@ -19,7 +19,8 @@
 //! runs only with the key that was read, which the rules above account for. In a `get` that doesn't
 //! use `this`, and whose key parameter has no default, `Reflect.get(t, k, ...)` and `t[k]` don't
 //! count, with `t` and `k` its first two parameters, if nothing assigns either name
-//! (`body::assigned`: destructuring targets, closures and their defaults included).
+//! (`body::assigned`: destructuring targets, closures and their defaults included, and a
+//! parameter `param_copies` renamed because the trap assigns it).
 //!
 //! Any other program has every algorithm compiled.
 
@@ -212,6 +213,12 @@ impl FnCx<'_, '_> {
         let (t, k) = (params.first()?, params.get(1)?);
         for p in [t, k] {
             if p.pattern.is_some() || p.default.is_some() || p.optional || p.rest {
+                return None;
+            }
+            // A parameter the trap assigns was renamed and copied into a local of its name, with
+            // its span (`param_copies`): the reads by that name are the copy's, which an
+            // assignment may have changed, so they don't forward the key that was read.
+            if p.name.name.starts_with(crate::param_copies::PREFIX) {
                 return None;
             }
         }

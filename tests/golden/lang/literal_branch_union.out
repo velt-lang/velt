@@ -1,0 +1,6 @@
+lit {d} {d} lit
+x y {d}
+1 {d} true {d}
+a c a c
+a c 1 2
+x y

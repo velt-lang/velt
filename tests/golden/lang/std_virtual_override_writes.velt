@@ -1,0 +1,23 @@
+// A program's override of a std method that std's own code calls through the class's vtable
+// (Error's `toString` reads `this.name`), changing the object it is called on: the change
+// reaches the caller's object in every mode of checking (#3543).
+class CountingError extends Error {
+  reads = 0;
+
+  get name(): string {
+    this.reads++;
+    return "CountingError";
+  }
+}
+
+function main() {
+  const e = new CountingError("boom");
+  console.log(String(e));
+  console.log(e.toString());
+  console.log(e.reads);
+  const list: Error[] = [e, new Error("plain")];
+  for (const x of list) {
+    console.log(x.toString());
+  }
+  console.log(e.reads);
+}

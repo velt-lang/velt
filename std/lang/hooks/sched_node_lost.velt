@@ -236,6 +236,7 @@ export function nested(e: usize, task: usize, n: usize, cx: usize, fl: u32): boo
     (fl & (nd.RUNNING | nd.QUEUED | nd.CATCHES | nd.ADOPTED)) !== 0 ||
     m.ld(e + t.E_ADOPTING) === 0 ||
     m.ld(e + nc.E_CATCHING) >= 2 ||
+    task === 0 ||
     wk.taskOf(m.ld(cx + 8)) !== task ||
     m.load(n + nd.N_REFS) !== 2
   ) {

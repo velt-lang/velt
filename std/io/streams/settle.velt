@@ -48,20 +48,29 @@ export async function settled<R>(
   }
 }
 
+/**
+ * `p`, adopted as Node adopts the promise a source's `cancel` gives (`new Promise((r) => r(p))`):
+ * it settles a turn before `p` is attached to and two turns after `p` settles, the hops `settled`
+ * takes for an adopted promise, so `cancel`'s promise keeps Node's order (#3695). An async
+ * function, not callbacks, for the reason `settled` is one.
+ */
+export async function adopted(p: Promise<void, unknown>): Promise<void> throws unknown {
+  await velt_rt_microtask();
+  try {
+    await p;
+  } catch (e) {
+    await turns(true);
+    throw e;
+  }
+  await turns(true);
+}
+
 // The turns after a settled promise's reaction: one, or two for an adopted promise.
 async function turns(adopt: bool) {
   await velt_rt_microtask();
   if (adopt) {
     await velt_rt_microtask();
   }
-}
-
-/**
- * `p` (a source's `cancel` result) adopted as Node adopts it (`new Promise((r) => r(p))`): a job
- * queued now attaches to `p`, and `ok` or `bad` runs a microtask after `p`'s reaction (#3695).
- */
-export function adopted(p: Promise<void, unknown>, ok: () => void, bad: (e: unknown) => void) {
-  queueMicrotask(() => p.then(() => queueMicrotask(ok), (e) => queueMicrotask(() => bad(e))));
 }
 
 /** `TypeError: Invalid state: <what>`, Node's message for a stream used in a wrong state. */
