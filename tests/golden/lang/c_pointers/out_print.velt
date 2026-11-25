@@ -1,0 +1,20 @@
+// velt/ffi's `Out<T>` as a value (#2187): its `value` is an accessor over the field C writes, read
+// through a check, so `console.log` shows `Out { value: … }`, `JSON.stringify` writes
+// `{"value":…}`, and a spread copies no accessor, as in JS. A write through the setter is what a
+// later read gives.
+import { Out } from "velt/ffi";
+
+declare c struct Point { x: f64; y: f64; }
+
+function main() {
+  const n = new Out<i32>(3);
+  console.log(n);
+  console.log(JSON.stringify(n));
+  console.log({ ...n });
+  n.value = 4;
+  console.log(n.value);
+  const p = new Out<Point>({ x: 1.5, y: -2 });
+  console.log(p);
+  console.log(p.value.x + p.value.y);
+  console.log(new Out<bool>(true));
+}
