@@ -28,6 +28,7 @@ mod c_struct;
 mod classes;
 mod comparable;
 mod constants;
+mod covariant;
 mod declare;
 mod default_snapshots;
 mod export_walk;
