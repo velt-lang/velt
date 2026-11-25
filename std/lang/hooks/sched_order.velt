@@ -1,6 +1,6 @@
 // velt/lang/hooks (internal): Node's order of `setTimeout` / `setInterval` / `setImmediate`
-// callbacks under the executor in Velt (sched.velt, #2649), as the runtime's velt_rt
-// task/local/order.rs and Node's lib/internal/timers.js: one list per delay, the lists by
+// callbacks under the executor in Velt (sched.velt, #2649), as the runtime's Rust order
+// it replaced and Node's lib/internal/timers.js: one list per delay, the lists by
 // (expiry, list id), a timers pass reading the clock once, the check phase for immediates
 // (sched_order_list.velt, sched_order_pass.velt). The prelude's timers (std/prelude/timers.velt)
 // call `velt_rt_timer_new`, `_turn`, `_again`, `_clear` and `_free`, which route here.
