@@ -122,13 +122,13 @@ impl FnCx<'_, '_> {
                 Some(h) => self.coerce(h, elem),
                 None => match &e.kind {
                     ast::ExprKind::Lit(l @ (ast::Lit::Int { .. } | ast::Lit::Float { .. }))
-                        if literals =>
+                        if literals && !self.stores_as_number(elem, None, e) =>
                     {
                         crate::check_work::add_expr_check();
                         let h = self.lit(l, Some(elem), e.span, false);
                         self.coerce(h, elem)
                     }
-                    _ => self.expr_coerce(e, elem, Want::Move),
+                    _ => self.element_lit_coerce(e, elem),
                 },
             };
             hs.push(h);

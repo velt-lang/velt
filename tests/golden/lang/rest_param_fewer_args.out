@@ -1,0 +1,7 @@
+few decl one x two x 3
+opt x
+optc x optd x
+local decl 7
+optc x optd x
+few one x decl
+4

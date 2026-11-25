@@ -1,0 +1,19 @@
+// A `toJSON` that changes its object: `JSON.stringify`'s generated writer runs it, so the
+// writer's instance modifies the value it writes, beyond the `w` std's declaration lists in
+// `@modifies` (#3543). Checked whole and by units alike.
+class Tracked {
+  calls = 0;
+  x = 1;
+
+  toJSON(): { x: number } {
+    this.calls++;
+    return { x: this.x };
+  }
+}
+
+function main() {
+  const t = new Tracked();
+  console.log(JSON.stringify(t));
+  console.log(JSON.stringify([t, t]));
+  console.log(t.calls);
+}

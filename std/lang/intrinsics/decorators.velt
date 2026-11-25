@@ -82,7 +82,7 @@ export declare decorator function variant(
  * false, so a gated function never runs there.
  */
 export declare decorator function targetFeature(
-  ...targets: ("sha-arm" | "sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm" | "sse3-x86" | "ssse3-x86" | "sse4.1-x86" | "sse4.2-x86" | "popcnt-x86" | "cmpxchg16b-x86" | "avx-x86" | "avx2-x86" | "bmi1-x86" | "bmi2-x86" | "lzcnt-x86" | "movbe-x86" | "f16c-x86" | "avx512f-x86" | "avx512bw-x86" | "avx512cd-x86" | "avx512dq-x86" | "avx512vl-x86" | "avx512vbmi-x86" | "avx512bitalg-x86" | "dotprod-arm" | "crc-arm" | "sha3-arm" | "fp16-arm" | "i8mm-arm")[],
+  ...targets: ("sha-arm" | "sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm" | "fma-x86" | "bf16-arm" | "sse3-x86" | "ssse3-x86" | "sse4.1-x86" | "sse4.2-x86" | "popcnt-x86" | "cmpxchg16b-x86" | "avx-x86" | "avx2-x86" | "bmi1-x86" | "bmi2-x86" | "lzcnt-x86" | "movbe-x86" | "f16c-x86" | "avx512f-x86" | "avx512bw-x86" | "avx512cd-x86" | "avx512dq-x86" | "avx512vl-x86" | "avx512vbmi-x86" | "avx512bitalg-x86" | "dotprod-arm" | "crc-arm" | "sha3-arm" | "fp16-arm" | "i8mm-arm" | "adx-x86")[],
 ): FunctionDecorator;
 
 /**
@@ -104,6 +104,15 @@ export declare decorator function repr(how: "transparent"): TypeDecorator;
  * C's.
  */
 export declare decorator function align(bytes: u32): TypeDecorator;
+
+/**
+ * On std's `declare generated` functions only: the parameters every instance the generator
+ * writes modifies, its output or input stream (`writeJson`'s `w`). They take their final mode
+ * where the function is declared, so a program's instances never raise them; a parameter it
+ * does not list may still be modified by the program's own code an instance runs (a `toJSON`)
+ * (docs/internals/design/build-architecture.md, "Units in sema").
+ */
+export declare decorator function modifies(...params: string[]): FunctionDecorator;
 
 /**
  * On a `declare function` of std/lang/intrinsics: an operation the compiler emits itself, which

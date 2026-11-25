@@ -1,80 +1,12 @@
-// velt/process/child (internal): `execSync`'s start on macOS, Linux and WebAssembly (the default
-// variant of `#exec-sync`, std/imports.velt): the runtime's `velt_rt_child_output_sync`, which
-// looks the program up as Rust's `Command` does. Windows has its own (exec_sync_win32.velt).
+// velt/process/child (internal): `execSync`'s start where no other variant of `#exec-sync`
+// (std/imports.velt) runs it (WebAssembly): the runtime's `velt_rt_child_output_sync`. macOS and
+// Linux start the child in std (exec_sync_posix.velt), Windows has its own (exec_sync_win32.velt).
 
-import { envPairs } from "#env-sys";
 import { IoResult } from "velt/native/result";
-import { osErrnoOf } from "velt/process/child/spawn_error";
-import { ENOEXEC, SCRIPT_SHELL, SHELL } from "#script-shell";
 import { CommandSpec } from "velt/process/child/spec";
 import { RawOutput, velt_rt_child_output_sync } from "./rt";
 
 /** Runs `spec` to completion with `input`, blocking the calling thread. */
 export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
-  if (spec.clearEnv) {
-    return throughShellIfScript(spec, input);
-  }
-  // The child's whole environment, copied under velt/process' environment lock (`envPairs`,
-  // std/process/env_posix.velt), so that Rust's `Command` never reads C's `environ`, which another
-  // worker's `setEnv` may reallocate meanwhile (Rust's own environment lock doesn't cover it).
-  // The spec's variables come after the parent's, and `Command` keeps the last value of a name.
-  // A program named without a `/` is then looked up by fork and exec rather than `posix_spawnp`
-  // (Rust's `Command` does so whenever the environment is given).
-  const env = envPairs();
-  for (const v of spec.env) {
-    env.push(v.clone());
-  }
-  const whole: CommandSpec = {
-    program: spec.program.clone(),
-    args: spec.args.clone(),
-    cwd: spec.cwd.clone(),
-    env: env,
-    stdio: spec.stdio,
-    clearEnv: true,
-  };
-  return throughShellIfScript(whole, input);
-}
-
-/**
- * Runs `spec`. On Linux a program the OS can't execute (`ENOEXEC`: no `#!` line) runs again as a
- * script for `/bin/sh`, `/bin/sh <program> <args…>`, as Node and `spawn` and `exec` run it there
- * (spawn_posix.velt): Rust's `Command` starts a program named with a `/` with `posix_spawn`,
- * which fails it; one looked up in `PATH` starts through C's `execvp` (above), which does the
- * same as this.
- *
- * A known difference from Node on macOS (#3573): Rust's `Command` runs such a script there too
- * (through `execvp`'s `/bin/sh`), where Node fails it with ENOEXEC as `spawn` and `exec` do. It
- * stays more permissive than Node until `execSync`'s start moves into std.
- */
-function throughShellIfScript(spec: CommandSpec, input: string): IoResult<RawOutput> {
-  const got = velt_rt_child_output_sync(spec, input);
-  if (
-    !SCRIPT_SHELL ||
-    got.code === 0 ||
-    !spec.program.includes("/") ||
-    osErrnoOf(got.message) !== ENOEXEC
-  ) {
-    return got;
-  }
-  const args: string[] = [spec.program.clone()];
-  for (const a of spec.args) {
-    args.push(a.clone());
-  }
-  const shell: CommandSpec = {
-    program: SHELL,
-    args: args,
-    cwd: spec.cwd.clone(),
-    env: spec.env.clone(),
-    stdio: spec.stdio,
-    clearEnv: spec.clearEnv,
-  };
-  const ran = velt_rt_child_output_sync(shell, input);
-  const prefix = `spawn ${SHELL}: `;
-  if (ran.code !== 0 && osErrnoOf(ran.message) >= 0 && ran.message.startsWith(prefix)) {
-    // The shell didn't start: its error, as glibc's `execvp` (and so Node) reports it, worded
-    // as the program's (`spawn <program>: …`), which `SpawnError` reads.
-    const text = ran.message.slice(prefix.length as i64);
-    return { code: ran.code, message: `spawn ${spec.program}: ${text}`, value: ran.value };
-  }
-  return ran;
+  return velt_rt_child_output_sync(spec, input);
 }

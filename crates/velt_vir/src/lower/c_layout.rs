@@ -83,3 +83,55 @@ impl Cx<'_> {
         }
     }
 }
+
+/// The alignment an `Out` object gives the value it holds: a heap block's, 8.
+const OUT_ALIGN: u32 = 8;
+
+/// Why an `Out<S>` of C struct `name`, aligned to `align`, can't be passed to C, if it can't: its
+/// value is held in the `Out` object, which gives it [`OUT_ALIGN`] bytes, and C may assume more
+/// at the address it gets. No C struct is aligned above 8 now (its fields are C's scalars and C
+/// structs; `@align` doesn't apply to a `declare c struct`): the rule is for when one can be.
+fn out_alignment_refusal(name: &str, align: u32) -> Option<String> {
+    (align > OUT_ALIGN).then(|| {
+        format!("an `Out<{name}>` can't be passed to C: `{name}` is aligned to {align} bytes, and an `Out` holds its value aligned to {OUT_ALIGN}")
+    })
+}
+
+impl Cx<'_> {
+    /// Reports an `Out` of type `out` passed to C at `at` whose C struct is aligned above what
+    /// the `Out` object gives it (`out_alignment_refusal`).
+    pub(super) fn check_out_alignment(&mut self, out: TyId, at: velt_common::Span) {
+        let TyKind::Adt(_, args) = self.kind(out) else {
+            return;
+        };
+        let Some(&value) = args.first() else { return };
+        if !self.c_struct(value) {
+            return;
+        }
+        let (_, align, _) = self.c_layout(value);
+        if let Some(message) = out_alignment_refusal(&self.type_name(value), align) {
+            if !(self.c_clashes.iter()).any(|d| d.message == message) {
+                self.c_clashes
+                    .push(velt_common::Diagnostic::error(message, at));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A C struct aligned above 8 can't be written today, so the rule is tested on its alignment:
+    /// 16 is refused, naming the struct; 8 and below pass.
+    #[test]
+    fn an_out_of_a_struct_aligned_above_8_is_refused() {
+        let m = out_alignment_refusal("wide", 16).expect("refused");
+        assert!(
+            m.contains("`Out<wide>`") && m.contains("aligned to 16 bytes"),
+            "{m}"
+        );
+        assert_eq!(out_alignment_refusal("point", 8), None);
+        assert_eq!(out_alignment_refusal("byte", 1), None);
+    }
+}

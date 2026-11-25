@@ -7,7 +7,7 @@
 // can be called repeatedly; async methods take `this` by copy) released by `close()`: an
 // unclosed handle leaks until exit; after `close()` through any copy, the others throw
 // `IoError` `EBADF` and closing again does nothing. A writer's `close()` also flushes and
-// reports write errors.
+// reports write errors. On Windows the path is resolved as Node resolves it (`#fs-stream-path`).
 
 import { unwrapIo } from "velt/native/result";
 import { FileReader } from "velt/fs/file_reader";
@@ -19,6 +19,7 @@ import {
   velt_rt_fs_open_write,
 } from "velt/fs/rt";
 import { checkPathArg } from "velt/fs/path_arg";
+import { streamError, streamPath } from "#fs-stream-path";
 
 /** The options of `openWrite`. */
 export type OpenWriteOptions = {
@@ -29,17 +30,27 @@ export type OpenWriteOptions = {
 /** Opens `path` for chunked reading: the whole file, or the bytes `start` to `end` (included). */
 export async function openRead(path: string, opts: OpenReadOptions = {}): Promise<FileReader> {
   checkPathArg(path);
-  if (opts.start == undefined && opts.end == undefined) {
-    return { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
+  const opened = streamPath(path);
+  try {
+    if (opts.start == undefined && opts.end == undefined) {
+      return { handle: unwrapIo(await velt_rt_fs_open_read(opened)) };
+    }
+    // The runtime's "to the end of the file" is the largest u64, a byte no file has.
+    const start = opts.start ?? 0;
+    const end = opts.end ?? (-1 as u64);
+    return { handle: unwrapIo(await velt_rt_fs_open_read_range(opened, start, end)) };
+  } catch (e) {
+    throw streamError(e, opened, path);
   }
-  // The runtime's "to the end of the file" is the largest u64, a byte no file has.
-  const start = opts.start ?? 0;
-  const end = opts.end ?? (-1 as u64);
-  return { handle: unwrapIo(await velt_rt_fs_open_read_range(path, start, end)) };
 }
 
 /** Creates (or truncates, or with `append` extends) `path` for buffered writing. */
 export async function openWrite(path: string, opts: OpenWriteOptions = {}): Promise<FileWriter> {
   checkPathArg(path);
-  return { handle: unwrapIo(await velt_rt_fs_open_write(path, opts.append ?? false)) };
+  const opened = streamPath(path);
+  try {
+    return { handle: unwrapIo(await velt_rt_fs_open_write(opened, opts.append ?? false)) };
+  } catch (e) {
+    throw streamError(e, opened, path);
+  }
 }

@@ -29,6 +29,13 @@ macro_rules! with_module_hooks {
             /// The blocks go (the executor's counted normal end, sched_module.velt `dropAtExit`, by
             /// role).
             module_drop => lang_hooks_module_blocks, "moduleDrop", sig(() -> void), prebuilt;
+            // mutex_held.velt: under `velt dev` (velt_vir `LowerOptions::jit`) a `with` counts the
+            // `Mutex` it holds, after its lock and before its unlock, for the executor's module
+            // lock (sched_module.velt `take`, #3467); other builds lower and demand neither.
+            mutex_held_locked => lang_hooks_mutex_held, "locked", sig(() -> void), lowered,
+                constructs(MutexHeld);
+            mutex_held_unlocked => lang_hooks_mutex_held, "unlocked", sig(() -> void), lowered,
+                constructs(MutexHeld);
             // sched.velt: the executor's module lock (sched_module.velt) beyond module state.
             /// The module lock before a function's properties held as `any` are reached (workers).
             sched_module_touch => lang_hooks_sched, "schedModuleTouch", sig(() -> void), lowered;

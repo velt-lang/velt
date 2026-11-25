@@ -121,8 +121,7 @@ impl Origin {
         // test runner's import of a test file inside std) would otherwise share no prefix with an
         // absolute root and come out as `std/../../…/std/…`, a second name for a std module, whose
         // hooks the check then cannot find by their canonical names (#2875).
-        let rel =
-            vpm::relpath::relative(&vpm::relpath::absolute(file), &vpm::relpath::absolute(base));
+        let rel = relative_within(file, base);
         let rel = module_path(&rel);
         match (prefix, self) {
             (Some(name), Origin::Package { .. }) if rel == "lib" => name.to_string(),
@@ -130,6 +129,31 @@ impl Origin {
             (None, _) => rel.to_string(),
         }
     }
+}
+
+/// `file`'s path relative to `base` (`/`-separated). Spelled as given, both absolute; when that
+/// leaves `base` (a leading `..`), again by their file keys ([`crate::paths::file_key`]: links
+/// resolved, and on Windows the verbatim prefix and the case the file system has), so that one
+/// file has one name whichever spelling reached it. A std file imported by a relative path from a
+/// file reached through a link, or by its verbatim path on Windows, came out as `std/../../…`: a
+/// second name for a std module, whose hooks the check then could not find (#3731).
+fn relative_within(file: &Path, base: &Path) -> String {
+    let rel = vpm::relpath::relative(&vpm::relpath::absolute(file), &vpm::relpath::absolute(base));
+    if !escapes(&rel) {
+        return rel;
+    }
+    let keyed =
+        vpm::relpath::relative(&crate::paths::file_key(file), &crate::paths::file_key(base));
+    if escapes(&keyed) {
+        rel
+    } else {
+        keyed
+    }
+}
+
+/// Does relative path `rel` leave its base (`..`, `../x`)?
+fn escapes(rel: &str) -> bool {
+    rel == ".." || rel.starts_with("../")
 }
 
 /// `rel` (a `/`-separated file path) as a module path: without its source extension and a final

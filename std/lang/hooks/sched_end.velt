@@ -22,12 +22,12 @@
 // and exits with 13, anything else exits with 0 (stdout flushed). After `main`, the tasks left
 // are given up and the program's normal end follows (sched.velt `schedFinish`).
 //
-// A due `unref()`'d timer asks whether the process is ending (`schedUnrefDue`): when something
-// else can still happen (a keep-alive reference, pending I/O or leaf, a queued task) its callback
-// runs at once; otherwise it waits for the next park, which ends the process (the callback never
-// runs, as in Node) or finds something pending and wakes it to ask again. A worker that never
-// parks (code that keeps yielding) wakes it every I/O tick, and after a second it runs, as the
-// runtime's patience does.
+// A due `unref()`'d timer asks whether the process is ending (`schedUnrefDue`): when its turn came
+// in a pass that began alive (sched_order_alive.velt), or something else can still happen (a
+// keep-alive reference, pending I/O or leaf, a queued task), its callback runs at once; otherwise
+// it waits for the next park, which ends the process (the callback never runs, as in Node) or
+// finds something pending and wakes it to ask again. A worker that never parks (code that keeps
+// yielding) wakes it every I/O tick, and after a second it runs, as the runtime's patience does.
 
 import { export as cExport } from "velt/ffi";
 import {
@@ -46,6 +46,7 @@ import * as io from "./sched_io";
 import * as tb from "./sched_io_table";
 import * as wt from "./sched_io_wait";
 import * as mk from "./sched_make";
+import * as alive from "./sched_order_alive";
 import * as m from "./sched_mem";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
@@ -165,10 +166,12 @@ function ioWaits(e: usize): bool {
  * Has worker `w` something to run or something that can wake it: awake (unless it is `self`, the
  * thread asking: its code running now does not count), a task queued, in its inbox or offered,
  * a pending sleep? Another worker's words are read while its park word is up (it runs nothing
- * then).
+ * then). `asking`: for a due `unref()`'d timer's question (`unrefPoll`), not for the end: another
+ * worker counts only while it polls a task, not while it is awake on its way to park (#3576).
  */
-function workerBusy(w: usize, self: usize): bool {
-  if (w !== self && m.load32(w + t.E_PARK) !== 1) {
+function workerBusy(w: usize, self: usize, asking: bool): bool {
+  const awake = asking ? m.load(w + t.E_CURRENT) !== 0 : m.load32(w + t.E_PARK) !== 1;
+  if (w !== self && awake) {
     return true;
   }
   if (m.load(w + t.E_INBOX) !== 0 || q.any(w) || m.load(w + t.E_OFFER) !== 0) {
@@ -193,10 +196,10 @@ function unparks(g: usize): usize {
 
 /**
  * Can something still happen besides the code running now on worker `self` (module docs)? `g` is
- * worker 0's block, which holds what is process-wide.
+ * worker 0's block, which holds what is process-wide. `asking`: as `workerBusy`'s.
  */
-function busy(g: usize, self: usize): bool {
-  if (veltBusy(g, self)) {
+function busy(g: usize, self: usize, asking: bool): bool {
+  if (veltBusy(g, self, asking)) {
     return true;
   }
   // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
@@ -205,18 +208,18 @@ function busy(g: usize, self: usize): bool {
 }
 
 /** `busy` but for what the runtime has outstanding. */
-function veltBusy(g: usize, self: usize): bool {
+function veltBusy(g: usize, self: usize, asking: bool): bool {
   // Keep-alive references, and tasks in the monitor's hands between two workers.
   if (m.load(g + t.E_KEEP) !== 0 || m.load(g + t.E_MOVING) !== 0) {
     return true;
   }
-  // The waits before the queues (`ioWaits`).
-  if (ioWaits(g)) {
+  // The waits before the queues (`ioWaits`); a pass that began alive (sched_order_alive.velt).
+  if (ioWaits(g) || (stdUsed("nodeTimers") && alive.passWaits())) {
     return true;
   }
   const n = m.load(g + t.E_STARTED);
   for (let i: usize = 0; i < n; i++) {
-    if (workerBusy(t.worker(i), self)) {
+    if (workerBusy(t.worker(i), self, asking)) {
       return true;
     }
   }
@@ -234,7 +237,7 @@ function veltBusy(g: usize, self: usize): bool {
  */
 function quiet(e: usize): bool {
   const before = unparks(e);
-  if (busy(e, e)) {
+  if (busy(e, e, false)) {
     return false;
   }
   return m.load32(e + t.E_PARK) === 1 && unparks(e) === before;
@@ -328,7 +331,7 @@ function askAgain(e: usize): u32 {
 @noInline
 function detached(e: usize): void {
   const n = dt.count();
-  if (n !== 0 && n === mk.live(e) && !veltBusy(e, e)) {
+  if (n !== 0 && n === mk.live(e) && !veltBusy(e, e, false)) {
     dt.giveUp();
   }
 }
@@ -397,9 +400,9 @@ function unrefPoll(f: usize, cx: usize): u32 {
   }
   // Never true otherwise: an end the executor sees exits the process (`mayPark`).
   m.st(f + U_RESULT, 0);
-  // Asked for the process, from this worker (its own list keeps the question: its timers'
-  // task is anchored here).
-  if (busy(t.main(), e)) {
+  // Its turn came in a phase that began alive (sched_order_alive.velt), or asked for the process,
+  // from this worker (its own list keeps the question: its timers' task is anchored here).
+  if ((stdUsed("nodeTimers") && alive.inLivePhase(e)) || busy(t.main(), e, true)) {
     return 1;
   }
   const now = wt.now();

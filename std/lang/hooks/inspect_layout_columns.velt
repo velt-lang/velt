@@ -21,10 +21,28 @@ const SEPARATOR_SPACE: u64 = 2;
  * returns 0 when grouping does not pay off (an entry too wide, or too few rows to gain from it).
  */
 export function planColumns(widths: u64[], entries: u64, indent: u64, widest: u64[]): u64 {
-  const n = widths.length as u64;
+  widest.truncate(0);
+  return planColumnsIn(widths, 0, 1, widths.length as u64, entries, indent, widest);
+}
+
+/**
+ * `planColumns` for `n` widths kept in `words`, the first at `first` and each `stride` words
+ * after the one before (the layout's entry records), appending the columns' widths to `widest`
+ * only when it groups.
+ */
+export function planColumnsIn(
+  words: u64[],
+  first: u64,
+  stride: u64,
+  n: u64,
+  entries: u64,
+  indent: u64,
+  widest: u64[],
+): u64 {
   let totalLength: u64 = 0;
   let maxLength: u64 = 0;
-  for (const w of widths) {
+  for (let j: u64 = 0; j < n; j++) {
+    const w = words[first + j * stride];
     totalLength += w + SEPARATOR_SPACE;
     if (w > maxLength) {
       maxLength = w;
@@ -48,12 +66,12 @@ export function planColumns(widths: u64[], entries: u64, indent: u64, widest: u6
   if (count <= 1) {
     return 0;
   }
-  widest.truncate(0);
   for (let c: u64 = 0; c < count; c++) {
     let w: u64 = 0;
     for (let j = c; j < n; j += count) {
-      if (widths[j] > w) {
-        w = widths[j];
+      const x = words[first + j * stride];
+      if (x > w) {
+        w = x;
       }
     }
     widest.push(w);

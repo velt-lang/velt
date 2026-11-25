@@ -1,7 +1,8 @@
 //! Run a command to completion and collect its output, blocking the calling thread (`execSync`
-//! in std): stdout and stderr are piped and read concurrently (so neither pipe can fill up and
-//! deadlock the child), optional input is written to stdin from a thread of its own, and the
-//! result carries the exit code and both outputs as text (invalid UTF-8 becomes U+FFFD).
+//! in std on Windows and WebAssembly; macOS and Linux run it in std, exec_sync_posix.velt):
+//! stdout and stderr are piped and read concurrently (so neither pipe can fill up and deadlock
+//! the child), optional input is written to stdin from a thread of its own, and the result
+//! carries the exit code and both outputs as text (invalid UTF-8 becomes U+FFFD).
 
 use super::command::{StdioMode, VeltCommand};
 use crate::result::{IoResult, VeltErr};
@@ -12,7 +13,7 @@ use std::process::Output;
 /// `{ i32 code; u32 pad; VeltStr stdout; VeltStr stderr; }` — size 56, align 8.
 #[repr(C)]
 pub struct VeltOutput {
-    /// Exit code (`128 + signal` when killed by a signal).
+    /// Exit code (Windows' unsigned code as its bits; -1 when there is none).
     pub code: i32,
     /// Always 0.
     pub pad: u32,
@@ -22,19 +23,10 @@ pub struct VeltOutput {
     pub stderr: VeltStr,
 }
 
-/// The exit code of a finished process; killed by a signal ⇒ `128 + signal` (shell convention).
+/// The exit code of a finished process (-1 when it has none). Only Windows and WebAssembly come
+/// here, where a process always has one.
 fn exit_code(status: std::process::ExitStatus) -> i32 {
-    if let Some(code) = status.code() {
-        return code;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        if let Some(signal) = status.signal() {
-            return 128 + signal;
-        }
-    }
-    -1
+    status.code().unwrap_or(-1)
 }
 
 /// Prefixes spawn errors with the program, like Node's `spawn x ENOENT`.

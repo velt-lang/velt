@@ -1,16 +1,15 @@
 //! A promise test written as a thenable test (#379): `typeof (x as any).then === "function"`
 //! (or `!==`) where `x` is a local variable whose type is a union whose only member with a declared
-//! `then` is a promise (`Promise<ViewFn> | ViewFn`, a setup result that may be async). A promise
-//! can be held as `any` (#924), but its `then` can't be read through one yet, so the test is a
-//! match on the member instead, with no `any` made. A promise's `then` is a function; a
+//! `then` is a promise (`Promise<ViewFn> | ViewFn`, a setup result that may be async). The test
+//! is a match on the member instead, with no `any` made and no `then` read through one
+//! (`any_promise_members.rs`). A promise's `then` is a function; a
 //! primitive has none; a function or an array is asked through `any` whether it has a `then` and
 //! then read, so a `then` a program wrote on one through `any` is found, as Node finds it.
 //!
 //! Only this idiom, not a general `.then` read through `any`: any other read of a member through
 //! `any` needs the value as an `any`. Only unions whose other members are functions, primitives
 //! or arrays. Any other test is the plain cast and read: an object member, or a union that may
-//! be `null` or `undefined` (whose `.then` throws in Node). A promise's `then` read that way stops
-//! with a TypeError at run time until #924's later steps. A function with properties (#921) that
+//! be `null` or `undefined` (whose `.then` throws in Node). A function with properties (#921) that
 //! declares a `then`, given where a plain function type is expected, keeps only the function, so
 //! its `then` would not be found: the rule holds only in a program that declares no member named
 //! `then` (a type's, a class's, an object literal's), else the plain cast is used. `as unknown`

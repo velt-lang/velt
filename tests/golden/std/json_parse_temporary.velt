@@ -28,7 +28,7 @@ function main() {
   const source = new Map<string, string>();
   source.set("a long key that does not fit inline", "x");
   source.set("b", "a long value that does not fit inline either");
-  show("stringify", JSON.parse<Map<string, string>>(JSON.stringify(source)));
+  show("stringify", JSON.parse<Map<string, string>>(JSON.stringify(Object.fromEntries(source))));
   const tail = `"c":"3"}`;
   show("concat", JSON.parse<Map<string, string>>("{" + tail));
   show("returned", keep());
@@ -38,9 +38,8 @@ function main() {
 
   const p = JSON.parse<Person>(`{"name":"Ada${one}","city":"London"}`);
   console.log(p.name, p.city);
-  const people = JSON.parse<Map<string, Person>>(
-    JSON.stringify(new Map<string, Person>([["first", new Person("Bo", "Oslo")]])),
-  );
+  const bo = new Map<string, Person>([["first", new Person("Bo", "Oslo")]]);
+  const people = JSON.parse<Map<string, Person>>(JSON.stringify(Object.fromEntries(bo)));
   for (const [k, v] of people) {
     console.log(k, v.name, v.city);
   }

@@ -29,7 +29,10 @@ impl FnCx<'_, '_> {
             return self.retag(h, exp, &targets);
         }
         let mut h = h;
-        if let Some(v) = self.closest_member(h.ty, &targets) {
+        if let Some(v) = self
+            .closest_member(h.ty, &targets)
+            .or_else(|| self.promise_fn_member(h.ty, &targets))
+        {
             match self.try_coerce_or_same(h, targets[v]) {
                 Ok(c) => return Ok(self.union_variant(def, &args, v as u32, c, exp)),
                 Err(back) => h = back,
@@ -58,6 +61,22 @@ impl FnCx<'_, '_> {
         };
         let base = self.cx.lit_base(&lit);
         targets.iter().position(|t| *t == base)
+    }
+
+    /// For a function value whose result holds a promise (`Promise<void> | undefined`), the
+    /// first member of `targets` that is a function returning one: a member returning `void`
+    /// would drop the promise, as for an arrow (`first_fitting`, #3716).
+    fn promise_fn_member(&self, ty: TyId, targets: &[TyId]) -> Option<usize> {
+        let fn_ret = |t: TyId| match self.cx.ty.kind(t) {
+            hir::TyKind::FnPtr { ret, .. } => Some(*ret),
+            _ => None,
+        };
+        if !fn_ret(ty).is_some_and(|r| self.holds_promise(r)) {
+            return None;
+        }
+        targets
+            .iter()
+            .position(|t| fn_ret(*t).is_some_and(|r| self.holds_promise(r)))
     }
 
     /// `h` as a `t`: itself when it is one, else converted (`try_coerce`).
@@ -182,7 +201,7 @@ impl FnCx<'_, '_> {
     }
 
     /// [`map_members`](Self::map_members) over the variants `live` (`None`: all).
-    pub(super) fn map_members_in(
+    pub(crate) fn map_members_in(
         &mut self,
         h: hir::Expr,
         exp: TyId,

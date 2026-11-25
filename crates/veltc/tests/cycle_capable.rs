@@ -837,3 +837,31 @@ fn request_and_response_bodies_keep_the_request_and_response_out_of_the_set() {
         "{out}"
     );
 }
+
+#[test]
+fn a_streams_controller_keeps_closures_out_of_the_set() {
+    // The controller waits for its source's `start` and `pull` promises with an async method of
+    // its own (std/io/streams/controller.velt `settled`), not with `then` callbacks over it: those closures' environments are the type of every `() => void`
+    // and `(e: unknown) => void` in the program, and kept in the promise a source returned they
+    // reach the controller, whose pending reads hold callbacks of those types (#3119).
+    let out = debug_out(
+        "async function* letters(): AsyncGenerator<string, never> { yield \"b\"; }
+         async function main() {
+           const s = new ReadableStream<string>({
+             start: async (ctl) => { ctl.enqueue(\"a\"); },
+             pull: async (ctl) => { ctl.close(); },
+           });
+           const it = ReadableStream.from(letters());
+           const r = s.getReader();
+           console.log((await r.read()).value);
+           for await (const v of it) { console.log(v); }
+         }
+         await main();",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(!has_closures(line), "{out}");
+    assert!(!line.contains("CloseWait[]"), "{out}");
+}

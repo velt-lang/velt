@@ -1,0 +1,139 @@
+// requires: unix
+// `execSync`'s options and results, as Node's `spawnSync` gives them (#3573: macOS's and Linux's
+// `execSync` start their child in std): `input` fed to stdin (and stdin at its end without it),
+// `cwd`, `env` added to the parent's or alone (`clearEnv`), stdout and stderr both captured with
+// a non-zero exit code, a death by a signal as 128 + the signal, `PATH` entries and program
+// names too long for the lookup, and more than a pipe holds on stdout and stderr, and on stdin
+// while the child writes, without a deadlock. This program prints what
+// child_exec_sync_options.mjs prints under `node` on macOS and Linux.
+import { ExecOptions, execSync, SpawnError } from "velt/process/child";
+import * as fs from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+
+/** `text` with the test directory written as <dir>. */
+function hide(text: string, dir: string): string {
+  return text.split(dir).join("<dir>");
+}
+
+/** How many bytes `text` has, and how many of them are not `c`. */
+function count(text: string, c: string): string {
+  let other = 0;
+  for (const ch of text) {
+    if (ch != c) {
+      other++;
+    }
+  }
+  return `${text.length} bytes, ${other} other`;
+}
+
+/** Prints `label` and what `program` with `args` and `opts` gave. */
+function run(label: string, program: string, args: string[], opts: ExecOptions, dir: string) {
+  const r = execSync(program, args, opts);
+  console.log(`${label}: ${r.code} [${hide(r.stdout, dir).trim()}] [${r.stderr.trim()}]`);
+}
+
+/** The code `execSync` of `program` throws with `opts`, or "ran". */
+function failure(program: string, opts: ExecOptions): string {
+  try {
+    execSync(program, [], opts);
+    return "ran";
+  } catch (err) {
+    return err instanceof SpawnError ? err.code : err.message;
+  }
+}
+
+const LINUX = platform() == "linux";
+
+/** Writes an executable script at `path`. */
+function writeScript(path: string, text: string) {
+  const fd = fs.openSync(path, "w", 0o755);
+  fs.writeSync(fd, text);
+  fs.closeSync(fd);
+}
+
+/**
+ * Prints a fixed line for `label`: on macOS after checking that `got()` is ENAMETOOLONG (what it
+ * got when it isn't), on Linux without running it.
+ */
+function macOnly(label: string, got: () => string) {
+  console.log(`${label}: checked on macOS`);
+  if (!LINUX) {
+    const g = got();
+    if (g != "ENAMETOOLONG") {
+      console.log("  got:", g);
+    }
+  }
+}
+
+function main() {
+  const dir = `${tmpdir()}/velt-golden-exec-sync-options-${process.pid}`;
+  fs.mkdirSync(dir, { recursive: true });
+  const fd = fs.openSync(`${dir}/marker`, "w", 0o644);
+  fs.closeSync(fd);
+
+  run("input", "cat", [], { input: "hello\nworld\n" }, dir);
+  run("no input", "cat", [], {}, dir);
+  run("cwd", "ls", [], { cwd: dir }, dir);
+  const extra = new Map<string, string>();
+  extra.set("VELT_GOLDEN_FOO", "bar");
+  const script = 'echo "foo=$VELT_GOLDEN_FOO home=${HOME:+set}"';
+  run("env", "sh", ["-c", script], { env: extra }, dir);
+  run("env alone", "sh", ["-c", script], { env: extra, clearEnv: true }, dir);
+  run("exit", "sh", ["-c", "echo out; echo err >&2; exit 7"], {}, dir);
+  run("signal", "sh", ["-c", "kill -9 $$"], {}, dir);
+  // A `PATH` entry longer than `PATH_MAX` (1024 on macOS, 4096 on Linux) can't be searched: the
+  // program is found in a later entry.
+  const long = new Map<string, string>();
+  long.set("PATH", `${("/" + "b".repeat(99)).repeat(50)}:/usr/bin:/bin`);
+  run("long PATH entry", "sh", ["-c", "echo found"], { env: long, clearEnv: true }, dir);
+  // Such an entry before a directory holding `prog`, with another `prog` in the working
+  // directory: on Linux glibc's `execvp` tries the bare name there in the entry's place (every
+  // glibc release), so the working directory's runs; on macOS libuv's loop skips the entry.
+  fs.mkdirSync(`${dir}/bin`, { recursive: true });
+  writeScript(`${dir}/bin/prog`, "#!/bin/sh\necho bin\n");
+  writeScript(`${dir}/prog`, "#!/bin/sh\necho cwd\n");
+  const cwdTry = new Map<string, string>();
+  cwdTry.set("PATH", `/${"x".repeat(4999)}:${dir}/bin`);
+  const ran = execSync("prog", [], { cwd: dir, env: cwdTry, clearEnv: true }).stdout.trim();
+  console.log("long entry then a dir as Node:", ran == (LINUX ? "cwd" : "bin"));
+  // As `PATH`'s last entry it is left out on both OSes (glibc stops there, libuv skips it): the
+  // working directory's `prog` is not tried.
+  const lastLong = new Map<string, string>();
+  lastLong.set("PATH", `/nope:/${"x".repeat(4999)}`);
+  console.log("long last entry:", failure("prog", { cwd: dir, env: lastLong, clearEnv: true }));
+  // libuv's own rules on macOS: a directory whose name passes `NAME_MAX` (255) ends the lookup
+  // with ENAMETOOLONG, and so does a program name longer than `NAME_MAX`, before any lookup.
+  // On Linux both are the glibc release's (Node's ENAMETOOLONG and long-name rules changed in
+  // 2.43 and 2.44), so these lines check them on macOS only.
+  const longDir = new Map<string, string>();
+  longDir.set("PATH", `/${"d".repeat(299)}:/usr/bin:/bin`);
+  macOnly("long dir is ENAMETOOLONG", () => failure("sh", { env: longDir, clearEnv: true }));
+  const nope = new Map<string, string>();
+  nope.set("PATH", "/nope1:/nope2");
+  macOnly(
+    "long name is ENAMETOOLONG",
+    () => failure("p".repeat(256), { env: nope, clearEnv: true }),
+  );
+  console.log("255-byte name:", failure("p".repeat(255), { env: nope, clearEnv: true }));
+
+  // 300 KB to stdout, then 300 KB to stderr, then 300 KB to stdout again: a parent that read
+  // one pipe to its end before the other would wait forever.
+  const both = "yes o | head -c 300000; yes e | head -c 300000 >&2; yes o | head -c 300000";
+  const big = execSync("sh", ["-c", both]);
+  const out = big.stdout.replaceAll("\n", "");
+  const err = big.stderr.replaceAll("\n", "");
+  console.log(`both pipes: ${big.code} stdout ${count(out, "o")}, stderr ${count(err, "e")}`);
+
+  // 300 KB of output before it reads 300 KB of input.
+  const first = execSync("sh", ["-c", "yes w | head -c 300000; wc -c"], {
+    input: "i".repeat(300000),
+  });
+  const lines = first.stdout.trim().split("\n");
+  console.log(
+    `input after output: ${first.code} ${lines.length} lines, read ${lines[lines.length - 1].trim()}`,
+  );
+
+  fs.rmSync(dir, { recursive: true });
+}
+
+main();

@@ -49,11 +49,8 @@ pub(super) fn check(cx: &mut Ctx) {
                 }),
                 // A function without a body here: its inferred mode says.
                 _ => {
-                    let modifies = cx
-                        .fn_info(*def)
-                        .params
-                        .first()
-                        .is_some_and(|p| p.mode == PassMode::BorrowMut);
+                    // As the app's passes raised it, for a finished unit's (`units::raised`).
+                    let modifies = cx.own_param_modes(*def).first() == Some(&PassMode::BorrowMut);
                     modifies.then_some(cb.span)
                 }
             },

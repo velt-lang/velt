@@ -52,7 +52,11 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   layout), and so is a borrowed view that long.
 - The all-zero value is the empty static string. Literals are built by lowering as
   `{ &static_bytes, units << 32 | len, 0 }` (units counted from the literal's text). Sub-ranges of
-  static strings may borrow them (same lifetime).
+  static strings may borrow them (same lifetime). A static string may also point into a heap
+  buffer that something else keeps alive for as long as the string and its copies are used: the
+  JSON reader's borrowed keys, and the views `velt_opt` gives a family of locals over a heap ASCII
+  string it proves alive and unchanged (design/strings.md "Views"). Such a string is never stored,
+  returned or passed where it could be kept, and it is ASCII unless it is a JSON key.
 - Heap buffers come from the Rust global allocator (align 8); `ptr` is the address of the first
   byte (of the buffer's own string; a slice's `ptr` points further in, see below), and the count
   is always the 8 bytes before the buffer's first byte:
@@ -238,6 +242,17 @@ values crosses as an unboxed view (arguments) or is boxed after the call (result
 environments on the heap are counted blocks too; the drop function in their header releases one
 reference.
 
+**The vtable word.** An object whose class has a vtable (its first field, which `Callee::Virtual`
+calls and the drop glue of a class with subclasses read; hir_encodings.md) gets that word from its
+construction only. Lowering's `new` stores the class's vtable right after the allocation, the
+count and the zero fill, before anything reads the object, and nothing stores into the word
+afterwards: no method, function value, glue (drop, clone, transfer, equality) or runtime function.
+A copy of an object (copy-on-write, a transfer's deep copy) is a new object whose construction
+stores the same vtable. `velt_opt`'s `heap_sroa::devirt` depends on this: where every allocation a
+local can hold stores the same vtable first, it reads that vtable as a constant, so the drop
+through it becomes a direct call (#1718). A change that writes the word later must change `devirt`
+with it.
+
 **Debug check of captured variables' cells**. A captured variable that a closure assigns
 lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two tasks: the
 transfer glue gives a value crossing to another task cells of its own, and sema rejects the
@@ -403,7 +418,7 @@ serves none of them. It computes the CPU's **feature word** (std/lang/cpu, velt_
 `cpu_features`): bit 0
 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMPXCHG16B, 6 AVX, 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA,
 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW, 16 AVX512CD, 17 AVX512DQ, 18 AVX512VL,
-19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ, 23 AES (`velt_codegen_cl::X86_FEATURES`; a
+19 AVX512VBMI, 20 AVX512BITALG, 21 SHA, 22 PCLMULQDQ, 23 AES, 24 ADX (`velt_codegen_cl::X86_FEATURES`; a
 feature whose registers the OS must save counts only where XCR0 says it does), from CPUID and
 XGETBV on x86-64 (`velt_simd_cpuid` and `velt_simd_xgetbv`, "SIMD": inline assembly under
 LLVM; under Cranelift, which has no instruction for either, a function of fixed SSE2 code each
@@ -439,7 +454,59 @@ Under Cranelift (and on wasm) `velt_simd_on_x86()` and `velt_simd_on_arm()` are 
 `velt_simd_cpu_word()` is 0 and `velt_simd_cpu_word_set` does nothing, so every run-time check is
 false: no gated code runs there, though the requirement is checked. Code whose features hold a feature's mask (SHA with SSE4.1 and down
 for `sha-x86`) takes its check (`velt_simd_has_<feature>`, "SIMD") as true; the LLVM backend folds
-it.
+it. The field operations' helpers read the word for their fast form the same way ("Field
+arithmetic").
+
+## Field arithmetic
+
+The prime-field operations of std's elliptic curves (std/crypto/field_p256.velt, x25519.velt) are
+externs `velt_field_*` that, like the SIMD externs, **no runtime defines**: `velt_vir::field`
+gives each symbol's operation and VIR signature (`FieldOp`), the verifier rejects a
+`velt_field_*` extern that is not one, and both backends emit every call inline (Cranelift
+declares no symbol; LLVM defines internal helpers). `FieldOp::eval`, `double_p256` and
+`x25519_ladder` are the reference every form matches.
+
+| extern | signature | does |
+|---|---|---|
+| `velt_field_p256_mul` | `(r: u64[], d, a, b: u64)` | register `d` = `a * b / 2^256` mod p (P-256, Montgomery) |
+| `velt_field_p256_sqr` | `(r: u64[], d, a: u64)` | register `d` = `a * a / 2^256` mod p |
+| `velt_field_p256_add` | `(r: u64[], d, a, b: u64)` | register `d` = `a + b` mod p |
+| `velt_field_p256_sub` | `(r: u64[], d, a, b: u64)` | register `d` = `a - b` mod p |
+| `velt_field_p256_double` | `(r: u64[], d, p: u64): bool` | the Jacobian point at registers `d`..`d + 2` (X, Y, Z) = twice the one at `p`..`p + 2` |
+| `velt_field_x25519_ladder` | `(r: u64[], d, u, k: u64): bool` | registers `d`, `d + 1` = X2, Z2 after RFC 7748's ladder for the u-coordinate at `u` and the clamped scalar at `k` |
+
+- **Registers.** `r` is the field's register array (`FeP256.r`). Register `n` is four `u64` limbs,
+  little-endian, at elements `4n` to `4n + 3` of its data. No index is checked: std checks its
+  registers against the array's length once, where it makes them.
+- **Inputs and results.** P-256 operands are fully reduced (below p) and the results are too. The
+  ladder's u is any value below 2^256; its X2 and Z2 are fully reduced mod 2^255 - 19.
+- **Aliasing.** An operation reads its operand registers whole before it writes its result, so
+  the result register may be an operand's (`mul(d, d, d)`, a doubling in place).
+- **Memory.** It touches nothing but those registers (and a stack scratch area of its own), keeps
+  no pointer and never unwinds. Nothing in it branches on or indexes by a secret: the limbs' values
+  choose no path or address.
+- **The `bool`.** `p256_double` and `x25519_ladder` return true when they did the operation, and
+  false where the target has no fused form; std then runs the same formula with the other
+  operations (its own ladder for X25519). No register is written when false.
+
+Which form runs:
+
+- **LLVM on x86-64.** `mul` and `sqr` are hand-scheduled assembly in two forms: with BMI2 and ADX,
+  `mulx` and the two carry chains of `adcx`/`adox`; without them, `mul`. `double` and the ladder
+  have only the first form and return false without it. The choice reads the CPU feature word
+  ("CPU check": `adx-x86`'s mask, ADX's bit 24 with BMI2's bit 9), so `VELT_CPU_DISABLE=ADX` or
+  `BMI2` selects the other form; where `--cpu` guarantees both, the check is folded away. `add`
+  and `sub` are one form (`add`/`adc`, `sub`/`sbb`) on every x86-64 CPU. The ladder's final
+  reduction subtracts p by a mask behind an empty inline-asm value barrier.
+- **LLVM elsewhere (arm64, wasm32).** Portable IR with 128-bit multiplies (the same interleaved
+  Montgomery multiplication); `double` and the ladder return false. Whether to keep the reduced
+  result is a secret (a carry), so the optimizer never sees that choice as a `select` it could
+  make a branch: on arm64 the whole final reduction is one inline-asm block, p subtracted (or
+  added) with its borrow and a `csel` per limb on the flags it leaves (veltc's `p256_masks` test
+  reads the optimized arm64 IR). On
+  wasm32, which has no inline assembly, it is a `select`, and the engine decides how that
+  compiles.
+- **Cranelift.** The same algorithm in Cranelift IR; `double` and the ladder return false.
 
 ## Math operations
 
@@ -499,7 +566,8 @@ The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
 `velt_simd_mask8x16_any`) declared by `std/simd/*.velt` (`velt/simd`). **No runtime defines
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
-inline. They never cross the C ABI, so no target's vector calling convention is involved.
+inline. They never cross the C ABI, so no target's vector calling convention is involved. The field
+operations (`velt_field_*`, "Field arithmetic") are externs of the same kind.
 velt/arch's instructions are externs too, `velt_arch_<class>_<method>`
 (`velt_arch_sse42_crc32_u64`), declared by `std/arch/x86` and `std/arch/arm` (#3222 step 4) and
 defined by no runtime: `velt_vir::arch` gives each one's row (`SimdCall::Arch`), with its
@@ -807,7 +875,11 @@ WebAssembly) or until `main` returns. The lock is std's, the executor's
 (std/lang/hooks/sched_module.velt): a program without the executor has one thread and no lock,
 and neither has WebAssembly. A program that never reaches module state pays nothing per task.
 A `Mutex`'s lock keeps the module lock while it blocks; sema rejects module state in a `with`
-callback.
+callback. The module lock (sched_module.velt `take`) stops with a panic, not an `ICE:`, when the
+thread is about to wait for it while it holds a `Mutex` (#3467): a `with` counts its `Mutex`
+(std/lang/hooks/mutex_held.velt) only in a build for the `velt dev` JIT. Other builds lower no
+call, and their check is one relaxed load of a flag only the count sets. `RwLock` holds are not
+counted.
 
 A program that gives functions properties through `any` takes the module lock around each
 `with`, `read` and `write` whose callback may reach a declared function's properties (below),

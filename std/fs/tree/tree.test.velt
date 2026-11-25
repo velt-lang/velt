@@ -2,8 +2,8 @@
 //
 // What the directory goldens can't hold, because it is Windows' alone or depends on where the
 // test runs: a relative path that is short itself and long once it is made absolute (Windows
-// takes it only with the `\\?\` prefix, which std/fs/whole/win_path.velt gives by the absolute
-// path's length), the name Windows gives a directory name it refuses, and what Windows' removal
+// takes it only with the `\\?\` prefix, which std/fs/whole/win_path.velt gives every path
+// as Node does), the name Windows gives a directory name it refuses, and what Windows' removal
 // (std/fs/tree/win_remove.velt) must leave alone and must take: a junction's target, a
 // read-only file.
 import * as fs from "velt/fs";

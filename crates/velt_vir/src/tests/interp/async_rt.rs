@@ -86,7 +86,6 @@ pub(super) struct Exec {
     /// Something asked to be polled again without time passing (yield, I/O readiness).
     pub woke: bool,
     pub net: super::net::Net,
-    pub json: super::json::Readers,
 }
 
 impl Interp<'_> {
@@ -170,7 +169,6 @@ impl Interp<'_> {
                     .rt_sync_shared(sym, a)
                     .or_else(|| self.rt_net(sym, a))
                     .or_else(|| self.rt_strbuf(sym, a).map(Ok))
-                    .or_else(|| self.rt_json(sym, a).map(Ok))
             }
         }))
     }
