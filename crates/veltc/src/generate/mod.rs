@@ -25,7 +25,7 @@ use velt_sema::generated::{needs_rewrite, GenBatch, GenInput, GenInstance, GenMo
 use velt_sema::{hir, CheckOptions, Checked, SourceModule};
 use velt_syntax::ast::ItemKind;
 
-use crate::driver::{KeptHandover, Session, StdLoad};
+use crate::driver::{KeptHandover, Served, Session, StdLoad};
 
 pub use host::host_main;
 pub(crate) use process::stop_all;
@@ -167,7 +167,8 @@ fn check_offered(
         if !errors.is_empty() || crate::native::first_unsafe_code(&ast).is_some() {
             return None;
         }
-        sources.push(generated_module(modules, &f.module, &f.path, file, ast)?);
+        let declaring = Declaring::of(modules, &[]);
+        sources.push(generated_module(declaring, &f.module, &f.path, file, ast)?);
         input.files.push(file);
         input.modules.push(GenModule {
             path: f.path,
@@ -274,9 +275,10 @@ fn rounds(
         let shared = std::sync::Mutex::new((&mut *sess, &mut *st, Duration::ZERO, &mut *more));
         let generate = |demand: &velt_sema::generated::Demand| {
             let mut guard = shared.lock().ok()?;
-            let (sess, st, spent, _) = &mut *guard;
+            let (sess, st, spent, more) = &mut *guard;
             let t = Instant::now();
-            let batch = generate_now(sess, st, current, demand, packages);
+            let declaring = Declaring::of(current, served(more));
+            let batch = generate_now(sess, st, declaring, demand, packages);
             *spent += t.elapsed();
             batch
         };
@@ -339,7 +341,8 @@ fn rounds(
             return None;
         }
         let t = Instant::now();
-        let generated = generate_now(sess, st, current, &demand, packages);
+        let declaring = Declaring::of(current, served(more));
+        let generated = generate_now(sess, st, declaring, &demand, packages);
         sess.record_time("generate", t.elapsed());
         generated?;
         if let Some(next) = with_generated(current, st) {
@@ -347,6 +350,36 @@ fn rounds(
         }
     }
     None
+}
+
+/// The modules the check loaded on demand so far.
+fn served<'a>(more: &'a Option<&mut StdLoad>) -> &'a [Served] {
+    more.as_ref().map_or(&[], |m| &m.served)
+}
+
+/// The modules a generated function may be declared in: the program's, and the std modules the
+/// check loaded on demand (`StdLoad`), which the program's load does not hold. Each by what
+/// generating needs of it.
+#[derive(Clone, Copy)]
+pub(super) struct Declaring<'a> {
+    modules: &'a [SourceModule],
+    served: &'a [Served],
+}
+
+impl<'a> Declaring<'a> {
+    fn of(modules: &'a [SourceModule], served: &'a [Served]) -> Self {
+        Declaring { modules, served }
+    }
+
+    /// The file and the imports of the module at `path`.
+    pub(super) fn find(self, path: &str) -> Option<(FileId, &'a [(String, String)])> {
+        let loaded =
+            (self.modules.iter().find(|m| m.path == path)).map(|m| (m.file, &m.imports[..]));
+        loaded.or_else(|| {
+            let m = self.served.iter().find(|m| m.path == path)?;
+            Some((m.file, &m.imports[..]))
+        })
+    }
 }
 
 /// `current` with the generated modules of `st` that a check rewrites (`needs_rewrite`), which
@@ -370,7 +403,7 @@ fn with_generated(current: &[SourceModule], st: &Rounds) -> Option<Vec<SourceMod
 fn generate_now(
     sess: &mut Session,
     st: &mut Rounds,
-    current: &[SourceModule],
+    current: Declaring,
     demand: &velt_sema::generated::Demand,
     packages: Option<&vpm::PackageGraph>,
 ) -> Option<GenBatch> {
@@ -477,19 +510,19 @@ fn module_path(declaring: &str, round: u32) -> String {
 /// A generated module of the program: not std, with the imports of the module it was generated
 /// for (whose scope it is checked in); `None` when that module is not in the program.
 fn generated_module(
-    modules: &[SourceModule],
+    modules: Declaring,
     declaring: &str,
     path: &str,
     file: FileId,
     ast: velt_syntax::ast::Module,
 ) -> Option<SourceModule> {
-    let decl = modules.iter().find(|m| m.path == declaring)?;
+    let (_, imports) = modules.find(declaring)?;
     Some(SourceModule {
         path: path.to_string(),
         is_std: false,
         file,
         ast,
-        imports: decl.imports.clone(),
+        imports: imports.to_vec(),
         jsx_runtime: None,
         // The program's, as for a std generator's module (`is_std: false`): lowering builds what a
         // generated module defines, so its definitions are live roots (velt_sema `live_roots`),

@@ -121,8 +121,8 @@ pub struct Generator<'a> {
 /// What a [`Generator`] added during the check.
 #[derive(Default)]
 pub(crate) struct GenState {
-    /// Slots filled, each with the index of its module's declaring module.
-    pub filled: Vec<usize>,
+    /// How many slots are filled.
+    pub filled: usize,
     /// What the added modules hold.
     pub input: GenInput,
     /// The generator failed (its errors are the driver's), or made code a check cannot add to
@@ -142,18 +142,19 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// Keep module `m`, generated for module `declaring`, for the rest of the check: `None`
-    /// when no slot is left.
-    pub(crate) fn keep(
-        &self,
-        m: crate::SourceModule,
-        declaring: usize,
-    ) -> Option<&crate::SourceModule> {
-        let i = self.state.borrow().filled.len();
+    /// Keep module `m` for the rest of the check: `None` when no slot is left.
+    pub(crate) fn keep(&self, m: crate::SourceModule) -> Option<&crate::SourceModule> {
+        let i = self.state.borrow().filled;
         let slot = self.slots.get(i)?;
         slot.set(m).ok()?;
-        self.state.borrow_mut().filled.push(declaring);
+        self.state.borrow_mut().filled += 1;
         slot.get()
+    }
+
+    /// Whether it stopped the check: it failed, or made code the check cannot add to itself.
+    pub(crate) fn stopped(&self) -> bool {
+        let state = self.state.borrow();
+        state.failed || state.restart
     }
 
     /// The modules kept so far, in order.
@@ -233,6 +234,10 @@ pub(crate) struct Gen<'m> {
     pub input: Option<std::rc::Rc<GenInput>>,
     pub generate: Option<&'m Generator<'m>>,
     pub binding: Binding,
+    /// Generated modules not added yet, each with the path of the module it was generated for:
+    /// a std module the check loads on demand, which this context has not loaded so far
+    /// (`crate::generating::add_waiting`).
+    pub waiting: Vec<(&'m crate::SourceModule, String)>,
 }
 
 /// What binding the instances to their generated definitions found ([`phase::run`]).

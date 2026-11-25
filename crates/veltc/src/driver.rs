@@ -29,7 +29,7 @@ mod std_summary;
 mod units_key;
 use sema_stage::sema_stage;
 use std_load::load_options;
-pub(crate) use std_load::StdLoad;
+pub(crate) use std_load::{Served, StdLoad};
 mod warm;
 pub use warm::{compile_for_jit_warm, copy_files};
 pub(crate) mod stamp;
