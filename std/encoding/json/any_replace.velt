@@ -67,7 +67,9 @@ export function replaceJsonAny(
     return out;
   }
   const members =
-    (kind == "object" || kind == "class" || kind == "struct") && !holdsJsonValue(v) && t.name != "Date";
+    (kind == "object" || kind == "class" || kind == "struct") &&
+    !holdsJsonValue(v) &&
+    t.name != "Date";
   if ((members || kind == "record") && entryCount(v) >= 0) {
     return replaceMembers(v, view, kind == "record" ? recordOrder(v) : null, replacer, depth);
   }

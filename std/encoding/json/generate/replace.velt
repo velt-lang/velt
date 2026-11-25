@@ -86,7 +86,9 @@ function dispatch(out: Output, model: Model, id: i64, hook: bool, w: Walk): bool
     return true;
   }
   if (t.kind == "option") {
-    out.line(`if (${v} == null) { return jsonReplacedNull(${w.key}, ${w.raw}, ${w.f}, ${w.depth}); }`);
+    out.line(
+      `if (${v} == null) { return jsonReplacedNull(${w.key}, ${w.raw}, ${w.f}, ${w.depth}); }`,
+    );
     const call = walkCall(out, model, t.args[0], hook, v, w.key, w.raw, w, w.depth);
     out.line(`return ${call};`);
     return true;
@@ -194,7 +196,9 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     out.line(`return jsonReplacedMembers(r, ${w.f}, ${w.depth});`);
     return;
   }
-  out.line(`if (!jsonReplacerKept(r, view)) { return jsonReplacedMembers(r, ${w.f}, ${w.depth}); }`);
+  out.line(
+    `if (!jsonReplacerKept(r, view)) { return jsonReplacedMembers(r, ${w.f}, ${w.depth}); }`,
+  );
   const d = `${w.depth} + 1`;
   if (k == "array" || k == "tuple") {
     out.line(`const out = JsonValue.array();`);
@@ -207,7 +211,17 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     } else {
       for (let i: i64 = 0; i < (t.args.length as i64); i++) {
         const key = out.literal(`${i}`);
-        const call = walkCall(out, model, t.args[i], true, `${v}[${i}]`, key, `view.at(${i})`, w, d);
+        const call = walkCall(
+          out,
+          model,
+          t.args[i],
+          true,
+          `${v}[${i}]`,
+          key,
+          `view.at(${i})`,
+          w,
+          d,
+        );
         out.line(`pushRevived(out, ${call});`);
       }
     }

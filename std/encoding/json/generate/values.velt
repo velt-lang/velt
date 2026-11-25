@@ -184,7 +184,13 @@ export function fieldRead(out: Output, model: Model, f: Field, v: string): [stri
  * The members of an object, a struct or a class written with its fields (`v` holds it); `raw`:
  * as a replacer sees them, with no `toJSON` called.
  */
-export function writeFields(out: Output, model: Model, t: Type, v: string, raw: bool = false): void {
+export function writeFields(
+  out: Output,
+  model: Model,
+  t: Type,
+  v: string,
+  raw: bool = false,
+): void {
   const any = raw ? "writeJsonAnyRaw" : "writeJsonAny";
   // Constant text is gathered and appended as one literal before each value; after a member
   // that may be left out, a flag says whether a `,` is needed.
