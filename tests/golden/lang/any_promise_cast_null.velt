@@ -1,0 +1,6 @@
+// `null` as `Promise<T>` from `any` in a program that runs no async code (#924 step 4): a
+// `TypeError` at the cast, as for a number (any_promise_cast_number.velt). `Promise<T> | null`
+// takes it (any_promise_cast.velt). Node prints `object`.
+const n: any = null;
+const p = n as Promise<number>;
+console.log(typeof p);

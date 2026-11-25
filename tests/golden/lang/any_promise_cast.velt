@@ -1,0 +1,190 @@
+// check: no leaks
+// `v as Promise<T>` of an `any` / `unknown` holding a promise, as in Node (#924 step 4): a
+// promise of exactly that type, of another payload type (`Promise<any>`, a widening), a rejected
+// one (the cast's `Promise<T>` rejects with anything, as TypeScript's does), an optional promise
+// type, and payloads of class, array and `void` types. The cast is the promise it converts (`===`,
+// `Set` keys), and awaiting it takes no turn more than awaiting the promise does.
+class Pt {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+async function num(n: number): Promise<number> {
+  return n;
+}
+
+async function anyRes(): Promise<any> {
+  return 3;
+}
+
+async function pt(): Promise<Pt> {
+  return new Pt(7);
+}
+
+async function list(): Promise<any> {
+  return [1, 2];
+}
+
+function asPromise<T>(v: any): Promise<T> {
+  return v as Promise<T>;
+}
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+async function shapes(): Promise<void> {
+  const a: any = num(1);
+  console.log("exact", await (a as Promise<number>));
+  console.log("then", await (a as Promise<number>).then((v) => v + 1));
+  const u: unknown = num(4);
+  console.log("unknown", await (u as Promise<number>));
+  console.log("generic", await asPromise<number>(num(5)));
+  const stored = [a as Promise<number>];
+  const h = new Holder(a as Promise<number>);
+  console.log("stored", await stored[0], await h.p, stored[0] === h.p);
+  const b: any = anyRes();
+  console.log("any payload", await (b as Promise<number>));
+  const c: any = num(10);
+  console.log("widen", await (c as Promise<number | string>));
+  const d: any = Promise.reject(new Error("no"));
+  try {
+    console.log(await (d as Promise<number>));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  const g: any = Promise.reject("reason");
+  console.log("catch", await (g as Promise<number>).catch((e) => (String(e) === "reason" ? -1 : 0)));
+  const n: any = null;
+  console.log("null", (n as Promise<number> | null) === null);
+  const o: any = num(3);
+  const oc = o as Promise<number> | null;
+  console.log("optional", oc === null ? "null" : await oc);
+  const p: any = pt();
+  console.log("class", (await (p as Promise<Pt>)).x);
+  const l: any = list();
+  console.log("array", (await (l as Promise<number[]>)).length);
+  const v: any = num(1);
+  await (v as Promise<void>);
+  console.log("void");
+}
+
+async function identity(): Promise<void> {
+  const t = num(1);
+  const h: any = t;
+  const c = h as Promise<number>;
+  const c2 = h as Promise<number>;
+  const w = h as Promise<number | string>;
+  const back: any = c;
+  console.log("same", c === h, h === c, back === h, c === c2, (w as any) === back);
+  const s = new Set<any>([h]);
+  console.log("set", s.has(c), s.has(back), s.has(w));
+  await c;
+}
+
+async function ticks(): Promise<void> {
+  // Settled before the awaits start (after: any_promise_cast_ticks_late.velt).
+  const log: string[] = [];
+  const typed = num(2);
+  const held: any = typed;
+  const t1 = (async () => {
+    await typed;
+    log.push("typed");
+  })();
+  const t2 = (async () => {
+    await (held as Promise<number>);
+    log.push("cast");
+  })();
+  const t3 = (async () => {
+    await held;
+    log.push("any");
+  })();
+  const t4 = (async () => {
+    await (held as Promise<number | string>);
+    log.push("widen");
+  })();
+  const t5 = (async () => {
+    await typed;
+    log.push("typed again");
+  })();
+  await t1;
+  await t2;
+  await t3;
+  await t4;
+  await t5;
+  console.log(log.join(", "));
+  // A converting cast against an await through `any`.
+  const r: any = anyRes();
+  const conv: string[] = [];
+  const w1 = (async () => {
+    await (r as Promise<number>);
+    conv.push("convert");
+  })();
+  const w2 = (async () => {
+    await r;
+    conv.push("any");
+  })();
+  await w1;
+  await w2;
+  console.log(conv.join(", "));
+}
+
+interface Box {
+  p: Promise<number>;
+}
+
+function take(p: Promise<number>): Promise<number> {
+  return p;
+}
+
+async function ret(v: any): Promise<number> {
+  return v as Promise<number>;
+}
+
+async function retAwait(v: any): Promise<number> {
+  return await (v as Promise<number>);
+}
+
+// The cast stored where a `Promise<number>` is written: it may reject, and so may those.
+async function stores(): Promise<void> {
+  const v: any = num(1);
+  const p: Promise<number> = v as Promise<number>;
+  console.log("annotated", await p);
+  console.log("param", await take(v as Promise<number>));
+  console.log("return", await ret(num(2)), await retAwait(anyRes()));
+  const arr: Promise<number>[] = [];
+  arr.push(v as Promise<number>);
+  arr.push((v as Promise<number>));
+  console.log("pushed", await arr[0], await arr[1]);
+  console.log("all", (await Promise.all([v as Promise<number>, num(5)])).join(","));
+  const xs: any = [num(1), anyRes()];
+  const ps = xs as Promise<number>[];
+  console.log("array of", await ps[0], await ps[1]);
+  const o: any = { p: anyRes() };
+  console.log("member", await (o as Box).p);
+  try {
+    await ret(Promise.reject(new Error("x")));
+  } catch (e) {
+    console.log("returned rejection", (e as Error).message);
+  }
+  const bad: Promise<number>[] = [];
+  bad.push(Promise.reject(new Error("y")) as any as Promise<number>);
+  try {
+    await bad[0];
+  } catch (e) {
+    console.log("pushed rejection", (e as Error).message);
+  }
+}
+
+async function main(): Promise<void> {
+  await shapes();
+  await stores();
+  await identity();
+  await ticks();
+}
+main();

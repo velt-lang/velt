@@ -170,6 +170,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// Move the inner result slot at `*src` (of promise type `from`) into `out`, the
     /// `Result<T, E2>` slot of promise type `to`.
     fn widen_slot(&mut self, src: &Place, out: &Place, from: TyId, to: TyId) {
+        // A promise held as `any`, cast to a promise type (any_promise_cast.rs).
+        if self.narrows(from, to) {
+            return self.narrow_slot(src, out, from, to);
+        }
         let to_slot = self.cx.promise_slot(to);
         let TyKind::Result(t, e2) = self.cx.kind(to_slot) else {
             // A `Promise<never>` (no value, no error) as a `Promise<U>`: nothing ever arrives,

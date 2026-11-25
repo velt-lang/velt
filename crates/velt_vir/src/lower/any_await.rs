@@ -68,7 +68,7 @@ impl Cx<'_> {
     }
 
     /// `Promise<unknown, unknown>`, what a promise held as `any` is awaited as.
-    fn awaited_any_promise(&mut self) -> TyId {
+    pub(super) fn awaited_any_promise(&mut self) -> TyId {
         let unknown = match self.hir.unknown {
             Some(d) => self.intern(TyKind::Dyn(d, vec![])),
             None => self.any_ty(),
