@@ -13,5 +13,6 @@ Renamed Renamed: renamed renamed Renamed: renamed
 InvalidCharacterError 5 InvalidCharacterError: dm
 AppError: m
 Later: late
-RangeError: kept -> RangeError: kept | After: changed
+9
 custom stack
+true Error: g

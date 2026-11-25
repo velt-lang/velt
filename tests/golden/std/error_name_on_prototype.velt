@@ -77,8 +77,7 @@ show(t);
 const d = new DOMException("dm", "InvalidCharacterError");
 console.log(d.name, d.code, String(d));
 
-// The stack's first line: a name assigned in a constructor, or before the first read, shows;
-// one assigned after the first read doesn't.
+// The stack's first line: a name assigned in a constructor, or before the first read, shows.
 class App extends Error {
   constructor(m: string) {
     super(m);
@@ -89,13 +88,18 @@ console.log(first(new App("m").stack));
 const late = new Error("late");
 late.name = "Later";
 console.log(first(late.stack));
-const kept = new RangeError("kept");
-const before = first(kept.stack);
-kept.name = "After";
-kept.message = "changed";
-console.log(before, "->", first(kept.stack), "|", String(kept));
 
-// An assigned stack replaces it.
+// Reading the stack changes nothing, so it can sit beside the error in one call.
+function report(e: Error, stack: string | undefined): number {
+  return first(stack).length + e.message.length;
+}
+const r = new Error("m");
+console.log(report(r, r.stack));
+
+// An assigned stack replaces it, `undefined` included.
 const own = new Error("own");
 own.stack = "custom stack";
 console.log(own.stack);
+const g = new Error("g");
+g.stack = undefined;
+console.log(g.stack === undefined, String(g));

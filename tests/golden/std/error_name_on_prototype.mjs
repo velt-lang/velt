@@ -82,12 +82,16 @@ console.log(first(new App("m").stack));
 const late = new Error("late");
 late.name = "Later";
 console.log(first(late.stack));
-const kept = new RangeError("kept");
-const before = first(kept.stack);
-kept.name = "After";
-kept.message = "changed";
-console.log(before, "->", first(kept.stack), "|", String(kept));
+
+function report(e, stack) {
+  return first(stack).length + e.message.length;
+}
+const r = new Error("m");
+console.log(report(r, r.stack));
 
 const own = new Error("own");
 own.stack = "custom stack";
 console.log(own.stack);
+const g = new Error("g");
+g.stack = undefined;
+console.log(g.stack === undefined, String(g));

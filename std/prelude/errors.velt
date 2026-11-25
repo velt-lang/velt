@@ -21,8 +21,8 @@ export class Error {
   // through the accessor, which a program's subclass may override (#3792).
   #name: string = "Error";
 
-  // `stack`, once read or assigned: V8 writes its first line on the first read and keeps it.
-  #stack: string | undefined = undefined;
+  // `stack` once assigned (`undefined` included); `null`, which no program can assign, until then.
+  #stack: string | undefined | null = null;
 
   /** An error with the given `message`. */
   constructor(message: string = "") {
@@ -43,15 +43,18 @@ export class Error {
   }
 
   /**
-   * The error's stack as Node starts it: `toString()`'s text, written on the first read (with
-   * the `name` a subclass assigned in its constructor) and kept after, as V8 keeps it. Velt
-   * keeps no call frames, so the `    at …` lines Node adds after it are not there.
+   * The error's stack as Node starts it: `toString()`'s text (with the `name` a subclass assigned
+   * in its constructor), until one is assigned. Velt keeps no call frames, so the `    at …` lines
+   * Node adds after it are not there. Reading it changes nothing, so it can sit beside the error
+   * in one call (`console.error(e, e.stack)`): V8 writes the text on the first read and keeps it,
+   * so a `name` or `message` changed after that read shows here, where Node keeps the old text.
    */
   get stack(): string | undefined {
-    if (this.#stack === undefined) {
-      this.#stack = errorText(this.name, this.message);
+    const assigned = this.#stack;
+    if (assigned === null) {
+      return errorText(this.name, this.message);
     }
-    return this.#stack;
+    return assigned;
   }
 
   /** Replaces the stack, as assigning Node's own `stack` property does. */
