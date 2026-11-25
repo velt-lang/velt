@@ -58,7 +58,10 @@ function xorPartial(d: u8[], key: u8[]) {
 }
 
 function main() {
-  const a = args();
+  // Without arguments: partial 31 1000000 (one length of partial.sh), so bench/compiler_ab.sh
+  // measures a run.
+  const given = args();
+  const a = given.length == 0 ? ["partial", "31", "1000000"] : given;
   const partial = a[0] == "partial";
   const n = parseInt(a[1]) as usize;
   const calls = parseInt(a[2]) as usize;

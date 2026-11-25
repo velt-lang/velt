@@ -4,8 +4,8 @@
 // (#3611): each `yieldNow()` is a turn of its own (an immediate), in the order the yields were
 // made. The children log each step;
 // the output is Node 22's (run with `yieldNow` as `setImmediate`, `sleep` as `setTimeout`).
-// The combinators are awaited in a started promise (`run`), not in `main` itself: one awaited
-// directly by a task's root still takes its children's turns out of Node's order (#3687).
+// The combinators are awaited in a started promise (`run`), which `main`'s root adopts in its last
+// sections; promise_combinators_order_root awaits them in `main` itself (#3687).
 
 const log: string[] = [];
 
@@ -137,4 +137,21 @@ async function run(): Promise<void> {
   const w = await Promise.all([after("q", shared), shared, yields("z", 1)]);
   say(`all: ${w.join(",")}`);
   flush("all, a child awaits another");
+
+  // Last: once `main`'s root adopts this started promise (after it awaited a settled promise, or
+  // after a `Promise.any` that rejected), its yields take the root's cx, and still take their
+  // turns in order (#3611, #3687).
+  await Promise.resolve(1);
+  const a = await Promise.all([yields("t", 3), yields("u", 1)]);
+  say(`all: ${a.join(",")}`);
+  flush("all, after a settled await (adopted)");
+
+  try {
+    await Promise.any<number>([Promise.reject<number>(new Error("no"))]);
+  } catch (e) {
+    say("any rejected");
+  }
+  const b = await Promise.all([yields("v", 3), yields("w", 1)]);
+  say(`all: ${b.join(",")}`);
+  flush("all, after a rejected any (adopted)");
 }

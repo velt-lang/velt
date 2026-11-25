@@ -211,6 +211,8 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `hir::CTy::Ref { nullable }` (additive) is a `Ref<S>` parameter (velt/ffi's alias of a C
   struct `S`, `velt_common` std module `ffi_ref`, additive): the address of a copy of the struct,
   borrowed for the call, `NULL` for `null` when `nullable`; a plain `Ptr` in VIR.
+  `hir::CTy::Buf` takes an array of C structs too (#2187): `readonly S[]` / `S[]`, the first
+  element's address, as for an array of numbers.
 - C structs by value (#2187 layer 3, docs/internals/design/c-ffi.md "C structs"): `hir::CTy::Struct`
   (additive) is a `declare c struct` parameter or result, the declaration's type naming which.
   `vir::ExternFn::c_abi` (additive, `None` for every other extern) is the target's C calling

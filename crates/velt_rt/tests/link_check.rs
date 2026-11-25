@@ -284,18 +284,17 @@ fn staticlib_links_and_runs() {
     assert_eq!(text(&out.stdout), "{\"name\":\"ann\",\"age\":30}\n");
 }
 
-/// The string builder's JSON escaping from C, like the compiler's glue for JSON literals.
+/// The string builder from C, building a JSON object's text as generated code does.
 const JSON: &str = r#"
 void velt_rt_strbuf_new(uint64_t, VeltStr*);
 void velt_rt_strbuf_push_str(VeltStr*, const VeltStr*);
-void velt_rt_strbuf_push_json_str(VeltStr*, const VeltStr*);
 void velt_rt_strbuf_push_byte(VeltStr*, uint8_t);
 void velt_rt_strbuf_finish(VeltStr*, VeltStr*);
 int32_t velt_main(void) {
-    VeltStr b, s, name = LIT("ann"), p1 = LIT("{\"name\":"), p2 = LIT(",\"age\":");
+    VeltStr b, s, name = LIT("\"ann\""), p1 = LIT("{\"name\":"), p2 = LIT(",\"age\":");
     velt_rt_strbuf_new(0, &b);
     velt_rt_strbuf_push_str(&b, &p1);
-    velt_rt_strbuf_push_json_str(&b, &name);
+    velt_rt_strbuf_push_str(&b, &name);
     velt_rt_strbuf_push_str(&b, &p2);
     velt_rt_strbuf_push_byte(&b, '3'); velt_rt_strbuf_push_byte(&b, '0');
     velt_rt_strbuf_push_byte(&b, '}');

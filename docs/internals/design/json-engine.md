@@ -172,9 +172,8 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | Tree of a built or edited `JsonValue`, and what `console.log` prints for one | `std/encoding/json/tree*.velt`, `value_inspect.velt` |
 | Numbers | `std/lang/number/`, `std/lang/hooks/number_parse.velt` |
 
-No JSON parsing or reading is left in the runtime (#3318). What std calls there is the string
-builder's (escaping for the compiler's JSON-literal glue, the shortest-digits printer for
-doubles).
+No JSON code is left in the runtime (#3318, #3530): no parsing, reading, writing or escaping.
+What std calls there is the string builder's (appending bytes and strings).
 
 ## Compatibility
 

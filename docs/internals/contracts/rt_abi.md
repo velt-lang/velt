@@ -238,11 +238,14 @@ calls and the drop glue of a class with subclasses read; hir_encodings.md) gets 
 construction only. Lowering's `new` stores the class's vtable right after the allocation, the
 count and the zero fill, before anything reads the object, and nothing stores into the word
 afterwards: no method, function value, glue (drop, clone, transfer, equality) or runtime function.
-A copy of an object (copy-on-write, a transfer's deep copy) is a new object whose construction
-stores the same vtable. `velt_opt`'s `heap_sroa::devirt` depends on this: where every allocation a
-local can hold stores the same vtable first, it reads that vtable as a constant, so the drop
-through it becomes a direct call (#1718). A change that writes the word later must change `devirt`
-with it.
+The one other write is a copy: the clone glue (`obj_clone_body`, `_Gobjclone_*`, for `clone()`
+and a transfer's deep copy) copies a whole object onto a new object of the same class, so the word
+is that class's vtable again (and `devirt` keeps the loads of a local whose object is stored
+whole). `velt_opt`'s `heap_sroa::devirt` depends on this: where every allocation a local can hold
+stores the same vtable first, it reads that vtable as a constant, so the drop through it becomes
+a direct call (#1718). A change that writes the word later must change `devirt` with it.
+`velt_vir`'s test `tests/vtable_word.rs` checks a lowered program for other writes into the word:
+stores, whole stores, fills and copies, as its header lists.
 
 **Debug check of captured variables' cells**. A captured variable that a closure assigns
 lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two tasks: the

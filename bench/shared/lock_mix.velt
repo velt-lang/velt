@@ -72,9 +72,11 @@ async function wr(rw: shared<RwLock<Table>>, seed: i64, mix: i64): Promise<i64> 
 }
 
 async function main() {
-  const kind = process.argv[2];
-  const tasks = Number(process.argv[3]) as i64;
-  const mix = Number(process.argv[4]) as i64;
+  // Without arguments: rwlock 1 90 (README.md's case with one task), so bench/compiler_ab.sh,
+  // which runs on one thread, measures a short run.
+  const kind = process.argv[2] ?? "rwlock";
+  const tasks = Number(process.argv[3] ?? "1") as i64;
+  const mix = Number(process.argv[4] ?? "90") as i64;
   const ps: Promise<i64>[] = [];
   const t0 = performance.now();
   if (kind == "mutex") {

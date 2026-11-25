@@ -159,7 +159,6 @@ velt_rt velt_rt_strbuf_push_byte
 velt_rt velt_rt_strbuf_push_bytes
 velt_rt velt_rt_strbuf_push_inspect_key
 velt_rt velt_rt_strbuf_push_inspect_str
-velt_rt velt_rt_strbuf_push_json_str
 velt_rt velt_rt_strbuf_push_str
 velt_rt velt_rt_strbuf_push_u8s
 velt_rt velt_rt_strbuf_push_words

@@ -11,6 +11,7 @@ import * as wn from "./sched_node_woken";
 import * as t from "./sched_task";
 import * as wa from "./sched_wake_away";
 import * as wk from "./sched_wake";
+import * as wp from "./sched_wake_pause";
 
 @cExport("std_sched_node_clone")
 export function nodeClone(w: usize): usize {
@@ -66,10 +67,26 @@ function wakeAway(task: usize, n: usize): void {
     nd.release(n);
     return;
   }
+  wp.beforeTaskRef();
+  if (wk.counting()) {
+    taskHeld(task, n);
+  }
   // The node holds a reference to its task, and this one to the node: the task is alive.
   m.inc(task + t.T_REFS);
   give(n);
   wa.wakeAway(task);
+}
+
+/**
+ * The check `wakeAway` makes in counted runs: node `n` still holds its reference to `task`. An
+ * ICE when its finish let go of the task while a wake of it by value was under way
+ * (sched_node_done.velt `letGo` keeps it while a waker is out; sched_node_wake.test.velt).
+ */
+@noInline
+export function taskHeld(task: usize, n: usize): void {
+  if (m.ld(n + nd.N_TASK) !== task) {
+    panic("ICE: a promise let go of its task while a wake of it by value was under way");
+  }
 }
 
 @cExport("std_sched_node_wake_by_ref")
