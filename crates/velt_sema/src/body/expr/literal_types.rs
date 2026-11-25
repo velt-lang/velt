@@ -152,12 +152,16 @@ impl FnCx<'_, '_> {
             return (l, r);
         }
         let arith = matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Rem | B::Pow);
-        let float = arith && (self.number_literal(l.ty) || self.number_literal(r.ty));
+        let (ll, rl) = (self.number_literal(l.ty), self.number_literal(r.ty));
+        // A bitwise operator beside a `number` takes the literal as the `number` it is too
+        // (`y | n` with `y: number`, `n: 0 | 1`; also `c.v |= n` through an accessor, #3747).
+        let f64 = self.cx.ty.f64;
+        let bitwise = super::int32::is_bitwise(op) && ((ll && r.ty == f64) || (rl && l.ty == f64));
+        let float = (arith && (ll || rl)) || bitwise;
         let (l, r) = (self.widen_value(l), self.widen_value(r));
         if !float {
             return (l, r);
         }
-        let f64 = self.cx.ty.f64;
         let float = |s: &mut Self, h: hir::Expr| match h.ty == s.cx.ty.i64 {
             true => s.int_to_float(h, f64),
             false => h,
