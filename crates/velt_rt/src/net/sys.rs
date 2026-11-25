@@ -118,11 +118,14 @@ impl TcpListener {
         tokio::net::TcpListener::from_std(l).map(TcpListener)
     }
 
-    pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        self.0.accept().await.map(|(s, a)| (TcpStream(s), a))
-    }
-
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.0.local_addr()
+    /// The socket, out of the host's reactor (still non-blocking), for the caller to own: a
+    /// descriptor, or a `SOCKET` on Windows.
+    pub fn into_raw(self) -> io::Result<u64> {
+        let l = self.0.into_std()?;
+        #[cfg(unix)]
+        let raw = std::os::fd::IntoRawFd::into_raw_fd(l) as u64;
+        #[cfg(windows)]
+        let raw = std::os::windows::io::IntoRawSocket::into_raw_socket(l);
+        Ok(raw)
     }
 }

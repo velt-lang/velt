@@ -10,8 +10,8 @@ import { IoError } from "velt/io/error";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 // The socket operations of std/net/tcp_sched.velt, which tell a socket of the reactor's from one
-// of the runtime's: a TLS stream's socket may be either (the runtime's under `velt dev`, whose
-// supervisor hands the listener over, and in a build with no reactor).
+// of the runtime's: a TLS stream's socket may be either (the runtime's in a build with no
+// reactor).
 import {
   velt_rt_tcp_accept,
   velt_rt_tcp_close,
