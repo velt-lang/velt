@@ -7,7 +7,7 @@
 // member's `toJSON` runs at its own key; a value the replacer made is walked as JSON.
 
 import { JsonValue } from "velt/prelude/json/json_value";
-import { JsonReplacer } from "velt/prelude/json/layout";| undefined;
+import { JsonReplacer } from "velt/prelude/json/layout";
 import {
   JSON_CALLBACK_DEPTH,
   jsonCallbackTooDeep,

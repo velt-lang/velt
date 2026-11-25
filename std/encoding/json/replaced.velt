@@ -25,7 +25,7 @@ import {
 } from "velt/encoding/json/replace_ops";
 import { pushRevived, setRevived } from "velt/encoding/json/value_ops";
 import { JsonValue } from "velt/prelude/json/json_value";
-import { JsonReplacer } from "velt/prelude/json/layout";| undefined;
+import { JsonReplacer } from "velt/prelude/json/layout";
 
 /**
  * Appends `value`, whose key in its parent is `key`, as a replacer function sees it: with no
