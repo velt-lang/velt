@@ -1,29 +1,34 @@
 //! Covariant results of interface implementations (#3771). A class method implements an
 //! interface method whose result its own converts to as a call converts it: a class that
-//! declares `implements` of the result interface (`step(): Counter` for `step(): Fluent`), a
-//! subclass of the result class, or `this` of such a class, as in TypeScript (which also
+//! declares `implements` of the result interface (`step(): Counter` for `step(): Fluent`), an
+//! interface that has the result interface's members (`step(): Sub` with `Sub extends
+//! Fluent`), a subclass of the result class, the same with `| null` on both sides, or `this`,
+//! as the implementing class (also when a base class declares the method). TypeScript also
 //! accepts a class that matches the interface without declaring it; Velt converts a class to
-//! an interface only through `implements`, at a call as here).
+//! an interface only through `implements`, at a call as here.
 //!
 //! The implementation's table entry is then a method of the class, `C.<Fluent.step>`, that
 //! calls the method's own entry (the method, its vtable slot's trampoline, or the entry that
 //! returns the receiver of a method returning `this`, `crate::hand_back`) and converts the
-//! result: an `Upcast` to a base class, or a `ToDyn` through the result class's implementation
-//! of the interface. Its implementation index is known once the batch's implementations are
-//! built (`finish`). Calls through the class itself still call the method directly.
+//! result: an `Upcast` to a base class or interface, or a `ToDyn` through the result class's
+//! implementation of the interface. Its implementation index is known once the batch's
+//! implementations are built (`finish`). A method with type parameters of its own gives the
+//! entry the same ones, and the entry passes them on. Calls through the class itself still
+//! call the method directly.
 
 use velt_common::{Diagnostic, Span};
 
 use super::forwarders::{synth_method, Host, Target};
 use super::ret_infer::is_pending;
 use crate::ctx::Ctx;
-use crate::defs::ParamSig;
+use crate::defs::{Generics, ParamSig};
 use crate::hir::{self, Def, DefId, ExprKind as H, StmtKind as S, TyId, TyKind};
 
 /// How the result of an implementing method converts to the interface method's.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Conv {
-    /// To a base class (`want`).
+    /// To a base class or an interface value's wider interface (`want`), or the same with
+    /// `| null` on both sides.
     Upcast(TyId),
     /// To interface `iface` (as `want`), through the result class's implementation of it.
     ToDyn { iface: DefId, want: TyId },
@@ -33,32 +38,96 @@ pub(super) enum Conv {
 /// the class type it converts and the interface.
 pub(super) type Pending = (DefId, TyId, DefId);
 
-/// How method `def` (of a class instantiated with `owner_args`), whose result differs from
-/// `want`, converts to it, if it does as a call would. `None` for an equal result, and while
-/// the result is still being inferred.
-pub(super) fn conversion(
-    cx: &mut Ctx,
-    def: DefId,
-    owner_args: &[TyId],
-    want: TyId,
-) -> Option<Conv> {
-    if is_pending(cx, def) {
+/// The implementing method: `def`, declared by a class instantiated with `owner_args`, found
+/// on the class whose self type is `self_ty`.
+#[derive(Clone, Copy)]
+pub(super) struct Imp<'a> {
+    pub def: DefId,
+    pub owner_args: &'a [TyId],
+    pub self_ty: TyId,
+}
+
+impl Imp<'_> {
+    /// The declaring class's arguments followed by the method's own type parameters, as the
+    /// implementing method sees them (`Param(owner_args.len() + k)`).
+    fn full_args(&self, cx: &mut Ctx) -> Vec<TyId> {
+        let n = self.owner_args.len();
+        let own = cx.fn_info(self.def).generics.len().saturating_sub(n);
+        let mut args = self.owner_args.to_vec();
+        args.extend((0..own).map(|k| cx.ty.param((n + k) as u32)));
+        args
+    }
+
+    /// The method's declared result, as the implementing method sees it.
+    fn declared(&self, cx: &mut Ctx) -> TyId {
+        let args = self.full_args(cx);
+        let ret = cx.fn_info(self.def).ret;
+        cx.subst(ret, &args)
+    }
+
+    /// The method's result where it is implemented: a `this` result is the implementing class.
+    fn result(&self, cx: &mut Ctx) -> TyId {
+        match cx.fn_info(self.def).returns_this() {
+            true => self.self_ty,
+            false => self.declared(cx),
+        }
+    }
+}
+
+/// How the method's result, which differs from `want`, converts to it, if it does as a call
+/// would. `None` for an equal result, and while the result is still being inferred.
+pub(super) fn conversion(cx: &mut Ctx, imp: Imp, want: TyId) -> Option<Conv> {
+    if is_pending(cx, imp.def) || !own_generics_fit(cx, imp) {
         return None;
     }
-    let have = cx.fn_info(def).ret;
-    let have = cx.subst(have, owner_args);
-    if cx.same_ty(have, want) {
+    // A declared result equal to the interface's needs no entry (an inherited `this` too).
+    let declared = imp.declared(cx);
+    let have = imp.result(cx);
+    if cx.same_ty(declared, want) || cx.same_ty(have, want) {
         return None;
     }
-    match cx.ty.kind(want).clone() {
-        TyKind::Dyn(iface, args) if implements(cx, have, iface, &args) => {
+    converts(cx, have, want)
+}
+
+/// How `have` converts to `want` (`conversion`).
+fn converts(cx: &mut Ctx, have: TyId, want: TyId) -> Option<Conv> {
+    match (cx.ty.kind(have).clone(), cx.ty.kind(want).clone()) {
+        (TyKind::Dyn(from, fargs), TyKind::Dyn(to, targs))
+            if cx.dynamic(have).is_none()
+                && cx.dynamic(want).is_none()
+                && !cx.is_generic_fn(want)
+                && cx.iface_upcast((from, &fargs), (to, &targs)) =>
+        {
+            cx.generic_called.upcasts.insert((from, to));
+            Some(Conv::Upcast(want))
+        }
+        (_, TyKind::Dyn(iface, args)) if implements(cx, have, iface, &args) => {
             Some(Conv::ToDyn { iface, want })
         }
-        TyKind::Adt(..) if cx.class_of(want).is_some() && is_base(cx, have, want) => {
+        (_, TyKind::Adt(..)) if cx.class_of(want).is_some() && is_base(cx, have, want) => {
+            Some(Conv::Upcast(want))
+        }
+        // `Square | null` for `Shape | null`: the same pointer or null (a call converts it
+        // by testing for null; the entry needs no test).
+        (TyKind::Option(x, m), TyKind::Option(y, n))
+            if m == n && cx.class_of(y).is_some() && is_base(cx, x, y) =>
+        {
             Some(Conv::Upcast(want))
         }
         _ => None,
     }
+}
+
+/// A method with type parameters of its own declared by a class with as many as the
+/// implementing class: the entry takes the class's and then the method's (a method inherited
+/// from a base class with other type parameters is not converted).
+fn own_generics_fit(cx: &mut Ctx, imp: Imp) -> bool {
+    let n = imp.owner_args.len();
+    if cx.fn_info(imp.def).generics.len() <= n {
+        return true;
+    }
+    cx.class_of(imp.self_ty)
+        .is_some_and(|(_, args)| args.len() == n)
 }
 
 /// Does class type `t` (or a base class of it) declare `implements iface<args>`?
@@ -95,49 +164,55 @@ fn is_base(cx: &mut Ctx, t: TyId, base: TyId) -> bool {
     false
 }
 
-/// The table entry of class `d` (self type `self_ty`) for interface method `name` of
-/// `iname`, implemented by `def` (instantiated with `owner_args`) through `entry`, whose
-/// result converts by `conv`: a method calling `entry` and converting what it returns.
-#[allow(clippy::too_many_arguments)] // the implementation pair's parts and the conversion
+/// The table entry of class `d` for interface method `name` of `iname`, implemented by `imp`
+/// through `entry`, whose result converts by `conv`: a method calling `entry` and converting
+/// what it returns.
 pub(super) fn entry(
     cx: &mut Ctx,
-    (d, self_ty): (DefId, TyId),
+    (d, imp): (DefId, Imp),
     (iname, name): (&str, &str),
-    (def, owner_args): (DefId, &[TyId]),
     entry: DefId,
     conv: Conv,
     pending: &mut Vec<Pending>,
 ) -> DefId {
-    let host = Host::adt(cx, d);
-    let self_args: Vec<TyId> = (0..host.generics.len() as u32)
-        .map(|i| cx.ty.param(i))
-        .collect();
-    // The entry is a method of `d` (a trampoline) or of the class declaring `def`.
-    let targs = match cx.fn_info(entry).owner == Some(d) {
-        true => self_args,
-        false => owner_args.to_vec(),
+    let mut host = Host::adt(cx, d);
+    let n = host.generics.len();
+    let full_args = imp.full_args(cx);
+    let own = &full_args[imp.owner_args.len()..];
+    // The method's own type parameters follow the class's in the entry too.
+    if !own.is_empty() {
+        let g = cx.fn_info(imp.def).generics.clone();
+        host.generics = with_own(&host.generics, &g, imp.owner_args.len());
+    }
+    // The entry is a method of `d` (a trampoline) or of the class declaring the method.
+    let mut targs: Vec<TyId> = match cx.fn_info(entry).owner == Some(d) {
+        true => (0..n as u32).map(|i| cx.ty.param(i)).collect(),
+        false => imp.owner_args.to_vec(),
     };
-    let params: Vec<ParamSig> = (cx.fn_info(def).params.clone().into_iter())
+    targs.extend_from_slice(own);
+    let params: Vec<ParamSig> = (cx.fn_info(imp.def).params.clone().into_iter())
         .map(|mut p| {
-            p.ty = cx.subst(p.ty, owner_args);
+            p.ty = cx.subst(p.ty, &full_args);
             p.default = None;
             p
         })
         .collect();
-    let have = cx.fn_info(def).ret;
-    let have = cx.subst(have, owner_args);
+    let have = imp.result(cx);
+    let declared = imp.declared(cx);
     let want = match conv {
         Conv::Upcast(w) | Conv::ToDyn { want: w, .. } => w,
     };
     let mut_this = cx
-        .fn_info(def)
+        .fn_info(imp.def)
         .this
         .as_ref()
         .is_some_and(|t| t.mode == hir::PassMode::BorrowMut);
     let qual = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
     let label = format!("{qual}.<{iname}.{name}>");
     let target = Target::Default(entry, targs);
+    let self_ty = imp.self_ty;
     let e = synth_method(cx, &host, self_ty, label, params, want, mut_this, target);
+    let downcast = !cx.same_ty(declared, have);
     let Some(Def::Fn(f)) = &mut cx.defs[e.0 as usize] else {
         panic!("ICE: a synthesized method has a body");
     };
@@ -150,7 +225,16 @@ pub(super) fn entry(
     };
     let span: Span = *span;
     let mut call = std::mem::replace(value, unit_placeholder(want, span));
-    call.ty = have;
+    call.ty = declared;
+    // A `this` result declared by a base class is the receiver, an instance of this class (as
+    // a call on it is, `body::expr::this_type`).
+    if downcast {
+        call = hir::Expr {
+            kind: H::Downcast(Box::new(call)),
+            ty: have,
+            span,
+        };
+    }
     let kind = match conv {
         Conv::Upcast(_) => H::Upcast(Box::new(call)),
         Conv::ToDyn { iface, .. } => {
@@ -169,14 +253,37 @@ pub(super) fn entry(
     e
 }
 
+/// The class's generics `class` followed by method generics `method`'s own (those after the
+/// first `n`, the declaring class's).
+fn with_own(class: &Generics, method: &Generics, n: usize) -> Generics {
+    let mut g = class.clone();
+    let k = method.len().saturating_sub(n);
+    g.names.extend(method.names[n..].iter().cloned());
+    g.bounds
+        .extend(method.bounds.get(n..).unwrap_or_default().iter().cloned());
+    let pad = |dst: &mut Vec<Option<TyId>>, src: &[Option<TyId>], len: usize| {
+        if dst.is_empty() && src.len() <= n {
+            return;
+        }
+        dst.resize(len, None);
+        dst.extend((0..k).map(|i| src.get(n + i).copied().flatten()));
+    };
+    let len = class.len();
+    pad(&mut g.defaults, &method.defaults, len);
+    pad(&mut g.constraints, &method.constraints, len);
+    g
+}
+
 /// Sets the implementation index of each pending entry's `ToDyn`, now that the batch's
 /// implementations are built.
 pub(super) fn finish(cx: &mut Ctx, pending: Vec<Pending>) {
     for (e, have, iface) in pending {
         let Some(found) = cx.find_impl(have, iface).map(|(i, ..)| i) else {
             let span = cx.fn_info(e).span;
+            let (t, i) = (cx.display(have), cx.iface(iface).map(|i| i.name.clone()));
+            let i = i.unwrap_or_default();
             cx.error(Diagnostic::error(
-                "a method whose result converts to the interface's is not supported here yet: its class's implementation of the result interface is declared in another batch of modules",
+                format!("a method whose result converts to the interface's is not supported here yet: `{t}`'s implementation of `{i}` is declared in another batch of modules"),
                 span,
             ));
             continue;

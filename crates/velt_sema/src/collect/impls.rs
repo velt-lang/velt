@@ -310,7 +310,12 @@ fn impl_method(
             let mut full_args = p.bound.args.clone();
             full_args.push(p.self_ty);
             let owner_args = f.owner_args();
-            let want = check_method_sig(cx, def, &owner_args, m, &full_args, &p.iname, true);
+            let imp = super::covariant::Imp {
+                def,
+                owner_args: &owner_args,
+                self_ty: p.self_ty,
+            };
+            let want = check_method_sig(cx, def, &owner_args, m, &full_args, &p.iname, Some(imp));
             cx.fn_info_mut(def).fixed_modes = true;
             let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
             let entry = match slot {
@@ -318,13 +323,12 @@ fn impl_method(
                 None => crate::hand_back::value_entry(cx, def),
             };
             // A result that converts to the interface's (`super::covariant`).
-            let conv = want.and_then(|w| super::covariant::conversion(cx, def, &owner_args, w));
+            let conv = want.and_then(|w| super::covariant::conversion(cx, imp, w));
             Some(match conv {
                 Some(conv) => super::covariant::entry(
                     cx,
-                    (p.d, p.self_ty),
+                    (p.d, imp),
                     (&p.iname, &m.name),
-                    (def, &owner_args),
                     entry,
                     conv,
                     pending,
@@ -450,7 +454,7 @@ pub(super) fn check_method_sig(
     m: &IfaceMethod,
     iface_args: &[TyId],
     iname: &str,
-    covariant: bool,
+    covariant: Option<super::covariant::Imp>,
 ) -> Option<TyId> {
     let (ps, span, is_getter, is_generator) = {
         let f = cx.fn_info(def);
@@ -491,7 +495,8 @@ pub(super) fn check_method_sig(
         }
     } else if promise_results_unify(cx, def, owner_args, m, want_ret) {
         true
-    } else if covariant && super::covariant::conversion(cx, def, owner_args, want_ret).is_some() {
+    } else if covariant.is_some_and(|imp| super::covariant::conversion(cx, imp, want_ret).is_some())
+    {
         // The table entry converts the result (`super::covariant`).
         true
     } else {
