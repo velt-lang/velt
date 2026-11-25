@@ -11,9 +11,9 @@ pub mod stats;
 mod stdout;
 
 use crate::bytes::VeltBytes;
-use crate::fmt;
 use crate::str::VeltStr;
 use std::io::Write;
+use velt_text::fmt;
 
 /// Flush all buffered stdout (this thread's and the shared buffer).
 pub fn flush_stdout() {

@@ -106,6 +106,15 @@ export declare decorator function repr(how: "transparent"): TypeDecorator;
 export declare decorator function align(bytes: u32): TypeDecorator;
 
 /**
+ * On std's `declare generated` functions only: the parameters every instance the generator
+ * writes modifies, its output or input stream (`writeJson`'s `w`). They take their final mode
+ * where the function is declared, so a program's instances never raise them; a parameter it
+ * does not list may still be modified by the program's own code an instance runs (a `toJSON`)
+ * (docs/internals/design/build-architecture.md, "Units in sema").
+ */
+export declare decorator function modifies(...params: string[]): FunctionDecorator;
+
+/**
  * On a `declare function` of std/lang/intrinsics: an operation the compiler emits itself, which
  * no Velt code can express (std-layout.md §10). The declaration is the signature calls are checked
  * against (modes.velt says how arguments are passed); velt_sema's table (`intrinsic_decls.rs`)

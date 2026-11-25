@@ -1,6 +1,6 @@
 //! Velt runtime: process entry, allocation, strings, printing, panics, and the tokio-based async
-//! host for fs, TCP and HTTP, plus the string-method, string-builder and JSON support
-//! used by generated code. Exposes a C ABI documented in docs/internals/contracts/rt_abi.md
+//! host for fs, TCP and HTTP, plus the string-method and string-builder support used by
+//! generated code. Exposes a C ABI documented in docs/internals/contracts/rt_abi.md
 //! (sync core) and docs/internals/contracts/rt_abi_async.md (async, std/fs, std/net, std/http, process).
 
 //!
@@ -17,7 +17,6 @@ pub mod bytes;
 pub mod cell_owner;
 pub mod child;
 pub mod db_handles;
-pub mod db_json;
 pub mod db_params;
 pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
@@ -26,7 +25,6 @@ pub mod deep_eq;
 pub mod dev;
 pub mod drop_depth;
 pub mod entry;
-pub mod fmt;
 pub mod fn_props;
 pub mod freed;
 pub mod fs;

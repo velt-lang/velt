@@ -218,6 +218,10 @@ assignment) are listed in the module comment of `crates/velt_sema/src/hir/mod.rs
   slot likewise compares only the names the program calls; lowering starts from
   `Program::any_call_names`, those in its own code. `Call { Intrinsic(AnyIsList), [x] }`, std only,
   is not a constant: a comparison of the descriptor of the `any` `x` with the table of `any[]`.
+  `Call { Intrinsic(AnyZeroSign), [x] }`, std only, is not a constant either: `1` when the `any`
+  `x` holds a number that is `0`, `-1` for a `-0`, `0` otherwise. A comparison of its descriptor
+  with `number`'s table and of the value's bits, inline; another number type goes through its
+  descriptor's number slot.
   `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the same kind of constant: is a
   `Call { Intrinsic(NoteStdUse), [Lit(Str(name))] }` in code the program reaches?
 - Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type
@@ -263,9 +267,10 @@ assignment) are listed in the module comment of `crates/velt_sema/src/hir/mod.rs
   closure does), and the cell itself for a `LocalDef::boxed` capture.
 - `JSON.stringify` and `JSON.parse` are std code generated per type at compile time
   (std/encoding/json/generate, docs/internals/design/source-generators.md), not HIR forms. The
-  generators report the types that have no JSON form (`check.velt`, `parse_check.velt`): maps
-  without `string` keys, std types that keep private state, and for `JSON.parse` unions whose
-  members a document cannot tell apart and types with private fields.
+  generators report the types that have no JSON form (`check.velt`, `parse_check.velt`): std
+  types that keep private state, and for `JSON.parse` maps without `string` keys, unions whose
+  members a document cannot tell apart and types with private fields. `JSON.stringify` writes a
+  `Map`, `Set`, `WeakMap` and `WeakSet` as `{}`, as Node does.
 
 ## Loops
 - `StmtKind::ForOf { consume: true, .. }`: `for...of` over an owned temporary array (a call

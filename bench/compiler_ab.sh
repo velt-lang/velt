@@ -12,8 +12,11 @@
 # differ; db/velt/sqlite prints its timings, so it is DIFF unless those are stripped), then the
 # compile row (`VELT_CHECK_ALL_STD=1 velt check bench/compile/all_std.velt`, with `VELT_EAGER_STD=1` for
 # commits older than that variable), then the programs sorted by change.
-# A program that fails to build prints FAIL. Knobs: JOBS (parallel programs, default 6), ONLY and
-# SKIP (regular expressions over the paths), TO (timeout per run, seconds, default 1800).
+# A program that fails to build prints FAIL; one that exits non-zero on a side (it needs an
+# argument, an input file or a server, or timed out) gets `EXIT=<base>/<branch>`, its status on
+# each side, and is listed apart from the measured rows. Knobs: JOBS (parallel programs, default
+# 6), ONLY and SKIP (regular expressions over the paths), TO (timeout per run, seconds, default
+# 1800).
 # WORK defaults to $CARGO_TARGET_DIR/compiler-ab; keep it on a Linux file system (not /mnt/*).
 # Needs: cargo, clang, valgrind, python3, git.
 set -euo pipefail
@@ -37,16 +40,21 @@ done
 OUT=$W/cg
 one() {
   src=$1; rel=${src#$W/branch-src/bench/}; name=$(echo "$rel" | sed 's#/#__#g; s#\.velt$##'); res="$rel"
+  exits=""
   for v in base branch; do
     exe=$OUT/$name-$v
     s=$W/$v-src/bench/$rel
-    if ! VELT_STD=$W/$v-src/std VELT_RT_LIB=$W/tc-$v/libvelt_rt.a "$W/tc-$v/velt" build --release --backend llvm "$s" -o "$exe" > "$exe.build" 2>&1; then res="$res FAIL"; continue; fi
-    (cd "$OUT" && VELT_THREADS=1 timeout "${TO:-1800}" valgrind --vgdb=no --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$exe" < /dev/null > "$exe.out" 2> "$exe.vg") || true
+    if ! VELT_STD=$W/$v-src/std VELT_RT_LIB=$W/tc-$v/libvelt_rt.a "$W/tc-$v/velt" build --release --backend llvm "$s" -o "$exe" > "$exe.build" 2>&1; then res="$res FAIL"; exits="$exits/0"; continue; fi
+    st=0
+    (cd "$OUT" && VELT_THREADS=1 timeout "${TO:-1800}" valgrind --vgdb=no --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$exe" < /dev/null > "$exe.out" 2> "$exe.vg") || st=$?
+    exits="$exits/$st"
     ir=$(grep -oP 'I\s+refs:\s+\K[0-9,]+' "$exe.vg" | tr -d ,) || true; res="$res ${ir:-NA}"
     rm -f "$exe" "$exe.o" "$exe.link-stamp"
   done
   same=same; cmp -s "$OUT/$name-base.out" "$OUT/$name-branch.out" || same=DIFF
-  echo "$res $same"
+  # A program that exits non-zero (one that needs an argument, an input file or a server, or
+  # times out) was measured to wherever it stopped: flagged, and left out of the sorted rows.
+  case "$exits" in */0/0 | /0/0) echo "$res $same" ;; *) echo "$res $same EXIT=${exits#/}" ;; esac
 }
 export -f one; export W OUT
 find "$W/branch-src/bench" -name '*.velt' | grep -E "${ONLY:-.}" | grep -vE "${SKIP:-^$}" | sort \
@@ -59,13 +67,19 @@ done
 
 python3 - "$W/counts.txt" <<'EOF'
 import sys
-rows = []
+rows, exited = [], []
 for line in open(sys.argv[1]):
     p = line.split()
-    if len(p) == 4 and p[1].isdigit() and p[2].isdigit():
+    if len(p) == 5 and p[4].startswith("EXIT="):
+        exited.append((p[0], p[4][5:]))
+    elif len(p) == 4 and p[1].isdigit() and p[2].isdigit():
         b, c = int(p[1]), int(p[2])
         rows.append((p[0], b, c, (c - b) / b * 100, p[3]))
 for r in sorted(rows, key=lambda r: -r[3]):
     print(f"{r[0]:45} {r[1]:>15,} {r[2]:>15,} {r[3]:+7.2f}% {r[4]}")
 print(len(rows), "measured")
+if exited:
+    print(len(exited), "exited non-zero (base/branch status), not measured:")
+    for name, st in sorted(exited):
+        print(f"  {name:45} {st}")
 EOF

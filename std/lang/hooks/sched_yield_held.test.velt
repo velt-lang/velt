@@ -1,0 +1,76 @@
+// velt/lang/hooks (tests): an awaited yield's record held as its token (sched_yield_list.velt
+// `held`, `heldPoll`; sched_yield.velt `schedYieldDrop`, #3687), tested directly:
+// - a record dropped while it waits is freed by its turn, which wakes nothing; one dropped after
+//   its turn is freed by the drop. A caught panic drops the siblings of an inline `Promise.all`
+//   that wait at a yield (golden std/catch_panic_yield_siblings, which checks the blocks);
+// - a record polled from another thread (a blocking-pool job, no task current) while its task's
+//   turn fires it: the swap-then-recheck window neither frees it twice nor loses the turn. No
+//   construct reaches this path today (a state resumes on its own task): it is kept to match the
+//   stored yield's (`storedPoll`).
+import { describe, expect, it } from "velt/test";
+import { hookCall } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as t from "velt/lang/hooks/sched_task";
+import { schedYieldDrop } from "velt/lang/hooks/sched_yield";
+import * as ls from "velt/lang/hooks/sched_yield_list";
+
+/** The task polled on this thread. */
+function task(): usize {
+  return m.ld(t.here() + t.E_CURRENT);
+}
+
+/** A record held for task `k`'s root, on its list: its turn comes at the task's next poll. */
+function heldOnList(k: usize, w: usize): usize {
+  const r = ls.held(w, k, ls.nextStamp(ls.block(k)));
+  ls.join(k, r);
+  return r;
+}
+
+describe("a held yield record", () => {
+  it("dropped while it waits, goes at its turn", async () => {
+    const k = task();
+    const r = heldOnList(k, ls.ROOT);
+    schedYieldDrop(r);
+    expect(m.load(r + ls.Y_STATE)).toBe(ls.DROPPED);
+    // Its turn frees it (the debug allocator checks the free), and wakes nothing.
+    await yieldNow();
+    await yieldNow();
+  });
+
+  it("dropped after its turn, goes with the drop", async () => {
+    const k = task();
+    const r = heldOnList(k, ls.ROOT);
+    await yieldNow();
+    expect(m.load(r + ls.Y_STATE)).toBe(ls.FIRED);
+    schedYieldDrop(r);
+  });
+
+  it("polled from another thread while its turn fires loses no wake", async () => {
+    const k = task();
+    let lost: u64 = 0;
+    for (let i = 0; i < 1000; i++) {
+      // Woken at its turn: a clone of the task's own waker.
+      const r = heldOnList(k, m.wakerClone(k));
+      const job = hookCall<u64>("sched_blocking_run", (): u64 => {
+        let missed: u64 = 0;
+        // No task current there: `heldPoll`'s other-task path (swap its waker in, then see a
+        // turn that came meanwhile).
+        while (ls.heldPoll(r, k, 0) === 0) {
+          // Not ready, yet its turn may have fired by now. The turn takes the waker it finds, so
+          // a waker left in a fired record is one this poll swapped in after the turn took the
+          // old one, which nothing will ever wake: the re-check must have seen that turn.
+          if (m.load(r + ls.Y_STATE) === ls.FIRED && m.load(r + ls.Y_WAKER) !== 0) {
+            missed += 1;
+            m.wakerDrop(m.swap(r + ls.Y_WAKER, 0));
+          }
+          m.yieldCore();
+        }
+        return missed;
+      });
+      // The next poll fires `r` while the job polls it.
+      await yieldNow();
+      lost += await job;
+    }
+    expect(lost).toBe(0 as u64);
+  });
+});

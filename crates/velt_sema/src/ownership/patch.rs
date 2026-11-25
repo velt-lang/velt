@@ -284,6 +284,10 @@ pub(super) fn call_reads(cx: &Ctx, e: &Expr, out: &mut Vec<DefId>) {
 
 /// A function's modes, `this` first.
 pub(super) fn modes_of(cx: &Ctx, d: DefId) -> Vec<PassMode> {
+    // A finished unit's function as the app's passes raised it (`units::raised`).
+    if let Some(m) = cx.raised_modes_of(d) {
+        return m.clone();
+    }
     let f = cx.fn_info(d);
     let mut modes: Vec<PassMode> = f
         .this
@@ -364,16 +368,13 @@ fn iface_modes(cx: &mut Ctx, iface: DefId, slot: u32) -> Option<Vec<PassMode>> {
             PassMode::Borrow
         }]);
     }
-    let m = i.methods.get(slot as usize)?;
-    let this = match m.mut_this {
+    // A finished unit's slot as the app's passes raised it (`units::raised`).
+    let (mut_this, params) = cx.slot_modes(iface, slot as usize)?;
+    let this = match mut_this {
         true => PassMode::BorrowMut,
         false => PassMode::Borrow,
     };
-    Some(
-        std::iter::once(this)
-            .chain(m.params.iter().map(|p| p.mode))
-            .collect(),
-    )
+    Some(std::iter::once(this).chain(params).collect())
 }
 
 /// Tables passed to a callee whose parameter modes are not known (a function value): it may
@@ -537,11 +538,8 @@ fn callback(cx: &mut Ctx, a: &Expr) -> Callback {
                 .any(|p| c.body.locals[p.local.0 as usize].mutable && p.mode != PassMode::Copy),
             _ => false,
         },
-        E::FnRef(def, _) => cx
-            .fn_info(*def)
-            .params
-            .iter()
-            .any(|p| p.mode == PassMode::BorrowMut),
+        // A finished unit's function as the app's passes raised it (`units::raised`).
+        E::FnRef(def, _) => cx.own_param_modes(*def).contains(&PassMode::BorrowMut),
         _ => return Callback::Unknown,
     };
     match modifies {
