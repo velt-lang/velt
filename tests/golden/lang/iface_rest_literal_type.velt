@@ -1,0 +1,10 @@
+// An object literal with a rest-parameter method is shown with its `...`, as TypeScript shows it
+// (TS2322 here).
+const o = {
+  n: 1,
+  add(...xs: number[]) {
+    return xs.length + this.n;
+  },
+};
+const s: string = o;
+console.log(s);

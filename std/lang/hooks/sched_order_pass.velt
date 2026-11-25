@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): which timer comes next in Node's event loop, under the executor in
-// Velt (sched_order.velt, #2649), as the runtime's velt_rt task/local/order_pass.rs: a timers pass
+// Velt (sched_order.velt, #2649), as the runtime's Rust order it replaced: a timers pass
 // reads the clock once and runs, list by list, every timer due by then; once none is left, the
 // immediates created so far run (the check phase), and the next pass reads the clock again.
 //
@@ -10,7 +10,7 @@
 //
 // A timer whose task is in a poll on another worker (`busy`: running code that does not pause,
 // or another of its callbacks) cannot run now and holds back no other timer: the look passes it
-// over, as the runtime's skips a busy task's lists (order.rs `busy_elsewhere`), so a spawned
+// over, as the runtime's skipped a busy task's lists, so a spawned
 // task that spins does not stop every timer of the process; it runs once that poll has ended.
 // The lists here are one per delay for the process, as Node's, where the runtime's are one per
 // task and delay: the look passes over the busy task's timers in a list and may take a later one
