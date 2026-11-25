@@ -1,0 +1,6 @@
+1 null
+[object Object] {"p":null,"n":1}
+Box { p: null, n: 1 }
+null
+2 undefined {"n":2}
+3 null {"p":null,"n":3}
