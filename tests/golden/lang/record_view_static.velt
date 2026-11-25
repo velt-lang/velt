@@ -2,7 +2,8 @@
 // A record view compared with its source of a static type (#3675): `===`, `!==` and
 // `Object.is` between `x as Record<string, any>` and `x` are identity, as in Node, where the
 // cast is a no-op, for an object literal, a class instance, an array, an interface value and a
-// `Map`; `JSON.stringify` of a statically typed view writes its source (an array as an array).
+// `Map`; `JSON.stringify` of a statically typed view writes its source (an array as an array, a
+// `Map` or `Set` as `{}`, as through `any`).
 // The Node twin is record_view_static.mjs.
 class Point {
   x: number = 1;
@@ -43,6 +44,18 @@ function main(): void {
   console.log(`nested view: ${JSON.stringify({ a: xv })} ${JSON.stringify(mv)}`);
   const dv = new D() as any as Record<string, any>;
   console.log(`toJSON key: ${JSON.stringify({ k: dv })} ${JSON.stringify([dv])}`);
+  const full = new Map<string, number>([["a", 1]]);
+  const fullAny: any = full;
+  const fullView = full as any as Record<string, any>;
+  console.log(
+    `stringify map: ${JSON.stringify(fullView)} ${JSON.stringify(fullAny)} ${JSON.stringify({ m: fullView })}`,
+  );
+  const set = new Set<number>([1, 2]);
+  const setAny: any = set;
+  const setView = set as any as Record<string, any>;
+  console.log(
+    `stringify set: ${JSON.stringify(setView)} ${JSON.stringify(setAny)} ${JSON.stringify([setView])}`,
+  );
 }
 
 main();

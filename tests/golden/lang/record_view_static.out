@@ -8,3 +8,5 @@ stringify object: {"a":1,"b":"x"} {"x":1,"y":2}
 plain record: false true {"a":1}
 nested view: {"a":[1,2]} {}
 toJSON key: {"k":"key=k"} ["key=0"]
+stringify map: {} {} {"m":{}}
+stringify set: {} {} [{}]

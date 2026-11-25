@@ -33,3 +33,15 @@ console.log(`plain record: ${plain === p} ${plain !== p} ${JSON.stringify(plain)
 console.log(`nested view: ${JSON.stringify({ a: xv })} ${JSON.stringify(mv)}`);
 const dv = new D();
 console.log(`toJSON key: ${JSON.stringify({ k: dv })} ${JSON.stringify([dv])}`);
+const full = new Map([["a", 1]]);
+const fullAny = full;
+const fullView = full;
+console.log(
+  `stringify map: ${JSON.stringify(fullView)} ${JSON.stringify(fullAny)} ${JSON.stringify({ m: fullView })}`,
+);
+const set = new Set([1, 2]);
+const setAny = set;
+const setView = set;
+console.log(
+  `stringify set: ${JSON.stringify(setView)} ${JSON.stringify(setAny)} ${JSON.stringify([setView])}`,
+);
