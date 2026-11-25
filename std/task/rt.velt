@@ -1,24 +1,5 @@
-// velt/task (internal): the runtime functions velt/task calls: signals and workers.
-
-export declare function velt_rt_signal_new(): u64;
-
-export declare function velt_rt_signal_retain(s: u64): u64;
-
-export declare function velt_rt_signal_free(s: u64);
-
-export declare function velt_rt_signal_abort(s: u64, reason: string);
-
-export declare function velt_rt_signal_aborted(s: u64): bool;
-
-export declare function velt_rt_signal_reason(s: u64): string;
-
-/**
- * Completes once `s` is aborted. `timed`: a timer may abort it (`AbortSignal.timeout`, or an
- * `AbortSignal.any` of one), so the wait keeps the process alive, as a wait for a timer does.
- */
-export declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
-
-export declare function velt_rt_signal_any(signals: u64[]): u64;
+// velt/task (internal): the runtime functions velt/task calls: workers and catches (the signals'
+// are signal_rt.velt's).
 
 export declare function velt_rt_worker_count(): u64;
 

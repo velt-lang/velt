@@ -1,17 +1,22 @@
 // velt/task (internal): the abort signals behind `AbortSignal` (signal.velt) where the runtime
 // keeps them (the default variant of `#task-signal`: WebAssembly, whose runtime has its own; under
-// the executor in Velt, signal_sched.velt's).
+// the executor in Velt, signal_sched.velt's). velt_rt defines none of these: only velt_rt_wasm.
 
-import {
-  velt_rt_signal_abort,
-  velt_rt_signal_aborted,
-  velt_rt_signal_any,
-  velt_rt_signal_free,
-  velt_rt_signal_new,
-  velt_rt_signal_reason,
-  velt_rt_signal_retain,
-  velt_rt_signal_wait,
-} from "velt/task/rt";
+declare function velt_rt_signal_new(): u64;
+
+declare function velt_rt_signal_retain(s: u64): u64;
+
+declare function velt_rt_signal_free(s: u64);
+
+declare function velt_rt_signal_abort(s: u64, reason: string);
+
+declare function velt_rt_signal_aborted(s: u64): bool;
+
+declare function velt_rt_signal_reason(s: u64): string;
+
+declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
+
+declare function velt_rt_signal_any(signals: u64[]): u64;
 
 /** A new signal that is not aborted. */
 export function signalNew(): u64 {
