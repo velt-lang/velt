@@ -52,7 +52,8 @@ class Derived extends Base implements Fluent {
   }
 }
 
-// An interface extending `Fluent`: through a type parameter bounded by it, `step` gives `T`.
+// An interface extending `Fluent`: through a type parameter bounded by it, `step` gives `T`, and
+// on a value of it, the interface itself.
 interface Totalled extends Fluent {
   half(): number;
 }
@@ -138,6 +139,10 @@ function main() {
   console.log(df.step(1).step(2).total());
   const h = twiceTotalled(new Halves());
   console.log(h.n, h.half());
+  // On a `Totalled` value, `step` gives a `Totalled` too.
+  const tv: Totalled = new Halves();
+  const tr = tv.step(2).step(2);
+  console.log(tr.half(), tv.step(4).half(), tv.total());
   const e: Each = new Seq();
   e.each((n: number) => {
     console.log("at", n);
