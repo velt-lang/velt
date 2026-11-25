@@ -2,13 +2,15 @@
 // used after `close` fails with EBADF, a reader closed with a read in flight lets that read end,
 // copies of one reader read in turn, reads and writes started together run in the order they were
 // started, operations waiting behind a close fail with EBADF, a writer's buffer reaches the file
-// on `flush`, `close` and when it is released unclosed, and a write after `close` fails with EPIPE.
+// on `flush`, `close` and when it is released unclosed, a write after `close` fails with EPIPE, and
+// a reader whose file is descriptor 0 is closed like any other.
 import { openRead, openWrite, readFile, readFileSync, remove, writeFile } from "velt/fs";
 import { platform, tmpdir } from "velt/os";
 import { uuidv4 } from "velt/random/uuid";
 import { describe, expect, it } from "velt/test";
 import { IoError } from "velt/io";
 import { unwrapIo } from "velt/native/result";
+import { closeFd } from "#fd-system";
 import {
   velt_rt_fs_open_read_range,
   velt_rt_fs_open_write,
@@ -203,5 +205,26 @@ describe("stream_sched", () => {
     // The whole message, path included; Windows shows the path with its own separator.
     const shown = platform() == "win32" ? path.replaceAll("/", "\\") : path;
     expect(message).toBe(`ENOENT: no such file or directory, open '${shown}'`);
+  });
+
+  // Last: it frees descriptor 0 (the tests read no standard input), which later opens then get.
+  it("closes a reader whose file is descriptor 0", async () => {
+    if (platform() == "win32") {
+      // A Win32 handle is never 0.
+      return;
+    }
+    const path = temp("fd0");
+    await writeFile(path, "kept");
+    // Once before, so whatever the first stream makes the process open is open already.
+    const warm = await openRead(path);
+    warm.close();
+    expect(closeFd(0)).toBe(0);
+    // The lowest free descriptor: 0.
+    const r = await openRead(path);
+    expect(await r.readString()).toBe("kept");
+    r.close();
+    // The reader's close closed descriptor 0: closing it again fails.
+    expect(closeFd(0)).toBe(-1);
+    await remove(path);
   });
 });
