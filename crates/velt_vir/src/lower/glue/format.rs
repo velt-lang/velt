@@ -54,7 +54,7 @@ impl FnLower<'_, '_> {
 
     fn format_top_as(&mut self, buf: &Operand, place: &Place, ty: TyId, log: bool) {
         if let Some(strings) = self.enum_strings(ty) {
-            return self.push_enum_str(buf, place, &strings, false, false);
+            return self.push_enum_str(buf, place, &strings, false);
         }
         match self.cx.kind(ty) {
             TyKind::Str => {
@@ -214,7 +214,7 @@ impl FnLower<'_, '_> {
                 if !self.cx.is_class(ty) && self.is_enum(ty) && self.cx.is_c_like_enum(d) =>
             {
                 match self.enum_strings(ty) {
-                    Some(strings) => self.push_enum_str(buf, place, &strings, true, false),
+                    Some(strings) => self.push_enum_str(buf, place, &strings, true),
                     None => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
                 }
             }
