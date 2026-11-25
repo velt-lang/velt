@@ -30,7 +30,7 @@ pub(super) fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 // builds that from the signature, whatever the body throws. (`hir::FnDef::throws`
                 // is filled in later, by `finalize::build_defs`.)
                 let thrown = fi.declared_throws.as_ref().and_then(|d| d.ty);
-                w.thrown_containers += thrown.is_some_and(|t| may_hold_containers(ty, t)) as u32;
+                w.thrown.extend(thrown);
                 w.formats.extend(thrown);
             }
             for t in f.body.locals.iter().map(|l| l.ty).chain([f.ret]) {
@@ -153,14 +153,14 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         }
         E::Throw(v) => {
             w.formats.push(v.ty);
-            w.thrown_containers += may_hold_containers(ty, v.ty) as u32;
+            w.thrown.push(v.ty);
         }
         E::Call {
             callee: Callee::Intrinsic(I::ToString | I::TemplateToString),
             args,
         } => {
             w.texts.extend(args.iter().map(|a| a.ty));
-            w.prints_containers |= args.iter().any(|a| may_hold_containers(ty, a.ty));
+            w.prints.extend(args.iter().map(|a| (a.ty, true)));
         }
         E::Call {
             callee: Callee::Intrinsic(I::Print | I::PrintErr),
@@ -168,7 +168,7 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         } => {
             let (float, glued) = super::super::number_text::printed(ty, args);
             w.prints_float |= float;
-            w.prints_containers |= glued.iter().any(|&t| may_hold_containers(ty, t));
+            w.prints.extend(glued.iter().map(|&t| (t, false)));
             w.formats.extend(glued);
         }
         E::Call {
@@ -177,8 +177,9 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         } => {
             w.formats.extend(args.iter().map(|a| a.ty));
             // `inspectNested` writes a value inside another, which the outer value's layout breaks.
-            let top = !matches!(i, I::InspectNested);
-            w.prints_containers |= top && args.iter().any(|a| may_hold_containers(ty, a.ty));
+            if !matches!(i, I::InspectNested) {
+                w.prints.extend(args.iter().map(|a| (a.ty, false)));
+            }
         }
         E::Call {
             callee: Callee::Intrinsic(I::AnyTo | I::AnyToExact),
@@ -240,24 +241,4 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         }
         kind => w.constructs |= constructs::pow_bit(ty, kind),
     }
-}
-
-/// May the text `console.log` prints for a value of type `t` hold a container, so that its line
-/// breaking runs (velt_vir `glue/format.rs` `format_top_inspect`)? No for what prints as one
-/// scalar: numbers, booleans, strings, symbols, literals and pointers. Anything else may (an enum,
-/// an option or a union is answered yes too, which only loads the hooks where they may be idle).
-fn may_hold_containers(ty: &crate::types::Types, t: TyId) -> bool {
-    !matches!(
-        ty.kind(t),
-        TyKind::Int(_)
-            | TyKind::Float(_)
-            | TyKind::Bool
-            | TyKind::Str
-            | TyKind::Unit
-            | TyKind::Never
-            | TyKind::Error
-            | TyKind::Symbol
-            | TyKind::Ptr(_)
-            | TyKind::Literal(_)
-    )
 }

@@ -34,7 +34,58 @@ pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
     }
     cx.lazy.live.present |= present;
     cx.lazy.live.prints_float |= w.prints_float;
-    cx.lazy.live.prints_containers |= w.prints_containers;
+    note_prints(cx, w.prints.iter().copied());
+}
+
+/// Live code prints values of these types at the top level, each as text (`String(x)`, a
+/// template's part) or inspected: the line breaking is needed once one may hold containers.
+pub(super) fn note_prints(cx: &mut Ctx, prints: impl Iterator<Item = (TyId, bool)>) {
+    for (t, text) in prints {
+        if cx.lazy.live.prints_containers {
+            return;
+        }
+        cx.lazy.live.prints_containers = may_hold_containers(cx, t, text, 0);
+    }
+}
+
+/// May what is printed for a value of type `t` hold a container, so that its line breaking runs
+/// (velt_vir `glue/format.rs` `format_top_inspect`)? As lowering writes it: no for what prints as
+/// one scalar (numbers, booleans, strings, symbols, literals, pointers, an enum without
+/// payloads), for an option or a union of such (`"AM" | "PM"`, `string | null`), and for the
+/// `text` of a dynamic value or a promise, which is JavaScript's `ToString` (std's `anyText`:
+/// an array joined, `[object Object]`), never the inspected form. Anything else may.
+pub(super) fn may_hold_containers(cx: &mut Ctx, t: TyId, text: bool, depth: u32) -> bool {
+    if depth > 8 {
+        return true;
+    }
+    let parts: Vec<TyId> = match cx.ty.kind(t) {
+        TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Bool
+        | TyKind::Str
+        | TyKind::Unit
+        | TyKind::Never
+        | TyKind::Error
+        | TyKind::Symbol
+        | TyKind::Ptr(_)
+        | TyKind::Literal(_) => return false,
+        TyKind::Promise(..) => return !text,
+        TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
+        TyKind::Adt(d, _) => {
+            let d = *d;
+            match cx.union_members(t) {
+                Some(members) => members,
+                None => match cx.enum_info(d) {
+                    Some(e) if e.variants.iter().all(|v| v.payload.is_empty()) => return false,
+                    _ => return true,
+                },
+            }
+        }
+        _ => return !(text && cx.dynamic(t).is_some()),
+    };
+    parts
+        .into_iter()
+        .any(|p| may_hold_containers(cx, p, text, depth + 1))
 }
 
 /// `TextFloat` where text or glue for a value of type `t` may print a float (none needed when

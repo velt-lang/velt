@@ -846,6 +846,18 @@ fn line_breaking_is_checked_once_a_container_may_be_printed_at_the_top_level() {
         ("const p = new P();\n  console.log(p.x);", false),
         ("console.log(1.5);", false),
         ("console.log(\"text\");", false),
+        // An `any` is inspected by `console.log`, a union or an option by what it may hold.
+        ("const a: any = { a: 1 };\n  console.log(a.a);", true),
+        ("const u: string | number[] = [1, 2];\n  console.log(u);", true),
+        ("const o: P | null = new P();\n  console.log(o);", true),
+        // Not for what prints as a scalar whichever member it is, nor for the text of an
+        // `any`, which is JavaScript's `ToString` (std's `anyText`), never the inspected form:
+        // std's own text of a number held by an `any` and its templates of literal unions
+        // (`"AM" | "PM"`) are in nearly every program.
+        ("const a: any = { a: 1 };\n  console.log(a.a as number);", false),
+        ("const a: any = [1, [2]];\n  console.log(String(a), `${a}`);", false),
+        ("const h: \"AM\" | \"PM\" = \"AM\";\n  const n: number | null = 1;\n  console.log(`${h}${n}`, h, n);", false),
+        ("console.log(new Date(0).toLocaleTimeString());", false),
     ] {
         let src = format!("{class}function main() {{\n  {body}\n}}\n");
         assert_eq!(checked(&ok_src(&src)), wanted, "{src}");
