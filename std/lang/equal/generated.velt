@@ -98,6 +98,13 @@ function floatEqual(x: f64, y: f64, deep: bool): bool {
   return deep ? Object.is(x, y) : x == y || (x != x && y != y);
 }
 
+/** The `kind|repr|name` of a runtime type text (`anyReflectInfo`): what tells two types apart. */
+function typeFields(info: string): string {
+  const kind = info.indexOf("|");
+  const repr = info.indexOf("|", kind + 1);
+  return info.slice(0, info.indexOf("|", repr + 1));
+}
+
 /**
  * Two values whose structure only their dynamic type shows (an interface value in `toEqual`, a
  * std type keeping its state private): equal when they are the same value, else when they are of
@@ -105,10 +112,11 @@ function floatEqual(x: f64, y: f64, deep: bool): bool {
  * instances in `deepEqual` compare by identity.
  */
 function equalDynamic(a: any, b: any, deep: bool): bool {
-  // `kind|repr|name|hooks` (velt/reflect `typeOf`): one runtime type when all but the hooks match.
+  // `kind|repr|name|hooks` (velt/reflect `typeOf`), then `|own` for some classes: one runtime
+  // type when the first three fields match.
   const ta = anyReflectInfo(a);
   const tb = anyReflectInfo(b);
-  if (ta.slice(0, ta.lastIndexOf("|")) != tb.slice(0, tb.lastIndexOf("|"))) {
+  if (typeFields(ta) != typeFields(tb)) {
     return false;
   }
   const kind = ta.slice(0, ta.indexOf("|"));

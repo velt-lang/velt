@@ -53,6 +53,7 @@ mod coerce_generic;
 mod coerce_mismatch;
 mod coerce_vars;
 mod comparable_cast;
+mod console_format;
 mod constraints;
 mod construct;
 mod conversions;
