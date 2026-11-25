@@ -54,7 +54,7 @@ impl FnLower<'_, '_> {
 
     fn format_top_as(&mut self, buf: &Operand, place: &Place, ty: TyId, log: bool) {
         if let Some(strings) = self.enum_strings(ty) {
-            return self.push_enum_str(buf, place, &strings, false, false);
+            return self.push_enum_str(buf, place, &strings, false);
         }
         match self.cx.kind(ty) {
             TyKind::Str => {
@@ -99,6 +99,9 @@ impl FnLower<'_, '_> {
                 self.push_inspect_float(buf, Operand::Copy(place.clone()), ty)
             }
             TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
+            // `String(p)` and `${p}` of a promise are `Object.prototype.toString`'s text, as in
+            // JavaScript; `console.log` shows its state (`format_promise`).
+            TyKind::Promise(..) if !log => self.push_text(buf, "[object Promise]"),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
             // A string held by an `any` prints as itself at the top level (lower/any.rs).
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => {
@@ -213,7 +216,7 @@ impl FnLower<'_, '_> {
                 if !self.cx.is_class(ty) && self.is_enum(ty) && self.cx.is_c_like_enum(d) =>
             {
                 match self.enum_strings(ty) {
-                    Some(strings) => self.push_enum_str(buf, place, &strings, true, false),
+                    Some(strings) => self.push_enum_str(buf, place, &strings, true),
                     None => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
                 }
             }

@@ -35,7 +35,10 @@ function fill(kind: string, n: usize): u8[] {
 }
 
 function main() {
-  const a = args();
+  // Without arguments: ascii 1048576 20 (a case of cases.sh), so bench/compiler_ab.sh measures
+  // a run.
+  const given = args();
+  const a = given.length == 0 ? ["ascii", "1048576", "20"] : given;
   const n = parseInt(a[1]) as usize;
   const calls = parseInt(a[2]) as usize;
   const d = fill(a[0], n);

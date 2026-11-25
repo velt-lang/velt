@@ -138,6 +138,11 @@ function main() {
   const lone = mixedOne<Mixed>();
   console.log(lone.data, lone.meta.tags, lone.whole);
   console.log(JSON.stringify(mixed<JsonValue>(2)));
+  // Text cells written into a `JsonValue` row's text: ASCII, and short and long (over 64 units)
+  // non-ASCII text with escapes.
+  for (const v of mixed<JsonValue>(6)) {
+    console.log(JSON.stringify(v.get("maybe")));
+  }
   console.log(mixedOne<JsonValue>());
   for (const v of mixed<Values>(2)) {
     console.log(JSON.stringify(v.meta), JSON.stringify(v.data), JSON.stringify(v.raw));
@@ -209,6 +214,12 @@ true [ 0, 7 ] [ 't2', 'x' ] 2 [ true, null ] caf� \"q\" 4 set
 false [ 0, 7, 255 ] [ 't3', 'x' ] 3 [ true, null ] caf� \"q\" 6 null
 [ 0 ] [ 't1', 'x' ] 2
 [{\"ok\":false,\"data\":[0],\"meta\":{\"tags\":[\"t1\",\"x\"],\"n\":1,\"deep\":{\"k\":[true,null]}},\"raw\":\"caf� \\\"q\\\"\",\"whole\":2,\"maybe\":null},{\"ok\":true,\"data\":[0,7],\"meta\":{\"tags\":[\"t2\",\"x\"],\"n\":2,\"deep\":{\"k\":[true,null]}},\"raw\":\"caf� \\\"q\\\"\",\"whole\":4,\"maybe\":\"set\"}]
+null
+\"set\"
+null
+\"s\\\"é\\t😀\"
+null
+\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\\\"\\n\"
 {
   ok: false,
   data: [ 0 ],
