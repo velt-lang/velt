@@ -1,0 +1,20 @@
+refs awaited_dropped T4 #1 exit 0 out=dropped 30  blocks=812/812 panics caught=0
+refs awaited_dropped T8 #1 exit 0 out=dropped 30  blocks=812/812 panics caught=0
+refs node_woken_away T4 #1 exit 0 out=done 20  blocks=518/518 panics caught=0
+refs node_woken_away T8 #1 exit 0 out=done 20  blocks=522/522 panics caught=0
+refs stolen_carry T4 #1 exit 0 out=parked 40 true  blocks=981/981 panics caught=0
+refs stolen_carry T8 #1 exit 0 out=parked 40 true  blocks=981/981 panics caught=0
+refs exit_queued T4 #1 exit 0 out=main ends busy true  blocks=30/30 panics caught=0
+refs exit_queued T8 #1 exit 0 out=main ends busy true  blocks=30/30 panics caught=0
+refs handed_all2 T4 #1 exit 0 out=got 30, dropped 30  blocks=496/496 panics caught=0
+refs handed_all2 T8 #1 exit 0 out=got 30, dropped 30  blocks=496/496 panics caught=0
+refs away_first_leaves2 T4 #1 exit 0 out=got 30  blocks=3721747/3721747 panics caught=0
+refs away_first_leaves2 T8 #1 exit 0 out=got 30  blocks=630335/630335 panics caught=0
+refs held_plain T4 #1 exit 0 out=parked 20  blocks=478/478 panics caught=0
+refs held_plain T8 #1 exit 0 out=parked 20  blocks=478/478 panics caught=0
+refs two_roots T4 #1 exit 0 out=parked 20  blocks=658/658 panics caught=0
+refs two_roots T8 #1 exit 0 out=parked 20  blocks=658/658 panics caught=0
+refs held_handed T4 #1 exit 0 out=parked 20, used 20  blocks=518/518 panics caught=0
+refs held_handed T8 #1 exit 0 out=parked 20, used 20  blocks=518/518 panics caught=0
+refs share_finished T4 #1 exit 0 out=parked 40, read 40  blocks=758/758 panics caught=0
+refs share_finished T8 #1 exit 0 out=parked 40, read 40  blocks=758/758 panics caught=0

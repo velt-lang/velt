@@ -1,0 +1,842 @@
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.14s
+     Running tests/std_scheduler.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler-418aa9f06bd43a8b)
+
+running 21 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.03s
+test a_combinators_losers_are_handled_and_an_exit_code_ends_at_once ... ok
+test a_combinator_s_spawned_losers_reject_quietly ... ok
+test a_dropped_spawn_handle_frees_its_task ... ok
+test a_leaf_on_another_thread_wakes_the_task ... ok
+test a_long_poll_on_the_only_worker_starts_no_spare ... ok
+test a_never_settled_promise_exits_like_the_runtime ... ok
+test a_program_without_imports_builds_for_every_reactor ... ok
+test a_spawn_handle_dropped_after_its_task_rejected_reports_it ... ok
+test a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued ... ok
+test an_awaited_spawn_handle_frees_its_task ... ok
+test channels_hand_values_between_tasks ... ok
+test combinators_look_at_their_promises_in_node_s_order ... ok
+test promises_woken_while_queued_keep_their_task_s_woken_stack_whole ... ok
+test raced_spawn_handles_free_their_tasks ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test results_nobody_claims_are_dropped_and_tasks_outlive_main ... ok
+test spawned_tasks_yield_and_join ... ok
+test a_rejection_finishing_while_woken_keeps_the_woken_stack_whole ... ok
+test started_promises_run_at_once_and_microtasks_keep_node_order ... ok
+test the_variable_does_nothing_on_wasi ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.74s
+
+     Running tests/std_scheduler_all.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_all-b704ecc5c2cd46f2)
+
+running 4 tests
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.03s
+test a_join_over_reads_the_runtime_wakes_from_its_threads_completes_in_every_mode ... ok
+test a_join_over_spawned_tasks_wakes_its_awaiter_in_every_mode ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.89s
+
+     Running tests/std_scheduler_bounds.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_bounds-f3a3431c640a6f3a)
+
+running 8 tests
+test a_scan_without_the_fix_ends_the_program_early ... ignored, timing-dependent negative control: the nightly flake job runs it (#3495)
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.04s
+test a_latch_with_many_waiters_frees_its_waker_buffer_by_size ... ok
+test a_task_ending_last_on_another_worker_frees_its_block_first ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test velt_threads_past_the_bound_runs_on_the_cores ... ok
+test a_node_woken_from_another_worker_after_its_task_ended_is_freed ... ok
+test a_wake_delivered_while_worker_0_scans_keeps_the_program_alive has been running for over 60 seconds
+test a_wake_delivered_while_worker_0_scans_keeps_the_program_alive ... ok
+
+test result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 85.84s
+
+     Running tests/std_scheduler_bridge.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_bridge-b7982b9714ade081)
+
+running 15 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_nul_in_a_childs_working_directory_fails_its_start ... ok
+test a_pending_stdin_read_keeps_the_process_alive_until_its_line_comes ... ok
+test a_job_runs_when_the_pool_can_start_no_thread ... ok
+test a_read_of_a_childs_silent_pipe_leaves_its_worker_free ... ok
+test a_receive_with_a_limit_keeps_that_many_bytes ... ok
+test a_stdin_read_nobody_waits_for_still_ends_with_its_line ... ok
+test a_result_given_before_its_wake_loses_a_race_to_a_settled_promise ... ok
+test child_processes_from_every_worker_run_and_report_their_exit ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test file_operations_from_every_worker_finish_on_the_pool ... ok
+test a_raised_signal_comes_through_the_self_pipe ... ok
+test socket_and_name_errors_read_as_the_runtimes ... ok
+test stdin_lines_and_the_rest_come_through_the_pool_in_order ... ok
+test udp_datagrams_cross_workers_and_names_resolve_on_the_pool ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.69s
+
+     Running tests/std_scheduler_carry.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_carry-c07c82693e1e65ac)
+
+running 4 tests
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test sleeps_move_with_their_task_and_fire_once ... ok
+test sched_sleep_move_white_box_tests_pass ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.94s
+
+     Running tests/std_scheduler_catch.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_catch-fbf4ccd4380b8d01)
+
+running 14 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_guarded_promise_waiting_for_another_task_is_run_by_its_own_wake ... ok
+test a_guarded_promise_done_before_the_wait_and_nested_catching_polls_give_their_results ... ok
+test a_panic_in_a_task_on_a_solo_worker_rejects_its_join_as_with_other_threads ... ok
+test a_panicked_promise_nobody_awaits_is_dropped_and_one_outside_a_catch_ends_the_process ... ok
+test a_panic_in_a_task_on_another_worker_reaches_its_joiners_catch_panic ... ok
+test a_panic_in_the_first_run_of_a_promise_started_under_a_catch_and_one_after_the_wait_are_caught ... ok
+test a_panicked_promise_prints_pending ... ok
+test a_panicked_tasks_output_comes_before_its_joiners ... ok
+test a_promise_started_under_a_catch_panics_alone ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_panicked_promise_or_task_through_a_shared_promise_ends_or_raises_as_with_the_runtime ... ok
+test only_a_program_that_catches_has_the_catch ... ok
+test the_goldens_that_catch_panics_pass_under_the_executor_in_velt ... FAILED
+
+failures:
+
+---- the_goldens_that_catch_panics_pass_under_the_executor_in_velt stdout ----
+
+thread 'the_goldens_that_catch_panics_pass_under_the_executor_in_velt' (2448301177) panicked at crates/veltc/tests/std_scheduler_catch.rs:39:5:
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/http_request_after_handler.velt: /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    the_goldens_that_catch_panics_pass_under_the_executor_in_velt
+
+test result: FAILED. 13 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.20s
+
+error: test failed, to rerun pass `-p veltc --test std_scheduler_catch`
+     Running tests/std_scheduler_demand.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_demand-0e0af4b7b9ddb633)
+
+running 12 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_program_without_tasks_has_no_executor ... ok
+test a_synchronous_api_that_starts_promises_runs_on_the_executor ... ok
+test a_hook_called_by_role_that_drifted_from_the_table_is_an_ice ... ok
+test async_code_reached_only_through_a_function_value_runs_on_the_executor ... ok
+test module_state_takes_one_path_decided_after_the_initializers ... ok
+test module_state_without_tasks_goes_through_the_runtime ... ok
+test module_state_with_tasks_takes_the_executors_lock ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test state_read_by_code_only_an_initializer_reaches_takes_one_path ... ok
+test programs_running_nothing_on_the_executor_load_none_of_it ... ok
+test programs_calling_by_role_build_the_same_with_std_up_front ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.80s
+
+     Running tests/std_scheduler_exit_order.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_exit_order-363542720596b6ad)
+
+running 4 tests
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_rejected_result_dropped_in_mains_poll_reports_after_it ... ok
+test an_uncaught_error_on_another_worker_waits_for_mains_poll ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
+
+     Running tests/std_scheduler_fair.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_fair-308bc04321939a0e)
+
+running 6 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_connection_that_always_has_input_lets_the_other_promises_of_its_task_run ... ok
+test a_connection_that_always_has_input_lets_the_other_tasks_of_its_worker_run ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_read_loop_waiting_with_a_signal_ends_its_turn_once_the_budget_is_spent ... ok
+test an_accept_loop_that_starts_a_promise_per_connection_lets_the_other_tasks_of_its_worker_run ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+
+     Running tests/std_scheduler_fetch.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_fetch-bfc30c999a8c5704)
+
+running 4 tests
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.03s
+test sequential_fetches_reuse_one_pooled_connection ... ok
+test a_closed_pooled_connection_is_not_reused_and_a_refused_connect_fails ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+     Running tests/std_scheduler_gather.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_gather-b66a90e046e41539)
+
+running 3 tests
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test actors_a_burst_spread_come_back_to_worker_0 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.58s
+
+     Running tests/std_scheduler_goldens.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_goldens-4187c15e58d2000c)
+
+running 11 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.04s
+test an_uncaught_exit_disposes_nothing_main_holds ... ok
+test an_uncaught_exit_in_a_poll_a_microtask_resumed_balances_the_block_counts ... ok
+test a_maybe_promise_printed_by_a_program_without_tasks_builds_and_prints ... ok
+test an_uncaught_exit_reporting_a_held_promise_balances_the_block_counts ... ok
+test an_uncaught_exit_of_a_program_without_tasks_builds_and_ends_with_1 ... ok
+test an_uncaught_exit_reports_no_rejection_of_a_handle_main_holds ... ok
+test an_uncaught_exit_runs_no_generator_finally_main_holds ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test an_uncaught_exit_while_main_sleeps_balances_the_block_counts ... ok
+test goldens_that_failed_only_under_the_executor_in_velt_pass_under_it ... FAILED
+
+failures:
+
+---- goldens_that_failed_only_under_the_executor_in_velt_pass_under_it stdout ----
+
+thread 'goldens_that_failed_only_under_the_executor_in_velt_pass_under_it' (2448331221) panicked at crates/veltc/tests/std_scheduler_goldens.rs:59:5:
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/serve_counts_hits.velt: /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    goldens_that_failed_only_under_the_executor_in_velt_pass_under_it
+
+test result: FAILED. 10 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.30s
+
+error: test failed, to rerun pass `-p veltc --test std_scheduler_goldens`
+     Running tests/std_scheduler_handed_promises.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_handed_promises-f1e572bb4bbd2996)
+
+running 8 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_promise_settled_from_another_task_reaches_its_awaiter_handed_over ... ok
+test a_copy_of_a_promise_handed_over_from_its_task_is_handed_over_too ... ok
+test a_value_settled_from_another_task_is_let_go_before_its_awaiter_sees_it ... ok
+test a_rejected_promise_handed_to_another_task_is_handled_by_the_hand_over ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_promise_dropped_while_another_worker_finishes_it_drops_its_result_once ... ok
+test a_waiter_awaiting_a_promise_finished_on_another_worker_is_woken ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.05s
+
+     Running tests/std_scheduler_handle_drop.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_handle_drop-cdae6e43a609ac5d)
+
+running 4 tests
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_task_whose_handle_goes_between_its_park_reads_is_dropped ... ok
+test a_task_whose_handle_is_dropped_as_it_parks_is_dropped ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.16s
+
+     Running tests/std_scheduler_handover.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_handover-b140805b3ab15f5e)
+
+running 17 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_program_without_tasks_shares_its_promises_without_the_executor ... ok
+test a_converted_promise_is_the_promise_it_converts ... ok
+test a_promise_handed_to_a_task_delivers_a_copy_there ... ok
+test a_race_over_shared_and_unshared_promises_picks_node_s_winner ... ok
+test a_rejection_handled_through_one_converted_promise_is_quiet_through_another ... ok
+test a_converted_promise_handed_to_a_task_keeps_its_holder_home ... ok
+test a_shared_promise_s_unclaimed_rejection_is_reported ... ok
+test a_spawned_race_delivers_a_copy_to_its_task ... ok
+test a_view_s_take_handles_nothing ... ok
+test a_promise_shared_on_the_task_it_was_handed_to_settles_there ... ok
+test converted_promises_await_through_views ... ok
+test holders_handed_to_tasks_by_a_synchronous_main_resume_in_order ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_result_is_copied_before_the_other_task_can_take_it ... ok
+test shared_promise_waiters_resume_in_node_order ... ok
+test holders_of_a_shared_promise_handed_to_tasks_get_copies ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.20s
+
+     Running tests/std_scheduler_held.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_held-15dc0fc435738506)
+
+running 11 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_finished_promise_kept_in_module_state_is_freed_off_its_task ... ok
+test a_finished_promise_shared_after_it_let_go_of_its_task_is_read ... ok
+test a_finished_promise_handed_to_another_task_is_not_counted ... ok
+test a_finished_promise_shared_after_it_let_go_with_its_original_handed_over_is_freed ... ok
+test a_finished_promise_shared_into_module_state_is_dropped_off_its_task ... ok
+test a_shared_promise_whose_first_waiter_leaves_after_it_finished_still_wakes_the_next ... ok
+test a_task_holding_a_finished_shared_promise_is_found_parked_for_ever ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_task_holding_a_promise_that_finished_unawaited_is_found_parked_for_ever ... ok
+test promises_handed_over_pending_and_awaited_or_dropped_there_as_they_finish ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.85s
+
+     Running tests/std_scheduler_ids.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_ids-15c55e37be91ebff)
+
+running 4 tests
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_task_started_in_a_read_callback_stops_the_program ... ok
+test a_promise_resolved_on_another_task_gets_a_copy ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running tests/std_scheduler_join_order.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_join_order-52e86a24708351a5)
+
+running 3 tests
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_joined_tasks_output_and_microtasks_come_before_its_joiners ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.17s
+
+     Running tests/std_scheduler_net.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_net-b14656b50532f09e)
+
+running 16 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_failed_name_lookup_reads_as_with_the_runtime ... ok
+test a_program_declaring_the_reactors_c_functions_compiles ... ok
+test a_listening_server_keeps_the_process_alive_until_closed ... ok
+test a_read_wait_with_no_limit_waits_for_the_bytes ... ok
+test a_read_wait_ends_when_its_signal_aborts_while_it_waits ... ok
+test a_reader_waits_for_readiness_and_a_deadline_ends_a_wait ... ok
+test a_refused_connect_and_a_closed_handle_report_the_runtimes_codes ... ok
+test an_echo_server_sends_what_it_queued_before_the_worker_waits ... ok
+test a_write_in_flight_across_close_ends_the_program ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test queued_bytes_beyond_the_socket_go_out_on_writable_events ... ok
+test the_program_runs_on_while_another_worker_waits_for_a_connect ... ok
+test an_http_server_keeps_a_connection_alive_between_requests ... FAILED
+test tls_streams_closed_at_the_end_end_the_program ... ok
+test velt_net_users_compile_as_their_goldens_say ... FAILED
+
+failures:
+
+---- an_http_server_keeps_a_connection_alive_between_requests stdout ----
+
+thread 'an_http_server_keeps_a_connection_alive_between_requests' (2448370574) panicked at crates/veltc/tests/std_scheduler_net.rs:39:5:
+keep_alive: /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- velt_net_users_compile_as_their_goldens_say stdout ----
+
+thread 'velt_net_users_compile_as_their_goldens_say' (2448371713) panicked at crates/veltc/tests/std_scheduler_net.rs:376:5:
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/connections_fn_props_one_worker.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/connections_spread_over_workers.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handle_after_close.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/connections_module_state_spread.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/fetch_exits_promptly.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/fetch_headers_immutable.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_buffer_copy.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_any_hook_reads_capture.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_converted_cond_other_field.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_converted_store_other_field.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_ctor_method_fresh.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_ctx_to_any_hook.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_ctx_to_callback.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_ctx_to_iface.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_ctx_to_iface_literal.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_ctx_to_map_callback.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_ctx_to_optional_hook.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_emit_generic.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_factory_fn.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_factory_method.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_known_gap_store_by_key.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_literal_own_buf.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_new_ctx_from_capture.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_new_ctx_own_buffer.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_new_ctx_own_list.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_new_ctx_own_list_any_store.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_new_ctx_own_map.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_new_page_from_capture.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/handler_reads_through_computed_receiver.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/http_close_releases_handler.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/http_request_after_handler.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/http_request_body_after_response.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/http_server.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/http_script_module_state.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/jsx_stream.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/output_socket_handoff.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/server_uncaught_error_exits.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/serve_bad_offset_500.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/serve_counts_hits.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/serve_record_capture.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/serve_shared_state.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+/Users/andii/dev/velt/branches/let-go-knobs/crates/veltc/../../tests/golden/std/http_server/server_handle_dropped.velt (fails): /Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+
+
+failures:
+    an_http_server_keeps_a_connection_alive_between_requests
+    velt_net_users_compile_as_their_goldens_say
+
+test result: FAILED. 14 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.73s
+
+error: test failed, to rerun pass `-p veltc --test std_scheduler_net`
+     Running tests/std_scheduler_net_close.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_net_close-3a2f133215bc9e0a)
+
+running 4 tests
+test a_closed_sockets_poll_completion_never_reaches_its_next_source ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.07s
+test a_socket_program_frees_every_block_it_counted ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
+     Running tests/std_scheduler_order.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_order-64b13011ab478516)
+
+running 4 tests
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test tasks_woken_in_turn_by_timers_run_in_turn ... ok
+test tasks_woken_in_turn_by_resolves_run_in_turn ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+     Running tests/std_scheduler_parked_away.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_parked_away-2991bee4fbfc1522)
+
+running 11 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.03s
+test a_holder_awaited_and_dropped_by_an_unpinned_task_frees_everything ... ok
+test a_handed_holders_proxy_dropped_on_another_worker_is_given_up ... ok
+test a_finished_promise_freed_on_another_worker_lets_its_parked_task_go ... ok
+test a_proxy_dropped_by_an_unpinned_task_is_given_up_on_its_own_task ... ok
+test a_promise_dropped_as_it_finishes_lets_its_parked_task_go ... ok
+test a_suspended_promise_dropped_on_another_worker_frees_its_task ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_task_with_yields_freed_by_a_hand_over_frees_its_yield_block ... ok
+test hand_overs_racing_their_tasks_polls_leave_nothing ... ok
+test two_promises_dropped_at_once_on_two_workers_free_their_task_once ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.51s
+
+     Running tests/std_scheduler_rescue.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_rescue-56e964e8f5cd715a)
+
+running 15 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.07s
+test a_line_printed_before_a_spawn_comes_first_when_the_rescue_moves_the_spawned_task ... ok
+test a_line_printed_on_a_lazy_worker_comes_before_what_the_rescued_task_prints_next ... ok
+test a_spare_waiting_for_a_node_timer_hands_the_wait_on_when_it_retires ... ok
+test a_spinning_poll_on_the_only_worker_is_rescued_within_20_ms ... ok
+test a_task_sleeping_on_a_retiring_spare_goes_to_worker_0_with_its_sleep ... ok
+test a_task_woken_by_a_spare_mid_poll_goes_home_so_the_spares_retire ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test starting_a_spare_counts_no_block ... ok
+test worker_0_woken_but_not_run_yet_counts_as_calm ... ok
+test worker_0_woken_but_not_run_yet_still_relaxes ... ok
+test worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again ... ok
+test worker_0s_lines_keep_their_order_while_it_turns_shared_and_lazy_again_with_sleeps ... ok
+test a_spawn_storm_crosses_the_hand_over_of_a_lazy_worker ... ok
+test a_million_resolves_in_one_poll_are_rescued_mid_loop has been running for over 60 seconds
+test a_million_resolves_in_one_poll_are_rescued_mid_loop ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 67.96s
+
+     Running tests/std_scheduler_rt_streams.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_rt_streams-618d06246ffc9805)
+
+running 11 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_failed_deferred_write_reports_its_status ... ok
+test an_unclosed_stream_s_send_buffer_is_freed_at_the_end ... ok
+test deferred_bytes_do_not_keep_the_program_alive_after_main ... ok
+test close_with_deferred_bytes_closes_at_once_and_still_sends_them ... ok
+test deferred_writes_on_a_stream_pair_reach_the_peer ... ok
+test process_exit_with_an_open_stream_with_deferred_bytes_ends_the_program ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test write_later_on_a_closed_stream_pair_end_reports_ebadf ... ok
+test deferred_writes_on_runtime_tls_streams_reach_the_peer ... ok
+test rt_later_shadow_white_box_tests_pass ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.42s
+
+     Running tests/std_scheduler_shared_leaves.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_shared_leaves-9245d945f60e014b)
+
+running 5 tests
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test shared_leaves_alive_at_once_deliver_their_own_results ... ok
+test a_shared_handle_whose_task_panics_stays_shared_once ... ok
+test a_shared_leaf_keeps_its_identity_while_a_copy_lives ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running tests/std_scheduler_shared_parked.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_shared_parked-ade6b122e77230bd)
+
+running 11 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.07s
+test a_holder_kept_in_module_state_outlives_the_dropped_task ... ok
+test a_holder_handed_over_while_the_promise_is_listed_takes_its_references_back ... ok
+test a_park_whose_verdict_went_stale_does_not_drop_its_task ... ok
+test a_root_awaiting_a_shared_holder_handed_on_and_dropped_is_dropped ... ok
+test a_root_that_raced_a_shared_promise_first_is_dropped ... ok
+test a_root_awaiting_a_shared_promise_nobody_settles_is_dropped ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_shared_promise_that_yields_before_it_waits_for_ever_is_dropped ... ok
+test a_shared_promise_settled_by_another_task_reaches_its_root ... ok
+test two_kept_copies_dropped_and_handed_over_leave_nothing ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.75s
+
+     Running tests/std_scheduler_sleep_handed.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_sleep_handed-00e0a6b43f123005)
+
+running 9 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_handed_sleep_dropped_after_its_request_is_freed_once ... ok
+test a_sleep_awaited_from_three_tasks_on_other_workers_wakes_them_all ... ok
+test a_sleep_asked_of_a_busy_worker_past_its_deadline_is_given_up_at_its_park ... ok
+test a_sleep_awaited_on_another_worker_moves_to_it ... ok
+test a_sleep_dropped_on_another_worker_leaves_its_block ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test handed_on_sleeps_fire_under_offers ... ok
+test a_sleep_does_not_take_a_new_task_at_its_first_tasks_address_for_its_owner ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.31s
+
+     Running tests/std_scheduler_slot.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_slot-fef93a7a08fb2150)
+
+running 5 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_task_that_yields_lets_the_task_it_spawned_on_its_worker_run ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_sleeper_beside_two_tasks_waking_each_other_through_the_slot_runs ... ok
+test a_task_spawned_beside_two_tasks_waking_each_other_through_the_slot_runs ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+     Running tests/std_scheduler_timers.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_timers-2892d39b9dede7d0)
+
+running 14 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.06s
+test a_callback_clears_timers_due_with_it ... ok
+test an_error_in_a_callback_ends_the_process_at_once ... ok
+test a_timer_set_just_before_its_worker_spins_fires_meanwhile ... ok
+test an_unrefd_timer_lets_the_process_end ... ok
+test immediates_run_after_the_timers_pass ... ok
+test interval_runs_overlap ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test output_reaches_a_pipe_before_the_worker_sleeps ... ok
+test sleeps_and_timers_due_together_run_in_one_order ... ok
+test sleeps_resume_in_timer_order_whoever_polls_them ... ok
+test timer_lists_run_by_expiry_then_list_id ... ok
+test timer_goldens_run_in_node_order_on_several_workers ... ok
+test a_pinned_spawn_runs_its_timers ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.52s
+
+     Running tests/std_scheduler_tls.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_tls-5326994c658e61a7)
+
+running 10 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_plain_serve_builds_no_tls_server ... FAILED
+test a_program_without_tls_options_builds_no_tls_server ... ok
+test a_tls_echo_server_serves_clients_on_the_reactor ... ok
+test a_tls_server_reports_what_ended_a_connection ... ok
+test a_fetch_that_reaches_the_tls_client_is_checked_once ... ok
+test a_tls_stream_is_readable_when_a_read_finds_bytes ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_ws_only_websocket_program_builds_no_tls_client ... ok
+test an_http_only_fetch_without_redirects_builds_no_tls_client ... ok
+
+failures:
+
+---- a_plain_serve_builds_no_tls_server stdout ----
+
+thread 'a_plain_serve_builds_no_tls_server' (2448448120) panicked at crates/veltc/tests/std_scheduler_tls.rs:568:5:
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:32: error: cannot find `adopted` in this scope
+
+/Users/andii/dev/velt/branches/let-go-knobs/std/io/streams/controller.velt:367:61: error: type annotations needed for parameter `e`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    a_plain_serve_builds_no_tls_server
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.79s
+
+error: test failed, to rerun pass `-p veltc --test std_scheduler_tls`
+     Running tests/std_scheduler_waiting_in_hub.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_waiting_in_hub-4c7ca14d8d39b511)
+
+running 9 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_listed_waiting_promise_shared_by_its_owner_stays_listed ... ok
+test a_listed_waiting_promise_handed_over_by_its_owner_leaves_the_list ... ok
+test a_listed_waiting_promise_raced_then_handed_over_is_dropped ... ok
+test a_promise_awaiting_a_promise_waiting_in_a_listed_hub_is_dropped_too ... ok
+test a_promise_of_the_task_waiting_in_a_listed_hub_is_listed_too ... ok
+test a_shared_listed_waiting_promise_handed_over_gives_its_first_entry_back ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test a_waiting_promise_unlisted_by_a_hand_over_takes_its_reference_back ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s
+
+     Running tests/std_scheduler_wake_end.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_wake_end-d13b6e3f67bf5a8e)
+
+running 3 tests
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_wake_giving_its_reference_back_at_the_end_frees_every_block ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s
+
+     Running tests/std_scheduler_wake_order.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_wake_order-4eeaa04d6cee0406)
+
+running 6 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_promise_woken_from_another_worker_is_found_owner_only ... ok
+test a_task_woken_from_another_worker_is_found_parked_for_ever ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_carried_wake_still_queued_when_main_ends_is_given_back ... ok
+test a_woken_task_taken_by_another_worker_gives_the_reference_back_once ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+     Running tests/std_scheduler_watch.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_watch-ff8d406a4533b0fa)
+
+running 8 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_held_rejection_handled_before_the_microtasks_drain_is_not_reported ... ok
+test a_watched_converted_rejection_is_reported_where_it_was_thrown ... ok
+test a_watched_converted_rejection_handled_elsewhere_is_dropped_quietly ... ok
+test a_watched_rejection_its_owner_drops_is_reported_once ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_watched_rejection_handed_to_a_task_is_reported_there_once ... ok
+test promises_dropped_on_another_worker_as_they_finish_free_their_results ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.66s
+
+     Running tests/std_scheduler_windows_link.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_windows_link-a4002e0cfa945913)
+
+running 1 test
+test a_windows_program_calls_only_functions_its_import_libraries_export ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.58s
+
+     Running tests/std_scheduler_workers.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_workers-153157da4b49a6a1)
+
+running 20 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_pinned_tasks_result_is_transferred_to_its_joiner ... ok
+test a_worker_that_borrows_before_its_first_park_is_awake ... ok
+test an_uncaught_rejection_on_another_worker_gives_back_mains_root ... ok
+test an_unrefd_timer_on_another_worker_ticks_while_main_sleeps ... ok
+test a_line_printed_before_an_await_comes_first_when_the_task_resumes_elsewhere ... ok
+test lines_ordered_by_the_module_lock_across_workers_print_in_that_order ... ok
+test module_state_is_freed_at_a_counted_normal_exit ... ok
+test mains_last_line_printed_on_another_worker_is_written ... ok
+test module_state_is_one_lock_across_workers ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test pinned_tasks_run_on_their_worker_and_wake_across_workers ... ok
+test process_exit_on_another_worker_keeps_the_lines_a_task_printed ... ok
+test tasks_put_back_while_worker_0_leaves_its_lazy_mode_still_run ... ok
+test the_end_waits_for_tasks_woken_during_the_scan ... ok
+test the_last_line_of_a_task_ending_last_on_another_worker_is_written ... ok
+test the_program_ends_once_every_worker_is_idle ... ok
+test the_rescue_of_the_only_worker_is_taken_back_once_the_spares_are_idle ... ok
+test sched_queue_white_box_tests_pass ... ok
+test sched_spread_white_box_tests_pass ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.13s
+
+     Running tests/std_scheduler_workers_net.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_workers_net-ca2050d1a00f907b)
+
+running 10 tests
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_comment_that_names_a_global_with_module_state_leaves_the_connections_spread ... ok
+test a_listener_of_a_program_with_module_state_says_every_worker ... ok
+test a_connection_moves_to_another_worker_and_keeps_serving ... ok
+test a_listener_opened_on_worker_0_accepts_on_another ... ok
+test a_listener_spreads_its_connections_over_every_worker ... ok
+test a_server_moved_off_a_stalled_worker_keeps_serving ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test a_socket_serves_from_another_worker ... ok
+test a_task_follows_a_socket_tasks_take_turns_with ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.35s
+
+     Running tests/std_scheduler_yield.rs (/Users/andii/dev/velt/branches/s13-target/debug/deps/std_scheduler_yield-ccd2ce00600cdcd9)
+
+running 3 tests
+test runtime_support::tests::dep_info_sources_map_to_this_checkout ... ok
+test runtime_support::tests::a_touched_source_makes_the_library_stale ... ok
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.05s
+test a_root_that_yielded_on_a_lazy_worker_resumes_in_its_first_shared_poll ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+error: 4 targets failed:
+    `-p veltc --test std_scheduler_catch`
+    `-p veltc --test std_scheduler_goldens`
+    `-p veltc --test std_scheduler_net`
+    `-p veltc --test std_scheduler_tls`

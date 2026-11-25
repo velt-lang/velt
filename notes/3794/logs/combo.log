@@ -1,0 +1,18 @@
+c_await handed_all2 T4 #1 exit 0 out= blocks=317/308 panics caught=0
+c_await handed_all2 T4 #2 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_await handed_all2 T4 #3 exit 0 out= blocks=157/148 panics caught=0
+c_await handed_all2 T8 #1 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_await handed_all2 T8 #2 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_await handed_all2 T8 #3 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_await away_first_leaves2 T4 #1 exit 0 out= blocks=121/104 panics caught=0
+c_await away_first_leaves2 T4 #2 exit 0 out= blocks=91/74 panics caught=0
+c_await away_first_leaves2 T4 #3 exit 0 out= blocks=108/91 panics caught=0
+c_await away_first_leaves2 T8 #1 exit 0 out= blocks=88/71 panics caught=0
+c_await away_first_leaves2 T8 #2 exit 0 out= blocks=81/64 panics caught=0
+c_await away_first_leaves2 T8 #3 exit 0 out= blocks=88/71 panics caught=0
+c_ownside handed_all2 T4 #1 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_ownside handed_all2 T4 #2 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_ownside handed_all2 T4 #3 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_ownside handed_all2 T8 #1 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_ownside handed_all2 T8 #2 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0
+c_ownside handed_all2 T8 #3 exit 0 out=got 30, dropped 30  blocks=494/494 panics caught=0

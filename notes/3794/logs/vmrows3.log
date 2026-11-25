@@ -1,0 +1,16 @@
+fanout_all T1 base 459124029 head 457123584  -0.44%
+fanout_all T4 base 461364073 head 459367208  -0.43%
+all_small_stored T1 base 2235751792 head 2229751817  -0.27%
+all_small_stored T4 base 2251638321 head 2257679026  +0.27%
+race_small T1 base 1577621243 head 1575671268  -0.12%
+race_small T4 base 1588501006 head 1590756455  +0.14%
+race_yield T1 base 249667572 head 250067594  +0.16%
+race_yield T4 base 255515008 head 255916069  +0.16%
+chan_wake T1 base 1126214365 head 1126214390  +0.00%
+chan_wake T4 base 1247559848 head 1247560299  +0.00%
+promise_identity_loop T1 base 4519960670 head 4512626174  -0.16%
+promise_identity_loop T4 base 4532809298 head 4530123662  -0.06%
+spawn_many T1 base 745378224 head 745378249  +0.00%
+spawn_many T4 base 1291074796 head 1296028076  +0.38%
+pingpong_colocated T1 base 922037253 head 921397278  -0.07%
+pingpong_colocated T4 base 1145479371 head 1176300186  +2.69%
