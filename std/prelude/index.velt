@@ -36,6 +36,7 @@ import "./process";
 import "./promise";
 import "./record";
 import "./rw_lock";
+import "./set_like";
 import "./sort";
 import "./string";
 import "./string_iterator";

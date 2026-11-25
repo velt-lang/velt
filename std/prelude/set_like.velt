@@ -1,0 +1,19 @@
+// Prelude: `ReadonlySetLike<T>`, what the set algebra of `Set` (velt/collections) reads of its
+// argument, as ES2025's set methods do.
+
+/**
+ * A value with a set's `size`, `has` and `keys` (TypeScript's `ReadonlySetLike<T>`): what
+ * `Set`'s `union`, `intersection`, `difference`, `symmetricDifference`, `isSubsetOf`,
+ * `isSupersetOf` and `isDisjointFrom` take. `Set` and `Map` (by their keys) are ones, and so is
+ * an object with the three members (`{ size: 2, has(x) { … }, keys() { return [3, 8]; } }`).
+ * Unlike TypeScript's, its `keys()` returns an array (as a `Set`'s and a `Map`'s do) and the
+ * elements are of the set's own type: `Set<number>`'s methods take a `ReadonlySetLike<number>`.
+ */
+export interface ReadonlySetLike<T> {
+  /** How many elements it holds: read once, first. */
+  readonly size: usize;
+  /** Whether it holds `value`. */
+  has(value: T): boolean;
+  /** Its elements. */
+  keys(): T[];
+}

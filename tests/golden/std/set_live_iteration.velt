@@ -1,0 +1,53 @@
+// Iterating a set walks it live, as JS does (#3820): an element added while a `for...of` runs is
+// visited, one deleted before it is reached is not, and a cleared set ends the loop. An iterator
+// that reported `done` stays done, even after the set grows.
+
+const s = new Set<number>([1, 2, 3]);
+const seen: number[] = [];
+for (const x of s) {
+  seen.push(x);
+  if (x == 1) {
+    s.delete(2);
+    s.add(7);
+  }
+}
+console.log(seen.join(","), [...s].join(","));
+
+const grows = new Set<string>(["a"]);
+const names: string[] = [];
+for (const x of grows) {
+  names.push(x);
+  if (grows.size < 4) {
+    grows.add(`${x}${grows.size}`);
+  }
+}
+console.log(names.join(","));
+
+const cleared = new Set<number>([1, 2, 3]);
+const firsts: number[] = [];
+for (const x of cleared) {
+  firsts.push(x);
+  cleared.clear();
+}
+console.log(firsts.join(","), cleared.size);
+
+const s2 = new Set<number>([1]);
+const it = s2[Symbol.iterator]();
+const first = it.next();
+s2.add(2);
+const second = it.next();
+const third = it.next();
+s2.add(3);
+console.log(first.done, second.done, third.done, it.next().done);
+
+// Deleting and adding the same element moves it to the end: the loop meets it again.
+const again = new Set<number>([1, 2]);
+const order: number[] = [];
+for (const x of again) {
+  order.push(x);
+  if (order.length == 1) {
+    again.delete(1);
+    again.add(1);
+  }
+}
+console.log(order.join(","));
