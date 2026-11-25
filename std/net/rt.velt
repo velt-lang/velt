@@ -8,6 +8,10 @@ import { IoStatus } from "velt/native/status";
 import { moduleStateUsed } from "velt/lang/intrinsics/task";
 import { velt_rt_worker_count } from "velt/task/rt";
 
+/**
+ * Under `velt dev`: the listening socket the supervisor hands over (a descriptor, or a `SOCKET` on
+ * Windows), which std/net/tcp_sched.velt registers with the reactor. No other build has it.
+ */
 export declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
 export declare function velt_rt_tcp_listener_port(l: u64): u32;
 export declare function velt_rt_tcp_listener_close(l: u64);
