@@ -81,15 +81,22 @@ impl FnCx<'_, '_> {
     /// r: A = this`), which TypeScript types as the class (as it does `this as A`, `cast`).
     pub(crate) fn note_this_alias(
         &mut self,
-        local: hir::LocalId,
+        (local, name): (hir::LocalId, Span),
         kind: LocalKind,
         ty: Option<&ast::TypeExpr>,
         h: Option<&hir::Expr>,
     ) {
-        let typed_this = ty.is_none_or(is_this_written);
+        let typed_this = ty.is_none_or(is_this_written) && !self.this_defaulted.contains(&name);
         if kind == LocalKind::Const && typed_this && h.is_some_and(|h| self.is_this_value(h)) {
             self.this_aliases.insert(local);
         }
+    }
+
+    /// The bindings of pattern `p` declared under a default (`[r = o]`, `{ a: [r] = d }`): TypeScript
+    /// types each with the default's type too (`this | A` for `const [r = o] = [this]`), so none
+    /// is `this`, even where the default never applies and is left out (`literal_patterns`).
+    pub(crate) fn note_defaulted_bindings(&mut self, p: &ast::Pattern) {
+        defaulted(p, false, &mut self.this_defaulted);
     }
 
     /// `h`, checked from `… as ty`: when it is `this` and `ty` is not `this`, it is typed as
@@ -132,6 +139,24 @@ impl FnCx<'_, '_> {
             )
             .with_note(note),
         );
+    }
+}
+
+/// Into `out`, the spans of the bindings of `p` under a default (`under`: `p` is).
+fn defaulted(p: &ast::Pattern, under: bool, out: &mut rustc_hash::FxHashSet<Span>) {
+    use ast::PatternKind as P;
+    match &p.kind {
+        P::Ident(n) if under => _ = out.insert(n.span),
+        P::Ident(_) | P::Wildcard => {}
+        P::Object { fields, rest } => {
+            fields.iter().for_each(|(_, p)| defaulted(p, under, out));
+            rest.iter().filter(|_| under).for_each(|r| _ = out.insert(r.span));
+        }
+        P::Array { elems, rest } => {
+            elems.iter().for_each(|p| defaulted(p, under, out));
+            rest.iter().filter(|_| under).for_each(|r| _ = out.insert(r.span));
+        }
+        P::Default { pattern, .. } => defaulted(pattern, true, out),
     }
 }
 

@@ -33,6 +33,12 @@ class A {
   back(): this {
     return (this as A) as this;
   }
+  // Next to a binding with a default, one without is still `this`.
+  besideDefault(o: A): this {
+    const [q = o, r] = [this, this];
+    q.n++;
+    return r;
+  }
 }
 
 class B extends A {
@@ -47,4 +53,6 @@ function main() {
   console.log(c.n, c.tag);
   const d = new B().typed().back().typed();
   console.log(d.n, d.tag);
+  const e = new B().besideDefault(new A()).bump();
+  console.log(e.n, e.tag);
 }

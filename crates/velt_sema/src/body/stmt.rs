@@ -589,7 +589,7 @@ impl FnCx<'_, '_> {
             self.f.late_lets.insert(local);
         }
         self.note_trusted_local(local, ann, init.as_ref());
-        self.note_this_alias(local, kind, v.ty.as_ref(), init.as_ref());
+        self.note_this_alias((local, name.span), kind, v.ty.as_ref(), init.as_ref());
         self.note_marks(local, v.ty.as_ref(), v.init.as_ref());
         if let (None, Some(e), Some(h)) = (&v.ty, &v.init, &init) {
             self.note_readonly_init(local, e, h);

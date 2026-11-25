@@ -1,7 +1,7 @@
 // A `const` that TypeScript types as the class rather than `this` is not `this`: one with a
 // written type other than `this`, or through `as` to one, for `this` and for a `this`-returning
-// call on it; nor is `this` returned through `as` to the class, or a call on such a cast
-// (TypeScript's TS2322, #3772).
+// call on it; nor is `this` returned through `as` to the class, or a call on such a cast; nor a
+// binding declared with a default (TypeScript's TS2322, #3772).
 class A {
   n = 0;
   step(): this {
@@ -37,6 +37,32 @@ class A {
   castAlias(): this {
     const r = this;
     return (r as A).step();
+  }
+  // A binding with a default is typed with the default's type too (`this | A`), even where the
+  // element is there and the default never applies.
+  defaulted(o: A): this {
+    const [r = o] = [this];
+    return r;
+  }
+  defaultedCall(o: A): this {
+    const [r = o] = [this.step()];
+    return r;
+  }
+  defaultedSecond(o: A): this {
+    const [, r = o] = [o, this];
+    return r;
+  }
+  defaultedNested(o: A): this {
+    const [[r = o]] = [[this]];
+    return r;
+  }
+  defaultedField(o: A): this {
+    const [{ r = o }] = [{ r: this }];
+    return r;
+  }
+  defaultedFirst(o: A): this {
+    const [q = o, r] = [this, this];
+    return q;
   }
 }
 
