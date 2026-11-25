@@ -1,0 +1,24 @@
+// A promise-typed member that can be absent (`Promise<T> | null`, `p?: Promise<T>`), held as `any`
+// in a program that runs no async code, as in Node (#924 step 3): it is `null` or `undefined`
+// there, read, written, printed and written as JSON. Such a program holds no promise, and its
+// `any` tables and glue must not reach the executor.
+class Box {
+  p: Promise<number> | null = null;
+  n = 1;
+}
+
+class Opt {
+  p?: Promise<number>;
+  n = 2;
+}
+
+const b: any = new Box();
+console.log(b.n, b.p);
+console.log(String(b), JSON.stringify(b));
+console.log(b);
+b.p = null;
+console.log(b.p);
+const o: any = new Opt();
+console.log(o.n, o.p, JSON.stringify(o));
+const lit: any = { p: null as Promise<number> | null, n: 3 };
+console.log(lit.n, lit.p, JSON.stringify(lit));

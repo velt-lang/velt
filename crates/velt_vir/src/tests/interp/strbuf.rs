@@ -4,26 +4,6 @@
 use super::rt::{inspect_num, js_num};
 use super::Interp;
 
-/// `JSON.stringify` of a string: quotes and the escapes of §12.1.
-pub(super) fn json_quote(s: &[u8]) -> Vec<u8> {
-    let mut out = vec![b'"'];
-    for &c in s {
-        match c {
-            b'"' => out.extend(b"\\\""),
-            b'\\' => out.extend(b"\\\\"),
-            b'\n' => out.extend(b"\\n"),
-            b'\r' => out.extend(b"\\r"),
-            b'\t' => out.extend(b"\\t"),
-            8 => out.extend(b"\\b"),
-            12 => out.extend(b"\\f"),
-            c if c < 0x20 => out.extend(format!("\\u{c:04x}").bytes()),
-            c => out.push(c),
-        }
-    }
-    out.push(b'"');
-    out
-}
-
 impl Interp<'_> {
     /// Append `more` to the builder at `b`.
     fn buf_push(&mut self, b: u64, more: &[u8]) {
@@ -89,10 +69,6 @@ impl Interp<'_> {
                 let s = self.str_bytes(a[1]);
                 let text = crate::lower::inspect_key(&String::from_utf8_lossy(&s));
                 self.buf_push(a[0], text.as_bytes());
-            }
-            "velt_rt_strbuf_push_json_str" => {
-                let s = self.str_bytes(a[1]);
-                self.buf_push(a[0], &json_quote(&s));
             }
             "velt_rt_strbuf_finish" => {
                 let hdr = self.read_bytes(a[0], 24);

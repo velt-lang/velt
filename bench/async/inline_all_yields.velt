@@ -1,0 +1,17 @@
+// 50,000 inline `Promise.all`s in `main`'s root, each of two children that yield once (#3687): the
+// children yield with a copy of the root's cx, so the second takes a record, a turn of its own
+// after the first's, which here goes on in the first one's poll of the root (nothing runs between
+// them: sched_yield_list.velt `nextTurn`), its record kept for reuse by the task's yield block.
+async function step(n: number): Promise<number> {
+  await yieldNow();
+  return n;
+}
+
+async function main() {
+  let s = 0;
+  for (let i = 0; i < 50000; i++) {
+    const r = await Promise.all([step(i), step(1)]);
+    s += r[0] + r[1];
+  }
+  console.log(s);
+}

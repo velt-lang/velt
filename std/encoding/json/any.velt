@@ -11,6 +11,7 @@
 import { StringBuilder } from "velt/text/string_builder";
 import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
 import { JsonValue } from "velt/prelude/json/json_value";
+import { anyIsPromise } from "velt/lang/intrinsics";
 import {
   beginVisit,
   callToJSON,
@@ -92,6 +93,9 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     enter(v);
     writeMembers(w, v, recordOrder(v));
     endVisit();
+  } else if (anyIsPromise(v)) {
+    // An object with no own enumerable members, as Node writes it (#924).
+    w.append("{}");
   } else {
     unsupported();
   }
