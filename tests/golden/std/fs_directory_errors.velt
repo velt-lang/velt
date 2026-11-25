@@ -1,8 +1,14 @@
 // Reading or writing a directory as a file fails like Node on every system: a read reports
 // `EISDIR … read` without a path (the open succeeded, or Windows refused it), a write reports
 // the failed `open` with the path.
+import { cwd } from "velt/process";
 import { mkdirSync, readFileSync, removeSync, writeFileSync } from "velt/fs";
 import { IoError } from "velt/io";
+
+/** The message as Node prints it on Linux: on Windows it names the path absolute, with `\`. */
+function portable(m: string): string {
+  return m.split(`${cwd()}\\`).join("").split("\\").join("/");
+}
 
 function main() {
   const dir = "velt_fs_directory_errors_tmp";
@@ -10,12 +16,12 @@ function main() {
   try {
     readFileSync(dir);
   } catch (e) {
-    console.log(e instanceof IoError, e.code, e.message);
+    console.log(e instanceof IoError, e.code, portable(e.message));
   }
   try {
     writeFileSync(dir, "x");
   } catch (e) {
-    console.log(e instanceof IoError, e.code, e.message);
+    console.log(e instanceof IoError, e.code, portable(e.message));
   }
   removeSync(dir, { recursive: true });
 }

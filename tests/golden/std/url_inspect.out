@@ -1,0 +1,222 @@
+URL {
+  href: 'https://example.com/',
+  origin: 'https://example.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'example.com',
+  hostname: 'example.com',
+  port: '',
+  pathname: '/',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
+}
+URL {
+  href: 'https://user:pa%20ss@example.com:8080/a/b?x=1&y=two#frag',
+  origin: 'https://example.com:8080',
+  protocol: 'https:',
+  username: 'user',
+  password: 'pa%20ss',
+  host: 'example.com:8080',
+  hostname: 'example.com',
+  port: '8080',
+  pathname: '/a/b',
+  search: '?x=1&y=two',
+  searchParams: URLSearchParams { 'x' => '1', 'y' => 'two' },
+  hash: '#frag'
+}
+URL {
+  href: "https://example.com/it's?q=a+b%20c&q=%27",
+  origin: 'https://example.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'example.com',
+  hostname: 'example.com',
+  port: '',
+  pathname: "/it's",
+  search: '?q=a+b%20c&q=%27',
+  searchParams: URLSearchParams { 'q' => 'a b c', 'q' => "'" },
+  hash: ''
+}
+URL {
+  href: 'file:///tmp/x',
+  origin: 'null',
+  protocol: 'file:',
+  username: '',
+  password: '',
+  host: '',
+  hostname: '',
+  port: '',
+  pathname: '/tmp/x',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
+}
+URL {
+  href: 'mailto:a@b.c',
+  origin: 'null',
+  protocol: 'mailto:',
+  username: '',
+  password: '',
+  host: '',
+  hostname: '',
+  port: '',
+  pathname: 'a@b.c',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
+}
+{
+  link: URL {
+    href: 'https://a.b/?q=1',
+    origin: 'https://a.b',
+    protocol: 'https:',
+    username: '',
+    password: '',
+    host: 'a.b',
+    hostname: 'a.b',
+    port: '',
+    pathname: '/',
+    search: '?q=1',
+    searchParams: URLSearchParams { 'q' => '1' },
+    hash: ''
+  }
+}
+[
+  URL {
+    href: 'https://a.b/',
+    origin: 'https://a.b',
+    protocol: 'https:',
+    username: '',
+    password: '',
+    host: 'a.b',
+    hostname: 'a.b',
+    port: '',
+    pathname: '/',
+    search: '',
+    searchParams: URLSearchParams {},
+    hash: ''
+  }
+]
+{
+  a: {
+    b: URL {
+      href: 'https://a.b/?q=1',
+      origin: 'https://a.b',
+      protocol: 'https:',
+      username: '',
+      password: '',
+      host: 'a.b',
+      hostname: 'a.b',
+      port: '',
+      pathname: '/',
+      search: '?q=1',
+      searchParams: URLSearchParams { 'q' => '1' },
+      hash: ''
+    }
+  }
+}
+u URL {
+  href: 'https://a.b/c',
+  origin: 'https://a.b',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'a.b',
+  hostname: 'a.b',
+  port: '',
+  pathname: '/c',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
+} 1
+{ a: { b: { c: URL {} } } }
+[ [ [ URL {} ] ] ]
+URLSearchParams { 'a' => '1', 'b' => '2' }
+URLSearchParams {}
+URLSearchParams { 'a' => '1', 'a' => '2', "it's" => '"x"' }
+{ p: URLSearchParams { 'a' => '1' } }
+[ URLSearchParams { 'a' => '1', 'a' => '2' } ]
+{ a: { b: { c: [Object] } } }
+URLSearchParams {
+  'a' => 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  'b' => '2',
+  'c' => '3' }
+URLSearchParams { 'a' => 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'b' => '1' }
+URLSearchParams {
+  'a' => 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  'b' => '1' }
+{
+  deep: {
+    p: URLSearchParams {
+      'a' => 'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy',
+      'b' => '2' }
+  }
+}
+URL {
+  href: 'https://a.b/?a=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz&b=2',
+  origin: 'https://a.b',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'a.b',
+  hostname: 'a.b',
+  port: '',
+  pathname: '/',
+  search: '?a=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz&b=2',
+  searchParams: URLSearchParams {
+    'a' => 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz',
+    'b' => '2' },
+  hash: ''
+}
+URLSearchParams {
+  'a' => 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' }
+URLSearchParams {
+  'a' => 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' +
+  'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' }
+URLSearchParams {
+  'k\n' +
+  'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' => '1',
+  'b' => 'qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq\n\nz' }
+URL {
+  href: 'https://a.b/?a=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx%0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy',
+  origin: 'https://a.b',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'a.b',
+  hostname: 'a.b',
+  port: '',
+  pathname: '/',
+  search: '?a=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx%0Ayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy',
+  searchParams: URLSearchParams {
+    'a' => 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n' +
+    'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy' },
+  hash: ''
+}
+[
+  Wide<wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww, vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv>,
+  URLSearchParams { 'a' => '1' }
+]
+{
+  a: Wide<wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww, vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv>,
+  u: URL {
+    href: 'https://a.b/',
+    origin: 'https://a.b',
+    protocol: 'https:',
+    username: '',
+    password: '',
+    host: 'a.b',
+    hostname: 'a.b',
+    port: '',
+    pathname: '/',
+    search: '',
+    searchParams: URLSearchParams {},
+    hash: ''
+  }
+}
+https://a.b/x?y#z
+https://a.b/x?y#z
+https://a.b/x?y#z {"u":"https://a.b/x?y#z"}

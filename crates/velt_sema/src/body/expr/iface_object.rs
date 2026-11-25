@@ -302,6 +302,8 @@ impl FnCx<'_, '_> {
                         Some(v) => self.slot_fn(v, exp, (iface, slot), dyn_ty),
                         None => (self.slot_shorthand(&key, exp, (iface, slot)), false),
                     };
+                    // A function not written here, stored as a method (`literal_this.rs`).
+                    self.stored_value(&key, v, &h);
                     let h = self.overload_impl_results(&methods, &m.name, (h, v), key.span);
                     let h = self.fit_fn(h, m, this.then_some(dyn_ty));
                     values.push((key.name.clone(), h));

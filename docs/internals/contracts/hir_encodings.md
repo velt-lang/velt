@@ -1065,7 +1065,7 @@ converted to, the object types in the fields, elements and map values of what is
 function value whose body is not known, or runs a `with` whose callback is not a closure or a
 named function written there (lowering takes the module lock for it); and no `with` inside them
 has a callback that does. In a program whose functions may have properties, lowering calls
-`velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
+std's `schedModuleWith` before the lock of every other call (rt_abi.md "Module state"). Empty in a
 program without `any`.
 
 ## Unchecked definitions (#1658; additive)

@@ -10,7 +10,6 @@ mod async_rt;
 mod atomic;
 mod cancel;
 mod drops;
-mod json;
 mod local;
 mod net;
 mod rt;

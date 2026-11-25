@@ -1,0 +1,93 @@
+// A `catch` handler giving `any`, or a value holding one (a field, a nested field, a function's
+// result, a union's member), is refused: TypeScript types the result `Promise<any>` or `Promise<T | U>`, which
+// Velt doesn't make yet, and taking the value as the promise's value type would be a checked
+// conversion that fails at run time for the error object or another value.
+async function fail(b: boolean): Promise<number> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return 7;
+}
+
+function fallback(): any {
+  return "text";
+}
+
+async function failU(b: boolean): Promise<number | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return 7;
+}
+
+interface P {
+  x: number;
+}
+async function failP(b: boolean): Promise<P | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return { x: 1 };
+}
+function loose(): { x: any } {
+  return { x: "s" };
+}
+async function failNested(b: boolean): Promise<{ inner: { x: number } } | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return { inner: { x: 1 } };
+}
+function nested(): { inner: { x: any } } {
+  return { inner: { x: "n" } };
+}
+async function failFn(b: boolean): Promise<(() => number) | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return () => 1;
+}
+function fnAny(): () => any {
+  return () => "f";
+}
+
+async function failObjOrNum(b: boolean): Promise<P | number | undefined> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return 1;
+}
+function objOrNum(): { x: any } | number {
+  return { x: "s" };
+}
+interface Q {
+  kind: "q";
+  v: number;
+}
+interface R {
+  kind: "r";
+}
+async function failDisc(b: boolean): Promise<Q | R> {
+  if (b) {
+    throw new Error("boom");
+  }
+  return { kind: "r" };
+}
+function disc(): { kind: "q"; v: any } | R {
+  return { kind: "q", v: "s" };
+}
+
+async function main() {
+  const v = await fail(true).catch((e: any) => e);
+  const w = await failU(true).catch(() => fallback());
+  console.log("a", typeof v, typeof w);
+  const p = await failP(true).catch(() => loose());
+  const n = await failNested(true).catch(() => nested());
+  const f = await failFn(true).catch(() => fnAny());
+  console.log(typeof p, typeof n, typeof f);
+  const u = await failObjOrNum(true).catch(() => objOrNum());
+  const q = await failDisc(true).catch(() => disc());
+  console.log(typeof u, typeof q);
+}
+
+main();

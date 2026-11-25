@@ -19,6 +19,8 @@ pub(crate) struct Frame {
     /// branches of `if (typeIs<A, B>())` (`body::type_guards`), innermost last.
     pub type_guards: Vec<(TyId, TyId)>,
     pub locals: Vec<LocalDef>,
+    /// The `const`s initialized with an arrow (`expr/literal_this.rs` `stored_value`).
+    pub arrow_consts: rustc_hash::FxHashSet<LocalId>,
     pub kinds: Vec<LocalKind>,
     pub scopes: Vec<Scope>,
     pub loops: Vec<LoopCx>,
@@ -247,6 +249,7 @@ impl Frame {
             cpu_guards: vec![],
             type_guards: vec![],
             locals: vec![],
+            arrow_consts: Default::default(),
             kinds: vec![],
             scopes: vec![Scope::default()],
             loops: vec![],

@@ -37,6 +37,8 @@ pub(super) struct Walk<'a> {
     fn_depth: usize,
     /// Keys read before their constant's declaration (reported once the walk is done).
     early: std::cell::RefCell<Vec<Diagnostic>>,
+    /// The module binds `Symbol` nowhere: `Symbol.for` names the registry (`keys::binds_anywhere`).
+    symbol_global: bool,
     /// Where the module's own key constants are declared (module-level reads before them are
     /// TS2448).
     module_consts: FxHashMap<String, u32>,
@@ -58,6 +60,7 @@ impl<'a> Walk<'a> {
             const_scopes: vec![FxHashMap::default()],
             fn_depth: 0,
             early: Default::default(),
+            symbol_global: true,
             module_consts: Default::default(),
             sites: vec![],
             diags: vec![],
@@ -67,9 +70,11 @@ impl<'a> Walk<'a> {
     /// Rewrite every item of the module, its constants standing for `globalThis` first (a
     /// function may use one declared after it).
     pub(super) fn module_items(&mut self, module: &mut ast::Module) {
+        self.symbol_global = !super::keys::binds_anywhere(module, "Symbol");
+        let symbol_global = self.symbol_global;
         for item in &module.items {
             if let I::Var(v) = &item.kind {
-                if let Some((n, _)) = const_key(v) {
+                if let Some((n, _)) = const_key(v, symbol_global) {
                     self.module_consts.insert(n, v.span.lo);
                 }
             }
@@ -150,6 +155,28 @@ impl<'a> Walk<'a> {
     /// The property key `e` names: a string literal or constant (the innermost declaration of
     /// the name decides).
     fn key(&self, e: &ast::Expr) -> Option<String> {
+        let k = self.key_as_written(e)?;
+        // A string spelled as a symbol's key (`"[Symbol.for(\"k\")]"`, or a constant holding one)
+        // would name that symbol's property: refused.
+        let shown = k.strip_prefix(super::keys::RESERVED);
+        let literal = !matches!(e.kind, E::Ident(_)) && super::keys::reserved_key(&k);
+        if shown.is_some() || literal {
+            self.reserved_name(shown.unwrap_or(&k), e.span);
+            return None;
+        }
+        Some(k)
+    }
+
+    /// Property name `name` of `globalThis`, spelled as a symbol's key, written at `at`: refused.
+    pub(super) fn reserved_name(&self, name: &str, at: velt_common::Span) {
+        self.early.borrow_mut().push(Diagnostic::error(
+            format!("the property name `{name}` of `globalThis` is not supported: Velt uses names starting with `[Symbol.` for symbol keys"),
+            at,
+        ));
+    }
+
+    /// [`Self::key`] before the check of names spelled as symbol keys.
+    fn key_as_written(&self, e: &ast::Expr) -> Option<String> {
         if let E::Ident(id) = &e.kind {
             for (names, consts) in self.scopes.iter().zip(&self.const_scopes).rev() {
                 if let Some(c) = consts.get(&id.name) {
@@ -285,7 +312,7 @@ impl<'a> Walk<'a> {
                     let mut names = vec![];
                     pattern_names(&v.pattern, &mut names);
                     self.shadow(names);
-                    if let Some((n, k)) = const_key(v) {
+                    if let Some((n, k)) = const_key(v, self.symbol_global) {
                         let scope = self.const_scopes.last_mut().expect("ICE: no scope");
                         scope.insert(
                             n,
@@ -321,7 +348,7 @@ impl<'a> Walk<'a> {
                 let mut names = vec![];
                 pattern_names(&v.pattern, &mut names);
                 self.shadow(names);
-                if let Some((n, k)) = const_key(v) {
+                if let Some((n, k)) = const_key(v, self.symbol_global) {
                     let scope = self.const_scopes.last_mut().expect("ICE: no scope");
                     scope.insert(
                         n,

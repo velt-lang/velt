@@ -1,11 +1,7 @@
-//! The string builder and the runtime's JSON reader on large inputs. Timings are only printed
+//! The string builder on large inputs. Timings are only printed
 //! (`cargo test -p velt_rt --release --lib text_perf -- --nocapture`): what is checked is
-//! counted, so a loaded machine can't fail it. Speed is measured by `bench/strings.velt` and
-//! `bench/json/` (`parse_typed`, `parse_value`).
+//! counted, so a loaded machine can't fail it. Speed is measured by `bench/strings.velt`.
 
-use super::json_reader::{borrow, decode_user_object};
-use crate::json::reader::*;
-use crate::json::reader_abi::*;
 use crate::str::{velt_rt_str_drop, VeltStr};
 use crate::strbuf::*;
 use std::mem::MaybeUninit;
@@ -51,67 +47,4 @@ fn builder_1m_small_pushes() {
     eprintln!("strbuf: 1M push_str + 1M push_i64: {elapsed:?}, {grows} grows");
     // Doubling from 32 bytes to 4 MB: about 17.
     assert!(grows <= 40, "the builder grew {grows} times");
-}
-
-/// About `target` bytes of `[User, ...]` with escapes, unknown keys and nested values.
-fn users_doc(target: usize) -> (String, usize) {
-    let mut doc = String::with_capacity(target + 256);
-    doc.push('[');
-    let mut n = 0;
-    while doc.len() < target {
-        if n > 0 {
-            doc.push(',');
-        }
-        doc += &format!(
-            r#"{{"name":"user {n} \"q\"","age":{},"tags":["admin","t{n}"],"email":"u{n}@example.com","score":{}.25,"meta":{{"a":[1,2,3],"b":null}}}}"#,
-            20 + n % 50,
-            n * 7
-        );
-        n += 1;
-    }
-    doc.push(']');
-    (doc, n)
-}
-
-fn mb_per_s(bytes: usize, t: std::time::Duration) -> f64 {
-    bytes as f64 / 1e6 / t.as_secs_f64()
-}
-
-/// 10 MB skipped, decoded and parsed as a value: the results are checked, the times printed.
-#[test]
-fn json_reader_throughput_10mb() {
-    let (doc, count) = users_doc(10 << 20);
-    let src = borrow(&doc);
-    // Pure tokenizing/validation: skip the whole document.
-    let t = Instant::now();
-    unsafe {
-        let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_skip_value(r as u64), 1);
-        assert_eq!(velt_rt_json_reader_end(r as u64), 1);
-        velt_rt_json_reader_free(r as u64);
-    }
-    let skip = t.elapsed();
-    // A generated `JSON.parse<User[]>` decoder.
-    let t = Instant::now();
-    let users = unsafe {
-        let r = velt_rt_json_reader_new(&src);
-        assert_eq!(velt_rt_json_reader_expect_array_start(r as u64), 1);
-        let mut users = Vec::new();
-        while velt_rt_json_reader_array_next(r as u64) == STEP_MORE {
-            users.push(decode_user_object(r).unwrap());
-        }
-        assert_eq!(velt_rt_json_reader_end(r as u64), 1);
-        velt_rt_json_reader_free(r as u64);
-        users
-    };
-    let decode = t.elapsed();
-    assert_eq!(users.len(), count);
-    assert_eq!(users[3].name, "user 3 \"q\"");
-    let len = doc.len();
-    eprintln!(
-        "json {:.1} MB, {count} users: skip_value {:.0} MB/s, typed decode {:.0} MB/s",
-        len as f64 / 1e6,
-        mb_per_s(len, skip),
-        mb_per_s(len, decode)
-    );
 }
