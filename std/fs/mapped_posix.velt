@@ -7,6 +7,7 @@ import { cPath } from "velt/fs/fd/args";
 import { isMac } from "velt/fs/fd/system";
 import { osError } from "velt/fs/errors";
 import { letGo, MapOptions, Mapping, newOwner, outsideFile, partOf } from "velt/fs/mapped_part";
+import { reportBusErrors } from "#mapped-fault";
 
 /** Maps the part of the file at `path` that `options` names (`MappedFile.open`). */
 export function mapFile(path: string, options: MapOptions | undefined): Mapping {
@@ -50,6 +51,7 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
   if (base == 0) {
     throw osError(e, "mmap", path);
   }
+  reportBusErrors();
   const address = base + (lead as usize);
   const owner = newOwner(fnAddress(release), base, (lead as usize) + len);
   // SAFETY: `address` is `len` readable bytes of a mapping that stays until `owner`'s last
