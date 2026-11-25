@@ -123,8 +123,9 @@ function runMap(phase: string): u64 {
 }
 
 function main() {
-  const kind = process.argv[2];
-  const phase = process.argv[3];
+  // Without arguments: u64 hit, so bench/compiler_ab.sh measures a run.
+  const kind = process.argv[2] ?? "u64";
+  const phase = process.argv[3] ?? "hit";
   let sum: u64 = 0;
   if (kind == "u64") {
     sum = runU64(phase);
