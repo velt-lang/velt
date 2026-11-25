@@ -52,6 +52,7 @@ mod nested;
 mod operators;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
+mod short_overrides;
 pub(crate) mod sigs;
 pub(crate) mod static_this;
 mod unsafe_methods;

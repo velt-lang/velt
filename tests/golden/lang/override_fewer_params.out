@@ -1,0 +1,46 @@
+a0 a3 s1 s5
+base note m 2
+1 3 3
+base zero 3 base plain p7
+short a short a short step s short step s
+short note m
+101 202 202
+short zero 1 short plain p
+shorter short a shorter short a short step s short step s
+short note m
+101 202 202
+shorter zero short plain p
+short b short zero 5 102 short plain q short step t
+short note n
+shorter short b shorter zero 102 short plain q short step t
+short note n
+shorter zero
+stepper a1 stepper b7
+twice a2 twice b7
+still a still b
+still twice a still twice b
+still twice c still twice d still twice f
+1 3 x+y 40 none
+10 10 none 40 none
+10
+400
+1100
+square 9 shape square 4
+dot shape dot
+square 16 dot
+-1 -2 [ 2, 4 ] num 3
+42 box 4 42
+short q short r
+own a own b
+own note
+counter a1 counter b2
+counter note m
+over a over b
+counter note m
+gen a2 gen b2
+gen note m
+loaded x
+over c own d
+base a base b2
+fast a fast b
+fast c

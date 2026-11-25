@@ -1,0 +1,312 @@
+// An override, or a method implementing an interface, may take fewer parameters than the
+// method it stands for, as in TypeScript: it ignores the arguments after its own (#3819). A
+// call through the base class or the interface passes them all; a call on the class itself
+// passes only its own.
+class Ctx {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+
+class Base {
+  n = 0;
+  run(s: string, from?: number): string {
+    return s + (from ?? 0);
+  }
+  step(s: string, by = 1): string {
+    return s + by;
+  }
+  note(msg: string, level: number): void {
+    console.log("base note", msg, level);
+  }
+  bump(by: number, twice?: boolean): number {
+    this.n += twice ? by * 2 : by;
+    return this.n;
+  }
+  zero(a: number, b: number): string {
+    return "base zero " + (a + b);
+  }
+  // No return types written: both results are inferred.
+  plain(s: string, ctx: Ctx) {
+    return "base plain " + s + ctx.id;
+  }
+}
+
+class Short extends Base {
+  override run(s: string): string {
+    return "short " + s;
+  }
+  override step(s: string): string {
+    return "short step " + s;
+  }
+  override note(msg: string): void {
+    console.log("short note", msg);
+  }
+  override bump(by: number): number {
+    this.n += by + 100;
+    return this.n;
+  }
+  override zero(a: number): string {
+    return "short zero " + a;
+  }
+  override plain(s: string) {
+    return "short plain " + s;
+  }
+}
+
+// Fewer again, and an override of the shorter method with the same parameters.
+class Shorter extends Short {
+  override zero(): string {
+    return "shorter zero";
+  }
+  override run(s: string): string {
+    return "shorter " + super.run(s);
+  }
+}
+
+const all: Base[] = [new Base(), new Short(), new Shorter()];
+for (const b of all) {
+  console.log(b.run("a"), b.run("a", 3), b.step("s"), b.step("s", 5));
+  b.note("m", 2);
+  const one = b.bump(1);
+  const two = b.bump(1, true);
+  console.log(one, two, b.n);
+  console.log(b.zero(1, 2), b.plain("p", new Ctx(7)));
+}
+const shorts: Short[] = [new Short(), new Shorter()];
+for (const s of shorts) {
+  console.log(s.run("b"), s.zero(5), s.bump(2), s.plain("q"), s.step("t"));
+  s.note("n");
+}
+console.log(new Shorter().zero());
+
+// Beside an override that gives the dropped parameter another default.
+class Stepper {
+  step(s: string, by = 1): string {
+    return "stepper " + s + by;
+  }
+}
+
+class Twice extends Stepper {
+  override step(s: string, by = 2): string {
+    return "twice " + s + by;
+  }
+}
+
+class Still extends Stepper {
+  override step(s: string): string {
+    return "still " + s;
+  }
+}
+
+class StillTwice extends Twice {
+  override step(s: string): string {
+    return "still twice " + s;
+  }
+}
+
+const steppers: Stepper[] = [new Stepper(), new Twice(), new Still(), new StillTwice()];
+for (const b of steppers) {
+  console.log(b.step("a"), b.step("b", 7));
+}
+const twice: Twice = new StillTwice();
+console.log(twice.step("c"), twice.step("d", 9), new StillTwice().step("f"));
+
+// A rest parameter of the base method is one of those left out.
+class Joiner {
+  all(a: number, ...rest: number[]): number {
+    return a + rest.length;
+  }
+  log(...parts: string[]): string {
+    return parts.join("+");
+  }
+}
+
+class Terse extends Joiner {
+  override all(a: number): number {
+    return a * 10;
+  }
+  override log(): string {
+    return "none";
+  }
+}
+
+const joiners: Joiner[] = [new Joiner(), new Terse()];
+for (const j of joiners) {
+  console.log(j.all(1), j.all(1, 2, 3), j.log("x", "y"), new Terse().all(4), new Terse().log());
+}
+
+// A method that returns `this`.
+class Chain {
+  n = 0;
+  add(a: number, b: number): this {
+    this.n += a + b;
+    return this;
+  }
+}
+
+class One extends Chain {
+  override add(a: number): this {
+    this.n += a * 100;
+    return this;
+  }
+}
+
+const chains: Chain[] = [new Chain(), new One()];
+for (const c of chains) {
+  console.log(c.add(1, 2).add(3, 4).n);
+}
+console.log(new One().add(5).add(6).n);
+
+// An abstract method, implemented with fewer parameters.
+abstract class Shape {
+  abstract area(scale: number, unit: string): string;
+  describe(): string {
+    return "shape " + this.area(2, "cm");
+  }
+}
+
+class Square extends Shape {
+  area(scale: number): string {
+    return "square " + scale * scale;
+  }
+}
+
+class Dot extends Square {
+  override area(): string {
+    return "dot";
+  }
+}
+
+const shapes: Shape[] = [new Square(), new Dot()];
+for (const s of shapes) {
+  console.log(s.area(3, "m"), s.describe());
+}
+console.log(new Square().area(4), new Dot().area());
+
+// A generic base class.
+class Box<T> {
+  items: T[] = [];
+  put(v: T, tag?: string): number {
+    this.items.push(v);
+    return this.items.length;
+  }
+  label(v: T, ctx: Ctx): string {
+    return "box " + ctx.id;
+  }
+}
+
+class NumBox extends Box<number> {
+  override put(v: number): number {
+    this.items.push(v * 2);
+    return -this.items.length;
+  }
+  override label(v: number): string {
+    return "num " + v;
+  }
+}
+
+class AnyBox<U> extends Box<U> {
+  override put(v: U): number {
+    return 42;
+  }
+}
+
+const nums: Box<number> = new NumBox();
+const p1 = nums.put(1);
+const p2 = nums.put(2, "t");
+console.log(p1, p2, nums.items, nums.label(3, new Ctx(9)));
+const strs: Box<string> = new AnyBox<string>();
+console.log(strs.put("x", "t"), strs.label("y", new Ctx(4)), new AnyBox<boolean>().put(true));
+
+// Through `any`, where the arguments are whatever the call passes.
+const dynamic: any = new Short();
+console.log(dynamic.run("q", 5), dynamic.run("r"));
+
+// Interface methods: implemented by the class itself, by a method it inherits, by an override,
+// and by a generic class.
+interface Runner {
+  run(s: string, from?: number): string;
+  note(msg: string, level: number): void;
+}
+
+interface Loader {
+  load(id: string, retries: number): Promise<string>;
+}
+
+class Own implements Runner {
+  run(s: string): string {
+    return "own " + s;
+  }
+  note(): void {
+    console.log("own note");
+  }
+}
+
+class Counter {
+  n = 0;
+  run(s: string): string {
+    this.n += 1;
+    return "counter " + s + this.n;
+  }
+  note(msg: string): void {
+    console.log("counter note", msg);
+  }
+}
+
+class Inherits extends Counter implements Runner {}
+
+class Overrides extends Counter implements Runner, Loader {
+  override run(s: string): string {
+    return "over " + s;
+  }
+  async load(id: string): Promise<string> {
+    return "loaded " + id;
+  }
+}
+
+class Gen<T> implements Runner {
+  v: T[];
+  constructor(v: T[]) {
+    this.v = v;
+  }
+  run(s: string): string {
+    return "gen " + s + this.v.length;
+  }
+  note(msg: string): void {
+    console.log("gen note", msg);
+  }
+}
+
+// Async methods.
+class Fetcher {
+  async load(id: string, opts?: { retries: number }): Promise<string> {
+    return "base " + id + (opts ? String(opts.retries) : "");
+  }
+}
+
+class Fast extends Fetcher {
+  override async load(id: string): Promise<string> {
+    return "fast " + id;
+  }
+}
+
+async function main(): Promise<void> {
+  const runners: Runner[] = [new Own(), new Inherits(), new Overrides(), new Gen<number>([1, 2])];
+  for (const r of runners) {
+    console.log(r.run("a"), r.run("b", 2));
+    r.note("m", 3);
+  }
+  const l: Loader = new Overrides();
+  console.log(await l.load("x", 2));
+  const c: Counter = new Overrides();
+  console.log(c.run("c"), new Own().run("d"));
+  const fetchers: Fetcher[] = [new Fetcher(), new Fast()];
+  for (const f of fetchers) {
+    console.log(await f.load("a"), await f.load("b", { retries: 2 }));
+  }
+  console.log(await new Fast().load("c"));
+}
+
+main();
