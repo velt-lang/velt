@@ -4,9 +4,10 @@
 let sets = 0;
 
 class Doubled extends Map<string, number> {
-  override set(k: string, v: number) {
+  override set(k: string, v: number): this {
     sets++;
     super.set(k, v * 2);
+    return this;
   }
 }
 
