@@ -379,3 +379,12 @@ export class ReadableStreamDefaultController<R> {
 async function finished<T>(p: Promise<T>): Promise<void> {
   await p;
 }
+
+/**
+ * `p` (a source's `cancel` result) adopted as Node adopts it (`new Promise((r) => r(p))`): a
+ * job queued now attaches to `p`, and `ok` or `bad` runs a microtask after `p`'s reaction, so
+ * `reader.cancel()`'s promise keeps Node's order against other microtasks (#3695).
+ */
+function adopted(p: Promise<void, unknown>, ok: () => void, bad: (e: unknown) => void) {
+  queueMicrotask(() => p.then(() => queueMicrotask(ok), (e) => queueMicrotask(() => bad(e))));
+}
