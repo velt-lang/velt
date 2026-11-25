@@ -1,0 +1,52 @@
+// A program's override of a std method, called through a std-typed receiver: the call
+// dispatches to the override (`Map.get`, `Set.add`, `Error`'s `name`). By units std's class gets
+// no slot for an override the program adds (#3684), so the run by units fails until then.
+let gets = 0;
+let adds = 0;
+
+class Counted extends Map<string, number> {
+  override get(k: string): number | undefined {
+    gets++;
+    const v = super.get(k);
+    return v === undefined ? undefined : v * 10;
+  }
+}
+
+class Seen extends Set<string> {
+  override add(v: string) {
+    adds++;
+    super.add(v);
+  }
+}
+
+class Named extends Error {
+  override get name(): string {
+    return "Named";
+  }
+}
+
+function look(m: Map<string, number>, k: string): number | undefined {
+  return m.get(k);
+}
+
+function put(s: Set<string>, v: string): void {
+  s.add(v);
+}
+
+function describe(e: Error): string {
+  return e.name;
+}
+
+function main() {
+  const c = new Counted();
+  c.set("x", 4);
+  const m: Map<string, number> = c;
+  console.log(m.get("x"), look(c, "x"), gets);
+  const s = new Seen();
+  put(s, "a");
+  const t: Set<string> = s;
+  t.add("b");
+  console.log(adds, s.size);
+  const e: Error = new Named("boom");
+  console.log(describe(e), e.name);
+}
