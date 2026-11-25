@@ -27,7 +27,9 @@ fn project(dir: &Path, header: &str, lib: &str) {
     std::fs::write(pkg.join("native/geo.h"), header).unwrap();
     std::fs::write(
         pkg.join("src/lib.velt"),
-        format!("import {{ Out, Ptr }} from \"velt/ffi\";\n\n{lib}\nexport const ready = 1;\n"),
+        format!(
+            "import {{ Out, Ptr, Ref }} from \"velt/ffi\";\n\n{lib}\nexport const ready = 1;\n"
+        ),
     )
     .unwrap();
     std::fs::write(
@@ -82,6 +84,9 @@ void use_seg(struct seg *s);
 void use_pt(point_t *p);
 /* An out-parameter of a struct (#2187): `Out<point>`. */
 int get_point(point_t *out);
+/* A struct C only reads (#2187): `Ref<point>`, and `Ref<point> | null`. */
+void draw_point(const point_t *p);
+int maybe_point(const struct point *p);
 /* Every kind of field, with padding before and after small ones and a nested struct with tail
    padding: a slip in any width or alignment shows in the offsets. */
 #include <stdbool.h>
@@ -105,6 +110,8 @@ declare c struct seg { a: point; b: point; }
 declare c("geo") function use_seg(s: Ptr<seg>): void;
 declare c("geo") function use_pt(p: Ptr<point>): void;
 declare c("geo") function get_point(out: Out<point>): i32;
+declare c("geo") function draw_point(p: Ref<point>): void;
+declare c("geo") function maybe_point(p: Ref<point> | null): i32;
 declare c struct tail { big: i64; small: u8; }
 declare c struct kinds {
   flag: bool; i8: i8; u8: u8; i16: i16; u16: u16; f: f32; i32: i32;
@@ -277,6 +284,23 @@ fn an_out_struct_is_a_struct_pointer_c_writes() {
         "C only reads it: it is no out-parameter",
         "its `Out<T>`: declare",
     ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+}
+
+/// A `Ref<S>` is a `const S *` C reads: a non-const one C may write through, and a pointer to
+/// another struct, are refused.
+#[test]
+fn a_ref_struct_is_a_const_struct_pointer() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let header = "#include <stdint.h>\nstruct point { double x; double y; };\nstruct seg { int32_t n; };\nint poke_point(struct point *p);\nint read_seg(const struct seg *s);\n";
+    let lib = "declare c struct point { x: f64; y: f64; }\ndeclare c struct seg { n: i32; }\ndeclare c(\"geo\") function poke_point(p: Ref<point>): i32;\ndeclare c(\"geo\") function read_seg(s: Ref<point>): i32;\n";
+    project(dir.path(), header, lib);
+    let o = check(dir.path(), LINUX);
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    for want in ["C may write through it", "its `Ref<S>`: declare"] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
 }

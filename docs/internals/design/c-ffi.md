@@ -146,6 +146,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
 | `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, `Ptr<U> \| null` for a `U **`, or a C struct |
+| `Ref<S>` | `const S *` | a C struct C reads: the call passes the struct, and C gets the address of a copy, borrowed for the call; `Ref<S> \| null` passes `NULL` for `null` |
 | a `declare c struct` | the struct by value | x86-64 Linux, macOS (System V) and Windows (Win64), arm64 Linux and macOS (AAPCS64); other targets refuse it until their convention comes |
 | `void` | `void` | as a result |
 
@@ -184,6 +185,18 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   inspect hook and `toJSON`, both reading `value`), and a spread (`{ ...out }`) copies no
   accessor, as in JS, so it is `{}`. An `Out<S>` of a C struct aligned above 8 bytes, what the
   `Out` object gives its value, is refused where it is passed (none can be declared today).
+- **`Ref<S>`** (#2187) is velt/ffi's alias of `S`, a `declare c struct`, for a parameter only:
+  the declaration says `Ref<S>`, and the call passes the struct itself, as a `StrBytes` parameter
+  takes a `string`. The call copies it and C gets the copy's address (`CTy::Ref`), borrowed for
+  the call: C must not keep the pointer (the `unsafe` block's promise), and what C does to the
+  copy, `const` cast away, never reaches the caller's value. `Ref<S> | null` passes `NULL` for
+  `null`. It is recognized through a program's type aliases too, generic ones included
+  (`type R = Ref<S>`, `type Id<T> = T` as `Id<Ref<S>>`, `type M<T> = T | null`): each resolves
+  to `S`, which would otherwise cross by value. A `Ref` of anything else, a `Ref` written
+  anywhere else in a C function's signature (`Ref<S>[]`, `Ref<S> | undefined`), a C function
+  returning one, and a `Ref` in a C struct's field (where it would be `S` inline; a field that
+  points is `Ptr<S>`) are errors at the declaration (collect/c_ref.rs). Elsewhere `Ref<S>`
+  is just `S`, as `StrBytes` is `string`.
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
@@ -508,6 +521,7 @@ native: {
   | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`; `Out<S>` of a C struct is `S *`, by the definition it names) |
   | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
   | written arrays, `Out<T>` | non-const `T *` only |
+  | `Ref<S>` | `const S *` only, `S` by the definition it names (a non-const one C may write through is `Out<S>` or `Ptr<S>`; stricter than read-only arrays, which accept a non-const `T *` because many APIs omit `const` on buffers: a struct pointer without `const` usually means C writes it, and `Ptr<S>` stays for the APIs that only forgot it) |
   | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
 
   A function whose type has a calling convention other than the target's C one (`vectorcall`,
@@ -728,8 +742,8 @@ must not depend on code elsewhere.
 
 - `declare c` calls are synchronous.
 - A C struct crosses by value only on x86-64 (Linux, macOS, Windows) and arm64 Linux and macOS,
-  and not as `Ref<S>`, in a variadic function, or to an `@export` function. C arrays in structs
-  are not supported, and an array of structs cannot be passed yet.
+  and not in a variadic function's `...` or to an `@export` function. C arrays in structs are not
+  supported, and an array of structs cannot be passed yet.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -745,9 +759,8 @@ must not depend on code elsewhere.
 ## Not yet implemented
 
 - **C structs by value on the remaining targets** (wasm32, Windows on arm64), in a variadic
-  function and to an `@export` function; **`Ref<S>`**, a `const S *` to a copy borrowed for the
-  call; and arrays of structs (`readonly S[]` as `const S *`), as decided on #2187. C arrays become
-  fields once Velt has fixed-size arrays.
+  function's `...` and to an `@export` function; and arrays of structs (`readonly S[]` as
+  `const S *`), as decided on #2187. C arrays become fields once Velt has fixed-size arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call
