@@ -29,16 +29,16 @@ declare function velt_rt_keep_alive_release();
 // signals it was derived from (until it is aborted or freed), whether it holds a reason, the last
 // wait and the last link of its two lists (new ones are appended), the reason (a string slot,
 // `slotSize<string>()` bytes).
-export const S_LOCK: usize = 0;
-export const S_ABORTED: usize = 8;
-export const S_REFS: usize = 16;
-export const S_WAITERS: usize = 24;
-export const S_CHILDREN: usize = 32;
-export const S_LINKS: usize = 40;
-export const S_HAS_REASON: usize = 48;
+const S_LOCK: usize = 0;
+const S_ABORTED: usize = 8;
+const S_REFS: usize = 16;
+const S_WAITERS: usize = 24;
+const S_CHILDREN: usize = 32;
+const S_LINKS: usize = 40;
+const S_HAS_REASON: usize = 48;
 const S_LAST_WAITER: usize = 56;
 const S_LAST_CHILD: usize = 64;
-export const S_REASON: usize = 72;
+const S_REASON: usize = 72;
 
 // A wait: the heap future's header (poll, drop, an unused result word), its signal (a reference
 // of its own), its place in the signal's list, its waker, whether it is linked, whether it is
