@@ -19,13 +19,18 @@ use velt_syntax::ast;
 use super::in_place_chain::is_pure_place;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
-use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, UseMode};
+use crate::hir::{self, DefId, ExprKind as H, PassMode, StmtKind as S, TyId, UseMode};
 use crate::visit::{self, VisitMut};
 
 impl FnCx<'_, '_> {
-    /// `call` (of a method that hands back its receiver, on a receiver of type `to`) as the
-    /// block that runs it and then gives the receiver.
-    pub(super) fn hand_back_call(&mut self, mut call: hir::Expr, to: TyId) -> hir::Expr {
+    /// `call` (of method `def`, which hands back its receiver, on a receiver of type `to`) as
+    /// the block that runs it and then gives the receiver.
+    pub(super) fn hand_back_call(
+        &mut self,
+        mut call: hir::Expr,
+        def: DefId,
+        to: TyId,
+    ) -> hir::Expr {
         let span = call.span;
         let unit = self.cx.ty.unit;
         let H::Call { args, .. } = &mut call.kind else {
@@ -54,9 +59,12 @@ impl FnCx<'_, '_> {
         } else {
             let ty = recv.ty;
             let tmp = self.new_local("<receiver>", ty, true, span, LocalKind::Temp);
-            let mode = match recv.kind {
-                H::Local(_, UseMode::BorrowMut) => UseMode::BorrowMut,
-                _ => UseMode::Borrow,
+            // The temporary is passed as the receiver was: changed when the place was read
+            // mutably or the method changes `this`.
+            let mutates = self.this_mode(def) == PassMode::BorrowMut;
+            let mode = match mutates || place_mode(recv) == Some(UseMode::BorrowMut) {
+                true => UseMode::BorrowMut,
+                false => UseMode::Borrow,
             };
             let read = self.mk(H::Local(tmp, mode), ty, span);
             let mut init = std::mem::replace(recv, read);
@@ -313,6 +321,19 @@ fn is_receiver(e: &hir::Expr) -> bool {
         H::Local(..) => true,
         H::Upcast(x) | H::Downcast(x) => is_receiver(x),
         _ => false,
+    }
+}
+
+/// How place `e` is read (`None`: `e` is no place).
+fn place_mode(e: &hir::Expr) -> Option<UseMode> {
+    match &e.kind {
+        H::Local(_, mode)
+        | H::Field { mode, .. }
+        | H::Index { mode, .. }
+        | H::UnwrapSome(_, mode)
+        | H::UnwrapVariant { mode, .. } => Some(*mode),
+        H::Downcast(x) => place_mode(x),
+        _ => None,
     }
 }
 

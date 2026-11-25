@@ -48,6 +48,10 @@ function withZero(s: Set<number>): Set<number> {
   return s.add(0);
 }
 
+function first(): number {
+  return 0;
+}
+
 function sizeOf(s: Set<number>): number {
   return s.size;
 }
@@ -68,6 +72,11 @@ function main() {
   // Returned and passed on.
   const z = withZero(s);
   console.log(z === s, sizeOf(s.add(9)), s.size);
+
+  // On an element found by a call: the element itself, changed.
+  const group = [new Set<number>()];
+  const e = group[first()].add(5).add(6);
+  console.log(e === group[0], group[0].size);
 
   // Through an interface and through `any`.
   const a = new AddingSet();
