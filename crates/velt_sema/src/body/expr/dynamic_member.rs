@@ -13,6 +13,7 @@ use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, UseMode};
 use crate::hook_calls::{self as hooks, ty, HookTy};
+use crate::literals::js_number;
 
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
@@ -743,18 +744,3 @@ const ARRAY_RESULTS: &[&str] = &[
     "toSpliced",
     "with",
 ];
-
-/// A non-negative number as JavaScript prints it (`String(n)`): `1e+21`, `1e-7`, `0.5`, `3`.
-fn js_number(f: f64) -> String {
-    if f == 0.0 {
-        return "0".into();
-    }
-    if !(1e-6..1e21).contains(&f.abs()) {
-        let t = format!("{f:e}");
-        return match t.split_once('e') {
-            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
-            _ => t,
-        };
-    }
-    f.to_string()
-}
