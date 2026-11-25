@@ -1,16 +1,16 @@
 // velt/task (internal): `catchPanic`, a promise whose panics are caught, and its `PanicError`.
 
 import { arm, bodyCatching, free, message, NONE, settled, take } from "#task-catch";
+import { ERROR_NAME } from "velt/lang/hooks/error";
 
 /** Thrown by `catchPanic` when the code it ran panicked; `message` is the panic's message. */
 export class PanicError extends Error {
-  // Its `name`, set as `Error`'s built-in subclasses set theirs (never through the accessor a
-  // subclass may override).
-  name = "PanicError";
-
   /** A `PanicError` with the panic's `message`. */
   constructor(message: string) {
     super(message);
+    // Its `name`, set as `Error`'s built-in subclasses set theirs (never through the accessor a
+    // subclass may override).
+    this[ERROR_NAME]("PanicError");
   }
 }
 
