@@ -61,7 +61,7 @@ pub(crate) mod ctor_locals;
 mod ctor_name;
 mod ctor_objects;
 mod ctor_values;
-mod default_args;
+pub(super) mod default_args;
 mod discriminated;
 mod discriminated_cast;
 mod dispose_call;
