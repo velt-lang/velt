@@ -68,14 +68,25 @@ function wakeAway(task: usize, n: usize): void {
     return;
   }
   wp.beforeTaskRef();
-  if (wk.counting() && m.ld(n + nd.N_TASK) !== task) {
-    // Its finish let go of the task while this reference was out (sched_node_done.velt `letGo`).
-    panic("ICE: a promise let go of its task while a wake of it by value was under way");
+  if (wk.counting()) {
+    taskHeld(task, n);
   }
   // The node holds a reference to its task, and this one to the node: the task is alive.
   m.inc(task + t.T_REFS);
   give(n);
   wa.wakeAway(task);
+}
+
+/**
+ * The check `wakeAway` makes in counted runs: node `n` still holds its reference to `task`. An
+ * ICE when its finish let go of the task while a wake of it by value was under way
+ * (sched_node_done.velt `letGo` keeps it while a waker is out; sched_node_wake.test.velt).
+ */
+@noInline
+export function taskHeld(task: usize, n: usize): void {
+  if (m.ld(n + nd.N_TASK) !== task) {
+    panic("ICE: a promise let go of its task while a wake of it by value was under way");
+  }
 }
 
 @cExport("std_sched_node_wake_by_ref")
