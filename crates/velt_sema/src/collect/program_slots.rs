@@ -12,7 +12,8 @@
 //! override gives a parameter another default, the default-filling slots follow the method's
 //! (`fill_defaults`), each std class of the subtree getting a fill method of its own where its
 //! method differs from its base's, as `classes::fill_slots` lays them out in a whole-program
-//! check.
+//! check. A method std gave a slot (because std overrides it) gets only the fill slots it lacks
+//! (`missing_fills`).
 
 use std::collections::BTreeMap;
 
@@ -21,7 +22,9 @@ use crate::ctx::Ctx;
 use crate::hir::DefId;
 
 use super::classes::base_of_def;
-use super::fill_defaults::{fill_key, fill_method, fill_positions, trailing_counts, Overrides};
+use super::fill_defaults::{
+    fill_key, fill_method, fill_positions, trailing_counts, Overrides, FILL,
+};
 
 /// Gives the finished unit's classes in `overridden` (origin class, method key) the slots they
 /// lack, beside them, with the default-filling slots of a method an override in `overrides` gives
@@ -33,7 +36,15 @@ pub(super) fn add(
 ) {
     let mut wanted: BTreeMap<DefId, Vec<String>> = BTreeMap::new();
     for (origin, key) in overridden {
-        if !cx.is_frozen(*origin) || cx.vslot(*origin, key).is_some() {
+        if !cx.is_frozen(*origin) {
+            continue;
+        }
+        // A method std gave a slot (std overrides it) may still lack the default-filling slots
+        // of the program's other default (std's overrides keep the method's).
+        if cx.vslot(*origin, key).is_some() {
+            if !missing_fills(cx, *origin, key, overrides).is_empty() {
+                wanted.entry(*origin).or_default().push(key.clone());
+            }
             continue;
         }
         // A method the class gets as an interface's default has no method of its own to put in
@@ -69,31 +80,72 @@ struct Added {
     fill: Option<(String, Vec<usize>, Option<usize>)>,
 }
 
-/// The slots `keys` add to `origin`'s subtree, in order: each key's, then its fill slots, as
-/// `classes::fill_slots` gives a class whose method an override gives another default.
+/// The slots `keys` add to `origin`'s subtree, in order: each key's when std gave it none, then
+/// the fill slots it lacks, as `classes::fill_slots` gives a class whose method an override
+/// gives another default.
 fn added_slots(cx: &Ctx, origin: DefId, keys: &[String], overrides: &Overrides) -> Vec<Added> {
     let mut out = vec![];
     for k in keys {
-        out.push(Added {
-            slot_key: k.clone(),
-            fill: None,
-        });
-        let Some(m) = own_method(cx, origin, k) else {
-            continue;
-        };
-        let positions = fill_positions(cx, overrides, origin, k, m);
-        if positions.is_empty() {
-            continue;
-        }
-        let trailing = trailing_counts(cx, m, &positions);
-        for t in std::iter::once(None).chain(trailing.into_iter().map(Some)) {
+        if cx.vslot(origin, k).is_none() {
             out.push(Added {
-                slot_key: fill_key(k, t),
-                fill: Some((k.clone(), positions.clone(), t)),
+                slot_key: k.clone(),
+                fill: None,
             });
+        }
+        out.extend(missing_fills(cx, origin, k, overrides));
+    }
+    out
+}
+
+/// The default-filling slots method `key` of `origin` (introducing it) lacks for the defaults
+/// the program's overrides in `overrides` give it: none when no override changes one. Std's
+/// own fill slots (when std's overrides change a default too) are kept: the general one is
+/// added again when the program's take more parameters (`add_slots` keeps std's under another
+/// key, for std's checked calls and their entries in the program's classes), and a trailing one
+/// only for a count std has none for.
+fn missing_fills(cx: &Ctx, origin: DefId, key: &str, overrides: &Overrides) -> Vec<Added> {
+    let Some(m) = own_method(cx, origin, key) else {
+        return vec![];
+    };
+    let mut positions = fill_positions(cx, overrides, origin, key, m);
+    if positions.is_empty() {
+        return vec![];
+    }
+    let general = fill_key(key, None);
+    let std_positions = (cx.vslot(origin, &general))
+        .and_then(|s| cx.vtable_of(origin)?.get(s as usize).copied())
+        .and_then(|e| cx.fills.get(&e))
+        .map(|f| f.positions.clone());
+    let mut out = vec![];
+    let mut add = |t: Option<usize>, positions: &[usize]| {
+        out.push(Added {
+            slot_key: fill_key(key, t),
+            fill: Some((key.to_string(), positions.to_vec(), t)),
+        })
+    };
+    match std_positions {
+        Some(had) if positions.iter().all(|p| had.contains(p)) => positions = had,
+        Some(had) => {
+            positions.extend(had);
+            positions.sort_unstable();
+            positions.dedup();
+            add(None, &positions);
+        }
+        None => add(None, &positions),
+    }
+    for t in trailing_counts(cx, m, &positions) {
+        if cx.vslot(origin, &fill_key(key, Some(t))).is_none() {
+            add(Some(t), &positions);
         }
     }
     out
+}
+
+/// The key std's own general fill slot of a method keeps when the program adds a wider one
+/// (`missing_fills`): a fill slot still (`classes::fill_slots` gives a program class an entry
+/// of its own there), no call names it.
+fn std_fill_key(key: &str) -> String {
+    format!("{FILL}<std>{}", key.strip_prefix(FILL).unwrap_or(key))
 }
 
 /// Adds `keys` as slots of `origin` and of every std class under it.
@@ -118,11 +170,14 @@ fn add_slots(cx: &mut Ctx, origin: DefId, keys: &[String], frozen: &[DefId], o: 
             let def = match &a.fill {
                 None => own_method(cx, c, &a.slot_key).or_else(|| entry(cx, parent, &a.slot_key)),
                 Some((k, positions, t)) => {
-                    // The method this class's slot `k` holds, computed just before.
+                    // The method this class's slot `k` holds: computed just before, or std's.
                     let at = added
                         .iter()
                         .position(|b| b.fill.is_none() && b.slot_key == *k);
-                    let m = new[at.expect("ICE: a fill slot's method slot")];
+                    let m = match at {
+                        Some(at) => new[at],
+                        None => entry(cx, Some(c), k).expect("ICE: a fill slot's method slot"),
+                    };
                     match entry(cx, parent, k) == Some(m) {
                         // Inherited unchanged: so is the fill entry.
                         true => entry(cx, parent, &a.slot_key),
@@ -135,6 +190,10 @@ fn add_slots(cx: &mut Ctx, origin: DefId, keys: &[String], frozen: &[DefId], o: 
         let pad = *entries.first().or(new.first()).expect("ICE: a slot added");
         entries.resize(first, pad);
         for (a, def) in added.iter().zip(new) {
+            // Std's general fill slot, which a wider one replaces for the program's calls.
+            if let Some(old) = slots.get(&a.slot_key).copied() {
+                slots.insert(std_fill_key(&a.slot_key), old);
+            }
             slots.insert(a.slot_key.clone(), entries.len() as u32);
             entries.push(def);
         }
