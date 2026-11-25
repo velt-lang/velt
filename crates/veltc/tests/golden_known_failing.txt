@@ -27,20 +27,6 @@ tests/golden/lang/iface_any_args_write_check.velt                  #2943 units
 tests/golden/lang/iface_from_unknown_class.velt                    #2943 units
 tests/golden/lang/iface_nested_receivers.velt                      #2943 units
 tests/golden/lang/iface_nested_writes.velt                         #2943 units
-tests/golden/lang/proxy_getter_brand_receiver.velt                 #2943 units
-tests/golden/lang/proxy_throws.velt                                #2943 units
-tests/golden/lang/proxy_throws_catch.velt                          #2943 units
-tests/golden/lang/proxy_throws_reason_mix.velt                     #2943 units
-tests/golden/lang/proxy_throws_reason_one.velt                     #2943 units
-tests/golden/lang/proxy_throws_reason_two.velt                     #2943 units
-tests/golden/lang/proxy_throws_recheck.velt                        #2943 units
-tests/golden/lang/proxy_throws_settled.velt                        #2943 units
-tests/golden/lang/proxy_throws_settled_own.velt                    #2943 units
-tests/golden/lang/proxy_throws_three_traps.velt                    #2943 units
-tests/golden/lang/proxy_throws_two_traps.velt                      #2943 units
-tests/golden/lang/proxy_throws_typed.velt                          #2943 units
-tests/golden/lang/proxy_trap_throws_string.velt                    #2943 units
-tests/golden/lang/proxy_trap_throws_through_helpers.velt           #2943 units
 tests/golden/std/db_rows_source_throws.velt                        #2943 units
 
 # Fail in a run by units, from the whole suite (the nightly's golden-units, run 45498934030 on

@@ -28,23 +28,11 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             }
         }
         solved_ok = cx.solve_err_vars();
-        // The passes after inference see the solved error types.
-        for &d in fns {
-            let t = cx.fn_info(d).throws;
-            cx.fn_info_mut(d).throws = solved(cx, t);
-        }
-        // And what the app's passes raised of a finished unit's throws (`units::raised`).
-        let raised: Vec<_> = cx
-            .unit_sums
-            .raised
-            .throws
-            .iter()
-            .map(|(d, t)| (*d, *t))
-            .collect();
-        for (d, t) in raised {
-            let t = solved(cx, t);
-            cx.unit_sums.raised.throws.insert(d, t);
-        }
+        write_solved(cx, fns);
+    } else if cx.seed_trap_vars() {
+        // By units, a round without variables still has std's trap variables in std's types:
+        // they stand for the seeded sets now.
+        write_solved(cx, fns);
     }
     for &d in fns {
         if let Some(decl) = cx.fn_info(d).declared_throws {
@@ -99,13 +87,30 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     }
 }
 
-/// `t` with its error-set variables solved (`vars`), when the check has them.
+/// `t` with its error-set variables solved (`vars`), when the check has them (or, by units,
+/// std's trap variables stand for the seeded sets: `Ctx::seed_trap_vars`).
 fn solved(cx: &mut Ctx, t: Option<TyId>) -> Option<TyId> {
-    if !cx.fn_sites.use_vars || cx.fn_sites.solved.is_empty() {
+    if cx.fn_sites.solved.is_empty() {
         return t;
     }
     let t = t.map(|t| cx.solved_type(t));
     cx.canon_error(t)
+}
+
+/// The passes after inference see the solved error types: the functions', and what the app's
+/// passes raised of a finished unit's throws (`units::raised`).
+fn write_solved(cx: &mut Ctx, fns: &[DefId]) {
+    for &d in fns {
+        let t = cx.fn_info(d).throws;
+        cx.fn_info_mut(d).throws = solved(cx, t);
+    }
+    let raised: Vec<_> = (cx.unit_sums.raised.throws.iter())
+        .map(|(d, t)| (*d, *t))
+        .collect();
+    for (d, t) in raised {
+        let t = solved(cx, t);
+        cx.unit_sums.raised.throws.insert(d, t);
+    }
 }
 
 /// Generator method `d` implements interface method `what` with an inferred error type: the

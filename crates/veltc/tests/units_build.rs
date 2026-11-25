@@ -117,3 +117,88 @@ fn a_build_by_units_for_windows_lowers_no_posix_only_std_code() {
         );
     }
 }
+
+/// A `get` trap throwing a string, read through std's proxy hooks: std's unit inferred the
+/// hooks (and std's callers of them, `callArrayMethod` among them) with the traps' sets empty,
+/// and a round of the app's stage solves the traps' variables from the program's traps again
+/// (an earlier round's solution, `never`, kept would leave the hooks throwing nothing).
+const PROXY_GET: &str = r#"
+const p: any = new Proxy({ a: 1 }, {
+  get(t, k, r) {
+    if (k === "bad") {
+      throw "a string";
+    }
+    return Reflect.get(t, k, r);
+  },
+});
+try {
+  console.log(p.bad);
+} catch (e) {
+  console.log("caught", e);
+}
+"#;
+
+/// A `set` and a `has` trap throwing classes: the program is checked again with the sets the
+/// first check found, without variables, where std's trap variables stand for those sets.
+const PROXY_TWO_TRAPS: &str = r#"
+class E1 extends Error {}
+class E2 extends Error {}
+
+const s: any = new Proxy({ a: 1 } as any, {
+  set(t, k, v, r) {
+    if (k === "bad") {
+      throw new E1("set");
+    }
+    return Reflect.set(t, k, v, r);
+  },
+});
+const h: any = new Proxy({ a: 1 } as any, {
+  has(t, k) {
+    if (k === "bad") {
+      throw new E2("has");
+    }
+    return Reflect.has(t, k);
+  },
+});
+
+async function write(p: any, k: string): Promise<void> {
+  p[k] = 1;
+}
+
+async function test(p: any, k: string): Promise<boolean> {
+  return k in p;
+}
+
+async function run(): Promise<void> {
+  await write(s, "bad").catch((e) => console.log("set", e instanceof E1, (e as Error).message));
+  const r = await test(h, "bad").catch((e) => {
+    console.log("has", e instanceof E2, (e as Error).message);
+    return false;
+  });
+  console.log(r, await test(h, "a"));
+}
+
+run();
+"#;
+
+/// Programs whose proxy traps throw run by units as checked whole: std's proxy hooks and their
+/// std callers throw what the program's traps throw (`throws::traps`).
+#[test]
+fn a_run_by_units_raises_std_s_proxy_hooks_to_what_the_traps_throw() {
+    for (what, src, prints) in [
+        ("get", PROXY_GET, "caught a string\n"),
+        (
+            "set and has",
+            PROXY_TWO_TRAPS,
+            "set true set\nhas true has\nfalse true\n",
+        ),
+    ] {
+        let dir = test_dir::TestDir::new();
+        std::fs::write(dir.path().join("main.velt"), src).unwrap();
+        let ran = velt_by_units(dir.path(), &["run", "main.velt"]);
+        let stderr = String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "{what}: {stderr}");
+        assert!(checked_by_units(&stderr), "{what}: not by units:\n{stderr}");
+        assert_eq!(String::from_utf8_lossy(&ran.stdout), prints, "{what}");
+    }
+}
