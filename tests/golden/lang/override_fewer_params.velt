@@ -279,6 +279,36 @@ class Gen<T> implements Runner {
   }
 }
 
+// An interface method with a rest parameter, implemented without it.
+interface Sink {
+  write(tag: string, ...parts: string[]): string;
+  all(...parts: number[]): number;
+}
+
+class Quiet implements Sink {
+  write(tag: string): string {
+    return "quiet " + tag;
+  }
+  all(): number {
+    return -1;
+  }
+}
+
+class Full implements Sink {
+  write(tag: string, ...parts: string[]): string {
+    return tag + parts.length;
+  }
+  all(...parts: number[]): number {
+    return parts.length;
+  }
+}
+
+const sinks: Sink[] = [new Quiet(), new Full()];
+for (const s of sinks) {
+  console.log(s.write("t"), s.write("t", "a", "b"), s.all(), s.all(1, 2, 3));
+}
+console.log(new Quiet().write("q"), new Quiet().all());
+
 // Async methods.
 class Fetcher {
   async load(id: string, opts?: { retries: number }): Promise<string> {

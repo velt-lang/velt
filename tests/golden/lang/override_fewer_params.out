@@ -31,6 +31,9 @@ square 16 dot
 -1 -2 [ 2, 4 ] num 3
 42 box 4 42
 short q short r
+quiet t quiet t -1 -1
+t0 t2 0 3
+quiet q -1
 own a own b
 own note
 counter a1 counter b2

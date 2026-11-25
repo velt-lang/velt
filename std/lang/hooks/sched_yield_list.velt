@@ -8,6 +8,7 @@ import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as t from "./sched_task";
+import * as tn from "./sched_yield_turn";
 
 /**
  * A yield: a heap future's header (0, 0 for an awaited yield's record; `HELD`, 0 for a held one),
@@ -40,22 +41,129 @@ export const ROOT: usize = 1;
 /** A held record's first word (`held`), where a stored yield has its poll and a record 0. */
 export const HELD: usize = 1;
 
-// A task's yield block: its list's last yield (0: none), its last stamp, and the stamp of the
-// yield its root waits for with no record (flag `ROOT_ALONE`). A stamp is a yield's generation
-// (the high 32 bits: one more in each poll after one that made stored yields, flag `FRESH`) and
-// its number: stamps grow in the order yields are made.
-const B_LAST: usize = 0;
+/**
+ * An awaited yield's token (sched_yield.velt `schedYield`, what its suspension keeps, #3687):
+ * - `POLL` (0), no record: its task's root yielded, and it goes on once the poll it yielded in is
+ *   over (`YIELDED`, which lasts exactly that poll), whatever cx asks (`pollReady`); or it was
+ *   made off the workers (no task);
+ * - not 0: its held record (`held`), a block's address.
+ */
+export const POLL: usize = 0;
+
+/**
+ * Token `POLL` asked with waker `w`, a started promise's (`isNode`) or a foreign one, on the thread
+ * polling task `k` (0: none) (sched_yield.velt `otherReady`; a task's waker asks its state): 1 once
+ * the poll it was made in is over (`YIELDED` of its task: the node's own, else `k`). Asked in that
+ * poll (a detached child of an inline `Promise.all`, now a started promise of its own), it waits for
+ * a turn of its own, since no record wakes `w` (the task's next poll resumes only its root): a
+ * record on `k`'s list, its node flagged `YIELDING` (a second ask adds none), or, asked on another
+ * task's thread, `w` woken to ask again. Asked after the root yielded again in a later poll, it
+ * waits that turn too: one turn late, never early.
+ */
+@noInline
+export function pollReady(k: usize, w: usize, isNode: bool): u32 {
+  const x = isNode ? m.ld(w + node.N_TASK) : k;
+  if (k === 0 || x === 0 || m.load32(x + t.T_STATE) !== t.YIELDED) {
+    return 1;
+  }
+  if (x !== k) {
+    m.wakeByRef(w);
+    return 0;
+  }
+  if (isNode) {
+    if ((m.load32(w + node.N_FLAGS) & node.YIELDING) !== 0) {
+      // Its turn is on the list.
+      return 0;
+    }
+    m.or32(w + node.N_FLAGS, node.YIELDING);
+  }
+  otherTurn(k, w);
+  return 0;
+}
+
+/**
+ * `pollReady`'s turn for waker `w` of task `k`. It was made as the root's yield with no record, whose
+ * turn the root placed in this poll (`B_ROOT`): it takes that stamp, so it comes before the yields
+ * made after it (a yield of the same number joins before the root's record, `join`).
+ */
+@noInline
+function otherTurn(k: usize, w: usize): void {
+  const b = block(k);
+  join(k, record(m.wakerClone(w), m.ld(b + B_ROOT)));
+}
+
+/**
+ * A task's yield block: its list's last yield (0: none), its last stamp, the stamp of the yield
+ * its root waits for with no record (flag `ROOT_ALONE`), and, while a turn polls the root
+ * (`turnNext`), the yield whose turn is next and whether this turn's waiter went on. A stamp is a
+ * yield's generation (the high 32 bits: one more in each poll after one that made stored yields,
+ * flag `FRESH`) and its number: stamps grow in the order yields are made.
+ */
+export const B_LAST: usize = 0;
 export const B_STAMP: usize = 8;
 export const B_ROOT: usize = 16;
-export const B_SIZE: usize = 24;
+export const B_NEXT: usize = 24;
+export const B_TAKEN: usize = 32;
+/** Records kept for reuse (`recAlloc`, `recFree`): the first, linked by `Y_NEXT`, and how many. */
+export const B_FREE: usize = 40;
+export const B_NFREE: usize = 48;
+/** The stamp + 1 of the root's turn this poll has with no record (`rootTurn`; 0: none). */
+export const B_RTURN: usize = 56;
+export const B_SIZE: usize = 64;
+/** At most this many records are kept for reuse. */
+const POOL: usize = 8;
 /** One generation in a stamp. */
 export const GEN: usize = 4294967296;
 
-/** Task `k`'s yield block, made now if it has none (on its thread). */
+/**
+ * Task `k`'s yield block, made now if it has none, un-parked if parked (on its thread). A parked
+ * block (`park`, sched_task.velt `T_PARKED`) comes back with its stamps and generation as they were.
+ */
 @inline("always")
 export function block(k: usize): usize {
   const b = m.ld(k + t.T_YIELDS);
-  return b !== 0 ? b : makeBlock(k);
+  return b !== 0 ? b : blockAgain(k);
+}
+
+/** `block` for a task with no block in use: its parked one, or one made now. */
+@noInline
+function blockAgain(k: usize): usize {
+  const u = m.ld(k + t.T_PARKED);
+  if (u === 0) {
+    return makeBlock(k);
+  }
+  m.st(k + t.T_PARKED, 0);
+  m.st(k + t.T_YIELDS, u);
+  if (m.load32(k + t.T_STATE) === t.YIELDED && !t.has(k, t.ROOT_ALONE)) {
+    // Its root yielded in this poll while the block was parked, when no stamp is made: its turn
+    // comes before the yields made from now on, as with a block made now. A turn placed before
+    // the block was parked (`ROOT_ALONE`, of this poll: sched_run.velt `runOther` clears an
+    // earlier poll's) keeps its stamp.
+    m.st(u + B_ROOT, m.ld(u + B_STAMP));
+    t.flags(k, t.ROOT_ALONE, 0);
+  }
+  return u;
+}
+
+/** Task `k`'s yield block, parked or not (0: none), for what reads its stamps. */
+@inline("always")
+export function blockOf(k: usize): usize {
+  // At most one of the two is set.
+  return m.ld(k + t.T_YIELDS) | m.ld(k + t.T_PARKED);
+}
+
+/**
+ * Task `k`'s turns are over and its list is empty: its block is parked, so its root's next yields
+ * take the no-block fast path (#3687: a root whose `Promise.all` children's yields made the block).
+ * A turn its root placed in this poll (`ROOT_ALONE`, `B_ROOT`) stays, for `block`.
+ */
+@inline("always")
+export function park(k: usize): void {
+  const b = m.ld(k + t.T_YIELDS);
+  if (b !== 0 && !t.has(k, t.YIELDS)) {
+    m.st(k + t.T_PARKED, b);
+    m.st(k + t.T_YIELDS, 0);
+  }
 }
 
 @noInline
@@ -64,6 +172,11 @@ function makeBlock(k: usize): usize {
   m.st(b + B_LAST, 0);
   m.st(b + B_STAMP, 0);
   m.st(b + B_ROOT, 0);
+  m.st(b + B_NEXT, 0);
+  m.st(b + B_TAKEN, 0);
+  m.st(b + B_FREE, 0);
+  m.st(b + B_NFREE, 0);
+  m.st(b + B_RTURN, 0);
   m.st(k + t.T_YIELDS, b);
   if (m.load32(k + t.T_STATE) === t.YIELDED) {
     // Its root yielded in this poll, before any yield was made: its turn comes first (stamp 0).
@@ -99,7 +212,7 @@ export function record(w: usize, stamp: usize): usize {
  * does; it is task `k`'s, stamped `stamp`.
  */
 export function held(w: usize, k: usize, stamp: usize): usize {
-  const r = m.alloc(Y_SIZE);
+  const r = recAlloc(blockOf(k));
   m.st(r, HELD);
   m.st(r + 8, 0);
   m.st(r + Y_WAKER, w);
@@ -111,20 +224,32 @@ export function held(w: usize, k: usize, stamp: usize): usize {
 /**
  * Yield `y` joins task `k`'s list (on the thread polling `k`) by its number: at the end, unless a
  * yield made after it joined first. The root's turn placed with no record (`ROOT_ALONE`) gets one
- * first, so the yields made after it come after it (a yield of the same number, made before the
- * root's, comes before it).
+ * once a yield that wakes something else joins, so the yields made after it come after it (a
+ * yield of the same number, made before the root's, comes before it). While only the root's
+ * records join, it keeps none: its turn comes first in the next poll (`rootTurn`).
  */
 export function join(k: usize, y: usize): void {
   const b = block(k);
   m.st(y + Y_STATE, QUEUED);
-  let last = m.ld(b + B_LAST);
-  if (last === 0 && t.has(k, t.ROOT_ALONE) && m.load32(k + t.T_STATE) === t.YIELDED) {
+  if (
+    m.ld(y + Y_WAKER) !== ROOT && t.has(k, t.ROOT_ALONE) && m.load32(k + t.T_STATE) === t.YIELDED
+  ) {
     t.flags(k, 0, t.ROOT_ALONE);
-    last = record(ROOT, m.ld(b + B_ROOT));
-    m.st(last + Y_STATE, QUEUED);
-    m.st(last + Y_NEXT, last);
-    m.st(b + B_LAST, last);
+    const r = recAlloc(b);
+    m.st(r, 0);
+    m.st(r + Y_WAKER, ROOT);
+    m.st(r + Y_STAMP, m.ld(b + B_ROOT));
+    m.st(r + Y_STATE, QUEUED);
+    insert(b, r);
   }
+  insert(b, y);
+  // Its next poll fires them (sched_run.velt `runWoken`), and this one's end queues it again.
+  t.flags(k, t.YIELDS | t.LOCALS, 0);
+}
+
+/** Yield `y` goes on block `b`'s list by its number (`join`). */
+function insert(b: usize, y: usize): void {
+  const last = m.ld(b + B_LAST);
   const seq = m.ld(y + Y_STAMP);
   if (last === 0) {
     m.st(y + Y_NEXT, y);
@@ -142,8 +267,12 @@ export function join(k: usize, y: usize): void {
     m.st(y + Y_NEXT, m.ld(p + Y_NEXT));
     m.st(p + Y_NEXT, y);
   }
-  // Its next poll fires them (sched_run.velt `runWoken`), and this one's end queues it again.
-  t.flags(k, t.YIELDS | t.LOCALS, 0);
+}
+
+/** Yield `y`'s stamp. */
+@inline("always")
+export function stampOf(y: usize): usize {
+  return m.ld(y + Y_STAMP);
 }
 
 /**
@@ -152,7 +281,7 @@ export function join(k: usize, y: usize): void {
  */
 export function take(k: usize): usize {
   t.flags(k, 0, t.YIELDS);
-  const b = m.ld(k + t.T_YIELDS);
+  const b = blockOf(k);
   const last = b === 0 ? 0 : m.ld(b + B_LAST);
   if (last === 0) {
     return 0;
@@ -173,13 +302,44 @@ export function waiting(k: usize): bool {
 /** Has task `k` a yield block, to go with it? Never in a program that never yields. */
 @inline("always")
 export function hasBlock(k: usize): bool {
-  return stdUsed("yields") && m.ld(k + t.T_YIELDS) !== 0;
+  return stdUsed("yields") && blockOf(k) !== 0;
 }
 
 /** Task `k`'s yield block goes with the task (its list is empty: the task ended). */
 @noInline
 export function freeBlock(k: usize): void {
-  m.release(m.ld(k + t.T_YIELDS), B_SIZE);
+  const b = blockOf(k);
+  let r = m.ld(b + B_FREE);
+  while (r !== 0) {
+    const nx = m.ld(r + Y_NEXT);
+    m.release(r, Y_SIZE);
+    r = nx;
+  }
+  m.release(b, B_SIZE);
+}
+
+/** A record's memory, from yield block `b`'s spare ones if it has one (on its task's thread). */
+@inline("always")
+function recAlloc(b: usize): usize {
+  const r = m.ld(b + B_FREE);
+  if (r === 0) {
+    return m.alloc(Y_SIZE);
+  }
+  m.st(b + B_FREE, m.ld(r + Y_NEXT));
+  m.st(b + B_NFREE, m.ld(b + B_NFREE) - 1);
+  return r;
+}
+
+/** Record `r` is done with: kept by yield block `b` for reuse, or freed (on its task's thread). */
+function recFree(b: usize, r: usize): void {
+  const n = m.ld(b + B_NFREE);
+  if (n >= POOL) {
+    m.release(r, Y_SIZE);
+    return;
+  }
+  m.st(r + Y_NEXT, m.ld(b + B_FREE));
+  m.st(b + B_FREE, r);
+  m.st(b + B_NFREE, n + 1);
 }
 
 /** The yield after `y` in a list `take` gave. */
@@ -189,14 +349,15 @@ export function next(y: usize): usize {
 }
 
 /**
- * Yield `y`'s turn: the waker to resume (a clone the caller owns, or `ROOT`: its task's, with no
- * reference), 0 when nothing waits for it. An awaited yield's record is freed, and a dropped
- * stored one; a held one (`held`) is left `FIRED` for the resume that takes it.
+ * Yield `y`'s turn, on task `k`'s thread: the waker to resume (a clone the caller owns, or
+ * `ROOT`: its task's, with no reference), 0 when nothing waits for it. An awaited yield's record
+ * is freed, and a dropped stored one; a held one (`held`) is left `FIRED` for the resume that
+ * takes it.
  */
-export function fire(y: usize): usize {
+export function fire(k: usize, y: usize): usize {
   if (m.ld(y) === 0) {
     const w = m.ld(y + Y_WAKER);
-    m.release(y, Y_SIZE);
+    recFree(blockOf(k), y);
     if (w > ROOT && m.ld(w) === t.main() + t.E_NODE_VT) {
       m.and32(w + node.N_FLAGS, ~node.YIELDING);
     }
@@ -204,7 +365,7 @@ export function fire(y: usize): usize {
   }
   // Dropped (for good: nothing else touches it), or dropped meanwhile (the CAS fails).
   if (m.load(y + Y_STATE) === DROPPED || m.cas(y + Y_STATE, QUEUED, FIRING) !== QUEUED) {
-    m.release(y, Y_SIZE);
+    recFree(blockOf(k), y);
     return 0;
   }
   const w = m.swap(y + Y_WAKER, 0);
@@ -237,11 +398,19 @@ export function letGo(w: usize): void {
  */
 @noInline
 export function heldPoll(f: usize, w: usize, cur: usize): u32 {
+  const k = m.ld(f + Y_TASK);
   if (m.load(f + Y_STATE) === FIRED) {
-    m.release(f, Y_SIZE);
+    if (k === cur) {
+      recFree(blockOf(k), f);
+      tn.taken(k);
+    } else {
+      m.release(f, Y_SIZE);
+    }
     return 1;
   }
-  const k = m.ld(f + Y_TASK);
+  if (k === cur && w === k && tn.nextTurn(k, f)) {
+    return 1;
+  }
   if (k === cur && m.ld(w) === t.main() + t.E_NODE_VT) {
     // A started promise one of whose yields still waits: its owner doesn't adopt it meanwhile
     // (sched_node.velt `pollNode`), as `otherYield` flagged it. Another of its records' turn

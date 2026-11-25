@@ -1,0 +1,88 @@
+// A promise a call through `any` returns (#924 step 3), as in Node: function values (an async
+// arrow, an arrow returning a promise, an `unknown` cast, a callback parameter, rest
+// parameters, a function read from a field), an object literal's async method, a class's async
+// and plain methods (with arguments, on a subclass, on a generic class, the object let go while
+// the call runs), through a proxy, and `then` on a call's result.
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+
+class Svc {
+  load(): Promise<number> {
+    return later(9);
+  }
+  async loadAsync(): Promise<number> {
+    return 10;
+  }
+}
+
+class Counter {
+  n = 0;
+  async bump(by: number): Promise<number> {
+    this.n += by;
+    return this.n;
+  }
+}
+
+class Base {
+  async name(): Promise<string> {
+    return "base";
+  }
+}
+
+class Sub extends Base {
+  override async name(): Promise<string> {
+    return "sub";
+  }
+}
+
+class Holder<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  async get(): Promise<T> {
+    return this.v;
+  }
+}
+
+async function values(): Promise<void> {
+  const f: any = async (x: number) => x + 1;
+  console.log("async arrow", await f(1));
+  const g: any = (n: number) => later(n);
+  console.log("arrow", await g(8));
+  const u: unknown = async () => 3;
+  console.log("unknown", await (u as any)());
+  const run = (h: any) => h();
+  console.log("callback", await run(async () => 11));
+  const rest: any = async (...xs: number[]) => xs.length;
+  console.log("rest", await rest(1, 2, 3));
+  const o: any = { f: (n: number) => later(n), run: async () => 7 };
+  const read = o.f;
+  console.log("fields", await o.f(3), await read(4), await o.run());
+  const twice: any = async (x: number) => x * 2;
+  await twice(5).then((v: number) => console.log("then", v));
+}
+
+async function methods(): Promise<void> {
+  const s: any = new Svc();
+  console.log("methods", await s.load(), await s.loadAsync());
+  let c: any = new Counter();
+  const p = c.bump(2);
+  c = null;
+  console.log("let go", await p);
+  const xs: any[] = [new Base(), new Sub()];
+  for (const x of xs) {
+    console.log("class", await x.name());
+  }
+  const h: any = new Holder<string>("hi");
+  console.log("generic", await h.get());
+  const px: any = new Proxy(new Svc(), {});
+  console.log("proxy", await px.load(), await px.loadAsync());
+}
+
+async function main(): Promise<void> {
+  await values();
+  await methods();
+}
+main();

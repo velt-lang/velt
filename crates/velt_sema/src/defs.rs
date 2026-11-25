@@ -500,6 +500,9 @@ pub(crate) struct IfaceMethod {
     pub generics: Generics,
     /// `throws` clause: bounds what implementations may throw (else inferred from them).
     pub throws: Option<DeclaredThrows>,
+    /// The last parameter is a rest parameter (`...xs: T[]`): a call packs the remaining
+    /// arguments into its array.
+    pub rest: bool,
 }
 
 #[derive(Clone, Debug)]

@@ -442,13 +442,14 @@ pub(super) fn check_method_sig(
     iname: &str,
     shorter: Option<&mut Option<usize>>,
 ) -> Option<TyId> {
-    let (ps, span, is_getter, is_generator) = {
+    let (ps, span, is_getter, is_generator, rest) = {
         let f = cx.fn_info(def);
         (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
             f.name_span,
             f.is_getter,
             f.is_generator,
+            f.rest,
         )
     };
     super::unsafe_methods::implements(cx, def, &format!("`{iname}.{}`", m.name));
@@ -484,17 +485,26 @@ pub(super) fn check_method_sig(
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
+    // A rest parameter takes the arguments one by one, an array parameter as one array.
+    let rest_ok = rest == m.rest;
     let first = match shorter.is_some() {
         true => super::short_overrides::implements_first(cx, (def, &ps), (m, &want_ps)),
         false => None,
     };
-    let ps_ok = first.is_some() || cx.same_tys(&ps, &want_ps);
+    let ps_ok = first.is_some() || (cx.same_tys(&ps, &want_ps) && rest_ok);
     if let (Some(out), true) = (shorter, ps_ok && ret_ok && is_getter == m.is_getter) {
         *out = first;
     }
     if !ps_ok || !ret_ok {
         let mut d = Diagnostic::error(message, span);
-        if is_generator && ps_ok {
+        if !rest_ok {
+            let decl = format!("`{iname}.{name}`");
+            let (has, lacks) = match m.rest {
+                true => (decl.as_str(), "this method"),
+                false => ("this method", decl.as_str()),
+            };
+            d = d.with_note(format!("{has} ends in a rest parameter (`...xs: T[]`) and {lacks} does not: one takes the arguments one by one, the other one array"));
+        } else if is_generator && ps_ok {
             let want = cx.display(want_ret);
             d = d.with_note(format!("declare the generator's result as `{want}`: its error type is part of the result type"));
         } else if name == "return" && ps_ok && matches!(iname, "Iterator" | "AsyncIterator") {

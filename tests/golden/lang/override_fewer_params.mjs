@@ -271,6 +271,32 @@ class Gen {
   }
 }
 
+// An interface method with a rest parameter, implemented without it.
+
+class Quiet {
+  write(tag) {
+    return "quiet " + tag;
+  }
+  all() {
+    return -1;
+  }
+}
+
+class Full {
+  write(tag, ...parts) {
+    return tag + parts.length;
+  }
+  all(...parts) {
+    return parts.length;
+  }
+}
+
+const sinks = [new Quiet(), new Full()];
+for (const s of sinks) {
+  console.log(s.write("t"), s.write("t", "a", "b"), s.all(), s.all(1, 2, 3));
+}
+console.log(new Quiet().write("q"), new Quiet().all());
+
 // Async methods.
 class Fetcher {
   async load(id, opts) {

@@ -86,7 +86,7 @@ impl Ctx<'_> {
             params,
             ret,
             throws,
-            rest: false,
+            rest: m.rest,
         }))
     }
 
