@@ -1,0 +1,59 @@
+// check: no leaks
+// The turns of `await (v as Promise<T>)` of a promise held as `any` that settles after the
+// awaits start (#924 step 4), against a typed `await` of the same promise, a `then` on the cast
+// and an `await` through `any`, as in Node: a typed promise (the cast widens it) and one of
+// type `Promise<any>` (the cast converts its value). Settled before they start:
+// any_promise_cast.velt.
+async function main(): Promise<void> {
+  const later: string[] = [];
+  let settle = (v: number) => {};
+  const late = new Promise<number>((r) => {
+    settle = r;
+  });
+  const lh: any = late;
+  const u1 = (async () => {
+    await (lh as Promise<number>);
+    later.push("cast");
+  })();
+  const u2 = (async () => {
+    await late;
+    later.push("typed");
+  })();
+  const u3 = (async () => {
+    await (lh as Promise<number>).then((v) => later.push("then " + v));
+  })();
+  const u4 = (async () => {
+    await lh;
+    later.push("any");
+  })();
+  settle(5);
+  await u1;
+  await u2;
+  await u3;
+  await u4;
+  console.log(later.join(", "));
+  const conv: string[] = [];
+  let settleAny = (v: any) => {};
+  const lateAny = new Promise<any>((r) => {
+    settleAny = r;
+  });
+  const la: any = lateAny;
+  const w1 = (async () => {
+    await la;
+    conv.push("any");
+  })();
+  const w2 = (async () => {
+    await (la as Promise<number>);
+    conv.push("convert");
+  })();
+  const w3 = (async () => {
+    await lateAny;
+    conv.push("typed");
+  })();
+  settleAny(7);
+  await w1;
+  await w2;
+  await w3;
+  console.log(conv.join(", "));
+}
+main();
