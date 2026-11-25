@@ -152,9 +152,11 @@ impl Cx<'_> {
         match self.raw_kind(t) {
             TyKind::Unit => true,
             // `null` alone (`{ a: null }`'s field) is boxed as its nothing.
+            // A `Promise<T> | null` is boxed even where the program runs no async code: it is
+            // always `null` there (`any_box_raw` stops on the promise it never holds).
             TyKind::Option(inner, _) => {
                 self.is_dynamic(*inner)
-                    || matches!(self.raw_kind(*inner), TyKind::Never)
+                    || matches!(self.raw_kind(*inner), TyKind::Never | TyKind::Promise(..))
                     || self.any_boxable_plain(*inner)
             }
             _ => self.any_boxable_plain(t),
