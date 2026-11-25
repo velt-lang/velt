@@ -823,3 +823,35 @@ fn a_printed_float_without_the_prebuilt_printer_checks_it() {
     let warm = unchecked(&ok_src_prebuilt(src));
     assert!(warm.contains(&array), "{array} is checked");
 }
+
+#[test]
+fn line_breaking_is_checked_once_a_container_may_be_printed_at_the_top_level() {
+    // `console.log`'s line breaking (std/lang/hooks/inspect_layout.velt): lowering calls it after
+    // each top-level value that may hold containers (velt_vir `format_top_inspect`), so it is
+    // checked once live code prints one, makes text of one, or the program throws one; not for a
+    // class nothing prints, a printed number, or std's own throws and nested printing.
+    let layout = "std/lang/hooks/inspect_layout::inspectLayout";
+    let checked = |p: &Program| {
+        p.defs
+            .iter()
+            .any(|d| matches!(d, Def::Fn(x) if x.name == layout))
+            && !unchecked(p).contains(&layout.to_string())
+    };
+    let class = "class P {\n  x: number = 1;\n}\n";
+    for (body, wanted) in [
+        ("console.log(new P());", true),
+        ("console.log([1, 2, 3]);", true),
+        ("const s = `${new P()}`;\n  console.log(s.length);", true),
+        ("throw new P();", true),
+        ("const p = new P();\n  console.log(p.x);", false),
+        ("console.log(1.5);", false),
+        ("console.log(\"text\");", false),
+    ] {
+        let src = format!("{class}function main() {{\n  {body}\n}}\n");
+        assert_eq!(checked(&ok_src(&src)), wanted, "{src}");
+    }
+    // `JSON.parse<T>` throws a `JsonError` inside std, which holds no container a program throws:
+    // a program that parses and prints a number loads none of the layout.
+    let src = "type Q = { x: number };\nfunction main() {\n  const q = JSON.parse<Q>(\"{\\\"x\\\": 1}\");\n  console.log(q.x);\n}\n";
+    assert!(!checked(&ok_src(src)), "{src}");
+}
