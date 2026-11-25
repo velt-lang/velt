@@ -1,0 +1,81 @@
+// The set algebra when `other`'s `has` or `keys` changes the receiver during the call: each method
+// copies the receiver where Node (ES2025) does, and walks it live where Node does (#3792).
+// `difference` copies it first and then asks `other.has` of each element the live receiver
+// still holds; `symmetricDifference` copies it after calling `other.keys`, `union` before.
+
+class H extends Set<number> {
+  onHas: (x: number) => void = (x: number) => {};
+  onKeys: () => void = () => {};
+  override has(x: number): boolean {
+    this.onHas(x);
+    return super.has(x);
+  }
+  override keys(): number[] {
+    this.onKeys();
+    return super.keys();
+  }
+}
+
+function show(r: Set<number>): string {
+  return [...r].join(",");
+}
+
+/** `other` is bigger, so `has` is asked; asking about 1 swaps 2 for 9 in the receiver. */
+function hasHook(run: (a: Set<number>, b: H) => string): string {
+  const a = new Set<number>([1, 2, 3, 4]);
+  const b = new H([1, 2, 3, 4, 9, 10]);
+  b.onHas = (x: number) => {
+    if (x == 1) {
+      a.delete(2);
+      a.add(9);
+    }
+  };
+  return run(a, b);
+}
+
+/** `other` is smaller, so `keys` is read; reading it swaps 2 for 9 in the receiver. */
+function keysHook(run: (a: Set<number>, b: H) => string): string {
+  const a = new Set<number>([1, 2, 3, 4]);
+  const b = new H([2, 9]);
+  b.onKeys = () => {
+    a.delete(2);
+    a.add(9);
+  };
+  return run(a, b);
+}
+
+/** `other` is bigger; its first `has` empties the receiver. */
+function clearing(run: (a: Set<number>, b: H) => string): string {
+  const a = new Set<number>([1, 2, 3]);
+  const b = new H([1, 2, 3, 4]);
+  b.onHas = (x: number) => {
+    a.clear();
+  };
+  return run(a, b);
+}
+
+/** `other` is bigger; asking about 3 (after 1 and 2) drops 5 and adds 20 and 6 to the receiver. */
+function late(run: (a: Set<number>, b: H) => string): string {
+  const a = new Set<number>([1, 2, 3, 4, 5]);
+  const b = new H([2, 4, 5, 6, 7, 8, 20]);
+  b.onHas = (x: number) => {
+    if (x == 3) {
+      a.delete(5);
+      a.add(20);
+      a.add(6);
+    }
+  };
+  return run(a, b);
+}
+
+function row(name: string, run: (a: Set<number>, b: H) => string) {
+  console.log(`${name}: has-hook ${hasHook(run)} | keys-hook ${keysHook(run)} | clearing ${clearing(run)} | late ${late(run)}`);
+}
+
+row("union", (a: Set<number>, b: H) => show(a.union(b)));
+row("intersection", (a: Set<number>, b: H) => show(a.intersection(b)));
+row("difference", (a: Set<number>, b: H) => show(a.difference(b)));
+row("symmetricDifference", (a: Set<number>, b: H) => show(a.symmetricDifference(b)));
+row("isSubsetOf", (a: Set<number>, b: H) => `${a.isSubsetOf(b)}`);
+row("isSupersetOf", (a: Set<number>, b: H) => `${a.isSupersetOf(b)}`);
+row("isDisjointFrom", (a: Set<number>, b: H) => `${a.isDisjointFrom(b)}`);

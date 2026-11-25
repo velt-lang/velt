@@ -72,9 +72,26 @@ export class Set<T> implements Iterable<T> {
     return this.items.keys();
   }
 
-  /** An iterator over the elements when it is made (`values()`), in insertion order. */
+  /** The elements in insertion order, as `values()` (JS gives sets `keys` for `Map`'s sake). */
+  keys(): T[] {
+    return this.items.keys();
+  }
+
+  /** `[value, value]` for each element in insertion order (JS's `entries`, shaped as `Map`'s). */
+  entries(): [T, T][] {
+    const out: [T, T][] = [];
+    for (const x of this.items.keys()) {
+      out.push([share(x), share(x)]);
+    }
+    return out;
+  }
+
+  /**
+   * An iterator over the elements when it is made, in insertion order. It reads the set itself,
+   * never a subclass's `values`, as in JS.
+   */
   [Symbol.iterator](): Iterator<T> {
-    return new ArrayIterator<T>(this.values());
+    return new ArrayIterator<T>(this.items.keys());
   }
 
   /** Visits the elements in insertion order, borrowing them. */
@@ -84,74 +101,150 @@ export class Set<T> implements Iterable<T> {
     });
   }
 
+  // The set algebra follows ES2025: it reads this set's own elements, never a subclass's
+  // members, and of `other` only `size` (once, first), `has` and `keys`, in the spec's order, so
+  // a subclass sees the calls Node makes. The result is a plain `Set`.
+
   /** Elements of this set, then those of `other` not in it. */
   union(other: Set<T>): Set<T> {
-    const out = new Set<T>(this.values());
-    other.forEach((x) => {
-      if (!out.has(x)) {
-        out.add(share(x));
-      }
-    });
+    other.size;
+    const out = new Set<T>(this.items.keys());
+    for (const x of other.keys()) {
+      out.items.set(share(x), true);
+    }
     return out;
   }
 
-  /** Elements of this set that are also in `other` (in this set's order). */
+  /**
+   * Elements of this set that are also in `other`: in this set's order, asking `other.has`,
+   * unless `other` is smaller, whose `keys` are then looked up here, in its order.
+   */
   intersection(other: Set<T>): Set<T> {
     const out = new Set<T>();
-    this.forEach((x) => {
-      if (other.has(x)) {
-        out.add(share(x));
+    if (this.items.size <= other.size) {
+      for (const x of this.items.keys()) {
+        if (other.has(x)) {
+          out.items.set(share(x), true);
+        }
       }
-    });
+    } else {
+      for (const x of other.keys()) {
+        if (this.items.has(x)) {
+          out.items.set(share(x), true);
+        }
+      }
+    }
     return out;
   }
 
-  /** Elements of this set that are not in `other`. */
+  /**
+   * Elements of this set that are not in `other`. A copy of this set loses each element
+   * `other.has` reports, asked while walking this set as it is then (what `other` adds or
+   * deletes here counts, as in Node), or each of `other`'s `keys` when `other` is smaller.
+   */
   difference(other: Set<T>): Set<T> {
-    const out = new Set<T>();
-    this.forEach((x) => {
-      if (!other.has(x)) {
-        out.add(share(x));
+    const otherSize = other.size;
+    if (this.items.size > otherSize) {
+      const out = new Set<T>(this.items.keys());
+      for (const x of other.keys()) {
+        out.items.delete(x);
       }
-    });
+      return out;
+    }
+    // While `other.has` leaves this set alone, the copy less what it reports is the elements it
+    // reports absent, collected as they come. Once a call changes this set (its map's `edits`),
+    // the copy is made from the elements there were, less those `other` held so far.
+    const was = this.items.keys();
+    const edits = this.items.edits;
+    let out = new Set<T>();
+    let seen: usize = 0;
+    let copied = false;
+    for (const x of this.items.keys()) {
+      const inOther = other.has(x);
+      if (copied) {
+        if (inOther) {
+          out.items.delete(x);
+        }
+        continue;
+      }
+      seen++;
+      if (!inOther) {
+        out.items.set(share(x), true);
+      }
+      if (this.items.edits != edits) {
+        const copy = new Set<T>(was);
+        for (let i: usize = 0; i < seen; i++) {
+          if (!out.items.has(was[i])) {
+            copy.items.delete(was[i]);
+          }
+        }
+        out = copy;
+        copied = true;
+      }
+    }
     return out;
   }
 
-  /** Elements in exactly one of the two sets (this set's first, then `other`'s). */
+  /**
+   * Elements in exactly one of the two sets (this set's first, then `other`'s). This set is
+   * copied after `other.keys` is called, as in Node.
+   */
   symmetricDifference(other: Set<T>): Set<T> {
-    const out = this.difference(other);
-    other.forEach((x) => {
-      if (!this.has(x)) {
-        out.add(share(x));
+    other.size;
+    const theirs = other.keys();
+    const out = new Set<T>(this.items.keys());
+    for (const x of theirs) {
+      if (this.items.has(x)) {
+        out.items.delete(x);
+      } else {
+        out.items.set(share(x), true);
       }
-    });
+    }
     return out;
   }
 
-  /** Whether every element of this set is in `other`. */
+  /** Whether every element of this set is in `other` (asking `other.has` until one is not). */
   isSubsetOf(other: Set<T>): bool {
-    if (this.size > other.size) {
+    if (this.items.size > other.size) {
       return false;
     }
-    let all = true;
-    this.forEach((x) => {
-      all = all && other.has(x);
-    });
-    return all;
+    for (const x of this.items.keys()) {
+      if (!other.has(x)) {
+        return false;
+      }
+    }
+    return true;
   }
 
-  /** Whether every element of `other` is in this set. */
+  /** Whether every element of `other` is in this set (reading `other.keys` until one is not). */
   isSupersetOf(other: Set<T>): bool {
-    return other.isSubsetOf(this);
+    if (this.items.size < other.size) {
+      return false;
+    }
+    for (const x of other.keys()) {
+      if (!this.items.has(x)) {
+        return false;
+      }
+    }
+    return true;
   }
 
-  /** Whether the sets share no element. */
+  /** Whether the sets share no element (`other.has`, or its `keys` when smaller). */
   isDisjointFrom(other: Set<T>): bool {
-    let none = true;
-    this.forEach((x) => {
-      none = none && !other.has(x);
-    });
-    return none;
+    if (this.items.size <= other.size) {
+      for (const x of this.items.keys()) {
+        if (other.has(x)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    for (const x of other.keys()) {
+      if (this.items.has(x)) {
+        return false;
+      }
+    }
+    return true;
   }
 }
 
