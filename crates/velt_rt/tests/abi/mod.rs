@@ -8,7 +8,6 @@ mod cells;
 #[path = "../../../../tests/common/command.rs"]
 pub(crate) mod command;
 mod fake;
-mod fs;
 mod handover;
 mod js_table;
 mod local;

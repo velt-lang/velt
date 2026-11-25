@@ -1,0 +1,33 @@
+// File streams (std/fs/stream_sched.velt): 200,000 lines written through a `FileWriter`, read
+// back by `readLine`, then in 4 KiB chunks by `read`. Counted by bench/std_ab.sh (one worker).
+import { openRead, openWrite, remove } from "velt/fs";
+import { tmpdir } from "velt/os";
+
+async function main() {
+  const path = `${tmpdir()}/velt-bench-stream-lines-${Date.now()}.txt`;
+  const w = await openWrite(path);
+  for (let i = 0; i < 200000; i++) {
+    await w.write(`line ${i} of the stream benchmark\n`);
+  }
+  await w.close();
+
+  const r = await openRead(path);
+  let lines = 0;
+  let line = await r.readLine();
+  while (line != null) {
+    lines++;
+    line = await r.readLine();
+  }
+  r.close();
+
+  const c = await openRead(path);
+  let bytes = 0;
+  let chunk = await c.read(4096);
+  while (chunk.length > 0) {
+    bytes += chunk.length;
+    chunk = await c.read(4096);
+  }
+  c.close();
+  await remove(path);
+  console.log(lines, bytes);
+}

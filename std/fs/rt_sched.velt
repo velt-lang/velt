@@ -8,9 +8,9 @@
 // async forms on the executor's blocking pool (std/lang/hooks/sched_blocking.velt), which has
 // threads on every OS a native build targets. WebAssembly builds use std/fs/rt.velt:
 // velt_rt_wasm's whole files and directories, and `#fs-paths`' WASI and JS host variants run on
-// the calling task. File streams (`openRead`, `openWrite` and their readers and writers) keep
-// the runtime's leaves: they have no synchronous twin to run on the pool (a gap until streams are
-// Velt code over file descriptors, std/fs/fd).
+// the calling task. File streams (`openRead`, `openWrite` and their readers and writers) are Velt
+// code too (std/fs/stream_sched.velt over `#fs-stream-os`), each operation a job on the same
+// pool.
 
 import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
@@ -41,7 +41,7 @@ export {
   velt_rt_fs_writer_write,
   velt_rt_fs_writer_free,
   velt_rt_fs_writer_write_bytes,
-} from "./rt";
+} from "./stream_sched";
 
 // Whole files: Velt code over the C library or Win32 (`#fs-whole`), the async forms on the
 // blocking pool. The path is checked on the calling thread, so the work on the pool only

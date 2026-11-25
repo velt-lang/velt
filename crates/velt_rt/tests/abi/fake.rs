@@ -100,12 +100,6 @@ pub fn ok<T>(r: IoResult<T>) -> T {
     unsafe { r.value.assume_init() }
 }
 
-/// Check an `IoResult` failed with `code`; frees the message and returns it.
-pub fn err<T>(r: IoResult<T>, code: i32) -> String {
-    assert_eq!(r.err.code, code);
-    take_string(r.err.message)
-}
-
 /// Take an owned `VeltStr` result as a Rust `String` (frees it).
 pub fn take_string(mut s: VeltStr) -> String {
     let out = String::from_utf8(unsafe { s.as_bytes() }.to_vec()).unwrap();

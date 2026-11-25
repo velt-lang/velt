@@ -456,14 +456,9 @@ fn mirrored_sources() -> Vec<PathBuf> {
     out
 }
 
-/// velt_rt files in mirrored directories that are not on wasm yet: `std/fs_stream`
-/// (its reads run on velt_rt's blocking pool).
-const NATIVE_ONLY: &[&str] = &["fs/stream.rs"];
-
 /// A velt_rt directory velt_rt_wasm mirrors part of (`json/`, `fs/`) is portable code: every
 /// symbol std declares from a file there must be linkable on wasm too, mirrored or defined by
-/// velt_rt_wasm itself (a missing symbol fails only when a wasm program calls it), except in
-/// the files of `NATIVE_ONLY`.
+/// velt_rt_wasm itself (a missing symbol fails only when a wasm program calls it).
 #[test]
 fn velt_rt_wasm_defines_what_mirrored_directories_export() {
     let mirrored = mirrored_sources();
@@ -488,8 +483,7 @@ fn velt_rt_wasm_defines_what_mirrored_directories_export() {
         }
         for (_, path) in defs {
             let path = path.canonicalize().unwrap_or_else(|_| path.clone());
-            let native_only = NATIVE_ONLY.iter().any(|f| path.ends_with(f));
-            if !native_only && path.parent().is_some_and(|d| dirs.iter().any(|m| *m == d)) {
+            if path.parent().is_some_and(|d| dirs.iter().any(|m| *m == d)) {
                 missing.push(format!("{name}: defined in {}", short(&path)));
             }
         }
