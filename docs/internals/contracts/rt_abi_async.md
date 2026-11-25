@@ -445,14 +445,14 @@ graceful stop's (§13.2), until that stop is std's too. WebAssembly's runtime ke
 
 | Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
-| `velt_rt_signal_new` | `() -> u64` | a signal that is not aborted |
-| `velt_rt_signal_retain` | `(u64 s) -> u64` | another reference to it (a scope's child task holds one) |
-| `velt_rt_signal_free` | `(u64 s)` | releases a handle |
-| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
-| `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
-| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
-| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
-| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason); keeps them alive until then |
+| `velt_rt_signal_new` | `() -> u64` | WebAssembly only. A signal that is not aborted |
+| `velt_rt_signal_retain` | `(u64 s) -> u64` | WebAssembly only. Another reference to it (a scope's child task holds one) |
+| `velt_rt_signal_free` | `(u64 s)` | releases a handle (velt_rt too: its stop signal's) |
+| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | WebAssembly only. Aborts it and the signals derived from it (`any`); a no-op if aborted |
+| `velt_rt_signal_aborted` | `(u64 s) -> bool` | WebAssembly only |
+| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) (velt_rt too: its stop signal's) |
+| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive (velt_rt too: its stop signal's) |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | WebAssembly only. Aborted with the first of `signals` that is (its reason); keeps them alive until then |
 
 ### 2.4 Task groups (`taskScope`)
 
