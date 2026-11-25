@@ -1,0 +1,9 @@
+// A number literal type past 2^53 is shown as JavaScript and tsc print the number (#3183):
+// `9007199254740992` and `1e+23`, not `9007199254740992.0`.
+function main() {
+  const e: 9007199254740993 = 9007199254740993;
+  const one: 1 = e;
+  const big: 100000000000000000000000 = 100000000000000000000000;
+  const two: 2 = big;
+  console.log(one, two);
+}
