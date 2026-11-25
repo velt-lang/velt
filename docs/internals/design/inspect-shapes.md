@@ -91,6 +91,13 @@ given back once it is written. Thread-local arrays would save those blocks per b
 the rest of the thread) and private state of the prebuilt object. The allocations cost less than
 the margin of the rows below.
 
+`Layout` is a class of a module read on demand, so a program with std read up front has the
+class whether it prints a container or not, and nothing in the program may depend on that. A
+`Layout` never reaches a dynamic value, so sema leaves it out of the dispatches over the classes
+an `any` may hold (`dynamic_class_match_where`, as a record view's source), and lowering numbers
+it after every other class, last of all where nothing builds one (`class_test.rs`
+`on_demand_rank`), so no other class's id moves. `eager_std_identity` compares the two builds.
+
 Re-reading the printed text keeps the writers simple. Node decides to break only after it has
 formatted every entry, so laying out while writing would make every writer (lowering's glue,
 `inspectArray`, `JsonValue`'s, `Map` and `Set`) record each entry's place on every print, short

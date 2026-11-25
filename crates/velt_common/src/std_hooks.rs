@@ -791,7 +791,7 @@ mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
 pub mod prebuilt;
-pub use on_demand::{on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES};
+pub use on_demand::*;
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

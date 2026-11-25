@@ -31,6 +31,13 @@ pub const INSPECT_SHAPES: &[&str] = &[
     "inspect_atoms_restore",
 ];
 
+/// The class holding the state of `console.log`'s line breaking, by its qualified name
+/// (std/lang/hooks/inspect_layout_container.velt, read with [`ON_DEMAND_MODULES`]'
+/// `inspect_layout`). Its objects never reach a dynamic value, and a program with std read up
+/// front has the class whether it prints a container or not: sema leaves it out of a dispatch
+/// over the classes a dynamic value may hold, and lowering numbers it after the other classes.
+pub const INSPECT_LAYOUT_STATE: &str = "std/lang/hooks/inspect_layout_container::Layout";
+
 /// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands
 /// each when it finds the hook needed, during the check (#2161 (a1): `velt_sema` `std_load`), so
 /// each follows the rule of `velt_loader::std_index`. `VELT_EAGER_STD=1` loads them all up front,
