@@ -126,8 +126,9 @@ export class ReadableStreamDefaultController<R> {
 
   // ─── the stream's side (std only) ───
 
-  // A new stream's state: runs `start`, then pulls a microtask after it settles. A `start` that
-  // throws makes the constructor throw, as in JS.
+  // A new stream's state: runs `start`, then pulls a microtask after it returns, or, when it
+  // gives a promise, after that promise is adopted (`adopted`). A `start` that throws makes the
+  // constructor throw, as in JS.
   private static make<R>(
     source: UnderlyingSource<R>,
     hwm: number,
@@ -142,7 +143,7 @@ export class ReadableStreamDefaultController<R> {
     if (p == null) {
       queueMicrotask(() => c.begun());
     } else {
-      p.then(() => c.begun(), (e) => c.error(e));
+      adopted(p, () => c.begun(), (e) => c.error(e));
     }
     return c;
   }
@@ -205,7 +206,7 @@ export class ReadableStreamDefaultController<R> {
       if (p == null) {
         queueMicrotask(() => this.pulled());
       } else {
-        p.then(() => this.pulled(), (e) => this.fail(e));
+        adopted(p, () => this.pulled(), (e) => this.fail(e));
       }
     } catch (e) {
       queueMicrotask(() => this.fail(e));
@@ -243,15 +244,16 @@ export class ReadableStreamDefaultController<R> {
   private finishClose() {
     this.state = CLOSED;
     this.clearCallbacks();
-    const requests = this.requests;
-    this.requests = [];
-    for (const r of requests) {
-      r.resolve({ done: true });
-    }
+    // `closed` first, then the pending reads, as Node settles them (#3643).
     const waits = this.closeWaits;
     this.closeWaits = [];
     for (const w of waits) {
       w.resolve();
+    }
+    const requests = this.requests;
+    this.requests = [];
+    for (const r of requests) {
+      r.resolve({ done: true });
     }
   }
 
@@ -264,15 +266,16 @@ export class ReadableStreamDefaultController<R> {
     this.clearCallbacks();
     this.queue = [];
     this.head = 0;
-    const requests = this.requests;
-    this.requests = [];
-    for (const r of requests) {
-      r.reject(e);
-    }
+    // `closed` first, then the pending reads, as Node settles them (#3643).
     const waits = this.closeWaits;
     this.closeWaits = [];
     for (const w of waits) {
       w.reject(e);
+    }
+    const requests = this.requests;
+    this.requests = [];
+    for (const r of requests) {
+      r.reject(e);
     }
   }
 
@@ -305,18 +308,19 @@ export class ReadableStreamDefaultController<R> {
     return promise;
   }
 
-  // Rejects the waiting reads and `reader.closed`: their reader released the stream.
+  // Rejects `reader.closed` and the waiting reads (in that order, as Node): their reader
+  // released the stream.
   private release() {
     this.locked = false;
-    const requests = this.requests;
-    this.requests = [];
-    for (const r of requests) {
-      r.reject(invalidState("Releasing reader"));
-    }
     const waits = this.closeWaits;
     this.closeWaits = [];
     for (const w of waits) {
       w.reject(invalidState("Reader released"));
+    }
+    const requests = this.requests;
+    this.requests = [];
+    for (const r of requests) {
+      r.reject(invalidState("Releasing reader"));
     }
   }
 
@@ -368,4 +372,14 @@ export class ReadableStreamDefaultController<R> {
 // Waits for `p`, dropping its result.
 async function finished<T>(p: Promise<T>): Promise<void> {
   await p;
+}
+
+/**
+ * `p` (a source's `start` or `pull` result) adopted as Node adopts it (`new Promise((r) =>
+ * r(p))`): a job queued now attaches to `p`, and `ok` or `bad` runs a microtask after `p`'s
+ * reaction. So a stream's pulls and reads keep Node's order against other microtasks (#3643):
+ * three microtasks after a `p` that has settled by the return, two after one that settles later.
+ */
+function adopted(p: Promise<void, unknown>, ok: () => void, bad: (e: unknown) => void) {
+  queueMicrotask(() => p.then(() => queueMicrotask(ok), (e) => queueMicrotask(() => bad(e))));
 }
