@@ -20,6 +20,19 @@ class A {
     me.twice();
     return me.bump();
   }
+  // Written as `this`, in parentheses, or through `as this`: still `this`.
+  typed(): this {
+    const r: this = this;
+    const p = (this);
+    const q = this.bump() as this;
+    r.n++;
+    p.n++;
+    return q;
+  }
+  // Cast to the class and back to `this`.
+  back(): this {
+    return (this as A) as this;
+  }
 }
 
 class B extends A {
@@ -32,4 +45,6 @@ function main() {
   console.log(b.n, b.tag);
   const c = new B().thrice().bump();
   console.log(c.n, c.tag);
+  const d = new B().typed().back().typed();
+  console.log(d.n, d.tag);
 }

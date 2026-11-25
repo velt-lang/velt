@@ -1,0 +1,45 @@
+// A `const` that TypeScript types as the class rather than `this` is not `this`: one with a
+// written type other than `this`, or through `as` to one, for `this` and for a `this`-returning
+// call on it; nor is `this` returned through `as` to the class, or a call on such a cast
+// (TypeScript's TS2322, #3772).
+class A {
+  n = 0;
+  step(): this {
+    return this;
+  }
+  annotated(): this {
+    const r: A = this;
+    return r;
+  }
+  cast(): this {
+    const r = this as A;
+    return r;
+  }
+  annotatedCall(): this {
+    const r: A = this.step();
+    return r;
+  }
+  castCall(): this {
+    const r = this.step() as A;
+    return r;
+  }
+  returnCast(): this {
+    return this as A;
+  }
+  // A `this`-returning call on `this` cast to the class gives the class too.
+  castReceiver(): this {
+    return (this as A).step();
+  }
+  castReceiverKept(): this {
+    const r = (this as A).step();
+    return r;
+  }
+  castAlias(): this {
+    const r = this;
+    return (r as A).step();
+  }
+}
+
+function main() {
+  console.log(new A().step().n);
+}

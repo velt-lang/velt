@@ -1,0 +1,8 @@
+this_result_alias_errors.velt:12:12: error: type `A` is not assignable to type `this`
+this_result_alias_errors.velt:16:12: error: type `A` is not assignable to type `this`
+this_result_alias_errors.velt:20:12: error: type `A` is not assignable to type `this`
+this_result_alias_errors.velt:24:12: error: type `A` is not assignable to type `this`
+this_result_alias_errors.velt:27:12: error: type `A` is not assignable to type `this`
+this_result_alias_errors.velt:31:12: error: type `A` is not assignable to type `this`
+this_result_alias_errors.velt:35:12: error: type `A` is not assignable to type `this`
+this_result_alias_errors.velt:39:12: error: type `A` is not assignable to type `this`

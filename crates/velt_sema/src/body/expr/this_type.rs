@@ -8,6 +8,7 @@
 //! on `this` (checked by `check_this_return`; anything else is TypeScript's TS2322).
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, TyId, TyKind};
@@ -56,6 +57,9 @@ impl FnCx<'_, '_> {
 
     /// Is `h` the method's `this` (or a `this`-returning method's result on it)?
     fn is_this_value(&self, h: &hir::Expr) -> bool {
+        if self.this_casts.contains(&h.span) {
+            return false;
+        }
         match &h.kind {
             H::Local(l, _) => {
                 self.outer.is_empty()
@@ -71,16 +75,31 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `const local = init` (`kind`): a `const` holding `this` is `this` (TypeScript types it
-    /// `this`), so a method returning `this` may return it.
+    /// `const local: ty = init` (`kind`, `init` checked as `h`): a `const` holding `this` is
+    /// `this` (TypeScript types it `this`), so a method returning `this` may return it, and so
+    /// is a `const` holding such a `const`. Not with a written type other than `this` (`const
+    /// r: A = this`), which TypeScript types as the class (as it does `this as A`, `cast`).
     pub(crate) fn note_this_alias(
         &mut self,
         local: hir::LocalId,
         kind: LocalKind,
-        init: Option<&hir::Expr>,
+        ty: Option<&ast::TypeExpr>,
+        h: Option<&hir::Expr>,
     ) {
-        if kind == LocalKind::Const && init.is_some_and(|h| self.is_this_value(h)) {
+        let typed_this = ty.is_none_or(is_this_written);
+        if kind == LocalKind::Const && typed_this && h.is_some_and(|h| self.is_this_value(h)) {
             self.this_aliases.insert(local);
+        }
+    }
+
+    /// `h`, checked from `… as ty`: when it is `this` and `ty` is not `this`, it is typed as
+    /// the class from now on, as in TypeScript (`return this as A;` is TS2322). Cast back to
+    /// `this` (`this as A as this`), it is `this` again.
+    pub(super) fn note_this_cast(&mut self, ty: &ast::TypeExpr, h: &hir::Expr) {
+        if is_this_written(ty) {
+            self.this_casts.remove(&h.span);
+        } else if self.is_this_value(h) {
+            self.this_casts.insert(h.span);
         }
     }
 
@@ -114,4 +133,10 @@ impl FnCx<'_, '_> {
             .with_note(note),
         );
     }
+}
+
+/// Is `t` the written type `this`?
+fn is_this_written(t: &ast::TypeExpr) -> bool {
+    matches!(&t.kind, ast::TypeExprKind::Named { path, args }
+        if path.len() == 1 && path[0].name == "this" && args.is_empty())
 }

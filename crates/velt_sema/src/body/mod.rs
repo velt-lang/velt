@@ -454,6 +454,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// `const r = this` (or a `this`-returning call on `this`): `r` is `this` itself, which a
     /// method returning `this` may return (`expr/this_type.rs`).
     pub this_aliases: rustc_hash::FxHashSet<hir::LocalId>,
+    /// `this` cast to another type (`this as A`, `r as A` of such a `const`), by span: typed as
+    /// the class, so not `this` (`expr/this_type.rs`).
+    pub this_casts: rustc_hash::FxHashSet<Span>,
     /// The expression statement being checked, whose value is discarded (`expr_stmt`).
     pub discard_at: Option<Span>,
     /// The member of a recursive closure group whose arrow is about to be checked: group,
@@ -549,6 +552,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_calls: Default::default(),
             handed_back: Default::default(),
             this_aliases: Default::default(),
+            this_casts: Default::default(),
             discard_at: None,
             pending_member: None,
             adapting: false,
