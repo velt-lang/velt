@@ -133,11 +133,11 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
     }
     const recursive = isRecursive(model, t);
     if (recursive) {
-      out.line(`if (!beginVisit(identity(${v}))) { jsonCircular(); }`);
+      out.line(`jsonEnter(identity(${v}));`);
     }
     writeFields(out, model, t, v);
     if (recursive) {
-      out.line(`endVisit();`);
+      out.line(`jsonLeave();`);
     }
   } else {
     // No JSON form: sema reports the call that needs it (the code is never run).
@@ -203,11 +203,11 @@ function writeResult(out: Output, model: Model, id: i64, v: string, key: string)
 function writeGuardedFields(out: Output, model: Model, t: Type, v: string): void {
   const recursive = isRecursive(model, t);
   if (recursive) {
-    out.line(`if (!beginVisit(identity(${v}))) { jsonCircular(); }`);
+    out.line(`jsonEnter(identity(${v}));`);
   }
   writeFields(out, model, t, v);
   if (recursive) {
-    out.line(`endVisit();`);
+    out.line(`jsonLeave();`);
   }
 }
 
