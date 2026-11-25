@@ -1,0 +1,10 @@
+// A class's method with no value yet (generic, throwing, a generator) stops when a view reads it,
+// even for `typeof`; an async method has one (#924). Node prints `function` for each.
+const made = new Proxy({}, {});
+class A { async dispose() { return 1; } }
+class G { *dispose(): Generator<number> { yield 1; } }
+function disposer<T>(x: T) { return typeof (x as { dispose?: unknown } | null)?.dispose; }
+console.log(disposer({ dispose: 1 }));
+console.log(disposer(new A()));
+console.log(disposer(new G()));
+console.log("after");
