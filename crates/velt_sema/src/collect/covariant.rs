@@ -2,7 +2,8 @@
 //! interface method whose result its own converts to as a call converts it: a class that
 //! declares `implements` of the result interface (`step(): Counter` for `step(): Fluent`), an
 //! interface that has the result interface's members (`step(): Sub` with `Sub extends
-//! Fluent`), a subclass of the result class, the same with `| null` on both sides, or `this`,
+//! Fluent`), a subclass of the result class, the same with `| null`, `| undefined` or both on
+//! both sides, or `this`,
 //! as the implementing class (also when a base class declares the method). TypeScript also
 //! accepts a class that matches the interface without declaring it; Velt converts a class to
 //! an interface only through `implements`, at a call as here.
@@ -35,14 +36,32 @@ pub(super) enum Conv {
     Upcast(TyId),
     /// To interface `iface` (as `want`), through the result class's implementation of it.
     ToDyn { iface: DefId, want: TyId },
-    /// `have | null` to `want | null` (`whole`) where `have` converts to `want` by a `ToDyn`
-    /// through the implementation of `iface`, or by an interface upcast (`iface: None`): tested
-    /// for null, as a call converts it (`Counter | null` for `Fluent | null`).
+    /// A nullable result to nullable `whole` where the payload `have` converts to `want` by
+    /// `step`: tested for its nothing, as a call converts it (`Counter | null` for
+    /// `Fluent | null`). Of a result with both `null` and `undefined` the payloads are the
+    /// `| null` types inside (`hir_encodings.md` "Undefined").
     Payload {
-        iface: Option<DefId>,
+        step: Step,
         have: TyId,
         want: TyId,
         whole: TyId,
+    },
+}
+
+/// How the payload of a `Conv::Payload` converts.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Step {
+    /// Through its class's implementation of the interface.
+    ToDyn(DefId),
+    /// To a wider interface, or a `| null` class to its `| null` base class.
+    Upcast,
+    /// A `have | null` to a `want | null`, tested for null, where `have` converts through the
+    /// implementation of `iface` or by an interface upcast (`None`): the payload of a result
+    /// with both `null` and `undefined`.
+    Tested {
+        iface: Option<DefId>,
+        have: TyId,
+        want: TyId,
     },
 }
 
@@ -128,29 +147,52 @@ fn converts(cx: &mut Ctx, have: TyId, want: TyId) -> Option<Conv> {
         (_, TyKind::Adt(..)) if cx.class_of(want).is_some() && is_base(cx, have, want) => {
             Some(Conv::Upcast(want))
         }
-        // `Square | null` for `Shape | null`: the same pointer or null (a call converts it
-        // by testing for null; the entry needs no test).
-        (TyKind::Option(x, m), TyKind::Option(y, n))
-            if m == n && cx.class_of(y).is_some() && is_base(cx, x, y) =>
-        {
-            Some(Conv::Upcast(want))
-        }
-        // `Counter | null` for `Fluent | null`: the payload converted when it is there.
-        (TyKind::Option(x, m), TyKind::Option(y, n)) if m == n => {
-            let iface = match converts(cx, x, y)? {
-                Conv::ToDyn { iface, .. } => Some(iface),
-                Conv::Upcast(_) if matches!(cx.ty.kind(y), TyKind::Dyn(..)) => None,
-                _ => return None,
-            };
-            Some(Conv::Payload {
-                iface,
-                have: x,
-                want: y,
-                whole: want,
-            })
-        }
+        (TyKind::Option(_, m), TyKind::Option(_, n)) if m == n => nullable(cx, have, want),
         _ => None,
     }
+}
+
+/// How nullable `have` converts to nullable `want` with the same nothings (`converts`).
+fn nullable(cx: &mut Ctx, have: TyId, want: TyId) -> Option<Conv> {
+    let (x, y) = (cx.ty.opt_payload(have)?, cx.ty.opt_payload(want)?);
+    // `Square | null` for `Shape | null`: the same pointer or null (a call converts it by
+    // testing for null; the entry needs no test). With both nothings the payload is the
+    // `| null` type, no class, so it converts below instead.
+    if cx.class_of(y).is_some() && is_base(cx, x, y) {
+        return Some(Conv::Upcast(want));
+    }
+    // `Counter | null` for `Fluent | null`: the payload converted when it is there.
+    let step = match converts(cx, x, y)? {
+        Conv::ToDyn { iface, .. } => Step::ToDyn(iface),
+        Conv::Upcast(_) => Step::Upcast,
+        Conv::Payload {
+            step: Step::ToDyn(iface),
+            have,
+            want,
+            ..
+        } => Step::Tested {
+            iface: Some(iface),
+            have,
+            want,
+        },
+        Conv::Payload {
+            step: Step::Upcast,
+            have,
+            want,
+            ..
+        } => Step::Tested {
+            iface: None,
+            have,
+            want,
+        },
+        Conv::Payload { .. } => return None,
+    };
+    Some(Conv::Payload {
+        step,
+        have: x,
+        want: y,
+        whole: want,
+    })
 }
 
 /// A method with type parameters of its own declared by a class with as many as the
@@ -246,16 +288,28 @@ pub(super) fn entry(
     let self_ty = imp.self_ty;
     let e = synth_method(cx, &host, self_ty, label, params, want, mut_this, target);
     let downcast = !cx.same_ty(declared, have);
-    // The payload's binding of a `Conv::Payload` (`LocalId(n)` after `this` and the params).
-    if let Conv::Payload { have, .. } = conv {
+    // The payload's binding of a `Conv::Payload`, and the one of the payload inside a
+    // `Step::Tested` (after `this` and the params).
+    let binds: Vec<TyId> = match conv {
+        Conv::Payload {
+            step: Step::Tested { have: inner, .. },
+            have,
+            ..
+        } => vec![have, inner],
+        Conv::Payload { have, .. } => vec![have],
+        _ => Vec::new(),
+    };
+    let mut bound = Vec::new();
+    for ty in binds {
         cx.fn_info_mut(e).local_kinds.push(LocalKind::Bind);
         let Some(Def::Fn(f)) = &mut cx.defs[e.0 as usize] else {
             panic!("ICE: a synthesized method has a body");
         };
         let span = f.span;
+        bound.push(LocalId(f.body.locals.len() as u32));
         f.body.locals.push(hir::LocalDef {
             name: "<some>".into(),
-            ty: have,
+            ty,
             mutable: false,
             boxed: false,
             weak: false,
@@ -284,7 +338,6 @@ pub(super) fn entry(
             span,
         };
     }
-    let some = LocalId(f.body.locals.len() as u32 - 1);
     let kind = match conv {
         Conv::Upcast(_) => H::Upcast(Box::new(call)),
         Conv::ToDyn { iface, .. } => {
@@ -295,25 +348,41 @@ pub(super) fn entry(
             }
         }
         Conv::Payload {
-            iface,
+            step,
             have,
             want: to,
             whole,
         } => {
-            let value = hir::Expr {
-                kind: H::Local(some, UseMode::Move),
-                ty: have,
+            let local = |l: LocalId, ty| hir::Expr {
+                kind: H::Local(l, UseMode::Move),
+                ty,
                 span,
             };
-            let kind = match iface {
+            // `value` through the implementation of `iface`, or upcast.
+            let mut turn = |value: hir::Expr, iface: Option<DefId>| match iface {
                 Some(iface) => {
-                    pending.push((e, have, iface));
+                    pending.push((e, value.ty, iface));
                     H::ToDyn {
                         expr: Box::new(value),
                         impl_index: u32::MAX,
                     }
                 }
                 None => H::Upcast(Box::new(value)),
+            };
+            let some = bound[0];
+            let kind = match step {
+                Step::ToDyn(iface) => turn(local(some, have), Some(iface)),
+                Step::Upcast => turn(local(some, have), None),
+                Step::Tested {
+                    iface,
+                    have: h,
+                    want: w,
+                } => {
+                    let inner = bound[1];
+                    let kind = turn(local(inner, h), iface);
+                    let converted = hir::Expr { kind, ty: w, span };
+                    null_tested(local(some, have), (inner, h), converted, to)
+                }
             };
             let converted = hir::Expr { kind, ty: to, span };
             null_tested(call, (some, have), converted, whole)
@@ -379,7 +448,7 @@ pub(super) fn finish(cx: &mut Ctx, pending: Vec<Pending>) {
 }
 
 /// The implementation index `finish` sets in entry result `e`: of its `ToDyn`, or of the one in
-/// the `Some` arm of a `Conv::Payload`'s test.
+/// the `Some` arm of a `Conv::Payload`'s test (or of the test inside it).
 fn pending_index(e: &mut hir::Expr) -> Option<&mut u32> {
     match &mut e.kind {
         H::ToDyn { impl_index, .. } => Some(impl_index),
