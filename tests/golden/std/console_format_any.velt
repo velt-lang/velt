@@ -1,0 +1,38 @@
+// check: no leaks
+// `%s` of an `any` holding a class instance in a program with no `String(x)` of an `any` of its
+// own (#3662): the `toString()` of the class is called through `any`. The Node twin is
+// console_format_any.mjs.
+class Pt {
+  x: number = 1;
+  toString(): string {
+    return "PT";
+  }
+}
+
+const e: any = new Error("e");
+console.log("%s", e.message);
+const p: any = new Pt();
+console.log("%s|%d", p, p);
+
+let calls = 0;
+
+class Same extends Error {
+  toString(): string {
+    calls++;
+    return "Error: same";
+  }
+}
+
+class Stacked extends Error {
+  get stack(): string | undefined {
+    return "Error: stacked";
+  }
+  toString(): string {
+    return "Error: stacked";
+  }
+}
+
+const same: any = new Same("same");
+const stacked: any = new Stacked("s");
+console.log("%s|%s", same, stacked);
+console.log("calls " + calls);

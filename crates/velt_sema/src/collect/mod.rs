@@ -22,6 +22,7 @@
 
 mod abstract_fields;
 mod abstracts;
+mod c_ref;
 pub(crate) mod c_sig;
 mod c_struct;
 mod classes;

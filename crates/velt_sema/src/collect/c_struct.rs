@@ -41,6 +41,7 @@ pub(super) fn check_all(cx: &mut Ctx, items: &ItemDefs) {
 
 fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
     let name = decl.name.name.clone();
+    let module = cx.adt(d).map_or(0, |a| a.module);
     let no =
         |what: &str| format!("C struct `{name}` can't have {what}: it is C's struct, fields only");
     if let Some(g) = decl.generics.first() {
@@ -70,6 +71,16 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
         };
         if let Some(what) = what {
             cx.err(no(what), f.span);
+        }
+        // `Ref<S>` is `S`, which would lay the field out inline where C has a pointer.
+        if super::c_ref::mentions_ref(cx, module, &f.ty) {
+            cx.error(
+                Diagnostic::error(
+                    format!("field `{}` of C struct `{name}` has a `Ref`, which is `S` inline in a struct", f.name.name),
+                    f.ty.span,
+                )
+                .with_note("`Ref<S>` is a C function's parameter only; a field that points is `Ptr<S>`, or `Ptr<S> | null` if C may leave it `NULL`"),
+            );
         }
     }
     if decl.fields.is_empty() {

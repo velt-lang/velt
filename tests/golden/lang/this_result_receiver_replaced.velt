@@ -1,0 +1,120 @@
+// check: no leaks
+// A call of a method returning `this` gives the object it ran on, as JavaScript evaluates the
+// receiver once, even when the call (the method, a closure it runs or an argument) assigns a new
+// object to the place the receiver was read from (#3738). A kept result is another reference
+// to the receiver: either of the two may outlive the other.
+class B {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+  m(): this {
+    holder.b = new B(this.id + 100);
+    return this;
+  }
+  shift(): this {
+    arr.shift();
+    return this;
+  }
+  run(f: () => void): this {
+    f();
+    return this;
+  }
+}
+
+const holder = { b: new B(1) };
+const arr = [new B(1), new B(2), new B(3)];
+
+// A method returning `this` with an argument, for an argument that assigns the receiver's
+// variable.
+class C {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+  m(n: number): this {
+    return this;
+  }
+}
+
+class Holder {
+  s = new Set<number>();
+}
+
+const h = new Holder();
+const box = { m: new Map<string, number>() };
+
+function reset(): number {
+  h.s = new Set<number>();
+  return 1;
+}
+
+function resetMap(): number {
+  box.m = new Map<string, number>();
+  return 2;
+}
+
+class Cell {
+  v = 0;
+  bump(): this {
+    this.v++;
+    return this;
+  }
+}
+
+// The receiver's variable gets a new object; the kept result keeps the old one.
+function keptOutlives(): number {
+  let c = new Cell();
+  const k = c.bump();
+  c = new Cell();
+  c.bump();
+  return k.v * 10 + c.v;
+}
+
+// The kept result goes out of scope first; the receiver stays in use.
+function receiverOutlives(): number {
+  const c = new Cell();
+  {
+    const k = c.bump();
+    k.bump();
+  }
+  c.bump();
+  return c.v;
+}
+
+function main() {
+  const t = holder.b.m();
+  console.log("kept", t.id);
+  console.log("chain", holder.b.m().id);
+  const u = arr[0].shift();
+  console.log("elem kept", u.id);
+  console.log("elem chain", arr[0].shift().id);
+  let x = new B(7);
+  const v = x.run(() => {
+    x = new B(8);
+  });
+  console.log("captured kept", v.id, x.id);
+
+  h.s.add(5);
+  const s = h.s.add(reset());
+  console.log(s.size, h.s.size, s === h.s);
+  box.m.set("a", 1);
+  const w = box.m.set("b", resetMap());
+  console.log(w.size, box.m.size, w === box.m);
+  console.log(box.m.set("c", resetMap()).size);
+
+  // An argument assigns the receiver's variable: the result is the object the call ran on.
+  let s2 = new Set<number>();
+  const other = new Set<number>();
+  const t2 = s2.add((s2 = other).size + 1);
+  console.log(t2.size, s2.size, t2 === s2);
+  let c = new C(1);
+  const r = c.m((c = new C(2)).id);
+  console.log(r.id, c.id);
+
+  // A chain on a field with arguments that run nothing.
+  h.s.add(7).add(8);
+  console.log(h.s.has(7), h.s.has(8));
+
+  console.log(keptOutlives(), receiverOutlives());
+}

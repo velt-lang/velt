@@ -13,8 +13,9 @@ import {
   appendJsonUint,
   appendJsonValue,
 } from "velt/encoding/json/append";
-import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any";
+import { checkJsonTop, jsonPresent, writeJsonAny, writeJsonResult } from "velt/encoding/json/any";
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
+import { recordViewIs } from "velt/lang/intrinsics";
 import { Reader } from "velt/encoding/json/reader";
 import {
   readerFinish,
@@ -125,4 +126,33 @@ export declare generated("velt/encoding/json/generate/read") function readJson<T
 /** A recursive object type's value seen again while it is being written. */
 function jsonCircular(): never {
   panic("JSON.stringify: converting circular structure to JSON (an object contains itself)");
+}
+
+/**
+ * How many values that can contain themselves the typed writers are inside. The cycle check
+ * (velt/reflect's visits) starts past `JSON_SHALLOW` of them: a cycle repeats, so it is still found,
+ * a few levels deeper, and a value nested less deep, as most data is, pays for the count only.
+ */
+const JSON_DEPTH = new ThreadLocal<u64>(0);
+const JSON_SHALLOW: u64 = 16;
+
+/** Starts writing a value that can contain itself, whose identity is `id`. */
+function jsonEnter(id: u64): void {
+  const d = JSON_DEPTH.get();
+  JSON_DEPTH.set(d + 1);
+  if (d >= JSON_SHALLOW && !beginVisit(id)) {
+    jsonCircular();
+  }
+}
+
+/** Ends what `jsonEnter` started. */
+function jsonLeave(): void {
+  const d = JSON_DEPTH.get();
+  if (d == 0) {
+    return;
+  }
+  JSON_DEPTH.set(d - 1);
+  if (d - 1 >= JSON_SHALLOW) {
+    endVisit();
+  }
 }

@@ -23,8 +23,8 @@
 
 use velt_sema::hir::{self, AdtKind, DefId, TyId, TyKind};
 
-use super::any_glue::Ready;
 use super::any_proxy::ProxyKey;
+use super::any_ready::Ready;
 use super::glue::VtableKey;
 use super::operand::proj;
 use super::{cfunc, cint, Cx, FnLower, ScopeKind, ThunkKind, Work};

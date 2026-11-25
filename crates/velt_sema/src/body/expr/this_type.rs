@@ -39,6 +39,9 @@ impl FnCx<'_, '_> {
         if on_this {
             self.this_calls.insert(call.span);
         }
+        if crate::hand_back::hands_back(self.cx, def) {
+            return self.hand_back_call(call, def, to);
+        }
         // A receiver of a type parameter bounded by the class (`x: T` with `T extends Base`)
         // gives `T`, as in TypeScript: each instance downcasts to its own class.
         if to == call.ty
@@ -57,6 +60,10 @@ impl FnCx<'_, '_> {
             H::Local(l, _) => self.outer.is_empty() && self.local_kind(*l) == LocalKind::This,
             H::Upcast(x) | H::Downcast(x) => self.is_this_value(x),
             H::Call { .. } => self.this_calls.contains(&h.span),
+            // A call that hands back its receiver (`hand_back`), the receiver being `this`.
+            H::Block(b) if self.is_hand_back(h) && self.this_calls.contains(&h.span) => {
+                b.value.as_deref().is_some_and(|v| self.is_this_value(v))
+            }
             _ => false,
         }
     }

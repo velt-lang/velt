@@ -47,6 +47,12 @@ pub enum Shape {
     OutPtr(Pointee),
     /// `Out<S>` of a C struct, by name: an `S *` C writes (#2187).
     OutStruct(String),
+    /// `Ref<S>` of a C struct, by name: a `const S *` C reads (#2187); `Ref<S> | null` if
+    /// `nullable`.
+    RefStruct {
+        name: String,
+        nullable: bool,
+    },
     /// A C struct by value, by name: a field of another C struct.
     Struct(String),
     Void,
@@ -92,6 +98,14 @@ pub fn describe(shape: &Shape) -> String {
         Shape::Out(s) => format!("Out<{}>", scalar(s)),
         Shape::OutPtr(p) => format!("Out<Ptr<{}> | null>", pointee(p)),
         Shape::OutStruct(name) => format!("Out<{name}>"),
+        Shape::RefStruct {
+            name,
+            nullable: false,
+        } => format!("Ref<{name}>"),
+        Shape::RefStruct {
+            name,
+            nullable: true,
+        } => format!("Ref<{name}> | null"),
         Shape::Struct(name) => name.clone(),
         Shape::Void => "void".into(),
     }
@@ -182,6 +196,19 @@ pub fn compare_in(shape: &Shape, c: &CType, h: &Headers) -> Result<(), String> {
                 other => Err(format!("its `Out<T>`: declare {}", velt_for(other))),
             },
             CType::Pointer { .. } => Err("C only reads it: it is no out-parameter".into()),
+            _ => Err(format!("declare {}", velt_for(c))),
+        },
+        Shape::RefStruct { name, .. } => match c {
+            CType::Pointer {
+                pointee, is_const, ..
+            } if *is_const => match &**pointee {
+                CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
+                other => Err(format!("its `Ref<S>`: declare {}", velt_for(other))),
+            },
+            CType::Pointer { .. } => Err(
+                "C may write through it: declare it `Out<S>` or `Ptr<S>`; a `Ref<S>` is a `const S *`"
+                    .into(),
+            ),
             _ => Err(format!("declare {}", velt_for(c))),
         },
         Shape::OutPtr(p) => match c {
