@@ -316,7 +316,6 @@ export class ReadableStreamDefaultController<R> {
     return value;
   }
 
-
   // Rejects `reader.closed` and the waiting reads (in that order, as Node): their reader
   // released the stream.
   private release() {

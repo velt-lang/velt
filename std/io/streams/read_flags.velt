@@ -60,7 +60,11 @@ export function readFor<R>(
  * The controller answers a read (`flags` when it is a `for await` read's): `last` when the answer
  * ends the loop, which lets go of the stream first (the iterator's reader is its own).
  */
-export function readAnswered<R>(c: ReadableStreamDefaultController<R>, flags: ReadFlags | null, last: bool) {
+export function readAnswered<R>(
+  c: ReadableStreamDefaultController<R>,
+  flags: ReadFlags | null,
+  last: bool,
+) {
   if (flags == null) {
     return;
   }
