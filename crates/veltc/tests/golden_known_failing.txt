@@ -22,8 +22,6 @@ tests/golden/lang/class_objects.velt                               #2943 units
 tests/golden/lang/class_objects_switch.velt                        #2943 units
 tests/golden/lang/class_value_init_order.velt                      #2943 units
 tests/golden/lang/class_value_init_order_import.velt               #2943 units
-tests/golden/lang/generic_fn_rest_null.velt                        #2943 units
-tests/golden/lang/generic_fn_values_forms.velt                     #2943 units
 tests/golden/lang/iface_any_args_write_check.velt                  #2943 units
 tests/golden/lang/iface_from_unknown_class.velt                    #2943 units
 tests/golden/lang/iface_nested_receivers.velt                      #2943 units
@@ -41,11 +39,6 @@ tests/golden/std/error_name_getter_uncaught.velt                   #3684 units
 tests/golden/std/set_ctor_subclass_add.velt                        #3684 units
 tests/golden/std/set_map_return_this.velt                          #3684 units
 # The others (#2943's U6 list):
-examples/apps/todo-api/demo.velt                                   #2943 units
-examples/apps/todo-api/demo_sqlite.velt                            #2943 units
-tests/golden/lang/any_apply_list_throws.velt                       #2943 units
-tests/golden/lang/any_function_properties_life.velt                #2943 units
-tests/golden/lang/any_function_properties_mutex.velt               #2943 units
 tests/golden/lang/any_not_fn_catch.velt                            #2943 units
 tests/golden/lang/any_operators_objects.velt                       #2943 units
 tests/golden/lang/any_promise_cast_optional.velt                   #2943 units
@@ -66,11 +59,8 @@ tests/golden/lang/catch_panic_promise_freed.velt                   #2943 units
 tests/golden/lang/concat_lists_params.velt                         #2943 units
 tests/golden/lang/default_export_of_import.velt                    #2943 units
 tests/golden/lang/function_call_this.velt                          #2943 units
-tests/golden/lang/literal_view_record_fill.velt                    #2943 units
 tests/golden/lang/number_of_any.velt                               #2943 units
 tests/golden/lang/param_text_any.velt                              #2943 units
-tests/golden/lang/rwlock_read_caught_error.velt                    #2943 units
-tests/golden/lang/sort_comparator_any.velt                         #2943 units
 tests/golden/lang/union_view_assigned.velt                         #2943 units
 tests/golden/lang/union_view_live.velt                             #2943 units
 tests/golden/std/bigint_errors.velt                                #2943 units
