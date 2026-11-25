@@ -142,6 +142,9 @@ velt_rt velt_rt_rwlock_write
 velt_rt velt_rt_rwlock_write_unlock
 velt_rt velt_rt_set_scheduler
 velt_rt velt_rt_set_throw_loc
+velt_rt velt_rt_signal_free
+velt_rt velt_rt_signal_reason
+velt_rt velt_rt_signal_wait
 velt_rt velt_rt_start
 velt_rt velt_rt_statics
 velt_rt velt_rt_stdout_write_bytes

@@ -439,8 +439,9 @@ by `any` holds references to its sources until it is aborted (they reach it only
 owns).
 
 Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
-in raw memory; a wait is a heap future linked into its signal); velt_rt has no signal functions.
-WebAssembly's runtime keeps its own:
+in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
+began). velt_rt keeps `velt_rt_signal_wait`, `_reason` and `_free` for one signal of its own, the
+graceful stop's (§13.2), until that stop is std's too. WebAssembly's runtime keeps its own:
 
 | Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
@@ -1106,7 +1107,7 @@ joins through velt/dev's `joinStop` and `drained` (std/dev/stop.velt), on:
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_dev_server_stop` | `() -> VeltFut*` | a future (unit result; the caller owns it) that completes once a stop request arrives, null outside dev mode; std aborts the server's signal then. The process waits for the server until it reports itself drained (up to 1 s) |
+| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a runtime signal (§2.3; the caller owns it) aborted once a stop request arrives; null outside dev mode. std waits for it and aborts the server's own `AbortSignal`. The process waits for the server until it reports itself drained (up to 1 s) |
 | `velt_rt_dev_server_drained` | `()` | the server that joined stopped accepting and finished its requests |
 
 The stop request is:

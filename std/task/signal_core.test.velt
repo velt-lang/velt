@@ -103,6 +103,39 @@ describe("signal_core", () => {
     signalFree(any);
   });
 
+  it("wakes waits in the order they began", async () => {
+    const s = signalNew();
+    const order: number[] = [];
+    const w1 = noteWoken(s, order, 1);
+    const w2 = noteWoken(s, order, 2);
+    // A wait that was the last one and is dropped (the race it loses) leaves the end of the list
+    // to the one before it.
+    await Promise.race([signalWait(s, false), Promise.resolve()]);
+    const w3 = noteWoken(s, order, 3);
+    signalAbort(s, "stop");
+    await Promise.all([w1, w2, w3]);
+    expect(order).toEqual([1, 2, 3]);
+    signalFree(s);
+  });
+
+  it("aborts derived signals in the order they were made", async () => {
+    const a = signalNew();
+    const order: number[] = [];
+    const first = signalAny([a]);
+    const gone = signalAny([a]);
+    signalFree(gone);
+    const second = signalAny([a]);
+    // The waits begin in the other order: the signals' order decides.
+    const w2 = noteWoken(second, order, 2);
+    const w1 = noteWoken(first, order, 1);
+    signalAbort(a, "stop");
+    await Promise.all([w1, w2]);
+    expect(order).toEqual([1, 2]);
+    for (const s of [a, first, second]) {
+      signalFree(s);
+    }
+  });
+
   it("wakes waits on other workers, with aborts racing", async () => {
     for (let round = 0; round < 50; round++) {
       const a = signalNew();
@@ -132,6 +165,12 @@ describe("signal_core", () => {
 async function waitOn(s: u64): Promise<void> {
   await signalWait(s, false);
   signalFree(s);
+}
+
+// Waits for `s`, then notes `n` in `order`.
+async function noteWoken(s: u64, order: number[], n: number): Promise<void> {
+  await signalWait(s, false);
+  order.push(n);
 }
 
 // Drops wait `w`, a heap future, without polling it.

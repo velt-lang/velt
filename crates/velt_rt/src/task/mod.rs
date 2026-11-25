@@ -12,6 +12,7 @@
 //!   header starting with a table of C functions (waker.rs), passed through as an opaque
 //!   pointer. Runtime leaves get a Rust `Context` for it with [`with_context`].
 
+pub mod abort;
 pub mod compiled;
 pub mod coop;
 pub mod identity;

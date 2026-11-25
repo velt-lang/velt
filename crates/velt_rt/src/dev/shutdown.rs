@@ -10,8 +10,9 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
-use crate::task::leaf::new_inner_leaf;
-use crate::task::VeltFut;
+use crate::handle::Handle;
+use crate::task::abort::Signal;
+use std::sync::Arc;
 
 /// Longest time in-flight requests get to finish after a stop request.
 pub(crate) const DRAIN: Duration = Duration::from_secs(1);
@@ -88,22 +89,25 @@ pub(crate) fn open_stop_channel(socket: &std::ffi::OsStr) {
     });
 }
 
-/// A server written in Velt joins the graceful stop (velt/dev's `joinStop`, which aborts its
-/// signal when this completes): a future (unit result, the caller owns it) that completes once a
-/// stop request arrives, or null outside dev mode. The process waits for the server (up to
-/// [`DRAIN`]) until it reports itself drained ([`velt_rt_dev_server_drained`]).
+/// A server written in Velt joins the graceful stop (velt/dev's `joinStop`): a signal that
+/// is aborted once a stop request arrives, or a null handle outside dev mode. The process waits
+/// for the server (up to [`DRAIN`]) until it reports itself drained
+/// ([`velt_rt_dev_server_drained`]).
 #[no_mangle]
-pub extern "C" fn velt_rt_dev_server_stop() -> *mut VeltFut {
+pub extern "C" fn velt_rt_dev_server_stop() -> Handle<Signal> {
     let Some(stop) = STOP.get() else {
-        return std::ptr::null_mut();
+        return Handle::NULL;
     };
     ACTIVE.fetch_add(1, Ordering::AcqRel);
+    let signal = Arc::new(Signal::default());
+    let aborted = signal.clone();
     let mut rx = stop.subscribe();
-    new_inner_leaf(async move {
-        if rx.wait_for(|stop| *stop).await.is_err() {
-            std::future::pending::<()>().await;
+    crate::task::runtime::spawn(async move {
+        if rx.wait_for(|stop| *stop).await.is_ok() {
+            aborted.abort_with("the program is stopping");
         }
-    })
+    });
+    Handle::from_arc(signal)
 }
 
 /// A server that joined the graceful stop ([`velt_rt_dev_server_stop`]) finished: stopped

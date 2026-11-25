@@ -7,8 +7,11 @@
 //
 // A wait is a heap future (rt_abi_async.md §1: poll, drop; no result) that completes once the
 // signal is aborted. A pending wait is linked into its signal's list (any number per signal;
-// dropped, it leaves in constant time); the abort takes the list and wakes every wait in it. The
-// signal's spin lock guards its lists, the waits' wakers and its reason.
+// dropped, it leaves in constant time); the abort wakes the waits in the order they began, as Node
+// calls a signal's listeners, and aborts the derived signals in the order they were made. The
+// signal's spin lock guards its lists, the waits' wakers and its reason; no waker is woken or
+// dropped under it (either may end a task that owns another wait for the same signal, whose drop
+// takes the lock).
 //
 // A wait `timed` (a timer may abort its signal: an `AbortSignal.timeout`, or an `AbortSignal.any`
 // of one) holds a keep-alive reference while it is pending, so it keeps the process alive as a
@@ -23,8 +26,9 @@ declare function velt_rt_keep_alive_release();
 
 // A signal: its spin lock (a u32), whether it is aborted, its references, the first wait linked
 // into it, the first link to a signal derived from it (`AbortSignal.any`), its own links to the
-// signals it was derived from (until it is aborted or freed), whether it holds a reason, the
-// reason (a string slot, `slotSize<string>()` bytes).
+// signals it was derived from (until it is aborted or freed), whether it holds a reason, the last
+// wait and the last link of its two lists (new ones are appended), the reason (a string slot,
+// `slotSize<string>()` bytes).
 export const S_LOCK: usize = 0;
 export const S_ABORTED: usize = 8;
 export const S_REFS: usize = 16;
@@ -32,7 +36,9 @@ export const S_WAITERS: usize = 24;
 export const S_CHILDREN: usize = 32;
 export const S_LINKS: usize = 40;
 export const S_HAS_REASON: usize = 48;
-export const S_REASON: usize = 56;
+const S_LAST_WAITER: usize = 56;
+const S_LAST_CHILD: usize = 64;
+export const S_REASON: usize = 72;
 
 // A wait: the heap future's header (poll, drop, an unused result word), its signal (a reference
 // of its own), its place in the signal's list, its waker, whether it is linked, whether it is
@@ -88,24 +94,25 @@ export function waitFuture(s: usize, timed: bool): usize {
 }
 
 /**
- * Wakes every wait linked into signal `s` (locked, aborted): each is unlinked and its waker
- * taken, so a wait dropped after the lock is let go finds nothing to undo.
+ * Wakes every wait linked into signal `s` (locked and aborted; unlocked when this returns), the
+ * first that began first: each is unlinked and its waker taken under the lock, so a wait dropped
+ * later finds nothing to undo, and woken without it. No wait joins meanwhile: the signal is
+ * aborted.
  */
 export function wakeAll(s: usize): void {
   let w = m.ld(s + S_WAITERS);
-  m.st(s + S_WAITERS, 0);
   while (w !== 0) {
-    const next = m.ld(w + W_NEXT);
-    m.st(w + W_LINKED, 0);
-    m.st(w + W_PREV, 0);
-    m.st(w + W_NEXT, 0);
+    unlinkLocked(w, s);
     const k = m.ld(w + W_WAKER);
+    m.st(w + W_WAKER, 0);
+    unlock(s);
     if (k !== 0) {
-      m.st(w + W_WAKER, 0);
       m.wakeOwned(k);
     }
-    w = next;
+    lock(s);
+    w = m.ld(s + S_WAITERS);
   }
+  unlock(s);
 }
 
 function waitPoll(f: usize, cx: usize): u32 {
@@ -124,21 +131,25 @@ function waitPoll(f: usize, cx: usize): u32 {
   const old = m.ld(f + W_WAKER);
   if (old !== w) {
     m.st(f + W_WAKER, m.wakerClone(w));
-    if (old !== 0) {
-      m.wakerDrop(old);
-    }
   }
   if (m.ld(f + W_LINKED) === 0) {
-    const head = m.ld(s + S_WAITERS);
-    m.st(f + W_NEXT, head);
-    m.st(f + W_PREV, 0);
-    if (head !== 0) {
-      m.st(head + W_PREV, f);
+    const last = m.ld(s + S_LAST_WAITER);
+    m.st(f + W_PREV, last);
+    m.st(f + W_NEXT, 0);
+    if (last !== 0) {
+      m.st(last + W_NEXT, f);
+    } else {
+      m.st(s + S_WAITERS, f);
     }
-    m.st(s + S_WAITERS, f);
+    m.st(s + S_LAST_WAITER, f);
     m.st(f + W_LINKED, 1);
   }
   unlock(s);
+  // Dropped without the lock: the last reference to a task ends it, and it may own another wait
+  // for this signal, whose drop takes the lock.
+  if (old !== w && old !== 0) {
+    m.wakerDrop(old);
+  }
   if (m.ld(f + W_TIMED) !== 0 && m.ld(f + W_KEPT) === 0) {
     m.st(f + W_KEPT, 1);
     velt_rt_keep_alive_acquire();
@@ -169,6 +180,8 @@ function unlinkLocked(f: usize, s: usize): void {
   }
   if (next !== 0) {
     m.st(next + W_PREV, prev);
+  } else {
+    m.st(s + S_LAST_WAITER, prev);
   }
   m.st(f + W_LINKED, 0);
 }
@@ -283,6 +296,8 @@ function unlinkSources(s: usize): void {
       }
       if (after !== 0) {
         m.st(after + L_PREV, prev);
+      } else {
+        m.st(src + S_LAST_CHILD, prev);
       }
       m.st(l + L_LINKED, 0);
     }
@@ -312,9 +327,9 @@ export function abort(s: usize, reason: string): void {
   }
   m.st(s + S_HAS_REASON, 1);
   m.storeRelease(s + S_ABORTED, 1);
-  wakeAll(s);
   let l = m.ld(s + S_CHILDREN);
   m.st(s + S_CHILDREN, 0);
+  m.st(s + S_LAST_CHILD, 0);
   while (l !== 0) {
     const next = m.ld(l + L_NEXT);
     m.st(l + L_LINKED, 0);
@@ -324,7 +339,8 @@ export function abort(s: usize, reason: string): void {
     }
     l = next;
   }
-  unlock(s);
+  // Its own waits first, then the derived signals' (in the order they were made).
+  wakeAll(s);
   unlinkSources(s);
   for (const c of kids) {
     abort(c, reason);
@@ -366,13 +382,15 @@ export function link(src: usize, child: usize): bool {
   m.inc(src + S_REFS);
   m.st(l + L_CHILD, child);
   m.st(l + L_SOURCE, src);
-  const head = m.ld(src + S_CHILDREN);
-  m.st(l + L_NEXT, head);
-  m.st(l + L_PREV, 0);
-  if (head !== 0) {
-    m.st(head + L_PREV, l);
+  const last = m.ld(src + S_LAST_CHILD);
+  m.st(l + L_PREV, last);
+  m.st(l + L_NEXT, 0);
+  if (last !== 0) {
+    m.st(last + L_NEXT, l);
+  } else {
+    m.st(src + S_CHILDREN, l);
   }
-  m.st(src + S_CHILDREN, l);
+  m.st(src + S_LAST_CHILD, l);
   m.st(l + L_LINKED, 1);
   // A source linked before may abort `child` now, on another thread (`unlinkSources`).
   m.pushStack(child + S_LINKS, l, L_OWN);

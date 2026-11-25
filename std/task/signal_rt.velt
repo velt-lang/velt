@@ -1,6 +1,7 @@
 // velt/task (internal): the abort signals behind `AbortSignal` (signal.velt) where the runtime
 // keeps them (the default variant of `#task-signal`: WebAssembly, whose runtime has its own; under
-// the executor in Velt, signal_sched.velt's). velt_rt defines none of these: only velt_rt_wasm.
+// the executor in Velt, signal_sched.velt's). Of these velt_rt defines only what std/dev/rt.velt
+// declares, for its own stop signal: the rest is velt_rt_wasm's.
 
 declare function velt_rt_signal_new(): u64;
 

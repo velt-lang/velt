@@ -2,9 +2,15 @@
 // crates/velt_rt/src/dev/shutdown.rs).
 
 /**
- * Joins the stop: a heap future (unit result, the caller owns it) that completes once the stop
- * request arrives; 0 outside `velt dev`. The `$fut` suffix is not part of the symbol.
+ * A runtime signal aborted once the stop request arrives (the caller owns it); 0 outside
+ * `velt dev`. Not one of `AbortSignal`'s, which are std's: the three below are all it has.
  */
-export declare c("c") function velt_rt_dev_server_stop$fut(): usize;
+export declare function velt_rt_dev_server_stop(): u64;
+/** Completes once runtime signal `s` is aborted; `timed` (false here): keeps the process alive. */
+export declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
+/** Runtime signal `s`'s reason (`""` while it is not aborted). */
+export declare function velt_rt_signal_reason(s: u64): string;
+/** Releases runtime signal `s`. */
+export declare function velt_rt_signal_free(s: u64);
 /** The server that joined the stop stopped accepting and finished its requests. */
 export declare function velt_rt_dev_server_drained();
