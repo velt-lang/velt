@@ -3,8 +3,9 @@
 // (std/process/child/spawn_posix.velt spawns the children), `faccessat`'s constants and
 // `PATH_MAX` (spawn_lookup.velt), and `poll`, whose `nfds_t` is 64 bits here
 // (exec_sync_posix.velt waits on the pipes), and the few OS calls starting a child needs
-// (`errno`, its pipes), so that `execSync` loads no reactor file. One C symbol has one signature
-// in a program: these declarations are the reactor's (std/lang/hooks/reactor_epoll.velt).
+// (`errno`, its pipes, the descriptors it keeps), so that `execSync` loads no reactor file. One
+// C symbol has one signature in a program: these declarations are the reactor's
+// (std/lang/hooks/reactor_epoll.velt).
 
 import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
@@ -22,6 +23,10 @@ export const SPAWN_FLAGS: i16 = 0;
 const O_CLOEXEC: i32 = 0x80000;
 const F_SETFL: i32 = 4;
 const O_NONBLOCK: i32 = 0x800;
+const F_GETFD: i32 = 1;
+const FD_CLOEXEC: i32 = 1;
+/** `F_DUPFD_CLOEXEC` (<fcntl.h>). */
+const F_DUPFD_CLOEXEC: i32 = 1030;
 
 /** The calling thread's `errno`. */
 export function errno(): i32 {
@@ -44,8 +49,34 @@ export function nonBlocking(fd: i32): i32 {
   return unsafe { fcntl$spawn(fd, F_SETFL, O_NONBLOCK) } < 0 ? errno() : 0;
 }
 
-/** Keeps descriptor `fd` the child's: nothing to do here (no `SPAWN_FLAGS`). */
-export function spawnInherit(fa: usize, fd: i32): void {}
+/** A close-on-exec copy of `fd` numbered 3 or above: the copy, or -1 with `errno` set. */
+export function dupAboveStdio(fd: i32): i32 {
+  // SAFETY: F_DUPFD_CLOEXEC takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$spawn(fd, F_DUPFD_CLOEXEC, 3 as i32) };
+}
+
+declare c("c") function posix_spawn_file_actions_adddup2$spawn(
+  fa: Ptr<posix_spawn_file_actions_t> | null,
+  fd: i32,
+  to: i32,
+): i32;
+
+/**
+ * Keeps descriptor `fd` the child's in file actions `fa`, even close-on-exec (a file opened on a
+ * closed stdout), as libuv clears the flag in its child: with a `dup2` onto itself, which clears
+ * it (glibc 2.29 and later, and musl since 2019; an older C library leaves it, and the child
+ * gets the stream closed). A closed `fd` stays closed.
+ */
+export function spawnInherit(fa: usize, fd: i32): void {
+  // SAFETY: F_GETFD takes no argument.
+  const flags = unsafe { fcntl$spawn(fd, F_GETFD) };
+  if (flags >= 0 && (flags & FD_CLOEXEC) !== 0) {
+    // SAFETY: `fa` is an initialized file-actions object.
+    unsafe {
+      posix_spawn_file_actions_adddup2$spawn(m.ptrTo<posix_spawn_file_actions_t>(fa), fd, fd);
+    }
+  }
+}
 
 /** C's `posix_spawn_file_actions_t` and `struct pollfd`. */
 declare c type posix_spawn_file_actions_t;

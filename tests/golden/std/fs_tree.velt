@@ -4,15 +4,21 @@
 // made and removed, and Node's errors. The expected output is Node's, whose twin sorts its
 // listings by code point (Node lists in the system's order) and removes with `rmdirSync`,
 // `unlinkSync` or `rmSync` after an `lstatSync`, as `remove` does.
+import { cwd } from "velt/process";
 import * as fs from "velt/fs";
 import { IoError } from "velt/io";
+
+/** The message as Node prints it on Linux: on Windows it names the path absolute, with `\`. */
+function portable(m: string): string {
+  return m.split(`${cwd()}\\`).join("").split("\\").join("/");
+}
 
 function attempt(what: string, f: () => void) {
   try {
     f();
     console.log(what, "no error");
   } catch (e) {
-    console.log(what, (e as IoError).code, (e as Error).message);
+    console.log(what, (e as IoError).code, portable((e as Error).message));
   }
 }
 
@@ -78,17 +84,17 @@ async function main() {
   try {
     await fs.readDir(`${dir}/missing`);
   } catch (e) {
-    console.log("async list", (e as IoError).code, (e as Error).message);
+    console.log("async list", (e as IoError).code, portable((e as Error).message));
   }
   try {
     await fs.mkdir(`${dir}/plain`);
   } catch (e) {
-    console.log("async mkdir", (e as IoError).code, (e as Error).message);
+    console.log("async mkdir", (e as IoError).code, portable((e as Error).message));
   }
   try {
     await fs.remove(`${dir}/a`);
   } catch (e) {
-    console.log("async remove", (e as IoError).code, (e as Error).message);
+    console.log("async remove", (e as IoError).code, portable((e as Error).message));
   }
 
   fs.removeSync(`${dir}/a.txt`);

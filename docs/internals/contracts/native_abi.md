@@ -274,22 +274,22 @@ Apple M-series): a `StrBuf` is as fast as or faster than a `Vec<u8>` copied into
 
 ## Rows
 
-The binary rows format of `velt_text::rows` (`BinRows` writes it) is the layout a driver's row
-cursor (below) shares for its header: `single`, the column names. std's decoders read drivers'
-rows through row cursors; the runtime no longer reads binary rows as JSON (the reader that did,
-`velt_rt_json_reader_new_with` flag 4, went with #3318).
+std's decoders read drivers' rows through row cursors (below). `velt_text::rows` holds what a
+cursor shares with them: its header and its cells' tags. (The binary rows buffer a driver once
+returned, and the runtime's reader of it, `velt_rt_json_reader_new_with` flag 4, went with
+#3318 and #3614.)
 
-Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows, one
-cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT` 3 + `i64`,
-`FLOAT` 4 + `f64`, `TEXT` 5 or `ASCII` 7 + `u32` length + UTF-8, `BLOB` 6 + `u32` length +
-bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The format
-has no cell for nested values (arrays, JSON columns); a row cursor hands those as JSON text.
+Header: `single: u8, columns: u16, (name_len: u32, name bytes)*` (integers little-endian; bit 31
+of a name's length says the name is ASCII; `velt_text::rows::encode_names` writes the part after
+`single`). A cell crosses the C ABI as a `RawCell` whose tag is `NULL` 0, `FALSE` 1, `TRUE` 2,
+`INT` 3, `FLOAT` 4, `TEXT` 5, `BLOB` 6, `ASCII` 7 (text that is all ASCII) or `JSON` 8 (a nested
+value, such as an array or a JSON column, as its JSON text).
 
 ## Row cursors
 
 A driver lets the decoder read its rows where it has them, without writing them into a
-buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()` (the header of
-the binary rows: `single`, the column names), `step()` (to the next row, the first on the first
+buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()` (the header laid
+out as in "Rows" above: `single`, the column names), `step()` (to the next row, the first on the first
 call; false at the end and after a failure, which the driver keeps) and `cell(col)` (a `Cell`
 of the current row: null, bool, int, float, text, ascii text, blob, or a nested value as JSON
 text, borrowed until the next step) — and registers it with the runtime: `open_cursor(Box<C>)`

@@ -43,7 +43,7 @@ fn a_function_value_that_throws_lowers() {
 
 /// Lowering converts `get`'s result to the interface's in the adapter `make_dynamic_impls` makes
 /// for the object in the `any`, which is the first mention of `Set`, after the bodies' check. So
-/// the check runs again with `Set`'s methods live from the start.
+/// the check runs again with `Set` live from the start (its constructor, live with the class).
 #[test]
 fn what_an_adapter_made_after_the_check_reaches_is_checked_in_time() {
     let src = "interface Src { get(): Set<string>; }\n\
@@ -51,7 +51,7 @@ fn what_an_adapter_made_after_the_check_reaches_is_checked_in_time() {
                const a: any = o;\n  const s = a as Src;\n  console.log(\"x\");\n}\n";
     lowers(src);
     let p = std_src::check_src(src);
-    assert!(is_live(&p, "std/collections/set::Set.from"));
+    assert!(is_live(&p, "std/collections/set::Set.constructor"));
 }
 
 /// The same for a conversion to a record, whose hooks' module wasn't loaded.

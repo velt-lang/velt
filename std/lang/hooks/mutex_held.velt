@@ -1,0 +1,46 @@
+// velt/lang/hooks (internal): how many `Mutex`es this thread holds, for the module lock (#3467).
+// A thread that waits for the module lock (sched_module.velt `take`) while it holds a `Mutex`
+// could wait for a thread that holds the module lock and waits for that `Mutex`: sema refuses
+// module state in a `with` callback (velt_sema `module_state.rs` `check_locked_access`), and
+// `velt dev` checks an edit again before it swaps it in, so only a gap in that rule reaches the
+// wait. In code `velt dev` runs, the wait stops with a panic instead.
+//
+// Only a build for the `velt dev` JIT counts: lowering calls `locked` after a `with`'s lock and
+// `unlocked` before its unlock (velt_vir `async_fn/sync.rs` `count_held`, the hooks of
+// `Construct::MutexHeld`), whichever lock the `with` took. Other builds call neither: their
+// `Mutex` is as it was, and the module lock's check is one relaxed load of `USED`, which stays 0.
+// The count is per thread (a worker, a blocking-pool thread, a thread of a C library alike): a
+// `Mutex` is locked only for `m.with(f)`, whose callback never awaits, so it is unlocked on the
+// thread that locked it. A caught panic doesn't put the count back: the JIT doesn't catch panics
+// (std/task/unwind.velt), so in the builds that count, a panic ends the program. An `RwLock`'s
+// holds are not counted: its lock words are the runtime's.
+
+/** How many `Mutex`es this thread holds (in a `velt dev` build). */
+const HELD = new ThreadLocal<u32>(0);
+
+/**
+ * 1 once any thread has counted a `Mutex` (only a `velt dev` build does): until then the module
+ * lock reads no count (sched_module.velt `take`), one relaxed load in every other build.
+ */
+export const USED = new Atomic<u32>(0);
+
+/** This thread locked a `Mutex` (`velt dev`: after a `with`'s lock). */
+export function locked(): void {
+  if (USED.load("relaxed") === 0) {
+    USED.store(1, "relaxed");
+  }
+  HELD.set(HELD.get() + 1);
+}
+
+/** This thread is about to unlock a `Mutex` it locked (`velt dev`: before a `with`'s unlock). */
+export function unlocked(): void {
+  const c = HELD.get();
+  if (c !== 0) {
+    HELD.set(c - 1);
+  }
+}
+
+/** How many `Mutex`es this thread holds (always 0 outside a `velt dev` build). */
+export function held(): u32 {
+  return HELD.get();
+}
