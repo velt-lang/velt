@@ -1,8 +1,9 @@
 // check: no leaks
 // More results an implementation converts to the interface's, as a call converts them (#3771):
 // a generic method's, an interface extending the wanted one, a `this` result inherited from a
-// base class that doesn't implement the interface, a nullable subclass, a result class that
-// implements the interface through its base class, and the iterator shapes.
+// base class that doesn't implement the interface, a nullable subclass, a nullable class or
+// interface for a nullable interface, a result class that implements the interface through its
+// base class, and the iterator shapes.
 class Shape {
   name(): string {
     return "shape";
@@ -107,6 +108,38 @@ class SqFinder implements Finder {
   }
 }
 
+// A nullable class for a nullable interface, and a nullable interface extending it.
+interface Chain {
+  link(n: number): Fluent | null;
+}
+
+class ClassLinker implements Chain {
+  link(n: number): Derived | null {
+    if (n > 0) {
+      const d = new Derived();
+      d.n = n;
+      return d;
+    }
+    return null;
+  }
+}
+
+class SubLinker implements Chain {
+  link(n: number): Sub | null {
+    if (n > 0) {
+      const t = new Tot();
+      t.n = n * 10;
+      return t;
+    }
+    return null;
+  }
+}
+
+function linked(c: Chain, n: number): string {
+  const f = c.link(n);
+  return f === null ? "none" : String(f.step(1).total());
+}
+
 // An iterator class for `Iterable`, and `this` for `IterableIterator`.
 class RangeIter implements Iterator<number> {
   i: number;
@@ -173,4 +206,7 @@ function main() {
   const b = f.find(0);
   console.log(a === null ? "null" : a.name(), b === null ? "null" : b.name());
   console.log(sum(new Span(4)), sum(new Countdown(3)));
+  const cl = new ClassLinker();
+  const sl = new SubLinker();
+  console.log(linked(cl, 2), linked(cl, 0), linked(sl, 3), linked(sl, 0));
 }

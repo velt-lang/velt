@@ -20,9 +20,12 @@ use velt_common::{Diagnostic, Span};
 
 use super::forwarders::{synth_method, Host, Target};
 use super::ret_infer::is_pending;
+use crate::body::LocalKind;
 use crate::ctx::Ctx;
 use crate::defs::{Generics, ParamSig};
-use crate::hir::{self, Def, DefId, ExprKind as H, StmtKind as S, TyId, TyKind};
+use crate::hir::{
+    self, Def, DefId, ExprKind as H, LocalId, PatKind as P, StmtKind as S, TyId, TyKind, UseMode,
+};
 
 /// How the result of an implementing method converts to the interface method's.
 #[derive(Clone, Copy, Debug)]
@@ -32,6 +35,24 @@ pub(super) enum Conv {
     Upcast(TyId),
     /// To interface `iface` (as `want`), through the result class's implementation of it.
     ToDyn { iface: DefId, want: TyId },
+    /// `have | null` to `want | null` (`whole`) where `have` converts to `want` by a `ToDyn`
+    /// through the implementation of `iface`, or by an interface upcast (`iface: None`): tested
+    /// for null, as a call converts it (`Counter | null` for `Fluent | null`).
+    Payload {
+        iface: Option<DefId>,
+        have: TyId,
+        want: TyId,
+        whole: TyId,
+    },
+}
+
+impl Conv {
+    /// The type converted to.
+    fn want(&self) -> TyId {
+        match *self {
+            Conv::Upcast(w) | Conv::ToDyn { want: w, .. } | Conv::Payload { whole: w, .. } => w,
+        }
+    }
 }
 
 /// A converting entry whose `ToDyn` waits for its implementation index (`finish`): the entry,
@@ -113,6 +134,20 @@ fn converts(cx: &mut Ctx, have: TyId, want: TyId) -> Option<Conv> {
             if m == n && cx.class_of(y).is_some() && is_base(cx, x, y) =>
         {
             Some(Conv::Upcast(want))
+        }
+        // `Counter | null` for `Fluent | null`: the payload converted when it is there.
+        (TyKind::Option(x, m), TyKind::Option(y, n)) if m == n => {
+            let iface = match converts(cx, x, y)? {
+                Conv::ToDyn { iface, .. } => Some(iface),
+                Conv::Upcast(_) if matches!(cx.ty.kind(y), TyKind::Dyn(..)) => None,
+                _ => return None,
+            };
+            Some(Conv::Payload {
+                iface,
+                have: x,
+                want: y,
+                whole: want,
+            })
         }
         _ => None,
     }
@@ -199,9 +234,7 @@ pub(super) fn entry(
         .collect();
     let have = imp.result(cx);
     let declared = imp.declared(cx);
-    let want = match conv {
-        Conv::Upcast(w) | Conv::ToDyn { want: w, .. } => w,
-    };
+    let want = conv.want();
     let mut_this = cx
         .fn_info(imp.def)
         .this
@@ -213,6 +246,22 @@ pub(super) fn entry(
     let self_ty = imp.self_ty;
     let e = synth_method(cx, &host, self_ty, label, params, want, mut_this, target);
     let downcast = !cx.same_ty(declared, have);
+    // The payload's binding of a `Conv::Payload` (`LocalId(n)` after `this` and the params).
+    if let Conv::Payload { have, .. } = conv {
+        cx.fn_info_mut(e).local_kinds.push(LocalKind::Bind);
+        let Some(Def::Fn(f)) = &mut cx.defs[e.0 as usize] else {
+            panic!("ICE: a synthesized method has a body");
+        };
+        let span = f.span;
+        f.body.locals.push(hir::LocalDef {
+            name: "<some>".into(),
+            ty: have,
+            mutable: false,
+            boxed: false,
+            weak: false,
+            span,
+        });
+    }
     let Some(Def::Fn(f)) = &mut cx.defs[e.0 as usize] else {
         panic!("ICE: a synthesized method has a body");
     };
@@ -235,6 +284,7 @@ pub(super) fn entry(
             span,
         };
     }
+    let some = LocalId(f.body.locals.len() as u32 - 1);
     let kind = match conv {
         Conv::Upcast(_) => H::Upcast(Box::new(call)),
         Conv::ToDyn { iface, .. } => {
@@ -243,6 +293,30 @@ pub(super) fn entry(
                 expr: Box::new(call),
                 impl_index: u32::MAX,
             }
+        }
+        Conv::Payload {
+            iface,
+            have,
+            want: to,
+            whole,
+        } => {
+            let value = hir::Expr {
+                kind: H::Local(some, UseMode::Move),
+                ty: have,
+                span,
+            };
+            let kind = match iface {
+                Some(iface) => {
+                    pending.push((e, have, iface));
+                    H::ToDyn {
+                        expr: Box::new(value),
+                        impl_index: u32::MAX,
+                    }
+                }
+                None => H::Upcast(Box::new(value)),
+            };
+            let converted = hir::Expr { kind, ty: to, span };
+            null_tested(call, (some, have), converted, whole)
         }
     };
     *value = hir::Expr {
@@ -292,21 +366,64 @@ pub(super) fn finish(cx: &mut Ctx, pending: Vec<Pending>) {
             continue;
         };
         let Some(hir::Stmt {
-            kind:
-                S::Return(Some(hir::Expr {
-                    kind: H::ToDyn { impl_index, .. },
-                    ..
-                })),
+            kind: S::Return(Some(value)),
             ..
         }) = f.body.block.stmts.last_mut()
         else {
             continue;
         };
-        *impl_index = found;
+        if let Some(impl_index) = pending_index(value) {
+            *impl_index = found;
+        }
     }
 }
 
-/// A placeholder for the value being replaced.
+/// The implementation index `finish` sets in entry result `e`: of its `ToDyn`, or of the one in
+/// the `Some` arm of a `Conv::Payload`'s test.
+fn pending_index(e: &mut hir::Expr) -> Option<&mut u32> {
+    match &mut e.kind {
+        H::ToDyn { impl_index, .. } => Some(impl_index),
+        H::Match { arms, .. } => arms.first_mut().and_then(|a| pending_index(&mut a.body)),
+        H::WrapSome(x) => pending_index(x),
+        _ => None,
+    }
+}
+
+/// `match (value) { some => wrap(converted), null => null }` typed `whole`, with `some` (of
+/// type `have`) bound to the payload, as a call converts a nullable value
+/// (`body::expr::union_coerce`).
+fn null_tested(
+    value: hir::Expr,
+    (some, have): (LocalId, TyId),
+    converted: hir::Expr,
+    whole: TyId,
+) -> H {
+    let span = value.span;
+    let pat = |kind, ty| hir::Pat { kind, ty, span };
+    let bind = pat(P::Binding(some, UseMode::Move), have);
+    let arms = vec![
+        hir::Arm {
+            pat: pat(P::Some(Box::new(bind)), value.ty),
+            guard: None,
+            body: hir::Expr {
+                kind: H::WrapSome(Box::new(converted)),
+                ty: whole,
+                span,
+            },
+        },
+        hir::Arm {
+            pat: pat(P::None, value.ty),
+            guard: None,
+            body: unit_placeholder(whole, span),
+        },
+    ];
+    H::Match {
+        scrutinee: Box::new(value),
+        arms,
+    }
+}
+
+/// A placeholder for the value being replaced (`null`).
 fn unit_placeholder(ty: TyId, span: Span) -> hir::Expr {
     hir::Expr {
         kind: H::Lit(hir::Lit::Null),
