@@ -1,11 +1,11 @@
 //! `std/fs` (rt_abi_async.md §5) over WASI files: velt_rt's operations compiled from its
 //! sources, async variants that run the operation on their first poll (there is no blocking
-//! pool on one thread), and the `*_sync` functions of whole.rs, tree.rs and paths.rs. In the
-//! browser every operation fails with the error `std` reports there.
+//! pool on one thread), and the `*_sync` functions of whole.rs and tree.rs. In the browser every
+//! operation fails with the error `std` reports there. Renaming, linking and copying are std
+//! code on WebAssembly too (std/fs/paths/wasi.velt and js.velt).
 
 #[path = "../../../velt_rt/src/fs/ops.rs"]
 mod ops;
-mod paths;
 mod tree;
 mod whole;
 
@@ -91,30 +91,6 @@ pub unsafe extern "C" fn velt_rt_fs_lstat(path: *const VeltStr) -> *mut VeltFut 
     ready_leaf(move || whole::lstat(p))
 }
 
-/// `readlink(path)` → `IoResult<VeltStr>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_readlink(path: *const VeltStr) -> *mut VeltFut {
-    let p = path_arg(path);
-    ready_leaf(move || paths::readlink(p))
-}
-
-/// `realpath(path)` → `IoResult<VeltStr>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_realpath(path: *const VeltStr) -> *mut VeltFut {
-    let p = path_arg(path);
-    ready_leaf(move || paths::realpath(p))
-}
-
-/// `symlink(target, path)` → `IoResult<()>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_symlink(
-    target: *const VeltStr,
-    path: *const VeltStr,
-) -> *mut VeltFut {
-    let (t, p) = (path_arg(target), path_arg(path));
-    ready_leaf(move || paths::symlink(t, p))
-}
-
 /// `mkdir(path, { recursive })` → `IoResult<()>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_mkdir(path: *const VeltStr, recursive: u8) -> *mut VeltFut {
@@ -127,26 +103,6 @@ pub unsafe extern "C" fn velt_rt_fs_mkdir(path: *const VeltStr, recursive: u8) -
 pub unsafe extern "C" fn velt_rt_fs_remove(path: *const VeltStr, recursive: u8) -> *mut VeltFut {
     let p = path_arg(path);
     ready_leaf(move || tree::remove(p, recursive != 0))
-}
-
-/// `rename(from, to)` → `IoResult<()>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_rename(
-    from: *const VeltStr,
-    to: *const VeltStr,
-) -> *mut VeltFut {
-    let (f, t) = (path_arg(from), path_arg(to));
-    ready_leaf(move || paths::rename(f, t))
-}
-
-/// `copyFile(from, to)` → `IoResult<()>`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_fs_copy_file(
-    from: *const VeltStr,
-    to: *const VeltStr,
-) -> *mut VeltFut {
-    let (f, t) = (path_arg(from), path_arg(to));
-    ready_leaf(move || paths::copy(f, t))
 }
 
 /// `exists(path)` → `u8`.

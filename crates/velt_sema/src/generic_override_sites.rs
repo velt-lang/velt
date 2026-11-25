@@ -14,7 +14,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, LocalId, TyId, TyKind};
-use crate::visit;
+use crate::visit_ref as visit;
 
 /// Type parameter `.1` of definition `.0` (a function, or a class for its methods).
 type Node = (DefId, u32);
@@ -173,10 +173,10 @@ fn exact(cx: &Ctx, g: DefId, j: u32, t: TyId, args: &[(TyId, bool)]) -> bool {
 
 /// The variables of a body that are initialized with a `new` and never reassigned (`const a =
 /// new A()`), with the `new`'s type: such a variable holds exactly that class.
-fn new_locals(f: &mut crate::hir::FnDef) -> FxHashMap<LocalId, TyId> {
+fn new_locals(f: &crate::hir::FnDef) -> FxHashMap<LocalId, TyId> {
     struct Lets(FxHashMap<LocalId, TyId>);
-    impl visit::VisitMut for Lets {
-        fn stmt(&mut self, s: &mut crate::hir::Stmt) {
+    impl visit::Visit for Lets {
+        fn stmt(&mut self, s: &crate::hir::Stmt) {
             if let crate::hir::StmtKind::Let {
                 local,
                 init: Some(e),
@@ -189,7 +189,7 @@ fn new_locals(f: &mut crate::hir::FnDef) -> FxHashMap<LocalId, TyId> {
         }
     }
     let mut lets = Lets(FxHashMap::default());
-    visit::block(&mut f.body.block, &mut lets);
+    visit::block(&f.body.block, &mut lets);
     let locals = &f.body.locals;
     lets.0.retain(|l, _| {
         locals
@@ -214,7 +214,8 @@ fn collect(cx: &mut Ctx) -> Collected {
         TyKind::Param(p) => Some(*p),
         _ => None,
     };
-    for (i, d) in cx.defs.iter_mut().enumerate() {
+    // Read in place (a finished unit's, in a check by units, is never written).
+    for (i, d) in cx.defs.iter().enumerate() {
         let Some(Def::Fn(f)) = d else { continue };
         let me = DefId(i as u32);
         // A method's leading parameters are its class's.
@@ -226,7 +227,7 @@ fn collect(cx: &mut Ctx) -> Collected {
         let n = f.generics;
         let generic = n > 0;
         let news = new_locals(f);
-        visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| match &e.kind {
+        visit::exprs(&f.body.block, &mut |e: &Expr| match &e.kind {
             E::Call {
                 callee: Callee::ParamMethod { iface, slot, .. },
                 args,

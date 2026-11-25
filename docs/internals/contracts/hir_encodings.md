@@ -263,9 +263,10 @@ assignment) are listed in the module comment of `crates/velt_sema/src/hir/mod.rs
   closure does), and the cell itself for a `LocalDef::boxed` capture.
 - `JSON.stringify` and `JSON.parse` are std code generated per type at compile time
   (std/encoding/json/generate, docs/internals/design/source-generators.md), not HIR forms. The
-  generators report the types that have no JSON form (`check.velt`, `parse_check.velt`): maps
-  without `string` keys, std types that keep private state, and for `JSON.parse` unions whose
-  members a document cannot tell apart and types with private fields.
+  generators report the types that have no JSON form (`check.velt`, `parse_check.velt`): std
+  types that keep private state, and for `JSON.parse` maps without `string` keys, unions whose
+  members a document cannot tell apart and types with private fields. `JSON.stringify` writes a
+  `Map`, `Set`, `WeakMap` and `WeakSet` as `{}`, as Node does.
 
 ## Loops
 - `StmtKind::ForOf { consume: true, .. }`: `for...of` over an owned temporary array (a call
@@ -1065,7 +1066,7 @@ converted to, the object types in the fields, elements and map values of what is
 function value whose body is not known, or runs a `with` whose callback is not a closure or a
 named function written there (lowering takes the module lock for it); and no `with` inside them
 has a callback that does. In a program whose functions may have properties, lowering calls
-`velt_rt_module_with` before the lock of every other call (rt_abi.md "Module state"). Empty in a
+std's `schedModuleWith` before the lock of every other call (rt_abi.md "Module state"). Empty in a
 program without `any`.
 
 ## Unchecked definitions (#1658; additive)

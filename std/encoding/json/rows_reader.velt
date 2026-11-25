@@ -1,0 +1,332 @@
+// velt/encoding/json (internal): the pull reader over a native driver's rows: what a `Reader`
+// (reader.velt) made by `readerOverCursor` (rows_ops.velt) asks, for velt/db's `decodeRows<T>` when
+// `T` is not read by column (velt/encoding/json/generate/read.velt). It answers every call as the
+// text reader would for the JSON the rows stand for (`[{"col":value,...},...]`, or with `single`
+// one row's object), so the generated decoders need not know: a blob is the array of its bytes. A
+// nested value (a JSON column) is read by the `Reader` itself, as text (rows_ops.velt).
+//
+// Like the text reader, the first failure is sticky until `reset`. The only failures are a value of
+// another kind than the decoder asked for and a rejected unknown key. The rows are well-formed by
+// construction (the driver's cursor), so nothing here fails for their sake.
+//
+// Port of the runtime's rows_reader.rs (#3318), with the same answers and messages.
+
+import {
+  CELL_BLOB,
+  CELL_BOOL,
+  CELL_FLOAT,
+  CELL_INT,
+  CELL_NONE,
+  CELL_NULL,
+  CELL_TEXT,
+  RowCells,
+} from "velt/encoding/json/rows_cells";
+import {
+  FLAG_REJECT_UNKNOWN,
+  MISMATCH,
+  NONE,
+  STEP_END,
+  STEP_ERROR,
+  STEP_MORE,
+  TOKEN_ARRAY_END,
+  TOKEN_ARRAY_START,
+  TOKEN_EOF,
+  TOKEN_ERROR,
+  TOKEN_FALSE,
+  TOKEN_NULL,
+  TOKEN_NUMBER,
+  TOKEN_OBJECT_END,
+  TOKEN_OBJECT_START,
+  TOKEN_STRING,
+  TOKEN_TRUE,
+  UNKNOWN,
+} from "velt/encoding/json/reader";
+import { shortPath } from "velt/encoding/json/reader_ops";
+import { strByteLen } from "velt/lang/intrinsics";
+import { rowsJsonText } from "velt/encoding/json/rows_text";
+import { RowsMark } from "velt/encoding/json/rows_mark";
+import { TreeWriter } from "velt/encoding/json/tree_text";
+import { rowsSkipValue } from "velt/encoding/json/rows_reads";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+// Where the reader is in the document.
+/** Before the top-level value. */
+export const AT_TOP: u8 = 0;
+/** In the array of rows, before `,` or `]`. */
+export const AT_ROWS: u8 = 1;
+/** Before a row's `{`. */
+export const AT_ROW: u8 = 2;
+/** In a row, before the key of column `col` (or `}` after the last). */
+export const AT_KEYS: u8 = 3;
+/** Before the value of column `col`. */
+export const AT_VAL: u8 = 4;
+/** In a blob's array of bytes, before `,` or `]`. */
+export const AT_BYTES: u8 = 5;
+/** Before a blob's byte. */
+export const AT_BYTE: u8 = 6;
+/** After the top-level value. */
+export const AT_DONE: u8 = 7;
+
+/** The pull reader over a driver's rows. Failing methods return false (`STEP_ERROR`). */
+export class RowsReader {
+  cells: RowCells;
+  at: u8 = AT_TOP;
+  col: usize = 0;
+  /** The kind of the pending column value (`CELL_*`), read once when its key is. */
+  kind: u8 = CELL_NONE;
+  /** The blob being read (in `AT_BYTES` / `AT_BYTE`), and its next byte's index. */
+  blob: u8[] = [];
+  blobAt: usize = 0;
+  /** The first failure (`MISMATCH`, `UNKNOWN`), or `NONE`. */
+  error: u8 = NONE;
+  rejectUnknown: bool;
+  flags: u32;
+  /** Positions `mark` saved. */
+  marks: RowsMark[] = [];
+  /**
+   * How many marks there were when the array of rows was opened: a decoder looks ahead within
+   * one value, so the next row forgets the marks made in the last one.
+   */
+  rowMarks: usize = 0;
+  /** The byte buffer a value read whole is written with (rows_text.velt), kept for the next. */
+  writer: TreeWriter | null = null;
+  /** The builder capacity for the next value read whole: the last one's length (rows are alike). */
+  valueCap: u64 = 64;
+  /** What the last read gave: a key, a string or a value's JSON text; a number; a boolean. */
+  text: string = "";
+  num: f64 = 0;
+  int: i64 = 0;
+  flag: bool = false;
+
+  /** A reader over the driver's cursor at address `cursor`, with `Reader` flags. */
+  constructor(cursor: u64, flags: u32) {
+    this.cells = new RowCells(cursor);
+    this.flags = flags;
+    this.rejectUnknown = (flags & FLAG_REJECT_UNKNOWN) != 0;
+  }
+
+  /** Ends the rows state over the cursor (the cursor stays the driver's). */
+  close(): void {
+    this.cells.end();
+  }
+
+  mismatch(): bool {
+    if (this.error == NONE) {
+      this.error = MISMATCH;
+    }
+    return false;
+  }
+
+  /** The kind of the pending column value, or `CELL_NONE` (failed: not at a value, or none). */
+  val(): u8 {
+    if (this.error != NONE) {
+      return CELL_NONE;
+    }
+    if (this.at != AT_VAL) {
+      this.mismatch();
+      return CELL_NONE;
+    }
+    const k = this.kind;
+    if (k == CELL_NONE) {
+      this.mismatch();
+    }
+    return k;
+  }
+
+  /** The pending value was consumed. */
+  advance(): void {
+    this.col++;
+    this.at = AT_KEYS;
+  }
+
+  /** The kind of the next value (`TOKEN_*`). */
+  peek(): u32 {
+    if (this.error != NONE) {
+      return TOKEN_ERROR;
+    }
+    const at = this.at;
+    if (at == AT_TOP) {
+      return this.cells.single ? TOKEN_OBJECT_START : TOKEN_ARRAY_START;
+    }
+    if (at == AT_ROWS) {
+      return this.cells.rowAhead() ? TOKEN_OBJECT_START : TOKEN_ARRAY_END;
+    }
+    if (at == AT_ROW) {
+      return TOKEN_OBJECT_START;
+    }
+    if (at == AT_KEYS) {
+      return this.col < this.cells.columns() ? TOKEN_STRING : TOKEN_OBJECT_END;
+    }
+    if (at == AT_VAL) {
+      const k = this.kind;
+      if (k == CELL_NULL) {
+        return TOKEN_NULL;
+      }
+      if (k == CELL_BOOL) {
+        return this.cells.bool(this.col) ? TOKEN_TRUE : TOKEN_FALSE;
+      }
+      if (k == CELL_INT || k == CELL_FLOAT) {
+        return TOKEN_NUMBER;
+      }
+      if (k == CELL_TEXT) {
+        return TOKEN_STRING;
+      }
+      return k == CELL_BLOB ? TOKEN_ARRAY_START : TOKEN_ERROR;
+    }
+    if (at == AT_BYTES) {
+      return this.blobAt < this.blob.length ? TOKEN_NUMBER : TOKEN_ARRAY_END;
+    }
+    return at == AT_BYTE ? TOKEN_NUMBER : TOKEN_EOF;
+  }
+
+  /** Consumes `{` (123) or `[` (91). */
+  open(bracket: u8): bool {
+    if (this.error != NONE) {
+      return false;
+    }
+    const at = this.at;
+    if (at == AT_TOP && bracket == 91 && !this.cells.single) {
+      this.at = AT_ROWS;
+      this.rowMarks = this.marks.length;
+      return true;
+    }
+    // A live single row: the cursor steps to it.
+    if (
+      (
+        at == AT_TOP &&
+        bracket == 123 &&
+        this.cells.single &&
+        (this.cells.copied != null || this.cells.rowAhead())
+      ) ||
+      (at == AT_ROW && bracket == 123)
+    ) {
+      this.at = AT_KEYS;
+      this.col = 0;
+      return true;
+    }
+    if (at == AT_VAL && bracket == 91 && this.kind == CELL_BLOB) {
+      this.at = AT_BYTES;
+      this.blob = this.cells.blob(this.col);
+      this.blobAt = 0;
+      return true;
+    }
+    return this.mismatch();
+  }
+
+  /** `STEP_MORE` if another array element follows, `STEP_END` after the closing `]`. */
+  arrayNext(): u8 {
+    if (this.error != NONE) {
+      return STEP_ERROR;
+    }
+    if (this.at == AT_ROWS) {
+      if (this.cells.rowAhead()) {
+        this.at = AT_ROW;
+        this.marks.truncate(this.rowMarks as i64);
+        return STEP_MORE;
+      }
+      this.at = AT_DONE;
+      return STEP_END;
+    }
+    if (this.at == AT_BYTES) {
+      if (this.blobAt < this.blob.length) {
+        this.at = AT_BYTE;
+        return STEP_MORE;
+      }
+      this.advance();
+      return STEP_END;
+    }
+    this.mismatch();
+    return STEP_ERROR;
+  }
+
+  /** The next column's name (`text` after `STEP_MORE`), or `STEP_END` after the last. */
+  nextKey(): u8 {
+    if (this.error != NONE) {
+      return STEP_ERROR;
+    }
+    if (this.at != AT_KEYS) {
+      this.mismatch();
+      return STEP_ERROR;
+    }
+    if (this.col >= this.cells.columns()) {
+      this.at = this.cells.single ? AT_DONE : AT_ROWS;
+      this.cells.rowDone();
+      return STEP_END;
+    }
+    this.text = this.cells.names[this.col];
+    this.at = AT_VAL;
+    this.kind = this.cells.kind(this.col);
+    return STEP_MORE;
+  }
+
+  /** The current position, for `reset`. */
+  mark(): u64 {
+    // A live cursor cannot go back to an earlier row: a decoder that may read the rows again
+    // (a union of whole results) gets the ones left copied, once.
+    if (this.cells.copied == null && (this.at == AT_TOP || this.at == AT_ROWS)) {
+      this.cells.copy();
+    }
+    const m = new RowsMark(this.at, this.col, this.kind, this.blob, this.blobAt, this.cells.row);
+    this.marks.push(m);
+    return (this.marks.length - 1) as u64;
+  }
+
+  /** Goes back to `mark` and forgets any failure since. */
+  reset(mark: u64): void {
+    if (mark >= (this.marks.length as u64)) {
+      return;
+    }
+    const m = this.marks[mark as usize];
+    this.at = m.at;
+    this.col = m.col;
+    this.kind = m.kind;
+    this.blob = m.blob;
+    this.blobAt = m.blobAt;
+    this.cells.row = m.row;
+    this.error = NONE;
+  }
+
+  /**
+   * One complete value of any kind, as the JSON text it stands for (`text` after true; std reads
+   * it as a `JsonValue`).
+   */
+  value(): bool {
+    if (this.error != NONE) {
+      return false;
+    }
+    // The text goes into one builder (rows_text.velt).
+    let buf = "";
+    velt_rt_strbuf_new(this.valueCap, buf);
+    const ok = rowsJsonText(this, buf);
+    let text = "";
+    velt_rt_strbuf_finish(buf, text);
+    const len = strByteLen(text) as u64;
+    this.valueCap = len > 64 ? len + 16 : 64;
+    if (!ok || !rowsSkipValue(this)) {
+      return this.mismatch();
+    }
+    this.text = text;
+    return true;
+  }
+
+  /** Nothing follows the top-level value. */
+  end(): bool {
+    if (this.error != NONE) {
+      return false;
+    }
+    if (this.at != AT_DONE) {
+      return this.mismatch();
+    }
+    return true;
+  }
+
+  /** The `JsonError` message: the decoder expected `expected` at `path`. */
+  message(expected: string, path: string): string {
+    if (this.error == UNKNOWN) {
+      return `unknown field at ${shortPath(path)}`;
+    }
+    return `expected ${expected} at ${shortPath(path)}`;
+  }
+}

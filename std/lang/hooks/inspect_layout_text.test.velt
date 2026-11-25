@@ -1,0 +1,594 @@
+// velt/lang/hooks (tests): `console.log`'s line breaking (inspect_layout_text.velt) on the text
+// the printer writes. Expected texts are Node 22's `util.inspect(v)`; the inputs are the same
+// values printed on one line (`util.inspect(v, { compact: true, breakLength: Infinity })`), as
+// the printer writes them. The cases velt_rt's layout was tested with. Run by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { fitsAsIs, layoutText } from "velt/lang/hooks/inspect_layout_text";
+
+/** `text` laid out from byte 0, with the custom inspect ranges `atoms`. */
+function laid(text: string, atoms: u64[]): string {
+  const s = layoutText(text, 0, atoms);
+  return strByteLen(s) == 0 ? text : s;
+}
+
+/** `fitsAsIs` counted byte by byte: at most 71 bytes, fewer than six commas, no line break. */
+function fitsSlowly(text: string, start: u64): bool {
+  const end = strByteLen(text) as u64;
+  if (end - start > 71) {
+    return false;
+  }
+  let commas: u64 = 0;
+  for (let i = start; i < end; i++) {
+    const c = strByteAt(text, i);
+    if (c == 10) {
+      return false;
+    }
+    if (c == 44) {
+      commas += 1;
+    }
+  }
+  return commas < 6;
+}
+
+describe("fitsAsIs", () => {
+  // 8 bytes at a time from an 8-byte boundary: every start, with commas and a line break at
+  // every place around the limit, gives what a byte-by-byte count gives.
+  it("counts commas and line breaks at every alignment", () => {
+    const bodies = [
+      "[ 1, 2, 3, 4, 5, 6 ]",
+      "[ 1, 2, 3, 4, 5, 6, 7 ]",
+      "{ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7 }",
+      ",,,,,",
+      ",,,,,,",
+      "abc\ndef",
+      "a,b,c,d,e\n",
+      "x".repeat(71),
+      "x".repeat(72),
+      "y".repeat(60) + ",,,,,",
+      "y".repeat(60) + ",,,,,,",
+      // A byte one above a comma or a line break right after it, which a borrow between bytes
+      // would count too: three commas, not six.
+      ",-,-,-",
+      "a,-b,-c,-d",
+      "x\n\u000by",
+      // Bytes past ASCII next to a comma or a line break in the same word.
+      "é,é,é,é,é,é",
+      "é,é,é,é,é",
+      "aé\nb",
+      "ü\n",
+      "\u00ff,\u0080,\u00ff,\u0080,\u00ff",
+      "\u00ff,\u0080,\u00ff,\u0080,\u00ff,\u0080",
+    ];
+    for (let k: u64 = 0; k < 16; k++) {
+      for (const body of bodies) {
+        const text = "p".repeat(k as i64) + body;
+        expect(fitsAsIs(text, k)).toBe(fitsSlowly(text, k));
+      }
+    }
+  });
+});
+
+describe("layoutText", () => {
+  it("short object stays on one line", () => {
+    expect(laid("{ a: 1, b: 'two', c: [ 3, 4 ] }", [])).toBe("{ a: 1, b: 'two', c: [ 3, 4 ] }");
+  });
+
+  it("nested object over 72 columns", () => {
+    expect(
+      laid(
+        "{ name: 'velt', version: '0.1.0', tags: [ 'compiler', 'typescript' ], nested: { deep: true } }",
+        [],
+      ),
+    ).toBe(
+      "{\n  name: 'velt',\n  version: '0.1.0',\n  tags: [ 'compiler', 'typescript' ],\n  nested: { deep: true }\n}",
+    );
+  });
+
+  it("seven numbers group into columns", () => {
+    expect(laid("[ 1, 2, 3, 4, 5, 6, 7 ]", [])).toBe("[\n  1, 2, 3, 4,\n  5, 6, 7\n]");
+  });
+
+  it("numbers right-aligned", () => {
+    expect(
+      laid(
+        "[ 0, 919, 838, 757, 676, 595, 514, 433, 352, 271, 190, 109, 28, 947, 866, 785, 704, 623, 542, 461, 380, 299, 218, 137, 56, 975 ]",
+        [],
+      ),
+    ).toBe(
+      "[\n    0, 919, 838, 757, 676, 595,\n  514, 433, 352, 271, 190, 109,\n   28, 947, 866, 785, 704, 623,\n  542, 461, 380, 299, 218, 137,\n   56, 975\n]",
+    );
+  });
+
+  it("strings left-aligned", () => {
+    expect(
+      laid("[ 'apple', 'banana', 'cherry', 'date', 'elderberry', 'fig', 'grape', 'honeydew' ]", []),
+    ).toBe(
+      "[\n  'apple',\n  'banana',\n  'cherry',\n  'date',\n  'elderberry',\n  'fig',\n  'grape',\n  'honeydew'\n]",
+    );
+  });
+
+  it("entries of very different length do not group", () => {
+    expect(
+      laid(
+        "[ 'a', 'b', 'c', 'd', 'e', 'f', 'a much longer string than all the others put together' ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  'a',\n  'b',\n  'c',\n  'd',\n  'e',\n  'f',\n  'a much longer string than all the others put together'\n]",
+    );
+  });
+
+  it("map and class instances", () => {
+    expect(
+      laid(
+        "Map(3) { 'origin' => Point { x: 0, y: 0 }, 'far away' => Point { x: 123456.789, y: -98765.4321 }, 'third' => Point { x: 1, y: 2 } }",
+        [],
+      ),
+    ).toBe(
+      "Map(3) {\n  'origin' => Point { x: 0, y: 0 },\n  'far away' => Point { x: 123456.789, y: -98765.4321 },\n  'third' => Point { x: 1, y: 2 }\n}",
+    );
+  });
+
+  it("a cycle keeps its ref marker", () => {
+    expect(
+      laid(
+        "<ref *1> Tree { name: 'root', parent: null, children: [ Tree { name: 'kid', parent: [Circular *1], children: [] } ] }",
+        [],
+      ),
+    ).toBe(
+      "<ref *1> Tree {\n  name: 'root',\n  parent: null,\n  children: [ Tree { name: 'kid', parent: [Circular *1], children: [] } ]\n}",
+    );
+  });
+
+  it("long string splits at line breaks", () => {
+    expect(
+      laid(
+        "{ text: 'first line\\nsecond line that is quite a bit longer than the first one\\nthird line' }",
+        [],
+      ),
+    ).toBe(
+      "{\n  text: 'first line\\n' +\n    'second line that is quite a bit longer than the first one\\n' +\n    'third line'\n}",
+    );
+  });
+
+  it("wide characters count two columns", () => {
+    expect(laid("[ '日本語', '中文', '한국어', 'abc', 'défini', 'x', 'y', 'z' ]", [])).toBe(
+      "[\n  '日本語', '中文',\n  '한국어', 'abc',\n  'défini', 'x',\n  'y',      'z'\n]",
+    );
+  });
+
+  it("array of objects", () => {
+    expect(
+      laid(
+        "[ { id: 1, label: 'one' }, { id: 2, label: 'two' }, { id: 3, label: 'three' }, { id: 4, label: 'four' } ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  { id: 1, label: 'one' },\n  { id: 2, label: 'two' },\n  { id: 3, label: 'three' },\n  { id: 4, label: 'four' }\n]",
+    );
+  });
+
+  it("101 numbers group without the more-items entry", () => {
+    expect(
+      laid(
+        "[ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, ... 1 more item ]",
+        [],
+      ),
+    ).toBe(
+      "[\n   0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11,\n  12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,\n  24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,\n  36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,\n  48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,\n  60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71,\n  72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83,\n  84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,\n  96, 97, 98, 99,\n  ... 1 more item\n]",
+    );
+  });
+
+  it("strings left-aligned, then the more-items entry", () => {
+    expect(
+      laid(
+        "[ 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', 'wxx', 'wxxx', 'wxxxx', 'wxxxxx', 'wxxxxxx', 'w', 'wx', ... 3 more items ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  'w',       'wx',      'wxx',     'wxxx',    'wxxxx',   'wxxxxx',\n  'wxxxxxx', 'w',       'wx',      'wxx',     'wxxx',    'wxxxx',\n  'wxxxxx',  'wxxxxxx', 'w',       'wx',      'wxx',     'wxxx',\n  'wxxxx',   'wxxxxx',  'wxxxxxx', 'w',       'wx',      'wxx',\n  'wxxx',    'wxxxx',   'wxxxxx',  'wxxxxxx', 'w',       'wx',\n  'wxx',     'wxxx',    'wxxxx',   'wxxxxx',  'wxxxxxx', 'w',\n  'wx',      'wxx',     'wxxx',    'wxxxx',   'wxxxxx',  'wxxxxxx',\n  'w',       'wx',      'wxx',     'wxxx',    'wxxxx',   'wxxxxx',\n  'wxxxxxx', 'w',       'wx',      'wxx',     'wxxx',    'wxxxx',\n  'wxxxxx',  'wxxxxxx', 'w',       'wx',      'wxx',     'wxxx',\n  'wxxxx',   'wxxxxx',  'wxxxxxx', 'w',       'wx',      'wxx',\n  'wxxx',    'wxxxx',   'wxxxxx',  'wxxxxxx', 'w',       'wx',\n  'wxx',     'wxxx',    'wxxxx',   'wxxxxx',  'wxxxxxx', 'w',\n  'wx',      'wxx',     'wxxx',    'wxxxx',   'wxxxxx',  'wxxxxxx',\n  'w',       'wx',      'wxx',     'wxxx',    'wxxxx',   'wxxxxx',\n  'wxxxxxx', 'w',       'wx',      'wxx',     'wxxx',    'wxxxx',\n  'wxxxxx',  'wxxxxxx', 'w',       'wx',\n  ... 3 more items\n]",
+    );
+  });
+
+  it("long entries one per line with the more-items entry", () => {
+    expect(
+      laid(
+        "[ 'a fairly long string number 0', 'a fairly long string number 1', 'a fairly long string number 2', 'a fairly long string number 3', 'a fairly long string number 4', 'a fairly long string number 5', 'a fairly long string number 6', 'a fairly long string number 7', 'a fairly long string number 8', 'a fairly long string number 9', 'a fairly long string number 10', 'a fairly long string number 11', 'a fairly long string number 12', 'a fairly long string number 13', 'a fairly long string number 14', 'a fairly long string number 15', 'a fairly long string number 16', 'a fairly long string number 17', 'a fairly long string number 18', 'a fairly long string number 19', 'a fairly long string number 20', 'a fairly long string number 21', 'a fairly long string number 22', 'a fairly long string number 23', 'a fairly long string number 24', 'a fairly long string number 25', 'a fairly long string number 26', 'a fairly long string number 27', 'a fairly long string number 28', 'a fairly long string number 29', 'a fairly long string number 30', 'a fairly long string number 31', 'a fairly long string number 32', 'a fairly long string number 33', 'a fairly long string number 34', 'a fairly long string number 35', 'a fairly long string number 36', 'a fairly long string number 37', 'a fairly long string number 38', 'a fairly long string number 39', 'a fairly long string number 40', 'a fairly long string number 41', 'a fairly long string number 42', 'a fairly long string number 43', 'a fairly long string number 44', 'a fairly long string number 45', 'a fairly long string number 46', 'a fairly long string number 47', 'a fairly long string number 48', 'a fairly long string number 49', 'a fairly long string number 50', 'a fairly long string number 51', 'a fairly long string number 52', 'a fairly long string number 53', 'a fairly long string number 54', 'a fairly long string number 55', 'a fairly long string number 56', 'a fairly long string number 57', 'a fairly long string number 58', 'a fairly long string number 59', 'a fairly long string number 60', 'a fairly long string number 61', 'a fairly long string number 62', 'a fairly long string number 63', 'a fairly long string number 64', 'a fairly long string number 65', 'a fairly long string number 66', 'a fairly long string number 67', 'a fairly long string number 68', 'a fairly long string number 69', 'a fairly long string number 70', 'a fairly long string number 71', 'a fairly long string number 72', 'a fairly long string number 73', 'a fairly long string number 74', 'a fairly long string number 75', 'a fairly long string number 76', 'a fairly long string number 77', 'a fairly long string number 78', 'a fairly long string number 79', 'a fairly long string number 80', 'a fairly long string number 81', 'a fairly long string number 82', 'a fairly long string number 83', 'a fairly long string number 84', 'a fairly long string number 85', 'a fairly long string number 86', 'a fairly long string number 87', 'a fairly long string number 88', 'a fairly long string number 89', 'a fairly long string number 90', 'a fairly long string number 91', 'a fairly long string number 92', 'a fairly long string number 93', 'a fairly long string number 94', 'a fairly long string number 95', 'a fairly long string number 96', 'a fairly long string number 97', 'a fairly long string number 98', 'a fairly long string number 99', ... 2 more items ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  'a fairly long string number 0',\n  'a fairly long string number 1',\n  'a fairly long string number 2',\n  'a fairly long string number 3',\n  'a fairly long string number 4',\n  'a fairly long string number 5',\n  'a fairly long string number 6',\n  'a fairly long string number 7',\n  'a fairly long string number 8',\n  'a fairly long string number 9',\n  'a fairly long string number 10',\n  'a fairly long string number 11',\n  'a fairly long string number 12',\n  'a fairly long string number 13',\n  'a fairly long string number 14',\n  'a fairly long string number 15',\n  'a fairly long string number 16',\n  'a fairly long string number 17',\n  'a fairly long string number 18',\n  'a fairly long string number 19',\n  'a fairly long string number 20',\n  'a fairly long string number 21',\n  'a fairly long string number 22',\n  'a fairly long string number 23',\n  'a fairly long string number 24',\n  'a fairly long string number 25',\n  'a fairly long string number 26',\n  'a fairly long string number 27',\n  'a fairly long string number 28',\n  'a fairly long string number 29',\n  'a fairly long string number 30',\n  'a fairly long string number 31',\n  'a fairly long string number 32',\n  'a fairly long string number 33',\n  'a fairly long string number 34',\n  'a fairly long string number 35',\n  'a fairly long string number 36',\n  'a fairly long string number 37',\n  'a fairly long string number 38',\n  'a fairly long string number 39',\n  'a fairly long string number 40',\n  'a fairly long string number 41',\n  'a fairly long string number 42',\n  'a fairly long string number 43',\n  'a fairly long string number 44',\n  'a fairly long string number 45',\n  'a fairly long string number 46',\n  'a fairly long string number 47',\n  'a fairly long string number 48',\n  'a fairly long string number 49',\n  'a fairly long string number 50',\n  'a fairly long string number 51',\n  'a fairly long string number 52',\n  'a fairly long string number 53',\n  'a fairly long string number 54',\n  'a fairly long string number 55',\n  'a fairly long string number 56',\n  'a fairly long string number 57',\n  'a fairly long string number 58',\n  'a fairly long string number 59',\n  'a fairly long string number 60',\n  'a fairly long string number 61',\n  'a fairly long string number 62',\n  'a fairly long string number 63',\n  'a fairly long string number 64',\n  'a fairly long string number 65',\n  'a fairly long string number 66',\n  'a fairly long string number 67',\n  'a fairly long string number 68',\n  'a fairly long string number 69',\n  'a fairly long string number 70',\n  'a fairly long string number 71',\n  'a fairly long string number 72',\n  'a fairly long string number 73',\n  'a fairly long string number 74',\n  'a fairly long string number 75',\n  'a fairly long string number 76',\n  'a fairly long string number 77',\n  'a fairly long string number 78',\n  'a fairly long string number 79',\n  'a fairly long string number 80',\n  'a fairly long string number 81',\n  'a fairly long string number 82',\n  'a fairly long string number 83',\n  'a fairly long string number 84',\n  'a fairly long string number 85',\n  'a fairly long string number 86',\n  'a fairly long string number 87',\n  'a fairly long string number 88',\n  'a fairly long string number 89',\n  'a fairly long string number 90',\n  'a fairly long string number 91',\n  'a fairly long string number 92',\n  'a fairly long string number 93',\n  'a fairly long string number 94',\n  'a fairly long string number 95',\n  'a fairly long string number 96',\n  'a fairly long string number 97',\n  'a fairly long string number 98',\n  'a fairly long string number 99',\n  ... 2 more items\n]",
+    );
+  });
+
+  it("a Map's more-items entry is one more line", () => {
+    expect(
+      laid(
+        "Map(101) { 0 => 0, 1 => 1, 2 => 2, 3 => 3, 4 => 4, 5 => 5, 6 => 6, 7 => 7, 8 => 8, 9 => 9, 10 => 10, 11 => 11, 12 => 12, 13 => 13, 14 => 14, 15 => 15, 16 => 16, 17 => 17, 18 => 18, 19 => 19, 20 => 20, 21 => 21, 22 => 22, 23 => 23, 24 => 24, 25 => 25, 26 => 26, 27 => 27, 28 => 28, 29 => 29, 30 => 30, 31 => 31, 32 => 32, 33 => 33, 34 => 34, 35 => 35, 36 => 36, 37 => 37, 38 => 38, 39 => 39, 40 => 40, 41 => 41, 42 => 42, 43 => 43, 44 => 44, 45 => 45, 46 => 46, 47 => 47, 48 => 48, 49 => 49, 50 => 50, 51 => 51, 52 => 52, 53 => 53, 54 => 54, 55 => 55, 56 => 56, 57 => 57, 58 => 58, 59 => 59, 60 => 60, 61 => 61, 62 => 62, 63 => 63, 64 => 64, 65 => 65, 66 => 66, 67 => 67, 68 => 68, 69 => 69, 70 => 70, 71 => 71, 72 => 72, 73 => 73, 74 => 74, 75 => 75, 76 => 76, 77 => 77, 78 => 78, 79 => 79, 80 => 80, 81 => 81, 82 => 82, 83 => 83, 84 => 84, 85 => 85, 86 => 86, 87 => 87, 88 => 88, 89 => 89, 90 => 90, 91 => 91, 92 => 92, 93 => 93, 94 => 94, 95 => 95, 96 => 96, 97 => 97, 98 => 98, 99 => 99, ... 1 more item }",
+        [],
+      ),
+    ).toBe(
+      "Map(101) {\n  0 => 0,\n  1 => 1,\n  2 => 2,\n  3 => 3,\n  4 => 4,\n  5 => 5,\n  6 => 6,\n  7 => 7,\n  8 => 8,\n  9 => 9,\n  10 => 10,\n  11 => 11,\n  12 => 12,\n  13 => 13,\n  14 => 14,\n  15 => 15,\n  16 => 16,\n  17 => 17,\n  18 => 18,\n  19 => 19,\n  20 => 20,\n  21 => 21,\n  22 => 22,\n  23 => 23,\n  24 => 24,\n  25 => 25,\n  26 => 26,\n  27 => 27,\n  28 => 28,\n  29 => 29,\n  30 => 30,\n  31 => 31,\n  32 => 32,\n  33 => 33,\n  34 => 34,\n  35 => 35,\n  36 => 36,\n  37 => 37,\n  38 => 38,\n  39 => 39,\n  40 => 40,\n  41 => 41,\n  42 => 42,\n  43 => 43,\n  44 => 44,\n  45 => 45,\n  46 => 46,\n  47 => 47,\n  48 => 48,\n  49 => 49,\n  50 => 50,\n  51 => 51,\n  52 => 52,\n  53 => 53,\n  54 => 54,\n  55 => 55,\n  56 => 56,\n  57 => 57,\n  58 => 58,\n  59 => 59,\n  60 => 60,\n  61 => 61,\n  62 => 62,\n  63 => 63,\n  64 => 64,\n  65 => 65,\n  66 => 66,\n  67 => 67,\n  68 => 68,\n  69 => 69,\n  70 => 70,\n  71 => 71,\n  72 => 72,\n  73 => 73,\n  74 => 74,\n  75 => 75,\n  76 => 76,\n  77 => 77,\n  78 => 78,\n  79 => 79,\n  80 => 80,\n  81 => 81,\n  82 => 82,\n  83 => 83,\n  84 => 84,\n  85 => 85,\n  86 => 86,\n  87 => 87,\n  88 => 88,\n  89 => 89,\n  90 => 90,\n  91 => 91,\n  92 => 92,\n  93 => 93,\n  94 => 94,\n  95 => 95,\n  96 => 96,\n  97 => 97,\n  98 => 98,\n  99 => 99,\n  ... 1 more item\n}",
+    );
+  });
+
+  it("short arrays with more items stay grouped", () => {
+    expect(
+      laid(
+        "{ list: [ 0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000, 15000, 16000, 17000, 18000, 19000, 20000, 21000, 22000, 23000, 24000, 25000, 26000, 27000, 28000, 29000, 30000, 31000, 32000, 33000, 34000, 35000, 36000, 37000, 38000, 39000, 40000, 41000, 42000, 43000, 44000, 45000, 46000, 47000, 48000, 49000, 50000, 51000, 52000, 53000, 54000, 55000, 56000, 57000, 58000, 59000, 60000, 61000, 62000, 63000, 64000, 65000, 66000, 67000, 68000, 69000, 70000, 71000, 72000, 73000, 74000, 75000, 76000, 77000, 78000, 79000, 80000, 81000, 82000, 83000, 84000, 85000, 86000, 87000, 88000, 89000, 90000, 91000, 92000, 93000, 94000, 95000, 96000, 97000, 98000, 99000, ... 50 more items ] }",
+        [],
+      ),
+    ).toBe(
+      "{\n  list: [\n        0,  1000,  2000,  3000,  4000,  5000,  6000,  7000,\n     8000,  9000, 10000, 11000, 12000, 13000, 14000, 15000,\n    16000, 17000, 18000, 19000, 20000, 21000, 22000, 23000,\n    24000, 25000, 26000, 27000, 28000, 29000, 30000, 31000,\n    32000, 33000, 34000, 35000, 36000, 37000, 38000, 39000,\n    40000, 41000, 42000, 43000, 44000, 45000, 46000, 47000,\n    48000, 49000, 50000, 51000, 52000, 53000, 54000, 55000,\n    56000, 57000, 58000, 59000, 60000, 61000, 62000, 63000,\n    64000, 65000, 66000, 67000, 68000, 69000, 70000, 71000,\n    72000, 73000, 74000, 75000, 76000, 77000, 78000, 79000,\n    80000, 81000, 82000, 83000, 84000, 85000, 86000, 87000,\n    88000, 89000, 90000, 91000, 92000, 93000, 94000, 95000,\n    96000, 97000, 98000, 99000,\n    ... 50 more items\n  ]\n}",
+    );
+  });
+
+  // The printer escapes a lone surrogate (`\ud800`): a string split at its line break keeps it
+  // in its piece, as Node does.
+  it("splits a string with a lone surrogate", () => {
+    expect(
+      laid(
+        "[ 'first line with a lone \\ud800 surrogate\\nsecond line, long enough that the string is split at its break' ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  'first line with a lone \\ud800 surrogate\\n' +\n    'second line, long enough that the string is split at its break'\n]",
+    );
+  });
+
+  it("lays out only the value, from where it starts", () => {
+    const line = "label: [ 1, 2, 3, 4, 5, 6, 7 ]";
+    expect(layoutText(line, 7, [])).toBe("[\n  1, 2, 3, 4,\n  5, 6, 7\n]");
+    // A short value is left alone without being parsed.
+    expect(layoutText("{ a: 1, b: [ 2 ] }", 0, [])).toBe("");
+  });
+
+  it("leaves text that is not the printer's", () => {
+    // Unbalanced or unterminated text: no layout.
+    for (const text of ["{ a: 1", "Ok(1))", "[Circular *1"]) {
+      expect(layoutText(text.repeat(12), 0, [])).toBe("");
+    }
+    // An unterminated quote (one quote in all), past the short check: in a container, and at the
+    // top level, where only the quote makes the text not the printer's (`'x\n` would otherwise
+    // split there).
+    expect(layoutText("[ 'x " + "y".repeat(80) + " ]", 0, [])).toBe("");
+    expect(layoutText("'x\\n" + "y".repeat(80), 0, [])).toBe("");
+    expect(layoutText("Foo { a: 1 } 'x\\n" + "y".repeat(80), 0, [])).toBe("");
+    // Velt's own forms (`Ok(…)`, enum variants) keep their entries together.
+    const long = "Ok({ first: 'aaaaaaaaaaaaaaaa', second: 'bbbbbbbbbbbbbbbb', third: E.V(1, 2) })";
+    expect(laid(long, [])).toBe(
+      "Ok({\n  first: 'aaaaaaaaaaaaaaaa',\n  second: 'bbbbbbbbbbbbbbbb',\n  third: E.V(1, 2)\n})",
+    );
+  });
+
+  // Text a custom inspect wrote is kept as one piece (Node inserts the string a custom inspect
+  // returns as it is): Node prints a response's body stream on one line at any indentation.
+  it("keeps a custom inspect's text on one line", () => {
+    const stream = "ReadableStream { locked: false, state: 'readable', supportsBYOB: true }";
+    const head = "Response { status: 200, statusText: '', headers: Headers {}, body: ";
+    const tail = ", bodyUsed: false, ok: true }";
+    const at = strByteLen(head) as u64;
+    const text = head + stream + tail;
+    expect(laid(text, [at, at + (strByteLen(stream) as u64)])).toBe(
+      "Response {\n  status: 200,\n  statusText: '',\n  headers: Headers {},\n  body: " +
+        stream +
+        ",\n  bodyUsed: false,\n  ok: true\n}",
+    );
+    // Without the range, the stream's text is laid out as usual.
+    const nested = "{ a: { b: { body: " + stream + " } } }";
+    expect(laid(nested, []).endsWith("supportsBYOB: true\n      }\n    }\n  }\n}")).toBe(true);
+  });
+
+  // A custom inspect's text that breaks across lines (a big `ArrayBuffer`, a `DataView`) nested
+  // in a container: its lines after the first are indented by the value's indentation.
+  it("indents a multi-line custom inspect text where it is nested", () => {
+    const atom = "ArrayBuffer {\n  [Uint8Contents]: <00 00>,\n  [byteLength]: 2\n}";
+    const head = "{ big: ";
+    const at = strByteLen(head) as u64;
+    const text = head + atom + " }";
+    expect(laid(text, [at, at + (strByteLen(atom) as u64)])).toBe(
+      "{\n  big: ArrayBuffer {\n    [Uint8Contents]: <00 00>,\n    [byteLength]: 2\n  }\n}",
+    );
+  });
+});
+
+/**
+ * Values at the edges of the one-line limit (one character at a time, at depths 0, 1 and 2) and
+ * of splitting a string at its line break: Node's one-line text, then its layout.
+ */
+function edges(): string[] {
+  return [
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{\n  key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv'\n}",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{\n  key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv'\n}",
+    "{ key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv' }",
+    "{\n  key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv'\n}",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{\n  a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',\n  b: 1\n}",
+    "{ a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }",
+    "{\n  a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',\n  b: 1\n}",
+    "{ k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } }",
+    "{\n  k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n}",
+    "{ k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } }",
+    "{\n  k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n}",
+    "{ k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } }",
+    "{\n  k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n}",
+    "{ k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } }",
+    "{\n  k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n}",
+    "{ k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } }",
+    "{\n  k: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n}",
+    "{ k: { m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } } }",
+    "{\n  k: { m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } }\n}",
+    "{ k: { m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } } }",
+    "{\n  k: { m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } }\n}",
+    "{ k: { m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } } }",
+    "{\n  k: {\n    m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n  }\n}",
+    "{ k: { m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } } }",
+    "{\n  k: {\n    m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n  }\n}",
+    "{ k: { m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 } } }",
+    "{\n  k: {\n    m: { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', b: 1 }\n  }\n}",
+    "[ 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]",
+    "[\n  'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n]",
+    "{ k: { s: 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }",
+    "{\n  k: {\n    s: 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n  }\n}",
+    "[ 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]",
+    "[\n  'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n]",
+    "{ k: { s: 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }",
+    "{\n  k: {\n    s: 'aaaaaaaaaa\\n' +\n      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n  }\n}",
+    "[ 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]",
+    "[\n  'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n]",
+    "{ k: { s: 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }",
+    "{\n  k: {\n    s: 'aaaaaaaaaa\\n' +\n      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n  }\n}",
+    "[ 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]",
+    "[\n  'aaaaaaaaaa\\n' +\n    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n]",
+    "{ k: { s: 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }",
+    "{\n  k: {\n    s: 'aaaaaaaaaa\\n' +\n      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n  }\n}",
+    "[ 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]",
+    "[\n  'aaaaaaaaaa\\n' +\n    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n]",
+    "{ k: { s: 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }",
+    "{\n  k: {\n    s: 'aaaaaaaaaa\\n' +\n      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n  }\n}",
+    "[ 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ]",
+    "[\n  'aaaaaaaaaa\\n' +\n    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n]",
+    "{ k: { s: 'aaaaaaaaaa\\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' } }",
+    "{\n  k: {\n    s: 'aaaaaaaaaa\\n' +\n      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n  }\n}",
+    "[ 'abcdefghijklmn\\no', 'abcdefghijklmno\\np', 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz' ]",
+    "[\n  'abcdefghijklmn\\no',\n  'abcdefghijklmno\\np',\n  'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'\n]",
+  ];
+}
+
+describe("layoutText at the limits", () => {
+  it("breaks where Node breaks", () => {
+    const all = edges();
+    for (let i = 0; i < all.length; i += 2) {
+      expect(laid(all[i], [])).toBe(all[i + 1]);
+    }
+  });
+});
+
+/**
+ * Escapes in strings, number columns with signs, `NaN`, `Infinity` and bigints, a `<ref *1>` base
+ * and a number-keyed `Map` entry at the one-line limit, and an entry holding a line break: Node 22's
+ * one-line text and its layout.
+ */
+describe("layoutText against Node", () => {
+  it("a string splits at the top level", () => {
+    expect(
+      laid(
+        "'x\\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'",
+        [],
+      ),
+    ).toBe(
+      "'x\\n' +\n  'yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'",
+    );
+  });
+
+  it("numbers but the last, 8", () => {
+    expect(laid("[ 1, 22, 333, 4, 55, 6, 77, 'x' ]", [])).toBe(
+      "[\n  1,  22, 333, 4,\n  55, 6,  77,  'x'\n]",
+    );
+  });
+
+  it("numbers but the last, 10", () => {
+    expect(laid("[ 10, 2, 300, 4, 5, 6, 7, 8, 9, 'last' ]", [])).toBe(
+      "[\n  10,     2, 300,\n  4,      5, 6,\n  7,      8, 9,\n  'last'\n]",
+    );
+  });
+
+  it("an array that breaks, in an array of 26", () => {
+    expect(
+      laid(
+        "[ [ 1, A\nB ], 'sssssssssssss', 'ssssssssssssss', 'sssssssssssssss', 'ssssssssssss', 'sssssssssssss', 'ssssssssssssss', 'sssssssssssssss', 'ssssssssssss', 'sssssssssssss', 'ssssssssssssss', 'sssssssssssssss', 'ssssssssssss', 'sssssssssssss', 'ssssssssssssss', 'sssssssssssssss', 'ssssssssssss', 'sssssssssssss', 'ssssssssssssss', 'sssssssssssssss', 'ssssssssssss', 'sssssssssssss', 'ssssssssssssss', 'sssssssssssssss', 'ssssssssssss', 'sssssssssssss' ]",
+        [7, 10],
+      ),
+    ).toBe(
+      "[\n  [\n    1,\n    A\n    B\n  ], 'sssssssssssss',\n  'ssssssssssssss',     'sssssssssssssss',\n  'ssssssssssss',       'sssssssssssss',\n  'ssssssssssssss',     'sssssssssssssss',\n  'ssssssssssss',       'sssssssssssss',\n  'ssssssssssssss',     'sssssssssssssss',\n  'ssssssssssss',       'sssssssssssss',\n  'ssssssssssssss',     'sssssssssssssss',\n  'ssssssssssss',       'sssssssssssss',\n  'ssssssssssssss',     'sssssssssssssss',\n  'ssssssssssss',       'sssssssssssss',\n  'ssssssssssssss',     'sssssssssssssss',\n  'ssssssssssss',       'sssssssssssss'\n]",
+    );
+  });
+
+  it("an escaped quote inside a string", () => {
+    expect(
+      laid("[ 'it\\'s \"all\" three `quotes`, in an array long enough to break', 'b, c', 2 ]", []),
+    ).toBe(
+      "[\n  'it\\'s \"all\" three `quotes`, in an array long enough to break',\n  'b, c',\n  2\n]",
+    );
+  });
+
+  it("escaped quotes", () => {
+    expect(
+      laid(
+        "[ `it's \"quoted\" here`, \"and 'single' too, long enough that the array breaks\", 1 ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  `it's \"quoted\" here`,\n  \"and 'single' too, long enough that the array breaks\",\n  1\n]",
+    );
+  });
+
+  it("escaped quote at a split", () => {
+    expect(
+      laid(
+        "[ \"it's here\\nand a second line long enough that node splits the string at the break\" ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  \"it's here\\n\" +\n    'and a second line long enough that node splits the string at the break'\n]",
+    );
+  });
+
+  it("tab and \\x escapes at a split", () => {
+    expect(
+      laid(
+        "[ 'tab\\there and \\x01 control\\nthen a second line long enough to split the string at its line break' ]",
+        [],
+      ),
+    ).toBe(
+      "[\n  'tab\\there and \\x01 control\\n' +\n    'then a second line long enough to split the string at its line break'\n]",
+    );
+  });
+
+  it("negative numbers in columns", () => {
+    expect(laid("[ -1, -22, -333, 4, -5, 66, -777, 8, -9, 10 ]", [])).toBe(
+      "[\n  -1, -22, -333, 4,\n  -5,  66, -777, 8,\n  -9,  10\n]",
+    );
+  });
+
+  it("NaN and Infinity in columns", () => {
+    expect(
+      laid("[ NaN, 1, Infinity, -Infinity, 22, 333, NaN, 4, 5, 66, 7, 8, 9, 10, -11, 12 ]", []),
+    ).toBe(
+      "[\n        NaN,  1, Infinity,\n  -Infinity, 22,      333,\n        NaN,  4,        5,\n         66,  7,        8,\n          9, 10,      -11,\n         12\n]",
+    );
+  });
+
+  it("bigints in columns", () => {
+    expect(laid("[ 1n, -22n, 333n, 4n, 5n, -66n, 7n, 888n, 9n, 10n ]", [])).toBe(
+      "[\n  1n, -22n, 333n,   4n,\n  5n, -66n,   7n, 888n,\n  9n,  10n\n]",
+    );
+  });
+
+  it("ref base, name 26", () => {
+    expect(
+      laid("{ o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] } }", []),
+    ).toBe("{\n  o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] }\n}");
+  });
+
+  it("ref base, name 27", () => {
+    expect(
+      laid("{ o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] } }", []),
+    ).toBe("{\n  o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] }\n}");
+  });
+
+  it("ref base, name 28", () => {
+    expect(
+      laid("{ o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] } }", []),
+    ).toBe("{\n  o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] }\n}");
+  });
+
+  it("ref base, name 29", () => {
+    expect(
+      laid("{ o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] } }", []),
+    ).toBe(
+      "{\n  o: <ref *1> {\n    name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxx',\n    self: [Circular *1]\n  }\n}",
+    );
+  });
+
+  it("ref base, name 30", () => {
+    expect(
+      laid("{ o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] } }", []),
+    ).toBe(
+      "{\n  o: <ref *1> {\n    name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',\n    self: [Circular *1]\n  }\n}",
+    );
+  });
+
+  it("ref base, name 31", () => {
+    expect(
+      laid("{ o: <ref *1> { name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', self: [Circular *1] } }", []),
+    ).toBe(
+      "{\n  o: <ref *1> {\n    name: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',\n    self: [Circular *1]\n  }\n}",
+    );
+  });
+
+  it("map number key, value 58", () => {
+    expect(
+      laid(
+        "Map(1) { 1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' } }",
+        [],
+      ),
+    ).toBe(
+      "Map(1) {\n  1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }\n}",
+    );
+  });
+
+  it("map number key, value 59", () => {
+    expect(
+      laid(
+        "Map(1) { 1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' } }",
+        [],
+      ),
+    ).toBe(
+      "Map(1) {\n  1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }\n}",
+    );
+  });
+
+  it("map number key, value 60", () => {
+    expect(
+      laid(
+        "Map(1) { 1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' } }",
+        [],
+      ),
+    ).toBe(
+      "Map(1) {\n  1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' }\n}",
+    );
+  });
+
+  it("map number key, value 61", () => {
+    expect(
+      laid(
+        "Map(1) { 1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' } }",
+        [],
+      ),
+    ).toBe(
+      "Map(1) {\n  1 => {\n    a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n  }\n}",
+    );
+  });
+
+  it("map number key, value 62", () => {
+    expect(
+      laid(
+        "Map(1) { 1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' } }",
+        [],
+      ),
+    ).toBe(
+      "Map(1) {\n  1 => {\n    a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n  }\n}",
+    );
+  });
+
+  it("map number key, value 63", () => {
+    expect(
+      laid(
+        "Map(1) { 1 => { a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' } }",
+        [],
+      ),
+    ).toBe(
+      "Map(1) {\n  1 => {\n    a: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n  }\n}",
+    );
+  });
+
+  it("a line break inside an entry", () => {
+    expect(laid("{ a: A\nB, b: 1 }", [5, 8])).toBe("{\n  a: A\n  B,\n  b: 1\n}");
+  });
+});

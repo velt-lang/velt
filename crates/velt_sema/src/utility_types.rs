@@ -62,6 +62,11 @@ impl Ctx<'_> {
         };
         // `Pick` / `Omit` of an interface with methods: an interface with those members
         // (`crate::synth_ifaces`).
+        if name == "Partial" {
+            if let Some(t) = self.partial_iface(tys[0], env.module, t.span) {
+                return t;
+            }
+        }
         if matches!(name, "Pick" | "Omit") && self.is_method_iface(tys[0]) {
             let Some(keys) = self.literal_strings(tys[1]) else {
                 let shown = self.display(tys[1]);
@@ -191,7 +196,7 @@ impl Ctx<'_> {
 
     /// The fields and getters of interface type `t` (one with methods), as an indexed access
     /// type reads them (`I["k"]`), with `t`'s type arguments substituted.
-    fn indexed_iface_members(&mut self, t: TyId) -> Option<Vec<ShapeField>> {
+    pub(crate) fn indexed_iface_members(&mut self, t: TyId) -> Option<Vec<ShapeField>> {
         let TyKind::Dyn(d, args) = self.ty.kind(t).clone() else {
             return None;
         };

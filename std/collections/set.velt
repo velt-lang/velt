@@ -19,10 +19,12 @@ export class Set<T> implements Iterable<T> {
   /**
    * A set holding each distinct element of `values` (like JS `new Set(values)`), in
    * first-occurrence order. Leaves `values` as it is; the set shares the elements, like JS.
+   * Each element goes through `add`, so a subclass's own `add` sees every one, as in JS
+   * (ECMA-262's "adder"; `Map`'s constructor calls `set` the same way).
    */
   constructor(values: T[] = []) {
     for (const v of values) {
-      this.items.set(v, true);
+      this.add(v);
     }
   }
 

@@ -1,0 +1,50 @@
+// velt/process (internal): Windows' working directories through `GetFullPathNameW`: `.` is the
+// process' (std/process/cwd_win32.velt), `D:` the one Windows keeps for the drive `D:` (its `=D:`
+// variable, which Node reads, or the drive's root), which velt/fs resolves `D:x` against
+// (std/fs/whole/win_path.velt). Through the call the file system's paths are made, not
+// `GetCurrentDirectoryW` nor the environment, so code that reads them reaches the file system
+// alone (a source generator is refused for that, and for nothing else).
+
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf, wideText } from "velt/ffi/wide";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+declare c("c") function GetFullPathNameW(
+  name: readonly u16[],
+  room: u32,
+  out: u16[],
+  file: Out<Ptr<u16> | null>,
+): u32;
+
+/**
+ * `GetFullPathNameW(name)`, or null on failure, with the error left for `GetLastError`: `.` is
+ * the working directory, `D:` the drive's.
+ */
+export function fullPathOf(name: string): string | null {
+  const w = wideOf(name);
+  if (w === null) {
+    return null;
+  }
+  let room: u32 = 260;
+  while (true) {
+    // Not zeroed: only Windows writes it, and only what it wrote (up to its NUL) is read.
+    const buf = arrayWithCapacity<u16>(room as usize);
+    arraySetLen(buf, room as usize);
+    // SAFETY: `w` is NUL-terminated and `buf` holds `room` code units, the count passed.
+    const got = unsafe { GetFullPathNameW(w, room, buf, new Out<Ptr<u16> | null>(null)) };
+    if (got === 0) {
+      return null;
+    }
+    if (got < room) {
+      return wideText(buf);
+    }
+    // Too small: `got` is the room the path needs, its NUL counted.
+    room = got;
+  }
+}
+
+/** The working directory on the drive `device` (`D:`), or null when Windows can't say. */
+export function driveDir(device: string): string | null {
+  return fullPathOf(device);
+}

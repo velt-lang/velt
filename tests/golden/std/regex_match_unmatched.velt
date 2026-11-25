@@ -1,0 +1,103 @@
+// check: no leaks
+// A match's group that did not take part, as in Node (#3562): `m[n] === undefined`, `== null`,
+// `?? d` and `|| d` test whether it took part (in `exec` and `matchAll`, and for a group past
+// the last); `m.length`, `m.at(n)` and `m.input`; a match read through `any`; a replacer's group
+// parameter typed `any`; `m?.[n]`; a type parameter bounded by the class; `m.groups`; `String(m)`;
+// `JSON.stringify(m)` and `console.log(m)`. (A typed `m[n]` there is still `""`, so `typeof
+// m[1]`, `m[1].length` and a copy of it (`const p = m[1]`) differ from Node, as does `m?.[i]`
+// with a computed `i`. `console.log` doesn't cut a match at Node's depth limit, `m.groups`
+// prints as a plain object, and `s.match(re)` without the `g` flag gives a `string[]`.)
+// Expected output from Node.
+import { RegExpMatch } from "velt/text";
+
+function show(label: string, m: RegExpMatch | null): void {
+  if (m == null) {
+    console.log(label, "no match");
+    return;
+  }
+  console.log(label, m[0], m[1] === undefined, m[1] !== undefined, m[1] == null, m[1] ?? "none");
+  console.log(label, m[2] === undefined, m[2] ?? "-", m[1] || "empty", m.length);
+}
+
+show("exec", /(a)?b/.exec("b"));
+show("exec taken", /(a)?b/.exec("ab"));
+for (const m of "b ab".matchAll(/(a)?b/g)) {
+  console.log("matchAll", m.index, m[1] === undefined, m[1] ?? "none", m.length);
+}
+
+// A group that matched the empty string took part.
+const empty = /(a*)b/.exec("b");
+if (empty) {
+  console.log("empty group", empty[1] === undefined, empty[1] ?? "none", empty[1] || "falsy");
+}
+
+// A group read by a computed index, and past the last group.
+const two = /(x)?(y)/.exec("y");
+if (two) {
+  for (let i = 0; i < 4; i++) {
+    console.log("index", i, two[i] === undefined, two[i] ?? "u");
+  }
+  console.log("at", two.at(0), two.at(1), two.at(2), two.at(-1), two.at(3), two.at(-4), two.length);
+}
+
+// An optional read of a group: the usual one-line idiom.
+console.log("optional", /(\d+)?x/.exec("x")?.[1] ?? "none", /(\d+)?x/.exec("x")?.[1] === undefined);
+console.log("optional taken", /(\d+)?x/.exec("7x")?.[1] ?? "none", /(\d+)?x/.exec("q")?.[1] ?? "no match");
+console.log("optional past", /x/.exec("x")?.[3] === undefined, /x/.exec("x")?.[0] == null);
+
+// A type parameter bounded by the match class.
+function second<T extends RegExpMatch>(x: T): string {
+  return (x[1] === undefined) + " " + (x[1] ?? "d");
+}
+const bounded = /(a)?b/.exec("b");
+if (bounded) {
+  console.log("bounded", second(bounded));
+}
+
+// `groups`, and a match turned into a string.
+const date = /(?<y>\d{4})-(?<mo>\d\d)?/.exec("2024-");
+console.log("groups", date?.groups?.y, date?.groups?.mo ?? "nomo", date?.groups?.zz, /(b)/.exec("b")?.groups === undefined);
+const dg = date?.groups;
+if (dg) {
+  console.log(JSON.stringify(dg));
+}
+const s = /(a)?b/.exec("b");
+console.log("string", String(s), `${s}`, "" + s, s?.toString());
+
+// A match through `any`.
+const ma: any = /b/.exec("abc");
+console.log("any", ma[0], ma[0].length, ma[1], ma.index, ma.length);
+const mg: any = /(a)?(b)/.exec("b");
+console.log("any groups", mg[1] === undefined, mg[2], mg[3], mg[-1], mg[0.5], mg.length);
+
+// A replacer's group parameters.
+console.log("replace any", "b".replace(/(a)?b/, (m: string, p1: any) => "[" + typeof p1 + "]"));
+console.log("replace unknown", "b".replace(/(a)?b/, (m: string, p1: unknown) => "[" + typeof p1 + "]"));
+console.log("replace optional", "b".replace(/(a)?b/, (m: string, p1?: string) => "[" + typeof p1 + "]"));
+console.log("replace taken", "ab".replace(/(a)?b/, (m: string, p1: any) => "[" + p1 + "]"));
+console.log("replace $1", "b".replace(/(a)?b/, "<$1>"));
+
+// JSON.stringify of a match: the array, `null` for a group that did not take part.
+console.log(JSON.stringify(/(a)?(b)/.exec("xb")));
+console.log(JSON.stringify({ m: /(a)(b)/.exec("ab") }));
+
+// console.log of a match, as Node lays it out.
+const named = /(?<first>a)?(?<second>b)(c)?/.exec("b's");
+console.log(/(a)?(b)/.exec("xb"), named?.input);
+console.log([/b/.exec("ab")], { m: /x(y)?/.exec("x") });
+console.log(named);
+for (const x of "ab b".matchAll(/(a)?b/g)) {
+  console.log(x);
+}
+console.log(/it's/.exec("it's \"q\"\n"));
+// Past Node's 80 columns: one entry a line, and the named groups' object broken too.
+const big = /(?<first>aaaa)(?<second>bbbb)(?<third>cccc)/.exec("aaaabbbbcccc");
+console.log(big);
+console.log([big]);
+console.log(/(?<x>a)/.exec("a"), /(a)(b)(c)(d)/.exec("abcd"));
+
+// `at` as JavaScript's array `at`: truncated first, NaN as 0, a negative counted back.
+const ab = /a(b)/.exec("ab");
+if (ab) {
+  console.log(ab.at(-0.5), ab.at(-1.5), ab.at(NaN), ab.at(-1), ab.at(1.9), ab.at(-3), ab.at(2));
+}

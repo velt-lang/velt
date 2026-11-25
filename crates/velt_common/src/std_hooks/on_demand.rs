@@ -37,6 +37,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_write",
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
+    // `then`, `catch` and `finally` of a promise held as `any` (#924 step 2), demanded by sema.
+    "std/lang/hooks/any_promise",
     "std/lang/hooks/unwind",
     "std/lang/hooks/inspect",
     "std/lang/hooks/inspect_cycles",
@@ -45,6 +47,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
+    // A `number` stored into an integer array's element (#3182), demanded where sema finds one.
+    "std/lang/hooks/int_store",
     "std/lang/hooks/number_shortest",
     // The blocks of module state (#2196 9c): a native program with module state.
     "std/lang/hooks/module_blocks",

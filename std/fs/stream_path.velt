@@ -1,0 +1,15 @@
+// velt/fs (internal): the path `openRead` and `openWrite` hand the runtime, and the error that
+// names it (`#fs-stream-path`'s default variant, std/imports.velt): the path as given, which the
+// runtime's error names as Node's does.
+
+import { IoError } from "velt/io/error";
+
+/** The path the runtime opens for `path`: `path` itself. */
+export function streamPath(path: string): string {
+  return path;
+}
+
+/** The runtime's error `e` for opening `opened` (`streamPath(path)`), as it is. */
+export function streamError(e: IoError, opened: string, path: string): IoError {
+  return e;
+}

@@ -85,7 +85,6 @@ const CLAIMS: &[(&str, Claim)] = &[
     ),
     ("object-in-template", Claim::Behaviour),
     ("default-sort", Claim::Behaviour),
-    ("json-map", Claim::Behaviour),
     ("map-iter-as-array", Claim::Rejected),
     ("velt-global", Claim::Rejected),
     ("velt-member", Claim::Rejected),

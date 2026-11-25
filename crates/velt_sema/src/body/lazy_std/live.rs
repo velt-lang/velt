@@ -4,9 +4,12 @@
 //! included. *Live* code is a superset of the functions it builds: the program's own definitions,
 //! the std definitions lowering looks up by name ([`super::Mode::named`]), the hooks demanded so
 //! far, and, closed over, every definition live code names (a call, a function value, a closure,
-//! a constant), the methods of each class or struct a live type mentions (with its base classes,
-//! subclasses and fields' types: a class value's glue dispatches over every class that extends
-//! it, constructed or not, `velt_vir` `any_subclass_dispatch`, `json_descendants`), and the
+//! a constant), the methods lowering builds for each class or struct a live type mentions (with its
+//! base classes, subclasses and fields' types: a class value's glue dispatches over every class
+//! that extends it, constructed or not, `velt_vir` `any_subclass_dispatch`, `json_descendants`):
+//! its table, constructor, accessors and the methods glue calls by name or key, and every method
+//! once the program reads a member of an `any` ([`class_methods`]; a method with a plain name is
+//! otherwise live where live code names it), and the
 //! interface implementations of the live types, and every module slot, whose initializer lowering
 //! runs whether or not code reads it. A type argument of a checked call is a live type:
 //! monomorphization builds the methods the callee calls on it. Three more rules are about what
@@ -57,6 +60,19 @@ pub(crate) struct Live {
     adts: FxHashSet<DefId>,
     /// Per class or struct: all its methods and constructors (made when first needed).
     methods: Option<FxHashMap<DefId, Vec<DefId>>>,
+    /// Every method of a live class is live, not only those live with it ([`class_methods`]:
+    /// a member of an `any` is read).
+    all_methods: bool,
+    /// The methods of the implementations (`Ctx::impls`), as of `impl_methods_of` of them.
+    impl_methods: FxHashSet<DefId>,
+    impl_methods_of: usize,
+    /// The implementations, `all_methods` and `texts_generic` when
+    /// [`class_methods::open_methods`] last ran.
+    methods_opened: Option<(usize, bool, bool)>,
+    /// The operand types of the text conversions in live code ([`class_methods::note_texts`]).
+    text_types: FxHashSet<TyId>,
+    /// One of them holds a type parameter: every class's `toString()` is live.
+    texts_generic: bool,
     /// The implementations (`cx.impls` indexes) whose methods are live.
     impls: FxHashSet<usize>,
     /// The kinds of the live types an implementation or a gated root may be for ([`kind_bit`]).
@@ -366,6 +382,7 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     cx.lazy.live.tasks |= w.tasks;
     cx.lazy.live.module_state |= w.module_state;
     cx.lazy.live.ifaces.extend(w.ifaces);
+    class_methods::note_texts(cx, &w.texts);
     let bound = match w.stub_calls.is_empty() {
         true => FxHashMap::default(),
         false => super::hook_stubs::bind(cx, &w.stub_calls),
@@ -408,6 +425,7 @@ fn open(cx: &mut Ctx) {
     if cx.lazy.live.kinds & DYNAMIC != 0 {
         dynamic_classes(cx);
     }
+    class_methods::open_methods(cx);
     let live = &cx.lazy.live;
     let now = (live.adts.len(), live.ifaces.len(), live.kinds);
     if live.opened == Some(now) {
@@ -466,8 +484,9 @@ pub(super) fn mark(cx: &mut Ctx, d: DefId) -> bool {
     new
 }
 
-/// Record the types `todo` and their parts as live: their constructs, and the methods of each
-/// class or struct among them (with its base classes, subclasses and fields' types), and of the
+/// Record the types `todo` and their parts as live: their constructs, and the methods live with
+/// each class or struct among them ([`class_methods`]; with its base classes, subclasses and
+/// fields' types), and of the
 /// implementations for them.
 fn live_types(cx: &mut Ctx, todo: Vec<TyId>) {
     live_types_of(cx, todo, vec![]);
@@ -518,8 +537,7 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
             }
         }
         adts.extend(cx.lazy.subclasses.get(&d).into_iter().flatten().copied());
-        let ms = methods(cx).get(&d).cloned().unwrap_or_default();
-        for m in ms {
+        for m in class_methods::with_class(cx, d) {
             if loaded_for(cx, m, Some(d)) {
                 mark(cx, m);
             }
@@ -640,6 +658,8 @@ mod again;
 #[path = "live_constructs.rs"]
 mod constructs;
 pub(crate) use again::reach_again;
+#[path = "live_methods.rs"]
+mod class_methods;
 #[path = "live_roots.rs"]
 mod roots;
 pub(super) use constructs::def_name;

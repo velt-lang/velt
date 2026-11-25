@@ -127,6 +127,17 @@ impl FnCx<'_, '_> {
         let mut bounds = vec![vec![]; n + 1];
         bounds.extend(s.method.generics.bounds.iter().cloned());
         let mut params = s.method.params.clone();
+        // A check by units: std's slot as declared while the app's bodies are checked
+        // (`units::modes`).
+        let declared = self
+            .cx
+            .declared_slot(s.iface, s.slot)
+            .map(|(m, ps)| (m, ps.to_vec()));
+        if let Some((_, ps)) = &declared {
+            for (p, &m) in params.iter_mut().zip(ps) {
+                p.mode = m;
+            }
+        }
         let rest_form = self.cx.generic_fn_rest_form(s.iface);
         if let (Some(form), Some(last)) = (rest_form, params.last_mut()) {
             last.ty = form;
@@ -162,7 +173,7 @@ impl FnCx<'_, '_> {
         if let Some(form) = rest_form {
             self.rest_form_args(&c, form, &mut ck, args, span);
         }
-        let mode = if s.method.mut_this {
+        let mode = if declared.map_or(s.method.mut_this, |(m, _)| m) {
             PassMode::BorrowMut
         } else {
             PassMode::Borrow
