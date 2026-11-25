@@ -453,6 +453,9 @@ fn push_impl(cx: &mut Ctx, o: &Owner, iface: DefId, args: Vec<TyId>, methods: Ve
     for &m in &methods {
         cx.fn_info_mut(m).fixed_modes = true;
     }
+    let methods = (methods.into_iter())
+        .map(|m| crate::hand_back::value_entry(cx, m))
+        .collect();
     cx.impls.push(crate::hir::ImplDef {
         ty: o.ty,
         generics: o.generics,
