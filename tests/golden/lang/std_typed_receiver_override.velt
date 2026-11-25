@@ -13,9 +13,10 @@ class Counted extends Map<string, number> {
 }
 
 class Seen extends Set<string> {
-  override add(v: string) {
+  override add(v: string): this {
     adds++;
     super.add(v);
+    return this;
   }
 }
 

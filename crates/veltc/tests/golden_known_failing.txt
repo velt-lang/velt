@@ -53,6 +53,7 @@ tests/golden/std/date_subclass_text.velt                           #3684 units
 tests/golden/std/error_name_getter.velt                            #3684 units
 tests/golden/std/error_name_getter_uncaught.velt                   #3684 units
 tests/golden/std/set_ctor_subclass_add.velt                        #3684 units
+tests/golden/std/set_map_return_this.velt                          #3684 units
 # The others (#2943's U6 list):
 examples/apps/todo-api/demo.velt                                   #2943 units
 examples/apps/todo-api/demo_sqlite.velt                            #2943 units
