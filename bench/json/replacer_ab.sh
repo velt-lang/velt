@@ -15,7 +15,7 @@ WORK=$(cd "$WORK" && pwd)
 rm -rf "$WORK/old-std"
 cp -r "$ROOT/std" "$WORK/old-std"
 F=$WORK/old-std/lang/hooks/json_replace.velt
-perl -0pi -e 's/  return replaceJsonTop<T>\(value, replacer\);/  const root = JsonValue.parse(JSON.stringify(value), { maxDepth: 4294967295 });\n  return jsonReplacedText(jsonReplaced("", root, replacer, 0));/' "$F"
+perl -0pi -e 's/  return replaceJsonTop<T>\(value, replacer\);/  let root = JsonValue.of(null);\n  try {\n    root = JsonValue.parse(JSON.stringify(value), { maxDepth: 4294967295 });\n  } catch (e) {\n    panic("JSON.stringify wrote text it cannot read back");\n  }\n  return jsonReplacedText(jsonReplaced("", root, replacer, 0));/' "$F"
 perl -0pi -e 's/(import \{ replaceJsonTop \} from "velt\/encoding\/json\/replaced";)/$1\nimport { jsonReplaced, jsonReplacedText } from "velt\/encoding\/json\/replace_ops";\nimport { JSON } from "velt\/prelude\/json\/json";/' "$F"
 grep -q 'jsonReplaced("", root' "$F" || { echo "the swap did not apply" >&2; exit 1; }
 for side in old new; do
