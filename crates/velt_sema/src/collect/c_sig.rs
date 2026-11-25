@@ -209,7 +209,7 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
         // An array of C structs (#2187): its elements are inline at C's layout, so its first
         // element's address is a `const S *` (`readonly S[]`) or an `S *` C writes.
         &TyKind::Array(e) if cx.is_c_struct_ty(e) => {
-            let readonly = super::sigs::written_readonly(&p.ty);
+            let readonly = super::c_ref::written_readonly_array(cx, module, &p.ty);
             if let Some(why) = (!readonly).then(|| c_unwritable(cx, e, 0)).flatten() {
                 let shown = cx.display(e);
                 cx.error(
@@ -220,7 +220,7 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
                         ),
                         p.ty.span,
                     )
-                    .with_note("an array C only reads is `readonly S[]` (`const S *`); C writing these fields would forge a Velt value"),
+                    .with_note("an array C only reads is `readonly S[]` (`const S *`), written so at the parameter or in a type alias of it; C writing these fields would forge a Velt value"),
                 );
                 return CTy::Void;
             }

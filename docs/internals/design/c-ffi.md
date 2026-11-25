@@ -203,9 +203,11 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   element's address is a `const S *` (`readonly S[]`) or an `S *` C may write, borrowed for the
   call. C writing an element writes its bytes as they are, so `S[]` is refused when `S` has a
   `bool` field (C could write another byte) or a non-null pointer field (C could write `NULL`),
-  also in a nested struct (collect/c_sig.rs `c_unwritable`); `readonly S[]` of them is not, as
-  C promises not to write it. The header check compares the elements by the definition they
-  name.
+  also in a nested struct (collect/c_sig.rs `c_unwritable`). `readonly S[]` of them is not:
+  C promises not to write it, and the header check holds C to it, as for `Ref<S>`. `readonly`
+  is read where the parameter is written or through a type alias (`type Flags = readonly
+  Flag[]`). The header check compares the elements by the definition they name, and takes
+  `void *` as for numbers (`fwrite`, `qsort`).
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
@@ -528,7 +530,8 @@ native: {
   | `bool` | `_Bool` / `bool` only |
   | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them, so a declaration right on one target is right on all |
   | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`; `Out<S>` of a C struct is `S *`, by the definition it names) |
-  | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`); an array of C structs `S` by the definition it names |
+  | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`); an array of C structs `S` by the definition it names, or `void *` |
+  | a read-only array of a C struct with a `bool` or a non-null pointer field | `const S *` or `const void *` only: C writing such a struct could make no Velt value, so the pointer must promise it doesn't, as `Ref<S>` |
   | written arrays, `Out<T>` | non-const `T *` only |
   | `Ref<S>` | `const S *` only, `S` by the definition it names (a non-const one C may write through is `Out<S>` or `Ptr<S>`; stricter than read-only arrays, which accept a non-const `T *` because many APIs omit `const` on buffers: a struct pointer without `const` usually means C writes it, and `Ptr<S>` stays for the APIs that only forgot it) |
   | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
@@ -753,7 +756,9 @@ must not depend on code elsewhere.
 - A C struct crosses by value only on x86-64 (Linux, macOS, Windows) and arm64 Linux and macOS,
   and not in a variadic function's `...` or to an `@export` function. C arrays in structs are not
   supported. An array of structs C writes (`S[]`) can't hold a `bool` or a non-null pointer
-  field, which C could write as no Velt value; `readonly S[]` can.
+  field, which C could write as no Velt value; `readonly S[]` can, against a `const` pointer.
+  An array of structs crosses from its first element only: `S[]` has no `subarray`, and a
+  `slice` is a copy, so what C writes into it is not seen in the original.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -771,6 +776,8 @@ must not depend on code elsewhere.
 - **C structs by value on the remaining targets** (wasm32, Windows on arm64), in a variadic
   function's `...` and to an `@export` function. C arrays become fields once Velt has
   fixed-size arrays.
+- **A position in an array of C structs**, as `subarray` gives one in an array of numbers: a
+  C function is given an `S[]` from its first element only.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call

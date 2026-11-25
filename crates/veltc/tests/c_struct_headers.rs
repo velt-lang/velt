@@ -71,6 +71,7 @@ fn zig() -> Option<PathBuf> {
 const LINUX: &str = "x86_64-unknown-linux-gnu";
 
 const GOOD_H: &str = r#"#include <stdint.h>
+#include <stdbool.h>
 typedef struct point { double x; double y; } point;
 typedef struct { struct point origin; int32_t tag; const char *label; } box_t;
 struct node { struct node *next; uint8_t kind; void (*visit)(struct node *); };
@@ -92,6 +93,13 @@ int maybe_point(const struct point *p);
 double sum_points(const point_t *ps, int32_t n);
 double sum_loose(struct point *ps, int32_t n);
 void fill_points(struct point *ps, int32_t n);
+/* As arrays of numbers, `void *` takes them (`fwrite`, `qsort`); a struct C writing could make
+   no Velt value (a `bool`) is `const` only. */
+void put_points(const void *ps, int32_t n);
+void take_points(void *ps, int32_t n);
+struct flag { bool on; int32_t n; };
+void read_flags(const struct flag *xs, int32_t n);
+void put_flags(const void *xs, int32_t n);
 /* Every kind of field, with padding before and after small ones and a nested struct with tail
    padding: a slip in any width or alignment shows in the offsets. */
 #include <stdbool.h>
@@ -120,6 +128,11 @@ declare c("geo") function maybe_point(p: Ref<point> | null): i32;
 declare c("geo") function sum_points(ps: readonly point[], n: i32): f64;
 declare c("geo") function sum_loose(ps: readonly point[], n: i32): f64;
 declare c("geo") function fill_points(ps: point[], n: i32): void;
+declare c("geo") function put_points(ps: readonly point[], n: i32): void;
+declare c("geo") function take_points(ps: point[], n: i32): void;
+declare c struct flag { on: bool; n: i32; }
+declare c("geo") function read_flags(xs: readonly flag[], n: i32): void;
+declare c("geo") function put_flags(xs: readonly flag[], n: i32): void;
 declare c struct tail { big: i64; small: u8; }
 declare c struct kinds {
   flag: bool; i8: i8; u8: u8; i16: i16; u16: u16; f: f32; i32: i32;
@@ -313,22 +326,28 @@ fn a_ref_struct_is_a_const_struct_pointer() {
     }
 }
 
-/// An array of structs C fills is refused against a `const S *` (C only reads it), and an
-/// array of one struct against a pointer to another.
+/// An array of structs C fills is refused against a `const S *` (C only reads it), an array of
+/// one struct against a pointer to another, and a `readonly` array of a struct with a `bool`
+/// against a pointer C may write through (`S *` or `void *`), on every target's headers.
 #[test]
 fn an_array_of_structs_is_a_struct_pointer() {
     let Some(_zig) = zig() else { return };
     let dir = test_dir::TestDir::new();
-    let header = "#include <stdint.h>\nstruct point { double x; double y; };\nstruct seg { int32_t n; };\nvoid fill_points(const struct point *ps, int32_t n);\nint read_segs(const struct seg *s, int32_t n);\n";
-    let lib = "declare c struct point { x: f64; y: f64; }\ndeclare c struct seg { n: i32; }\ndeclare c(\"geo\") function fill_points(ps: point[], n: i32): void;\ndeclare c(\"geo\") function read_segs(s: readonly point[], n: i32): i32;\n";
+    let header = "#include <stdint.h>\n#include <stdbool.h>\nstruct point { double x; double y; };\nstruct seg { int32_t n; };\nstruct flag { bool on; int32_t n; };\nvoid fill_points(const struct point *ps, int32_t n);\nint read_segs(const struct seg *s, int32_t n);\nvoid poke_flags(struct flag *xs, int32_t n);\nvoid poke_any(void *xs, int32_t n);\n";
+    let lib = "declare c struct point { x: f64; y: f64; }\ndeclare c struct seg { n: i32; }\ndeclare c struct flag { on: bool; n: i32; }\ndeclare c(\"geo\") function fill_points(ps: point[], n: i32): void;\ndeclare c(\"geo\") function read_segs(s: readonly point[], n: i32): i32;\ndeclare c(\"geo\") function poke_flags(xs: readonly flag[], n: i32): void;\ndeclare c(\"geo\") function poke_any(xs: readonly flag[], n: i32): void;\n";
     project(dir.path(), header, lib);
-    let o = check(dir.path(), LINUX);
-    let out = output(&o);
-    assert!(!o.status.success(), "{out}");
-    for want in [
-        "C only reads the array: declare it `readonly`",
-        "the array's elements are",
-    ] {
-        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    for target in [LINUX, "aarch64-apple-darwin", "x86_64-pc-windows-msvc"] {
+        let o = check(dir.path(), target);
+        let out = output(&o);
+        assert!(!o.status.success(), "{target}:\n{out}");
+        for want in [
+            "C only reads the array: declare it `readonly`",
+            "the array's elements are",
+            "parameter 1 of C function `poke_flags`",
+            "parameter 1 of C function `poke_any`",
+            "`flag` has a `bool` or a non-null pointer field",
+        ] {
+            assert!(out.contains(want), "{target}: missing `{want}` in:\n{out}");
+        }
     }
 }

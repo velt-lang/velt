@@ -54,10 +54,12 @@ pub enum Shape {
         nullable: bool,
     },
     /// An array of C structs, by name: a pointer to its first element (#2187); `readonly` when C
-    /// only reads it.
+    /// only reads it. `const_only`: the struct has a field C writing could make no Velt value (a
+    /// `bool`, a non-null pointer), so C must take a `const S *` (or `const void *`), as `Ref<S>`.
     StructBuf {
         name: String,
         readonly: bool,
+        const_only: bool,
     },
     /// A C struct by value, by name: a field of another C struct.
     Struct(String),
@@ -112,7 +114,7 @@ pub fn describe(shape: &Shape) -> String {
             name,
             nullable: true,
         } => format!("Ref<{name}> | null"),
-        Shape::StructBuf { name, readonly } => {
+        Shape::StructBuf { name, readonly, .. } => {
             format!("{}{name}[]", if *readonly { "readonly " } else { "" })
         }
         Shape::Struct(name) => name.clone(),
@@ -220,16 +222,28 @@ pub fn compare_in(shape: &Shape, c: &CType, h: &Headers) -> Result<(), String> {
             ),
             _ => Err(format!("declare {}", velt_for(c))),
         },
-        // As an array of numbers: `readonly` may be a pointer without `const`, and an array C
-        // writes may not be a `const S *`.
-        Shape::StructBuf { name, readonly } => match c {
+        // As an array of numbers: an array C writes may not be a `const S *`, and `void *`
+        // matches. A `readonly` one may be a pointer without `const`, unless C writing an
+        // element could make no Velt value (`const_only`): then it is `const S *` only, as
+        // `Ref<S>`.
+        Shape::StructBuf {
+            name,
+            readonly,
+            const_only,
+        } => match c {
             CType::Pointer {
                 pointee, is_const, ..
             } => {
                 if !*readonly && *is_const {
                     return Err("C only reads the array: declare it `readonly`".into());
                 }
+                if *const_only && !*is_const {
+                    return Err(format!(
+                        "C may write through it, and `{name}` has a `bool` or a non-null pointer field C writing could make no Velt value: an array C only reads is a `const {name} *`"
+                    ));
+                }
                 match &**pointee {
+                    CType::Void => Ok(()),
                     CType::Named(n) if n == name || h.same_record(name, n) => Ok(()),
                     other => Err(format!("the array's elements are {}", velt_for(other))),
                 }

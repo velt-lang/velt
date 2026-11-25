@@ -175,7 +175,7 @@ fn c_source(shapes: &[Vec<&Field>]) -> (String, String) {
     h.push_str("#include <stdarg.h>\nint32_t ref_var(const OS *s, int32_t n, ...);\n");
     // Arrays of C structs: C reads every field of every element of a `readonly OS[]` (an empty
     // one too), and fills an `OI[]` in place.
-    h.push_str("int64_t arr_sum(const OS *xs, int32_t n);\nvoid arr_fill(OI *xs, int32_t n);\n");
+    h.push_str("int64_t arr_sum(const OS *xs, int32_t n);\nvoid arr_fill(OI *xs, int32_t n);\ntypedef struct PN { void *p; int64_t n; } PN;\nvoid pn_fill(PN *xs, int32_t n);\n");
     c.push_str("int64_t late_int(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, S7 s, int64_t f) {\n  if (a + b + c + d + e + f != 21) return -100;\n  return chk7(s, 3);\n}\n");
     c.push_str("int64_t late_sse(double a, double b, double c, double d, double e, double f, double g, S0 s, double h) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk0(s, 4);\n}\n");
     c.push_str("int64_t late_small_sse(double a, double b, double c, double d, double e, double f, double g, double h, S18 s) {\n  if (a + b + c + d + e + f + g + h != 36.0) return -100;\n  return chk18(s, 6);\n}\n");
@@ -198,6 +198,7 @@ fn c_source(shapes: &[Vec<&Field>]) -> (String, String) {
     c.push_str("int32_t ref_var(const OS *s, int32_t n, ...) {\n  va_list ap;\n  va_start(ap, n);\n  int32_t sum = s->a;\n  for (int32_t i = 0; i < n; i++) sum += va_arg(ap, int32_t);\n  va_end(ap);\n  return sum;\n}\n");
     c.push_str("int64_t arr_sum(const OS *xs, int32_t n) {\n  int64_t s = 0;\n  for (int32_t i = 0; i < n; i++) s += xs[i].a + xs[i].inner.b + (int64_t)(xs[i].inner.c * 2) + xs[i].d + xs[i].flag + (xs[i].p != 0);\n  return s;\n}\n");
     c.push_str("void arr_fill(OI *xs, int32_t n) {\n  for (int32_t i = 0; i < n; i++) {\n    xs[i].b = (int16_t)(i * 7 + 1);\n    xs[i].c = i + 0.5;\n  }\n}\n");
+    c.push_str("void pn_fill(PN *xs, int32_t n) {\n  for (int32_t i = 0; i < n; i++) {\n    xs[i].p = i % 2 ? (void *)(uintptr_t)(64 * i) : 0;\n    xs[i].n = i * 3;\n  }\n}\n");
     c.push_str("NP null_ptr(void) {\n  NP r = { 0, 7 };\n  return r;\n}\n");
     c.push_str("S8 big_after(int64_t a, int64_t b, int64_t c, int64_t d, S7 s) {\n  S8 r = mk8(a + b + c + d);\n  if (chk7(s, 5) != 1) r.f0 = -1;\n  return r;\n}\n");
     (h, c)
@@ -246,8 +247,8 @@ fn velt_lib(shapes: &[Vec<&Field>]) -> String {
         "declare c(\"abi\") function ref_var(s: Ref<OS>, n: i32, ...args: CVarArgs): i32;\n",
     );
     v.push_str("export function refs(): string[] {\n  const s: OS = { a: 6, inner: { b: 15, c: 1.25 }, d: 5000, flag: true, p: ptrOf(80) };\n  // SAFETY: each reads the struct during the call and keeps no pointer to it.\n  const [checked, poked, some, none] = unsafe { [ref_check(s, 5), ref_poke(s), ref_maybe(s), ref_maybe(null)] };\n  // SAFETY: as above.\n  const [aliased, aliasSome, aliasNone] = unsafe { [ref_alias(make6(3), 3), ref_alias_maybe(make6(3)), ref_alias_maybe(null)] };\n  // SAFETY: as above.\n  const [ided, idSome, idNone] = unsafe { [ref_id(make6(4), 4), ref_id_maybe(make6(4)), ref_id_maybe(null)] };\n  // SAFETY: as above; the variadic arguments are two `int32_t`s.\n  const summed = unsafe { ref_var(s, 2, 10 as i32, 20 as i32) };\n  return [`ref_check ${checked}`, `ref_poke ${poked} ${s.a}`, `ref_maybe ${some} ${none}`, `ref_alias ${aliased} ${aliasSome} ${aliasNone}`, `ref_id ${ided} ${idSome} ${idNone}`, `ref_var ${summed}`];\n}\n");
-    v.push_str("declare c(\"abi\") function arr_sum(xs: readonly OS[], n: i32): i64;\ndeclare c(\"abi\") function arr_fill(xs: OI[], n: i32): void;\n");
-    v.push_str("export function arrays(): string[] {\n  const xs: OS[] = [{ a: 1, inner: { b: 2, c: 0.5 }, d: 3, flag: true, p: ptrOf(16) }, { a: 10, inner: { b: 20, c: 0 }, d: 30, flag: false, p: null }, { a: 100, inner: { b: 200, c: 0 }, d: 300, flag: true, p: null }];\n  const ys: OI[] = [{ b: 0, c: 0 }, { b: 0, c: 0 }, { b: 0, c: 0 }];\n  const empty: OS[] = [];\n  // SAFETY: C reads `n` elements of each during the call and keeps no pointer to them.\n  const [sum, none] = unsafe { [arr_sum(xs, xs.length as i32), arr_sum(empty, 0)] };\n  // SAFETY: C writes `n` elements of `ys` during the call.\n  unsafe { arr_fill(ys, ys.length as i32) };\n  return [`arr_sum ${sum} ${none}`, `arr_fill ${ys[0].b} ${ys[1].b} ${ys[2].b} ${ys[2].c}`];\n}\n");
+    v.push_str("declare c(\"abi\") function arr_sum(xs: readonly OS[], n: i32): i64;\ndeclare c(\"abi\") function arr_fill(xs: OI[], n: i32): void;\nexport declare c struct PN { p: Ptr<void> | null; n: i64; }\ndeclare c(\"abi\") function pn_fill(xs: PN[], n: i32): void;\n");
+    v.push_str("export function arrays(): string[] {\n  const xs: OS[] = [{ a: 1, inner: { b: 2, c: 0.5 }, d: 3, flag: true, p: ptrOf(16) }, { a: 10, inner: { b: 20, c: 0 }, d: 30, flag: false, p: null }, { a: 100, inner: { b: 200, c: 0 }, d: 300, flag: true, p: null }];\n  const ys: OI[] = [{ b: 0, c: 0 }, { b: 0, c: 0 }, { b: 0, c: 0 }];\n  const empty: OS[] = [];\n  // SAFETY: C reads `n` elements of each during the call and keeps no pointer to them.\n  const [sum, none] = unsafe { [arr_sum(xs, xs.length as i32), arr_sum(empty, 0)] };\n  // SAFETY: C writes `n` elements of `ys` during the call.\n  unsafe { arr_fill(ys, ys.length as i32) };\n  const ps: PN[] = [{ p: ptrOf(8), n: 0 }, { p: null, n: 0 }];\n  // SAFETY: C writes `n` elements of `ps` during the call: `NULL`, then an address.\n  unsafe { pn_fill(ps, ps.length as i32) };\n  return [`arr_sum ${sum} ${none}`, `arr_fill ${ys[0].b} ${ys[1].b} ${ys[2].b} ${ys[2].c}`, `pn_fill ${ps[0].p === null} ${ps[1].p === ptrOf(64)} ${ps[1].n}`];\n}\n");
     v.push_str("function truth(b: bool): string {\n  return `${b} ${!b} ${b === true}`;\n}\n");
     v.push_str("export function outs(): string[] {\n  const o = new Out<OS>({ a: 0, inner: { b: 0, c: 0 }, d: 0, flag: false, p: null });\n  // SAFETY: `o` is the struct it fills.\n  const r = unsafe { out_fill(5, o) };\n  const s = o.value;\n  const same = r === 5 && s.a === 6 && s.inner.b === 15 && s.inner.c === 1.25 && s.d === 5000 && s.p === ptrOf(80);\n  const b = new Out<bool>(false);\n  // SAFETY: `b` is the bool it sets.\n  unsafe { out_bool(b) };\n  return [`out_struct ${same}`, `out_flag ${truth(s.flag)}`, `out_bool ${truth(b.value)}`];\n}\n\n");
     v.push_str("export function nullField(): i64 {\n  // SAFETY: by value; C leaves `p` NULL.\n  return unsafe { null_ptr() }.n;\n}\n\n");
@@ -364,7 +365,7 @@ fn expected() -> String {
         }
     }
     out.push_str(
-        "late_int 1\nlate_sse 1\nbig_after true\nlate_small_sse 1\nlate_small_int 1\nlate_f3 1\nlate_hfa 1\nlate_pair 1\nlate_f3_float 1\nlate_big 1\nout_struct true\nout_flag true false true\nout_bool true false true\nref_check 1\nref_poke 99 6\nref_maybe 6 0\nref_alias 1 1 0\nref_id 1 1 0\nref_var 36\narr_sum 670 0\narr_fill 1 8 15 2.5\n",
+        "late_int 1\nlate_sse 1\nbig_after true\nlate_small_sse 1\nlate_small_int 1\nlate_f3 1\nlate_hfa 1\nlate_pair 1\nlate_f3_float 1\nlate_big 1\nout_struct true\nout_flag true false true\nout_bool true false true\nref_check 1\nref_poke 99 6\nref_maybe 6 0\nref_alias 1 1 0\nref_id 1 1 0\nref_var 36\narr_sum 670 0\narr_fill 1 8 15 2.5\npn_fill true true 3\n",
     );
     out
 }
