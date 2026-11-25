@@ -7,6 +7,7 @@ use velt_syntax::ast;
 use super::accessor_rmw::Rmw;
 use super::any_text::Hint;
 use super::assign_checks::assigned_literal;
+use super::assign_paths::is_plain_path;
 use super::dynamic_arith::DynRmw;
 use super::element_value::ElementWrite;
 use super::ops::hir_binop;
@@ -31,8 +32,6 @@ pub(super) enum AssignTarget {
     /// `x[k]` of a type parameter's value by a key known per instantiation (`key_index.rs`).
     Keyed(hir::Expr, hir::Expr),
 }
-
-use super::assign_paths::is_plain_path;
 
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
@@ -119,9 +118,8 @@ impl FnCx<'_, '_> {
                 if self.indexes_through(obj.ty, index) {
                     return Some(AssignTarget::Indexer(obj));
                 }
-                // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol
-                // key the member it names: a setter or a getter-only accessor is handled the
-                // same way.
+                // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol key
+                // the member it names: a setter or a getter-only accessor is handled the same way.
                 let key = match self.symbol_key_of(index) {
                     Some(key) => Some(key),
                     None => self.single_key(index),
