@@ -1,0 +1,64 @@
+// velt/fs (internal): the C library's `open`, `read` and `write` of a file as Node opens it, on
+// macOS and Linux (`#fd-system`), made again when a signal interrupts them: for whole files
+// (std/fs/whole/posix.velt) and file streams (std/fs/stream_os/posix.velt).
+
+import { IoError } from "velt/io/error";
+import { EINTR, isMac } from "velt/fs/fd/system";
+import { lastError, openPath, readInto, writeFrom } from "#fd-system";
+import { osError } from "velt/fs/errors";
+
+/** EIO: a write that wrote nothing. */
+const EIO: i32 = 5;
+
+/** `O_RDONLY | O_CLOEXEC` (Node's "r"; libuv adds `O_CLOEXEC`). */
+export function readFlags(): i32 {
+  return isMac() ? 0x1000000 : 0x80000;
+}
+
+/** `O_WRONLY | O_CREAT | O_CLOEXEC`, with `O_APPEND` (Node's "a") or `O_TRUNC` ("w"). */
+export function writeFlags(append: bool): i32 {
+  const mac = isMac();
+  const creat: i32 = mac ? 0x200 : 0x40;
+  const how: i32 = append ? (mac ? 0x8 : 0x400) : mac ? 0x400 : 0x200;
+  return 1 | creat | how | (mac ? 0x1000000 : 0x80000);
+}
+
+/** `open(c, flags)`, again after `EINTR`: the descriptor, or -1 with the error for `lastError()`. */
+export function openRetry(c: readonly u8[], flags: i32): i32 {
+  while (true) {
+    const fd = openPath(c, flags, 0o666);
+    if (fd >= 0 || lastError() != EINTR) {
+      return fd;
+    }
+  }
+}
+
+/** `read` into `bytes[start..end]`, again after `EINTR`: the count, or -1 (`lastError()`). */
+export function readRetry(fd: i32, bytes: u8[], start: usize, end: usize): isize {
+  while (true) {
+    const n = readInto(fd, bytes, start, end, -1);
+    if (n >= 0 || lastError() != EINTR) {
+      return n;
+    }
+  }
+}
+
+/** Writes all of `bytes[start..end]` to `fd`: null, or the error (Node's, naming `write`). */
+export function writeAll(fd: i32, bytes: readonly u8[], start: usize, end: usize): IoError | null {
+  let at = start;
+  while (at < end) {
+    const n = writeFrom(fd, bytes, at, end, -1);
+    if (n < 0) {
+      const e = lastError();
+      if (e != EINTR) {
+        return osError(e, "write");
+      }
+    } else if (n == 0) {
+      // Nothing written with bytes left: an error, not a loop (Rust's `write_all`'s WriteZero).
+      return osError(EIO, "write");
+    } else {
+      at += n as usize;
+    }
+  }
+  return null;
+}

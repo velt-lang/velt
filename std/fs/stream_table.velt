@@ -1,0 +1,201 @@
+// velt/fs (internal): the table of open file streams (std/fs/stream_sched.velt): each reader's and
+// writer's file, its turn (`busy`: an operation runs without the table's lock), a reader's bytes
+// left in its range and metadata, a writer's buffer. Every method runs under the table's lock and
+// does no I/O: it hands back the file to close or the bytes to write.
+
+import { Stats } from "velt/fs/stats";
+
+/** The operation has the entry's turn (`Turn`). */
+export const CLAIM: u8 = 0;
+/** Another operation has it: wait, then ask again. */
+export const WAIT: u8 = 1;
+/** No such stream: it was closed (or released). */
+export const CLOSED: u8 = 2;
+
+/** What an operation sees when it asks for its stream's turn. */
+export struct Turn {
+  status: u8;
+  os: u64;
+  /** A reader's bytes left in its range. */
+  left: u64;
+  /** A writer's buffered bytes. */
+  buffered: usize;
+  /** A writer whose file `close` closed. */
+  shut: bool;
+}
+
+/** What a writer released with its file still open leaves: its buffer to write, then close. */
+export struct Left {
+  os: u64;
+  bytes: u8[];
+}
+
+class Entry {
+  id: u64;
+  os: u64;
+  writer: bool;
+  busy: bool = false;
+  /** Closed (a reader) or released (a writer) while an operation had its turn. */
+  gone: bool = false;
+  left: u64 = 0;
+  stats: Stats | null = null;
+  buffer: u8[] = [];
+  shut: bool = false;
+
+  constructor(id: u64, os: u64, writer: bool) {
+    this.id = id;
+    this.os = os;
+    this.writer = writer;
+  }
+}
+
+/** The process's open streams (few at a time: searched in a list). */
+export class Streams {
+  private list: Entry[] = [];
+  private next: u64 = 1;
+
+  private find(h: u64): i64 {
+    for (let i = 0; i < this.list.length; i++) {
+      if (this.list[i].id == h) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  private remove(i: i64) {
+    const last = this.list.length - 1;
+    if ((i as usize) != last) {
+      this.list[i] = this.list[last];
+    }
+    this.list.pop();
+  }
+
+  private add(e: Entry): u64 {
+    this.list.push(e);
+    return e.id;
+  }
+
+  /** A new reader of file `os`, `left` bytes of it, with its metadata. */
+  addReader(os: u64, left: u64, stats: Stats): u64 {
+    const e = new Entry(this.next, os, false);
+    this.next += 1;
+    e.left = left;
+    e.stats = stats;
+    return this.add(e);
+  }
+
+  /** A new writer of file `os`. */
+  addWriter(os: u64): u64 {
+    const e = new Entry(this.next, os, true);
+    this.next += 1;
+    return this.add(e);
+  }
+
+  /** Stream `h`'s turn, or `WAIT` / `CLOSED`. */
+  claim(h: u64): Turn {
+    const i = this.find(h);
+    if (i < 0 || this.list[i].gone) {
+      return { status: CLOSED, os: 0, left: 0, buffered: 0, shut: false };
+    }
+    const e = this.list[i];
+    if (e.busy) {
+      return { status: WAIT, os: 0, left: 0, buffered: 0, shut: false };
+    }
+    e.busy = true;
+    return { status: CLAIM, os: e.os, left: e.left, buffered: e.buffer.length, shut: e.shut };
+  }
+
+  /** Reader `h`'s metadata as of its open, or null once it is closed. */
+  statsOf(h: u64): Stats | null {
+    const i = this.find(h);
+    return i < 0 || this.list[i].gone ? null : this.list[i].stats;
+  }
+
+  /** Reader `h`'s turn ends after reading `got` bytes: the file to close if it was closed. */
+  release(h: u64, got: u64): u64 {
+    const i = this.find(h);
+    if (i < 0) {
+      return 0;
+    }
+    const e = this.list[i];
+    e.busy = false;
+    e.left = e.left > got ? e.left - got : 0;
+    if (e.gone) {
+      this.remove(i);
+      return e.os;
+    }
+    return 0;
+  }
+
+  /** Closes reader `h`: the file to close now (0: none, or a read has it and closes it). */
+  closeReader(h: u64): u64 {
+    const i = this.find(h);
+    if (i < 0 || this.list[i].gone) {
+      return 0;
+    }
+    const e = this.list[i];
+    if (e.busy) {
+      e.gone = true;
+      return 0;
+    }
+    this.remove(i);
+    return e.os;
+  }
+
+  /** Writer `h`'s buffer, taken to be written. */
+  takeBuffer(h: u64): u8[] {
+    const i = this.find(h);
+    if (i < 0) {
+      return [];
+    }
+    const e = this.list[i];
+    const b = e.buffer;
+    e.buffer = [];
+    return b;
+  }
+
+  /**
+   * Writer `h`'s turn ends: `data` gathered into its buffer, its file closed (`shut`) by the
+   * operation. If it was released meanwhile, what is left to write and close (`Left`, os 0: none).
+   */
+  releaseWriter(h: u64, data: u8[] | null, shut: bool): Left {
+    const i = this.find(h);
+    if (i < 0) {
+      return { os: 0, bytes: [] };
+    }
+    const e = this.list[i];
+    e.busy = false;
+    if (data !== null) {
+      for (const b of data) {
+        e.buffer.push(b);
+      }
+    }
+    if (shut) {
+      e.shut = true;
+    }
+    if (e.gone) {
+      this.remove(i);
+      return e.shut ? { os: 0, bytes: [] } : { os: e.os, bytes: e.buffer };
+    }
+    return { os: 0, bytes: [] };
+  }
+
+  /**
+   * Releases writer `h`: what is left to write and close (os 0: nothing; its file was closed, or
+   * an operation in flight finishes the release).
+   */
+  freeWriter(h: u64): Left {
+    const i = this.find(h);
+    if (i < 0 || this.list[i].gone) {
+      return { os: 0, bytes: [] };
+    }
+    const e = this.list[i];
+    if (e.busy) {
+      e.gone = true;
+      return { os: 0, bytes: [] };
+    }
+    this.remove(i);
+    return e.shut ? { os: 0, bytes: [] } : { os: e.os, bytes: e.buffer };
+  }
+}

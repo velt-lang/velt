@@ -1244,23 +1244,16 @@ std/net/dns/rt.velt) fail with `ENOTSUP`.
 
 ### 14.7 File streams (`velt/fs`)
 
-`VeltFileReader` / `VeltFileWriter` are `Arc`s around a buffered (64 KiB) `std::fs::File`;
-every operation runs on the blocking pool. A writer's last release flushes (errors ignored).
-Lines and text are std code (std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per
-`velt_rt_fs_reader_read`, split at `\n` by `indexOfByte` and decoded there.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_fs_open_read` | `(const VeltStr* path) -> VeltFut*` | `IoResult<VeltFileReader>` |
-| `velt_rt_fs_open_read_range` | `(const VeltStr* path, u64 start, u64 end) -> VeltFut*` | `IoResult<VeltFileReader>` that reads bytes `start..=end` (both included, as Node's `createReadStream`) and then reports the end of the file; `end` `u64::MAX` = to the end of the file. A `start` past the end of the file, or `end < start`, reads nothing |
-| `velt_rt_fs_reader_opened_stats` | `(VeltFileReader r, IoResult<VeltStat>* out)` | synchronous: the file's `VeltStat` when it was opened (an `fstat` in the open's own blocking call, so no I/O here), whatever its path names now; `size` is the whole file's; `EBADF` once closed |
-| `velt_rt_fs_reader_read` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB |
-| `velt_rt_fs_reader_close` | `(VeltFileReader r)` | |
-| `velt_rt_fs_open_write` | `(const VeltStr* path, u8 append) -> VeltFut*` | `IoResult<VeltFileWriter>`; creates; truncates unless `append` |
-| `velt_rt_fs_writer_write` / `_write_bytes` | `(VeltFileWriter w, const VeltStr* data) -> VeltFut*` / `(VeltFileWriter w, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; data copied |
-| `velt_rt_fs_writer_flush` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>` |
-| `velt_rt_fs_writer_close` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>`: flush + close; later writes fail `EPIPE`; idempotent |
-| `velt_rt_fs_writer_free` | `(VeltFileWriter w)` | releases the handle |
+File streams are std code in a native build: std/fs/stream_sched.velt keeps every open reader and
+writer in one table for the process (a reader's file, its range left and its metadata as of the
+open; a writer's file and its 64 KiB buffer), and runs each open, read, write and close on the
+executor's blocking pool, over the C library's file descriptors on macOS and Linux and Win32
+handles on Windows (`#fs-stream-os`). A handle used after `close` fails with `EBADF`; a writer
+released unclosed is flushed then (errors ignored). Lines and text are std code
+(std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per read, split at `\n` by
+`indexOfByte` and decoded there. velt_rt has no file stream functions; std/fs/rt.velt declares the
+`velt_rt_fs_open_*`, `_reader_*` and `_writer_*` names for a runtime that has them (WebAssembly's
+has none, so file streams fail to link there).
 
 ### 14.8 TLS
 

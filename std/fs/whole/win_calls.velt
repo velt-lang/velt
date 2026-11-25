@@ -1,0 +1,231 @@
+// velt/fs (internal): Win32's file calls under whole files (std/fs/whole/win32.velt) and file
+// streams (std/fs/stream_os/win32.velt): opening a wide path, reading, writing, a handle's
+// metadata as `Stats`, with libuv's names for Win32's errors (std/os/win_error.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+import { IoError } from "velt/io/error";
+import { Stats } from "velt/fs/stats";
+import { addressLoad } from "velt/lang/intrinsics";
+import { winError } from "velt/fs/whole/win_path";
+import { errnoOfWin32 } from "velt/os/win_error";
+
+/** C's `SECURITY_ATTRIBUTES` and `OVERLAPPED`: never passed. */
+declare c type _SECURITY_ATTRIBUTES;
+declare c type _OVERLAPPED;
+/** C's `BY_HANDLE_FILE_INFORMATION`, which `GetFileInformationByHandle` fills. */
+declare c type _BY_HANDLE_FILE_INFORMATION;
+
+declare c("c") function CreateFileW(
+  name: readonly u16[],
+  access: u32,
+  share: u32,
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
+  disposition: u32,
+  flags: u32,
+  template: Ptr<void> | null,
+): Ptr<void> | null;
+declare c("c") function ReadFile(
+  handle: Ptr<void> | null,
+  buf: u8[],
+  count: u32,
+  read: u32[],
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+export declare c("c") function WriteFile(
+  handle: Ptr<void> | null,
+  buf: readonly u8[],
+  count: u32,
+  written: u32[],
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function GetFileInformationByHandle(
+  handle: Ptr<void> | null,
+  info: Ptr<_BY_HANDLE_FILE_INFORMATION> | null,
+): i32;
+export declare c("c") function GetFileInformationByHandleEx(
+  handle: Ptr<void> | null,
+  infoClass: i32,
+  info: u32[],
+  size: u32,
+): i32;
+export declare c("c") function GetFileAttributesW(name: readonly u16[]): u32;
+declare c("c") function CloseHandle(handle: Ptr<void> | null): i32;
+declare c("c") function GetLastError(): u32;
+declare c("c") function malloc(size: usize): Ptr<void> | null;
+declare c("c") function free(p: Ptr<void> | null): void;
+
+export const INVALID_HANDLE: usize = 0xffffffffffffffff;
+export const GENERIC_READ: u32 = 0x80000000;
+export const GENERIC_WRITE: u32 = 0x40000000;
+export const FILE_APPEND_DATA: u32 = 0x4;
+export const FILE_READ_ATTRIBUTES: u32 = 0x80;
+export const SYNCHRONIZE: u32 = 0x100000;
+/** FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, as Rust's std and libuv open. */
+export const SHARE_ALL: u32 = 7;
+export const CREATE_ALWAYS: u32 = 2;
+export const OPEN_EXISTING: u32 = 3;
+export const OPEN_ALWAYS: u32 = 4;
+export const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+export const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x02000000;
+export const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+export const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+export const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+export const INVALID_FILE_ATTRIBUTES: u32 = 0xffffffff;
+/** `FileStandardInfo`: the sizes (the end of the file is its second 64-bit field). */
+export const STANDARD_INFO: i32 = 1;
+/** `FileAttributeTagInfo`: the attributes and the reparse tag. */
+export const ATTRIBUTE_TAG_INFO: i32 = 9;
+/** The size of `BY_HANDLE_FILE_INFORMATION`: 13 DWORDs. */
+export const HANDLE_INFO_SIZE: usize = 52;
+export const IO_REPARSE_TAG_SYMLINK: u32 = 0xa000000c;
+export const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xa0000003;
+export const ERROR_FILE_NOT_FOUND: u32 = 2;
+export const ERROR_ACCESS_DENIED: u32 = 5;
+export const ERROR_SHARING_VIOLATION: u32 = 32;
+export const ERROR_BROKEN_PIPE: u32 = 109;
+/** EISDIR, Linux's number, which `winError` reads. */
+export const EISDIR: i32 = 21;
+/** EIO, Linux's number: a write that wrote nothing. */
+export const EIO: i32 = 5;
+/** The most one ReadFile or WriteFile is asked for. */
+export const MOST: usize = 1073741824;
+/** Windows' FILETIME of the Unix epoch, in 100 ns ticks since 1601. */
+export const EPOCH_TICKS: i64 = 116444736000000000;
+
+/** The last Win32 error. */
+export function lastWin32(): u32 {
+  // SAFETY: GetLastError has no precondition.
+  return unsafe { GetLastError() };
+}
+
+/** Whether `w` names a directory (for "access denied" on opening it). */
+export function isDirectory(w: readonly u16[]): bool {
+  // SAFETY: `w` is NUL-terminated.
+  const a = unsafe { GetFileAttributesW(w) };
+  return a !== INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) !== 0;
+}
+
+/** `CreateFileW` of `w`: the handle, or null (`lastWin32()`). */
+export function open(w: readonly u16[], access: u32, disposition: u32, flags: u32): Ptr<void> | null {
+  // SAFETY: `w` is NUL-terminated; no security attributes and no template.
+  const h = unsafe { CreateFileW(w, access, SHARE_ALL, null, disposition, flags, null) };
+  // INVALID_HANDLE_VALUE is what a failed open returns.
+  if (h === null || Ptr.addressOf(h) === INVALID_HANDLE) {
+    return null;
+  }
+  return h;
+}
+
+export function close(h: Ptr<void>) {
+  // SAFETY: a handle this module opened, closed once.
+  unsafe {
+    CloseHandle(h);
+  }
+}
+
+/**
+ * `ReadFile` of up to `end - start` bytes into `bytes[start..end]`: the count, or -1 with the
+ * error in `failed[0]`, read right after the call.
+ */
+export function readSome(h: Ptr<void>, bytes: u8[], start: usize, end: usize, failed: u32[]): i64 {
+  const n = end - start > MOST ? MOST : end - start;
+  const got: u32[] = [0];
+  // SAFETY: `start..start + n` is inside `bytes` (the callers' ranges are), C gets its length.
+  const ok = unsafe { ReadFile(h, bytes.subarray(start, start + n), n as u32, got, null) };
+  if (ok !== 0) {
+    return got[0] as i64;
+  }
+  const code = lastWin32();
+  // A pipe whose writer closed: the end.
+  if (code === ERROR_BROKEN_PIPE) {
+    return 0;
+  }
+  failed[0] = code;
+  return -1;
+}
+
+/**
+ * `GetFileInformationByHandle(h)`: its 13 DWORDs pushed to `info` and 0, or the Win32 error.
+ */
+export function handleInfo(h: Ptr<void>, info: u32[]): u32 {
+  // SAFETY: malloc's result is checked before use and freed once below.
+  const block = unsafe { malloc(HANDLE_INFO_SIZE) };
+  if (block === null) {
+    panic("stat: out of memory");
+  }
+  const at = Ptr.addressOf(block);
+  // SAFETY: `at` is the block's address, HANDLE_INFO_SIZE bytes, as many as the struct's.
+  const out = unsafe { Ptr.orNull<_BY_HANDLE_FILE_INFORMATION>(at) };
+  // SAFETY: `h` is an open handle and `out` points at room for the struct the call fills; it
+  // keeps no pointer after it returns.
+  const ok = unsafe { GetFileInformationByHandle(h, out) } !== 0;
+  // Read right after the call, before `free` can change it.
+  const code: u32 = ok ? 0 : lastWin32();
+  if (ok) {
+    for (let i: usize = 0; i < HANDLE_INFO_SIZE; i += 4) {
+      // SAFETY: the call wrote the struct at `at`, and `i..i + 4` is inside it; malloc's
+      // memory is aligned for a DWORD.
+      info.push(unsafe { addressLoad<u32>(at + i) });
+    }
+  }
+  // SAFETY: `block` came from malloc and is freed once; `info` holds copies.
+  unsafe {
+    free(block);
+  }
+  return code;
+}
+
+/**
+ * The `Stats` of a handle's `BY_HANDLE_FILE_INFORMATION` (`info`, 13 DWORDs from `handleInfo`:
+ * the attributes at 0, the last write time at 5-6, the size at 8 (high) and 9 (low)); `link`:
+ * the handle is a symbolic link's own (its reparse tag says so).
+ */
+export function statsOfInfo(info: u32[], link: bool): Stats {
+  const dir = !link && (info[0] & FILE_ATTRIBUTE_DIRECTORY) !== 0;
+  // In integers: ticks since 1970 are past 2^53, which an f64 would round.
+  const ticks = (((info[6] as i64) << 32) | (info[5] as i64)) - EPOCH_TICKS;
+  const whole = ticks >= 0 ? ticks / 10000000 : -((-ticks + 9999999) / 10000000);
+  const sec = whole as number;
+  const nsec = ((ticks - whole * 10000000) * 100) as number;
+  return {
+    size: ((info[8] as u64) << 32) | (info[9] as u64),
+    mtimeMs: sec * 1000 + nsec / 1e6,
+    file: !link && !dir,
+    dir: dir,
+    symlink: link,
+  };
+}
+
+/** Writes all of `bytes[start..end]` to `h`: null, or the error (Node's, naming `write`). */
+export function writeAllWin(h: Ptr<void>, bytes: readonly u8[], start: usize, end: usize): IoError | null {
+  let at = start;
+  while (at < end) {
+    const n = end - at > MOST ? MOST : end - at;
+    const wrote: u32[] = [0];
+    // SAFETY: `at..at + n` is inside `bytes`, and C gets its length.
+    const ok = unsafe { WriteFile(h, bytes.subarray(at, at + n), n as u32, wrote, null) };
+    if (ok === 0) {
+      // Read right after the call.
+      return winError(errnoOfWin32(lastWin32()), "write");
+    }
+    if (wrote[0] === 0) {
+      // Nothing written with bytes left: an error, not a loop (Rust's `write_all`'s WriteZero).
+      return winError(EIO, "write");
+    }
+    at += wrote[0] as usize;
+  }
+  return null;
+}
+
+declare c("c") function SetFilePointerEx(
+  handle: Ptr<void> | null,
+  distance: i64,
+  newPointer: Ptr<void> | null,
+  method: u32,
+): i32;
+
+/** Moves `h`'s file pointer to byte `at` from the start: 0, or the Win32 error. */
+export function seekTo(h: Ptr<void>, at: i64): u32 {
+  // SAFETY: `h` is open; FILE_BEGIN (0); the new position isn't asked for.
+  return unsafe { SetFilePointerEx(h, at, null, 0) } !== 0 ? 0 : lastWin32();
+}
