@@ -4,13 +4,16 @@
 //! typed code, when it settles:
 //!
 //! - **At the cast** (`any_to_promise`, in `AnyTo`'s slow path): a value that holds no promise
-//!   is the `TypeError` of any other conversion. A promise of another type (its table is not the
-//!   target's) is awaited through its table's `SLOT_AWAIT`, which gives a `Promise<unknown,
-//!   unknown>` around a share of it (any_await.rs), and that is put in a converting wrapper of
-//!   the target type: step 1's widening wrapper (`async_fn/widen.rs`) with `narrow_slot` as its
-//!   conversion. Both wrappers poll the promise they hold themselves, so awaiting the cast takes
-//!   no turn more than awaiting the held promise, and both are aliases of it (`velt_rt_fut_alias`),
-//!   so the cast is `===` to the held promise, as in JavaScript.
+//!   is the `TypeError` of any other conversion. A typed `Promise<T>` of the cast's `T` (it
+//!   doesn't reject; the cast's type may) is taken out of its box and widened, one wrapper and
+//!   no conversion: the commonest cast. A promise of another type is awaited through its
+//!   table's `SLOT_AWAIT`, which gives a `Promise<unknown, unknown>` around a share of it
+//!   (any_await.rs), and that is put in a converting wrapper of the target type: step 1's
+//!   widening wrapper (`async_fn/widen.rs`) with `narrow_slot` as its conversion. Each wrapper
+//!   polls the promise it holds itself, so awaiting the cast takes no turn more than awaiting
+//!   the held promise, and each is an alias of it (`velt_rt_fut_alias`), so the cast is `===`
+//!   to the held promise, as in JavaScript (any_eq.rs compares two promise types by the
+//!   promise each stands for).
 //! - **When it settles** (`narrow_slot`): the value is converted to `T` as `v as T` converts it.
 //!   A value whose `typeof` `T` can never hold (a string for a `number`) rejects the promise
 //!   with `TypeError: the value is not a number (it is a string)`, where JavaScript would hand
@@ -42,10 +45,31 @@ impl FnLower<'_, '_> {
         out: &Place,
         done: BlockId,
     ) {
-        if !matches!(self.cx.kind(ty), TyKind::Promise(..)) || !self.cx.executor_loaded() {
+        let TyKind::Promise(t, _) = self.cx.kind(ty) else {
+            return;
+        };
+        if !self.cx.executor_loaded() {
             return;
         }
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
+        // The commonest held type, a promise of the same value type that doesn't reject (a
+        // typed `Promise<T>`): taken out of its box and widened, one wrapper with no conversion.
+        let never = self.cx.intern(TyKind::Never);
+        let plain = self.cx.intern(TyKind::Promise(t, never));
+        if plain != ty {
+            let imp = self.cx.hir.any_impl.unwrap_or(0);
+            let table = self.vtable_addr(super::VtableKey::Impl(imp, plain));
+            let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc.clone(), table));
+            let (yes, no) = (self.new_block(), self.new_block());
+            self.branch(same, yes, no);
+            self.switch_to(yes);
+            let data = Operand::Copy(proj(p, Proj::Field(0)));
+            let fut = self.dyn_box_take(data, plain);
+            let w = self.widen_fut(fut, plain, ty, false);
+            self.move_into(w, out);
+            self.goto(done);
+            self.switch_to(no);
+        }
         let id = self.vtable_class_id(desc.clone());
         let want = cint(PROMISE_ID as i128, Ty::U64);
         let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, id, want));
