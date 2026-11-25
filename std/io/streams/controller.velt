@@ -9,6 +9,7 @@ import {
   UnderlyingSource,
 } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
+import { settled } from "velt/io/streams/settle";
 
 /** The states of a stream. */
 export const READABLE: u8 = 0;
@@ -127,7 +128,7 @@ export class ReadableStreamDefaultController<R> {
   // ─── the stream's side (std only) ───
 
   // A new stream's state: runs `start`, then pulls a microtask after it returns, or, when it
-  // gives a promise, after that promise is adopted (`adopted`). A `start` that throws makes the
+  // gives a promise, after that promise is adopted (`settled`). A `start` that throws makes the
   // constructor throw, as in JS.
   private static make<R>(
     source: UnderlyingSource<R>,
@@ -143,7 +144,7 @@ export class ReadableStreamDefaultController<R> {
     if (p == null) {
       queueMicrotask(() => c.begun());
     } else {
-      adopted(p, () => c.begun(), (e) => c.error(e));
+      const settling = settled(c, p, true, true);
     }
     return c;
   }
@@ -193,7 +194,7 @@ export class ReadableStreamDefaultController<R> {
     this.pulling = true;
     const it = this.iter;
     if (it != null) {
-      this.pullFrom(it).then(() => this.pulled(), (e) => this.fail(e));
+      const settling = settled(this, this.pullFrom(it), false, false);
       return;
     }
     const pull = this.pullFn;
@@ -206,7 +207,7 @@ export class ReadableStreamDefaultController<R> {
       if (p == null) {
         queueMicrotask(() => this.pulled());
       } else {
-        adopted(p, () => this.pulled(), (e) => this.fail(e));
+        const settling = settled(this, p, false, true);
       }
     } catch (e) {
       queueMicrotask(() => this.fail(e));
@@ -354,32 +355,27 @@ export class ReadableStreamDefaultController<R> {
     if (it != null) {
       return finished(it.return());
     }
+    // The promise settles as Node's does (#3695): a microtask after a `cancel` that gives nothing
+    // or throws, and for one that gives a promise, after that promise is adopted (`adopted`).
     if (cancel == null) {
-      return Promise.resolve();
+      return Promise.resolve().then(() => {});
     }
     try {
       const p = cancel(reason);
       if (p != null) {
-        return p;
+        return new Promise<void, unknown>(
+          (resolve, reject) => adopted(p, () => resolve(), (e) => reject(e)),
+        );
       }
     } catch (e) {
-      return Promise.reject<void>(e);
+      // Typed here, not inferred: `cancel`'s error type is in a recursion (#3695).
+      return new Promise<void, unknown>((resolve, reject) => queueMicrotask(() => reject(e)));
     }
-    return Promise.resolve();
+    return Promise.resolve().then(() => {});
   }
 }
 
 // Waits for `p`, dropping its result.
 async function finished<T>(p: Promise<T>): Promise<void> {
   await p;
-}
-
-/**
- * `p` (a source's `start` or `pull` result) adopted as Node adopts it (`new Promise((r) =>
- * r(p))`): a job queued now attaches to `p`, and `ok` or `bad` runs a microtask after `p`'s
- * reaction. So a stream's pulls and reads keep Node's order against other microtasks (#3643):
- * three microtasks after a `p` that has settled by the return, two after one that settles later.
- */
-function adopted(p: Promise<void, unknown>, ok: () => void, bad: (e: unknown) => void) {
-  queueMicrotask(() => p.then(() => queueMicrotask(ok), (e) => queueMicrotask(() => bad(e))));
 }

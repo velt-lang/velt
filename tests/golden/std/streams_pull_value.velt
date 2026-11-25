@@ -1,0 +1,64 @@
+// check: no leaks
+// A stream source's `pull`, `start` or `cancel` whose expression body gives a promise or nothing
+// (`Promise<void> | undefined`) keeps the promise, so its rejection errors the stream, and a
+// body that gives nothing is a plain callback, as in Node (#3686). The Node twin is
+// streams_pull_value.mjs.
+function maybe(n: number): Promise<void> | undefined {
+  if (n > 0) {
+    return Promise.reject(new Error("maybe boom"));
+  }
+  return undefined;
+}
+
+async function main(): Promise<void> {
+  const t = new ReadableStream<number>({ pull: (c) => maybe(1) });
+  try {
+    await t.getReader().read();
+  } catch (e) {
+    console.log("optional pull caught " + (e as Error).message);
+  }
+
+  const st = new ReadableStream<number>({ start: (c) => maybe(2) });
+  try {
+    await st.getReader().read();
+  } catch (e) {
+    console.log("optional start caught " + (e as Error).message);
+  }
+
+  const cs = new ReadableStream<number>({
+    pull: (c) => {
+      c.enqueue(1);
+    },
+    cancel: (reason) => maybe(3),
+  });
+  try {
+    await cs.cancel("why");
+    console.log("cancel resolved");
+  } catch (e) {
+    console.log("optional cancel caught " + (e as Error).message);
+  }
+
+  let k = 0;
+  const u = new ReadableStream<number>({
+    pull: (c) => {
+      k++;
+      if (k > 2) {
+        c.close();
+      } else {
+        c.enqueue(k);
+      }
+      return maybe(0);
+    },
+  });
+  const r = u.getReader();
+  for (;;) {
+    const x = await r.read();
+    if (x.done) {
+      break;
+    }
+    console.log("optional pull read " + x.value);
+  }
+  console.log("done");
+}
+
+main();

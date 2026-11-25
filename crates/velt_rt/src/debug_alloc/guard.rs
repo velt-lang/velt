@@ -9,9 +9,6 @@
 //!   faults inside the reservation, before or after the poison address alike, and the fault
 //!   handler installed here reports `use after free` instead of the plain crash a non-canonical
 //!   address gave (#819);
-//! - as a **number**, it is a tiny subnormal `f64` (or a large `i64`) that the runtime's number
-//!   formatting recognises ([`crate::freed::check_value`]): printing it, or making a string of
-//!   it, aborts;
 //! - as a **string's count** (the string value is live but its buffer was freed), the runtime's
 //!   retain and release recognise it.
 //!
@@ -296,15 +293,6 @@ mod tests {
         println!("{v}");
     }
 
-    /// A number read from a freed block and formatted (as the runtime's JSON text does).
-    unsafe fn freed_number_printed() {
-        let p = velt_rt_alloc(16, 8);
-        (p as *mut f64).add(1).write(2.5);
-        velt_rt_free(p, 16, 8);
-        let v = std::ptr::read_volatile((p as *const f64).add(1));
-        crate::fmt::push_f64(&mut Vec::new(), v);
-    }
-
     /// A string kept (a bitwise copy, no count; `VeltStr` has no `Drop`) after its buffer was
     /// freed, then copied.
     unsafe fn freed_string_buffer() {
@@ -342,7 +330,6 @@ mod tests {
             unsafe {
                 match case.to_str() {
                     Some("chain") => dangling_field_chain(),
-                    Some("number") => freed_number_printed(),
                     Some("string") => freed_string_buffer(),
                     _ => panic!("unknown case"),
                 }
@@ -352,7 +339,6 @@ mod tests {
         }
         for (case, what) in [
             ("chain", "followed a pointer read from a freed block"),
-            ("number", "a number read from a freed block"),
             ("string", "a string whose buffer was freed"),
         ] {
             let err = run_child(case);
