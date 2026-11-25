@@ -221,19 +221,26 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(d), ty)
     }
 
-    /// `await yieldNow()`'s call before it suspends.
-    pub(super) fn sched_yield(&mut self, cx: Operand) {
+    /// `await yieldNow()`'s call before it suspends: its record on the task's yield list (a
+    /// `usize`, 0 for none), its token: the suspension holds it until a resume or its cancel
+    /// takes it (#3687).
+    pub(super) fn sched_yield(&mut self, cx: Operand) -> Operand {
         let cx = self.as_usize(cx);
-        hooks::sched_yield(self, ty::USize::arg(cx)).emit(self);
+        hooks::sched_yield(self, ty::USize::arg(cx)).emit(self).op()
     }
 
-    /// `await yieldNow()`'s question when it resumes: 1 (a `u32`) to go on, 0 to stay suspended,
-    /// when the poll it yielded in polls it again (#3241).
-    pub(super) fn sched_yield_ready(&mut self, cx: Operand) -> Operand {
+    /// `await yieldNow()`'s question when it resumes: 1 (a `u32`) to go on, which frees its
+    /// record, 0 to stay suspended (#3241); `record` is what `sched_yield` gave.
+    pub(super) fn sched_yield_ready(&mut self, cx: Operand, record: Operand) -> Operand {
         let cx = self.as_usize(cx);
-        hooks::sched_yield_ready(self, ty::USize::arg(cx))
+        hooks::sched_yield_ready(self, ty::USize::arg(cx), ty::USize::arg(record))
             .emit(self)
             .op()
+    }
+
+    /// The cancel of a state suspended at `await yieldNow()`: its record goes (0: nothing).
+    pub(super) fn sched_yield_drop(&mut self, record: Operand) {
+        hooks::sched_yield_drop(self, ty::USize::arg(record)).emit(self);
     }
 
     /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to

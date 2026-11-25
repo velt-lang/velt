@@ -287,8 +287,8 @@ fn patch_std(std_dir: &Path, variant: &str) {
     );
     let awake =
         "  if (parkWord !== 0) {\n    m.store32(parkWord, 0);\n    m.incOrdered(wakes);\n  }\n";
-    let waits = "  if (ioWaits(g)) {\n    return true;\n  }\n";
-    let queues = "  const n = m.load(g + t.E_STARTED);\n  for (let i: usize = 0; i < n; i++) {\n    if (workerBusy(t.worker(i), self)) {\n      return true;\n    }\n  }\n";
+    let waits = "  if (ioWaits(g) || (stdUsed(\"nodeTimers\") && alive.passWaits())) {\n    return true;\n  }\n";
+    let queues = "  const n = m.load(g + t.E_STARTED);\n  for (let i: usize = 0; i < n; i++) {\n    if (workerBusy(t.worker(i), self, asking)) {\n      return true;\n    }\n  }\n";
     let pause = "  pause(300);\n";
     let in_order = format!("{waits}{queues}");
     let count_first = (

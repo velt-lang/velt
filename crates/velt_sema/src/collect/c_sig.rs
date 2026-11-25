@@ -15,7 +15,7 @@ use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, PassMode, TyId, TyKind};
 const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
                        `Ptr<T>` and `Ptr<T> | null` (velt/ffi), a `@repr(\"transparent\")` struct of \
                        one of them, and for a parameter `null`, \
-                       `StrBytes`, `CString`, `Out<T>` of a number, `bool` or `Ptr<T> | null` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
+                       `StrBytes`, `CString`, `Out<T>` of a number, `bool`, `Ptr<T> | null` or a C struct (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
 
 /// The module of std's `StrBytes` (std/ffi/str_bytes.velt).
 const STR_BYTES_MODULE: &str = velt_common::std_module!(ffi_str_bytes);
@@ -417,19 +417,20 @@ fn out_refusal(cx: &Ctx, ty: TyId) -> Option<&'static str> {
     Some(if is_c_ptr(cx, value) {
         "C may write `NULL` into an `Out` of a pointer: declare it `Out<Ptr<T> | null>`"
     } else {
-        "C writes an `Out<T>` of a number, `bool` or `Ptr<T> | null`: anything else C wrote would forge a Velt value (a reference, a symbol)"
+        "C writes an `Out<T>` of a number, `bool`, `Ptr<T> | null` or a C struct: anything else C wrote would forge a Velt value (a reference, a symbol)"
     })
 }
 
 /// May C write the `value` of an `Out<T>` of type `ty`? A number, a `bool`, or a pointer that may
 /// be `NULL` (`T **`: `Out<Ptr<T> | null>`, #3094). Not a non-null `Ptr<T>`, since C may write
 /// `NULL` into it; not a class reference, a `symbol` or a `shared<T>`, one word too, which C
-/// writing would forge a counted reference.
+/// writing would forge a counted reference. A C struct too (`S *`, #2187): its fields are C's, and
+/// its non-null pointers are checked where `value` is read (std/ffi/out.velt).
 fn out_value(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
         TyKind::Bool => true,
         TyKind::Option(inner, n) => *n != Nothing::Both && is_c_ptr(cx, *inner),
-        _ => is_number(cx, ty),
+        _ => is_number(cx, ty) || cx.is_c_struct_ty(ty),
     }
 }
 

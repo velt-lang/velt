@@ -5,7 +5,8 @@ use super::*;
 
 crate::units::codec::structs! {
     Live {
-        check, seeded, live, todo, types, adts, methods, impls, kinds, ifaces, gated, opened,
+        check, seeded, live, todo, types, adts, methods, all_methods, impl_methods,
+        impl_methods_of, methods_opened, text_types, texts_generic, impls, kinds, ifaces, gated, opened,
         waiting, texts, dynamic_classes, finishing, present, assumed, late, demanded, int_text,
         prints_float, tasks, module_state, units, units_loaded,
     }

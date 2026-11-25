@@ -875,7 +875,11 @@ WebAssembly) or until `main` returns. The lock is std's, the executor's
 (std/lang/hooks/sched_module.velt): a program without the executor has one thread and no lock,
 and neither has WebAssembly. A program that never reaches module state pays nothing per task.
 A `Mutex`'s lock keeps the module lock while it blocks; sema rejects module state in a `with`
-callback.
+callback. The module lock (sched_module.velt `take`) stops with a panic, not an `ICE:`, when the
+thread is about to wait for it while it holds a `Mutex` (#3467): a `with` counts its `Mutex`
+(std/lang/hooks/mutex_held.velt) only in a build for the `velt dev` JIT. Other builds lower no
+call, and their check is one relaxed load of a flag only the count sets. `RwLock` holds are not
+counted.
 
 A program that gives functions properties through `any` takes the module lock around each
 `with`, `read` and `write` whose callback may reach a declared function's properties (below),

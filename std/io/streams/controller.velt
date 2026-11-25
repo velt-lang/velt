@@ -9,7 +9,7 @@ import {
   UnderlyingSource,
 } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";
-import { adopted, finished, invalidState } from "velt/io/streams/settle";
+import { adopted, finished, invalidState, settled } from "velt/io/streams/settle";
 
 /** The states of a stream. */
 export const READABLE: u8 = 0;
@@ -123,7 +123,7 @@ export class ReadableStreamDefaultController<R> {
   // ─── the stream's side (std only) ───
 
   // A new stream's state: runs `start`, then pulls a microtask after it returns, or, when it
-  // gives a promise, after that promise is adopted (`adopted`). A `start` that throws makes the
+  // gives a promise, after that promise is adopted (`settled`). A `start` that throws makes the
   // constructor throw, as in JS.
   private static make<R>(
     source: UnderlyingSource<R>,
@@ -139,7 +139,7 @@ export class ReadableStreamDefaultController<R> {
     if (p == null) {
       queueMicrotask(() => c.begun());
     } else {
-      adopted(p, () => c.begun(), (e) => c.error(e));
+      const settling = settled(c, p, true, true);
     }
     return c;
   }
@@ -189,7 +189,7 @@ export class ReadableStreamDefaultController<R> {
     this.pulling = true;
     const it = this.iter;
     if (it != null) {
-      this.pullFrom(it).then(() => this.pulled(), (e) => this.fail(e));
+      const settling = settled(this, this.pullFrom(it), false, false);
       return;
     }
     const pull = this.pullFn;
@@ -202,7 +202,7 @@ export class ReadableStreamDefaultController<R> {
       if (p == null) {
         queueMicrotask(() => this.pulled());
       } else {
-        adopted(p, () => this.pulled(), (e) => this.fail(e));
+        const settling = settled(this, p, false, true);
       }
     } catch (e) {
       queueMicrotask(() => this.fail(e));

@@ -1,8 +1,9 @@
 // velt/encoding/json (internal): the code the generator of `writeJson` (write.velt) writes for
-// a value of each type, and for the members of an object, a `Map` and a record.
+// a value of each type, and for the members of an object and a record.
 
 import { Model, Output, Type } from "velt/generate";
 import {
+  collectionState,
   dynamicArms,
   hidden,
   isDynamic,
@@ -111,7 +112,7 @@ export function writeFields(out: Output, model: Model, t: Type, v: string): void
   let maybe = false;
   let wrote = false;
   for (const f of keyOrder(t)) {
-    if (hidden(model, f) && !f.isGetter) {
+    if ((hidden(model, f) && !f.isGetter) || collectionState(model, t, f)) {
       continue;
     }
     const ft = model.type(f.type);
@@ -191,7 +192,7 @@ export function writeFields(out: Output, model: Model, t: Type, v: string): void
   out.line(`w.append(${end});`);
 }
 
-/** The members of a `Map` or record whose entries the loop's `k` and `x` hold. */
+/** The members of a record whose entries the loop's `k` and `x` hold. */
 export function writeEntries(out: Output, model: Model, kt: Type, vid: i64, iter: string): void {
   const vt = model.type(vid);
   out.line(`w.append("{");`);

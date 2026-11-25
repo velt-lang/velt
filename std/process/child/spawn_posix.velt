@@ -16,7 +16,7 @@
 // pipe of another child spawned at the same time never reaches it (that child would never see
 // its stdin end). The parent's end of each pipe is non-blocking, for the reactor (or `execSync`'s `poll`);
 // the child's end becomes the child's descriptor 0, 1 or 2 through a `dup2` file action (which
-// clears the flag on the copy).
+// clears the flag on the copy), after moving above 2 if it is one of them (`pipeFor`).
 //
 // The opaque C types (`posix_spawnattr_t`, `posix_spawn_file_actions_t`, `sigset_t`) live in
 // zeroed blocks larger than any of these OSes needs.
@@ -221,19 +221,36 @@ function throughShell(
 
 /**
  * Makes a pipe for the child's descriptor `target` (0 reads, 1 and 2 write) with `fa`'s `dup2`:
- * the parent's end, or -1 with `errno` set.
+ * the parent's end, or the error negated.
+ *
+ * With 0, 1 or 2 closed, pipe ends land there; the child's end moves above them (as libuv moves
+ * one below its target): on its target, `dup2` would leave it close-on-exec on macOS, and below
+ * it, another stream's file action would replace it first. The low number stays taken until the
+ * child started (closed with the child's ends, in the tail's words 3-5), as one of its own pipes.
  */
 function pipeFor(fa: usize, target: i32): i32 {
   const fds = m.zeroed(16);
   if (r.pipeCloexec(fds) !== 0) {
+    const e = r.errno();
     m.release(fds, 16);
-    return -1;
+    return -e;
   }
   const readEnd = m.ld32(fds) as i32;
   const writeEnd = m.ld32(fds + 4) as i32;
   m.release(fds, 16);
-  const child = target === 0 ? readEnd : writeEnd;
+  let child = target === 0 ? readEnd : writeEnd;
   const parent = target === 0 ? writeEnd : readEnd;
+  if (child < 3) {
+    const moved = r.dupAboveStdio(child);
+    if (moved < 0) {
+      const e = r.errno();
+      closeFd(child);
+      closeFd(parent);
+      return -e;
+    }
+    m.st32(fa + OPAQUE + 4 * (3 + target as usize), child as u32);
+    child = moved;
+  }
   r.nonBlocking(parent);
   // SAFETY: `fa` is an initialized file-actions object.
   unsafe {
@@ -278,11 +295,11 @@ export function start(spec: CommandSpec, modes: u32): Started {
   }
   const devNull = m.ld(cDirs);
   const cwd = spec.cwd != "" ? m.ld(cDirs + 8) : 0;
-  const fa = m.zeroed(OPAQUE + 16);
+  const fa = m.zeroed(OPAQUE + 32);
   const attr = m.zeroed(OPAQUE);
   const set = m.zeroed(OPAQUE);
-  // Each child end -1 until a pipe makes one.
-  for (let i: usize = 0; i < 3; i++) {
+  // Each child end, and each low number one left (`pipeFor`), -1 until a pipe makes one.
+  for (let i: usize = 0; i < 6; i++) {
     m.st32(fa + OPAQUE + 4 * i, 0xffffffff);
   }
   // SAFETY: zeroed blocks larger than each opaque type, initialized before use and destroyed
@@ -306,7 +323,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
     if (mode === 1) {
       const parent = pipeFor(fa, i);
       if (parent < 0) {
-        out.error = r.errno();
+        out.error = -parent;
         failed = true;
         break;
       }
@@ -319,7 +336,16 @@ export function start(spec: CommandSpec, modes: u32): Started {
       }
     } else if (mode === 2) {
       addOpen(fa, i, devNull, O_RDWR, 0);
-    } else {
+    }
+  }
+  // Inherited streams, after the pipes: the program's descriptor (close-on-exec too, as from
+  // Node), not one of this child's own pipe ends on the free number (it gets that one closed).
+  for (let i: i32 = 0; i < 3 && !failed; i++) {
+    let own = i === out.stdin || i === out.stdout || i === out.stderr;
+    for (let j: usize = 3; j < 6; j++) {
+      own = own || i === (m.ld32(fa + OPAQUE + 4 * j) as i32);
+    }
+    if (((modes >> (2 * (i as u32))) & 3) === 0 && !own) {
       r.spawnInherit(fa, i);
     }
   }
@@ -382,7 +408,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
     }
     m.release(pid, 16);
   }
-  for (let i: usize = 0; i < 3; i++) {
+  for (let i: usize = 0; i < 6; i++) {
     closeFd(m.ld32(fa + OPAQUE + 4 * i) as i32);
   }
   if (out.pid === 0) {
@@ -398,7 +424,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
     posix_spawn_file_actions_destroy(m.ptrTo<posix_spawn_file_actions_t>(fa));
     posix_spawnattr_destroy(m.ptrTo<posix_spawnattr_t>(attr));
   }
-  m.release(fa, OPAQUE + 16);
+  m.release(fa, OPAQUE + 32);
   m.release(attr, OPAQUE);
   m.release(set, OPAQUE);
   freeArray(cArgv);

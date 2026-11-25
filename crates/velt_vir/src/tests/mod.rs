@@ -44,6 +44,7 @@ mod m3_io;
 mod m3_state;
 mod m3_tasks;
 mod member_slots;
+mod mutex_held;
 mod native_init;
 mod numeric;
 mod param_attrs;
@@ -55,6 +56,7 @@ mod start_up_allocs;
 mod std_src;
 mod verifier;
 mod vir_ext;
+mod yield_cancel;
 
 use velt_sema::hir;
 

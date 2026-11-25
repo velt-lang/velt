@@ -47,6 +47,7 @@ pub(super) fn run(
         eager_std: false,
         units: false,
         prebuilt: false,
+        jit: false,
     };
     let same_path = super::check::same_path_groups(&files);
     match driver::check_for_lint(sess, &opts, &scope) {
