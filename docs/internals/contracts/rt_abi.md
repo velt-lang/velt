@@ -242,6 +242,17 @@ values crosses as an unboxed view (arguments) or is boxed after the call (result
 environments on the heap are counted blocks too; the drop function in their header releases one
 reference.
 
+**The vtable word.** An object whose class has a vtable (its first field, which `Callee::Virtual`
+calls and the drop glue of a class with subclasses read; hir_encodings.md) gets that word from its
+construction only. Lowering's `new` stores the class's vtable right after the allocation, the
+count and the zero fill, before anything reads the object, and nothing stores into the word
+afterwards: no method, function value, glue (drop, clone, transfer, equality) or runtime function.
+A copy of an object (copy-on-write, a transfer's deep copy) is a new object whose construction
+stores the same vtable. `velt_opt`'s `heap_sroa::devirt` depends on this: where every allocation a
+local can hold stores the same vtable first, it reads that vtable as a constant, so the drop
+through it becomes a direct call (#1718). A change that writes the word later must change `devirt`
+with it.
+
 **Debug check of captured variables' cells**. A captured variable that a closure assigns
 lives in a counted *cell* (`LocalDef::boxed`), which must never be used by two tasks: the
 transfer glue gives a value crossing to another task cells of its own, and sema rejects the

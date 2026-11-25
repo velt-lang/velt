@@ -57,8 +57,10 @@ struct Env {
     /// `num() -> i64`: an opaque call returning a number.
     num: ExternId,
     obj: AggId,
-    /// Another aggregate of the object's size.
+    /// Another aggregate laid out as the object.
     other: AggId,
+    /// An aggregate of the object's size laid out differently.
+    unlike: AggId,
 }
 
 fn env() -> Env {
@@ -70,6 +72,7 @@ fn env() -> Env {
     let num = pb.ext("num", &[], I64, false);
     let obj = pb.agg("Pair object", 16, 8, &[(I64, 0), (I64, 8)]);
     let other = pb.agg("Other object", 16, 8, &[(I64, 0), (I64, 8)]);
+    let unlike = pb.agg("Unlike object", 16, 8, &[(F64, 0), (I64, 8)]);
     Env {
         pb,
         alloc,
@@ -79,6 +82,7 @@ fn env() -> Env {
         num,
         obj,
         other,
+        unlike,
     }
 }
 
@@ -144,7 +148,7 @@ fn check(original: Program, inputs: &[u64], expect_replaced: bool) -> Program {
     let aggs = p.aggs.clone();
     let allocator = Allocator::find(&p);
     let last = p.funcs.len() - 1;
-    let changed = run(&aggs, allocator, &mut p.funcs[last]);
+    let changed = run(&aggs, allocator, &mut p.funcs[last]).replaced;
     assert_eq!(changed, expect_replaced, "{p}");
     assert_valid(&p);
     for &n in inputs {
@@ -302,7 +306,7 @@ fn returned_objects_keep_the_heap() {
     let mut p = env.pb.finish();
     let aggs = p.aggs.clone();
     let allocator = Allocator::find(&p);
-    assert!(!run(&aggs, allocator, &mut p.funcs[0]));
+    assert!(!run(&aggs, allocator, &mut p.funcs[0]).any());
 }
 
 #[test]
@@ -391,10 +395,11 @@ fn a_zero_filled_field_dropped_before_its_store_is_replaced() {
 
 #[test]
 fn an_offset_pointer_keeps_the_heap() {
-    // A reference-counted object's header sits in front of it.
+    // A plain object has no count in front of it: reading there is outside the block.
     stays_on_heap(|_, fb, b, _, t| {
-        let h = fb.local(Ptr);
+        let (h, x) = (fb.local(Ptr), fb.local(U64));
         fb.assign(b, h, bin(BinOp::PtrAdd, copy_local(t), int(-8, I64)));
+        fb.assign(b, x, Rvalue::Use(copy_place(deref(h, U64))));
         b
     });
 }
@@ -465,14 +470,31 @@ fn blocks_of_another_size_keep_the_heap() {
 #[test]
 fn an_access_as_another_aggregate_keeps_the_heap() {
     stays_on_heap(|env, fb, b, _, t| {
-        let x = fb.local(I64);
+        let x = fb.local(F64);
         let place = Place {
             local: t,
-            proj: vec![Proj::Deref(Ty::Agg(env.other)), Proj::Field(0)],
+            proj: vec![Proj::Deref(Ty::Agg(env.unlike)), Proj::Field(0)],
         };
         fb.assign(b, x, Rvalue::Use(copy_place(place)));
         b
     });
+}
+
+#[test]
+fn an_access_as_an_aggregate_laid_out_alike_is_replaced() {
+    // A class object read as its base class (`Uint8Array` as `BufferView`): the same fields.
+    let p = loop_program(|env, fb, b, _, t| {
+        let x = fb.local(I64);
+        let place = Place {
+            local: t,
+            proj: vec![Proj::Deref(Ty::Agg(env.other)), Proj::Field(1)],
+        };
+        fb.assign(b, x, Rvalue::Use(copy_place(place)));
+        let c = fb.local(Bool);
+        fb.assign(b, c, bin(BinOp::Ne, copy_local(x), int(0, I64)));
+        b
+    });
+    check(p, &[0, 1, 3], true);
 }
 
 #[test]
@@ -582,3 +604,5 @@ fn a_name_that_holds_the_object_on_loop_entry_only_keeps_the_heap() {
     env.pb.add(fb.finish());
     check(env.pb.finish(), &[0, 1, 2, 5], false);
 }
+
+mod counted;
