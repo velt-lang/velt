@@ -78,7 +78,7 @@ impl FnCx<'_, '_> {
         let local = self.declare_local_mut(name, ty, LocalKind::Bind, false);
         self.f.const_refs.insert(local);
         self.note_checked_copy(local, ann.is_none(), Some(e));
-        self.note_this_alias(local, LocalKind::Const, Some(&h));
+        self.note_this_alias(local, LocalKind::Const, (v.ty.as_ref(), Some(e)), Some(&h));
         let pat = self.pat(P::Binding(local, UseMode::Borrow), ty, name.span);
         Self::push(out, S::LetPat { pat, init: h }, span);
         Ok(())

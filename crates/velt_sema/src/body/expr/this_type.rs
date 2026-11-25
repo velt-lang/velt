@@ -7,7 +7,8 @@
 //! return `this` itself: `return this;`, or the result of another `this`-returning method called
 //! on `this` (checked by `check_this_return`; anything else is TypeScript's TS2322).
 
-use velt_common::{Diagnostic, Span};
+use velt_common::Diagnostic;
+use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, TyId, TyKind};
@@ -71,28 +72,34 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `const local = init` (`kind`): a `const` holding `this` is `this` (TypeScript types it
-    /// `this`), so a method returning `this` may return it.
+    /// `const local: ty = init` (`kind`, `init` checked as `h`): a `const` holding `this` is
+    /// `this` (TypeScript types it `this`), so a method returning `this` may return it. Not
+    /// with a written type other than `this` (`const r: A = this`), nor through `as` to one
+    /// (`const r = this as A`): TypeScript types those as the class.
     pub(crate) fn note_this_alias(
         &mut self,
         local: hir::LocalId,
         kind: LocalKind,
-        init: Option<&hir::Expr>,
+        (ty, init): (Option<&ast::TypeExpr>, Option<&ast::Expr>),
+        h: Option<&hir::Expr>,
     ) {
-        if kind == LocalKind::Const && init.is_some_and(|h| self.is_this_value(h)) {
+        let typed_this = ty.is_none_or(is_this_written) && !init.is_some_and(casts_away);
+        if kind == LocalKind::Const && typed_this && h.is_some_and(|h| self.is_this_value(h)) {
             self.this_aliases.insert(local);
         }
     }
 
-    /// `return h;` in the body: in a method returning `this`, `h` must be `this`.
-    pub(crate) fn check_this_return(&mut self, h: &hir::Expr, ret: TyId, span: Span) {
+    /// `return h;` (checked from `e`) in the body: in a method returning `this`, `h` must be
+    /// `this`, and not cast to another type (`return this as A`, TypeScript's TS2322).
+    pub(crate) fn check_this_return(&mut self, h: &hir::Expr, ret: TyId, e: &ast::Expr) {
+        let span = e.span;
         let Some(d) = self.body_def else {
             return;
         };
         if !self.outer.is_empty() || !self.cx.fn_info(d).returns_this() {
             return;
         }
-        if self.is_this_value(h) || self.cx.ty.is_bottom(h.ty) {
+        if (self.is_this_value(h) && !casts_away(e)) || self.cx.ty.is_bottom(h.ty) {
             return;
         }
         let found = self.cx.display(h.ty);
@@ -114,4 +121,19 @@ impl FnCx<'_, '_> {
             .with_note(note),
         );
     }
+}
+
+/// Is `e` (parenthesized or not) an `as` to a type other than `this`?
+fn casts_away(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => casts_away(inner),
+        ast::ExprKind::Cast { ty, .. } => !is_this_written(ty),
+        _ => false,
+    }
+}
+
+/// Is `t` the written type `this`?
+fn is_this_written(t: &ast::TypeExpr) -> bool {
+    matches!(&t.kind, ast::TypeExprKind::Named { path, args }
+        if path.len() == 1 && path[0].name == "this" && args.is_empty())
 }
