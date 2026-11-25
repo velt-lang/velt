@@ -1,0 +1,34 @@
+shapes:
+  replacer "" {"either":{"name":"u"},"plain":"s","rec":{"r1":{"name":"r1"},"r2":{"name":"r2"}},"pair":[{"name":"t0"},7],"present":{"name":"o"},"map":{},"base":{"kind":"base","extra":{"name":"x"}},"dyn":{"name":"i"}}
+  toJSON u key="either"
+  replacer "either" "u"
+  replacer "plain" "s"
+  replacer "rec" {"r1":{"name":"r1"},"r2":{"name":"r2"}}
+  toJSON r1 key="r1"
+  replacer "r1" "r1"
+  toJSON r2 key="r2"
+  replacer "r2" "r2"
+  replacer "pair" [{"name":"t0"},7]
+  toJSON t0 key="0"
+  replacer "0" "t0"
+  replacer "1" 7
+  toJSON o key="present"
+  replacer "present" "o"
+  replacer "map" {}
+  toJSON derived key="base"
+  replacer "base" "derived"
+  toJSON i key="dyn"
+  replacer "dyn" "i"
+{"either":"u","plain":"s","rec":{"r1":"r1","r2":"r2"},"pair":["t0",7],"present":"o","map":{},"base":"derived","dyn":"i"}
+generic:
+  replacer "" [{"name":"g"}]
+  toJSON g key="0"
+  replacer "0" "g"
+["g"]
+space:
+  replacer "" {"k":{"name":"sp"}}
+  toJSON sp key="k"
+  replacer "k" "sp"
+{
+-"k": "sp"
+}
