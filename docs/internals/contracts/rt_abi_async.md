@@ -1251,9 +1251,8 @@ executor's blocking pool, over the C library's file descriptors on macOS and Lin
 handles on Windows (`#fs-stream-os`). A handle used after `close` fails with `EBADF`; a writer
 released unclosed is flushed then (errors ignored). Lines and text are std code
 (std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per read, split at `\n` by
-`indexOfByte` and decoded there. velt_rt has no file stream functions; std/fs/rt.velt declares the
-`velt_rt_fs_open_*`, `_reader_*` and `_writer_*` names for a runtime that has them (WebAssembly's
-has none, so file streams fail to link there).
+`indexOfByte` and decoded there. velt_rt has no file stream functions, and neither has
+velt_rt_wasm: on WebAssembly every open fails with `ENOTSUP` (std/fs/stream_none.velt).
 
 ### 14.8 TLS
 
