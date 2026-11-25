@@ -3,7 +3,7 @@
 // goes through JavaScript's `ToPrimitive` here first (`anyToPrimitive`), and the operator then
 // runs on the primitive it gives.
 
-import { anyIsList, anyPromise, anyToPrimitive } from "velt/lang/intrinsics";
+import { anyIsList, anyIsPromise, anyPromise, anyToPrimitive } from "velt/lang/intrinsics";
 import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
 
 // Past this many arguments Node's stack is out, and past `ANY_LIST_MAX` its array is.
@@ -100,6 +100,10 @@ export function anyPrimitivePlain(v: any, hint: string, at: string): any {
   }
   if (Array.isArray(v)) {
     return anyJoin(v, ",", at);
+  }
+  // A promise: its `valueOf()` is itself, its `toString()` `Object.prototype.toString`'s (#924).
+  if (anyIsPromise(v)) {
+    return "[object Promise]";
   }
   if (hint !== "string" && anyOwnFn(v, "valueOf")) {
     const r: any = v.valueOf();

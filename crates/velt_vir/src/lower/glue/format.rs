@@ -99,6 +99,9 @@ impl FnLower<'_, '_> {
                 self.push_inspect_float(buf, Operand::Copy(place.clone()), ty)
             }
             TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
+            // `String(p)` and `${p}` of a promise are `Object.prototype.toString`'s text, as in
+            // JavaScript; `console.log` shows its state (`format_promise`).
+            TyKind::Promise(..) if !log => self.push_text(buf, "[object Promise]"),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
             // A string held by an `any` prints as itself at the top level (lower/any.rs).
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => {
