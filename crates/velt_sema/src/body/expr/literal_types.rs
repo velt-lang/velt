@@ -165,6 +165,50 @@ impl FnCx<'_, '_> {
         (float(self, l), float(self, r))
     }
 
+    /// `h`, of an integer literal type or a union of them (`5`, `0 | 1`: an `i64` underneath),
+    /// as the `number` it is in TypeScript, converted to `exp` from there: `number` itself, a
+    /// union holding `number` (`string | number`), or a `number | null`. Tried after the other
+    /// conversions, so a union that holds the literals themselves keeps them. `Err(h)` when `h`
+    /// is no such type or the `number` converts to `exp` no better.
+    pub(super) fn int_literal_as_number(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let f64 = self.cx.ty.f64;
+        if exp == h.ty || !self.number_literal(h.ty) || !self.holds_number(exp, 4) {
+            return Err(h);
+        }
+        let original = h.clone();
+        let int = self.widen_value(h);
+        if int.ty != self.cx.ty.i64 {
+            return Err(original);
+        }
+        let number = self.int_to_float(int, f64);
+        match exp == f64 {
+            true => Ok(number),
+            false => self.try_coerce(number, exp).map_err(|_| original),
+        }
+    }
+
+    /// Can a `number` convert to `t`: `number` itself, or a union or an option holding one
+    /// (`depth` bounds the nesting looked into)?
+    fn holds_number(&mut self, t: TyId, depth: u32) -> bool {
+        if t == self.cx.ty.f64 {
+            return true;
+        }
+        if depth == 0 {
+            return false;
+        }
+        if let Some(inner) = self.cx.ty.opt_payload(t) {
+            return self.holds_number(inner, depth - 1);
+        }
+        match self.cx.union_members(t) {
+            Some(members) => members.into_iter().any(|m| self.holds_number(m, depth - 1)),
+            None => false,
+        }
+    }
+
     /// Is `t` a number literal type or a union of them, of `i64`s (`1 | 2`)?
     fn number_literal(&mut self, t: TyId) -> bool {
         let w = self.cx.widened(t);
