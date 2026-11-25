@@ -13,13 +13,19 @@ use crate::ctx::Ctx;
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as H};
 
 /// Makes std's direct calls of the methods in `added` (origin class, method key: the slots the
-/// program's overrides added) dispatch where a program override can run.
-pub(crate) fn redispatch(cx: &mut Ctx, added: &[(DefId, String)]) {
+/// program's overrides added) dispatch where a program override can run, and std's calls that
+/// leave out arguments take the default-filling slot in `fills` (std class, fill key: those the
+/// program added) of that many arguments, so the override that runs applies its own defaults.
+pub(crate) fn redispatch(
+    cx: &mut Ctx,
+    added: &[(DefId, String)],
+    fills: &FxHashSet<(DefId, String)>,
+) {
     if added.is_empty() {
         return;
     }
     let targets = targets(cx, added);
-    if targets.is_empty() {
+    if targets.is_empty() && fills.is_empty() {
         return;
     }
     let report = std::env::var_os("VELT_UNITS_RAISED").is_some();
@@ -27,17 +33,28 @@ pub(crate) fn redispatch(cx: &mut Ctx, added: &[(DefId, String)]) {
         .map(DefId)
         .filter(|&d| matches!(cx.defs[d.0 as usize], Some(Def::Fn(_))))
         .filter(|&d| cx.try_fn(d).is_some_and(|f| cx.scopes[f.module].is_std))
+        // A class's default-filling entry calls its own class's method, the entry's (#3684).
+        .filter(|d| !cx.fills.contains_key(d))
         .collect();
     for d in std_fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
         };
-        let mut changed = vec![];
+        let (mut changed, mut filled) = (vec![], vec![]);
         crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             if let Some((slot, m)) = dispatches(cx, &targets, e) {
                 if let H::Call { callee, .. } = &mut e.kind {
                     *callee = Callee::Virtual { slot };
                     changed.push(m);
+                }
+            }
+            if let Some((slot, written, key)) = fills_left_out(cx, fills, e) {
+                if let H::Call { callee, args } = &mut e.kind {
+                    // The receiver and the arguments written: the defaults std placed for the
+                    // rest are the override's to apply.
+                    *callee = Callee::Virtual { slot };
+                    args.truncate(1 + written);
+                    filled.push(key);
                 }
             }
         });
@@ -46,6 +63,9 @@ pub(crate) fn redispatch(cx: &mut Ctx, added: &[(DefId, String)]) {
             for m in changed {
                 let (at, of) = (&cx.fn_info(d).name, &cx.fn_info(m).name);
                 eprintln!("velt-units-raised: dispatch {at} -> {of}");
+            }
+            for key in filled {
+                eprintln!("velt-units-raised: fill {} -> {key}", cx.fn_info(d).name);
             }
         }
     }
@@ -117,4 +137,35 @@ fn dispatches(
     let (c, _) = cx.class_of(inner.ty)?;
     let slot = *targets.get(&(c, *m))?;
     Some((slot, *m))
+}
+
+/// The default-filling slot of `e`, a std call through a slot that leaves out arguments
+/// (`Summaries::left_out_calls`), when the program added it to the receiver's class: the slot taking
+/// the arguments written, their number, and its key.
+fn fills_left_out(
+    cx: &Ctx,
+    fills: &FxHashSet<(DefId, String)>,
+    e: &Expr,
+) -> Option<(u32, usize, String)> {
+    let H::Call {
+        callee: Callee::Virtual { slot },
+        args,
+    } = &e.kind
+    else {
+        return None;
+    };
+    let written = *cx.unit_sums.left_out_calls.get(&e.span)? as usize;
+    let recv = args.first()?;
+    let inner = match &recv.kind {
+        H::Upcast(inner) => &**inner,
+        _ => recv,
+    };
+    let (c, _) = cx.class_of(inner.ty)?;
+    let slots = cx.vslots_of(c)?;
+    let key = slots.iter().find(|(_, &s)| s == *slot)?.0;
+    let fill = crate::collect::fill_defaults::fill_key(key, Some(written));
+    if args.len() <= 1 + written || !fills.contains(&(c, fill.clone())) {
+        return None;
+    }
+    Some((*slots.get(&fill)?, written, fill))
 }
