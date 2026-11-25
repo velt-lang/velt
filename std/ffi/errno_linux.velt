@@ -2,6 +2,7 @@
 // `__errno_location()` (`#errno-location`, errno.velt).
 
 import { Ptr } from "velt/ffi/ptr";
+import { inline } from "velt/lang/intrinsics";
 
 declare c("c") function __errno_location(): Ptr<i32>;
 
@@ -9,4 +10,16 @@ declare c("c") function __errno_location(): Ptr<i32>;
 export function errnoLocation(): Ptr<i32> | null {
   // SAFETY: `__errno_location` takes nothing and returns the address of this thread's `errno`.
   return unsafe { __errno_location() };
+}
+
+/** The value of `errno` as std reads it: this C library's own number, unchanged. */
+@inline("always")
+export function fromCErrno(e: i32): i32 {
+  return e;
+}
+
+/** The C library's number for an `errno()` value: the same. */
+@inline("always")
+export function toCErrno(e: i32): i32 {
+  return e;
 }

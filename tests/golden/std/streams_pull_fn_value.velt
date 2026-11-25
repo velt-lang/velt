@@ -1,0 +1,79 @@
+// check: no leaks
+// A stream source's `pull`, `start` or `cancel` given as a function value whose result type is
+// `Promise<void> | undefined` (a `const` arrow with that result type, or a function declaration)
+// is the promise form, as one written in place: the stream waits for the promise and a rejection
+// errors it, as in Node (#3716). The Node twin is streams_pull_fn_value.mjs.
+type Ctl = ReadableStreamDefaultController<number>;
+
+function maybe(n: number): Promise<void> | undefined {
+  if (n > 2) {
+    return Promise.reject(new Error("maybe " + n));
+  }
+  if (n > 0) {
+    return Promise.resolve();
+  }
+  return undefined;
+}
+
+let declaredPulls = 0;
+
+function declaredPull(c: Ctl): Promise<void> | undefined {
+  declaredPulls++;
+  c.enqueue(declaredPulls);
+  return maybe(declaredPulls);
+}
+
+function declaredStart(c: Ctl): Promise<void> | undefined {
+  return maybe(5);
+}
+
+function declaredCancel(reason: unknown): Promise<void> | undefined {
+  return maybe(6);
+}
+
+async function drain(name: string, s: ReadableStream<number>): Promise<void> {
+  const r = s.getReader();
+  try {
+    for (;;) {
+      const x = await r.read();
+      if (x.done) {
+        console.log(name + " done");
+        return;
+      }
+      console.log(name + " read " + x.value);
+    }
+  } catch (e) {
+    console.log(name + " caught " + (e as Error).message);
+  }
+}
+
+async function main(): Promise<void> {
+  let arrowPulls = 0;
+  const arrowPull = (c: Ctl): Promise<void> | undefined => {
+    arrowPulls++;
+    c.enqueue(arrowPulls);
+    return maybe(arrowPulls);
+  };
+  await drain("const pull", new ReadableStream<number>({ pull: arrowPull }));
+  await drain("declared pull", new ReadableStream<number>({ pull: declaredPull }));
+
+  const arrowStart = (c: Ctl): Promise<void> | undefined => maybe(4);
+  await drain("const start", new ReadableStream<number>({ start: arrowStart }));
+  await drain("declared start", new ReadableStream<number>({ start: declaredStart }));
+
+  const arrowCancel = (reason: unknown): Promise<void> | undefined => maybe(7);
+  await cancelled("const cancel", new ReadableStream<number>({ cancel: arrowCancel }));
+  await cancelled("declared cancel", new ReadableStream<number>({ cancel: declaredCancel }));
+  console.log("done");
+}
+
+async function cancelled(name: string, s: ReadableStream<number>): Promise<void> {
+  try {
+    await s.cancel("why");
+    console.log(name + " resolved");
+  } catch (e) {
+    console.log(name + " caught " + (e as Error).message);
+  }
+}
+
+main();

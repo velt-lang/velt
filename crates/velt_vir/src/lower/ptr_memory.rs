@@ -5,12 +5,28 @@
 //! structs too: C may have left one `NULL`, which a `Ptr<T>` never is (with the null niche it
 //! would read as `null` once widened), so the program stops, naming the field. A `bool` in it
 //! is its byte's truth to C, 0 or not.
+//!
+//! `cArrived<T>(v)` (velt/ffi's `Out.value`, #2187) reads a value C wrote the same way (its
+//! `bool`s normalized, its non-null pointers checked), where it is read rather than when C
+//! returns: a C function that fails often leaves its out-struct untouched, and a caller that tests
+//! the result first never reads it.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
 use super::operand::proj;
 use super::{cint, unit, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
+
+/// Where a value [`FnLower::stop_on_null`] checks came from, for its message.
+#[derive(Clone, Copy)]
+pub(super) enum Arrived<'a> {
+    /// `Ptr.read`.
+    Read,
+    /// The struct result of this C function (c_struct_call.rs).
+    Returned(&'a str),
+    /// An `Out`'s `value` (`cArrived`).
+    Out,
+}
 
 impl FnLower<'_, '_> {
     /// `ptrRead<S>(p, index)`, `ty` being `S`.
@@ -24,8 +40,34 @@ impl FnLower<'_, '_> {
         let base = self.rvalue_temp(Ty::U64, Rvalue::Cast(at, Ty::U64));
         self.normalize_bools(&held, ty, &base, 0);
         let s = self.cx.type_name(ty);
-        self.stop_on_null(&held, ty, (&s, None), "");
+        self.stop_on_null(&held, ty, (&s, Arrived::Read), "");
         v
+    }
+
+    /// `cArrived<T>(v)`: `v`, read from where C wrote it (the `Out`'s field), as `ptr_read`
+    /// reads: each `bool` in it is its byte's truth to C and its non-null pointers are checked. A
+    /// `T` holding neither passes as it is.
+    pub(super) fn c_arrived(&mut self, v: &hir::Expr, ty: TyId) -> Operand {
+        let ty = self.sub(ty);
+        let (pointers, bools) = (self.cx.holds_non_null_ptr(ty), self.cx.holds_bool(ty));
+        if !pointers && !bools {
+            return self.expr(v);
+        }
+        let t = self.vty(ty);
+        // The bytes C wrote, before a load as `bool` narrows them: `v` is the field's place.
+        let at = self.place_expr(v);
+        let addr = self.addr(at.clone());
+        let base = self.rvalue_temp(Ty::U64, Rvalue::Cast(addr, Ty::U64));
+        let value = self.rvalue_temp(t, Rvalue::Use(Operand::Copy(at)));
+        let held = self.operand_place(value.clone(), t);
+        if bools {
+            self.normalize_bools(&held, ty, &base, 0);
+        }
+        if pointers {
+            let s = format!("Out<{}>", self.cx.type_name(ty));
+            self.stop_on_null(&held, ty, (&s, Arrived::Out), "");
+        }
+        value
     }
 
     /// Makes each `bool` in the value at `place` (of type `ty`, read from `base + offset`) what
@@ -88,13 +130,12 @@ impl FnLower<'_, '_> {
 
     /// Stops the program where a non-null pointer in the value at `place`, of type `ty`, is
     /// `NULL`: `ty` itself, or a field (of a field…) of C struct `s`, `path` being the fields
-    /// above it. `returned` names the C function whose struct result it is (c_struct_call.rs);
-    /// `None` is `Ptr.read`'s.
+    /// above it; `from` says where the value came from, for the message.
     pub(super) fn stop_on_null(
         &mut self,
         place: &Place,
         ty: TyId,
-        (s, returned): (&str, Option<&str>),
+        (s, from): (&str, Arrived),
         path: &str,
     ) {
         match self.kind(ty) {
@@ -106,10 +147,11 @@ impl FnLower<'_, '_> {
                 let (bad, ok) = (self.new_block(), self.new_block());
                 self.branch(null, bad, ok);
                 self.switch_to(bad);
-                let msg = match (returned, path.is_empty()) {
-                    (Some(f), _) => format!("C function `{f}`: field `{path}` of the `{s}` it returned is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
-                    (None, true) => format!("Ptr.read: the `{s}` read is NULL, and a C pointer declared `Ptr<T>` is never NULL; read a `Ptr<T> | null` where C may leave it NULL"),
-                    (None, false) => format!("Ptr.read: field `{path}` of C struct `{s}` is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
+                let msg = match (from, path.is_empty()) {
+                    (Arrived::Out, _) => format!("Out.value: field `{path}` of the `{s}` read is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
+                    (Arrived::Returned(f), _) => format!("C function `{f}`: field `{path}` of the `{s}` it returned is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
+                    (Arrived::Read, true) => format!("Ptr.read: the `{s}` read is NULL, and a C pointer declared `Ptr<T>` is never NULL; read a `Ptr<T> | null` where C may leave it NULL"),
+                    (Arrived::Read, false) => format!("Ptr.read: field `{path}` of C struct `{s}` is NULL, and it is declared `Ptr<T>`, which is never NULL; declare it `Ptr<T> | null` if C may leave it NULL"),
                 };
                 self.panic_msg(&msg);
                 self.terminate(vir::Terminator::Unreachable);
@@ -129,7 +171,7 @@ impl FnLower<'_, '_> {
                         true => name,
                         false => format!("{path}.{name}"),
                     };
-                    self.stop_on_null(&at, f, (s, returned), &path);
+                    self.stop_on_null(&at, f, (s, from), &path);
                 }
             }
             _ => {}

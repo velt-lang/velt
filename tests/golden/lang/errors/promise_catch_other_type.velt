@@ -1,0 +1,8 @@
+// A `catch` handler giving a value that is not of the promise's value type is refused:
+// TypeScript would type the result `Promise<number | string>`, which Velt doesn't join yet.
+async function load(): Promise<number> {
+  return 1;
+}
+
+const p = load().catch(() => "none");
+console.log(p);

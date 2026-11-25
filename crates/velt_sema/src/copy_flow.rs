@@ -16,7 +16,7 @@ use crate::hir::{
     Callee, Conversion, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalId, Pat, PatKind, Stmt,
     StmtKind as S, TyId,
 };
-use crate::visit::{self, VisitMut};
+use crate::visit_ref::{self as visit, Visit};
 
 /// Where an object value may come from or go to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -200,8 +200,8 @@ impl Edges<'_> {
     }
 }
 
-impl VisitMut for Edges<'_> {
-    fn stmt(&mut self, s: &mut Stmt) {
+impl Visit for Edges<'_> {
+    fn stmt(&mut self, s: &Stmt) {
         match &s.kind {
             S::Let {
                 local,
@@ -225,7 +225,7 @@ impl VisitMut for Edges<'_> {
         }
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Assign { place, value } => match place.kind {
                 E::Local(l, _) => self.flow(value, Store::Local(self.f, l)),
@@ -296,10 +296,10 @@ impl CopyFlow {
             params: &params,
             to: FxHashMap::default(),
         };
-        for (i, d) in cx.defs.iter_mut().enumerate() {
+        for (i, d) in cx.defs.iter().enumerate() {
             if let Some(Def::Fn(f)) = d {
                 edges.f = DefId(i as u32);
-                visit::block(&mut f.body.block, &mut edges);
+                visit::block(&f.body.block, &mut edges);
                 if let Some(v) = &f.body.block.value {
                     edges.flow(v, Store::Ret(edges.f));
                 }
@@ -314,9 +314,9 @@ impl CopyFlow {
             }
         }
         edges.f = GLOBAL;
-        for i in cx.info.iter_mut() {
+        for i in cx.info.iter() {
             if let crate::defs::DefInfo::Global(g) = i {
-                if let Some(e) = &mut g.init {
+                if let Some(e) = &g.init {
                     visit::expr(e, &mut edges);
                     edges.flow(e, Store::Heap);
                 }
@@ -325,9 +325,9 @@ impl CopyFlow {
         // A closure's captures are its enclosing function's variables: both ways. The
         // enclosing function is found from the closure expression.
         let mut outer: FxHashMap<DefId, DefId> = FxHashMap::default();
-        for (i, d) in cx.defs.iter_mut().enumerate() {
+        for (i, d) in cx.defs.iter().enumerate() {
             if let Some(Def::Fn(f)) = d {
-                visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+                visit::exprs(&f.body.block, &mut |e: &Expr| {
                     if let E::Closure(c) = e.kind {
                         outer.insert(c, DefId(i as u32));
                     }

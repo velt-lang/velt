@@ -294,6 +294,7 @@ fn std_scope(
         eager_std: true,
         units: false,
         prebuilt: false,
+        jit: false,
     };
     Ok((opts, scope, vec![]))
 }
@@ -441,6 +442,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
         eager_std: false,
         units: false,
         prebuilt: true,
+        jit: false,
     };
     Ok((input, scope, same_path))
 }

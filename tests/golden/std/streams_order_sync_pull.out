@@ -1,0 +1,19 @@
+pull 1
+t0
+read0 1
+pull 2
+t1
+read1 2
+pull 3
+t2
+closed
+read2 true
+t3
+t4
+t5
+t6
+t7
+t8
+t9
+t10
+t11

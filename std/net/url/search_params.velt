@@ -2,6 +2,9 @@
 
 import { FORM, decodeLenient, encodeSet } from "velt/net/url/encode";
 import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { NativeInspect } from "velt/lang/typed_array/native_inspect";
+import { paramsText } from "velt/net/url/inspect";
 
 /**
  * An ordered list of name/value pairs in `application/x-www-form-urlencoded` form (JS
@@ -147,5 +150,10 @@ export class URLSearchParams {
       parts.push(`${encodeSet(this.names[i], FORM)}=${encodeSet(this.vals[i], FORM)}`);
     }
     return parts.join("&");
+  }
+
+  /** How `console.log` shows the pairs, like Node: `URLSearchParams { 'a' => '1' }`; `[Object]` past its depth limit. */
+  [INSPECT](): NativeInspect {
+    return { text: paramsText(this.names, this.vals), cut: "[Object]" };
   }
 }

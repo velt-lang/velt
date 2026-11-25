@@ -205,6 +205,12 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   velt/ffi's `Ptr.read` and `Ptr.write`, a read checking the element's non-null pointers.
   `CheckOptions::wasm32` (additive) tells sema the target is wasm32, where they refuse a type
   holding a pointer, `usize` or `isize`.
+  `Out<T>` takes a C struct `T` too (#2187): velt/ffi's `Out` keeps the value in a private
+  field `held`, whose address a call passes (`c_call.rs`), and `value` is a getter through
+  `Intrinsic::CArrived` (additive), which checks the value's non-null pointers where it is read.
+  `hir::CTy::Ref { nullable }` (additive) is a `Ref<S>` parameter (velt/ffi's alias of a C
+  struct `S`, `velt_common` std module `ffi_ref`, additive): the address of a copy of the struct,
+  borrowed for the call, `NULL` for `null` when `nullable`; a plain `Ptr` in VIR.
 - C structs by value (#2187 layer 3, docs/internals/design/c-ffi.md "C structs"): `hir::CTy::Struct`
   (additive) is a `declare c struct` parameter or result, the declaration's type naming which.
   `vir::ExternFn::c_abi` (additive, `None` for every other extern) is the target's C calling

@@ -13,6 +13,7 @@ use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, UseMode};
 use crate::hook_calls::{self as hooks, ty, HookTy};
+use crate::literals::js_number;
 
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
@@ -34,7 +35,7 @@ impl FnCx<'_, '_> {
     /// `Some(None)` for a computed key, `None` for a call of `obj` itself): `Ok(any type)` for an `any` (and a `Function`
     /// called), `Err(obj)` for anything else. An `unknown`, an `object` and a member of a
     /// `Function` report their error and give `Ok(None)`.
-    fn dynamic_receiver(
+    pub(super) fn dynamic_receiver(
         &mut self,
         obj: hir::Expr,
         member: Option<Option<&str>>,
@@ -224,6 +225,7 @@ impl FnCx<'_, '_> {
             },
             false => obj,
         };
+        let promise_member = self.promise_member_named(name, &obj);
         let (obj, any) = self.dynamic_receiver(obj, Some(Some(name)))?;
         let Some(any) = any else {
             return Ok(self.error_expr(span));
@@ -233,6 +235,10 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         }
         let key = self.key_lit(name, span);
+        if promise_member {
+            let get = |s: &mut Self, held| s.any_op(Intrinsic::AnyGet, vec![held, key], any, span);
+            return Ok(self.promise_member_get(obj, name, any, span, get));
+        }
         Ok(self.any_op(Intrinsic::AnyGet, vec![obj, key], any, span))
     }
 
@@ -344,6 +350,7 @@ impl FnCx<'_, '_> {
             }
         }
         let typed_callbacks = self.narrowed_dynamic_instance(&recv);
+        let promise_member = self.promise_member_named(&prop.name, &recv);
         let (recv, any) = self.dynamic_receiver(recv, Some(Some(&prop.name)))?;
         let Some(any) = any else {
             self.check_args_loose(args);
@@ -372,16 +379,22 @@ impl FnCx<'_, '_> {
         if user && prop.name == "apply" && self.apply_reads_list(args) {
             return Ok(self.any_apply_method(recv, key, text, args, any, span));
         }
-        let mut all = vec![recv, key, text];
         let outer = self.any_callback;
         let boxed = self.dynamic_args(args, any, typed_callbacks);
         self.any_callback = outer;
         let Some(boxed) = boxed else {
             return Ok(self.error_expr(span));
         };
-        all.extend(boxed);
         self.note_any_call();
-        Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span))
+        let call = move |s: &mut Self, recv, boxed: Vec<hir::Expr>| {
+            let mut all = vec![recv, key, text];
+            all.extend(boxed);
+            s.intrinsic(Intrinsic::AnyCall, all, any, span)
+        };
+        if promise_member {
+            return Ok(self.promise_member_call(recv, &prop.name, boxed, any, span, call));
+        }
+        Ok(call(self, recv, boxed))
     }
 
     /// Is `recv` a variable declared `object` or `unknown` that a test narrowed to an instance
@@ -731,18 +744,3 @@ const ARRAY_RESULTS: &[&str] = &[
     "toSpliced",
     "with",
 ];
-
-/// A non-negative number as JavaScript prints it (`String(n)`): `1e+21`, `1e-7`, `0.5`, `3`.
-fn js_number(f: f64) -> String {
-    if f == 0.0 {
-        return "0".into();
-    }
-    if !(1e-6..1e21).contains(&f.abs()) {
-        let t = format!("{f:e}");
-        return match t.split_once('e') {
-            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
-            _ => t,
-        };
-    }
-    f.to_string()
-}

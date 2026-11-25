@@ -14,17 +14,6 @@ use crate::task::VeltFut;
 /// Drop the unclaimed result of started node `f` with `d` (its `result_drop`), which reports a
 /// rejection at once (the runtime's own tasks run no compiled code that defers it).
 pub(super) unsafe fn drop_result(f: *mut VeltFut, d: unsafe extern "C-unwind" fn(*mut u8)) {
-    // A converted promise whose promise was handled elsewhere is dropped quietly (task/identity.rs).
-    if node::is_aliased(f) {
-        if let Some(quiet) = crate::task::identity::handled_elsewhere(f) {
-            if let Some(q) = quiet {
-                q(node::state(f));
-            }
-            // Handled: `watch` lets go of it.
-            node::mark_handled(f, None);
-            return;
-        }
-    }
     d(node::state(f));
 }
 
@@ -42,12 +31,6 @@ pub(super) unsafe fn watch(f: *mut VeltFut) {
         // Let go of the ones claimed meanwhile, which the checkpoint would pass over: the list
         // keeps only the open ones, at amortized constant cost per entry.
         list.retain(|&g| {
-            // A converted promise whose promise was handled is never reported (task/identity.rs).
-            if node::is_aliased(g) {
-                if let Some(quiet) = crate::task::identity::handled_elsewhere(g) {
-                    node::mark_handled(g, quiet);
-                }
-            }
             let open = node::rejection_open(g);
             if !open {
                 node::release(g);
@@ -78,23 +61,11 @@ pub(super) unsafe fn flush(set: *mut LocalSet) {
     // In order, a batch at a time: linear in their number.
     while !(*set).rejections.is_empty() {
         for f in std::mem::take(&mut (*set).rejections) {
-            handled_elsewhere(f);
             if node::rejection_unclaimed(f) {
                 // Reports the rejection and ends the process.
                 node::drop_result_now(f);
             }
             node::release(f);
         }
-    }
-}
-
-/// A converted promise's rejection that another holder of the promise it stands for handled is
-/// dropped quietly (task/identity.rs).
-unsafe fn handled_elsewhere(f: *mut VeltFut) {
-    if !node::is_aliased(f) {
-        return;
-    }
-    if let Some(quiet) = crate::task::identity::handled_elsewhere(f) {
-        node::mark_handled(f, quiet);
     }
 }

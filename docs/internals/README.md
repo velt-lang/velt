@@ -102,7 +102,11 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
      same object on every path and are read later (a variable and an inlined method's
      `this`). When another name may hold the object on some paths only, it stays on the heap.
      Fields holding counted values qualify too: lowering drops and shares a pointer field
-     from a copy of it, never through the field's address.
+     from a copy of it, never through the field's address. So do counted objects (a view made
+     by `subarray` or `new DataView`, #1718): their count becomes a local beside the object,
+     and their drops and getters, calls through a vtable every object of the group got, become
+     direct calls for the next round to inline. A counted object whose copies sit in deeper
+     loops than its allocations (an error object a hot loop carries) stays on the heap.
    - `sroa` then splits those aggregate locals, and others whose address is never taken, into
      one local per field.
    - `numrep` stores a `number` (`f64`) as an `i32` or `i64` where its facts (interval, whole, never

@@ -10,6 +10,7 @@ mod consts;
 mod export;
 mod known;
 mod layout;
+mod modifies;
 mod scope;
 mod suffixes;
 
@@ -26,6 +27,7 @@ pub(crate) use consts::path_of;
 pub(crate) use export::throws as export_throws;
 pub(crate) use known::{intrinsics, Inline, Variant, VariantCond, VariantTest};
 pub(crate) use layout::transparent_field;
+pub(crate) use modifies::apply as apply_modifies;
 pub(crate) use scope::Scopes;
 
 /// The result types of a `declare decorator function`: where it may be used, with the bit each

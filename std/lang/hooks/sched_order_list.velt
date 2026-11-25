@@ -83,10 +83,12 @@ export const BUSY_MAX: usize = 32;
 /**
  * After the room of a look's busy tasks: the worker that waits for `O_WAKE_AT` in its park (0:
  * none; sched_order_wait.velt), then whether the last look met more busy tasks than it
- * remembers (sched_order_pass.velt `P_FULL`).
+ * remembers (sched_order_pass.velt `P_FULL`), then whether the phase under way (a timers pass or
+ * a check phase) began while a keep-alive reference was held (sched_order_pass.velt `commit`).
  */
 export const O_WAITER: usize = sl.TM_SIZE + 8 + 8 * BUSY_MAX;
-const O_END: usize = O_WAITER + 16;
+export const O_ALIVE: usize = O_WAITER + 16;
+const O_END: usize = O_WAITER + 24;
 
 /** The order's block (0 until the first Node timer). */
 const ORDER = new Atomic<u64>(0);

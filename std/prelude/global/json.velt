@@ -7,3 +7,4 @@ export { JsonError, JsonParseOptions } from "velt/prelude/json/json_error";
 export { JsonReplacer } from "velt/prelude/json/layout";
 export { JsonValue } from "velt/prelude/json/json_value";
 import "velt/lang/hooks/json";
+import "velt/prelude/json/json_any";

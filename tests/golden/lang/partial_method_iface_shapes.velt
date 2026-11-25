@@ -1,0 +1,36 @@
+// `Partial<I>` of interfaces with methods: a generic interface at a type argument, methods
+// inherited from a base interface, `Partial` of a `Partial`, a `readonly` member, a getter and
+// an optional method.
+interface Box<T> {
+  v: T;
+  map(f: (v: T) => T): T;
+}
+
+const box: Partial<Box<number>> = { map: (f) => f(20) };
+console.log(box.map?.((v) => v + 1), box.v);
+
+interface Base {
+  id: number;
+  describe(prefix: string): string;
+}
+interface Derived extends Base {
+  tag: string;
+}
+
+const derived: Partial<Derived> = { describe: (p) => p + "!", tag: "t" };
+console.log(derived.describe?.("hello"), derived.tag, derived.id);
+
+const nested: Partial<Partial<Derived>> = { id: 3 };
+console.log(nested.id, nested.describe === undefined);
+
+interface Settings {
+  readonly name: string;
+  get size(): number;
+  check?(n: number): boolean;
+  run(): void;
+}
+
+const settings: Partial<Settings> = { name: "s", size: 4, check: (n) => n > 2 };
+console.log(settings.name, settings.size, settings.check?.(3), settings.run === undefined);
+settings.run = () => console.log("ran");
+settings.run?.();

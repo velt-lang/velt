@@ -3,11 +3,9 @@
 // or found in the child's `PATH` (#3167), behaves as in Node 22 on each OS: on Linux it runs
 // through `/bin/sh` as `/bin/sh <file> <args…>` (glibc's `execvp`); on macOS it fails with
 // ENOEXEC (libuv's `posix_spawn`), `spawn ENOEXEC` from `spawn` and `exec` (Node's `spawn` and
-// `execFile` throw it), `spawnSync <file> ENOEXEC` from Node's `spawnSync`. Each line compares
-// what happened with what this OS expects, so the output is the same on both, and the same as
-// child_no_shebang.mjs prints under `node` on each. The `execSync` lines are checked on Linux
-// only: on macOS Velt's `execSync` runs the script (its start is still Rust's `Command`), where
-// Node's `spawnSync` fails it (#3573), so there they print a fixed line without checking.
+// `execFile` throw it), `spawnSync <file> ENOEXEC` from `execSync` as from Node's `spawnSync`
+// (#3573). Each line compares what happened with what this OS expects, so the output is the
+// same on both, and the same as child_no_shebang.mjs prints under `node` on each.
 import { exec, execSync, spawn, SpawnError } from "velt/process/child";
 import * as fs from "velt/fs";
 import { platform, tmpdir } from "velt/os";
@@ -42,16 +40,10 @@ function check(label: string, got: string, want: string) {
   }
 }
 
-/**
- * Prints a fixed line for `label`: on Linux after checking `got` is `want` (what it got when it
- * isn't), on macOS without checking (#3573).
- */
-function checkOnLinux(label: string, got: string, want: string) {
-  console.log(label, "checked on Linux, not on macOS (#3573)");
-  if (LINUX && got != want) {
-    console.log("  got: ", got);
-    console.log("  want:", want);
-  }
+/** What `execSync` of `file` with `args` throws where the OS can't execute it (macOS). */
+function syncThrown(file: string, args: string[]): string {
+  const fields = `ENOEXEC -8 spawnSync ${file} ${file} ${JSON.stringify(args)}`;
+  return `error ${fields} | spawnSync ${file} ENOEXEC`;
 }
 
 async function main() {
@@ -71,21 +63,32 @@ async function main() {
   } catch (err) {
     got = failed(err, dir);
   }
-  checkOnLinux("execSync:", got, "ran 3 zero=./bin/script count=2 args=a b c to stderr");
+  const syncWant = "ran 3 zero=./bin/script count=2 args=a b c to stderr";
+  check("execSync as Node:", got, LINUX ? syncWant : syncThrown("./bin/script", ["a", "b c"]));
   try {
     const r = execSync(`${dir}/bin/script`, ["x"]);
     got = ran(r.code, r.stdout, r.stderr, dir);
   } catch (err) {
     got = failed(err, dir);
   }
-  checkOnLinux("execSync absolute:", got, "ran 3 zero=<dir>/bin/script count=1 args=x to stderr");
+  check(
+    "execSync absolute as Node:",
+    got,
+    LINUX
+      ? "ran 3 zero=<dir>/bin/script count=1 args=x to stderr"
+      : syncThrown("<dir>/bin/script", ["x"]),
+  );
   try {
     const r = execSync("script", ["y"], { cwd: dir, env: path });
     got = ran(r.code, r.stdout, r.stderr, dir);
   } catch (err) {
     got = failed(err, dir);
   }
-  checkOnLinux("execSync in PATH:", got, "ran 3 zero=bin/script count=1 args=y to stderr");
+  check(
+    "execSync in PATH as Node:",
+    got,
+    LINUX ? "ran 3 zero=bin/script count=1 args=y to stderr" : syncThrown("script", ["y"]),
+  );
 
   try {
     const r = await exec("./bin/script", ["a", "b c"], { cwd: dir });

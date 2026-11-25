@@ -179,10 +179,17 @@ const DESCRIPTOR_C: &[&str] = &[
     "NtCreateFile",
 ];
 
-/// Velt's own functions besides the runtime's that touch nothing outside: SIMD, atomics,
-/// thread-local storage, CPU feature checks and catching a Velt panic (with the underscore, and no
-/// `__`: a C library's function may be called `velt_simdjson__parse` or `velt_atomic_ops__cas`).
-const PURE_OWN: &[&str] = &["velt_simd_", "velt_atomic_", "velt_tls_", "velt_eh_"];
+/// Velt's own functions besides the runtime's that touch nothing outside: SIMD, the field
+/// operations, atomics, thread-local storage, CPU feature checks and catching a Velt panic (with
+/// the underscore, and no `__`: a C library's function may be called `velt_simdjson__parse` or
+/// `velt_atomic_ops__cas`).
+const PURE_OWN: &[&str] = &[
+    "velt_simd_",
+    "velt_field_",
+    "velt_atomic_",
+    "velt_tls_",
+    "velt_eh_",
+];
 
 /// What a record entry stands for when the build can't attribute code to a test file (its
 /// registering function was inlined) or has no entry for it.
@@ -635,6 +642,8 @@ mod tests {
             "velt_rt_uncaught_now",
             "velt_atomic_load_u64",
             "velt_simd_add_f32x4",
+            "velt_field_p256_mul",
+            "velt_field_x25519_ladder",
             "malloc",
             "memcpy",
             "__error",

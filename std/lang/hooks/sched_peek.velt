@@ -9,6 +9,7 @@ import * as rc from "./sched_race";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as sh from "./sched_share";
+import * as lf from "./sched_share_leaf";
 
 // A pointer is `Ptr`, as in compiled code's declaration of this symbol.
 declare c("c") function velt_rt_fut_peek$rt(f: Ptr<u8> | null): u8;
@@ -25,6 +26,10 @@ export function peek(f: usize): u32 {
   }
   if (m.ld(f) === fnAddress(sh.holderPoll)) {
     return sh.peek(f) ? 1 : 0;
+  }
+  if (lf.isLeaf(f)) {
+    // A shared leaf's holder (sched_share_leaf.velt): what its role shows, copied to its slot.
+    return lf.peek(f) ? 1 : 0;
   }
   if (jn.isJoin(f) || rc.isRace(f)) {
     // Pending until awaited, as the runtime's peek of its race says.

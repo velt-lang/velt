@@ -3,6 +3,7 @@
 // file and a directory, and each failure has Node's code and message (the path named for `open`,
 // `stat` and `lstat`, none for `read`). `exists` is false, not an error, for a missing path and
 // for one holding a 0. The async forms give the same.
+import { cwd } from "velt/process";
 import {
   appendFile,
   appendFileSync,
@@ -23,15 +24,20 @@ import {
 } from "velt/fs";
 import { IoError } from "velt/io";
 
+/** The message as Node prints it on Linux: on Windows it names the path absolute, with `\`. */
+function portable(m: string): string {
+  return m.split(`${cwd()}\\`).join("").split("\\").join("/");
+}
+
 function attempt(what: string, f: () => void) {
   try {
     f();
     console.log(what, "no error");
   } catch (e) {
     if (e instanceof IoError) {
-      console.log(what, e.code, e.message);
+      console.log(what, e.code, portable(e.message));
     } else {
-      console.log(what, (e as Error).message);
+      console.log(what, portable((e as Error).message));
     }
   }
 }
@@ -96,7 +102,7 @@ async function main() {
   try {
     await readFile(`${dir}/none.txt`);
   } catch (e) {
-    console.log("async read missing", (e as IoError).code, (e as Error).message);
+    console.log("async read missing", (e as IoError).code, portable((e as Error).message));
   }
 
   removeSync(dir, { recursive: true });

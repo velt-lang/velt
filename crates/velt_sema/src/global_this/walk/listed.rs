@@ -22,7 +22,13 @@ impl Walk<'_> {
         if matches!(self.lookup(&k.name), Some(Some(_))) {
             return None;
         }
-        Some((k.clone(), listed_keys(t, self.aliases)?))
+        let keys = listed_keys(t, self.aliases)?;
+        // A key spelled as a symbol's would read that symbol's property: refused, as in `key`.
+        if let Some(r) = keys.iter().find(|k| super::super::keys::reserved_key(k)) {
+            self.reserved_name(r, t.span);
+            return None;
+        }
+        Some((k.clone(), keys))
     }
 
     /// `Object.defineProperty(g, k, d);` with `g` standing for `globalThis` as a type listing a

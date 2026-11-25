@@ -1,0 +1,29 @@
+cast then 6
+cast catch c1
+cast finally 5 true
+cast read function
+generic 2
+no promise undefined undefined
+optional call 3
+optional catch 2
+optional missing undefined
+optional own own 6
+skipped undefined 0
+evaluated 2 present
+cast optional 6
+unknown cast optional 4
+optional read 3 undefined
+call result 3
+index 3
+member 3
+call result catch 2
+chain 3 undefined undefined
+chain skipped present
+optional read own own 6
+continued 30
+catch continued 3
+missing continued undefined undefined
+twice 40
+inner link continued 30 undefined
+continued skipped present
+typed 1, any 1, typed 2, any 2

@@ -1,0 +1,53 @@
+// `then` and `catch` of a promise held as `any` (#924 step 2), as in Node: one and two
+// callbacks, a chain, a rejection reaching `catch`, a callback that is no function passing the
+// value on, the method read as a value (one shared function: `p.then === p.then`), the
+// `typeof v.then` test, and the tick order against a typed chain.
+async function later(n: number): Promise<number> {
+  return n;
+}
+
+async function fails(m: string): Promise<number> {
+  throw new Error(m);
+}
+
+async function main(): Promise<void> {
+  const p: any = later(1);
+  const two = await p.then((v: any) => v + 1);
+  console.log("then", two);
+  const both = await p.then(
+    (v: any) => "ok " + v,
+    (e: any) => "no " + e,
+  );
+  console.log("both", both);
+  const chained = await p.then((v: any) => v * 10).then((v: any) => v + 5);
+  console.log("chain", chained);
+  const f: any = fails("boom");
+  const caught = await f.catch((e: any) => "caught " + e.message);
+  console.log(caught);
+  const viaThen = await f.then(
+    (v: any) => "value " + v,
+    (e: any) => "reason " + e.message,
+  );
+  console.log(viaThen);
+  const passed = await p.then(undefined);
+  console.log("passed", passed);
+  console.log("typeof", typeof p.then, typeof p.catch, typeof p.finally);
+  console.log("same", p.then === p.then);
+  const t = p.then;
+  console.log("read same", t === p.then);
+  const plain: any = { n: 1 };
+  console.log("plain", typeof plain.then);
+  const handlers: any[] = [(v: any) => "spread " + v];
+  console.log(await p.then(...handlers));
+
+  // Tick order: a typed chain and chains through `any` interleave as in Node.
+  const order: string[] = [];
+  const typed = later(0);
+  const held: any = later(0);
+  const a = typed.then(() => order.push("typed 1")).then(() => order.push("typed 2"));
+  const b = held.then(() => order.push("any 1")).then(() => order.push("any 2"));
+  await a;
+  await b;
+  console.log(order.join(", "));
+}
+main();

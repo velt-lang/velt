@@ -17,7 +17,6 @@ mod catch;
 mod gate;
 mod losers;
 mod micro;
-mod module_state;
 mod node;
 mod order;
 mod set;
@@ -32,11 +31,6 @@ pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait
 pub use losers::velt_rt_fut_detach;
 pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
 pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
-pub(crate) use module_state::{
-    held as module_held, mutex_locked, mutex_unlocked, release_outside as module_release_outside,
-    touch as module_touch, used as module_used,
-};
-pub use module_state::{velt_rt_module_with, velt_rt_module_with_end};
 pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
 
 use std::cell::Cell;
@@ -61,9 +55,6 @@ struct TaskCx {
     id: *mut u64,
     /// The task's timers (none until its first `sleep`; timers.rs).
     timers: *mut Option<Arc<Timers>>,
-    /// Whether the task uses module state, and whether this poll holds the module lock
-    /// (module_state.rs).
-    module: module_state::PollState,
     /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
     /// can only have been woken by the poll's own code, never by a timer or another event.
     turn: u32,
@@ -189,9 +180,8 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers, its turn, and
-/// whether it touched module state (in the padding: the size stays 32 bytes).
-struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32, bool);
+/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
+struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
 
 const _: () = assert!(std::mem::size_of::<SetPtr>() == 32);
 
@@ -199,7 +189,7 @@ const _: () = assert!(std::mem::size_of::<SetPtr>() == 32);
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0, false);
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -209,16 +199,11 @@ impl SetPtr {
     /// `waker` must stay valid during the call.
     unsafe fn enter(&mut self, waker: *const Waker, root: &mut dyn FnMut()) {
         self.3 = next_turn(self.3);
-        let took = module_state::start_poll(self.4);
         let tcx = TaskCx {
             set: &mut self.0,
             waker,
             id: &mut self.1,
             timers: &mut self.2,
-            module: module_state::PollState {
-                touched: &mut self.4,
-                took: Cell::new(took),
-            },
             turn: self.3,
             micro_jobs: Cell::new(0),
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
@@ -268,8 +253,6 @@ impl SetPtr {
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.leave();
         }
-        // Last: the module lock this poll took (module_state.rs).
-        module_state::end_poll(tcx.module.took.get());
     }
 
     /// Hand the set over if promises in it are still running (it is dropped otherwise).
@@ -289,13 +272,7 @@ impl Drop for SetPtr {
         if !self.0.is_null() {
             let set = self.0;
             // SAFETY: created by `Box::into_raw` in `velt_rt_fut_start`, owned by `self`.
-            let free = || drop(unsafe { Box::from_raw(set) });
-            // Promises of a task that used module state may hold objects from there.
-            if self.4 {
-                module_state::with_lock(free);
-            } else {
-                free();
-            }
+            drop(unsafe { Box::from_raw(set) });
         }
     }
 }
@@ -312,17 +289,6 @@ impl Default for Locals {
 }
 
 impl Locals {
-    /// Run `f`, which drops the task's own state outside a poll (a cancelled task), with the
-    /// module lock when the task used module state (module_state.rs).
-    #[inline]
-    pub(super) fn drop_with(&self, f: impl FnOnce()) {
-        if self.set.4 {
-            module_state::with_lock(f);
-        } else {
-            f();
-        }
-    }
-
     /// Poll the task: its woken local promises, then `root` (with the set current). Local
     /// promises still running when `root` finishes move to an orphan task.
     pub fn poll_root(
@@ -492,10 +458,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_transfer(
     if crate::task::shared::is_shared(f) {
         return crate::task::shared::hand_over(f, transfer);
     }
-    // Its identity stays on this task (task/identity.rs).
-    if node::is_lazy(f) || node::is_started(f) {
-        node::drop_alias(f);
-    }
     // Whatever its result needs, the promise is the other task's now (#1497).
     node::mark_handed_over(f);
     if let Some(t) = transfer {
@@ -513,12 +475,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
         return crate::task::shared::peek(f) as u8;
     }
     node::peek(f) as u8
-}
-
-/// Mark node `f` as standing for another promise (task/identity.rs); false when `f` is not a
-/// node (a runtime leaf), which then cannot.
-pub(crate) unsafe fn mark_aliased(f: *mut VeltFut) -> bool {
-    node::mark_aliased(f)
 }
 
 /// Is `f` a started promise (driven by its task's set)?
@@ -554,26 +510,11 @@ pub(crate) unsafe fn node_loc(f: *mut VeltFut) -> crate::panic::ThrowLoc {
 /// has an id and a set, so the promise is shared on it. Code outside a task enters it for each
 /// hand-over; once that code is done ([`outside_done`]), the set moves to an orphan task that
 /// drives what is still running (until then a wake only queues it).
-///
-/// In a program with module state it is a touched task (module_state.rs): code outside a task
-/// may have put holders of its promises in module state, where tasks holding the module lock
-/// use them (task/shared.rs `on_its_task`), so each of its polls takes the lock too, here and
-/// in the orphan.
 static OUTSIDE_HOME: parking_lot::Mutex<SetPtr> = parking_lot::Mutex::new(SetPtr::NONE);
 
 /// Run `f` (outside a task) as a step of the task of [`OUTSIDE_HOME`].
 pub(crate) fn in_outside_home(f: impl FnOnce()) {
-    if module_state::used() {
-        // The module lock first, then the home's: the order every taker of both keeps.
-        module_state::with_lock(|| outside_home_step(f));
-    } else {
-        outside_home_step(f);
-    }
-}
-
-fn outside_home_step(f: impl FnOnce()) {
     let mut home = OUTSIDE_HOME.lock();
-    home.4 |= module_state::used();
     // Its promises may start timers and I/O, which need the runtime.
     let _rt = super::runtime::enter();
     let mut f = Some(f);
@@ -588,10 +529,9 @@ fn outside_home_step(f: impl FnOnce()) {
 }
 
 /// Code outside a task is done (`main` returned): the promises the outside home runs go on in
-/// an orphan task, a touched one when the program has module state ([`OUTSIDE_HOME`]).
+/// an orphan task ([`OUTSIDE_HOME`]).
 pub(crate) fn outside_done() {
     let mut home = std::mem::replace(&mut *OUTSIDE_HOME.lock(), SetPtr::NONE);
-    home.4 |= module_state::used();
     if let Some(set) = home.take_busy() {
         Orphan::spawn(set);
     }
@@ -614,10 +554,6 @@ pub unsafe extern "C-unwind" fn velt_rt_futs_handled(
 ) {
     for i in 0..n as usize {
         let f = *futs.add(i);
-        if node::is_started(f) && node::is_aliased(f) {
-            // A combinator handling a converted promise handles the promise it stands for.
-            node::alias_claimed(f);
-        }
         node::mark_handled(f, quiet_drop);
     }
 }

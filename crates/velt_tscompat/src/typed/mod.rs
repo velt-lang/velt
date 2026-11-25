@@ -3,7 +3,7 @@
 //! walk over each module ([`velt_syntax::visit`]) hands them.
 //!
 //! - [`numbers`] for `int-division`, `default-sort` (with the call arguments [`args`] collects);
-//! - [`templates`] for `object-in-template`, `json-map`;
+//! - [`templates`] for `object-in-template`;
 //! - [`strings`] for `map-iter-as-array`;
 //! - [`globals`] for `velt-global`, `velt-member`, with the prelude's classification in
 //!   [`prelude`];
@@ -227,7 +227,6 @@ impl<'a> Visit<'a> for Walk<'a> {
                 ..
             } => {
                 numbers::call(e, callee, args, t);
-                templates::call(callee, args, t);
                 args::call(callee, args, t);
                 globals::call(callee, type_args, t);
             }

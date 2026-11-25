@@ -27,12 +27,9 @@ function check(label, got, want) {
   }
 }
 
-function checkOnLinux(label, got, want) {
-  console.log(label, "checked on Linux, not on macOS (#3573)");
-  if (LINUX && got != want) {
-    console.log("  got: ", got);
-    console.log("  want:", want);
-  }
+function syncThrown(file, args) {
+  const fields = `ENOEXEC -8 spawnSync ${file} ${file} ${JSON.stringify(args)}`;
+  return `error ${fields} | spawnSync ${file} ENOEXEC`;
 }
 
 function sync(file, args, opts, dir) {
@@ -64,13 +61,24 @@ async function main() {
   const path = { ...process.env, PATH: "bin" };
   const thrown = "error ENOEXEC -8 spawn none none | spawn ENOEXEC";
 
-  // Node's spawnSync (Velt's execSync): checked on Linux only (#3573).
+  // Node's spawnSync (Velt's execSync).
   let got = sync("./bin/script", ["a", "b c"], { cwd: dir }, dir);
-  checkOnLinux("execSync:", got, "ran 3 zero=./bin/script count=2 args=a b c to stderr");
+  const syncWant = "ran 3 zero=./bin/script count=2 args=a b c to stderr";
+  check("execSync as Node:", got, LINUX ? syncWant : syncThrown("./bin/script", ["a", "b c"]));
   got = sync(`${dir}/bin/script`, ["x"], {}, dir);
-  checkOnLinux("execSync absolute:", got, "ran 3 zero=<dir>/bin/script count=1 args=x to stderr");
+  check(
+    "execSync absolute as Node:",
+    got,
+    LINUX
+      ? "ran 3 zero=<dir>/bin/script count=1 args=x to stderr"
+      : syncThrown("<dir>/bin/script", ["x"]),
+  );
   got = sync("script", ["y"], { cwd: dir, env: path }, dir);
-  checkOnLinux("execSync in PATH:", got, "ran 3 zero=bin/script count=1 args=y to stderr");
+  check(
+    "execSync in PATH as Node:",
+    got,
+    LINUX ? "ran 3 zero=bin/script count=1 args=y to stderr" : syncThrown("script", ["y"]),
+  );
 
   got = await run("./bin/script", ["a", "b c"], { cwd: dir }, dir);
   const execWant = "ran 3 zero=./bin/script count=2 args=a b c to stderr";

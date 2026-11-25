@@ -1,0 +1,1 @@
+partial_generic_method.velt:8:10: error: `Partial<Store>` is not supported yet: method `get` is generic

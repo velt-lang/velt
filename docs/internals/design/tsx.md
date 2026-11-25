@@ -179,7 +179,6 @@ Accepted by `tsc`, but behaves differently (all errors):
 | `int-division` | `/` (and `/=`) whose operands have declared integer types: Velt truncates | `Math.trunc(a / b)` |
 | `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | `(a, b) => a - b`, not for unsigned elements |
-| `json-map` | `JSON.stringify` of a value holding a `Map` (in a field, element or union member) | |
 
 How the rules decide:
 

@@ -201,9 +201,12 @@ export function writeTree(out: string, tree: JsonTree): void {
   }
 }
 
-// `writeTree`'s byte buffer: `n` bytes of `buf` written, `extra` of them beyond their UTF-16
-// units (non-ASCII text copied in), and the last byte written (to tell an object's first member).
-class TreeWriter {
+/**
+ * `writeTree`'s byte buffer: `n` bytes of `buf` written, `extra` of them beyond their UTF-16
+ * units (non-ASCII text copied in), and the last byte written (to tell an object's first member). Handed to a string builder in chunks (`flush`); a caller
+ * flushes once `n` passes `OUT_CAP` (every write but `text` needs at most `OUT_ROOM` bytes).
+ */
+export class TreeWriter {
   buf: u8[];
   n: usize = 0;
   extra: u64 = 0;
@@ -221,7 +224,7 @@ class TreeWriter {
     this.last = b;
   }
 
-  // Hands the bytes so far to the builder `out`.
+  /** Hands the bytes so far to the builder `out`. */
   flush(out: string): void {
     if (this.n > 0) {
       const len = this.n as u64;
@@ -232,8 +235,10 @@ class TreeWriter {
     }
   }
 
-  // `s` quoted: copied into the buffer when it needs no escape and fits, else written by the
-  // writer's escaping code after a flush.
+  /**
+   * `s` quoted: copied into the buffer when it needs no escape and fits, else written by the
+   * writer's escaping code after a flush.
+   */
   @inline("always")
   text(out: string, s: string): void {
     const len = strByteLen(s);

@@ -1,0 +1,68 @@
+// check: no leaks
+// requires: unix
+// A caught panic drops the siblings of an inline `Promise.all` that wait at a yield when it comes
+// (#3706): their cancels drop their yields' records (`schedYieldDrop`), so every block is freed.
+// Flat and nested, with `catchPanic` called from a started promise and from `main`.
+import { catchPanic, PanicError } from "velt/task";
+
+async function yields(name: string, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) {
+    console.log(`${name} yield ${i}`);
+    await yieldNow();
+  }
+  console.log(`${name} done`);
+  return turns;
+}
+
+function fail(why: string): number {
+  panic(why);
+}
+
+async function panics(name: string, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) {
+    console.log(`${name} yield ${i}`);
+    await yieldNow();
+  }
+  return fail(name);
+}
+
+async function flat(): Promise<number> {
+  const r = await Promise.all([yields("a", 4), panics("p", 1), yields("b", 3)]);
+  return r[0];
+}
+
+async function inner(): Promise<number> {
+  const r = await Promise.all([yields("d", 4), panics("q", 1)]);
+  return r[0];
+}
+
+async function nested(): Promise<number> {
+  const r = await Promise.all([yields("c", 3), inner()]);
+  return r[0];
+}
+
+async function shapes(where: string): Promise<void> {
+  for (const shape of ["flat", "nested"]) {
+    try {
+      if (shape == "flat") {
+        await catchPanic(() => flat());
+      } else {
+        await catchPanic(() => nested());
+      }
+    } catch (e) {
+      console.log(`${where} ${shape}: caught ${e instanceof PanicError}`);
+    }
+    // More turns than any sibling had left: a sibling that went on would print here.
+    for (let i = 0; i < 6; i++) {
+      await yieldNow();
+    }
+    console.log(`${where} ${shape}: after`);
+  }
+}
+
+async function main() {
+  // Stored, so `catchPanic` is called from a started promise.
+  const p = shapes("started");
+  await p;
+  await shapes("main");
+}

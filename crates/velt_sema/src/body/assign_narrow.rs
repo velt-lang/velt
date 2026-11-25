@@ -38,8 +38,8 @@ impl FnCx<'_, '_> {
                 _ => return,
             };
         }
-        if let H::Match { arms, .. } = &inner.kind {
-            return self.narrow_to_retagged(token, ty, inner.ty, arms);
+        if matches!(inner.kind, H::Match { .. } | H::If { .. } | H::Block(_)) {
+            return self.narrow_to_branches(token, ty, inner);
         }
         let H::Variant { def, variant, .. } = &inner.kind else {
             return;
@@ -66,20 +66,18 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// A union value of some of the members of `token`'s union type, re-tagged as that union
-    /// (`result = await result` of a `R | Promise<R>` where `R` is `A | B`): those members.
-    fn narrow_to_retagged(
-        &mut self,
-        token: LocalId,
-        ty: hir::TyId,
-        vty: hir::TyId,
-        arms: &[hir::Arm],
-    ) {
+    /// A union value made of branches that each give some of the members of `token`'s union
+    /// type: a re-tag (`result = await result` of a `R | Promise<R>` where `R` is `A | B`), or
+    /// a conditional, `||` or `&&` (`x &&= "c"` on `"" | "a" | "c"` after `x = s` with
+    /// `s: "" | "a"`, #3370): those members.
+    fn narrow_to_branches(&mut self, token: LocalId, ty: hir::TyId, v: &hir::Expr) {
         let union = self.cx.ty.core(ty).unwrap_or(ty);
         let Some((udef, _)) = self.cx.union_def(union) else {
             return;
         };
-        if vty != union || self.token_path(token).is_some() || self.token_global_ty(token).is_some()
+        if v.ty != union
+            || self.token_path(token).is_some()
+            || self.token_global_ty(token).is_some()
         {
             return;
         }
@@ -87,18 +85,36 @@ impl FnCx<'_, '_> {
         // view whatever is assigned.
         let n = self.cx.union_members(union).map_or(0, |ms| ms.len() as u32);
         let mut vs = vec![];
-        for a in arms {
-            match &a.body.kind {
-                H::Variant { def, variant, .. } if *def == udef && *variant < n => {
-                    vs.push(*variant)
-                }
-                _ if self.cx.ty.is_bottom(a.body.ty) => {}
-                _ => return,
-            }
+        if !self.branch_variants(v, udef, n, &mut vs) {
+            return;
         }
         vs.sort_unstable();
         vs.dedup();
         self.narrow(&Fact::Members(token, vs));
+    }
+
+    /// The members (variants below `n` of union `udef`) that value `e` may be, gathered into
+    /// `vs` through its branches; false when some branch gives something else.
+    fn branch_variants(&self, e: &hir::Expr, udef: hir::DefId, n: u32, vs: &mut Vec<u32>) -> bool {
+        if self.cx.ty.is_bottom(e.ty) {
+            return true;
+        }
+        match &e.kind {
+            H::Variant { def, variant, .. } if *def == udef && *variant < n => {
+                vs.push(*variant);
+                true
+            }
+            H::Match { arms, .. } => {
+                (arms.iter()).all(|a| self.branch_variants(&a.body, udef, n, vs))
+            }
+            H::If { then, els, .. } => {
+                self.branch_variants(then, udef, n, vs) && self.branch_variants(els, udef, n, vs)
+            }
+            H::Block(b) => {
+                (b.value.as_deref()).is_some_and(|x| self.branch_variants(x, udef, n, vs))
+            }
+            _ => false,
+        }
     }
 }
 

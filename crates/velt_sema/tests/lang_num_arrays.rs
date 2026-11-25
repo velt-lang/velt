@@ -176,29 +176,31 @@ fn float_tables_and_local_arrays_are_one_const_array() {
 
 #[test]
 fn an_element_out_of_range_is_reported_where_it_is() {
-    // The messages and positions of the checker before #2421 (`velt check` of the same files).
+    // The messages and positions of the checker before #2421 (`velt check` of the same files),
+    // for element types whose arrays don't convert a number literal (`u64`, `i64`; #3182).
     let src = format!(
-        "const T: u8[] = {};\nconsole.log(T.length);\n",
-        with(7, "256")
+        "const T: u64[] = {};\nconsole.log(T.length);\n",
+        with(7, "18446744073709551616")
     );
     let (diags, _) = same(&src);
     assert!(
-        diags.contains("main.velt:1:39: error: literal out of range for `u8`"),
+        diags.contains("main.velt:1:40: error: literal out of range for `u64`"),
         "{diags}"
     );
-    assert!(diags
-        .contains("the literal `256` does not fit into the type `u8` whose range is `0..=255`"));
+    assert!(diags.contains(
+        "the literal `18446744073709551616` does not fit into the type `u64` whose range is"
+    ));
     let src = format!(
-        "function main() {{\n  const t: i8[] = {};\n  console.log(t.length);\n}}\n",
-        with(3, "-129")
+        "function main() {{\n  const t: i64[] = {};\n  console.log(t.length);\n}}\n",
+        with(3, "-9223372036854775809")
     );
     let (diags, _) = same(&src);
     assert!(
-        diags.contains("main.velt:2:30: error: literal out of range for `i8`"),
+        diags.contains("main.velt:2:31: error: literal out of range for `i64`"),
         "{diags}"
     );
     let src = format!(
-        "const T: u32[] = {};\nconsole.log(T.length);\n",
+        "const T: u64[] = {};\nconsole.log(T.length);\n",
         with(5, "2.5")
     );
     let (diags, _) = same(&src);
@@ -207,25 +209,37 @@ fn an_element_out_of_range_is_reported_where_it_is() {
         "{diags}"
     );
     let src = format!(
-        "const T: u16[] = {};\nconsole.log(T.length);\n",
+        "const T: u64[] = {};\nconsole.log(T.length);\n",
         with(9, "-1")
     );
     let (diags, _) = same(&src);
     assert!(
-        diags.contains("main.velt:1:46: error: cannot apply unary operator `-` to type `u16`"),
+        diags.contains("main.velt:1:46: error: cannot apply unary operator `-` to type `u64`"),
         "{diags}"
     );
-    // The last element, and one past `u64`'s range in an `i64` table.
-    let src = format!(
-        "const T: u8[] = {};\nconsole.log(T.length);\n",
-        with(19, "300")
-    );
-    assert!(same(&src).0.contains("literal out of range for `u8`"));
+    // One past `u64`'s range in an `i64` table.
     let src = format!(
         "const T: i64[] = {};\nconsole.log(T.length);\n",
         with(0, "9223372036854775808")
     );
     assert!(same(&src).0.contains("literal out of range for `i64`"));
+}
+
+/// In an array of `u8`, `i8`, `u16`, `i16`, `u32` or `i32`, a number literal outside the range,
+/// negative or fractional converts as the typed array stores a number (#3182), packed or not:
+/// no diagnostics, and the same HIR.
+#[test]
+fn a_literal_an_integer_array_converts_checks_as_unpacked() {
+    for (ty, odd) in [("u8", "300"), ("i8", "-129"), ("u16", "-1"), ("u32", "2.5")] {
+        for at in [0, 7, 19] {
+            let src = format!(
+                "const T: {ty}[] = {};\nconsole.log(T[{at}]);\n",
+                with(at, odd)
+            );
+            let (diags, _) = same(&src);
+            assert!(diags.is_empty(), "{src}\n{diags}");
+        }
+    }
 }
 
 #[test]

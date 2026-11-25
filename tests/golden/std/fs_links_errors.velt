@@ -4,6 +4,7 @@
 // node:fs (fs_links_errors.mjs in the pull request that added it, #2196). `realpathSync`'s error
 // is printed by code only: Node's resolves the path in JavaScript and names its first missing
 // part (`lstat '/abs/…'`), where velt/fs's, as Node's `fs.promises.realpath`, names the path.
+import { cwd } from "velt/process";
 import {
   existsSync,
   mkdir,
@@ -17,12 +18,17 @@ import {
   writeFile,
 } from "velt/fs";
 
+/** The message as Node prints it on Linux: on Windows it names the path absolute, with `\`. */
+function portable(m: string): string {
+  return m.split(`${cwd()}\\`).join("").split("\\").join("/");
+}
+
 async function tryIt(label: string, f: () => Promise<void>) {
   try {
     await f();
     console.log(label, "ok");
   } catch (e) {
-    console.log(label, e.code, e.message);
+    console.log(label, e.code, portable(e.message));
   }
 }
 
@@ -39,7 +45,7 @@ async function main() {
   try {
     symlinkSync("a.txt", `${d}/no/link`);
   } catch (e) {
-    console.log("symlinkSync missing dir", e.code, e.message);
+    console.log("symlinkSync missing dir", e.code, portable(e.message));
   }
   await tryIt("readlink file", async () => {
     await readlink(`${d}/a.txt`);
@@ -50,7 +56,7 @@ async function main() {
   try {
     readlinkSync(`${d}/nope`);
   } catch (e) {
-    console.log("readlinkSync missing", e.code, e.message);
+    console.log("readlinkSync missing", e.code, portable(e.message));
   }
   await tryIt("realpath missing", async () => {
     await realpath(`${d}/nope`);

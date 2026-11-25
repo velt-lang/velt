@@ -138,7 +138,7 @@ fn a_generator_that_resolves_to_another_file_is_run_again() {
     assert_eq!(run(&dir, &cache), "goodbye User\n");
 }
 
-/// An instance a generator refuses (`JSON.stringify` of a `Map<i32, i32>`) is reported once,
+/// An instance a generator refuses (`JSON.stringify` of a `Promise<i32>`) is reported once,
 /// also when later rounds of generating (generic methods reached through an interface) ask
 /// for it again.
 #[test]
@@ -147,11 +147,11 @@ fn a_refused_instance_is_reported_once() {
     let main = tmp.path().join("main.velt");
     std::fs::write(
         &main,
-        "class Client {\n\
+        "interface Q { query<P>(sql: string, params: P): Promise<string>; }\n\
+         class Client implements Q {\n\
          \x20 async query<P>(sql: string, params: P): Promise<string> { return sql + JSON.stringify(params); }\n\
          }\n\
-         interface Q { query<P>(sql: string, params: P): Promise<string>; }\n\
-         function f(m: Map<i32, i32>) { console.log(JSON.stringify(m)); }\n\
+         function f(p: Promise<i32>) { console.log(JSON.stringify(p)); }\n\
          async function main() {\n\
          \x20 const c = new Client();\n\
          \x20 console.log(await c.query(\"x\", [1]));\n\
@@ -168,8 +168,11 @@ fn a_refused_instance_is_reported_once() {
         .output()
         .expect("run velt");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let reports = stderr.matches("`Map<i32, i32>` has no JSON form").count();
+    let reports = stderr.matches("`Promise<i32>` has no JSON form").count();
     assert_eq!(reports, 1, "{stderr}");
+    // The refused instance is the program's only error: the rest checks, so the later rounds
+    // (the generic method reached through `Q`) run.
+    assert_eq!(stderr.matches("error: ").count(), 1, "{stderr}");
 }
 
 /// A generator that lists a type's fields: its output changes when the type does.
