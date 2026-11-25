@@ -17,7 +17,7 @@ import {
 import { JSON } from "./json";
 
 /** `%j` of `value`. */
-export function jsonAny(value: any): string {
+function jsonAny(value: any): string {
   const t = typeof value;
   if (t === "undefined" || t === "symbol" || t === "function") {
     return "undefined";

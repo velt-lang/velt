@@ -21,7 +21,7 @@ function numberText(n: number): string {
  * object with a `toString()` of its own by it, and any other object (and `null`) inspected at
  * depth 0. (No `===` of the `any`: a program comparing `any` values pays for their identity.)
  */
-export function consoleString(v: any): string {
+function consoleString(v: any): string {
   const t = typeof v;
   if (t === "number") {
     return numberText(v as number);
@@ -46,7 +46,7 @@ export function consoleString(v: any): string {
  * `%i` of a number: `parseInt(String(n))` without parsing, `n` without its fraction (`0` for
  * `-0`); a number `String` writes with an exponent (`1e+21`, `5e-7`) gives the digit before it.
  */
-export function consoleInteger(n: number): number {
+function consoleInteger(n: number): number {
   const a = Math.abs(n);
   if (n != n || a == Infinity) {
     return NaN;
@@ -59,12 +59,12 @@ export function consoleInteger(n: number): number {
 }
 
 /** `%f` of a number: `parseFloat(String(n))`, which is `n`, but `0` for `-0`. */
-export function consoleFloat(n: number): number {
+function consoleFloat(n: number): number {
   return n == 0 ? 0 : n;
 }
 
 /** `%d` of `v`: `Number(v)`, but `NaN` for a symbol (which `Number` would throw for). */
-export function consoleNumber(v: any): number {
+function consoleNumber(v: any): number {
   return typeof v === "symbol" ? NaN : Number(v);
 }
 

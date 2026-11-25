@@ -80,6 +80,6 @@ export class JSON {
  * `JSON.stringify(value)`, called by the compiler for a `%j` in a `console.log` format string
  * (velt_sema `console_format.rs`): by its path, so a program's own `JSON` does not hide it.
  */
-export function jsonText<T>(value: T): string {
+function jsonText<T>(value: T): string {
   return JSON.stringify(value);
 }
