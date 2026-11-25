@@ -45,11 +45,14 @@ tests/golden/lang/proxy_trap_throws_through_helpers.velt           #2943 units
 tests/golden/std/db_rows_source_throws.velt                        #2943 units
 
 # Fail in a run by units, from the whole suite (the nightly's golden-units, run 45498934030 on
-# 5d06f3628, all eight shards). std's own calls of a std method a program's override gives a
+# 5d06f3628, all eight shards), and of the goldens main added or changed since, run by units
+# with main merged in (78ed9bf63). std's own calls of a std method a program's override gives a
 # slot (#3684):
+tests/golden/lang/std_virtual_override_writes.velt                 #3684 units
 tests/golden/std/date_subclass_text.velt                           #3684 units
 tests/golden/std/error_name_getter.velt                            #3684 units
 tests/golden/std/error_name_getter_uncaught.velt                   #3684 units
+tests/golden/std/set_ctor_subclass_add.velt                        #3684 units
 # The others (#2943's U6 list):
 examples/apps/todo-api/demo.velt                                   #2943 units
 examples/apps/todo-api/demo_sqlite.velt                            #2943 units
@@ -58,6 +61,7 @@ tests/golden/lang/any_function_properties_life.velt                #2943 units
 tests/golden/lang/any_function_properties_mutex.velt               #2943 units
 tests/golden/lang/any_not_fn_catch.velt                            #2943 units
 tests/golden/lang/any_operators_objects.velt                       #2943 units
+tests/golden/lang/any_promise_cast_optional.velt                   #2943 units
 tests/golden/lang/any_string_array.velt                            #2943 units
 tests/golden/lang/any_text_lists.velt                              #2943 units
 tests/golden/lang/any_to_primitive.velt                            #2943 units
@@ -85,11 +89,19 @@ tests/golden/lang/union_view_live.velt                             #2943 units
 tests/golden/std/bigint_errors.velt                                #2943 units
 tests/golden/std/catch_panic.velt                                  #2943 units
 tests/golden/std/catch_panic_after_timer.velt                      #2943 units
+tests/golden/std/catch_panic_await_shapes.velt                     #2943 units
 tests/golden/std/catch_panic_in_clone.velt                         #2943 units
 tests/golden/std/catch_panic_in_clone_cycle.velt                   #2943 units
+tests/golden/std/catch_panic_join_yield.velt                       #2943 units
+tests/golden/std/catch_panic_nested_shapes.velt                    #2943 units
 tests/golden/std/catch_panic_promises.velt                         #2943 units
+tests/golden/std/catch_panic_returned_shapes.velt                  #2943 units
 tests/golden/std/catch_panic_task_freed.velt                       #2943 units
 tests/golden/std/catch_panic_with.velt                             #2943 units
+tests/golden/std/catch_panic_with_pinned.velt                      #2943 units
+tests/golden/std/catch_panic_yield_siblings.velt                   #2943 units
+tests/golden/std/console_format.velt                               #2943 units
+tests/golden/std/console_format_any.velt                           #2943 units
 tests/golden/std/http_server/http_request_after_handler.velt       #2943 units
 tests/golden/std/http_server/http_request_body_after_response.velt #2943 units
 tests/golden/std/inspect_custom_panic.velt                         #2943 units
