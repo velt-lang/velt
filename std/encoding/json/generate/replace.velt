@@ -1,0 +1,277 @@
+// velt/encoding/json (internal): the generators of `replaceJson<T>`, `replaceJsonPlain<T>` and
+// `replaceJsonTop<T>` (generated.velt), the typed part of the walk of `JSON.stringify(value,
+// replacer)` (replace_ops.velt): one function per type that calls the value's `toJSON(key)`,
+// passes the replacer the value as `writeJsonRaw` writes it, and, while the replacer returns
+// that view unedited, goes on through the value's members in the order `writeJson` writes them.
+// `replaceJsonPlain` is the same after a `toJSON` has run: what it returned is not converted
+// again.
+
+import { InstanceRequest, Model, Output, Type } from "velt/generate";
+import {
+  className,
+  dynamicArms,
+  isDynamic,
+  rawEmpty,
+  toJsonMethod,
+  writable,
+  writesEmpty,
+} from "velt/encoding/json/generate/facts";
+import { stringifyProblem } from "velt/encoding/json/generate/check";
+import { entryRead, fieldRead, writtenFields } from "velt/encoding/json/generate/values";
+import { writeRawBody } from "velt/encoding/json/generate/write";
+
+/** The parameters of a generated walk function: value, key, view, replacer, depth. */
+class Walk {
+  v: string;
+  key: string;
+  raw: string;
+  f: string;
+  depth: string;
+
+  constructor(v: string, key: string, raw: string, f: string, depth: string) {
+    this.v = v;
+    this.key = key;
+    this.raw = raw;
+    this.f = f;
+    this.depth = depth;
+  }
+}
+
+/**
+ * The call that walks `v` of model type `id` under `key` (`raw`: its view, or `null`); `hook`:
+ * its `toJSON` is still to run.
+ */
+function walkCall(
+  out: Output,
+  model: Model,
+  id: i64,
+  hook: bool,
+  v: string,
+  key: string,
+  raw: string,
+  w: Walk,
+  depth: string,
+): string {
+  const t = model.type(id);
+  if (isDynamic(t)) {
+    return `replaceJsonAny(${v}, ${key}, ${raw}, ${w.f}, ${depth}, ${hook})`;
+  }
+  if (t.kind == "interface") {
+    return `replaceJsonAny(dynamicOf(${v}), ${key}, ${raw}, ${w.f}, ${depth}, ${hook})`;
+  }
+  const name = out.instance(hook ? "replaceJson" : "replaceJsonPlain", [id]);
+  return `${name}(${v}, ${key}, ${raw}, ${w.f}, ${depth})`;
+}
+
+/** Is a value of `t` walked as an object of its fields (once its `toJSON`, if any, has run)? */
+function hasFields(model: Model, t: Type): bool {
+  const k = t.kind;
+  if (k != "object" && k != "struct" && k != "class") {
+    return false;
+  }
+  return toJsonMethod(t) < 0 || !rawEmpty(model, t);
+}
+
+/**
+ * Writes the code that returns the walk of a value that is some other type's: a dynamic value,
+ * an option, a `shared`, a union's member, a proxy, a subclass's instance, or what `toJSON`
+ * returns; false when the value itself is what the replacer gets.
+ */
+function dispatch(out: Output, model: Model, id: i64, hook: bool, w: Walk): bool {
+  const t = model.type(id);
+  const v = w.v;
+  if (isDynamic(t) || t.kind == "interface") {
+    const call = walkCall(out, model, id, hook, v, w.key, w.raw, w, w.depth);
+    out.line(`return ${call};`);
+    return true;
+  }
+  if (t.kind == "option") {
+    out.line(`if (${v} == null) { return jsonReplacedNull(${w.key}, ${w.raw}, ${w.f}, ${w.depth}); }`);
+    const call = walkCall(out, model, t.args[0], hook, v, w.key, w.raw, w, w.depth);
+    out.line(`return ${call};`);
+    return true;
+  }
+  if (t.kind == "shared") {
+    const call = walkCall(out, model, t.args[0], hook, v, w.key, w.raw, w, w.depth);
+    out.line(`return ${call};`);
+    return true;
+  }
+  if (t.kind == "union") {
+    for (let i: i64 = 0; i < (t.arms.length as i64); i++) {
+      const call = walkCall(out, model, t.arms[i], hook, v, w.key, w.raw, w, w.depth);
+      out.line(`if (__arm(${v}, ${i})) { return ${call}; }`);
+    }
+    out.line(`return undefined;`);
+    return true;
+  }
+  const classLike = t.kind == "object" || t.kind == "struct" || t.kind == "class";
+  if (!classLike && !writesEmpty(t) && t.kind != "date" && t.kind != "opaque") {
+    return false;
+  }
+  if (t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
+    // JSON data: its `toJSON()` is its text, as `writeJson` writes it; its members are replaced.
+    return false;
+  }
+  if (t.mayBeProxy) {
+    const call = `replaceJsonAny(dynamicOf(${v}), ${w.key}, ${w.raw}, ${w.f}, ${w.depth}, ${hook})`;
+    out.line(`if (isProxy(${v})) { return ${call}; }`);
+  }
+  // A class value is walked as its dynamic class, most derived first (as `writeJson` writes it).
+  for (let i = (t.subclasses.length as i64) - 1; i >= 0; i--) {
+    const s = model.type(t.subclasses[i]);
+    if (!writable(model, s.id, [])) {
+      continue;
+    }
+    const call = walkCall(out, model, s.id, hook, v, w.key, w.raw, w, w.depth);
+    out.line(`if (${v} instanceof ${className(s)}) { return ${call}; }`);
+  }
+  const m = toJsonMethod(t);
+  if (hook && m >= 0) {
+    const ret = t.methods[m].ret;
+    const arg = t.methods[m].params > 0 ? w.key : "";
+    out.line(`const j = ${v}.toJSON(${arg});`);
+    // What it returns is walked as it is (`return this` too): its own `toJSON` isn't called.
+    const call = walkCall(out, model, ret, false, "j", w.key, "null", w, w.depth);
+    out.line(`return ${call};`);
+    return true;
+  }
+  return false;
+}
+
+/** The body of `replaceJson` (`hook`) or `replaceJsonPlain`. */
+function body(req: InstanceRequest, out: Output, hook: bool): void {
+  const model = req.model;
+  const id = req.args[0];
+  const t = model.type(id);
+  const p = req.params;
+  const w = new Walk(p[0], p[1], p[2], p[3], p[4]);
+  const v = w.v;
+  out.line(`jsonReplacerDepth(${w.depth});`);
+  if (dispatch(out, model, id, hook, w)) {
+    return;
+  }
+  const k = t.kind;
+  const container = k == "array" || k == "tuple" || k == "record" || hasFields(model, t);
+  const leaf =
+    k == "number" ||
+    k == "string" ||
+    k == "boolean" ||
+    k == "literal" ||
+    k == "enum" ||
+    k == "void" ||
+    k == "never" ||
+    k == "function" ||
+    k == "opaque" ||
+    k == "date" ||
+    writesEmpty(t) ||
+    k == "class" ||
+    k == "object" ||
+    k == "struct";
+  if (!container && !leaf) {
+    // No JSON form: sema reports the call that needs it (the code is never run).
+    const msg = out.literal(`JSON.stringify of \`${t.display}\``);
+    out.line(`panic(${msg});`);
+    return;
+  }
+  // The replacer's view: its parent's holds it, or it is written now.
+  const write = out.instance("writeJsonRaw", [id]);
+  out.line(`let text = "";`);
+  out.line(`if (${w.raw} == null) {`);
+  out.line(`const sb = new StringBuilder();`);
+  out.line(`${write}(sb, ${v}, ${w.key});`);
+  out.line(`text = sb.take();`);
+  out.line(`}`);
+  out.line(`const view = jsonReplacerView(${w.raw}, text);`);
+  out.line(`const r = ${w.f}(${w.key}, view);`);
+  out.line(`if (r == undefined) { return undefined; }`);
+  if (!container) {
+    out.line(`return jsonReplacedMembers(r, ${w.f}, ${w.depth});`);
+    return;
+  }
+  out.line(`if (!jsonReplacerKept(r, view)) { return jsonReplacedMembers(r, ${w.f}, ${w.depth}); }`);
+  const d = `${w.depth} + 1`;
+  if (k == "array" || k == "tuple") {
+    out.line(`const out = JsonValue.array();`);
+    if (k == "array") {
+      out.line(`const n = ${v}.length;`);
+      out.line(`for (let i = 0; i < n; i++) {`);
+      const call = walkCall(out, model, t.args[0], true, `${v}[i]`, "`${i}`", "view.at(i)", w, d);
+      out.line(`pushRevived(out, ${call});`);
+      out.line(`}`);
+    } else {
+      for (let i: i64 = 0; i < (t.args.length as i64); i++) {
+        const key = out.literal(`${i}`);
+        const call = walkCall(out, model, t.args[i], true, `${v}[${i}]`, key, `view.at(${i})`, w, d);
+        out.line(`pushRevived(out, ${call});`);
+      }
+    }
+    out.line(`return out;`);
+    return;
+  }
+  out.line(`const out = JsonValue.object();`);
+  if (k == "record") {
+    out.line(`for (const [k, x] of Object.entries(${v})) {`);
+    const [ks, wid] = entryRead(out, model, model.type(t.args[0]), t.args[1]);
+    const call = walkCall(out, model, wid, true, "x", ks, `view.get(${ks})`, w, d);
+    out.line(`setRevived(out, ${ks}, ${call});`);
+    out.line(`}`);
+    out.line(`return out;`);
+    return;
+  }
+  for (const f of writtenFields(model, t)) {
+    const name = out.literal(f.name);
+    const [x, test, wid] = fieldRead(out, model, f, v);
+    const view = `view.get(${name})`;
+    const call =
+      wid < 0
+        ? `replaceJsonAny(${x}, ${name}, ${view}, ${w.f}, ${d}, true)`
+        : walkCall(out, model, wid, true, x, name, view, w, d);
+    if (test.length > 0) {
+      out.line(`if (${test}) { setRevived(out, ${name}, ${call}); }`);
+    } else {
+      out.line(`setRevived(out, ${name}, ${call});`);
+    }
+  }
+  out.line(`return out;`);
+}
+
+/** The generator of `writeJsonRaw<T>(w, value, key)`: the replacer's view of a value. */
+export function writeJsonRaw(req: InstanceRequest, out: Output): void {
+  writeRawBody(req, out);
+}
+
+/** The generator of `replaceJson<T>(value, key, raw, replacer, depth)`. */
+export function replaceJson(req: InstanceRequest, out: Output): void {
+  body(req, out, true);
+}
+
+/** The generator of `replaceJsonPlain<T>(value, key, raw, replacer, depth)`. */
+export function replaceJsonPlain(req: InstanceRequest, out: Output): void {
+  body(req, out, false);
+}
+
+/**
+ * The generator of `replaceJsonTop<T>(value: T, replacer)`, what `JSON.stringify(value,
+ * replacer)` calls: what `writeJsonTop` checks, then the walk from the key `""`.
+ */
+export function replaceJsonTop(req: InstanceRequest, out: Output): void {
+  const model = req.model;
+  const id = req.args[0];
+  const t = model.type(id);
+  const v = req.params[0];
+  const f = req.params[1];
+  const problem = stringifyProblem(model, id);
+  if (problem.length > 0) {
+    out.error(problem, -1);
+    return;
+  }
+  if (isDynamic(t)) {
+    out.line(`checkJsonTop(${v});`);
+  }
+  for (const i of dynamicArms(model, t)) {
+    out.line(`if (__arm(${v}, ${i})) { checkJsonTop(${v}); }`);
+  }
+  const w = new Walk(v, `""`, "null", f, "0");
+  const call = walkCall(out, model, id, true, v, `""`, "null", w, "0");
+  out.line(`return jsonReplacedText(${call});`);
+}

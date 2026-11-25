@@ -1,0 +1,66 @@
+// velt/encoding/json (internal): `JSON.stringify(value, replacer)` (replace_ops.velt): the walk of
+// a typed value, `replaceJson<T>`, and the replacer's view of one, `writeJsonRaw<T>`, generated
+// per type at compile time by velt/encoding/json/generate/replace. The code they generate calls
+// the functions imported here.
+
+import { StringBuilder } from "velt/text/string_builder";
+import { modifies } from "velt/lang/intrinsics/decorators";
+import {
+  appendJsonNumber,
+  appendJsonString,
+  appendJsonUint,
+  appendJsonValue,
+} from "velt/encoding/json/append";
+import { checkJsonTop, jsonPresent } from "velt/encoding/json/any";
+import { writeJsonAnyRaw } from "velt/encoding/json/any_raw";
+import { replaceJsonAny } from "velt/encoding/json/any_replace";
+import { dynamicOf, isProxy } from "velt/reflect";
+import {
+  jsonReplacedMembers,
+  jsonReplacedNull,
+  jsonReplacedText,
+  jsonReplacerDepth,
+  jsonReplacerKept,
+  jsonReplacerView,
+} from "velt/encoding/json/replace_ops";
+import { pushRevived, setRevived } from "velt/encoding/json/value_ops";
+import { JsonValue } from "velt/prelude/json/json_value";
+import { JsonReplacer } from "velt/prelude/json/layout";| undefined;
+
+/**
+ * Appends `value`, whose key in its parent is `key`, as a replacer function sees it: with no
+ * `toJSON` called (one function per type, generated).
+ */
+@modifies("w")
+export declare generated("velt/encoding/json/generate/replace") function writeJsonRaw<T>(
+  w: StringBuilder,
+  value: T,
+  key: string,
+): void;
+
+/**
+ * `value` under `key` walked with `replacer` (`raw`: its view in its parent's, when that holds
+ * it): its `toJSON(key)`, the replacer, then its members (one function per type, generated).
+ */
+export declare generated("velt/encoding/json/generate/replace") function replaceJson<T>(
+  value: T,
+  key: string,
+  raw: JsonValue | null,
+  replacer: JsonReplacer,
+  depth: i64,
+): JsonValue | undefined throws RangeError;
+
+/** `replaceJson` of what a `toJSON` returned: it is not converted again. */
+export declare generated("velt/encoding/json/generate/replace") function replaceJsonPlain<T>(
+  value: T,
+  key: string,
+  raw: JsonValue | null,
+  replacer: JsonReplacer,
+  depth: i64,
+): JsonValue | undefined throws RangeError;
+
+/** The text of `JSON.stringify(value, replacer)`. */
+export declare generated("velt/encoding/json/generate/replace") function replaceJsonTop<T>(
+  value: T,
+  replacer: JsonReplacer,
+): string throws RangeError | TypeError;

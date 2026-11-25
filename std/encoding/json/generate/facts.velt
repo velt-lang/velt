@@ -267,9 +267,10 @@ export function className(t: Type): string {
 /**
  * Can a value of type `id` be written (`seen`: the types being looked at)? A subclass that
  * cannot (a function or a dynamic value in a field, std's private state) is written as the
- * class it is seen as.
+ * class it is seen as. `raw`: written as a replacer sees it, with no `toJSON` called (a value
+ * with one is its fields, or `{}`: always writable).
  */
-export function writable(model: Model, id: i64, seen: i64[]): bool {
+export function writable(model: Model, id: i64, seen: i64[], raw: bool = false): bool {
   if (seen.includes(id)) {
     return true;
   }
@@ -283,30 +284,51 @@ export function writable(model: Model, id: i64, seen: i64[]): bool {
   }
   seen.push(id);
   if (k == "array" || k == "option") {
-    return writable(model, t.args[0], seen);
+    return writable(model, t.args[0], seen, raw);
   }
   if (k == "tuple") {
-    return t.args.every((a) => writable(model, a, seen));
+    return t.args.every((a) => writable(model, a, seen, raw));
   }
   if (k == "union") {
-    return t.arms.every((a) => writable(model, a, seen));
+    return t.arms.every((a) => writable(model, a, seen, raw));
   }
   if (k == "record") {
-    return writable(model, t.args[1], seen);
+    return writable(model, t.args[1], seen, raw);
   }
   if (writesEmpty(t)) {
     return true;
   }
   const m = toJsonMethod(t);
+  if (raw && (m >= 0 || k == "date" || isDynamic(t) || k == "interface" || k == "function")) {
+    return true;
+  }
   if (m >= 0) {
     return writable(model, t.methods[m].ret, seen);
   }
+  return fieldsWritable(model, t, seen, raw);
+}
+
+/**
+ * Does `writeJsonRaw` write a value of `t` with a `toJSON` as `{}`: a `Date` or a std opaque type
+ * (no fields a program sees), or a class whose fields can't be written? A replacer's view of
+ * it then has no members to walk.
+ */
+export function rawEmpty(model: Model, t: Type): bool {
+  if (t.kind == "date" || t.kind == "opaque") {
+    return true;
+  }
+  return !fieldsWritable(model, t, [t.id], true);
+}
+
+/** Can the fields of object, struct or class `t` be written (`writable`'s `seen` and `raw`)? */
+export function fieldsWritable(model: Model, t: Type, seen: i64[], raw: bool): bool {
+  const k = t.kind;
   if (k == "object" || k == "struct" || k == "class") {
     for (const f of t.fields) {
       if (hiddenKey(f) || collectionState(model, t, f)) {
         continue;
       }
-      if (!writable(model, f.type, seen)) {
+      if (!writable(model, f.type, seen, raw)) {
         return false;
       }
     }

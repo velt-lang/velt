@@ -170,7 +170,7 @@ export function jsonRevived(
   return reviver(key, value);
 }
 
-// The edits of `jsonRevived` and the replacer's walk (layout.velt), out of line: inlined, they
+// The edits of `jsonRevived` and the replacer's walk (replace_ops.velt), out of line: inlined, they
 // grow the frame of every level of those recursive walks, and `JSON_CALLBACK_DEPTH` levels must
 // fit on a thread's stack.
 
