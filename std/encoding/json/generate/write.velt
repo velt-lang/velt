@@ -17,7 +17,7 @@
 // values, typed proxies) through any.velt. A recursive object type that meets itself is an
 // error, as in Node.
 
-import { InstanceRequest, Output } from "velt/generate";
+import { InstanceRequest, Model, Output } from "velt/generate";
 import {
   className,
   dynamicArms,
@@ -128,12 +128,7 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
       const ret = t.methods[m].ret;
       const arg = t.methods[m].params > 0 ? key : "";
       out.line(`const j = ${v}.toJSON(${arg});`);
-      if (ret == id) {
-        // `toJSON() { return this; }`: JavaScript writes the fields of the result.
-        writeFields(out, model, t, "j");
-      } else {
-        writeValue(out, model, ret, "j", key);
-      }
+      writeHookResult(out, model, ret, key);
       return;
     }
     const recursive = isRecursive(model, t);
@@ -149,6 +144,32 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
     const msg = out.literal(`JSON.stringify of \`${t.display}\``);
     out.line(`panic(${msg});`);
   }
+}
+
+/**
+ * Writes `j`, what a `toJSON(key)` returned, of type `ret`. JavaScript calls the hook once and
+ * writes its result's own fields, never the result's `toJSON` (#3732): a `return this` would call
+ * it again (forever, for a subclass that inherits the hook), and a result of another class with a
+ * hook would be written through that hook. So a class result is written by its dynamic class,
+ * most derived first, and a class or object with a hook by its fields; anything else as itself.
+ */
+function writeHookResult(out: Output, model: Model, ret: i64, key: string): void {
+  const r = model.type(ret);
+  if (r.kind != "class" && toJsonMethod(r) < 0) {
+    writeValue(out, model, ret, "j", key);
+    return;
+  }
+  for (let i = (r.subclasses.length as i64) - 1; i >= 0; i--) {
+    const s = model.type(r.subclasses[i]);
+    if (!writable(model, s.id, [])) {
+      continue;
+    }
+    out.line(`if (j instanceof ${className(s)}) {`);
+    writeFields(out, model, s, "j");
+    out.line(`return;`);
+    out.line(`}`);
+  }
+  writeFields(out, model, r, "j");
 }
 
 /**

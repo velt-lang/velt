@@ -1,0 +1,69 @@
+// check: no leaks
+// `JSON.stringify` calls a value's `toJSON(key)` once and writes what it returns without calling
+// the result's own `toJSON` (#3732), as Node does: a `toJSON` returning `this`, one a subclass
+// inherits (which called itself until the stack ran out), one returning new data, and one
+// returning an object of another class with a hook of its own, at the top, nested, in arrays,
+// with a key list and with indentation.
+
+let calls: number[] = [];
+
+class Self {
+  v = 1;
+  toJSON(key: string) {
+    calls.push(key.length);
+    return this;
+  }
+}
+
+class Sub extends Self {
+  w = 2;
+}
+
+class Data {
+  v = 3;
+  toJSON() {
+    calls.push(-1);
+    return { data: this.v, kind: "data" };
+  }
+}
+
+class Inner {
+  x = 4;
+  toJSON() {
+    calls.push(-2);
+    return "inner";
+  }
+}
+
+class Outer {
+  toJSON() {
+    calls.push(-3);
+    return new Inner();
+  }
+}
+
+type Holder = { self: Self; list: Self[]; data: Data; outer: Outer };
+
+function show(label: string, text: string | undefined): void {
+  console.log(label, text, calls.length, calls.join(","));
+  calls = [];
+}
+
+show("self", JSON.stringify(new Self()));
+show("sub", JSON.stringify(new Sub()));
+const asBase: Self = new Sub();
+show("sub as base", JSON.stringify(asBase));
+show("data", JSON.stringify(new Data()));
+show("outer", JSON.stringify(new Outer()));
+const holder: Holder = {
+  self: new Sub(),
+  list: [new Self(), new Sub()],
+  data: new Data(),
+  outer: new Outer(),
+};
+show("holder", JSON.stringify(holder));
+show("array", JSON.stringify([new Self(), new Sub(), new Self()]));
+// A key list leaves members out after they are written, so only members without a hook are
+// left out here: Node never calls the hook of one it leaves out (#3767).
+show("keys", JSON.stringify({ self: new Sub(), list: [new Self()], n: 5 }, ["self", "v", "list"]));
+show("indent", JSON.stringify({ a: new Sub() }, null, 1));
