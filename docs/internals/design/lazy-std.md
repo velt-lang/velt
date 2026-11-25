@@ -156,12 +156,15 @@ drives the server's handshake through an interface (`std/net/tls/server_steps.ve
 program that only connects never loads the server's handshake. velt/simd's `extend`s of the
 built-in vector types, which the record layer and the crypto use, may be added in the middle of a
 check too: the rule allows an `extend` of a built-in vector or mask type without type parameters
-or `implements`, which only adds methods to a type no module declares. Code checked before it
-cannot have called those methods. It could change such code only by taking over a call it made
-on the vector type through an earlier block with a method of the same name (a program's blanket
-`extend<T> T`, say): the checker records those calls, and where one would change it refuses the
-module, so the program is checked again with it up front, as for a module the rule refuses
-(`crates/velt_sema/src/collect/vector_extends.rs`, `StdLoads::refuse_served`). So every program that reaches TLS, through a
+or `implements`, which only adds methods to a type no module declares. It can still change code
+checked before it, which may hold a vector without velt/simd (`velt/arch/x86`'s `Vector256` loads
+only part of it): a method or operator looked up on the vector type that an earlier block answered
+(a program's blanket `extend<T> T`, say) and the new block takes over, or that nothing answered
+and the new block would. The checker records every name looked up through `extend` blocks on a
+vector type, found or not, and where the new block declares one it refuses the module, so the
+program is checked again with it up front, as for a module the rule refuses
+(`crates/velt_sema/src/collect/vector_extends.rs`, `StdLoads::refuse_served`; the recovered check of
+a file with syntax errors and the editor's check do the same). So every program that reaches TLS, through a
 `fetch` that can reach `https:` (every `fetch` that follows redirects), `connectTls` or
 `listenTls`, is checked once, with the TLS code added in the middle of the check.
 

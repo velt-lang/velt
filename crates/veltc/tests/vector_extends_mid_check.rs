@@ -125,3 +125,150 @@ fn a_blanket_extend_of_the_programs_meets_velt_simd_in_the_middle_of_the_check()
         );
     }
 }
+
+/// A vector held through `velt/arch/x86`'s `Vector256`, which loads only part of velt/simd: an
+/// operator or method that only the rest of velt/simd gives was looked up and not found before
+/// velt/simd arrived with the TLS code (#3696's second review). The module is refused and the
+/// program checked again with it up front, as on main, wherever the use sits in the source.
+#[test]
+fn a_vector_lookup_nothing_answered_yet_refuses_the_block_that_would() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let programs = [
+        ("operator before", P9, "6\nfailed\n"),
+        ("operator after", P12, "failed\n6\n"),
+        ("method before", P10, "106\nfailed\n"),
+    ];
+    for (name, src, want) in programs {
+        std::fs::write(root.join("main.velt"), src).unwrap();
+        let (ok, err, checks) = build(root, &real);
+        assert!(ok, "{name}: {err}");
+        assert_eq!(
+            checks, 2,
+            "{name}: checked again with velt/simd up front: {err}"
+        );
+        let out = no_window::command(root.join("main.bin").to_str().unwrap())
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), want, "{name}");
+    }
+}
+
+/// `velt check` of a file with a syntax error (the recovered check, `driver/recover.rs`) after a
+/// real takeover: checked again with velt/simd up front, so only the syntax error is reported,
+/// not the abandoned check's findings in std.
+#[test]
+fn the_recovered_check_takes_a_late_refusal_too() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    std::fs::write(root.join("main.velt"), P13).unwrap();
+    let real = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let o = no_window::command(VELT)
+        .args(["check", "main.velt"])
+        .current_dir(root)
+        .env("VELT_STD", &real)
+        .env("VELT_BUILD_CACHE", "0")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "{err}");
+    assert!(err.contains("expected identifier, found `{`"), "{err}");
+    let errors = err.lines().filter(|l| l.contains("error:")).count();
+    assert_eq!(errors, 1, "only the syntax error: {err}");
+}
+
+const P9: &str = r#"import { Vector256 } from "velt/arch/x86";
+import { connectTls } from "velt/net";
+
+async function main() {
+  const bytes: u8[] = [];
+  for (let i = 0; i < 32; i++) {
+    bytes.push(i as u8);
+  }
+  const v = Vector256.loadU8(bytes).lower();
+  const w = v + v;
+  console.log(w.lane(3));
+  try {
+    const s = await connectTls("127.0.0.1:1", {});
+    console.log(s != null);
+  } catch (e) {
+    console.log("failed");
+  }
+}
+"#;
+
+const P12: &str = r#"import { Vector256 } from "velt/arch/x86";
+import { connectTls } from "velt/net";
+
+async function tls() {
+  try {
+    const s = await connectTls("127.0.0.1:1", {});
+    console.log(s != null);
+  } catch (e) {
+    console.log("failed");
+  }
+}
+
+async function main() {
+  await tls();
+  later();
+}
+
+function later() {
+  const bytes: u8[] = [];
+  for (let i = 0; i < 32; i++) {
+    bytes.push(i as u8);
+  }
+  const v = Vector256.loadU8(bytes).lower();
+  const w = v + v;
+  console.log(w.lane(3));
+}
+"#;
+
+const P10: &str = r#"import { Vector256 } from "velt/arch/x86";
+import { connectTls } from "velt/net";
+
+async function main() {
+  const bytes: u8[] = [];
+  for (let i = 0; i < 32; i++) {
+    bytes.push(i as u8);
+  }
+  const v = Vector256.loadU8(bytes).lower();
+  console.log(v.aesenc(v).lane(0));
+  try {
+    const s = await connectTls("127.0.0.1:1", {});
+    console.log(s != null);
+  } catch (e) {
+    console.log("failed");
+  }
+}
+"#;
+
+const P13: &str = r#"import { Vector256 } from "velt/arch/x86";
+import { connectTls } from "velt/net";
+
+extend<T> T {
+  aesenc(rk: T): T {
+    return rk;
+  }
+}
+
+async function main() {
+  const bytes: u8[] = [];
+  for (let i = 0; i < 32; i++) {
+    bytes.push(i as u8);
+  }
+  const v = Vector256.loadU8(bytes).lower();
+  console.log(v.aesenc(v).lane(0));
+  try {
+    const s = await connectTls("127.0.0.1:1", {});
+    console.log(s != null);
+  } catch (e) {
+    console.log("failed");
+  }
+  const bad: string = 42;
+}
+
+function broken( {
+"#;

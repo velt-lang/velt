@@ -178,15 +178,13 @@ impl FnCx<'_, '_> {
     /// over `extend<T> Array<T[]>` over `extend<T> Array<T>`). Several equally specific blocks are ambiguous
     /// ([`FnCx::check_extension_ambiguity`] reports it at the call); the first is used then.
     fn extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
+        self.note_vector_lookup(recv, name);
         let candidates = self.applicable_extensions(recv, name);
         let (i, owner) = self
             .most_specific(&candidates)
             .first()
             .map(|&k| candidates[k].clone())?;
         let m = self.cx.extensions[i].methods.get(name).copied()?;
-        if matches!(self.cx.ty.kind(recv), TyKind::Simd(_)) {
-            self.cx.ext_lookup.vector_calls.insert((i, recv));
-        }
         let slots = self.own_generic_slots(m.def, &owner);
         Some(Resolved::Def {
             def: m.def,
@@ -250,6 +248,17 @@ impl FnCx<'_, '_> {
         self.cx.error(d.with_note(
             "neither `extend` block's target is more specific than the other's: rename one method",
         ));
+    }
+
+    /// Records the lookup of `name` through `extend` blocks on `recv` when it is a built-in vector
+    /// type, whether a block answers it or not (`ExtensionLookup::vector_lookups`).
+    pub(super) fn note_vector_lookup(&mut self, recv: TyId, name: &str) {
+        if matches!(self.cx.ty.kind(recv), TyKind::Simd(_)) {
+            self.cx
+                .ext_lookup
+                .vector_lookups
+                .insert((recv, name.to_string()));
+        }
     }
 
     /// `extend` blocks with a method `name` that apply to `recv`, with their type arguments.

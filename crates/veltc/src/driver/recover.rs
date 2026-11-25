@@ -122,7 +122,15 @@ fn check_recovering_once(
         Ok(inner) => inner,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let refused = more.map_or(vec![], |m| m.refused);
+    let mut refused = more.map_or(vec![], |m| m.refused);
+    // A module the check refused after serving it (a vector method that would answer a lookup
+    // checked before it, velt_sema `collect::vector_extends`): checked again with it up front,
+    // as `generate::check` hands it on.
+    for path in kept.take_late_refused() {
+        if !refused.contains(&path) {
+            refused.push(path);
+        }
+    }
     if !refused.is_empty() {
         return Ok((loaded, Err(BuildError::Diagnostics), refused));
     }

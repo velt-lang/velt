@@ -1,17 +1,19 @@
 //! The `extend` blocks of built-in vector and mask types (`extend u8x16 { … }`, velt/simd) that a
 //! std module added in the middle of the check brings (`super::collect_added`). velt_loader's
 //! (a1) rule lets such a block in (`std_index/rule.rs`): it only adds methods to a type no module
-//! declares. It changes code checked before it only where that code called a method of the same
-//! name on the vector type through an earlier block (a blanket `extend<T> T` of the program's,
-//! say) that the new, more specific block now takes over (`FnCx::extension_method` takes the most
-//! specific). The calls the check resolved that way are recorded (`Ctx::ext_lookup`); when
-//! one would change, the module is refused, as velt_loader refuses a module that breaks the rule:
-//! the check stops, and the driver checks again with it up front (`StdLoads::refuse_served`).
-//! A clash no call went through changes nothing: the up-front check picks the new block too.
+//! declares. It changes code checked before it only where that code looked up a method of the
+//! same name on the vector type through the `extend` blocks: a call or an operator (whose method
+//! is looked up) that an earlier block answered and the new, exact block now takes over or makes
+//! ambiguous (`FnCx::extension_method` takes the most specific), or one that nothing answered and
+//! the new block would (a program holding a vector through `velt/arch/x86`'s `Vector256`, which
+//! loads only part of velt/simd). Those lookups are recorded, found or not
+//! (`ExtensionLookup::vector_lookups`); when one is for a name the new block declares, the module
+//! is refused, as velt_loader refuses a module that breaks the rule: the check stops, and the
+//! driver checks again with it up front (`StdLoads::refuse_served`). A clash no lookup went
+//! through changes nothing: the up-front check picks the new block too.
 
 use crate::ctx::Ctx;
-use crate::defs::Bound;
-use crate::hir::{TyId, TyKind};
+use crate::hir::TyKind;
 
 pub(super) fn check(cx: &mut Ctx, from: super::Added) {
     for i in from.extensions..cx.extensions.len() {
@@ -19,15 +21,12 @@ pub(super) fn check(cx: &mut Ctx, from: super::Added) {
         if !matches!(cx.ty.kind(target), TyKind::Simd(_)) {
             continue;
         }
-        let names: Vec<String> = cx.extensions[i].methods.keys().cloned().collect();
-        let taken_over = names.iter().any(|name| {
-            (0..from.extensions).any(|j| {
-                cx.ext_lookup.vector_calls.contains(&(j, target))
-                    && cx.extensions[j].methods.contains_key(name)
-                    && applies(cx, j, target)
-            })
+        let looked_up = cx.extensions[i].methods.keys().any(|name| {
+            cx.ext_lookup
+                .vector_lookups
+                .contains(&(target, name.clone()))
         });
-        if !taken_over {
+        if !looked_up {
             continue;
         }
         let m = *cx.extensions[i]
@@ -43,26 +42,4 @@ pub(super) fn check(cx: &mut Ctx, from: super::Added) {
         }
         return;
     }
-}
-
-/// Whether extension `j` applies to `t`, as a call decides (`FnCx::applicable_extensions`): its
-/// target pattern has an instance equal to `t`, and its bounds hold for the type arguments that
-/// make it.
-fn applies(cx: &mut Ctx, j: usize, t: TyId) -> bool {
-    let pattern = cx.extensions[j].target;
-    let mut slots = vec![None; cx.extensions[j].generics.names.len()];
-    if !cx.match_ty(pattern, t, &mut slots) || cx.subst_known(pattern, &slots) != t {
-        return false;
-    }
-    let owner: Vec<TyId> = slots.iter().map(|s| s.unwrap_or(cx.ty.error)).collect();
-    let bounds = cx.extensions[j].generics.bounds.clone();
-    bounds.iter().zip(&owner).all(|(bs, &arg)| {
-        bs.iter().all(|b| {
-            let b = Bound {
-                iface: b.iface,
-                args: b.args.iter().map(|a| cx.subst(*a, &owner)).collect(),
-            };
-            cx.satisfies(arg, &b, &[])
-        })
-    })
 }
