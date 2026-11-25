@@ -97,12 +97,6 @@ pub extern "C" fn velt_rt_throw_loc() -> *const VeltStr {
 // the arming, so std's `catchPanic` only awaits the body's promise and never calls the other
 // functions.
 
-/// Panics stopped at a catching promise (velt_rt's str/stats.rs, compiled here): none.
-#[cfg(debug_assertions)]
-pub(crate) fn caught_count() -> u64 {
-    0
-}
-
 /// Arms nothing: no promise catches panics in WebAssembly.
 #[no_mangle]
 pub extern "C" fn velt_rt_catch_arm() {}
