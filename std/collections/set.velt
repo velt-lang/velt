@@ -137,29 +137,63 @@ export class Set<T> implements Iterable<T> {
     return out;
   }
 
-  /** Elements of this set that are not in `other` (`other.has`, or its `keys` when smaller). */
+  /**
+   * Elements of this set that are not in `other`. A copy of this set loses each element
+   * `other.has` reports, asked while walking this set as it is then (what `other` adds or
+   * deletes here counts, as in Node), or each of `other`'s `keys` when `other` is smaller.
+   */
   difference(other: Set<T>): Set<T> {
-    if (this.items.size <= other.size) {
-      const out = new Set<T>();
-      for (const x of this.items.keys()) {
-        if (!other.has(x)) {
-          out.items.set(share(x), true);
-        }
+    const otherSize = other.size;
+    if (this.items.size > otherSize) {
+      const out = new Set<T>(this.items.keys());
+      for (const x of other.keys()) {
+        out.items.delete(x);
       }
       return out;
     }
-    const out = new Set<T>(this.items.keys());
-    for (const x of other.keys()) {
-      out.items.delete(x);
+    // While `other.has` leaves this set alone, the copy less what it reports is the elements it
+    // reports absent, collected as they come. Once a call changes this set (its map's `edits`),
+    // the copy is made from the elements there were, less those `other` held so far.
+    const was = this.items.keys();
+    const edits = this.items.edits;
+    let out = new Set<T>();
+    let seen: usize = 0;
+    let copied = false;
+    for (const x of this.items.keys()) {
+      const inOther = other.has(x);
+      if (copied) {
+        if (inOther) {
+          out.items.delete(x);
+        }
+        continue;
+      }
+      seen++;
+      if (!inOther) {
+        out.items.set(share(x), true);
+      }
+      if (this.items.edits != edits) {
+        const copy = new Set<T>(was);
+        for (let i: usize = 0; i < seen; i++) {
+          if (!out.items.has(was[i])) {
+            copy.items.delete(was[i]);
+          }
+        }
+        out = copy;
+        copied = true;
+      }
     }
     return out;
   }
 
-  /** Elements in exactly one of the two sets (this set's first, then `other`'s). */
+  /**
+   * Elements in exactly one of the two sets (this set's first, then `other`'s). This set is
+   * copied after `other.keys` is called, as in Node.
+   */
   symmetricDifference(other: Set<T>): Set<T> {
     other.size;
+    const theirs = other.keys();
     const out = new Set<T>(this.items.keys());
-    for (const x of other.keys()) {
+    for (const x of theirs) {
       if (this.items.has(x)) {
         out.items.delete(x);
       } else {

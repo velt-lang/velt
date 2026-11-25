@@ -11,6 +11,7 @@ class L extends Set<number> {
   }
   override get size(): usize {
     log.push(`${this.tag}.size`);
+    // Velt reaches the base only as `super.method(...)`, not `super.size` as the twin does.
     return super.values().length as usize;
   }
   override has(x: number): bool {
