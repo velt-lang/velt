@@ -148,9 +148,9 @@ function openAs(a: usize, lkind: u32): void {
   let more: usize = 0;
   let n: usize = 0;
   let cap: usize = 0;
-  // The latch's one waiter, when it is a promise of the task being polled that is at rest: run
-  // on after the lock is given back (`settleNow`). Several waiters are queued in their order.
-  const alone = w !== 0 && m.ld(w + W_NEXT) === 0;
+  // The first waiter that is a promise of the task being polled, at rest: run on after the lock
+  // is given back (`settleNow`). std's latches have one waiter each (the function of a `new
+  // Promise`, a queued call of an async generator); any others are queued in their order.
   let own: usize = 0;
   while (w !== 0) {
     const next = m.ld(w + W_NEXT);
@@ -159,7 +159,7 @@ function openAs(a: usize, lkind: u32): void {
     m.st(w + W_WAKER, 0);
     if (k !== 0) {
       if (current !== 0 && wk.taskOf(k) === current) {
-        if (alone && k !== current && atRest(k)) {
+        if (own === 0 && k !== current && atRest(k)) {
           own = k;
         } else {
           m.st(w + W_TICKET, micro.enqueue(current, k, true) as usize);
@@ -198,13 +198,14 @@ function openAs(a: usize, lkind: u32): void {
 
 /**
  * Is started promise `n` at rest: not running (a `resolve` called from inside its own poll), not
- * about to be run or resumed by something else (woken, yielding, under a catch's adoption), not
- * given up by its owner? Only then does the opening run it on; any other waiter is queued.
+ * waiting for its turn on its task's yield list, not given up by its owner, not catching a panic
+ * (whose poll goes through sched_node_catch.velt)? Only then does the opening run it on; any
+ * other waiter is queued. A node among its task's woken ones (`QUEUED`) may be run: `run` leaves
+ * the flag to the woken stack's own run, which then finds it finished.
  */
 @inline("always")
 function atRest(n: usize): bool {
-  const busy =
-    nd.FINISHED | nd.RUNNING | nd.QUEUED | nd.DETACHED | nd.CATCHES | nd.ADOPTED | nd.YIELDING;
+  const busy = nd.FINISHED | nd.RUNNING | nd.DETACHED | nd.CATCHES | nd.YIELDING;
   return (m.load32(n + nd.N_FLAGS) & (nd.STARTED | busy)) === nd.STARTED;
 }
 

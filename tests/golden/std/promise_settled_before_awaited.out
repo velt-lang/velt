@@ -118,6 +118,9 @@ one waiting, nested, rejected: settle settled t0 t1 caught no goes on t2 t3
 resolved inside an awaited call: resolver started t0 resolve resolved t1 got 1 goes on resolver done t2 t3 t4
 resolved inside an awaited call, nested: resolver started t0 resolve resolved t1 inner got 1 resolver done t2 got 1 goes on t3 t4
 combinators: r1 r2 any allSettled race all r3 r4
+pairs over 1: all/allSettled AB, all/race AB, all/any AB, all/then BA, all/loop AB, allSettled/all AB, allSettled/race AB, allSettled/any AB, allSettled/then BA, allSettled/loop AB, race/all AB, race/allSettled AB, race/any AB, race/then BA, race/loop AB, any/all AB, any/allSettled AB, any/race AB, any/then BA, any/loop AB, then/all AB, then/allSettled AB, then/race AB, then/any AB, then/loop AB, loop/all AB, loop/allSettled AB, loop/race AB, loop/any AB, loop/then BA
+pairs over 2: all/allSettled AB, all/race BA, all/any BA, all/then BA, all/loop AB, allSettled/all AB, allSettled/race BA, allSettled/any BA, allSettled/then BA, allSettled/loop AB, race/all AB, race/allSettled AB, race/any AB, race/then BA, race/loop AB, any/all AB, any/allSettled AB, any/race AB, any/then BA, any/loop AB, then/all AB, then/allSettled AB, then/race AB, then/any AB, then/loop AB, loop/all BA, loop/allSettled BA, loop/race BA, loop/any BA, loop/then BA
+pairs over 3: all/allSettled AB, all/race BA, all/any BA, all/then BA, all/loop AB, allSettled/all AB, allSettled/race BA, allSettled/any BA, allSettled/then BA, allSettled/loop AB, race/all AB, race/allSettled AB, race/any AB, race/then BA, race/loop AB, any/all AB, any/allSettled AB, any/race AB, any/then BA, any/loop AB, then/all AB, then/allSettled AB, then/race AB, then/any AB, then/loop AB, loop/all BA, loop/allSettled BA, loop/race BA, loop/any BA, loop/then BA
 combinators again: r1 r2 any allSettled race all r3 r4
 async fn, adopted: t0 p1 t1 t2 t3 v1 t4 t5 t6 t7 t8 t9
 job, adopted: t0 p1 t1 t2 t3 v1 t4 t5 t6 t7 t8 t9

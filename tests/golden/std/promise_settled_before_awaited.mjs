@@ -321,6 +321,58 @@ async function combinatorsWhenQuiet()                  {
   return log.join(" ");
 }
 
+// Two ways of waiting over the same promises, resolved in one go: which finishes first, for every
+// ordered pair of six ways (`A` the first one asked, `B` the second). `allSettled` attaches to
+// every promise at the call, as `all` does.
+const WAYS = ["all", "allSettled", "race", "any", "then", "loop"];
+
+async function loopOver(ps                   )                {
+  for (const p of ps) {
+    await p;
+  }
+}
+
+function wait(way        , ps                   , log          , tag        )                {
+  const mark = () => {
+    log.push(tag);
+  };
+  if (way == 0) {
+    return Promise.all(ps).then(mark);
+  }
+  if (way == 1) {
+    return Promise.allSettled(ps).then(mark);
+  }
+  if (way == 2) {
+    return Promise.race(ps).then(mark);
+  }
+  if (way == 3) {
+    return Promise.any(ps).then(mark, mark);
+  }
+  if (way == 4) {
+    return ps[ps.length - 1].then(mark);
+  }
+  return loopOver(ps).then(mark);
+}
+
+async function pair(n        , a        , b        )                  {
+  const log           = [];
+  const rs                          = [];
+  const ps                    = [];
+  for (let i = 0; i < n; i++) {
+    const { promise, resolve } = Promise.withResolvers        ();
+    ps.push(promise);
+    rs.push(resolve);
+  }
+  const x = wait(a, ps, log, "A");
+  const y = wait(b, ps, log, "B");
+  for (let i = 0; i < n; i++) {
+    rs[i](i);
+  }
+  await x;
+  await y;
+  return log.join("");
+}
+
 async function main()                {
   for (let how = 0; how < HOW.length; how++) {
     for (const reject of [false, true]) {
@@ -342,6 +394,17 @@ async function main()                {
   console.log("resolved inside an awaited call: " + (await resolvedInsideAwaitedCall(false)));
   console.log("resolved inside an awaited call, nested: " + (await resolvedInsideAwaitedCall(true)));
   console.log("combinators: " + (await combinatorsWhenQuiet()));
+  for (let n = 1; n <= 3; n++) {
+    const line           = [];
+    for (let a = 0; a < WAYS.length; a++) {
+      for (let b = 0; b < WAYS.length; b++) {
+        if (a != b) {
+          line.push(`${WAYS[a]}/${WAYS[b]} ${await pair(n, a, b)}`);
+        }
+      }
+    }
+    console.log(`pairs over ${n}: ` + line.join(", "));
+  }
   console.log("combinators again: " + (await combinatorsWhenQuiet()));
   console.log("async fn, adopted: " + (await adoptedEarlier(true, true)));
   console.log("job, adopted: " + (await adoptedEarlier(false, true)));
