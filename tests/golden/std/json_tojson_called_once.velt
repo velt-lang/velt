@@ -1,0 +1,160 @@
+// check: no leaks
+// `JSON.stringify` calls a value's `toJSON(key)` once and writes what it returns without calling
+// the result's own `toJSON` (#3732), as Node does: a `toJSON` returning `this`, one a subclass
+// inherits (which called itself until the stack ran out), one returning new data, and one
+// returning an object of another class with a hook of its own, at the top, nested, in arrays,
+// with a key list and with indentation.
+
+let calls: number[] = [];
+
+class Self {
+  v = 1;
+  toJSON(key: string) {
+    calls.push(key.length);
+    return this;
+  }
+}
+
+class Sub extends Self {
+  w = 2;
+}
+
+class Data {
+  v = 3;
+  toJSON() {
+    calls.push(-1);
+    return { data: this.v, kind: "data" };
+  }
+}
+
+class Inner {
+  x = 4;
+  toJSON() {
+    calls.push(-2);
+    return "inner";
+  }
+}
+
+class Outer {
+  toJSON() {
+    calls.push(-3);
+    return new Inner();
+  }
+}
+
+// The result typed as `any`, as a union and as an option: still written by its own fields.
+class AnyOut {
+  toJSON(): any {
+    calls.push(-4);
+    return new Inner();
+  }
+}
+
+class UnionOut {
+  inner: boolean;
+  constructor(inner: boolean) {
+    this.inner = inner;
+  }
+  toJSON(): Inner | string {
+    calls.push(-5);
+    return this.inner ? new Inner() : "text";
+  }
+}
+
+class MaybeOut {
+  inner: boolean;
+  constructor(inner: boolean) {
+    this.inner = inner;
+  }
+  toJSON(): Inner | null {
+    calls.push(-6);
+    return this.inner ? new Inner() : null;
+  }
+}
+
+// A result of a type that has a hook of its own, not a class (a `Date`): written by its fields,
+// none, as Node writes `{}`.
+class DateOut {
+  toJSON() {
+    calls.push(-7);
+    return new Date(0);
+  }
+}
+
+// A result that is a typed `Proxy` of a class: written through the proxy (its `get` trap answers).
+class Plain {
+  y = 5;
+}
+
+class ProxyOut {
+  toJSON(): Plain {
+    calls.push(-8);
+    return new Proxy(new Plain(), {});
+  }
+}
+
+class TrapOut {
+  toJSON(): Plain {
+    calls.push(-9);
+    return new Proxy(new Plain(), {
+      get(t: Plain, k: string | symbol, r: any): any {
+        return k === "y" ? 50 : Reflect.get(t, k, r);
+      },
+    });
+  }
+}
+
+// Its `ownKeys` trap hides the field, so Node writes `{}`: the proxy is written as a proxy.
+class KeysOut {
+  toJSON(): Plain {
+    calls.push(-11);
+    return new Proxy(new Plain(), {
+      ownKeys(t: Plain): (string | symbol)[] {
+        return [];
+      },
+    });
+  }
+}
+
+class AnyProxyOut {
+  toJSON(): any {
+    calls.push(-10);
+    return new Proxy(new Plain(), {});
+  }
+}
+
+type Holder = { self: Self; list: Self[]; data: Data; outer: Outer };
+
+function show(label: string, text: string | undefined): void {
+  console.log(label, text, calls.length, calls.join(","));
+  calls = [];
+}
+
+show("self", JSON.stringify(new Self()));
+show("sub", JSON.stringify(new Sub()));
+const asBase: Self = new Sub();
+show("sub as base", JSON.stringify(asBase));
+show("data", JSON.stringify(new Data()));
+show("outer", JSON.stringify(new Outer()));
+const holder: Holder = {
+  self: new Sub(),
+  list: [new Self(), new Sub()],
+  data: new Data(),
+  outer: new Outer(),
+};
+show("holder", JSON.stringify(holder));
+show("array", JSON.stringify([new Self(), new Sub(), new Self()]));
+// A key list leaves members out after they are written, so only members without a hook are
+// left out here: Node never calls the hook of one it leaves out (#3767).
+show("keys", JSON.stringify({ self: new Sub(), list: [new Self()], n: 5 }, ["self", "v", "list"]));
+show("indent", JSON.stringify({ a: new Sub() }, null, 1));
+show("any result", JSON.stringify(new AnyOut()));
+show("union result", JSON.stringify([new UnionOut(true), new UnionOut(false)]));
+show("option result", JSON.stringify([new MaybeOut(true), new MaybeOut(false)]));
+const dynamic: any = new Outer();
+show("dynamic", JSON.stringify(dynamic));
+const dynamicSub: any = new Sub();
+show("dynamic sub", JSON.stringify(dynamicSub));
+show("date result", JSON.stringify(new DateOut()));
+show("proxy result", JSON.stringify([new ProxyOut(), new TrapOut(), new KeysOut()]));
+show("any proxy result", JSON.stringify(new AnyProxyOut()));
