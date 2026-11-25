@@ -1,0 +1,63 @@
+// velt/task (internal): the abort signals behind `AbortSignal` (signal.velt) where the runtime
+// keeps them (the default variant of `#task-signal`: WebAssembly, whose runtime has its own; under
+// the executor in Velt, signal_sched.velt's).
+
+import {
+  velt_rt_signal_abort,
+  velt_rt_signal_aborted,
+  velt_rt_signal_any,
+  velt_rt_signal_free,
+  velt_rt_signal_new,
+  velt_rt_signal_reason,
+  velt_rt_signal_retain,
+  velt_rt_signal_wait,
+} from "velt/task/rt";
+
+/** A new signal that is not aborted. */
+export function signalNew(): u64 {
+  return velt_rt_signal_new();
+}
+
+/** Another reference to signal `s` (for a holder that releases it on its own). */
+export function signalRetain(s: u64): u64 {
+  return velt_rt_signal_retain(s);
+}
+
+/** Releases a reference to signal `s`. */
+export function signalFree(s: u64): void {
+  velt_rt_signal_free(s);
+}
+
+/**
+ * Aborts signal `s` with `reason` (a no-op if it is aborted already) and every signal derived
+ * from it; wakes the tasks waiting for it.
+ */
+export function signalAbort(s: u64, reason: string): void {
+  velt_rt_signal_abort(s, reason);
+}
+
+/** Whether signal `s` is aborted. */
+export function signalAborted(s: u64): bool {
+  return velt_rt_signal_aborted(s);
+}
+
+/** Signal `s`'s reason (`""` while it is not aborted). */
+export function signalReason(s: u64): string {
+  return velt_rt_signal_reason(s);
+}
+
+/**
+ * Completes once signal `s` is aborted (never, if it never is). `timed`: a timer may abort it, so
+ * the wait keeps the process alive, as a wait for a timer does.
+ */
+export function signalWait(s: u64, timed: bool): Promise<void> {
+  return velt_rt_signal_wait(s, timed);
+}
+
+/**
+ * A new signal aborted as soon as any of `signals` is (at once with the first aborted already,
+ * in their order), with that signal's reason; it keeps them alive until then.
+ */
+export function signalAny(signals: u64[]): u64 {
+  return velt_rt_signal_any(signals);
+}
