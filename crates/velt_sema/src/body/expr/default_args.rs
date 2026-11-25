@@ -12,6 +12,17 @@ use crate::hir::{self, DefId, ExprKind as H, Nothing, PatKind as P, TyId, TyKind
 /// The temporary holding the argument (no source name can be this).
 const ARG: &str = "<maybe undefined arg>";
 
+/// What checking a call's arguments in std's bodies by units notes for the call
+/// ([`FnCx::note_left_out`], #3789), by the call's span (`FnCx::undefined_args`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ArgNote {
+    /// The argument at this position may be `undefined` for a parameter with a default.
+    MayBeUndefined(usize),
+    /// The number of arguments written before trailing `undefined`s; `None` when a spread of an
+    /// unknown length is among them.
+    Written(Option<usize>),
+}
+
 impl FnCx<'_, '_> {
     /// Default `d` (a parameter's, checked once per signature outside any body: `defaults.rs`;
     /// or a field's) placed in this body at `span`, with the type arguments of the call or
@@ -156,28 +167,49 @@ impl FnCx<'_, '_> {
         self.cx.units && self.cx.scopes[self.module].is_std
     }
 
-    /// An argument of type `ty` at `span` for a parameter with a default: in std's bodies checked
-    /// by units, notes it when it may be `undefined` (the callee's default then applies), for
-    /// the call's [`Self::note_left_out`].
-    pub(super) fn note_undefined_arg(&mut self, ty: TyId, span: velt_common::Span) {
+    /// The argument of type `ty` at position `k` of the call at `call` (after spreads of a known
+    /// length stand for their elements), for a parameter with a default when `default`: in
+    /// std's bodies checked by units, notes it when it may be `undefined` (the callee's default
+    /// then applies), for the call's [`Self::note_left_out`].
+    pub(super) fn note_undefined_arg(
+        &mut self,
+        default: bool,
+        ty: TyId,
+        (k, call): (usize, velt_common::Span),
+    ) {
         let may_be = ty == self.cx.ty.undefined()
             || self.cx.dynamic(ty).is_some()
             || (self.cx.ty.nothing_of(ty)).is_some_and(|n| n.has_undefined());
-        if may_be && self.std_by_units() {
-            self.undefined_args.push(span);
+        if default && may_be && self.std_by_units() {
+            self.undefined_args.push((call, ArgNote::MayBeUndefined(k)));
         }
     }
 
-    /// A call of method `def` in std's bodies, checked by units before any program exists, its
-    /// arguments checked since `mark` (`FnCx::undefined_args`). A program's override may give a
-    /// parameter whose argument takes the callee's default another default, which JavaScript
-    /// applies:
+    /// The arguments `args` of the call at `call` as checked (spreads of a known length stand
+    /// for their elements): in std's bodies checked by units, notes how many it writes before
+    /// trailing `undefined`s, unknown when a spread is left, for [`Self::note_left_out`].
+    pub(super) fn note_call_args(&mut self, args: &[ast::Expr], call: velt_common::Span) {
+        if !self.std_by_units() {
+            return;
+        }
+        let spread = |a: &ast::Expr| matches!(a.kind, ast::ExprKind::Spread(_));
+        let is_undefined = crate::body::defaults::is_undefined;
+        let written = (!args.iter().any(spread))
+            .then(|| args.len() - args.iter().rev().take_while(|a| is_undefined(a)).count());
+        self.undefined_args.push((call, ArgNote::Written(written)));
+    }
+
+    /// A call of method `def` at `span` in std's bodies, checked by units before any program
+    /// exists, its arguments noted since `mark` (`FnCx::undefined_args`). A program's override
+    /// may give a parameter whose argument takes the callee's default another default, which
+    /// JavaScript applies:
     /// - when only trailing arguments take it (left out, or `undefined` written for them),
     ///   records how many the call writes; once the program's default-filling slots are known,
-    ///   `units::std_calls` sends the call to the one taking that many arguments;
-    /// - when an argument before them may be `undefined`, or the call takes std's own fill slot
-    ///   for some parameters (`general`), records the call as one no slot can redo
-    ///   (`Summaries::left_out_general`).
+    ///   `units::std_calls` sends the call to the one taking that many arguments (a rest
+    ///   parameter after them takes its own default, no elements);
+    /// - when one of the written arguments may be `undefined`, the call takes std's own fill
+    ///   slot for some parameters (`general`), or a spread of an unknown length may fill one,
+    ///   records the call as one no slot can redo (`Summaries::left_out_general`).
     pub(super) fn note_left_out(
         &mut self,
         (def, general): (DefId, bool),
@@ -185,27 +217,48 @@ impl FnCx<'_, '_> {
         span: velt_common::Span,
         mark: usize,
     ) {
-        let undefined: Vec<velt_common::Span> = self.undefined_args.drain(mark..).collect();
+        let notes: Vec<ArgNote> = (self.undefined_args.drain(mark..))
+            .filter(|(call, _)| *call == span)
+            .map(|(_, n)| n)
+            .collect();
         // A method of a class (a subclass may override it), not of a struct or an extension.
         let class = (self.cx.fn_info(def).owner.and_then(|o| self.cx.adt(o)))
             .is_some_and(|a| a.kind == hir::AdtKind::Class && a.decl.is_some());
         if !class || !self.std_by_units() {
             return;
         }
-        // A rest parameter takes what follows; a spread's length isn't known here.
-        let spread = |a: &ast::Expr| matches!(a.kind, ast::ExprKind::Spread(_));
-        if crate::body::defaults::has_rest(self.cx, def) || args.iter().any(spread) {
+        // The last check of the call's arguments decides (a call checked once more after a
+        // trial); one that stopped before them (an arity error) writes what it was given.
+        let written = match notes.iter().rev().find_map(|n| match n {
+            ArgNote::Written(w) => Some(*w),
+            ArgNote::MayBeUndefined(_) => None,
+        }) {
+            Some(w) => w,
+            None if args
+                .iter()
+                .any(|a| matches!(a.kind, ast::ExprKind::Spread(_))) =>
+            {
+                None
+            }
+            None => Some(args.len()),
+        };
+        let undefined_at = |k: usize| notes.contains(&ArgNote::MayBeUndefined(k));
+        let rest = crate::body::defaults::has_rest(self.cx, def);
+        let fixed = self.cx.fn_info(def).params.len() - usize::from(rest);
+        let defaulted =
+            (self.cx.fn_info(def).params.iter().take(fixed)).any(|p| p.default.is_some());
+        let leaves_out = match written {
+            Some(w) => w < fixed || (0..w).any(undefined_at),
+            None => defaulted,
+        };
+        if !leaves_out && !general {
             return;
         }
-        let is_undefined = crate::body::defaults::is_undefined;
-        let written = args.len() - args.iter().rev().take_while(|a| is_undefined(a)).count();
-        if general || args[..written].iter().any(|a| undefined.contains(&a.span)) {
-            self.cx.unit_sums.left_out_general.insert(span);
-        } else if written < self.cx.fn_info(def).params.len() {
-            self.cx
-                .unit_sums
-                .left_out_calls
-                .insert(span, written as u32);
+        match written {
+            Some(w) if !general && !(0..w).any(undefined_at) => {
+                self.cx.unit_sums.left_out_calls.insert(span, w as u32);
+            }
+            _ => _ = self.cx.unit_sums.left_out_general.insert(span),
         }
     }
 }
