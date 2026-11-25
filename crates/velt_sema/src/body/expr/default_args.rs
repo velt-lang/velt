@@ -7,7 +7,7 @@
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::hir::{self, ExprKind as H, Nothing, PatKind as P, TyId, TyKind, UseMode};
+use crate::hir::{self, DefId, ExprKind as H, Nothing, PatKind as P, TyId, TyKind, UseMode};
 
 /// The temporary holding the argument (no source name can be this).
 const ARG: &str = "<maybe undefined arg>";
@@ -149,5 +149,63 @@ impl FnCx<'_, '_> {
             arms,
         };
         self.mk(kind, target, span)
+    }
+
+    /// Whether std's bodies are being checked by units, before any program exists (#3789).
+    fn std_by_units(&self) -> bool {
+        self.cx.units && self.cx.scopes[self.module].is_std
+    }
+
+    /// An argument of type `ty` at `span` for a parameter with a default: in std's bodies checked
+    /// by units, notes it when it may be `undefined` (the callee's default then applies), for
+    /// the call's [`Self::note_left_out`].
+    pub(super) fn note_undefined_arg(&mut self, ty: TyId, span: velt_common::Span) {
+        let may_be = ty == self.cx.ty.undefined()
+            || self.cx.dynamic(ty).is_some()
+            || (self.cx.ty.nothing_of(ty)).is_some_and(|n| n.has_undefined());
+        if may_be && self.std_by_units() {
+            self.undefined_args.push(span);
+        }
+    }
+
+    /// A call of method `def` in std's bodies, checked by units before any program exists, its
+    /// arguments checked since `mark` (`FnCx::undefined_args`). A program's override may give a
+    /// parameter whose argument takes the callee's default another default, which JavaScript
+    /// applies:
+    /// - when only trailing arguments take it (left out, or `undefined` written for them),
+    ///   records how many the call writes; once the program's default-filling slots are known,
+    ///   `units::std_calls` sends the call to the one taking that many arguments;
+    /// - when an argument before them may be `undefined`, or the call takes std's own fill slot
+    ///   for some parameters (`general`), records the call as one no slot can redo
+    ///   (`Summaries::left_out_general`).
+    pub(super) fn note_left_out(
+        &mut self,
+        (def, general): (DefId, bool),
+        args: &[ast::Expr],
+        span: velt_common::Span,
+        mark: usize,
+    ) {
+        let undefined: Vec<velt_common::Span> = self.undefined_args.drain(mark..).collect();
+        // A method of a class (a subclass may override it), not of a struct or an extension.
+        let class = (self.cx.fn_info(def).owner.and_then(|o| self.cx.adt(o)))
+            .is_some_and(|a| a.kind == hir::AdtKind::Class && a.decl.is_some());
+        if !class || !self.std_by_units() {
+            return;
+        }
+        // A rest parameter takes what follows; a spread's length isn't known here.
+        let spread = |a: &ast::Expr| matches!(a.kind, ast::ExprKind::Spread(_));
+        if crate::body::defaults::has_rest(self.cx, def) || args.iter().any(spread) {
+            return;
+        }
+        let is_undefined = crate::body::defaults::is_undefined;
+        let written = args.len() - args.iter().rev().take_while(|a| is_undefined(a)).count();
+        if general || args[..written].iter().any(|a| undefined.contains(&a.span)) {
+            self.cx.unit_sums.left_out_general.insert(span);
+        } else if written < self.cx.fn_info(def).params.len() {
+            self.cx
+                .unit_sums
+                .left_out_calls
+                .insert(span, written as u32);
+        }
     }
 }
