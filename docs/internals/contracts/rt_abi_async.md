@@ -1260,11 +1260,14 @@ typedef struct {                 // std/process/child/spec.velt `CommandSpec` (1
 } VeltCommand;
 typedef struct { int32_t code; uint32_t pad; VeltStr stdout; VeltStr stderr; } VeltOutput;  // 56 bytes
 ```
-Only `execSync` is the runtime's: `spawn` and `exec` are std's own on every native target
+Only `execSync` is the runtime's, on Windows and WebAssembly only; macOS and Linux start it in
+std (std/process/child/exec_sync_posix.velt: `posix_spawn`, a `poll` loop on its pipes and
+`waitpid`, without the executor). `spawn` and `exec` are std's own on every native target
 (std/process/child/child_sched.velt: `posix_spawn` with the exit and the pipes on the executor's
 reactor on macOS and Linux, `CreateProcessW` with the exit wait and the pipes on its blocking
-pool on Windows). Exit codes: the process's code, or `128 + signal` when killed by a signal
-(Unix). Spawn failures are `IoResult` errors whose message starts with `spawn <program>: `.
+pool on Windows). Exit codes: the process's code (std reports `128 + signal` for a child killed
+by a signal on macOS and Linux). Spawn failures are `IoResult` errors whose message starts with
+`spawn <program>: `.
 
 | Symbol | Signature | Notes |
 |---|---|---|
