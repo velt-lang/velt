@@ -46,7 +46,7 @@ structs! {
     ConstElem { bits, float, lo, hi }
     // The program's tables.
     FnShape { name, length, wraps }
-    DynMember { name, kind, def, owner }
+    DynMember { name, kind, def, owner, rest }
     ImplBound { param, iface, args }
     ModuleState { ty, slots, deferred }
     Decorator { def, args, span }
