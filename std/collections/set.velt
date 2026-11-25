@@ -38,9 +38,13 @@ export class Set<T> implements Iterable<T> {
     return this.items.size;
   }
 
-  /** Inserts `value`; a value already present keeps its position (the new copy is dropped). */
-  add(value: T) {
+  /**
+   * Inserts `value`; a value already present keeps its position (the new copy is dropped).
+   * Returns the set itself, as in JS (`s.add(1).add(2)`); a result nobody uses costs nothing.
+   */
+  add(value: T): this {
     this.items.set(value, true);
+    return this;
   }
 
   /** Whether `value` is in the set. */

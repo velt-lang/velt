@@ -26,6 +26,7 @@
 
 #[cfg(test)] // by its name, for the integration tests' loader (`script_locals_tests.rs`)
 extern crate self as velt_sema;
+pub mod console_format;
 pub mod hir;
 pub mod js_protos;
 
@@ -78,6 +79,7 @@ mod generic_fns;
 mod generic_override_sites;
 mod generic_spread;
 mod global_this;
+mod hand_back;
 #[cfg(test)]
 mod hasher_tests;
 mod holds_promise;

@@ -361,10 +361,11 @@ impl Loader<'_, '_> {
             .into_iter()
             .partition(|g| {
                 g.names.iter().any(|n| {
-                    (!own.contains(n.as_str()) || globals::through_global_this(src, n))
+                    ((!own.contains(n.as_str()) || globals::through_global_this(src, n))
                         && globals::names_global(&words, ast, n, || {
                             globals::in_code(src, ast, n, &mut stripped)
-                        })
+                        }))
+                        || globals::compiler_needs_global(&words, ast, n)
                 })
             });
         self.globals = rest;

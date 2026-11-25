@@ -637,6 +637,11 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         None => fcx.inferred_fn_ret(def, &mut block),
     };
     fcx.check_returns(&f.name, frame_ret, f.name_span, &mut block, false);
+    // A method that hands back its receiver returns nothing (`crate::hand_back`).
+    let hands_back = crate::hand_back::hands_back(fcx.cx, def);
+    if hands_back {
+        fcx.hand_back_returns(&mut block);
+    }
     fcx.wrap_adopted(&mut block);
     fcx.rec_frame_scopes();
     fcx.finish_using_shares();
@@ -652,7 +657,10 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
         name: f.name.clone(),
         generics: f.generics.len() as u32,
         params,
-        ret: body_ret.unwrap_or(frame_ret),
+        ret: match hands_back {
+            true => cx.ty.unit,
+            false => body_ret.unwrap_or(frame_ret),
+        },
         is_async: f.is_async || f.is_async_gen,
         is_generator: f.is_generator,
         // A function's `this` parameter is no method's receiver.
