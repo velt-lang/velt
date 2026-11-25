@@ -1,0 +1,19 @@
+exact 1
+then 2
+unknown 4
+generic 5
+stored 1 1 true
+any payload 3
+widen 10
+caught no
+catch -1
+null true
+optional 3
+class 7
+array 2
+void
+same true true true true true
+set true true true
+typed, cast, any, widen, typed again
+cast, typed, then 5, any
+convert, any

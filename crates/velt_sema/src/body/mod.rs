@@ -411,6 +411,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object literal being checked as the operand of a type assertion (`member_cast`):
     /// its values convert to the fields' types as assertions do (`asserted_field`).
     pub asserted_lit: Option<Span>,
+    /// The type assertion about to be checked is to a written `Promise<T>` without an error
+    /// type, which a dynamic operand makes reject with `unknown` (`any_promise_cast`).
+    pub open_promise_cast: bool,
     /// The conditional initializing a declaration (`const m = c ? ("a" as const) : …`), whose
     /// `as const` arms keep their literals (`ternary`).
     pub kept_arms: Option<Span>,
@@ -476,6 +479,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_fn_forwarding: vec![],
             asserted_fn: None,
             asserted_lit: None,
+            open_promise_cast: false,
             kept_arms: None,
             kept_plain_arms: false,
             in_as_const: false,

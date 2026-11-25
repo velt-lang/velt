@@ -1,0 +1,7 @@
+// `v as Promise<T>` of a promise held as `any` in a program with no `async` function or `await`
+// (#924 step 4): the cast converts it, and its `then` runs after the synchronous code, as in Node.
+const p: any = Promise.resolve(2);
+(p as Promise<number>).then((v) => console.log("then", v + 1));
+const q: any = Promise.resolve("s");
+(q as Promise<number | string>).then((v) => console.log("widened", v));
+console.log("sync end");
