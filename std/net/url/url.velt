@@ -11,6 +11,9 @@ import { defaultPort, isSpecial, validScheme } from "velt/net/url/scheme";
 import { URLSearchParams } from "velt/net/url/search_params";
 import { hostInput, portColon, userinfoOrPort } from "velt/net/url/setters";
 import { setFileHost } from "velt/net/url/authority";
+import { urlText } from "velt/net/url/inspect";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { NativeInspect } from "velt/lang/typed_array/native_inspect";
 
 /** A parsed absolute URL (JS `URL`). */
 export class URL {
@@ -235,6 +238,16 @@ export class URL {
   /** Same as `href` (JS `toJSON`). */
   toJSON(): string {
     return this.href;
+  }
+
+  /**
+   * How `console.log` shows the URL, like Node: `URL { href: '…', origin: '…', … }`, and
+   * `URL {}` past its depth limit.
+   */
+  [INSPECT](): NativeInspect {
+    const values = [this.href, this.origin, this.protocol, this.username, this.password];
+    values.push(this.host, this.hostname, this.port, this.pathname, this.search, this.hash);
+    return { text: urlText(values, this.searchParams[INSPECT]().text), cut: "URL {}" };
   }
 
   // Sets the (non-file) host from `text`, which has no port; false (URL unchanged) if it is

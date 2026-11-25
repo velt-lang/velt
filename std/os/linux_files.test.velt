@@ -1,8 +1,10 @@
 // velt/os (tests): the readers of Linux's /proc and /sys files behind `cpus()`, `totalmem()`,
-// `freemem()`, `loadavg()`, `uptime()` and velt/process' memory limits, on texts as the kernel
-// writes them (so they run on every OS), run by `velt test std/`.
+// `freemem()`, `loadavg()`, `uptime()`, `availableParallelism()`'s CPU quota and velt/process'
+// memory limits, on texts as the kernel writes them (so they run on every OS), run by
+// `velt test std/`.
 import { describe, expect, it } from "velt/test";
 import { armPartName } from "velt/os/arm_parts";
+import { cpuQuotaOf, parallelismOf } from "velt/os/cgroup";
 import { availableOf, constrainedOf, uint64Of, v1MemoryPath } from "velt/os/cgroup_memory";
 import { cpuinfoModels, statLines } from "velt/os/cpus_linux";
 import { leadingNumbers, meminfoBytes } from "velt/os/meminfo_linux";
@@ -180,5 +182,165 @@ describe("cgroup memory limits, read as libuv reads them", () => {
     tree.set("/sys/fs/cgroup/c/memory.current", "600\n");
     expect(availableOf("0::/c\n", files(tree), 4096, 4000, () => 5)).toBe(0);
     expect(availableOf("0::/c\n", files(tree), 4096, 400, () => 5)).toBe(5);
+  });
+});
+
+/**
+ * A reader of the files `tree` holds, null for any other (a file that can't be read); "//" in a
+ * path reads as "/", as the kernel reads it.
+ */
+function fileOrNull(tree: Map<string, string>): (path: string) => string | null {
+  return (path: string): string | null => {
+    let p = path;
+    while (p.includes("//")) {
+      p = p.replaceAll("//", "/");
+    }
+    const text = tree.get(p);
+    return text === undefined ? null : text;
+  };
+}
+
+/** A cgroup v2 tree with `cgroup.controllers` in each of `dirs` ("a", "a/b") and the mount. */
+function v2Tree(dirs: string[]): Map<string, string> {
+  const tree = new Map<string, string>();
+  tree.set("/sys/fs/cgroup/cgroup.controllers", "cpuset cpu io memory pids\n");
+  for (const dir of dirs) {
+    tree.set(`/sys/fs/cgroup/${dir}/cgroup.controllers`, "cpu memory pids\n");
+  }
+  return tree;
+}
+
+describe("cgroup CPU quota, read as libuv 1.51 (Node 22) reads it", () => {
+  it("reads v2's cpu.max in the process' own cgroup, whole CPUs rounded down", () => {
+    const tree = v2Tree(["a", "a/b"]);
+    tree.set("/sys/fs/cgroup/a/b/cpu.max", "350000 100000\n");
+    tree.set("/sys/fs/cgroup/a/cpu.max", "max 100000\n");
+    expect(cpuQuotaOf("0::/a/b\n", fileOrNull(tree))).toBe(3);
+  });
+
+  it("reads each level above it too, and the outermost limit counts, not the smallest", () => {
+    const tree = v2Tree(["a", "a/b"]);
+    tree.set("/sys/fs/cgroup/a/b/cpu.max", "max 100000\n");
+    tree.set("/sys/fs/cgroup/a/cpu.max", "200000 100000\n");
+    expect(cpuQuotaOf("0::/a/b\n", fileOrNull(tree))).toBe(2);
+    tree.set("/sys/fs/cgroup/a/b/cpu.max", "200000 100000\n");
+    tree.set("/sys/fs/cgroup/a/cpu.max", "400000 100000\n");
+    expect(cpuQuotaOf("0::/a/b\n", fileOrNull(tree))).toBe(4);
+    tree.set("/sys/fs/cgroup/a/cpu.max", "100000 100000\n");
+    expect(cpuQuotaOf("0::/a/b\n", fileOrNull(tree))).toBe(1);
+  });
+
+  it("gives 0 (no cap) for a limit under one CPU, even above a whole-CPU one", () => {
+    const tree = v2Tree(["test", "test/child"]);
+    tree.set("/sys/fs/cgroup/test/cpu.max", "50000 100000\n");
+    tree.set("/sys/fs/cgroup/test/child/cpu.max", "max 100000\n");
+    expect(cpuQuotaOf("0::/test/child\n", fileOrNull(tree))).toBe(0);
+    tree.set("/sys/fs/cgroup/test/child/cpu.max", "300000 100000\n");
+    expect(cpuQuotaOf("0::/test/child\n", fileOrNull(tree))).toBe(0);
+  });
+
+  it("skips levels whose cpu.max is missing, max or doesn't parse", () => {
+    const tree = v2Tree(["a", "a/b", "a/b/c"]);
+    tree.set("/sys/fs/cgroup/a/b/c/cpu.max", "200000 100000\n");
+    tree.set("/sys/fs/cgroup/a/cpu.max", "100000\n");
+    tree.set("/sys/fs/cgroup/cpu.max", "100000 0\n");
+    expect(cpuQuotaOf("0::/a/b/c\n", fileOrNull(tree))).toBe(2);
+    tree.set("/sys/fs/cgroup/a/cpu.max", "x 100000\n");
+    tree.set("/sys/fs/cgroup/a/b/cpu.max", " +400000\t100000 junk\n");
+    expect(cpuQuotaOf("0::/a/b/c\n", fileOrNull(tree))).toBe(4);
+    expect(cpuQuotaOf("0::/a/b/c\n", fileOrNull(v2Tree(["a", "a/b", "a/b/c"])))).toBe(0);
+  });
+
+  it("reads 15 characters of cpu.max, as libuv's buffer holds", () => {
+    const tree = v2Tree(["a"]);
+    tree.set("/sys/fs/cgroup/a/cpu.max", "800000000 1000000\n");
+    expect(cpuQuotaOf("0::/a\n", fileOrNull(tree))).toBe(80000);
+  });
+
+  it("cuts paths at 255 characters, as libuv's buffers do", () => {
+    // A 230-character cgroup: its cpu.max path (253) fits, its cgroup.controllers path (264)
+    // is cut, and libuv looks for that file at the cut path.
+    const dir = `a/${"x".repeat(228)}`;
+    const tree = v2Tree([]);
+    const controllers = `/sys/fs/cgroup/${dir}/cgroup.controllers`;
+    tree.set(controllers.slice(0, 255), "cpu\n");
+    tree.set(`/sys/fs/cgroup/${dir}/cpu.max`, "300000 100000\n");
+    expect(cpuQuotaOf(`0::/${dir}\n`, fileOrNull(tree))).toBe(3);
+    tree.delete(controllers.slice(0, 255));
+    tree.set(controllers, "cpu\n");
+    expect(cpuQuotaOf(`0::/${dir}\n`, fileOrNull(tree))).toBe(0);
+  });
+
+  it("reads a limit on /sys/fs/cgroup itself, a container's with --cpus", () => {
+    // The namespace root: libuv reads /sys/fs/cgroup//cpu.max, then /sys/fs/cgroup/cpu.max.
+    const tree = v2Tree(["a"]);
+    tree.set("/sys/fs/cgroup/cpu.max", "200000 100000\n");
+    expect(cpuQuotaOf("0::/\n", fileOrNull(tree))).toBe(2);
+    // A sub-cgroup of the container, with the limit only on the mount.
+    expect(cpuQuotaOf("0::/a\n", fileOrNull(tree))).toBe(2);
+  });
+
+  it("gives 0 without the cgroup's cgroup.controllers", () => {
+    const tree = v2Tree([]);
+    tree.set("/sys/fs/cgroup/a/cpu.max", "200000 100000\n");
+    expect(cpuQuotaOf("0::/a\n", fileOrNull(tree))).toBe(0);
+  });
+
+  it("gives Node 22's availableParallelism on 9 CPUs in the layouts it was compared in", () => {
+    // [parent cpu.max, child cpu.max ("" for none), Node 22's answer], all with period 100000,
+    // as measured in a Linux VM with 9 CPUs: /sys/fs/cgroup/cgtest and cgtest/child.
+    const cases: [string, string, i64][] = [
+      ["50000", "", 9], // A: a limit only on the parent, under one CPU
+      ["50000", "max", 9], // B
+      ["200000", "max", 2], // C: a limit only on the parent, 2 CPUs
+      ["max", "300000", 3], // D: a limit only on the process' own cgroup
+      ["400000", "200000", 4], // E: the outermost limit counts, not the smallest
+      ["200000", "50000", 2], // F
+      ["50000", "300000", 9], // G: an outer limit under one CPU caps nothing
+      ["200000", "400000", 2], // H
+    ];
+    for (const [parent, child, node] of cases) {
+      const tree = v2Tree([".lxc", "cgtest", "cgtest/child"]);
+      tree.set("/sys/fs/cgroup/cpu.max", "max 100000\n");
+      tree.set("/sys/fs/cgroup/.lxc/cpu.max", "max 100000\n");
+      tree.set("/sys/fs/cgroup/cgtest/cpu.max", `${parent} 100000\n`);
+      if (child.length > 0) {
+        tree.set("/sys/fs/cgroup/cgtest/child/cpu.max", `${child} 100000\n`);
+      }
+      const quota = cpuQuotaOf("0::/cgtest/child\n", fileOrNull(tree));
+      expect(`${parent}/${child}: ${parallelismOf(9, quota)}`).toBe(`${parent}/${child}: ${node}`);
+      // The baseline, outside the test cgroups.
+      expect(parallelismOf(9, cpuQuotaOf("0::/.lxc\n", fileOrNull(tree)))).toBe(9);
+    }
+    expect(parallelismOf(9, -3)).toBe(9);
+    expect(parallelismOf(0, 0)).toBe(1);
+  });
+
+  it("reads v1's path after the first \":cpu,\", which Linux's usual layout doesn't have", () => {
+    const tree = new Map<string, string>();
+    tree.set("/sys/fs/cgroup/cpu,cpuacct/a/cpu.cfs_quota_us", "200000\n");
+    tree.set("/sys/fs/cgroup/cpu,cpuacct/a/cpu.cfs_period_us", "100000\n");
+    tree.set("/sys/fs/cgroup/cpu/a/cpu.cfs_quota_us", "200000\n");
+    tree.set("/sys/fs/cgroup/cpu/a/cpu.cfs_period_us", "100000\n");
+    // What a ":cpu" without the comma would find in "3:cpu:/a".
+    tree.set("/sys/fs/cgroup/:/a/cpu.cfs_quota_us", "200000\n");
+    tree.set("/sys/fs/cgroup/:/a/cpu.cfs_period_us", "100000\n");
+    const v1 = "5:memory:/a\n4:cpu,cpuacct:/a\n";
+    expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(0);
+    expect(cpuQuotaOf("3:cpu:/a\n", fileOrNull(tree))).toBe(0);
+    tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_quota_us", "300000\n");
+    tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_period_us", "100000\n");
+    expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(3);
+    // A hybrid system's "0::" line comes last: v1 too.
+    expect(cpuQuotaOf(`${v1}0::/a\n`, fileOrNull(tree))).toBe(3);
+    tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_quota_us", "-1\n");
+    expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(0);
+    tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_quota_us", "-300000\n");
+    expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(-3);
+    // `%lld` past the range reads LLONG_MAX, as strtoll gives.
+    tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_quota_us", "99999999999999999999999\n");
+    expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(92233720368547);
+    tree.set("/sys/fs/cgroup/cpuacct:/a/cpu.cfs_period_us", "0\n");
+    expect(cpuQuotaOf(v1, fileOrNull(tree))).toBe(0);
   });
 });

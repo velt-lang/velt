@@ -13,8 +13,11 @@
 //! - a function value to the environments of the closures made at its function type (the key,
 //!   cycles_keys.rs), and to those of the generic closures; an environment to what it captures;
 //! - an interface value to the types its implementation tables were built for, and to the
-//!   interfaces converted to it; an `any`, `unknown` or `object` to the types `any` tables were
-//!   built for, the interfaces converted to `any`, and the generic closures;
+//!   interfaces converted to it, per instantiation: a value of `I<A>` holds only what was
+//!   converted to `I<A>` (an implementation is of one instantiation, fixed by its type), so a
+//!   value of `I<A>` that holds an `I<B>` closes no cycle unless an `I<B>` reaches back; an
+//!   `any`, `unknown` or `object` to the types `any` tables were built for, every instantiation
+//!   of the interfaces converted to `any`, and the generic closures;
 //! - a class with subclasses to every built subclass (strict: "is a" is not "owns");
 //! - a generator object to the locals of the generator functions made at its class type (its
 //!   state follows the class's fields);
@@ -37,7 +40,7 @@ use velt_sema::hir::{DefId, TyId, TyKind};
 
 use super::cycles_keys::CycleKey;
 use super::cycles_scc::{cycle_through, cyclic_components};
-use crate::lower::Cx;
+use crate::lower::{ice, Cx};
 
 /// A node of the ownership graph.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -46,8 +49,9 @@ enum Node {
     /// The environments of the closures made at a function type of this key (`None`: the
     /// generic closures, whose own type is not a function type of fixed types).
     Closures(Option<CycleKey>),
-    /// The value of an interface value of this interface.
-    Iface(DefId),
+    /// The value of an interface value of this interface type (`Dyn(d, args)`: one
+    /// instantiation).
+    Iface(TyId),
     /// The value of an `any`, `unknown` or `object`.
     Dynamics,
 }
@@ -78,10 +82,10 @@ struct Graph {
     frames: FxHashMap<TyId, Vec<TyId>>,
     /// What the environments of each key capture.
     envs: FxHashMap<Option<CycleKey>, Vec<TyId>>,
-    /// The concrete types each interface's tables were built for.
-    impls: FxHashMap<DefId, Vec<TyId>>,
-    /// The interfaces whose values were converted to each interface.
-    upcast_from: FxHashMap<DefId, Vec<DefId>>,
+    /// The concrete types the tables of each interface type were built for.
+    impls: FxHashMap<TyId, Vec<TyId>>,
+    /// The interface types whose values were converted to each interface type.
+    upcast_from: FxHashMap<TyId, Vec<TyId>>,
 }
 
 impl Graph {
@@ -123,8 +127,8 @@ impl Cx<'_> {
         let mut keys: Vec<Option<CycleKey>> = g.envs.keys().cloned().collect();
         keys.sort_by_key(|k| format!("{k:?}"));
         starts.extend(keys.into_iter().map(Node::Closures));
-        let mut ifaces: Vec<DefId> = g.impls.keys().copied().collect();
-        ifaces.sort_by_key(|d| d.0);
+        let mut ifaces: Vec<TyId> = g.impls.keys().copied().collect();
+        ifaces.sort_by_key(|t| t.0);
         starts.extend(ifaces.into_iter().map(Node::Iface));
         starts.push(Node::Dynamics);
         let starts: Vec<usize> = starts.into_iter().map(|n| g.id(n)).collect();
@@ -165,8 +169,10 @@ impl Cx<'_> {
                 Node::Closures(k) => {
                     out.closures.insert(k);
                 }
-                Node::Iface(d) => {
-                    out.ifaces.insert(d);
+                Node::Iface(t) => {
+                    if let TyKind::Dyn(d, _) = self.kind(t) {
+                        out.ifaces.insert(d);
+                    }
                 }
                 Node::Dynamics => out.dynamics = true,
             }
@@ -182,7 +188,7 @@ impl Cx<'_> {
                 _ => self.type_name(*t),
             },
             Node::Closures(k) => self.closure_set_name(k),
-            Node::Iface(d) => self.iface_entry_name(*d),
+            Node::Iface(t) => format!("`{}` interface values", self.type_name(*t)),
             Node::Dynamics => "dynamic values".into(),
         }
     }
@@ -258,8 +264,8 @@ impl Cx<'_> {
     /// alive while its key lives.
     fn ephemeron_edges(
         &mut self,
-        impls: &FxHashMap<DefId, Vec<TyId>>,
-        upcast_from: &FxHashMap<DefId, Vec<DefId>>,
+        impls: &FxHashMap<TyId, Vec<TyId>>,
+        upcast_from: &FxHashMap<TyId, Vec<TyId>>,
     ) -> FxHashMap<TyId, Vec<TyId>> {
         let mut out: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
         for t in self.table_types() {
@@ -289,8 +295,8 @@ impl Cx<'_> {
     fn key_types(
         &mut self,
         k: TyId,
-        impls: &FxHashMap<DefId, Vec<TyId>>,
-        upcast_from: &FxHashMap<DefId, Vec<DefId>>,
+        impls: &FxHashMap<TyId, Vec<TyId>>,
+        upcast_from: &FxHashMap<TyId, Vec<TyId>>,
     ) -> Vec<TyId> {
         let mut out = vec![k];
         match self.kind(k) {
@@ -310,8 +316,8 @@ impl Cx<'_> {
                 all.sort_by_key(|t| t.0);
                 out.extend(all);
             }
-            TyKind::Dyn(d, _) => {
-                let mut ifaces = vec![d];
+            TyKind::Dyn(..) => {
+                let mut ifaces = vec![k];
                 let mut i = 0;
                 while let Some(&cur) = ifaces.get(i) {
                     for &f in upcast_from.get(&cur).map_or(&[][..], |v| &v[..]) {
@@ -380,32 +386,63 @@ impl Cx<'_> {
         out
     }
 
-    /// The concrete types each interface's tables were built for.
-    fn iface_impl_types(&self) -> FxHashMap<DefId, Vec<TyId>> {
-        let mut pairs: Vec<(DefId, TyId)> = self
-            .facts
-            .iface_impls
-            .iter()
-            .map(|&(d, _, t)| (d, t))
-            .collect();
-        pairs.sort_by_key(|(d, t)| (d.0, t.0));
-        let mut out: FxHashMap<DefId, Vec<TyId>> = FxHashMap::default();
-        for (d, t) in pairs {
-            push_new(out.entry(d).or_default(), t);
+    /// The concrete types the tables of each interface type were built for.
+    fn iface_impl_types(&mut self) -> FxHashMap<TyId, Vec<TyId>> {
+        let mut built: Vec<(DefId, u32, TyId)> = self.facts.iface_impls.iter().copied().collect();
+        built.sort_by_key(|&(d, i, t)| (d.0, i, t.0));
+        let mut out: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
+        for (_, index, t) in built {
+            let iface = self.impl_iface_ty(index, t);
+            push_new(out.entry(iface).or_default(), t);
         }
         out
     }
 
-    /// For each interface, the interfaces whose values were converted to it (`Upcast`).
-    fn iface_upcasts(&self) -> FxHashMap<DefId, Vec<DefId>> {
+    /// The interface type implementation `index` gives the concrete type `t`: its interface with
+    /// its arguments, bound by matching the implementation's type against `t` or a base of it
+    /// (callee.rs `impl_method`).
+    fn impl_iface_ty(&mut self, index: u32, t: TyId) -> TyId {
+        let imp = &self.hir.impls[index as usize];
+        let (iface, pattern, generics) = (imp.iface, imp.ty, imp.generics);
+        let iface_args = imp.iface_args.clone();
+        let mut binds = vec![None; generics as usize];
+        let found = self.self_and_bases(t).into_iter().any(|c| {
+            binds = vec![None; generics as usize];
+            self.match_ty(pattern, c, &mut binds)
+        });
+        if !found {
+            ice("an implementation table for a type its implementation does not match");
+        }
+        let targs: Vec<TyId> = (binds.into_iter())
+            .map(|b| b.unwrap_or_else(|| ice("an implementation's type parameter left unbound")))
+            .collect();
+        let args: Vec<TyId> = iface_args.iter().map(|&a| self.subst(a, &targs)).collect();
+        self.intern(TyKind::Dyn(iface, args))
+    }
+
+    /// For each interface type, the interface types whose values were converted to it
+    /// (`Upcast`).
+    fn iface_upcasts(&self) -> FxHashMap<TyId, Vec<TyId>> {
         let mut pairs: Vec<(TyId, TyId)> = self.facts.upcasts.iter().copied().collect();
         pairs.sort_by_key(|(a, b)| (a.0, b.0));
-        let mut out: FxHashMap<DefId, Vec<DefId>> = FxHashMap::default();
+        let mut out: FxHashMap<TyId, Vec<TyId>> = FxHashMap::default();
         for (from, to) in pairs {
-            if let (TyKind::Dyn(f, _), TyKind::Dyn(t, _)) = (self.kind(from), self.kind(to)) {
-                push_new(out.entry(t).or_default(), f);
+            if let (TyKind::Dyn(..), TyKind::Dyn(..)) = (self.kind(from), self.kind(to)) {
+                push_new(out.entry(to).or_default(), from);
             }
         }
+        out
+    }
+
+    /// The interface types of the graph that are instantiations of interface `d`.
+    fn instances_of(g: &Graph, d: DefId, kind: &mut impl FnMut(TyId) -> TyKind) -> Vec<TyId> {
+        let mut out: Vec<TyId> = (g.impls.keys().chain(g.upcast_from.keys()))
+            .chain(g.upcast_from.values().flatten())
+            .copied()
+            .filter(|&t| matches!(kind(t), TyKind::Dyn(x, _) if x == d))
+            .collect();
+        out.sort_by_key(|t| t.0);
+        out.dedup();
         out
     }
 
@@ -434,9 +471,13 @@ impl Cx<'_> {
             }
             Node::Dynamics => {
                 out.extend(sorted(&self.facts.dyn_types).into_iter().map(Node::Ty));
+                // Every instantiation of an interface whose values were converted to `any`.
                 let mut to_any: Vec<DefId> = self.facts.dyn_to_any.iter().copied().collect();
                 to_any.sort_by_key(|d| d.0);
-                out.extend(to_any.into_iter().map(Node::Iface));
+                for d in to_any {
+                    let instances = Self::instances_of(g, d, &mut |t| self.kind(t));
+                    out.extend(instances.into_iter().map(Node::Iface));
+                }
                 // A generic closure held as `unknown` (glue/vtable.rs `ClosureAny`).
                 out.push(Node::Closures(None));
             }
@@ -450,10 +491,10 @@ impl Cx<'_> {
                     TyKind::Dyn(d, _) if self.is_generic_fn_value(t) => {
                         out.push(Node::Closures(Some(CycleKey::Generic(d))));
                         out.push(Node::Closures(None));
-                        out.push(Node::Iface(d));
+                        out.push(Node::Iface(t));
                     }
                     TyKind::Dyn(..) if self.is_dynamic(t) => out.push(Node::Dynamics),
-                    TyKind::Dyn(d, _) => out.push(Node::Iface(d)),
+                    TyKind::Dyn(..) => out.push(Node::Iface(t)),
                     _ => {}
                 }
                 out.extend(self.owned_tys(t).into_iter().map(Node::Ty));
@@ -483,11 +524,25 @@ impl Cx<'_> {
                     true => self.adt_edge_tys(t),
                     false => self.part_types(t),
                 };
-                // What a standard-library container keeps behind its own pointers; but a weak
-                // collection's entries are the runtime's (the ephemeron edges stand for them),
-                // while its fields and a subclass's are its own.
+                // What a type keeps behind the runtime's pointers: an argument for a parameter no
+                // field shows (a `Mutex<T>`, a runtime handle's element). A parameter a field
+                // shows has its edges in that field's type, which leaves out what is no edge
+                // there (`shared<T>`, a `weak` field). A weak collection's entries are the
+                // runtime's (the ephemeron edges stand for them), while its fields and a
+                // subclass's are its own.
                 if self.weak_class(t).is_none() {
-                    tys.extend(args);
+                    let fields: Vec<TyId> = match self.hir.def(d) {
+                        velt_sema::hir::Def::Adt(a) => a.fields.iter().map(|f| f.ty).collect(),
+                        velt_sema::hir::Def::Enum(e) => {
+                            e.variants.iter().flat_map(|v| v.payload.clone()).collect()
+                        }
+                        _ => vec![],
+                    };
+                    for (i, a) in args.into_iter().enumerate() {
+                        if !fields.iter().any(|&f| self.mentions_param(f, i as u32)) {
+                            tys.push(a);
+                        }
+                    }
                 }
                 if self.is_class(t) && self.has_header(d) {
                     // It may be an object of any subclass that was built, which owns what the
@@ -510,6 +565,33 @@ impl Cx<'_> {
 }
 
 impl Cx<'_> {
+    /// Does `t`, a type as a definition writes it, mention its type parameter `i`?
+    fn mentions_param(&self, t: TyId, i: u32) -> bool {
+        match self.raw_kind(t) {
+            TyKind::Param(n) => *n == i,
+            TyKind::Adt(_, ts) | TyKind::Dyn(_, ts) | TyKind::Tuple(ts) | TyKind::Op(_, ts) => {
+                ts.iter().any(|&x| self.mentions_param(x, i))
+            }
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => {
+                self.mentions_param(*e, i)
+            }
+            TyKind::Map(a, b) | TyKind::Result(a, b) | TyKind::Promise(a, b) => {
+                self.mentions_param(*a, i) || self.mentions_param(*b, i)
+            }
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+                ..
+            } => {
+                params.iter().any(|&x| self.mentions_param(x, i))
+                    || self.mentions_param(*ret, i)
+                    || self.mentions_param(*throws, i)
+            }
+            _ => false,
+        }
+    }
+
     /// Does the class `sub` extend `sup`, directly or not (and is not `sup` itself)?
     pub(in crate::lower) fn strict_subclass(&self, mut sub: DefId, sup: DefId) -> bool {
         while let Some(b) = self.adt_def(sub).base {

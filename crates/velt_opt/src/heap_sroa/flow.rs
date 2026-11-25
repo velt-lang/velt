@@ -15,10 +15,10 @@
 //! (on the other paths it holds another object), so `w`'s web stays on the heap; so does a web
 //! written by a call's result with a live alias (the copy would have to go after the call).
 
-use velt_vir::vir::{Callee, Function, Local, Operand, Place, Proj, Rvalue, Stmt, Terminator};
+use velt_vir::vir::{Callee, Function, Local, Operand, Place, Proj, Stmt, Terminator};
 
 use super::aliases::{self, bits, Aliases};
-use super::webs::Webs;
+use super::webs::{moved, Webs};
 use super::Allocator;
 use crate::visit::{rvalue_operands, stmt_operands, successors, term_operands};
 
@@ -225,12 +225,10 @@ impl Index {
     fn stmt_events(&self, s: &Stmt, out: &mut Vec<Event>) {
         match s {
             Stmt::Assign(dst, rv) => match self.whole(dst) {
-                Some(d) => out.push(match rv {
-                    Rvalue::Use(Operand::Copy(src)) => match self.whole(src) {
-                        Some(src) => Event::Copy { dst: d, src },
-                        None => Event::Kill(d),
-                    },
-                    _ => Event::Kill(d),
+                // A copy, or the same block's count or object (`d = w + 8`): the same object.
+                Some(d) => out.push(match moved(rv).and_then(|(src, _)| self.whole(src)) {
+                    Some(src) => Event::Copy { dst: d, src },
+                    None => Event::Kill(d),
                 }),
                 None => {
                     rvalue_operands(rv, &mut |op| self.read(op, out));

@@ -4,6 +4,7 @@
 // text, which every target can write.
 import * as fs from "velt/fs";
 import { platform, tmpdir } from "velt/os";
+import { cwd } from "velt/process";
 
 function main() {
   // Windows keeps a mapped file until the program ends and may refuse to remove it below (older
@@ -47,11 +48,12 @@ function main() {
     console.log((e as Error).name, (e as Error).message.replace(path, "<path>"));
   }
   console.log(fs.MappedFile.open(path, { offset: 96 }).length, m.f32s(8, 0).length);
-  // A directory is refused with the same code on every target.
+  // A directory is refused with the same code on every target (named resolved on Windows, as
+  // velt/fs names every path there, as Node does: printed as given).
   try {
     fs.MappedFile.open(".");
   } catch (e) {
-    console.log((e as Error).message);
+    console.log((e as Error).message.replace(`'${cwd()}'`, "'.'"));
   }
   try {
     fs.rmSync(path);

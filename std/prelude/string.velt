@@ -18,9 +18,11 @@ import {
   inline,
   noInline,
   strAsciiWords,
+  strBorrowedWords,
   strByteAt,
   strByteLen,
   strCharCodeAt,
+  strWord0,
   strWord1,
   strWord2,
 } from "velt/lang/intrinsics";
@@ -46,12 +48,16 @@ function asciiLen(s: string): u64 {
 }
 
 /**
- * `s.slice(start, end)` (#2198). Compiled into the caller is the one-unit slice of an ASCII string
- * (`start` in range, `end` the next unit): the inline string of its byte, with no call. Anything
- * else is one call of the runtime, which clamps the bounds and translates positions, precompiled:
- * in Velt (std/lang/string/positions.velt) that would be checked in every program, as nearly
- * every program slices (+13 to +21 % on `velt check` of hello), until std objects make it free
- * (#1728).
+ * `s.slice(start, end)` (#2198). Compiled into the caller, with no call:
+ * - the one-unit slice of an ASCII string (`start` in range, `end` the next unit): the inline
+ *   string of its byte;
+ * - any slice of a static ASCII string (a literal, or a view the runtime handed out as static):
+ *   the static string of its sub-range, as the runtime would return it (#3469), so slicing one
+ *   costs no call, no count and no copy.
+ * Anything else is one call of the runtime, which clamps the bounds and translates positions,
+ * precompiled: in Velt (std/lang/string/positions.velt) that would be checked in every program,
+ * as nearly every program slices (+13 to +21 % on `velt check` of hello), until std objects make
+ * it free (#1728).
  */
 @inline("always")
 function sliceOf(s: string, start: i64, end: i64): string {
@@ -59,7 +65,49 @@ function sliceOf(s: string, start: i64, end: i64): string {
   if (start >= 0 && (start as u64) < n && end == start + 1) {
     return strAsciiWords(strByteAt(s, start as u64) as u64, 0, 0, 1);
   }
+  // Static (`w2` 0) and ASCII (units equal bytes, not 0): the runtime's static branch of
+  // `VeltStr::substring`, inline. Only `w2` is tested before the call, not `n`: a heap string
+  // then pays one compare, and LLVM need not compute `n` for slices the test above rules out
+  // (+5 % instructions on bench/typical/consume when the test read `n`).
+  if (strWord2(s) == 0) {
+    const w1 = strWord1(s);
+    const len = w1 & 0xffffffff;
+    if (w1 >> 32 == len && len != 0) {
+      return staticAsciiSlice(strWord0(s), len, start, end);
+    }
+  }
   return velt_rt_str_slice(s, start, end);
+}
+
+/**
+ * The slice `[start, end)` of the static ASCII string of `n` bytes at `ptr`, as the runtime's
+ * static branch of `VeltStr::substring` gives it: the static string of the clamped range, or
+ * the empty string when it is empty.
+ */
+@inline("always")
+function staticAsciiSlice(ptr: u64, n: u64, start: i64, end: i64): string {
+  const a = relativePos(start, n);
+  const b = relativePos(end, n);
+  if (a >= b) {
+    return strBorrowedWords(0, 0);
+  }
+  const len = b - a;
+  return strBorrowedWords(ptr + a, (len << 32) | len);
+}
+
+/**
+ * A JS relative position in a string of `n` units, as the runtime's `relative_index`: a negative
+ * `i` counts from the end; the result is clamped to `[0, n]`. For a negative `i`, `n + i` cannot
+ * overflow: `n` is not negative (and below 2^31), so the sum lies in `[i, n)`, even for
+ * `i64::MIN` (what `-Infinity` converts to).
+ */
+@inline("always")
+function relativePos(i: i64, n: u64): u64 {
+  if (i < 0) {
+    const k = (n as i64) + i;
+    return k < 0 ? 0 : k as u64;
+  }
+  return (i as u64) < n ? i as u64 : n;
 }
 
 /**

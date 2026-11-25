@@ -295,9 +295,6 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object-literal method written at `.0` takes the object it is called on, of type
     /// `.1`, as its `this` parameter (`expr/literal_this.rs`).
     pub method_this: Option<(Span, TyId)>,
-    /// The property read written at this span is the value of an object-literal property
-    /// (`expr/literal_this.rs` `stored_value`).
-    pub stored_prop: Option<Span>,
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
@@ -356,6 +353,10 @@ pub(crate) struct FnCx<'a, 'm> {
     pub c_args: bool,
     /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
     pub proxy_keys_inner: bool,
+    /// Checking the branch of the typed proxy hooks taken when `x` is one (`proxy.rs`
+    /// `proxy_split`): `x`, a proxy, holds none of its type's fields, so it may become an `any`
+    /// even when the type holds a lock.
+    pub typed_proxy_branch: bool,
     /// How many `unsafe { … }` blocks and expressions enclose the code being
     /// checked, lexically: closures inside one are unsafe code too, a nested function
     /// declaration is not (`unsafe_code.rs`).
@@ -493,7 +494,6 @@ impl<'a, 'm> FnCx<'a, 'm> {
             promise_callback: false,
             literal_slot: None,
             method_this: None,
-            stored_prop: None,
             call_temps: vec![],
             held_recheck: Vec::new(),
             callee_effects: None,
@@ -516,6 +516,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             system_args: false,
             c_args: false,
             proxy_keys_inner: false,
+            typed_proxy_branch: false,
             unsafe_depth: 0,
             explicit_type_spans: None,
             optional_slots: vec![],

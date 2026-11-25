@@ -1,0 +1,45 @@
+// `Partial<I>` of an interface with methods is an object type with every member optional, as
+// TypeScript's mapped type gives it: a field of its type, a method `m(x: A): R` a field
+// `m?: (x: A) => R` (sigx's `Request | Partial<ServerFnContext>` for in-process server calls).
+// A value of it may leave out any member, or give a method as a function.
+interface Ctx {
+  url: string;
+  headers: Map<string, string>;
+  status(code: number): void;
+  locals: Record<string, unknown>;
+}
+
+type CtxInit = string | Partial<Ctx>;
+
+function detached(): Ctx {
+  let st = 200;
+  return {
+    url: "/detached",
+    headers: new Map(),
+    status(code: number) {
+      st = code;
+      console.log("detached status", code);
+    },
+    locals: {},
+  };
+}
+
+function contextFrom(init: CtxInit): Ctx {
+  const partial: Partial<Ctx> = typeof init === "string" ? { url: init } : init;
+  const d = detached();
+  return {
+    url: partial.url ?? d.url,
+    headers: partial.headers ?? new Map(),
+    status: partial.status ?? ((c: number) => d.status(c)),
+    locals: partial.locals ?? {},
+  };
+}
+
+const a = contextFrom("/a");
+a.status(404);
+const b = contextFrom({ status: (c: number) => console.log("own status", c), locals: { u: 1 } });
+b.status(201);
+console.log(a.url, b.url, b.locals, Object.keys(a.locals));
+
+const empty: Partial<Ctx> = {};
+console.log(empty.url === undefined, empty.status === undefined, "status" in empty);

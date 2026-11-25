@@ -1,7 +1,8 @@
 // velt/process/child (internal): the child-process functions where the executor in Velt doesn't
 // run (the default variant of `#child-rt`, std/imports.velt: WebAssembly), with the names and
 // signatures of the `std-scheduler` variant (std/process/child/child_sched.velt), and what both
-// share: the runtime's `execSync` (rt_abi_async.md §14.3) and the layout it returns. No child
+// share: the layout `execSync` returns, and the runtime's `execSync` (rt_abi_async.md §14.3),
+// which Windows runs too (exec_sync_win32.velt); macOS and Linux run std's. No child
 // can start there: `spawn` and `exec` fail with `ENOTSUP`, and no handle is open.
 
 import { IoResult } from "velt/native/result";

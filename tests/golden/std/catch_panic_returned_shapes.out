@@ -1,0 +1,8 @@
+typed caught true typed
+awaited spawn caught true awaited
+as any caught true as any
+spawn handle caught true handle
+ok typed result a
+ok as any result b
+ok spawn handle result c
+done

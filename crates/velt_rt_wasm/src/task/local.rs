@@ -448,8 +448,7 @@ pub extern "C" fn velt_rt_task_id() -> u64 {
     1
 }
 
-/// What the compiler emits once per program with module state (velt_rt's
-/// task/local/module_state.rs).
+/// What the compiler emits once per program with module state (rt_abi.md "Module state").
 #[repr(C)]
 pub struct ModuleDesc {
     pub size: u64,
@@ -539,9 +538,6 @@ unsafe fn not_ready(desc: *const ModuleDesc, slot: u64) -> ! {
     crate::platform::write(2, msg.as_bytes());
     crate::platform::exit(1)
 }
-
-/// The module lock of a runtime with threads (velt_rt `module_state::touch`): one thread here.
-pub(crate) fn module_touch() {}
 
 #[cfg(test)]
 mod tests {

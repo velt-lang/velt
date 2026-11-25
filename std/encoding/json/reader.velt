@@ -6,11 +6,12 @@
 // `nextKey` / `arrayNext`: the reader only needs to know whether the last token it consumed
 // was an opening bracket.
 //
-// A driver's rows (std/db) are read by the runtime's row reader: such a reader starts out
-// failed (`ROWS`), so every method takes its failure branch, which forwards to the row reader;
-// reading text pays nothing for it.
+// A driver's rows (std/db) are read through a rows side (rows_side.velt), which only velt/db's
+// decoders make (rows_ops.velt's `readerOverCursor`): such a reader starts out failed (`ROWS`),
+// so every method takes its failure branch, which forwards to it. Reading text pays nothing for
+// it, and a program that reads only text neither loads nor compiles the rows reader.
 //
-// Port of crates/velt_rt/src/json/reader.rs and error.rs (#1668), with the same results and
+// Port of the runtime's json/reader.rs and error.rs (#1668), with the same results and
 // messages.
 
 import { blankComments } from "velt/encoding/json/scan_escape";
@@ -28,29 +29,24 @@ import {
   readerNumberStart,
   readerOpen,
   readerRangeIs,
-  readerRowsNextKey,
   readerStep,
   readerSyntaxFailed,
   readerValueStart,
   readerWalk,
 } from "velt/encoding/json/reader_steps";
-
-declare function velt_rt_json_reader_free(r: u64);
-declare function velt_rt_json_reader_peek(r: u64): u32;
-declare function velt_rt_json_reader_expect_object_start(r: u64): u8;
-declare function velt_rt_json_reader_expect_array_start(r: u64): u8;
-declare function velt_rt_json_reader_array_next(r: u64): u8;
-declare function velt_rt_json_reader_read_string(r: u64, out: string): u8;
-declare function velt_rt_json_reader_read_f64(r: u64, out: ReaderF64): u8;
-declare function velt_rt_json_reader_read_null(r: u64): u8;
-declare function velt_rt_json_reader_skip_value(r: u64): u8;
-declare function velt_rt_json_reader_mark(r: u64): u64;
-declare function velt_rt_json_reader_null_absent(r: u64): u8;
-
-// Out-parameters of the row reader's calls.
-struct ReaderF64 {
-  v: f64;
-}
+import {
+  rowsArrayNext,
+  rowsF64,
+  rowsMark,
+  rowsNestedKey,
+  rowsNextKey,
+  RowsSide,
+  rowsNull,
+  rowsOpen,
+  rowsPeek,
+  rowsSkip,
+  rowsString,
+} from "velt/encoding/json/rows_side";
 
 /** `peek` results. */
 export const TOKEN_EOF: u32 = 0;
@@ -73,8 +69,7 @@ export const STEP_ERROR: u8 = 2;
 /** `Reader` flags (`JSON.parse` options). */
 export const FLAG_REJECT_UNKNOWN: u32 = 1;
 export const FLAG_NULL_NOT_ABSENT: u32 = 2;
-/** JSONC: comments are whitespace; a comma may come before `]` and `}`. (4 and 8 are the
- *  runtime's row flags.) */
+/** JSONC: comments are whitespace; a comma may come before `]` and `}`. */
 export const FLAG_COMMENTS: u32 = 16;
 export const FLAG_TRAILING_COMMAS: u32 = 32;
 
@@ -85,7 +80,7 @@ export const MISMATCH: u8 = 1;
 /** An object key the target type does not have, with unknown keys rejected. */
 export const UNKNOWN: u8 = 2;
 export const SYNTAX: u8 = 3;
-/** Reading a driver's rows: the row reader at `rows` answers. */
+/** Reading a driver's rows: the rows reader `rows` answers. */
 export const ROWS: u8 = 4;
 
 /** Bits of a mark: position, open containers, `afterOpen`. */
@@ -107,8 +102,10 @@ export class Reader extends Scanner {
   depth: usize = 0;
   /** Where each array or object `skipLookahead` walked ends, by the offset of its bracket. */
   ends: Map<usize, usize> | null = null;
-  /** The runtime's row reader, when reading a driver's rows (0 otherwise). */
-  rows: u64 = 0;
+  /** The rows side, when reading a driver's rows (rows_ops.velt's `readerOverCursor` sets it). */
+  rows: RowsSide | null = null;
+  /** Reading a driver's rows, whether this reads a nested value's JSON text now (rows_ops.velt). */
+  rowsNested: bool = false;
   /** The last number read. */
   num: f64 = 0;
   int: i64 = 0;
@@ -146,19 +143,12 @@ export class Reader extends Scanner {
     return new Reader(src, flags, maxDepth);
   }
 
-  /** A reader over the runtime's row reader `rows` (owned: `close` frees it). */
-  static overRows(rows: u64): Reader {
-    const r = new Reader("", 0, 0);
-    r.rows = rows;
-    r.failed = ROWS;
-    return r;
-  }
-
-  /** Frees the row reader, if any. */
+  /** Ends the rows reader, if any. */
   close() {
-    if (this.rows != 0) {
-      velt_rt_json_reader_free(this.rows);
-      this.rows = 0;
+    const rows = this.rows;
+    if (rows != null) {
+      rows.close();
+      this.rows = null;
     }
   }
 
@@ -179,16 +169,13 @@ export class Reader extends Scanner {
 
   /** May a JSON `null` stand for an absent optional field whose type has no `null`? */
   nullAbsent(): bool {
-    if (this.rows != 0) {
-      return velt_rt_json_reader_null_absent(this.rows) == 1;
-    }
     return !this.nullNotAbsent;
   }
 
   /** The kind of the next value (`TOKEN_*`); consumes only whitespace. */
   peek(): u32 {
     if (this.failed != NONE) {
-      return this.rows != 0 ? velt_rt_json_reader_peek(this.rows) : TOKEN_ERROR;
+      return this.failed == ROWS ? rowsPeek(this) : TOKEN_ERROR;
     }
     const b = this.peekNonWs();
     if (b == 34) {
@@ -224,9 +211,7 @@ export class Reader extends Scanner {
   /** Consumes `{`. */
   openObject(): bool {
     if (!readerValueStart(this, 123, 123)) {
-      return this.rows != 0 &&
-        this.failed == ROWS &&
-        velt_rt_json_reader_expect_object_start(this.rows) == 1;
+      return this.failed == ROWS && rowsOpen(this, 123);
     }
     return readerOpen(this);
   }
@@ -234,9 +219,7 @@ export class Reader extends Scanner {
   /** Consumes `[`. */
   openArray(): bool {
     if (!readerValueStart(this, 91, 91)) {
-      return this.rows != 0 &&
-        this.failed == ROWS &&
-        velt_rt_json_reader_expect_array_start(this.rows) == 1;
+      return this.failed == ROWS && rowsOpen(this, 91);
     }
     return readerOpen(this);
   }
@@ -248,11 +231,12 @@ export class Reader extends Scanner {
    */
   nextKey(): u8 {
     if (this.failed != NONE) {
-      return readerRowsNextKey(this);
+      return this.failed == ROWS ? rowsNextKey(this) : STEP_ERROR;
     }
     const step = readerStep(this, 125, EXPECTED_COMMA_BRACE);
     if (step != STEP_MORE) {
-      return step;
+      // Past a nested value of a driver's rows (its text ends here): the row's next column.
+      return step == STEP_ERROR && this.rowsNested && this.depth == 0 ? rowsNestedKey(this) : step;
     }
     if (this.peekNonWs() != 34) {
       this.fail(EXPECTED_KEY);
@@ -314,9 +298,7 @@ export class Reader extends Scanner {
   /** `STEP_MORE` if another array element follows, `STEP_END` after the closing `]`. */
   arrayNext(): u8 {
     if (this.failed != NONE) {
-      return this.rows != 0 && this.failed == ROWS
-        ? velt_rt_json_reader_array_next(this.rows)
-        : STEP_ERROR;
+      return this.failed == ROWS ? rowsArrayNext(this) : STEP_ERROR;
     }
     return readerStep(this, 93, EXPECTED_COMMA_BRACKET);
   }
@@ -324,14 +306,7 @@ export class Reader extends Scanner {
   /** A string value (decoded): `text()` after true. A row reader's counts as escaped. */
   readString(): bool {
     if (!readerValueStart(this, 34, 34)) {
-      if (this.rows != 0 && this.failed == ROWS) {
-        let s = "";
-        const ok = velt_rt_json_reader_read_string(this.rows, s) == 1;
-        this.escaped = true;
-        this.decoded = s;
-        return ok;
-      }
-      return false;
+      return this.failed == ROWS && rowsString(this);
     }
     if (!this.string(true)) {
       this.failed = SYNTAX;
@@ -343,13 +318,7 @@ export class Reader extends Scanner {
   /** A number value: `num` after true. */
   readF64(): bool {
     if (!readerNumberStart(this)) {
-      if (this.rows != 0 && this.failed == ROWS) {
-        let out: ReaderF64 = { v: 0 };
-        const ok = velt_rt_json_reader_read_f64(this.rows, out) == 1;
-        this.num = out.v;
-        return ok;
-      }
-      return false;
+      return this.failed == ROWS && rowsF64(this);
     }
     this.num = this.numberValue();
     return true;
@@ -358,25 +327,23 @@ export class Reader extends Scanner {
   /** `null`. */
   readNull(): bool {
     if (!readerValueStart(this, 110, 110)) {
-      return this.rows != 0 && this.failed == ROWS && velt_rt_json_reader_read_null(this.rows) == 1;
+      return this.failed == ROWS && rowsNull(this);
     }
-    return (this.literal("null") || readerSyntaxFailed(this));
+    return this.literal("null") || readerSyntaxFailed(this);
   }
 
   /** Skips one complete value of any kind, checking it. */
   skipValue(): bool {
     if (!readerValueStart(this, 0, 0)) {
-      return this.rows != 0 &&
-        this.failed == ROWS &&
-        velt_rt_json_reader_skip_value(this.rows) == 1;
+      return this.failed == ROWS && rowsSkip(this);
     }
-    return (readerWalk(this, readerDepthLeft(this), false) || readerSyntaxFailed(this));
+    return readerWalk(this, readerDepthLeft(this), false) || readerSyntaxFailed(this);
   }
 
   /** The current position, to come back to with `reset` (a decoder looking ahead). */
   mark(): u64 {
-    if (this.rows != 0 && this.failed == ROWS) {
-      return velt_rt_json_reader_mark(this.rows);
+    if (this.failed == ROWS) {
+      return rowsMark(this);
     }
     const max: u64 = (1 << MARK_DEPTH_BITS) - 1;
     const depth = this.depth as u64 < max ? this.depth as u64 : max;

@@ -113,6 +113,7 @@ export { strLoadPartialU8x16, strLoadU8x16 } from "velt/lang/intrinsics/simd";
 export {
   strAsciiWords,
   strAt,
+  strBorrowedWords,
   strByteAt,
   strByteLen,
   strbufPushAsciiWord,

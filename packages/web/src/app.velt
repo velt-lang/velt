@@ -54,7 +54,14 @@ export class App<V> {
   /** Adds a route for `method` (in any case), inside the `around` middleware added so far. */
   on(method: string, pattern: string, route: Route<V>): App<V> {
     const name = method.toUpperCase();
-    this.added.push({ method: name, pattern, route, layers: this.arounds.length });
+    // An arrow: a function stored under a `this`-reading method's name (`route` below) is
+    // written in the literal (velt_sema `iface_method_values`).
+    this.added.push({
+      method: name,
+      pattern,
+      route: (c: Context<V>): Promise<Response> => route(c),
+      layers: this.arounds.length,
+    });
     return this;
   }
 
@@ -110,7 +117,7 @@ export class App<V> {
       this.added.push({
         method: a.method,
         pattern: joined(prefix, a.pattern),
-        route: a.route,
+        route: (c: Context<V>): Promise<Response> => a.route(c),
         layers: base + a.layers,
       });
     }

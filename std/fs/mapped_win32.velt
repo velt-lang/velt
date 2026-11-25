@@ -7,9 +7,8 @@
 // cut a file short while a view of it exists, so there is no bus error here.
 
 import { Ptr } from "velt/ffi/ptr";
-import { osError } from "velt/fs/errors";
 import { letGo, MapOptions, Mapping, newOwner, outsideFile, partOf } from "velt/fs/mapped_part";
-import { winPath } from "velt/fs/whole/win_path";
+import { winError, winPath } from "velt/fs/whole/win_path";
 import { addressArrayOwned, fnAddress } from "velt/lang/intrinsics";
 import { errnoOfWin32 } from "velt/os/win_error";
 
@@ -57,7 +56,7 @@ const FILE_TYPE_DISK: u32 = 1;
 const PAGE_READONLY: u32 = 2;
 const FILE_MAP_READ: u32 = 4;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
-/** Linux's numbers, which `osError` reads on Windows. */
+/** Linux's numbers, which `winError` reads. */
 const EISDIR: i32 = 21;
 const EINVAL: i32 = 22;
 
@@ -84,7 +83,7 @@ function close(h: Ptr<void>) {
 export function mapFile(path: string, options: MapOptions | undefined): Mapping {
   const w = winPath(path);
   if (w === null) {
-    throw osError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path);
+    throw winError(errnoOfWin32(ERROR_FILE_NOT_FOUND), "open", path);
   }
   let opened: Ptr<void> | null = null;
   // SAFETY: `w` is NUL-terminated; no security attributes and no template.
@@ -105,23 +104,23 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
     // A directory refuses to open as a file: with "access denied", or, named with a separator
     // after it (`dir\`), with another code.
     if (isDirectory(w)) {
-      throw osError(EISDIR, "mmap", path);
+      throw winError(EISDIR, "mmap", path);
     }
-    throw osError(errnoOfWin32(code), "open", path);
+    throw winError(errnoOfWin32(code), "open", path);
   }
   const file: Ptr<void> = opened;
   // Only a file on a disk has bytes to map (not a console, a pipe or a device).
   // SAFETY: `file` is an open handle.
   if (unsafe { GetFileType(file) } !== FILE_TYPE_DISK) {
     close(file);
-    throw osError(EINVAL, "mmap", path);
+    throw winError(EINVAL, "mmap", path);
   }
   const sized: i64[] = [0];
   // SAFETY: `sized` holds the 8 bytes the call writes.
   if (unsafe { GetFileSizeEx(file, sized) } === 0) {
     const code = lastWin32();
     close(file);
-    throw osError(errnoOfWin32(code), "fstat", path);
+    throw winError(errnoOfWin32(code), "fstat", path);
   }
   const size = sized[0] as number;
   const part = partOf(size, options);
@@ -140,7 +139,7 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
   if (mapping === null) {
     const code = lastWin32();
     close(file);
-    throw osError(errnoOfWin32(code), "mmap", path);
+    throw winError(errnoOfWin32(code), "mmap", path);
   }
   // A view starts at a multiple of the allocation granularity, 64 KiB.
   const lead = part.offset % 65536;
@@ -158,7 +157,7 @@ export function mapFile(path: string, options: MapOptions | undefined): Mapping 
   close(mapping);
   close(file);
   if (view === null) {
-    throw osError(errnoOfWin32(code), "mmap", path);
+    throw winError(errnoOfWin32(code), "mmap", path);
   }
   const base = Ptr.addressOf(view);
   const address = base + (lead as usize);

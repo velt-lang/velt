@@ -501,9 +501,26 @@ async function main() {
     std::fs::write(dir.path().join("fetch_follow.velt"), follows).unwrap();
     let exe = build(dir.path(), "fetch_follow");
     assert_eq!(run(&exe, 1), "200 ok\n");
+    let follow = vir(dir.path(), Some("fetch_follow"));
     assert!(
-        vir(dir.path(), Some("fetch_follow")).contains(CLIENT_MARKER),
+        follow.contains(CLIENT_MARKER),
         "an http: fetch that follows redirects must keep the TLS client"
+    );
+    // The client reaches the server's handshake only through `ServerSteps`
+    // (std/net/tls/server_steps.velt), so it doesn't load it, let alone check it (#3634): the
+    // build stamp lists every std file the build read.
+    let stamp = std::fs::read_to_string(exe.with_file_name(format!(
+        "{}.build-stamp",
+        exe.file_name().unwrap().to_string_lossy()
+    )))
+    .unwrap();
+    assert!(
+        stamp.contains("fd_client.velt"),
+        "the stamp lists std's files"
+    );
+    assert!(
+        !stamp.contains("server_handshake.velt"),
+        "a program that only connects with TLS loads the TLS server's handshake"
     );
 }
 
@@ -621,4 +638,41 @@ fn a_ws_only_websocket_program_builds_no_tls_client() {
         vir(dir.path(), Some("ws_secure")).contains(CLIENT_MARKER),
         "a wss: connectWebSocket must build the TLS client"
     );
+}
+
+/// How many checks building `name.velt` in `dir` takes: `--timings` prints a `sema` line for each.
+fn checks(dir: &Path, name: &str) -> usize {
+    let o = command(env!("CARGO_BIN_EXE_velt"))
+        .arg("build")
+        .arg(dir.join(format!("{name}.velt")))
+        .arg("-o")
+        .arg(dir.join(format!("{name}.bin")))
+        .arg("--timings")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let err = String::from_utf8_lossy(&o.stderr);
+    err.lines().filter(|l| l.starts_with("velt: sema ")).count()
+}
+
+/// The TLS client loads in the middle of the check (#3634): a `fetch` that follows redirects (the
+/// default) or fetches an `https:` URL is checked once, not checked again with the client up
+/// front (docs/internals/design/lazy-std.md "Loading on demand"): tcp_sched reaches the TLS
+/// streams through function values the client installs (std/net/tls/fd_hook.velt), the error
+/// classes load up front, and velt/simd, whose `extend`s of the vector types the record layer
+/// uses, a `fetch` program loads up front anyway.
+#[test]
+fn a_fetch_that_reaches_the_tls_client_is_checked_once() {
+    let dir = test_dir::TestDir::new();
+    for (name, url) in [
+        ("follow", "http://127.0.0.1:9/"),
+        ("https", "https://127.0.0.1:9/"),
+    ] {
+        let src = format!(
+            "async function main() {{\n  try {{\n    console.log((await fetch(\"{url}\")).status);\n  }} catch (e) {{\n    console.log(\"failed\");\n  }}\n}}\n"
+        );
+        std::fs::write(dir.path().join(format!("{name}.velt")), src).unwrap();
+        assert_eq!(checks(dir.path(), name), 1, "`{name}` is checked once");
+    }
 }

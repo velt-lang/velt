@@ -86,7 +86,6 @@ pub(super) struct Exec {
     /// Something asked to be polled again without time passing (yield, I/O readiness).
     pub woke: bool,
     pub net: super::net::Net,
-    pub json: super::json::Readers,
 }
 
 impl Interp<'_> {
@@ -170,7 +169,6 @@ impl Interp<'_> {
                     .rt_sync_shared(sym, a)
                     .or_else(|| self.rt_net(sym, a))
                     .or_else(|| self.rt_strbuf(sym, a).map(Ok))
-                    .or_else(|| self.rt_json(sym, a).map(Ok))
             }
         }))
     }
@@ -182,7 +180,6 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &0u64.to_le_bytes());
                 0
             }
-            "velt_rt_module_with" | "velt_rt_module_with_end" => 0,
             "velt_rt_mutex_lock" | "velt_rt_mutex_lock_checked" => {
                 assert_eq!(self.read_u64(a[0]), 0, "interp: mutex already locked");
                 self.write_bytes(a[0], &1u64.to_le_bytes());
