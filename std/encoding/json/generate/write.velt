@@ -120,6 +120,11 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
     writeSubclasses(out, model, t, v, key);
     out.line(`w.append("{}");`);
   } else if (t.kind == "record") {
+    // A record view (`x as Record<string, any>`) is written as the object it views, the `any`
+    // it converts to, as in Node, where the cast is a no-op (an array as an array, #3675).
+    if (isDynamic(model.type(t.args[1]))) {
+      out.line(`if (recordViewIs(${v})) { writeJsonAny(w, dynamicOf(${v}), ${key}); return; }`);
+    }
     writeEntries(out, model, model.type(t.args[0]), t.args[1], `Object.entries(${v})`);
   } else if (t.kind == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
     out.line(`appendJsonValue(w, ${v});`);
