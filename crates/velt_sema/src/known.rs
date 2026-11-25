@@ -697,8 +697,10 @@ impl Ctx<'_> {
         let m = a.methods.get("clone").filter(|m| !m.is_static)?;
         let f = self.try_fn(m.def)?;
         let returns_self = matches!(self.ty.kind(f.ret), TyKind::Adt(r, _) if *r == d);
+        // As the app's passes raised it, for a finished unit's (`units::raised`).
         let throws = f.declared_throws.is_some()
-            || f.throws
+            || self
+                .fn_throws(m.def)
                 .is_some_and(|e| !matches!(self.ty.kind(e), TyKind::Never));
         (f.owner == Some(d) && f.params.is_empty() && !f.is_async && !throws && returns_self)
             .then_some(m.def)
