@@ -290,21 +290,20 @@ fn a_promise_shared_on_a_c_thread_stops_the_program_with_its_reason() {
     let dir = test_dir::TestDir::new();
     let home = home(dir.path());
     let in_initializer = format!("{SHARE_LIB}\nrunEarly();\n");
-    // (the case, the library, `main`, whether `main` began before the share)
     let cases = [
-        ("blocked", SHARE_LIB, SHARE_BLOCKED, true),
-        ("asleep", SHARE_LIB, SHARE_ASLEEP, true),
-        ("before", in_initializer.as_str(), SHARE_BEFORE, false),
+        ("blocked", SHARE_LIB, SHARE_BLOCKED),
+        ("asleep", SHARE_LIB, SHARE_ASLEEP),
+        ("before", in_initializer.as_str(), SHARE_BEFORE),
     ];
-    for (name, lib, main, main_began) in cases {
+    for (name, lib, main) in cases {
         let app = project_with(&dir.path().join(name), lib, main);
         let (code, out) = velt(&app, &home, &["build", "--release"], &[]);
         assert_eq!(code, Some(0), "{name}: {out}");
         for env in [&[][..], &[("VELT_THREADS", "1")][..]] {
             let (code, out) = velt(&app, &home, &["run", "--release"], env);
-            // Stopped by the panic: not killed by the time limit, not a crash.
+            // Stopped by the panic: not killed by the time limit, not a crash. (What `main`
+            // logged before it may still be in its buffer: the panic is another thread's.)
             assert_eq!(code, Some(101), "{name} {env:?}: {out}");
-            assert_eq!(out.contains("main\n"), main_began, "{name} {env:?}: {out}");
             assert!(
                 out.contains("a promise cannot be shared on a C library's own thread yet (#3782)"),
                 "{name} {env:?}: {out}"
