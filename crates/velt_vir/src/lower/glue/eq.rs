@@ -323,7 +323,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Raw bits of a float (through memory: VIR casts are numeric conversions).
-    fn float_bits(&mut self, v: Operand, vt: Ty) -> Operand {
+    pub(in crate::lower) fn float_bits(&mut self, v: Operand, vt: Ty) -> Operand {
         let (fa, ia) = if vt == Ty::F32 {
             (
                 self.cx.new_agg("f32 bits".into(), &[Ty::F32]),

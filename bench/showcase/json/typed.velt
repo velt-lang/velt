@@ -92,8 +92,8 @@ struct Performance {
 }
 
 struct Citm {
-  areaNames: Map<string, string>;
-  events: Map<string, Event>;
+  areaNames: Record<string, string>;
+  events: Record<string, Event>;
   performances: Performance[];
 }
 
@@ -141,10 +141,11 @@ function citmSum(c: Citm): string {
     }
   }
   let topics: i64 = 0;
-  for (const e of c.events.values()) {
+  const events = Object.values(c.events);
+  for (const e of events) {
     topics += e.topicIds.length + e.subTopicIds.length;
   }
-  return `${c.areaNames.size} ${c.events.size} ${c.performances.length} ${prices} ${amount} ${areas} ${topics}`;
+  return `${Object.keys(c.areaNames).length} ${events.length} ${c.performances.length} ${prices} ${amount} ${areas} ${topics}`;
 }
 
 function main() {

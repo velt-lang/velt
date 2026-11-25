@@ -121,6 +121,12 @@ export function open(): usize {
   if (kq < 0) {
     return 0;
   }
+  // Close-on-exec, as every kqueue (`#spawn-open`'s `spawnInherit` keeps a close-on-exec one
+  // from a child).
+  // SAFETY: F_SETFD takes an `int`, passed as C's `...` argument.
+  unsafe {
+    fcntl$io(kq, F_SETFD, FD_CLOEXEC);
+  }
   const r = m.lastingZeroed(R_SIZE);
   m.st(r + R_KQ, kq as usize);
   // The wake: a user event, cleared when a wait takes it.

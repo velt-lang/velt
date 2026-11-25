@@ -38,6 +38,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("anyIsPromise", Op(I::AnyIsPromise)),
     ("holdsDynamic", Op(I::HoldsDynamic)),
     ("anyIsList", Op(I::AnyIsList)),
+    ("anyZeroSign", Op(I::AnyZeroSign)),
     ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),
     ("noteStdUse", Op(I::NoteStdUse)),
@@ -129,6 +130,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("ptrToAddress", Op(I::PtrToAddress)),
     ("ptrRead", Op(I::PtrRead)),
     ("ptrWrite", Op(I::PtrWrite)),
+    ("cArrived", Op(I::CArrived)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("addressCall3", Op(I::AddressCall3)),

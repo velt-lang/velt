@@ -1,4 +1,3 @@
-inferred_exclusive.velt:38:5: error: cannot assign to parameter `v` of a closure
 inferred_exclusive.velt:29:13: error: cannot use `b.items` here: this call may modify `b` through another argument
 inferred_exclusive.velt:29:3: may be modified through this argument
 inferred_exclusive.velt:31:12: error: cannot use `xs` here: this call may modify it through another argument

@@ -75,7 +75,7 @@ pub(crate) fn final_hook(
     name: &str,
 ) -> Option<(DefId, TyId)> {
     let (m, ret) = hook(cx, d, args, name)?;
-    let throws = cx.fn_info(m).throws;
+    let throws = cx.fn_throws(m);
     if throws.is_some_and(|t| t != cx.ty.never) {
         return None;
     }
@@ -127,11 +127,11 @@ pub(crate) fn check_shapes(cx: &mut Ctx) {
 /// nowhere to send it).
 pub(crate) fn check_throws(cx: &mut Ctx) {
     for (_, m, name) in hook_methods(cx) {
-        let f = cx.fn_info(m);
-        let Some(t) = f.throws.filter(|&t| t != cx.ty.never) else {
+        // A finished unit's method as the app's passes raised it (`units::raised`).
+        let Some(t) = cx.fn_throws(m).filter(|&t| t != cx.ty.never) else {
             continue;
         };
-        let (span, tn) = (f.name_span, cx.display(t));
+        let (span, tn) = (cx.fn_info(m).name_span, cx.display(t));
         let what = match name {
             TO_STRING => "`String(x)` and template literals call it",
             _ => "`JSON.stringify` calls it",

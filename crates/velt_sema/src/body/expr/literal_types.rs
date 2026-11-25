@@ -64,8 +64,9 @@ impl FnCx<'_, '_> {
                     value,
                     suffix: None,
                 },
+                // Not `i64`, an unsuffixed literal's own type (from 2^53 on, an `f64`).
                 Some(LitValue::Int(it, _)),
-            ) => {
+            ) if *it != crate::hir::IntTy::I64 => {
                 let name = crate::types::int_name(*it);
                 ast::SignedLit {
                     lit: ast::Lit::Int {
@@ -173,8 +174,9 @@ impl FnCx<'_, '_> {
     /// as the `number` it is in TypeScript, converted to `exp` from there: `number` itself, a
     /// union holding `number` (`string | number`), or a `number | null`. Tried after the other
     /// conversions, so a union that holds the literals themselves keeps them. `Err(h)` when `h`
-    /// is no such type or the `number` converts to `exp` no better.
-    pub(super) fn int_literal_as_number(
+    /// is no such type or the `number` converts to `exp` no better. One literal is the `number`
+    /// constant [`int_literal_as_number`](Self::int_literal_as_number) makes of it.
+    pub(super) fn int_literal_to(
         &mut self,
         h: hir::Expr,
         exp: TyId,
@@ -184,11 +186,19 @@ impl FnCx<'_, '_> {
             return Err(h);
         }
         let original = h.clone();
-        let int = self.widen_value(h);
-        if int.ty != self.cx.ty.i64 {
+        let number = match self.cx.lit_value(h.ty) {
+            Some(hir::LitValue::Int(..)) => self.int_literal_as_number(h),
+            _ => {
+                let int = self.widen_value(h);
+                if int.ty != self.cx.ty.i64 {
+                    return Err(original);
+                }
+                self.int_to_float(int, f64)
+            }
+        };
+        if number.ty != f64 {
             return Err(original);
         }
-        let number = self.int_to_float(int, f64);
         match exp == f64 {
             true => Ok(number),
             false => self.try_coerce(number, exp).map_err(|_| original),
@@ -197,12 +207,13 @@ impl FnCx<'_, '_> {
 
     /// `v`, the operand of a compound assignment to a place of type `place`: a value of an
     /// integer literal type or a union of them as the `number` it is when the place is a `number`
-    /// (`x += n`, `x |= n` with `n: 0 | 1`), else `v` as it is.
+    /// (`x += n`, `x |= n` with `n: 0 | 1`), else `v` as it is. Taken before the bitwise path,
+    /// which takes `number`s (#3747).
     pub(super) fn compound_literal_operand(&mut self, place: TyId, v: hir::Expr) -> hir::Expr {
         if place != self.cx.ty.f64 {
             return v;
         }
-        self.int_literal_as_number(v, place).unwrap_or_else(|v| v)
+        self.int_literal_to(v, place).unwrap_or_else(|v| v)
     }
 
     /// Can a `number` convert to `t`: `number` itself, or a union or an option holding one

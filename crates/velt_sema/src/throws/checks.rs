@@ -33,6 +33,18 @@ pub(super) fn check_all(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
             let t = cx.fn_info(d).throws;
             cx.fn_info_mut(d).throws = solved(cx, t);
         }
+        // And what the app's passes raised of a finished unit's throws (`units::raised`).
+        let raised: Vec<_> = cx
+            .unit_sums
+            .raised
+            .throws
+            .iter()
+            .map(|(d, t)| (*d, *t))
+            .collect();
+        for (d, t) in raised {
+            let t = solved(cx, t);
+            cx.unit_sums.raised.throws.insert(d, t);
+        }
     }
     for &d in fns {
         if let Some(decl) = cx.fn_info(d).declared_throws {

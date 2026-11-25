@@ -446,3 +446,32 @@ function main() {
         );
     }
 }
+
+/// `Ref<S>` is a `const S *` of a C struct, as a parameter (#2187): a `Ref` of anything else, and
+/// a C function returning one, are errors at the declaration.
+#[test]
+fn a_ref_is_a_c_struct_parameter() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ref } from \"velt/ffi\";\n\nexport declare c struct P { x: f64; y: f64; }\n\ndeclare c(\"c\") function takes(n: Ref<i32>): void;\ndeclare c(\"c\") function gives(): Ref<P>;\ndeclare c(\"c\") function maybe(m: Ref<P> | undefined): void;\ntype Id<T> = T;\nexport declare c struct Holder { n: i32; r: Ref<P>; s: Id<Ref<P>>; }\ndeclare c(\"c\") function listed(ps: Ref<P>[]): void;\ndeclare c(\"c\") function gives2(): Id<Ref<P>>;\n\nexport function run(): void {\n  const p: P = { x: 1, y: 2 };\n  // SAFETY: a test of the checks only; never run.\n  unsafe {\n    takes(3);\n    gives();\n    maybe(p);\n  }\n  ;\n}\n",
+        "import { run } from \"geom\";\n\nfunction main() {\n  run();\n}\n",
+    );
+    let o = velt(dir.path(), &["check"]);
+    let out = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
+    assert!(!o.status.success(), "{out}");
+    for want in [
+        "parameter `n` of C function `takes` is a `Ref` of `i32`, which is no C struct",
+        "C function `gives` can't return a `Ref<S>`",
+        // Only `Ref<S> | null` is a nullable `Ref`; a `Ref` anywhere else in a parameter or
+        // result would cross as the struct, so it is refused.
+        "parameter `m` of C function `maybe` has a `Ref` that isn't its whole type",
+        "parameter `ps` of C function `listed` has a `Ref` that isn't its whole type",
+        "C function `gives2` can't return a `Ref<S>`",
+        // In a C struct, `Ref<P>` would be `P` inline where C has a pointer.
+        "field `r` of C struct `Holder` has a `Ref`",
+        "field `s` of C struct `Holder` has a `Ref`",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+}

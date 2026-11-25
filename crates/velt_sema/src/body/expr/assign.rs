@@ -446,7 +446,7 @@ impl FnCx<'_, '_> {
                         true => Want::Borrow,
                         false => Want::Move,
                     };
-                    let v = s.expr(value, Some(lty), want);
+                    let v = s.expr(value, Some(s.store_hint(&place, None, value)), want);
                     // A local declared from a literal takes the type of what it is assigned
                     // (`literal_locals`); other places are a typed position.
                     if s.literal_assign(&place, &v) {
@@ -454,8 +454,8 @@ impl FnCx<'_, '_> {
                             s.report_mismatch(lty, &v);
                             v
                         })
-                    } else if s.converting_store(&place, &v) {
-                        s.any_element_value(v, lty)
+                    } else if s.converting_store(&place, &v) || s.number_store(&place, &v) {
+                        s.element_value(v, lty)
                     } else {
                         s.coerce(v, lty)
                     }
@@ -544,7 +544,7 @@ impl FnCx<'_, '_> {
         let storage = self.cx.ty.is_storage_float(lty);
         let hint = match storage {
             true => Some(self.cx.ty.f64),
-            false => Some(lty),
+            false => Some(self.store_hint(&place, Some(op), value)),
         };
         let v = self.expr(value, hint, Want::Borrow);
         self.place_compound_checked(place, op, v, span)
@@ -577,10 +577,12 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(v.ty) == Some(crate::any::Dynamic::Any) {
             return self.number_place_any_rmw(place, op, v, span);
         }
+        if self.number_store(&place, &v) {
+            return self.number_element_rmw(place, op, v, span);
+        }
         // `depth += xs.length` on an integer that holds it: the integer (`numbers::std_int_fits`).
         let v = self.std_int_coerce(v, lty).unwrap_or_else(|v| v);
         self.literal_operands(op, &place, &v);
-        // Before the bitwise path, which takes `number`s (`x |= n` with `n: 0 | 1`, #3747).
         let v = self.compound_literal_operand(lty, v);
         // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
         let v = match self.js_bitwise_operands(op, &place, v) {
@@ -659,6 +661,9 @@ impl FnCx<'_, '_> {
                 let rmw = Rmw::Update(op, prefix);
                 return self.asserted_place_rmw(place, rmw, as_value, span);
             }
+            Some(AssignTarget::Place(p)) if as_value && prefix && self.int_update(&p) => {
+                return self.element_update_value(op, target, span);
+            }
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {
                 return self.setter_update(obj, op, prefix, target, as_value, span)
@@ -677,10 +682,7 @@ impl FnCx<'_, '_> {
                 let rmw = DynRmw::Update(op, prefix);
                 return self.dynamic_member_rmw(obj, target, rmw, as_value, span);
             }
-            Some(AssignTarget::Keyed(obj, _)) => {
-                self.cannot_index(&obj);
-                return self.error_expr(span);
-            }
+            Some(AssignTarget::Keyed(obj, _)) => return self.index_error(&obj, span),
             None => return self.error_expr(span),
         };
         if self.cx.dynamic(place.ty) == Some(crate::any::Dynamic::Any) {

@@ -25,10 +25,19 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
             },
             readonly,
         },
-        // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094).
+        // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094); `Out<S>` of a C
+        // struct an `S *` (#2187).
+        // `Ref<S>`: a `const S *` C reads (#2187), `t` being `S` (or `S | null`).
+        CTy::Ref { nullable } => match field_shape(p, option_inner(p, t)) {
+            Shape::Struct(name) => Shape::RefStruct { name, nullable },
+            other => other,
+        },
         CTy::Out => match first_arg(p, t) {
             Some(a) if ptr_target(p, a).is_some() => Shape::OutPtr(pointee_of_ptr(p, a)),
-            Some(a) => Shape::Out(scalar_of(p, a).unwrap_or(Scalar::Bool)),
+            Some(a) => match field_shape(p, a) {
+                Shape::Struct(name) => Shape::OutStruct(name),
+                _ => Shape::Out(scalar_of(p, a).unwrap_or(Scalar::Bool)),
+            },
             None => Shape::Out(Scalar::Bool),
         },
     }
@@ -59,6 +68,14 @@ fn scalar_of(p: &hir::Program, t: TyId) -> Option<Scalar> {
         TyKind::Float(hir::FloatTy::F64) => Some(Scalar::F64),
         TyKind::Bool => Some(Scalar::Bool),
         _ => None,
+    }
+}
+
+/// The `T` of `T | null` `t`, or `t`.
+fn option_inner(p: &hir::Program, t: TyId) -> TyId {
+    match p.types.kind(t) {
+        TyKind::Option(inner, _) => *inner,
+        _ => t,
     }
 }
 

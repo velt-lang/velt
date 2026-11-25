@@ -33,7 +33,7 @@ impl FnCx<'_, '_> {
         match self.try_coerce_as_is(h, exp) {
             Ok(h) => Ok(h),
             // An integer literal type, or a union of them, is a `number` too (#3747).
-            Err(h) => self.int_literal_as_number(h, exp),
+            Err(h) => self.int_literal_to(h, exp),
         }
     }
 

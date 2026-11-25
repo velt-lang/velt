@@ -343,7 +343,7 @@ class User {
 | `@json.ignore()` / `@json.ignore({ when: "null" \| "default" })` | field | Never written or read / not written when null or the type's default | `JsonIgnore` |
 | `@json.required` | field | Absent key is an error even if the type has a default | `JsonRequired` |
 | `@json.unknownKeys("reject" \| "skip")` | class | Per-type `unknownKeys` | `UnmappedMemberHandling` |
-| `@json.extra` | field of `Map<string, Value>` | Unknown members go here, and are written back | `JsonExtensionData` |
+| `@json.extra` | field of `Map<string, Value>` | Unknown members go here, and are written back as members of the object (its entries, as `Object.fromEntries` or a `Record` writes them: `JSON.stringify` of the `Map` itself is `{}`, as in Node) | `JsonExtensionData` |
 | `@json.numbers("string" \| "allowString")` | field or class | Write `i64`/`u64` as strings; accept numbers in strings | `JsonNumberHandling` |
 | `@json.discriminator("kind", { A: "a", B: "b" })` | base class | Polymorphic subclasses by a tag, written first | `JsonPolymorphic`, `JsonDerivedType` |
 | `@json.converter(C)` | field or class | `C` has static `read(r: json.Reader): T` and `write(w: json.Writer, v: T): void`; the generated code calls them directly (inlinable, not virtual) | `JsonConverter` |

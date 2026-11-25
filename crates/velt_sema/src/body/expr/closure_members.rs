@@ -1,7 +1,7 @@
 //! An arrow checked against a union of function types (`(() => void) | (() => Promise<void>)`):
 //! the member it is typed by, the first it type-checks against (closure.rs `closure`), each try
-//! rolled back. A `void` member doesn't fit an expression body that gives a promise when another
-//! member returns one: it would drop the promise (#3644).
+//! rolled back. A `void` member doesn't fit an arrow whose body or a `return` gives a promise
+//! when another member returns one: it would drop the promise (#3644, #3710).
 
 use velt_syntax::ast;
 
@@ -32,7 +32,7 @@ impl FnCx<'_, '_> {
     }
 
     fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        // A member returning a promise, for an expression body that gives one: a `void` member
+        // A member returning a promise, for a body or a `return` that gives one: a `void` member
         // would drop it (`pull: (c) => p.then(...)`, whose rejection must reach the stream).
         let promising = members.iter().any(|&m| self.returns_promise(m));
         for &m in members {
@@ -53,10 +53,31 @@ impl FnCx<'_, '_> {
         members[0]
     }
 
-    /// Does the function type `m` return a promise?
+    /// Does the function type `m` return a promise (or a promise or nothing)?
     fn returns_promise(&self, m: TyId) -> bool {
         match self.cx.ty.kind(m) {
-            hir::TyKind::FnPtr { ret, .. } => self.cx.ty.promise_payload(*ret).is_some(),
+            hir::TyKind::FnPtr { ret, .. } => self.holds_promise(*ret),
+            _ => false,
+        }
+    }
+
+    /// A value of type `t` dropped by the body or a `return` of the arrow being tried
+    /// (`first_fitting`), not of an arrow nested in it: a promise marks the try (#3686, #3710).
+    pub(in crate::body) fn note_dropped(&mut self, t: TyId) {
+        let at = self.f.return_site.closure_at;
+        let promise = self.holds_promise(t);
+        if let Some((tried, dropped)) = &mut self.dropped_promise {
+            if at == Some(*tried) && promise {
+                *dropped = true;
+            }
+        }
+    }
+
+    /// Is `t` a promise type, or an optional one (`Promise<void> | undefined`)?
+    pub(super) fn holds_promise(&self, t: TyId) -> bool {
+        match self.cx.ty.kind(t) {
+            hir::TyKind::Promise(..) => true,
+            hir::TyKind::Option(x, _) => matches!(self.cx.ty.kind(*x), hir::TyKind::Promise(..)),
             _ => false,
         }
     }

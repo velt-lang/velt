@@ -6,9 +6,9 @@
 
 use std::sync::Mutex;
 
-use crate::fmt;
 use crate::platform;
 use crate::str::VeltStr;
+use velt_text::fmt;
 
 /// Buffer size at which stdout is written through.
 const CAP: usize = 64 * 1024;

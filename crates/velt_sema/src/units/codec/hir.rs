@@ -98,6 +98,7 @@ enums! {
         // 10 was `OutPtr` (#3094): not reused.
         11 => Void,
         12 => Struct,
+        13 => Ref { nullable },
     }
     @fielded HostTy {
         0 => Int(a),
@@ -593,6 +594,8 @@ enums! {
         222 => PtrWrite,
         223 => WeakRead,
         224 => StrBorrowedWords,
+        225 => CArrived,
+        227 => AnyZeroSign,
     }
 }
 
