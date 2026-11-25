@@ -1,16 +1,15 @@
-//! The `Intrinsic` table of the HIR (part of the hir.rs contract): compiler-known operations,
-//! split out of `hir/mod.rs` by concern.
+//! The HIR's `Intrinsic` table (hir.rs contract), split out of `hir/mod.rs` by concern.
 
 /// Compiler-known operations. Lowering maps each to inline code or rt calls (see rt_abi.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Intrinsic {
     // M1
-    /// `console.log(a, b, ...)`: prints args separated by ' ' then '\n'. Args are Borrow uses.
-    /// Arg types in M1: ints, floats, bool, Str.
+    /// `console.log(a, b, ...)`: prints args separated by ' ' then '\n'. Args are Borrow uses. Arg
+    /// types in M1: ints, floats, bool, Str.
     Print,
     /// `console.error(...)`: same, to stderr.
     PrintErr,
-    /// 1 arg of int/float/bool/Str type → owned `Str` (JS formatting for floats: `1`, `1.5`, `NaN`).
+    /// 1 int/float/bool/Str arg → owned `Str` (JS float formatting: `1`, `1.5`, `NaN`).
     ToString,
     /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and not caught writes
     /// after `Uncaught ` and before the location: Node's header for an `Error` (`ParseError: bad`),
@@ -19,12 +18,11 @@ pub enum Intrinsic {
     /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw` on this thread,
     /// as an uncaught report ends, or `""` when not known (read it first thing in the `catch`).
     ThrowLoc,
-    /// `(x: borrow T) -> string` (`inspect`): `x` as Node's `util.inspect` writes
-    /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
-    /// messages that show values, such as a failed `assertEq`.
+    /// `(x: borrow T) -> string` (`inspect`): Node's `util.inspect(x)` (`'a'`, `[ 1, 2 ]`, `{ a: 1
+    /// }`: as `console.log` prints it in an array), for messages with values (a failed `assertEq`).
     Inspect,
-    /// `(buf: borrow mut string, x: borrow T, depth: u32)`: appends `x` as `console.log` shows
-    /// it inside a container, at Node's depth `depth`, to the string builder `buf`
+    /// `(buf: borrow mut string, x: borrow T, depth: u32)`: appends `x` as `console.log` shows it
+    /// inside a container, at Node's depth `depth`, to the string builder `buf`
     /// (std/lang/hooks/inspect.velt: a leaf in place, anything else through its format function).
     InspectNested,
     /// (Str borrow, Str borrow) → new owned Str.
@@ -53,102 +51,95 @@ pub enum Intrinsic {
     ArrayRemove,
     /// `(xs (modified), len: usize)` drop elements past `len`
     ArrayTruncate,
-    /// std only: `(dst (modified), d: usize, src: borrow T[], s: usize, n: usize)` — the
-    /// bits of `src[s..s + n)` written to `dst[d..d + n)` (both ranges bounds-checked; `dst`
-    /// and `src` are different arrays): what `dst` held there is not dropped, nothing is
-    /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
-    /// owned exactly once themselves (the stable sort's scratch buffer, std/lang/sort/stable.velt).
+    /// std only: `(dst (modified), d: usize, src: borrow T[], s: usize, n: usize)` — the bits of
+    /// `src[s..s + n)` written to `dst[d..d + n)` (both ranges bounds-checked; `dst` and `src` are
+    /// different arrays): what `dst` held there is not dropped, nothing is shared, and `src` keeps
+    /// stale copies. A raw move for algorithms that keep every element owned exactly once
+    /// themselves (the stable sort's scratch buffer, std/lang/sort/stable.velt).
     ArrayMove,
     /// std only: `(dst (modified), d: usize, src: borrow u8[], s: usize, n: usize)` — the bytes
     /// `src[s..s + n * size)` written as the bits of `dst[d..d + n)`, `size` the byte size of
-    /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
-    /// load of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
+    /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk load
+    /// of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
     ArrayCopyBytes,
-    /// std only, unsafe: `arrayDataAddress<T>(xs (modified)) -> usize`, the address of `xs`'s
-    /// buffer (0 for an array without one), whose elements own nothing (a number type or
-    /// `bool`; sema checks it, and lowering each instance of a type parameter). Good only
-    /// until `xs` is grown or dropped. With `ArrayByteLength`, how a generic function hands a
-    /// number array's own memory to a C function (velt/fs's `readSync`). Additive.
+    /// std only, unsafe: `arrayDataAddress<T>(xs (modified)) -> usize`, `xs`'s buffer address (0 if
+    /// none), whose elements own nothing (a number type or `bool`: sema checks it, lowering each
+    /// type parameter instance). Valid until `xs` grows or is dropped. With `ArrayByteLength`, how
+    /// generic code hands a number array's memory to C (velt/fs's `readSync`). Additive.
     ArrayDataAddress,
-    /// std only, unsafe: `arrayReadAddress<T>(xs) -> usize`, `ArrayDataAddress` for memory
-    /// that is only read: it does not count as a change of `xs` (an array an `RwLock` holds,
-    /// in a `read` callback: velt/fs's `writeSync`). Additive.
+    /// std only, unsafe: `arrayReadAddress<T>(xs) -> usize`, `ArrayDataAddress` for memory that is
+    /// only read: it does not count as a change of `xs` (an array an `RwLock` holds, in a `read`
+    /// callback: velt/fs's `writeSync`). Additive.
     ArrayReadAddress,
     /// std only: `arrayBytesWritten<T>(xs (modified))`, said after bytes were written at
-    /// `ArrayDataAddress`'s address: a view (velt_vir array_view.rs) writes its mirror back to
-    /// the array it views; nothing for a plain array. Additive.
+    /// `ArrayDataAddress`'s address: a view (velt_vir array_view.rs) writes its mirror back to the
+    /// array it views; nothing for a plain array. Additive.
     ArrayBytesWritten,
-    /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of
-    /// numbers (checked as `ArrayDataAddress`). Additive.
+    /// std only: `arrayByteLength<T>(xs) -> usize`, `xs.length * sizeof(T)` for an array of numbers
+    /// (checked as `ArrayDataAddress`). Additive.
     ArrayByteLength,
-    /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
-    /// when it is smaller) without dropping or initializing any element: slots past the old
-    /// length must be written (`ArrayMove`) before they are read, and slots that are not owned
-    /// any more must be cut off with it before the array is dropped.
+    /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity when
+    /// it is smaller) without dropping or initializing any element: slots past the old length must
+    /// be written (`ArrayMove`) before they are read, and slots that are not owned any more must be
+    /// cut off with it before the array is dropped.
     ArraySetLen,
-    /// `(xs (modified), extra: usize)` make room for `extra` more elements: when the capacity
-    /// is under `len + extra`, the buffer is reallocated to exactly that (no doubling); the
-    /// length and the elements stay. Emitted for an array spread whose length is known only
-    /// where it is pushed (`[...xs, ...f()]`, spread_array.rs); not for a constant table.
+    /// `(xs (modified), extra: usize)` make room for `extra` more elements: when the capacity is
+    /// under `len + extra`, the buffer is reallocated to exactly that (no doubling); the length and
+    /// the elements stay. Emitted for an array spread whose length is known only where it is pushed
+    /// (`[...xs, ...f()]`, spread_array.rs); not for a constant table.
     ArrayReserve,
-    /// std only (std/collections/btree): `(xs: borrow T[], i: usize)`, a hint that element `i`
-    /// is read soon, so the CPU starts loading its cache line. Not bounds-checked: a prefetch
-    /// never faults, and an index past the end only wastes the load. Lowered to the
-    /// `velt_simd_prefetch` extern of the element's address (rt_abi.md "SIMD"), which LLVM
-    /// emits as `llvm.prefetch` and Cranelift as nothing. Additive.
+    /// std only (std/collections/btree): `(xs: borrow T[], i: usize)`, a hint that `xs[i]` is read
+    /// soon, so the CPU starts loading its cache line. Not bounds-checked: a prefetch never faults;
+    /// an index past the end wastes it. Lowered to the `velt_simd_prefetch` extern of the element's
+    /// address (rt_abi.md "SIMD"): `llvm.prefetch` in LLVM, nothing in Cranelift. Additive.
     ArrayPrefetch,
-    /// std only (std/collections/btree): `(xs (modified), lo: usize, hi: usize)`, rotates the
-    /// elements `xs[lo..=hi]` one slot up: the element at `hi` moves to `lo` and the others
-    /// one slot up, by one `memmove` (`hi` bounds-checked; nothing when `lo >= hi`). A
-    /// permutation: every element stays owned once, so it moves elements of any type, where a
-    /// loop of moves would count or check each one. Additive.
+    /// std only (std/collections/btree): `(xs (modified), lo: usize, hi: usize)`, rotates
+    /// `xs[lo..=hi]` one slot up (`xs[hi]` moves to `lo`) by one `memmove` (`hi` bounds-checked;
+    /// nothing when `lo >= hi`). A permutation: every element stays owned once, so it moves
+    /// elements of any type, where a loop of moves would count or check each one. Additive.
     ArrayRotateRight,
     /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`. Additive.
     ArrayRotateLeft,
-    /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize,
-    /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
-    /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
-    /// inner arrays, which one call may not otherwise change both of. Additive.
+    /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize, i:
+    /// usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four bounds-checked):
+    /// the bits of two elements, nothing copied or dropped, also between two inner arrays, which
+    /// one call may not otherwise change both of. Additive.
     ArraySwapNested,
-    /// `xs.subarray(begin, end)` of an array as the argument of a C or host function's buffer
-    /// parameter (docs/internals/design/c-ffi.md "A position in an array"): `(xs: u8[] (borrowed, modified
-    /// for a buffer the function writes), begin, end)`, of type `u8[]`, the bytes
-    /// `begin..end` of `xs` with JS's `subarray` positions (negative counts from the end,
-    /// clamped to the array); a position is an `i64`, or a `usize` when it is never negative.
-    /// A borrowed view: lowering passes the address and length of those
-    /// bytes, with no copy and no object. Sema makes it only there (`system_args.rs`); lowering
-    /// meets it only as such an argument. Additive (#1718).
+    /// `xs.subarray(begin, end)` (docs/internals/design/c-ffi.md "A position in an array") as a C
+    /// or host function's buffer argument: `(xs: u8[] (borrowed, modified if the function writes
+    /// it), begin, end) -> u8[]`, bytes `begin..end` of `xs` by JS's `subarray` positions (negative
+    /// counts from the end, clamped to the array; `i64`, or `usize` when never negative). A
+    /// borrowed view: lowering passes those bytes' address and length, no copy, no object. Sema
+    /// makes it only there (`system_args.rs`); lowering meets it only there. Additive (#1718).
     Subarray,
     /// `(i64) -> i64`, the value itself: the `compareTo` call of an ordering operator on a type
     /// parameter (`a < b` with `T extends Comparable<T>`, sema's `compare_via`), marked so that
-    /// lowering compares a float `T` directly (NaN unordered, as JS's `<`). A `compareTo` call
-    /// the program writes (`a.compareTo(b) < 0`) is not marked and keeps NaN ordered.
+    /// lowering compares a float `T` directly (NaN unordered, as JS's `<`). A `compareTo` call the
+    /// program writes (`a.compareTo(b) < 0`) is not marked and keeps NaN ordered.
     ParamOrdering,
-    /// `(x: borrow T) -> u64` compiler-generated hash agreeing with `KeyEq` (`Map` and `Set`
-    /// keys): numbers, bool and strings by value, objects by identity, unions, options and
-    /// tuples part by part
+    /// `(x: borrow T) -> u64` compiler-generated hash matching `KeyEq` (`Map`/`Set` keys): numbers,
+    /// bool and strings by value, objects by identity, unions, options and tuples part by part
     Hash,
-    /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero, the `Map` and `Set` key comparison
-    /// (`keyEq`): `Same` with floats compared so that `NaN` equals itself and `0`
-    /// equals `-0`. Objects compare by identity, as `Hash` hashes them.
+    /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero (`keyEq`, `Map`/`Set` keys): `Same`,
+    /// but float `NaN` equals itself and `0` equals `-0`; objects by identity (as `Hash` does).
     KeyEq,
-    /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes`
-    /// (`includesEq`): `Same`, except that a number `NaN` equals `NaN` (a number
-    /// held by an `any` or an option too). Tuples and the other parts compare as `Same` does.
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes` (`includesEq`): `Same`,
+    /// except that a number `NaN` equals `NaN` (a number held by an `any` or an option too). Tuples
+    /// and the other parts compare as `Same` does.
     IncludesEq,
     /// `(a: borrow T, b: borrow T) -> bool` JS `===` (`==` on non-primitive types): objects —
-    /// class instances, arrays, object types, interface and function values — by identity;
-    /// `T | null`, unions and tuples part by part; strings and numbers by value
+    /// class instances, arrays, object types, interface and function values — by identity; `T |
+    /// null`, unions and tuples part by part; strings and numbers by value
     Same,
-    /// `(a: borrow T, b: borrow T) -> bool` JS `Object.is` (SameValue): `Same`, except that
-    /// floats compare by value with `NaN` equal to itself and `0` unequal to `-0`
+    /// `(a: borrow T, b: borrow T) -> bool` JS `Object.is` (SameValue): `Same`, except that floats
+    /// compare by value with `NaN` equal to itself and `0` unequal to `-0`
     SameValue,
     /// `x.clone()` (user-visible, every type): deep copy
     Clone,
     /// `(x: borrow T) -> T`: another reference to the same value (JS reference copy; semantics
-    /// stage 2, hir_encodings.md "Sharing"): a count increment for counted objects, a copy for
-    /// Copy types and strings, a field-wise share for immutable value types. Emitted by sema
-    /// wherever a non-Copy place is used by value but stays in use (or cannot be moved from).
+    /// stage 2, hir_encodings.md "Sharing"): a count increment for counted objects, a copy for Copy
+    /// types and strings, a field-wise share for immutable value types. Emitted by sema wherever a
+    /// non-Copy place is used by value but stays in use (or cannot be moved from).
     Share,
     /// `(parts: borrow P0, P1, …) -> TyOp::Spread(P0, P1, …)`: an object literal with a spread
     /// whose fields are known only per instantiation (#350): each part is a spread source
@@ -157,9 +148,9 @@ pub enum Intrinsic {
     /// `(value: borrow A) -> U[]`, `U` dynamic: `f(...args)` with `args: A` into a rest of `U[]`
     /// (#943); per instantiation, a tuple's or an array's elements, each shared and boxed.
     SpreadParam,
-    /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with
-    /// `K extends keyof T`, #350): at every instantiation `K` is one key of the object type `T`
-    /// (sema checks it), and lowering reads that field, shared, as `object.<key>` would.
+    /// `(object: borrow T, key: borrow K) -> T[K]` in a generic body (`source[key]` with `K extends
+    /// keyof T`, #350): at every instantiation `K` is one key of the object type `T` (sema checks
+    /// it), and lowering reads that field, shared, as `object.<key>` would.
     KeyRead,
     /// `(object: borrow mut T, key: borrow K, value: T[K]) -> void`: `object[key] = value` in a
     /// generic body, as for `KeyRead`; lowering writes that field.
@@ -176,85 +167,79 @@ pub enum Intrinsic {
     /// `(v: borrow T) -> bool`: `Object.isFrozen(v)`, the mark of a freezable type's value; true
     /// for a primitive and for a frozen literal's type (readonly fields), else false (#2623)
     IsFrozen,
-    /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
-    /// made safe for another task (moved where this task held the only reference, deep-copied
-    /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
-    /// by sema around a value a `Mutex.with` callback stores across the lock (ownership/locked).
+    /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value made safe for
+    /// another task (moved where this task held the only reference, deep-copied where it is still
+    /// shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted by sema around a value
+    /// a `Mutex.with` callback stores across the lock (ownership/locked).
     Transfer,
-    /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
-    /// bool`, a constant: has `Transfer` work to do for a `T`, because it can reach a counted
-    /// object or a promise (whose holder is handed over)? The value itself is not read.
+    /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) -> bool`, a
+    /// constant: has `Transfer` work to do for a `T`, because it can reach a counted object or a
+    /// promise (whose holder is handed over)? The value itself is not read.
     NeedsTransfer,
-    /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`,
-    /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
-    /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
-    /// independent value. The value itself is not evaluated.
+    /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`, a constant:
+    /// does a `T` own anything dropping it releases (strings, arrays, objects, closures with a heap
+    /// environment)? If not, a bit copy is an independent value. The value is not evaluated.
     NeedsDrop,
-    /// std only (std/lang/intrinsics/task.velt): `moduleStateUsed() -> bool`, a constant:
-    /// does the program have module state (`Program::module_state`) or functions that may have
-    /// properties through `any` (module state too), so that its tasks may take the process-wide
-    /// module lock (rt_abi.md "Module state")? velt/net's `TcpListener.workers()` spreads a
-    /// server's connections over the workers only without it (#2744), until #2726 replaces it.
+    /// std only (std/lang/intrinsics/task.velt): `moduleStateUsed() -> bool`, a constant: does the
+    /// program have module state (`Program::module_state`) or functions that may have properties
+    /// through `any` (module state too), so that its tasks may take the process-wide module lock
+    /// (rt_abi.md "Module state")? velt/net's `TcpListener.workers()` spreads a server's
+    /// connections over the workers only without it (#2744), until #2726 replaces it.
     ModuleStateUsed,
-    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a constant:
-    /// can a value of type `T` that a call borrows be reached through another reference while
-    /// the call runs (lowering counts the type, or borrows values of it inside counted objects)?
-    /// Only then can a callback change it. The value is not evaluated.
+    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a constant: can a
+    /// value of type `T` that a call borrows be reached through another reference while the call
+    /// runs (lowering counts the type, or borrows values of it inside counted objects)? Only then
+    /// can a callback change it. The value is not evaluated.
     MayAlias,
     /// std only: `isUnique<T>(value: borrow T) -> bool` (hir_encodings.md "Sharing").
     IsUnique,
     /// Every read of a `weak` local (hir_encodings.md `LocalDef::weak`; additive, #3119).
     WeakRead,
-    /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
-    /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
-    /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
+    /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a constant: is
+    /// `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then a generic `T |
+    /// null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
     HoldsNull,
-    /// std only (std/prelude/map.velt): `nullAs<T>() -> T`, `null` as a `T` that
-    /// holds null (`HoldsNull`). For any other `T` it stops the program with an internal error:
-    /// std reaches it only behind a `HoldsNull` test.
+    /// std only (std/prelude/map.velt): `nullAs<T>() -> T`, `null` as a nullable `T` (`HoldsNull`).
+    /// Any other `T` stops the program (internal error): std reaches it only behind `HoldsNull`.
     NullAs,
     /// Compiler-internal (no source syntax): `(x: borrow T) -> bool`, JS truthiness of a value
-    /// whose type is a type parameter (`!x`, `if (x)` on a `T`), the test chosen by lowering
-    /// per instantiation as for a value of that type (truthiness.rs in sema): `false`, `null`,
-    /// `0`, `-0`, `NaN` and `""` are falsy, a union by its member, objects always truthy.
+    /// whose type is a type parameter (`!x`, `if (x)` on a `T`), the test chosen by lowering per
+    /// instantiation as for a value of that type (truthiness.rs in sema): `false`, `null`, `0`,
+    /// `-0`, `NaN` and `""` are falsy, a union by its member, objects always truthy.
     Truthy,
-    /// Compiler-internal (no source syntax): `(x: borrow T) -> bool`, `x === null` on a value
-    /// whose type is an option of a type parameter (`x?: T`, issue #930): whether it holds the
-    /// `null` of the type it is instantiated with (the inner nothing of a `X | null | undefined`,
-    /// the nothing of a `X | null`); `false` for a type without `null`.
+    /// Compiler-internal (no source syntax): `(x: borrow T) -> bool`, `x === null` on an option of
+    /// a type parameter (`x?: T`, #930): whether it holds the instantiated type's `null` (a `X |
+    /// null | undefined`'s inner nothing, a `X | null`'s nothing); `false` for types without one.
     IsNull,
     /// Compiler-internal: `(x: borrow T) -> bool`, `x == null` on such a value: whether it holds
     /// either nothing once instantiated.
     IsNullish,
-    /// Compiler-internal: `(a: borrow T, b: borrow T) -> bool`, `a == b` of two values of one
-    /// type with a type parameter in it: lowered as `Same(a, b)` (`a === b`) where the
-    /// instantiated type holds no nothing, else both nothings are equal too (`null == undefined`),
-    /// as in JavaScript; `AnyLooseEq` at `T = any` / `unknown`.
+    /// Compiler-internal: `(a: borrow T, b: borrow T) -> bool`, `a == b` on a type mentioning a
+    /// type parameter: `Same(a, b)` (`a === b`) where the instantiated type holds no nothing, else
+    /// also `null == undefined` (as in JS); `AnyLooseEq` at `T = any` / `unknown`.
     LooseEq,
-    /// Compiler-internal (issue #1251): `(probe: borrow T) -> bool`, a constant: can a value of
-    /// the type `T` is instantiated with be a primitive (`false` for a struct, class, object
-    /// type, array, tuple, map or function type; `true` for anything else, unions and `any`
-    /// included)? The probe is not evaluated. Only as the right operand of `g(x) && _` in the
-    /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
-    /// (hir_encodings.md "Type predicates on a type parameter").
+    /// Compiler-internal (#1251): `(probe: borrow T) -> bool`, a constant: can `T`, once
+    /// instantiated, hold a primitive (`false` for a struct, class, object type, array, tuple, map
+    /// or function type; `true` otherwise, unions and `any` too)? The probe is not evaluated. Only
+    /// as the right side of `g(x) && _` in an `if` condition whose test `g(x)` is a type predicate
+    /// with only primitive members (hir_encodings.md "Type predicates on a type parameter").
     MayHoldPrimitive,
-    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type `T` is
+    /// Compiler-internal (#1462): `(probe: borrow T) -> bool`, a constant: is the type `T` is
     /// instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The condition of
     /// the `if` that writes a `T` value's text (hir_encodings.md "Text of a type parameter").
     HoldsDynamic,
-    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a
-    /// class: the condition of the text of a `T` value in a string `+`, which asks a class
-    /// instance for its `valueOf()` first. The probe is not evaluated.
+    /// Compiler-internal (#1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a class: the
+    /// condition of the text of a `T` value in a string `+`, which asks a class instance for its
+    /// `valueOf()` first. The probe is not evaluated.
     HoldsDynamicOrClass,
-    /// std only (std/lang/sort/stable.velt): `fnCapturesNothing<F>(f: borrow F) ->
-    /// bool` for a function value: true when its environment is null, which only closures
-    /// without captures and named functions have (a program that compares function values
-    /// gives every closure an environment, so it is false there). Such a function reaches no
-    /// variable of its caller. Lowered to `f.env == null`, which velt_opt folds to a constant
-    /// where the function value is known (const_fields after specialization).
+    /// std only (std/lang/sort/stable.velt): `fnCapturesNothing<F>(f: borrow F) -> bool` for a
+    /// function value: true when its env is null, which only closures without captures and named
+    /// functions have (a program comparing function values gives every closure one: false there).
+    /// Such a function reaches no variable of its caller. Lowered to `f.env == null`, which
+    /// velt_opt folds to a constant where it is known (const_fields after specialization).
     FnCapturesNothing,
-    /// `f.length` of a function value: an `f64`, looked up by its code
-    /// (`hir::Program::fn_shapes`, hir_encodings.md "Function values"). Additive.
+    /// `f.length` of a function value: an `f64`, looked up by its code (`hir::Program::fn_shapes`,
+    /// hir_encodings.md "Function values"). Additive.
     FnLength,
     /// `f.name` of a function value: a `string`, as [`Intrinsic::FnLength`]. Additive.
     FnName,
@@ -264,8 +249,8 @@ pub enum Intrinsic {
     /// environments have one layout. No args; the result is owned.
     ClosureSibling(super::DefId),
     /// In the entry `main` only: evaluate the initializers of module state slots `from..to`
-    /// (`ModuleState::deferred` on) into their slots, in order, as the state's initializer does
-    /// for the slots before them. No args, `void`. Additive (#1438).
+    /// (`ModuleState::deferred` on) into their slots, in order, as the state's initializer does for
+    /// the slots before them. No args, `void`. Additive (#1438).
     InitSlots(u32, u32),
     /// f64 math: `Math.sqrt/floor/ceil/round/trunc/abs` (round = JS: half toward +inf)
     Sqrt,
@@ -277,11 +262,11 @@ pub enum Intrinsic {
     /// `shared(x)` (user-visible) -> `Shared<T>`
     SharedNew,
 
-    // M3 async & concurrency (user-visible builtins; see https://veltlang.com/docs/reference/async/)
+    // M3 async & concurrency (user-visible builtins; https://veltlang.com/docs/reference/async/)
     /// `spawn(p: Promise<T>): Promise<T>` — start now on the runtime, returns a join handle.
     Spawn,
-    /// `spawnHandled(p)` (standard library only): `spawn(p)` whose rejection the
-    /// caller handles itself (a `taskScope` child): a dropped handle never reports it.
+    /// `spawnHandled(p)` (standard library only): `spawn(p)` whose rejection the caller handles
+    /// itself (a `taskScope` child): a dropped handle never reports it.
     SpawnHandled,
     /// `sleep(ms: i64): Promise<void>`
     Sleep,
@@ -289,48 +274,44 @@ pub enum Intrinsic {
     YieldNow,
     /// `Promise.all(ps: Promise<T>[]): Promise<T[]>`
     PromiseAll,
-    /// `Promise.race(ps: Promise<T, E>[]): Promise<T, E>` — the first to settle; the others keep
-    /// running.
+    /// `Promise.race(ps: Promise<T, E>[]): Promise<T, E>`: the first to settle; others still run.
     PromiseRace,
-    /// std only: `firstFulfilled(ps: Promise<T, E>[]): Promise<T, E>` — the first to
-    /// fulfill, or the last rejection when all reject (std/prelude/promise.velt `promiseAny`).
+    /// std only: `firstFulfilled(ps: Promise<T, E>[]): Promise<T, E>` — the first to fulfill, or
+    /// the last rejection when all reject (std/prelude/promise.velt `promiseAny`).
     PromiseAny,
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
     /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.velt).
     SourceLocation,
-    /// Compiler-internal (std: `symbolStatic(id, desc, described)`): `(id: i64
-    /// literal, desc: string literal, described: bool literal) -> symbol`, the address of a
-    /// read-only symbol record made at compile time (rt_abi.md "Symbols"): one record per `id`
-    /// in a program, whatever the call site, so every evaluation gives the same symbol. Ids
-    /// below 64 are the well-known symbols (`Symbol.iterator`, std/lang/symbol/index.velt), ids from 64 the
-    /// module constants initialized with `Symbol()` / `Symbol("d")`, and ids from 2^40 the
-    /// registry's symbols of module constants initialized with `Symbol.for("k")` (`desc` is the
-    /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
-    /// false the symbol has no description (`desc` is `""`).
+    /// Compiler-internal (std: `symbolStatic(id, desc, described)`): `(id: i64 literal, desc:
+    /// string literal, described: bool literal) -> symbol`, the address of a read-only symbol
+    /// record made at compile time (rt_abi.md "Symbols"): one record per `id` in a program,
+    /// whatever the call site, so every evaluation gives the same symbol. Ids below 64 are the
+    /// well-known symbols (`Symbol.iterator`, std/lang/symbol/index.velt), ids from 64 module
+    /// constants initialized with `Symbol()` / `Symbol("d")`, ids from 2^40 the registry symbols of
+    /// those with `Symbol.for("k")` (`desc` is the key), listed in [`Intrinsic::SymbolRegistry`]'s
+    /// table. With `described` false, no description (`desc` is `""`).
     SymbolStatic,
     /// Compiler-internal (std: `symbolRegistry()`): `() -> symbol`, the address of the program's
     /// null-ended table of registry records (`SymbolStatic`, ids from 2^40) std's registry reads.
     SymbolRegistry,
-    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, `symbolAt(address)` back; `strAt(address)`
-    /// another reference to the string there, a symbol's description, rt_abi.md "Symbols").
+    /// Compiler-internal, unsafe (std: `symbolAddress(s)`, `symbolAt(address)` back;
+    /// `strAt(address)` a share of the string there, a symbol's description, rt_abi.md "Symbols").
     SymbolAddress,
     SymbolAt,
     StrAt,
     /// Compiler-internal (no source syntax): `ToString` of a template literal part whose type
-    /// mentions a type parameter (`${x}` with `x: T`). It is `ToString`, except that where the
-    /// value is a symbol once substituted (`symbol`, or the active member of a union or `T | null`
-    /// holding one, tested at run time), it stops the program with JS's `TypeError: Cannot
-    /// convert a Symbol value to a string`, as JS's `ToString` throws (`String(x)`, a
-    /// `ToString`, writes `Symbol(d)`; sema rejects the direct cases).
+    /// mentions a type parameter (`${x}` with `x: T`), except that a symbol once substituted
+    /// (`symbol`, or a union's or `T | null`'s active member holding one, a run-time test) stops
+    /// with JS's `TypeError: Cannot convert a Symbol value to a string`, as JS's `ToString` throws
+    /// (`String(x)`, a `ToString`, writes `Symbol(d)`; sema rejects the direct cases).
     TemplateToString,
-    /// Compiler-internal (no source syntax): `p: Promise<T, E1>` as a `Promise<T, E2>` whose error
-    /// set contains `E1`'s (an implicit conversion, `coerce.rs`): a lazy wrapper that widens
-    /// the rejection.
+    /// Compiler-internal (no source syntax): `p: Promise<T, E1>` as a `Promise<T, E2>` whose errors
+    /// include `E1`'s (implicit conversion, `coerce.rs`): a lazy wrapper widening the rejection.
     PromiseWiden,
-    /// Compiler-internal (no source syntax): `(q: Promise<U, E>, p: Promise<T, E>) ->
-    /// Promise<U, E>`, both owned: `q`, a `then` of `p` converting its value (a `Promise<T>`
-    /// used as a `Promise<unknown>`, `coerce_generic.rs`), is `p` in JS: it compares and hashes
-    /// as `p` (`===`, `Set` keys; #1682), and its rejection is `p`'s, reported through `p`.
+    /// Compiler-internal (no source syntax): `(q: Promise<U, E>, p: Promise<T, E>) -> Promise<U,
+    /// E>`, both owned: `q`, a `then` of `p` converting its value (a `Promise<T>` used as a
+    /// `Promise<unknown>`, `coerce_generic.rs`), is `p` in JS: it compares and hashes as `p`
+    /// (`===`, `Set` keys; #1682), and its rejection is `p`'s, reported through `p`.
     PromiseSame,
     /// `performance.now(): f64`
     PerfNow,
@@ -340,38 +321,35 @@ pub enum Intrinsic {
     SharedAdd,
     SharedGet,
     SharedSet,
-    /// Compiler-internal (no source syntax): `s: shared<T>` (no `Mutex`) used as the `T` it
-    /// holds, where the value is only read (#36): `s[i]`, `s.length`, a method's receiver, an
-    /// argument. Its one argument is borrowed and the result is borrowed out of the shared box:
-    /// a borrow of the `T` itself when no part of `T` is reference counted, else (and where the
-    /// value is consumed) a copy. Nothing ever writes through it.
+    /// Compiler-internal (no source syntax): `s: shared<T>` (no `Mutex`) used as the `T` it holds
+    /// where only read (#36): `s[i]`, `s.length`, a method's receiver, an argument. Its one
+    /// argument is borrowed, the result borrowed out of the shared box: the `T` itself when no part
+    /// of it is counted, else (and where the value is consumed) a copy. Never written through.
     SharedRead,
     /// `new Mutex<T>(x)` → `Mutex<T>` (an ADT-like builtin: lock word + value)
     MutexNew,
-    /// `m.with(f)` on `Mutex<T>` or `shared<Mutex<T>>`: lock, call `f(value)` (by reference), unlock, return f's result.
-    /// Also `rw.write(f)` on an `RwLock<T>` (its exclusive lock).
+    /// `m.with(f)` on `Mutex<T>` or `shared<Mutex<T>>`: lock, call `f(value)` (by reference),
+    /// unlock, return f's result. Also `rw.write(f)` on an `RwLock<T>` (its exclusive lock).
     MutexWith,
     /// `new RwLock<T>(x)` → `RwLock<T>` (lock word + value, like `Mutex<T>`)
     RwLockNew,
-    /// `rw.read(f)` on `RwLock<T>` or `shared<RwLock<T>>`: `MutexWith` with the lock taken
-    /// shared, readers at once (velt_rt's read mode); sema rejects a callback that modifies it.
+    /// `rw.read(f)` on `RwLock<T>` or `shared<RwLock<T>>`: `MutexWith` with the lock taken shared,
+    /// readers at once (velt_rt's read mode); sema rejects a callback that modifies it.
     LockRead,
     /// `a.load(order)` on an `Atomic<T>` (docs/internals/design/atomics.md; T an integer or
-    /// `bool`): `(a: borrow Atomic<T>, order: u8) -> T`. Every ordering argument of the
-    /// `Atomic*` intrinsics is an integer literal: 0 relaxed, 1 acquire, 2 release, 3 acqrel,
-    /// 4 seqcst (sema checked that the operation may have it). The receiver is a place, read
-    /// and changed where it is (in a local, an object, an array or a `shared` box); nothing
-    /// else reads or writes an `Atomic`. Additive.
+    /// `bool`): `(a: borrow Atomic<T>, order: u8) -> T`. Every `Atomic*` ordering argument is an
+    /// integer literal: 0 relaxed, 1 acquire, 2 release, 3 acqrel, 4 seqcst (sema checks the
+    /// operation may have it). The receiver is a place, read and changed in place (a local, an
+    /// object, an array or a `shared` box); nothing else reads or writes an `Atomic`. Additive.
     AtomicLoad,
     /// `a.store(v, order)`: `(a: borrow Atomic<T>, v: T, order: u8)`. Additive.
     AtomicStore,
-    /// A read-modify-write: `(a: borrow Atomic<T>, v: T, op: u8, order: u8) -> T`, the
-    /// previous value. `op` is an integer literal: 0 exchange, 1 add, 2 sub, 3 and, 4 or, 5 xor,
-    /// 6 max, 7 min (`max`/`min` compare as `T` does: signed for a signed `T`; integers only;
-    /// add and sub wrap). Additive.
+    /// A read-modify-write: `(a: borrow Atomic<T>, v: T, op: u8, order: u8) -> T`, the old value.
+    /// `op` (an integer literal): 0 exchange, 1 add, 2 sub, 3 and, 4 or, 5 xor, 6 max, 7 min
+    /// (`max`/`min` signed for a signed `T`; integers only; add and sub wrap). Additive.
     AtomicRmw,
-    /// `a.compareExchange(expected, v, order, failure)`: `(a: borrow Atomic<T>, expected: T,
-    /// v: T, order: u8, failure: u8) -> T`, the previous value. Additive.
+    /// `a.compareExchange(expected, v, order, failure)`: `(a: borrow Atomic<T>, expected: T, v: T,
+    /// order: u8, failure: u8) -> T`, the previous value. Additive.
     AtomicCas,
     /// `a.compareExchangeWeak(…)`: as `AtomicCas`, `-> bool` (may fail spuriously). Additive.
     AtomicCasWeak,
@@ -381,23 +359,22 @@ pub enum Intrinsic {
     AtomicSpinHint,
     /// `tl.get()` on a `ThreadLocal<T>` (T a number type or `bool`): `(tl: borrow ThreadLocal<T>)
     /// -> T`, this thread's value. The receiver is always `Global(d)` of the module `const` whose
-    /// initializer is `new ThreadLocal<T>(literal)` (sema checks it); lowering never evaluates
-    /// it, but names the value by `d` and reads the starting value from that literal. Additive.
+    /// initializer is `new ThreadLocal<T>(literal)` (sema checks it); lowering never evaluates it,
+    /// but names the value by `d` and reads the starting value from that literal. Additive.
     ThreadLocalGet,
     /// `tl.set(v)`: `(tl: borrow ThreadLocal<T>, v: T)`, this thread's value becomes `v`; the
     /// receiver as for `ThreadLocalGet`. Additive.
     ThreadLocalSet,
 
     // M4 JSON (compile-time generated glue over the rt JSON reader)
-    /// std only: `strCharCodeAt(s: borrow string, i: i64) -> i64` — the byte at
-    /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
+    /// std only: `strCharCodeAt(s: borrow string, i: i64) -> i64` — the byte at `i`, or -1 when
+    /// out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,
-    /// std only: `addressLoad<T>(address: usize) -> T`, `T` a number type or `bool`: the value
-    /// at `address` in memory, unchecked (velt/ffi's raw reads of C memory, which are unsafe
-    /// functions). Additive.
+    /// std only: `addressLoad<T>(address: usize) -> T`, `T` a number type or `bool`: the value at
+    /// `address`, unchecked (velt/ffi's raw reads of C memory, unsafe functions). Additive.
     AddressLoad,
-    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema
-    /// checks it): `v` written at `address`, unchecked (intrinsics.md). Additive.
+    /// std only: `addressStore<T>(address: usize, v: T)`, `T` a number type or `bool` (sema checks
+    /// it): `v` written at `address`, unchecked (intrinsics.md). Additive.
     AddressStore,
     /// std only: `addressArray<T>(address: usize, length: usize) -> T[]`, `T` a number type or
     /// `bool` (sema checks it): an array over memory it does not own (`cap == 0`, velt_vir
@@ -427,112 +404,108 @@ pub enum Intrinsic {
     PtrRead,
     /// std only (`Ptr.write`): `ptrWrite<S>(p: Ptr<S>, i: usize, s: S)`, as `PtrRead`. Additive.
     PtrWrite,
-    /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`, the address of `a`'s word: a
-    /// 32- or 64-bit `Atomic` that can't move (`Global(d)`, a field of `SharedRead`'s). Additive.
+    /// std only (`Out.value`, #2187): `cArrived<T>(v: T) -> T`, `v` with its non-null `Ptr<T>`s
+    /// checked, as `PtrRead`'s. Additive.
+    CArrived,
+    /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`, the address of `a`'s word: a 32-
+    /// or 64-bit `Atomic` that can't move (`Global(d)`, a field of `SharedRead`'s). Additive.
     AtomicAddress,
-    /// std only: `futPoll(f: usize, cx: usize) -> u32`: `f->poll(f, cx)`, the call through
-    /// offset 0 of heap future `f`'s header (rt_abi_async.md §1), inline. Additive.
+    /// std only: `futPoll(f: usize, cx: usize) -> u32`: `f->poll(f, cx)`, the call through offset 0
+    /// of heap future `f`'s header (rt_abi_async.md §1), inline. Additive.
     FutPoll,
     /// std only: `futDrop(f: usize)`: `f->drop(f)`, through offset 8 of the header. Additive.
     FutDrop,
-    /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds
-    /// for an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index
-    /// of its `CExport` there. For a C API taking a function pointer (`pthread_create`). Additive.
+    /// std only: `exportedAddress(f) -> usize`, the address of the C function lowering builds for
+    /// an `@export` function (`Program::c_exports`): the argument is a `Lit::Int`, the index of its
+    /// `CExport` there. For a C API taking a function pointer (`pthread_create`). Additive.
     ExportedAddress,
-    /// std only: `catchUnwind(f: () => void) -> usize`: call `f` (borrowed) and return 0 when it
-    /// returns, or the address of the Velt panic's exception object when a Velt panic unwound
-    /// out of it (docs/internals/design/unwinding.md). Lowered to a call of `velt_eh_try`, which
-    /// the backend defines (`velt_vir::eh`). Additive.
+    /// std only: `catchUnwind(f: () => void) -> usize` (docs/internals/design/unwinding.md): calls
+    /// `f` (borrowed): 0 when it returns, or the address of the exception object of a Velt panic
+    /// unwinding out of it. Lowered to the backend's `velt_eh_try` (`velt_vir::eh`). Additive.
     CatchUnwind,
-    /// std only: `catchUnwindAt(code: usize, arg: usize) -> usize`: `catchUnwind` of the C
-    /// function at address `code` (an `fnAddress` taking one pointer-sized argument) called with
-    /// `arg`: no function value, so no closure environment and no thunk (the executor in Velt's
-    /// catching poll, std/task/catch_sched.velt). Lowered to `velt_eh_try(code, arg)`. Additive.
+    /// std only: `catchUnwindAt(code: usize, arg: usize) -> usize`: `catchUnwind` of the C function
+    /// at address `code` (an `fnAddress` taking one pointer-sized argument) called with `arg`: no
+    /// function value, so no closure environment and no thunk (the executor in Velt's catching
+    /// poll, std/task/catch_sched.velt). Lowered to `velt_eh_try(code, arg)`. Additive.
     CatchUnwindAt,
-    /// std only: `statePoll(poll: usize, state: usize, cx: usize) -> u32`: the call of the
-    /// compiled poll function at address `poll` with `(state, cx)` (rt_abi_async.md §1), for
-    /// std's executor (#2649). Additive.
+    /// std only: `statePoll(poll: usize, state: usize, cx: usize) -> u32`: calls the compiled poll
+    /// function `poll(state, cx)` (rt_abi_async.md §1; std's executor, #2649). Additive.
     StatePoll,
-    /// std only: `stateDrop(drop: usize, at: usize)`: the call of the C function at address
-    /// `drop` with `at` (a state's drop function, a result's drop glue). Additive.
+    /// std only: `stateDrop(drop: usize, at: usize)`: the call of the C function at address `drop`
+    /// with `at` (a state's drop function, a result's drop glue). Additive.
     StateDrop,
-    /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at
-    /// address `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
+    /// std only: `addressCall(f: usize, a: usize) -> usize`: the call of the C function at address
+    /// `f` with `a`, both pointer-sized (a waker table's `clone`). Additive.
     AddressCall,
-    /// std only: `addressCallWord(f: usize, a: u64)`: the call of the C function at address `f`,
-    /// which takes one 64-bit word and returns nothing (a weak map value's retain and release
-    /// glue, rt_abi.md "Weak references"). Additive.
+    /// std only: `addressCallWord(f: usize, a: u64)`: calls the C function at `f` with `a` (no
+    /// result: a weak map value's retain and release glue, rt_abi.md "Weak references"). Additive.
     AddressCallWord,
-    /// std only: `addressCall3(f: usize, a: usize, b: usize, c: usize)`: the call of the C
-    /// function at address `f`, which takes three pointer-sized values and returns nothing (trace
-    /// glue's `(obj, visit, ctx)`). Additive.
+    /// std only: `addressCall3(f: usize, a: usize, b: usize, c: usize)`: calls the C function at
+    /// `f` (three pointer-sized args, no result: trace glue's `(obj, visit, ctx)`). Additive.
     AddressCall3,
-    /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef`
-    /// with no type arguments; sema checks it is not async or throwing and passes only numbers
-    /// and `bool`), callable from C with the C calling convention (#2649). Additive.
+    /// std only: `fnAddress(f) -> usize`: the address of module-level function `f` (a `FnRef` with
+    /// no type arguments; sema checks it is not async or throwing and passes only numbers and
+    /// `bool`), callable from C with the C calling convention (#2649). Additive.
     FnAddress,
     /// std only: `slotSizeOfFirst() -> usize`, behind std's `slotSize<T>()`: the size of the
     /// enclosing instance's first type argument (std/lang/intrinsics/slot.velt). Additive.
     SlotSize,
-    /// std only: `slotPut<T>(at: usize, value: T)`: `value` moved to `*(T*)at`, transferred as
-    /// a channel send's value is. Additive.
+    /// std only: `slotPut<T>(at: usize, value: T)`: `value` moved to `*(T*)at`, transferred as a
+    /// channel send's value is. Additive.
     SlotPut,
-    /// std only: `slotTransfer<T>(value: T) -> T`: `value` made the receiving task's, as
-    /// `SlotPut` does before it stores it (and the same channel boundary), so std can transfer
-    /// a value before it takes a lock and store it with `SlotStore` under the lock. Additive.
+    /// std only: `slotTransfer<T>(value: T) -> T`: `value` made the receiving task's, as `SlotPut`
+    /// does before it stores it (and the same channel boundary), so std can transfer a value before
+    /// it takes a lock and store it with `SlotStore` under the lock. Additive.
     SlotTransfer,
     /// std only: `slotStore<T>(at: usize, value: T)`: `value` (already transferred with
     /// `SlotTransfer`) moved to `*(T*)at` as it is. Additive.
     SlotStore,
     /// std only: `slotTake<T>(at: usize) -> T`: the value at `at`, moved out. Additive.
     SlotTake,
-    /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f` as an owned
-    /// promise. Additive.
+    /// std only: `promiseAt<T>(f: usize) -> Promise<T>`: the heap future at `f`, owned. Additive.
     PromiseAt,
     /// std only: `rawAlloc(n: usize) -> usize`: `n` bytes (aligned to 8) from the allocator
     /// generated code uses (`velt_rt_alloc`), on every target. Additive.
     RawAlloc,
-    /// std only: `rawFree(p: usize, n: usize)`: gives back what `rawAlloc(n)` returned
-    /// (`velt_rt_free`). Additive.
+    /// std only: `rawFree(p: usize, n: usize)`: `velt_rt_free` of a `rawAlloc(n)` result. Additive.
     RawFree,
-    /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
-    /// range against `StrByteLen`). The bytes are read where the string keeps them.
+    /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the range
+    /// against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,
-    /// `(s, at: u64)` → u8x16: the 16 UTF-8 bytes of `s` from `at`, unchecked (a SIMD `load`
-    /// of the string's bytes, no copy).
+    /// `(s, at: u64)` → u8x16: the 16 UTF-8 bytes of `s` from `at`, unchecked (a SIMD `load` of
+    /// the string's bytes, no copy).
     StrLoadU8x16,
-    /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes,
-    /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
+    /// `(s, at: u64, count: u64)` → u8x16: `count` (below 16) bytes from `at` in the low lanes, 0
+    /// in the others, unchecked (a SIMD `load_partial` of the string's bytes).
     StrLoadPartialU8x16,
     /// std only: `(w0: u64, w1: u64, w2: u64, len: usize)` → string: the inline ASCII string of
-    /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`. The bytes past
-    /// `len` must be 0 (equality compares the words). No call: the string's inline form
-    /// (rt_abi.md "Strings") written as three words.
+    /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`, bytes past `len` 0
+    /// (equality compares the words). No call: the inline form (rt_abi.md "Strings").
     StrAsciiWords,
+    /// std only: `(ptr: u64, w1: u64)` → string: the static form `{ptr, w1, 0}`, made only from a
+    /// sub-range of a static string (std/lang/intrinsics/string.velt says why). Additive.
+    StrBorrowedWords,
     /// std only: `(buf: Mut<string>, w0: u64, w1: u64, w2: u64, len: usize)`: appends the first
-    /// `len` (at most 24) bytes of the words, ASCII, to the builder `buf` (a `velt_rt_strbuf_*`
-    /// builder, which the call writes): the three words are stored after its text when its plain
-    /// heap buffer has room for 24 more bytes; an inline ASCII builder that still fits gets them
-    /// shifted in and OR'd; anything else calls `velt_rt_strbuf_push_words` with them by value.
+    /// `len` (at most 24) bytes of the words, ASCII, to the builder `buf` (which the call writes):
+    /// stored after its text when its plain heap buffer has room for 24 more bytes, shifted in and
+    /// OR'd in an inline builder that fits, else by value to `velt_rt_strbuf_push_words`.
     StrbufPushAsciiWords,
     /// std only: `(buf: Mut<string>, w: u64, len: usize)`: appends the first `len` (at most 8)
     /// bytes of `w`, ASCII, to the builder `buf`: an inline ASCII builder of fewer than 16 bytes
-    /// gets the word stored where its text ends, in the builder itself, and byte 23 raised; a
-    /// plain heap builder with room for 8 more bytes gets it stored after its text; anything else
-    /// calls `velt_rt_strbuf_push_words` (`StrbufPushAsciiWords` for up to 24).
+    /// gets the word stored where its text ends and byte 23 raised; a plain heap builder with room
+    /// for 8 more gets it after its text; else `velt_rt_strbuf_push_words` is called.
     StrbufPushAsciiWord,
     /// `(xs: borrow T[]) -> u64` — address of element 0 (no std declaration calls it now).
     ArrayDataPtr,
-    /// std only: `(s: borrow string) -> u64`, the string value's first word as rt_abi.md
-    /// "Strings" lays it out (#2778): a heap or static string's data pointer, inline text
-    /// otherwise. With `StrWord1` and `StrWord2`, what the runtime's position translation reads
-    /// from a string (its form, its buffer, its unit and byte counts).
+    /// std only: `(s: borrow string) -> u64`, the first word (rt_abi.md "Strings"; #2778): a heap
+    /// or static string's data pointer, inline text otherwise. With `StrWord1` and `StrWord2`, what
+    /// the runtime's position translation reads (form, buffer, unit and byte counts).
     StrWord0,
     /// std only: `(s: borrow string) -> u64`, the second word (`units << 32 | len` for a heap or
     /// static string, inline text otherwise).
     StrWord1,
-    /// std only: `(s: borrow string) -> u64`, the third word (the form: inline when its top bit
-    /// is set, else static (0), heap or slice).
+    /// std only: `(s: borrow string) -> u64`, the third word (the form: inline when its top bit is
+    /// set, else static (0), heap or slice).
     StrWord2,
     /// std only: `(s: borrow string) -> usize`, the address of `s`'s UTF-8 bytes: inside the value
     /// for an inline string, the buffer otherwise (#2778), while `s` lives unchanged.
@@ -542,32 +515,31 @@ pub enum Intrinsic {
     Attempt,
 
     // Generators (hir_encodings.md "Generators")
-    /// Compiler-internal: `yield v` in a generator body (`v: T` owned, the generator's yield
-    /// type) → unit. Suspends the generator with `v` in its value slot. In a `Generator<T, E,
-    /// N>` the call has type `N`: the value `next(value)` resumes it with, and its second
-    /// argument (owned, evaluated only then) is the value when `next()` passes none.
+    /// Compiler-internal: `yield v` in a generator body (`v: T` owned, the generator's yield type)
+    /// → unit. Suspends the generator with `v` in its value slot. In a `Generator<T, E, N>` the
+    /// call has type `N`: the value `next(value)` resumes it with, and its second argument (owned,
+    /// evaluated only then) is the value when `next()` passes none.
     Yield,
-    /// std only: `generatorResume<T, E>(g: Generator<T, E> (modified)): bool`,
-    /// throws `E` — run the generator to its next `yield` (true: a value is in the slot) or to
-    /// its end (false; also every later call). An error thrown by the body is thrown here.
+    /// std only: `generatorResume<T, E>(g: Generator<T, E> (modified)): bool`, throws `E` — run
+    /// the generator to its next `yield` (true: a value is in the slot) or to its end (false; also
+    /// every later call). An error thrown by the body is thrown here.
     GeneratorResume,
-    /// std only: `generatorValue<T, E>(g: Generator<T, E> (modified)): T` — move
-    /// the value of the last `yield` out of the slot (once, after `GeneratorResume` returned true).
+    /// std only: `generatorValue<T, E>(g: Generator<T, E> (modified)): T` — move the value of the
+    /// last `yield` out of the slot (once, after `GeneratorResume` returned true).
     GeneratorValue,
-    /// std only: `generatorReturn<T, E>(g: Generator<T, E> (modified))` — close
-    /// the generator: a suspended body runs its `finally` blocks and disposes its `using`
-    /// values as if the `yield` were a `return`; then it is done.
+    /// std only: `generatorReturn<T, E>(g: Generator<T, E> (modified))` — close the generator: a
+    /// suspended body runs its `finally` blocks and disposes its `using` values as if the `yield`
+    /// were a `return`; then it is done.
     GeneratorReturn,
     /// std only: `generatorResumeWith<T, E, N>(g: Generator<T, E, N> (modified), value: N
     /// (borrowed)): bool`, throws `E` — `next(value)`: like `GeneratorResume`, and the paused
     /// `yield` evaluates to (a copy of) `value`; a generator that has not started ignores it.
     GeneratorResumeWith,
-    /// std only: `generatorThrow<T, E, N>(g: Generator<T, E, N> (modified), error:
-    /// any (borrowed)): u32`, throws `E` — `throw(error)`: resume the body with `error` thrown
-    /// at the paused `yield`. 1: the body caught it and yielded again (the value is in the
-    /// slot); 0: it caught it and finished; 3: nothing caught it (the generator is closed, as
-    /// by `return()`, or it had not started or was finished), and the caller throws it. An
-    /// error the body throws (after catching) is thrown here.
+    /// std only: `generatorThrow<T, E, N>(g: Generator<T, E, N> (modified), error: any (borrowed)):
+    /// u32`, throws `E`: `throw(error)`: resume the body with `error` thrown at the paused `yield`.
+    /// 1: the body caught it and yielded again (value in the slot); 0: caught and finished; 3:
+    /// nothing caught it (it is closed, as by `return()`, or had not started or was finished), and
+    /// the caller throws it. An error the body throws after catching is thrown here.
     GeneratorThrow,
     /// Compiler-internal: `(g: Generator<T, E, N> (modified)): bool`, throws `E` — one step of
     /// `yield* g` in a generator that takes `next(value)` or may be thrown into (after a first
@@ -575,53 +547,48 @@ pub enum Intrinsic {
     /// generator is resumed (`next(value)` passes the value on, `throw(e)` throws `e` into `g` and,
     /// if `g` did not catch it, at the `yield*`, closing closes `g`). True when `g` yielded again.
     YieldDelegate,
-    /// Compiler-internal: `(call: owned) -> Generator<T, E>`, the initializer of the hidden
-    /// local of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps
-    /// the generator's state inline in that local instead of a heap object.
+    /// Compiler-internal: `(call: owned) -> Generator<T, E>`, the initializer of the hidden local
+    /// of a `for...of` over a direct generator call (`for (x of gen(a))`): lowering keeps the
+    /// generator's state inline in that local instead of a heap object.
     GeneratorEmbed,
 
     // Async generators (hir_encodings.md "Async generators")
-    /// std only: `asyncGeneratorResume<T, E>(g: AsyncGenerator<T, E> (modified)):
-    /// Promise<bool, E>`, only as the operand of `await` — run the generator to its next
-    /// `yield` (true) or its end (false; also every later call), suspending the awaiting
-    /// function while the generator awaits. An error thrown by the body rejects it.
+    /// std only: `asyncGeneratorResume<T, E>(g: AsyncGenerator<T, E> (modified)): Promise<bool,
+    /// E>`, only `await`ed: run it to its next `yield` (true) or its end (false; also every later
+    /// call), suspending the awaiting function while the generator awaits. Body errors reject it.
     AsyncGeneratorResume,
-    /// std only: `asyncGeneratorValue<T, E>(g: AsyncGenerator<T, E> (modified)):
-    /// T` — like `GeneratorValue`.
+    /// std only: `asyncGeneratorValue<T, E>(g: AsyncGenerator<T, E> (modified)): T` — like
+    /// `GeneratorValue`.
     AsyncGeneratorValue,
-    /// std only: `asyncGeneratorReturn<T, E>(g: AsyncGenerator<T, E> (modified)):
-    /// Promise<void>`, only as the operand of `await` — close the generator: a body suspended
-    /// at a `yield` runs its `finally` blocks and disposals (which may `await`) as if the
-    /// `yield` were a `return`; one suspended at an `await` is cancelled. Then it is done.
+    /// std only: `asyncGeneratorReturn<T, E>(g: AsyncGenerator<T, E> (modified)): Promise<void>`,
+    /// only as the operand of `await` — close the generator: a body suspended at a `yield` runs
+    /// its `finally` blocks and disposals (which may `await`) as if the `yield` were a `return`;
+    /// one suspended at an `await` is cancelled. Then it is done.
     AsyncGeneratorReturn,
-    /// std only: `asyncGeneratorDispose<T, E>(g: AsyncGenerator<T, E>
-    /// (modified))` — close the generator without awaiting (its drop): like
-    /// `AsyncGeneratorReturn`, except that a body whose cleanup at that `yield` would `await`
-    /// is cancelled instead (drops only, like a cancelled async function).
+    /// std only: `asyncGeneratorDispose<T, E>(g: AsyncGenerator<T, E> (modified))`: close it
+    /// without awaiting (its drop): as `AsyncGeneratorReturn`, except a body whose cleanup at that
+    /// `yield` would `await` is cancelled (drops only, like a cancelled async function).
     AsyncGeneratorDispose,
 
     // Weak references (std/prelude/weak.velt; rt_abi.md "Weak references")
-    /// std only: `weakMapSet<K, V>(m: u32, key: borrow K, value: owned V): u32` —
-    /// store `value` for the object `key` in weak map `m`, creating the map first when `m` is 0
-    /// (with `K`'s and `V`'s glue); returns the map. `K` is counted and weak-capable.
+    /// std only: `weakMapSet<K, V>(m: u32, key: borrow K, value: owned V): u32` — store `value`
+    /// for the object `key` in weak map `m`, creating the map first when `m` is 0 (with `K`'s and
+    /// `V`'s glue); returns the map. `K` is counted and weak-capable.
     WeakMapSet,
-    /// std only: `weakMapGet<K>(m: u32, key: borrow K): u64` — the value word
-    /// stored for `key` (counted), or 0 when there is none (0 is also a stored null or zero:
-    /// `WeakMapHas` tells them apart).
+    /// std only: `weakMapGet<K>(m: u32, key: borrow K): u64`: the value word stored for `key`
+    /// (counted), or 0 if none (0 is also a stored null or zero: `WeakMapHas` tells them apart).
     WeakMapGet,
     /// std only: `weakMapHas<K>(m: u32, key: borrow K): bool`.
     WeakMapHas,
-    /// std only: `weakMapDelete<K>(m: u32, key: borrow K): bool` — true if there
-    /// was an entry (its value is released).
+    /// std only: `weakMapDelete<K>(m: u32, key: borrow K): bool` — true if there was an entry
+    /// (its value is released).
     WeakMapDelete,
-    /// std only: `weakMapValue<V>(w: u64): V` — the value a word `WeakMapGet`
-    /// returned (taking over its reference).
+    /// std only: `weakMapValue<V>(w: u64): V`: a `WeakMapGet` word's value, taking its reference.
     WeakMapValue,
-    /// std only: `weakRefNew<T>(target: borrow T): u32` — a `WeakRef` slot of the
-    /// object `target`, which is counted and weak-capable.
+    /// std only: `weakRefNew<T>(target: borrow T): u32` — a `WeakRef` slot of the object
+    /// `target`, which is counted and weak-capable.
     WeakRefNew,
-    /// std only: `weakRefDeref<T>(r: u32): T | null` — the target (counted), or
-    /// null once it was freed.
+    /// std only: `weakRefDeref<T>(r: u32): T | null`: the target (counted), or null once freed.
     WeakRefDeref,
     /// std only: `weakMapDrop(m: u32)` — weak map `m`'s drop: every value is released. Lowered to
     /// std's weak core (`Construct::Weak`), which a program without weak collections doesn't load.
@@ -638,15 +605,14 @@ pub enum Intrinsic {
     /// std only: `recordViewIs<K, V>(r: borrow Record<K, V>): bool` — whether `r` is a view:
     /// `false` in a record type no conversion makes a view.
     RecordViewIs,
-    /// std only: `recordViewGet<K, V>(r: borrow Record<K, V>, key: borrow K): V | undefined` — the
-    /// view `r`'s source's own entry `key` through `any`, or `undefined`.
+    /// std only: `recordViewGet<K, V>(r: borrow Record<K, V>, key: borrow K): V | undefined` —
+    /// the view `r`'s source's own entry `key` through `any`, or `undefined`.
     RecordViewGet,
     /// std only: `recordViewHas<K, V>(r: borrow Record<K, V>, key: borrow K): bool` — whether the
     /// view `r`'s source has the own key `key`.
     RecordViewHas,
-    /// std only: `recordViewSet<K, V>(r: borrow Record<K, V>, key: borrow K, value: owned V)` —
-    /// `value` written to the view `r`'s source through `any` (a `TypeError` where it can't hold
-    /// it).
+    /// std only: `recordViewSet<K, V>(r: borrow Record<K, V>, key: borrow K, value: owned V)`:
+    /// `value` written to the view `r`'s source through `any` (a `TypeError` if it can't hold it).
     RecordViewSet,
     /// std only: `recordViewDelete<K, V>(r: borrow Record<K, V>, key: borrow K)` — `key` deleted
     /// from the view `r`'s source through `any`.
@@ -656,20 +622,18 @@ pub enum Intrinsic {
     /// `Object.assign` of `other` into the view).
     RecordViewFlush,
 
-    // The dynamic value `any` / `unknown` (issue #924; hir_encodings.md "any and unknown"). Its
-    // operand is a `TyKind::Dyn` of the prelude's `any` or `unknown`, built by `ToDyn` with
-    // `Program::any_impl`.
-    /// `(x: owned any) -> T` (`Expr::ty`): the value `x` holds, checked: a value of another
-    /// type stops the program with a `TypeError` naming the expected and the found type. `T` is
-    /// a concrete type, a class (an instance of it or of a subclass), `U | null` (`null` and
-    /// `undefined` give `null`) or `any` / `unknown` (the same value). An optional second
-    /// operand `text: string`, a string literal read while compiling, starts the `TypeError`
-    /// (`TypeError: <text>: the value is not …`; hir_encodings.md "any and unknown").
+    // The dynamic `any` / `unknown` (#924; hir_encodings.md "any and unknown"). Its operand is a
+    // `TyKind::Dyn` of the prelude's `any` or `unknown`, built by `ToDyn` with `Program::any_impl`.
+    /// `(x: owned any) -> T` (`Expr::ty`): the value `x` holds, checked: another type stops with a
+    /// `TypeError` naming the expected and found types. `T` is a concrete type, a class (instances
+    /// of it or a subclass), `U | null` (`null`, `undefined` give `null`) or `any` / `unknown` (the
+    /// same value). An optional second operand `text: string` (a compile-time literal) starts the
+    /// `TypeError` (`TypeError: <text>: the value is not …`; hir_encodings.md "any and unknown").
     AnyTo,
-    /// `(x: borrow any) -> T | undefined` (`Expr::ty`, an option of the function type `T`),
-    /// made by sema only: the function `x` holds (a new reference to it) when it is of exactly
-    /// type `T`, else `undefined`. A conversion of an `any` to a function type gives that
-    /// function itself, and otherwise a closure calling it through `any`. Additive (#379).
+    /// `(x: borrow any) -> T | undefined` (`Expr::ty`, an option of the function type `T`), made by
+    /// sema only: the function `x` holds (a new reference to it) when it is of exactly type `T`,
+    /// else `undefined`. A conversion of an `any` to a function type gives that function itself,
+    /// and otherwise a closure calling it through `any`. Additive (#379).
     AnyToExact,
     /// `(x: borrow any) -> string`: JavaScript's `typeof x`.
     AnyTypeof,
@@ -681,120 +645,117 @@ pub enum Intrinsic {
     /// `(a: borrow any, b: borrow any) -> bool`: `a === b` (numbers by value, `NaN` unequal,
     /// strings by content, objects and functions by identity).
     AnyStrictEq,
-    /// `(a: borrow any, b: borrow any) -> bool`: `a == b` (JavaScript's loose equality:
-    /// `null == undefined`, `"1" == 1`, `true == 1`).
+    /// `(a: borrow any, b: borrow any) -> bool`: `a == b` (JavaScript's loose equality: `null ==
+    /// undefined`, `"1" == 1`, `true == 1`).
     AnyLooseEq,
-    /// `(x: borrow any, key: borrow string | any) -> any`: `x.key` / `x[key]` (a key of type
-    /// `any` holding a number reads like `AnyIndex`): the member of the value held, boxed;
-    /// `undefined` when the value's fixed shape has no such member; a `TypeError` for a
-    /// `null` / `undefined` receiver or a member not supported through `any` yet. Sets
-    /// `Program::dyn_members`.
+    /// `(x: borrow any, key: borrow string | any) -> any`: `x.key` / `x[key]` (a key of type `any`
+    /// holding a number reads like `AnyIndex`): the member of the value held, boxed; `undefined`
+    /// when the value's fixed shape has no such member; a `TypeError` for a `null` / `undefined`
+    /// receiver or a member not supported through `any` yet. Sets `Program::dyn_members`.
     AnyGet,
     /// `(x: borrow any, i: f64) -> any`: `x[i]` with a number key (array elements).
     AnyIndex,
-    /// `(x: borrow any, key: borrow string, text: string, args: owned any...) -> any`: the
-    /// method call `x.key(args)`; each argument is converted to the parameter's type as by
-    /// `AnyTo`. `text` names the callee in a `TypeError` (`x.key is not a function`).
+    /// `(x: borrow any, key: borrow string, text: string, args: owned any...) -> any`: the method
+    /// call `x.key(args)`; each argument is converted to the parameter's type as by `AnyTo`. `text`
+    /// names the callee in a `TypeError` (`x.key is not a function`).
     AnyCall,
-    /// `(f: borrow any, text: string, args: owned any...) -> any`: calling the function value
-    /// `f` holds (`text` as for `AnyCall`).
+    /// `(f: borrow any, text: string, args: owned any...) -> any`: calling the function value `f`
+    /// holds (`text` as for `AnyCall`).
     AnyApply,
-    /// `(x: borrow any, key: borrow string | any, v: owned any) -> void`: `x.key = v` /
-    /// `x[key] = v` (a key of type `any` holding a number writes like `AnySetIndex`): `v`
-    /// converted to the member's type as by `AnyTo` and stored, or passed to its setter; a
-    /// `TypeError` for a `null` / `undefined` receiver, a member the value's fixed shape does not
-    /// have (a record takes any key), a getter without a setter, or a member not supported
-    /// through `any` yet. Sets `Program::dyn_members`.
+    /// `(x: borrow any, key: borrow string | any, v: owned any) -> void`: `x.key = v` / `x[key] =
+    /// v` (an `any` key holding a number: as `AnySetIndex`): `v` converted to the member's type as
+    /// by `AnyTo` and stored, or passed to its setter; a `TypeError` for a `null` / `undefined`
+    /// receiver, a member the fixed shape lacks (a record takes any key), a getter without a
+    /// setter, or a member not supported through `any` yet. Sets `Program::dyn_members`.
     AnySet,
-    /// `(x: borrow any, i: f64, v: owned any) -> void`: `x[i] = v` with a number key (an
-    /// element of an array, inside its length).
+    /// `(x: borrow any, i: f64, v: owned any) -> void`: `x[i] = v` with a number key (an element of
+    /// an array, inside its length).
     AnySetIndex,
-    /// `(x: borrow any, key: borrow string | any) -> bool`: `key in x` (a key of type `any`
-    /// holding a number names an element by its string): whether the value held has the
-    /// property (a proxy: its `has` trap); a `TypeError` for a `null` / `undefined` value or one
-    /// not supported yet. Sets `Program::dyn_members`.
+    /// `(x: borrow any, key: borrow string | any) -> bool`: `key in x` (an `any` key holding a
+    /// number: as its string): whether the held value has it (a proxy's `has` trap); a `TypeError`
+    /// for `null` / `undefined` or values not supported yet. Sets `Program::dyn_members`.
     AnyHas,
-    /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that
-    /// is not a proxy (std/lang/proxy/index.velt, `Reflect.deleteProperty`): a record's entry is
-    /// removed and an optional field made absent (`true`), a key the value does not have is
-    /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
+    /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that is
+    /// not a proxy (std/lang/proxy/index.velt, `Reflect.deleteProperty`): a record's entry is
+    /// removed and an optional field made absent (`true`), a key the value does not have is `true`,
+    /// an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,
-    /// std only: `(x: borrow unknown) -> Promise<unknown, unknown> | undefined`, awaits x's. Additive.
+    /// std only: `(x: borrow unknown) -> Promise<unknown, unknown> | undefined`, awaits x's.
+    /// Additive.
     AnyPromise,
     /// `(x: borrow T) -> bool`: `x instanceof Promise`, by its table if dynamic. Additive.
     AnyIsPromise,
     /// std only: `(name: string literal) -> bool`, a constant: can the program call the array
     /// method `name` through `any`, so that its generic algorithm on a proxy can run
-    /// (velt/lang/proxy/array)? True when `name` is called by name, when a method is called by a
-    /// computed name, or when the program can hold a method under another name, which is also what
-    /// a `call`, `apply` or `bind` of one needs (`Program::array_methods_open`; hir_encodings.md
-    /// "any and unknown").
+    /// (velt/lang/proxy/array)? True when `name` is called by name, a method by a computed name, or
+    /// the program can hold a method under another name (also what a `call`, `apply` or `bind` of
+    /// one needs; `Program::array_methods_open`; hir_encodings.md "any and unknown").
     AnyMethodCalled,
     /// std only: `(x: borrow any) -> bool`: does `x` hold an `any[]` itself (not a view, a proxy or
     /// another array)? A comparison of its descriptor.
     AnyIsList,
+    /// std only: `(x: borrow any) -> i32`: `1` for a `0`, `-1` for a `-0`, else `0`. Inline.
+    AnyZeroSign,
     /// std only: `(name: string literal)`: nothing runs. Where it is lowered, the program can reach
     /// this code, so `StdUsed(name)` is true for the whole program.
     NoteStdUse,
     /// std only: `(name: string literal) -> bool`, a constant: is `NoteStdUse(name)` reachable?
     StdUsed,
-    /// std only: `(x: borrow any, op: i64) -> i64`, an array method running on a proxy of the
-    /// array `x` holds (velt/lang/proxy/array; identified by its data pointer): `op` 1 starts it, -1
-    /// ends it and answers the first hole it leaves (or -1), 2 and -2 start and end a trap call
-    /// of it (`velt_rt_proxy_array_call`, rt_abi.md "Array methods on a proxy").
+    /// std only: `(x: borrow any, op: i64) -> i64`, an array method running on a proxy of the array
+    /// `x` holds (velt/lang/proxy/array; identified by its data pointer): `op` 1 starts it, -1 ends
+    /// it and answers the first hole it leaves (or -1), 2 and -2 start and end a trap call of it
+    /// (`velt_rt_proxy_array_call`, rt_abi.md "Array methods on a proxy").
     ProxyArrayCall,
-    /// std only: `(x: borrow any, index: i64, op: i64) -> i64`, the holes those methods made in
-    /// the array `x` holds (identified by its data pointer): `op` 0 tests element `index`, 1
-    /// records it (only in a trap call of a method on `x`, else -1), 2 forgets it, 3 forgets
-    /// those from `index` on, 4 gives the first below `index` (or -1) (`velt_rt_proxy_array_hole`).
+    /// std only: `(x: borrow any, index: i64, op: i64) -> i64`, the holes those methods made in the
+    /// array `x` holds (identified by its data pointer): `op` 0 tests element `index`, 1 records it
+    /// (only in a trap call of a method on `x`, else -1), 2 forgets it, 3 forgets those from
+    /// `index` on, 4 gives the first below `index` (or -1) (`velt_rt_proxy_array_hole`).
     ProxyArrayHole,
     /// `(x: borrow T) -> bool`, made by sema only: whether the value of the class or object type
     /// `T` is a typed proxy (velt_vir's tagged pointer, proxy_typed.rs); `false` for a type that
     /// cannot hold one. A test of a bit, so a plain value keeps its own code path.
     IsTypedProxy,
-    /// `(x: borrow T) -> u64`: the identity of the value `x` (velt/reflect `identity`): the
-    /// address of a class object, a boxed value or an array, the data pointer of an `any` that
-    /// holds an object, an array or a function; 0 for a value without one (a number, a string,
-    /// a struct copied by value). A typed proxy's tag bit is cleared. Additive.
+    /// `(x: borrow T) -> u64`: the identity of the value `x` (velt/reflect `identity`): the address
+    /// of a class object, a boxed value or an array, the data pointer of an `any` that holds an
+    /// object, an array or a function; 0 for a value without one (a number, a string, a struct
+    /// copied by value). A typed proxy's tag bit is cleared. Additive.
     Identity,
-    /// `(x: borrow T) -> any`: a share of `x` as an `any`, boxed at run time as `ToDyn` boxes it
-    /// (a typed proxy as the proxy), without the conversion's effect on the checks of `T`
-    /// (velt/reflect `dynamicOf`). Additive.
+    /// `(x: borrow T) -> any`: `x` shared as `any`, boxed at run time like `ToDyn` (a typed proxy
+    /// as is), without the conversion's effect on `T`'s checks (velt/reflect `dynamicOf`).
+    /// Additive.
     ToAny,
     /// `(x: borrow any) -> string`: what the value `x` holds is, from its descriptor (velt/reflect
     /// `typeOf`): `"<kind>|<repr>|<name>|<hooks>"`, a static string (`any_reflect.rs`). Additive.
     AnyReflectInfo,
     /// `(x: borrow any) -> i64`: how many entries velt/reflect lists for the value `x` holds (the
-    /// fields of an object, the elements of an array or a tuple, the entry positions of a `Map`
-    /// or a `Record`), or -1 when it cannot list them. Additive.
+    /// fields of an object, the elements of an array or a tuple, the entry positions of a `Map` or
+    /// a `Record`), or -1 when it cannot list them. Additive.
     AnyReflectCount,
     /// `(x: borrow any, i: i64) -> string`: the name of entry `i` (`AnyReflectCount`). Additive.
     AnyReflectName,
-    /// `(x: borrow any, i: i64) -> any`: the value of entry `i`, `undefined` for an absent
-    /// optional field or a deleted `Map` entry. Additive.
+    /// `(x: borrow any, i: i64) -> any`: the value of entry `i`, `undefined` for an absent optional
+    /// field or a deleted `Map` entry. Additive.
     AnyReflectValue,
     /// `(x: borrow any, key: borrow string) -> any`: what the `toJSON(key)` hook of the class
     /// object `x` holds returns (`undefined` without one). Additive.
     AnyReflectHook,
     /// `(x: borrow any) -> bool`: `Array.isArray(x)` (the value held is an array or a tuple).
     AnyIsArray,
-    /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the own enumerable string keys of the
-    /// value held in JavaScript's order (an array's or a string's indexes, a record's keys,
-    /// the fields of an object); a `TypeError` for `null` / `undefined` or a value not
-    /// supported yet. Sets `Program::dyn_members`.
+    /// `(x: borrow any) -> string[]`: `Object.keys(x)`, the held value's own enumerable string keys
+    /// in JS order (array or string indexes, a record's keys, an object's fields); a `TypeError`
+    /// for `null` / `undefined` or a value not supported yet. Sets `Program::dyn_members`.
     AnyKeys,
-    /// `(x: borrow any) -> i64`: the `typeof` tag of the value held, as a number (0 `undefined`,
-    /// 1 `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7 object), read from its
+    /// `(x: borrow any) -> i64`: the `typeof` tag of the value held, as a number (0 `undefined`, 1
+    /// `null`, 2 boolean, 3 number, 4 string, 5 symbol, 6 function, 7 object), read from its
     /// descriptor without a call. Additive (#924, operators through `any`).
     AnyTag,
-    /// `(x: borrow any) -> f64`: JavaScript's `ToNumber` of a primitive held (`null` is 0,
-    /// `undefined` NaN, a string as `Number(s)`; a symbol stops with Node's `TypeError`), one
-    /// call through the descriptor. An object or a function held gives `NaN`: sema converts
-    /// those with `ToPrimitive` first. Additive (#924).
+    /// `(x: borrow any) -> f64`: JS `ToNumber` of a primitive held (`null` is 0, `undefined` NaN, a
+    /// string as `Number(s)`; a symbol stops with Node's `TypeError`), one descriptor call; an
+    /// object or a function held gives `NaN` (sema applies `ToPrimitive` first). Additive (#924).
     AnyToNumber,
     /// `T.shuffle(a, b, i0, …)` of a SIMD vector type (`velt/simd`): `(a: T, b: T) -> T`, lane
-    /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices
-    /// were integer literals in range (sema checks them), so they are part of the operation:
-    /// lowering calls the `velt_simd_<T>_shuffle_<i0>_<i1>…` extern (`velt_vir::simd`).
+    /// `k` of the result being lane `lanes[k]` of `a`'s lanes followed by `b`'s. The indices were
+    /// integer literals in range (sema checks them), so they are part of the operation: lowering
+    /// calls the `velt_simd_<T>_shuffle_<i0>_<i1>…` extern (`velt_vir::simd`).
     SimdShuffle(super::SimdTy, [u8; 16]),
 }

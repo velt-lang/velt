@@ -1,0 +1,115 @@
+// velt/fs (tests): `MappedFile.copy` copies a range of the mapping out as Node's `buf.copy`
+// does: the rows of Node 22's results for a 16-byte source and an 8-byte target, Node's reading
+// of odd positions and its messages, number arrays counted in bytes, and a mapping's bytes as
+// the target, which take a copy and leave the read-only mapping as it was. Typed arrays and
+// views as targets are in the golden std/fs_mapped_copy_targets.
+import { MappedFile, rmSync, writeFileSync } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { describe, expect, it } from "velt/test";
+
+/** A new file of "0123456789abcdef", mapped. */
+function mapped(tag: string): MappedFile {
+  const path = `${tmpdir()}/velt-copy-${Date.now()}-${Math.floor(Math.random() * 1e9)}-${tag}`;
+  writeFileSync(path, "0123456789abcdef");
+  const m = MappedFile.open(path);
+  try {
+    rmSync(path);
+  } catch (e) {
+    // Windows may refuse to remove a file that is mapped.
+  }
+  return m;
+}
+
+/** The bytes of `t` as Latin-1 text, a zero byte as ".". */
+function shown(t: u8[]): string {
+  let s = "";
+  for (const b of t) {
+    s += b == 0 ? "." : String.fromCharCode(b);
+  }
+  return s;
+}
+
+/** `m.copy(target, …)` into a new 8-byte buffer: "count target", or the error's message. */
+function row(m: MappedFile, ts?: number, ss?: number, se?: number): string {
+  const t = Buffer.alloc(8);
+  try {
+    const n =
+      ts === undefined
+        ? m.copy(t)
+        : ss === undefined
+          ? m.copy(t, ts)
+          : se === undefined ? m.copy(t, ts, ss) : m.copy(t, ts, ss, se);
+    return `${n} ${shown(t)}`;
+  } catch (e) {
+    return `${(e as Error).name}: ${(e as Error).message}`;
+  }
+}
+
+describe("MappedFile.copy", () => {
+  it("gives Node 22's results for a 16-byte source and an 8-byte target", () => {
+    const m = mapped("rows");
+    expect(row(m)).toBe("8 01234567");
+    expect(row(m, 2)).toBe("6 ..012345");
+    expect(row(m, 0, 4)).toBe("8 456789ab");
+    expect(row(m, 0, 4, 6)).toBe("2 45......");
+    expect(row(m, 0, 14)).toBe("2 ef......");
+    expect(row(m, 6, 0)).toBe("2 ......01");
+    expect(row(m, 8)).toBe("0 ........");
+    expect(row(m, 9)).toBe("0 ........");
+    expect(row(m, 0, 16)).toBe("0 ........");
+    expect(row(m, 0, 4, 2)).toBe("0 ........");
+    expect(row(m, 0, 4, 99)).toBe("8 456789ab");
+    expect(row(m, 0, 17)).toBe(
+      'RangeError: The value of "sourceStart" is out of range. It must be >= 0 && <= 16. Received 17',
+    );
+    expect(row(m, -1)).toBe(
+      'RangeError: The value of "targetStart" is out of range. It must be >= 0. Received -1',
+    );
+    expect(row(m, 0, -1)).toBe(
+      'RangeError: The value of "sourceStart" is out of range. It must be >= 0 && <= 16. Received -1',
+    );
+    expect(row(m, 0, 0, -1)).toBe(
+      'RangeError: The value of "sourceEnd" is out of range. It must be >= 0. Received -1',
+    );
+  });
+
+  it("reads odd positions as Node does", () => {
+    const m = mapped("odd");
+    expect(row(m, 1.7)).toBe("7 .0123456");
+    expect(row(m, 0, 2.9)).toBe("8 23456789");
+    expect(row(m, 0, 0, 5.5)).toBe("5 01234...");
+    expect(row(m, NaN)).toBe("8 01234567");
+    expect(row(m, 0, NaN)).toBe("8 01234567");
+    expect(row(m, 0, 0, NaN)).toBe("0 ........");
+    expect(row(m, Infinity)).toBe("8 01234567");
+    expect(row(m, 0, Infinity)).toBe("8 01234567");
+    expect(row(m, 0, 0, Infinity)).toBe("0 ........");
+    expect(row(m, 0, 2 ** 33)).toBe(
+      'RangeError: The value of "sourceStart" is out of range. It must be >= 0 && <= 16. Received 8_589_934_592',
+    );
+  });
+
+  it("copies into an array of another number type, counted in bytes", () => {
+    const m = mapped("numbers");
+    const numbers: u32[] = [0, 0];
+    expect(m.copy(numbers, 4, 0, 4)).toBe(4);
+    expect(numbers[0]).toBe(0);
+    expect(numbers[1]).toBe(0x33323130);
+    const halves: u16[] = [0, 0, 0];
+    expect(m.copy(halves, 1)).toBe(5);
+    expect(halves[0]).toBe(0x3000);
+    expect(halves[2]).toBe(0x3433);
+  });
+
+  it("takes a mapping's bytes as a copy, and leaves the mapping as it was", () => {
+    const m = mapped("own");
+    const other = mapped("other");
+    // `bytes` is read out of a `shared` value, so the call gets a copy: no write reaches the
+    // read-only mapping, which would end the process. (A typed array of a mapping is a
+    // `shared` array of another type, which is no target at all: a type error.)
+    expect(m.copy(other.bytes, 0, 8)).toBe(16 - 8);
+    expect(m.copy(m.bytes, 0, 8)).toBe(16 - 8);
+    expect(shown(Buffer.from(m.bytes))).toBe("0123456789abcdef");
+    expect(shown(Buffer.from(other.bytes))).toBe("0123456789abcdef");
+  });
+});

@@ -13,6 +13,8 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
         CTy::F64 => Shape::Scalar(Scalar::F64),
         CTy::Bool => Shape::Scalar(Scalar::Bool),
         CTy::Void => Shape::Void,
+        // A C struct by value (#2187 layer 3): compared by the definition it names.
+        CTy::Struct => field_shape(p, t),
         CTy::Null => Shape::Null,
         CTy::StrBytes | CTy::CString => Shape::Text,
         CTy::Ptr { .. } => Shape::Ptr(pointee_of_ptr(p, t)),
@@ -23,10 +25,19 @@ pub(super) fn shape(p: &hir::Program, t: TyId, c: CTy) -> Shape {
             },
             readonly,
         },
-        // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094).
+        // `Out<T>`: a `T *` C writes; `Out<Ptr<T> | null>` is a `T **` (#3094); `Out<S>` of a C
+        // struct an `S *` (#2187).
+        // `Ref<S>`: a `const S *` C reads (#2187), `t` being `S` (or `S | null`).
+        CTy::Ref { nullable } => match field_shape(p, option_inner(p, t)) {
+            Shape::Struct(name) => Shape::RefStruct { name, nullable },
+            other => other,
+        },
         CTy::Out => match first_arg(p, t) {
             Some(a) if ptr_target(p, a).is_some() => Shape::OutPtr(pointee_of_ptr(p, a)),
-            Some(a) => Shape::Out(scalar_of(p, a).unwrap_or(Scalar::Bool)),
+            Some(a) => match field_shape(p, a) {
+                Shape::Struct(name) => Shape::OutStruct(name),
+                _ => Shape::Out(scalar_of(p, a).unwrap_or(Scalar::Bool)),
+            },
             None => Shape::Out(Scalar::Bool),
         },
     }
@@ -57,6 +68,14 @@ fn scalar_of(p: &hir::Program, t: TyId) -> Option<Scalar> {
         TyKind::Float(hir::FloatTy::F64) => Some(Scalar::F64),
         TyKind::Bool => Some(Scalar::Bool),
         _ => None,
+    }
+}
+
+/// The `T` of `T | null` `t`, or `t`.
+fn option_inner(p: &hir::Program, t: TyId) -> TyId {
+    match p.types.kind(t) {
+        TyKind::Option(inner, _) => *inner,
+        _ => t,
     }
 }
 
@@ -100,4 +119,24 @@ fn pointee(p: &hir::Program, t: TyId) -> Pointee {
         TyKind::Option(inner, _) => pointee(p, *inner),
         _ => Pointee::Void,
     }
+}
+
+/// What a field of type `t` of a C struct holds: a number, `bool`, a pointer or another C
+/// struct (sema allowed only these).
+pub(super) fn field_shape(p: &hir::Program, t: TyId) -> Shape {
+    if let Some(s) = scalar_of(p, t) {
+        return Shape::Scalar(s);
+    }
+    match p.types.kind(t) {
+        TyKind::Adt(d, _) => match p.def(*d) {
+            Def::Adt(a) => Shape::Struct(short_name(&a.name)),
+            _ => Shape::Void,
+        },
+        _ => Shape::Ptr(pointee_of_ptr(p, t)),
+    }
+}
+
+/// A declaration's name without its module (`app::geom::Point` → `Point`): C's name.
+pub(super) fn short_name(name: &str) -> String {
+    name.rsplit("::").next().unwrap_or(name).to_string()
 }

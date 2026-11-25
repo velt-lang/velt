@@ -535,9 +535,18 @@ fn is_named_regexp(class: &ast::TypeExpr) -> bool {
 }
 
 /// The nothing a parameter type written as a union with `null` or `undefined` admits:
-/// `undefined` when it admits that one (`T | undefined`, `T | null | undefined`), else `null`.
+/// `undefined` when it admits that one (`T | undefined`, `T | null | undefined`, and `any` /
+/// `unknown`), else `null`.
 fn admitted_nothing(t: &ast::TypeExpr) -> Option<ast::Lit> {
     use ast::TypeExprKind as T;
+    // `g: any` / `g: unknown` hold `undefined` as JavaScript passes it.
+    if let T::Named { path, args } = &t.kind {
+        if let ([name], []) = (path.as_slice(), args.as_slice()) {
+            if matches!(name.name.as_str(), "any" | "unknown") {
+                return Some(ast::Lit::Undefined);
+            }
+        }
+    }
     let T::Union(ts) = &t.kind else {
         return None;
     };

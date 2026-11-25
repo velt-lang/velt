@@ -39,6 +39,7 @@ mod any_glue;
 mod any_has;
 mod any_has_builtin;
 mod any_iface;
+mod any_index_match;
 mod any_keys;
 mod any_member;
 mod any_not_fn;
@@ -80,6 +81,7 @@ mod c_call;
 mod c_export;
 pub(crate) mod c_global;
 mod c_layout;
+mod c_struct_call;
 mod call;
 mod callee;
 mod caller_aliases;
@@ -92,6 +94,7 @@ mod class_test;
 mod cleanup;
 mod closure;
 mod console;
+mod console_format;
 mod cpu_checks;
 mod ctor_init;
 mod debug_vars;
@@ -109,6 +112,7 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod lent_variant;
 mod lower_profile;
 mod moved_args;
 mod ptr_memory;
@@ -143,6 +147,7 @@ mod literal_accessors;
 mod literal_moves;
 mod match_switch;
 mod matching;
+mod module_lock;
 mod module_state;
 mod narrowed_paths;
 mod operand;
@@ -269,6 +274,9 @@ struct Cx<'h> {
     /// The class roots of the targets of `weak` fields, built on first use (weak_fields.rs
     /// `slot_target`).
     weak_targets: std::cell::OnceCell<FxHashSet<DefId>>,
+    /// The classes declaring a `[Symbol.toPrimitive]` method, built on first use (`%s` of one,
+    /// console_format.rs `own_to_primitive`).
+    to_primitive_classes: std::cell::OnceCell<FxHashSet<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function but `velt_main` is lowered, hence built last.
     uses_placement: bool,

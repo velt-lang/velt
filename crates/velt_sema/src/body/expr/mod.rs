@@ -6,6 +6,7 @@ mod access;
 mod accessor_rmw;
 mod any_apply;
 mod any_prim;
+mod any_promise_members;
 mod any_record_cast;
 mod any_text;
 mod arg_order;
@@ -45,12 +46,14 @@ mod cast_member;
 mod chain;
 mod class_bound;
 mod closure;
+mod closure_members;
 mod closure_sig;
 mod coerce;
 mod coerce_generic;
 mod coerce_mismatch;
 mod coerce_vars;
 mod comparable_cast;
+mod console_format;
 mod constraints;
 mod construct;
 mod conversions;
@@ -114,6 +117,7 @@ mod generic_conversions;
 mod generic_member;
 mod generic_spread;
 mod generic_values;
+mod hand_back;
 mod hidden_nothings;
 mod hoist;
 mod hook_call;
@@ -148,6 +152,7 @@ mod lit;
 mod literal_iface;
 mod literal_keys;
 mod literal_this;
+pub(crate) use literal_this::{is_arrow, stored_method_error, StoredWhy};
 mod literal_types;
 mod literal_union_cast;
 mod literal_union_compare;
@@ -215,6 +220,7 @@ mod record_props;
 mod record_view;
 mod record_view_cast;
 mod regex_args;
+mod regexp_match_reads;
 mod rest_forms;
 mod rest_shapes;
 mod rest_tuple;
@@ -310,6 +316,8 @@ impl FnCx<'_, '_> {
         let h = self.with_lets(temps, h);
         // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).
         let h = self.in_place_value(e, h);
+        // `s.add(x)`: the receiver it hands back, read as `want` says (`hand_back`).
+        let h = self.hand_back_want(h, want);
         // An integer from the standard library is a number in user code (`numbers`).
         let h = self.std_number(h);
         // An `any | null` (a generic `T | undefined` with `T = any`: `Map.get`, `find`, an

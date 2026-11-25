@@ -1,6 +1,6 @@
 // velt/task (internal): `catchPanic`, a promise whose panics are caught, and its `PanicError`.
 
-import { arm, free, message, settled, take } from "#task-catch";
+import { arm, bodyCatching, free, message, NONE, settled, take } from "#task-catch";
 
 /** Thrown by `catchPanic` when the code it ran panicked; `message` is the panic's message. */
 export class PanicError extends Error {
@@ -11,23 +11,31 @@ export class PanicError extends Error {
 }
 
 /**
+ * `p` awaited in a promise of `catchPanic`'s own, which it guards when no promise the body
+ * started took the arming (#3223): a body that returns a promise held as `Promise<any>`.
+ */
+async function awaited<T, E>(p: Promise<T, E>): Promise<T> throws E {
+  return await p;
+}
+
+/**
  * Calls `body` and awaits the promise it returns. A panic in the code that promise runs (an
- * index out of bounds, `panic(msg)`, also in promises it starts and awaits) throws `PanicError`
- * here instead of ending the process; its message is printed to stderr when it happens, as an
- * uncaught one is. A promise started there that panics and is never awaited by anyone is
- * printed and then dropped with its panic: it doesn't end the process.
+ * index out of bounds, `panic(msg)`, also in promises it starts and awaits) throws
+ * `PanicError` here instead of ending the process; its message is printed to stderr when it
+ * happens, as an uncaught one is. A promise started there that panics and is never awaited by
+ * anyone is printed and then dropped with its panic: it doesn't end the process.
  *
  * What the panicked code was doing is abandoned, not undone: its memory is leaked (nothing it
  * held is dropped), a `Mutex` it held stays locked, and an object it was changing keeps the
  * change half made. Use it at a boundary where the work can be thrown away, such as one request
- * of a server (`http-server` answers 500). The guarded promise is the first one started after
- * `body` is called, so `body` should be the async call itself (`() => handle(req)`): a body
- * that returns a promise it did not make (`() => p`) catches nothing, and a non-async body that
- * starts another promise before the one it returns guards that other one instead. A panic in a
- * task the body `spawn`s ends the process, as before; under the executor in Velt
- * (`VELT_SCHEDULER=std`) such a task catches too, and its panic is raised again where it is
- * joined. Where generated code doesn't catch panics (Windows and the `velt dev` JIT under that
- * executor), a panic here ends the process as an uncaught one does.
+ * of a server (`http-server` answers 500). The body may return its promise as `Promise<any>`
+ * or return a spawned task's handle; a task it spawns catches, its panic raised again where it
+ * is joined. Three shapes don't catch yet (#3223): a body that panics before it makes its
+ * promise (a non-async body), one that returns a promise made before `catchPanic` was called
+ * (`() => p`), and a spawned task's handle held as `Promise<any>`. Under the runtime's executor
+ * (being retired, #2196), as before, only the first promise the body starts is guarded. Where
+ * generated code doesn't catch panics (Windows and the `velt dev` JIT under the executor in
+ * Velt), a panic here ends the process as an uncaught one does.
  */
 export async function catchPanic<T, E>(
   body: () => Promise<T, E>,
@@ -35,8 +43,19 @@ export async function catchPanic<T, E>(
   const outer = arm();
   // Storing the promise starts it, which takes the arming (the runtime's task/local/catch.rs, or
   // the executor in Velt's std/task/catch_sched.velt).
-  const p = body();
-  const h = take(outer);
+  bodyCatching(true);
+  let p = body();
+  bodyCatching(false);
+  let h = take(outer);
+  if (h == NONE) {
+    // No promise took the arming: one of `catchPanic`'s own awaits `p`, and is guarded.
+    const again = arm();
+    p = awaited(p);
+    h = take(again);
+    if (h == NONE) {
+      h = 0;
+    }
+  }
   if (h == 0) {
     return await p;
   }

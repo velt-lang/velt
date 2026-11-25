@@ -125,7 +125,7 @@ function resume(e: usize, k: usize, w: usize, lent: bool, own: bool, woken: bool
     return between(e, k, m.load32(k + t.T_STATE) === t.NOTIFIED);
   }
   if (own) {
-    node.run(k, w, false);
+    node.run(k, w, false, 1);
     node.release(w);
   } else {
     m.wakeOwned(w);
@@ -172,7 +172,7 @@ function runWoken(e: usize, k: usize): void {
   let n = wn.takeWoken(k);
   while (n !== 0) {
     const nx = wn.nextWoken(n);
-    node.run(k, n, true);
+    node.run(k, n, true, 1);
     node.release(n);
     run.drain(e, k);
     n = nx;

@@ -315,6 +315,7 @@ fn verify_checks_static_symbols() {
         host: None,
         c_decl: None,
         variadic: false,
+        c_abi: None,
     });
     named(&mut extern_clash, 1, "_Vclash", Linkage::Export);
     expect_err(&extern_clash, "is not unique");

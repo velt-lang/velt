@@ -24,6 +24,7 @@ export {
 export {
   anyDelete,
   anyIsList,
+  anyZeroSign,
   anyIsPromise,
   anyMethodCalled,
   anyPromise,
@@ -113,6 +114,7 @@ export { strLoadPartialU8x16, strLoadU8x16 } from "velt/lang/intrinsics/simd";
 export {
   strAsciiWords,
   strAt,
+  strBorrowedWords,
   strByteAt,
   strByteLen,
   strbufPushAsciiWord,

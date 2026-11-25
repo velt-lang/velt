@@ -1,0 +1,10 @@
+declared: keys 0 same true twice true
+closure: keys 0 same true
+written through the function: x keys tag
+written through the view: 5 true
+still callable: 2
+two boxings: true
+closure with captures: true true
+this functions: false true true
+array methods: false true
+generic closures: false

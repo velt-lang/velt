@@ -60,6 +60,9 @@ pub(crate) struct ObjectState {
     pub frozen_found: FxHashSet<String>,
     /// The types of the values given to `Object.isFrozen` (`freezable` module docs).
     pub is_frozen_types: Vec<TyId>,
+    /// The object types made as `Partial<I>` of an interface `I` with methods, with `I`'s value
+    /// type (`crate::utility_partial`).
+    pub partial_types: FxHashMap<TyId, TyId>,
     /// The program calls `Object.create(null)`: records may have no prototype.
     pub null_proto_records: bool,
     /// The program defines accessors with `Object.defineProperty`, which a record may hold:
@@ -750,7 +753,7 @@ pub(crate) fn absent_is_null(ty: &crate::types::Types, kind: AdtKind, f: &FieldI
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     ObjectState {
-        frozen, frozen_defs, freezable, frozen_keys, frozen_found, is_frozen_types, null_proto_records, record_accessors, ctor_reads, record_fills,
+        frozen, frozen_defs, freezable, frozen_keys, frozen_found, is_frozen_types, partial_types, null_proto_records, record_accessors, ctor_reads, record_fills,
         brands, hidden, layouts, class_values, expansive_cut,
     }
     ShapeField {

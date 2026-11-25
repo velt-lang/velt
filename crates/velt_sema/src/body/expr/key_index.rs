@@ -156,6 +156,12 @@ impl FnCx<'_, '_> {
         self.cx.error(d);
     }
 
+    /// [`Self::cannot_index`] reported, and the error expression at `span`.
+    pub(super) fn index_error(&mut self, obj: &hir::Expr, span: velt_common::Span) -> hir::Expr {
+        self.cannot_index(obj);
+        self.error_expr(span)
+    }
+
     /// Is `object[key]` (with these types) a key access of a generic body: a type parameter's
     /// value by a key type known only per instantiation?
     pub(super) fn generic_keyed(&self, t: hir::TyId, k: hir::TyId) -> bool {

@@ -1,0 +1,77 @@
+// check: no leaks
+// check: also with VELT_THREADS=1
+// A shared promise that isn't an async call (a `sleep`, a race, a spawned task's handle) keeps its
+// identity while any copy lives (#2196): a copy kept in a `Set` after the original was dropped and
+// the promise settled is never `===` to, or found for, a promise made later.
+async function work(n: number): Promise<number> {
+  await Promise.resolve();
+  return n;
+}
+
+function keepSleep(keep: Set<Promise<void>>, arr: Promise<void>[]): void {
+  const s = sleep(1); // timing: a sleep kept as a value is the promise shared, nothing waits on it
+  const c = s;
+  keep.add(c);
+  arr.push(c);
+  console.log("sleep copy", c === s);
+}
+
+function keepRace(keep: Set<Promise<number>>, arr: Promise<number>[]): void {
+  const r = Promise.race([work(1), work(2)]);
+  const c = r;
+  keep.add(c);
+  arr.push(c);
+  console.log("race copy", c === r);
+}
+
+function keepJoin(keep: Set<Promise<number>>, arr: Promise<number>[]): void {
+  const h = spawn(work(7));
+  const c = h;
+  keep.add(c);
+  arr.push(c);
+  console.log("join copy", c === h);
+}
+
+async function main() {
+  const ks = new Set<Promise<void>>();
+  const as: Promise<void>[] = [];
+  keepSleep(ks, as);
+  await as[0];
+  let hits = 0;
+  for (let i = 0; i < 300; i++) {
+    const s = sleep(0); // timing: a new sleep is a new promise to compare, not an order
+    if (ks.has(s) || s === as[0]) {
+      hits++;
+    }
+    await s;
+  }
+  console.log("sleep collisions", hits, ks.has(as[0]));
+
+  const kr = new Set<Promise<number>>();
+  const ar: Promise<number>[] = [];
+  keepRace(kr, ar);
+  console.log("race", await ar[0]);
+  hits = 0;
+  for (let i = 0; i < 300; i++) {
+    const r = Promise.race([work(i), work(i + 1)]);
+    if (kr.has(r) || r === ar[0]) {
+      hits++;
+    }
+    await r;
+  }
+  console.log("race collisions", hits, kr.has(ar[0]));
+
+  const kj = new Set<Promise<number>>();
+  const aj: Promise<number>[] = [];
+  keepJoin(kj, aj);
+  console.log("join", await aj[0]);
+  hits = 0;
+  for (let i = 0; i < 300; i++) {
+    const h = spawn(work(i));
+    if (kj.has(h) || h === aj[0]) {
+      hits++;
+    }
+    await h;
+  }
+  console.log("join collisions", hits, kj.has(aj[0]));
+}

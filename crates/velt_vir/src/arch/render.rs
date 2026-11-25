@@ -163,10 +163,11 @@ pub fn vector_file(width: u32) -> String {
          // CPU; velt/arch/x86's AVX2 and AVX-512 methods take it as one register, behind their\n\
          // class's check.\n"
     );
-    // The 128-bit types' methods (`asU8x16`, `load`, `store`), from their defining files.
-    s.push_str("\nimport \"velt/simd/bytes\";\nimport \"velt/simd/floats\";\nimport \"velt/simd/words\";\n");
+    // No import of velt/simd: its three files are about 3,500 lines, which every program that
+    // uses this type (std's regex scan does) would read. The 128-bit parts are taken apart and
+    // loaded with velt/simd's externs, declared at the end (#3080).
     if width == 512 {
-        s.push_str("import { Vector256 } from \"velt/arch/x86/vector256\";\n");
+        s.push_str("\nimport { Vector256 } from \"velt/arch/x86/vector256\";\n");
     }
     let parts: &[&str] = if width == 256 {
         &["lo", "hi"]
@@ -210,10 +211,14 @@ pub fn vector_file(width: u32) -> String {
                 as_bytes(l, "lo"),
                 as_bytes(l, "hi")
             ));
+            // `{x}.load` of each half: the same check and RangeError.
             s.push_str(&format!(
                 "\n  /** The {n} lanes of `from` from `at` on. */\n  \
                  static load{suffix}(from: {t}[], at: usize = 0): Vector256<{t}> {{\n    \
-                 return Vector256.from{}({x}.load(from, at), {x}.load(from, at + {half}));\n  }}\n",
+                 if (!velt_simd_{x}_fits(from, at as u64) || !velt_simd_{x}_fits(from, (at + {half}) as u64)) {{\n      \
+                 panic(\"RangeError: {x}.load: range is out of bounds\");\n    }}\n    \
+                 const lo = velt_simd_{x}_load(from, at as u64);\n    \
+                 return Vector256.from{}(lo, velt_simd_{x}_load(from, (at + {half}) as u64));\n  }}\n",
                 capitalize(&x)
             ));
         } else {
@@ -240,10 +245,44 @@ pub fn vector_file(width: u32) -> String {
                 from_bytes(l, "this.hi")
             ));
         }
-        s.push_str(&format!(
-            "  /** Stores its {n} lanes in `to` from `at` on. */\n  store(to: {t}[], at: usize = 0) {{\n    \
-             this.lower().store(to, at);\n    this.upper().store(to, at + {half});\n  }}\n}}\n"
-        ));
+        if width == 256 {
+            // `{x}.store` of each half: the same check and RangeError, the low half stored first.
+            let x = l.narrow();
+            let store = |part: &str, at: &str| {
+                format!(
+                    "    if (!velt_simd_{x}_fits(to, {at} as u64)) {{\n      \
+                     panic(\"RangeError: {x}.store: range is out of bounds\");\n    }}\n    \
+                     velt_simd_{x}_store(this.{part}(), to, {at} as u64);\n"
+                )
+            };
+            s.push_str(&format!(
+                "  /** Stores its {n} lanes in `to` from `at` on. */\n  store(to: {t}[], at: usize = 0) {{\n{}{}  }}\n}}\n",
+                store("lower", "at"),
+                store("upper", &format!("(at + {half})"))
+            ));
+        } else {
+            s.push_str(&format!(
+                "  /** Stores its {n} lanes in `to` from `at` on. */\n  store(to: {t}[], at: usize = 0) {{\n    \
+                 this.lower().store(to, at);\n    this.upper().store(to, at + {half});\n  }}\n}}\n"
+            ));
+        }
+    }
+    if width == 256 {
+        s.push_str("\n// velt/simd's externs for the 128-bit parts (its `asU8x16`, `load` and `store` call them).\n");
+        for l in Lane::ALL {
+            let (t, x) = (l.scalar(), l.narrow());
+            if l != Lane::U8 {
+                s.push_str(&format!(
+                    "declare function velt_simd_{x}_as_u8x16(v: {x}): u8x16;\n\
+                     declare function velt_simd_u8x16_as_{x}(v: u8x16): {x};\n"
+                ));
+            }
+            s.push_str(&format!(
+                "declare function velt_simd_{x}_fits(xs: {t}[], at: u64): bool;\n\
+                 declare function velt_simd_{x}_load(from: {t}[], at: u64): {x};\n\
+                 declare function velt_simd_{x}_store(v: {x}, to: {t}[], at: u64);\n"
+            ));
+        }
     }
     s
 }
@@ -260,7 +299,7 @@ fn capitalize(x: &str) -> String {
 fn as_bytes(l: Lane, v: &str) -> String {
     match l {
         Lane::U8 => v.to_string(),
-        _ => format!("{v}.asU8x16()"),
+        _ => format!("velt_simd_{}_as_u8x16({v})", l.narrow()),
     }
 }
 
@@ -268,6 +307,6 @@ fn as_bytes(l: Lane, v: &str) -> String {
 fn from_bytes(l: Lane, v: &str) -> String {
     match l {
         Lane::U8 => v.to_string(),
-        _ => format!("{v}.as{}()", capitalize(&l.narrow())),
+        _ => format!("velt_simd_u8x16_as_{}({v})", l.narrow()),
     }
 }

@@ -1,0 +1,105 @@
+// velt/os (internal): the name, release, version and processor of Windows (`type`, `release`,
+// `version` and `machine`, sys_win32.velt) and this process' CPU time (velt/process'
+// `cpuUsage`), as libuv's `uv_os_uname` and `uv_getrusage` give them to Node.
+//
+// Where this differs from libuv: the release's numbers come from the registry key libuv reads
+// the product name from (`CurrentMajorVersionNumber`, `CurrentMinorVersionNumber`,
+// `CurrentBuildNumber`, as Windows 10 and later have them), not from ntdll's `RtlGetVersion`,
+// which no Windows header outside the driver kit declares; and an arm64 processor is "arm64",
+// where libuv has no name for it ("unknown").
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import { systemInfo } from "./machine_win32";
+import { registryNumber, registryText } from "./win_registry";
+
+/** Win32's `FILETIME` (its tag, as the headers declare the function with it). */
+declare c type _FILETIME;
+
+declare c("c") function GetCurrentProcess$times(): Ptr<void>;
+declare c("c") function GetProcessTimes(
+  process: Ptr<void>,
+  creation: Ptr<_FILETIME> | null,
+  exit: Ptr<_FILETIME> | null,
+  kernel: Ptr<_FILETIME> | null,
+  user: Ptr<_FILETIME> | null,
+): i32;
+
+/** The registry key of the installed Windows. */
+const CURRENT_VERSION = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+/** `PROCESSOR_ARCHITECTURE_AMD64`. */
+const ARCH_AMD64: i64 = 9;
+/** `PROCESSOR_ARCHITECTURE_ARM64`. */
+const ARCH_ARM64: i64 = 12;
+
+/** "<major>.<minor>.<build>" of the installed Windows ("10.0.22631"), or "" when unknown. */
+function release(): string {
+  const major = registryNumber(CURRENT_VERSION, "CurrentMajorVersionNumber");
+  const minor = registryNumber(CURRENT_VERSION, "CurrentMinorVersionNumber");
+  const build = registryText(CURRENT_VERSION, "CurrentBuildNumber");
+  if (major === null || minor === null || build.length === 0) {
+    return "";
+  }
+  return `${major}.${minor}.${build}`;
+}
+
+/**
+ * The product's name ("Windows 11 Pro") and its service pack, if any: Windows 11 still calls
+ * itself "Windows 10" in the registry, so a build from 22000 on is renamed, as libuv does.
+ */
+function version(release: string): string {
+  let name = registryText(CURRENT_VERSION, "ProductName");
+  const parts = release.split(".");
+  const build = parts.length === 3 ? parseInt(parts[2], 10) : 0;
+  if (parts[0] === "10" && build >= 22000 && name.startsWith("Windows 10")) {
+    name = "Windows 11" + name.slice(10);
+  }
+  const servicePack = registryText(CURRENT_VERSION, "CSDVersion");
+  if (servicePack.length === 0) {
+    return name;
+  }
+  return name.length === 0 ? servicePack : `${name} ${servicePack}`;
+}
+
+/** The processor's name as `uname -m` would give it: "x86_64" or "arm64" ("unknown" else). */
+function machine(): string {
+  const arch = systemInfo()[1];
+  if (arch === ARCH_AMD64) {
+    return "x86_64";
+  }
+  return arch === ARCH_ARM64 ? "arm64" : "unknown";
+}
+
+/** `[type, release, version, machine]`: "Windows_NT", then as read above. */
+export function windowsNames(): string[] {
+  const r = release();
+  return ["Windows_NT", r, version(r), machine()];
+}
+
+/**
+ * `[user, system]`: the CPU time this process has spent in user code and in the kernel, in
+ * microseconds (`GetProcessTimes`; `[0, 0]` when it fails), in whole milliseconds as Node gives
+ * them: libuv reads them through `FileTimeToSystemTime`, which keeps milliseconds.
+ */
+export function windowsCpuUsage(): [i64, i64] {
+  const p = rawAlloc(32);
+  let user: i64 = 0;
+  let kernel: i64 = 0;
+  // SAFETY: `p` holds four `FILETIME`s, which the call fills; the pseudo-handle of this process
+  // needs no closing; the block is freed once, after the reads.
+  unsafe {
+    const ok = GetProcessTimes(
+      GetCurrentProcess$times(),
+      Ptr.orNull<_FILETIME>(p),
+      Ptr.orNull<_FILETIME>(p + 8),
+      Ptr.orNull<_FILETIME>(p + 16),
+      Ptr.orNull<_FILETIME>(p + 24),
+    );
+    if (ok !== 0) {
+      kernel = (addressLoad<u64>(p + 16) / 10000 * 1000) as i64;
+      user = (addressLoad<u64>(p + 24) / 10000 * 1000) as i64;
+    }
+    rawFree(p, 32);
+  }
+  return [user, kernel];
+}

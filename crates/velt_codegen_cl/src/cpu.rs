@@ -29,7 +29,7 @@ pub const DEFAULT_X86_CPU: &str = "x86-64-v2";
 /// and the Cranelift ISA flag (`None`: Cranelift does not use the feature). The order is the
 /// feature word's x86 bits (velt_common `cpu_features`, std/lang/cpu), part of rt_abi.md "CPU
 /// check".
-pub const X86_FEATURES: [(&str, Option<&str>); 24] = [
+pub const X86_FEATURES: [(&str, Option<&str>); 25] = [
     ("SSE3", Some("has_sse3")),
     ("SSSE3", Some("has_ssse3")),
     ("SSE4.1", Some("has_sse41")),
@@ -54,6 +54,7 @@ pub const X86_FEATURES: [(&str, Option<&str>); 24] = [
     ("SHA", None),
     ("PCLMULQDQ", None),
     ("AES", None),
+    ("ADX", None),
 ];
 
 /// The bits of [`X86_FEATURES`] a CPU feature needs (`velt_vir::simd::Ext`, velt_common's
@@ -65,7 +66,7 @@ pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
 
 /// The macro clang defines (`clang -dM -E -march=<cpu>`) for each feature of [`X86_FEATURES`], in
 /// its order: how the LLVM backend learns what a named CPU lets clang use.
-pub const X86_FEATURE_MACROS: [&str; 24] = [
+pub const X86_FEATURE_MACROS: [&str; 25] = [
     "__SSE3__",
     "__SSSE3__",
     "__SSE4_1__",
@@ -90,6 +91,7 @@ pub const X86_FEATURE_MACROS: [&str; 24] = [
     "__SHA__",
     "__PCLMUL__",
     "__AES__",
+    "__ADX__",
 ];
 
 /// The features of [`X86_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.
@@ -337,7 +339,9 @@ fn host_arm_features() -> u32 {
 fn host_x86_features() -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
-        let has: [bool; 24] = [
+        // One entry per feature of `X86_FEATURES`, in its order: a feature added there and not
+        // here fails to compile.
+        let has: [bool; X86_FEATURES.len()] = [
             std::arch::is_x86_feature_detected!("sse3"),
             std::arch::is_x86_feature_detected!("ssse3"),
             std::arch::is_x86_feature_detected!("sse4.1"),
@@ -362,6 +366,7 @@ fn host_x86_features() -> u32 {
             std::arch::is_x86_feature_detected!("sha"),
             std::arch::is_x86_feature_detected!("pclmulqdq"),
             std::arch::is_x86_feature_detected!("aes"),
+            std::arch::is_x86_feature_detected!("adx"),
         ];
         has.iter()
             .enumerate()
@@ -413,6 +418,33 @@ mod tests {
             .filter(|b| mask & 1 << b != 0)
             .map(|b| X86_FEATURES[b].0)
             .collect()
+    }
+
+    /// `--cpu native` detects every feature of the list (#3588: ADX was missed): the host mask
+    /// has no bit past it, and each bit is the host's answer for that feature, ADX's included.
+    #[test]
+    fn the_host_mask_covers_every_feature() {
+        let host = host_x86_features();
+        assert_eq!(host >> X86_FEATURES.len(), 0, "a bit past the list");
+        #[cfg(target_arch = "x86_64")]
+        {
+            let adx = X86_FEATURES
+                .iter()
+                .position(|(n, _)| *n == "ADX")
+                .expect("ADX");
+            let bmi2 = X86_FEATURES
+                .iter()
+                .position(|(n, _)| *n == "BMI2")
+                .expect("BMI2");
+            assert_eq!(
+                host >> adx & 1 == 1,
+                std::arch::is_x86_feature_detected!("adx")
+            );
+            assert_eq!(
+                host >> bmi2 & 1 == 1,
+                std::arch::is_x86_feature_detected!("bmi2")
+            );
+        }
     }
 
     #[test]

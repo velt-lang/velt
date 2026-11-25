@@ -3,8 +3,10 @@
 //! `Owned`, `ownership::mutation`), a function's and an interface slot's (the join over its
 //! implementations), once every body is checked. A whole-program check therefore checks the
 //! program's bodies with std's modes as declared, and only the passes after the bodies judge what
-//! a call of std changes. std's unit keeps the modes as declared for the app's bodies, and the
-//! modes its inference raised for the app's passes.
+//! a call of std changes. std's unit keeps the modes its inference raised, and beside them the
+//! declared modes of what it raised (`Summaries::declared_modes`), which the app's body check
+//! reads while its bodies are checked ([`Ctx::declared_this`], [`Ctx::declared_slot`]). Nothing in std's
+//! frozen unit is written.
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
@@ -44,66 +46,51 @@ fn of(cx: &Ctx, def: DefId) -> Vec<Modes> {
     }
 }
 
-/// The modes `m` names now.
-fn now(cx: &Ctx, m: &Modes) -> Option<Modes> {
-    of(cx, m.def).into_iter().find(|n| n.slot == m.slot)
-}
-
-fn set(cx: &mut Ctx, m: &Modes) {
-    let (this, params) = match (&mut cx.info[m.def.0 as usize], m.slot) {
-        (DefInfo::Fn(f), None) => {
-            if let (Some(t), Some(mode)) = (f.this.as_mut(), m.this) {
-                t.mode = mode;
-            }
-            (None, &mut f.params)
-        }
-        (DefInfo::Iface(i), Some(k)) => {
-            let Some(s) = i.methods.get_mut(k as usize) else {
-                return;
-            };
-            (Some(&mut s.mut_this), &mut s.params)
-        }
-        _ => return,
-    };
-    if let (Some(mut_this), Some(mode)) = (this, m.this) {
-        *mut_this = mode == PassMode::BorrowMut;
-    }
-    for (p, &mode) in params.iter_mut().zip(&m.params) {
-        p.mode = mode;
-    }
-}
-
 /// std's stage, after its bodies: every function's and interface slot's modes as declared,
-/// before its inference (`Summaries::raised_modes` holds them until [`keep_raised`]).
+/// before its inference (`Summaries::declared_modes` holds them until [`keep_declared`]).
 pub(crate) fn declared(cx: &mut Ctx) {
     let all = (0..cx.info.len() as u32)
         .flat_map(|i| of(cx, DefId(i)))
         .collect();
-    cx.unit_sums.raised_modes = all;
+    cx.unit_sums.declared_modes = all;
 }
 
-/// End of std's stage: what its inference raised gets its declared modes back, and the unit keeps
-/// the raised ones for the app's passes ([`restore`]).
-pub(crate) fn keep_raised(cx: &mut Ctx) {
-    let declared = std::mem::take(&mut cx.unit_sums.raised_modes);
-    let mut raised = vec![];
-    for d in declared {
-        match now(cx, &d) {
-            Some(now) if now != d => {
-                set(cx, &d);
-                raised.push(now);
-            }
-            _ => {}
+/// End of std's stage: the declared modes of what its inference raised, sorted for the app's
+/// lookups; the unit itself keeps the raised modes.
+pub(crate) fn keep_declared(cx: &mut Ctx) {
+    let declared = std::mem::take(&mut cx.unit_sums.declared_modes);
+    let mut kept: Vec<Modes> = (declared.into_iter())
+        .filter(|d| (of(cx, d.def).iter()).any(|now| now.slot == d.slot && now != d))
+        .collect();
+    kept.sort_by_key(|m| (m.def, m.slot));
+    cx.unit_sums.declared_modes = kept;
+    cx.unit_sums.declared_now = false;
+}
+
+impl Ctx<'_> {
+    /// The declared modes of std's `def` (slot `slot` of an interface) while the app's bodies
+    /// are checked, when std's inference raised them; `None` otherwise.
+    fn declared_of(&self, def: DefId, slot: Option<u32>) -> Option<&Modes> {
+        if !self.unit_sums.declared_now || def.0 >= self.unit_base {
+            return None;
         }
+        let list = &self.unit_sums.declared_modes;
+        let i = list
+            .binary_search_by_key(&(def, slot), |m| (m.def, m.slot))
+            .ok()?;
+        list.get(i)
     }
-    cx.unit_sums.raised_modes = raised;
-}
 
-/// The app's stage, after its bodies: std's functions and interface slots take the modes its
-/// inference raised.
-pub(crate) fn restore(cx: &mut Ctx) {
-    for m in cx.unit_sums.raised_modes.clone() {
-        set(cx, &m);
+    /// Function `def`'s receiver mode as declared, while the app's bodies are checked.
+    pub(crate) fn declared_this(&self, def: DefId) -> Option<PassMode> {
+        self.declared_of(def, None)?.this
+    }
+
+    /// Slot `slot` of interface `iface` as declared (whether a call may change the receiver, and
+    /// the parameter modes), while the app's bodies are checked.
+    pub(crate) fn declared_slot(&self, iface: DefId, slot: u32) -> Option<(bool, &[PassMode])> {
+        let m = self.declared_of(iface, Some(slot))?;
+        Some((m.this == Some(PassMode::BorrowMut), &m.params))
     }
 }
 

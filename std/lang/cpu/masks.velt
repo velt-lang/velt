@@ -69,3 +69,5 @@ export const SHA3_ARM: u64 = 0x1200000000;
 export const FP16_ARM: u64 = 0x2000000000;
 /** `i8mm-arm`. */
 export const I8MM_ARM: u64 = 0x4000000000;
+/** `adx-x86`. */
+export const ADX_X86: u64 = 0x1000200;

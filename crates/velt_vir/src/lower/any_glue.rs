@@ -632,10 +632,10 @@ impl FnLower<'_, '_> {
                 self.ret_status(ST_OK);
             }
             TyKind::Tuple(es) => self.any_tuple_index(data, i, &outp, ty, &es),
-            // A record's key "0" (later).
+            TyKind::Adt(..) if self.is_regexp_match(ty) => self.any_index_match(data, i, &outp, ty),
+            // A record's key "0" (later); no field of a fixed shape is named by a number.
             TyKind::Adt(..) if self.prelude_record(ty).is_some() => self.ret_status(ST_UNSUPPORTED),
             TyKind::Adt(..) if self.plain_adt(ty).is_some() => {
-                // No field of a fixed shape is named by a number.
                 self.any_nothing_into(Nothing::Undefined, &outp);
                 self.ret_status(ST_OK);
             }

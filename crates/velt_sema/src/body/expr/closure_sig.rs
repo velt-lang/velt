@@ -75,7 +75,7 @@ impl FnCx<'_, '_> {
             })
             .collect();
         let promise = |s: &mut Self, ret: TyId| {
-            s.cx.ty.promise_payload(ret).is_some()
+            s.holds_promise(ret)
                 || s.cx
                     .union_members(ret)
                     .is_some_and(|ms| ms.iter().any(|m| s.cx.ty.promise_payload(*m).is_some()))
@@ -287,6 +287,11 @@ impl FnCx<'_, '_> {
                 (None, None) => {
                     let what = match p.pattern {
                         Some(_) => "this parameter".to_string(),
+                        // A wrapper's own parameter (`#args` of a callback adapter, #3296):
+                        // the program never wrote it, so name the function passed.
+                        None if p.name.name.starts_with('#') => {
+                            "the arguments of the function passed here".to_string()
+                        }
                         None => format!("parameter `{}`", p.name.name),
                     };
                     self.cx.error(

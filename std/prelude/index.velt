@@ -19,6 +19,7 @@ import "./bits";
 import "./bytes";
 import "./clone";
 import "./compare";
+import "./console_format";
 import "./date";
 import "./errors";
 import "./int_arith";

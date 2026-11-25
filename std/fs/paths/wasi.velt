@@ -1,0 +1,306 @@
+// velt/fs (internal): the `#fs-paths` variant of wasm32-wasip1 (std/imports.velt): renaming,
+// linking and copying through wasi-libc (docs/internals/design/wasi-libc.md), whose `rename`,
+// `symlink`, `readlink` and `realpath` are POSIX's over WASI's `path_*` calls on the directories
+// the host preopened. `copyFile` is libuv's `uv_fs_copyfile` as posix.velt does it, without what
+// WASI has not: no permissions to copy (no `fchmod`) and no clone (`COPYFILE_FICLONE` copies,
+// `COPYFILE_FICLONE_FORCE` is `ENOSYS`). The C library's functions are declared here, not taken
+// from `#fd-system`, which has no WASI variant: wasi-libc's flags and `struct stat` are its own.
+// wasi-libc's `errno` is read right after a failed call with velt/ffi's `errno()` (lowering
+// captures no `errno` on WebAssembly), which gives WASI's number as Linux's (`#errno-location`,
+// std/ffi/errno_wasi.velt), so errors.velt's `osError` names it as Node does.
+// There is no WASI header check (`velt native headers --std` checks native targets), so each
+// declaration follows wasi-libc's headers as noted.
+
+import { CVarArgs } from "velt/ffi/c_var_args";
+import { errno } from "velt/ffi/errno";
+import { Ptr } from "velt/ffi/ptr";
+import { readBytes } from "velt/ffi/read";
+import { checkPath } from "velt/fs/fd/guards";
+import { osError } from "velt/fs/errors";
+import { Done } from "velt/fs/whole/done";
+import { COPY_EXCL, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
+
+declare c("c") function rename$wasi(from: readonly u8[], to: readonly u8[]): i32;
+declare c("c") function symlink$wasi(target: readonly u8[], path: readonly u8[]): i32;
+declare c("c") function readlink$wasi(path: readonly u8[], buf: u8[], size: usize): isize;
+declare c("c") function realpath$wasi(
+  path: readonly u8[],
+  resolved: Ptr<u8> | null,
+): Ptr<u8> | null;
+declare c("c") function strlen$wasi(s: Ptr<u8>): usize;
+declare c("c") function free$wasi(p: Ptr<u8>): void;
+declare c("c") function open$wasi(path: readonly u8[], oflag: i32, ...args: CVarArgs): i32;
+declare c("c") function close$wasi(fd: i32): i32;
+declare c("c") function read$wasi(fd: i32, buf: u8[], nbyte: usize): isize;
+declare c("c") function write$wasi(fd: i32, buf: readonly u8[], nbyte: usize): isize;
+/** `struct stat *` as the bytes of one: `STAT_SIZE` of them. */
+declare c("c") function fstat$wasi(fd: i32, st: u8[]): i32;
+/** `off_t` is 64 bits. */
+declare c("c") function ftruncate$wasi(fd: i32, length: i64): i32;
+declare c("c") function unlink$wasi(path: readonly u8[]): i32;
+
+// wasi-libc's `open` flags (<fcntl.h>: WASI's `oflags` shifted left by 12, and its rights as
+// high bits); `O_CLOEXEC` is 0 there.
+const O_CREAT: i32 = 0x1000;
+const O_EXCL: i32 = 0x4000;
+const O_NOFOLLOW: i32 = 0x1000000;
+const O_RDONLY: i32 = 0x4000000;
+const O_WRONLY: i32 = 0x10000000;
+
+/**
+ * wasi-libc's `struct stat`: `st_dev` at 0, `st_ino` at 8, `st_mode` (32 bits) at 24, `st_size`
+ * at 48, 144 bytes in all.
+ */
+const STAT_SIZE: usize = 144;
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o40000;
+
+// The errno numbers this file makes or reads, Linux's as `errno()` gives them.
+const EISDIR: i32 = 21;
+const ENOSYS: i32 = 38;
+/** Should a failed call leave no `errno`. */
+const EIO: i32 = 5;
+/** A link's target longer than the buffer, where the host refuses instead of truncating. */
+const ERANGE: i32 = 34;
+const ENOBUFS: i32 = 105;
+/** The largest buffer `readlinkAt` tries: past it, the host's error is reported. */
+const LINK_MAX: usize = 65536;
+
+/** The buffer of the copy. */
+const BUFFER: usize = 64 * 1024;
+
+/** wasi-libc's `errno` now: the error of the call that just failed (`EIO` if it left none). */
+function lastError(): i32 {
+  // SAFETY: only reads this thread's `errno`, which the failed call just left.
+  const e = unsafe { errno() };
+  return e == 0 ? EIO : e;
+}
+
+function failed<T>(e: i32, syscall: string, path: string, dest: string | null = null): Done<T> {
+  return { value: null, error: osError(e, syscall, path, dest) };
+}
+
+/** Renames `cf` (`from`) to `ct` (`to`), replacing a file there. */
+export function renameAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+): Done<bool> {
+  checkPath("rename", cf);
+  checkPath("rename", ct);
+  // SAFETY: both paths end with their only 0 byte (checked above); C keeps neither.
+  if (unsafe { rename$wasi(cf, ct) } != 0) {
+    return failed(lastError(), "rename", from, to);
+  }
+  return { value: true, error: null };
+}
+
+/** Makes a link at `cp` (`path`) to `target` (`ct`, stored as it is). */
+export function symlinkAt(
+  ct: readonly u8[],
+  target: string,
+  cp: readonly u8[],
+  path: string,
+): Done<bool> {
+  checkPath("symlink", ct);
+  checkPath("symlink", cp);
+  // SAFETY: as `rename`'s.
+  if (unsafe { symlink$wasi(ct, cp) } != 0) {
+    return failed(lastError(), "symlink", target, path);
+  }
+  return { value: true, error: null };
+}
+
+/** The target stored in the link at `c` (`EINVAL` for something that is not a link). */
+export function readlinkAt(c: readonly u8[], path: string): Done<string> {
+  checkPath("readlink", c);
+  // `readlink` says only how much it wrote: a target that fills the buffer may be longer, so it
+  // is read again into one twice the size. A host may refuse a buffer too small instead of
+  // filling it (Node's uvwasi: `ENOBUFS`, or `ERANGE`), which is retried the same way, up to
+  // `LINK_MAX` bytes.
+  let size: usize = 256;
+  while (true) {
+    const buf: u8[] = Buffer.alloc(size);
+    // SAFETY: `c` ends with its only 0 byte; `buf` holds `size` bytes, the count C gets, and C
+    // keeps no pointer to it.
+    const n = unsafe { readlink$wasi(c, buf, size) };
+    if (n < 0) {
+      const e = lastError();
+      if ((e == ENOBUFS || e == ERANGE) && size < LINK_MAX) {
+        size *= 2;
+        continue;
+      }
+      return failed(e, "readlink", path);
+    }
+    if ((n as usize) < size) {
+      return { value: buf.slice(0, n as i64).utf8Slice(), error: null };
+    }
+    size *= 2;
+  }
+}
+
+/**
+ * The absolute path of `c` with every link, `.` and `..` resolved (`ENOENT` if it is missing),
+ * as the program sees it: below the preopened directories, from wasi-libc's working directory.
+ */
+export function realpathAt(c: readonly u8[], path: string): Done<string> {
+  checkPath("realpath", c);
+  // SAFETY: `c` ends with its only 0 byte; with no buffer given, `realpath` returns one of its
+  // own from malloc (or null with `errno`), which is freed below.
+  const p = unsafe { realpath$wasi(c, null) };
+  if (p === null) {
+    return failed(lastError(), "realpath", path);
+  }
+  // SAFETY: `p` is a NUL-terminated string of `strlen(p)` bytes, read before it is freed once.
+  const bytes = unsafe { readBytes(p, strlen$wasi(p)) };
+  // SAFETY: `p` came from `realpath`'s malloc and nothing else holds it.
+  unsafe {
+    free$wasi(p);
+  }
+  return { value: bytes.utf8Slice(), error: null };
+}
+
+/** `fstat(fd)` into `st` (`STAT_SIZE` bytes): 0, or -1. */
+function fstatInto(fd: i32, st: u8[]): i32 {
+  if ((st.length as usize) < STAT_SIZE) {
+    panic("ICE: velt/fs: a stat buffer smaller than wasi-libc's struct stat");
+  }
+  // SAFETY: `st` holds at least `STAT_SIZE` bytes (checked above), all of wasi-libc's `struct
+  // stat`, which `fstat` fills (WebAssembly loads need no alignment); C keeps no pointer to it.
+  return unsafe { fstat$wasi(fd, st) };
+}
+
+/** The little-endian `u64` at byte `at` of `b`. */
+function u64At(b: readonly u8[], at: i64): u64 {
+  let v: u64 = 0;
+  for (let i: i64 = 7; i >= 0; i--) {
+    v = (v << 8) | (b[at + i] as u64);
+  }
+  return v;
+}
+
+function closeFd(fd: i32): i32 {
+  // SAFETY: an integer argument only, a descriptor `copyAt` opened.
+  return unsafe { close$wasi(fd) };
+}
+
+/**
+ * Copies the file `cf` (`from`) to `ct` (`to`) in libuv's `uv_fs_copyfile` steps, with Node's
+ * errors on Linux: the source is opened and `fstat`ed, the destination opened (created), and if
+ * both are the same file nothing more happens. Otherwise the destination is truncated and filled
+ * with the source's `st_size` bytes; if any of that fails, the destination is removed, one that
+ * was there before too. Every error names both paths (`copyfile 'a' -> 'b'`). `mode` is
+ * copy_mode.velt's: with `COPYFILE_EXCL` the destination is opened with `O_EXCL`, so one that
+ * exists (a link too, even to nothing) fails with `EEXIST` and is left as it was;
+ * `COPYFILE_FICLONE` copies. Two errors come before the destination is opened, and leave one
+ * that exists as it was, where libuv on Linux would have truncated and then removed it (the
+ * runtime's copy, which this replaces, left it too): `COPYFILE_FICLONE_FORCE` is `ENOSYS` (WASI
+ * has no clone), and a directory as the source is `EISDIR` (Linux's error for reading it).
+ */
+export function copyAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+  mode: u32,
+): Done<bool> {
+  checkPath("copyfile", cf);
+  checkPath("copyfile", ct);
+  // SAFETY: `cf` ends with its only 0 byte (checked above); `open` keeps no pointer, and its
+  // third argument is `mode_t`, which WASI ignores.
+  const src = unsafe { open$wasi(cf, O_RDONLY, 0 as u32) };
+  if (src < 0) {
+    return failed(lastError(), "copyfile", from, to);
+  }
+  const st: u8[] = Buffer.alloc(STAT_SIZE);
+  if (fstatInto(src, st) != 0) {
+    const e = lastError();
+    closeFd(src);
+    return failed(e, "copyfile", from, to);
+  }
+  const perm =
+    (st[24] as u32) | ((st[25] as u32) << 8) | ((st[26] as u32) << 16) | ((st[27] as u32) << 24);
+  let early: i32 = 0;
+  if ((mode & COPY_FICLONE_FORCE) != 0) {
+    early = ENOSYS;
+  } else if ((perm & S_IFMT) == S_IFDIR) {
+    early = EISDIR;
+  }
+  if (early != 0) {
+    closeFd(src);
+    return failed(early, "copyfile", from, to);
+  }
+  // `O_EXCL` fails on a link at the destination, even one to nothing, as POSIX has it; with
+  // `O_NOFOLLOW` too, so a host that resolves the link itself first (Node's uvwasi) does as well.
+  const excl: i32 = (mode & COPY_EXCL) == 0 ? 0 : O_EXCL | O_NOFOLLOW;
+  // SAFETY: as the source's `open`.
+  const dst = unsafe { open$wasi(ct, O_WRONLY | O_CREAT | excl, perm & 0o7777) };
+  if (dst < 0) {
+    const e = lastError();
+    closeFd(src);
+    return failed(e, "copyfile", from, to);
+  }
+  let e = fill(src, dst, u64At(st, 0), u64At(st, 8), u64At(st, 48) as i64);
+  closeFd(src);
+  // A write's failure may show only when the file is closed: libuv's copy fails then too.
+  if (closeFd(dst) != 0 && e == 0) {
+    e = lastError();
+  }
+  if (e < 0) {
+    // The destination is the source: there is nothing to copy.
+    return { value: true, error: null };
+  }
+  if (e != 0) {
+    // SAFETY: `ct` ends with its only 0 byte (checked above); C keeps no pointer to it.
+    unsafe {
+      unlink$wasi(ct);
+    }
+    return failed(e, "copyfile", from, to);
+  }
+  return { value: true, error: null };
+}
+
+/**
+ * The steps of `copyAt` once both files are open: 0, -1 for the same file, or the errno. `dev`,
+ * `ino` and `size` are the source's.
+ */
+function fill(src: i32, dst: i32, dev: u64, ino: u64, size: i64): i32 {
+  const dt: u8[] = Buffer.alloc(STAT_SIZE);
+  if (fstatInto(dst, dt) != 0) {
+    return lastError();
+  }
+  if (u64At(dt, 0) == dev && u64At(dt, 8) == ino) {
+    return -1;
+  }
+  // SAFETY: integer arguments only, the destination `copyAt` opened.
+  if (unsafe { ftruncate$wasi(dst, 0) } != 0) {
+    return lastError();
+  }
+  const buf: u8[] = Buffer.alloc(BUFFER);
+  // As libuv, `st_size` bytes: a device or a FIFO (size 0) is copied as an empty file.
+  let left = size;
+  while (left > 0) {
+    const want: usize = left < (BUFFER as i64) ? left as usize : BUFFER;
+    // SAFETY: `buf` holds `BUFFER` bytes, at least `want`, the count C gets; C keeps no pointer.
+    const n = unsafe { read$wasi(src, buf, want) };
+    if (n == 0) {
+      return 0;
+    }
+    if (n < 0) {
+      return lastError();
+    }
+    let done: usize = 0;
+    while (done < (n as usize)) {
+      // SAFETY: the bytes `done..n` of `buf` are the ones still to write, the count C gets; C
+      // keeps no pointer to them.
+      const w = unsafe { write$wasi(dst, buf.subarray(done, n as usize), (n as usize) - done) };
+      if (w < 0) {
+        return lastError();
+      }
+      done += w as usize;
+    }
+    left -= n as i64;
+  }
+  return 0;
+}

@@ -1,0 +1,54 @@
+// check: also with VELT_THREADS=8
+// FileReader in three tasks at once (#2196): two read lines while one reads 777 bytes at a
+// time, through copies of one reader; every byte is read once (each line counts its "\n"). The
+// lines are long enough that most refills leave part of a line unread, so a chunk the runtime
+// read is handed from the reading task to the line buffer while another thread uses it: under
+// the debug allocator, a chunk both of them still held was a use after free.
+import { FileReader, openRead, openWrite, remove } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function lineBytes(r: FileReader): Promise<i64> {
+  let n: i64 = 0;
+  let line = await r.readLine();
+  while (line != null) {
+    n += (Buffer.from(line).length as i64) + 1;
+    line = await r.readLine();
+  }
+  return n;
+}
+
+async function chunkBytes(r: FileReader): Promise<i64> {
+  let n: i64 = 0;
+  let b = await r.read(777);
+  while (b.length > 0) {
+    n += b.length as i64;
+    b = await r.read(777);
+  }
+  return n;
+}
+
+async function main() {
+  const path = `${tmpdir()}/velt-fs-line-tasks-${uuidv4()}.txt`;
+  const w = await openWrite(path);
+  let size: i64 = 0;
+  for (let i = 0; i < 40000; i++) {
+    const line = Buffer.from(`line ${i} ${"-".repeat(i % 300)}\n`);
+    size += line.length as i64;
+    await w.writeBytes(line);
+  }
+  await w.close();
+  // Three rounds; in each the 777-byte task starts first (it then holds the first refill
+  // while the line tasks wait), and two line tasks read with it.
+  for (let round = 0; round < 3; round++) {
+    const r = await openRead(path);
+    const counts = await Promise.all([
+      spawn(chunkBytes(r)),
+      spawn(lineBytes(r)),
+      spawn(lineBytes(r)),
+    ]);
+    console.log(counts[0] + counts[1] + counts[2] == size);
+    r.close();
+  }
+  await remove(path);
+}

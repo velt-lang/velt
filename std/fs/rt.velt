@@ -1,5 +1,9 @@
-// velt/fs (internal): the runtime functions velt/fs calls (docs/internals/contracts/rt_abi_async.md
-// §5 and §14.7) and the layouts they return.
+// velt/fs (internal): the functions velt/fs calls in a WebAssembly build (the default variant of
+// `#fs-rt`, std/imports.velt; a native build uses rt_sched.velt, which takes the file streams
+// from here): the runtime's (docs/internals/contracts/rt_abi_async.md §5 and §14.7) and the
+// layouts they return, for whole files, directories and file streams, and Velt code for
+// renaming, linking and copying (`#fs-paths`: wasi-libc's calls under WASI, `ENOTSUP` under a JS
+// host).
 //
 // Extern conventions (the lowering ABI of `declare function`, rt_abi_async.md §3.1): `string`/
 // struct params are passed as `const T*`; a struct result becomes a trailing out-pointer and the
@@ -11,8 +15,9 @@ import { IoStatus, checkIo } from "velt/native/status";
 import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { checkPathArg } from "velt/fs/path_arg";
-import { COPY_EXCL, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
-import { osError } from "velt/fs/errors";
+import { utf8Encode } from "velt/encoding/utf8";
+import { take } from "velt/fs/whole/done";
+import { copyAt, readlinkAt, realpathAt, renameAt, symlinkAt } from "#fs-paths";
 
 declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;
 declare async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus>;
@@ -21,13 +26,8 @@ declare async function velt_rt_fs_read_dir(path: string): Promise<IoResult<strin
 declare async function velt_rt_fs_read_dir_typed(path: string): Promise<IoResult<DirentList>>;
 declare async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>>;
 declare async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>>;
-declare async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>>;
-declare async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>>;
-declare async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus>;
 declare async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus>;
 declare async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus>;
-declare async function velt_rt_fs_rename(from: string, to: string): Promise<IoStatus>;
-declare async function velt_rt_fs_copy_file(from: string, to: string): Promise<IoStatus>;
 declare async function velt_rt_fs_exists(path: string): Promise<bool>;
 declare function velt_rt_fs_read_file_bytes_sync(path: string): IoResult<u8[]>;
 declare function velt_rt_fs_write_file_sync(path: string, data: string): IoStatus;
@@ -36,13 +36,8 @@ declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
 declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
 declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
 declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
-declare function velt_rt_fs_readlink_sync(path: string): IoResult<string>;
-declare function velt_rt_fs_realpath_sync(path: string): IoResult<string>;
-declare function velt_rt_fs_symlink_sync(target: string, path: string): IoStatus;
 declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
 declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
-declare function velt_rt_fs_rename_sync(from: string, to: string): IoStatus;
-declare function velt_rt_fs_copy_file_sync(from: string, to: string): IoStatus;
 declare function velt_rt_fs_exists_sync(path: string): bool;
 
 export declare async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>>;
@@ -53,11 +48,6 @@ export declare async function velt_rt_fs_open_read_range(
 ): Promise<IoResult<u64>>;
 export declare function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats>;
 export declare async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>>;
-export declare async function velt_rt_fs_reader_read_string(
-  r: u64,
-  max: u64,
-): Promise<IoResult<string>>;
-export declare async function velt_rt_fs_reader_read_line(r: u64): Promise<LineRead>;
 export declare function velt_rt_fs_reader_close(r: u64);
 export declare async function velt_rt_fs_open_write(
   path: string,
@@ -74,12 +64,6 @@ export declare function velt_rt_fs_writer_free(w: u64);
 struct DirentList {
   names: string[];
   kinds: u8[];
-}
-
-// The runtime's `LineRead` (§14.4).
-struct LineRead {
-  line: IoResult<string>;
-  eof: bool;
 }
 
 /** The entries of a runtime listing, each with its type. */
@@ -190,68 +174,55 @@ export async function exists(path: string): Promise<bool> {
   return await velt_rt_fs_exists(path);
 }
 
-// Renaming, linking and copying, as std/fs/rt_sched.velt names them for native builds:
-// velt_rt_wasm's functions. The callers have checked the paths.
+// Renaming, linking and copying, as std/fs/rt_sched.velt names them for native builds: Velt code
+// over wasi-libc under WASI, failing with `ENOTSUP` under a JS host (`#fs-paths`). An async form
+// runs the sync code on the calling task (WebAssembly has no blocking pool). The callers
+// (velt/fs/entries.velt, metadata.velt) have checked the paths with Node's argument names.
+
+/** `path` as `#fs-paths` takes it: its UTF-8 and a 0 (the caller has checked it holds no 0). */
+function bytesOf(path: string): u8[] {
+  const c = utf8Encode(path);
+  c.push(0);
+  return c;
+}
 
 export function renameSync(from: string, to: string) {
-  checkIo(velt_rt_fs_rename_sync(from, to));
+  take(renameAt(bytesOf(from), from, bytesOf(to), to));
 }
 
 export async function rename(from: string, to: string): Promise<void> {
-  checkIo(await velt_rt_fs_rename(from, to));
+  renameSync(from, to);
 }
 
-/**
- * `mode`: copy_mode.velt's bits, checked by the caller. The runtime's copy takes none, so the
- * mode is applied here, after the source is found (a missing one stays the copy's `ENOENT`, as in
- * Node): `COPYFILE_FICLONE_FORCE` is `ENOSYS` (no clone), and `COPYFILE_EXCL` is `EEXIST` for a
- * destination there before the copy starts, a link too (`lstat`), even one to nothing. Another
- * process can still make the destination between the check and the copy: the runtime has no
- * exclusive copy. Mode 0 asks nothing more.
- */
+/** `mode`: copy_mode.velt's bits, checked by the caller. */
 export function copyFileSync(from: string, to: string, mode: u32) {
-  if (mode != 0 && velt_rt_fs_lstat_sync(from).code == 0) {
-    copyModeCheck(from, to, mode, velt_rt_fs_lstat_sync(to).code == 0);
-  }
-  checkIo(velt_rt_fs_copy_file_sync(from, to));
+  take(copyAt(bytesOf(from), from, bytesOf(to), to, mode));
 }
 
 export async function copyFile(from: string, to: string, mode: u32): Promise<void> {
-  if (mode != 0 && (await velt_rt_fs_lstat(from)).code == 0) {
-    copyModeCheck(from, to, mode, (await velt_rt_fs_lstat(to)).code == 0);
-  }
-  checkIo(await velt_rt_fs_copy_file(from, to));
-}
-
-function copyModeCheck(from: string, to: string, mode: u32, exists: bool) {
-  if ((mode & COPY_FICLONE_FORCE) != 0) {
-    throw osError(38, "copyfile", from, to);
-  }
-  if ((mode & COPY_EXCL) != 0 && exists) {
-    throw osError(17, "copyfile", from, to);
-  }
+  copyFileSync(from, to, mode);
 }
 
 export function symlinkSync(target: string, path: string) {
-  checkIo(velt_rt_fs_symlink_sync(target, path));
+  take(symlinkAt(bytesOf(target), target, bytesOf(path), path));
 }
 
 export async function symlink(target: string, path: string): Promise<void> {
-  checkIo(await velt_rt_fs_symlink(target, path));
+  symlinkSync(target, path);
 }
 
 export function readlinkSync(path: string): string {
-  return unwrapIo(velt_rt_fs_readlink_sync(path));
+  return take(readlinkAt(bytesOf(path), path));
 }
 
 export async function readlink(path: string): Promise<string> {
-  return unwrapIo(await velt_rt_fs_readlink(path));
+  return readlinkSync(path);
 }
 
 export function realpathSync(path: string): string {
-  return unwrapIo(velt_rt_fs_realpath_sync(path));
+  return take(realpathAt(bytesOf(path), path));
 }
 
 export async function realpath(path: string): Promise<string> {
-  return unwrapIo(await velt_rt_fs_realpath(path));
+  return realpathSync(path);
 }

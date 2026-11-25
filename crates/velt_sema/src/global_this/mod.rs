@@ -7,7 +7,9 @@
 //! property exists before any module runs. Every site then reads or writes that variable:
 //!
 //! - `(globalThis as T).K` and `(globalThis as T)[KEY]`, with `KEY` a string literal or a string
-//!   constant (of the module or imported);
+//!   constant (of the module or imported), or a constant `Symbol.for("k")`, whose property's key
+//!   is `[Symbol.for("k")]` (one symbol for the process; through `Record<symbol, V>` it is a
+//!   `V | undefined`);
 //! - the same through a `const g = globalThis as T;` (the constant stands for `globalThis`);
 //! - `globalThis.K` and `globalThis[KEY]` without an assertion (or asserted `any` or
 //!   `unknown`), when another site asserts `K`'s type;
@@ -262,8 +264,19 @@ fn maybe_undefined(t: ast::TypeExpr) -> ast::TypeExpr {
     }
 }
 
-/// `T["K"] | undefined`: property `key` of the asserted type `t`, which may be unset.
+/// `T["K"] | undefined`: property `key` of the asserted type `t`, which may be unset. For a
+/// symbol key of a `Record<symbol, V>` (`globalThis as Record<symbol, V>`), `V | undefined`.
 fn member_type(key: &str, t: ast::TypeExpr) -> ast::TypeExpr {
+    if keys::is_symbol_key(key) {
+        if let ast::TypeExprKind::Named { path, args } = &t.kind {
+            let symbol = |k: &ast::TypeExpr| matches!(&k.kind, ast::TypeExprKind::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "symbol");
+            if let ([p], [k, v]) = (path.as_slice(), args.as_slice()) {
+                if p.name == "Record" && symbol(k) {
+                    return maybe_undefined(v.clone());
+                }
+            }
+        }
+    }
     let span = t.span;
     let key = ast::TypeExpr {
         kind: ast::TypeExprKind::Literal(ast::SignedLit {

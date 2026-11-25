@@ -1,0 +1,59 @@
+// `new Set(values)` on a subclass calls the subclass's `add` once per value, duplicates too, as
+// JavaScript's constructor does (#3712), and `new Map(entries)` its `set`. A subclass that
+// changes or skips values in `add` builds the set it says; a plain `Set` is unchanged. The
+// overrides return `this`, as `tsc --strict` requires (#3738).
+let adds = 0;
+let seen: string[] = [];
+
+class LoggingSet extends Set<string> {
+  override add(v: string): this {
+    adds++;
+    seen.push(v);
+    return super.add(v);
+  }
+}
+
+class UpperSet extends Set<string> {
+  override add(v: string): this {
+    return super.add(v.toUpperCase());
+  }
+}
+
+class EvenSet extends Set<number> {
+  override add(v: number): this {
+    if (v % 2 == 0) {
+      super.add(v);
+    }
+    return this;
+  }
+}
+
+let sets = 0;
+
+class LoggingMap extends Map<string, number> {
+  override set(k: string, v: number): this {
+    sets++;
+    return super.set(k, v);
+  }
+}
+
+function main() {
+  const s = new LoggingSet(["x", "y", "x"]);
+  console.log(adds, s.size, seen.join(","), [...s].join(","));
+  s.add("z");
+  console.log(adds, s.size);
+  const u = new UpperSet(["a", "b", "A"]);
+  console.log(u.size, [...u].join(","), u.has("A"), u.has("a"));
+  const e = new EvenSet([1, 2, 3, 4, 4]);
+  console.log(e.size, [...e].join(","));
+  const empty = new LoggingSet();
+  console.log(adds, empty.size);
+  const m = new LoggingMap([
+    ["a", 1],
+    ["b", 2],
+    ["a", 3],
+  ]);
+  console.log(sets, m.size, m.get("a"));
+  const plain = new Set([3, 1, 3, 2]);
+  console.log(plain.size, [...plain].join(","));
+}

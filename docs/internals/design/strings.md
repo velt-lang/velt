@@ -138,6 +138,15 @@ sliced strings. Smaller pieces are copied (they would pin a buffer more than fou
 size). A slice has no breadcrumbs of its own: it translates positions by a scan from the closer
 end, and the per-thread positions keep sequential loops over it linear.
 
+**Views.** When `rest = text` starts a family of locals that only slice and read (`velt_opt`'s
+string views, `crates/velt_opt/src/borrowed_copies/views.rs`, #3469) and `text` stays alive and
+unchanged while they are read, `rest` gets the static form of `text`'s bytes when `text` is a
+heap ASCII string: a view, with no count. A static string slices to static strings, inline in
+std's `sliceOf`, and drops as nothing, so such a loop makes no call and touches no count. No
+view leaves the function: a family with a store to memory, a return or a call that is not
+read-only keeps its clone. Only ASCII is viewed, since the position translation takes a
+non-ASCII static string for a literal and remembers its positions for good.
+
 ### How the operations compile
 
 | Operation | ASCII (`units == bytes`) | Non-ASCII |

@@ -1,23 +1,38 @@
 //! Number formatting shared by `velt_rt_write_*` and `velt_rt_str_from_*`.
 //!
 //! Floats follow ECMAScript `Number::toString(10)` exactly: shortest round-trip digits
-//! (from `ryu`), laid out with the JS rules (plain notation for exponents in `-7 < e < 21`,
-//! otherwise `d.ddde±x`), `NaN`, `Infinity`, `-Infinity`, and `-0` printed as `0`.
+//! (from `core::fmt`), laid out with the JS rules (plain notation for exponents in `-7 < e < 21`,
+//! otherwise `d.ddde±x`), `NaN`, `Infinity`, `-Infinity`, and `-0` printed as `0`. Integers are
+//! written digit by digit. No crate does either (#3581: ryu and itoa went).
+
+use core::fmt::Write;
 
 use crate::Out;
 
 /// Append the decimal representation of `v`.
 #[inline]
 pub fn push_i64(out: &mut (impl Out + ?Sized), v: i64) {
-    let mut b = itoa::Buffer::new();
-    out.extend(b.format(v).as_bytes());
+    if v < 0 {
+        out.push(b'-');
+    }
+    push_u64(out, v.unsigned_abs());
 }
 
 /// Append the decimal representation of `v`.
 #[inline]
-pub fn push_u64(out: &mut (impl Out + ?Sized), v: u64) {
-    let mut b = itoa::Buffer::new();
-    out.extend(b.format(v).as_bytes());
+pub fn push_u64(out: &mut (impl Out + ?Sized), mut v: u64) {
+    // Digits from the right, into the end of a buffer of the longest (20 digits).
+    let mut buf = [0u8; 20];
+    let mut i = buf.len();
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    out.extend(&buf[i..]);
 }
 
 #[inline]
@@ -56,17 +71,7 @@ pub fn push_f64(out: &mut (impl Out + ?Sized), v: f64) {
     if v < 0.0 {
         out.push(b'-');
     }
-    let mut buf = ryu::Buffer::new();
-    let text = buf.format_finite(v.abs()).as_bytes();
-    // ryu's plain forms, `12.34` (a point inside the digits) and `0.001234` (at most four zeros
-    // after the point), are the shortest digits laid out as JS lays them out, so they are the
-    // answer as they are. Its other forms differ from JS's: an integer ends in `.0`, and its
-    // exponent form starts at other bounds and has no `+`. Those are laid out from the digits.
-    if !text.ends_with(b".0") && !text.contains(&b'e') {
-        out.extend(text);
-        return;
-    }
-    let (digits, k, n) = digits_of(text);
+    let (digits, k, n) = shortest_digits(v.abs());
     lay_out(out, &digits, k, n);
 }
 
@@ -101,17 +106,73 @@ fn lay_out(out: &mut (impl Out + ?Sized), digits: &[u8; 20], k: usize, n: i32) {
     }
 }
 
-/// Shortest round-trip decimal digits of a finite, positive `v`.
-/// Returns `(digits, k, n)` with `v == 0.d1..dk * 10^n`, `d1 != 0`, `dk != 0`.
-#[cfg(test)]
+/// Shortest round-trip decimal digits of a finite, positive `v`: `(digits, k, n)` with
+/// `v == 0.d1..dk * 10^n`, `d1 != 0`, `dk != 0`, as ECMAScript picks them (of the shortest
+/// strings that read back as `v`, the closest to `v`; of two as close, the even one).
+///
+/// `{:e}` gives the shortest length `k` and the closest such digits, except that on an exact tie
+/// between two candidates it does not take the even one. `{:.(k-1)e}` rounds `v` itself to `k`
+/// digits, exactly and half to even: on a tie that is the even candidate, which reads back as `v`
+/// as both do. It can also be closer than `{:e}`'s digits yet not read back as `v`: below a power
+/// of two the doubles are twice as dense, so the interval that reads back is lopsided. So the
+/// rounded digits are taken only when they read back as `v`.
 fn shortest_digits(v: f64) -> ([u8; 20], usize, i32) {
-    let mut buf = ryu::Buffer::new();
-    digits_of(buf.format_finite(v).as_bytes())
+    let mut text = Stack::default();
+    write!(text, "{v:e}").expect("ICE: a float's text fits in 40 bytes");
+    let k = text
+        .bytes()
+        .iter()
+        .take_while(|&&c| c != b'e')
+        .filter(|c| c.is_ascii_digit())
+        .count();
+    let mut exact = Stack::default();
+    write!(exact, "{:.*e}", k - 1, v).expect("ICE: a float's text fits in 40 bytes");
+    let reads_back = core::str::from_utf8(exact.bytes())
+        .ok()
+        .and_then(|t| t.parse::<f64>().ok())
+        == Some(v);
+    digits_of(if reads_back {
+        exact.bytes()
+    } else {
+        text.bytes()
+    })
 }
 
-/// The shortest digits in ryu's text for a finite, positive value (e.g. "1.0", "0.3", "1e21",
-/// "1.5e-7", "1.2345678901234568e20", "0.0001"): `(digits, k, n)` with the value
-/// `0.d1..dk * 10^n`, `d1 != 0`, `dk != 0`.
+/// A float's text, formatted on the stack (the longest, `-1.2345678901234567e-308`, is 24 bytes).
+struct Stack {
+    buf: [u8; 40],
+    len: usize,
+}
+
+impl Default for Stack {
+    fn default() -> Self {
+        Stack {
+            buf: [0; 40],
+            len: 0,
+        }
+    }
+}
+
+impl Stack {
+    fn bytes(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl Write for Stack {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let end = self.len + s.len();
+        if end > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// The digits of a finite, positive value's text in `{:e}` form (`1.5e-7`, `1e21`): `(digits, k,
+/// n)` with the value `0.d1..dk * 10^n`, `d1 != 0`, `dk != 0`.
 fn digits_of(s: &[u8]) -> ([u8; 20], usize, i32) {
     let (mantissa, exp) = match s.iter().position(|&c| c == b'e') {
         Some(i) => (&s[..i], parse_exp(&s[i + 1..])),
@@ -241,7 +302,7 @@ mod tests {
         }
     }
 
-    /// Cross-check ryu-derived digits against Rust's own shortest `{:e}` on many bit patterns.
+    /// Cross-check the digits against Rust's own shortest `{:e}` on many bit patterns.
     #[test]
     fn digits_match_std_shortest() {
         let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -259,8 +320,8 @@ mod tests {
             let std_digits: String = m.chars().filter(|&c| c != '.').collect();
             let ours = std::str::from_utf8(&d[..k]).unwrap();
             if ours != std_digits {
-                // Exact ties between two shortest candidates: ECMAScript (and ryu) pick the even
-                // digit string, Rust's std does not. Anything else is a real mismatch.
+                // Exact ties between two shortest candidates: ECMAScript (and these digits) pick
+                // the even digit string, `{:e}` does not. Anything else is a real mismatch.
                 let (a, b) = (ours.as_bytes(), std_digits.as_bytes());
                 assert!(
                     a.len() == b.len()
@@ -292,84 +353,6 @@ mod tests {
         }
         assert!(n > 0);
         eprintln!("checked {n} values");
-    }
-
-    /// What `push_f64` printed before ryu's plain forms were taken as they are: every value laid
-    /// out from its digits.
-    fn by_digits(v: f64) -> String {
-        if let Some(i) = whole(v) {
-            return i.to_string();
-        }
-        if !v.is_finite() || v == 0.0 {
-            return js(v);
-        }
-        let mut o = Vec::new();
-        if v < 0.0 {
-            o.push(b'-');
-        }
-        let (d, k, n) = shortest_digits(v.abs());
-        lay_out(&mut o, &d, k, n);
-        String::from_utf8(o).unwrap()
-    }
-
-    /// The text is byte for byte what laying out the digits gives, for every form ryu writes:
-    /// random bit patterns, random values at every decimal scale, and the bounds of ryu's and
-    /// JS's plain forms.
-    #[test]
-    #[allow(clippy::excessive_precision)] // literals are deliberate
-    fn plain_forms_are_the_digits_laid_out() {
-        let mut x: u64 = 0x2545_F491_4F6C_DD1D;
-        let mut next = || {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            x
-        };
-        let mut values: Vec<f64> = vec![];
-        for _ in 0..300_000 {
-            values.push(f64::from_bits(next()));
-        }
-        for e in -330..=310 {
-            let scale = 10f64.powi(e);
-            for _ in 0..200 {
-                let m = (next() >> 11) as f64 / (1u64 << 53) as f64;
-                values.push(m * scale);
-                values.push(-(m + 1.0) * scale);
-            }
-            values.extend([
-                scale,
-                scale * 0.999_999_999_999_999_9,
-                scale * 1.000_000_000_000_000_2,
-            ]);
-        }
-        values.extend([
-            1e-5,
-            9.99999e-6,
-            1.0000000000000002e-5,
-            1e-4,
-            0.00009999999999999999,
-            1e15,
-            1e16,
-            9999999999999998.0,
-            9007199254740993.0,
-            9007199254740994.0,
-            1e21,
-            9.999999999999999e20,
-            1e-7,
-            1e-6,
-            0.000001234,
-            5e-324,
-            2.2250738585072014e-308,
-            1.7976931348623157e308,
-            0.1,
-            0.30000000000000004,
-            1658206780088562.25,
-            4.35,
-            123456789012345680.0,
-        ]);
-        for v in values {
-            assert_eq!(js(v), by_digits(v), "formatting {v:e} ({:#x})", v.to_bits());
-        }
     }
 
     #[test]

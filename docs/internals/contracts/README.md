@@ -205,6 +205,23 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   velt/ffi's `Ptr.read` and `Ptr.write`, a read checking the element's non-null pointers.
   `CheckOptions::wasm32` (additive) tells sema the target is wasm32, where they refuse a type
   holding a pointer, `usize` or `isize`.
+  `Out<T>` takes a C struct `T` too (#2187): velt/ffi's `Out` keeps the value in a private
+  field `held`, whose address a call passes (`c_call.rs`), and `value` is a getter through
+  `Intrinsic::CArrived` (additive), which checks the value's non-null pointers where it is read.
+  `hir::CTy::Ref { nullable }` (additive) is a `Ref<S>` parameter (velt/ffi's alias of a C
+  struct `S`, `velt_common` std module `ffi_ref`, additive): the address of a copy of the struct,
+  borrowed for the call, `NULL` for `null` when `nullable`; a plain `Ptr` in VIR.
+- C structs by value (#2187 layer 3, docs/internals/design/c-ffi.md "C structs"): `hir::CTy::Struct`
+  (additive) is a `declare c struct` parameter or result, the declaration's type naming which.
+  `vir::ExternFn::c_abi` (additive, `None` for every other extern) is the target's C calling
+  convention's classification (`velt_vir::c_struct_abi`): a struct in registers is already its
+  `I64`/`F64` eightbytes or an AAPCS64 HFA's `F32`/`F64` fields as parameters (after zeros
+  that use up the registers a struct on the AAPCS64 stack leaves), and a struct passed by
+  reference (Win64, AAPCS64 over 16 bytes) a plain `Ptr` parameter to a copy; `CParam::ByVal` is a `Ptr` to a copy passed on the stack (LLVM
+  `byval`, Cranelift `StructArgument`), `CParam::Sret` the first parameter, a `Ptr` to the
+  result's slot (`sret`, `StructReturn`), with `ret` `Unit`; `CRet::Words` makes `ret` an `Agg` of
+  one to four scalar words of one size, packed, the only `Agg` an extern signature may have (invariant 2
+  otherwise), which the call's destination receives whole. The verifier checks each.
 - Variadic C functions (#2187, docs/internals/design/c-ffi.md "Variadic functions"):
   `hir::CImport::variadic` (additive) marks a `declare c` function ending with `...args:
   CVarArgs`; its `CImport::params` and `ExternFnDef::params` are the fixed parameters, and a

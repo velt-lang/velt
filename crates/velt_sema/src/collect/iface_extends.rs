@@ -98,7 +98,16 @@ pub(crate) fn inherit_from(cx: &mut Ctx, d: DefId, p: &Bound, keep: &dyn Fn(&str
     // Parent methods are in terms of the parent's params plus its `Self` (= `d`'s `Self`).
     let mut args = p.args.clone();
     args.push(cx.ty.param(n));
-    for mut m in pmethods.into_iter().filter(|m| keep(&m.name)) {
+    let numbered = pmethods.into_iter().enumerate();
+    for (slot, mut m) in numbered.filter(|(_, m)| keep(&m.name)) {
+        // A check by units: a std parent's slot as declared while the app is collected
+        // (`units::modes`).
+        if let Some((mut_this, ps)) = cx.declared_slot(p.iface, slot as u32) {
+            m.mut_this = mut_this;
+            for (q, &mode) in m.params.iter_mut().zip(ps) {
+                q.mode = mode;
+            }
+        }
         // A generic method's own params follow `Self`: renumber them after `d`'s `Self`.
         let mut margs = args.clone();
         margs.extend((0..m.generics.len() as u32).map(|k| cx.ty.param(n + 1 + k)));

@@ -1,0 +1,64 @@
+// Callees that change the union argument they're lent (#3537): a `BorrowMut` union parameter
+// keeps the union owning, so writes, pushes that move a number array, a kept value and a
+// reassigned parameter all reach the caller as in Node, also through function values. With the
+// union lent instead, `grow`'s pushes go to an array only the callee sees.
+class Foo {
+  n: number = 1;
+}
+const kept: (u8[] | Foo)[] = [];
+
+function poke(x: u8[] | Foo, v: number): void {
+  if (x instanceof Foo) {
+    x.n = v;
+  } else {
+    x[0] = v as u8;
+  }
+}
+function pokeAndKeep(x: u8[] | Foo, v: number): void {
+  poke(x, v);
+  kept.push(x);
+}
+function grow(x: number[] | Foo): number {
+  if (x instanceof Foo) {
+    return x.n;
+  }
+  for (let i = 0; i < 100; i++) {
+    x.push(i);
+  }
+  return x.length;
+}
+function pokeThenReassign(x: u8[] | Foo, v: number): number {
+  poke(x, v);
+  x = new Foo();
+  return x instanceof Foo ? x.n : 0;
+}
+
+function main(): void {
+  const b = Buffer.alloc(4);
+  const f = new Foo();
+  poke(b, 5);
+  poke(f, 9);
+  console.log(b[0], f.n);
+  {
+    const c = Buffer.alloc(2);
+    pokeAndKeep(c, 7);
+  }
+  const first = kept[0];
+  console.log(kept.length, first instanceof Foo ? 0 : first[0]);
+  const arr: number[] = [1, 2, 3, 4];
+  console.log(grow(arr), arr.length, arr[103]);
+  console.log(pokeThenReassign(b, 3), b[0]);
+  const fns = [poke, pokeAndKeep];
+  for (const fn of fns) {
+    fn(b, 8);
+    fn(f, 4);
+  }
+  console.log(b[0], f.n, kept.length);
+  let t = 0;
+  for (let i = 0; i < 1000; i++) {
+    poke(b, i & 255);
+    t += b[0];
+  }
+  console.log(t);
+}
+main();

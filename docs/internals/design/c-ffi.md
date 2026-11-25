@@ -145,7 +145,9 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 | `readonly T[]`, `T[]` (`T` a number type), views of bytes | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
 | `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
 | `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, refusing a NUL inside) |
-| `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, or `Ptr<U> \| null` for a `U **` |
+| `Out<T>` | `T *` | the `value` C writes through the pointer: a number, `bool`, `Ptr<U> \| null` for a `U **`, or a C struct |
+| `Ref<S>` | `const S *` | a C struct C reads: the call passes the struct, and C gets the address of a copy, borrowed for the call; `Ref<S> \| null` passes `NULL` for `null` |
+| a `declare c struct` | the struct by value | x86-64 Linux, macOS (System V) and Windows (Win64), arm64 Linux and macOS (AAPCS64); other targets refuse it until their convention comes |
 | `void` | `void` | as a result |
 
 - **No hidden conversions.** A `string` crosses only as a `StrBytes` parameter (the declaration
@@ -171,8 +173,30 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
   `Ptr<T> | null` is the same word with 0 as `null`, so nothing converts at a C call. Nothing
   puts 0 in a `Ptr<T>`: `Ptr.at(0)` stops the program (`Ptr.orNull` gives `null` for 0), and on
   wasm32 so does an address past 32 bits.
-- **`Out<T>`** takes a number, `bool` or `Ptr<U> | null` only: C may write NULL into a non-null
-  pointer, and writing a class reference, a `symbol` or a `shared<T>` would forge one.
+- **`Out<T>`** takes a number, `bool`, `Ptr<U> | null` or a C struct only: C may write NULL into
+  a non-null pointer, and writing a class reference, a `symbol` or a `shared<T>` would forge one.
+  C writes the `Out`'s private field `held`; `value` is an accessor that reads it through the
+  std-only `cArrived<T>`, as `Ptr.read` reads C memory: each `bool` is its byte's truth (0 or
+  not), and a C struct's fields declared `Ptr<T>` are checked where `value` is read, not when C
+  returns, since a C function that fails often leaves its out-struct untouched and a caller that
+  tests its result first never reads it. One C left NULL stops the program at the read, naming
+  the field (``field `text` of the `Out<Label>` read is NULL``). A `T` holding neither passes as
+  it is. As a value, an `Out` prints as `Out { value: 3 }` and serializes as `{"value":3}` (an
+  inspect hook and `toJSON`, both reading `value`), and a spread (`{ ...out }`) copies no
+  accessor, as in JS, so it is `{}`. An `Out<S>` of a C struct aligned above 8 bytes, what the
+  `Out` object gives its value, is refused where it is passed (none can be declared today).
+- **`Ref<S>`** (#2187) is velt/ffi's alias of `S`, a `declare c struct`, for a parameter only:
+  the declaration says `Ref<S>`, and the call passes the struct itself, as a `StrBytes` parameter
+  takes a `string`. The call copies it and C gets the copy's address (`CTy::Ref`), borrowed for
+  the call: C must not keep the pointer (the `unsafe` block's promise), and what C does to the
+  copy, `const` cast away, never reaches the caller's value. `Ref<S> | null` passes `NULL` for
+  `null`. It is recognized through a program's type aliases too, generic ones included
+  (`type R = Ref<S>`, `type Id<T> = T` as `Id<Ref<S>>`, `type M<T> = T | null`): each resolves
+  to `S`, which would otherwise cross by value. A `Ref` of anything else, a `Ref` written
+  anywhere else in a C function's signature (`Ref<S>[]`, `Ref<S> | undefined`), a C function
+  returning one, and a `Ref` in a C struct's field (where it would be `S` inline; a field that
+  points is `Ptr<S>`) are errors at the declaration (collect/c_ref.rs). Elsewhere `Ref<S>`
+  is just `S`, as `StrBytes` is `string`.
 - **A pointer in the language** is Copy, prints as `Ptr(0x7ffd5e8c1a30)`, compares and hashes by
   address, narrows and is truthy, and crosses workers as it is. Text of it (`${p}`, also as an
   element, `${[p]}`), `typeof`, ordering, arithmetic, JSON, a pointer to another C type, and
@@ -346,6 +370,36 @@ declare c struct CGRect { origin: CGPoint; size: CGSize; }
 - On wasm32 C's pointers, `size_t` and `ssize_t` are 4 bytes and Velt's 8, so `Ptr.read` and
   `Ptr.write` of a type holding one are compile errors naming the target; a struct of other
   fields is C's layout there too.
+- **By value**: a C struct is a parameter or result of a `declare c` function, passed as the
+  target's C calling convention classifies it (`crates/velt_vir/src/c_struct_abi/`, one module
+  per convention, one table both backends follow through `vir::ExternFn::c_abi`):
+  - **x86-64 System V** (Linux, macOS): a struct of 16 bytes or less crosses in registers, each
+    eightbyte in an integer register or, if only floats are in it, a vector one, and takes them
+    all or none: when too few remain it goes on the stack whole. A larger struct goes on the
+    stack (a copy the callee owns, `byval`), and a larger result comes back through a slot the
+    caller passes first (`sret`).
+  - **Win64** (x86-64 Windows): a struct of 1, 2, 4 or 8 bytes crosses as an integer in its
+    argument's register or slot, floats too; any other is passed by reference, the address of a
+    copy the caller makes. A result of those sizes comes back in RAX, any other through `sret`.
+  - **AAPCS64** (arm64 Linux, and Apple's variant): an HFA (one to four fields, all `f32` or all
+    `f64`) crosses in that many vector registers, any other struct of 16 bytes or less in one or
+    two integer registers, all or none; a struct that doesn't fit goes on the stack and uses up
+    its class's registers, so the arguments of that class after it go there too (lowering passes
+    zeros in the registers left). A larger struct is passed by reference, and a larger result
+    comes back through x8. Apple's variant packs stack arguments by size, so an `f32` HFA on its
+    stack takes four bytes a field where Linux's slot is eight-byte aligned.
+
+  A struct result arriving from C has its non-null pointer fields checked as `Ptr.read` does.
+  Other targets (wasm32, Windows on arm64), a variadic function's struct and an `@export`
+  function's struct are errors until their layers; `velt build` reports the target's at the
+  declaration. tests/c_struct_by_value.rs is the differential test: generated C functions over
+  23 struct shapes and the cases where registers run out, called from debug (Cranelift) and
+  release (LLVM) builds, every field compared in both directions, on the host or, with
+  `VELT_ABI_TARGET`, for another target under an emulator (scripts/abi-cross.sh runs arm64 Linux
+  under qemu). CI runs it on x86-64 Linux (the c-headers job) and arm64 Linux (c-struct-abi) for
+  every pull request that touches it, and on macOS and Windows nightly; the c-headers job also
+  compares every C function's signature in Velt's LLVM IR with clang's for Win64, Apple's arm64
+  and arm64 Linux.
 - It has no identity, so every comparison compares its content, with the numbers in it compared
   as the operation compares numbers: `===`, `==` and `indexOf` by IEEE, `Object.is` by
   SameValue, `Map` and `Set` keys and `includes` by SameValueZero.
@@ -464,14 +518,26 @@ native: {
   | `i8`…`u64`, `f32`, `f64` | the C type of that width and signedness; a C enum by its underlying type |
   | `bool` | `_Bool` / `bool` only |
   | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them, so a declaration right on one target is right on all |
-  | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`) |
+  | `Ptr<T>`, `Out<T>` | `T *`, `T` the C type of that name (`Out<Ptr<T> \| null>` is `T **`; `Out<S>` of a C struct is `S *`, by the definition it names) |
   | read-only arrays, `StrBytes`, `CString` | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
   | written arrays, `Out<T>` | non-const `T *` only |
+  | `Ref<S>` | `const S *` only, `S` by the definition it names (a non-const one C may write through is `Out<S>` or `Ptr<S>`; stricter than read-only arrays, which accept a non-const `T *` because many APIs omit `const` on buffers: a struct pointer without `const` usually means C writes it, and `Ptr<S>` stays for the APIs that only forgot it) |
   | `Ptr<void>`, `null` | `void *` or a function pointer (`null`: any pointer) |
 
   A function whose type has a calling convention other than the target's C one (`vectorcall`,
   `preserve_most`, `ms_abi` off Windows) is refused. An enum whose width clang's dump does not
   show cannot cross.
+- **C structs** (#2187 layer 4, `crates/veltc/src/native/headers/structs.rs`): each
+  `declare c struct` a library's declarations reach (a pointer's pointee, an `Out<T>`'s `T`, a
+  reached struct's field) is checked with that library. The headers' struct of that name is
+  found by its tag (`struct point`) or a typedef, a definition winning over a declaration, and
+  its fields must be the same, in order, by C name and by type through the table above (a nested
+  struct by name, a function pointer as `Ptr<void>`). Unions, structs only declared, `packed`,
+  bit-fields, C arrays and flexible array members are refused with the header line. The layout
+  is clang's own: a second clang run reads `sizeof`, `_Alignof` and `__builtin_offsetof` of each
+  struct as enumerators, compared with Velt's layout, so `#pragma pack` and `aligned(…)` are
+  refused, naming each offset and size that differs. A struct's fields and layout are part of the
+  remembered check's key and of `c-headers.json`'s digests.
 - **A mismatch is a build error** naming the declaration and the header line.
 - **Remembered**: a check that passed is kept in `$VELT_HOME/cache/headers/`, keyed by zig's
   version, the target, the headers' names, the library's `defines` and the declarations, with a
@@ -675,9 +741,9 @@ must not depend on code elsewhere.
 ## Limitations
 
 - `declare c` calls are synchronous.
-- A C struct crosses only behind `Ptr<S>` (read and written with `Ptr.read` and `Ptr.write`):
-  not by value, not as `Out<S>`; struct declarations are not compared with headers. C arrays in
-  structs are not supported.
+- A C struct crosses by value only on x86-64 (Linux, macOS, Windows) and arm64 Linux and macOS,
+  and not in a variadic function's `...` or to an `@export` function. C arrays in structs are not
+  supported, and an array of structs cannot be passed yet.
 - Function pointers cross only as `Ptr<void>`; C cannot call a Velt closure.
 - `declare c const` cannot be a string; a macro of a string literal is an error.
 - `va_list` parameters (`vprintf`) cannot be declared.
@@ -692,14 +758,9 @@ must not depend on code elsewhere.
 
 ## Not yet implemented
 
-- **C structs by value** in `declare c` signatures, `Out<S>` and `Ref<S>`, following the target's
-  convention (SysV x86-64 eightbytes, AAPCS64 homogeneous float aggregates, Win64 by reference
-  over 8 bytes, `sret`). One table-driven classifier, a port of rustc's
-  `rustc_target::abi::call`, serves both backends, and a differential ABI test (generated C
-  functions over many struct shapes, compiled with the system C compiler, called from both
-  backends on every CI target) gates it. Structs are compared with headers (names, order, types,
-  size, alignment, offsets per target), and C arrays become fields once Velt has fixed-size
-  arrays.
+- **C structs by value on the remaining targets** (wasm32, Windows on arm64), in a variadic
+  function's `...` and to an `@export` function; and arrays of structs (`readonly S[]` as
+  `const S *`), as decided on #2187. C arrays become fields once Velt has fixed-size arrays.
 - **`NativeHandle<T>`**, after .NET's `SafeHandle`: a native object's pointer with its release,
   which runs exactly once. It counts calls in flight: passing it for a `Ptr<T>` parameter takes
   a reference for the call, `dispose()` marks it closed, the release runs when the last call

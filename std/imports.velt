@@ -30,6 +30,7 @@ export const imports: Imports = {
     darwin: "./ffi/errno_darwin.velt",
     linux: "./ffi/errno_linux.velt",
     win32: "./ffi/errno_windows.velt",
+    wasi: "./ffi/errno_wasi.velt",
     default: "./ffi/errno_none.velt",
   },
   // How a Velt panic under `catchUnwind` is raised and taken (docs/internals/design/unwinding.md):
@@ -95,11 +96,20 @@ export const imports: Imports = {
     win32: "./lang/hooks/thread_win32.velt",
     default: "./lang/hooks/thread_none.velt",
   },
-  // `posix_spawn_file_actions_addopen`, whose `mode_t` is 16 bits on macOS and 32 on Linux
-  // (std/process/child/spawn_posix.velt, which only those load).
+  // What starting a child differs in between macOS and Linux (std/process/child/spawn_posix.velt,
+  // which only those load): `posix_spawn_file_actions_addopen`'s `mode_t`, `poll`'s `nfds_t`,
+  // `errno` and the pipes' calls, `PATH_MAX`, the default `PATH`, and Node's lookup rules.
   "#spawn-open": {
     darwin: "./process/child/spawn_open_darwin.velt",
     default: "./process/child/spawn_open_linux.velt",
+  },
+  // Whether a child that is a script without a `#!` line (ENOEXEC) runs through `/bin/sh`, as Node
+  // runs it on Linux with glibc (its `execvp`; musl's has no such rule, and Velt has no musl
+  // condition), not on macOS (libuv's `posix_spawn`): spawn_posix.velt, which starts the children
+  // of `spawn`, `exec` and `execSync`.
+  "#script-shell": {
+    linux: "./process/child/script_shell_linux.velt",
+    default: "./process/child/script_shell_none.velt",
   },
   // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
   // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
@@ -199,9 +209,13 @@ export const imports: Imports = {
     win32: "./process/child/child_win32.velt",
     default: "./process/child/child_posix.velt",
   },
-  // `execSync`'s start: the runtime's, after the program is found and checked as `exec` does it
-  // on Windows; elsewhere the runtime's alone.
+  // `execSync`'s start: on macOS and Linux std's (`posix_spawn`, as `spawn` and `exec` start
+  // theirs, and a `poll` loop on the pipes, without the executor); on Windows the runtime's,
+  // after the program is found and checked as `exec` does it; elsewhere (WebAssembly) the
+  // runtime's alone.
   "#exec-sync": {
+    darwin: "./process/child/exec_sync_posix.velt",
+    linux: "./process/child/exec_sync_posix.velt",
     win32: "./process/child/exec_sync_win32.velt",
     default: "./process/child/exec_sync.velt",
   },
@@ -237,6 +251,9 @@ export const imports: Imports = {
   // Whole files (`readFile`, `writeFile`, `appendFile`, `stat`, `lstat`, `exists`) in a native
   // build: the C library's file descriptors (`#fd-system`), or Win32's on Windows.
   "#fs-whole": { win32: "./fs/whole/win32.velt", default: "./fs/whole/posix.velt" },
+  // The path `openRead` and `openWrite` hand the runtime, and their errors: Node's resolved
+  // path on Windows (std/fs/whole/win_path.velt), the path as given elsewhere.
+  "#fs-stream-path": { win32: "./fs/whole/win_stream_path.velt", default: "./fs/stream_path.velt" },
   // What a `MappedFile` is made of (velt/fs): a mapping of the file (`mmap` through
   // `#fd-system`, Win32's file mappings on Windows), the file read into memory on WebAssembly.
   "#mapped-source": {
@@ -248,12 +265,14 @@ export const imports: Imports = {
   // Directories (`readDir`, `readDirEntries`, `mkdir`, `remove`) in a native build: the C
   // library's directory functions (`#fd-system`), or Win32's on Windows.
   "#fs-tree": { win32: "./fs/tree/win32.velt", default: "./fs/tree/posix.velt" },
-  // Renaming, linking and copying (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`) in a
-  // native build: the C library's on macOS and Linux (each with its own data copy), Win32's on
-  // Windows.
+  // Renaming, linking and copying (`rename`, `copyFile`, `symlink`, `readlink`, `realpath`): the
+  // C library's on macOS and Linux (each with its own data copy), Win32's on Windows,
+  // wasi-libc's under WASI, and none under a JS host (each fails with `ENOTSUP`).
   "#fs-paths": {
     win32: "./fs/paths/win32.velt",
     darwin: "./fs/paths/darwin.velt",
+    wasi: "./fs/paths/wasi.velt",
+    js: "./fs/paths/js.velt",
     default: "./fs/paths/linux.velt",
   },
   // `fs.constants`: Node's keys and values on each OS (std/fs/constants/), Linux's for any other
@@ -351,5 +370,19 @@ export const imports: Imports = {
     win32: "./time/localtime_win32.velt",
     native: "./time/localtime_posix.velt",
     default: "./time/localtime_none.velt",
+  },
+  // The zone local time is in, by its id, for `Date`'s zone name (std/time/zone_name.velt):
+  // `TZ` or `/etc/localtime`'s link on macOS and Linux, `TZ`'s fixed offsets or the system
+  // zone's registry key on Windows, UTC on WebAssembly.
+  "#zone-id": {
+    win32: "./time/zone_id_win32.velt",
+    native: "./time/zone_id_posix.velt",
+    default: "./time/zone_id_none.velt",
+  },
+  // `O_CLOEXEC` for zone_id_posix.velt's `open`, which differs between macOS and Linux (without
+  // velt/os, which a program printing a date need not load).
+  "#zone-cloexec": {
+    darwin: "./time/zone_cloexec_darwin.velt",
+    default: "./time/zone_cloexec_linux.velt",
   },
 };

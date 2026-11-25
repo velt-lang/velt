@@ -27,8 +27,9 @@ pub(super) fn check_group(cx: &mut Ctx, g: &Group) {
         if cx.abstract_methods.contains(&m) {
             continue;
         }
-        let Some(e) = f.throws else { continue };
         let (is_getter, ret) = (f.is_getter, f.ret);
+        // A finished unit's member as the app's passes raised it (`units::raised`).
+        let Some(e) = cx.fn_throws(m) else { continue };
         // A synchronous member whose body throws nothing returns its errors in the promise it
         // returns (a `Promise<T>` written without an error type, `promise_sites`).
         let generic_ret = cx.ty.promise_payload(ret).is_none();

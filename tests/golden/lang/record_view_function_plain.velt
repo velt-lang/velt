@@ -1,0 +1,23 @@
+// check: no leaks
+// A function viewed as a `Record<string, any>` in a program that writes no properties through
+// `any` (#3507): the view has no keys, is the function, and two conversions, of one boxing or of
+// two, are one view. The Node twin is record_view_function_plain.mjs.
+function hello(): number {
+  return 1;
+}
+
+function main(): void {
+  const a: any = hello;
+  const b: object = hello;
+  const ra = a as Record<string, any>;
+  const rb = b as Record<string, any>;
+  console.log(`keys ${Object.keys(ra).length} ${Object.keys(rb).length}`);
+  console.log(`same ${ra === a} ${rb === (b as any)} ${ra === rb}`);
+  const k: any = () => 7;
+  console.log(`closure ${(k as Record<string, any>) === k} ${k()}`);
+  const ga: unknown = <T>(x: T): T => x;
+  const gb: unknown = <T>(x: T): T[] => [x];
+  console.log(`generic closures: ${(ga as Record<string, any>) === (gb as Record<string, any>)}`);
+}
+
+main();

@@ -17,8 +17,8 @@ export class WeakSet<T> {
     this.#id = 0;
   }
 
-  /** Adds `value` to the set. */
-  add(value: T): WeakSet<T> {
+  /** Adds `value` to the set; returns the set itself, as in JS. */
+  add(value: T): this {
     this.#id = weakMapSet(this.#id, value, true);
     return this;
   }

@@ -64,9 +64,12 @@ export function cellCount(all: Uint8Array): number {
   return cells;
 }
 
-/** Runs `decode` `rounds` times (the first argument) and prints the cells and the checksum. */
+/**
+ * Runs `decode` `rounds` times (the first argument; 10 without one, so `bench/compiler_ab.sh`,
+ * which passes none, measures the decoding) and prints the cells and the checksum.
+ */
 export function run(decode: (all: Uint8Array) => number) {
-  const rounds = Number(process.argv[2]);
+  const rounds = Number(process.argv[2] ?? "10");
   const all = build();
   let check = 0;
   for (let r = 0; r < rounds; r++) {

@@ -2,6 +2,7 @@
 //! prelude's `promiseThen` family (std/prelude/promise.velt), which take the promise. A callback
 //! that returns a promise selects the `…Async` form, which awaits it (flattening, as in JS).
 
+use rustc_hash::FxHashSet;
 use velt_common::Span;
 use velt_syntax::ast;
 
@@ -288,9 +289,19 @@ impl FnCx<'_, '_> {
                 _ => vec![reason],
             };
             let error = self.cx.ty.error;
+            // `p.catch(() => null)` (or `undefined`): the literal is of the promise's value type,
+            // as TypeScript's `Promise<T | null>` infers it, where nothing else would type it.
+            let ret = match (method, super::args::as_arrow(a)) {
+                ("catch", Some(arrow))
+                    if nothing_body(arrow) && self.cx.ty.opt_payload(t).is_some() =>
+                {
+                    t
+                }
+                _ => error,
+            };
             let hint = self.cx.ty.intern(TyKind::FnPtr {
                 params: params.clone(),
-                ret: error,
+                ret,
                 throws: error,
                 rest: false,
             });
@@ -424,9 +435,17 @@ impl FnCx<'_, '_> {
                 };
                 (name, vec![e, *u, g], recv.ty, *u, g)
             }
-            ("catch", [(u, xg)]) if self.cx.ty.is_bottom(*u) && t != *u => {
-                // A handler that only throws (`p.catch((e) => { throw e; })`): the promise's value
-                // type, as TypeScript types it; the handler converts to a function giving it.
+            // Not a value holding a dynamic one (`(e: any) => e`, `() => ({ x: v as any })`):
+            // TypeScript's `Promise<T | any>` is a `Promise<any>`, and a `Promise<T | U>` with a
+            // `U` holding `any` converts nothing, while a checked conversion to `T` would stop the
+            // program at run time where the `any` holds another type.
+            ("catch", [(u, xg)])
+                if t != *u && !holds_dynamic_deep(self.cx, *u, &mut FxHashSet::default()) =>
+            {
+                // A handler that only throws (`p.catch((e) => { throw e; })`), or that gives a
+                // value of the promise's value type (`undefined` for a `T | undefined`): the
+                // promise's value type, as TypeScript types it (`Promise<T | U>` is `T` when
+                // every `U` is a `T`); the handler converts to a function giving it.
                 let g = xg.unwrap_or(never);
                 let (ret, throws) = match all_async {
                     true => (self.cx.ty.promise_rejecting(t, g), never),
@@ -446,8 +465,16 @@ impl FnCx<'_, '_> {
                     let taken = std::mem::replace(h, placeholder);
                     match self.try_coerce(taken, exp) {
                         Ok(w) => *h = w,
-                        Err(w) => {
+                        Err(w) if self.cx.ty.is_bottom(*u) => {
                             self.report_mismatch(exp, &w);
+                            return self.error_expr(span);
+                        }
+                        Err(_) => {
+                            let (a, b) = (self.cx.display(t), self.cx.display(*u));
+                            self.cx.err(
+                                format!("the callback of `catch` must give the promise's value type `{a}`, found `{b}`"),
+                                span,
+                            );
                             return self.error_expr(span);
                         }
                     }
@@ -528,4 +555,60 @@ impl FnCx<'_, '_> {
         };
         self.mk(kind, ret, span)
     }
+}
+
+/// Is `arrow` (`() => null`, `() => undefined`, without a written result type) a function giving
+/// only a nothing?
+fn nothing_body(arrow: &ast::Expr) -> bool {
+    let ast::ExprKind::Arrow {
+        ret: None,
+        is_async: false,
+        body: ast::ArrowBody::Expr(body),
+        ..
+    } = &arrow.kind
+    else {
+        return false;
+    };
+    matches!(
+        body.kind,
+        ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
+    )
+}
+
+/// Does a value of type `t` hold a dynamic value (`any`, `unknown`, `object`, `Function`) by
+/// itself or through its parts: elements, fields, a union's members, type arguments, and a
+/// function type's parameters and result?
+fn holds_dynamic_deep(cx: &mut crate::ctx::Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+    if !seen.insert(t) {
+        return false;
+    }
+    if cx.dynamic(t).is_some() {
+        return true;
+    }
+    let parts: Vec<TyId> = match cx.ty.kind(t).clone() {
+        TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) | TyKind::Promise(x, _) => {
+            vec![x]
+        }
+        TyKind::Map(k, v) | TyKind::Result(k, v) => vec![k, v],
+        TyKind::Tuple(xs) => xs,
+        TyKind::FnPtr {
+            mut params, ret, ..
+        } => {
+            params.push(ret);
+            params
+        }
+        TyKind::Adt(d, args) => {
+            // A union's members (its def is an enum: no fields).
+            if let Some(members) = cx.union_members(t) {
+                return members.into_iter().any(|m| holds_dynamic_deep(cx, m, seen));
+            }
+            let fields: Vec<TyId> = cx
+                .adt(d)
+                .map_or(vec![], |a| a.fields.iter().map(|f| f.ty).collect());
+            let fields: Vec<TyId> = fields.into_iter().map(|f| cx.subst(f, &args)).collect();
+            args.into_iter().chain(fields).collect()
+        }
+        _ => vec![],
+    };
+    parts.into_iter().any(|x| holds_dynamic_deep(cx, x, seen))
 }

@@ -37,6 +37,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_write",
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
+    // `then`, `catch` and `finally` of a promise held as `any` (#924 step 2), demanded by sema.
+    "std/lang/hooks/any_promise",
     "std/lang/hooks/unwind",
     "std/lang/hooks/inspect",
     "std/lang/hooks/inspect_cycles",
@@ -45,6 +47,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
+    // A `number` stored into an integer array's element (#3182), demanded where sema finds one.
+    "std/lang/hooks/int_store",
     "std/lang/hooks/number_shortest",
     // The blocks of module state (#2196 9c): a native program with module state.
     "std/lang/hooks/module_blocks",
@@ -54,6 +58,9 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/mutex",
     // The errors of a write to a frozen object (#2623), demanded by sema's test of the mark.
     "std/lang/hooks/frozen",
+    // The count of held `Mutex`es (#3467), demanded by a `with` in a `velt dev` build
+    // (`Construct::MutexHeld`); the executor's module lock imports it too.
+    "std/lang/hooks/mutex_held",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
     // The other string methods in Velt, called by role too (#2198).
@@ -62,6 +69,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/string/split",
     "std/lang/string/replace",
     "std/lang/string/case",
+    // `Date`'s zone name and its table, which the prelude's `toTimeString` calls by role (#3152).
+    "std/lang/hooks/date_zone_name",
     // A byte range as a string, which the prelude's `utf8Slice` calls by role (#2196).
     "std/lang/bytes/range_text",
     // The CPU's features (#3222 step 3): every program with an entry demands it (`velt_main`

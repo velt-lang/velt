@@ -1,0 +1,160 @@
+// velt/os: the machine's CPUs, memory, load and uptime (`cpus`, `totalmem`, `freemem`,
+// `loadavg`, `uptime`, `endianness`), the OS's names (`type`, `release`, `version`, `machine`)
+// and velt/process' memory limits and CPU time (`constrainedMemory`, `availableMemory`,
+// `cpuUsage`), on the machine the tests run on: what Node's `os` and `process` promise of them,
+// as each OS reports them.
+import { availableParallelism, cpus, endianness, freemem, loadavg, platform } from "velt/os";
+import { arch, machine, release, totalmem, type, uptime, version } from "velt/os";
+import { availableMemory, constrainedMemory, cpuUsage } from "velt/process";
+import { describe, expect, it } from "velt/test";
+
+describe("cpus()", () => {
+  it("lists at least the CPUs the process may use, each named, with a clock and times", () => {
+    const list = cpus();
+    // Windows lists one processor group's CPUs (up to 64); affinity is counted within it too.
+    expect(list.length >= availableParallelism()).toBe(true);
+    for (const cpu of list) {
+      expect(cpu.model.length > 0).toBe(true);
+      expect(cpu.speed >= 0).toBe(true);
+      const t = cpu.times;
+      expect(t.user >= 0 && t.nice >= 0 && t.sys >= 0 && t.idle >= 0 && t.irq >= 0).toBe(true);
+    }
+    // A machine that has run this far has spent time somewhere.
+    let spent: i64 = 0;
+    for (const cpu of list) {
+      spent += cpu.times.user + cpu.times.sys + cpu.times.idle;
+    }
+    expect(spent > 0).toBe(true);
+  });
+
+  it("never counts time backward between two calls", () => {
+    const before = cpus();
+    const after = cpus();
+    expect(after.length).toBe(before.length);
+    for (let i = 0; i < before.length; i++) {
+      const a = before[i].times;
+      const b = after[i].times;
+      expect(b.user >= a.user && b.sys >= a.sys && b.idle >= a.idle).toBe(true);
+    }
+  });
+
+  it("counts times in milliseconds, against an uptime in seconds", () => {
+    // Each CPU's modes add up to about the time the machine has been up (less what goes
+    // uncounted: iowait, steal, and on macOS and Windows the time asleep), so a slip of units in
+    // the times or in `uptime()` (a factor of 1000) lands far outside these bounds.
+    const list = cpus();
+    const up = uptime() * 1000;
+    let most: f64 = 0;
+    for (const cpu of list) {
+      const t = cpu.times;
+      const total = (t.user + t.nice + t.sys + t.idle + t.irq) as f64;
+      expect(total <= up * 1.1 + 5000).toBe(true);
+      most = total > most ? total : most;
+    }
+    if (list.length > 0) {
+      expect(most >= up / 10).toBe(true);
+    }
+  });
+
+  it("has no nice time on Windows and no interrupt time on macOS", () => {
+    for (const cpu of cpus()) {
+      if (platform() === "win32") {
+        expect(cpu.times.nice).toBe(0);
+      }
+      if (platform() === "darwin") {
+        expect(cpu.times.irq).toBe(0);
+      }
+    }
+  });
+});
+
+describe("totalmem() and freemem()", () => {
+  it("gives the machine's memory, with what is free inside it", () => {
+    const total = totalmem();
+    const free = freemem();
+    // More than 64 MiB: every machine the tests run on has that.
+    expect(total > 64 * 1024 * 1024).toBe(true);
+    expect(free > 0).toBe(true);
+    expect(free <= total).toBe(true);
+  });
+});
+
+describe("loadavg() and uptime()", () => {
+  it("gives three load averages, none negative, all 0 on Windows", () => {
+    const load = loadavg();
+    expect(load.length).toBe(3);
+    for (const l of load) {
+      expect(l >= 0).toBe(true);
+      if (platform() === "win32") {
+        expect(l).toBe(0);
+      }
+    }
+  });
+
+  it("gives the seconds since the machine started, not going back", () => {
+    const first = uptime();
+    expect(first > 0).toBe(true);
+    expect(uptime() >= first).toBe(true);
+  });
+});
+
+describe("endianness()", () => {
+  it("is little-endian", () => {
+    expect(endianness()).toBe("LE");
+  });
+});
+
+describe("constrainedMemory() and availableMemory()", () => {
+  it("gives a limit (0 for none) and the memory the process can still get", () => {
+    const limit = constrainedMemory();
+    const available = availableMemory();
+    expect(limit >= 0).toBe(true);
+    expect(available >= 0).toBe(true);
+    if (platform() !== "linux") {
+      expect(limit).toBe(0);
+    }
+    if (limit === 0 || limit > totalmem()) {
+      expect(available <= totalmem()).toBe(true);
+    } else {
+      expect(available <= limit).toBe(true);
+    }
+  });
+});
+
+describe("type(), release(), version() and machine()", () => {
+  it("name the OS as uname (or Windows) does", () => {
+    const names: Record<string, string> = { linux: "Linux", darwin: "Darwin", win32: "Windows_NT" };
+    expect(type()).toBe(names[platform()]);
+    // "6.8.0-45-generic", "24.1.0", "10.0.22631": digits, then a dot.
+    expect(/^[0-9]+\./.test(release())).toBe(true);
+    expect(version().length > 0).toBe(true);
+  });
+
+  it("names the processor the build runs on", () => {
+    const m = machine();
+    if (arch() === "x64") {
+      expect(m).toBe("x86_64");
+    } else {
+      expect(m).toBe(platform() === "linux" ? "aarch64" : "arm64");
+    }
+  });
+});
+
+describe("cpuUsage()", () => {
+  it("counts the CPU time this process spends, and the time since an earlier result", () => {
+    const start = cpuUsage();
+    expect(start.user >= 0 && start.system >= 0).toBe(true);
+    // About 0.1-0.2 s of CPU on the machines the tests run on: well over a millisecond, and over
+    // ten of Windows' CPU-time ticks (about 15.6 ms each), so `user` has moved on every OS.
+    let x: i64 = 0;
+    for (let i: i64 = 0; i < 40000000; i++) {
+      x = (x + i) % 1000003;
+    }
+    expect(x >= 0).toBe(true);
+    const spent = cpuUsage(start);
+    expect(spent.user > 1000).toBe(true);
+    expect(spent.system >= 0).toBe(true);
+    const now = cpuUsage();
+    expect(now.user >= start.user + spent.user).toBe(true);
+  });
+});

@@ -1,0 +1,6 @@
+execSync as Node: true
+execSync absolute as Node: true
+execSync in PATH as Node: true
+exec as Node: true
+exec in PATH as Node: true
+spawn as Node: true

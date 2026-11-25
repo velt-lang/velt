@@ -31,12 +31,9 @@ pub(in crate::task::local) unsafe fn caught(f: *mut VeltFut, poll: impl FnOnce()
         return poll();
     }
     let _catching = crate::panic::Catching::enter();
-    let holds = super::super::module_state::holds();
     match crate::panic::catch(poll) {
         Ok(done) => done,
         Err(msg) => {
-            // What the panicked code took of the runtime's own and can no longer give back.
-            super::super::module_state::restore_holds(holds);
             mark(f, msg);
             true
         }
