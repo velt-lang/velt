@@ -1,7 +1,6 @@
-//! Result rows read where the driver has them (native_abi.md "Row cursors"): instead of writing
-//! every row into a binary buffer ([`crate::rows`]) for std's decoder to read back, a driver
-//! hands the decoder a cursor over its live result, and the decoder takes each value straight
-//! from the driver's memory into the Velt value it builds (one copy, of the text it keeps).
+//! Result rows read where the driver has them (native_abi.md "Row cursors"): a driver hands
+//! std's decoder a cursor over its live result, and the decoder takes each value straight from
+//! the driver's memory into the Velt value it builds (one copy, of the text it keeps).
 //!
 //! Any native driver can offer one: it implements [`RowCursor`], registers the cursor with the
 //! runtime (`open_cursor`, `sdk` feature) and hands velt/db's `decodeRows` the handle. std finds
@@ -10,8 +9,8 @@
 //! takes the cursor back (`close_cursor`), releases what it held and reports a failure the rows
 //! met.
 //!
-//! The cursor answers like the binary rows it replaces: the same header (`single`, the column
-//! names), then the rows, each read cell by cell, in any order, between two steps.
+//! The cursor answers with a header (`single`, the column names, laid out as [`crate::rows`]
+//! says), then the rows, each read cell by cell, in any order, between two steps.
 //!
 //! The other way, a [`ParamSink`] takes a statement's parameters as typed values from std's
 //! generated code (velt/db's `bindValues<P>`), instead of as JSON text the driver parses.

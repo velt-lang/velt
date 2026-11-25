@@ -148,7 +148,7 @@ impl FnLower<'_, '_> {
             }
             if let CTy::CString = t {
                 // Its bytes (read-only, NUL-terminated), held for the statement. A proxy's `get`
-                // trap could give other bytes, without the NUL: refused, as for `Out`'s field.
+                // trap could give other bytes, without the NUL: refused.
                 let v = self.expr(a);
                 let obj = self.operand_place(v, Ty::Ptr);
                 self.proxy_guard(&obj);
@@ -160,9 +160,11 @@ impl FnLower<'_, '_> {
                 continue;
             }
             if let CTy::Out = t {
+                let (at, out) = (self.cx.user_span(a.span), self.sub(a.ty));
+                self.cx.check_out_alignment(out, at);
                 let v = self.expr(a);
                 let obj = self.operand_place(v, Ty::Ptr);
-                vals.push(CArg::Field(obj, self.sub(a.ty), "value"));
+                vals.push(CArg::Field(obj, self.sub(a.ty), "held"));
                 continue;
             }
             if let CTy::Struct = t {

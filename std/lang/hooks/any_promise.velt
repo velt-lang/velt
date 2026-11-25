@@ -1,0 +1,132 @@
+// velt/lang/hooks (internal): `then`, `catch` and `finally` of a promise held as `any` (#924
+// step 2). Sema sends a member of one of these names, read or called through an `any` in the
+// program's own code, here when the value is a promise (velt_sema `any_promise_members.rs`, the
+// hooks `anyPromiseMethod` and `anyPromiseCall` below; a module loaded on demand). Each runs as
+// `Promise.prototype`'s does in Node: a callback that is no function passes the value or the
+// reason on, the result is a new promise held as `any`, and `finally`'s callback is awaited.
+
+import { anyIsPromise, anyPromise } from "velt/lang/intrinsics";
+
+/** The promise `v` holds, as `unknown` (no step more than awaiting it), or a `TypeError`. */
+function heldPromise(v: unknown, name: string): Promise<unknown, unknown> {
+  const p = anyPromise(v);
+  if (p === undefined) {
+    panic(`TypeError: Method Promise.prototype.${name} called on incompatible receiver`);
+  }
+  return p;
+}
+
+/**
+ * `r`, what a `then` callback returned, which settles the new promise. JavaScript adopts a
+ * thenable there, which Velt doesn't yet (#3412). A promise stops in the prelude's `then`
+ * (#3425).
+ */
+function settledWith(r: any): any {
+  if (!anyIsPromise(r)) {
+    const t = typeof r;
+    if (((t === "object" && r !== null) || t === "function") && "then" in r) {
+      panic("TypeError: adopting an object with a `then` member is not supported yet (#3412)");
+    }
+  }
+  return r;
+}
+
+/** `v.then(onFulfilled, onRejected)` of the promise `v` holds. */
+export function promiseThenAny(v: unknown, onFulfilled: any, onRejected: any): any {
+  const p = heldPromise(v, "then");
+  const fulfils = typeof onFulfilled === "function";
+  const rejects = typeof onRejected === "function";
+  const q = p.then(
+    (x: unknown): any => (fulfils ? settledWith(onFulfilled(x)) : x),
+    (e: unknown): any => {
+      if (rejects) {
+        return settledWith(onRejected(e));
+      }
+      throw e;
+    },
+  );
+  return q;
+}
+
+/** `v.catch(onRejected)`: `then(undefined, onRejected)`, as in Node. */
+export function promiseCatchAny(v: unknown, onRejected: any): any {
+  if (anyPromise(v) === undefined) {
+    panic("TypeError: Method Promise.prototype.catch called on incompatible receiver");
+  }
+  return promiseThenAny(v, undefined, onRejected);
+}
+
+/**
+ * `v.finally(onFinally)`: the callback runs on either outcome with no argument. A promise it
+ * returns is awaited, and its rejection (or the callback's throw) rejects the result. Else the
+ * value or reason passes on, as in Node.
+ */
+export function promiseFinallyAny(v: unknown, onFinally: any): any {
+  const p = heldPromise(v, "finally");
+  if (typeof onFinally !== "function") {
+    return promiseThenAny(v, onFinally, onFinally);
+  }
+  const q = p.then(
+    async (x: unknown): Promise<unknown> => {
+      await onFinally();
+      return x;
+    },
+    async (e: unknown): Promise<unknown> => {
+      await onFinally();
+      throw e;
+    },
+  );
+  return q;
+}
+
+/**
+ * `Promise.prototype.then` read through `any`: one shared function, so `p.then === p.then` as
+ * in Node, and `typeof` is `"function"`. Called on its own it has no promise, which Node reports
+ * as below. Velt doesn't pass a receiver to it yet: `t.call(p, f)` of the read value stops with
+ * `call` through `any` not being supported (#924's later steps).
+ */
+function anyThen(onFulfilled: any, onRejected: any): any {
+  panic("TypeError: Method Promise.prototype.then called on incompatible receiver undefined");
+}
+
+/** `Promise.prototype.catch` read through `any` (`anyThen`). */
+function anyCatch(onRejected: any): any {
+  panic("TypeError: Method Promise.prototype.catch called on incompatible receiver undefined");
+}
+
+/** `Promise.prototype.finally` read through `any` (`anyThen`). */
+function anyFinally(onFinally: any): any {
+  panic("TypeError: Method Promise.prototype.finally called on incompatible receiver undefined");
+}
+
+/**
+ * `p.then(…)`, `p.catch(…)` or `p.finally(…)` (`name`) called through `any` on a promise (the
+ * hook `anyPromiseCall`).
+ */
+export function anyPromiseCall(p: unknown, name: string, args: any[]): any {
+  const a = args.length > 0 ? args[0] : undefined;
+  if (name === "then") {
+    return promiseThenAny(p, a, args.length > 1 ? args[1] : undefined);
+  }
+  if (name === "catch") {
+    return promiseCatchAny(p, a);
+  }
+  return promiseFinallyAny(p, a);
+}
+
+/**
+ * The shared function a promise's member `name` is, read through `any` (the hook
+ * `anyPromiseMethod`): one value per name, as in Node.
+ */
+export function anyPromiseMethod(name: string): any {
+  if (name === "then") {
+    const f: any = anyThen;
+    return f;
+  }
+  if (name === "catch") {
+    const f: any = anyCatch;
+    return f;
+  }
+  const f: any = anyFinally;
+  return f;
+}

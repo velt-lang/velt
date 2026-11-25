@@ -37,6 +37,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_write",
     "std/lang/hooks/number_float",
     "std/lang/hooks/any_record",
+    // `then`, `catch` and `finally` of a promise held as `any` (#924 step 2), demanded by sema.
+    "std/lang/hooks/any_promise",
     "std/lang/hooks/unwind",
     "std/lang/hooks/inspect",
     "std/lang/hooks/inspect_cycles",
@@ -54,6 +56,9 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/weak",
     // The inline `Mutex` lock (#2196), demanded by a `Mutex`'s `with` (`Construct::Mutex`).
     "std/lang/hooks/mutex",
+    // The count of held `Mutex`es (#3467), demanded by a `with` in a `velt dev` build
+    // (`Construct::MutexHeld`); the executor's module lock imports it too.
+    "std/lang/hooks/mutex_held",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
     // The other string methods in Velt, called by role too (#2198).

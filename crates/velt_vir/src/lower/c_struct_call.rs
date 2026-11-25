@@ -189,7 +189,12 @@ impl FnLower<'_, '_> {
             _ => ice("a C struct result without a place"),
         };
         let s = self.cx.type_name(st);
-        self.stop_on_null(&place, st, (&s, Some(link)), "");
+        self.stop_on_null(
+            &place,
+            st,
+            (&s, super::ptr_memory::Arrived::Returned(link)),
+            "",
+        );
         let out = self.temp(ret_vt);
         self.assign(Place::local(out), Rvalue::Use(Operand::Copy(place)));
         Operand::Copy(Place::local(out))

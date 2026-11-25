@@ -263,9 +263,10 @@ assignment) are listed in the module comment of `crates/velt_sema/src/hir/mod.rs
   closure does), and the cell itself for a `LocalDef::boxed` capture.
 - `JSON.stringify` and `JSON.parse` are std code generated per type at compile time
   (std/encoding/json/generate, docs/internals/design/source-generators.md), not HIR forms. The
-  generators report the types that have no JSON form (`check.velt`, `parse_check.velt`): maps
-  without `string` keys, std types that keep private state, and for `JSON.parse` unions whose
-  members a document cannot tell apart and types with private fields.
+  generators report the types that have no JSON form (`check.velt`, `parse_check.velt`): std
+  types that keep private state, and for `JSON.parse` maps without `string` keys, unions whose
+  members a document cannot tell apart and types with private fields. `JSON.stringify` writes a
+  `Map`, `Set`, `WeakMap` and `WeakSet` as `{}`, as Node does.
 
 ## Loops
 - `StmtKind::ForOf { consume: true, .. }`: `for...of` over an owned temporary array (a call
