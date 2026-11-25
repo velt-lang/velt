@@ -14,6 +14,7 @@ use crate::SourceModule;
 mod access;
 mod classes;
 pub(crate) mod def_table;
+mod extension_lookup;
 mod slots;
 
 pub(crate) use def_table::DefTable;
@@ -132,9 +133,8 @@ pub(crate) struct Ctx<'m> {
     /// (`body::expr::checked_key`): the key's error is the site's only one.
     pub bad_key_sites: Vec<(velt_common::Span, velt_common::Span)>,
     pub extensions: Vec<Extension>,
-    /// The extensions declaring each method name, built for the first `extensions.len()`
-    /// extensions (body/expr/method.rs `applicable_extensions`).
-    pub(crate) extension_names: (usize, FxHashMap<String, Vec<usize>>),
+    /// Method lookup through `extend` blocks (`extension_lookup.rs`).
+    pub(crate) ext_lookup: extension_lookup::ExtensionLookup,
     pub impls: Vec<ImplDef>,
     /// Interfaces written through and their setter slots (`crate::iface_writes`).
     pub(crate) iface_writes: crate::iface_writes::IfaceWrites,
@@ -614,7 +614,7 @@ impl<'m> Ctx<'m> {
             marked_aliases: Default::default(),
             bad_key_sites: vec![],
             extensions: vec![],
-            extension_names: (0, FxHashMap::default()),
+            ext_lookup: Default::default(),
             impls: vec![],
             iface_writes: Default::default(),
             method_writes: Default::default(),
