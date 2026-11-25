@@ -37,6 +37,7 @@ import { fnAddress, inline, noInline, noteStdUse } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as ls from "./sched_yield_list";
+import * as tn from "./sched_yield_turn";
 import * as t from "./sched_task";
 
 /** The task being polled on this thread (0: none, or off the workers). */
@@ -243,11 +244,13 @@ function otherReady(w: usize): u32 {
   const vt = m.ld(w);
   if (vt === t.main() + t.E_VT) {
     // A task's waker in another cx: its state, as with its own cx. Going on, it is a waiter of
-    // the turn polling the root, if one is (`ls.nextTurn`).
+    // the turn polling the root, if one is (`tn.nextTurn`).
     if (m.load32(w + t.T_STATE) === t.YIELDED) {
       return 0;
     }
-    ls.taken(w);
+    if (w === current()) {
+      tn.taken(w);
+    }
     return 1;
   }
   const isNode = vt === t.main() + t.E_NODE_VT;

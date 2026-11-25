@@ -28,6 +28,7 @@ import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
 import * as yl from "./sched_yield";
 import * as ls from "./sched_yield_list";
+import * as tn from "./sched_yield_turn";
 
 /**
  * Polls task `k` once: its woken started promises, its due sleeps, its root, its microtasks. A
@@ -127,7 +128,7 @@ function runOther(e: usize, k: usize, fl: u32): void {
       // poll itself when none are.
       t.flags(k, 0, t.ROOT_ALONE);
       if ((fl & t.YIELDS) !== 0) {
-        ls.rootFirstNext(k);
+        tn.rootTurnNext(k);
       } else {
         ls.park(k);
       }

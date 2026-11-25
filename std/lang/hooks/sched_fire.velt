@@ -15,6 +15,7 @@ import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 import * as ls from "./sched_yield_list";
+import * as tn from "./sched_yield_turn";
 
 /**
  * Fires task `k`'s due sleeps one at a time, in timer order: each resumes its waiter at once, and
@@ -56,12 +57,15 @@ export function fireYields(e: usize, k: usize): void {
   }
   let woken = m.load32(k + t.T_STATE) === t.YIELDED;
   let y = ls.take(k);
-  if (ls.rootFirst(k)) {
-    // The root's turn placed with no record comes before the root's records listed after it.
-    ls.turnNext(k, y);
-    woken = resume(e, k, k, true, false, woken, true);
-  }
+  // The root's turn placed with no record (`tn.rootTurn`: its stamp + 1, 0: none) comes before the
+  // yields made after it, and after a detached child's of its stamp (`ls.otherTurn`).
+  let rt = tn.rootTurn(k);
   while (y !== 0) {
+    if (rt !== 0 && ls.stampOf(y) >= rt) {
+      rt = 0;
+      tn.turnNext(k, y);
+      woken = resume(e, k, k, true, false, woken, true);
+    }
     const nx = ls.next(y);
     let w = ls.fire(k, y);
     const lent = w === ls.ROOT;
@@ -78,12 +82,16 @@ export function fireYields(e: usize, k: usize): void {
     }
     if (w !== 0) {
       if (w === k) {
-        // A held record of the root's whose turn is next may go on in this poll (`ls.nextTurn`).
-        ls.turnNext(k, nx);
+        // A held record of the root's whose turn is next may go on in this poll (`tn.nextTurn`).
+        tn.turnNext(k, nx);
       }
       woken = resume(e, k, w, lent, w !== k && node.ownNode(k, w), woken, true);
     }
     y = nx;
+  }
+  if (rt !== 0 && t.has(k, t.POLLED)) {
+    // The root's turn, the last, after a turn that polled it: the poll would not poll it again.
+    resume(e, k, k, true, false, woken, true);
   }
 }
 
@@ -142,7 +150,7 @@ function resume(
     }
     run.pollRootAgain(e, k);
     if (yieldTurn) {
-      ls.turnOver(k);
+      tn.turnOver(k);
     }
     return between(e, k, m.load32(k + t.T_STATE) === t.NOTIFIED);
   }

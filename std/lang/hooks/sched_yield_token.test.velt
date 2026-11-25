@@ -10,6 +10,7 @@ import * as node from "velt/lang/hooks/sched_node";
 import * as t from "velt/lang/hooks/sched_task";
 import { schedYield, schedYieldReady } from "velt/lang/hooks/sched_yield";
 import * as ls from "velt/lang/hooks/sched_yield_list";
+import { channel } from "velt/sync/channel";
 
 /** The task polled on this thread. */
 function task(): usize {
@@ -191,5 +192,32 @@ describe("a yield block", () => {
     // The next poll: the mark is gone, so a block that comes back places the root's turn anew.
     await yieldNow();
     expect(t.has(k, t.ROOT_ALONE)).toBe(false);
+  });
+});
+
+describe("the root's turns in one poll", () => {
+  it("leave a child woken without a microtask to go on before the next child's turn", async () => {
+    // In a task's root: a child's turn sends on a channel (a direct wake of the root, no
+    // microtask), which the first child waits for; it goes on before the third child's turn.
+    const order = await spawn(async (): Promise<string> => {
+      const log: string[] = [];
+      const ch = channel<number>(1);
+      const waits = async (): Promise<void> => {
+        await ch.receive();
+        log.push("c");
+      };
+      const sends = async (): Promise<void> => {
+        await yieldNow();
+        log.push("a");
+        ch.trySend(1);
+      };
+      const later = async (): Promise<void> => {
+        await yieldNow();
+        log.push("b");
+      };
+      await Promise.all([waits(), sends(), later()]);
+      return log.join(",");
+    });
+    expect(order).toBe("a,c,b");
   });
 });

@@ -6,9 +6,9 @@
 
 import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
-import * as micro from "./sched_micro";
 import * as node from "./sched_node";
 import * as t from "./sched_task";
+import * as tn from "./sched_yield_turn";
 
 /**
  * A yield: a heap future's header (0, 0 for an awaited yield's record; `HELD`, 0 for a held one),
@@ -105,7 +105,7 @@ export const B_TAKEN: usize = 32;
 /** Records kept for reuse (`recAlloc`, `recFree`): the first, linked by `Y_NEXT`, and how many. */
 export const B_FREE: usize = 40;
 export const B_NFREE: usize = 48;
-/** 1 while this poll's first turn is the root's, placed with no record (`rootFirst`). */
+/** The stamp + 1 of the root's turn this poll has with no record (`rootTurn`; 0: none). */
 export const B_RTURN: usize = 56;
 export const B_SIZE: usize = 64;
 /** At most this many records are kept for reuse. */
@@ -224,7 +224,7 @@ export function held(w: usize, k: usize, stamp: usize): usize {
  * yield made after it joined first. The root's turn placed with no record (`ROOT_ALONE`) gets one
  * once a yield that wakes something else joins, so the yields made after it come after it (a
  * yield of the same number, made before the root's, comes before it). While only the root's
- * records join, it keeps none: its turn comes first in the next poll (`rootFirst`).
+ * records join, it keeps none: its turn comes first in the next poll (`rootTurn`).
  */
 export function join(k: usize, y: usize): void {
   const b = block(k);
@@ -267,22 +267,10 @@ function insert(b: usize, y: usize): void {
   }
 }
 
-/**
- * A poll of task `k` begins with its root's turn of the last poll placed (`ROOT_ALONE`) and only
- * the root's records listed after it (`join`): that turn comes first (sched_run.velt `runOther`).
- */
-export function rootFirstNext(k: usize): void {
-  m.st(blockOf(k) + B_RTURN, 1);
-}
-
-/** Does this poll of task `k` begin with its root's turn (`rootFirstNext`)? Asked once. */
-export function rootFirst(k: usize): bool {
-  const b = blockOf(k);
-  if (m.ld(b + B_RTURN) === 0) {
-    return false;
-  }
-  m.st(b + B_RTURN, 0);
-  return true;
+/** Yield `y`'s stamp. */
+@inline("always")
+export function stampOf(y: usize): usize {
+  return m.ld(y + Y_STAMP);
 }
 
 /**
@@ -412,13 +400,13 @@ export function heldPoll(f: usize, w: usize, cur: usize): u32 {
   if (m.load(f + Y_STATE) === FIRED) {
     if (k === cur) {
       recFree(blockOf(k), f);
-      taken(k);
+      tn.taken(k);
     } else {
       m.release(f, Y_SIZE);
     }
     return 1;
   }
-  if (k === cur && w === k && nextTurn(k, f)) {
+  if (k === cur && w === k && tn.nextTurn(k, f)) {
     return 1;
   }
   if (k === cur && m.ld(w) === t.main() + t.E_NODE_VT) {
@@ -454,53 +442,6 @@ export function heldPoll(f: usize, w: usize, cur: usize): u32 {
     return 1;
   }
   return 0;
-}
-
-/**
- * A turn of task `k` polls its root (sched_fire.velt `fireYields`): `nx` is the yield whose turn
- * comes next (0: none), and none of this turn's waiters went on yet (`taken`).
- */
-export function turnNext(k: usize, nx: usize): void {
-  const b = blockOf(k);
-  m.st(b + B_NEXT, nx);
-  m.st(b + B_TAKEN, 0);
-}
-
-/** The turn's poll of task `k`'s root is over (`turnNext`). */
-export function turnOver(k: usize): void {
-  m.st(blockOf(k) + B_NEXT, 0);
-}
-
-/** A waiter of task `k`'s turn goes on now (a held record fired, or a token 0 after its poll). */
-export function taken(k: usize): void {
-  const b = blockOf(k);
-  if (b !== 0) {
-    m.st(b + B_TAKEN, 1);
-  }
-}
-
-/**
- * Held record `f` of task `k`'s root, asked in a turn's poll of the root once that turn's waiter
- * went on: when its turn is the next one and nothing would run between the two turns (no
- * microtask, rejection to report or woken promise), it goes on now, as at its own turn, which
- * then only frees it (`DROPPED`). The children of an inline `Promise.all` that yielded once each
- * then go on in one poll of the root, in the order they yielded, as their turns would run them.
- */
-function nextTurn(k: usize, f: usize): bool {
-  const b = blockOf(k);
-  if (
-    m.ld(b + B_NEXT) !== f ||
-    m.ld(b + B_TAKEN) === 0 ||
-    m.ld(f + Y_WAKER) !== ROOT ||
-    micro.pending(k) ||
-    m.ld(k + t.T_UNHANDLED) !== 0 ||
-    m.load(k + t.T_WOKEN) !== 0
-  ) {
-    return false;
-  }
-  m.st(f + Y_STATE, DROPPED);
-  m.st(b + B_NEXT, m.ld(f + Y_NEXT));
-  return true;
 }
 
 /** Stored yield `f`'s state once its turn, if it is taking place, has taken its waker. */
