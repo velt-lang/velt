@@ -2,7 +2,7 @@
 # Instructions of bench/json/replacer.velt (--release, cachegrind) with this tree's walk of
 # `JSON.stringify(value, replacer)` and with the walk it replaced (#3774): every `toJSON` run
 # while the value is written as text, which is parsed and then replaced. The same compiler builds
-# both programs; only std/prelude/json/layout.velt's `jsonStringifyReplaced` is swapped. Linux
+# both programs; only std/lang/hooks/json_replace.velt's `jsonStringifyReplaced` is swapped. Linux
 # only (valgrind).
 #
 #   bench/json/replacer_ab.sh VELT WORKDIR
@@ -14,9 +14,9 @@ mkdir -p "$WORK"
 WORK=$(cd "$WORK" && pwd)
 rm -rf "$WORK/old-std"
 cp -r "$ROOT/std" "$WORK/old-std"
-F=$WORK/old-std/prelude/json/layout.velt
+F=$WORK/old-std/lang/hooks/json_replace.velt
 perl -0pi -e 's/  return replaceJsonTop<T>\(value, replacer\);/  const root = JsonValue.parse(JSON.stringify(value), { maxDepth: 4294967295 });\n  return jsonReplacedText(jsonReplaced("", root, replacer, 0));/' "$F"
-perl -0pi -e 's/(import \{ replaceJsonTop \} from "velt\/encoding\/json\/replaced";)/$1\nimport { jsonReplaced, jsonReplacedText } from "velt\/encoding\/json\/replace_ops";/' "$F"
+perl -0pi -e 's/(import \{ replaceJsonTop \} from "velt\/encoding\/json\/replaced";)/$1\nimport { jsonReplaced, jsonReplacedText } from "velt\/encoding\/json\/replace_ops";\nimport { JSON } from "velt\/prelude\/json\/json";/' "$F"
 grep -q 'jsonReplaced("", root' "$F" || { echo "the swap did not apply" >&2; exit 1; }
 for side in old new; do
   std=$ROOT/std
