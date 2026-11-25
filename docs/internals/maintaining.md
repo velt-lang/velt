@@ -259,6 +259,31 @@ not a reason for another round.
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.
 
+### Merge trains
+
+When runners are scarce (a few concurrent jobs, macOS the tightest), the queue's one-run-per-PR
+crawls. A maintainer can instead land approved pull requests in **trains**: several approved PRs
+merged together onto `main`, one full gate run (`ci` by `workflow_dispatch`, every OS), then each
+PR squash-merged in order. The scripts are in `.claude/scripts/`:
+
+- `train.sh <pr> <pr> …` builds `train-<mmdd-hhmm>` from `main` plus each PR's current head,
+  pushes it and starts the full run. It refuses a draft or a conflicting PR. Its record (branch,
+  base, each PR's head, the run id) goes in `$VELT_TRAINS_DIR` (default `~/.velt-trains`). Set
+  `VELT_TRAIN_SSH` to build the merge on another machine where checking out the tree is slow.
+- `train-land.sh <train>` lands a green train: it squash-merges the PRs in order (admin: the full
+  gate passed on exactly this tree) and deletes the branch. It skips a PR whose head changed since
+  the train or that was closed, and stops at a merge conflict. `main` may have moved since the
+  base only on files the train doesn't touch (trains on disjoint files run side by side).
+- `trains.sh <run>:<train> …` watches several trains as a Monitor: one status call per train
+  every 5 minutes; green → `train-land.sh`; failed → rerun the failed jobs once; failed again →
+  report. It exits after 29 minutes (a Monitor's expiry doesn't kill it), so re-arm it.
+- `whyfail.sh <run>` prints each failed or cancelled job's failing step and FAIL/error lines,
+  including the real failure behind a fail-fast cancellation.
+
+Rules: only approved PRs; never push to a branch that is in a train (its head would change and
+the PR is skipped at landing); after a failure, rebuild the train without the failing PR rather
+than waiting on it. Fewer, bigger trains use fewer runners than many small ones.
+
 ## Keeping the machinery healthy
 
 - **Toolchain**: Rust is pinned in `rust-toolchain.toml`. Upgrade it in its own pull request
