@@ -1,0 +1,109 @@
+// A `throws` type that only a declaration names (an interface method, an abstract method, a
+// function type, a type argument) and no code throws: the methods that implement it are live
+// with that type as what they may throw, though nothing ever makes such a value. The check used
+// to run for ever on a union or an enum there, or leave the uncaught error's report unchecked
+// (#3807).
+enum Bad {
+  A,
+  B,
+}
+
+class AErr extends Error {}
+class BErr extends Error {
+  code: number = 7;
+}
+
+interface Risky {
+  run(n: number): void throws RangeError | TypeError;
+}
+
+interface RiskyEnum {
+  run(n: number): void throws Bad;
+}
+
+interface RiskyOf<E> {
+  run(n: number): void throws E;
+}
+
+interface RiskyText {
+  run(n: number): void throws string | RangeError;
+}
+
+interface RiskyOwn {
+  run(n: number): void throws AErr | BErr;
+}
+
+abstract class Base {
+  abstract run(n: number): void throws RangeError | TypeError;
+}
+
+type Step = (n: number) => void throws RangeError | TypeError;
+
+class Calm implements Risky {
+  run(n: number): void {
+    console.log("calm", n);
+  }
+}
+
+class CalmEnum implements RiskyEnum {
+  run(n: number): void {
+    console.log("calm enum", n);
+  }
+}
+
+class CalmOf implements RiskyOf<RangeError | TypeError> {
+  run(n: number): void {
+    console.log("calm of", n);
+  }
+}
+
+class CalmText implements RiskyText {
+  run(n: number): void {
+    console.log("calm text", n);
+  }
+}
+
+class CalmOwn implements RiskyOwn {
+  run(n: number): void {
+    console.log("calm own", n);
+  }
+}
+
+class LoudOwn implements RiskyOwn {
+  run(n: number): void throws AErr | BErr {
+    if (n > 1) {
+      throw new AErr("a");
+    }
+    throw new BErr("b");
+  }
+}
+
+class Derived extends Base {
+  run(n: number): void {
+    console.log("derived", n);
+  }
+}
+
+function text(r: RiskyText): void {
+  r.run(4);
+}
+
+new Calm().run(1);
+new CalmEnum().run(2);
+new CalmOf().run(3);
+text(new CalmText());
+new Derived().run(5);
+const step: Step = (n: number) => {
+  console.log("step", n);
+};
+step(6);
+const own: RiskyOwn[] = [new CalmOwn(), new LoudOwn()];
+for (const r of own) {
+  for (const n of [1, 2]) {
+    try {
+      r.run(n);
+    } catch (e) {
+      console.log(e instanceof AErr, e instanceof BErr, e.message);
+    }
+  }
+}

@@ -1,0 +1,84 @@
+// Prelude: what the compiler calls for the arguments of a literal `console.log` format string
+// (#3662), as Node's `util.format` writes them (`formatWithOptionsInternal` in
+// lib/internal/util/inspect.js): `%s` and `%d` of an `any` (`consoleString`, `consoleNumber`),
+// `%i` and `%f` of a number (`consoleInteger`, `consoleFloat`). The compiler splits the literal
+// and converts the other arguments itself (velt_sema `console_format.rs`).
+
+import { anyString } from "velt/lang/hooks/any_text";
+import { anyReflectInfo, inspectNested } from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_rt_strbuf_inspect_layout(buf: string, start: u64);
+
+/** A number as Node's `%s` writes it: `String(n)`, but `-0` for negative zero. */
+function numberText(n: number): string {
+  return n == 0 && 1 / n < 0 ? "-0" : String(n);
+}
+
+/**
+ * `%s` of `v`: a number as `numberText` writes it, another primitive as `String(v)` does, an
+ * object with a `toString()` of its own by it, and any other object (and `null`) inspected at
+ * depth 0. (No `===` of the `any`: a program comparing `any` values pays for their identity.)
+ */
+function consoleString(v: any): string {
+  const t = typeof v;
+  if (t === "number") {
+    return numberText(v as number);
+  }
+  if (t !== "object") {
+    return anyString(v, "");
+  }
+  if (ownToString(v)) {
+    return anyString(v, "");
+  }
+  let b = "";
+  velt_rt_strbuf_new(64, b);
+  // Node's depth 0: the value's own entries, the objects in it as `[Object]`.
+  inspectNested(b, v, 2);
+  velt_rt_strbuf_inspect_layout(b, 0);
+  let s = "";
+  velt_rt_strbuf_finish(b, s);
+  return s;
+}
+
+/**
+ * `%i` of a number: `parseInt(String(n))` without parsing, `n` without its fraction (`0` for
+ * `-0`); a number `String` writes with an exponent (`1e+21`, `5e-7`) gives the digit before it.
+ */
+function consoleInteger(n: number): number {
+  const a = Math.abs(n);
+  if (n != n || a == Infinity) {
+    return NaN;
+  }
+  if (a >= 1e21 || (a < 1e-6 && a != 0)) {
+    const lead = (String(a).charCodeAt(0) - 48) as number;
+    return n < 0 ? -lead : lead;
+  }
+  return n == 0 ? 0 : Math.trunc(n);
+}
+
+/** `%f` of a number: `parseFloat(String(n))`, which is `n`, but `0` for `-0`. */
+function consoleFloat(n: number): number {
+  return n == 0 ? 0 : n;
+}
+
+/** `%d` of `v`: `Number(v)`, but `NaN` for a symbol (which `Number` would throw for). */
+function consoleNumber(v: any): number {
+  return typeof v === "symbol" ? NaN : Number(v);
+}
+
+/**
+ * Has the object `v` a `toString()` that is not a built-in's (Node's `hasBuiltInToString` is
+ * false): an object literal's own, or one a class declares that is not a JavaScript built-in
+ * (the `own` field of its runtime type, velt_vir `any_reflect.rs`: an `Error` subclass
+ * without one of its own has `Error`'s).
+ */
+function ownToString(v: any): boolean {
+  const info = anyReflectInfo(v).split("|");
+  const kind = info[0];
+  if (kind == "object") {
+    return Object.keys(v).includes("toString") && typeof v.toString === "function";
+  }
+  return (kind == "class" || kind == "struct") && info.length > 4 && info[4] == "own";
+}

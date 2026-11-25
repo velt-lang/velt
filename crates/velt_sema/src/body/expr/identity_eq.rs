@@ -26,6 +26,16 @@ impl FnCx<'_, '_> {
                 Ok(r) | Err(r) => (l, r),
             };
         }
+        // A record view (`Record<string, any>`) and a value of an object type it may view
+        // (`view === point`, `Object.is(view, xs)`): both as `any`, where a view is its source
+        // (velt_vir record_view.rs), so the view and its source are one object (#3675). A module
+        // constant is reported before the conversion hides it (`check_identity`).
+        if self.view_and_source(l.ty, r.ty) || self.view_and_source(r.ty, l.ty) {
+            if let Some(any) = self.any_ty() {
+                crate::body::pure_init::check_identity(self.cx, [&l, &r]);
+                return (self.coerce(l, any), self.coerce(r, any));
+            }
+        }
         // Two function types: one converts to the other, and the wrapper the conversion makes
         // is the function it wraps (`hir::Program::fn_wrappers`), as in JavaScript.
         let func = |s: &Self, t: TyId| matches!(s.cx.ty.kind(t), TyKind::FnPtr { .. });
@@ -42,6 +52,27 @@ impl FnCx<'_, '_> {
                 (l, r)
             }
         }
+    }
+
+    /// Is `v` a record type with `string` keys and `any` values (what `x as Record<string, any>`
+    /// makes, a view of `x`), and `s` another object type a view's source may have: a class,
+    /// struct, object literal type, interface, array or `Map`?
+    fn view_and_source(&self, v: TyId, s: TyId) -> bool {
+        let v = self.cx.ty.core(v).unwrap_or(v);
+        let s = self.cx.ty.core(s).unwrap_or(s);
+        if v == s || self.cx.union_def(s).is_some() {
+            return false;
+        }
+        let viewing = matches!(
+            self.record_args(v),
+            Some((k, val)) if k == self.cx.ty.str_ && self.cx.dynamic(val).is_some()
+        );
+        viewing
+            && self.cx.dynamic(s).is_none()
+            && matches!(
+                self.cx.ty.kind(s),
+                TyKind::Adt(..) | TyKind::Dyn(..) | TyKind::Array(_)
+            )
     }
 
     /// Are `a` and `b` (or what they hold besides `null`/`undefined`) two interfaces, one

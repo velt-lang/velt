@@ -133,6 +133,12 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
     writeSubclasses(out, model, t, v, key, raw);
     out.line(`w.append("{}");`);
   } else if (t.kind == "record") {
+    // A record view (`x as Record<string, any>`) is written as the object it views, the `any`
+    // it converts to, as in Node, where the cast is a no-op (an array as an array, #3675).
+    if (isDynamic(model.type(t.args[1]))) {
+      const any = raw ? "writeJsonAnyRaw" : "writeJsonAny";
+      out.line(`if (recordViewIs(${v})) { ${any}(w, dynamicOf(${v}), ${key}); return; }`);
+    }
     writeEntries(out, model, model.type(t.args[0]), t.args[1], `Object.entries(${v})`, raw);
   } else if (t.kind == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
     out.line(`appendJsonValue(w, ${v});`);
@@ -164,26 +170,86 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
       const ret = t.methods[m].ret;
       const arg = t.methods[m].params > 0 ? key : "";
       out.line(`const j = ${v}.toJSON(${arg});`);
-      if (ret == id) {
-        // `toJSON() { return this; }`: JavaScript writes the fields of the result.
-        writeFields(out, model, t, "j");
-      } else {
-        writeValue(out, model, ret, "j", key);
-      }
+      writeHookResult(out, model, ret, key);
       return;
     }
     const recursive = isRecursive(model, t);
     if (recursive) {
-      out.line(`if (!beginVisit(identity(${v}))) { jsonCircular(); }`);
+      out.line(`jsonEnter(identity(${v}));`);
     }
     writeFields(out, model, t, v, raw);
     if (recursive) {
-      out.line(`endVisit();`);
+      out.line(`jsonLeave();`);
     }
   } else {
     // No JSON form: sema reports the call that needs it (the code is never run).
     const msg = out.literal(`JSON.stringify of \`${t.display}\``);
     out.line(`panic(${msg});`);
+  }
+}
+
+/**
+ * Writes `j`, what a `toJSON(key)` returned, of type `ret`. JavaScript calls the hook once and
+ * writes its result's own fields, never the result's `toJSON` (#3732): a `return this` would call
+ * it again (forever, for a subclass that inherits the hook), and a result of another class with a
+ * hook would be written through that hook. The code this writes ends the writer.
+ */
+function writeHookResult(out: Output, model: Model, ret: i64, key: string): void {
+  writeResult(out, model, ret, "j", key);
+}
+
+/**
+ * The code that writes `v`, a hook's result (or part of the result's union) of type `id`, without
+ * calling the result's own hook: a class by its dynamic class (most derived first) and its fields,
+ * guarded against a cycle as the class's writer is; a type with a hook by its fields; a dynamic
+ * value through `writeJsonResult`; an option or a union by its value; anything else as itself.
+ */
+function writeResult(out: Output, model: Model, id: i64, v: string, key: string): void {
+  const r = model.type(id);
+  if (isDynamic(r)) {
+    out.line(`writeJsonResult(w, ${v}, ${key});`);
+  } else if (r.kind == "interface") {
+    out.line(`writeJsonResult(w, dynamicOf(${v}), ${key});`);
+  } else if (r.kind == "option") {
+    out.line(`if (${v} == null) { w.append("null"); return; }`);
+    writeResult(out, model, r.args[0], v, key);
+  } else if (r.kind == "union") {
+    for (let i: i64 = 0; i < (r.arms.length as i64); i++) {
+      out.line(`if (__arm(${v}, ${i})) {`);
+      writeResult(out, model, r.arms[i], v, key);
+      out.line(`return;`);
+      out.line(`}`);
+    }
+  } else if (r.kind != "class" && toJsonMethod(r) < 0) {
+    writeValue(out, model, id, v, key);
+  } else {
+    // A typed proxy is written as the `any` it converts to, where one may stand for the type.
+    if (r.mayBeProxy) {
+      out.line(`if (isProxy(${v})) { writeJsonResult(w, dynamicOf(${v}), ${key}); return; }`);
+    }
+    for (let i = (r.subclasses.length as i64) - 1; i >= 0; i--) {
+      const s = model.type(r.subclasses[i]);
+      if (!writable(model, s.id, [])) {
+        continue;
+      }
+      out.line(`if (${v} instanceof ${className(s)}) {`);
+      writeGuardedFields(out, model, s, v);
+      out.line(`return;`);
+      out.line(`}`);
+    }
+    writeGuardedFields(out, model, r, v);
+  }
+}
+
+/** `writeFields` of `v`, as a cycle when `t` can contain itself and `v` is being written. */
+function writeGuardedFields(out: Output, model: Model, t: Type, v: string): void {
+  const recursive = isRecursive(model, t);
+  if (recursive) {
+    out.line(`jsonEnter(identity(${v}));`);
+  }
+  writeFields(out, model, t, v);
+  if (recursive) {
+    out.line(`jsonLeave();`);
   }
 }
 

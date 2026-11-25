@@ -29,6 +29,12 @@ export { CVarArgs } from "velt/ffi/c_var_args";
  */
 export { Out } from "velt/ffi/out";
 
+/**
+ * A C struct a C function reads through a `const S *` parameter: the call passes the struct, and
+ * C gets the address of a copy, borrowed for the call.
+ */
+export { Ref } from "velt/ffi/ref";
+
 /** The calling thread's C `errno`, read and set in place (unsafe). */
 export { errno, setErrno } from "velt/ffi/errno";
 

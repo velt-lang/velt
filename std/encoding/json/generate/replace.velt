@@ -104,6 +104,12 @@ function dispatch(out: Output, model: Model, id: i64, hook: bool, w: Walk): bool
     out.line(`return undefined;`);
     return true;
   }
+  if (t.kind == "record" && isDynamic(model.type(t.args[1]))) {
+    // A record view (`x as Record<string, any>`): the `any` it views, as `writeJson` writes it.
+    const call = `replaceJsonAny(dynamicOf(${v}), ${w.key}, ${w.raw}, ${w.f}, ${w.depth}, ${hook})`;
+    out.line(`if (recordViewIs(${v})) { return ${call}; }`);
+    return false;
+  }
   const classLike = t.kind == "object" || t.kind == "struct" || t.kind == "class";
   if (!classLike && !writesEmpty(t) && t.kind != "date" && t.kind != "opaque") {
     return false;
