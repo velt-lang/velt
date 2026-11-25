@@ -252,9 +252,6 @@ impl FnCx<'_, '_> {
         self.view_receiver = false;
         let obj = self.record_present_member(obj, &prop.name);
         if want != Want::BorrowMut && self.is_method_value(obj.ty, &prop.name) {
-            if self.stored_method_read(object, prop, obj.ty, span) {
-                return self.error_expr(span);
-            }
             return self.method_value(obj, object, prop, exp, span);
         }
         let r = self.in_place_receiver(object, obj);
@@ -348,6 +345,9 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         if optional {
             return self.chain_with(exp, object, span, |s, v| {
+                if let Some(h) = s.match_group_read(&v, index, want, span) {
+                    return h;
+                }
                 if want != Want::BorrowMut {
                     s.array_used_in_place(&v);
                 }

@@ -1,0 +1,8 @@
+main done
+setup done
+unref'd 5 ms timeout, due before a
+a: the last ref'd timer
+unref'd timeout due with a
+d, unref'd by a while due
+unref'd interval run 1
+unref'd 15 ms timeout, due in the same pass

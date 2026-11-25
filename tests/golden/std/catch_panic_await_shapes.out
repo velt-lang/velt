@@ -1,0 +1,8 @@
+top-level 2,3,1
+plain 3,1,2
+try/catch/finally try+finally try+catch+finally try+finally
+async generators 3,0,1
+methods 6 3
+arrows 14
+caught true
+after 2,1

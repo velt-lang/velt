@@ -1,0 +1,22 @@
+return true 40 true
+push true 40 true
+field true 40 true
+map key true 40 true
+map value true 40 true
+closure true 40 true
+throw true 40 true
+identity true 40 true
+copy in use true 40 true
+identity in use true 40 true
+pick true 40 true
+piece true 40 true
+trim true 40 true
+array literal true 40 true
+spread true 40 true
+object literal true 40 true
+any true 40 true
+any parameter true 40 true
+unknown true 40 true
+destructuring true 40 true
+rest parameter true 40 true
+module let true 40 true

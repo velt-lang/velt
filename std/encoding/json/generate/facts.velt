@@ -118,6 +118,42 @@ export function hidden(model: Model, f: Field): bool {
   return t.kind == "function";
 }
 
+/**
+ * Is `t` a collection whose entries are no properties, which JavaScript writes as `{}`: a
+ * `Map`, a `Set`, a `WeakMap` or a `WeakSet`?
+ */
+export function writesEmpty(t: Type): bool {
+  const k = t.kind;
+  if (k == "map" || k == "set") {
+    return true;
+  }
+  const q = t.qualifiedName;
+  const weak = q == "std/prelude/weak::WeakMap" || q == "std/prelude/weak_set::WeakSet";
+  return k == "opaque" && weak;
+}
+
+/**
+ * Does class `t` extend a collection `writesEmpty` holds? Its inherited fields are the
+ * collection's private state, which JavaScript doesn't write (it has no own properties there):
+ * only its own fields are written.
+ */
+export function extendsCollection(model: Model, t: Type): bool {
+  let b = t.base;
+  for (let n = 0; b >= 0 && n < 64; n++) {
+    const bt = model.type(b);
+    if (writesEmpty(bt)) {
+      return true;
+    }
+    b = bt.base;
+  }
+  return false;
+}
+
+/** Is field `f` of `t` a collection's private state, which a subclass of one leaves out? */
+export function collectionState(model: Model, t: Type, f: Field): bool {
+  return f.stdPrivate && extendsCollection(model, t);
+}
+
 /** The `toJSON` method of `t`, if it has one a generator can call. */
 export function toJsonMethod(t: Type): i64 {
   for (let i: i64 = 0; i < (t.methods.length as i64); i++) {
@@ -151,7 +187,8 @@ export function needsKey(model: Model, id: i64, seen: i64[]): bool {
   if (t.kind == "record") {
     return isDynamic(model.type(t.args[1]));
   }
-  if (t.kind != "class") {
+  // A `Map` or `Set` value may be a subclass's instance, written as that class.
+  if (t.kind != "class" && t.kind != "map" && t.kind != "set") {
     return false;
   }
   if (keyedHook(t)) {
@@ -262,8 +299,8 @@ export function writable(model: Model, id: i64, seen: i64[]): bool {
   if (k == "record") {
     return writable(model, t.args[1], seen);
   }
-  if (k == "map") {
-    return model.type(t.args[0]).kind == "string" && writable(model, t.args[1], seen);
+  if (writesEmpty(t)) {
+    return true;
   }
   const m = toJsonMethod(t);
   if (m >= 0) {
@@ -271,7 +308,7 @@ export function writable(model: Model, id: i64, seen: i64[]): bool {
   }
   if (k == "object" || k == "struct" || k == "class") {
     for (const f of t.fields) {
-      if (hiddenKey(f)) {
+      if (hiddenKey(f) || collectionState(model, t, f)) {
         continue;
       }
       if (!writable(model, f.type, seen)) {

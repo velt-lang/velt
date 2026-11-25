@@ -5,6 +5,7 @@
 // transport (in one piece and a byte at a time), and what the client writes must be the trace's
 // records byte for byte: its Finished, its application data, its close_notify. Tampered and
 // broken server flights must fail with the right alert.
+import "velt/lang/typed_array/bytes_view";
 import { hkdfExpandSha256 } from "velt/crypto/hkdf";
 import { sha256 } from "velt/crypto/sha256";
 import { hexDecode, hexEncode } from "velt/encoding/hex";

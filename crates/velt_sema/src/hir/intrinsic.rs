@@ -12,14 +12,12 @@ pub enum Intrinsic {
     PrintErr,
     /// 1 arg of int/float/bool/Str type → owned `Str` (JS formatting for floats: `1`, `1.5`, `NaN`).
     ToString,
-    /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and
-    /// not caught writes after `Uncaught ` and before the location: Node's header for an
-    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt/test`
-    /// reports a failed test with it.
+    /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and not caught writes
+    /// after `Uncaught ` and before the location: Node's header for an `Error` (`ParseError: bad`),
+    /// any other value as `console.log` prints it. `velt/test` reports a failed test with it.
     ErrorText,
-    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw`
-    /// on this thread, as an uncaught report ends, or `""` when not known (read it first thing
-    /// in the `catch`).
+    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw` on this thread,
+    /// as an uncaught report ends, or `""` when not known (read it first thing in the `catch`).
     ThrowLoc,
     /// `(x: borrow T) -> string` (`inspect`): `x` as Node's `util.inspect` writes
     /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
@@ -234,10 +232,9 @@ pub enum Intrinsic {
     /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
     /// (hir_encodings.md "Type predicates on a type parameter").
     MayHoldPrimitive,
-    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type
-    /// `T` is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The
-    /// condition of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type
-    /// parameter").
+    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type `T`
+    /// is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The condition
+    /// of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type parameter").
     HoldsDynamic,
     /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a
     /// class: the condition of the text of a `T` value in a string `+`, which asks a class
@@ -425,6 +422,9 @@ pub enum Intrinsic {
     PtrRead,
     /// std only (`Ptr.write`): `ptrWrite<S>(p: Ptr<S>, i: usize, s: S)`, as `PtrRead`. Additive.
     PtrWrite,
+    /// std only (`Out.value`, #2187): `cArrived<T>(v: T) -> T`, `v` with its non-null `Ptr<T>`s
+    /// checked, as `PtrRead`'s. Additive.
+    CArrived,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`, the address of `a`'s word: a
     /// 32- or 64-bit `Atomic` that can't move (`Global(d)`, a field of `SharedRead`'s). Additive.
     AtomicAddress,
@@ -503,21 +503,21 @@ pub enum Intrinsic {
     /// 0 in the others, unchecked (a SIMD `load_partial` of the string's bytes).
     StrLoadPartialU8x16,
     /// std only: `(w0: u64, w1: u64, w2: u64, len: usize)` → string: the inline ASCII string of
-    /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`. The bytes past
-    /// `len` must be 0 (equality compares the words). No call: the string's inline form
-    /// (rt_abi.md "Strings") written as three words.
+    /// `len` (at most 23) bytes, byte `i` in bits `8 * (i % 8)` of word `i / 8`, bytes past `len`
+    /// 0 (equality compares the words). No call: the inline form (rt_abi.md "Strings").
     StrAsciiWords,
+    /// std only: `(ptr: u64, w1: u64)` → string: the static form `{ptr, w1, 0}`, made only from a
+    /// sub-range of a static string (std/lang/intrinsics/string.velt says why). Additive.
+    StrBorrowedWords,
     /// std only: `(buf: Mut<string>, w0: u64, w1: u64, w2: u64, len: usize)`: appends the first
-    /// `len` (at most 24) bytes of the words, ASCII, to the builder `buf` (a `velt_rt_strbuf_*`
-    /// builder, which the call writes): the three words are stored after its text when its plain
-    /// heap buffer has room for 24 more bytes; an inline ASCII builder that still fits gets them
-    /// shifted in and OR'd; anything else calls `velt_rt_strbuf_push_words` with them by value.
+    /// `len` (at most 24) bytes of the words, ASCII, to the builder `buf` (which the call writes):
+    /// stored after its text when its plain heap buffer has room for 24 more bytes, shifted in
+    /// and OR'd in an inline builder that fits, else by value to `velt_rt_strbuf_push_words`.
     StrbufPushAsciiWords,
     /// std only: `(buf: Mut<string>, w: u64, len: usize)`: appends the first `len` (at most 8)
     /// bytes of `w`, ASCII, to the builder `buf`: an inline ASCII builder of fewer than 16 bytes
-    /// gets the word stored where its text ends, in the builder itself, and byte 23 raised; a
-    /// plain heap builder with room for 8 more bytes gets it stored after its text; anything else
-    /// calls `velt_rt_strbuf_push_words` (`StrbufPushAsciiWords` for up to 24).
+    /// gets the word stored where its text ends and byte 23 raised; a plain heap builder with
+    /// room for 8 more gets it after its text; else `velt_rt_strbuf_push_words` is called.
     StrbufPushAsciiWord,
     /// `(xs: borrow T[]) -> u64` — address of element 0 (no std declaration calls it now).
     ArrayDataPtr,

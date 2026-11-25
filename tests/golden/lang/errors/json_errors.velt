@@ -21,5 +21,4 @@ async function main() {
   JSON.parse<D>("{}");
   JSON.parse<F>("{}");
   JSON.parse<G>("{}");
-  JSON.stringify(new Map<i64, string>());
 }

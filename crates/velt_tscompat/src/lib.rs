@@ -45,7 +45,6 @@ pub const RULES: &[&str] = &[
     "int-division",
     "object-in-template",
     "default-sort",
-    "json-map",
     "map-iter-as-array",
     "velt-global",
     "velt-member",

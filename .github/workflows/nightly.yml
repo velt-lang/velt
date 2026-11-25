@@ -71,6 +71,10 @@ jobs:
       VELT_ROBUSTNESS: full
       # Every golden with variables described, not a sample (crates/veltc/tests/debug_vars.rs).
       VELT_DEBUG_VARS: all
+      # Every golden's VIR with std loaded up front and on demand, not the sample the queue and the
+      # checks after merging compare (crates/veltc/tests/eager_std_identity.rs). On Linux only: what
+      # it checks, the order std loads in, doesn't depend on the OS.
+      VELT_VIR_IDENTITY: all
     steps:
       # The whole gate fills the runner's disk (2026-11-05: "No space left on device", which kills
       # the runner itself and leaves no log). Remove what the image carries and this job never uses.
@@ -165,7 +169,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) on Windows and macOS: the queue
-  # skips them unless a change touches WebAssembly code, and ci.yml's scheduled run of these OSes
+  # runs them there only for a change to WebAssembly's host side (`WASM_HOST_PATHS` in
+  # crates/xtask/src/os.rs; Linux checks the rest), and ci.yml's scheduled run of these OSes
   # leaves them out, so this is where every change meets them there. As in the
   # queue, one job per OS builds them and shards run them (queue-goldens.yml, `WASM_SHARDS` in
   # crates/xtask/src/os.rs, which `wasm-plan` reads); a failed shard leaves the other jobs of this

@@ -129,6 +129,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("ptrToAddress", Op(I::PtrToAddress)),
     ("ptrRead", Op(I::PtrRead)),
     ("ptrWrite", Op(I::PtrWrite)),
+    ("cArrived", Op(I::CArrived)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("addressCall3", Op(I::AddressCall3)),
@@ -152,6 +153,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("slotTransfer", Op(I::SlotTransfer)),
     // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
+    ("strBorrowedWords", Op(I::StrBorrowedWords)),
     ("strByteAt", Op(I::StrByteAt)),
     ("strByteLen", Op(I::StrByteLen)),
     ("strCharCodeAt", Op(I::StrCharCodeAt)),

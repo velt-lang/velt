@@ -68,6 +68,32 @@ extend<T> Array<T> {
   }
 
   /**
+   * Copies the elements in [start, end) to position `target` and on, as far as the array
+   * reaches (positions as in `slice`; the ranges may overlap). The length stays. JS also returns
+   * the array; here the result is `void`, see `fill`.
+   */
+  copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807) {
+    const len = this.length;
+    const to = clampPosition(target, len);
+    const from = clampPosition(start, len);
+    const hi = clampPosition(end, len);
+    if (hi <= from || to == from) {
+      return;
+    }
+    const count = hi - from < len - to ? hi - from : len - to;
+    if (from < to && to < from + count) {
+      // Back to front, so no element is overwritten before it is copied.
+      for (let i = count; i > 0; i--) {
+        this[to + i - 1] = share(this[from + i - 1]);
+      }
+      return;
+    }
+    for (let i: usize = 0; i < count; i++) {
+      this[to + i] = share(this[from + i]);
+    }
+  }
+
+  /**
    * Removes `deleteCount` elements from `start` (positions as in `slice`; omitted: the rest),
    * inserts `items` there, and returns the removed elements, like JS. O(length).
    */

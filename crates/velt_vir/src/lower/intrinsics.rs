@@ -62,6 +62,7 @@ impl FnLower<'_, '_> {
             }
             (I::PtrRead, [p, i]) => self.ptr_read(p, i, ty),
             (I::PtrWrite, [p, i, v]) => self.ptr_write(p, i, v),
+            (I::CArrived, [v]) => self.c_arrived(v, ty),
             (I::FutPoll, [f, cx]) => self.fut_intrinsic(f, Some(cx)),
             (I::FutDrop, [f]) => self.fut_intrinsic(f, None),
             (I::StatePoll, [p, s, cx]) => self.state_poll(p, s, cx),
@@ -269,6 +270,10 @@ impl FnLower<'_, '_> {
                 let words = [self.expr(w0), self.expr(w1), self.expr(w2)];
                 let len = self.expr_as_u64(len);
                 self.str_ascii_words(words, len, ty)
+            }
+            (I::StrBorrowedWords, [ptr, w1]) => {
+                let (ptr, w1) = (self.expr(ptr), self.expr(w1));
+                self.str_borrowed_words(ptr, w1, ty)
             }
             (I::StrbufPushAsciiWord, [buf, w, len]) => {
                 let w = self.expr(w);

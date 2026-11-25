@@ -335,6 +335,7 @@ enums! {
         30 => Sha3Arm,
         31 => Fp16Arm,
         32 => I8mmArm,
+        33 => AdxX86,
     }
     DynMemberKind {
         0 => Method,
@@ -591,6 +592,8 @@ enums! {
         221 => PtrRead,
         222 => PtrWrite,
         223 => WeakRead,
+        224 => StrBorrowedWords,
+        225 => CArrived,
     }
 }
 

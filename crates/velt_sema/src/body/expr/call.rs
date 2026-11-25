@@ -23,6 +23,11 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        if optional {
+            if let Some(h) = self.promise_member_optional_call(callee, args, span) {
+                return h;
+            }
+        }
         if optional && !self.is_method_member(callee) {
             return self.optional_chain(callee, span, |s, f| s.call_value(f, args, span));
         }

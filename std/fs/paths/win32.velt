@@ -1,15 +1,14 @@
 // velt/fs (internal): renaming, linking and copying on Windows (`#fs-paths`'s win32 variant,
 // std/imports.velt), the way libuv does each for Node, through Win32's wide-path functions, with
-// Node's messages and libuv's names for Win32's errors (std/os/win_error.velt). A long path gets
-// the `\\?\` prefix, and separators after a path are taken as Node takes them (velt/fs/whole/
-// win_path: a path read names the file, a path made is made without them). Errors name the paths
-// as they were given.
+// Node's messages and libuv's names for Win32's errors (std/os/win_error.velt). Paths are resolved
+// and given with the `\\?\` prefix, and errors name them absolute, as Node does (velt/fs/whole/
+// win_path).
 
 import { Ptr } from "velt/ffi/ptr";
 import { wideOf, wideText } from "velt/ffi/wide";
-import { osError } from "velt/fs/errors";
 import { Done } from "velt/fs/whole/done";
-import { asFile, winPath, withoutSeparators } from "velt/fs/whole/win_path";
+import { osError } from "velt/fs/errors";
+import { resolved, shown, winError, winPath } from "velt/fs/whole/win_path";
 import { errnoOfWin32 } from "velt/os/win_error";
 import { COPY_EXCL, COPY_FICLONE_FORCE } from "velt/fs/copy_mode";
 
@@ -87,7 +86,7 @@ const EBUSY: i32 = 16;
 const ENOSYS: i32 = 38;
 
 function failed<T>(code: u32, syscall: string, path: string, dest: string | null = null): Done<T> {
-  return { value: null, error: osError(errnoOfWin32(code), syscall, path, dest) };
+  return { value: null, error: winError(errnoOfWin32(code), syscall, path, dest) };
 }
 
 function lastWin32(): u32 {
@@ -120,8 +119,8 @@ export function renameAt(
   ct: readonly u8[],
   to: string,
 ): Done<bool> {
-  const wf = winPath(asFile(from));
-  const wt = winPath(withoutSeparators(to));
+  const wf = winPath(from);
+  const wt = winPath(to);
   if (wf === null || wt === null) {
     return failed(ERROR_FILE_NOT_FOUND, "rename", from, to);
   }
@@ -159,10 +158,10 @@ export function copyAt(
   mode: u32,
 ): Done<bool> {
   if ((mode & COPY_FICLONE_FORCE) != 0) {
-    return { value: null, error: osError(ENOSYS, "copyfile", from, to) };
+    return { value: null, error: winError(ENOSYS, "copyfile", from, to) };
   }
-  const wf = winPath(asFile(from));
-  const wt = winPath(withoutSeparators(to));
+  const wf = winPath(from);
+  const wt = winPath(to);
   if (wf === null || wt === null) {
     return failed(ERROR_FILE_NOT_FOUND, "copyfile", from, to);
   }
@@ -213,13 +212,13 @@ export function symlinkAt(
   path: string,
 ): Done<bool> {
   // A relative target is stored as it is, not resolved: from the link's directory is how
-  // Windows follows it.
-  const link = withoutSeparators(path);
-  const wl = winPath(link);
-  const wt = absolute(target) ? winPath(target) : wideOf(target.replaceAll("/", "\\"));
-  const wr = winPath(fromLink(target, link));
+  // Windows follows it. An absolute one is stored as Node gives it to Windows, and named so.
+  const wl = winPath(path);
+  const stored = absolute(target) ? null : target.replaceAll("/", "\\");
+  const wt = stored === null ? winPath(target) : wideOf(stored);
+  const wr = winPath(fromLink(target, resolved(path)));
   if (wl === null || wt === null || wr === null) {
-    return failed(ERROR_FILE_NOT_FOUND, "symlink", target, path);
+    return linkFailed(ERROR_FILE_NOT_FOUND, target, stored, path);
   }
   // SAFETY: `wr` is NUL-terminated.
   const attributes = unsafe { GetFileAttributesW(wr) };
@@ -240,7 +239,16 @@ export function symlinkAt(
     }
     code = lastWin32();
   }
-  return failed(code, "symlink", target, path);
+  return linkFailed(code, target, stored, path);
+}
+
+/**
+ * `symlink`'s error, naming the target as Node does: a relative one as stored (`stored`, `\` for
+ * `/`), an absolute one resolved; the link's path resolved.
+ */
+function linkFailed<T>(code: u32, target: string, stored: string | null, path: string): Done<T> {
+  const named = stored ?? shown(target);
+  return { value: null, error: osError(errnoOfWin32(code), "symlink", named, shown(path)) };
 }
 
 /** Whether unit `u` is an ASCII letter. */
@@ -266,7 +274,7 @@ function ntDrive(w: readonly u16[], at: usize, n: usize): bool {
  * a junction's when it names a drive's path. Something that is not a link is `EINVAL`.
  */
 export function readlinkAt(c: readonly u8[], path: string): Done<string> {
-  const w = winPath(asFile(path));
+  const w = winPath(path);
   if (w === null) {
     return failed(ERROR_FILE_NOT_FOUND, "readlink", path);
   }
@@ -330,7 +338,7 @@ export function readlinkAt(c: readonly u8[], path: string): Done<string> {
  * `\\s\x`). A path that doesn't exist is `ENOENT`.
  */
 export function realpathAt(c: readonly u8[], path: string): Done<string> {
-  const w = winPath(asFile(path));
+  const w = winPath(path);
   if (w === null) {
     return failed(ERROR_FILE_NOT_FOUND, "realpath", path);
   }

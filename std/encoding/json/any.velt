@@ -82,7 +82,10 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     endVisit();
   } else if (kind == "class" && t.hasHook("toJSON")) {
     writeHooked(w, v, t, key);
-  } else if (kind == "object" || kind == "class" || kind == "struct" || kind == "map") {
+  } else if (kind == "map" || kind == "set") {
+    // No enumerable own properties, as in Node.
+    w.append("{}");
+  } else if (kind == "object" || kind == "class" || kind == "struct") {
     enter(v);
     writeMembers(w, v, null);
     endVisit();
@@ -147,10 +150,16 @@ function writeElements(w: StringBuilder, v: any): void {
   w.append("]");
 }
 
-/** The members of an object, a class instance, a struct, a `Map` or a record, in `order`. */
+/** The members of an object, a class instance, a struct or a record, in `order`. */
 function writeMembers(w: StringBuilder, v: any, order: i64[] | null): void {
   const n = entryCount(v);
   if (n < 0) {
+    // std's `WeakMap` and `WeakSet` keep their entries out of sight: `{}`, as in Node.
+    const name = typeOf(v).name;
+    if (name == "WeakMap" || name == "WeakSet") {
+      w.append("{}");
+      return;
+    }
     unsupported();
   }
   w.append("{");

@@ -1,0 +1,141 @@
+// velt/encoding/json (internal): what a `Reader` (reader.velt) reading a native driver's rows does
+// on its failure branch (such a reader stays failed with `ROWS`): each forwards, out of line, to
+// the reader's rows side, a `RowsSide`, so the text reader's methods carry one call for rows (as
+// they carried one runtime call before #3318) and stay small for the text they read.
+//
+// The rows side is an interface: its one implementation (`RowsOps`, rows_ops.velt) is made only by
+// rows_ops.velt's `readerOverCursor`, which velt/db hands to the generated row decoders. So a
+// program that never decodes a driver's rows neither loads nor compiles the rows reader, and
+// needs none of the runtime's rows functions (velt_rt_wasm has none).
+
+import { Reader } from "velt/encoding/json/reader";
+import { noInline } from "velt/lang/intrinsics";
+
+/** A mark of the rows (not of a nested value's text): its bit 63, which no text mark sets. */
+export const ROWS_MARK: u64 = 0x8000000000000000;
+
+/**
+ * The rows side of a `Reader` over a driver's rows: each method answers the `Reader` method of its
+ * name for `r` (the reader, which a nested value is read with as text).
+ */
+export interface RowsSide {
+  peek(r: Reader): u32;
+  open(r: Reader, bracket: u8): bool;
+  arrayNext(r: Reader): u8;
+  nextKey(r: Reader): u8;
+  nestedKey(r: Reader): u8;
+  readString(r: Reader): bool;
+  readF64(r: Reader): bool;
+  readI64(r: Reader, unsigned: bool): bool;
+  readBool(r: Reader): bool;
+  readNull(r: Reader): bool;
+  skip(r: Reader): bool;
+  skipUnknown(r: Reader): bool;
+  mark(r: Reader): u64;
+  reset(r: Reader, mark: u64): void;
+  end(r: Reader): bool;
+  value(r: Reader): void;
+  message(r: Reader, expected: string, path: string): string;
+  nestedMessage(r: Reader, expected: string, path: string): string;
+  close(): void;
+}
+
+@noInline
+export function rowsPeek(r: Reader): u32 {
+  return r.rows!.peek(r);
+}
+
+/** Consumes `{` (123) or `[` (91). */
+@noInline
+export function rowsOpen(r: Reader, bracket: u8): bool {
+  return r.rows!.open(r, bracket);
+}
+
+@noInline
+export function rowsArrayNext(r: Reader): u8 {
+  return r.rows!.arrayNext(r);
+}
+
+/** The next key: a column's name, which counts as escaped (`keyDecoded`). */
+@noInline
+export function rowsNextKey(r: Reader): u8 {
+  return r.rows!.nextKey(r);
+}
+
+/** The row's next column, after `r` read a nested value as text (`Reader.nextKey` calls it). */
+@noInline
+export function rowsNestedKey(r: Reader): u8 {
+  return r.rows!.nestedKey(r);
+}
+
+/** A string value: `r.decoded` after true. */
+@noInline
+export function rowsString(r: Reader): bool {
+  return r.rows!.readString(r);
+}
+
+/** A number value: `r.num` after true. */
+@noInline
+export function rowsF64(r: Reader): bool {
+  return r.rows!.readF64(r);
+}
+
+/** An integer: `r.int` after true (`unsigned`: one in `u64`'s range). */
+@noInline
+export function rowsI64(r: Reader, unsigned: bool): bool {
+  return r.rows!.readI64(r, unsigned);
+}
+
+/** `true` or `false`: `r.int` is 1 or 0 after true. */
+@noInline
+export function rowsBool(r: Reader): bool {
+  return r.rows!.readBool(r);
+}
+
+@noInline
+export function rowsNull(r: Reader): bool {
+  return r.rows!.readNull(r);
+}
+
+@noInline
+export function rowsSkip(r: Reader): bool {
+  return r.rows!.skip(r);
+}
+
+@noInline
+export function rowsSkipUnknown(r: Reader): bool {
+  return r.rows!.skipUnknown(r);
+}
+
+@noInline
+export function rowsMark(r: Reader): u64 {
+  return r.rows!.mark(r);
+}
+
+/** Goes back to a mark of the rows, also from inside a nested value. */
+@noInline
+export function rowsReset(r: Reader, mark: u64): void {
+  r.rows!.reset(r, mark);
+}
+
+@noInline
+export function rowsEnd(r: Reader): bool {
+  return r.rows!.end(r);
+}
+
+/** One value read whole: its JSON text in `r.rowsText` (`r.rowsValue`: it read). */
+@noInline
+export function rowsValue(r: Reader): void {
+  r.rows!.value(r);
+}
+
+@noInline
+export function rowsMessage(r: Reader, expected: string, path: string): string {
+  return r.rows!.message(r, expected, path);
+}
+
+/** The message of a failure while `r` read a nested value. */
+@noInline
+export function rowsNestedMessage(r: Reader, expected: string, path: string): string {
+  return r.rows!.nestedMessage(r, expected, path);
+}

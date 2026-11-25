@@ -1,0 +1,109 @@
+// velt/net (internal): session resumption for the TLS 1.3 server (RFC 8446 §2.2, §4.2.11, §4.6.1),
+// for `ServerHandshake`: a ClientHello's ticket looked up in the listener's `TicketStore` and its
+// binder checked, and the NewSessionTicket the server sends after a handshake. Resumption is
+// psk_dhe_ke only (a fresh (EC)DHE exchange every time, so forward secrecy holds), never 0-RTT,
+// and each ticket resumes once.
+
+import { randomBytes } from "velt/crypto/random";
+import { sha256 } from "velt/crypto/sha256";
+import { sha384 } from "velt/crypto/sha512";
+import { DECRYPT_ERROR, TlsFailure } from "velt/net/tls/alert";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+import { NEW_SESSION_TICKET } from "velt/net/tls/client_handshake";
+import { ClientOffer } from "velt/net/tls/client_hello_parse";
+import { finishedMac } from "velt/net/tls/key_schedule";
+import { binderKey, earlySecret, ticketPsk } from "velt/net/tls/key_schedule_psk";
+import { hashLength } from "velt/net/tls/record_cipher";
+import { Ticket } from "velt/net/tls/ticket";
+import { TicketStore } from "velt/net/tls/ticket_store";
+
+/** How long a ticket resumes, in seconds (the client is told; RFC 8446 allows up to 7 days). */
+export const TICKET_LIFETIME_S: usize = 7200;
+
+/**
+ * The early secret of the ticket the ClientHello `m` (parsed: `offer`) resumes with `suite`, its
+ * binder checked; null when it offers none this listener can resume (unknown, used, expired,
+ * another hash or another server name: the handshake is a full one then). The ticket is taken
+ * only once its binder checks out. Throws `decrypt_error` for a known ticket with a wrong binder
+ * (RFC 8446 §4.2.11), and leaves that ticket for its owner.
+ */
+export function resumeFrom(
+  store: shared<Mutex<TicketStore>>,
+  offer: ClientOffer,
+  m: u8[],
+  suite: usize,
+): u8[] | null {
+  if (!offer.pskDheKe || offer.pskIds.length == 0) {
+    return null;
+  }
+  // The ticket is only looked at until its binder checks out: the identity is sent in the clear,
+  // so taking it first would let anyone who saw it burn it with a wrong binder.
+  const id = offer.pskIds[0].slice();
+  const t = store.with((s) => s.get(id));
+  if (t == null) {
+    return null;
+  }
+  const now = Date.now() as number;
+  if (now < t.issued || now - t.issued >= (TICKET_LIFETIME_S as number) * 1000) {
+    store.with((s) => s.take(id));
+    return null;
+  }
+  if (hashLength(t.suite) != hashLength(suite) || t.serverName != offer.serverName) {
+    return null;
+  }
+  const early = earlySecret(t.psk);
+  const truncated = m.slice(0, (4 + offer.bindersAt) as i64);
+  const hash = hashLength(suite) == 48 ? sha384(truncated) : sha256(truncated);
+  const expected = finishedMac(binderKey(early), hash);
+  const got = offer.binders[0];
+  let diff: u8 = got.length == expected.length ? 0 : 1;
+  for (let i: usize = 0; i < expected.length && i < got.length; i++) {
+    diff |= expected[i] ^ got[i];
+  }
+  if (diff != 0) {
+    throw new TlsFailure(DECRYPT_ERROR, "the PSK binder does not match the ClientHello");
+  }
+  // Another connection may have resumed with it since: then this one is a full handshake.
+  if (store.with((s) => s.take(id)) == null) {
+    return null;
+  }
+  return early;
+}
+
+/**
+ * A NewSessionTicket for the session with `suite` and `serverName` whose resumption master secret
+ * is `resumption`: its PSK is kept in `store` under a new random ticket.
+ */
+export function newTicket(
+  store: shared<Mutex<TicketStore>>,
+  suite: usize,
+  serverName: string,
+  resumption: u8[],
+): u8[] {
+  const nonce: u8[] = [0];
+  const psk = ticketPsk(resumption, nonce);
+  const ticket = randomBytes(32);
+  const a = randomBytes(4);
+  const ageAdd =
+    ((a[0] as u32) << 24) | ((a[1] as u32) << 16) | ((a[2] as u32) << 8) | (a[3] as u32);
+  const kept = new Ticket(psk, suite, serverName, Date.now() as number, ageAdd);
+  const key = ticket.slice();
+  store.with((s) => s.put(key, kept));
+  const w = new ByteWriter();
+  w.u8(NEW_SESSION_TICKET);
+  const b = w.begin(3);
+  w.u16(TICKET_LIFETIME_S >> 16);
+  w.u16(TICKET_LIFETIME_S & 0xffff);
+  w.u16((ageAdd >> 16) as usize);
+  w.u16((ageAdd & 0xffff) as usize);
+  const n = w.begin(1);
+  w.put(nonce);
+  w.end(n, 1);
+  const t = w.begin(2);
+  w.put(ticket);
+  w.end(t, 2);
+  // No extensions (no early data).
+  w.u16(0);
+  w.end(b, 3);
+  return w.bytes;
+}

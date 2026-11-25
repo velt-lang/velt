@@ -1,28 +1,178 @@
-// velt/process/child (internal): `#spawn-open` on macOS: `posix_spawn_file_actions_addopen`, whose
-// `mode_t` is 16 bits here (std/process/child/spawn_posix.velt spawns the children).
+// velt/process/child (internal): `#spawn-open` on macOS: what differs from Linux for starting a
+// child: `posix_spawn_file_actions_addopen`, whose `mode_t` is 16 bits here
+// (std/process/child/spawn_posix.velt spawns the children), `faccessat`'s constants and
+// `PATH_MAX` (spawn_lookup.velt), and `poll`, whose `nfds_t` is 32 bits here
+// (exec_sync_posix.velt waits on the pipes), and the few OS calls starting a child needs
+// (`errno`, its pipes, the descriptors it keeps), so that `execSync` loads no reactor file.
+// One C symbol has one signature in a program: these declarations are the reactor's
+// (std/lang/hooks/reactor_kqueue.velt).
 
-import { CString } from "velt/ffi/c_string";
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { Ptr } from "velt/ffi/ptr";
-import * as m from "velt/lang/hooks/sched_mem";
+import * as m from "velt/lang/hooks/mem_raw";
 
-/** C's `posix_spawn_file_actions_t`. */
+declare c("c") function __error(): Ptr<i32>;
+declare c("c") function pipe$spawn(fds: Ptr<i32> | null): i32;
+declare c("c") function fcntl$spawn(fd: i32, cmd: i32, ...args: CVarArgs): i32;
+declare c("c") function posix_spawn_file_actions_addinherit_np(
+  fa: Ptr<posix_spawn_file_actions_t> | null,
+  fd: i32,
+): i32;
+// C's `kevent`, named apart from `struct kevent` (one Velt name is one thing).
+declare c("c") function kevent$spawn(
+  kq: i32,
+  changes: Ptr<kevent> | null,
+  nchanges: i32,
+  events: Ptr<kevent> | null,
+  nevents: i32,
+  timeout: Ptr<timespec> | null,
+): i32;
+
+/** `errno`'s values a non-blocking pipe and an interrupted call give. */
+export const EAGAIN: i32 = 35;
+export const EINTR: i32 = 4;
+/**
+ * `posix_spawnattr_setflags`' extra flags for a child process: `POSIX_SPAWN_CLOEXEC_DEFAULT`, so
+ * the child gets only the descriptors its file actions name (macOS has no `pipe2`: a pipe made
+ * by another thread at the same time may not be close-on-exec yet).
+ */
+export const SPAWN_FLAGS: i16 = 0x4000;
+const F_GETFD: i32 = 1;
+const F_SETFD: i32 = 2;
+const F_SETFL: i32 = 4;
+/** `F_DUPFD_CLOEXEC` (<sys/fcntl.h>). */
+const F_DUPFD_CLOEXEC: i32 = 67;
+const FD_CLOEXEC: i32 = 1;
+const O_NONBLOCK: i32 = 4;
+
+/** The calling thread's `errno`. */
+export function errno(): i32 {
+  // SAFETY: `__error` returns the thread's errno slot.
+  return m.ld32(Ptr.addressOf(unsafe { __error() })) as i32;
+}
+
+/** A pipe at `fds` (read end, write end), both close-on-exec; 0, or -1 with `errno` set. */
+export function pipeCloexec(fds: usize): i32 {
+  // SAFETY: room for two descriptors.
+  if (unsafe { pipe$spawn(Ptr.orNull<i32>(fds)) } !== 0) {
+    return -1;
+  }
+  // SAFETY: F_SETFD takes an `int`, passed as C's `...` argument.
+  unsafe {
+    fcntl$spawn(m.ld32(fds) as i32, F_SETFD, FD_CLOEXEC);
+    fcntl$spawn(m.ld32(fds + 4) as i32, F_SETFD, FD_CLOEXEC);
+  }
+  return 0;
+}
+
+/** A close-on-exec copy of `fd` numbered 3 or above: the copy, or -1 with `errno` set. */
+export function dupAboveStdio(fd: i32): i32 {
+  // SAFETY: F_DUPFD_CLOEXEC takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$spawn(fd, F_DUPFD_CLOEXEC, 3 as i32) };
+}
+
+/** Makes the parent's end of a pipe non-blocking; 0 or errno. */
+export function nonBlocking(fd: i32): i32 {
+  // SAFETY: F_SETFL takes an `int`, passed as C's `...` argument.
+  return unsafe { fcntl$spawn(fd, F_SETFL, O_NONBLOCK) } < 0 ? errno() : 0;
+}
+
+/**
+ * Keeps descriptor `fd` the child's (`SPAWN_FLAGS` closes the others) in file actions `fa`, even
+ * close-on-exec (a file opened on a closed stdout), as libuv's `addinherit_np` keeps it, and
+ * closed (then `posix_spawn` fails with EBADF, as Node's `spawn` does here); not a kqueue (one
+ * the runtime made on a free number), which macOS refuses to hand over: the child gets that one
+ * closed.
+ */
+export function spawnInherit(fa: usize, fd: i32): void {
+  // SAFETY: F_GETFD takes no argument.
+  const flags = unsafe { fcntl$spawn(fd, F_GETFD) };
+  if (flags >= 0 && (flags & FD_CLOEXEC) !== 0) {
+    // A kqueue answers an empty `kevent`; any other descriptor fails it (EBADF). Every kqueue
+    // here is close-on-exec (std's reactor's too), the program's own streams seldom are.
+    const zero = m.zeroed(16);
+    // SAFETY: no changes, no events, and a zero timeout in `zero`.
+    const kq = unsafe { kevent$spawn(fd, null, 0, null, 0, m.ptrTo<timespec>(zero)) };
+    m.release(zero, 16);
+    if (kq >= 0) {
+      return;
+    }
+  }
+  // SAFETY: `fa` is an initialized file-actions object.
+  unsafe {
+    posix_spawn_file_actions_addinherit_np(m.ptrTo<posix_spawn_file_actions_t>(fa), fd);
+  }
+}
+
+/** C's `posix_spawn_file_actions_t`, `struct pollfd`, `struct kevent` and `struct timespec`. */
 declare c type posix_spawn_file_actions_t;
+declare c type pollfd;
+declare c type kevent;
+declare c type timespec;
+
+declare c("c") function poll(fds: Ptr<pollfd> | null, nfds: u32, timeout: i32): i32;
+
+declare c("c") function faccessat(fd: i32, path: Ptr<u8> | null, mode: i32, flag: i32): i32;
+
+/** `AT_FDCWD` and `AT_EACCESS` (<sys/fcntl.h>), and `PATH_MAX` (<sys/syslimits.h>). */
+const AT_FDCWD: i32 = -2;
+const AT_EACCESS: i32 = 0x10;
+export const PATH_MAX: usize = 1024;
+/** Where a program is looked up when the child's environment has no `PATH` (libuv's). */
+export const DEFAULT_PATH = "/usr/bin:/bin";
+
+/**
+ * Is an entry too long to search that isn't `PATH`'s last tried as the bare name in the working
+ * directory? No: libuv's own loop here (musl's) skips it.
+ */
+export const LONG_ENTRY_TRIES_CWD: bool = false;
+
+/**
+ * Does the lookup go on to `PATH`'s next entry after a candidate failed with `e`? libuv's own
+ * loop here (Node's lookup) does after ENOENT, ENOTDIR and EACCES only: ENAMETOOLONG ends it.
+ */
+export function goesOn(e: i32): bool {
+  return e === 2 || e === 20 || e === 13;
+}
+
+/**
+ * The error of a program name to look up in `PATH` before any lookup: ENAMETOOLONG (63) for one
+ * longer than `NAME_MAX` (255) bytes, as libuv's loop checks; 0 otherwise.
+ */
+export function nameError(bytes: usize): i32 {
+  return bytes > 255 ? 63 : 0;
+}
+
+/**
+ * Whether the NUL-terminated path at address `path` exists (`faccessat`'s `F_OK` with the
+ * effective ids, as the kernel checks an exec): 0, or -1 with `errno` set.
+ */
+export function exists(path: usize): i32 {
+  // SAFETY: the caller's NUL-terminated path.
+  return unsafe { faccessat(AT_FDCWD, m.ptr(path), 0, AT_EACCESS) };
+}
+
+/** `poll` on the `n` `struct pollfd`s at address `fds`, at most `timeoutMs` (-1: no limit). */
+export function pollFds(fds: usize, n: usize, timeoutMs: i32): i32 {
+  // SAFETY: the caller's `n` initialized `struct pollfd`s.
+  return unsafe { poll(m.ptrTo<pollfd>(fds), n as u32, timeoutMs) };
+}
 
 declare c("c") function posix_spawn_file_actions_addopen(
   fa: Ptr<posix_spawn_file_actions_t> | null,
   fd: i32,
-  path: CString,
+  path: Ptr<u8> | null,
   flags: i32,
   mode: u16,
 ): i32;
 
 /** `posix_spawn_file_actions_addopen` on the file-actions object at address `fa`. */
-export function addOpen(fa: usize, fd: i32, path: CString, flags: i32, mode: u32): i32 {
+export function addOpen(fa: usize, fd: i32, path: usize, flags: i32, mode: u32): i32 {
   // SAFETY: the caller's initialized file-actions object and a NUL-terminated path.
   return unsafe { posix_spawn_file_actions_addopen(
     m.ptrTo<posix_spawn_file_actions_t>(fa),
     fd,
-    path,
+    m.ptr(path),
     flags,
     mode as u16,
   ) };

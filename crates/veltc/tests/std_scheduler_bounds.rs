@@ -287,8 +287,8 @@ fn patch_std(std_dir: &Path, variant: &str) {
     );
     let awake =
         "  if (parkWord !== 0) {\n    m.store32(parkWord, 0);\n    m.incOrdered(wakes);\n  }\n";
-    let waits = "  if (ioWaits(g)) {\n    return true;\n  }\n";
-    let queues = "  const n = m.load(g + t.E_STARTED);\n  for (let i: usize = 0; i < n; i++) {\n    if (workerBusy(t.worker(i), self)) {\n      return true;\n    }\n  }\n";
+    let waits = "  if (ioWaits(g) || (stdUsed(\"nodeTimers\") && alive.passWaits())) {\n    return true;\n  }\n";
+    let queues = "  const n = m.load(g + t.E_STARTED);\n  for (let i: usize = 0; i < n; i++) {\n    if (workerBusy(t.worker(i), self, asking)) {\n      return true;\n    }\n  }\n";
     let pause = "  pause(300);\n";
     let in_order = format!("{waits}{queues}");
     let count_first = (
@@ -572,8 +572,9 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
     }
 }
 
-/// A started promise woken from another worker after its task ended (sched_node_wake.velt `wake`):
-/// the waker wins the node's `QUEUED` flag, then pushes it on the task's woken stack. A microtask
+/// A started promise woken from another worker after its task ended (sched_node_wake.velt `give`,
+/// which such a wake goes through): the waker wins the node's `QUEUED` flag, then pushes it on the
+/// task's woken stack. A microtask
 /// that runs the node does not look at the flag, so the node can finish meanwhile and the task
 /// end (sched_run.velt `finish` finds the stack empty); the push then comes too late, and the
 /// waker gives the reference back itself. The std copies pause 300 ms between the flag and the
@@ -587,10 +588,11 @@ fn a_node_woken_from_another_worker_after_its_task_ended_is_freed() {
         return;
     }
     let dir = test_dir::TestDir::new();
-    let pushed = "  m.inc(n + nd.N_REFS);\n  const task = m.ld(n + nd.N_TASK);\n  m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);\n";
+    // A wake from another worker gives its reference to the woken stack (`give`, #3487).
+    let pushed = "  const task = m.ld(n + nd.N_TASK);\n  m.pushStack(task + t.T_WOKEN, n, nd.N_NEXT);\n  if (m.load32(task + t.T_STATE) === t.DONE) {\n    // Pushed too late, as in `wake`.\n";
     let pause =
         "  if (t.here() !== m.ld(m.ld(n + nd.N_TASK) + t.T_HOME)) {\n    pause(300);\n  }\n";
-    let checked = "    wn.giveBackWoken(task);\n    return;\n";
+    let checked = "    // Pushed too late, as in `wake`.\n    wn.giveBackWoken(task);\n";
     let woken = "  if (w !== 0) {\n    wakeOwned(w);\n  }\n}\n";
     let late = "  if (w !== 0) {\n    const late = wakerClone(w);\n    wakeOwned(w);\n    pause(100);\n    wakeOwned(late);\n  }\n}\n";
     for checks in [true, false] {

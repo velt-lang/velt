@@ -94,6 +94,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::PtrToAddress
         | I::PtrRead
         | I::PtrWrite
+        | I::CArrived
         | I::ExportedAddress
         | I::Exit
         | I::Panic
@@ -185,6 +186,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::StrAsciiWords
+        | I::StrBorrowedWords
         | I::StrbufPushAsciiWords
         | I::StrbufPushAsciiWord
         | I::StrLoadU8x16

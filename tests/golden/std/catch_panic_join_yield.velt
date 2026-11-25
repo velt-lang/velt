@@ -1,0 +1,58 @@
+// requires: unix
+// `catchPanic` over an `await Promise.all([...])` whose children yield (#3596): a child that
+// panics after an earlier one finished, in the middle, last, or in a nested join, is caught, and
+// the program goes on. Each child's `await yieldNow()` is asked again on every poll until its
+// turn comes: before the fix, one asked too early hung, the join never finished, and the process
+// exited 0 with `main` cut short.
+import { catchPanic, PanicError } from "velt/task";
+
+function fail(why: string): number {
+  panic(why);
+}
+
+async function dies(tag: string, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) await yieldNow();
+  return fail(tag);
+}
+
+async function waits(turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) await yieldNow();
+  return 1;
+}
+
+async function middle(): Promise<number> {
+  const rs = await Promise.all([waits(3), dies("middle", 1), waits(3)]);
+  return rs[0] + rs[1] + rs[2];
+}
+
+async function last(): Promise<number> {
+  const rs = await Promise.all([waits(2), waits(1), dies("last", 3)]);
+  return rs[0] + rs[1] + rs[2];
+}
+
+async function nested(): Promise<number> {
+  const rs = await Promise.all([waits(1), middle()]);
+  return rs[0] + rs[1];
+}
+
+async function fine(): Promise<number> {
+  const rs = await Promise.all([waits(3), waits(1), waits(2)]);
+  return rs[0] + rs[1] + rs[2];
+}
+
+async function attempt(label: string, run: () => Promise<number>): Promise<void> {
+  try {
+    console.log(label, "result", await catchPanic(run));
+  } catch (e) {
+    const why = e instanceof PanicError ? e.message.split(" at ")[0] : "";
+    console.log(label, "caught", e instanceof PanicError, why);
+  }
+}
+
+async function main() {
+  await attempt("middle", () => middle());
+  await attempt("last", () => last());
+  await attempt("nested", () => nested());
+  await attempt("all fine", () => fine());
+  console.log("done");
+}

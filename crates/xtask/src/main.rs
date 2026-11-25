@@ -26,6 +26,7 @@ mod graph;
 mod hook_tests;
 mod hooks;
 mod junit;
+mod main_plan;
 mod old_extension;
 mod os;
 mod package_users;
@@ -67,6 +68,8 @@ Commands:
   pr-lint     Check a pull request's title, description and commits for tool footers and
               trailers, session links, machine paths, review wording and the commit author
               (`cargo xtask pr-lint --help` for its options)
+  main-plan   The jobs after a push to main (--event push|schedule, --tested queue|train|no,
+              --base, --superseded true|false, --github; crates/xtask/src/main_plan.rs)
   gen-arch    Rewrite what velt_vir's instruction table generates (crates/velt_vir/src/arch):
               velt/arch's methods in std/arch/x86 and std/arch/arm and
               docs/internals/arch-c-names.md (velt_vir's tests fail while they are stale)
@@ -172,8 +175,10 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    if argv.first().is_some_and(|c| c == "pr-lint") {
-        return pr_lint::main(&repo_root()?, &argv[1..]);
+    match argv.first().map(String::as_str) {
+        Some("pr-lint") => return pr_lint::main(&repo_root()?, &argv[1..]),
+        Some("main-plan") => return main_plan::main(&repo_root()?, &argv[1..]),
+        _ => {}
     }
     let args = parse(argv)?;
     let root = repo_root()?;
@@ -436,11 +441,12 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
 /// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`; the
 /// formatter's corpus: `fmt_corpus`, `fmt_corpus_files`), nor
-/// whether the WebAssembly goldens run (`wasm_goldens`: `skip` when they don't), nor how much of
-/// the VIR identity it compares (`vir_identity`, [`Plan::vir_identity_queue`]). The goldens and
-/// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`). After a push to
-/// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
-/// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate. `c_headers` says
+/// whether the WebAssembly goldens run (`wasm_goldens`: `skip` when they don't; `wasm_os`: the
+/// OSes that run them, [`Plan::wasm_oses`]), nor how much of
+/// the VIR identity it compares (`vir_identity`, [`Plan::vir_identity_queue`]; a pull request's
+/// `golden` job: `vir_identity_pr`, [`Plan::vir_identity_pr`]). The goldens and
+/// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`); what a push to
+/// `main` runs is `cargo xtask main-plan`'s ([`main_plan`]). `c_headers` says
 /// whether the `c-headers` job runs ([`Plan::c_headers`]); `zig_tests` and `zig_goldens` whether
 /// the `test` and `golden` parts build C `sources` and so get the cached zig ([`zig`]).
 fn github_output_text(plan: &Plan) -> String {
@@ -456,11 +462,6 @@ fn github_output_text(plan: &Plan) -> String {
         })
         .collect();
     let oses = oses.as_slice();
-    let main_os = if plan.after_merge.is_some() {
-        r#"["ubuntu-latest","windows-latest","macos-latest"]"#
-    } else {
-        r#"["ubuntu-latest"]"#
-    };
     let json = |list: &[&str]| {
         let quoted: Vec<String> = list.iter().map(|os| format!("\"{os}\"")).collect();
         format!("[{}]", quoted.join(","))
@@ -469,7 +470,7 @@ fn github_output_text(plan: &Plan) -> String {
     let golden_shards = os::golden_shards_json(oses);
     let wasm_shards = os::wasm_shards_json(oses);
     let mut text = format!(
-        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\nmain_os={main_os}\n\
+        "full={}\nlint={}\ntest={}\ngolden={}\nos={os}\nother_os={other_os}\n\
          golden_shards={golden_shards}\nwasm_shards={wasm_shards}\n",
         flag(plan.full),
         "true",
@@ -495,6 +496,8 @@ fn github_output_text(plan: &Plan) -> String {
     ));
     let wasm = if plan.wasm { "" } else { "skip" };
     text.push_str(&format!("vir_identity={}\n", plan.vir_identity_queue()));
+    text.push_str(&format!("vir_identity_pr={}\n", plan.vir_identity_pr()));
+    text.push_str(&format!("wasm_os={}\n", json(&plan.wasm_oses(oses))));
     text.push_str(&format!("wasm_goldens={wasm}\n"));
     text
 }
@@ -698,20 +701,6 @@ name = \"a\"
                 }
             }
         }
-    }
-
-    #[test]
-    fn main_checks_windows_and_macos_only_after_a_linux_only_queue_run() {
-        let mut plan = Plan::everything("test");
-        plan.after_merge = None;
-        let text = github_output_text(&plan);
-        assert!(text.contains("\nmain_os=[\"ubuntu-latest\"]\n"), "{text}");
-        plan.after_merge = Some("Cargo.lock changed: refresh the build cache".into());
-        let text = github_output_text(&plan);
-        assert!(
-            text.contains("\nmain_os=[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]\n"),
-            "{text}"
-        );
     }
 
     #[test]

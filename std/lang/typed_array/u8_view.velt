@@ -1,0 +1,15 @@
+// velt/lang/typed_array (internal): a `Uint8Array` over part of a `u8[]`'s bytes, sharing them, for
+// std code that can't use `u8[]`'s `subarray` (std/lang/typed_array/bytes_view.velt): its `extend`
+// of `Array` keeps a module that loads it from being added in the middle of a check (velt_loader's
+// (a1) rule), which the TLS record layer must be (std/net/tls/fd_hook.velt).
+
+import { ArrayBuffer } from "velt/lang/typed_array/buffer";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+
+/**
+ * A `Uint8Array` of `n` bytes of `bytes` from `from` (in range), sharing them, as `subarray` makes
+ * (std/lang/typed_array/bytes_view.velt).
+ */
+export function u8View(bytes: u8[], from: usize, n: usize): Uint8Array {
+  return Uint8Array.view(ArrayBuffer.over(bytes), from, n);
+}

@@ -166,17 +166,17 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | `JSON`, `JsonValue`, `JsonError`, options, replacer layout | `std/prelude/json/` (loaded only when a module names one of them: `std/prelude/global/json.velt`) |
 | Per-type decoders and writers | generators in `std/encoding/json/generate/` (`read*.velt`, `write.velt`, `check.velt`), declared in `std/encoding/json/generated.velt` |
 | Scanner, pull reader, writer | `std/encoding/json/scan*.velt`, `reader*.velt`, `writer*.velt` |
+| Reader of a native driver's rows (`decodeRows<T>` of a row type not read by column) | `std/encoding/json/rows_reader.velt`, `rows_cells.velt` |
 | Tape | `std/encoding/json/tape*.velt` |
 | Node's syntax-error messages (computed only after a failure) | `std/encoding/json/node_syntax.velt` |
 | `JSON.stringify(value, keys, space)` | `std/encoding/json/relayout.velt` |
 | Tree of a built or edited `JsonValue`, and what `console.log` prints for one | `std/encoding/json/tree*.velt`, `value_inspect.velt` |
 | Numbers | `std/lang/number/`, `std/lang/hooks/number_parse.velt` |
 
-Some JSON code remains in the runtime (`crates/velt_rt/src/json/`, ABI in
-[rt_abi_async.md §12](../contracts/rt_abi_async.md)): the reader of a database driver's rows
-(with the Rust copy of Node's messages its reader of nested JSON cells gives; a `JsonValue` it
-reads reaches std as JSON text, which std parses into a tape), which goes with the
-native-package ABI (#2563), and the shortest-digits printer for doubles.
+No JSON parsing or reading is left in the runtime (#3318). What std calls there is the string
+builder's (escaping for the compiler's JSON-literal glue, the shortest-digits printer for
+doubles) and velt/db's rows functions (`velt_rt_rows_*`, [rt_abi_async.md
+§12.1](../contracts/rt_abi_async.md)), through which `rows_reader.velt` reads a driver's cursor.
 
 ## Compatibility
 
@@ -343,7 +343,7 @@ class User {
 | `@json.ignore()` / `@json.ignore({ when: "null" \| "default" })` | field | Never written or read / not written when null or the type's default | `JsonIgnore` |
 | `@json.required` | field | Absent key is an error even if the type has a default | `JsonRequired` |
 | `@json.unknownKeys("reject" \| "skip")` | class | Per-type `unknownKeys` | `UnmappedMemberHandling` |
-| `@json.extra` | field of `Map<string, Value>` | Unknown members go here, and are written back | `JsonExtensionData` |
+| `@json.extra` | field of `Map<string, Value>` | Unknown members go here, and are written back as members of the object (its entries, as `Object.fromEntries` or a `Record` writes them: `JSON.stringify` of the `Map` itself is `{}`, as in Node) | `JsonExtensionData` |
 | `@json.numbers("string" \| "allowString")` | field or class | Write `i64`/`u64` as strings; accept numbers in strings | `JsonNumberHandling` |
 | `@json.discriminator("kind", { A: "a", B: "b" })` | base class | Polymorphic subclasses by a tag, written first | `JsonPolymorphic`, `JsonDerivedType` |
 | `@json.converter(C)` | field or class | `C` has static `read(r: json.Reader): T` and `write(w: json.Writer, v: T): void`; the generated code calls them directly (inlinable, not virtual) | `JsonConverter` |

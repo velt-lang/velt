@@ -17,7 +17,8 @@
 //   pipe handles, exit handle) hangs off it and is counted: the handle and the reaper each hold
 //   it, and an operation in flight holds it while it runs. `close` releases the handle and the
 //   pipes; the child keeps running and is reaped. A handle of no child is a closed one (EBADF).
-// - `execSync` (`velt_rt_child_output_sync`) stays the runtime's: it blocks its thread anyway.
+// - `execSync` doesn't come here: it blocks its thread on its child's pipes without the executor
+//   (std/process/child/exec_sync_posix.velt).
 // On an OS without the reactor, starting a child fails with `ENOTSUP`.
 
 import { IoResult } from "velt/native/result";

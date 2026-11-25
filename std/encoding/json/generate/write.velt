@@ -11,13 +11,14 @@
 // indexes first; optional and `T | undefined` fields left out when empty, a present `null` of
 // `a?: T | null` written; ES private fields and functions left out, `private` fields written),
 // a class value as its dynamic class (an `instanceof` chain, most derived first) and through
-// its `toJSON(key)`, `Map<string, V>` and `Record<K, V>` as objects, `JsonValue` as its text,
+// its `toJSON(key)`, `Record<K, V>` as an object, a `Map`, `Set`, `WeakMap` and `WeakSet` as
+// `{}` (no enumerable own properties; a subclass writes its own fields), `JsonValue` as its text,
 // a `shared<T>` as the `T` it holds, a union as its active member, a function as `null` (an
 // array element; a member holding one is left out), and dynamic values (`any`, interface
 // values, typed proxies) through any.velt. A recursive object type that meets itself is an
 // error, as in Node.
 
-import { InstanceRequest, Output } from "velt/generate";
+import { InstanceRequest, Model, Output, Type } from "velt/generate";
 import {
   className,
   dynamicArms,
@@ -25,6 +26,7 @@ import {
   isRecursive,
   toJsonMethod,
   writable,
+  writesEmpty,
 } from "velt/encoding/json/generate/facts";
 import { stringifyProblem } from "velt/encoding/json/generate/check";
 import {
@@ -33,6 +35,22 @@ import {
   writerOf,
   writeValue,
 } from "velt/encoding/json/generate/values";
+
+/**
+ * The code that writes `v` of class (or `Map`, `Set`) type `t` as its dynamic class when it is
+ * an instance of a subclass, most derived first.
+ */
+function writeSubclasses(out: Output, model: Model, t: Type, v: string, key: string): void {
+  for (let i = (t.subclasses.length as i64) - 1; i >= 0; i--) {
+    const s = model.type(t.subclasses[i]);
+    if (!writable(model, s.id, [])) {
+      continue;
+    }
+    const [name, sk] = writerOf(out, model, s.id);
+    const call = sk ? `${name}(w, ${v}, ${key})` : `${name}(w, ${v})`;
+    out.line(`if (${v} instanceof ${className(s)}) { ${call}; return; }`);
+  }
+}
 
 /** The body of `writeJson` (`keyed`: of `writeJsonKeyed`, whose third parameter is the key). */
 function body(req: InstanceRequest, out: Output, keyed: bool): void {
@@ -96,8 +114,11 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
       out.line(`return;`);
       out.line(`}`);
     }
-  } else if (t.kind == "map") {
-    writeEntries(out, model, model.type(t.args[0]), t.args[1], v);
+  } else if (writesEmpty(t)) {
+    // A subclass's instance is written as its class; the collection itself has no enumerable
+    // own properties: `{}`, as in Node (`Object.fromEntries(m)` writes a map's entries).
+    writeSubclasses(out, model, t, v, key);
+    out.line(`w.append("{}");`);
   } else if (t.kind == "record") {
     // A record view (`x as Record<string, any>`) is written as the object it views, the `any`
     // it converts to, as in Node, where the cast is a no-op (an array as an array, #3675).
@@ -118,16 +139,7 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
     if (t.mayBeProxy) {
       out.line(`if (isProxy(${v})) { writeJsonAny(w, dynamicOf(${v}), ${key}); return; }`);
     }
-    // A class value is written as its dynamic class, most derived first.
-    for (let i = (t.subclasses.length as i64) - 1; i >= 0; i--) {
-      const s = model.type(t.subclasses[i]);
-      if (!writable(model, s.id, [])) {
-        continue;
-      }
-      const [name, sk] = writerOf(out, model, s.id);
-      const call = sk ? `${name}(w, ${v}, ${key})` : `${name}(w, ${v})`;
-      out.line(`if (${v} instanceof ${className(s)}) { ${call}; return; }`);
-    }
+    writeSubclasses(out, model, t, v, key);
     const m = toJsonMethod(t);
     if (m >= 0) {
       const ret = t.methods[m].ret;
