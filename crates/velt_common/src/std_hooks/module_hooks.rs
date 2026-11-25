@@ -3,7 +3,8 @@
 //! program without the executor, reached by role from the executor's module lock
 //! (sched_module.velt), and prebuilt, the module's state its own (`prebuilt::private`). Kept apart
 //! from the rest of the table ([`super`]), which [`with_module_hooks`] gives on, with these rows
-//! after it, to `with_string_hooks!`.
+//! after it, to `with_string_hooks!`. The executor's module lock rows beyond module state (a
+//! function's properties, `with` callbacks: sched_module.velt) follow them.
 
 /// The std module table's entry of the module that keeps the blocks of module state: its lowered
 /// hooks are live once a program has module state (`velt_sema` `lazy_std` `module_hooks`), not in
@@ -35,6 +36,13 @@ macro_rules! with_module_hooks {
                 constructs(MutexHeld);
             mutex_held_unlocked => lang_hooks_mutex_held, "unlocked", sig(() -> void), lowered,
                 constructs(MutexHeld);
+            // sched.velt: the executor's module lock (sched_module.velt) beyond module state.
+            /// The module lock before a function's properties held as `any` are reached (workers).
+            sched_module_touch => lang_hooks_sched, "schedModuleTouch", sig(() -> void), lowered;
+            /// The module lock around a `with`, `read` or `write` callback that may reach them:
+            /// taken before the lock (whether it was) and given back after the unlock (workers).
+            sched_module_with => lang_hooks_sched, "schedModuleWith", sig(() -> u8), lowered, replaces("velt_rt_module_with");
+            sched_module_with_end => lang_hooks_sched, "schedModuleWithEnd", sig((u8) -> void), lowered, replaces("velt_rt_module_with_end");
         }
     };
 }

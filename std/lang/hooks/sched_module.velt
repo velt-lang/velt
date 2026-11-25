@@ -1,7 +1,7 @@
 // velt/lang/hooks (internal): module state under the executor in Velt's workers (sched.velt,
-// #2649 step 3), as the runtime's module lock (velt_rt task/local/module_state.rs) keeps it: one
-// process-wide lock, which a task takes on its first access of module state and keeps until the
-// end of that poll, and at the start of every later poll (it is touched, flag `TOUCHED`); code
+// #2649 step 3; the runtime's module lock until #2196 9c): one process-wide lock, which a task
+// takes on its first access of module state and keeps until the end of that poll, and at the
+// start of every later poll (it is touched, flag `TOUCHED`); code
 // outside a task (worker 0's synchronous `main` once the executor runs) keeps it until it hands
 // over to the tasks. So a task's code between two `await`s runs alone with respect to every other
 // task that uses module state, as in Node, on whichever worker it runs.
@@ -16,10 +16,15 @@
 // the blocks' own fast path was inlined here; a call is made for another block, or for a slot
 // beyond the ones known to be initialized.
 //
-// Gap: a program giving a declared function properties through `any` takes the runtime's lock
-// around a `Mutex` (`velt_rt_module_with`), and the runtime's function properties take it too
-// (velt_rt fn_props.rs), which would wait for ever off worker 0: such a program's tasks stay on
-// worker 0 (sched_spread.velt `stay`), until those move here too.
+// A declared function's properties held as `any` are module state too (the runtime keeps them,
+// velt_rt fn_props.rs): lowering touches the lock before it reaches any function's properties
+// (`touch`), as an access does. A callback of `with`, `read` or `write` in a program that may give
+// functions properties may reach them, which the compiler cannot see, so the lock is taken before
+// the `Mutex` or `RwLock` (`withStart`) and given back after its unlock (`withEnd`): the callback
+// never waits for the module lock while it holds the `Mutex`, which a thread holding the module
+// lock may be waiting for. A callback that reaches module state keeps the lock for the poll (or
+// outside a task), as any access does. A program without the executor reaches neither: it has
+// one thread, and its blocks no lock (module_blocks.velt).
 
 import { atomicAddress, hookCall, noInline } from "velt/lang/intrinsics";
 import * as r from "#reactor";
@@ -30,10 +35,15 @@ import * as t from "./sched_task";
 /** The lock: 0 free, 1 held, 2 held with threads waiting. */
 const LOCK = new Atomic<u32>(0);
 
-/** How this thread holds the lock: not, for its task's poll, outside a task. */
-const NOT_HELD: u32 = 0;
-const IN_POLL: u32 = 1;
-const OUTSIDE: u32 = 2;
+/**
+ * How this thread holds the lock: not, for a `with` callback (`withStart`), for its task's poll,
+ * outside a task. An access needs it held for the poll or outside a task: `HELD < IN_POLL` is the
+ * one test of its fast path.
+ */
+export const NOT_HELD: u32 = 0;
+export const IN_WITH: u32 = 1;
+export const IN_POLL: u32 = 2;
+export const OUTSIDE: u32 = 3;
 const HELD = new ThreadLocal<u32>(0);
 
 /**
@@ -48,7 +58,7 @@ const READY = new Atomic<u64>(0);
 
 /** `velt_rt_module_state`: the block, to reach slot `slot` of the program's descriptor `desc`. */
 export function state(desc: usize, slot: u64): usize {
-  if (HELD.get() === NOT_HELD) {
+  if (HELD.get() < IN_POLL) {
     take(t.here());
   }
   if (DESC.load("acquire") as usize === desc && slot < READY.load("acquire")) {
@@ -83,7 +93,7 @@ function keep(desc: usize, p: usize, n: u64): void {
 
 /** `velt_rt_module_block`: the block without the slot check (the root file's `main`). */
 export function block(desc: usize): usize {
-  if (HELD.get() === NOT_HELD) {
+  if (HELD.get() < IN_POLL) {
     take(t.here());
   }
   if (DESC.load("acquire") as usize === desc) {
@@ -109,8 +119,11 @@ export function ready(state: usize, n: u64): void {
  * reaching freed state.
  */
 export function dropAtExit(): void {
-  if (HELD.get() === NOT_HELD) {
-    lock();
+  const h = HELD.get();
+  if (h < IN_POLL) {
+    if (h === NOT_HELD) {
+      lock();
+    }
     HELD.set(OUTSIDE);
   }
   // Nothing is the block last looked up any more.
@@ -124,15 +137,18 @@ export function dropAtExit(): void {
  * Takes the lock for worker `e`'s task being polled (touched from now on), or outside a task: on
  * a worker between polls, or on a thread no worker runs on (`e` 0: the program's start, whose
  * initializers may start the executor, until it hands over; a C library's thread, which waits
- * for the tasks as the runtime's lock made it).
+ * for the tasks as the runtime's lock made it). Held for a callback already (`withStart`), it is
+ * kept from now on as any access keeps it.
  */
 function take(e: usize): void {
-  // Counted in a `velt dev` build only (mutex_held.velt): `USED` stays 0 in any other, which
-  // reads no count.
-  if (mh.USED.load("relaxed") !== 0 && mh.held() !== 0) {
-    mutexHeld();
+  if (HELD.get() === NOT_HELD) {
+    // About to wait for it. A held `Mutex` is counted in a `velt dev` build only
+    // (mutex_held.velt): `USED` stays 0 in any other, which reads no count.
+    if (mh.USED.load("relaxed") !== 0 && mh.held() !== 0) {
+      mutexHeld();
+    }
+    lock();
   }
-  lock();
   if (e === 0) {
     HELD.set(OUTSIDE);
     return;
@@ -161,7 +177,59 @@ function mutexHeld(): void {
 
 /** Does this thread hold the module lock (for a task's poll, or outside a task)? */
 export function held(): bool {
-  return HELD.get() !== NOT_HELD;
+  return HELD.get() >= IN_POLL;
+}
+
+/**
+ * `touch`: what an access of module state takes, before a function's properties held as `any`
+ * are reached (a declared function's are module state, velt_rt fn_props.rs).
+ */
+export function touch(): void {
+  if (HELD.get() < IN_POLL) {
+    take(t.here());
+  }
+}
+
+/**
+ * Before a `Mutex` or `RwLock` is locked for a callback that may reach a function's properties:
+ * the module lock, unless this thread holds it, until `withEnd` after the unlock. Whether it took
+ * it (1), for the end.
+ */
+export function withStart(): u8 {
+  if (HELD.get() !== NOT_HELD) {
+    return 0;
+  }
+  lock();
+  HELD.set(IN_WITH);
+  return 1;
+}
+
+/**
+ * After the unlock that followed `withStart`, with what it answered: the lock it took goes,
+ * unless the callback reached module state (the poll, or the code outside a task, keeps it then).
+ */
+export function withEnd(took: u8): void {
+  if (took !== 0 && HELD.get() === IN_WITH) {
+    HELD.set(NOT_HELD);
+    unlock();
+  }
+}
+
+/** How this thread holds the lock now, for `restore` (std/task/catch_sched.velt `caughtPoll`). */
+export function holds(): u32 {
+  return HELD.get();
+}
+
+/**
+ * A panic was caught in a poll that started with this thread holding the lock as `saved`: the
+ * code it abandoned never ran a `withEnd`, so the lock a callback took goes. Kept, other threads
+ * would wait for it for good.
+ */
+export function restore(saved: u32): void {
+  if (saved !== IN_WITH && HELD.get() === IN_WITH) {
+    HELD.set(NOT_HELD);
+    unlock();
+  }
 }
 
 /** A touched task's poll starts: the lock, unless this thread holds it. */

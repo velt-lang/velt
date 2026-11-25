@@ -1,0 +1,182 @@
+// velt/os (internal): the CPUs, memory, load and uptime on macOS (sys_darwin.velt), as libuv
+// reads them for Node's `os` module: Mach's `host_processor_info` for each CPU's ticks,
+// `host_statistics` for the free pages, and the sysctls `machdep.cpu.brand_string`,
+// `hw.cpufrequency`, `hw.memsize`, `vm.loadavg` and `kern.boottime`.
+
+import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { CString } from "velt/ffi/c_string";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad } from "velt/lang/intrinsics";
+import type { CpuInfo } from "./cpu_info";
+
+declare c("c") function sysctlbyname$bytes(
+  name: CString,
+  old: u8[],
+  oldLen: Out<usize>,
+  newValue: Ptr<void> | null,
+  newLen: usize,
+): i32;
+declare c("c") function sysctlbyname$words(
+  name: CString,
+  old: i64[],
+  oldLen: Out<usize>,
+  newValue: Ptr<void> | null,
+  newLen: usize,
+): i32;
+declare c("c") function sysconf(name: i32): i64;
+declare c("c") function mach_host_self(): u32;
+declare c("c") function host_processor_info(
+  host: u32,
+  flavor: i32,
+  processorCount: Out<u32>,
+  info: Out<Ptr<i32> | null>,
+  infoCount: Out<u32>,
+): i32;
+declare c("c") function host_statistics(host: u32, flavor: i32, info: i32[], count: Out<u32>): i32;
+declare c("c") function vm_deallocate(task: u32, address: usize, size: usize): i32;
+
+/** This task's port (`mach_task_self()` reads it). */
+declare c("c") let mach_task_self_: u32;
+
+/** `_SC_CLK_TCK` on macOS: the unit of the CPU ticks. */
+const SC_CLK_TCK: i32 = 3;
+/** `_SC_PAGESIZE` on macOS. */
+const SC_PAGESIZE: i32 = 29;
+/** `PROCESSOR_CPU_LOAD_INFO`: each CPU's ticks (`u32`s): user, system, idle and nice. */
+const PROCESSOR_CPU_LOAD_INFO: i32 = 2;
+/** `CPU_STATE_MAX`: the ticks of one CPU. */
+const CPU_STATES: usize = 4;
+/** `HOST_VM_INFO`: `vm_statistics_data_t`, whose first field is the free pages. */
+const HOST_VM_INFO: i32 = 2;
+/** `HOST_VM_INFO_COUNT`: the `integer_t`s of `vm_statistics_data_t`. */
+const VM_INFO_COUNT: u32 = 15;
+
+/**
+ * The `i64`s the sysctl `name` gives (`count` of them, room for `count`), or null when it can't
+ * be read or gives fewer than `least` bytes.
+ */
+function sysctlWords(name: string, count: i64, least: usize): i64[] | null {
+  const value: i64[] = new Array<i64>(count).fill(0);
+  const len = new Out<usize>((count as usize) * 8);
+  // SAFETY: room for `count` words, which `len` says; no new value.
+  const r = unsafe { sysctlbyname$words(new CString(name), value, len, null, 0) };
+  return r === 0 && len.value >= least ? value : null;
+}
+
+/** The text the sysctl `name` gives, or null when it can't be read. */
+function sysctlText(name: string): string | null {
+  const buf: u8[] = new Array<u8>(512).fill(0);
+  const len = new Out<usize>(512);
+  // SAFETY: room for 512 bytes, which `len` says; no new value.
+  if (unsafe { sysctlbyname$bytes(new CString(name), buf, len, null, 0) } !== 0) {
+    return null;
+  }
+  const end = buf.indexOf(0);
+  return utf8DecodeLossy(end < 0 ? buf : buf.slice(0, end));
+}
+
+/**
+ * Every CPU, with the model of `machdep.cpu.brand_string` (`hw.model` where it has none) and
+ * the clock of `hw.cpufrequency`, which Apple silicon doesn't report: 2400 MHz there, libuv's
+ * stand-in. Their times are Mach's ticks in milliseconds; macOS counts no interrupt time.
+ */
+export function darwinCpus(): CpuInfo[] {
+  const brand = sysctlText("machdep.cpu.brand_string");
+  const named = brand === null ? sysctlText("hw.model") : brand;
+  const model = named === null || named.length === 0 ? "unknown" : named;
+  const freq = sysctlWords("hw.cpufrequency", 1, 8);
+  const speed = freq === null || freq[0] <= 0 ? 2400 : freq[0] / 1000000;
+  // SAFETY: no precondition.
+  const hz = unsafe { sysconf(SC_CLK_TCK) };
+  const msPerTick = hz > 0 && hz <= 1000 ? 1000 / hz : 10;
+  const count = new Out<u32>(0);
+  const info = new Out<Ptr<i32> | null>(null);
+  const infoCount = new Out<u32>(0);
+  let r: i32 = -1;
+  // SAFETY: the host's own port; Mach allocates the array and says how long it is.
+  unsafe {
+    r = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, count, info, infoCount);
+  }
+  const out: CpuInfo[] = [];
+  const array = info.value;
+  if (r !== 0 || array === null) {
+    return out;
+  }
+  const p = Ptr.addressOf(array);
+  const n = count.value as usize;
+  if ((infoCount.value as usize) >= n * CPU_STATES) {
+    for (let i: usize = 0; i < n; i++) {
+      const at = p + i * CPU_STATES * 4;
+      // SAFETY: inside the array, which holds `CPU_STATES` ticks per CPU.
+      const user = unsafe { addressLoad<u32>(at) } as i64;
+      // SAFETY: as above.
+      const sys = unsafe { addressLoad<u32>(at + 4) } as i64;
+      // SAFETY: as above.
+      const idle = unsafe { addressLoad<u32>(at + 8) } as i64;
+      // SAFETY: as above.
+      const nice = unsafe { addressLoad<u32>(at + 12) } as i64;
+      out.push({
+        model,
+        speed,
+        times: {
+          user: user * msPerTick,
+          nice: nice * msPerTick,
+          sys: sys * msPerTick,
+          idle: idle * msPerTick,
+          irq: 0,
+        },
+      });
+    }
+  }
+  // SAFETY: the array Mach allocated in this task above, `infoCount` integers long, freed once.
+  unsafe {
+    vm_deallocate(mach_task_self_, p, (infoCount.value as usize) * 4);
+  }
+  return out;
+}
+
+/** The machine's memory in bytes (`hw.memsize`), 0 when it can't be read. */
+export function darwinTotalMemory(): i64 {
+  const v = sysctlWords("hw.memsize", 1, 8);
+  return v === null ? 0 : v[0];
+}
+
+/** The free memory in bytes: the free pages `host_statistics` counts; 0 when it fails. */
+export function darwinFreeMemory(): i64 {
+  const info: i32[] = new Array<i32>(VM_INFO_COUNT as i64).fill(0);
+  const count = new Out<u32>(VM_INFO_COUNT);
+  // SAFETY: the host's own port and room for `VM_INFO_COUNT` integers, which `count` says.
+  const r = unsafe { host_statistics(mach_host_self(), HOST_VM_INFO, info, count) };
+  // SAFETY: no precondition.
+  const page = unsafe { sysconf(SC_PAGESIZE) };
+  return r !== 0 || page <= 0 ? 0 : (info[0] as u32 as i64) * page;
+}
+
+/**
+ * The 1, 5 and 15 minute load averages (`vm.loadavg`: `struct loadavg`, three 32-bit fixed-point
+ * numbers and their scale); `[0, 0, 0]` when it can't be read.
+ */
+export function darwinLoadAverage(): f64[] {
+  const v = sysctlWords("vm.loadavg", 3, 24);
+  if (v === null || v[2] <= 0) {
+    return [0, 0, 0];
+  }
+  const scale = v[2] as f64;
+  return [
+    ((v[0] & 0xffffffff) as f64) / scale,
+    ((v[0] >> 32) & 0xffffffff) as f64 / scale,
+    ((v[1] & 0xffffffff) as f64) / scale,
+  ];
+}
+
+/** Whole seconds since the machine started (`kern.boottime`), 0 when it can't be read. */
+export function darwinUptime(): f64 {
+  const v = sysctlWords("kern.boottime", 2, 16);
+  if (v === null) {
+    return 0;
+  }
+  const now = Math.floor((Date.now() as f64) / 1000);
+  const boot = v[0] as f64;
+  return now > boot ? now - boot : 0;
+}

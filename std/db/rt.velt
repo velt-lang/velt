@@ -1,6 +1,7 @@
 // velt/db (internal): the runtime functions velt/db calls, and the code generated for it calls.
 
 import { JsonError } from "velt/prelude/json/json_error";
+import { shortPath } from "velt/encoding/json/reader_ops";
 
 /**
  * `u64 velt_rt_db_cursor(u64 handle)`: the address of the open row cursor a native driver
@@ -41,16 +42,15 @@ export declare function velt_rt_rows_str(st: u64, col: u64, out: string): u8;
 export declare function velt_rt_rows_kind(st: u64, col: u64): u8;
 /** Column `col` of the current row as a `u8[]` (empty when it holds no blob). */
 export declare function velt_rt_rows_blob(st: u64, col: u64): u8[];
-declare function velt_rt_rows_fail(expected: string, row: i64, field: string, out: string);
 
 /**
  * The `JsonError` of a row that does not fit, with `JSON.parse`'s message: `expected
  * <expected> at $[row].field` (`row` -1: the single row, `$`; `field` empty: the row itself).
  */
 export function rowMismatch(expected: string, row: i64, field: string): JsonError {
-  let message = "";
-  velt_rt_rows_fail(expected, row, field, message);
-  return new JsonError(message);
+  const at = row >= 0 ? `$[${row}]` : "$";
+  const path = field.length > 0 ? `${at}.${field}` : at;
+  return new JsonError(`expected ${expected} at ${shortPath(path)}`);
 }
 
 // Parameters (velt_rt db_params.rs; the code velt/db/generate/bind writes): `sink` is the

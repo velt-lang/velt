@@ -1,0 +1,8 @@
+// `Math.random()` seeds its generator from the operating system's random numbers
+// (std/lang/random/os.velt): under `velt dev` on Windows that is bcrypt.dll's `BCryptGenRandom`,
+// which the JIT host must load as a linked build does.
+function main() {
+  const a = Math.random();
+  const b = Math.random();
+  console.log(`random 2 ${a >= 0 && a < 1 && b >= 0 && b < 1 && a !== b}`);
+}

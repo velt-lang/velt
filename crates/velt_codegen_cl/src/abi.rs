@@ -65,6 +65,45 @@ pub(crate) fn make_signature(cc: CallConv, params: &[Ty], ret: Ty) -> CodegenRes
     Ok(sig)
 }
 
+/// The signature of a C function taking or returning C structs by value (`vir::ExternFn::c_abi`,
+/// #2187 layer 3): a struct on the stack is a pointer the call copies from
+/// (`StructArgument`), the result's slot a `StructReturn` pointer, and a struct result in
+/// registers one return per word.
+pub(crate) fn c_signature(
+    cc: CallConv,
+    program: &vir::Program,
+    e: &vir::ExternFn,
+) -> CodegenResult<Signature> {
+    let Some(c) = &e.c_abi else {
+        return make_signature(cc, &e.params, e.ret);
+    };
+    let mut sig = Signature::new(cc);
+    for (&p, cp) in e.params.iter().zip(&c.params) {
+        sig.params.push(match *cp {
+            vir::CParam::Value => abi_param(p)?,
+            // Cranelift's x64 ABI copies a stack argument in eightbytes: the size rounded up,
+            // from the copy lowering pads to whole eightbytes (c_struct_call.rs).
+            vir::CParam::ByVal { size, .. } => AbiParam::special(
+                types::I64,
+                ir::ArgumentPurpose::StructArgument(size.next_multiple_of(8)),
+            ),
+            vir::CParam::Sret { .. } => {
+                AbiParam::special(types::I64, ir::ArgumentPurpose::StructReturn)
+            }
+        });
+    }
+    match (c.ret, e.ret) {
+        (vir::CRet::Words, Ty::Agg(a)) => {
+            for &(t, _) in &aggregate(program, a)?.fields {
+                sig.returns.push(abi_param(t)?);
+            }
+        }
+        (_, Ty::Unit) => {}
+        (_, t) => sig.returns.push(abi_param(t)?),
+    }
+    Ok(sig)
+}
+
 /// Layout of an aggregate, or an error for an unknown id.
 pub(crate) fn aggregate(program: &vir::Program, id: AggId) -> CodegenResult<&AggLayout> {
     match program.aggs.get(id.0 as usize) {

@@ -1,15 +1,16 @@
 // velt/net (internal): the TLS operations of std/net/tcp_sched.velt on the reactor under the
-// executor in Velt (#2649): `extend TlsServer implements ReactorTls`, in place of the stubs of
-// std/net/tls/fd_hook.velt, for the TLS streams of both `listenTls` and `connectTls`. The TLS
-// server and client (std/net/tls/fd_server.velt, fd_client.velt) load this file; a program loads
-// them only when live code can listen or connect with TLS (fd_hook.velt).
+// executor in Velt (#2649), as the function values of `ReactorFns` (std/net/tls/fd_hook.velt),
+// for the TLS streams of both `listenTls` and `connectTls`. The TLS server and client
+// (std/net/tls/fd_server.velt, fd_client.velt) load this file and install them before their first
+// handle (`installReactorOps`); a program loads them only when live code can listen or connect
+// with TLS (fd_hook.velt).
 
 import { IoError } from "velt/io/error";
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import * as fs from "velt/net/fd_socket";
 import { CLOSE_NOTIFY, TlsFailure } from "velt/net/tls/alert";
-import { ReactorTls, TlsServer } from "velt/net/tls/fd_hook";
+import { reactorOpsInstalled, setReactorOps } from "velt/net/tls/fd_hook";
 import * as ops from "velt/net/tls/fd_ops";
 
 /**
@@ -42,93 +43,139 @@ export function status(e: unknown): IoStatus {
   }
 }
 
-/** The TLS operations for std/net/tcp_sched.velt (std/net/tls/fd_ops.velt), in place of the stubs. */
-extend TlsServer implements ReactorTls {
-  listenerFd(l: u64): u64 {
-    return ops.listenerFd(l);
+/**
+ * Installs the TLS operations for std/net/tcp_sched.velt (std/net/tls/fd_hook.velt
+ * `setReactorOps`): the TLS server and client call it before they make a handle.
+ */
+export function installReactorOps(): void {
+  // Every TLS connection calls this: after the first, nothing to build.
+  if (reactorOpsInstalled()) {
+    return;
   }
-  closeListener(l: u64) {
-    ops.closeListener(l);
+  setReactorOps({
+    listenerFd,
+    closeListener,
+    accept,
+    read,
+    readString,
+    tryReadInto,
+    readyOrFd,
+    fdOf,
+    readable,
+    writeLaterRange,
+    tryWriteRange,
+    drained,
+    writeRange,
+    shutdown,
+    alpn,
+    idleOpen,
+    close,
+  });
+}
+
+// The operations: tcp_sched's names and results (failures as codes, never thrown), over
+// std/net/tls/fd_ops.velt.
+
+function listenerFd(l: u64): u64 {
+  return ops.listenerFd(l);
+}
+
+function closeListener(l: u64) {
+  ops.closeListener(l);
+}
+
+async function accept(l: u64): Promise<IoResult<u64>> {
+  try {
+    return await ops.accept(l);
+  } catch (e) {
+    return fs.failed(status(e), 0);
   }
-  async accept(l: u64): Promise<IoResult<u64>> {
-    try {
-      return await ops.accept(l);
-    } catch (e) {
-      return fs.failed(status(e), 0);
-    }
+}
+
+async function read(s: u64, max: u64): Promise<IoResult<u8[]>> {
+  try {
+    return await ops.read(s, max);
+  } catch (e) {
+    return fs.failed(status(e), []);
   }
-  async read(s: u64, max: u64): Promise<IoResult<u8[]>> {
-    try {
-      return await ops.read(s, max);
-    } catch (e) {
-      return fs.failed(status(e), []);
-    }
+}
+
+async function readString(s: u64, max: u64): Promise<IoResult<string>> {
+  try {
+    return await ops.readString(s, max);
+  } catch (e) {
+    return fs.failed(status(e), "");
   }
-  async readString(s: u64, max: u64): Promise<IoResult<string>> {
-    try {
-      return await ops.readString(s, max);
-    } catch (e) {
-      return fs.failed(status(e), "");
-    }
+}
+
+function tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+  try {
+    return ops.tryReadInto(s, data, start, end);
+  } catch (e) {
+    return fs.failed(status(e), 0);
   }
-  tryReadInto(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
-    try {
-      return ops.tryReadInto(s, data, start, end);
-    } catch (e) {
-      return fs.failed(status(e), 0);
-    }
+}
+
+function readyOrFd(s: u64): IoResult<u64> {
+  return ops.readyOrFd(s);
+}
+
+function fdOf(s: u64): u64 {
+  return ops.fdOf(s);
+}
+
+async function readable(s: u64): Promise<IoStatus> {
+  try {
+    return await ops.readable(s);
+  } catch (e) {
+    return status(e);
   }
-  readyOrFd(s: u64): IoResult<u64> {
-    return ops.readyOrFd(s);
+}
+
+function writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
+  try {
+    return ops.writeLaterRange(s, data, start, end);
+  } catch (e) {
+    return fs.failed(status(e), 0);
   }
-  fdOf(s: u64): u64 {
-    return ops.fdOf(s);
+}
+
+function tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
+  return ops.tryWriteRange(s, data, start, end);
+}
+
+async function drained(s: u64, max: u64): Promise<IoStatus> {
+  try {
+    return await ops.drained(s, max);
+  } catch (e) {
+    return status(e);
   }
-  async readable(s: u64): Promise<IoStatus> {
-    try {
-      return await ops.readable(s);
-    } catch (e) {
-      return status(e);
-    }
+}
+
+async function writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
+  try {
+    return await ops.writeRange(s, data, start, end);
+  } catch (e) {
+    return status(e);
   }
-  writeLaterRange(s: u64, data: u8[], start: u64, end: u64): IoResult<u64> {
-    try {
-      return ops.writeLaterRange(s, data, start, end);
-    } catch (e) {
-      return fs.failed(status(e), 0);
-    }
+}
+
+function shutdown(s: u64): IoStatus {
+  return ops.shutdown(s);
+}
+
+async function alpn(s: u64): Promise<IoResult<string>> {
+  try {
+    return await ops.alpn(s);
+  } catch (e) {
+    return fs.failed(status(e), "");
   }
-  tryWriteRange(s: u64, data: u8[], start: u64, end: u64): u64 {
-    return ops.tryWriteRange(s, data, start, end);
-  }
-  async drained(s: u64, max: u64): Promise<IoStatus> {
-    try {
-      return await ops.drained(s, max);
-    } catch (e) {
-      return status(e);
-    }
-  }
-  async writeRange(s: u64, data: u8[], start: u64, end: u64): Promise<IoStatus> {
-    try {
-      return await ops.writeRange(s, data, start, end);
-    } catch (e) {
-      return status(e);
-    }
-  }
-  shutdown(s: u64): IoStatus {
-    return ops.shutdown(s);
-  }
-  async alpn(s: u64): Promise<IoResult<string>> {
-    try {
-      return await ops.alpn(s);
-    } catch (e) {
-      return fs.failed(status(e), "");
-    }
-  }
-  idleOpen(s: u64): bool {
-    return ops.idleOpen(s);
-  }
-  close(s: u64) {
-    ops.close(s);
-  }
+}
+
+function idleOpen(s: u64): bool {
+  return ops.idleOpen(s);
+}
+
+function close(s: u64) {
+  ops.close(s);
 }

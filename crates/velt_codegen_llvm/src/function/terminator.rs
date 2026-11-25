@@ -118,6 +118,23 @@ impl Emitter<'_> {
             raw.push(v);
             types.push(ty);
         }
+        // A C function taking or returning C structs by value (#2187 layer 3): its `byval` and
+        // `sret` pointers at the call too, and a result of two words (c_struct.rs).
+        let c_abi = match callee {
+            Callee::Extern(id) => {
+                (self.program.externs.get(id.0 as usize)).filter(|e| e.c_abi.is_some())
+            }
+            _ => None,
+        };
+        let mut ret_text = abi_ret(ret).unwrap_or_default();
+        let mut pair = None;
+        if let Some(e) = c_abi {
+            for (k, (v, (r, &t))) in values.iter_mut().zip(raw.iter().zip(&types)).enumerate() {
+                *v = format!("{} {r}", crate::c_struct::param(e, k, t)?);
+            }
+            ret_text = crate::c_struct::ret(self.program, e)?;
+            pair = crate::c_struct::words(self.program, e);
+        }
         let variadic = self.variadic(callee);
         let fixed = if variadic {
             params.len().min(types.len())
@@ -178,11 +195,10 @@ impl Emitter<'_> {
             }
             false => String::new(),
         };
-        let mut text = format!(
-            "call {}{fn_ty} {target}({})",
-            abi_ret(ret)?,
-            values.join(", ")
-        );
+        if c_abi.is_none() {
+            ret_text = abi_ret(ret)?;
+        }
+        let mut text = format!("call {ret_text}{fn_ty} {target}({})", values.join(", "));
         let kept = self.kept_calls.binary_search(&self.block).is_ok();
         if kept || self.enters_gated(callee) {
             text.push_str(" noinline");
@@ -214,7 +230,17 @@ impl Emitter<'_> {
             if let Some(label) = &continues {
                 self.label(label);
             }
-            if let Some(dest) = dest {
+            if let (Some(dest), Some(words)) = (dest, &pair) {
+                // The words into the destination's fields.
+                let ty = crate::c_struct::words_type(words);
+                for i in 0..words.len() {
+                    let word = self.inst(format!("extractvalue {ty} {result}, {i}"));
+                    let mut field = dest.clone();
+                    field.proj.push(velt_vir::vir::Proj::Field(i as u32));
+                    let loc = self.place(&field)?;
+                    self.write(loc, Val::Scalar(word))?;
+                }
+            } else if let Some(dest) = dest {
                 let loc = self.place(dest)?;
                 if loc.ty() != ret && loc.ty() != Ty::Unit {
                     bail!(
@@ -340,6 +366,23 @@ impl Emitter<'_> {
         if let Some((name, definitions, want_params, want_ret)) =
             crate::simd::helper(symbol, self.simd, self.simd_caps)
         {
+            if params != want_params || ret != want_ret {
+                return None;
+            }
+            for d in definitions {
+                self.intrinsics.need(d);
+            }
+            return Some(name);
+        }
+        // BMI2 and ADX where `--cpu` guarantees them: the helpers take their fast form without
+        // reading the CPU feature word.
+        let adx = self.baseline_has(velt_vir::simd::Ext::AdxX86);
+        if let Some((name, definitions, want_params, want_ret)) = crate::field::helper(
+            &e.symbol,
+            self.simd == crate::simd::Arch::Sse2,
+            adx,
+            crate::field_portable::Choice::of(self.simd),
+        ) {
             if params != want_params || ret != want_ret {
                 return None;
             }

@@ -13,8 +13,7 @@
 // `Mutex` is locked only for `m.with(f)`, whose callback never awaits, so it is unlocked on the
 // thread that locked it. A caught panic doesn't put the count back: the JIT doesn't catch panics
 // (std/task/unwind.velt), so in the builds that count, a panic ends the program. An `RwLock`'s
-// holds are not counted here: they are the runtime's, which counts them for its own module lock
-// (#3631).
+// holds are not counted: its lock words are the runtime's.
 
 /** How many `Mutex`es this thread holds (in a `velt dev` build). */
 const HELD = new ThreadLocal<u32>(0);

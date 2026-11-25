@@ -35,6 +35,11 @@ export function utf8DecodeLossy(data: u8[]): string {
   const out: u8[] = arrayWithCapacity(data.length + 8);
   let i: usize = 0;
   while (i < data.length) {
+    if (data[i] < 0x80) {
+      out.push(data[i]);
+      i++;
+      continue;
+    }
     const len = sequenceAt(data, i);
     if (len > 0) {
       for (let k: usize = 0; k < (len as usize); k++) {

@@ -496,6 +496,9 @@ pub(crate) const SCHED_HOOKS: &[&str] = &[
     velt_common::std_hook!(sched_module_state),
     velt_common::std_hook!(sched_module_block),
     velt_common::std_hook!(sched_module_ready),
+    velt_common::std_hook!(sched_module_touch),
+    velt_common::std_hook!(sched_module_with),
+    velt_common::std_hook!(sched_module_with_end),
     velt_common::std_hook!(sched_task_id),
 ];
 

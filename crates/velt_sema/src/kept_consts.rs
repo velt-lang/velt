@@ -78,18 +78,15 @@ pub(crate) fn keep_readers(cx: &mut Ctx) {
     // `keep` did: an initializer that takes another constant over (`const B = { a: A }`).
     let mut inits = FxHashMap::default();
     for &d in &consts {
-        // Visited in place: taken out of the constant and put back.
-        let DefInfo::Global(g) = &mut cx.info[d.0 as usize] else {
+        // Read in place (a finished unit's constants, in a check by units, are never written).
+        let DefInfo::Global(g) = &cx.info[d.0 as usize] else {
             continue;
         };
-        let Some(mut init) = g.init.take() else {
+        let Some(init) = &g.init else {
             continue;
         };
         let mut facts = Facts::default();
-        crate::visit::expr(&mut init, &mut facts);
-        if let DefInfo::Global(g) = &mut cx.info[d.0 as usize] {
-            g.init = Some(init);
-        }
+        crate::visit_ref::expr(init, &mut facts);
         for &a in &facts.shared {
             keep(cx, a);
         }
@@ -146,8 +143,8 @@ struct Facts {
     shared: Vec<DefId>,
 }
 
-impl crate::visit::VisitMut for Facts {
-    fn expr(&mut self, e: &mut hir::Expr) {
+impl crate::visit_ref::Visit for Facts {
+    fn expr(&mut self, e: &hir::Expr) {
         match &e.kind {
             E::Global(d) => self.globals.push(*d),
             E::Closure(c) | E::FnRef(c, _) => self.fns.push(*c),
@@ -179,8 +176,8 @@ fn reachable_fns(cx: &mut Ctx, inits: &FxHashMap<DefId, Facts>) -> FxHashMap<Def
             continue;
         }
         let mut facts = Facts::default();
-        if let Some(hir::Def::Fn(def)) = cx.defs[f.0 as usize].as_mut() {
-            crate::visit::block(&mut def.body.block, &mut facts);
+        if let Some(hir::Def::Fn(def)) = cx.defs.get(f.0 as usize).and_then(|d| d.as_ref()) {
+            crate::visit_ref::block(&def.body.block, &mut facts);
         }
         work.extend(facts.fns.iter().copied());
         fns.insert(f, facts);

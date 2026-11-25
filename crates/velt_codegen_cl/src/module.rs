@@ -444,9 +444,19 @@ pub(crate) fn declare_all<M: Module>(
             velt_vir::math::MathOp::of_extern(e).is_some_and(|op| !op.has_runtime_function());
         if velt_vir::simd::SimdCall::of_symbol(&e.symbol).is_some()
             || velt_vir::atomic::AtomicCall::of_symbol(&e.symbol).is_some()
+            || velt_vir::field::FieldOp::of_symbol(&e.symbol).is_some()
             || inline_math
         {
             externs.push(None);
+            continue;
+        }
+        if e.c_abi.is_some() {
+            // C structs by value (#2187 layer 3): abi.rs `c_signature`.
+            let sig = crate::abi::c_signature(call_conv, program, e)?;
+            let id = module
+                .declare_function(&e.symbol, Linkage::Import, &sig)
+                .map_err(|err| format!("codegen: declaring function `{}`: {err}", e.symbol))?;
+            externs.push(Some(id));
             continue;
         }
         externs.push(Some(declare_function(

@@ -5,12 +5,13 @@
 // then, its node dropped as its owner drops it, unless the original handed to another task is
 // still held there (whichever of the two goes second frees it).
 
-import { fnAddress, inline, stateDrop } from "velt/lang/intrinsics";
+import { fnAddress, inline, noInline, stateDrop } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as sh from "./sched_share";
 import * as t from "./sched_task";
 import * as away from "./sched_share_away";
+import * as lf from "./sched_share_leaf";
 import * as ls from "./sched_share_listed";
 import * as wt from "./sched_share_wait";
 
@@ -78,8 +79,10 @@ export function release(h: usize, f: usize): void {
 
 /**
  * Frees hub `h`: its node gets its entries back and is dropped as an owner drops it (a node that
- * has not finished keeps running, its result dropped when it does).
+ * has not finished keeps running, its result dropped when it does); a shared leaf's hub lets go of
+ * the leaf, which every holder named as its identity.
  */
+@noInline
 export function free(h: usize): void {
   const n = m.ld(h + sh.H_NODE);
   const f = n + nd.N_HEAD;
@@ -98,6 +101,12 @@ export function free(h: usize): void {
     // Someone claimed the promise (took its result, or a combinator handles it): a node still
     // running finishes for nobody, and a rejection it then holds is not one to report.
     nd.handled(f, m.ld(h + sh.H_RDROP), fnAddress(nd.nodePoll));
+  }
+  const rec = m.ld(h + sh.H_LEAF);
+  if (rec !== 0) {
+    // A shared leaf's driver (sched_share_leaf.velt): its identity, the leaf, may go now (an
+    // unfinished driver keeps its own hold until it is dropped or finishes).
+    lf.hubFreed(rec);
   }
   sh.unwatch(h);
   nd.nodeDrop(f);

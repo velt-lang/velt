@@ -1,0 +1,9 @@
+// velt/fs (internal): `Took`, what an operation on a reader's line buffer found
+// (std/fs/line_buffer.velt).
+
+/** A line or text (`GOT`), bytes (`GOT`), or a status: see line_buffer.velt's `GOT` .. `CLOSED`. */
+export struct Took {
+  status: u8;
+  text: string;
+  bytes: u8[] | null;
+}

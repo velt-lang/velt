@@ -34,12 +34,16 @@ macro_rules! bail {
     ($($t:tt)*) => { return Err(format!($($t)*)) };
 }
 
+mod c_struct;
 mod clang;
 mod clang_probe;
 mod clang_run;
 mod clang_search;
 mod debug;
 mod eh;
+mod field;
+mod field25519;
+mod field_portable;
 mod function;
 mod half;
 mod inlining;

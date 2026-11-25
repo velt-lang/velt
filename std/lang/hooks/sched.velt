@@ -81,7 +81,8 @@ export function schedExportExit(): void {
 /**
  * `velt_main`'s root: runs it, and every task it wakes, until it is done. `stay` is 1 when tasks
  * must stay on their worker (sched_spread.velt `stay`): the program may give a declared function
- * properties through `any`, which the runtime keeps under its module lock, held by worker 0.
+ * properties through `any`, placed as when the runtime's module lock, which worker 0 held, guarded
+ * them (the lock is sched_module.velt's now).
  */
 export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
   const e = exec();
@@ -211,8 +212,8 @@ export function schedWorkerCount(): u64 {
 
 /**
  * Do this program's tasks stay on their worker (sched_spread.velt `stay`, set before `main`
- * runs): it may give a declared function properties through `any`, which the runtime keeps under
- * a lock only worker 0 holds, so a task elsewhere that reaches them would never run on.
+ * runs): it may give a declared function properties through `any`, placed as when the runtime's
+ * module lock, which only worker 0 held, guarded them (the lock is sched_module.velt's now).
  */
 export function schedStays(): bool {
   return m.ld(m.ld(exec() + t.E_MAIN) + t.E_STAY) !== 0;
@@ -443,6 +444,21 @@ export function schedModuleBlock(desc: usize): usize {
 /** `velt_rt_module_ready`: the block's slots below `n` are initialized. */
 export function schedModuleReady(state: usize, n: u64): void {
   mod.ready(state, n);
+}
+
+/** Before a function's properties held as `any` are reached: the module lock (sched_module). */
+export function schedModuleTouch(): void {
+  mod.touch();
+}
+
+/** Before a `Mutex` or `RwLock` is locked for a callback: the module lock; whether it took it. */
+export function schedModuleWith(): u8 {
+  return mod.withStart();
+}
+
+/** After that callback's unlock: the module lock `schedModuleWith` took goes (`took` 1). */
+export function schedModuleWithEnd(took: u8): void {
+  mod.withEnd(took);
 }
 
 /** `velt_rt_latch_new`: a closed latch. */
