@@ -1,0 +1,12 @@
+interface Joiner {
+  join(...parts: string[]): string;
+}
+class J implements Joiner {
+  join(...parts: string[]): string {
+    return parts.join("+");
+  }
+}
+const j: Joiner = new J();
+// As a class method with a rest parameter, it is no function value: wrap it in an arrow.
+const f = j.join;
+console.log(f("a", "b"));

@@ -368,8 +368,8 @@ impl FnCx<'_, '_> {
                     iface,
                     iface_args,
                     slot,
+                    rest: method.rest,
                     method,
-                    rest: false,
                 };
                 self.iface_call(recv, s, type_args, args, exp, span)
             }
