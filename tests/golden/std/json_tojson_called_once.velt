@@ -72,6 +72,57 @@ class MaybeOut {
   }
 }
 
+// A result of a type that has a hook of its own, not a class (a `Date`): written by its fields,
+// none, as Node writes `{}`.
+class DateOut {
+  toJSON() {
+    calls.push(-7);
+    return new Date(0);
+  }
+}
+
+// A result that is a typed `Proxy` of a class: written through the proxy (its `get` trap answers).
+class Plain {
+  y = 5;
+}
+
+class ProxyOut {
+  toJSON(): Plain {
+    calls.push(-8);
+    return new Proxy(new Plain(), {});
+  }
+}
+
+class TrapOut {
+  toJSON(): Plain {
+    calls.push(-9);
+    return new Proxy(new Plain(), {
+      get(t: Plain, k: string | symbol, r: any): any {
+        return k === "y" ? 50 : Reflect.get(t, k, r);
+      },
+    });
+  }
+}
+
+// Its `ownKeys` trap hides the field, so Node writes `{}`: the proxy is written as a proxy.
+class KeysOut {
+  toJSON(): Plain {
+    calls.push(-11);
+    return new Proxy(new Plain(), {
+      ownKeys(t: Plain): (string | symbol)[] {
+        return [];
+      },
+    });
+  }
+}
+
+class AnyProxyOut {
+  toJSON(): any {
+    calls.push(-10);
+    return new Proxy(new Plain(), {});
+  }
+}
+
 type Holder = { self: Self; list: Self[]; data: Data; outer: Outer };
 
 function show(label: string, text: string | undefined): void {
@@ -104,3 +155,6 @@ const dynamic: any = new Outer();
 show("dynamic", JSON.stringify(dynamic));
 const dynamicSub: any = new Sub();
 show("dynamic sub", JSON.stringify(dynamicSub));
+show("date result", JSON.stringify(new DateOut()));
+show("proxy result", JSON.stringify([new ProxyOut(), new TrapOut(), new KeysOut()]));
+show("any proxy result", JSON.stringify(new AnyProxyOut()));

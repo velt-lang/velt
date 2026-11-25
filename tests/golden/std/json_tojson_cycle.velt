@@ -1,0 +1,22 @@
+// A `toJSON` that returns `this`, inherited by a subclass, on a value that contains itself: the
+// written result is checked for cycles as any class value is, so it is the circular structure
+// error, not a hook that recurses until the stack runs out (#3732, #3724). Node throws a TypeError;
+// Velt's is a panic so far (#3339).
+
+class N {
+  v = 1;
+  next: N | null = null;
+  toJSON() {
+    return this;
+  }
+}
+
+class M extends N {
+  w = 2;
+}
+
+const m = new M();
+m.next = new M();
+console.log(JSON.stringify(m));
+m.next = m;
+console.log(JSON.stringify(m));
