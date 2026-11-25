@@ -1,0 +1,19 @@
+made from pairs
+made from a record
+each a 1
+each b 2, 3
+each set-cookie x=1
+each set-cookie y=2
+of a 1
+of b 2, 3
+of set-cookie x=1
+of set-cookie y=2
+a,1|b,2, 3|set-cookie,x=1|set-cookie,y=2
+a|b|set-cookie|set-cookie
+1|2, 3|x=1|y=2
+x,1|y,2
+get b
+getSetCookie
+overridden 0
+append c 4
+a|b|c|set-cookie|set-cookie

@@ -1,0 +1,18 @@
+https://c.d:9090/p?q=1#f
+https://e.f:9090/p?q=1#f
+https://g.h/p?q=1#f
+port set 1
+port get
+https://g.h/p?q=1#f 0 g.h
+https://a.b:8080/p?q=1#f
+https://a.b:8080/p?q=1#f
+{"h":"https://a.b:8080/p?q=1#f"}
+https://a.b:8080/p?q=1#f
+https://a.b:8080/p?q=1#f
+host get
+https://evil.example
+href get
+host get
+evil:href evil.example a.b
+https://a.b/ https://a.b/ Text.toString "https://a.b/"
+https://a.b/ https://a.b/ https://a.b/ "Json.toJSON"

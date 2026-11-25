@@ -1,0 +1,29 @@
+// A `URLSearchParams` subclass's overrides are not what the built-in methods run on (#3792): the
+// constructor and `set` add to the list without calling `append`, and `sort` orders the list
+// without calling `entries`, as in Node. The Node twin is url_search_params_subclass.mjs.
+import { URLSearchParams } from "velt/net/url";
+
+class Loud extends URLSearchParams {
+  append(name: string, value: string) {
+    console.log("append", name, value);
+    super.append(name, value);
+  }
+  entries(): [string, string][] {
+    console.log("entries");
+    return [["z", "26"]];
+  }
+}
+
+function main() {
+  const p = new Loud("b=2&a=1&b=3&flag");
+  console.log("made", p.size, p.toString());
+  p.set("c", "4");
+  console.log("set new", p.toString());
+  p.set("b", "9");
+  console.log("set old", p.toString());
+  p.sort();
+  console.log("sorted", p.toString());
+  p.append("d", "5");
+  console.log(p.toString());
+  console.log(p.entries().join("|"));
+}
