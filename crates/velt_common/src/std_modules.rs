@@ -101,6 +101,7 @@ table! {
     lang_hooks_clock => "lang/hooks/clock",
     lang_hooks_date_zone_name => "lang/hooks/date_zone_name",
     lang_hooks_mutex => "lang/hooks/mutex",
+    lang_hooks_mutex_held => "lang/hooks/mutex_held",
     lang_hooks_heap => "lang/hooks/heap",
     lang_hooks_iter => "lang/hooks/iter",
     lang_hooks_json => "lang/hooks/json",

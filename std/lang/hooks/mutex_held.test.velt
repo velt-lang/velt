@@ -1,0 +1,41 @@
+// velt/lang/hooks (tests): the `Mutex`es a thread holds, for std's module lock (mutex_held.velt,
+// sched_module.velt `take`, #3467). Lowering counts a `with`'s `Mutex` only in a build for the
+// `velt dev` JIT (velt_vir `count_held`, tested there), so these tests count with the hooks
+// themselves, as that lowering calls them. Each runs on a blocking-pool thread:
+// - a counted `Mutex` and then module state stop with a panic before the module lock is waited
+//   for (with the check off, the case doesn't pass: it hung in the break check);
+// - an unlock on a thread that counted nothing leaves its count at 0.
+import { describe, expect, it } from "velt/test";
+import { hookCall } from "velt/lang/intrinsics";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+import * as mh from "./mutex_held";
+
+/** Module state the tests reach (a top-level `let`). */
+let visits = 0;
+
+describe("the Mutexes a thread holds", () => {
+  it("stop a thread that reaches module state while it holds one", async () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    visits += 1;
+    const message = await hookCall<string>("sched_blocking_run", (): string => {
+      mh.locked();
+      const panicked = catchVeltPanic(() => {
+        visits += 1;
+      });
+      mh.unlocked();
+      return panicked ?? "no panic";
+    });
+    expect(message.startsWith("module state reached while a `Mutex` is held")).toBe(true);
+    expect(visits).toBe(1);
+  });
+
+  it("leave a thread's count at 0 when it unlocks one it didn't count", async () => {
+    const left = await hookCall<u32>("sched_blocking_run", (): u32 => {
+      mh.unlocked();
+      return mh.held();
+    });
+    expect(left).toBe(0 as u32);
+  });
+});
