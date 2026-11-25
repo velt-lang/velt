@@ -42,6 +42,36 @@ class Outer {
   }
 }
 
+// The result typed as `any`, as a union and as an option: still written by its own fields.
+class AnyOut {
+  toJSON(): any {
+    calls.push(-4);
+    return new Inner();
+  }
+}
+
+class UnionOut {
+  inner: boolean;
+  constructor(inner: boolean) {
+    this.inner = inner;
+  }
+  toJSON(): Inner | string {
+    calls.push(-5);
+    return this.inner ? new Inner() : "text";
+  }
+}
+
+class MaybeOut {
+  inner: boolean;
+  constructor(inner: boolean) {
+    this.inner = inner;
+  }
+  toJSON(): Inner | null {
+    calls.push(-6);
+    return this.inner ? new Inner() : null;
+  }
+}
+
 type Holder = { self: Self; list: Self[]; data: Data; outer: Outer };
 
 function show(label: string, text: string | undefined): void {
@@ -67,3 +97,10 @@ show("array", JSON.stringify([new Self(), new Sub(), new Self()]));
 // left out here: Node never calls the hook of one it leaves out (#3767).
 show("keys", JSON.stringify({ self: new Sub(), list: [new Self()], n: 5 }, ["self", "v", "list"]));
 show("indent", JSON.stringify({ a: new Sub() }, null, 1));
+show("any result", JSON.stringify(new AnyOut()));
+show("union result", JSON.stringify([new UnionOut(true), new UnionOut(false)]));
+show("option result", JSON.stringify([new MaybeOut(true), new MaybeOut(false)]));
+const dynamic: any = new Outer();
+show("dynamic", JSON.stringify(dynamic));
+const dynamicSub: any = new Sub();
+show("dynamic sub", JSON.stringify(dynamicSub));

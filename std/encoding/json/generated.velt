@@ -12,7 +12,7 @@ import {
   appendJsonUint,
   appendJsonValue,
 } from "velt/encoding/json/append";
-import { checkJsonTop, jsonPresent, writeJsonAny } from "velt/encoding/json/any";
+import { checkJsonTop, jsonPresent, writeJsonAny, writeJsonResult } from "velt/encoding/json/any";
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
 import { Reader } from "velt/encoding/json/reader";
 import {

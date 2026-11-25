@@ -17,7 +17,7 @@
 // values, typed proxies) through any.velt. A recursive object type that meets itself is an
 // error, as in Node.
 
-import { InstanceRequest, Model, Output } from "velt/generate";
+import { InstanceRequest, Model, Output, Type } from "velt/generate";
 import {
   className,
   dynamicArms,
@@ -150,26 +150,65 @@ function body(req: InstanceRequest, out: Output, keyed: bool): void {
  * Writes `j`, what a `toJSON(key)` returned, of type `ret`. JavaScript calls the hook once and
  * writes its result's own fields, never the result's `toJSON` (#3732): a `return this` would call
  * it again (forever, for a subclass that inherits the hook), and a result of another class with a
- * hook would be written through that hook. So a class result is written by its dynamic class,
- * most derived first, and a class or object with a hook by its fields; anything else as itself.
+ * hook would be written through that hook. The code this writes ends the writer.
  */
 function writeHookResult(out: Output, model: Model, ret: i64, key: string): void {
-  const r = model.type(ret);
-  if (r.kind != "class" && toJsonMethod(r) < 0) {
-    writeValue(out, model, ret, "j", key);
-    return;
-  }
-  for (let i = (r.subclasses.length as i64) - 1; i >= 0; i--) {
-    const s = model.type(r.subclasses[i]);
-    if (!writable(model, s.id, [])) {
-      continue;
+  writeResult(out, model, ret, "j", key);
+}
+
+/**
+ * The code that writes `v`, a hook's result (or part of the result's union) of type `id`, without
+ * calling the result's own hook: a class by its dynamic class (most derived first) and its fields,
+ * guarded against a cycle as the class's writer is; a type with a hook by its fields; a dynamic
+ * value through `writeJsonResult`; an option or a union by its value; anything else as itself.
+ */
+function writeResult(out: Output, model: Model, id: i64, v: string, key: string): void {
+  const r = model.type(id);
+  if (isDynamic(r)) {
+    out.line(`writeJsonResult(w, ${v}, ${key});`);
+  } else if (r.kind == "interface") {
+    out.line(`writeJsonResult(w, dynamicOf(${v}), ${key});`);
+  } else if (r.kind == "option") {
+    out.line(`if (${v} == null) { w.append("null"); return; }`);
+    writeResult(out, model, r.args[0], v, key);
+  } else if (r.kind == "union") {
+    for (let i: i64 = 0; i < (r.arms.length as i64); i++) {
+      out.line(`if (__arm(${v}, ${i})) {`);
+      writeResult(out, model, r.arms[i], v, key);
+      out.line(`return;`);
+      out.line(`}`);
     }
-    out.line(`if (j instanceof ${className(s)}) {`);
-    writeFields(out, model, s, "j");
-    out.line(`return;`);
-    out.line(`}`);
+  } else if (r.kind != "class" && toJsonMethod(r) < 0) {
+    writeValue(out, model, id, v, key);
+  } else {
+    // A typed proxy is written as the `any` it converts to, where one may stand for the type.
+    if (r.mayBeProxy) {
+      out.line(`if (isProxy(${v})) { writeJsonResult(w, dynamicOf(${v}), ${key}); return; }`);
+    }
+    for (let i = (r.subclasses.length as i64) - 1; i >= 0; i--) {
+      const s = model.type(r.subclasses[i]);
+      if (!writable(model, s.id, [])) {
+        continue;
+      }
+      out.line(`if (${v} instanceof ${className(s)}) {`);
+      writeGuardedFields(out, model, s, v);
+      out.line(`return;`);
+      out.line(`}`);
+    }
+    writeGuardedFields(out, model, r, v);
   }
-  writeFields(out, model, r, "j");
+}
+
+/** `writeFields` of `v`, as a cycle when `t` can contain itself and `v` is being written. */
+function writeGuardedFields(out: Output, model: Model, t: Type, v: string): void {
+  const recursive = isRecursive(model, t);
+  if (recursive) {
+    out.line(`if (!beginVisit(identity(${v}))) { jsonCircular(); }`);
+  }
+  writeFields(out, model, t, v);
+  if (recursive) {
+    out.line(`endVisit();`);
+  }
 }
 
 /**

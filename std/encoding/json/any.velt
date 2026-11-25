@@ -19,7 +19,6 @@ import {
   entryName,
   entryValue,
   identity,
-  RuntimeType,
   typeOf,
 } from "velt/reflect";
 
@@ -81,7 +80,7 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     writeJsonAny(w, entryValue(v, 0), key);
     endVisit();
   } else if (kind == "class" && t.hasHook("toJSON")) {
-    writeHooked(w, v, t, key);
+    writeHooked(w, v, key);
   } else if (kind == "object" || kind == "class" || kind == "struct" || kind == "map") {
     enter(v);
     writeMembers(w, v, null);
@@ -118,16 +117,25 @@ function writeNumber(w: StringBuilder, v: any, repr: string): void {
   }
 }
 
-/** What a class instance's `toJSON(key)` returns, written; its fields when that is itself. */
-function writeHooked(w: StringBuilder, v: any, t: RuntimeType, key: string): void {
-  const r = callToJSON(v, key);
-  const rt = typeOf(r);
-  if (rt.kind == t.kind && rt.name == t.name) {
-    // `toJSON() { return this; }`: the fields of the result, as JavaScript writes them.
-    enter(r);
-    writeMembers(w, r, null);
-    endVisit();
-    return;
+/** What a class instance's `toJSON(key)` returns, written ([`writeJsonResult`]). */
+function writeHooked(w: StringBuilder, v: any, key: string): void {
+  writeJsonResult(w, callToJSON(v, key), key);
+}
+
+/**
+ * Appends `r`, what a `toJSON(key)` returned, as JavaScript writes it: the result's own `toJSON`
+ * is not called (#3732), so an instance of a class with one (the value itself, after
+ * `return this`, or another) is written by its members; anything else as `writeJsonAny` writes it.
+ */
+export function writeJsonResult(w: StringBuilder, r: any, key: string): void {
+  if (jsonPresent(r) && !holdsJsonValue(r)) {
+    const t = typeOf(r);
+    if (t.kind == "class" && t.hasHook("toJSON")) {
+      enter(r);
+      writeMembers(w, r, null);
+      endVisit();
+      return;
+    }
   }
   writeJsonAny(w, r, key);
 }
