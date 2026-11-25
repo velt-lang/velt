@@ -1,0 +1,113 @@
+// Edges of a held record going on in the turn before its own (ls.nextTurn): each section's order
+// is Node's.
+async function y1(name: string): Promise<string> {
+  console.log(`${name} yields`);
+  await yieldNow();
+  console.log(`${name} goes on`);
+  return name;
+}
+
+async function yMicro(name: string): Promise<string> {
+  console.log(`${name} yields`);
+  await yieldNow();
+  console.log(`${name} goes on`);
+  Promise.resolve(1).then(() => console.log(`${name}'s microtask`));
+  return name;
+}
+
+async function lateFirst(name: string): Promise<string> {
+  await null;
+  await null;
+  console.log(`${name} yields (late)`);
+  await yieldNow();
+  console.log(`${name} goes on`);
+  return name;
+}
+
+async function twice(name: string): Promise<string> {
+  for (let i = 0; i < 2; i++) {
+    console.log(`${name} yields ${i}`);
+    await yieldNow();
+  }
+  console.log(`${name} done`);
+  return name;
+}
+
+async function throwsAfter(name: string): Promise<string> {
+  console.log(`${name} yields`);
+  await yieldNow();
+  console.log(`${name} throws`);
+  throw new Error(name);
+}
+
+/** Waits for `gate`, then yields: it yields after a sibling later in the array opened it. */
+async function afterGate(name: string, gate: Promise<void>): Promise<string> {
+  await gate;
+  console.log(`${name} yields (after the gate)`);
+  await yieldNow();
+  console.log(`${name} goes on`);
+  return name;
+}
+
+/** Opens `open`, then yields. */
+async function opens(name: string, open: () => void): Promise<string> {
+  open();
+  console.log(`${name} yields`);
+  await yieldNow();
+  console.log(`${name} goes on`);
+  return name;
+}
+
+/** Starts a promise that yields, then yields itself: that one's turn comes between. */
+async function startsOne(name: string): Promise<string> {
+  const p = y1(`${name}'s p`);
+  console.log(`${name} yields`);
+  await yieldNow();
+  console.log(`${name} goes on`);
+  await p;
+  return name;
+}
+
+async function sections(): Promise<void> {
+  console.log("-- the first in the array yields second (a gate)");
+  let open = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  console.log((await Promise.all([afterGate("a", gate), opens("b", () => open())])).join(","));
+  console.log("-- a started promise yields between two children");
+  console.log((await Promise.all([y1("a"), startsOne("b"), y1("c")])).join(","));
+  console.log("-- three that yield once");
+  console.log((await Promise.all([y1("a"), y1("b"), y1("c")])).join(","));
+  console.log("-- a microtask from the first child's turn");
+  console.log((await Promise.all([yMicro("a"), y1("b"), y1("c")])).join(","));
+  console.log("-- the middle one queues a microtask");
+  console.log((await Promise.all([y1("a"), yMicro("b"), y1("c")])).join(","));
+  console.log("-- yields made in another order than the array's");
+  console.log((await Promise.all([lateFirst("a"), y1("b"), y1("c")])).join(","));
+  console.log("-- two yields each");
+  console.log((await Promise.all([twice("a"), twice("b"), y1("c")])).join(","));
+  console.log("-- one throws at its turn");
+  try {
+    await Promise.all([y1("a"), throwsAfter("t"), y1("c"), y1("d")]);
+  } catch (e) {
+    console.log("caught");
+  }
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+  }
+  console.log("-- a started promise yields between");
+  const p = y1("p");
+  console.log((await Promise.all([y1("a"), y1("b")])).join(","));
+  await p;
+  console.log("-- allSettled");
+  const s = await Promise.allSettled([y1("a"), throwsAfter("t"), y1("c")]);
+  console.log(s.map((r) => r.status).join(","));
+}
+
+async function main() {
+  console.log("== in main");
+  await sections();
+  console.log("== in a spawned task");
+  await spawn(sections());
+}

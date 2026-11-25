@@ -1,0 +1,33 @@
+// The root yields while a started promise's yield is listed, then another started promise
+// yields in the same poll (it resumes from a microtask after the root suspended): Node runs the
+// listed one, then the root, then the later one.
+async function loop(name: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(`${name} ${i}`);
+    await yieldNow();
+  }
+  console.log(`${name} done`);
+}
+
+async function late(name: string): Promise<void> {
+  await null;
+  console.log(`${name} resumed`);
+  await yieldNow();
+  console.log(`${name} after its yield`);
+}
+
+async function rounds(): Promise<void> {
+  const a = loop("a", 2);
+  const p = late("p");
+  await yieldNow();
+  console.log("root after its yield");
+  await a;
+  await p;
+}
+
+async function main() {
+  console.log("-- in main");
+  await rounds();
+  console.log("-- in a spawned task");
+  await spawn(rounds());
+}

@@ -1,0 +1,29 @@
+// The root yields while yields of started promises are listed: Node runs the started promises'
+// turns first, then the root's.
+async function loop(name: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(`${name} ${i}`);
+    await yieldNow();
+  }
+  console.log(`${name} done`);
+}
+
+async function rounds(): Promise<void> {
+  const a = loop("a", 3);
+  const b = loop("b", 3);
+  const c = loop("c", 3);
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+    console.log(`root ${i}`);
+  }
+  await a;
+  await b;
+  await c;
+}
+
+async function main() {
+  console.log("-- in main");
+  await rounds();
+  console.log("-- in a spawned task");
+  await spawn(rounds());
+}

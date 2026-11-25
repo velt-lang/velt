@@ -1,0 +1,15 @@
+async function yields(n: number): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function main() {
+  let total = 0;
+  for (let r = 0; r < 50000; r++) {
+    const [a, b] = await Promise.all([yields(2), yields(2)]);
+    total += a + b;
+  }
+  console.log(total);
+}

@@ -1,0 +1,15 @@
+// 50,000 inline `Promise.all`s in `main`'s root, each of two children that yield once: the
+// children's yields take the shared-cx path (a copy of the root's cx), the root's records and turns.
+async function step(n: number): Promise<number> {
+  await yieldNow();
+  return n;
+}
+
+async function main() {
+  let s = 0;
+  for (let i = 0; i < 50000; i++) {
+    const r = await Promise.all([step(i), step(1)]);
+    s += r[0] + r[1];
+  }
+  console.log(s);
+}
