@@ -239,6 +239,9 @@ export const imports: Imports = {
   // velt/task's `catchPanic` catch: the runtime's (velt_rt_catch_*), or under the executor in
   // Velt (`VELT_SCHEDULER=std`) its own, with `catchUnwind` (std/task/catch_sched.velt).
   "#task-catch": { "std-scheduler": "./task/catch_sched.velt", default: "./task/catch_rt.velt" },
+  // `AbortSignal`'s signals: under the executor in Velt (`VELT_SCHEDULER=std`) std's own
+  // (std/task/signal_core.velt), else the runtime's (velt_rt_signal_*, WebAssembly's runtime).
+  "#task-signal": { "std-scheduler": "./task/signal_sched.velt", default: "./task/signal_rt.velt" },
   "#task-workers": {
     "std-scheduler": "./task/worker_index_sched.velt",
     default: "./task/worker_index.velt",
