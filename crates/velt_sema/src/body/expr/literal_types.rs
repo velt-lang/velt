@@ -153,17 +153,75 @@ impl FnCx<'_, '_> {
             return (l, r);
         }
         let arith = matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Rem | B::Pow);
-        let float = arith && (self.number_literal(l.ty) || self.number_literal(r.ty));
+        let (ll, rl) = (self.number_literal(l.ty), self.number_literal(r.ty));
+        // A bitwise operator beside a `number` takes the literal as the `number` it is too
+        // (`y | n` with `y: number`, `n: 0 | 1`; also `c.v |= n` through an accessor, #3747).
+        let f64 = self.cx.ty.f64;
+        let bitwise = super::int32::is_bitwise(op) && ((ll && r.ty == f64) || (rl && l.ty == f64));
+        let float = (arith && (ll || rl)) || bitwise;
         let (l, r) = (self.widen_value(l), self.widen_value(r));
         if !float {
             return (l, r);
         }
-        let f64 = self.cx.ty.f64;
         let float = |s: &mut Self, h: hir::Expr| match h.ty == s.cx.ty.i64 {
             true => s.int_to_float(h, f64),
             false => h,
         };
         (float(self, l), float(self, r))
+    }
+
+    /// `h`, of an integer literal type or a union of them (`5`, `0 | 1`: an `i64` underneath),
+    /// as the `number` it is in TypeScript, converted to `exp` from there: `number` itself, a
+    /// union holding `number` (`string | number`), or a `number | null`. Tried after the other
+    /// conversions, so a union that holds the literals themselves keeps them. `Err(h)` when `h`
+    /// is no such type or the `number` converts to `exp` no better.
+    pub(super) fn int_literal_as_number(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let f64 = self.cx.ty.f64;
+        if exp == h.ty || !self.number_literal(h.ty) || !self.holds_number(exp, 4) {
+            return Err(h);
+        }
+        let original = h.clone();
+        let int = self.widen_value(h);
+        if int.ty != self.cx.ty.i64 {
+            return Err(original);
+        }
+        let number = self.int_to_float(int, f64);
+        match exp == f64 {
+            true => Ok(number),
+            false => self.try_coerce(number, exp).map_err(|_| original),
+        }
+    }
+
+    /// `v`, the operand of a compound assignment to a place of type `place`: a value of an
+    /// integer literal type or a union of them as the `number` it is when the place is a `number`
+    /// (`x += n`, `x |= n` with `n: 0 | 1`), else `v` as it is.
+    pub(super) fn compound_literal_operand(&mut self, place: TyId, v: hir::Expr) -> hir::Expr {
+        if place != self.cx.ty.f64 {
+            return v;
+        }
+        self.int_literal_as_number(v, place).unwrap_or_else(|v| v)
+    }
+
+    /// Can a `number` convert to `t`: `number` itself, or a union or an option holding one
+    /// (`depth` bounds the nesting looked into)?
+    fn holds_number(&mut self, t: TyId, depth: u32) -> bool {
+        if t == self.cx.ty.f64 {
+            return true;
+        }
+        if depth == 0 {
+            return false;
+        }
+        if let Some(inner) = self.cx.ty.opt_payload(t) {
+            return self.holds_number(inner, depth - 1);
+        }
+        match self.cx.union_members(t) {
+            Some(members) => members.into_iter().any(|m| self.holds_number(m, depth - 1)),
+            None => false,
+        }
     }
 
     /// Is `t` a number literal type or a union of them, of `i64`s (`1 | 2`)?
