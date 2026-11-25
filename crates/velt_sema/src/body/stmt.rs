@@ -249,13 +249,14 @@ impl FnCx<'_, '_> {
                 expr,
             } => {
                 self.stmt_yields(expr);
-                self.expr(expr, None, Want::Borrow)
+                let h = self.discarded_expr(expr);
+                self.discard_hand_back(h)
             }
             _ => {
                 self.stmt_yields(e);
-                let h = self.expr(e, None, Want::Borrow);
+                let h = self.discarded_expr(e);
                 self.check_floating(e, &h);
-                h
+                self.discard_hand_back(h)
             }
         }
     }

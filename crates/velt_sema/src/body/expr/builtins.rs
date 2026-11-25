@@ -193,54 +193,83 @@ impl FnCx<'_, '_> {
     }
 
     fn print(&mut self, intr: Intrinsic, args: &[ast::Expr], span: Span) -> hir::Expr {
+        // A first string followed by more arguments may hold format specifiers (#3662).
         let mut out = vec![];
-        for a in args {
-            let h = self.printed_expr(a);
-            let h = self.read_shared(h);
-            // A `Date` prints as its ISO string, like Node.
-            let h = self.own_to_string(h, crate::hooks::INSPECT);
-            let h = self.narrowed_for_print(h);
-            // A literal with accessors prints as Node shows it (`[Getter]`), through `any`.
-            let h = self.literal_iface_as_any(h);
-            // An interface value prints as the object it holds (`object_text`).
-            let h = self.printed_iface_as_any(h);
-            // A `void` variable (`then((v) => console.log(v))` on a `Promise<void>`) holds
-            // `undefined`. A call returning nothing stays an error: Velt's `reverse()` returns
-            // nothing where TypeScript's returns the array.
-            let h = match h.ty == self.cx.ty.unit && matches!(h.kind, hir::ExprKind::Local(..)) {
-                true => {
-                    let at = h.span;
-                    let undefined =
-                        super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), at);
-                    let u = self.expr(&undefined, None, Want::Move);
-                    let ty = u.ty;
-                    let block = hir::Block {
-                        stmts: vec![hir::Stmt {
-                            kind: hir::StmtKind::Expr(h),
-                            span: at,
-                        }],
-                        value: Some(Box::new(u)),
-                        span: at,
-                    };
-                    self.mk(hir::ExprKind::Block(block), ty, at)
+        let mut rest = args;
+        if let [first, more @ ..] = args {
+            if !more.is_empty() {
+                let h = self.printed_expr(first);
+                match self.console_format(intr, first, h, more, span) {
+                    Ok(done) => return done,
+                    Err(printed) => out.push(printed),
                 }
-                false => h,
-            };
-            if !self.printable(h.ty) {
-                let tn = self.cx.display(h.ty);
-                let mut d =
-                    Diagnostic::error(format!("cannot print a value of type `{tn}`"), h.span);
-                if let Some(note) = self.in_place_note(a, &h) {
-                    d = d.with_note(note);
-                }
-                if matches!(self.cx.ty.kind(h.ty), TyKind::Simd(_)) {
-                    d = d.with_note("print its lanes (`v.lane(0)`), or a mask's `bitmask()`");
-                }
-                self.cx.error(d);
+                rest = more;
             }
-            out.push(h);
+        }
+        for a in rest {
+            let h = self.printed_expr(a);
+            out.push(self.print_value(a, h));
         }
         self.intrinsic(intr, out, self.cx.ty.unit, span)
+    }
+
+    /// The printed argument `a`, checked as `h` (`printed_expr`), as `console.log` prints it.
+    pub(super) fn print_value(&mut self, a: &ast::Expr, h: hir::Expr) -> hir::Expr {
+        self.print_value_with(a, h, true)
+    }
+
+    /// [`Self::print_value`]; `inspect_hook`: a class's own `[INSPECT]()` is called here (else
+    /// the lowering's inspect calls it, as for a value inside a container: `%o`, `%O`).
+    pub(super) fn print_value_with(
+        &mut self,
+        a: &ast::Expr,
+        h: hir::Expr,
+        inspect_hook: bool,
+    ) -> hir::Expr {
+        let h = self.read_shared(h);
+        // A `Date` prints as its ISO string, like Node.
+        let h = match inspect_hook {
+            true => self.own_to_string(h, crate::hooks::INSPECT),
+            false => h,
+        };
+        let h = self.narrowed_for_print(h);
+        // A literal with accessors prints as Node shows it (`[Getter]`), through `any`.
+        let h = self.literal_iface_as_any(h);
+        // An interface value prints as the object it holds (`object_text`).
+        let h = self.printed_iface_as_any(h);
+        // A `void` variable (`then((v) => console.log(v))` on a `Promise<void>`) holds
+        // `undefined`. A call returning nothing stays an error: Velt's `reverse()` returns
+        // nothing where TypeScript's returns the array.
+        let h = match h.ty == self.cx.ty.unit && matches!(h.kind, hir::ExprKind::Local(..)) {
+            true => {
+                let at = h.span;
+                let undefined = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Undefined), at);
+                let u = self.expr(&undefined, None, Want::Move);
+                let ty = u.ty;
+                let block = hir::Block {
+                    stmts: vec![hir::Stmt {
+                        kind: hir::StmtKind::Expr(h),
+                        span: at,
+                    }],
+                    value: Some(Box::new(u)),
+                    span: at,
+                };
+                self.mk(hir::ExprKind::Block(block), ty, at)
+            }
+            false => h,
+        };
+        if !self.printable(h.ty) {
+            let tn = self.cx.display(h.ty);
+            let mut d = Diagnostic::error(format!("cannot print a value of type `{tn}`"), h.span);
+            if let Some(note) = self.in_place_note(a, &h) {
+                d = d.with_note(note);
+            }
+            if matches!(self.cx.ty.kind(h.ty), TyKind::Simd(_)) {
+                d = d.with_note("print its lanes (`v.lane(0)`), or a mask's `bitmask()`");
+            }
+            self.cx.error(d);
+        }
+        h
     }
 
     /// `Enum.Variant` / `Enum.Variant(args)`.

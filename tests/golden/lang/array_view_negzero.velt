@@ -75,6 +75,38 @@ function main() {
   w3[0] = -0;
   w3v.sort(childNegFirst);
   console.log(`Child sort after a change behind: ${w3.map((x: any) => (Object.is(x, -0) ? "-0" : `${x}`)).join(",")}`);
+
+  // A zero changed behind a view of an element type that owns something (#3610).
+  const raw: number[] = [0, 5];
+  const cv = raw as any as Child[];
+  const first = Object.is(cv[0], -0);
+  raw[0] = -0;
+  console.log(`Child read behind: ${first} ${Object.is(cv[0], -0)}`);
+  const raw2: number[] = [0, 5];
+  const cv2 = raw2 as any as Child[];
+  let before = true;
+  for (const c of cv2) {
+    before = Object.is(c, -0);
+    break;
+  }
+  raw2[0] = -0;
+  let after = false;
+  for (const c of cv2) {
+    after = Object.is(c, -0);
+    break;
+  }
+  console.log(`Child for...of behind: ${before} ${after}`);
+  const w4: any = [0, 5];
+  const w4v = w4 as Child[];
+  console.log(`Child read: ${w4v[0]}`);
+  w4[0] = -0;
+  w4v.reverse();
+  console.log(`Child reverse after a change behind: ${w4.map((x: any) => (Object.is(x, -0) ? "-0" : `${x}`)).join(",")}`);
+  const w5: any = [-0, "a"];
+  const w5v = w5 as Child[];
+  console.log(`Child read: ${Object.is(w5v[0], -0)}`);
+  w5[0] = 0;
+  console.log(`Child back to +0: ${Object.is(w5v[0], -0)}`);
 }
 
 main();

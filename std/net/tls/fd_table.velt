@@ -67,7 +67,9 @@ function nextHandle(): u64 {
 /** Adds stream `c`: its handle. */
 export function addConn(c: Conn): u64 {
   const h = nextHandle();
-  conns().with((m) => m.set(h, c));
+  conns().with((m) => {
+    m.set(h, c);
+  });
   return h;
 }
 
@@ -88,7 +90,9 @@ export function takeConn(h: u64): Conn | null {
 /** Adds listener `l`: its handle. */
 export function addListener(l: Listen): u64 {
   const h = nextHandle();
-  listeners().with((m) => m.set(h, l));
+  listeners().with((m) => {
+    m.set(h, l);
+  });
   return h;
 }
 

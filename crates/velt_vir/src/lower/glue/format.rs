@@ -54,7 +54,7 @@ impl FnLower<'_, '_> {
 
     fn format_top_as(&mut self, buf: &Operand, place: &Place, ty: TyId, log: bool) {
         if let Some(strings) = self.enum_strings(ty) {
-            return self.push_enum_str(buf, place, &strings, false, false);
+            return self.push_enum_str(buf, place, &strings, false);
         }
         match self.cx.kind(ty) {
             TyKind::Str => {
@@ -99,6 +99,9 @@ impl FnLower<'_, '_> {
                 self.push_inspect_float(buf, Operand::Copy(place.clone()), ty)
             }
             TyKind::Float(_) => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
+            // `String(p)` and `${p}` of a promise are `Object.prototype.toString`'s text, as in
+            // JavaScript; `console.log` shows its state (`format_promise`).
+            TyKind::Promise(..) if !log => self.push_text(buf, "[object Promise]"),
             _ if self.prints_scalar(ty) => self.format_nested(buf, place, ty, &top_depth()),
             // A string held by an `any` prints as itself at the top level (lower/any.rs).
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => {
@@ -121,26 +124,40 @@ impl FnLower<'_, '_> {
     /// The top-level text of a value that may hold containers; for any value, Node's
     /// `util.inspect` (a string quoted, as inside an array: `Intrinsic::Inspect`).
     pub(in crate::lower) fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
-        {
-            {
-                // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
-                // printed on one line, then broken across lines like node if too long.
-                let end = self.inspect_begin();
-                let start = self.temp(Ty::U64);
-                let len = Some(Place::local(start));
-                self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
-                self.format_nested(buf, place, ty, &top_depth());
-                let start = Operand::Copy(Place::local(start));
-                self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
-                if let Some(end) = end {
-                    _ = end.emit(self);
-                }
-            }
+        self.format_top_inspect_at(buf, place, ty, &top_depth());
+    }
+
+    /// [`Self::format_top_inspect`] with the value at Node's depth `depth` (a `u32` operand):
+    /// at [`DEPTH`], its own entries are shown and the containers in them cut (`[Object]`), as
+    /// `util.inspect` with `depth: 0` writes it (`console.log("%s", x)`).
+    pub(in crate::lower) fn format_top_inspect_at(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        depth: &Operand,
+    ) {
+        // Node numbers the `<ref *N>` of cycles once per top-level value; the value is printed
+        // on one line, then broken across lines like node if too long.
+        let end = self.inspect_begin();
+        let start = self.temp(Ty::U64);
+        let len = Some(Place::local(start));
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
+        self.format_nested(buf, place, ty, depth);
+        let start = Operand::Copy(Place::local(start));
+        self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
+        if let Some(end) = end {
+            _ = end.emit(self);
         }
     }
 
+    /// Node's depth past which a container is cut (`[Object]`), as a `u32` operand.
+    pub(in crate::lower) fn shallow_depth() -> Operand {
+        cint(DEPTH, Ty::U32)
+    }
+
     /// Types whose text has no containers (numbers, strings, enums), so it never breaks.
-    fn prints_scalar(&self, ty: TyId) -> bool {
+    pub(in crate::lower) fn prints_scalar(&self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
             TyKind::Int(_)
             | TyKind::Float(_)
@@ -197,7 +214,7 @@ impl FnLower<'_, '_> {
                 if !self.cx.is_class(ty) && self.is_enum(ty) && self.cx.is_c_like_enum(d) =>
             {
                 match self.enum_strings(ty) {
-                    Some(strings) => self.push_enum_str(buf, place, &strings, true, false),
+                    Some(strings) => self.push_enum_str(buf, place, &strings, true),
                     None => self.push_scalar(buf, Operand::Copy(place.clone()), ty),
                 }
             }

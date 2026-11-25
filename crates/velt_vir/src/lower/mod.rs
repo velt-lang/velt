@@ -46,6 +46,7 @@ mod any_not_fn;
 mod any_number;
 mod any_object_fill;
 mod any_proxy;
+mod any_ready;
 mod any_record;
 mod any_reflect;
 mod any_rest;
@@ -93,6 +94,7 @@ mod class_test;
 mod cleanup;
 mod closure;
 mod console;
+mod console_format;
 mod cpu_checks;
 mod ctor_init;
 mod debug_vars;
@@ -272,6 +274,9 @@ struct Cx<'h> {
     /// The class roots of the targets of `weak` fields, built on first use (weak_fields.rs
     /// `slot_target`).
     weak_targets: std::cell::OnceCell<FxHashSet<DefId>>,
+    /// The classes declaring a `[Symbol.toPrimitive]` method, built on first use (`%s` of one,
+    /// console_format.rs `own_to_primitive`).
+    to_primitive_classes: std::cell::OnceCell<FxHashSet<DefId>>,
     /// The program pins a task (`spawn(…, { worker })`): `velt_main` selects the per-core
     /// scheduler. Known once every function but `velt_main` is lowered, hence built last.
     uses_placement: bool,

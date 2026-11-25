@@ -8,6 +8,12 @@
 //!
 //! `Intrinsic::AnyPromise(x)` (std/lang/hooks/any_ops.velt `awaitAny`, which an `await` of an
 //! `any` or `unknown` calls) is that promise, or `undefined` when `x` holds no promise.
+//!
+//! The other tables box a promise the same way where one comes out of them (#924 step 3): a
+//! field, an element, a method's or a function value's result (`Cx::any_boxable`), an async
+//! method's included (glue passes it a share of the object as `this`, any_glue.rs
+//! `invoke_ready`). A promise's own `AnyCall` slot has `toString` (std's `anyPromise_toString`,
+//! any_builtin.rs); its `then`, `catch` and `finally` are sema's (`any_promise_members.rs`).
 
 use velt_sema::hir::{self, TyId, TyKind};
 

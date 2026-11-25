@@ -5,7 +5,9 @@
 import { intrinsic } from "./decorators";
 
 /**
- * What `value` holds, as `kind|repr|name|hooks` (`hooks` comma-separated): the text
+ * What `value` holds, as `kind|repr|name|hooks` (`hooks` comma-separated), then `|own` for a
+ * class with a text of its own (a `toString` or `[Symbol.toPrimitive]` no JavaScript built-in
+ * declares, for `console.log`'s `%s`): the text
  * velt/reflect's `typeOf` splits.
  */
 @intrinsic

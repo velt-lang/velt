@@ -595,6 +595,7 @@ enums! {
         223 => WeakRead,
         224 => StrBorrowedWords,
         225 => CArrived,
+        227 => AnyZeroSign,
     }
 }
 

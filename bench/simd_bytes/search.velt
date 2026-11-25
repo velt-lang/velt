@@ -5,7 +5,10 @@
 import { args } from "velt/process";
 
 function main() {
-  const a = args();
+  // Without arguments: 208 1000000 -1 (a case of cases.sh), so bench/compiler_ab.sh measures a
+  // run.
+  const given = args();
+  const a = given.length == 0 ? ["208", "1000000", "-1"] : given;
   const n = parseInt(a[0]) as usize;
   const calls = parseInt(a[1]) as usize;
   const at = parseInt(a[2]) as i64;
