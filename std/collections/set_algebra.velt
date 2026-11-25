@@ -1,0 +1,156 @@
+// velt/collections (internal): the ES2025 set algebra of `Set` (std/collections/set.velt), one
+// function per method, generic over what it reads of `other`: `Set`'s methods call each with
+// `other` as a `Set` when it is one (direct calls, a subclass's overrides included) and as a
+// `ReadonlySetLike` otherwise (a `Map`'s keys, an object with `size`, `has` and `keys`).
+//
+// Each reads `self`'s own elements, never a subclass's members, and of `other` only `size`
+// (once, first), `has` and `keys`, in the spec's order, so a subclass or a set-like object sees
+// the calls Node makes. The result is a plain `Set`.
+
+import { share } from "velt/lang/intrinsics";
+import { Set } from "./set";
+
+/** Elements of `self`, then those of `other` not in it. */
+export function setUnion<T, O extends ReadonlySetLike<T>>(self: Set<T>, other: O): Set<T> {
+  other.size;
+  const out = new Set<T>(self.items.keys());
+  for (const x of other.keys()) {
+    out.items.set(share(x), true);
+  }
+  return out;
+}
+
+/**
+ * Elements of `self` that are also in `other`: in `self`'s order, asking `other.has`,
+ * unless `other` is smaller, whose `keys` are then looked up in `self`, in its order.
+ */
+export function setIntersection<T, O extends ReadonlySetLike<T>>(self: Set<T>, other: O): Set<T> {
+  const out = new Set<T>();
+  if (self.items.size <= other.size) {
+    for (const x of self.items.keys()) {
+      if (other.has(x)) {
+        out.items.set(share(x), true);
+      }
+    }
+  } else {
+    for (const x of other.keys()) {
+      if (self.items.has(x)) {
+        out.items.set(share(x), true);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Elements of `self` that are not in `other`. A copy of `self` loses each element
+ * `other.has` reports, asked while walking `self` as it is then (what `other` adds or
+ * deletes here counts, as in Node), or each of `other`'s `keys` when `other` is smaller.
+ */
+export function setDifference<T, O extends ReadonlySetLike<T>>(self: Set<T>, other: O): Set<T> {
+  const otherSize = other.size;
+  if (self.items.size > otherSize) {
+    const out = new Set<T>(self.items.keys());
+    for (const x of other.keys()) {
+      out.items.delete(x);
+    }
+    return out;
+  }
+  // While `other.has` leaves `self` alone, the copy less what it reports is the elements it
+  // reports absent, collected as they come. Once a call changes `self` (its map's `edits`),
+  // the copy is made from the elements there were, less those `other` held so far.
+  const was = self.items.keys();
+  const edits = self.items.edits;
+  let out = new Set<T>();
+  let seen: usize = 0;
+  let copied = false;
+  for (const x of self.items.keys()) {
+    const inOther = other.has(x);
+    if (copied) {
+      if (inOther) {
+        out.items.delete(x);
+      }
+      continue;
+    }
+    seen++;
+    if (!inOther) {
+      out.items.set(share(x), true);
+    }
+    if (self.items.edits != edits) {
+      const copy = new Set<T>(was);
+      for (let i: usize = 0; i < seen; i++) {
+        if (!out.items.has(was[i])) {
+          copy.items.delete(was[i]);
+        }
+      }
+      out = copy;
+      copied = true;
+    }
+  }
+  return out;
+}
+
+/**
+ * Elements in exactly one of the two sets (`self`'s first, then `other`'s). `self` is
+ * copied after `other.keys` is called, as in Node.
+ */
+export function setSymmetricDifference<T, O extends ReadonlySetLike<T>>(
+  self: Set<T>,
+  other: O,
+): Set<T> {
+  other.size;
+  const theirs = other.keys();
+  const out = new Set<T>(self.items.keys());
+  for (const x of theirs) {
+    if (self.items.has(x)) {
+      out.items.delete(x);
+    } else {
+      out.items.set(share(x), true);
+    }
+  }
+  return out;
+}
+
+/** Whether every element of `self` is in `other` (asking `other.has` until one is not). */
+export function setIsSubsetOf<T, O extends ReadonlySetLike<T>>(self: Set<T>, other: O): bool {
+  if (self.items.size > other.size) {
+    return false;
+  }
+  for (const x of self.items.keys()) {
+    if (!other.has(x)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Whether every element of `other` is in `self` (reading `other.keys` until one is not). */
+export function setIsSupersetOf<T, O extends ReadonlySetLike<T>>(self: Set<T>, other: O): bool {
+  if (self.items.size < other.size) {
+    return false;
+  }
+  for (const x of other.keys()) {
+    if (!self.items.has(x)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Whether the sets share no element (`other.has`, or its `keys` when smaller). */
+export function setIsDisjointFrom<T, O extends ReadonlySetLike<T>>(self: Set<T>, other: O): bool {
+  if (self.items.size <= other.size) {
+    for (const x of self.items.keys()) {
+      if (other.has(x)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  for (const x of other.keys()) {
+    if (self.items.has(x)) {
+      return false;
+    }
+  }
+  return true;
+}

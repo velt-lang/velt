@@ -11,9 +11,19 @@
 import { share } from "velt/lang/intrinsics";
 import { adaptMismatch } from "velt/lang/hooks/adapt";
 import { anyFnArg } from "velt/lang/hooks/any_methods";
+import {
+  setDifference,
+  setIntersection,
+  setIsDisjointFrom,
+  setIsSubsetOf,
+  setIsSupersetOf,
+  setSymmetricDifference,
+  setUnion,
+} from "./set_algebra";
+import { SetIterator } from "./set_iterator";
 
 /** An insertion-ordered set of unique values. */
-export class Set<T> implements Iterable<T> {
+export class Set<T> implements Iterable<T>, ReadonlySetLike<T> {
   private items: Map<T, bool> = new Map<T, bool>();
 
   /**
@@ -87,11 +97,12 @@ export class Set<T> implements Iterable<T> {
   }
 
   /**
-   * An iterator over the elements when it is made, in insertion order. It reads the set itself,
-   * never a subclass's `values`, as in JS.
+   * An iterator over the elements in insertion order, which walks the set live, as JS does: an
+   * element added during a `for...of` is visited, one deleted before it is reached is not. It
+   * reads the set itself, never a subclass's `values`, as in JS.
    */
   [Symbol.iterator](): Iterator<T> {
-    return new ArrayIterator<T>(this.items.keys());
+    return new SetIterator<T>(this.items);
   }
 
   /** Visits the elements in insertion order, borrowing them. */
@@ -101,40 +112,30 @@ export class Set<T> implements Iterable<T> {
     });
   }
 
-  // The set algebra follows ES2025: it reads this set's own elements, never a subclass's
-  // members, and of `other` only `size` (once, first), `has` and `keys`, in the spec's order, so
-  // a subclass sees the calls Node makes. The result is a plain `Set`.
+  // The set algebra follows ES2025 (std/collections/set_algebra.velt): it reads this set's own
+  // elements, never a subclass's members, and of `other` only `size` (once, first), `has` and
+  // `keys`, in the spec's order. `other` is any `ReadonlySetLike<T>`: a `Set` (the direct path,
+  // taken after one class test), a `Map` (its keys) or an object with the three members. Its
+  // elements are this set's type, where TypeScript's methods take any (`Set<number>.union` of a
+  // `Set<string>` is a compile error here). The result is a plain `Set`.
 
   /** Elements of this set, then those of `other` not in it. */
-  union(other: Set<T>): Set<T> {
-    other.size;
-    const out = new Set<T>(this.items.keys());
-    for (const x of other.keys()) {
-      out.items.set(share(x), true);
+  union(other: ReadonlySetLike<T>): Set<T> {
+    if (other instanceof Set) {
+      return setUnion(this, other as Set<T>);
     }
-    return out;
+    return setUnion(this, other);
   }
 
   /**
    * Elements of this set that are also in `other`: in this set's order, asking `other.has`,
    * unless `other` is smaller, whose `keys` are then looked up here, in its order.
    */
-  intersection(other: Set<T>): Set<T> {
-    const out = new Set<T>();
-    if (this.items.size <= other.size) {
-      for (const x of this.items.keys()) {
-        if (other.has(x)) {
-          out.items.set(share(x), true);
-        }
-      }
-    } else {
-      for (const x of other.keys()) {
-        if (this.items.has(x)) {
-          out.items.set(share(x), true);
-        }
-      }
+  intersection(other: ReadonlySetLike<T>): Set<T> {
+    if (other instanceof Set) {
+      return setIntersection(this, other as Set<T>);
     }
-    return out;
+    return setIntersection(this, other);
   }
 
   /**
@@ -142,109 +143,46 @@ export class Set<T> implements Iterable<T> {
    * `other.has` reports, asked while walking this set as it is then (what `other` adds or
    * deletes here counts, as in Node), or each of `other`'s `keys` when `other` is smaller.
    */
-  difference(other: Set<T>): Set<T> {
-    const otherSize = other.size;
-    if (this.items.size > otherSize) {
-      const out = new Set<T>(this.items.keys());
-      for (const x of other.keys()) {
-        out.items.delete(x);
-      }
-      return out;
+  difference(other: ReadonlySetLike<T>): Set<T> {
+    if (other instanceof Set) {
+      return setDifference(this, other as Set<T>);
     }
-    // While `other.has` leaves this set alone, the copy less what it reports is the elements it
-    // reports absent, collected as they come. Once a call changes this set (its map's `edits`),
-    // the copy is made from the elements there were, less those `other` held so far.
-    const was = this.items.keys();
-    const edits = this.items.edits;
-    let out = new Set<T>();
-    let seen: usize = 0;
-    let copied = false;
-    for (const x of this.items.keys()) {
-      const inOther = other.has(x);
-      if (copied) {
-        if (inOther) {
-          out.items.delete(x);
-        }
-        continue;
-      }
-      seen++;
-      if (!inOther) {
-        out.items.set(share(x), true);
-      }
-      if (this.items.edits != edits) {
-        const copy = new Set<T>(was);
-        for (let i: usize = 0; i < seen; i++) {
-          if (!out.items.has(was[i])) {
-            copy.items.delete(was[i]);
-          }
-        }
-        out = copy;
-        copied = true;
-      }
-    }
-    return out;
+    return setDifference(this, other);
   }
 
   /**
    * Elements in exactly one of the two sets (this set's first, then `other`'s). This set is
    * copied after `other.keys` is called, as in Node.
    */
-  symmetricDifference(other: Set<T>): Set<T> {
-    other.size;
-    const theirs = other.keys();
-    const out = new Set<T>(this.items.keys());
-    for (const x of theirs) {
-      if (this.items.has(x)) {
-        out.items.delete(x);
-      } else {
-        out.items.set(share(x), true);
-      }
+  symmetricDifference(other: ReadonlySetLike<T>): Set<T> {
+    if (other instanceof Set) {
+      return setSymmetricDifference(this, other as Set<T>);
     }
-    return out;
+    return setSymmetricDifference(this, other);
   }
 
   /** Whether every element of this set is in `other` (asking `other.has` until one is not). */
-  isSubsetOf(other: Set<T>): bool {
-    if (this.items.size > other.size) {
-      return false;
+  isSubsetOf(other: ReadonlySetLike<T>): bool {
+    if (other instanceof Set) {
+      return setIsSubsetOf(this, other as Set<T>);
     }
-    for (const x of this.items.keys()) {
-      if (!other.has(x)) {
-        return false;
-      }
-    }
-    return true;
+    return setIsSubsetOf(this, other);
   }
 
   /** Whether every element of `other` is in this set (reading `other.keys` until one is not). */
-  isSupersetOf(other: Set<T>): bool {
-    if (this.items.size < other.size) {
-      return false;
+  isSupersetOf(other: ReadonlySetLike<T>): bool {
+    if (other instanceof Set) {
+      return setIsSupersetOf(this, other as Set<T>);
     }
-    for (const x of other.keys()) {
-      if (!this.items.has(x)) {
-        return false;
-      }
-    }
-    return true;
+    return setIsSupersetOf(this, other);
   }
 
   /** Whether the sets share no element (`other.has`, or its `keys` when smaller). */
-  isDisjointFrom(other: Set<T>): bool {
-    if (this.items.size <= other.size) {
-      for (const x of this.items.keys()) {
-        if (other.has(x)) {
-          return false;
-        }
-      }
-      return true;
+  isDisjointFrom(other: ReadonlySetLike<T>): bool {
+    if (other instanceof Set) {
+      return setIsDisjointFrom(this, other as Set<T>);
     }
-    for (const x of other.keys()) {
-      if (this.items.has(x)) {
-        return false;
-      }
-    }
-    return true;
+    return setIsDisjointFrom(this, other);
   }
 }
 

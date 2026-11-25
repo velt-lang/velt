@@ -175,3 +175,24 @@ fn iterator_result_takes_no_return_type() {
         "{r}"
     );
 }
+
+/// A value implementing the expected interface with other type arguments is named in a note, with
+/// the article its type takes; for `Set`'s algebra the note names the limit (#3820).
+#[test]
+fn another_element_type_is_named_in_the_note() {
+    let r = err_src(
+        "function sum(xs: Iterable<f64>): f64 { return 0; }
+         function main() { console.log(sum(new Set<string>([\"a\"]))); }",
+    );
+    assert!(
+        r.contains("`Set<string>` is an `Iterable<string, never>`, not an `Iterable<f64, never>`"),
+        "{r}"
+    );
+    let r = err_src(
+        "function main() { const a = new Set<number>([1]); console.log(a.union(new Set<string>([\"x\"])).size); }",
+    );
+    assert!(
+        r.contains("`Set<string>` is a `ReadonlySetLike<string>`, not a `ReadonlySetLike<f64>`: `Set`'s `union`"),
+        "{r}"
+    );
+}
