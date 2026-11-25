@@ -1,7 +1,9 @@
 // check: no leaks
 // `for await` over a `ReadableStream` against a chain of microtasks: each value arrives in the
-// turn Node 22's does (#3711), and leaving the loop early lets the stream go before the cancel
-// settles (#3717). The Node twin is streams_for_await.mjs.
+// turn Node 22's does (#3711), also from a pull that settles later and for `next()` calls made
+// at once, and leaving the loop early lets the stream go before the cancel settles (#3717).
+// `loop` makes its stream itself: one passed in as a parameter is #3761. The Node twin is
+// streams_for_await.mjs.
 function ticks(log: string[]): Promise<void> {
   let p = Promise.resolve();
   for (let i = 0; i < 20; i++) {
@@ -13,9 +15,10 @@ function ticks(log: string[]): Promise<void> {
   return p;
 }
 
-async function loop(name: string, s: ReadableStream<number>): Promise<void> {
+async function loop(name: string, mk: () => ReadableStream<number>): Promise<void> {
   const log: string[] = [];
   const t = ticks(log);
+  const s = mk();
   for await (const v of s) {
     log.push("v" + v);
   }
@@ -24,10 +27,81 @@ async function loop(name: string, s: ReadableStream<number>): Promise<void> {
   console.log(name + ": " + log.join(" "));
 }
 
+// A chain of `n` microtasks, each logged.
+function chain(log: string[], n: number): Promise<void> {
+  let p = Promise.resolve();
+  for (let i = 0; i < n; i++) {
+    const k = i;
+    p = p.then(() => {
+      log.push("t" + k);
+    });
+  }
+  return p;
+}
+
+// A pull that settles after `waits` microtasks: the first value waits for it, in Node's turn.
+async function slow(name: string, waits: number): Promise<void> {
+  const log: string[] = [];
+  const t = chain(log, 30);
+  let d = 0;
+  const s = new ReadableStream<number>({
+    pull: async (c) => {
+      for (let i = 0; i < waits; i++) {
+        await null;
+      }
+      d++;
+      if (d > 3) {
+        c.close();
+      } else {
+        c.enqueue(d);
+      }
+    },
+  });
+  for await (const v of s) {
+    log.push("v" + v);
+  }
+  log.push("end");
+  await t;
+  console.log(name + ": " + log.join(" "));
+}
+
+// Three `next()` calls at once: each waits for the one before it, as Node chains them.
+async function concurrent(): Promise<void> {
+  const log: string[] = [];
+  const t = chain(log, 16);
+  let n = 0;
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      n++;
+      if (n > 3) {
+        c.close();
+      } else {
+        c.enqueue(n);
+      }
+    },
+  });
+  const it = s[Symbol.asyncIterator]();
+  const a = it.next();
+  const b = it.next();
+  const c = it.next();
+  a.then((r) => {
+    log.push("a " + r.value);
+  });
+  b.then((r) => {
+    log.push("b " + r.value);
+  });
+  c.then((r) => {
+    log.push("c " + r.value);
+  });
+  await Promise.all([a, b, c]);
+  await t;
+  console.log("concurrent: " + log.join(" "));
+}
+
 async function main(): Promise<void> {
   await loop(
     "start",
-    new ReadableStream<number>({
+    () => new ReadableStream<number>({
       start: (c) => {
         c.enqueue(1);
         c.enqueue(2);
@@ -40,7 +114,7 @@ async function main(): Promise<void> {
   let n = 0;
   await loop(
     "sync pull",
-    new ReadableStream<number>({
+    () => new ReadableStream<number>({
       pull: (c) => {
         n++;
         if (n > 3) {
@@ -55,7 +129,7 @@ async function main(): Promise<void> {
   let m = 0;
   await loop(
     "async pull",
-    new ReadableStream<number>({
+    () => new ReadableStream<number>({
       pull: async (c) => {
         m++;
         if (m > 3) {
@@ -137,6 +211,10 @@ async function main(): Promise<void> {
   });
   await Promise.all([r1, r2, r3]);
   console.log("return twice: " + rlog.join(" "));
+
+  await slow("pull after 2 microtasks", 2);
+  await slow("pull after 3 microtasks", 3);
+  await concurrent();
 }
 
 main();

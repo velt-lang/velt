@@ -125,7 +125,7 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
     this.ctl = ctl;
   }
 
-  async next(): Promise<IteratorResult<R>> throws unknown {
+  next(): Promise<IteratorResult<R>, Reason> {
     if (!this.started) {
       // The first read waits a microtask, as in Node.
       this.current = Promise.resolve<IteratorResult<R>>({ done: true });
@@ -134,24 +134,26 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
     const cur = this.current;
     let p: Promise<IteratorResult<R>, unknown>;
     if (cur != null) {
-      p = new Promise<IteratorResult<R>, unknown>((resolve, reject) => {
-        const steps = () => {
-          const q = this.nextSteps();
-          q.then((r) => queueMicrotask(() => resolve(r)), (e) => queueMicrotask(() => reject(e)));
-        };
-        cur.then((r) => steps(), (e) => steps());
-      });
+      // Node's `current.then(nextSteps)`: the read runs in the reaction, and its promise is
+      // adopted as JS adopts a promise a reaction returns, attached a microtask later.
+      p = cur.then((r) => this.nextSteps(), (e) => this.nextSteps());
     } else {
       p = this.nextSteps();
     }
     this.current = p;
-    return await p;
+    return p;
   }
 
   // One read, as the spec's read request: its result clears the current promise.
   private nextSteps(): Promise<IteratorResult<R>, unknown> {
     if (this.done) {
       return Promise.resolve<IteratorResult<R>>({ done: true });
+    }
+    const ctl = this.ctl;
+    if (ctl.state == READABLE && ctl.queued() > 0) {
+      // A queued chunk answers the read at once, as `readSteps` would, without its callbacks.
+      this.current = null;
+      return Promise.resolve<IteratorResult<R>>({ value: ctl.take(), done: false });
     }
     const { promise, resolve, reject } = Promise.withResolvers<IteratorResult<R>, unknown>();
     this.ctl.readSteps(
@@ -174,27 +176,19 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
     return promise;
   }
 
-  async return(): Promise<IteratorResult<R>> {
+  return(): Promise<IteratorResult<R>> {
     this.started = true;
-    // After a `next()` still waiting, as Node's `current.then(returnSteps)`: its read is
-    // answered first, and the steps run in that promise's reaction. The return becomes the
-    // current promise, so a `next()` or `return()` after it waits for its cancel.
+    // Node's `current.then(returnSteps)`: after a `next()` still waiting, so its read is
+    // answered first; the return is the current promise from then on.
     const cur = this.current;
-    let q: Promise<IteratorResult<R>, never>;
-    if (cur == null) {
-      q = this.returnSteps();
+    let q: Promise<IteratorResult<R>>;
+    if (cur != null) {
+      q = cur.then((r) => this.returnSteps(), (e) => this.returnSteps());
     } else {
-      q = new Promise<IteratorResult<R>, never>((resolve) => {
-        cur.then(
-          (r) => this.returnSteps().then((x) => resolve(x)),
-          (e) => this.returnSteps().then((x) => resolve(x)),
-        );
-      });
+      q = this.returnSteps();
     }
-    this.current = new Promise<IteratorResult<R>, unknown>((resolve) => {
-      q.then((x) => resolve(x));
-    });
-    return await q;
+    this.current = q;
+    return q;
   }
 
   // Leaving the loop: the stream is cancelled, let go at once, then the cancel is waited for.
