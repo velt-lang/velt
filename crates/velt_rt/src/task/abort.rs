@@ -11,10 +11,11 @@
 //! only a weak one back), so a source aborted through another reference aborts it, and no cycle
 //! forms.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-
-use tokio::sync::Notify;
+use std::task::{Context, Poll, Waker};
 
 use super::leaf::{new_inner_leaf, new_leaf};
 use super::VeltFut;
@@ -33,7 +34,8 @@ struct Reason {
 pub struct Signal {
     aborted: AtomicBool,
     reason: Mutex<Reason>,
-    notify: Notify,
+    /// The tasks waiting for the abort ([`AbortWait`]), by the id their wait took.
+    waiters: Mutex<(u64, Vec<(u64, Waker)>)>,
     /// Signals that abort with this one (`AbortSignal.any`).
     children: Mutex<Vec<Weak<Signal>>>,
     /// The signals this one was derived from (`AbortSignal.any`), until it is aborted.
@@ -62,7 +64,8 @@ impl Signal {
             *r = reason.clone();
             self.aborted.store(true, Ordering::Release);
         }
-        self.notify.notify_waiters();
+        let waiters = std::mem::take(&mut lock(&self.waiters).1);
+        waiters.into_iter().for_each(|(_, w)| w.wake());
         drop(std::mem::take(&mut *lock(&self.sources)));
         let children = std::mem::take(&mut *lock(&self.children));
         for c in children.iter().filter_map(Weak::upgrade) {
@@ -96,13 +99,46 @@ impl Signal {
 impl Signal {
     /// Completes once the signal is aborted (never, if it never is): what runtime operations
     /// that take a signal (`fetch`) race their work against.
-    pub(crate) async fn aborted(&self) {
-        loop {
-            let notified = self.notify.notified();
-            if self.is_aborted() {
-                return;
+    pub(crate) fn aborted(&self) -> AbortWait<'_> {
+        AbortWait { s: self, id: None }
+    }
+}
+
+/// [`Signal::aborted`]: registered with the signal while it waits, and removed when dropped, so
+/// waits on a signal that is never aborted leave nothing behind.
+pub(crate) struct AbortWait<'a> {
+    s: &'a Signal,
+    id: Option<u64>,
+}
+
+impl Future for AbortWait<'_> {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let mut w = lock(&self.s.waiters);
+        // Checked under the lock `abort` takes the waiters with: no wake is lost.
+        if self.s.is_aborted() {
+            return Poll::Ready(());
+        }
+        let (next, list) = &mut *w;
+        match self.id.and_then(|id| list.iter_mut().find(|(i, _)| *i == id)) {
+            Some((_, waker)) => waker.clone_from(cx.waker()),
+            None => {
+                *next += 1;
+                list.push((*next, cx.waker().clone()));
+                let id = *next;
+                drop(w);
+                self.id = Some(id);
             }
-            notified.await;
+        }
+        Poll::Pending
+    }
+}
+
+impl Drop for AbortWait<'_> {
+    fn drop(&mut self) {
+        if let Some(id) = self.id {
+            lock(&self.s.waiters).1.retain(|(i, _)| *i != id);
         }
     }
 }
@@ -183,15 +219,7 @@ pub unsafe extern "C-unwind" fn velt_rt_signal_wait(
     timed: bool,
 ) -> *mut VeltFut {
     let s = h.clone_arc();
-    let wait = async move {
-        loop {
-            let aborted = s.notify.notified();
-            if s.is_aborted() {
-                return;
-            }
-            aborted.await;
-        }
-    };
+    let wait = async move { s.aborted().await };
     if timed {
         new_leaf(wait)
     } else {
