@@ -1,5 +1,5 @@
 A null 7 3 5 down x Map(2) { 't' => [ 1, 2 ], 'u' => [] } { '0': true, '1': true, z: false } { mem: 2, cpu: 1.5 } { up: 'u', down: 'd' } true true
-{"a":"A","b":null,"c":7,"lvl":3,"color":5,"dir":"down","lit":"x","tags":{"t":[1,2],"u":[]},"rec":{"0":true,"1":true,"z":false},"keyed":{"mem":2,"cpu":1.5},"byDir":{"up":"u","down":"d"}}
+{"a":"A","b":null,"c":7,"lvl":3,"color":5,"dir":"down","lit":"x","tags":{},"rec":{"0":true,"1":true,"z":false},"keyed":{"mem":2,"cpu":1.5},"byDir":{"up":"u","down":"d"}}
 undefined undefined null false 1 up x Map(0) {} {} { cpu: 1, mem: 2 } undefined true true
 {"c":null,"lvl":false,"color":1,"dir":"up","lit":"x","tags":{},"rec":{},"keyed":{"cpu":1,"mem":2}}
 undefined null null high 1 up x Map(0) {} {} { cpu: 1, mem: 2 } undefined true true

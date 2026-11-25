@@ -4,10 +4,10 @@
 // only for a program whose types can all be written.
 
 import { Model, Type } from "velt/generate";
-import { toJsonMethod } from "velt/encoding/json/generate/facts";
+import { collectionState, toJsonMethod, writesEmpty } from "velt/encoding/json/generate/facts";
 
 const SUPPORTED =
-  "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, `Map<string, T>`, structs, classes and object literals of those, and `JsonValue`";
+  "JSON supports numbers, boolean, string, literal types, enums, arrays, tuples, `T | null`, structs, classes and object literals of those, and `JsonValue`; a `Map` or a `Set` is written as `{}`, as in Node";
 
 /**
  * Why `JSON.stringify` cannot write a value of model type `id`, as a diagnostic: its message,
@@ -31,7 +31,7 @@ export function stringifyProblem(model: Model, id: i64): string {
     const what = top ? `\`${tn}\` is a generator` : `\`${tn}\` contains the generator \`${bn}\``;
     return `cannot convert to or from JSON: ${what}\nTypeScript allows this (\`JSON.stringify\` writes a generator as \`{}\`); Velt doesn't because a generator is a paused computation, not data; write the values it yields instead (collect them into an array with \`for...of\`)`;
   }
-  const field = privateField(b);
+  const field = privateField(model, b);
   if (field.length > 0) {
     const what =
       top
@@ -41,23 +41,19 @@ export function stringifyProblem(model: Model, id: i64): string {
   }
   const what =
     top ? `\`${tn}\` has no JSON form` : `\`${tn}\` contains \`${bn}\`, which has no JSON form`;
-  let text = `cannot convert to or from JSON: ${what}\n${SUPPORTED}`;
-  if (b.kind == "map") {
-    text += "\na `Map` converts to a JSON object only with `string` keys";
-  }
-  return text;
+  return `cannot convert to or from JSON: ${what}\n${SUPPORTED}`;
 }
 
 /**
  * The first private field of std's or of a native library's that keeps `t` from JSON (a
  * handle), or "".
  */
-function privateField(t: Type): string {
+function privateField(model: Model, t: Type): string {
   if (t.privateField.length > 0) {
     return t.privateField;
   }
   for (const f of t.fields) {
-    if (f.stdPrivate) {
+    if (f.stdPrivate && !collectionState(model, t, f)) {
       return f.name;
     }
   }
@@ -89,6 +85,13 @@ function notYet(model: Model, t: Type): string {
     if (u.classValue) {
       return "`JSON.stringify` of a class used as a value (#943)";
     }
+    if (writesEmpty(u)) {
+      // Written as `{}`: what it holds is never written; a subclass's instance as its class.
+      for (const s of u.subclasses) {
+        stack.push(s);
+      }
+      continue;
+    }
     let toJson = false;
     if (u.kind == "class") {
       const classes: i64[] = [id];
@@ -111,7 +114,9 @@ function notYet(model: Model, t: Type): string {
     }
     if (!toJson) {
       for (const f of u.fields) {
-        stack.push(f.type);
+        if (!collectionState(model, u, f)) {
+          stack.push(f.type);
+        }
       }
     }
     for (const a of u.args) {
@@ -140,7 +145,8 @@ function unwritable(model: Model, id: i64, stack: i64[]): i64 {
     k == "enum" ||
     k == "any" ||
     k == "unknown" ||
-    k == "date"
+    k == "date" ||
+    writesEmpty(t)
   ) {
     return -1;
   }
@@ -175,19 +181,17 @@ function unwritable(model: Model, id: i64, stack: i64[]): i64 {
     bad = first(model, t.arms, stack);
   } else if (k == "record") {
     bad = unwritable(model, t.args[1], stack);
-  } else if (k == "map") {
-    bad = model.type(t.args[0]).kind == "string" ? unwritable(model, t.args[1], stack) : id;
   } else if (k == "object" || k == "struct" || k == "class" || k == "opaque") {
     // A class with `toJSON()` is written as what it returns (std's `URL` too).
     const m = toJsonMethod(t);
     if (m >= 0) {
       bad = unwritable(model, t.methods[m].ret, stack);
-    } else if (privateField(t).length > 0 || k == "opaque") {
+    } else if (privateField(model, t).length > 0 || k == "opaque") {
       bad = id;
     } else {
       for (const f of t.fields) {
         // An extension's field (`via`) is written as its value allows (a function left out).
-        if (f.isEsPrivate || f.via >= 0) {
+        if (f.isEsPrivate || f.via >= 0 || collectionState(model, t, f)) {
           continue;
         }
         bad = unwritable(model, f.type, stack);

@@ -101,7 +101,7 @@ export function parseProblem(model: Model, id: i64): ParseProblem | null {
       : `\`${tn}\` contains \`${bn}\`, which has no JSON form`;
   p.message = `cannot convert to or from JSON: ${what}\n${SUPPORTED}`;
   if (b.kind == "map") {
-    p.message += "\na `Map` converts to a JSON object only with `string` keys";
+    p.message += "\n`JSON.parse` reads a JSON object into a `Map` only with `string` keys";
   }
   return p;
 }
