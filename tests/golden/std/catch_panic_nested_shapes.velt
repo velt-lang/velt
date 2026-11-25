@@ -1,0 +1,59 @@
+// check: no leaks
+// requires: unix
+// A `catchPanic` inside another one's body, as http-server runs every handler in one (#3223):
+// the inner body typed, held as `Promise<any>`, or a returned spawn handle, and the outer body
+// typed or held as `Promise<any>`. The inner panic is caught by the inner `catchPanic`; the
+// outer body goes on after an `await` and returns, and the program goes on.
+import { catchPanic, PanicError } from "velt/task";
+
+function fail(why: string): string {
+  panic(why);
+}
+
+async function boom(why: string): Promise<string> {
+  await yieldNow();
+  return fail(why);
+}
+
+async function inner(shape: string): Promise<string> {
+  let got = "none";
+  try {
+    if (shape == "typed") {
+      await catchPanic((): Promise<string> => boom("typed"));
+    } else if (shape == "any") {
+      await catchPanic((): Promise<any> => boom("any"));
+    } else {
+      await catchPanic(() => spawn(boom("spawn")));
+    }
+  } catch (e) {
+    got = e instanceof PanicError ? "inner caught" : "inner other";
+  }
+  await yieldNow();
+  return got;
+}
+
+async function outerTyped(shape: string): Promise<void> {
+  try {
+    const r = await catchPanic(async (): Promise<string> => await inner(shape));
+    console.log("typed outer,", shape, "inner:", r);
+  } catch (e) {
+    console.log("typed outer,", shape, "inner: outer caught", e instanceof PanicError);
+  }
+}
+
+async function outerAny(shape: string): Promise<void> {
+  try {
+    const r = await catchPanic(async (): Promise<any> => await inner(shape));
+    console.log("any outer,", shape, "inner:", r);
+  } catch (e) {
+    console.log("any outer,", shape, "inner: outer caught", e instanceof PanicError);
+  }
+}
+
+async function main() {
+  for (const shape of ["typed", "any", "spawn"]) {
+    await outerTyped(shape);
+    await outerAny(shape);
+  }
+  console.log("done");
+}

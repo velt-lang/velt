@@ -17,8 +17,11 @@
 // A node another task drives (handed over to this one) is awaited by the hub instead, through
 // the owner's side of the node (sched_share_away.velt): it settles here when that wakes it, so
 // the hub is only ever touched by the task it is shared on. A lazy node is driven by its first
-// waiter. Shared outside any task (a synchronous `main`), a promise goes to the runtime's hub,
-// whose outside home keeps it on one task (rt_abi_async.md §1.2). Dropping a holder never cancels
+// waiter. A promise that isn't a node (a spawned task's join handle, a `sleep` kept as a value, a
+// race, a runtime leaf) is shared through a lazy node of this task that drives it, and becomes
+// that node's holder in place (sched_share_leaf.velt). Shared outside any task (a C library's
+// thread), a promise goes to the runtime's hub, whose outside home keeps it on one task
+// (rt_abi_async.md §1.2). Dropping a holder never cancels
 // the promise; the last role drops the settled result, or gives the node back its entries and
 // drops it, so it runs to completion and its own result drop reports an unhandled rejection, as
 // for any dropped promise (sched_share_drop.velt).
@@ -38,6 +41,7 @@ import { fnAddress, futDrop, futPoll, inline, statePoll } from "velt/lang/intrin
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nc from "./sched_node_catch";
+import * as jn from "./sched_join";
 import * as nd from "./sched_node";
 import * as loc from "./sched_node_loc";
 import * as off from "./sched_off";
@@ -50,6 +54,7 @@ import * as ss from "./sched_share_settle";
 import * as wt from "./sched_share_wait";
 import * as al from "./sched_share_alias";
 import * as ls from "./sched_share_listed";
+import * as lf from "./sched_share_leaf";
 
 /**
  * The node head's word with the hub of a shared node (sched_node.velt's layout); read only while
@@ -76,7 +81,13 @@ export const H_ORIG_FWD: usize = 80;
 const H_WATCH: usize = 88;
 /** The task the promise is shared on, the only one that touches the hub (`sd.release` checks). */
 export const H_TASK: usize = 96;
-export const H_BYTES: usize = 104;
+/**
+ * The record of the leaf whose driver the node is (sched_share_leaf.velt), whose address is the
+ * promise's identity, or 0 for a node shared as itself. The hub keeps the leaf allocated until it
+ * is freed (sched_share_drop.velt `free`).
+ */
+export const H_LEAF: usize = 104;
+export const H_BYTES: usize = 112;
 
 /** It settled: its result is in `H_RESULT`, or its node panicked (no result). */
 export const DONE: u32 = 1;
@@ -103,9 +114,10 @@ export const FRONT: usize = 32;
 /**
  * `velt_rt_fut_share` (the hook lowering calls under `VELT_SCHEDULER=std`): another holder of
  * promise `f` (0: none), a handle of its own. `size` is the result's size, `share` its
- * `SharePoll` glue (0: copied as it is), `rdrop` its drop glue (0: nothing to drop). Only a node
- * of this executor is shared here; the runtime's futures (a leaf, a join handle, a race) are
- * shared by the runtime's hub.
+ * `SharePoll` glue (0: copied as it is), `rdrop` its drop glue (0: nothing to drop). On a task,
+ * a node of this executor is shared as itself, and any other promise (a join handle, a `sleep`, a
+ * race, a runtime leaf) through a lazy node that drives it, whose holder it becomes in place
+ * (sched_share_leaf.velt). Outside any task (a C library's thread) the runtime's hub shares it.
  */
 @inline("always")
 export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usize {
@@ -116,6 +128,10 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
   // A loop, not a call of itself: a function that can call itself is not inlined (#3097), and
   // this one is every share's entry point.
   let f = p;
+  if (lf.isLeaf(f)) {
+    // A shared leaf's holder (sched_share_leaf.velt): another holder of its driver's promise.
+    f = lf.roleOf(f);
+  }
   while (m.ld(f) === fnAddress(holderPoll)) {
     const fwd = forwardOf(f);
     if (fwd === 0) {
@@ -131,9 +147,17 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
     // copy, becomes the promise shared on this task (`f` goes on forwarding to it).
     f = fwd;
   }
-  if (m.ld(f) !== fnAddress(nd.nodePoll) || task === 0) {
-    // The runtime's futures, and any promise shared outside a task: the runtime's hub.
+  if (task === 0) {
+    // Shared outside any task (a C library's thread): the runtime's hub, whose identities the
+    // runtime keeps (`schedFutId`).
     return off.share(f, size, share, rdrop);
+  }
+  let leaf: usize = 0;
+  if (m.ld(f) !== fnAddress(nd.nodePoll)) {
+    // Not a node (a join handle, a sleep, a race, a runtime leaf): a lazy node of this task drives
+    // it, and it becomes that node's holder in place (sched_share_leaf.velt).
+    leaf = f;
+    f = lf.adopt(f, size);
   }
   const n = nd.nodeOf(f);
   const h = m.zeroed(H_BYTES);
@@ -155,6 +179,10 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
   m.st(n + N_HUB, h);
   m.st(f, fnAddress(holderPoll));
   m.st(f + 8, fnAddress(holderDrop));
+  if (leaf !== 0) {
+    // The driver's original holder is the leaf's role: the leaf forwards to it.
+    m.st(h + H_LEAF, lf.forwardTo(leaf, f));
+  }
   return newHandle(h);
 }
 
@@ -173,8 +201,22 @@ export function schedFutId(f: usize): u64 {
         g = fwd;
         continue;
       }
-      n = m.ld(m.ld(g - 8) + H_NODE);
+      const h = m.ld(g - 8);
+      const r = m.ld(h + H_LEAF);
+      if (r !== 0) {
+        // A shared leaf's promise (sched_share_leaf.velt): the leaf's address, as before the share.
+        return lf.leafOf(r) as u64;
+      }
+      n = m.ld(h + H_NODE);
       g = n + nd.N_HEAD;
+    } else if (lf.isLeaf(g)) {
+      // A shared leaf's own holder: its role, which may have been handed over (a proxy).
+      const fwd = forwardOf(lf.roleOf(g));
+      if (fwd === 0) {
+        break;
+      }
+      g = fwd;
+      continue;
     } else if (m.ld(g) === fnAddress(nd.nodePoll)) {
       n = nd.nodeOf(g);
     }
@@ -186,6 +228,11 @@ export function schedFutId(f: usize): u64 {
     }
     g = a;
   }
+  if (g === 0 || m.ld(g) === fnAddress(nd.nodePoll) || lf.isLeaf(g) || jn.isJoin(g)) {
+    return g as u64;
+  }
+  // A future of the runtime's: a holder of its hub (shared on a C library's thread) has the
+  // identity of the runtime's original; anything else is its own.
   return off.futId(g);
 }
 

@@ -1,0 +1,153 @@
+// velt/lang/hooks (internal): a long quoted string inside a value `console.log` breaks across
+// lines. Node's `formatPrimitive` splits a string longer than 16 UTF-16 units, and longer than
+// the room left on its line, after each line break, each piece quoted on its own and joined by
+// ` +` and a new line (lib/internal/util/inspect.js). The printer wrote the string quoted and
+// escaped (velt_rt's `push_inspect_string`), so this reads it back first.
+
+import { utf16Units } from "velt/lang/hooks/inspect_layout_width";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_push_byte(buf: string, b: u8);
+declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
+declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
+/** Node's `breakLength`. */
+const BREAK_LENGTH: u64 = 80;
+
+/**
+ * The quoted string at bytes `a..b` of `src` (quotes included) as Node lays it out at
+ * indentation `indent`: its pieces, one per line, or "" when it stays as it is (no line break in
+ * it, 16 units or fewer, or it fits on the line).
+ */
+export function splitString(src: string, a: u64, b: u64, indent: u64): string {
+  if (!hasEscapedBreak(src, a, b)) {
+    return "";
+  }
+  const raw = unescapeString(src, a, b);
+  const n = strByteLen(raw) as u64;
+  const len = utf16Units(raw, 0, n);
+  // Node's two rules. Within the depth limit (indentation at most 8) a string past the room on its
+  // line is longer than 16 units anyway, so the first decides nothing; it stays as Node writes it.
+  if (len <= 16 || len + indent + 4 <= BREAK_LENGTH) {
+    return "";
+  }
+  let out: string = "";
+  let from: u64 = 0;
+  let any = false;
+  for (let j: u64 = 0; j < n; j++) {
+    if (strByteAt(raw, j) == 0x0a || j + 1 == n) {
+      if (strByteAt(raw, j) == 0x0a) {
+        any = true;
+      }
+      const piece = velt_rt_str_byte_slice(raw, from, j + 1);
+      if (from > 0) {
+        velt_rt_strbuf_push_byte(out, 0x20);
+        velt_rt_strbuf_push_byte(out, 0x2b);
+        velt_rt_strbuf_push_byte(out, 0x0a);
+        for (let k: u64 = 0; k < indent + 2; k++) {
+          velt_rt_strbuf_push_byte(out, 0x20);
+        }
+      }
+      velt_rt_strbuf_push_inspect_str(out, piece);
+      from = j + 1;
+    }
+  }
+  // An escaped `\n` that was an escaped backslash and an `n`: no line break after all.
+  return any ? out : "";
+}
+
+/** Is there a `\n` escape (a backslash, then `n`) in bytes `a..b` of `s`? */
+function hasEscapedBreak(s: string, a: u64, b: u64): bool {
+  for (let j = a; j + 1 < b; j++) {
+    if (strByteAt(s, j) == 0x5c && strByteAt(s, j + 1) == 0x6e) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The text of the quoted string at bytes `a..b` of `s` (quotes included), as velt_rt's
+ * `push_inspect_string` escaped it: `\n`, `\t`, `\b`, `\f`, `\r`, `\xHH` (a control character),
+ * `\uXXXX` (a lone surrogate, in WTF-8), and a backslash before any other byte, which stands for
+ * that byte.
+ */
+function unescapeString(s: string, a: u64, b: u64): string {
+  // Built as bytes and made a string once: a character's bytes appended one by one would be
+  // checked one by one, each a truncated character.
+  const out: u8[] = [];
+  const end = b > a + 1 ? b - 1 : a + 1;
+  let i = a + 1;
+  while (i < end) {
+    const c = strByteAt(s, i);
+    if (c != 0x5c || i + 1 >= end) {
+      out.push(c);
+      i += 1;
+      continue;
+    }
+    const next = strByteAt(s, i + 1);
+    i += 2;
+    if (next == 0x6e) {
+      out.push(0x0a);
+    } else if (next == 0x74) {
+      out.push(0x09);
+    } else if (next == 0x62) {
+      out.push(0x08);
+    } else if (next == 0x66) {
+      out.push(0x0c);
+    } else if (next == 0x72) {
+      out.push(0x0d);
+    } else if (next == 0x78) {
+      const hi = hexValue(i < end ? strByteAt(s, i) : 0);
+      const lo = hexValue(i + 1 < end ? strByteAt(s, i + 1) : 0);
+      if (hi >= 0 && lo >= 0) {
+        const code = (hi * 16 + lo) as u64;
+        if (code < 0x80) {
+          out.push(code as u8);
+        } else {
+          out.push((0xc0 | (code >> 6)) as u8);
+          out.push((0x80 | (code & 0x3f)) as u8);
+        }
+        i += 2;
+      }
+    } else if (next == 0x75 && i + 4 <= end) {
+      // A lone surrogate, which the printer escapes: its three WTF-8 bytes.
+      let code: i64 = 0;
+      let ok = true;
+      for (let k: u64 = 0; k < 4; k++) {
+        const h = hexValue(strByteAt(s, i + k));
+        ok = ok && h >= 0;
+        code = code * 16 + h;
+      }
+      if (ok) {
+        const c = code as u64;
+        out.push((0xe0 | (c >> 12)) as u8);
+        out.push((0x80 | ((c >> 6) & 0x3f)) as u8);
+        out.push((0x80 | (c & 0x3f)) as u8);
+        i += 4;
+      } else {
+        out.push(next);
+      }
+    } else {
+      out.push(next);
+    }
+  }
+  let text: string = "";
+  velt_rt_strbuf_push_u8s(text, out, out.length as u64, 0xffffffffffffffff);
+  return text;
+}
+
+/** The value of hex digit `c`, or -1. */
+function hexValue(c: u8): i64 {
+  if (c >= 0x30 && c <= 0x39) {
+    return (c - 0x30) as i64;
+  }
+  if (c >= 0x61 && c <= 0x66) {
+    return (c - 0x61 + 10) as i64;
+  }
+  if (c >= 0x41 && c <= 0x46) {
+    return (c - 0x41 + 10) as i64;
+  }
+  return -1;
+}

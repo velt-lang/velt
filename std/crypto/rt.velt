@@ -43,3 +43,9 @@ export declare function velt_simd_u32x4_sha1nexte(a: u32x4, b: u32x4): u32x4;
 export declare function velt_simd_u32x4_sha1msg1(a: u32x4, b: u32x4): u32x4;
 
 export declare function velt_simd_u32x4_sha1msg2(a: u32x4, b: u32x4): u32x4;
+
+/**
+ * The four words of `from` at `at`, unchecked: for the SHA-256 round constants (64 words, read
+ * at constant offsets below 64), where `u32x4.load`'s check and call cost a round's time.
+ */
+export declare function velt_simd_u32x4_load(from: u32[], at: u64): u32x4;

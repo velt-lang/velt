@@ -1,0 +1,85 @@
+// Array `copyWithin(target, start, end)` (#3629), as in JS: positions as in `slice` (negative
+// ones count from the end, omitted ones are 0 and the length), overlapping ranges copied in
+// either direction, a copy cut at the end of the array, and the length unchanged. On numbers
+// (with -0 and NaN), strings, objects (shared, not copied), through `any` and chained.
+class Point {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+function show(label: string, xs: number[]) {
+  console.log(label, xs);
+}
+
+function main() {
+  const base = [1, 2, 3, 4, 5];
+  const run = (label: string, f: (xs: number[]) => void) => {
+    const xs = base.slice();
+    f(xs);
+    show(label, xs);
+  };
+  run("(0, 3)", (xs) => xs.copyWithin(0, 3));
+  run("(1, 3)", (xs) => xs.copyWithin(1, 3));
+  run("(1, 2)", (xs) => xs.copyWithin(1, 2));
+  run("(2, 0)", (xs) => xs.copyWithin(2, 0));
+  run("(1, 0, 3)", (xs) => xs.copyWithin(1, 0, 3));
+  run("(0, 1, 4)", (xs) => xs.copyWithin(0, 1, 4));
+  run("(-2)", (xs) => xs.copyWithin(-2));
+  run("(-2, -4, -3)", (xs) => xs.copyWithin(-2, -4, -3));
+  run("(0, -2)", (xs) => xs.copyWithin(0, -2));
+  run("(-9, 3)", (xs) => xs.copyWithin(-9, 3));
+  run("(9, 0)", (xs) => xs.copyWithin(9, 0));
+  run("(0, 9)", (xs) => xs.copyWithin(0, 9));
+  run("(0, 3, 1)", (xs) => xs.copyWithin(0, 3, 1));
+  run("(3, 3)", (xs) => xs.copyWithin(3, 3));
+  run("(4, 0, 99)", (xs) => xs.copyWithin(4, 0, 99));
+
+  const empty: number[] = [];
+  empty.copyWithin(0, 1);
+  console.log("empty", empty, empty.length);
+
+  const odd = [-0, NaN, 1.5, Infinity];
+  odd.copyWithin(2, 0);
+  console.log("odd", odd, Object.is(odd[2], -0));
+
+  const words = ["a", "b", "c", "d", "e"];
+  words.copyWithin(1, 0, 3);
+  console.log(words, words.length);
+
+  const pts = [new Point(1), new Point(2), new Point(3)];
+  pts.copyWithin(0, 1);
+  pts[1].x = 20;
+  console.log(pts.map((p) => p.x).join(","), pts[0] === pts[1], pts[1] === pts[2]);
+
+  // Chained: the call changes the array, and the chain reads it.
+  const ys = [1, 2, 3, 4, 5];
+  console.log(ys.copyWithin(0, 3).join(","), ys.join(","));
+  console.log([10, 20, 30].copyWithin(0, 1).length);
+  // On a temporary the result is that array.
+  const kept = [1, 2, 3, 4].copyWithin(0, 2);
+  console.log(kept);
+  // Bytes have their own `copyWithin`, chained the same way.
+  const bytes = Buffer.alloc(4);
+  for (let i = 0; i < 4; i++) {
+    bytes[i] = (i + 1) as u8;
+  }
+  console.log(bytes.copyWithin(0, 2).join(","), bytes.join(","));
+
+  // Through `any`: arguments converted as JS converts them, and the result is the array.
+  const held: any = [1, 2, 3, 4, 5];
+  const back = held.copyWithin("1", 3.7);
+  console.log(held, back === held);
+  held.copyWithin(0, undefined, -3);
+  console.log(held);
+  held.copyWithin(NaN, 4);
+  console.log(held);
+
+  // A view of the array (`as f32[]`; in TypeScript the cast changes nothing) writes back to it.
+  const nums: number[] = [0.5, 1.5, 2.5, 3.5, 4.5];
+  (nums as f32[]).copyWithin(0, 3);
+  console.log(nums);
+  (nums as f32[]).copyWithin(2, 0, 3);
+  console.log(nums, nums.length);
+}

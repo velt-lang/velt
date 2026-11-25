@@ -1,0 +1,17 @@
+// velt/fs (internal): the path `openRead` and `openWrite` hand the runtime on Windows, and the
+// error that names it (`#fs-stream-path`'s win32 variant, std/imports.velt): the path as Node
+// gives it to Windows (velt/fs/whole/win_path), which Rust's std opens as it is, and the error
+// naming it as Node does, absolute and without the `\?\` prefix.
+
+import { namespacedPath, shown } from "velt/fs/whole/win_path";
+import { IoError } from "velt/io/error";
+
+/** The path the runtime opens for `path`: resolved, with the `\?\` prefix. */
+export function streamPath(path: string): string {
+  return namespacedPath(path);
+}
+
+/** The runtime's error `e` for opening `opened` (`streamPath(path)`), naming `path` as Node does. */
+export function streamError(e: IoError, opened: string, path: string): IoError {
+  return new IoError(e.code, e.message.replace(`'${opened}'`, `'${shown(path)}'`));
+}

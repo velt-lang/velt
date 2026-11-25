@@ -32,6 +32,17 @@ impl FnLower<'_, '_> {
             && matches!(self.cx.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
     }
 
+    /// Before the runtime's table of a function's properties is reached: a declared function's
+    /// are module state, so the module lock comes first, as for an access of module state
+    /// (std/lang/hooks/sched_module.velt `touch`; the table's own lock is taken after it). Which
+    /// function it is is the runtime's to know, so any function's properties take it. On
+    /// WebAssembly, one thread, nothing.
+    fn fn_props_touch(&mut self) {
+        if self.std_sched() {
+            self.module_lock(super::module_state::Access::Touch, vec![], None);
+        }
+    }
+
     /// The identity of the function value an `any`'s data pointer `data` stands for: its
     /// environment, or for one without (a declared function's value) the identity the runtime
     /// keeps for its code, null while it has none.
@@ -79,6 +90,7 @@ impl FnLower<'_, '_> {
         self.switch_to(has_env);
         let p = Place::local(self.temp(Ty::Ptr));
         let k = Operand::Copy(Place::local(key));
+        self.fn_props_touch();
         self.call_rt(Rt::FnPropGet, vec![env, k], Some(p.clone()));
         let nn = self.non_null(Operand::Copy(p.clone()));
         self.branch(nn, found, absent);
@@ -172,6 +184,7 @@ impl FnLower<'_, '_> {
             Operand::Copy(Place::local(key)),
             Operand::Copy(Place::local(v)),
         );
+        self.fn_props_touch();
         self.call_rt(Rt::FnPropSet, vec![env, k, val], None);
         self.ret_status(ST_OK);
         // A generic closure's value without an environment: no identity to carry them yet.
@@ -214,6 +227,7 @@ impl FnLower<'_, '_> {
         self.switch_to(yes);
         let r = Place::local(self.temp(Ty::U8));
         let k = Operand::Copy(Place::local(key));
+        self.fn_props_touch();
         self.call_rt(Rt::FnPropDelete, vec![env, k], Some(r));
         self.ret_status(done);
         self.switch_to(no);
@@ -234,6 +248,7 @@ impl FnLower<'_, '_> {
         self.branch(nn, yes, done);
         self.switch_to(yes);
         let n = Place::local(self.temp(Ty::U64));
+        self.fn_props_touch();
         self.call_rt(Rt::FnPropLen, vec![env.clone()], Some(n.clone()));
         let arr = self.content(&ap, sa);
         let k = self.temp(Ty::U64);

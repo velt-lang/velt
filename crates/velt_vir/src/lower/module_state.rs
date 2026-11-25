@@ -31,6 +31,13 @@ pub(super) enum Access {
     Block,
     /// `(state: ptr, n: u64)`: slots up to `n` may be read from now on.
     Ready,
+    /// `()`: the module lock, before a function's properties held as `any` are reached.
+    Touch,
+    /// `() -> u8`: the module lock before a `with`, `read` or `write` callback that may reach
+    /// them; whether it was taken (1).
+    With,
+    /// `(took: u8)`: after that callback's unlock, the lock `With` took goes.
+    WithEnd,
 }
 
 /// The item of hook `qualified` when it is one of the executor in Velt's task or timer hooks
@@ -539,6 +546,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.terminate(Terminator::Return(super::unit()));
                 ("_Gmodule_ready", vec![Ty::Ptr, Ty::U64], Ty::Unit)
             }
+            Access::Touch | Access::With | Access::WithEnd => lw.module_lock_body(a),
         };
         lw.scopes.clear();
         lw.finish(name.into(), params, ret)

@@ -496,13 +496,13 @@ fn dispatch_targets(cx: &Ctx) -> FxHashSet<DefId> {
 /// method's name.
 fn dyn_method_args(cx: &mut Ctx, from: usize) -> Vec<(String, Vec<TyId>)> {
     let mut calls: Vec<(DefId, u32, Vec<TyId>)> = vec![];
-    let mut defs = std::mem::take(&mut cx.defs);
+    // Read in place (a finished unit's, in a check by units, is never written).
     let tys = &cx.ty;
-    for d in defs.iter_mut().skip(from) {
+    for d in cx.defs.iter().skip(from) {
         let Some(crate::hir::Def::Fn(f)) = d else {
             continue;
         };
-        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut crate::hir::Expr| {
+        crate::visit_ref::exprs(&f.body.block, &mut |e: &crate::hir::Expr| {
             let crate::hir::ExprKind::Call { callee, args } = &e.kind else {
                 return;
             };
@@ -529,7 +529,6 @@ fn dyn_method_args(cx: &mut Ctx, from: usize) -> Vec<(String, Vec<TyId>)> {
             }
         });
     }
-    cx.defs = defs;
     let mut out: Vec<(String, Vec<TyId>)> = vec![];
     for (iface, slot, targs) in calls {
         if targs.iter().any(|t| has_param(cx, *t)) {

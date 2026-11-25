@@ -1,0 +1,209 @@
+// requires: windows symlinks
+// Paths on Windows as Node takes them (#3225): every path is resolved and given to Windows with
+// the `\\?\` prefix, so errors name the absolute, backslashed path, a name with a dot or a space
+// after it (`a.txt.`) is not the name without it, and `NUL` (or `CON`, `com1.txt`) in a directory
+// is a file there, not the device. The working directory is printed as `<cwd>`. The expected
+// output is Node 22's on Windows.
+import * as fs from "velt/fs";
+import { IoError } from "velt/io";
+import { chdir, cwd } from "velt/process";
+
+const d = "velt_fs_win_node_paths_tmp";
+
+function show(m: string): string {
+  return m.split(cwd()).join("<cwd>");
+}
+
+function attempt(what: string, f: () => string) {
+  try {
+    console.log(what, "->", f());
+  } catch (e) {
+    if (e instanceof IoError) {
+      console.log(what, "!!", e.code, show(e.message));
+    }
+  }
+}
+
+function names(): string {
+  return fs.readDirSync(d).sort().join(",");
+}
+
+async function main() {
+  fs.rmSync(d, { recursive: true, force: true });
+  fs.mkdirSync(d);
+  fs.writeFileSync(`${d}/a.txt`, "A");
+  fs.writeFileSync(`${d}/b.txt`, "B");
+  fs.mkdirSync(`${d}/sub`);
+
+  // Each call's error names the path resolved.
+  attempt("readFile", () => fs.readFileSync(`${d}/nope.txt`));
+  attempt("readFile ..", () => fs.readFileSync(`${d}/x/../y/nope.txt`));
+  attempt(
+    "readFile absolute /",
+    () => fs.readFileSync(`${cwd().split("\\").join("/")}/${d}/nope.txt`),
+  );
+  attempt("readFile verbatim", () => fs.readFileSync(`\\\\?\\${cwd()}\\${d}\\nope.txt`));
+  attempt("writeFile", () => {
+    fs.writeFileSync(`${d}/no/x.txt`, "x");
+    return "ok";
+  });
+  attempt("writeFile dir", () => {
+    fs.writeFileSync(`${d}/sub/`, "x");
+    return "ok";
+  });
+  attempt("appendFile", () => {
+    fs.appendFileSync(`${d}/no/x.txt`, "x");
+    return "ok";
+  });
+  attempt("stat", () => `${fs.statSync(`${d}/nope`).size}`);
+  attempt("lstat", () => `${fs.lstatSync(`./${d}/nope`).size}`);
+  attempt("mkdir", () => {
+    fs.mkdirSync(`${d}/sub`);
+    return "ok";
+  });
+  attempt("mkdir recursive", () => {
+    fs.mkdirSync(`${d}/a.txt/x/y`, { recursive: true });
+    return "ok";
+  });
+  attempt("mkdir empty", () => {
+    fs.mkdirSync("");
+    return "ok";
+  });
+  attempt("readdir", () => fs.readDirSync(`${d}/nope`).join(","));
+  attempt("readdir file", () => fs.readDirSync(`${d}/a.txt`).join(","));
+  attempt("rename", () => {
+    fs.renameSync(`${d}/nope`, `${d}/x`);
+    return "ok";
+  });
+  attempt("copyFile", () => {
+    fs.copyFileSync(`${d}/nope`, `${d}//x`);
+    return "ok";
+  });
+  attempt("copyFile excl", () => {
+    fs.copyFileSync(`${d}/a.txt`, `${d}/b.txt`, fs.constants.COPYFILE_EXCL);
+    return "ok";
+  });
+  attempt("symlink", () => {
+    fs.symlinkSync("sub/a.txt", `${d}/b.txt`);
+    return "ok";
+  });
+  attempt("symlink absolute", () => {
+    fs.symlinkSync(`${cwd()}/${d}/a.txt`, `${d}/b.txt`);
+    return "ok";
+  });
+  attempt("readlink", () => fs.readlinkSync(`${d}/a.txt`));
+  attempt("readlink missing", () => fs.readlinkSync(`${d}/nope`));
+  attempt("rm", () => {
+    fs.rmSync(`${d}/nope`);
+    return "ok";
+  });
+
+  // A dot or a space after a name is part of it.
+  attempt("exists a.txt.", () => `${fs.existsSync(`${d}/a.txt.`)}`);
+  attempt("exists a.txt space", () => `${fs.existsSync(`${d}/a.txt `)}`);
+  attempt("exists sub.", () => `${fs.existsSync(`${d}/sub.`)}`);
+  attempt("readFile a.txt.", () => fs.readFileSync(`${d}/a.txt.`));
+  attempt("stat a.txt..", () => `${fs.statSync(`${d}/a.txt..`).size}`);
+  attempt("readdir sub.", () => fs.readDirSync(`${d}/sub.`).join(","));
+  attempt("copyFile a.txt.", () => {
+    fs.copyFileSync(`${d}/a.txt.`, `${d}/c.txt`);
+    return "ok";
+  });
+  attempt("writeFile e.", () => {
+    fs.writeFileSync(`${d}/e.`, "E");
+    return names();
+  });
+  attempt("readFile e.", () => fs.readFileSync(`${d}/e.`));
+  attempt("exists e", () => `${fs.existsSync(`${d}/e`)}`);
+  attempt("rename e. f.", () => {
+    fs.renameSync(`${d}/e.`, `${d}/f.`);
+    return names();
+  });
+  attempt("copyFile f. g.", () => {
+    fs.copyFileSync(`${d}/f.`, `${d}/g.`);
+    return names();
+  });
+  attempt("mkdir h.", () => {
+    fs.mkdirSync(`${d}/h.`);
+    fs.writeFileSync(`${d}/h./x`, "x");
+    return fs.readDirSync(`${d}/h.`).join(",");
+  });
+  attempt("realpath f.", () => show(fs.realpathSync(`${d}/f.`)));
+  attempt("rm f. g. h.", () => {
+    fs.rmSync(`${d}/f.`);
+    fs.rmSync(`${d}/g.`);
+    fs.rmSync(`${d}/h.`, { recursive: true });
+    return names();
+  });
+
+  // A device's name in a directory is a file there.
+  attempt("exists NUL", () => `${fs.existsSync(`${d}/NUL`)}`);
+  attempt("exists nul relative", () => `${fs.existsSync("nul")}`);
+  attempt("exists CON", () => `${fs.existsSync(`${d}/CON`)}`);
+  attempt("exists aux.txt", () => `${fs.existsSync(`${d}/aux.txt`)}`);
+  attempt("readFile NUL", () => fs.readFileSync(`${d}/NUL`));
+  attempt("stat NUL", () => `${fs.statSync(`${d}/NUL`).size}`);
+  attempt("readFile device", () => `[${fs.readFileSync("\\\\.\\NUL")}]`);
+  attempt("writeFile NUL", () => {
+    fs.writeFileSync(`${d}/NUL`, "n");
+    return names();
+  });
+  attempt("readFile NUL again", () => fs.readFileSync(`${d}/NUL`));
+  attempt("writeFile com1.txt", () => {
+    fs.writeFileSync(`${d}/com1.txt`, "c");
+    return names();
+  });
+  attempt("rm NUL com1.txt", () => {
+    fs.rmSync(`${d}/NUL`);
+    fs.rmSync(`${d}/com1.txt`);
+    return names();
+  });
+
+  // The async forms name paths the same way.
+  try {
+    await fs.readDir(`${d}/sub.`);
+  } catch (e) {
+    if (e instanceof IoError) {
+      console.log("async readdir sub. !!", e.code, show(e.message));
+    }
+  }
+  try {
+    await fs.copyFile(`${d}/nope`, `${d}/x`);
+  } catch (e) {
+    if (e instanceof IoError) {
+      console.log("async copyFile !!", e.code, show(e.message));
+    }
+  }
+
+  // So do the streams.
+  for (const name of ["a.txt", "a.txt.", "nope", "NUL"]) {
+    try {
+      const r = await fs.openRead(`${d}/${name}`);
+      const s = await r.readString(100);
+      r.close();
+      console.log("openRead", name, "->", s);
+    } catch (e) {
+      if (e instanceof IoError) {
+        console.log("openRead", name, "!!", e.code, show(e.message));
+      }
+    }
+  }
+  const w = await fs.openWrite(`${d}/w.`);
+  await w.write("W");
+  await w.close();
+  console.log("openWrite w. ->", names(), fs.readFileSync(`${d}/w.`));
+
+  // A relative path resolves from the working directory a `chdir` made.
+  const top = cwd();
+  chdir(`${d}/sub`);
+  try {
+    fs.readFileSync("nope");
+  } catch (e) {
+    if (e instanceof IoError) {
+      console.log("after chdir !!", e.code, e.message.split(top).join("<cwd>"));
+    }
+  }
+  chdir(top);
+
+  fs.rmSync(d, { recursive: true, force: true });
+}

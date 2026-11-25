@@ -35,7 +35,6 @@ pub unsafe extern "C" fn velt_rt_rwlock_write(p: *mut u64, reader: u64) -> u64 {
         w.lock.unlock_exclusive();
         write_slow(p, w);
     }
-    crate::task::local::mutex_locked();
     r as u64
 }
 
@@ -181,7 +180,6 @@ fn pause(at: Point) {
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_write_unlock(p: *mut u64, reader: u64) {
     let _ = reader;
-    crate::task::local::mutex_unlocked();
     (*(p as *const Words)).lock.unlock_exclusive();
 }
 

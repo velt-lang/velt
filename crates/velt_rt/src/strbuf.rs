@@ -8,8 +8,8 @@
 //! reference to its heap buffer, otherwise the text moves to a fresh buffer first (strings are
 //! immutable values: other copies never see the append).
 
-use crate::json::escape::{push_json_string, push_json_string_counted};
 use crate::str::{Summary, VeltStr};
+use velt_text::json_escape::{push_json_string, push_json_string_counted};
 
 /// Identical to `VeltStr` (size 24, align 8).
 pub type VeltStrBuf = VeltStr;

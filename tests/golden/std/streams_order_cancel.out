@@ -1,4 +1,5 @@
 none: t0 pull cancel t1 closed read done=true t2 cancel resolved t3 t4 t5 t6 t7
 sync: t0 pull cancel cancelFn t1 closed read done=true t2 cancel resolved t3 t4 t5 t6 t7
 async: t0 pull cancel cancelFn t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7
+asyncThrow: t0 pull cancel cancelFn t1 closed read done=true t2 t3 t4 cancel rejected async boom t5 t6 t7
 throws: t0 pull cancel cancelFn t1 closed read done=true t2 cancel rejected cancel boom t3 t4 t5 t6 t7
