@@ -92,11 +92,13 @@ function otherTurn(k: usize, w: usize): void {
   join(k, record(m.wakerClone(w), m.ld(b + B_ROOT)));
 }
 
-// A task's yield block: its list's last yield (0: none), its last stamp, the stamp of the yield
-// its root waits for with no record (flag `ROOT_ALONE`), and, while a turn polls the root
-// (`turnNext`), the yield whose turn is next and whether this turn's waiter went on. A stamp is a
-// yield's generation (the high 32 bits: one more in each poll after one that made stored yields,
-// flag `FRESH`) and its number: stamps grow in the order yields are made.
+/**
+ * A task's yield block: its list's last yield (0: none), its last stamp, the stamp of the yield
+ * its root waits for with no record (flag `ROOT_ALONE`), and, while a turn polls the root
+ * (`turnNext`), the yield whose turn is next and whether this turn's waiter went on. A stamp is a
+ * yield's generation (the high 32 bits: one more in each poll after one that made stored yields,
+ * flag `FRESH`) and its number: stamps grow in the order yields are made.
+ */
 export const B_LAST: usize = 0;
 export const B_STAMP: usize = 8;
 export const B_ROOT: usize = 16;
