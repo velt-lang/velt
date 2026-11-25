@@ -1,0 +1,9 @@
+// A string key of `globalThis` spelled as a symbol's key (`"[Symbol.for(\"k\")]"`, or a constant
+// holding it) is refused: Velt keys the property of `Symbol.for("k")` so, and the string would
+// name that symbol's property, where Node keeps them apart.
+const K = Symbol.for("k");
+const S = '[Symbol.for("k")]';
+(globalThis as Record<symbol, number | undefined>)[K] = 1;
+(globalThis as any)[S] = 2;
+(globalThis as any)['[Symbol.for("k")]'] = 3;
+console.log((globalThis as Record<symbol, number | undefined>)[K]);
