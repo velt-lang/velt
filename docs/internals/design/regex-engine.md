@@ -325,6 +325,17 @@ and the `lastIndex` it would see on the copy, and during a `split` the built-in 
 regex matches exactly at `lastIndex` (a thread-local names the regex being split). The class's
 constructor does not run again, and `exec` sees the regex's own fields.
 
+A class's `exec` may throw, and what it throws reaches the caller of the string method as in
+JavaScript: the functions on that path declare no `throws` clause of their own (`replaceWith`
+and the replace hooks included, which also pass on what a replacer throws), so each throws what
+the program's `exec` and replacer do. The regex that played a copy gets its `lastIndex` back on
+that path too (`finally`), and stops being the regex a `split` runs on.
+
+The methods JavaScript's string methods call on a regex (`[Symbol.match]`, `[Symbol.matchAll]`,
+`[Symbol.replace]`, `[Symbol.search]`, `[Symbol.split]`) are not `RegExp`'s here: the string
+methods go to std's hooks. A class that extends `RegExp` and declares one is refused where it
+declares it (`collect/regexp_symbols.rs`), since no string method would call it.
+
 Velt's own methods of a regex (`matches`, `matchAll`, `split`, `replaceAll` called by name)
 search by themselves, for every class.
 

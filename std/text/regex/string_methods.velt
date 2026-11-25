@@ -23,7 +23,7 @@ export function replaceRegExpCalling<E>(
   s: string,
   re: RegExp,
   f: (m: RegExpMatch, s: string) => string throws E,
-): string throws E {
+): string {
   return re[REPLACE_CALLING](s, f);
 }
 
@@ -40,7 +40,7 @@ export function replaceAllRegExpCalling<E>(
   s: string,
   re: RegExp,
   f: (m: RegExpMatch, s: string) => string throws E,
-): string throws E {
+): string {
   if (!re.global) {
     panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
   }

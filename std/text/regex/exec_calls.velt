@@ -14,6 +14,10 @@
 // finds the same `lastIndex` as on the copy, and for `split` the built-in `exec` matches exactly
 // at `lastIndex`, as the copy's `y` flag makes it. What differs: the class's constructor does
 // not run again, and the fields `exec` sees are the regex's own (its `flags` and `sticky` too).
+//
+// A class's `exec` may throw. What it throws passes through every function here to the caller
+// of the string method, as in JavaScript (no function declares what it throws: it is what the
+// program's `exec` does), and the regex that played a copy gets its `lastIndex` back then too.
 
 import { identity } from "velt/lang/intrinsics";
 import { CURSOR } from "velt/text/regex/keys";
@@ -86,9 +90,11 @@ export function matchByExec(re: RegExp, s: string): string[] | null {
 export function matchAllByExec(re: RegExp, s: string): RegExpMatch[] {
   const cursor = re[CURSOR]();
   const from = cursor.at.load();
-  const found = execAll(re, s);
-  cursor.at.store(from);
-  return found;
+  try {
+    return execAll(re, s);
+  } finally {
+    cursor.at.store(from);
+  }
 }
 
 /** `s.search(re)`: where `re.exec(s)` matches with `lastIndex` 0, or -1; `lastIndex` is put
@@ -153,10 +159,12 @@ export function splitByExec(re: RegExp, s: string, limit: number | undefined): s
   const saved = cursor.at.load();
   const outer = splitter.get();
   splitter.set(identity(re));
-  const out = splitParts(re, s, n > 0 ? n as usize : 0);
-  splitter.set(outer);
-  cursor.at.store(saved);
-  return out;
+  try {
+    return splitParts(re, s, n > 0 ? n as usize : 0);
+  } finally {
+    splitter.set(outer);
+    cursor.at.store(saved);
+  }
 }
 
 /** The parts of `splitByExec`, at most `limit` of them (0: no limit). */

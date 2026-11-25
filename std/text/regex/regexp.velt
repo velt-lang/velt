@@ -182,7 +182,7 @@ export class RegExp implements Pattern {
    * Replaces matches (every one with `g`, else the first) with `f(match)`; the matches are the
    * ones `replace` replaces.
    */
-  replaceWith<E>(s: string, f: (m: RegExpMatch) => string throws E): string throws E {
+  replaceWith<E>(s: string, f: (m: RegExpMatch) => string throws E): string {
     if (!isExactClass(this)) {
       return replaceFound(s, foundByExec(this, s), (m, _s) => f(m));
     }
@@ -198,10 +198,7 @@ export class RegExp implements Pattern {
   }
 
   /** `replaceWith` for `s.replace(re, (match, ...groups) => …)`: `f` gets the subject too. */
-  [REPLACE_CALLING]<E>(
-    s: string,
-    f: (m: RegExpMatch, s: string) => string throws E,
-  ): string throws E {
+  [REPLACE_CALLING]<E>(s: string, f: (m: RegExpMatch, s: string) => string throws E): string {
     if (!isExactClass(this)) {
       return replaceFound(s, foundByExec(this, s), f);
     }
