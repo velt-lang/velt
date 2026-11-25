@@ -13,7 +13,7 @@
 use velt_sema::hir::{DefId, TyId, TyKind};
 
 use super::any::TAG_OBJECT;
-use super::any_glue::Ready;
+use super::any_ready::Ready;
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::{cint, FnLower};

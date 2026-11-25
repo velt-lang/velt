@@ -171,8 +171,9 @@ impl Cx<'_> {
             | TyKind::Array(_)
             | TyKind::Tuple(_)
             | TyKind::FnPtr { .. } => true,
-            // Not a promise: glue that boxes a result, field or element (a call through `any`)
-            // doesn't box one yet; `ToDyn` does (any_await.rs, #924 step 1).
+            // A promise, boxed as it is (any_await.rs): a field, element or result read through
+            // `any` (#924). Only where the executor runs: a program with no async code holds none.
+            TyKind::Promise(..) => self.executor_loaded(),
             TyKind::Adt(d, args) => match self.hir.def(*d) {
                 hir::Def::Adt(_) => true,
                 // A union whose members are boxable (`string | symbol`, an element of the keys
@@ -352,6 +353,9 @@ impl FnLower<'_, '_> {
     ) -> Operand {
         if is_member_slot(slot) && self.cx.hir.dyn_members.is_none() {
             self.cx.note_any_member_call();
+        }
+        if slot == SLOT_APPLY {
+            self.cx.note_any_apply();
         }
         let f = self.dispatch(desc, slot);
         let out = Place::local(self.temp(Ty::U8));

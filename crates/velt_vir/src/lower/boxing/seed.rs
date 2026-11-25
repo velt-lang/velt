@@ -224,6 +224,7 @@ impl Cx<'_> {
             any_keys,
             any_reflect,
             any_number,
+            any_applies,
             any_call_keys,
             recursive,
             transferred,
@@ -291,6 +292,7 @@ impl Cx<'_> {
                 *read_indirect,
                 *any_members,
                 *fn_wrappers,
+                *any_applies,
             ],
             any_call_keys: any_call_keys.clone(),
             unseeded_types: vec![types(&mut weak.iter()), types(&mut proxy_types.iter())],
@@ -348,7 +350,7 @@ impl Cx<'_> {
         b.recursive.extend(d(1));
         b.dyn_to_any.extend(d(2));
         b.lock_roots.extend(d(3));
-        let flags: [&mut bool; 14] = [
+        let flags: [&mut bool; 15] = [
             &mut b.any_identity,
             &mut b.fn_identity,
             &mut b.generic_any,
@@ -363,6 +365,7 @@ impl Cx<'_> {
             &mut b.read_indirect,
             &mut b.any_members,
             &mut b.fn_wrappers,
+            &mut b.any_applies,
         ];
         for (flag, &seeded) in flags.into_iter().zip(&seed.flags) {
             *flag |= seeded;
