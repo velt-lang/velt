@@ -11,12 +11,11 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { Dirent } from "velt/fs/dirent";
-import { osError } from "velt/fs/errors";
 import { isDots, kindOf, nameOf } from "velt/fs/tree/find_data";
 import { byCodePoint } from "velt/fs/tree/order";
 import { removePath } from "velt/fs/tree/win_remove";
 import { Done } from "velt/fs/whole/done";
-import { asFile, winPath } from "velt/fs/whole/win_path";
+import { winError, winPath } from "velt/fs/whole/win_path";
 import { pdqsort } from "velt/lang/sort/pdq";
 import { errnoOfWin32 } from "velt/os/win_error";
 
@@ -63,7 +62,7 @@ const ERROR_ALREADY_EXISTS: u32 = 183;
 /** Not a Win32 error: what `makeAll` gives for a parent that is there and is no directory. */
 const PARENT_NOT_A_DIRECTORY: u32 = 0xffffffff;
 const ERROR_DIRECTORY: u32 = 267;
-/** Linux's numbers, which `osError` reads on Windows. */
+/** Linux's numbers, which `winError` reads. */
 const ENOENT: i32 = 2;
 const ENOMEM: i32 = 12;
 const ENOTDIR: i32 = 20;
@@ -153,7 +152,7 @@ export function list(c: readonly u8[], path: string): Done<string[]> {
   const kinds: u8[] = [];
   const e = read(path, names, kinds);
   if (e !== 0) {
-    return { value: null, error: osError(e, "scandir", path) };
+    return { value: null, error: winError(e, "scandir", path) };
   }
   pdqsort(names, (a, b) => byCodePoint(a, b));
   return { value: names, error: null };
@@ -165,7 +164,7 @@ export function listTyped(c: readonly u8[], path: string): Done<Dirent[]> {
   const kinds: u8[] = [];
   const e = read(path, names, kinds);
   if (e !== 0) {
-    return { value: null, error: osError(e, "scandir", path) };
+    return { value: null, error: winError(e, "scandir", path) };
   }
   const out: Dirent[] = [];
   for (let i: usize = 0; i < names.length; i++) {
@@ -273,7 +272,7 @@ function makeAll(path: string): u32 {
 export function make(c: readonly u8[], path: string, recursive: bool): Done<bool> {
   if (path.length === 0) {
     // Nothing to make (`makeAll` takes the empty path for a relative name's parent).
-    return { value: null, error: osError(ENOENT, "mkdir", path) };
+    return { value: null, error: winError(ENOENT, "mkdir", path) };
   }
   const code = recursive ? makeAll(path) : makeOne(path);
   if (code !== 0) {
@@ -283,7 +282,7 @@ export function make(c: readonly u8[], path: string, recursive: bool): Done<bool
       code === PARENT_NOT_A_DIRECTORY
         ? ENOTDIR
         : code === ERROR_INVALID_NAME || code === ERROR_DIRECTORY ? EINVAL : errnoOfWin32(code);
-    return { value: null, error: osError(e, "mkdir", path) };
+    return { value: null, error: winError(e, "mkdir", path) };
   }
   return { value: true, error: null };
 }
@@ -294,15 +293,15 @@ export function make(c: readonly u8[], path: string, recursive: bool): Done<bool
  * `lstat` for a path that is not there.
  */
 export function removeAt(c: readonly u8[], path: string, recursive: bool): Done<bool> {
-  // A file named with separators after it is removed as the file, as Node's `rm` does.
-  const file = asFile(path);
-  const w = winPath(file);
+  // A file named with separators after it is removed as the file, as Node's `rm` does
+  // (`winPath` resolves them away).
+  const w = winPath(path);
   if (w === null) {
-    return { value: null, error: osError(ENOENT, "lstat", file) };
+    return { value: null, error: winError(ENOENT, "lstat", path) };
   }
   const r = removePath(w, recursive);
   if (r.code !== 0) {
-    return { value: null, error: osError(errnoOfWin32(r.code), r.call, file) };
+    return { value: null, error: winError(errnoOfWin32(r.code), r.call, path) };
   }
   return { value: true, error: null };
 }
