@@ -47,6 +47,8 @@ export interface ServerSteps {
   clientApplication: u8[] | null;
   /** TLS 1.2: the write keys, after `S_DONE12`. */
   writeCipher: RecordCipher | null;
+  /** The NewSessionTicket to send once the handshake is done (TLS 1.3), or null. */
+  ticket: u8[] | null;
   /** Whether the handshake is over. */
   done(): bool;
   /** TLS 1.2: the client's write keys at its ChangeCipherSpec, or null (TLS 1.3). */
