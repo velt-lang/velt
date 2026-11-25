@@ -133,6 +133,8 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
     cx.shapes_done = true;
     cx.check_deferred_ts_returns();
     sigs::resolve_sigs(cx, items, from);
+    // After signatures: std's generated functions take their final modes from `@modifies`.
+    crate::decorators::apply_modifies(cx, from.defs);
     iface_extends::flatten_from(cx, from.defs);
     cx.fill_synth_ifaces();
     field_only::fill(cx, from.defs);

@@ -105,8 +105,9 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     }
     let live: Vec<_> = cx.lazy.live.live.iter().copied().collect();
     let mut thrown: Vec<TyId> = (live.iter())
+        // A finished unit's as the app's passes raised them (`units::raised`).
         .filter_map(|d| match &cx.info[d.0 as usize] {
-            DefInfo::Fn(f) => f.throws,
+            DefInfo::Fn(_) => cx.fn_throws(*d),
             _ => None,
         })
         .collect();

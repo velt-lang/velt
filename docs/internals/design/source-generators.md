@@ -262,6 +262,16 @@ generator run.
 | `std/db/generated.velt` | `std/db/generate/rows.velt`, `bind.velt` | `readRowsByColumn`, `readRowByColumn`, `bindValues`, `writeValues` |
 | `std/lang/equal/generated.velt` | `std/lang/equal/generate/` | `equalByContent` (`deepEqual`, `assertEq`, `Map`'s deep comparison), `equalByFields` (`toEqual`) |
 
+A generated function and its instances share one ABI, so the ownership passes join their pass
+modes. A std declaration whose every instance modifies the same parameters lists them with
+`@modifies` (std/lang/intrinsics/decorators.velt, for std's `declare generated` functions only):
+`writeJson` and `writeJsonTop` list `w`, `readJson` lists `r`. Those parameters take their
+final mode where std declares the function, so checking a program never raises them (in a check
+by units std's declaration is frozen by then: build-architecture.md "Units in sema"). The list
+is a floor: an instance also runs the program's code, so a `toJSON` that changes its object
+still raises `value`, as any raise. A declaration whose instances differ by type (velt/db's,
+`equalByContent`) lists nothing and is joined as before.
+
 What each operation cannot handle is reported by its generator from the model, at the user's
 call (`std/encoding/json/generate/check.velt`, `parse_check.velt`); sema names no JSON function.
 Dynamic values (`any`, `unknown`, interface values, typed proxies) are written over
