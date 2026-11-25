@@ -634,13 +634,13 @@ std code in a native build too (`#fs-paths`: std/fs/paths/posix.velt over the C 
 `ENOTSUP` for a source of another kind, as libuv's `sendfile` there) and `copy_file_range` or
 the loop on Linux (paths/linux.velt); paths/win32.velt over
 `MoveFileExW`, `CopyFileW`, `CreateSymbolicLinkW`, the reparse point `DeviceIoControl` reads
-and `GetFinalPathNameByHandleW`, as libuv uses them), with Node's messages. velt_rt has none
-of these. velt_rt_wasm has, for WebAssembly builds, with their async twins:
-`velt_rt_fs_readlink_sync(path, out)` and `velt_rt_fs_realpath_sync(path, out)`
-(`IoResult<VeltStr>`; `readlink` is `EINVAL` for something that is not a link, `realpath` as
-WASI reports it), and `velt_rt_fs_symlink_sync(target, path, out)` (always `ENOTSUP`: WASI's
-link call is not stable in Rust), `velt_rt_fs_rename_sync(from, to, out)` and
-`velt_rt_fs_copy_file_sync(from, to, out)` (`IoResult<()>`).
+and `GetFinalPathNameByHandleW`, as libuv uses them), with Node's messages. WebAssembly builds
+have them as std code as well (std/fs/rt.velt calls `#fs-paths`, the async forms running the
+sync code): under WASI paths/wasi.velt over wasi-libc's `rename`, `symlink`, `readlink`,
+`realpath` and, for `copyFile`, `open`, `fstat`, `ftruncate`, `read`, `write` and `unlink`
+(libuv's steps without permissions or clones), WASI's errno numbers read as Linux's
+(std/ffi/errno_wasi.velt); under a JS host paths/js.velt, where each fails with `ENOTSUP`.
+Neither runtime has functions for them.
 
 All `path`/`from`/`to`/`data` parameters are `const VeltStr*`. Error messages are Node's: `<CODE>:
 <description>, <syscall> '<path>'` (plus ` -> '<to>'` for `rename`/`copyfile`/`symlink`), e.g.
