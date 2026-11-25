@@ -13,7 +13,6 @@ mod handover;
 mod js_table;
 mod local;
 mod losers;
-mod net;
 mod shared;
 mod strings;
 mod text_perf;

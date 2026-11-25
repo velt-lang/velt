@@ -1,13 +1,7 @@
-//! `std/net`: TCP listeners and streams (`tcp.rs`, `stream.rs`) as leaf `VeltFut`s over tokio, with incremental
-//! UTF-8 decoding for `readString` (`utf8.rs`). UDP sockets and DNS lookups are std's
-//! (std/net/udp/udp_sched.velt, std/net/dns/lookup_sched.velt).
+//! `std/net`: TCP, UDP and DNS are std's, on the executor's reactor (std/net/tcp_sched.velt,
+//! std/net/udp/udp_sched.velt, std/net/dns/lookup_sched.velt). What is left here: the listener
+//! `velt dev`'s supervisor hands over (`tcp.rs`) and the host's sockets of native libraries'
+//! streams (`sys.rs`).
 
-#[cfg(test)]
-mod handoff_tests;
-pub(crate) mod later;
-pub mod park;
-pub mod stream;
 pub mod sys;
 pub mod tcp;
-pub(crate) mod utf8;
-pub mod views;
