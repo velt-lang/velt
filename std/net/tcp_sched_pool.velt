@@ -2,15 +2,11 @@
 // keep-alive pool of `fetch`'s connections under the executor in Velt. The streams of the
 // reactor, plain sockets and TLS streams alike, wait in Velt's pool (std/net/fd_pool.velt), which
 // is looked at through the right kind before a stream is handed out again (a TLS stream through
-// its session, std/net/tls/fd_ops.velt's `idleOpen`); the runtime's streams, where there is no
-// reactor, in the runtime's.
+// its session, std/net/tls/fd_ops.velt's `idleOpen`).
 
 import { noteStdUse, stdUsed } from "velt/lang/intrinsics";
-import * as tb from "velt/lang/hooks/sched_io_table";
 import * as fio from "velt/net/fd_io";
 import * as pool from "velt/net/fd_pool";
-import * as rt from "velt/net/rt";
-import * as lat from "velt/net/rt_later";
 import { isTls } from "velt/net/tls/fd_hook";
 import * as tlsOps from "velt/net/tls/fd_hook";
 
@@ -18,22 +14,12 @@ export function parkStream(s: u64, key: string) {
   // `fetch` parks here: it then dials plain TCP and TLS on the reactor (fetch/client/conn.velt
   // `dial`).
   noteStdUse("fetch-pool-reactor");
-  if ((stdUsed("reactorTls") && isTls(s)) || tb.ours(s)) {
-    if (!pool.park(s, key)) {
-      closeOurs(s);
-    }
-  } else {
-    if (stdUsed("rt-later")) {
-      lat.park(s, key);
-    } else {
-      rt.velt_rt_tcp_park(s, key);
-    }
+  if (!pool.park(s, key)) {
+    closeOurs(s);
   }
 }
 
 export function unparkStream(key: string, settled: u32): u64 {
-  // A key's streams are all of one kind (ours on the reactor, or the runtime's where there is
-  // none): the runtime is asked only when Velt's pool has none.
   while (true) {
     const taken = pool.unpark(key, settled !== 0);
     // Closed with the pool's lock let go: closing hands this thread's output off.
@@ -41,7 +27,7 @@ export function unparkStream(key: string, settled: u32): u64 {
       closeOurs(stale);
     }
     if (taken.h === 0) {
-      return rt.velt_rt_tcp_unpark(key, settled);
+      return 0;
     }
     const tls = stdUsed("reactorTls") && isTls(taken.h);
     if (tls ? tlsOps.idleOpen(taken.h) : pool.idleOpen(taken.h)) {
