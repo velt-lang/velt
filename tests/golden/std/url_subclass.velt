@@ -56,6 +56,11 @@ function main() {
   console.log(String(h));
   console.log(h.origin);
   console.log(h.href, h.host, h.hostname);
+  // `console.log` reads the getters, and names a subclass by its class, as Node does; past the
+  // depth limit the base's name follows.
+  console.log(h);
+  console.log({ t: new Text("https://a.b/?q=1") });
+  console.log({ a: { b: { c: new Text("https://a.b/") } } });
 
   const t = new Text("https://a.b/");
   console.log(t.toJSON(), t.href, `${t}`, JSON.stringify(t));

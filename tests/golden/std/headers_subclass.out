@@ -12,6 +12,9 @@ a,1|b,2, 3|set-cookie,x=1|set-cookie,y=2
 a|b|set-cookie|set-cookie
 1|2, 3|x=1|y=2
 x,1|y,2
+Headers { x: '1', y: '2' }
+{ r: Headers { x: '1', y: '2' } }
+Headers { b: '2, 3', a: '1' } Headers { q: '1' }
 get b
 getSetCookie
 overridden 0

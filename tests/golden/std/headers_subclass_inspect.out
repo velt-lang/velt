@@ -1,4 +1,0 @@
-Loud { b: '2, 3', a: '1' }
-{ h: Loud { b: '2, 3', a: '1' } }
-get b
-overridden

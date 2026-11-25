@@ -14,6 +14,8 @@ class Loud extends Headers {
   }
 }
 
+class Quiet extends Headers {}
+
 function main() {
   const h = new Loud([
     ["b", "2"],
@@ -33,6 +35,10 @@ function main() {
   console.log([...h.keys()].join("|"));
   console.log([...h.values()].join("|"));
   console.log([...r].join("|"));
+  // `console.log` reads the list too, under the name `Headers`, as Node writes it.
+  console.log(r);
+  console.log({ r });
+  console.log(new Loud([["b", "2"], ["a", "1"], ["b", "3"]]), new Quiet({ q: "1" }));
   console.log(h.get("b"), h.getSetCookie().length);
   h.append("c", "4");
   console.log([...h.keys()].join("|"));

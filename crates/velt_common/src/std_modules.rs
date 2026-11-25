@@ -176,6 +176,7 @@ table! {
     lang_bytes_range_text => "lang/bytes/range_text",
     lang_typed_array_core => "lang/typed_array/core",
     lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
+    lang_typed_array_named_inspect => "lang/typed_array/named_inspect",
 
     // Modules and their files that lowering and the checks know.
     collections => "collections",

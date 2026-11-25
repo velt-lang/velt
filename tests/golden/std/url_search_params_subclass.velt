@@ -14,6 +14,8 @@ class Loud extends URLSearchParams {
   }
 }
 
+class Quiet extends URLSearchParams {}
+
 function main() {
   const p = new Loud("b=2&a=1&b=3&flag");
   console.log("made", p.size, p.toString());
@@ -26,4 +28,8 @@ function main() {
   p.append("d", "5");
   console.log(p.toString());
   console.log(p.entries().join("|"));
+  // `console.log` names a subclass by its class, as Node does; `[Object]` past the depth limit.
+  console.log(p);
+  console.log(new Quiet(""), new Quiet(`a=${"x".repeat(80)}&b=2`));
+  console.log({ a: { b: { c: new Quiet("a=1") } } });
 }

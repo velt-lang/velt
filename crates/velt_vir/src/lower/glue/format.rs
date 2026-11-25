@@ -509,6 +509,43 @@ impl FnLower<'_, '_> {
         let name = self.cx.type_name(ty);
         if matches!(self.cx.kind(rty), TyKind::Str) {
             self.push_inspect_text(buf, &res);
+        } else if self.is_named_inspect(rty) {
+            // What Node prints under `this.constructor.name` (`URL`, `URLSearchParams`): the
+            // object's class, a subclass's too, then the text; past the depth limit the name and
+            // the struct's `cut` (`URL {}`; a subclass `U [URL] {}`, by the base's
+            // `Symbol.toStringTag`), or, when that is empty, `[Object]`.
+            let text = self.field_place(&res, rty, 0);
+            let cut = self.field_place(&res, rty, 1);
+            let cut_name = match self.std_inspect_owner(m) {
+                Some(base) if base != name => format!("{name} [{base}]"),
+                _ => name.clone(),
+            };
+            let cut_text = |lw: &mut Self| {
+                let n = lw.str_len(Operand::Copy(cut.clone()));
+                let given =
+                    lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, n, cint(0, Ty::U64)));
+                let (given_bb, plain_bb, done) = (lw.new_block(), lw.new_block(), lw.new_block());
+                lw.branch(given, given_bb, plain_bb);
+                lw.switch_to(given_bb);
+                lw.push_text(buf, &cut_name);
+                let a = lw.addr(cut.clone());
+                lw.push_str(buf, a);
+                lw.goto(done);
+                lw.switch_to(plain_bb);
+                lw.push_text(buf, "[Object]");
+                lw.goto(done);
+                lw.switch_to(done);
+            };
+            self.within_depth_by(buf, depth, cut_text, None, |lw, _| {
+                // The name and the text are one piece, like a custom inspect's string.
+                let start = lw.temp(Ty::U64);
+                lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+                let start = Operand::Copy(Place::local(start));
+                lw.push_text(buf, &name);
+                let a = lw.addr(text.clone());
+                lw.push_str(buf, a);
+                lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            });
         } else if self.is_native_inspect(rty) {
             // What Node prints for one of its own objects (`ArrayBuffer`, `URL`): the text, cut
             // past the depth limit to the struct's `cut` (`URL {}`), or, when that is empty, to
@@ -556,11 +593,23 @@ impl FnLower<'_, '_> {
             let start = self.temp(Ty::U64);
             self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
             let start = Operand::Copy(Place::local(start));
+            // One of std's classes writes its own name, as Node's do (`Headers { … }` for a
+            // subclass of `Headers` too).
+            let name = self.std_inspect_owner(m).unwrap_or(name);
             self.push_text(buf, &format!("{name} "));
             self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
             self.format_nested(buf, &res, rty, depth);
         }
         self.drop_glue(res, rty);
+    }
+
+    /// The name of the std class that declares `[INSPECT]()` method `m`; `None` for a program's.
+    fn std_inspect_owner(&self, m: DefId) -> Option<String> {
+        let owner = self.cx.fn_def(m).self_ty?;
+        let TyKind::Adt(d, _) = self.cx.kind(owner) else {
+            return None;
+        };
+        velt_common::std_modules::is_std(&self.cx.adt_def(d).name).then(|| self.cx.type_name(owner))
     }
 
     /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
@@ -574,11 +623,18 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
     }
 
-    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.velt), the result of an `[INSPECT]()`
-    /// that prints one of Node's own objects?
+    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.velt), the result of an
+    /// `[INSPECT]()` that prints one of Node's own objects?
     fn is_native_inspect(&self, ty: TyId) -> bool {
-        matches!(self.cx.kind(ty), TyKind::Adt(d, _)
-            if self.cx.adt_def(d).name == velt_common::std_item!(lang_typed_array_native_inspect, "NativeInspect"))
+        const NAME: &str = velt_common::std_item!(lang_typed_array_native_inspect, "NativeInspect");
+        matches!(self.cx.kind(ty), TyKind::Adt(d, _) if self.cx.adt_def(d).name == NAME)
+    }
+
+    /// Is `ty` std's `NamedInspect` (std/lang/typed_array/named_inspect.velt), the result of an
+    /// `[INSPECT]()` whose text follows the name of the object's class?
+    fn is_named_inspect(&self, ty: TyId) -> bool {
+        const NAME: &str = velt_common::std_item!(lang_typed_array_named_inspect, "NamedInspect");
+        matches!(self.cx.kind(ty), TyKind::Adt(d, _) if self.cx.adt_def(d).name == NAME)
     }
 
     /// The start of a top-level value: std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt)

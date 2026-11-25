@@ -42,12 +42,13 @@ function quoted(s: string, indent: i64): string {
 }
 
 /**
- * `URLSearchParams { 'a' => '1', 'b' => '2' }`, or `URLSearchParams {}`; pairs longer than 80
- * characters in all go one per line, the closing brace after the last.
+ * What follows the class's name in `URLSearchParams { 'a' => '1', 'b' => '2' }` or
+ * `URLSearchParams {}`; pairs longer than 80 characters in all go one per line, the closing brace
+ * after the last.
  */
 export function paramsText(names: string[], vals: string[]): string {
   if (names.length == 0) {
-    return "URLSearchParams {}";
+    return " {}";
   }
   const items: string[] = [];
   // As Node counts it: each pair and a `, ` between two (UTF-16 code units).
@@ -58,13 +59,13 @@ export function paramsText(names: string[], vals: string[]): string {
     items.push(item);
   }
   if (length > BREAK_LENGTH) {
-    return `URLSearchParams {\n  ${items.join(",\n  ")} }`;
+    return ` {\n  ${items.join(",\n  ")} }`;
   }
-  return `URLSearchParams { ${items.join(", ")} }`;
+  return ` { ${items.join(", ")} }`;
 }
 
 /**
- * `URL {` and its getters one per line (`  href: '…',`), then `}`: Node prints them as a plain
+ * What follows the class's name in `URL {` and its getters one per line (`  href: '…',`), then `}`: Node prints them as a plain
  * object, always too long for one line. `values` are the getters' in Node's order, `href` to
  * `hash` without `searchParams`; `params` is `paramsText` of the query, its lines after the
  * first indented to the getter's.
@@ -76,8 +77,8 @@ export function urlText(values: string[], params: string): string {
   for (let i: usize = 0; i < names.length; i++) {
     lines.push(`${names[i]}: ${quoted(values[i], 2)}`);
     if (names[i] == "search") {
-      lines.push(`searchParams: ${params.replaceAll("\n", "\n  ")}`);
+      lines.push(`searchParams: URLSearchParams${params.replaceAll("\n", "\n  ")}`);
     }
   }
-  return `URL {\n  ${lines.join(",\n  ")}\n}`;
+  return ` {\n  ${lines.join(",\n  ")}\n}`;
 }

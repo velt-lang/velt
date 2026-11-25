@@ -6,3 +6,8 @@ append d 5
 a=1&b=9&c=4&flag=&d=5
 entries
 z,26
+Loud { 'a' => '1', 'b' => '9', 'c' => '4', 'flag' => '', 'd' => '5' }
+Quiet {} Quiet {
+  'a' => 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  'b' => '2' }
+{ a: { b: { c: [Object] } } }

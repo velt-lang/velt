@@ -3,7 +3,7 @@
 import { FORM, decodeLenient, encodeSet } from "velt/net/url/encode";
 import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
 import { INSPECT } from "velt/lang/hooks/keys";
-import { NativeInspect } from "velt/lang/typed_array/native_inspect";
+import { NamedInspect } from "velt/lang/typed_array/named_inspect";
 import { paramsText } from "velt/net/url/inspect";
 
 /**
@@ -149,9 +149,17 @@ export class URLSearchParams {
     return parts.join("&");
   }
 
-  /** How `console.log` shows the pairs, like Node: `URLSearchParams { 'a' => '1' }`; `[Object]` past its depth limit. */
-  [INSPECT](): NativeInspect {
-    return { text: paramsText(this.names, this.vals), cut: "[Object]" };
+  /**
+   * How `console.log` shows the pairs, like Node: `URLSearchParams { 'a' => '1' }` (a subclass
+   * under its own name); `[Object]` past its depth limit.
+   */
+  [INSPECT](): NamedInspect {
+    return { text: paramsText(this.names, this.vals), cut: "" };
+  }
+
+  // The pairs as `console.log` shows them after the name (std only: `URL`'s `searchParams` line).
+  private pairsText(): string {
+    return paramsText(this.names, this.vals);
   }
 }
 
