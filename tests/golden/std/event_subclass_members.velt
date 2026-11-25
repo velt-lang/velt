@@ -1,0 +1,85 @@
+// Which of an event's members Event's and EventTarget's built-ins go through, as in Node (#3792):
+// `returnValue` reads and sets the event's own canceled flag, never a subclass's
+// `defaultPrevented` or `preventDefault`, and a passive listener's `returnValue = false` cancels
+// nothing. `dispatchEvent` does go through the members: its result reads `defaultPrevented`, it
+// finds the listeners by `type` (read once; the error for a dispatch already under way names
+// it too), and `stopImmediatePropagation` calls `stopPropagation`.
+
+class Loud extends Event {
+  override get defaultPrevented(): boolean {
+    console.log("  Loud.defaultPrevented");
+    return true;
+  }
+  override preventDefault(): void {
+    console.log("  Loud.preventDefault");
+  }
+}
+
+for (const cancelable of [false, true]) {
+  console.log(`cancelable ${cancelable}`);
+  const e = new Loud("x", { cancelable });
+  console.log("get returnValue:", e.returnValue);
+  e.returnValue = false;
+  console.log("after returnValue = false:", e.returnValue);
+  e.returnValue = true;
+  console.log("after returnValue = true:", e.returnValue);
+}
+
+const plain = new Event("y", { cancelable: true });
+plain.returnValue = false;
+console.log("plain:", plain.returnValue, plain.defaultPrevented);
+
+const t = new EventTarget();
+t.addEventListener("z", (e: Event) => {
+  e.returnValue = false;
+});
+console.log("dispatch:", t.dispatchEvent(new Loud("z", { cancelable: true })));
+t.addEventListener(
+  "p",
+  (e: Event) => {
+    e.returnValue = false;
+    console.log("passive listener:", e.returnValue, e.defaultPrevented);
+  },
+  { passive: true },
+);
+console.log("passive dispatch:", t.dispatchEvent(new Event("p", { cancelable: true })));
+
+let log: string[] = [];
+class Typed extends Event {
+  override get type(): string {
+    log.push("get type");
+    return "other";
+  }
+  override stopPropagation(): void {
+    log.push("stopPropagation");
+  }
+}
+const t3 = new EventTarget();
+let seen = "";
+t3.addEventListener("x", () => {
+  seen += "x";
+});
+t3.addEventListener("other", (e: Event) => {
+  seen += "other";
+  e.stopImmediatePropagation();
+});
+t3.addEventListener("other", () => {
+  seen += "+second";
+});
+log = [];
+console.log(t3.dispatchEvent(new Typed("x")), seen, "|", log.join(","));
+log = [];
+new Typed("y").stopImmediatePropagation();
+console.log("stopImmediatePropagation:", log.join(","));
+const t4 = new EventTarget();
+t4.addEventListener("other", (e: Event) => {
+  log = [];
+  try {
+    t4.dispatchEvent(e);
+  } catch (err) {
+    if (err instanceof Error) {
+      console.log("again:", err.message, "|", log.join(","));
+    }
+  }
+});
+t4.dispatchEvent(new Typed("z"));
