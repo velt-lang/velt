@@ -103,9 +103,12 @@ impl FnCx<'_, '_> {
             // A view reads the fields through getters.
             return None;
         }
-        if !param && props.iter().any(is_this_method) {
-            // A method using `this` called through `any` or a view would not get the object:
-            // the error where the method is checked stays.
+        // A method using `this` called through a view would not get the object: the error where
+        // the method is checked stays. Through `any` the slot method passes it (#3773). Where
+        // `unknown` or `object` is expected, TypeScript types `this` as `{}` (TS2339 on its
+        // members): refused too.
+        let any = matches!(self.cx.dynamic(t), Some(crate::any::Dynamic::Any));
+        if !param && !any && props.iter().any(is_this_method) {
             return None;
         }
         let h = self.own_iface_object(props, span);
