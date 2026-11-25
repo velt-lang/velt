@@ -7,6 +7,7 @@
 use super::setters::synth;
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
+use velt_syntax::js_number;
 
 use crate::any::Dynamic;
 use crate::body::places::set_place_mode;
