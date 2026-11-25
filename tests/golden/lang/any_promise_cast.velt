@@ -3,8 +3,7 @@
 // promise of exactly that type, of another payload type (`Promise<any>`, a widening), a rejected
 // one (the cast's `Promise<T>` rejects with anything, as TypeScript's does), an optional promise
 // type, and payloads of class, array and `void` types. The cast is the promise it converts (`===`,
-// `Set` keys), and awaiting it takes no turn more than awaiting the promise does, settled before
-// or after the `await` starts.
+// `Set` keys), and awaiting it takes no turn more than awaiting the promise does.
 class Pt {
   x: number;
   constructor(x: number) {
@@ -89,7 +88,7 @@ async function identity(): Promise<void> {
 }
 
 async function ticks(): Promise<void> {
-  // Settled before the awaits start.
+  // Settled before the awaits start (after: any_promise_cast_ticks_late.velt).
   const log: string[] = [];
   const typed = num(2);
   const held: any = typed;
@@ -119,34 +118,6 @@ async function ticks(): Promise<void> {
   await t4;
   await t5;
   console.log(log.join(", "));
-  // Settled after they start.
-  const later: string[] = [];
-  let settle = (v: number) => {};
-  const late = new Promise<number>((r) => {
-    settle = r;
-  });
-  const lh: any = late;
-  const u1 = (async () => {
-    await (lh as Promise<number>);
-    later.push("cast");
-  })();
-  const u2 = (async () => {
-    await late;
-    later.push("typed");
-  })();
-  const u3 = (async () => {
-    await (lh as Promise<number>).then((v) => later.push("then " + v));
-  })();
-  const u4 = (async () => {
-    await lh;
-    later.push("any");
-  })();
-  settle(5);
-  await u1;
-  await u2;
-  await u3;
-  await u4;
-  console.log(later.join(", "));
   // A converting cast against an await through `any`.
   const r: any = anyRes();
   const conv: string[] = [];
