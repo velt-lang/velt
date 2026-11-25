@@ -623,15 +623,15 @@ pub(crate) fn mark_shared_values(cx: &mut Ctx) {
         return;
     }
     let mut refs: FxHashSet<DefId> = FxHashSet::default();
-    let mut note = |e: &mut hir::Expr| {
+    let mut note = |e: &hir::Expr| {
         if let hir::ExprKind::FnRef(x, _) = &e.kind {
             refs.insert(*x);
         }
     };
-    for d in cx.defs.iter_mut() {
+    for d in cx.defs.iter() {
         match d {
-            Some(hir::Def::Fn(f)) => crate::visit::exprs_mut(&mut f.body.block, &mut note),
-            Some(hir::Def::Global(g)) => crate::visit::exprs_in(&mut g.init, &mut note),
+            Some(hir::Def::Fn(f)) => crate::visit_ref::exprs(&f.body.block, &mut note),
+            Some(hir::Def::Global(g)) => crate::visit_ref::exprs_in(&g.init, &mut note),
             _ => {}
         }
     }

@@ -322,7 +322,7 @@ unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
 /// Stop the program when the promise of `h` is used on another logical task than the one it is
 /// shared on (velt_rt's task/shared.rs `on_its_task`). Outside a task anything goes, and so it
 /// does in a program with module state: a holder reached through it may move between the tasks
-/// that use module state, which velt_rt runs one at a time under its module lock.
+/// that use module state, which run one at a time here (one thread).
 fn on_its_task(h: &HubRef) {
     let now = super::executor::logical_task();
     if now == 0 {

@@ -1,0 +1,33 @@
+// check: no leaks
+// A stream's microtask order against a chain of `then`s, as Node 22's (#3643): an `async` `pull`
+// that awaits before it enqueues: its promise is pending when `pull` returns, and the next pull
+// runs two microtasks after it settles. The Node twin is streams_order_await_pull.mjs.
+async function main(): Promise<void> {
+  let n = 0;
+  const s = new ReadableStream<number>({
+    pull: async (c) => {
+      n++;
+      console.log("pull " + n);
+      await Promise.resolve();
+      if (n <= 2) {
+        c.enqueue(n);
+      } else {
+        c.close();
+      }
+    },
+  });
+  let p = Promise.resolve();
+  for (let i = 0; i < 12; i++) {
+    const k = i;
+    p = p.then(() => {
+      console.log("t" + k);
+    });
+  }
+  const r = s.getReader();
+  r.read().then((v) => console.log("read0 " + v.value));
+  r.read().then((v) => console.log("read1 " + v.value));
+  r.read().then((v) => console.log("read2 " + v.done));
+  r.closed.then(() => console.log("closed"));
+}
+
+main();

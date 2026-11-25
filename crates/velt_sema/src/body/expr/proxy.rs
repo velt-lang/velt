@@ -339,7 +339,9 @@ impl FnCx<'_, '_> {
         let b = self.cx.ty.bool_;
         let cond = self.intrinsic(hir::Intrinsic::IsTypedProxy, vec![x], b, span);
         self.proxy_keys_inner = true;
+        let outer = std::mem::replace(&mut self.typed_proxy_branch, true);
         let then = hooks::proxy_keys_of(ty::Any::of(arg.clone())).check(self, span);
+        self.typed_proxy_branch = outer;
         let els = self.expr(&call, None, crate::body::Want::Move);
         self.proxy_keys_inner = false;
         let ty = els.ty;
@@ -413,7 +415,9 @@ impl FnCx<'_, '_> {
         let b = self.cx.ty.bool_;
         let cond = self.intrinsic(hir::Intrinsic::IsTypedProxy, vec![xv], b, span);
         self.proxy_keys_inner = true;
+        let outer = std::mem::replace(&mut self.typed_proxy_branch, true);
         let then = proxy.check(self, span);
+        self.typed_proxy_branch = outer;
         let els = self.expr(plain, None, crate::body::Want::Move);
         self.proxy_keys_inner = false;
         let ty = els.ty;

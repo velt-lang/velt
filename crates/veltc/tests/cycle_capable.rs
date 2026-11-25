@@ -779,6 +779,35 @@ fn an_instantiation_that_does_not_reach_back_is_no_cycle() {
 }
 
 #[test]
+fn an_abort_error_keeps_errors_out_of_the_set() {
+    // An `AbortError`'s cause is the string reason `abort(reason)` gave (std/task/errors.velt),
+    // not a dynamic value that could hold the error back: a program that throws one from
+    // `throwIfAborted` and reads its reason has no `Error` (nor dynamic values) on a cycle, so
+    // none of its errors pays for the collector (#3119).
+    let out = debug_out(
+        "import { AbortError } from \"velt/task\";
+         function main() {
+           const c = new AbortController();
+           c.abort(\"stop\");
+           try {
+             c.signal.throwIfAborted();
+           } catch (e) {
+             if (e instanceof AbortError) {
+               console.log(e.message, e.cause ?? \"none\");
+             }
+           }
+           console.log(c.signal.reason);
+         }",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(!has(line, "class std/prelude/errors::Error"), "{out}");
+    assert!(!has(line, "dynamic values"), "{out}");
+}
+
+#[test]
 fn request_and_response_bodies_keep_the_request_and_response_out_of_the_set() {
     // A body's chunks hold the request's state and its server side (std/net/http/fetch
     // request_body.velt `requestChunks`), or the response's body cell (response_cell.velt), not
