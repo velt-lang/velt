@@ -1,0 +1,11 @@
+pull caught pull boom
+start caught start boom
+cancel caught cancel boom
+awaited void
+awaited number
+awaited void, its error inferred
+awaited never widened
+awaited never widened
+awaited never widened
+any start read 1
+never-promise pending

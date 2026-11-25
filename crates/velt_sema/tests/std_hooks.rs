@@ -420,6 +420,9 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
             "panic_raise",
             "class_object",
             "host_ref_handle",
+            // A `Mutex`'s count, lowered in a `velt dev` build only (`Construct::MutexHeld`).
+            "mutex_held_locked",
+            "mutex_held_unlocked",
             "weak_release",
             "weak_map_new",
             "weak_map_set",

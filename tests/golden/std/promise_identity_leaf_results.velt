@@ -1,0 +1,78 @@
+// check: no leaks
+// check: also with VELT_THREADS=1
+// Several shared promises that aren't async calls alive at once (#2196), whose results are counted
+// (strings, an object, an array): each holder gets its own promise's value, also for a copy handed
+// to another task, and every value is freed once.
+class Box {
+  constructor(
+    public name: string,
+    public n: number,
+  ) {}
+}
+
+async function str(n: number): Promise<string> {
+  await Promise.resolve();
+  return "value-" + n.toString() + "-" + "x".repeat(n);
+}
+
+async function obj(n: number): Promise<Box> {
+  await Promise.resolve();
+  return new Box("b" + n.toString(), n);
+}
+
+async function arr(n: number): Promise<number[]> {
+  await Promise.resolve();
+  return [n, n + 1, n + 2];
+}
+
+async function waitFor(p: Promise<string>): Promise<string> {
+  return await p;
+}
+
+async function main() {
+  // Five shared at once, awaited in the reverse order through their copies, then the originals.
+  const hs: Promise<string>[] = [];
+  const cs: Promise<string>[] = [];
+  for (let i = 1; i <= 5; i++) {
+    const h = spawn(str(i));
+    hs.push(h);
+    cs.push(h);
+  }
+  for (let i = 4; i >= 0; i--) {
+    console.log(i, await cs[i], cs[i] === hs[i], cs[i] === hs[(i + 1) % 5]);
+  }
+  for (let i = 0; i < 5; i++) {
+    console.log(i, await hs[i]);
+  }
+
+  const h = spawn(str(3));
+  const h2 = h;
+  console.log(await h, await h2, h === h2);
+
+  const o = spawn(obj(4));
+  const o2 = o;
+  const a = await o;
+  const b = await o2;
+  console.log(a.name, b.name, a === b);
+
+  const r = Promise.race([str(5), str(6)]);
+  const r2 = r;
+  console.log(await r2, await r);
+
+  const x = spawn(arr(7));
+  const x2 = x;
+  console.log((await x).length, (await x2)[2]);
+
+  const s = spawn(str(8));
+  const s2 = s;
+  console.log(await spawn(waitFor(s2)), await s);
+
+  const d = spawn(str(9));
+  const d2 = d;
+  console.log("dropped", d === d2);
+
+  const l = spawn(str(10));
+  const l2 = l;
+  await l2;
+  console.log(l, l2);
+}

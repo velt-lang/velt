@@ -12,13 +12,12 @@ pub enum Intrinsic {
     PrintErr,
     /// 1 arg of int/float/bool/Str type → owned `Str` (JS formatting for floats: `1`, `1.5`, `NaN`).
     ToString,
-    /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and
-    /// not caught writes after `Uncaught ` and before the location: Node's header for an
-    /// `Error` (`ParseError: bad`), any other value as `console.log` prints it. `velt/test`
-    /// reports a failed test with it.
+    /// `(e: borrow T) -> string` (`errorText`): what the report of `e` thrown and not caught writes
+    /// after `Uncaught ` and before the location: Node's header for an `Error` (`ParseError: bad`),
+    /// any other value as `console.log` prints it. `velt/test` reports a failed test with it.
     ErrorText,
-    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw` on this
-    /// thread, as an uncaught report ends, or `""` when not known (read it first in the `catch`).
+    /// `() -> string` (`throwLoc`): ` at <path>:<line>:<col>` of the last `throw` on this thread,
+    /// as an uncaught report ends, or `""` when not known (read it first thing in the `catch`).
     ThrowLoc,
     /// `(x: borrow T) -> string` (`inspect`): `x` as Node's `util.inspect` writes
     /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
@@ -233,9 +232,9 @@ pub enum Intrinsic {
     /// condition of an `if` whose test `g(x)` is a type predicate with only primitive members
     /// (hir_encodings.md "Type predicates on a type parameter").
     MayHoldPrimitive,
-    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type
-    /// `T` is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The
-    /// condition of the `if` that writes a `T` value's text (hir_encodings.md, type parameters).
+    /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, a constant: is the type `T`
+    /// is instantiated with `any`, `unknown` or `object`? The probe is not evaluated. The condition
+    /// of the `if` that writes a `T` value's text (hir_encodings.md "Text of a type parameter").
     HoldsDynamic,
     /// Compiler-internal (issue #1462): `(probe: borrow T) -> bool`, `HoldsDynamic` or `T` a
     /// class: the condition of the text of a `T` value in a string `+`, which asks a class
@@ -423,6 +422,9 @@ pub enum Intrinsic {
     PtrRead,
     /// std only (`Ptr.write`): `ptrWrite<S>(p: Ptr<S>, i: usize, s: S)`, as `PtrRead`. Additive.
     PtrWrite,
+    /// std only (`Out.value`, #2187): `cArrived<T>(v: T) -> T`, `v` with its non-null `Ptr<T>`s
+    /// checked, as `PtrRead`'s. Additive.
+    CArrived,
     /// std only: `atomicAddress<T>(a: borrow Atomic<T>) -> usize`, the address of `a`'s word: a
     /// 32- or 64-bit `Atomic` that can't move (`Global(d)`, a field of `SharedRead`'s). Additive.
     AtomicAddress,

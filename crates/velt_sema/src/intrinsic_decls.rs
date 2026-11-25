@@ -130,6 +130,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("ptrToAddress", Op(I::PtrToAddress)),
     ("ptrRead", Op(I::PtrRead)),
     ("ptrWrite", Op(I::PtrWrite)),
+    ("cArrived", Op(I::CArrived)),
     // future.velt
     ("addressCall", Op(I::AddressCall)),
     ("addressCall3", Op(I::AddressCall3)),

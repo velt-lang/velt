@@ -1,0 +1,15 @@
+// A `Symbol` the module declares anywhere, here a class inside a function, turns `Symbol.for`
+// keys off for the whole module: the constant is no key, refused as on main (Node prints
+// `undefined`).
+const R = Symbol.for("k");
+(globalThis as Record<symbol, number | undefined>)[R] = 7;
+function f(): void {
+  class Symbol {
+    static for(s: string): string {
+      return s;
+    }
+  }
+  const K = Symbol.for("k");
+  console.log((globalThis as unknown as Record<string, number | undefined>)[K]);
+}
+f();

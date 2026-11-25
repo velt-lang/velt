@@ -1,0 +1,54 @@
+// velt/fs (internal): the `#fs-paths` variant of JS hosts (wasm32-unknown-unknown;
+// std/imports.velt), which have no file system: renaming, linking and copying each fail with
+// `ENOTSUP`, the code and message the runtime's file functions give there (`ENOTSUP: operation
+// not supported on this platform, rename 'a' -> 'b'`; `ENOTSUP: unsupported, symlink 't' -> 'l'`).
+
+import { IoError } from "velt/io/error";
+import { Done } from "velt/fs/whole/done";
+
+function unsupported<T>(syscall: string, path: string, dest: string | null = null): Done<T> {
+  return failed("operation not supported on this platform", syscall, path, dest);
+}
+
+function failed<T>(text: string, syscall: string, path: string, dest: string | null): Done<T> {
+  const to = dest == null ? "" : ` -> '${dest}'`;
+  const message = `ENOTSUP: ${text}, ${syscall} '${path}'${to}`;
+  return { value: null, error: new IoError("ENOTSUP", message) };
+}
+
+export function renameAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+): Done<bool> {
+  return unsupported("rename", from, to);
+}
+
+export function symlinkAt(
+  ct: readonly u8[],
+  target: string,
+  cp: readonly u8[],
+  path: string,
+): Done<bool> {
+  // The runtime's text for a link, which it refused on every WebAssembly target.
+  return failed("unsupported", "symlink", target, path);
+}
+
+export function readlinkAt(c: readonly u8[], path: string): Done<string> {
+  return unsupported("readlink", path);
+}
+
+export function realpathAt(c: readonly u8[], path: string): Done<string> {
+  return unsupported("realpath", path);
+}
+
+export function copyAt(
+  cf: readonly u8[],
+  from: string,
+  ct: readonly u8[],
+  to: string,
+  mode: u32,
+): Done<bool> {
+  return unsupported("copyfile", from, to);
+}

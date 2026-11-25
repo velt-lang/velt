@@ -49,7 +49,7 @@ use crate::hir::{
     AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, Lit, LocalDef, LocalId, Stmt,
     StmtKind as S, TyId, TyKind,
 };
-use crate::visit::{self, VisitMut};
+use crate::visit_ref::{self as visit, Visit};
 
 mod effects;
 mod fix;
@@ -323,12 +323,12 @@ struct Scan<'a, 'm> {
     candidates: &'a mut Vec<Candidate>,
 }
 
-impl VisitMut for Scan<'_, '_> {
-    fn stmt(&mut self, s: &mut Stmt) {
+impl Visit for Scan<'_, '_> {
+    fn stmt(&mut self, s: &Stmt) {
         self.scope.constant(self.cx, self.locals, s);
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         self.fx.note(self.cx, self.slots, &self.scope, self.im, e);
         match &e.kind {
             E::Call {
@@ -354,12 +354,12 @@ struct Rhs<'a, 'm> {
     fx: Effects,
 }
 
-impl VisitMut for Rhs<'_, '_> {
-    fn stmt(&mut self, s: &mut Stmt) {
+impl Visit for Rhs<'_, '_> {
+    fn stmt(&mut self, s: &Stmt) {
         self.scope.constant(self.cx, self.locals, s);
     }
 
-    fn expr(&mut self, e: &mut Expr) {
+    fn expr(&mut self, e: &Expr) {
         self.fx.note(self.cx, self.slots, &self.scope, self.im, e);
     }
 }
@@ -391,8 +391,8 @@ fn any_candidate(cx: &mut Ctx) -> bool {
 /// Collects the functions an expression uses as values, and the type arguments it passes.
 struct Values<'a>(&'a mut Vec<DefId>, &'a mut Vec<TyId>);
 
-impl VisitMut for Values<'_> {
-    fn expr(&mut self, e: &mut Expr) {
+impl Visit for Values<'_> {
+    fn expr(&mut self, e: &Expr) {
         match &e.kind {
             E::Closure(d) => self.0.push(*d),
             E::FnRef(d, targs) => {
@@ -421,8 +421,11 @@ pub(crate) fn check(cx: &mut Ctx) {
     let mut type_args: Vec<TyId> = Vec::new();
     let mut shared: Vec<TyId> = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
+    // Each body is read in place (a finished unit's, in a check by units, is never written).
+    let rd: &Ctx = cx;
     for (i, slot) in fns.iter_mut().enumerate() {
-        let Some(Def::Fn(mut f)) = cx.defs[i].take() else {
+        let cx = rd;
+        let Some(Def::Fn(f)) = cx.defs.get(i).and_then(|d| d.as_ref()) else {
             continue;
         };
         for l in &f.body.locals {
@@ -457,7 +460,7 @@ pub(crate) fn check(cx: &mut Ctx) {
                 .map(|p| p.local)
                 .collect();
             // Never reassigned (`mutable` also marks a parameter whose closure's state changes).
-            visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            visit::exprs(&f.body.block, &mut |e: &Expr| {
                 if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
                     if let E::Local(l, _) = place.kind {
                         params.remove(&l);
@@ -465,7 +468,7 @@ pub(crate) fn check(cx: &mut Ctx) {
                 }
             });
         }
-        let locals = std::mem::take(&mut f.body.locals);
+        let locals = &f.body.locals;
         let own_params: FxHashSet<LocalId> = f.params.iter().map(|p| p.local).collect();
         let first = candidates.len();
         let mut scan = Scan {
@@ -473,7 +476,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             slots: &slots,
             im: &im,
             names: &names,
-            locals: &locals,
+            locals,
             params: &own_params,
             scope: Scope {
                 params,
@@ -483,22 +486,21 @@ pub(crate) fn check(cx: &mut Ctx) {
             shared: &mut shared,
             candidates: &mut candidates,
         };
-        visit::block(&mut f.body.block, &mut scan);
+        visit::block(&f.body.block, &mut scan);
         let mut fx = scan.fx;
         // Its variables are dropped at the end of their scopes.
-        for l in &locals {
+        for l in locals {
             if im.maybe(cx, l.ty) {
                 fx.drops.insert(l.ty);
             }
         }
-        f.body.locals = locals;
         if candidates[first..]
             .iter()
             .any(|c| c.path.iter().any(|l| l.local.is_some()))
         {
             // A variable a closure captures may be assigned by it.
             let mut captured: FxHashSet<LocalId> = FxHashSet::default();
-            visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            visit::exprs(&f.body.block, &mut |e: &Expr| {
                 if let E::Closure(d) = e.kind {
                     if let Some(Some(Def::Fn(c))) = cx.defs.get(d.0 as usize) {
                         captured.extend(c.captures.iter().map(|c| c.outer));
@@ -519,7 +521,6 @@ pub(crate) fn check(cx: &mut Ctx) {
             methods.push((member(&f.name).to_string(), DefId(i as u32)));
         }
         *slot = Some(fx);
-        cx.defs[i] = Some(Def::Fn(f));
     }
     if candidates.is_empty() {
         return;
@@ -550,9 +551,8 @@ pub(crate) fn check(cx: &mut Ctx) {
             fx: Effects::default(),
         };
         for x in inits {
-            let mut x = x.clone();
-            visit::expr(&mut x, &mut Values(&mut values, &mut type_args));
-            visit::expr(&mut x, &mut rhs);
+            visit::expr(x, &mut Values(&mut values, &mut type_args));
+            visit::expr(x, &mut rhs);
         }
         let mut fx = rhs.fx;
         type_args.append(&mut fx.type_args);
@@ -631,7 +631,7 @@ fn candidate(scan: &mut Scan<'_, '_>, span: Span, place: &Expr, value: &Expr) ->
         },
         fx: Effects::default(),
     };
-    visit::expr(&mut value.clone(), &mut rhs);
+    visit::expr(value, &mut rhs);
     let fx = rhs.fx;
     scan.scope.known = rhs.scope.known;
     if !fx.runs_code() || contains_itself(cx, d) {

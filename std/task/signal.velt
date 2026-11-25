@@ -2,7 +2,7 @@
 // runtime object is owned by a `shared` cell (atomic, so `spawn` shares it rather than copying
 // it) and released once, at the cell's last reference.
 
-import { AbortError } from "velt/task/errors";
+import { AbortError, DEFAULT_REASON } from "velt/task/errors";
 import {
   velt_rt_signal_abort,
   velt_rt_signal_aborted,
@@ -218,7 +218,8 @@ export class AbortSignal {
       if (r instanceof AbortError) {
         throw r;
       }
-      throw AbortError.of(r);
+      // Not an `AbortError` (a `TimeoutError` is one): the string `abort(reason)` gave.
+      throw AbortError.of(typeof r === "string" ? r : DEFAULT_REASON);
     }
   }
 

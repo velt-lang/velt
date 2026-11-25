@@ -1,0 +1,14 @@
+handle true true 1
+handle keys 1
+handle map h 1
+converted true
+handle results 10 10
+Promise { 10 }
+sleep true true true
+sleep done
+yield true
+race true 20 20
+handed 40 40
+caught boom
+caught again boom
+dropped true

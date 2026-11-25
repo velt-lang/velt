@@ -274,28 +274,22 @@ Apple M-series): a `StrBuf` is as fast as or faster than a `Vec<u8>` copied into
 
 ## Rows
 
-A database driver hands result rows to std's `JSON.parse<T[]>` decoder without making them
-JSON text: as a `u8[]` in the binary rows format of `velt_text::rows` (`BinRows` writes it,
-into a `velt_native::Array<u8>`, the Velt array itself). The runtime's reader reads them
-(`velt_rt_json_reader_new_with` flag 4, `FLAG_ROWS`, [rt_abi_async.md](rt_abi_async.md)),
-answering every call as it would for the JSON the rows stand for (`[{"col":value,...},...]`, or
-with `single` one row's object). No number formatting or escaping on the way out, no scanning on
-the way in. std's own decoders read drivers' rows through row cursors (below); the format is also
-what a cursor's rows are copied into when a decoder looks ahead.
+std's decoders read drivers' rows through row cursors (below). `velt_text::rows` holds what a
+cursor shares with them: its header and its cells' tags. (The binary rows buffer a driver once
+returned, and the runtime's reader of it, `velt_rt_json_reader_new_with` flag 4, went with
+#3318 and #3614.)
 
-Layout: a header `single: u8, columns: u16, (name_len: u32, name bytes)*`, then the rows, one
-cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT` 3 + `i64`,
-`FLOAT` 4 + `f64`, `TEXT` 5 or `ASCII` 7 + `u32` length + UTF-8, `BLOB` 6 + `u32` length +
-bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The reader
-trusts what the tags say about text (UTF-8, ASCII; `BinRows` checks), and a buffer cut short
-reads as a type mismatch, never out of bounds. The format has no cell for nested values (arrays,
-JSON columns); a row cursor hands those as JSON text.
+Header: `single: u8, columns: u16, (name_len: u32, name bytes)*` (integers little-endian; bit 31
+of a name's length says the name is ASCII; `velt_text::rows::encode_names` writes the part after
+`single`). A cell crosses the C ABI as a `RawCell` whose tag is `NULL` 0, `FALSE` 1, `TRUE` 2,
+`INT` 3, `FLOAT` 4, `TEXT` 5, `BLOB` 6, `ASCII` 7 (text that is all ASCII) or `JSON` 8 (a nested
+value, such as an array or a JSON column, as its JSON text).
 
 ## Row cursors
 
-A driver can also let the decoder read its rows where it has them, without writing them into a
-buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()` (the header of
-the binary rows: `single`, the column names), `step()` (to the next row, the first on the first
+A driver lets the decoder read its rows where it has them, without writing them into a
+buffer first (`velt_text::rows_cursor`): it implements `RowCursor` — `header()` (the header laid
+out as in "Rows" above: `single`, the column names), `step()` (to the next row, the first on the first
 call; false at the end and after a failure, which the driver keeps) and `cell(col)` (a `Cell`
 of the current row: null, bool, int, float, text, ascii text, blob, or a nested value as JSON
 text, borrowed until the next step) — and registers it with the runtime: `open_cursor(Box<C>)`
@@ -306,13 +300,14 @@ Velt side decodes with velt/db's `decodeRows<T>(cursor)` (or `decodeRow<T>` for 
 for one row; [velt/db](https://veltlang.com/docs/std/db/) "Native drivers"): std looks the handle up
 (`velt_rt_db_cursor`), throws `RowError` when it names no open cursor (a made-up number, a
 closed cursor's handle, a sink's), and otherwise runs the generated decoder over the cursor
-(reader flag 8, rt_abi_async.md). No Velt code ever holds an address. Then it gives the handle
+(rt_abi_async.md §12.3). No Velt code ever holds an address. Then it gives the handle
 back to the driver, whose library takes the cursor back with `close_cursor::<C>(handle)` (`None`
 for a handle that is not an open cursor of type `C`: the runtime checks the key and a tag of the
 type), releases what it held and reports a failure met
 while stepping. The decoder reads cells between two steps; a decoder that looks ahead across rows (a
-union of whole results) gets the remaining rows copied into binary form once, and a nested value
-is read with a JSON reader over its text.
+union of whole results) gets the remaining rows copied once, and a nested value is read with a
+JSON reader over its text. That reader is std's (`std/encoding/json/rows_reader.velt`, over the
+rows functions `velt_rt_rows_*`).
 
 When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
 `u8[]`), the generated decoder reads the rows by column instead of through the JSON reader

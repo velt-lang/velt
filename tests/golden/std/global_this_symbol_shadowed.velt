@@ -1,0 +1,7 @@
+// `Symbol.for` of a `Symbol` the module declares is no registry symbol: the constant is no key
+// of `globalThis`, and reading through it is refused as on main (Node prints `1`).
+export {};
+const Symbol = { for: (s: string): string => s };
+const K = Symbol.for("k");
+(globalThis as Record<string, any>)[K] = 1;
+console.log((globalThis as Record<string, any>)["k"]);

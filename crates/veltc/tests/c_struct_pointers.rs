@@ -2,8 +2,10 @@
 //! "C structs"): a package's C `sources` fill a list of structs linked by their `next` pointers,
 //! with a nested struct pointing at text; Velt reads it with `Ptr.read`, writes another list
 //! with `Ptr.write`, and C checks every field of it. A pointer field is C's word at C's offset,
-//! `NULL` as `null`, so both sides see the same memory. These tests need `VELT_ZIG` as
-//! tests/c_sources.rs's do, and run on Unix (the shared zig cache is a symlink).
+//! `NULL` as `null`, so both sides see the same memory. An `Out<Label>` C fills (#2187) is
+//! checked where its `value` is read: a call that fails and leaves a NULL in it is fine as long
+//! as the caller doesn't read it, and one that returns a NULL stops at the read. These tests need
+//! `VELT_ZIG` as tests/c_sources.rs's do, and run on Unix (the shared zig cache is a symlink).
 
 #![cfg(unix)]
 
@@ -59,6 +61,15 @@ int32_t sp_check(const sp_node *head, const char *text) {
   return at == 4 ? sum : -100 - at;
 }
 
+/* An out-parameter: mode 1 fills `out` with the 4 bytes of TEXT and returns 0; mode 0 fails,
+   having written a NULL into `out` (as a half-done call may), and returns -1; mode 2 returns 0
+   with a NULL in it. */
+int32_t sp_get_label(int32_t mode, sp_label *out) {
+  out->len = mode == 1 ? 4 : 0;
+  out->text = mode == 1 ? TEXT : NULL;
+  return mode == 0 ? -1 : 0;
+}
+
 /* C's `sizeof` and offsets, for Velt to compare with its own. */
 int64_t sp_layout(void) {
   return (int64_t)sizeof(sp_node) * 1000000 + (int64_t)__builtin_offsetof(sp_node, next) * 10000
@@ -66,7 +77,7 @@ int64_t sp_layout(void) {
 }
 "#;
 
-const LIB: &str = r#"import { Ptr } from "velt/ffi";
+const LIB: &str = r#"import { Out, Ptr } from "velt/ffi";
 
 declare c struct Label { len: u8; text: Ptr<u8>; }
 declare c struct Node { value: i32; next: Ptr<Node> | null; label: Label; done: bool; }
@@ -77,6 +88,21 @@ declare c("sp") function sp_free(p: Ptr<Node>): void;
 declare c("sp") function sp_fill(out: Ptr<Node>): void;
 declare c("sp") function sp_check(head: Ptr<Node>, text: Ptr<u8>): i32;
 declare c("sp") function sp_layout(): i64;
+declare c("sp") function sp_get_label(mode: i32, out: Out<Label>): i32;
+
+/** What `sp_get_label` gives in `mode`: its label, or the error code it returned, its `value`
+ * left unread. */
+export function getLabel(mode: i32): string {
+  // SAFETY: it returns its static text.
+  const out = new Out<Label>({ len: 0, text: unsafe { sp_text() } });
+  // SAFETY: `out` is the label it writes.
+  const r = unsafe { sp_get_label(mode, out) };
+  if (r !== 0) {
+    return `failed ${r}`;
+  }
+  const label = out.value;
+  return `${label.len} ${bytes(label.text, label.len)}`;
+}
 
 /** The `len` bytes at `text`, as a string. */
 function bytes(text: Ptr<u8>, len: u8): string {
@@ -134,7 +160,7 @@ export function layout(): i64 {
 }
 "#;
 
-const MAIN: &str = r#"import { layout, readC, writeForC } from "sp";
+const MAIN: &str = r#"import { getLabel, layout, readC, writeForC } from "sp";
 
 function main() {
   console.log(layout());
@@ -142,12 +168,23 @@ function main() {
     console.log(line);
   }
   console.log(writeForC());
+  console.log(getLabel(1));
+  console.log(getLabel(0));
+}
+"#;
+
+/// `main` reading an `Out` C left a NULL in.
+const MAIN_NULL: &str = r#"import { getLabel } from "sp";
+
+function main() {
+  console.log("before");
+  console.log(getLabel(2));
 }
 "#;
 
 /// `dir/sp`, its C library, and `dir/app` (`main`), which allows it. The library is unchecked:
 /// the header check of structs is a later layer of #2187.
-fn project(dir: &Path) -> PathBuf {
+fn project(dir: &Path, main: &str) -> PathBuf {
     let pkg = dir.join("sp");
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(pkg.join("native")).unwrap();
@@ -165,7 +202,7 @@ fn project(dir: &Path) -> PathBuf {
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"sp\"],\n  dependencies: { sp: { path: \"../sp\" } },\n};\n",
     )
     .unwrap();
-    std::fs::write(app.join("src/main.velt"), MAIN).unwrap();
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
     app
 }
 
@@ -199,7 +236,7 @@ fn structs_with_pointer_fields_cross_to_c_and_back() {
     reload_support::build_runtime();
     let dir = test_dir::TestDir::new();
     let home = home(dir.path());
-    let app = project(dir.path());
+    let app = project(dir.path(), MAIN);
     for args in [&["run"][..], &["run", "--release"]] {
         let o = velt(&app, &home, args);
         let (out, err) = (
@@ -207,11 +244,40 @@ fn structs_with_pointer_fields_cross_to_c_and_back() {
             String::from_utf8_lossy(&o.stderr),
         );
         // C's `sizeof` 40 and offsets 8, 16 and 32; C's list as Velt reads it; and the sum
-        // 1 + 2 + 3 of the list C found as Velt wrote it.
+        // 1 + 2 + 3 of the list C found as Velt wrote it; the label C put in an `Out`, and the
+        // failed call's code, its NULL never read.
         assert!(
-            o.status.success() && out == "40081632\n10 velt false\n20 elt false\n30 lt true\n6\n",
+            o.status.success()
+                && out
+                    == "40081632\n10 velt false\n20 elt false\n30 lt true\n6\n4 velt\nfailed -1\n",
             "velt {args:?}: exit {:?}\n--- stdout ---\n{out}--- stderr ---\n{err}",
             o.status
+        );
+    }
+}
+
+/// A field declared `Ptr<T>` that C left NULL in an `Out` stops the program where `value` is read,
+/// naming the field.
+#[test]
+fn a_null_in_an_out_struct_stops_the_read_of_its_value() {
+    let Some(_zig) = zig_env::zig("build C sources filling an out-struct with a NULL") else {
+        return;
+    };
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let home = home(dir.path());
+    let app = project(dir.path(), MAIN_NULL);
+    for args in [&["run"][..], &["run", "--release"]] {
+        let o = velt(&app, &home, args);
+        let (out, err) = (
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr),
+        );
+        assert_eq!(o.status.code(), Some(101), "velt {args:?}:\n{out}{err}");
+        assert_eq!(out, "before\n", "velt {args:?}:\n{err}");
+        assert!(
+            err.contains("Out.value: field `text` of the `Out<Label>` read is NULL"),
+            "velt {args:?}:\n{err}"
         );
     }
 }

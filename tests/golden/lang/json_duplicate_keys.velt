@@ -55,7 +55,7 @@ function main() {
   const dup = '{"a":1,"b":2,"a":3}';
   user('{"name":"a","age":1,"name":"b","age":2}');
   user('{"name":"a","age":"x","age":2}');
-  console.log("map", JSON.stringify(JSON.parse<Map<string, i64>>(dup)));
+  console.log("map", JSON.stringify(Object.fromEntries(JSON.parse<Map<string, i64>>(dup))));
   console.log("record", JSON.stringify(JSON.parse<Record<string, i64>>(dup)));
   console.log("record keys", JSON.stringify(JSON.parse<Record<"a" | "b", i64>>(dup)));
   console.log("value", JSON.parseValue(dup).stringify());

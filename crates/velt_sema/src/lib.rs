@@ -173,6 +173,7 @@ mod union_views;
 mod unions;
 mod unique_symbols;
 mod units;
+mod utility_partial;
 mod utility_types;
 mod visit;
 mod visit_ref;
@@ -412,6 +413,7 @@ fn check_timed(
         cx.units = opts.units;
         cx.wasm32 = opts.wasm32;
         cx.lazy.native_executor = opts.native_executor;
+        cx.lazy.jit = opts.jit;
         cx.loads = loads;
         generating::install(cx, gen, generator.as_ref());
         cx.stack_budget = stack_budget;

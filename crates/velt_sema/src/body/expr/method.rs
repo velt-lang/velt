@@ -380,6 +380,10 @@ impl FnCx<'_, '_> {
 
     /// Pass mode of a method's `this`.
     pub(crate) fn this_mode(&self, def: DefId) -> PassMode {
+        // A check by units: std's as declared while the app's bodies are checked (`units::modes`).
+        if let Some(m) = self.cx.declared_this(def) {
+            return m;
+        }
         self.cx
             .fn_info(def)
             .this

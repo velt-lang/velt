@@ -4,8 +4,8 @@
 // throws velt/db's `RowError`.
 //
 // Not `readRows` itself: for a row type of plain fields it reads by column with code that calls
-// runtime functions the wasm32-unknown-unknown runtime lacks (`velt_rt_rows_exact_i64`,
-// `velt_rt_rows_fail`), so a `--host` build of it does not link (velt-lang/velt#2121). Once it
+// a runtime function the wasm32-unknown-unknown runtime lacks (`velt_rt_rows_exact_i64`), so a
+// `--host` build of it does not link (velt-lang/velt#2121). Once it
 // does, these become `readRows<T, D1Rows>` and `readRow<T, D1Rows>`; the results are the same.
 
 import { CellKind, RowError } from "velt/db";
