@@ -107,6 +107,14 @@ fn a_task_holding_a_promise_that_finished_unawaited_is_found_parked_for_ever() {
     check("held_plain", HELD_PLAIN, "parked 20\n", 3);
 }
 
+/// The same with promises that can reject but fulfilled, one held unawaited and one awaited
+/// (#3595): they let go of their task too (sched_node_done.velt `settledWell`). Before, only a
+/// promise that cannot reject did, and every run left blocks.
+#[test]
+fn a_task_holding_a_fulfilled_promise_that_could_reject_is_found_parked_for_ever() {
+    check("held_can_reject", HELD_CAN_REJECT, "parked 20\n", 3);
+}
+
 /// #3487's `two_roots`: the frame keeps a holder of a shared promise that settled (its hub
 /// keeps it, and it lets go of its task as it settles), and a promise of the task waits in
 /// a listed hub. Before, every run left 460 blocks.
@@ -211,6 +219,63 @@ async function maker(): Promise<number> {
   }
   PARKED.add(1);
   return (await d.p) + (await f);
+}
+
+async function main() {
+  const n: i64 = 20;
+  for (let r: i64 = 0; r < n; r++) {
+    void spawn(maker(), { worker: 1 + (r % 2) });
+  }
+  while (PARKED.load() < n) {
+    await yieldNow();
+  }
+  for (let i = 0; i < 50; i++) {
+    await yieldNow();
+  }
+  KEPT.length = 0;
+  console.log(`parked ${PARKED.load()}`);
+}
+"#;
+
+/// The program of [`a_task_holding_a_fulfilled_promise_that_could_reject_is_found_parked_for_ever`].
+const HELD_CAN_REJECT: &str = r#"// #3595: `held_plain` with promises that can reject: the root waits for ever on a shared promise
+// nobody settles while its frame holds one that fulfilled (`f`) and another that fulfilled and was
+// awaited (`g`). Neither can wake the task or be reported, so every task is still found parked
+// for ever.
+
+class Holder {
+  p: Promise<number>;
+  constructor(p: Promise<number>) {
+    this.p = p;
+  }
+}
+
+const KEPT: Holder[] = [];
+const PARKED = new Atomic<i64>(0);
+
+async function dead(): Promise<number> {
+  return await new Promise<number>((resolve) => {});
+}
+
+async function soon(fail: boolean): Promise<number> {
+  await yieldNow();
+  if (fail) {
+    throw new Error("never");
+  }
+  return 1;
+}
+
+async function maker(): Promise<number> {
+  const d = new Holder(dead());
+  KEPT.push(new Holder(d.p));
+  const f = soon(false);
+  const g = soon(false);
+  const v = await g;
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  PARKED.add(1);
+  return (await d.p) + (await f) + v;
 }
 
 async function main() {
