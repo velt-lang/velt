@@ -79,6 +79,12 @@ pub enum CTy {
     /// only): the address of its private field `held`, which C writes (`int *`, `T **`, `S *`) and
     /// its `value` reads through `Intrinsic::CArrived`.
     Out,
+    /// velt/ffi's `Ref<S>` of a C struct (parameters only, #2187, additive): the address of a copy
+    /// of the struct the call passes, borrowed for the call (`const S *`); `nullable` for
+    /// `Ref<S> | null`, which passes `NULL` for `null`.
+    Ref {
+        nullable: bool,
+    },
     /// A `declare c struct` by value (#2187 layer 3, additive): the parameter's or result's
     /// type names which; lowering passes it as the target's C calling convention says.
     Struct,

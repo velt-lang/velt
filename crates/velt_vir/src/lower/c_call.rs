@@ -167,6 +167,11 @@ impl FnLower<'_, '_> {
                 vals.push(CArg::Field(obj, self.sub(a.ty), "held"));
                 continue;
             }
+            if let CTy::Ref { nullable } = *t {
+                let v = self.ref_arg(a, nullable);
+                vals.push(CArg::Ready(v));
+                continue;
+            }
             if let CTy::Struct = t {
                 let v = self.expr(a);
                 vals.push(CArg::Struct(v, self.sub(a.ty)));
@@ -552,9 +557,13 @@ pub(super) fn c_vir(t: CTy, wasm32: bool) -> Ty {
         CTy::F32 => Ty::F32,
         CTy::F64 => Ty::F64,
         CTy::Bool => Ty::Bool,
-        CTy::Ptr { .. } | CTy::Null | CTy::StrBytes | CTy::Buf { .. } | CTy::CString | CTy::Out => {
-            Ty::Ptr
-        }
+        CTy::Ptr { .. }
+        | CTy::Null
+        | CTy::StrBytes
+        | CTy::Buf { .. }
+        | CTy::CString
+        | CTy::Out
+        | CTy::Ref { .. } => Ty::Ptr,
         // Expanded at the call (c_struct_call.rs): no one VIR type.
         CTy::Void | CTy::Struct => Ty::Unit,
     }
@@ -588,7 +597,8 @@ fn class(t: CTy) -> CClass {
         | CTy::StrBytes
         | CTy::Buf { .. }
         | CTy::CString
-        | CTy::Out => CClass::Word,
+        | CTy::Out
+        | CTy::Ref { .. } => CClass::Word,
         CTy::Int(i) => CClass::Int(i),
         CTy::F32 => CClass::F32,
         CTy::F64 => CClass::F64,
@@ -749,6 +759,8 @@ fn c_name(t: CTy) -> &'static str {
         CTy::Buf { readonly: false } => "array",
         CTy::CString => "CString",
         CTy::Out => "Out",
+        CTy::Ref { nullable: false } => "Ref",
+        CTy::Ref { nullable: true } => "Ref | null",
         CTy::Struct => "struct",
         CTy::Void => "void",
     }

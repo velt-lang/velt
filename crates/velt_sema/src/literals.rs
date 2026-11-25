@@ -84,7 +84,7 @@ impl Ctx<'_> {
     }
 
     /// The literal type written as `l` (a type annotation); `None` after reporting an error.
-    /// Integers are `i64` and floats `f64` unless suffixed (`1u8`).
+    /// Integers are `i64` (from 2^53 on, `f64`) and floats `f64` unless suffixed (`1u8`).
     pub fn lit_value_of(&mut self, l: &ast::SignedLit, span: Span) -> Option<LitValue> {
         let suffix_ty = |cx: &mut Self, s: &Option<String>| match s {
             Some(s) => cx.ty.primitive(s),
@@ -93,6 +93,13 @@ impl Ctx<'_> {
         match &l.lit {
             ast::Lit::Str(s) if !l.negative => Some(LitValue::Str(s.clone())),
             ast::Lit::Bool(b) if !l.negative => Some(LitValue::Bool(*b)),
+            // An unsuffixed integer from 2^53 on is the double it denotes, as a `number` is in
+            // TypeScript (`9007199254740993` is `9007199254740992`), so it is an `f64` literal:
+            // stored, compared, printed and added to as that double (#3183).
+            ast::Lit::Int {
+                value,
+                suffix: None,
+            } if *value >= 1 << 53 => Some(float_value(FloatTy::F64, *value as f64, l.negative)),
             ast::Lit::Int { value, suffix } => {
                 let t = suffix_ty(self, suffix).unwrap_or(self.ty.i64);
                 match self.ty.kind(t).clone() {
@@ -166,6 +173,21 @@ pub(crate) fn lit_matches(v: &LitValue, l: &ast::SignedLit) -> bool {
     }
 }
 
+/// A non-negative number as JavaScript prints it (`String(n)`): `1e+21`, `1e-7`, `0.5`, `3`.
+pub(crate) fn js_number(f: f64) -> String {
+    if f == 0.0 {
+        return "0".into();
+    }
+    if !(1e-6..1e21).contains(&f.abs()) {
+        let t = format!("{f:e}");
+        return match t.split_once('e') {
+            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
+            _ => t,
+        };
+    }
+    f.to_string()
+}
+
 fn float_value(ft: FloatTy, v: f64, negative: bool) -> LitValue {
     LitValue::Float(ft, (if negative { -v } else { v }).to_bits())
 }
@@ -179,7 +201,15 @@ pub(crate) fn display_lit(v: &LitValue) -> String {
         LitValue::Int(it, n) => format!("{n}{}", int_name(*it)),
         LitValue::Float(ft, bits) => {
             let f = f64::from_bits(*bits);
-            let shown = if f.fract() == 0.0 && f.is_finite() {
+            let shown = if f.is_finite() && f.abs() >= (1u64 << 53) as f64 {
+                // An integer spelling from 2^53 on (#3183): as JavaScript and tsc print it.
+                let s = js_number(f.abs());
+                if f < 0.0 {
+                    format!("-{s}")
+                } else {
+                    s
+                }
+            } else if f.fract() == 0.0 && f.is_finite() {
                 format!("{f:.1}")
             } else {
                 f.to_string()

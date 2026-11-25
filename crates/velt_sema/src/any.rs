@@ -366,6 +366,14 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                 {
                     continue;
                 }
+                // A call through `any` gives the method's result, the receiver for one that
+                // hands it back (`crate::hand_back`): a method of that name the program calls
+                // through `any` gets a method returning it.
+                let called = cx.method_facts.call_names.contains(&name);
+                let def = match kind {
+                    DynMemberKind::Method if called => crate::hand_back::value_entry(cx, def),
+                    _ => def,
+                };
                 members.push(DynMember {
                     name,
                     kind,

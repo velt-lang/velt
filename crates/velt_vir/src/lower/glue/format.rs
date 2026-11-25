@@ -121,26 +121,40 @@ impl FnLower<'_, '_> {
     /// The top-level text of a value that may hold containers; for any value, Node's
     /// `util.inspect` (a string quoted, as inside an array: `Intrinsic::Inspect`).
     pub(in crate::lower) fn format_top_inspect(&mut self, buf: &Operand, place: &Place, ty: TyId) {
-        {
-            {
-                // Node numbers the `<ref *N>` of cycles once per top-level value; the value is
-                // printed on one line, then broken across lines like node if too long.
-                let end = self.inspect_begin();
-                let start = self.temp(Ty::U64);
-                let len = Some(Place::local(start));
-                self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
-                self.format_nested(buf, place, ty, &top_depth());
-                let start = Operand::Copy(Place::local(start));
-                self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
-                if let Some(end) = end {
-                    _ = end.emit(self);
-                }
-            }
+        self.format_top_inspect_at(buf, place, ty, &top_depth());
+    }
+
+    /// [`Self::format_top_inspect`] with the value at Node's depth `depth` (a `u32` operand):
+    /// at [`DEPTH`], its own entries are shown and the containers in them cut (`[Object]`), as
+    /// `util.inspect` with `depth: 0` writes it (`console.log("%s", x)`).
+    pub(in crate::lower) fn format_top_inspect_at(
+        &mut self,
+        buf: &Operand,
+        place: &Place,
+        ty: TyId,
+        depth: &Operand,
+    ) {
+        // Node numbers the `<ref *N>` of cycles once per top-level value; the value is printed
+        // on one line, then broken across lines like node if too long.
+        let end = self.inspect_begin();
+        let start = self.temp(Ty::U64);
+        let len = Some(Place::local(start));
+        self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
+        self.format_nested(buf, place, ty, depth);
+        let start = Operand::Copy(Place::local(start));
+        self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
+        if let Some(end) = end {
+            _ = end.emit(self);
         }
     }
 
+    /// Node's depth past which a container is cut (`[Object]`), as a `u32` operand.
+    pub(in crate::lower) fn shallow_depth() -> Operand {
+        cint(DEPTH, Ty::U32)
+    }
+
     /// Types whose text has no containers (numbers, strings, enums), so it never breaks.
-    fn prints_scalar(&self, ty: TyId) -> bool {
+    pub(in crate::lower) fn prints_scalar(&self, ty: TyId) -> bool {
         match self.cx.kind(ty) {
             TyKind::Int(_)
             | TyKind::Float(_)
