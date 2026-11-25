@@ -332,3 +332,31 @@ fn only_a_kept_result_counts_the_class() {
     ));
     assert!(c.iter().any(|t| t == "class Cell"), "{c:?}");
 }
+
+/// A chain of `Set.add` / `Map.set` on a field or an element, with arguments that run nothing,
+/// re-reads the place between the calls: no user code runs that could replace it, so the
+/// receiver needs no share (`body/expr/hand_back.rs`, `contained_call`).
+#[test]
+fn chains_on_a_field_or_element_leave_set_and_map_uncounted() {
+    let c = counted(
+        "class Owner {
+           s = new Set<number>();
+           m = new Map<string, number>();
+           run(i: number) {
+             this.s.add(i).add(i + 1);
+             this.m.set(\"a\", i).set(\"b\", i * 2);
+           }
+         }
+         function main() {
+           const o = new Owner();
+           const sets = [new Set<number>()];
+           for (let i = 0; i < 10; i++) {
+             o.run(i);
+             sets[0].add(i).add(i + 2);
+           }
+           console.log(o.s.size, o.m.size, sets[0].size);
+         }",
+    );
+    let shared = |name: &str| c.iter().any(|t| t.ends_with(name));
+    assert!(!shared("::Set") && !shared("::Map"), "{c:?}");
+}

@@ -32,9 +32,10 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let span = call.span;
         let unit = self.cx.ty.unit;
-        let H::Call { args, .. } = &mut call.kind else {
+        let H::Call { callee, args } = &mut call.kind else {
             return call;
         };
+        let contained = self.contained_call(callee, args);
         let Some((first, rest)) = args.split_first_mut() else {
             return call;
         };
@@ -51,7 +52,7 @@ impl FnCx<'_, '_> {
             return self.mk(H::Block(block), unit, span);
         }
         let mut stmts = vec![];
-        let place = self.stays(recv, rest);
+        let place = self.stays(recv, rest, contained);
         let value = if place {
             let mut again = recv.clone();
             set_place_mode(&mut again, UseMode::Move);
@@ -99,14 +100,44 @@ impl FnCx<'_, '_> {
     /// constant, or a local that no closure and no argument assigns: nothing the call runs can
     /// assign them. A field or element (or a module `let`) can be assigned by the method, by a
     /// closure it calls or by an argument, so the receiver is kept as it was read, before the
-    /// arguments.
-    fn stays(&self, recv: &hir::Expr, args: &mut [hir::Expr]) -> bool {
+    /// arguments, unless the call runs no code that could (`contained`, [`Self::contained_call`]).
+    fn stays(&self, recv: &hir::Expr, args: &mut [hir::Expr], contained: bool) -> bool {
         match recv.kind {
             H::Global(d) => self.cx.global(d).is_some_and(|g| !g.mutable),
             H::Local(l, _) if self.local_kind(l) == LocalKind::This => true,
             H::Local(l, _) => self.closure_assignment(l).is_none() && !assigns(args, l),
-            _ => false,
+            _ => contained && place_path(recv),
         }
+    }
+
+    /// Does the call `callee(args)` run no code that could assign anything: `Set.add`,
+    /// `Map.set`, `WeakSet.add` or `WeakMap.set` (no user method: a subclass's override is a
+    /// virtual call) storing values whose drops run nothing (numbers, `bool`s, strings: a
+    /// replaced value or a duplicate key is dropped), with arguments that call nothing and
+    /// assign nothing (locals, literals, operators, field and element reads)?
+    fn contained_call(&mut self, callee: &hir::Callee, args: &mut [hir::Expr]) -> bool {
+        const METHODS: [(&str, &str); 4] = [
+            (velt_common::std_item!(collections_set, "Set.add"), "add"),
+            (velt_common::std_item!(prelude_map, "Map.set"), "set"),
+            (
+                velt_common::std_item!(prelude_weak_set, "WeakSet.add"),
+                "add",
+            ),
+            (velt_common::std_item!(prelude_weak, "WeakMap.set"), "set"),
+        ];
+        let hir::Callee::Def(d, targs) = callee else {
+            return false;
+        };
+        let name = &self.cx.fn_info(*d).name;
+        if !METHODS.iter().any(|(m, _)| m == name) {
+            return false;
+        }
+        for &t in targs {
+            if !self.cx.is_copy(t) && !self.cx.is_string_value(t) {
+                return false;
+            }
+        }
+        args.iter_mut().skip(1).all(runs_nothing)
     }
 
     /// `e` checked as an expression statement (`expr_stmt`): a call of a method that hands
@@ -320,6 +351,38 @@ fn is_receiver(e: &hir::Expr) -> bool {
         H::Upcast(x) | H::Downcast(x) => is_receiver(x),
         _ => false,
     }
+}
+
+/// A field or element path (with a local or literal index) of a local or a module variable:
+/// reading it again runs nothing.
+fn place_path(e: &hir::Expr) -> bool {
+    match &e.kind {
+        H::Local(..) | H::Global(_) => true,
+        H::Field { base, .. } | H::UnwrapSome(base, _) | H::Downcast(base) => place_path(base),
+        H::UnwrapVariant { expr, .. } => place_path(expr),
+        H::Index { base, index, .. } => {
+            place_path(base) && matches!(index.kind, H::Local(..) | H::Lit(_))
+        }
+        _ => false,
+    }
+}
+
+/// Does argument `e` evaluate without calling or assigning anything?
+fn runs_nothing(e: &mut hir::Expr) -> bool {
+    let mut quiet = true;
+    visit::exprs_in(e, &mut |x| {
+        quiet &= !matches!(
+            x.kind,
+            H::Call { .. }
+                | H::Assign { .. }
+                | H::CompoundAssign { .. }
+                | H::New { .. }
+                | H::Await(..)
+                | H::Throw(..)
+                | H::Closure(..)
+        );
+    });
+    quiet
 }
 
 /// Does one of `args` assign local `l` itself (`s.add(s = other)`)?
