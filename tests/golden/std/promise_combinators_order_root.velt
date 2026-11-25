@@ -1,0 +1,265 @@
+// check: no leaks
+// timing: the timers section sleeps (one sleep at a time, ordered by gates) against yields
+// The children of `Promise.all`, `allSettled`, `race` and `any` take their turns as in Node
+// (#3611): each `yieldNow()` is a turn of its own (an immediate), in the order the yields were
+// made. The children log each step;
+// the output is Node 22's (run with `yieldNow` as `setImmediate`, `sleep` as `setTimeout`).
+// promise_combinators_order awaited directly in `main`, a task's root, whose children yield
+// with the root's own cx: each of the root's awaited yields takes a turn of its own (#3687).
+
+const log: string[] = [];
+
+function say(s: string): void {
+  log.push(s);
+}
+
+async function yields(name: string, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) {
+    say(`${name} yield ${i}`);
+    await yieldNow();
+  }
+  say(`${name} done`);
+  return turns;
+}
+
+async function dies(name: string, turns: number): Promise<number> {
+  for (let i = 0; i < turns; i++) {
+    say(`${name} yield ${i}`);
+    await yieldNow();
+  }
+  say(`${name} throws`);
+  throw new Error(`${name} died after ${turns}`);
+}
+
+/** Yields once, then queues a microtask that logs: it runs before the next yield's turn. */
+async function yieldsThenQueues(name: string): Promise<number> {
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  Promise.resolve(1).then(() => say(`${name}'s microtask`));
+  return 1;
+}
+
+/** Yields, then at its turn queues a microtask that logs and yields again. */
+async function queuesThenYields(name: string): Promise<number> {
+  say(`${name} yield 0`);
+  await yieldNow();
+  Promise.resolve(1).then(() => say(`${name}'s microtask`));
+  say(`${name} yield 1`);
+  await yieldNow();
+  say(`${name} done`);
+  return 2;
+}
+
+/** Yields once `gate` opened: after a sibling later in the array that opens it yielded. */
+async function yieldsAfter(name: string, gate: Promise<void>): Promise<number> {
+  await gate;
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  return 1;
+}
+
+/** Opens a gate (`open`), then yields once. */
+async function opensThenYields(name: string, open: () => void): Promise<number> {
+  open();
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  return 1;
+}
+
+/** Starts a promise that yields, then yields itself: the started one's turn comes first. */
+async function startsThenYields(name: string): Promise<number> {
+  const p = yields(`${name}'s p`, 1);
+  say(`${name} yield 0`);
+  await yieldNow();
+  say(`${name} done`);
+  return 1 + (await p);
+}
+
+/** Resumes from a microtask (after its caller went on), then yields once. */
+async function yieldsLate(name: string): Promise<void> {
+  await null;
+  say(`${name} resumed`);
+  await yieldNow();
+  say(`${name} done`);
+}
+
+/**
+ * Sleeps `ms` once `start` settles, then yields: `woke` says it woke. Gates order the timers
+ * against the yields, not durations: each sleep runs alone.
+ */
+async function timed(
+  name: string,
+  ms: number,
+  start: Promise<void>,
+  woke: () => void,
+): Promise<number> {
+  await start;
+  say(`${name} sleeps ${ms}`);
+  // Literal delays: Node runs this same source.
+  if (ms == 5) {
+    await sleep(5);
+  } else {
+    await sleep(60);
+  }
+  say(`${name} woke`);
+  woke();
+  await yieldNow();
+  say(`${name} done`);
+  return ms;
+}
+
+/** `yields`, then `done` says it is done. */
+async function yieldsThen(name: string, turns: number, done: () => void): Promise<number> {
+  const n = await yields(name, turns);
+  done();
+  return n;
+}
+
+async function after(name: string, p: Promise<number>): Promise<number> {
+  say(`${name} waits`);
+  const n = await p;
+  say(`${name} got ${n}`);
+  await yieldNow();
+  say(`${name} done`);
+  return n + 1;
+}
+
+/** Lets the children a combinator left running finish: more turns than any child has. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 6; i++) {
+    await yieldNow();
+  }
+}
+
+function flush(title: string): void {
+  console.log(`-- ${title}`);
+  for (const s of log) {
+    console.log(s);
+  }
+  log.length = 0;
+}
+
+async function main() {
+  // The issue's case: the child with one yield throws before the one with three finishes.
+  try {
+    await Promise.all([yields("w", 3), dies("d", 1)]);
+  } catch (e) {
+    say(`caught: ${(e as Error).message}`);
+  }
+  await settle();
+  flush("all, a child dies");
+
+  const r = await Promise.all([yields("a", 1), yields("b", 3), yields("c", 2)]);
+  say(`all: ${r.join(",")}`);
+  flush("all, three children");
+
+  const s = await Promise.allSettled([yields("a", 2), dies("d", 1), yields("b", 1)]);
+  say(`allSettled: ${s.map((x) => x.status).join(",")}`);
+  await settle();
+  flush("allSettled");
+
+  const first = await Promise.race([yields("a", 3), yields("b", 1), yields("c", 2)]);
+  say(`race: ${first}`);
+  await settle();
+  flush("race");
+
+  const any = await Promise.any([dies("d", 1), yields("a", 2), yields("b", 3)]);
+  say(`any: ${any}`);
+  await settle();
+  flush("any");
+
+  // `t5` sleeps once `y` is done, and `t60` once `t5` woke.
+  const yDone = Promise.withResolvers<void>();
+  const t5Woke = Promise.withResolvers<void>();
+  const t = await Promise.all([
+    timed("t60", 60, t5Woke.promise, () => {}),
+    yieldsThen("y", 2, () => yDone.resolve()),
+    timed("t5", 5, yDone.promise, () => t5Woke.resolve()),
+  ]);
+  say(`all: ${t.join(",")}`);
+  flush("all, timers");
+
+  const shared = yields("p", 2);
+  const w = await Promise.all([after("q", shared), shared, yields("z", 1)]);
+  say(`all: ${w.join(",")}`);
+  flush("all, a child awaits another");
+
+  // A child that throws at once rejects the all in its first pass: the yielders beside it go on
+  // detached, each a started promise of its own, still in the order they yielded (#3687).
+  try {
+    await Promise.all([yields("b", 2), dies("t", 0), yields("c", 2)]);
+  } catch (e) {
+    say("caught t");
+  }
+  for (let i = 0; i < 4; i++) {
+    await yieldNow();
+  }
+  flush("all, a throw at once beside two yielders");
+
+  try {
+    await Promise.all([yields("a", 3), yields("b", 2), dies("t", 0), yields("c", 2)]);
+  } catch (e) {
+    say("caught t");
+  }
+  for (let i = 0; i < 5; i++) {
+    await yieldNow();
+  }
+  flush("all, a throw at once beside three yielders");
+
+  // The root's own yield, made while a started promise's yield is listed, takes its turn behind
+  // that one and ahead of a yield that another started promise makes later in the same poll
+  // (resuming from a microtask after the root yielded).
+  const listed = yields("l", 2);
+  const later = yieldsLate("m");
+  await yieldNow();
+  say("root after its yield");
+  await listed;
+  await later;
+  flush("the root's yield between a listed and a later yield");
+
+  // Children that yielded once each go on in the order they yielded; a microtask one of them
+  // queues at its turn runs before the next child's turn.
+  const q1 = await Promise.all([yieldsThenQueues("a"), yields("b", 1), yields("c", 1)]);
+  say(`all: ${q1.join(",")}`);
+  flush("all, the first child's turn queues a microtask");
+  const q2 = await Promise.all([yields("a", 1), yieldsThenQueues("b"), yields("c", 1)]);
+  say(`all: ${q2.join(",")}`);
+  flush("all, the second child's turn queues a microtask");
+  const q3 = await Promise.all([queuesThenYields("a"), yields("b", 2)]);
+  say(`all: ${q3.join(",")}`);
+  flush("all, a child queues a microtask and yields again at its turn");
+
+  // The first child in the array yields after the second (which opens its gate): their turns
+  // come in the order they yielded.
+  let open = (): void => {};
+  const gate = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  const g = await Promise.all([yieldsAfter("a", gate), opensThenYields("b", () => open())]);
+  say(`all: ${g.join(",")}`);
+  flush("all, the first child yields after the second");
+
+  // A promise a child starts yields between two children's yields: its turn comes between theirs.
+  const sb = await Promise.all([yields("a", 1), startsThenYields("b"), yields("c", 1)]);
+  say(`all: ${sb.join(",")}`);
+  flush("all, a started promise yields between two children");
+
+  // Last: after `main`'s root awaited a settled promise, or a `Promise.any` that rejected, the
+  // children of its inline alls still take their turns in order (#3611, #3687).
+  await Promise.resolve(1);
+  const a = await Promise.all([yields("t", 3), yields("u", 1)]);
+  say(`all: ${a.join(",")}`);
+  flush("all, after a settled await (adopted)");
+
+  try {
+    await Promise.any<number>([Promise.reject<number>(new Error("no"))]);
+  } catch (e) {
+    say("any rejected");
+  }
+  const b = await Promise.all([yields("v", 3), yields("w", 1)]);
+  say(`all: ${b.join(",")}`);
+  flush("all, after a rejected any (adopted)");
+}

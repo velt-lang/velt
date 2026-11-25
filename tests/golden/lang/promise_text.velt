@@ -1,0 +1,16 @@
+// The text of a typed promise, as in Node: `String(p)`, a template and `+` give
+// `Object.prototype.toString`'s `[object Promise]`; `console.log` shows its state (#924 step 3).
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+
+async function main(): Promise<void> {
+  const p = later(1);
+  console.log(String(p), `${p}`, "p: " + p);
+  console.log(p);
+  await p;
+  console.log(p);
+  const maybe: Promise<number> | null = p;
+  console.log(`${maybe}`);
+}
+main();

@@ -11,8 +11,8 @@
 
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
-use super::any_glue::Ready;
 use super::any_member::{ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
+use super::any_ready::Ready;
 use super::FnLower;
 use crate::vir::{self, Operand, Place, Ty};
 
@@ -31,6 +31,9 @@ impl FnLower<'_, '_> {
             // A function has none here yet: `call`, `apply`, `bind` and `toString` are not
             // supported, and any other name is not a function.
             TyKind::FnPtr { .. } | TyKind::Closure(_) => Some("anyFn_"),
+            // A promise held as `any` (#924): `toString`; `then`, `catch` and `finally` come through
+            // sema's own route (`any_promise_members.rs`).
+            TyKind::Promise(..) => Some("anyPromise_"),
             _ => None,
         }
     }
@@ -94,6 +97,7 @@ impl FnLower<'_, '_> {
         let outp = self.any_out(out);
         let targs = match self.cx.kind(ty) {
             TyKind::Array(e) => vec![e],
+            TyKind::Promise(t, e) => vec![t, e],
             _ => vec![],
         };
         let f64_ = self.cx.intern(TyKind::Float(hir::FloatTy::F64));
@@ -382,6 +386,7 @@ fn js_methods(prefix: &str) -> &'static [&'static str] {
             "valueOf",
         ],
         "anyFn_" => &["apply", "bind", "call", "toString", "valueOf"],
+        "anyPromise_" => &["catch", "finally", "then", "toString", "valueOf"],
         _ => &["toString", "valueOf"],
     }
 }

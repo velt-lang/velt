@@ -40,7 +40,7 @@ mod transfer;
 mod waker;
 
 pub(super) use self::transfer::set_transfer;
-pub(super) use self::waker::{firing_end, firing_start, local_awaiter, queue};
+pub(super) use self::waker::{local_awaiter, queue};
 
 pub(super) use self::loc::of as loc_of;
 pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
@@ -70,8 +70,6 @@ const LOC: u32 = 512;
 /// Its owner handed it to another task (`velt_rt_fut_transfer`): the task driving it no longer
 /// reports its rejection at a checkpoint, the task holding it now awaits it or gives it up.
 const HANDED_OVER: u32 = 1024;
-/// A timer that wakes it is among those its task fires now (timers.rs `fire`).
-const FIRING: u32 = 16384;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;

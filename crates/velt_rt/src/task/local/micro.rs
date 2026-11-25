@@ -124,9 +124,7 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         let Some(w) = e.waker else {
             continue;
         };
-        t.micro_jobs.set(t.micro_jobs.get() + 1);
         set::resume(d, w);
-        t.micro_jobs.set(t.micro_jobs.get() - 1);
     }
 }
 
@@ -134,15 +132,6 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
 /// waiting: the task's word is 0)? False outside a task.
 pub(crate) fn step_free() -> bool {
     tcx().is_some_and(|t| t.word.get() == 0)
-}
-
-/// Is a due timer's turn free to come now (timers.rs)? Nothing is queued or waits to go on, as in
-/// [`step_free`], and this is not a microtask's job: what that job goes on to run was made ready
-/// before the next timer's turn (Node drains the microtask queue, the promises a job resolves
-/// included, before it runs the next timer).
-#[inline]
-pub(super) fn timer_turn_free(t: &TaskCx) -> bool {
-    t.word.get() == 0 && t.micro_jobs.get() == 0
 }
 
 /// Waiter `w` of a promise settled now by `resolve` / `reject` (latch.rs): when it belongs to the

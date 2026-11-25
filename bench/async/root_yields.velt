@@ -1,0 +1,9 @@
+// 200,000 awaited yields of `main`'s root in a task with no yield block: the fast path, no record.
+async function main() {
+  let n = 0;
+  for (let i = 0; i < 200000; i++) {
+    await yieldNow();
+    n++;
+  }
+  console.log(n);
+}

@@ -12,7 +12,7 @@
 use super::utf16_model::{show, wtf8_encode};
 use super::utf16_props::{gen_string, run, to_rt, units, Rng, Rt, ALL_ALPHABETS};
 use crate::str::{wtf8, VeltStr};
-use crate::strbuf::{velt_rt_strbuf_push_inspect_str, velt_rt_strbuf_push_json_str};
+use crate::strbuf::velt_rt_strbuf_push_inspect_str;
 
 /// A starting string in a random form: empty, a builder with room, static, inline or heap.
 fn start(rng: &mut Rng, s: &[u16]) -> Rt {
@@ -58,7 +58,7 @@ fn push_wtf8_keeps_counts_and_layout() {
 
 #[test]
 fn formatting_producers_count_what_they_write() {
-    run("inspect / JSON escaping", ALL_ALPHABETS, 4_000, |rng| {
+    run("inspect escaping", ALL_ALPHABETS, 4_000, |rng| {
         let s = gen_string(rng, ALL_ALPHABETS);
         let rs = to_rt(rng, &s);
         // Appended to a builder that may already hold text (a join at the opening quote is
@@ -67,7 +67,6 @@ fn formatting_producers_count_what_they_write() {
         let mut b = start(rng, &prefix);
         unsafe {
             velt_rt_strbuf_push_inspect_str(&mut b.0, &rs.0);
-            velt_rt_strbuf_push_json_str(&mut b.0, &rs.0);
         }
         // `units` checks the stored counts against the bytes.
         units(&b.0);

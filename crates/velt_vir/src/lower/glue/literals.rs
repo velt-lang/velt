@@ -1,13 +1,12 @@
 //! Text of values that carry no payload bits: literal types (`TyKind::Literal`, zero-sized —
 //! the type is the value) and string enum members (an `I64` discriminant whose text is the
-//! member's `VariantDef::str_value`). Used by the formatter (`console.log`, `${x}`) and by
-//! `JSON.stringify`.
+//! member's `VariantDef::str_value`). Used by the formatter (`console.log`, `${x}`);
+//! `JSON.stringify` writes them in std's generated writers.
 
 use velt_sema::hir::{IntTy, LitValue, TyId, TyKind};
 
-use crate::lower::rt::Rt;
 use crate::lower::FnLower;
-use crate::vir::{self, Operand, Place, Terminator, Ty, STR_AGG};
+use crate::vir::{self, Operand, Place, Terminator};
 
 impl FnLower<'_, '_> {
     /// The literal type of union variant `v` of `ty`, if that member is a literal type.
@@ -36,24 +35,6 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// Append the JSON text of a literal value.
-    pub(in crate::lower) fn push_literal_json(&mut self, buf: &Operand, l: &LitValue) {
-        match l {
-            LitValue::Str(s) => {
-                let v = self.str_lit(s);
-                let a = self.operand_addr(v, Ty::Agg(STR_AGG));
-                self.call_rt(Rt::StrbufPushJsonStr, vec![buf.clone(), a], None);
-            }
-            LitValue::Bool(b) => self.push_text(buf, if *b { "true" } else { "false" }),
-            LitValue::Int(it, n) => self.push_text(buf, &int_literal_text(*it, *n)),
-            // `String(x)`, `null` for NaN and the infinities.
-            LitValue::Float(_, bits) => match f64::from_bits(*bits) {
-                x if x.is_finite() => self.push_text(buf, &velt_syntax::js_number(x)),
-                _ => self.push_text(buf, "null"),
-            },
-        }
-    }
-
     /// The member strings of string enum type `ty` (`None` for other types).
     pub(in crate::lower) fn enum_strings(&self, ty: TyId) -> Option<Vec<String>> {
         let TyKind::Adt(d, _) = self.cx.kind(ty) else {
@@ -70,14 +51,13 @@ impl FnLower<'_, '_> {
     }
 
     /// Append the string of the string-enum value at `place` (its discriminant is the member
-    /// index): quoted when `nested`, as a JSON string when `json`.
+    /// index): quoted when `nested`.
     pub(in crate::lower) fn push_enum_str(
         &mut self,
         buf: &Operand,
         place: &Place,
         strings: &[String],
         nested: bool,
-        json: bool,
     ) {
         let join = self.new_block();
         let blocks: Vec<vir::BlockId> = strings.iter().map(|_| self.new_block()).collect();
@@ -93,12 +73,7 @@ impl FnLower<'_, '_> {
         });
         for (s, b) in strings.iter().zip(blocks) {
             self.switch_to(b);
-            let l = LitValue::Str(s.clone());
-            if json {
-                self.push_literal_json(buf, &l);
-            } else {
-                self.push_literal(buf, &l, nested);
-            }
+            self.push_literal(buf, &LitValue::Str(s.clone()), nested);
             self.goto(join);
         }
         self.switch_to(join);

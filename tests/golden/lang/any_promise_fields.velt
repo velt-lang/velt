@@ -1,0 +1,80 @@
+// A promise read out of a value held as `any` (#924 step 3), as in Node: a field of an object
+// literal, of a class and of an interface value, nested, optional, `void`, rejected and written
+// back; an element of an array, a tuple and an `any[]`; `Map.get`; `Reflect.get`,
+// `Object.values` and `Object.entries`; through a proxy and a proxy's `get` trap; and `then`,
+// `typeof` and `instanceof` on what was read.
+async function later(n: number): Promise<number> {
+  return n;
+}
+
+async function fails(m: string): Promise<number> {
+  throw new Error(m);
+}
+
+class Box {
+  p: Promise<number> = later(2);
+}
+
+interface Job {
+  result: Promise<number>;
+}
+
+async function fields(): Promise<void> {
+  const o: any = { inner: later(14), a: { b: later(4) } };
+  console.log("literal", await o.inner, await o.a.b);
+  const b: any = new Box();
+  console.log("class", await b.p);
+  const j: Job = { result: later(21) };
+  const ja: any = j;
+  console.log("interface", await ja.result);
+  const typed = { inner: later(15) };
+  console.log("cast", await (typed as any).inner);
+  console.log(typeof o.inner, typeof o.inner.then, o.inner instanceof Promise);
+  await o.inner.then((v: number) => console.log("then", v));
+  o.inner = later(6);
+  console.log("written", await o.inner);
+  const opt: any = { p: undefined as Promise<number> | undefined };
+  const has: any = { p: later(3) as Promise<number> | undefined };
+  console.log("optional", opt.p, await has.p);
+  const done: any = { d: later(1).then(() => {}) };
+  console.log("void", await done.d);
+  const bad: any = { p: fails("no") };
+  try {
+    await bad.p;
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  console.log(Object.keys({ p: later(1), n: 2 } as any).join(","));
+}
+
+async function elements(): Promise<void> {
+  const xs: any = [later(1), later(2)];
+  console.log("array", await xs[1]);
+  const tu: [Promise<number>, number] = [later(1), 2];
+  const t: any = tu;
+  console.log("tuple", await t[0], t[1]);
+  const ys: any[] = [later(5), 2];
+  console.log("any[]", await ys[0], ys[1]);
+  const m: any = new Map<string, Promise<number>>([["a", later(3)]]);
+  console.log("map", await m.get("a"));
+}
+
+async function reflected(): Promise<void> {
+  const o: any = { inner: later(4), n: 1 };
+  console.log("Reflect.get", await Reflect.get(o, "inner"));
+  const vs = Object.values(o);
+  console.log("values", await vs[0], vs[1]);
+  const es = Object.entries(o);
+  console.log("entries", es[0][0], await es[0][1]);
+  const px: any = new Proxy({ inner: later(5) }, {});
+  console.log("proxy", await px.inner);
+  const trap: any = new Proxy({}, { get: (t: object, k: string | symbol) => later(6) });
+  console.log("trap", await trap.anything);
+}
+
+async function main(): Promise<void> {
+  await fields();
+  await elements();
+  await reflected();
+}
+main();

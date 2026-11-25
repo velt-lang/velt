@@ -443,7 +443,7 @@ impl FnCx<'_, '_> {
             Resolved::Iface {
                 iface_args, method, ..
             } => {
-                if !method.generics.names.is_empty() {
+                if !method.generics.names.is_empty() || method.rest {
                     return None;
                 }
                 let params = method
@@ -506,7 +506,10 @@ impl FnCx<'_, '_> {
                 }
             }
             Some(Resolved::Iface { method, .. }) => {
-                method.params.iter().map(|p| p.name.clone()).collect()
+                let last = method.params.len().saturating_sub(1);
+                let dots = |k: usize| if method.rest && k == last { "..." } else { "" };
+                let ps = method.params.iter().enumerate();
+                ps.map(|(k, p)| format!("{}{}", dots(k), p.name)).collect()
             }
             _ => vec!["x".into()],
         }

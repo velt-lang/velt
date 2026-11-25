@@ -17,7 +17,6 @@ use futures_util::task::AtomicWaker;
 use parking_lot::Mutex;
 
 use super::node::{self, CANCELLED, DONE, NO_MEMBER, QUEUED};
-use super::timers::Timers;
 use super::TaskCx;
 use crate::task::{SendPtr, VeltFut};
 
@@ -113,8 +112,6 @@ pub(crate) struct LocalSet {
     /// `drive_adopted`): bounded, so a long chain of promises each awaiting the one before it
     /// (`p = p.then(f)` in a loop) is never polled recursively from end to start.
     pub(super) adopting: u32,
-    /// The task's gate (none until it first creates a timer; gate.rs).
-    pub(super) gate: Option<Arc<super::gate::Gate>>,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -132,7 +129,6 @@ impl LocalSet {
             running: std::ptr::null(),
             micro: super::micro::Queue::new(),
             adopting: 0,
-            gate: None,
         })
     }
 
@@ -175,8 +171,6 @@ pub(super) struct Driver<'a> {
     pub set: *mut LocalSet,
     pub task: &'a Waker,
     pub root: &'a mut dyn FnMut(),
-    /// The task's timers, fired at the start of the drain (timers.rs).
-    pub timers: Option<&'a Timers>,
     /// The task's await word (micro.rs), handed to the polls through `cx`.
     pub word: *const u32,
 }
@@ -226,7 +220,6 @@ pub(super) unsafe fn run_now(set: *mut LocalSet, t: &TaskCx, f: *mut VeltFut) {
             set,
             task,
             root: &mut root,
-            timers: None,
             word: t.word.as_ptr(),
         },
         f,
@@ -290,53 +283,18 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
     let set = d.set;
     // The set's own `Arc` keeps `shared` alive for the whole drain.
     let shared: &Shared = &*Arc::as_ptr(&(*set).shared);
-    // Due timers next, in timer order: their promises are queued (without waking this task,
-    // which is running) after the ones woken before, and the root, when it waits for one of the
-    // timers itself, resumes at its place among them.
-    let mut root_at = None;
-    // Nodes woken by what those run, which wait for the next poll (see below).
-    let mut later = VecDeque::new();
-    if let Some(t) = d.timers {
-        shared.notified.store(true, SeqCst);
-        shared.take(&mut (*set).pending);
-        if !(*set).pending.is_empty() && t.has_due() {
-            // The nodes woken before run before due timers fire: a leaf of one may hold a waker
-            // that no longer reaches it (a loser its combinator gave up, losers.rs), and points
-            // it at the node now, so its timer wakes it in timer order, not in the order the
-            // nodes were queued (a poll that came late, after busy code or on a loaded machine,
-            // found both timers of two losers due).
-            run_pending(d, (*set).pending.len(), None);
-            shared.take(&mut later);
-        }
-        let before = (*set).pending.len();
-        root_at = t.fire(d.task).map(|n| before + n);
-    }
     // Registered before `notified` is cleared: a wake after this point reaches the task.
     shared.waker.register(d.task);
     shared.notified.store(false, SeqCst);
     shared.take(&mut (*set).pending);
-    run_pending(d, (*set).pending.len(), root_at);
-    for SendPtr(f) in later {
-        // Queued again (its reference and `QUEUED` flag go along); the task is woken for it.
-        if !shared.push(f) {
-            node::head(f).flags.fetch_and(!QUEUED, AcqRel);
-            node::release(f);
-        }
-    }
+    run_pending(d, (*set).pending.len());
 }
 
-/// Run the first `n` nodes of the pending queue (`root_at`: the root resumes before the one at
-/// that index). Only nodes woken before this drain: one woken again meanwhile waits for the
-/// next poll.
-unsafe fn run_pending(d: &mut Driver<'_>, n: usize, root_at: Option<usize>) {
+/// Run the first `n` nodes of the pending queue. Only nodes woken before this drain: one woken
+/// again meanwhile waits for the next poll.
+unsafe fn run_pending(d: &mut Driver<'_>, n: usize) {
     let set = d.set;
-    for ran in 0..n {
-        if root_at == Some(ran) {
-            (d.root)();
-            if has_microtasks(set) {
-                super::micro::drain(d);
-            }
-        }
+    for _ in 0..n {
         if !has_budget_remaining() {
             d.task.wake_by_ref();
             break;
@@ -361,9 +319,6 @@ impl Drop for LocalSet {
     /// The task was dropped (cancelled, or it finished while promises it started are unfinished and
     /// could not be handed on): cancel what is left.
     fn drop(&mut self) {
-        if let Some(g) = &self.gate {
-            g.leave();
-        }
         self.shared.closed.store(true, SeqCst);
         {
             let _g = self.shared.closing.lock();

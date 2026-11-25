@@ -1,0 +1,18 @@
+interface Adder {
+  add(...xs: number[]): number;
+}
+// TypeScript refuses both (TS2416): one takes the numbers one by one, the other one array.
+class ByArray implements Adder {
+  add(xs: number[]): number {
+    return xs.length;
+  }
+}
+interface Taker {
+  take(xs: number[]): number;
+}
+class ByRest implements Taker {
+  take(...xs: number[]): number {
+    return xs.length;
+  }
+}
+console.log(new ByArray().add([1]), new ByRest().take(1));
