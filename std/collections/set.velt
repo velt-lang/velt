@@ -11,6 +11,8 @@
 import { share } from "velt/lang/intrinsics";
 import { adaptMismatch } from "velt/lang/hooks/adapt";
 import { anyFnArg } from "velt/lang/hooks/any_methods";
+import { MAP_ADVANCE, MAP_CURSOR, MAP_ENTRY_AT, MAP_KEY_AT } from "velt/lang/hooks/keys";
+import { MapCursor } from "velt/lang/map/cursor";
 import {
   setDifference,
   setIntersection,
@@ -77,17 +79,27 @@ export class Set<T> implements Iterable<T>, ReadonlySetLike<T> {
     return this.items.size == 0;
   }
 
-  /** The elements in insertion order, objects shared as in JS (`for (const x of s.values())`). */
+  /**
+   * The elements in insertion order, objects shared as in JS (an array; JS returns an
+   * iterator). `for (const x of s.values())` iterates live instead, as in JS: it visits elements
+   * added while it runs and skips deleted ones (#3842 tracks the iterator itself).
+   */
   values(): T[] {
     return this.items.keys();
   }
 
-  /** The elements in insertion order, as `values()` (JS gives sets `keys` for `Map`'s sake). */
+  /**
+   * The elements in insertion order, as `values()` (JS gives sets `keys` for `Map`'s sake);
+   * `for (const x of s.keys())` iterates live, as `values()` does.
+   */
   keys(): T[] {
     return this.items.keys();
   }
 
-  /** `[value, value]` for each element in insertion order (JS's `entries`, shaped as `Map`'s). */
+  /**
+   * `[value, value]` for each element in insertion order (JS's `entries`, shaped as `Map`'s);
+   * `for (const [x, y] of s.entries())` iterates live, as `values()` does.
+   */
   entries(): [T, T][] {
     const out: [T, T][] = [];
     for (const x of this.items.keys()) {
@@ -103,6 +115,31 @@ export class Set<T> implements Iterable<T>, ReadonlySetLike<T> {
    */
   [Symbol.iterator](): Iterator<T> {
     return new SetIterator<T>(this.items);
+  }
+
+  // A `for...of` over `s.values()`, `s.keys()` or `s.entries()` walks the set's map live through
+  // these, as one over a map's does (`velt_sema` `for_map.rs`).
+
+  /** A cursor before the first element. */
+  [MAP_CURSOR](): MapCursor {
+    return this.items[MAP_CURSOR]();
+  }
+
+  /** Moves `c` to the next element; false past the last. */
+  [MAP_ADVANCE](c: MapCursor): bool {
+    return this.items[MAP_ADVANCE](c);
+  }
+
+  /** The element `c` is at. */
+  [MAP_KEY_AT](c: MapCursor): T {
+    return this.items[MAP_KEY_AT](c);
+  }
+
+  /** `[element, element]` for the element `c` is at, as `entries()` gives it. */
+  [MAP_ENTRY_AT](c: MapCursor): [T, T] {
+    const x = this.items[MAP_KEY_AT](c);
+    const pair: [T, T] = [share(x), x];
+    return pair;
   }
 
   /** Visits the elements in insertion order, borrowing them. */

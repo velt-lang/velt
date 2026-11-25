@@ -87,6 +87,12 @@ impl FnCx<'_, '_> {
         matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if Some(*d) == self.cx.prelude_adt("Map"))
     }
 
+    /// Is `t` std's `Set<T>` (velt/collections), whose `values()`, `keys()` and `entries()`
+    /// loops walk it live as a map's do (for_map.rs)?
+    pub(super) fn is_std_set(&self, t: TyId) -> bool {
+        matches!(self.cx.ty.kind(t), TyKind::Adt(d, _) if Some(*d) == self.cx.prelude_adt("Set"))
+    }
+
     /// `for (kind pattern of src) body` over the checked iterable `src` (see the module docs).
     pub(super) fn for_of_iterable(
         &mut self,
