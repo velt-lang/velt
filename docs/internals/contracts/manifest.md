@@ -203,13 +203,18 @@ staging directory, renamed into place; `GIT_TERMINAL_PROMPT=0`) below `<cache>/g
 `path` has the commit's whole tree, in `<commit>/`. One with a `path` has a **sparse checkout**
 (`git::sparse`, `Source::Git::sparse`), in `<commit>-<the first 6 bytes of the path's SHA-256>/`:
 the files keep their places in the repository (`<checkout>/<path>/…`), and the checkout holds
-the `path`; each directory above it's `package.json`, `pnpm-workspace.yaml` and `node_modules`,
-with the package directories of each npm workspace rooted there (its patterns read as
-`npm::workspace` reads a checkout's); and what the symbolic links in those lead to in the commit
-(the target and each link on the way, followed in the commit's listing as `check_links` follows a
-checkout's; one that leaves the repository or loops is refused). Its fetch is also partial
-(`--filter=blob:none`, then the files wanted by id; a server without partial fetches sends every
-file, a git that can't ask by id fetches the commit whole, and the checkout is the same).
+the `path`, through the commit's links where it goes through one (the directory it leads to, and
+each link on the way as a step); each directory above it's `package.json`, `pnpm-workspace.yaml`
+and `node_modules`, with the package directories of each npm workspace rooted there (its
+patterns read as `npm::workspace` reads a checkout's, over the directories whose paths have no
+`\` or `:`); what the symbolic links in those lead to in the commit (the target and each link on
+the way, followed in the commit's listing as `check_links` follows a checkout's; one that leaves
+the repository or loops is refused); and the `.gitattributes` of each directory above any of
+those, which git applies to the files below. A commit with a file path that has an empty, `.` or
+`..` part is refused, and so is a `path` the commit doesn't have. Its fetch is also partial
+(`--filter=blob:none`, then the files wanted by id). A server without partial fetches sends
+every file; a git that can't fetch partially, can't list what was left out or can't ask by id,
+and a server that won't send by id, get the commit fetched whole; the checkout is the same.
 `<checkout>.only` beside it lists the URL and the paths held, and a relative import that isn't
 found gets a note from `git::sparse::outside` when it names a file outside them. A git package's
 `path` dependencies are packages of their own, each with its own sparse checkout. The lock's

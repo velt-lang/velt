@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::git::sparse::{fetch_keeping, leads, outside, Leads, Listing};
+use crate::git::sparse::{fetch_keeping, follow, leads, outside, probe, Leads, Listing};
 
 /// An upstream with history: two packages (`packages/lib` depends on its sibling
 /// `packages/util` by path), and a large file beside them that changes in every commit. The
@@ -288,7 +288,7 @@ fn listing(files: &[(&str, bool)]) -> Listing {
             format!("{mode} blob 0123\t{path}")
         })
         .collect();
-    Listing::parse(&text.join("\0"))
+    Listing::parse(&text.join("\0")).unwrap()
 }
 
 #[test]
@@ -320,13 +320,25 @@ fn links_are_followed_in_the_listing() {
     );
     let t = texts(&[("a/link", "../b/next/file"), ("b/next", "../c/d")]);
     assert_eq!(leads(&l, &t, "a/link"), to("c/d/file"));
-    // The repository's root is inside; above it, an absolute path and a drive are not.
+    // The repository's root is inside; above it and an absolute path are not.
     let t = texts(&[("a/up", "..")]);
     assert_eq!(leads(&l, &t, "a/up"), to(""));
-    for out in ["../..", "/etc/passwd", "C:/x", "..\\..\\x"] {
+    for out in ["../..", "/etc/passwd"] {
         let t = texts(&[("a/up", out)]);
         assert_eq!(leads(&l, &t, "a/up"), Leads::Out, "{out}");
     }
+    // `:` and `\` are characters of a name, as git and Linux take them.
+    let t = texts(&[("a/up", "../b/a:b.txt")]);
+    assert_eq!(leads(&l, &t, "a/up"), to("b/a:b.txt"));
+    let t = texts(&[("a/up", "x\\y")]);
+    assert_eq!(leads(&l, &t, "a/up"), to("a/x\\y"));
+    // A path from the root goes through links the same way.
+    let t = texts(&[("b/next", "../c/d")]);
+    assert_eq!(follow(&l, &t, vec![], "b/next/file"), to("c/d/file"));
+    assert_eq!(
+        follow(&l, &texts(&[]), vec![], "b/next/file"),
+        Leads::Through("b/next".to_string())
+    );
     let t = texts(&[("a/loop", "loop")]);
     assert_eq!(leads(&l, &t, "a/loop"), Leads::Loop);
 }
@@ -442,6 +454,272 @@ fn the_npm_workspace_around_a_package_is_checked_out_with_it() {
         assert_eq!(
             npm.package_dir(&from, "@demo/signals"),
             Some(lib.join("packages/signals"))
+        );
+    }
+}
+
+/// A file path with a `..` part, which git itself never writes into a tree, is refused before
+/// any path of the commit is used: joined to a directory it would name a file outside it.
+#[test]
+fn a_listing_with_a_path_that_leaves_the_repository_is_refused() {
+    for path in [
+        "../victim/package.json",
+        "a/../../package.json",
+        "a/./b",
+        "a//b",
+        "..",
+    ] {
+        let err = Listing::parse(&format!("100644 blob 0123\t{path}")).err();
+        assert_eq!(
+            err,
+            Some(format!(
+                "has a file path `{path}` that is no path in a repository"
+            )),
+        );
+    }
+    assert!(Listing::parse("100644 blob 0123\ta/..b/c.d").is_ok());
+}
+
+/// The same through an install: a commit whose tree has `..` entries holding a `package.json`
+/// writes nothing outside the cache, and is refused.
+#[test]
+fn a_commit_with_dot_dot_entries_writes_nothing_outside_the_cache() {
+    let e = env();
+    monorepo(&e, true);
+    std::fs::write(
+        e.upstream.dir.join("package.json"),
+        "{ \"name\": \"root\" }",
+    )
+    .unwrap();
+    e.upstream.git(&["add", "-A"]);
+    e.upstream.git(&["commit", "-q", "-m", "root"]);
+    // `../../victim/package.json`, as `git mktree` builds what `git add` never would.
+    let empty = e.root.join("empty.json");
+    std::fs::write(&empty, "{}").unwrap();
+    let up = &e.upstream;
+    let blob = up.git(&["hash-object", "-w", &empty.to_string_lossy()]);
+    let mktree = |line: String| {
+        let file = e.root.join("tree.txt");
+        std::fs::write(&file, line).unwrap();
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&up.dir)
+            .arg("mktree")
+            .stdin(std::fs::File::open(&file).unwrap())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let mut tree = mktree(format!("100644 blob {blob}\tpackage.json\n"));
+    tree = mktree(format!("040000 tree {tree}\tvictim\n"));
+    for _ in 0..12 {
+        tree = mktree(format!("040000 tree {tree}\t..\n"));
+    }
+    let root = up.git(&["ls-tree", "HEAD"]);
+    let root = mktree(format!("{root}\n040000 tree {tree}\t..\n"));
+    let commit = up.git(&["commit-tree", &root, "-p", "HEAD", "-m", "dotdot"]);
+    up.git(&["update-ref", "refs/heads/main", &commit]);
+    // Where the stand-in would land, twelve directories up from the skeleton and above.
+    let victims: Vec<PathBuf> = e
+        .loc
+        .cache
+        .ancestors()
+        .map(|dir| dir.join("victim/package.json"))
+        .collect();
+    let app = e.app(&lib_dep(&e));
+    let err = e.install(&app, false).unwrap_err();
+    assert!(
+        err.contains("has a file path `") && err.contains("that is no path in a repository"),
+        "{err}"
+    );
+    for victim in victims {
+        assert!(!victim.exists(), "{}", victim.display());
+    }
+    let dir = checkout_dir(&e.loc, &e.upstream.url(), &commit, Some("packages/lib"));
+    assert!(!dir.exists());
+}
+
+/// A `path` that goes through a link to a directory is the directory it leads to, and the link:
+/// the package is found there as in a whole checkout. The same for a package's own path
+/// dependency through a link.
+#[cfg(unix)] // on Windows a link is checked out as a file, and no path goes through one
+#[test]
+fn a_path_through_a_link_is_followed() {
+    for partial in [true, false] {
+        let e = env();
+        monorepo(&e, partial);
+        let dir = &e.upstream.dir;
+        let write = |rel: &str, text: &str| {
+            let path = dir.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "third_party/kit/package.velt",
+            "export const pkg: Package = { name: \"kit\", version: \"0.1.0\" };",
+        );
+        write(
+            "third_party/kit/src/lib.velt",
+            "export const says = \"kit\";\n",
+        );
+        write(
+            "real/pkg/package.velt",
+            "export const pkg: Package = { name: \"lib\", version: \"0.1.0\", dependencies: { kit: { path: \"vendor/kit\" } } };",
+        );
+        write(
+            "real/pkg/src/lib.velt",
+            "export const says = \"through\";\n",
+        );
+        e.upstream.git(&["add", "-A"]);
+        stage_link(&e, "alias", "real");
+        stage_link(&e, "real/pkg/vendor", "../../third_party");
+        e.upstream.git(&["commit", "-q", "-m", "links"]);
+        let commit = e.upstream.git(&["rev-parse", "HEAD"]);
+        let url = e.upstream.url();
+        let app = e.app(&format!(
+            "lib: {{ git: \"{url}\", branch: \"main\", path: \"alias/pkg\" }}"
+        ));
+        let installed = e.install(&app, false).unwrap();
+        assert!(e.says(&installed).contains("through"), "partial: {partial}");
+        let lib = checkout_dir(&e.loc, &url, &commit, Some("alias/pkg"));
+        assert_eq!(
+            files_of(&lib),
+            [
+                "alias",
+                "real/pkg/package.velt",
+                "real/pkg/src/lib.velt",
+                "real/pkg/vendor",
+                "third_party/kit/package.velt",
+                "third_party/kit/src/lib.velt"
+            ]
+        );
+        // The path dependency, through `vendor`: a checkout of its own, the link and the package.
+        let lock = Lockfile::read(&app).unwrap().unwrap();
+        let kit = lock.get("kit").unwrap();
+        assert!(
+            kit.source.contains("&path=alias/pkg/vendor/kit&sparse=1#"),
+            "{}",
+            kit.source
+        );
+        let kit = checkout_dir(&e.loc, &url, &commit, Some("alias/pkg/vendor/kit"));
+        assert_eq!(
+            files_of(&kit),
+            [
+                "alias",
+                "real/pkg/vendor",
+                "third_party/kit/package.velt",
+                "third_party/kit/src/lib.velt"
+            ]
+        );
+    }
+}
+
+/// A link whose text has a `:` leads where git and Linux take it: to the file of that name.
+#[cfg(unix)] // Windows has no file of such a name
+#[test]
+fn a_link_to_a_name_with_a_colon_is_followed() {
+    let e = env();
+    monorepo(&e, true);
+    std::fs::create_dir_all(e.upstream.dir.join("data")).unwrap();
+    std::fs::write(e.upstream.dir.join("data/a:b.txt"), "ab").unwrap();
+    e.upstream.git(&["add", "-A"]);
+    stage_link(&e, "packages/lib/colon", "../../data/a:b.txt");
+    e.upstream.git(&["commit", "-q", "-m", "colon"]);
+    let commit = e.upstream.git(&["rev-parse", "HEAD"]);
+    let app = e.app(&lib_dep(&e));
+    e.install(&app, false).unwrap();
+    let lib = checkout_dir(&e.loc, &e.upstream.url(), &commit, Some("packages/lib"));
+    assert_eq!(
+        std::fs::read_to_string(lib.join("packages/lib/colon")).unwrap(),
+        "ab"
+    );
+}
+
+/// The `.gitattributes` above the path apply to its files, as in a whole checkout: they are
+/// checked out with it.
+#[test]
+fn attributes_above_the_path_apply() {
+    for partial in [true, false] {
+        let e = env();
+        monorepo(&e, partial);
+        let dir = &e.upstream.dir;
+        std::fs::write(dir.join(".gitattributes"), "*.txt text eol=crlf\n").unwrap();
+        std::fs::write(dir.join("packages/.gitattributes"), "*.md text eol=crlf\n").unwrap();
+        std::fs::write(dir.join("docs/.gitattributes"), "*.md text eol=crlf\n").unwrap();
+        std::fs::write(dir.join("packages/lib/notes.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(dir.join("packages/lib/notes.md"), "one\ntwo\n").unwrap();
+        std::fs::write(dir.join("packages/lib/plain.velt"), "one\ntwo\n").unwrap();
+        e.upstream.git(&["add", "-A"]);
+        e.upstream.git(&["commit", "-q", "-m", "attributes"]);
+        let commit = e.upstream.git(&["rev-parse", "HEAD"]);
+        let url = e.upstream.url();
+        let app = e.app(&lib_dep(&e));
+        e.install(&app, false).unwrap();
+        let lib = checkout_dir(&e.loc, &url, &commit, Some("packages/lib"));
+        let read = |rel: &str| std::fs::read_to_string(lib.join(rel)).unwrap();
+        assert_eq!(
+            read("packages/lib/notes.txt"),
+            "one\r\ntwo\r\n",
+            "partial: {partial}"
+        );
+        assert_eq!(read("packages/lib/notes.md"), "one\r\ntwo\r\n");
+        assert_eq!(read("packages/lib/plain.velt"), "one\ntwo\n");
+        let files = files_of(&lib);
+        assert!(files.contains(&".gitattributes".to_string()), "{files:?}");
+        assert!(
+            files.contains(&"packages/.gitattributes".to_string()),
+            "{files:?}"
+        );
+        assert!(!files.iter().any(|f| f.starts_with("docs/")), "{files:?}");
+        // As git checks the whole commit out.
+        let whole = checkout(
+            &e.loc,
+            &url,
+            (&commit, None),
+            (None, crate::tree_stamp::TreeCheck::Files),
+        )
+        .unwrap();
+        let same = std::fs::read(whole.join("packages/lib/notes.txt")).unwrap();
+        assert_eq!(same, read("packages/lib/notes.txt").as_bytes());
+    }
+}
+
+/// A git that can't fetch partially, can't list what a partial fetch left out, or can't ask for
+/// files by id (or a server that won't send them) gets the commit fetched whole, once, and the
+/// checkout is the one a partial fetch gives.
+#[test]
+fn every_way_of_fetching_gives_the_same_checkout() {
+    let install = |refused: u8| {
+        let e = env();
+        let commit = monorepo(&e, true);
+        let app = e.app(&lib_dep(&e));
+        probe::REFUSED.with(|r| r.set(refused));
+        probe::WHOLE.with(|w| w.set(0));
+        let installed = e.install(&app, false);
+        probe::REFUSED.with(|r| r.set(0));
+        installed.unwrap();
+        let lib = checkout_dir(&e.loc, &e.upstream.url(), &commit, Some("packages/lib"));
+        let lock = Lockfile::read(&app).unwrap().unwrap();
+        let sum = lock.get("lib").unwrap().checksum.clone();
+        (files_of(&lib), sum, probe::WHOLE.with(|w| w.get()))
+    };
+    let (files, sum, whole) = install(0);
+    assert_eq!(whole, 0);
+    assert_eq!(
+        files,
+        ["packages/lib/package.velt", "packages/lib/src/lib.velt"]
+    );
+    for refused in [probe::NO_PARTIAL, probe::NO_MISSING_LIST, probe::NO_ASKING] {
+        // Once for each of the two packages (`lib` and its path dependency).
+        assert_eq!(
+            install(refused),
+            (files.clone(), sum.clone(), 2),
+            "{refused}"
         );
     }
 }

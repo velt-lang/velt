@@ -18,6 +18,11 @@ url=${5:-https://github.com/velt-lang/velt}
 rev=${6:-6b441a1cabf05c0332a0980158d19dcdcc355640}
 path=${7:-packages/http-server}
 name=$(basename "$path")
+# The time from $1 to $2 (nanoseconds) in seconds, to the millisecond.
+seconds() {
+  local ms=$((($2 - $1) / 1000000))
+  printf '%d.%03d' $((ms / 1000)) $((ms % 1000))
+}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 for i in $(seq 1 "$rounds"); do
@@ -34,14 +39,14 @@ export const pkg: Package = {
 };
 VELT
   printf 'import "%s";\n\nconsole.log("built");\n' "$name" > "$app/src/main.velt"
-  start=$(date +%s.%N)
+  start=$(date +%s%N)
   (cd "$app" && VELT_HOME=$home VELT_STD=$std "$velt" install > "$work/install-$i.log" 2>&1) \
     || { cat "$work/install-$i.log"; exit 1; }
-  installed=$(date +%s.%N)
+  installed=$(date +%s%N)
   (cd "$app" && VELT_HOME=$home VELT_STD=$std "$velt" build > "$work/build-$i.log" 2>&1) \
     || { cat "$work/build-$i.log"; exit 1; }
-  built=$(date +%s.%N)
+  built=$(date +%s%N)
   files=$(find "$home/cache/git" -type f | wc -l)
   size=$(du -sm "$home/cache/git" | cut -f1)
-  echo "$label $i: install $(echo "$installed - $start" | bc) s, build $(echo "$built - $installed" | bc) s, cache/git $files files, $size MB"
+  echo "$label $i: install $(seconds "$start" "$installed") s, build $(seconds "$installed" "$built") s, cache/git $files files, $size MB"
 done

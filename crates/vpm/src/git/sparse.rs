@@ -6,12 +6,18 @@
 //! What is checked out is what the package reaches in its commit, found from the commit's own
 //! listing and manifests, so it is the same set on every machine:
 //!
-//! - the dependency's `path`;
+//! - the dependency's `path`, through the commit's links where it goes through one (`alias/pkg`
+//!   with `alias -> real` is `real/pkg`, and the link);
 //! - what npm's lookups read above it ([`around`]): each directory above's `package.json`,
 //!   `pnpm-workspace.yaml` and `node_modules`, and the package directories of each npm workspace
 //!   rooted there, which a package imports by name (`crate::npm`);
 //! - what the symbolic links in all of those lead to (a link's target, and each link on the way
-//!   to it).
+//!   to it);
+//! - the `.gitattributes` of each directory above any of those, which git applies to the files
+//!   it checks out below (`eol`, `working-tree-encoding`).
+//!
+//! A commit with a file path that is none in a repository (a `..` part) is refused before any
+//! path of it is used.
 //!
 //! A package's `path` dependencies are packages of their own, each with its own checkout. The
 //! files keep their places in the repository (`<checkout>/<path>/…`), so relative paths between
@@ -20,8 +26,10 @@
 //!
 //! The fetch is shallow (the one commit) and partial (`--filter=blob:none`: the commit and its
 //! directory listings, no file contents); the files wanted are then asked for by their ids. A
-//! server without partial fetches sends every file with the commit, and a git too old to ask for
-//! files by id fetches the commit whole; the checkout is the same either way.
+//! server without partial fetches sends every file with the commit. A git that can't fetch
+//! partially, can't list what a partial fetch left out or can't ask for files by id, and a
+//! server that won't send them, get the commit fetched whole ([`Fetched::new`] without
+//! `partial`). The checkout is the same every way.
 //!
 //! `<checkout>.only`, beside the checkout and outside the hashed tree, lists what it holds: the
 //! repository's URL, then one path per line. [`outside`] reads it to say why a file of the
@@ -62,6 +70,13 @@ fn within(path: &str, root: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// Whether every part of the repository path `path` is a plain name on every OS: no `\` and
+/// no `:`, which Windows reads as a separator and a drive. Only such a path is joined to a
+/// directory of this machine ([`around`]'s skeleton).
+fn plain(path: &str) -> bool {
+    !path.contains(['\\', ':'])
+}
+
 /// A commit's files, as `git ls-tree -r` lists them: each path with its object id, and whether
 /// it is a symbolic link.
 #[derive(Default)]
@@ -70,19 +85,30 @@ pub(super) struct Listing {
 }
 
 impl Listing {
-    /// From `git ls-tree -r -z`: `<mode> <type> <id>\t<path>` entries, NUL-separated.
-    pub(super) fn parse(listing: &str) -> Listing {
-        let files = listing
-            .split('\0')
-            .filter_map(|entry| {
-                let (meta, path) = entry.split_once('\t')?;
-                let mut meta = meta.split(' ');
-                let (mode, kind, id) = (meta.next()?, meta.next()?, meta.next()?);
-                // A submodule (`commit`) has no files here.
-                (kind == "blob").then(|| (path.to_string(), (id.to_string(), mode == "120000")))
-            })
-            .collect();
-        Listing { files }
+    /// From `git ls-tree -r -z`: `<mode> <type> <id>\t<path>` entries, NUL-separated. `Err` names
+    /// a path with an empty, `.` or `..` part: git writes no such tree, and joined to a directory
+    /// it would name a file outside it.
+    pub(super) fn parse(listing: &str) -> Result<Listing, String> {
+        let mut files = BTreeMap::new();
+        for entry in listing.split('\0') {
+            let Some((meta, path)) = entry.split_once('\t') else {
+                continue;
+            };
+            if path.split('/').any(|part| matches!(part, "" | "." | "..")) {
+                return Err(format!(
+                    "has a file path `{path}` that is no path in a repository"
+                ));
+            }
+            let mut meta = meta.split(' ');
+            let (Some(mode), Some(kind), Some(id)) = (meta.next(), meta.next(), meta.next()) else {
+                continue;
+            };
+            // A submodule (`commit`) has no files here.
+            if kind == "blob" {
+                files.insert(path.to_string(), (id.to_string(), mode == "120000"));
+            }
+        }
+        Ok(Listing { files })
     }
 
     fn is_link(&self, path: &str) -> bool {
@@ -123,9 +149,20 @@ pub(super) enum Leads {
 pub(super) fn leads(listing: &Listing, texts: &BTreeMap<String, String>, link: &str) -> Leads {
     let mut at: Vec<String> = link.split('/').map(str::to_string).collect();
     at.pop();
-    let Some(text) = texts.get(link) else {
-        return Leads::Through(link.to_string());
-    };
+    match texts.get(link) {
+        Some(text) => follow(listing, texts, at, text),
+        None => Leads::Through(link.to_string()),
+    }
+}
+
+/// Where `text` (a link's, or a path from the repository's root) leads from the directory `at`
+/// (its parts), through the commit's links.
+pub(super) fn follow(
+    listing: &Listing,
+    texts: &BTreeMap<String, String>,
+    mut at: Vec<String>,
+    text: &str,
+) -> Leads {
     if text.starts_with('/') {
         return Leads::Out;
     }
@@ -139,8 +176,6 @@ pub(super) fn leads(listing: &Listing, texts: &BTreeMap<String, String>, link: &
                     return Leads::Out;
                 }
             }
-            // A drive or a separator git doesn't use: no path of the repository.
-            name if name.contains(['\\', ':']) => return Leads::Out,
             name => {
                 at.push(name.to_string());
                 let path = at.join("/");
@@ -185,6 +220,8 @@ impl<'a> Fetched<'a> {
         commit: &'a str,
         partial: bool,
     ) -> Result<Fetched<'a>, String> {
+        #[cfg(test)]
+        probe::starting(partial)?;
         let _ = std::fs::remove_dir_all(repo);
         let repo_arg = repo.to_string_lossy().into_owned();
         // No template: hooks from the user's `init.templateDir` would run at the checkout.
@@ -204,14 +241,16 @@ impl<'a> Fetched<'a> {
             missing: HashSet::new(),
         };
         if partial {
-            // Each object the commit names and the repository lacks, as `?<id>`. A git that
-            // can't list them left nothing out either.
+            // Each object the commit names and the repository lacks, as `?<id>`. With a git
+            // that can't list them, what to ask for is not known: an error, and the caller
+            // fetches the commit whole.
             let listed = git(
                 Some(repo),
                 &["rev-list", "--objects", "--missing=print", commit],
-            )
-            .unwrap_or_default();
-            fetched.missing = listed
+            );
+            #[cfg(test)]
+            let listed = probe::listing(listed);
+            fetched.missing = listed?
                 .lines()
                 .filter_map(|l| l.strip_prefix('?'))
                 .map(|id| id.trim().to_string())
@@ -230,6 +269,8 @@ impl<'a> Fetched<'a> {
         if wanted.is_empty() {
             return Ok(());
         }
+        #[cfg(test)]
+        probe::asking()?;
         let args = [
             "-c",
             "fetch.negotiationAlgorithm=noop",
@@ -389,10 +430,52 @@ fn files(
         &["ls-tree", "-r", "-z", "--full-tree", commit],
     )
     .map_err(|e| Failed::Other(format!("cannot list commit {commit} of {url}: {e}")))?;
-    let listing = Listing::parse(&listing);
-    let mut paths = BTreeSet::from([path.to_string()]);
-    hold(&mut paths, around(fetched, &listing, path, skeleton)?);
+    let listing = Listing::parse(&listing).map_err(Failed::Link)?;
     let mut texts = BTreeMap::new();
+    let mut paths = BTreeSet::new();
+    // The path itself, through the commit's links: each link on the way is held with it, as a
+    // step only (what else it leads to is not the package's).
+    let mut way: BTreeSet<String> = BTreeSet::new();
+    let mut target = None;
+    for _ in 0..MAX_ROUNDS {
+        let link = match follow(&listing, &texts, vec![], path) {
+            Leads::To(to) => {
+                target = Some(to);
+                break;
+            }
+            Leads::Through(link) => link,
+            // Only a link's text leads out or around: `path` itself is plain names.
+            why => {
+                let link = way.last().cloned().unwrap_or_default();
+                return Err(link_error(&link, &why, &texts));
+            }
+        };
+        if let Some((id, _)) = listing.files.get(&link) {
+            fetched.fetch(&[id.as_str()]).map_err(Failed::Fetch)?;
+            let text = fetched.text(id).map_err(Failed::Other)?;
+            texts.insert(link.clone(), text);
+        }
+        if let why @ (Leads::Out | Leads::Loop) = leads(&listing, &texts, &link) {
+            return Err(link_error(&link, &why, &texts));
+        }
+        way.insert(link.clone());
+        hold(&mut paths, [link]);
+    }
+    let Some(target) = target else {
+        return Err(Failed::Link(format!(
+            "has symbolic links on the way to `{path}` that lead on through more than {MAX_ROUNDS} others"
+        )));
+    };
+    if !listing.has(&target) {
+        return Err(Failed::Link(format!("has no `{path}`")));
+    }
+    // What npm reads above the path as it is written, and above where it leads.
+    let mut near = around(fetched, &listing, path, skeleton)?;
+    if target != path {
+        near.extend(around(fetched, &listing, &target, skeleton)?);
+    }
+    hold(&mut paths, [target]);
+    hold(&mut paths, near);
     for _ in 0..MAX_ROUNDS {
         let wanted: Vec<(&str, &str, bool)> = paths.iter().flat_map(|p| listing.under(p)).collect();
         let ids: Vec<&str> = wanted.iter().map(|(_, id, _)| *id).collect();
@@ -410,22 +493,24 @@ fn files(
         }
         let mut more = BTreeSet::new();
         for (link, _) in links {
+            if way.contains(link) {
+                continue;
+            }
             let to = match leads(&listing, &texts, link) {
                 Leads::To(to) | Leads::Through(to) => to,
-                why => {
-                    let what = match why {
-                        Leads::Loop => "loops",
-                        _ => "points out of the repository",
-                    };
-                    return Err(Failed::Link(format!(
-                        "has a symbolic link `{link}` that {what} (`{}`)",
-                        texts[link]
-                    )));
-                }
+                why => return Err(link_error(link, &why, &texts)),
             };
             let held = paths.iter().any(|p| within(&to, p));
             if !held && listing.has(&to) {
                 more.insert(to);
+            }
+        }
+        // The attributes git applies to the files held: each directory above's.
+        for dir in paths.iter().flat_map(|p| above(p)) {
+            let file = join(dir, ".gitattributes");
+            let held = paths.iter().any(|p| within(&file, p));
+            if !held && matches!(listing.files.get(&file), Some((_, false))) {
+                more.insert(file);
             }
         }
         if more.is_empty() {
@@ -436,6 +521,18 @@ fn files(
     Err(Failed::Link(format!(
         "has symbolic links below `{path}` that lead on through more than {MAX_ROUNDS} others"
     )))
+}
+
+/// The error for the link at `link`, which leads out of the repository or around (`why`).
+fn link_error(link: &str, why: &Leads, texts: &BTreeMap<String, String>) -> Failed {
+    let what = match why {
+        Leads::Loop => "loops",
+        _ => "points out of the repository",
+    };
+    let text = texts.get(link).map_or("", String::as_str);
+    Failed::Link(format!(
+        "has a symbolic link `{link}` that {what} (`{text}`)"
+    ))
 }
 
 /// Add `more` to the paths a checkout holds: a path at or below one that is held is not named
@@ -450,16 +547,28 @@ fn hold(paths: &mut BTreeSet<String>, more: impl IntoIterator<Item = String>) {
     }
 }
 
-/// The directories above `path` in the repository, nearest first, ending with its root (``).
+/// The directories above `path` in the repository, nearest first, ending with its root (``);
+/// none above the root itself.
 fn above(path: &str) -> Vec<&str> {
     let mut out = vec![];
     let mut at = path;
+    if path.is_empty() {
+        return out;
+    }
     while let Some((parent, _)) = at.rsplit_once('/') {
         out.push(parent);
         at = parent;
     }
     out.push("");
     out
+}
+
+/// `name` in the repository's directory `dir` (the root when empty).
+fn join(dir: &str, name: &str) -> String {
+    match dir.is_empty() {
+        true => name.to_string(),
+        false => format!("{dir}/{name}"),
+    }
 }
 
 /// What npm's lookups for a package at `path` read above it in the commit (`crate::npm`: a
@@ -475,10 +584,6 @@ fn around(
     skeleton: &Path,
 ) -> Result<Vec<String>, Failed> {
     use crate::npm::workspace;
-    let join = |dir: &str, name: &str| match dir.is_empty() {
-        true => name.to_string(),
-        false => format!("{dir}/{name}"),
-    };
     let mut out = vec![];
     let mut manifests = vec![];
     for dir in above(path) {
@@ -499,6 +604,10 @@ fn around(
     let ids: Vec<&str> = manifests.iter().map(|(_, _, id)| *id).collect();
     fetched.fetch(&ids).map_err(Failed::Fetch)?;
     let write = |rel: &str, text: &str| {
+        // Only a path of plain names: another would not be the same file on every OS.
+        if !plain(rel) {
+            return Ok(());
+        }
         let file = skeleton.join(rel);
         let made = match file.parent() {
             Some(parent) => std::fs::create_dir_all(parent),
@@ -559,4 +668,53 @@ pub fn outside(file: &Path) -> Option<String> {
         ));
     }
     None
+}
+
+/// What a test makes fail, to see each way of fetching give the same checkout: on this thread
+/// alone, so tests run side by side.
+#[cfg(test)]
+pub(super) mod probe {
+    use std::cell::Cell;
+
+    /// A git that can't fetch partially.
+    pub const NO_PARTIAL: u8 = 1;
+    /// A git that can't list what a partial fetch left out.
+    pub const NO_MISSING_LIST: u8 = 2;
+    /// A git that can't ask for files by id, or a server that won't send them.
+    pub const NO_ASKING: u8 = 4;
+
+    thread_local! {
+        /// Which of the three fail.
+        pub static REFUSED: Cell<u8> = const { Cell::new(0) };
+        /// How many times a commit was fetched whole.
+        pub static WHOLE: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn refused(bit: u8) -> bool {
+        REFUSED.with(Cell::get) & bit != 0
+    }
+
+    pub(super) fn starting(partial: bool) -> Result<(), String> {
+        if partial && refused(NO_PARTIAL) {
+            return Err("probe: no partial fetch".to_string());
+        }
+        if !partial {
+            WHOLE.with(|w| w.set(w.get() + 1));
+        }
+        Ok(())
+    }
+
+    pub(super) fn listing(listed: Result<String, String>) -> Result<String, String> {
+        match refused(NO_MISSING_LIST) {
+            true => Err("probe: no list of missing objects".to_string()),
+            false => listed,
+        }
+    }
+
+    pub(super) fn asking() -> Result<(), String> {
+        match refused(NO_ASKING) {
+            true => Err("probe: no fetch by id".to_string()),
+            false => Ok(()),
+        }
+    }
 }
