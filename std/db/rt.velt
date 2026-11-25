@@ -1,8 +1,8 @@
-// velt/db (internal): the runtime functions velt/db calls, and the code generated for it calls.
+// velt/db (internal): what the code generated for velt/db calls besides a `RowSource`'s own
+// methods: the error of a row that does not fit.
 
 import { JsonError } from "velt/prelude/json/json_error";
 import { shortPath } from "velt/encoding/json/reader_ops";
-
 
 /**
  * The `JsonError` of a row that does not fit, with `JSON.parse`'s message: `expected
