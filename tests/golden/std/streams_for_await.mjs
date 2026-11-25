@@ -93,6 +93,86 @@ async function concurrent() {
   console.log("concurrent: " + log.join(" "));
 }
 
+// Three chunks and a `cancel` that logs, at once or after an `await`.
+function three(log, asyncCancel) {
+  if (asyncCancel) {
+    return new ReadableStream({
+      start: (c) => {
+        c.enqueue(1);
+        c.enqueue(2);
+        c.enqueue(3);
+      },
+      cancel: async (reason) => {
+        log.push("cancel");
+        await null;
+        log.push("done");
+      },
+    });
+  }
+  return new ReadableStream({
+    start: (c) => {
+      c.enqueue(1);
+      c.enqueue(2);
+      c.enqueue(3);
+    },
+    cancel: (reason) => {
+      log.push("cancel");
+    },
+  });
+}
+
+// Leaving the loop by a throw at value `at`: the code after it runs in Node's turn.
+async function throwAt(name, at, asyncCancel) {
+  const log = [];
+  const t = chain(log, 16);
+  const s = three(log, asyncCancel);
+  try {
+    for await (const v of s) {
+      log.push("v" + v);
+      if (v == at) {
+        throw new Error("x");
+      }
+    }
+  } catch (e) {
+    log.push("caught");
+  }
+  await t;
+  console.log(name + ": " + log.join(" "));
+}
+
+// Leaving the loop by `break` at value `at`, with an async `cancel`.
+async function breakAt(name, at) {
+  const log = [];
+  const t = chain(log, 16);
+  const s = three(log, true);
+  for await (const v of s) {
+    log.push("v" + v);
+    if (v == at) {
+      break;
+    }
+  }
+  log.push("after");
+  await t;
+  console.log(name + ": " + log.join(" "));
+}
+
+// `return v` from inside the loop, in an async function the caller awaits.
+async function firstOf(s) {
+  for await (const v of s) {
+    return v;
+  }
+  return 0;
+}
+
+async function returnInside() {
+  const log = [];
+  const t = chain(log, 16);
+  const v = await firstOf(three(log, false));
+  log.push("returned " + v);
+  await t;
+  console.log("return inside: " + log.join(" "));
+}
+
 async function main() {
   await loop(
     "start",
@@ -207,9 +287,16 @@ async function main() {
   await Promise.all([r1, r2, r3]);
   console.log("return twice: " + rlog.join(" "));
 
+  await slow("pull after 0 microtasks, an await not reached", 0);
+  await slow("pull after 1 microtask", 1);
   await slow("pull after 2 microtasks", 2);
   await slow("pull after 3 microtasks", 3);
   await concurrent();
+  await throwAt("throw at 2", 2, false);
+  await throwAt("throw at 2, async cancel", 2, true);
+  await breakAt("break at 1, async cancel", 1);
+  await breakAt("break at 2, async cancel", 2);
+  await returnInside();
 }
 
 main();

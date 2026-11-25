@@ -192,19 +192,19 @@ class StreamIterator<R> implements AsyncIterator<R, Reason> {
   }
 
   // Leaving the loop: the stream is cancelled, let go at once, then the cancel is waited for.
-  private async returnSteps(): Promise<IteratorResult<R>> {
+  // Node's `returnSteps` awaits the cancel in an async function; as one `then` it takes Node's
+  // turns, where the async form let the code after the loop run a turn early (#3741).
+  private returnSteps(): Promise<IteratorResult<R>> {
     if (this.done) {
-      return { done: true };
+      return Promise.resolve<IteratorResult<R>>({ done: true });
     }
     this.done = true;
     const cancelled = this.reader.cancel(null);
     this.reader.releaseLock();
-    try {
-      await cancelled;
-    } catch (e) {
-      // The loop is left either way.
-    }
-    return { done: true };
+    return cancelled.then(
+      () => ({ done: true }) as IteratorResult<R>,
+      (e) => ({ done: true }) as IteratorResult<R>,
+    );
   }
 }
 
