@@ -136,10 +136,10 @@ impl<O: Out> RowWriter<O> {
         crate::fmt::push_i64(&mut self.buf, v);
     }
 
-    /// A float (`null` if not finite: JSON has no NaN or Infinity). Only the decoder reads this
-    /// text, so it need not look like JavaScript's: an integral value within ±2^53 is written
-    /// as an integer (it still decodes into an integer field), anything else in its shortest
-    /// round-trip form as JavaScript prints it (`1.5`, `1e-7`, `1e+21`).
+    /// A float (`null` if not finite: JSON has no NaN or Infinity), as JavaScript's `String(v)`
+    /// prints it (`push_f64`): an integral value within ±2^53 as an integer (it still decodes
+    /// into an integer field), anything else in its shortest round-trip form (`1.5`, `1e-7`,
+    /// `1e+21`).
     pub fn float(&mut self, v: f64) {
         self.key();
         if !v.is_finite() {
