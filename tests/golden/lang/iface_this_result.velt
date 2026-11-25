@@ -1,0 +1,46 @@
+// check: no leaks
+// An interface method may return `this` (#3771): through an interface value the result is the
+// interface; through a type parameter bounded by it, the parameter's own type (the receiver
+// itself, so a chain keeps the class). Implementations return `this`, as TypeScript requires.
+interface Fluent {
+  step(n: number): this;
+  total(): number;
+}
+
+class Counter implements Fluent {
+  n = 0;
+  step(n: number): this {
+    this.n += n;
+    return this;
+  }
+  total(): number {
+    return this.n;
+  }
+}
+
+class Loud extends Counter {
+  override step(n: number): this {
+    this.n += n * 2;
+    return this;
+  }
+}
+
+function twice<T extends Fluent>(t: T): T {
+  return t.step(1).step(1);
+}
+
+function viaIface(f: Fluent): number {
+  return f.step(1).step(2).total();
+}
+
+function main() {
+  const c = twice(new Counter());
+  console.log(c.n, c.total());
+  const l = twice(new Loud());
+  console.log(l.n);
+  console.log(viaIface(new Counter()), viaIface(new Loud()));
+  const f: Fluent = new Counter();
+  const g = f.step(5);
+  g.step(1);
+  console.log(g.total(), f.total());
+}
