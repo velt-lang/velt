@@ -1,0 +1,223 @@
+// velt/lang/hooks (tests): an awaited yield's token with no record (sched_yield_list.velt `POLL`,
+// `pollReady`, #3687). It goes on once the poll its task's root yielded it in is over (`YIELDED`),
+// whatever cx asks: asked with a started promise's waker in that poll (a child of an inline
+// `Promise.all` detached to run on its own) it is not ready, and gets a turn of its own where the
+// root's placed turn is, once. And a yield block parks when its list empties, keeping the root's
+// turn placed before it parked.
+import { describe, expect, it } from "velt/test";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as node from "velt/lang/hooks/sched_node";
+import * as t from "velt/lang/hooks/sched_task";
+import { schedYield, schedYieldReady } from "velt/lang/hooks/sched_yield";
+import * as ls from "velt/lang/hooks/sched_yield_list";
+import { channel } from "velt/sync/channel";
+
+/** The task polled on this thread. */
+function task(): usize {
+  return m.ld(t.here() + t.E_CURRENT);
+}
+
+/** Task `k`'s first listed yield (0: none). */
+function first(k: usize): usize {
+  const b = ls.blockOf(k);
+  const last = b === 0 ? 0 : m.ld(b + ls.B_LAST);
+  return last === 0 ? 0 : m.ld(last + ls.Y_NEXT);
+}
+
+/** How many yields task `k` has listed. */
+function listed(k: usize): usize {
+  const f = first(k);
+  if (f === 0) {
+    return 0;
+  }
+  let n: usize = 1;
+  let y = m.ld(f + ls.Y_NEXT);
+  while (y !== f) {
+    n += 1;
+    y = m.ld(y + ls.Y_NEXT);
+  }
+  return n;
+}
+
+/** Task `k`'s listed yield woken through `w` (0: none). */
+function wakes(k: usize, w: usize): usize {
+  const f = first(k);
+  let y = f;
+  while (y !== 0) {
+    if (m.ld(y + ls.Y_WAKER) === w) {
+      return y;
+    }
+    y = m.ld(y + ls.Y_NEXT);
+    if (y === f) {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+describe("a yield's token with no record", () => {
+  it("is 0, and is not ready while the poll it was made in runs", async () => {
+    const k = task();
+    expect(ls.POLL).toBe(0 as usize);
+    // The root yields in this poll, as an awaited yield with no record does.
+    m.store32(k + t.T_STATE, t.YIELDED);
+    expect(schedYieldReady(k + t.T_CX, ls.POLL)).toBe(0 as u32);
+    expect(ls.pollReady(k, k, false)).toBe(0 as u32);
+    // The task's next poll: that poll is over.
+    await yieldNow();
+    expect(schedYieldReady(k + t.T_CX, ls.POLL)).toBe(1 as u32);
+    expect(ls.pollReady(k, k, false)).toBe(1 as u32);
+  });
+
+  it("asked with another waker in its poll, puts a turn for that waker on the list", async () => {
+    const k = task();
+    ls.block(k);
+    m.store32(k + t.T_STATE, t.YIELDED);
+    const before = listed(k);
+    expect(ls.pollReady(k, k, false)).toBe(0 as u32);
+    // A record joined the task's list, whose turn wakes the waker it was asked with (a clone of
+    // it), not the root.
+    expect(listed(k)).toBe(before + 1);
+    expect(t.has(k, t.YIELDS)).toBe(true);
+    const r = first(k);
+    expect(r !== 0 && m.ld(r + ls.Y_WAKER) !== ls.ROOT).toBe(true);
+    await yieldNow();
+  });
+
+  it(
+    "asked late, after its root yielded again in a later poll, waits one turn more and goes on",
+    async () => {
+      const k = task();
+      // Its poll: made, and the root yielded.
+      m.store32(k + t.T_STATE, t.YIELDED);
+      // A later poll, in which the root yields again before the started promise asks.
+      await yieldNow();
+      m.store32(k + t.T_STATE, t.YIELDED);
+      const before = listed(k);
+      // One turn late: not ready, and a turn of its own joins the list.
+      expect(ls.pollReady(k, k, false)).toBe(0 as u32);
+      expect(listed(k)).toBe(before + 1);
+      // At that turn, in the next poll, it goes on.
+      await yieldNow();
+      expect(ls.pollReady(k, k, false)).toBe(1 as u32);
+    },
+  );
+
+  it("asked in its poll, goes where the root's placed turn is, before later yields", async () => {
+    const k = task();
+    ls.block(k);
+    // The root's yield, with nothing listed: its turn is placed (`B_ROOT`), no record. A detached
+    // child holds this token.
+    expect(schedYield(k + t.T_CX)).toBe(ls.POLL);
+    const placed = m.ld(ls.blockOf(k) + ls.B_ROOT);
+    // A sibling yields after it: a record with a later stamp (the root's turn gets one first).
+    const later = ls.nextStamp(ls.block(k));
+    ls.join(k, ls.record(m.wakerClone(k), later));
+    // The child asks with its own waker: its turn takes the placed stamp, ahead of the sibling.
+    expect(ls.pollReady(k, k, false)).toBe(0 as u32);
+    const f = first(k);
+    expect(m.ld(f + ls.Y_STAMP)).toBe(placed);
+    expect(m.ld(f + ls.Y_WAKER) !== ls.ROOT).toBe(true);
+    expect(m.ld(m.ld(ls.blockOf(k) + ls.B_LAST) + ls.Y_STAMP)).toBe(later);
+    await yieldNow();
+  });
+
+  it("asked twice by one started promise in its poll, puts one turn on the list", async () => {
+    const k = task();
+    ls.block(k);
+    // A stand-in started promise of this task: its table, two references and no flags.
+    const n = m.zeroed(node.N_HEAD + 16);
+    m.st(n, t.main() + t.E_NODE_VT);
+    m.st(n + node.N_REFS, 2);
+    m.st(n + node.N_TASK, k);
+    m.store32(k + t.T_STATE, t.YIELDED);
+    const before = listed(k);
+    expect(ls.pollReady(k, n, true)).toBe(0 as u32);
+    expect(ls.pollReady(k, n, true)).toBe(0 as u32);
+    expect(listed(k)).toBe(before + 1);
+    expect((m.load32(n + node.N_FLAGS) & node.YIELDING) !== 0).toBe(true);
+    // Its turn would wake the stand-in: the task's own waker takes its place there.
+    const r = wakes(k, n);
+    expect(r !== 0).toBe(true);
+    m.st(r + ls.Y_WAKER, m.wakerClone(k));
+    m.wakerDrop(n);
+    expect(m.load(n + node.N_REFS)).toBe(2 as usize);
+    m.release(n, node.N_HEAD + 16);
+    await yieldNow();
+  });
+});
+
+describe("a yield block", () => {
+  it("is parked once its turns leave its list empty", async () => {
+    // In a task of its own, whose root this is (a test runs as a started promise, whose own
+    // yields keep the list full).
+    const parked = await spawn(async (): Promise<bool> => {
+      const k = task();
+      ls.join(k, ls.record(m.wakerClone(k), ls.nextStamp(ls.block(k))));
+      const inUse = m.ld(k + t.T_YIELDS) !== 0;
+      // Its turns, the root's among them; the root yields again at its own, with nothing listed.
+      await yieldNow();
+      await yieldNow();
+      // Parked: the root's next yields test one word, 0.
+      return inUse && m.ld(k + t.T_YIELDS) === 0 && m.ld(k + t.T_PARKED) !== 0;
+    });
+    expect(parked).toBe(true);
+  });
+
+  it("keeps the root's turn placed before it was parked ahead of yields made after", async () => {
+    const k = task();
+    ls.block(k);
+    // The root yields with nothing listed: its turn is placed (`ROOT_ALONE`, `B_ROOT`), no record.
+    expect(schedYield(k + t.T_CX)).toBe(ls.POLL);
+    expect(t.has(k, t.ROOT_ALONE)).toBe(true);
+    // A yield is made after it (its stamp), then the turns end and the block is parked.
+    const after = ls.nextStamp(ls.block(k));
+    ls.park(k);
+    // It joins later in this poll: the block comes back, and the root's turn comes first.
+    ls.join(k, ls.record(m.wakerClone(k), after));
+    const r = first(k);
+    expect(m.ld(r + ls.Y_WAKER)).toBe(ls.ROOT);
+    expect(m.ld(m.ld(r + ls.Y_NEXT) + ls.Y_STAMP)).toBe(after);
+    await yieldNow();
+  });
+
+  it("drops the root's placed turn of an earlier poll when the next one begins", async () => {
+    const k = task();
+    ls.block(k);
+    expect(schedYield(k + t.T_CX)).toBe(ls.POLL);
+    ls.park(k);
+    expect(t.has(k, t.ROOT_ALONE)).toBe(true);
+    // Its awaited yield below is then the first of this poll (so no record takes the mark).
+    m.store32(k + t.T_STATE, t.RUNNING);
+    // The next poll: the mark is gone, so a block that comes back places the root's turn anew.
+    await yieldNow();
+    expect(t.has(k, t.ROOT_ALONE)).toBe(false);
+  });
+});
+
+describe("the root's turns in one poll", () => {
+  it("leave a child woken without a microtask to go on before the next child's turn", async () => {
+    // In a task's root: a child's turn sends on a channel (a direct wake of the root, no
+    // microtask), which the first child waits for; it goes on before the third child's turn.
+    const order = await spawn(async (): Promise<string> => {
+      const log: string[] = [];
+      const ch = channel<number>(1);
+      const waits = async (): Promise<void> => {
+        await ch.receive();
+        log.push("c");
+      };
+      const sends = async (): Promise<void> => {
+        await yieldNow();
+        log.push("a");
+        ch.trySend(1);
+      };
+      const later = async (): Promise<void> => {
+        await yieldNow();
+        log.push("b");
+      };
+      await Promise.all([waits(), sends(), later()]);
+      return log.join(",");
+    });
+    expect(order).toBe("a,c,b");
+  });
+});

@@ -6,7 +6,11 @@
 //!   promise is taken as a heap future. When they can reject, every child is a heap future:
 //!   on an early rejection the others must keep running (JS), which an embedded state can't.
 //! - One suspension: its resume block polls every child whose `done` flag is still clear (a
-//!   child is never polled after READY) and suspends while any is pending.
+//!   child is never polled after READY) and suspends while any is pending. The children are
+//!   polled with a copy of the poll's `cx` (the same two words at another address), so a child's
+//!   `await yieldNow()` is not its task root's own: the root's own yield takes one test, and the
+//!   children's, which may come several in a poll, take their turns in order (rt_abi_async.md
+//!   `velt_rt_yield_now`, #3687).
 //! - Promises that can reject: the first pass runs every child up to its first suspension (the
 //!   calls of the literal, in JS), then the first `Err` in array order rejects the join. After
 //!   that, a child that finishes with an `Err` rejects right after its poll, before the rest of
@@ -80,9 +84,10 @@ impl FnLower<'_, '_> {
         let (k, resume) = self.suspension();
         self.goto(resume);
         self.switch_to(resume);
+        let child_cx = self.child_cx();
         let mut all_done = Self::cbool(true);
         for (i, (c, &d)) in children.iter().zip(&done).enumerate() {
-            self.poll_unless_done(c, d, &drop_children);
+            self.poll_unless_done(c, d, &child_cx, &drop_children);
             if let (Some(e), Some(f)) = (err, first) {
                 let (check, next) = (self.new_block(), self.new_block());
                 self.branch(Operand::Copy(Place::local(f)), next, check);
@@ -235,12 +240,23 @@ impl FnLower<'_, '_> {
     }
 
     /// `if (!done) { done = poll(child) != 0 }`.
-    fn poll_unless_done(&mut self, c: &Child, done: Local, drop_children: &Awaited) {
+    /// This poll's `cx` copied (its two words, at another address) for the children: see the
+    /// module docs. Copied at each poll, as each poll has its own.
+    fn child_cx(&mut self) -> Operand {
+        let a = self.cx.cx_agg();
+        let cx = self.actx().cx;
+        let copy = self.temp(Ty::Agg(a));
+        let words = proj(&Place::local(cx), Proj::Deref(Ty::Agg(a)));
+        self.assign(Place::local(copy), Rvalue::Use(Operand::Copy(words)));
+        self.addr(Place::local(copy))
+    }
+
+    fn poll_unless_done(&mut self, c: &Child, done: Local, cx: &Operand, drop_children: &Awaited) {
         let (poll_bb, next) = (self.new_block(), self.new_block());
         self.branch(Operand::Copy(Place::local(done)), next, poll_bb);
         self.switch_to(poll_bb);
         let r = self.temp(Ty::U32);
-        let cx = self.poll_cx();
+        let cx = cx.clone();
         self.awaiting(drop_children.clone(), |lw| match c {
             Child::State { info, local, .. } => {
                 let sp = lw.addr(Place::local(*local));
