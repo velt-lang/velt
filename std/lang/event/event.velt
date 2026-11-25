@@ -108,14 +108,18 @@ export class Event {
     return this.phase;
   }
 
-  /** `!defaultPrevented`; setting it to `false` is `preventDefault()`. */
+  /**
+   * Whether it was not cancelled; setting it to `false` cancels it as `preventDefault()` does.
+   * Both read and set the event's own flag, as the DOM spec does: never a subclass's
+   * `defaultPrevented` or `preventDefault`.
+   */
   get returnValue(): boolean {
-    return !this.defaultPrevented;
+    return !this.canceled;
   }
 
   set returnValue(value: boolean) {
     if (!value) {
-      this.preventDefault();
+      this.#cancel();
     }
   }
 
@@ -141,6 +145,11 @@ export class Event {
 
   /** Cancels a cancelable event, except from a passive listener. */
   preventDefault(): void {
+    this.#cancel();
+  }
+
+  /** The DOM spec's "set the canceled flag", which `preventDefault` and `returnValue` share. */
+  #cancel(): void {
     if (this.cancelling && !this.passiveNow) {
       this.canceled = true;
     }
@@ -157,11 +166,14 @@ export class Event {
     this.stoppedNow = true;
   }
 
-  /** How `console.log` shows it, like Node: `Event { type: 'x', defaultPrevented: false, … }`. */
+  /**
+   * How `console.log` shows it, like Node: `Event { type: 'x', defaultPrevented: false, … }`, from
+   * its own state (a subclass's `defaultPrevented` is not read).
+   */
   [INSPECT]() {
     return {
       type: this.kind,
-      defaultPrevented: this.defaultPrevented,
+      defaultPrevented: this.canceled,
       cancelable: this.cancelling,
       timeStamp: this.stamp,
     };
