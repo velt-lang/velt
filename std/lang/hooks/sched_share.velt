@@ -41,10 +41,8 @@ import * as pt from "./program_thread";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nc from "./sched_node_catch";
-import * as jn from "./sched_join";
 import * as nd from "./sched_node";
 import * as loc from "./sched_node_loc";
-import * as off from "./sched_off";
 import * as t from "./sched_task";
 import * as tr from "./sched_node_transfer";
 import * as away from "./sched_share_away";
@@ -259,12 +257,9 @@ export function schedFutId(f: usize): u64 {
     }
     g = a;
   }
-  if (g === 0 || m.ld(g) === fnAddress(nd.nodePoll) || lf.isLeaf(g) || jn.isJoin(g)) {
-    return g as u64;
-  }
-  // A future of the runtime's: a holder of its hub (shared on a C library's thread) has the
-  // identity of the runtime's original; anything else is its own.
-  return off.futId(g);
+  // Anything else (a node, a join handle, a runtime leaf) is its own identity: a holder of the
+  // runtime's hub exists only in a program without this executor.
+  return g as u64;
 }
 
 /**
