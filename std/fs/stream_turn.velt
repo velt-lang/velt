@@ -3,12 +3,14 @@
 
 /** The operation has the stream's turn. */
 export const CLAIM: u8 = 0;
-/** Another operation has it: wait, then ask again. */
+/** Another operation has it: this one waits in the stream's queue until the turn is handed to it. */
 export const WAIT: u8 = 1;
 /** No such stream: it was closed (or released). */
 export const CLOSED: u8 = 2;
+/** The turn was handed to a waiting operation of a stream closed meanwhile: it gives it back. */
+export const GONE: u8 = 3;
 
-/** A stream's state when its operation asked for its turn (`status`: `CLAIM`, `WAIT`, `CLOSED`). */
+/** A stream's state when its operation asked for its turn (`status`: `CLAIM`, `WAIT`, `CLOSED`, `GONE`). */
 export struct StreamTurn {
   status: u8;
   os: u64;

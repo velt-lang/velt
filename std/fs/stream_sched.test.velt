@@ -1,9 +1,10 @@
 // velt/fs (tests): file streams under the executor in Velt (std/fs/stream_sched.velt): a handle
 // used after `close` fails with EBADF, a reader closed with a read in flight lets that read end,
-// copies of one reader read in turn, a writer's buffer reaches the file on `flush`, `close` and
-// when it is released unclosed, and a write after `close` fails with EPIPE.
+// copies of one reader read in turn, reads and writes started together run in the order they were
+// started, operations waiting behind a close fail with EBADF, a writer's buffer reaches the file
+// on `flush`, `close` and when it is released unclosed, and a write after `close` fails with EPIPE.
 import { openRead, openWrite, readFile, readFileSync, remove, writeFile } from "velt/fs";
-import { tmpdir } from "velt/os";
+import { platform, tmpdir } from "velt/os";
 import { uuidv4 } from "velt/random/uuid";
 import { describe, expect, it } from "velt/test";
 import { IoError } from "velt/io";
@@ -84,6 +85,64 @@ describe("stream_sched", () => {
     await remove(path);
   });
 
+  it("runs reads started together in the order they were started", async () => {
+    const path = temp("read-order");
+    await writeFile(path, "0123456789abcdefghijklmnopqrstuvwxyz");
+    const r = await openRead(path);
+    const reads: Promise<u8[], IoError>[] = [];
+    for (let i = 0; i < 36; i++) {
+      reads.push(r.read(1));
+    }
+    let got = "";
+    for (const p of reads) {
+      got += String.fromCharCode((await p)[0] as number);
+    }
+    expect(got).toBe("0123456789abcdefghijklmnopqrstuvwxyz");
+    r.close();
+    await remove(path);
+  });
+
+  it("runs writes started together in the order they were started", async () => {
+    const path = temp("write-order");
+    const w = await openWrite(path);
+    const writes: Promise<void, IoError>[] = [];
+    let want = "";
+    for (let i = 0; i < 12; i++) {
+      // Larger than the buffer (written at once) and small (gathered), in turn.
+      const piece = i % 3 == 2 ? `<${i}>` : `${i % 10}`.repeat(70000);
+      writes.push(w.write(piece));
+      want += piece;
+    }
+    for (const p of writes) {
+      await p;
+    }
+    await w.close();
+    expect(await readFile(path)).toBe(want);
+    await remove(path);
+  });
+
+  it("fails the reads waiting behind a close with EBADF", async () => {
+    const path = temp("close-waiting");
+    await writeFile(path, "0123456789");
+    const r = await openRead(path);
+    const first = r.read(4);
+    const second = r.read(4);
+    const third = r.read(4);
+    r.close();
+    expect((await first).length).toBe(4);
+    expect(
+      await codeOf(async () => {
+        const b = await second;
+      }),
+    ).toBe("EBADF");
+    expect(
+      await codeOf(async () => {
+        const b = await third;
+      }),
+    ).toBe("EBADF");
+    await remove(path);
+  });
+
   it("writes large and small pieces in order", async () => {
     const path = temp("pieces");
     const w = await openWrite(path);
@@ -141,6 +200,8 @@ describe("stream_sched", () => {
     } catch (e) {
       message = e.message;
     }
-    expect(message.startsWith("ENOENT: no such file or directory, open")).toBe(true);
+    // The whole message, path included; Windows shows the path with its own separator.
+    const shown = platform() == "win32" ? path.replaceAll("/", "\\") : path;
+    expect(message).toBe(`ENOENT: no such file or directory, open '${shown}'`);
   });
 });

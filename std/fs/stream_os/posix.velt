@@ -2,7 +2,9 @@
 // variant of `#fs-stream-os`, std/imports.velt): the C library's file descriptors (`#fd-system`),
 // opened, read and written as whole files are (std/fs/whole/posix_calls.velt). Each call blocks:
 // std/fs/stream_sched.velt runs them on the executor's blocking pool. A failed `open` names the
-// path, as Node's does; a failed `read` or `write` doesn't.
+// path, as Node's does; a failed `read` or `write` doesn't. A file is its descriptor plus one:
+// 0 means "no file" in the stream table, and a process started with standard input closed gets
+// descriptor 0 for the first file it opens.
 
 import { IoError } from "velt/io/error";
 import { closeFd, fstatFd, lastError } from "#fd-system";
@@ -36,7 +38,7 @@ export function openReadOs(path: string, start: u64): Done<OsFile> {
     closeFd(fd);
     return { value: null, error: osError(e, "lseek") };
   }
-  return { value: { os: fd as u64, stats: statsOf(st) }, error: null };
+  return { value: { os: (fd as u64) + 1, stats: statsOf(st) }, error: null };
 }
 
 /** Creates `path` (truncated, or `append`ed to) for writing. */
@@ -45,12 +47,12 @@ export function openWriteOs(path: string, append: bool): Done<u64> {
   if (fd < 0) {
     return { value: null, error: osError(lastError(), "open", path) };
   }
-  return { value: fd as u64, error: null };
+  return { value: (fd as u64) + 1, error: null };
 }
 
 /** Reads up to `end - start` bytes into `bytes[start..end]`: the count (0 at the end). */
 export function readOs(os: u64, bytes: u8[], start: usize, end: usize): Done<usize> {
-  const n = readRetry(os as i32, bytes, start, end);
+  const n = readRetry((os - 1) as i32, bytes, start, end);
   if (n < 0) {
     return { value: null, error: osError(lastError(), "read") };
   }
@@ -59,10 +61,10 @@ export function readOs(os: u64, bytes: u8[], start: usize, end: usize): Done<usi
 
 /** Writes all of `bytes[start..end]`: null, or the error. */
 export function writeOs(os: u64, bytes: readonly u8[], start: usize, end: usize): IoError | null {
-  return writeAll(os as i32, bytes, start, end);
+  return writeAll((os - 1) as i32, bytes, start, end);
 }
 
 /** Closes the file. */
 export function closeOs(os: u64): void {
-  closeFd(os as i32);
+  closeFd((os - 1) as i32);
 }

@@ -1,0 +1,33 @@
+// requires: unix
+// A stream whose file is descriptor 0 (the first file a process opens when its standard input is
+// closed) is a stream like any other: a writer released without `close` still writes its buffer
+// and closes its file, and a reader is closed.
+import { openRead, openWrite, readFile, remove } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+declare c("c") function close(fd: i32): i32;
+
+// Writes through a writer that is released without `close`.
+async function writeUnclosed(path: string): Promise<void> {
+  const w = await openWrite(path);
+  await w.write("kept");
+}
+
+async function main() {
+  const path = `${tmpdir()}/velt-stream-fd0-${uuidv4()}.txt`;
+  // SAFETY: closes this process's standard input, which nothing here reads.
+  const closed = unsafe { close(0) };
+  console.log("stdin closed:", closed);
+  await writeUnclosed(path);
+  console.log("written:", await readFile(path));
+  // The descriptor is free again: a reader gets it, reads through it and gives it back.
+  for (let i = 0; i < 2; i++) {
+    const r = await openRead(path);
+    console.log("read:", await r.readString());
+    r.close();
+  }
+  await remove(path);
+}
+
+main();

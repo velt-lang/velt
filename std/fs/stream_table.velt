@@ -1,11 +1,12 @@
 // velt/fs (internal): the table of open file streams (std/fs/stream_sched.velt): each reader's and
-// writer's file, its turn (`busy`: an operation runs without the table's lock), a reader's bytes
-// left in its range and metadata, a writer's buffer. Every method runs under the table's lock and
-// does no I/O: it hands back the file to close or the bytes to write.
+// writer's file, its turn (`busy`: an operation runs without the table's lock), the operations
+// waiting for it in the order they asked, a reader's bytes left in its range and metadata, a
+// writer's buffer. Every method runs under the table's lock, does no I/O and wakes nobody: it hands
+// back the file to close, the bytes to write and the waiting operations to wake.
 
 import { Stats } from "velt/fs/stats";
 import { StreamLeft } from "velt/fs/stream_left";
-import { CLAIM, CLOSED, StreamTurn, WAIT } from "velt/fs/stream_turn";
+import { CLAIM, CLOSED, GONE, StreamTurn, WAIT } from "velt/fs/stream_turn";
 
 class Entry {
   id: u64;
@@ -18,6 +19,9 @@ class Entry {
   stats: Stats | null = null;
   buffer: u8[] = [];
   shut: bool = false;
+  /** The operations waiting for the turn (each one's wake), from `head` on, first come first. */
+  waiting: (() => void)[] = [];
+  head: usize = 0;
 
   constructor(id: u64, os: u64, writer: bool) {
     this.id = id;
@@ -69,7 +73,61 @@ export class StreamTable {
     return this.add(e);
   }
 
-  /** Stream `h`'s turn, or `WAIT` / `CLOSED`. */
+  /**
+   * Stream `h`'s turn if it is free now, else `WAIT`: the operation is queued behind the ones
+   * that asked before it, and `wake` is called once the turn is handed to it (`handed` next).
+   */
+  wait(h: u64, wake: () => void): StreamTurn {
+    const t = this.claim(h);
+    if (t.status == WAIT) {
+      this.list[this.find(h)].waiting.push(wake);
+    }
+    return t;
+  }
+
+  /**
+   * What a woken operation finds: its stream's turn (handed to it: `busy` stayed set), `GONE`
+   * when the stream was closed since (it gives the turn back with `release` / `releaseWriter`),
+   * `CLOSED` when the stream went while it waited.
+   */
+  handed(h: u64): StreamTurn {
+    const i = this.find(h);
+    if (i < 0) {
+      return { status: CLOSED, os: 0, left: 0, buffered: 0, shut: false };
+    }
+    const e = this.list[i];
+    const status = e.gone ? GONE : CLAIM;
+    return { status, os: e.os, left: e.left, buffered: e.buffer.length, shut: e.shut };
+  }
+
+  /**
+   * Entry `i`'s turn ends: the operations to wake. A stream that is gone leaves the table and
+   * all its waiting operations wake (to `CLOSED`); else the first one waiting gets the turn
+   * (`busy` stays set for it), or the turn is free.
+   */
+  private pass(i: i64): (() => void)[] {
+    const e = this.list[i];
+    if (e.gone) {
+      const all = e.waiting.slice(e.head as i64);
+      e.waiting = [];
+      e.head = 0;
+      this.remove(i);
+      return all;
+    }
+    if (e.head == e.waiting.length) {
+      e.busy = false;
+      return [];
+    }
+    const next = e.waiting[e.head];
+    e.head += 1;
+    if (e.head == e.waiting.length) {
+      e.waiting = [];
+      e.head = 0;
+    }
+    return [next];
+  }
+
+  /** Stream `h`'s turn, or `WAIT` (another operation has it: `wait` next) / `CLOSED`. */
   claim(h: u64): StreamTurn {
     const i = this.find(h);
     if (i < 0 || this.list[i].gone) {
@@ -89,20 +147,19 @@ export class StreamTable {
     return i < 0 || this.list[i].gone ? null : this.list[i].stats;
   }
 
-  /** Reader `h`'s turn ends after reading `got` bytes: the file to close if it was closed. */
-  release(h: u64, got: u64): u64 {
+  /**
+   * Reader `h`'s turn ends after reading `got` bytes: the file to close if it was closed, and
+   * who to wake.
+   */
+  release(h: u64, got: u64): StreamLeft {
     const i = this.find(h);
     if (i < 0) {
-      return 0;
+      return { os: 0, bytes: [], wake: [] };
     }
     const e = this.list[i];
-    e.busy = false;
     e.left = e.left > got ? e.left - got : 0;
-    if (e.gone) {
-      this.remove(i);
-      return e.os;
-    }
-    return 0;
+    const os = e.gone ? e.os : 0;
+    return { os, bytes: [], wake: this.pass(i) };
   }
 
   /** Closes reader `h`: the file to close now (0: none, or a read has it and closes it). */
@@ -135,15 +192,14 @@ export class StreamTable {
   /**
    * Writer `h`'s turn ends: `data` gathered into its buffer, its file closed (`shut`) by the
    * operation. If it was released meanwhile, what is left to write and close (`StreamLeft`, os
-   * 0: none).
+   * 0: none); and who to wake.
    */
   releaseWriter(h: u64, data: u8[] | null, shut: bool): StreamLeft {
     const i = this.find(h);
     if (i < 0) {
-      return { os: 0, bytes: [] };
+      return { os: 0, bytes: [], wake: [] };
     }
     const e = this.list[i];
-    e.busy = false;
     if (data !== null) {
       for (const b of data) {
         e.buffer.push(b);
@@ -152,11 +208,10 @@ export class StreamTable {
     if (shut) {
       e.shut = true;
     }
-    if (e.gone) {
-      this.remove(i);
-      return e.shut ? { os: 0, bytes: [] } : { os: e.os, bytes: e.buffer };
-    }
-    return { os: 0, bytes: [] };
+    const left = e.gone && !e.shut;
+    const os = left ? e.os : 0;
+    const bytes: u8[] = left ? e.buffer : [];
+    return { os, bytes, wake: this.pass(i) };
   }
 
   /**
@@ -166,14 +221,14 @@ export class StreamTable {
   freeWriter(h: u64): StreamLeft {
     const i = this.find(h);
     if (i < 0 || this.list[i].gone) {
-      return { os: 0, bytes: [] };
+      return { os: 0, bytes: [], wake: [] };
     }
     const e = this.list[i];
     if (e.busy) {
       e.gone = true;
-      return { os: 0, bytes: [] };
+      return { os: 0, bytes: [], wake: [] };
     }
     this.remove(i);
-    return e.shut ? { os: 0, bytes: [] } : { os: e.os, bytes: e.buffer };
+    return e.shut ? { os: 0, bytes: [], wake: [] } : { os: e.os, bytes: e.buffer, wake: [] };
   }
 }

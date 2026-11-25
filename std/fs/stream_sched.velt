@@ -9,8 +9,10 @@
 // velt/fs/line_buffer's): a handle is unique per open, so copies of one `FileReader` (a handle
 // struct) share one entry, and a handle used after `close` finds none (`EBADF`). An entry is
 // claimed (`busy`) for each operation, which then runs without the lock; another operation on it
-// waits its turn, so reads and writes through copies stay in order. Closing a reader while a read
-// is in flight closes its file when that read ends. A writer buffers up to 64 KiB, as the
+// waits in the entry's queue (parked: no worker turns for it) and gets the turn when the ones
+// that asked before it are done, so reads and writes started together run in the order they were
+// started, as Node's do. Closing a reader while a read is in flight closes its file when that
+// read ends; operations waiting behind it fail with `EBADF`. A writer buffers up to 64 KiB, as the
 // runtime's did; releasing one that was not closed flushes it on the releasing thread, its errors
 // lost.
 
@@ -24,7 +26,7 @@ import { closeOs, openReadOs, openWriteOs, readOs, writeOs } from "#fs-stream-os
 import { utf8Encode } from "velt/encoding/utf8";
 import { StreamLeft } from "velt/fs/stream_left";
 import { StreamTable } from "velt/fs/stream_table";
-import { CLOSED, StreamTurn, WAIT } from "velt/fs/stream_turn";
+import { CLOSED, GONE, StreamTurn, WAIT } from "velt/fs/stream_turn";
 
 /** A writer's buffer: writes smaller than this are gathered until it would overflow. */
 const BUFFER: usize = 65536;
@@ -54,15 +56,35 @@ function closed(): IoStatus {
   return { code: 16, message: "handle is closed" };
 }
 
-/** Takes handle `h`'s turn: its entry's state then, waiting while another operation has it. */
-async function turn(h: u64): Promise<StreamTurn> {
-  while (true) {
-    const t = table().with((s) => s.claim(h));
-    if (t.status != WAIT) {
-      return t;
-    }
-    await yieldNow();
+/**
+ * Takes the turn of handle `h` (a writer's, or a reader's): its entry's state then. While another
+ * operation has it, this one waits in the entry's queue, behind the ones that asked before, until
+ * the turn is handed to it.
+ */
+async function turn(h: u64, writer: bool): Promise<StreamTurn> {
+  const first = table().with((s) => s.claim(h));
+  if (first.status != WAIT) {
+    return first;
   }
+  const w = Promise.withResolvers<void>();
+  const wake = w.resolve;
+  const queued = table().with((s) => s.wait(h, wake));
+  if (queued.status != WAIT) {
+    return queued;
+  }
+  await w.promise;
+  const t = table().with((s) => s.handed(h));
+  if (t.status != GONE) {
+    return t;
+  }
+  // Closed while this operation waited with the turn in hand: the turn goes back, which ends
+  // the stream as the operation in flight at its close would have.
+  if (writer) {
+    settle(table().with((s) => s.releaseWriter(h, null, false)));
+  } else {
+    finish(table().with((s) => s.release(h, 0)));
+  }
+  return { status: CLOSED, os: 0, left: 0, buffered: 0, shut: false };
 }
 
 /** Runs `job` on the blocking pool. */
@@ -134,7 +156,7 @@ function readChunk(os: u64, n: usize): Done<u8[]> {
 
 /** The next 1..max bytes (`max` 0: 64 KiB), empty at the end of the file. */
 export async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>> {
-  const t = await turn(r);
+  const t = await turn(r, false);
   if (t.status == CLOSED) {
     const c = closed();
     return { code: c.code, message: c.message, value: [] };
@@ -159,13 +181,19 @@ export async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult
 
 /** Closes a reader (its file once no read is in flight); closing it again does nothing. */
 export function velt_rt_fs_reader_close(r: u64) {
-  finish(table().with((s) => s.closeReader(r)));
-}
-
-/** Closes the file `release`, `closeReader` or `free` gave back (0: none). */
-function finish(os: u64) {
+  const os = table().with((s) => s.closeReader(r));
   if (os != 0) {
     closeOs(os);
+  }
+}
+
+/** After a reader's turn: wakes who got it next, and closes the file it left (0: none). */
+function finish(left: StreamLeft) {
+  for (const wake of left.wake) {
+    wake();
+  }
+  if (left.os != 0) {
+    closeOs(left.os);
   }
 }
 
@@ -182,14 +210,16 @@ export async function velt_rt_fs_open_write(path: string, append: bool): Promise
   return { code: 0, message: "", value: table().with((s) => s.addWriter(os)) };
 }
 
-/** Writes `buffered` and then `data` (either may be empty) to file `os`. */
-function writeBoth(os: u64, buffered: u8[], data: u8[]): Done<bool> {
-  const first = writeOs(os, buffered, 0, buffered.length as usize);
-  if (first !== null) {
-    return { value: null, error: first };
+/** Writes `buffered` and then `data` (either may be empty) to file `os`, then closes it (`close`). */
+function writeBoth(os: u64, buffered: u8[], data: u8[], close: bool): Done<bool> {
+  let failed = writeOs(os, buffered, 0, buffered.length as usize);
+  if (failed === null) {
+    failed = writeOs(os, data, 0, data.length as usize);
   }
-  const then = writeOs(os, data, 0, data.length as usize);
-  return then === null ? { value: true, error: null } : { value: null, error: then };
+  if (close) {
+    closeOs(os);
+  }
+  return failed === null ? { value: true, error: null } : { value: null, error: failed };
 }
 
 /**
@@ -197,7 +227,7 @@ function writeBoth(os: u64, buffered: u8[], data: u8[]): Done<bool> {
  * would overflow (`flush`: always), the file closed after (`close`).
  */
 async function writerOp(w: u64, data: u8[], flush: bool, close: bool): Promise<IoStatus> {
-  const t = await turn(w);
+  const t = await turn(w, true);
   if (t.status == CLOSED) {
     return close ? { code: 0, message: "" } : closed();
   }
@@ -213,10 +243,7 @@ async function writerOp(w: u64, data: u8[], flush: bool, close: bool): Promise<I
   }
   const buffered = table().with((s) => s.takeBuffer(w));
   const os = t.os;
-  const d = await blocking<bool>(() => writeBoth(os, buffered, data));
-  if (close) {
-    closeOs(os);
-  }
+  const d = await blocking<bool>(() => writeBoth(os, buffered, data, close));
   settle(table().with((s) => s.releaseWriter(w, null, close)));
   return d.error === null ? { code: 0, message: "" } : ioStatusOf(d.error);
 }
@@ -247,8 +274,14 @@ export function velt_rt_fs_writer_free(w: u64) {
   settle(table().with((s) => s.freeWriter(w)));
 }
 
-/** What a released writer left: its buffer written (errors lost) and its file closed. */
+/**
+ * After a writer's turn: wakes who got it next; what a released writer left is written (errors
+ * lost) and its file closed.
+ */
 function settle(left: StreamLeft) {
+  for (const wake of left.wake) {
+    wake();
+  }
   if (left.os != 0) {
     const ignored = writeOs(left.os, left.bytes, 0, left.bytes.length as usize);
     closeOs(left.os);
