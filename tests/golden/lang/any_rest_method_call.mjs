@@ -1,6 +1,12 @@
 // Node twin of any_rest_method_call.velt: the same program with its types removed.
 // A method with a rest parameter called through `any`: the arguments from its position on are
 // the rest array, as at a typed call (#3812).
+// No argument written is not `undefined` written.
+class Counter {
+  join(...p) {
+    return p.length;
+  }
+}
 
 class C {
   tag = "c";
@@ -55,6 +61,10 @@ async function main() {
   const obj = { plain: (...xs) => xs.join("-") };
   const lit = obj;
   console.log(lit.plain("p", "q"), lit.plain());
+  const l = new Counter();
+  console.log(l.join(), l.join(undefined), l.join(undefined, undefined), l.join(null), l.join("a"));
+  const arr = [1, 2];
+  console.log(arr.join(), arr.join(undefined), arr.join("-"));
   // Through a proxy.
   const p = new Proxy(new C(), {});
   console.log(p.join("x", "y"), p.join(), p.sum(4, 5));

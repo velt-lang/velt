@@ -361,10 +361,16 @@ impl FnCx<'_, '_> {
             self.note_dyn_members();
             let recv = self.share_if_place(recv);
             return Ok(self.with_temp("<list>", recv, span, span, |lw, v| {
-                let undefined = || synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
-                let sep = args.first().cloned().unwrap_or_else(undefined);
                 let site = super::any_text::text_site_arg(span);
-                let call = hooks::any_join_method(ty::Any::of(v.clone()), ty::Any::of(sep), site);
+                let call = match args.first() {
+                    Some(sep) => {
+                        let sep = ty::Any::of(sep.clone());
+                        hooks::any_join_method(ty::Any::of(v.clone()), sep, site)
+                    }
+                    // No argument written is not `undefined` written: another value's own
+                    // `join` gets none (#3812).
+                    None => hooks::any_join_none(ty::Any::of(v.clone()), site),
+                };
                 lw.text_helper_call(call, span)
             }));
         }
