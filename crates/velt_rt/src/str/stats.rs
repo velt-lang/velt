@@ -13,9 +13,9 @@
 //! takes back from it (`VeltBytes::take_vec`), since compiled code frees and allocates those as
 //! its own blocks: equal numbers at exit mean compiled code freed everything it allocated (leak
 //! checks, semantics stage 2); the counts are frozen at a moment when they were equal, or else
-//! once no task is left that could make them so ([`freeze`]). `panics caught=<n>`: Velt panics stopped at a promise that catches them
-//! (`catchPanic`, panic.rs): each leaks what the panicked code held, so a leak check of such a run
-//! cannot pass and is skipped.
+//! once no task is left that could make them so ([`freeze`]). `panics caught=<n>`: Velt panics the runtime stopped at a
+//! promise that catches them (none since `catchPanic` moved to std, which leaves the count at 0);
+//! each leaks what the panicked code held, so a leak check of such a run is skipped.
 
 #[cfg(debug_assertions)]
 mod counters {
