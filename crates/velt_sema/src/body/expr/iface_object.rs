@@ -61,6 +61,7 @@ pub(super) struct MethodSig {
     throws: Option<TyId>,
     default: Option<DefId>,
     is_getter: bool,
+    rest: bool,
     /// A generic method as the interface declares it (over its own numbering).
     raw: Option<crate::defs::IfaceMethod>,
 }
@@ -154,6 +155,7 @@ impl FnCx<'_, '_> {
                     m.throws.and_then(|t| t.ty),
                     m.default,
                     m.is_getter,
+                    m.rest,
                     (!m.generics.names.is_empty()).then(|| m.clone()),
                 )
             })
@@ -163,7 +165,7 @@ impl FnCx<'_, '_> {
         let mut sargs = iargs.clone();
         sargs.push(self_ty);
         let mut methods = vec![];
-        for (name, params, ret, throws, default, is_getter, raw) in raw {
+        for (name, params, ret, throws, default, is_getter, rest, raw) in raw {
             let params = params
                 .into_iter()
                 .map(|p| ParamSig {
@@ -178,6 +180,7 @@ impl FnCx<'_, '_> {
                 throws: throws.map(|t| self.cx.subst(t, &sargs)),
                 default,
                 is_getter,
+                rest,
                 raw,
             });
         }
@@ -296,7 +299,7 @@ impl FnCx<'_, '_> {
                         .and_then(|v| self.branches_throw(v, exp))
                     {
                         let params = m.params.iter().map(|p| p.ty).collect();
-                        exp = self.fn_type(params, m.ret, Some(t));
+                        exp = self.fn_type_rest(params, m.ret, Some(t), m.rest);
                     }
                     let (h, this) = match v {
                         Some(v) => self.slot_fn(v, exp, (iface, slot), dyn_ty),
@@ -694,12 +697,23 @@ impl FnCx<'_, '_> {
 
     /// `(params) => ret throws err` (`err` unknown: `error`, so a closure's comes from its body).
     fn fn_type(&mut self, params: Vec<TyId>, ret: TyId, throws: Option<TyId>) -> TyId {
+        self.fn_type_rest(params, ret, throws, false)
+    }
+
+    /// `fn_type`, ending in a rest parameter when `rest`.
+    fn fn_type_rest(
+        &mut self,
+        params: Vec<TyId>,
+        ret: TyId,
+        throws: Option<TyId>,
+        rest: bool,
+    ) -> TyId {
         let throws = throws.unwrap_or(self.cx.ty.error);
         self.cx.ty.intern(TyKind::FnPtr {
             params,
             ret,
             throws,
-            rest: false,
+            rest,
         })
     }
 
@@ -715,7 +729,7 @@ impl FnCx<'_, '_> {
             }
             _ => m.ret,
         };
-        self.fn_type(params, ret, m.throws)
+        self.fn_type_rest(params, ret, m.throws, m.rest)
     }
 
     /// The result type of a function value of type `t` (`None` if it is no function).
@@ -774,7 +788,7 @@ impl FnCx<'_, '_> {
             }
             _ => m.ret,
         };
-        let t = self.fn_type(params, ret, Some(throws));
+        let t = self.fn_type_rest(params, ret, Some(throws), m.rest);
         self.coerce(h, t)
     }
 }

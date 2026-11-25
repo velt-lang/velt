@@ -1,0 +1,4 @@
+error: method `add` has a different signature than required by `Adder`
+`Adder.add` ends in a rest parameter (`...xs: T[]`) and this method does not
+error: method `take` has a different signature than required by `Taker`
+this method ends in a rest parameter (`...xs: T[]`) and `Taker.take` does not
