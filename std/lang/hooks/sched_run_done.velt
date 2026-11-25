@@ -1,0 +1,118 @@
+// velt/lang/hooks (internal): the end of a task's root and of a task under the executor in Velt
+// (sched_run.velt `pollRunning`, `runEnd`): the root's result to its join handle and its awaiter
+// woken; the task's last references given back.
+
+import { stateDrop } from "velt/lang/intrinsics";
+import * as fg from "./sched_foreign";
+import * as jn from "./sched_join";
+import * as lk from "./sched_lock";
+import * as me from "./sched_main_end";
+import * as mk from "./sched_make";
+import * as m from "./sched_mem";
+import * as micro from "./sched_micro";
+import * as node from "./sched_node";
+import * as wn from "./sched_node_woken";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/**
+ * Task `k`'s root is done: its result to the join handle, its awaiter woken; with the slot's
+ * locks on, at the poll's end (`jn.polledFlags`); at a lazy worker 0 (sched_lock.velt) in line,
+ * without the slot's lock (`jn.joinDoneLazy`).
+ */
+export function rootDone(e: usize, k: usize): void {
+  const tr = m.ld(k + t.T_TRANSFER);
+  if (tr !== 0) {
+    // SAFETY: the finished root's result is at its state's offset 0; the glue transfers it in
+    // place for the joining task (which may be on another worker), here, while promises the task
+    // started (which may still use the result's objects) are on this thread.
+    unsafe {
+      stateDrop(tr, m.ld(k + t.T_ROOT));
+    }
+  }
+  const rsize = m.ld(k + t.T_RESULT_SIZE);
+  if (rsize !== 0) {
+    m.copy(k + t.T_SLOT, m.ld(k + t.T_ROOT), rsize);
+  }
+  if (t.has(k, t.ROOT)) {
+    me.mainDone(e, k);
+    return;
+  }
+  t.flags(k, t.ROOT_DONE, 0);
+  // The join handle may be polled or dropped on another thread meanwhile: the slot's lock (no
+  // lock with one thread at the executor: sched_task.velt `E_SOLO`, sched_lock.velt `LK_NONE`).
+  if (m.ld32(e + t.E_SOLO) !== 0) {
+    const s = m.ld32(k + t.T_JOIN_STATE);
+    if ((s & t.J_FOREIGN) !== 0) {
+      return jn.joinDone(e, k, lk.LK_ON);
+    }
+    const joiner = m.ld(k + t.T_JOINER);
+    m.st(k + t.T_JOINER, 0);
+    m.st32(k + t.T_JOIN_STATE, s | t.J_DONE);
+    if (joiner !== 0) {
+      // Behind the tasks queued already (one thread queues no wake in a slot).
+      m.wakeOwned(joiner);
+    }
+    if ((s & t.J_HANDLE) === 0) {
+      jn.dropResult(k);
+    }
+    return;
+  }
+  if (lk.mode() === lk.LK_ON) {
+    // The slot ends at the poll's end, after its microtasks and the publish (`jn.polledFlags`).
+    m.or32(k + t.T_FLAGS, t.JOIN_DUE);
+    return;
+  }
+  const kind = jn.kindFor(k);
+  if (kind === lk.LK_LAZY) {
+    jn.joinDoneLazy(e, k, kind);
+    return;
+  }
+  jn.joinDone(e, k, kind);
+}
+
+/** Task `k` is done: its root and the promises it drives. */
+export function finish(e: usize, k: usize): void {
+  if ((m.ld32(k + t.T_FLAGS) & (t.ROOT | t.COUNTED)) === t.ROOT) {
+    me.mainFinish(e, k);
+    return;
+  }
+  m.store32(k + t.T_STATE, t.DONE);
+  // A promise woken while it waited, that finished before the task took it (its owner adopted
+  // it, or a microtask ran it), is still on the woken stack with a reference: given back.
+  let n = wn.takeWoken(k);
+  while (n !== 0) {
+    const next = wn.nextWoken(n);
+    node.run(k, n, true, 1);
+    node.release(n);
+    n = next;
+  }
+  micro.free(k);
+  // Not the root of `main`, or that root counted as live (a C thread's task: sched_foreign.velt).
+  const foreign = (m.ld32(k + t.T_JOIN_STATE) & t.J_FOREIGN) !== 0;
+  if (m.ld32(e + t.E_SOLO) === 0) {
+    const g = m.ld(e + t.E_MAIN);
+    if (e !== g) {
+      // What it printed is published before worker 0 can see it was the last live task and end
+      // the process, as for the root of `main` (`mainDone`).
+      wk.publishPrinted(e);
+    }
+    // The executor's reference first: once the count below says no task is live, worker 0 may
+    // end the program, and a block freed after that counts as leaked (`VELT_RC_STATS`).
+    if (foreign) {
+      return fg.ended(e, g, k);
+    }
+    wk.releaseHere(k);
+    if (mk.liveDown(g, e) === 1 && e !== g) {
+      // The last live task: worker 0 may wait for that in `schedFinish`.
+      wk.unpark(g);
+    }
+    return;
+  }
+  // The only thread at the executor: worker 0's own count.
+  if (foreign) {
+    return fg.ended(e, e, k);
+  }
+  m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
+  wk.releaseHere(k);
+}

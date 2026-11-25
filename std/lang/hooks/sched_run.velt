@@ -4,15 +4,11 @@
 // sleep and no queued microtask polls its root and nothing else; the end of its root and of the
 // task, and its join handle. The worker loop around it is sched_loop.velt.
 
-import { inline, noInline, stateDrop, statePoll, stdUsed } from "velt/lang/intrinsics";
+import { inline, noInline, statePoll, stdUsed } from "velt/lang/intrinsics";
 import * as bd from "./sched_budget";
 import * as fi from "./sched_fire";
-import * as fg from "./sched_foreign";
 import * as jn from "./sched_join";
-import * as lk from "./sched_lock";
-import * as me from "./sched_main_end";
 import * as m from "./sched_mem";
-import * as mk from "./sched_make";
 import * as micro from "./sched_micro";
 import * as mod from "./sched_module";
 import * as node from "./sched_node";
@@ -21,6 +17,7 @@ import * as rp from "./sched_node_report";
 import * as nc from "./sched_node_catch";
 import * as order from "./sched_order";
 import * as q from "./sched_queue";
+import * as dn from "./sched_run_done";
 import * as sl from "./sched_sleep";
 import * as sc from "./sched_sleep_carry";
 import * as t from "./sched_task";
@@ -65,9 +62,27 @@ export function run(e: usize, k: usize, mode: u32): void {
   // placed in the last poll, `ROOT_ALONE`, polls it in `runOther`).
   if ((fl & (t.LOCALS | t.ROOT_DONE | t.TOUCHED | nc.T_CATCHES | t.FRESH | t.ROOT_ALONE)) === 0) {
     pollRunning(e, k);
+  } else if (
+    stdUsed("yields") &&
+    (fl & TURNS) === (t.YIELDS | t.LOCALS | t.ROOT_ALONE) &&
+    m.load(k + t.T_WOKEN) === 0
+  ) {
+    // Its whole poll, out of line: no other task pays for its end (`ended`).
+    turnsPoll(e, k, mode);
+    return;
   } else {
     runOther(e, k, fl);
   }
+  ended(e, k, mode, false);
+}
+
+/**
+ * The end of `run`'s poll of task `k`, once its root or its jobs ran: its microtasks, then the
+ * task queued again, parked or finished. `yields`: tried first, the end of a task with yields
+ * listed that holds neither the module lock nor a timer's turn (`runEnd`'s first case, in line).
+ */
+@inline("always")
+function ended(e: usize, k: usize, mode: u32, yields: bool): void {
   if (m.ld(k + t.T_MICRO) !== 0 || m.ld(k + t.T_UNHANDLED) !== 0) {
     drain(e, k);
   }
@@ -88,7 +103,11 @@ export function run(e: usize, k: usize, mode: u32): void {
   // sequentially consistent store or read-modify-write (the state's `cas32` or `store32` here, in
   // `runEnd` and `finish`, a wake's state CAS), the fence that pair needs; a release store would
   // not do (a store then a load may pass each other on x86-64 and arm64).
-  if ((m.ld32(k + t.T_FLAGS) & (t.LOCALS | t.ROOT_DONE | t.HOLDS | t.TOUCHED)) !== 0) {
+  const end = m.ld32(k + t.T_FLAGS);
+  if (yields && (end & (t.YIELDS | t.HOLDS | t.TOUCHED)) === t.YIELDS) {
+    m.store32(k + t.T_STATE, t.SCHEDULED);
+    requeue(e, k, mode);
+  } else if ((end & (t.LOCALS | t.ROOT_DONE | t.HOLDS | t.TOUCHED)) !== 0) {
     runEnd(e, k, mode);
   } else if (m.cas32(k + t.T_STATE, t.RUNNING, t.IDLE) !== t.RUNNING) {
     // Woken during its poll.
@@ -123,6 +142,8 @@ function again(e: usize, mode: u32): bool {
  */
 @noInline
 function runOther(e: usize, k: usize, fl: u32): void {
+  // The stamp + 1 of the root's turn this poll has with no record (0: none).
+  let rootTurn: usize = 0;
   if (stdUsed("yields")) {
     yl.begin(k, fl);
     if ((fl & t.ROOT_ALONE) !== 0) {
@@ -131,7 +152,7 @@ function runOther(e: usize, k: usize, fl: u32): void {
       // poll itself when none are.
       t.flags(k, 0, t.ROOT_ALONE);
       if ((fl & t.YIELDS) !== 0) {
-        tn.rootTurnNext(k);
+        rootTurn = tn.rootTurn(k);
       } else {
         ls.park(k);
       }
@@ -143,11 +164,45 @@ function runOther(e: usize, k: usize, fl: u32): void {
   if ((fl & t.CANCEL) !== 0 && cancelled(k)) {
     // Nothing can wake it: its root is dropped, not polled (sched_task_lost.velt).
   } else if ((fl & t.LOCALS) !== 0) {
-    runWoken(e, k, fl);
+    runWoken(e, k, fl, rootTurn);
   } else if ((fl & (t.ROOT_DONE | nc.T_CATCHES)) === 0) {
     pollRunning(e, k);
   } else if ((fl & t.ROOT_DONE) === 0) {
     pollRootCaught(e, k);
+  }
+}
+
+/**
+ * The flags `turnsPoll` asks about: those that give a poll a job other than its yields' turns (a
+ * new yield generation, a due or a carried sleep, the module lock, its root's drop). `CANCEL` never
+ * comes with yields listed (`runEnd` looks for those first); it is here so that this does not rest
+ * on that.
+ */
+const TURNS: u32 =
+  t.YIELDS | t.LOCALS | t.ROOT_ALONE | t.FRESH | t.TIMED | t.CARRIED | t.TOUCHED | t.CANCEL;
+
+/**
+ * `run`'s poll, from its jobs to its end, of a task whose only jobs are its yields' turns, the
+ * first its root's, placed in the last poll with no record (the children of an inline `Promise.all`
+ * its root awaits, #3781): no stored yield, due sleep, carried sleep, woken promise or module lock
+ * (`TURNS`, `run`). `runOther`'s steps that are left, then the poll's end, where yields are mostly
+ * listed again.
+ */
+@noInline
+function turnsPoll(e: usize, k: usize, mode: u32): void {
+  rootTurns(e, k);
+  ended(e, k, mode, true);
+}
+
+/** `turnsPoll`'s jobs: `runWoken`'s steps that are left for such a task. */
+@inline("always")
+function rootTurns(e: usize, k: usize): void {
+  t.flags(k, 0, t.ROOT_ALONE | t.POLLED);
+  fi.fireYields(e, k, tn.rootTurn(k));
+  yieldsOver(k);
+  if (!t.has(k, t.POLLED)) {
+    bd.refill();
+    pollRoot(e, k);
   }
 }
 
@@ -174,7 +229,7 @@ function cancelled(k: usize): bool {
  * again then, so a root that yielded there waits for the task's next poll.
  */
 @inline("always")
-function runWoken(e: usize, k: usize, fl: u32): void {
+function runWoken(e: usize, k: usize, fl: u32, rootTurn: usize): void {
   sc.adoptCarried(e, k, fl);
   t.flags(k, 0, t.POLLED);
   if ((fl & t.LOCALS) !== 0) {
@@ -191,14 +246,26 @@ function runWoken(e: usize, k: usize, fl: u32): void {
     fi.fireDue(e, k);
   }
   if (stdUsed("yields") && (fl & t.YIELDS) !== 0) {
-    fi.fireYields(e, k);
-    ls.park(k);
-    leftLocals(k);
+    fi.fireYields(e, k, rootTurn);
+    yieldsOver(k);
   }
   if (!t.has(k, t.POLLED)) {
     // After its promises, the root's turn has a budget of its own (sched_budget.velt).
     bd.refill();
     pollRoot(e, k);
+  }
+}
+
+/**
+ * Task `k`'s yields had their turns. Unless yields made meanwhile are listed (one test then), its
+ * block is parked (sched_yield_list.velt `park`) and its polls may be its root's alone again
+ * (`leftLocals`).
+ */
+@inline("always")
+function yieldsOver(k: usize): void {
+  if (!t.has(k, t.YIELDS)) {
+    ls.park(k);
+    leftLocals(k);
   }
 }
 
@@ -240,7 +307,7 @@ function runEnd(e: usize, k: usize, mode: u32): void {
     m.store32(k + t.T_STATE, t.SCHEDULED);
     requeue(e, k, mode);
   } else if (t.has(k, t.ROOT_DONE) && m.ld(k + t.T_LOCALS) === 0) {
-    finish(e, k);
+    dn.finish(e, k);
   } else if (m.load(k + t.T_WOKEN) !== 0) {
     // Promises woken during this poll run in its next one.
     m.store32(k + t.T_STATE, t.SCHEDULED);
@@ -301,7 +368,7 @@ function pollRoot(e: usize, k: usize): void {
 function pollRootCaught(e: usize, k: usize): void {
   const r = nc.caughtPoll(e, m.ld(k + t.T_POLL), m.ld(k + t.T_ROOT), k + t.T_CX);
   if (r === 1) {
-    rootDone(e, k);
+    dn.rootDone(e, k);
   } else if (r === 2) {
     jn.rootPanicked(e, k, nc.caughtPanic(e));
   }
@@ -313,7 +380,7 @@ function pollRunning(e: usize, k: usize): void {
   // SAFETY: `k`'s root is the state of its poll function, not finished; `k + T_CX` is its cx.
   const ready = unsafe { statePoll(m.ld(k + t.T_POLL), m.ld(k + t.T_ROOT), k + t.T_CX) };
   if (ready === 1) {
-    rootDone(e, k);
+    dn.rootDone(e, k);
   }
 }
 
@@ -357,106 +424,4 @@ export function drain(e: usize, k: usize): void {
 export function pollRootAgain(e: usize, k: usize): void {
   pollRoot(e, k);
   t.flags(k, t.POLLED, 0);
-}
-
-/**
- * Task `k`'s root is done: its result to the join handle, its awaiter woken; with the slot's
- * locks on, at the poll's end (`jn.polledFlags`); at a lazy worker 0 (sched_lock.velt) in line,
- * without the slot's lock (`jn.joinDoneLazy`).
- */
-function rootDone(e: usize, k: usize): void {
-  const tr = m.ld(k + t.T_TRANSFER);
-  if (tr !== 0) {
-    // SAFETY: the finished root's result is at its state's offset 0; the glue transfers it in
-    // place for the joining task (which may be on another worker), here, while promises the task
-    // started (which may still use the result's objects) are on this thread.
-    unsafe {
-      stateDrop(tr, m.ld(k + t.T_ROOT));
-    }
-  }
-  const rsize = m.ld(k + t.T_RESULT_SIZE);
-  if (rsize !== 0) {
-    m.copy(k + t.T_SLOT, m.ld(k + t.T_ROOT), rsize);
-  }
-  if (t.has(k, t.ROOT)) {
-    me.mainDone(e, k);
-    return;
-  }
-  t.flags(k, t.ROOT_DONE, 0);
-  // The join handle may be polled or dropped on another thread meanwhile: the slot's lock (no
-  // lock with one thread at the executor: sched_task.velt `E_SOLO`, sched_lock.velt `LK_NONE`).
-  if (m.ld32(e + t.E_SOLO) !== 0) {
-    const s = m.ld32(k + t.T_JOIN_STATE);
-    if ((s & t.J_FOREIGN) !== 0) {
-      return jn.joinDone(e, k, lk.LK_ON);
-    }
-    const joiner = m.ld(k + t.T_JOINER);
-    m.st(k + t.T_JOINER, 0);
-    m.st32(k + t.T_JOIN_STATE, s | t.J_DONE);
-    if (joiner !== 0) {
-      // Behind the tasks queued already (one thread queues no wake in a slot).
-      m.wakeOwned(joiner);
-    }
-    if ((s & t.J_HANDLE) === 0) {
-      jn.dropResult(k);
-    }
-    return;
-  }
-  if (lk.mode() === lk.LK_ON) {
-    // The slot ends at the poll's end, after its microtasks and the publish (`jn.polledFlags`).
-    m.or32(k + t.T_FLAGS, t.JOIN_DUE);
-    return;
-  }
-  const kind = jn.kindFor(k);
-  if (kind === lk.LK_LAZY) {
-    jn.joinDoneLazy(e, k, kind);
-    return;
-  }
-  jn.joinDone(e, k, kind);
-}
-
-/** Task `k` is done: its root and the promises it drives. */
-function finish(e: usize, k: usize): void {
-  if ((m.ld32(k + t.T_FLAGS) & (t.ROOT | t.COUNTED)) === t.ROOT) {
-    me.mainFinish(e, k);
-    return;
-  }
-  m.store32(k + t.T_STATE, t.DONE);
-  // A promise woken while it waited, that finished before the task took it (its owner adopted
-  // it, or a microtask ran it), is still on the woken stack with a reference: given back.
-  let n = wn.takeWoken(k);
-  while (n !== 0) {
-    const next = wn.nextWoken(n);
-    node.run(k, n, true, 1);
-    node.release(n);
-    n = next;
-  }
-  micro.free(k);
-  // Not the root of `main`, or that root counted as live (a C thread's task: sched_foreign.velt).
-  const foreign = (m.ld32(k + t.T_JOIN_STATE) & t.J_FOREIGN) !== 0;
-  if (m.ld32(e + t.E_SOLO) === 0) {
-    const g = m.ld(e + t.E_MAIN);
-    if (e !== g) {
-      // What it printed is published before worker 0 can see it was the last live task and end
-      // the process, as for the root of `main` (`mainDone`).
-      wk.publishPrinted(e);
-    }
-    // The executor's reference first: once the count below says no task is live, worker 0 may
-    // end the program, and a block freed after that counts as leaked (`VELT_RC_STATS`).
-    if (foreign) {
-      return fg.ended(e, g, k);
-    }
-    wk.releaseHere(k);
-    if (mk.liveDown(g, e) === 1 && e !== g) {
-      // The last live task: worker 0 may wait for that in `schedFinish`.
-      wk.unpark(g);
-    }
-    return;
-  }
-  // The only thread at the executor: worker 0's own count.
-  if (foreign) {
-    return fg.ended(e, e, k);
-  }
-  m.st(e + t.E_LIVE, m.ld(e + t.E_LIVE) - 1);
-  wk.releaseHere(k);
 }
