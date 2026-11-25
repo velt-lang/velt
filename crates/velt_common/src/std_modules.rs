@@ -212,6 +212,8 @@ table! {
     net_dns_lookup_sched => "net/dns/lookup_sched",
     net_tls_fd_client => "net/tls/fd_client",
     net_tls_fd_server => "net/tls/fd_server",
+    /// The folder of the `fetch` classes (`Headers`, `Request`, `Response`, `Blob`).
+    net_http_fetch => "net/http/fetch",
     net_http_fetch_response => "net/http/fetch/response",
     /// `velt/ops/operators`, the interfaces of the operator methods `velt/ops` exports (sema
     /// `collect/operators.rs`).

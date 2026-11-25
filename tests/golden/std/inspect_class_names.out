@@ -1,0 +1,77 @@
+EventTarget {} Tg {}
+AbortController { signal: AbortSignal { aborted: false } } Ac { signal: AbortSignal { aborted: false } }
+[ Tg {} ] { a: Ac { signal: AbortSignal { aborted: false } } }
+{ a: { t: Tg {} } } [ [ Tg {} ] ]
+Headers { a: '1' } Headers { a: '1' }
+Blob { size: 2, type: '' } Blob { size: 2, type: 'text/plain' }
+[ Headers { a: '1' } ] { b: Blob { size: 2, type: '' } }
+{ a: { h: Headers { a: '1' }, b: Blob { size: 2, type: '' } } }
+Request {
+  method: 'GET',
+  url: 'https://a.b/',
+  headers: Headers {},
+  destination: '',
+  referrer: 'about:client',
+  referrerPolicy: '',
+  mode: 'cors',
+  credentials: 'same-origin',
+  cache: 'default',
+  redirect: 'follow',
+  integrity: '',
+  keepalive: false,
+  isReloadNavigation: false,
+  isHistoryNavigation: false,
+  signal: AbortSignal { aborted: false }
+}
+Request {
+  method: 'GET',
+  url: 'https://a.b/',
+  headers: Headers {},
+  destination: '',
+  referrer: 'about:client',
+  referrerPolicy: '',
+  mode: 'cors',
+  credentials: 'same-origin',
+  cache: 'default',
+  redirect: 'follow',
+  integrity: '',
+  keepalive: false,
+  isReloadNavigation: false,
+  isHistoryNavigation: false,
+  signal: AbortSignal { aborted: false }
+}
+Response {
+  status: 200,
+  statusText: '',
+  headers: Headers { 'content-type': 'text/plain;charset=UTF-8' },
+  body: ReadableStream { locked: false, state: 'readable', supportsBYOB: true },
+  bodyUsed: false,
+  ok: true,
+  redirected: false,
+  type: 'default',
+  url: ''
+}
+Response {
+  status: 200,
+  statusText: '',
+  headers: Headers { 'content-type': 'text/plain;charset=UTF-8' },
+  body: ReadableStream { locked: false, state: 'readable', supportsBYOB: true },
+  bodyUsed: false,
+  ok: true,
+  redirected: false,
+  type: 'default',
+  url: ''
+}
+[
+  Response {
+    status: 200,
+    statusText: '',
+    headers: Headers { 'content-type': 'text/plain;charset=UTF-8' },
+    body: ReadableStream { locked: false, state: 'readable', supportsBYOB: true },
+    bodyUsed: false,
+    ok: true,
+    redirected: false,
+    type: 'default',
+    url: ''
+  }
+]
