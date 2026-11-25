@@ -3,8 +3,8 @@
 // turn Node 22's does (#3711), also from a pull that settles later and for `next()` calls made
 // at once, and leaving the loop early (`break`, a throw, `return`) lets the stream go before the
 // cancel settles (#3717) and goes on in Node's turn (#3741).
-// `loop` makes its stream itself: one passed in as a parameter is #3761. The Node twin is
-// streams_for_await.mjs.
+// `loop` makes its stream after its chain of microtasks: a stream made before it is #3775
+// (tests/golden/bugs/streams_for_await_stream_first). The Node twin is streams_for_await.mjs.
 function ticks(log: string[]): Promise<void> {
   let p = Promise.resolve();
   for (let i = 0; i < 20; i++) {
