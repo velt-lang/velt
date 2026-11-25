@@ -8,10 +8,8 @@ import {
   xferDefer,
   xferEnd,
   xferFind,
-  xferForgetSince,
   xferKeepBegin,
   xferKeeps,
-  xferMark,
   xferRecord,
   xferResume,
   xferShareBegin,
@@ -95,58 +93,5 @@ describe("the transfer map", () => {
     xferEnd();
     xferEnd();
     expect(xferKeeps()).toBe(0);
-  });
-
-  it("ends what a panicked poll opened, releasing what it deferred", () => {
-    DROPPED.set(0);
-    const drop = fnAddress(countDrop);
-    const mark = xferMark();
-    xferBegin();
-    xferBegin();
-    xferRecord(A, A2);
-    expect(xferDefer(B, drop)).toBe(1);
-    xferForgetSince(mark);
-    expect(DROPPED.get()).toBe(B as u64);
-    expect(xferFind(A)).toBe(1);
-  });
-
-  it("lets a transfer suspended around the poll go on", () => {
-    DROPPED.set(0);
-    const drop = fnAddress(countDrop);
-    xferBegin();
-    xferRecord(A, A2);
-    const depth = xferSuspend();
-    // A class's own clone() runs a poll that catches, which panics inside a transfer of its own,
-    // itself set aside around more user code.
-    const mark = xferMark();
-    xferBegin();
-    expect(xferDefer(C, drop)).toBe(1);
-    xferSuspend();
-    xferBegin();
-    expect(xferDefer(B, drop)).toBe(1);
-    xferForgetSince(mark);
-    expect(DROPPED.get()).toBe((B + C) as u64);
-    expect(xferFind(A)).toBe(1);
-    xferResume(depth);
-    expect(xferFind(A)).toBe(A2);
-    xferEnd();
-    expect(xferFind(A)).toBe(1);
-  });
-
-  it("puts back a transfer the poll suspended", () => {
-    DROPPED.set(0);
-    const drop = fnAddress(countDrop);
-    xferBegin();
-    xferRecord(A, A2);
-    // The poll starts inside the transfer, which its user code sets aside.
-    const mark = xferMark();
-    xferSuspend();
-    xferBegin();
-    expect(xferDefer(C, drop)).toBe(1);
-    xferForgetSince(mark);
-    expect(DROPPED.get()).toBe(C as u64);
-    expect(xferFind(A)).toBe(A2);
-    xferEnd();
-    expect(xferFind(A)).toBe(1);
   });
 });

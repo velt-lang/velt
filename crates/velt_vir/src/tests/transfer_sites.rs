@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use velt_sema::hir;
+use velt_sema::hir::{self, Intrinsic as I};
 
 use super::{lower_ok, lower_src, std_src};
 
@@ -33,224 +33,66 @@ const ENTRIES: &[&str] = &[
     ".share_stored(",
 ];
 
-/// `(file, function, entry)` for every call of an entry, with what makes sema demand
-/// `Construct::Transfer` wherever it runs.
-const SITES: &[(&str, &str, &str, &str)] = &[
-    ("adt.rs", "shared_new", ".many_walk(", "SharedNew"),
-    ("adt.rs", "shared_new", ".transfer_value(", "SharedNew"),
-    (
-        "async_fn/ctor.rs",
-        "state_from_closure",
-        ".maybe_transfer(",
-        "Spawn (transfer_args)",
-    ),
-    (
-        "async_fn/ctor.rs",
-        "take_capture",
-        ".clone_keeping_identity(",
-        "an async closure that copies its captures",
-    ),
-    (
-        "async_fn/spawn.rs",
-        "spawn",
-        "Glue::TransferRoot,",
-        "Spawn, SpawnHandled",
-    ),
-    (
-        "async_fn/spawn.rs",
-        "transfer_result",
-        "Glue::TransferRoot,",
-        "Spawn (transfer_call)",
-    ),
-    (
-        "async_fn/suspend.rs",
-        "async_args",
-        ".maybe_transfer(",
-        "Spawn (transfer_args)",
-    ),
-    (
-        "async_fn/sync.rs",
-        "leave_lock",
-        ".reader_keep(",
-        "MutexWith, LockRead, SharedRead",
-    ),
-    (
-        "async_fn/sync.rs",
-        "leave_lock",
-        ".transfer_value(",
-        "MutexWith, LockRead, SharedRead",
-    ),
-    (
-        "async_fn/sync.rs",
-        "mutex_with",
-        ".many_walk(",
-        "MutexWith, LockRead",
-    ),
-    (
-        "async_fn/sync.rs",
-        "mutex_with",
-        ".transfer_root_in_place(",
-        "MutexWith, LockRead",
-    ),
-    (
-        "call.rs",
-        "borrow_args",
-        ".transfer_copy(",
-        "Spawn (transfer_call)",
-    ),
-    (
-        "callee.rs",
-        "call_indirect_in",
-        ".transfer_value(",
-        "Spawn (transfer_call)",
-    ),
-    (
-        "caller_stores.rs",
-        "copy_mut_arg",
-        ".reader_copy(",
-        "LockRead, SharedRead (read mode)",
-    ),
-    (
-        "caller_stores.rs",
-        "count_for_caller",
-        ".reader_keep(",
-        "LockRead, SharedRead (read mode)",
-    ),
-    (
-        "caller_stores.rs",
-        "keep_mut_arg",
-        ".reader_keep(",
-        "LockRead, SharedRead (read mode)",
-    ),
-    (
-        "caller_stores.rs",
-        "keep_value",
-        ".reader_copy(",
-        "LockRead, SharedRead (read mode)",
-    ),
-    (
-        "caller_stores.rs",
-        "keep_value",
-        ".reader_keep(",
-        "LockRead, SharedRead (read mode)",
-    ),
-    (
-        "caller_stores.rs",
-        "reader_keep",
-        ".xfer_keep_begin()",
-        "its callers",
-    ),
-    (
-        "caller_stores.rs",
-        "reader_keep",
-        "Glue::TransferRoot,",
-        "its callers",
-    ),
-    (
-        "closure.rs",
-        "fill_env_from",
-        ".maybe_transfer(",
-        "Spawn (transfer_args)",
-    ),
-    (
-        "dispatch.rs",
-        "receiver",
-        ".transfer_copy(",
-        "Spawn (transfer_call)",
-    ),
-    ("glue/many.rs", "many_walk", ".xfer_begin()", "its callers"),
-    (
-        "glue/transfer.rs",
-        "transfer_promise",
-        "Glue::TransferRoot,",
-        "the transfer glue",
-    ),
-    (
-        "glue/transfer.rs",
-        "transfer_root_body",
-        ".xfer_begin()",
-        "the TransferRoot glue",
-    ),
-    (
-        "glue/transfer_env.rs",
-        "answer_call_copy",
-        ".xfer_begin()",
-        "SharedNew (boxing.shared_fns)",
-    ),
-    (
-        "glue/transfer_env.rs",
-        "own_cell",
-        ".thread_copy(",
-        "the transfer glue",
-    ),
-    (
-        "intrinsics.rs",
-        "intrinsic",
-        ".transfer_stored(",
-        "Transfer",
-    ),
-    (
-        "leave_levels.rs",
-        "share_stored",
-        ".transfer_value(",
-        "its callers",
-    ),
-    (
-        "leave_levels.rs",
-        "share_stored",
-        ".xfer_share_begin()",
-        "its callers",
-    ),
-    (
-        "leave_levels.rs",
-        "transfer_stored",
-        ".share_stored(",
-        "Transfer",
-    ),
-    ("slot.rs", "slot_put", ".transfer_value(", "SlotPut"),
-    (
-        "slot.rs",
-        "slot_transfer",
-        ".transfer_value(",
-        "SlotTransfer",
-    ),
-    (
-        "transfer.rs",
-        "clone_keeping_identity",
-        ".xfer_begin()",
-        "its callers",
-    ),
-    (
-        "transfer.rs",
-        "maybe_transfer",
-        ".transfer_value(",
-        "its callers",
-    ),
-    (
-        "transfer.rs",
-        "reader_copy",
-        "Glue::TransferRoot,",
-        "its callers",
-    ),
-    ("transfer.rs", "thread_copy", ".xfer_begin()", "its callers"),
-    (
-        "transfer.rs",
-        "transfer_copy",
-        ".thread_copy(",
-        "its callers",
-    ),
-    (
-        "transfer.rs",
-        "transfer_root_in_place",
-        "Glue::TransferRoot,",
-        "its callers",
-    ),
-    (
-        "transfer.rs",
-        "transfer_value",
-        "Glue::TransferRoot,",
-        "its callers",
-    ),
+/// What makes sema demand `Construct::Transfer` wherever a site runs (velt_sema
+/// `transfer_starts`, which the live walk marks it with).
+enum Cover {
+    /// A call of one of these intrinsics, each of `transfer_starts::INTRINSICS`.
+    By(&'static [I]),
+    /// An async closure that copies its captures for each call (`transfer_starts::copies_captures`).
+    AsyncClosure,
+    /// Only reached through this listed entry (the function is that entry itself, or glue it
+    /// builds), whose other sites are covered.
+    Through(&'static str),
+}
+use Cover::{AsyncClosure, By, Through};
+
+/// `spawn`'s, with its result handled or not.
+const SPAWN: &[I] = &[I::Spawn, I::SpawnHandled];
+/// A `read` callback's: an `RwLock`'s and a shared value's.
+const READS: &[I] = &[I::LockRead, I::SharedRead];
+
+/// `(file, function, entry, cover)` for every call of an entry.
+const SITES: &[(&str, &str, &str, Cover)] = &[
+    ("adt.rs", "shared_new", ".many_walk(", By(&[I::SharedNew])),
+    ("adt.rs", "shared_new", ".transfer_value(", By(&[I::SharedNew])),
+    ("async_fn/ctor.rs", "state_from_closure", ".maybe_transfer(", By(SPAWN)),
+    ("async_fn/ctor.rs", "take_capture", ".clone_keeping_identity(", AsyncClosure),
+    ("async_fn/spawn.rs", "spawn", "Glue::TransferRoot,", By(SPAWN)),
+    ("async_fn/spawn.rs", "transfer_result", "Glue::TransferRoot,", By(SPAWN)),
+    ("async_fn/suspend.rs", "async_args", ".maybe_transfer(", By(SPAWN)),
+    ("async_fn/sync.rs", "leave_lock", ".reader_keep(", By(&[I::MutexWith, I::LockRead, I::SharedRead])),
+    ("async_fn/sync.rs", "leave_lock", ".transfer_value(", By(&[I::MutexWith, I::LockRead, I::SharedRead])),
+    ("async_fn/sync.rs", "mutex_with", ".many_walk(", By(&[I::MutexWith, I::LockRead])),
+    ("async_fn/sync.rs", "mutex_with", ".transfer_root_in_place(", By(&[I::MutexWith, I::LockRead])),
+    ("call.rs", "borrow_args", ".transfer_copy(", By(SPAWN)),
+    ("callee.rs", "call_indirect_in", ".transfer_value(", By(SPAWN)),
+    ("caller_stores.rs", "copy_mut_arg", ".reader_copy(", By(READS)),
+    ("caller_stores.rs", "count_for_caller", ".reader_keep(", By(READS)),
+    ("caller_stores.rs", "keep_mut_arg", ".reader_keep(", By(READS)),
+    ("caller_stores.rs", "keep_value", ".reader_copy(", By(READS)),
+    ("caller_stores.rs", "keep_value", ".reader_keep(", By(READS)),
+    ("caller_stores.rs", "reader_keep", ".xfer_keep_begin()", Through(".reader_keep(")),
+    ("caller_stores.rs", "reader_keep", "Glue::TransferRoot,", Through(".reader_keep(")),
+    ("closure.rs", "fill_env_from", ".maybe_transfer(", By(SPAWN)),
+    ("dispatch.rs", "receiver", ".transfer_copy(", By(SPAWN)),
+    ("glue/many.rs", "many_walk", ".xfer_begin()", Through(".many_walk(")),
+    ("glue/transfer.rs", "transfer_promise", "Glue::TransferRoot,", Through("Glue::TransferRoot,")),
+    ("glue/transfer.rs", "transfer_root_body", ".xfer_begin()", Through("Glue::TransferRoot,")),
+    ("glue/transfer_env.rs", "answer_call_copy", ".xfer_begin()", By(&[I::SharedNew])),
+    ("glue/transfer_env.rs", "own_cell", ".thread_copy(", Through("Glue::TransferRoot,")),
+    ("intrinsics.rs", "intrinsic", ".transfer_stored(", By(&[I::Transfer])),
+    ("leave_levels.rs", "share_stored", ".transfer_value(", Through(".share_stored(")),
+    ("leave_levels.rs", "share_stored", ".xfer_share_begin()", Through(".share_stored(")),
+    ("leave_levels.rs", "transfer_stored", ".share_stored(", By(&[I::Transfer])),
+    ("slot.rs", "slot_put", ".transfer_value(", By(&[I::SlotPut])),
+    ("slot.rs", "slot_transfer", ".transfer_value(", By(&[I::SlotTransfer])),
+    ("transfer.rs", "clone_keeping_identity", ".xfer_begin()", Through(".clone_keeping_identity(")),
+    ("transfer.rs", "maybe_transfer", ".transfer_value(", Through(".maybe_transfer(")),
+    ("transfer.rs", "reader_copy", "Glue::TransferRoot,", Through(".reader_copy(")),
+    ("transfer.rs", "thread_copy", ".xfer_begin()", Through(".thread_copy(")),
+    ("transfer.rs", "transfer_copy", ".thread_copy(", Through(".transfer_copy(")),
+    ("transfer.rs", "transfer_root_in_place", "Glue::TransferRoot,", Through(".transfer_root_in_place(")),
+    ("transfer.rs", "transfer_value", "Glue::TransferRoot,", Through(".transfer_value(")),
 ];
 
 /// Every `.rs` file under `dir`, with its path relative to `root`.
@@ -310,6 +152,79 @@ fn every_site_that_starts_a_transfer_is_listed_with_its_construct() {
         gone.is_empty(),
         "listed sites lowering no longer has:\n{gone:#?}"
     );
+}
+
+/// Is a site of `entry` covered by sema other than through `entry` itself (`seen`: the entries
+/// on the way)?
+fn covered(entry: &str, seen: &mut Vec<&'static str>) -> bool {
+    SITES.iter().any(|(_, _, e, cover)| {
+        *e == entry
+            && match cover {
+                By(_) | AsyncClosure => true,
+                Through(via) if seen.contains(via) || *via == entry => false,
+                Through(via) => {
+                    seen.push(via);
+                    let c = covered(via, seen);
+                    seen.pop();
+                    c
+                }
+            }
+    })
+}
+
+#[test]
+fn each_site_names_what_makes_sema_demand_the_transfer_map() {
+    for (file, func, entry, cover) in SITES {
+        match cover {
+            By(intrinsics) => {
+                for &i in *intrinsics {
+                    assert!(
+                        velt_sema::transfer_starts::intrinsic(i),
+                        "{file} `{func}` ({entry}) is covered by {i:?}, which sema does not                          mark `Construct::Transfer` for (velt_sema `transfer_starts`)"
+                    );
+                }
+            }
+            AsyncClosure => {}
+            Through(via) => {
+                assert!(
+                    ENTRIES.contains(via),
+                    "{file} `{func}`: {via} is not an entry"
+                );
+                assert!(
+                    covered(via, &mut vec![]),
+                    "{file} `{func}` ({entry}) is reached through {via}, no site of which sema                      covers"
+                );
+            }
+        }
+    }
+}
+
+/// An async closure copying its captures (`AsyncClosure`) is one sema's rule sees: a closure
+/// returned to the caller, so its captures go with it.
+const COPIES_CAPTURES: &str = "class N {
+  v = 1;
+}
+    function make(n: N): () => Promise<number> {
+  return async () => n.v;
+}
+    async function main() {
+  const f = make(new N());
+  console.log(await f());
+}
+";
+
+#[test]
+fn an_async_closure_that_copies_its_captures_is_a_transfer_site_sema_sees() {
+    if !SITES.iter().any(|s| matches!(s.3, AsyncClosure)) {
+        return;
+    }
+    let p: hir::Program = std_src::check_src(COPIES_CAPTURES);
+    let copies = p.defs.iter().any(|d| match d {
+        hir::Def::Fn(f) => velt_sema::transfer_starts::copies_captures(f),
+        _ => false,
+    });
+    assert!(copies, "no async closure copying its captures in:
+{COPIES_CAPTURES}");
 }
 
 const SPAWNS_A_GRAPH: &str = "class N {\n  next: N | null = null;\n}\n\

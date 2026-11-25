@@ -323,3 +323,27 @@ fn a_module_demanded_after_the_passes_is_an_internal_error() {
         "{late:?}"
     );
 }
+
+/// Each intrinsic that starts a transfer marks `Construct::Transfer` in the walk, so sema
+/// demands std's transfer map wherever lowering starts one for it (velt_vir's `transfer_sites`
+/// checks lowering's sites against the same list).
+#[test]
+fn each_intrinsic_that_starts_a_transfer_demands_the_transfer_map() {
+    let ty = crate::types::Types::new();
+    for &i in crate::transfer_starts::INTRINSICS {
+        let call = crate::hir::Expr {
+            kind: crate::hir::ExprKind::Call {
+                callee: crate::hir::Callee::Intrinsic(i),
+                args: vec![],
+            },
+            ty: ty.unit,
+            span: velt_common::Span::default(),
+        };
+        let mut w = super::Walk::default();
+        super::walk_expr(&ty, &call, &mut w);
+        assert!(
+            w.constructs & Construct::Transfer.bit() != 0,
+            "{i:?} starts a transfer but the walk does not mark `Construct::Transfer`"
+        );
+    }
+}

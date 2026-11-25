@@ -521,8 +521,7 @@ and cost nothing in programs that do not catch.
 - **A catch inside a transfer.** `caught()` closes every open transfer level, which assumes `f`
   started at depth 0; a `catchVeltPanic` run from a class's `clone()` during a transfer would
   close the outer transfer too. A transfer the panicked code had suspended stays on std's list of
-  suspended transfers. (The runtime's catch closes exactly what its poll opened, with
-  `xferMark` and `xferForgetSince`.)
+  suspended transfers.
 - **Runtime function pointers that are still `extern "C"`.** A Velt exception through one of them
   aborts instead of reaching the catch: `DropFn` in `crates/velt_rt/src/drop_depth.rs`; `DataFn`, `TransferFn` and `DropFn` in
   `crates/velt_rt/src/fn_props.rs`; `WorkFn` and `DropCtxFn` in `crates/velt_rt/src/native/mod.rs`.

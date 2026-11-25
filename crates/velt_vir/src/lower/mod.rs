@@ -379,10 +379,6 @@ struct Cx<'h> {
     module_hooks_declared: std::cell::OnceCell<bool>,
     held: Option<Vec<(FuncId, Work)>>, // module state's accesses, until main is built (drain)
     statics_table: Option<StaticId>,   // the process statics' table, its release to fill in
-    /// The process statics' table, its transfer map functions to fill in (static_atomic.rs).
-    xfer_table: Option<StaticId>,
-    /// Lowering called std's transfer map (transfer_map.rs): its functions go in that table.
-    xfer_used: bool,
     /// The class id number of each `struct` type with an interface table (class_test.rs
     /// `VALUE_IDS`), in the order the tables are made.
     value_ids: FxHashMap<TyId, u64>,

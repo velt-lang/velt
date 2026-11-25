@@ -19,10 +19,9 @@
 // (`Construct::Transfer`, velt_common `ON_DEMAND_MODULES`).
 //
 // The state is this thread's: a transfer runs on one thread, with no await in between. The
-// runtime reads it through the process statics table (rt_abi.md "Process statics"): `xferKeeps`
-// for read mode (velt_rt `read_mode.rs`), `xferMark` and `xferForgetSince` around the polls its
-// own catch runs (velt_rt `panic.rs`). A thread keeps its transfer's block for the next one; the
-// blocks are the C library's, outside the leak counters (`#xfer-mem`).
+// runtime never reads it: generated code asks `xferKeeps` and hands the answer to read mode
+// (velt_rt `velt_rt_lk_leave`). A thread keeps its transfer's block for the next one; the blocks
+// are the C library's, outside the leak counters (`#xfer-mem`).
 
 import { addressLoad, addressStore, stateDrop } from "velt/lang/intrinsics";
 import { release, zeroed } from "#xfer-mem";
@@ -363,52 +362,6 @@ export function xferResume(depth: u32): void {
     // The user code's own transfers are over: their block holds nothing any more.
     discard(CURRENT.get() as usize);
     CURRENT.set(saved as u64);
-  }
-  DEPTH.set(depth);
-}
-
-/**
- * What is open on this thread now, for `xferForgetSince` when a poll that catches panics starts
- * (velt_rt `panic.rs`): the depth in the high half, the number suspended in the low.
- */
-export function xferMark(): u64 {
-  return ((DEPTH.get() as u64) << 32) | (SUSPENDED_N.get() as u64);
-}
-
-/**
- * A panic was caught by the poll that took `mark` (`xferMark`): the transfers that poll opened
- * end as `xferEnd` ends one, their copies forgotten and the references they deferred released
- * (they were the transfer's, not the abandoned frames'), as std's own catch closes them
- * (std/task/unwind.velt `caught`). Those open when the poll started go on: a class's own
- * `clone()` may run such a poll, with a transfer suspended around it.
- */
-export function xferForgetSince(mark: u64): void {
-  const depth = (mark >> 32) as u32;
-  const suspended = (mark & 0xffff_ffff) as u32;
-  DEPTH.set(0);
-  // The transfer open at the start, if it was suspended since: the first suspended after `mark`.
-  let outer: usize = 0;
-  while (SUSPENDED_N.get() > suspended) {
-    const s = SUSPENDED.get() as usize;
-    SUSPENDED.set(ld(s + NEXT) as u64);
-    SUSPENDED_N.set(SUSPENDED_N.get() - 1);
-    st(s + NEXT, 0);
-    if (depth > 0 && SUSPENDED_N.get() == suspended) {
-      outer = s;
-    } else {
-      finish(s);
-      discard(s);
-    }
-  }
-  if (depth == 0 || outer != 0) {
-    const t = CURRENT.get() as usize;
-    if (t != 0) {
-      finish(t);
-    }
-    if (outer != 0) {
-      discard(t);
-      CURRENT.set(outer as u64);
-    }
   }
   DEPTH.set(depth);
 }

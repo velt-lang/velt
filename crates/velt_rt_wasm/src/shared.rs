@@ -22,8 +22,8 @@ pub unsafe extern "C" fn velt_rt_rc_dec(p: *mut u64) -> u8 {
 pub extern "C" fn velt_rt_thread_yield() {}
 
 /// `velt_rt_statics` (rt_abi.md "Process statics"): the WebAssembly runtime has no leak counters,
-/// so the drop function goes unused; the position cache takes std's epoch, and read mode the
-/// transfer map's `xferKeeps`, as the native runtime's do.
+/// so the drop function goes unused; the position cache takes std's epoch as the native runtime's
+/// does.
 ///
 /// # Safety
 /// As `velt_rt`'s: `t` is a table laid out as `Statics`, its addresses living as long as the
@@ -34,7 +34,6 @@ pub unsafe extern "C" fn velt_rt_statics(t: *const crate::statics::Statics) {
     if !epoch.is_null() {
         crate::str::use_epoch(epoch);
     }
-    crate::statics::adopt_transfer_map(t);
 }
 
 /// Initialize the 8-byte lock word at `p` (unlocked).
@@ -183,12 +182,12 @@ pub extern "C" fn velt_rt_lk_mode() -> u8 {
 
 /// velt_rt `read_mode::velt_rt_lk_leave`: in a nested read, the bit goes when the reads end.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue, keeps: u8) {
     if READ_DEPTH as u64 > LEAVE_TO || leaving(p) {
         return;
     }
     let unique = *p & (STORED - 1) == 1 && KEPT_UNDER == 0;
-    if unique || (READ_DEPTH <= 1 && crate::statics::xfer_keeps() != 1) {
+    if unique || (READ_DEPTH <= 1 && keeps != 1) {
         *p &= !LOCAL;
         return;
     }
