@@ -46,53 +46,173 @@ enum Cover {
 }
 use Cover::{AsyncClosure, By, Through};
 
-/// `spawn`'s, with its result handled or not.
-const SPAWN: &[I] = &[I::Spawn, I::SpawnHandled];
-/// A `read` callback's: an `RwLock`'s and a shared value's.
-const READS: &[I] = &[I::LockRead, I::SharedRead];
+/// `spawn`, with its result handled or not.
+const SPAWN: Cover = By(&[I::Spawn, I::SpawnHandled]);
+/// A `read` callback: an `RwLock`'s and a shared value's.
+const READS: Cover = By(&[I::LockRead, I::SharedRead]);
+/// A lock's callback whose result leaves the lock.
+const LOCKS: Cover = By(&[I::MutexWith, I::LockRead, I::SharedRead]);
+/// A `Mutex.with` or an `RwLock.write` (and the read lowered with them).
+const WITH: Cover = By(&[I::MutexWith, I::LockRead]);
+const SHARED: Cover = By(&[I::SharedNew]);
+const STORED: Cover = By(&[I::Transfer]);
+const PUT: Cover = By(&[I::SlotPut]);
+const MOVED: Cover = By(&[I::SlotTransfer]);
+/// The glue that transfers a value from its root.
+const ROOT: Cover = Through("Glue::TransferRoot,");
 
 /// `(file, function, entry, cover)` for every call of an entry.
 const SITES: &[(&str, &str, &str, Cover)] = &[
-    ("adt.rs", "shared_new", ".many_walk(", By(&[I::SharedNew])),
-    ("adt.rs", "shared_new", ".transfer_value(", By(&[I::SharedNew])),
-    ("async_fn/ctor.rs", "state_from_closure", ".maybe_transfer(", By(SPAWN)),
-    ("async_fn/ctor.rs", "take_capture", ".clone_keeping_identity(", AsyncClosure),
-    ("async_fn/spawn.rs", "spawn", "Glue::TransferRoot,", By(SPAWN)),
-    ("async_fn/spawn.rs", "transfer_result", "Glue::TransferRoot,", By(SPAWN)),
-    ("async_fn/suspend.rs", "async_args", ".maybe_transfer(", By(SPAWN)),
-    ("async_fn/sync.rs", "leave_lock", ".reader_keep(", By(&[I::MutexWith, I::LockRead, I::SharedRead])),
-    ("async_fn/sync.rs", "leave_lock", ".transfer_value(", By(&[I::MutexWith, I::LockRead, I::SharedRead])),
-    ("async_fn/sync.rs", "mutex_with", ".many_walk(", By(&[I::MutexWith, I::LockRead])),
-    ("async_fn/sync.rs", "mutex_with", ".transfer_root_in_place(", By(&[I::MutexWith, I::LockRead])),
-    ("call.rs", "borrow_args", ".transfer_copy(", By(SPAWN)),
-    ("callee.rs", "call_indirect_in", ".transfer_value(", By(SPAWN)),
-    ("caller_stores.rs", "copy_mut_arg", ".reader_copy(", By(READS)),
-    ("caller_stores.rs", "count_for_caller", ".reader_keep(", By(READS)),
-    ("caller_stores.rs", "keep_mut_arg", ".reader_keep(", By(READS)),
-    ("caller_stores.rs", "keep_value", ".reader_copy(", By(READS)),
-    ("caller_stores.rs", "keep_value", ".reader_keep(", By(READS)),
-    ("caller_stores.rs", "reader_keep", ".xfer_keep_begin()", Through(".reader_keep(")),
-    ("caller_stores.rs", "reader_keep", "Glue::TransferRoot,", Through(".reader_keep(")),
-    ("closure.rs", "fill_env_from", ".maybe_transfer(", By(SPAWN)),
-    ("dispatch.rs", "receiver", ".transfer_copy(", By(SPAWN)),
-    ("glue/many.rs", "many_walk", ".xfer_begin()", Through(".many_walk(")),
-    ("glue/transfer.rs", "transfer_promise", "Glue::TransferRoot,", Through("Glue::TransferRoot,")),
-    ("glue/transfer.rs", "transfer_root_body", ".xfer_begin()", Through("Glue::TransferRoot,")),
-    ("glue/transfer_env.rs", "answer_call_copy", ".xfer_begin()", By(&[I::SharedNew])),
-    ("glue/transfer_env.rs", "own_cell", ".thread_copy(", Through("Glue::TransferRoot,")),
-    ("intrinsics.rs", "intrinsic", ".transfer_stored(", By(&[I::Transfer])),
-    ("leave_levels.rs", "share_stored", ".transfer_value(", Through(".share_stored(")),
-    ("leave_levels.rs", "share_stored", ".xfer_share_begin()", Through(".share_stored(")),
-    ("leave_levels.rs", "transfer_stored", ".share_stored(", By(&[I::Transfer])),
-    ("slot.rs", "slot_put", ".transfer_value(", By(&[I::SlotPut])),
-    ("slot.rs", "slot_transfer", ".transfer_value(", By(&[I::SlotTransfer])),
-    ("transfer.rs", "clone_keeping_identity", ".xfer_begin()", Through(".clone_keeping_identity(")),
-    ("transfer.rs", "maybe_transfer", ".transfer_value(", Through(".maybe_transfer(")),
-    ("transfer.rs", "reader_copy", "Glue::TransferRoot,", Through(".reader_copy(")),
-    ("transfer.rs", "thread_copy", ".xfer_begin()", Through(".thread_copy(")),
-    ("transfer.rs", "transfer_copy", ".thread_copy(", Through(".transfer_copy(")),
-    ("transfer.rs", "transfer_root_in_place", "Glue::TransferRoot,", Through(".transfer_root_in_place(")),
-    ("transfer.rs", "transfer_value", "Glue::TransferRoot,", Through(".transfer_value(")),
+    ("adt.rs", "shared_new", ".many_walk(", SHARED),
+    ("adt.rs", "shared_new", ".transfer_value(", SHARED),
+    (
+        "async_fn/ctor.rs",
+        "state_from_closure",
+        ".maybe_transfer(",
+        SPAWN,
+    ),
+    (
+        "async_fn/ctor.rs",
+        "take_capture",
+        ".clone_keeping_identity(",
+        AsyncClosure,
+    ),
+    ("async_fn/spawn.rs", "spawn", "Glue::TransferRoot,", SPAWN),
+    (
+        "async_fn/spawn.rs",
+        "transfer_result",
+        "Glue::TransferRoot,",
+        SPAWN,
+    ),
+    (
+        "async_fn/suspend.rs",
+        "async_args",
+        ".maybe_transfer(",
+        SPAWN,
+    ),
+    ("async_fn/sync.rs", "leave_lock", ".reader_keep(", LOCKS),
+    ("async_fn/sync.rs", "leave_lock", ".transfer_value(", LOCKS),
+    ("async_fn/sync.rs", "mutex_with", ".many_walk(", WITH),
+    (
+        "async_fn/sync.rs",
+        "mutex_with",
+        ".transfer_root_in_place(",
+        WITH,
+    ),
+    ("call.rs", "borrow_args", ".transfer_copy(", SPAWN),
+    ("callee.rs", "call_indirect_in", ".transfer_value(", SPAWN),
+    ("caller_stores.rs", "copy_mut_arg", ".reader_copy(", READS),
+    (
+        "caller_stores.rs",
+        "count_for_caller",
+        ".reader_keep(",
+        READS,
+    ),
+    ("caller_stores.rs", "keep_mut_arg", ".reader_keep(", READS),
+    ("caller_stores.rs", "keep_value", ".reader_copy(", READS),
+    ("caller_stores.rs", "keep_value", ".reader_keep(", READS),
+    (
+        "caller_stores.rs",
+        "reader_keep",
+        ".xfer_keep_begin()",
+        Through(".reader_keep("),
+    ),
+    (
+        "caller_stores.rs",
+        "reader_keep",
+        "Glue::TransferRoot,",
+        Through(".reader_keep("),
+    ),
+    ("closure.rs", "fill_env_from", ".maybe_transfer(", SPAWN),
+    ("dispatch.rs", "receiver", ".transfer_copy(", SPAWN),
+    (
+        "glue/many.rs",
+        "many_walk",
+        ".xfer_begin()",
+        Through(".many_walk("),
+    ),
+    (
+        "glue/transfer.rs",
+        "transfer_promise",
+        "Glue::TransferRoot,",
+        ROOT,
+    ),
+    (
+        "glue/transfer.rs",
+        "transfer_root_body",
+        ".xfer_begin()",
+        ROOT,
+    ),
+    (
+        "glue/transfer_env.rs",
+        "answer_call_copy",
+        ".xfer_begin()",
+        SHARED,
+    ),
+    ("glue/transfer_env.rs", "own_cell", ".thread_copy(", ROOT),
+    ("intrinsics.rs", "intrinsic", ".transfer_stored(", STORED),
+    (
+        "leave_levels.rs",
+        "share_stored",
+        ".transfer_value(",
+        Through(".share_stored("),
+    ),
+    (
+        "leave_levels.rs",
+        "share_stored",
+        ".xfer_share_begin()",
+        Through(".share_stored("),
+    ),
+    (
+        "leave_levels.rs",
+        "transfer_stored",
+        ".share_stored(",
+        STORED,
+    ),
+    ("slot.rs", "slot_put", ".transfer_value(", PUT),
+    ("slot.rs", "slot_transfer", ".transfer_value(", MOVED),
+    (
+        "transfer.rs",
+        "clone_keeping_identity",
+        ".xfer_begin()",
+        Through(".clone_keeping_identity("),
+    ),
+    (
+        "transfer.rs",
+        "maybe_transfer",
+        ".transfer_value(",
+        Through(".maybe_transfer("),
+    ),
+    (
+        "transfer.rs",
+        "reader_copy",
+        "Glue::TransferRoot,",
+        Through(".reader_copy("),
+    ),
+    (
+        "transfer.rs",
+        "thread_copy",
+        ".xfer_begin()",
+        Through(".thread_copy("),
+    ),
+    (
+        "transfer.rs",
+        "transfer_copy",
+        ".thread_copy(",
+        Through(".transfer_copy("),
+    ),
+    (
+        "transfer.rs",
+        "transfer_root_in_place",
+        "Glue::TransferRoot,",
+        Through(".transfer_root_in_place("),
+    ),
+    (
+        "transfer.rs",
+        "transfer_value",
+        "Glue::TransferRoot,",
+        Through(".transfer_value("),
+    ),
 ];
 
 /// Every `.rs` file under `dir`, with its path relative to `root`.
@@ -180,7 +300,8 @@ fn each_site_names_what_makes_sema_demand_the_transfer_map() {
                 for &i in *intrinsics {
                     assert!(
                         velt_sema::transfer_starts::intrinsic(i),
-                        "{file} `{func}` ({entry}) is covered by {i:?}, which sema does not                          mark `Construct::Transfer` for (velt_sema `transfer_starts`)"
+                        "{file} `{func}` ({entry}) is covered by {i:?}, which sema does not \
+                         mark `Construct::Transfer` for (velt_sema `transfer_starts`)"
                     );
                 }
             }
@@ -192,26 +313,20 @@ fn each_site_names_what_makes_sema_demand_the_transfer_map() {
                 );
                 assert!(
                     covered(via, &mut vec![]),
-                    "{file} `{func}` ({entry}) is reached through {via}, no site of which sema                      covers"
+                    "{file} `{func}` ({entry}) is reached through {via}, no site of which sema \
+                     covers"
                 );
             }
         }
     }
 }
 
-/// An async closure copying its captures (`AsyncClosure`) is one sema's rule sees: a closure
-/// returned to the caller, so its captures go with it.
-const COPIES_CAPTURES: &str = "class N {
-  v = 1;
-}
-    function make(n: N): () => Promise<number> {
-  return async () => n.v;
-}
-    async function main() {
-  const f = make(new N());
-  console.log(await f());
-}
-";
+/// An async closure copying its captures (`AsyncClosure`) is one sema's rule sees: its call is
+/// spawned, so it may run on another thread and each call copies what it captured (a closure
+/// that stays in its task shares its captures instead, `hir::FnDef::shares_captures`).
+const COPIES_CAPTURES: &str = "class N {\n  v = 1;\n}\n\
+    async function main() {\n  const n = new N();\n  const go = async () => n.v;\n  \
+    console.log(await spawn(go()), n.v);\n}\n";
 
 #[test]
 fn an_async_closure_that_copies_its_captures_is_a_transfer_site_sema_sees() {
@@ -223,8 +338,10 @@ fn an_async_closure_that_copies_its_captures_is_a_transfer_site_sema_sees() {
         hir::Def::Fn(f) => velt_sema::transfer_starts::copies_captures(f),
         _ => false,
     });
-    assert!(copies, "no async closure copying its captures in:
-{COPIES_CAPTURES}");
+    assert!(
+        copies,
+        "no async closure copying its captures in:\n{COPIES_CAPTURES}"
+    );
 }
 
 const SPAWNS_A_GRAPH: &str = "class N {\n  next: N | null = null;\n}\n\
