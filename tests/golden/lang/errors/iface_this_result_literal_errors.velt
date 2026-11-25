@@ -1,0 +1,78 @@
+// An object literal's method for an interface method declared `: this` returns `this`: a call
+// through a type parameter, or on a value of an interface extending the declaring one, gives
+// the object it was called on. TypeScript accepts each of these (in a literal `this` is the
+// interface, so any value of it will do), and Node then gives the other object.
+interface Fluent {
+  step(n: number): this;
+  total(): number;
+}
+
+interface Totalled extends Fluent {
+  half(): number;
+}
+
+class Halves implements Totalled {
+  t: number = 0;
+  step(n: number): this {
+    this.t += n;
+    return this;
+  }
+  total(): number {
+    return this.t;
+  }
+  half(): number {
+    return this.t / 2;
+  }
+}
+
+function main() {
+  const other: Totalled = new Halves();
+  // Another object.
+  const a: Totalled = {
+    step(n: number) {
+      return other;
+    },
+    total() {
+      return 1;
+    },
+    half() {
+      return 0.5;
+    },
+  };
+  // `this` on one path only.
+  const b: Fluent = {
+    step(n: number) {
+      if (n > 0) {
+        return this;
+      }
+      return other;
+    },
+    total() {
+      return 2;
+    },
+  };
+  // An arrow has no `this` of its own.
+  const c: Fluent = {
+    step: (n: number) => other,
+    total: () => 3,
+  };
+  // A method of another object called on `this`, and a `this` method called on another object.
+  const d: Totalled = {
+    step(n: number) {
+      if (n > 0) {
+        return other.step(n);
+      }
+      return this.step(1).step(2);
+    },
+    total() {
+      return 4;
+    },
+    half() {
+      return 2;
+    },
+  };
+  // A function that is not written in the literal.
+  const step = (n: number): Fluent => other;
+  const e: Fluent = { step, total: () => 5 };
+  console.log(a.total(), b.total(), c.total(), d.total(), e.total());
+}
