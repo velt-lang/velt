@@ -1,13 +1,23 @@
 // velt/fs (internal): the `#mapped-source` variant of the targets with `mmap` (macOS, Linux;
-// std/imports.velt): a `MappedFile` is a mapping of the file, and its arrays are that memory.
+// std/imports.velt): a `MappedFile` is a mapping of the file, and its arrays are that memory; and
+// the line a bus error from a cut-short mapped file gets (below).
 
-import { addressArrayOwned, fnAddress } from "velt/lang/intrinsics";
+import { Ptr, export as cExport } from "velt/ffi";
+import {
+  addressArrayOwned,
+  addressLoad,
+  addressStore,
+  exportedAddress,
+  fnAddress,
+} from "velt/lang/intrinsics";
 import { adviseMap, closeFd, fstatFd, lastError, mapRead, openPath, unmapRead } from "#fd-system";
 import { cPath } from "velt/fs/fd/args";
 import { isMac } from "velt/fs/fd/system";
 import { osError } from "velt/fs/errors";
 import { letGo, MapOptions, Mapping, newOwner, outsideFile, partOf } from "velt/fs/mapped_part";
-import { reportBusErrors } from "#mapped-fault";
+import * as sg from "#sched-signal";
+import * as m from "velt/lang/hooks/sched_mem";
+import { utf8Encode } from "velt/encoding/utf8";
 
 /** Maps the part of the file at `path` that `options` names (`MappedFile.open`). */
 export function mapFile(path: string, options: MapOptions | undefined): Mapping {
@@ -85,3 +95,110 @@ export function adviseMapping(address: usize, len: usize, advice: i32): i32 {
  * which stays while one of them does.
  */
 export const COPIES: bool = false;
+
+// The bus error that ends a program which reads a page of a mapped file that is no longer in
+// the file (the file was cut short while mapped, #3162). The system delivers `SIGBUS` for that
+// read, whose default is to end the program without a word. `reportBusErrors()` (called by
+// `mapFile` once a mapping is made) installs a handler for it with `sigaction`, as the executor's
+// signals do (std/lang/hooks/sched_signal.velt): an `@export`ed function that, for a fault,
+// writes one line to standard error. It then puts the default action back and raises the signal
+// again: the signal is blocked while its handler runs, so it is delivered when the handler
+// returns and ends the program, with the status it always had. That holds for a `SIGBUS` another
+// process sent as well, which on Linux gets no line (its `si_code` is not a fault's). On macOS it
+// gets the line too: the kernel fills a `SIGBUS` handler's `siginfo_t` the same way whoever sent
+// it (XNU `sendsig`: `si_code` `BUS_ADRALN` on arm64, `BUS_ADRERR` on x86-64, `si_pid` 0), so
+// nothing tells the two apart.
+//
+// The handler is installed only over the default action: a program that ignores `SIGBUS`, or
+// has a handler of its own (the runtime's debug allocator, VELT_RT_DEBUG_ALLOC), keeps it.
+// The handler allocates and locks nothing: the line's bytes and the default action are blocks
+// made before it is installed, their addresses in static atomics. It lives in this variant, which
+// only the targets with `mmap` load, so no other target names its C functions.
+
+const LINE =
+  "velt: bus error: a page of a mapped file is not in the file any more (was the file cut short while it was mapped? MappedFile)\n";
+
+/** 0: not tried; 1: being installed, installed, or left to the action the program had. */
+const INSTALLED = new Atomic<u32>(0);
+/** The line's bytes and how many, and a zeroed `struct sigaction` (the default action). */
+const TEXT = new Atomic<u64>(0);
+const LENGTH = new Atomic<u64>(0);
+const DEFAULT = new Atomic<u64>(0);
+/** 1 once a handler has written the line: two threads that fault at once write it once. */
+const PRINTED = new Atomic<u32>(0);
+
+declare c("c") function sigaction$mapped(sig: i32, act: Ptr<u8> | null, old: Ptr<u8> | null): i32;
+declare c("c") function write$mapped(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
+declare c("c") function raise$mapped(sig: i32): i32;
+
+/**
+ * From now on a bus error from a fault says what it most likely is before it ends the program.
+ * Tried once per program (again if the system refuses), and only where `SIGBUS` has its
+ * default action.
+ */
+function reportBusErrors(): void {
+  if (!sg.SUPPORTED || INSTALLED.compareExchange(0, 1, "acquire") !== 0) {
+    return;
+  }
+  const act = m.zeroed(sg.ACTION_SIZE);
+  // SAFETY: a `struct sigaction` at `act` for the action there is now; nothing is installed.
+  const asked = unsafe { sigaction$mapped(sg.SIGBUS, null, m.ptr(act)) };
+  // The handler is the first word: 0 is `SIG_DFL`.
+  if (asked !== 0 || m.ld(act) !== 0) {
+    m.release(act, sg.ACTION_SIZE);
+    if (asked !== 0) {
+      INSTALLED.store(0, "release");
+    }
+    return;
+  }
+  if (TEXT.load("acquire") === 0) {
+    const line = utf8Encode(LINE);
+    const text = m.lastingZeroed(line.length);
+    for (let i: usize = 0; i < line.length; i++) {
+      // SAFETY: `text` holds `line.length` bytes.
+      unsafe {
+        addressStore<u8>(text + i, line[i]);
+      }
+    }
+    LENGTH.store(line.length as u64, "release");
+    DEFAULT.store(m.lastingZeroed(sg.ACTION_SIZE) as u64, "release");
+    TEXT.store(text as u64, "release");
+  }
+  // SAFETY: `onBusError` has the C signature of a handler that takes the signal's information,
+  // `void f(int, siginfo_t *, void *)`.
+  m.st(act, unsafe { exportedAddress(onBusError) });
+  m.st32(act + sg.FLAGS_AT, sg.SA_SIGINFO as u32);
+  // An empty mask: the zeroed `sigset_t`. SAFETY: a `struct sigaction` at `act`.
+  const rc = unsafe { sigaction$mapped(sg.SIGBUS, m.ptr(act), null) };
+  m.release(act, sg.ACTION_SIZE);
+  if (rc !== 0) {
+    // Refused: the next mapping tries again.
+    INSTALLED.store(0, "release");
+  }
+}
+
+/**
+ * The handler: for a fault (`si_code` 1 to 3: `BUS_ADRALN`, `BUS_ADRERR`, `BUS_OBJERR`, on macOS
+ * and Linux; on Linux a signal a process sent has another code, on macOS the same) the line to
+ * standard error, once. Then the default action, and the signal again.
+ */
+@cExport("std_fs_mapped_bus_error")
+function onBusError(sig: i32, info: usize, context: usize): void {
+  const text = TEXT.load("acquire") as usize;
+  const fallback = DEFAULT.load("acquire") as usize;
+  if (text === 0 || fallback === 0) {
+    return;
+  }
+  // SAFETY: the system's `siginfo_t` for this signal is at `info`; `si_code` is its third int.
+  const code = info === 0 ? 0 : unsafe { addressLoad<i32>(info + 8) };
+  // SAFETY: `LENGTH` bytes at `text` and a zeroed `struct sigaction` at `fallback`, both made
+  // before the handler was installed and never freed; `write`, `sigaction` and `raise` may be
+  // called from a signal handler.
+  unsafe {
+    if (code >= 1 && code <= 3 && PRINTED.compareExchange(0, 1, "acquire") === 0) {
+      write$mapped(2, m.ptr(text), LENGTH.load("acquire") as usize);
+    }
+    sigaction$mapped(sig, m.ptr(fallback), null);
+    raise$mapped(sig);
+  }
+}

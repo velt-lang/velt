@@ -12,7 +12,7 @@ export const SA_RESTART: i32 = 0;
 export const SIGUSR1: i32 = 0;
 /**
  * `SIGBUS`: a read of a mapped page that is not in its file any more
- * (std/fs/mapped_fault_posix.velt).
+ * (std/fs/mapped_posix.velt).
  */
 export const SIGBUS: i32 = 0;
 /** `SA_SIGINFO`: the handler takes the signal's `siginfo_t` (whose `si_code` is at byte 8). */

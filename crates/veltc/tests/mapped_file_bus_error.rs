@@ -1,5 +1,5 @@
 //! A mapped file cut short while it is mapped (velt/fs `MappedFile`): reading a cut page is a bus
-//! error, which ends the program. std's handler (std/fs/mapped_fault_posix.velt) says what
+//! error, which ends the program. std's handler (std/fs/mapped_posix.velt) says what
 //! happened on standard error first, and the program still ends by the signal (#3162). A `SIGBUS`
 //! another process sends ends the program too, without the line, and a program that ignores
 //! `SIGBUS` goes on ignoring it after it maps a file.

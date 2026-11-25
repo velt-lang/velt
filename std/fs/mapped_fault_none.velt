@@ -1,5 +1,0 @@
-// velt/fs (internal): `#mapped-fault` where a program has no signal handlers (Windows,
-// WebAssembly): files are not mapped there either, so there is no bus error to explain.
-
-/** Nothing here: see mapped_fault_posix.velt. */
-export function reportBusErrors(): void {}
