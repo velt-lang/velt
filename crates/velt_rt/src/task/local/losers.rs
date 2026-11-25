@@ -5,8 +5,8 @@
 //! In JS the owner's continuation is a microtask queued when the combinator settles, so the
 //! losers' microtasks queued before it run first, and their timers and events after it. A
 //! promise created during the current poll of the task can only have been woken by that poll's
-//! own code (a promise it settled), never by a timer, which fire at the start of a poll
-//! (timers.rs), so such a loser runs once right away; an older one waits for the task's next
+//! own code (a promise it settled), never by a timer or an event, which wake it for a later
+//! poll, so such a loser runs once right away; an older one waits for the task's next
 //! poll. A loop whose combinators settle without suspending therefore no longer piles up losers
 //! that JS would have finished between its iterations (#150).
 
