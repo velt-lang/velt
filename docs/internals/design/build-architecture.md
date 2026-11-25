@@ -121,6 +121,10 @@ class, which the app's calls through a std-typed receiver dispatch through
 slot numbers, so the slot goes after the longest vtable of the class's std subtree, and every
 std class of the subtree gets it; the indices in between pad with an entry the class already
 has, which the passes pairing a class's slots with its base's skip (`Ctx::vtable_entries`).
+An override that gives a parameter another default adds the method's default-filling slots the
+same way, also to a method std gave a slot but no fill slots (std's overrides keep its default);
+when std has a fill slot taking fewer parameters, std's stays under another key for std's
+checked calls and the program's calls use the wider one.
 
 Other writes are still counted: #3543's other sites.
 
