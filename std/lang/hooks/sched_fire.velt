@@ -56,6 +56,11 @@ export function fireYields(e: usize, k: usize): void {
   }
   let woken = m.load32(k + t.T_STATE) === t.YIELDED;
   let y = ls.take(k);
+  if (ls.rootFirst(k)) {
+    // The root's turn placed with no record comes before the root's records listed after it.
+    ls.turnNext(k, y);
+    woken = resume(e, k, k, true, false, woken, true);
+  }
   while (y !== 0) {
     const nx = ls.next(y);
     let w = ls.fire(k, y);

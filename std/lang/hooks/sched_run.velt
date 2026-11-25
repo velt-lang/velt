@@ -122,9 +122,15 @@ function runOther(e: usize, k: usize, fl: u32): void {
   if (stdUsed("yields")) {
     yl.begin(k, fl);
     if ((fl & t.ROOT_ALONE) !== 0) {
-      // The root's turn placed in the last poll (kept while its block was parked) is over.
+      // The root's turn placed in the last poll (kept while its block was parked) is this one's:
+      // first, before the root's records listed after it (`ls.join` made none for it), or the
+      // poll itself when none are.
       t.flags(k, 0, t.ROOT_ALONE);
-      ls.park(k);
+      if ((fl & t.YIELDS) !== 0) {
+        ls.rootFirstNext(k);
+      } else {
+        ls.park(k);
+      }
     }
   }
   if ((fl & t.TOUCHED) !== 0) {

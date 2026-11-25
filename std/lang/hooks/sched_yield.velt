@@ -130,9 +130,10 @@ function rootYieldBlock(k: usize, b: usize): usize {
 /**
  * The root's awaited yield with a task's waker in another cx: a child of an inline `Promise.all`
  * the root awaits, polled with a copy of the root's cx (velt_vir `await_all_inline`, rt_abi_async.md
- * `velt_rt_yield_now`), so its siblings' yields in this poll may come before or after it.
+ * `velt_rt_yield_now`), so its siblings' yields in this poll may come before or after it. In line
+ * in `otherYield`'s task branch: one call per child's yield.
  */
-@noInline
+@inline("always")
 function sharedRootYield(k: usize): usize {
   if (m.load32Relaxed(k + t.T_STATE) === t.YIELDED) {
     return rootYieldAgain(k);

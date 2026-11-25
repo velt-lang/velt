@@ -105,7 +105,9 @@ export const B_TAKEN: usize = 32;
 /** Records kept for reuse (`recAlloc`, `recFree`): the first, linked by `Y_NEXT`, and how many. */
 export const B_FREE: usize = 40;
 export const B_NFREE: usize = 48;
-export const B_SIZE: usize = 56;
+/** 1 while this poll's first turn is the root's, placed with no record (`rootFirst`). */
+export const B_RTURN: usize = 56;
+export const B_SIZE: usize = 64;
 /** At most this many records are kept for reuse. */
 const POOL: usize = 8;
 /** One generation in a stamp. */
@@ -172,6 +174,7 @@ function makeBlock(k: usize): usize {
   m.st(b + B_TAKEN, 0);
   m.st(b + B_FREE, 0);
   m.st(b + B_NFREE, 0);
+  m.st(b + B_RTURN, 0);
   m.st(k + t.T_YIELDS, b);
   if (m.load32(k + t.T_STATE) === t.YIELDED) {
     // Its root yielded in this poll, before any yield was made: its turn comes first (stamp 0).
@@ -219,23 +222,32 @@ export function held(w: usize, k: usize, stamp: usize): usize {
 /**
  * Yield `y` joins task `k`'s list (on the thread polling `k`) by its number: at the end, unless a
  * yield made after it joined first. The root's turn placed with no record (`ROOT_ALONE`) gets one
- * first, so the yields made after it come after it (a yield of the same number, made before the
- * root's, comes before it).
+ * once a yield that wakes something else joins, so the yields made after it come after it (a
+ * yield of the same number, made before the root's, comes before it). While only the root's
+ * records join, it keeps none: its turn comes first in the next poll (`rootFirst`).
  */
 export function join(k: usize, y: usize): void {
   const b = block(k);
   m.st(y + Y_STATE, QUEUED);
-  let last = m.ld(b + B_LAST);
-  if (last === 0 && t.has(k, t.ROOT_ALONE) && m.load32(k + t.T_STATE) === t.YIELDED) {
+  if (
+    m.ld(y + Y_WAKER) !== ROOT && t.has(k, t.ROOT_ALONE) && m.load32(k + t.T_STATE) === t.YIELDED
+  ) {
     t.flags(k, 0, t.ROOT_ALONE);
-    last = recAlloc(b);
-    m.st(last, 0);
-    m.st(last + Y_WAKER, ROOT);
-    m.st(last + Y_STAMP, m.ld(b + B_ROOT));
-    m.st(last + Y_STATE, QUEUED);
-    m.st(last + Y_NEXT, last);
-    m.st(b + B_LAST, last);
+    const r = recAlloc(b);
+    m.st(r, 0);
+    m.st(r + Y_WAKER, ROOT);
+    m.st(r + Y_STAMP, m.ld(b + B_ROOT));
+    m.st(r + Y_STATE, QUEUED);
+    insert(b, r);
   }
+  insert(b, y);
+  // Its next poll fires them (sched_run.velt `runWoken`), and this one's end queues it again.
+  t.flags(k, t.YIELDS | t.LOCALS, 0);
+}
+
+/** Yield `y` goes on block `b`'s list by its number (`join`). */
+function insert(b: usize, y: usize): void {
+  const last = m.ld(b + B_LAST);
   const seq = m.ld(y + Y_STAMP);
   if (last === 0) {
     m.st(y + Y_NEXT, y);
@@ -253,8 +265,24 @@ export function join(k: usize, y: usize): void {
     m.st(y + Y_NEXT, m.ld(p + Y_NEXT));
     m.st(p + Y_NEXT, y);
   }
-  // Its next poll fires them (sched_run.velt `runWoken`), and this one's end queues it again.
-  t.flags(k, t.YIELDS | t.LOCALS, 0);
+}
+
+/**
+ * A poll of task `k` begins with its root's turn of the last poll placed (`ROOT_ALONE`) and only
+ * the root's records listed after it (`join`): that turn comes first (sched_run.velt `runOther`).
+ */
+export function rootFirstNext(k: usize): void {
+  m.st(blockOf(k) + B_RTURN, 1);
+}
+
+/** Does this poll of task `k` begin with its root's turn (`rootFirstNext`)? Asked once. */
+export function rootFirst(k: usize): bool {
+  const b = blockOf(k);
+  if (m.ld(b + B_RTURN) === 0) {
+    return false;
+  }
+  m.st(b + B_RTURN, 0);
+  return true;
 }
 
 /**
