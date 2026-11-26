@@ -1,26 +1,21 @@
 // velt/process/child (internal): the child-process functions where the executor in Velt doesn't
 // run (the default variant of `#child-rt`, std/imports.velt: WebAssembly), with the names and
 // signatures of the `std-scheduler` variant (std/process/child/child_sched.velt), and what both
-// share: the layout `execSync` returns, and the runtime's `execSync` (rt_abi_async.md §14.3),
-// which Windows runs too (exec_sync_win32.velt); macOS and Linux run std's. No child
-// can start there: `spawn` and `exec` fail with `ENOTSUP`, and no handle is open.
+// share: what `execSync`'s start returns (`#exec-sync`: exec_sync_posix.velt, exec_sync_win32.velt,
+// exec_sync.velt). No child can start there: `spawn`, `exec` and `execSync` fail with `ENOTSUP`,
+// and no handle is open.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { ExecResult } from "velt/process/child/exec_result";
 import { CommandSpec } from "velt/process/child/spec";
 
-/** The runtime's `VeltOutput`. */
+/** What a child run by `execSync` gave: its exit code, and its output decoded lossily. */
 export struct RawOutput {
   code: i32;
   stdout: string;
   stderr: string;
 }
-
-export declare function velt_rt_child_output_sync(
-  spec: CommandSpec,
-  input: string,
-): IoResult<RawOutput>;
 
 /** The result of `raw`: its exit code unsigned, as Node reports a Windows code (0xC0000005). */
 export function resultOf(raw: RawOutput): ExecResult {

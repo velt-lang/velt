@@ -1,0 +1,9 @@
+both: 0; stdout 12000 lines, out 1 .. out 12000; stderr 12000 lines, err 1 .. err 12000
+echoed: 0; 258894 bytes; 30000 lines, in 1 .. in 30000
+unread: 0 [not reading]
+no input: 1 []
+exit 3: 3 [to out] [to err]
+cwd and env: 0 [<dir>
+value of the variable]
+missing: ENOENT
+batch: EINVAL

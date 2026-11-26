@@ -1,0 +1,61 @@
+// requires: windows
+// `execSync` on Windows (std/process/child/exec_sync_win32.velt), as Node's `spawnSync` gives it:
+// more than a pipe holds on stdout and stderr at once, interleaved; more than a pipe holds on
+// stdin while the child echoes it back (a reader of one pipe at a time would deadlock); input a
+// child never reads (the rest is dropped and the run goes on; Node also reports `error` EOF);
+// no input (stdin at its end); exit codes; `cwd` and `env`; a missing program and a batch file.
+// This program prints what child_exec_sync_win.mjs prints under `node`.
+import { ExecOptions, execSync, SpawnError } from "velt/process/child";
+import * as fs from "velt/fs";
+import { tmpdir } from "velt/os";
+
+/** The number of lines of `text`, and its first and last. */
+function lines(text: string): string {
+  const all = text.trim().split("\n");
+  return `${all.length} lines, ${all[0].trim()} .. ${all[all.length - 1].trim()}`;
+}
+
+/** Runs `cmd /d /c line` with `opts`. */
+function cmd(line: string, opts: ExecOptions = {}) {
+  return execSync("cmd.exe", ["/d", "/c", line], opts);
+}
+
+/** The code `execSync` of `program` throws, or "ran". */
+function failure(program: string): string {
+  try {
+    execSync(program, [], {});
+    return "ran";
+  } catch (err) {
+    return err instanceof SpawnError ? err.code : err.message;
+  }
+}
+
+const both = cmd("for /l %i in (1,1,12000) do @(echo out %i & echo err %i 1>&2)");
+console.log(`both: ${both.code}; stdout ${lines(both.stdout)}; stderr ${lines(both.stderr)}`);
+
+let input = "";
+for (let i = 1; i <= 30000; i++) {
+  input += `in ${i}\n`;
+}
+const echoed = execSync("findstr.exe", ["^"], { input: input });
+console.log(`echoed: ${echoed.code}; ${echoed.stdout.length} bytes; ${lines(echoed.stdout)}`);
+
+const unread = cmd("echo not reading", { input: input });
+console.log(`unread: ${unread.code} [${unread.stdout.trim()}]`);
+
+const empty = execSync("findstr.exe", ["^"], {});
+console.log(`no input: ${empty.code} [${empty.stdout}]`);
+
+const exit3 = cmd("echo to out & echo to err 1>&2 & exit 3");
+console.log(`exit 3: ${exit3.code} [${exit3.stdout.trim()}] [${exit3.stderr.trim()}]`);
+
+const dir = `${tmpdir()}\\velt-golden-exec-sync-win`;
+fs.mkdirSync(dir, { recursive: true });
+const env = new Map<string, string>();
+env.set("VELT_GOLDEN_VAR", "value of the variable");
+const where = cmd("cd & echo %VELT_GOLDEN_VAR%", { cwd: dir, env: env });
+console.log(`cwd and env: ${where.code} [${where.stdout.trim().split(dir).join("<dir>")}]`);
+fs.rmdirSync(dir);
+
+console.log(`missing: ${failure("velt-golden-no-such-program")}`);
+console.log(`batch: ${failure("velt-golden-script.bat")}`);

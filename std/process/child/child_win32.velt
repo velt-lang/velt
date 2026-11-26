@@ -17,7 +17,7 @@
 //   status, the signal it was killed with, the pipes) hangs off it and is counted: the handle and
 //   the reaper each hold it, and an operation in flight holds it while it runs. `close` releases
 //   the handle and the pipes; the child keeps running.
-// - `execSync` (`velt_rt_child_output_sync`) stays the runtime's: it blocks its thread anyway.
+// - `execSync` blocks the calling thread instead (std/process/child/exec_sync_win32.velt).
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";

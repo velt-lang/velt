@@ -1,38 +1,289 @@
-// velt/process/child (internal): `execSync`'s start on Windows (`#exec-sync`, std/imports.velt).
-// The runtime's `velt_rt_child_output_sync` runs it, but the program is found first as `exec`
-// and `spawn` find it (Node's libuv lookup, std/process/child/command_line_win32.velt), and a
-// batch file is refused (`EINVAL`) as they refuse it, so the three agree: Rust's `Command` would
-// look elsewhere and run a batch file through `cmd.exe`.
+// velt/process/child (internal): `execSync`'s start on Windows (`#exec-sync`, std/imports.velt),
+// blocking the calling thread as Node's `spawnSync` does. The child starts as `spawn` and `exec`
+// start theirs (std/process/child/spawn_win32.velt: the program found as libuv finds it, a batch
+// file refused with `EINVAL`, the command line and environment made as libuv makes them). Its
+// stdout and stderr are pipes, its stdin a pipe when there is input (the null device otherwise),
+// each a named pipe whose parent end is overlapped (std/process/child/sync_pipe_win32.velt): one
+// loop keeps a read pending on each output and a write of the input, waits for whichever ends
+// first (`WaitForMultipleObjects` on their events) and starts the next, so a child that fills one
+// pipe while this side waits on another never deadlocks. Then the process handle is waited for
+// and its exit code read. Nothing of the executor runs: the pipes are this thread's alone.
+//
+// `OVERLAPPED` is laid out in raw memory at the Windows SDK's offsets for 64-bit Windows
+// (minwinbase.h): two words for the system, the offset, then the event at 24.
 
 import { IoResult } from "velt/native/result";
-import * as cl from "velt/process/child/command_line_win32";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { arrayDataAddress, arrayReserve, arraySetLen, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { strBytesOf } from "velt/ffi/str_bytes";
+import * as m from "velt/lang/hooks/mem_raw";
 import { CommandSpec } from "velt/process/child/spec";
 import * as sw from "velt/process/child/spawn_win32";
-import { RawOutput, velt_rt_child_output_sync } from "./rt";
+import * as sp from "velt/process/child/sync_pipe_win32";
+import { RawOutput } from "./rt";
+
+/** C's `OVERLAPPED`. */
+declare c type _OVERLAPPED;
+/** C's `SECURITY_ATTRIBUTES`: never passed. */
+declare c type _SECURITY_ATTRIBUTES;
+
+declare c("c") function ReadFile$sync(
+  file: Ptr<void> | null,
+  buf: Ptr<u8> | null,
+  n: u32,
+  read: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function WriteFile$sync(
+  file: Ptr<void> | null,
+  buf: Ptr<u8> | null,
+  n: u32,
+  written: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function GetOverlappedResult(
+  file: Ptr<void> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+  n: Out<u32>,
+  wait: i32,
+): i32;
+declare c("c") function CreateEventW(
+  attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+  manualReset: i32,
+  initialState: i32,
+  name: Ptr<u16> | null,
+): Ptr<void> | null;
+declare c("c") function WaitForMultipleObjects(
+  count: u32,
+  handles: Ptr<Ptr<void>> | null,
+  waitAll: i32,
+  ms: u32,
+): u32;
+declare c("c") function CancelIoEx(file: Ptr<void> | null, overlapped: Ptr<_OVERLAPPED> | null): i32;
+declare c("c") function WaitForSingleObject$sync(h: Ptr<void> | null, ms: u32): u32;
+declare c("c") function GetExitCodeProcess$sync(h: Ptr<void> | null, code: Out<u32>): i32;
+
+const INFINITE: u32 = 0xffffffff;
+const WAIT_OBJECT_0: u32 = 0;
+const ERROR_IO_PENDING: u32 = 997;
+/** The size of an `OVERLAPPED`, and where its event is. */
+const OV_SIZE: usize = 32;
+const OV_EVENT: usize = 24;
+/** A pipe's buffer's first size, and the least it grows by. */
+const CHUNK: usize = 65536;
+/** The spare room below which a buffer grows before the next read (it reads into the rest). */
+const MIN_READ: usize = 4096;
+/** The most one write passes. */
+const MOST_WRITE: usize = 0x40000000;
+
+/**
+ * One pipe of the child: the parent's overlapped end (0 once it ended), its `OVERLAPPED` and
+ * event, whether an operation is pending on it; for an output, what it gave, in one buffer that
+ * grows by doubling (`room` its capacity, `kept` the bytes before the pending read); for stdin,
+ * how much of the input is written.
+ */
+class Pipe {
+  h: usize = 0;
+  ov: usize = 0;
+  pending: bool = false;
+  data: u8[] = [];
+  room: usize = 0;
+  kept: usize = 0;
+  off: usize = 0;
+}
+
+/** A pipe for parent end `h` (0: none) with its `OVERLAPPED` and event (ended when none). */
+function pipeOf(h: usize): Pipe {
+  const p = new Pipe();
+  p.h = h;
+  if (h !== 0) {
+    p.ov = m.zeroed(OV_SIZE);
+    // SAFETY: no security attributes or name; manual reset, as overlapped I/O wants.
+    const ev = Ptr.addressOf<void>(unsafe { CreateEventW(null, 1, 0, null) });
+    m.st(p.ov + OV_EVENT, ev);
+    if (ev === 0) {
+      endPipe(p);
+    }
+  }
+  return p;
+}
+
+/** Closes `p`'s end (its operation is over), and frees its event and `OVERLAPPED`. */
+function endPipe(p: Pipe): void {
+  if (p.h !== 0) {
+    sp.closeHandle(p.h);
+    p.h = 0;
+  }
+  if (p.ov !== 0) {
+    const ev = m.ld(p.ov + OV_EVENT);
+    if (ev !== 0) {
+      sp.closeHandle(ev);
+    }
+    m.release(p.ov, OV_SIZE);
+    p.ov = 0;
+  }
+  p.pending = false;
+}
+
+/** Starts a read on output `p` into the spare room of its buffer (grown first when short). */
+function startRead(p: Pipe): void {
+  const len = p.data.length;
+  if (p.room - len < MIN_READ) {
+    const want = len + CHUNK > 2 * p.room ? len + CHUNK : 2 * p.room;
+    arrayReserve(p.data, want - len);
+    p.room = want;
+  }
+  // The spare room, which only the read writes; the buffer is not touched until it is over.
+  arraySetLen(p.data, p.room);
+  p.kept = len;
+  // SAFETY: the buffer holds `room` bytes and nothing grows it while the read is pending.
+  const at = unsafe { arrayDataAddress(p.data) } + len;
+  const space = (p.room - len) as u32;
+  // SAFETY: `space` bytes at `at`; the handle is open and overlapped, with its `OVERLAPPED`.
+  const done = unsafe {
+    ReadFile$sync(m.ptrTo<void>(p.h), m.ptr(at), space, null, m.ptrTo<_OVERLAPPED>(p.ov))
+  };
+  issued(p, done);
+  if (!p.pending) {
+    arraySetLen(p.data, len);
+  }
+}
+
+/** Starts a write of the input's rest (`size` bytes at `from`) to stdin `p`. */
+function startWrite(p: Pipe, from: usize, size: usize): void {
+  const left = size - p.off;
+  const n = left > MOST_WRITE ? MOST_WRITE : left;
+  // SAFETY: `n` bytes at `from + off`, alive until the run is over; the handle is open and
+  // overlapped, with its `OVERLAPPED`.
+  const done = unsafe {
+    WriteFile$sync(m.ptrTo<void>(p.h), m.ptr(from + p.off), n as u32, null, m.ptrTo<_OVERLAPPED>(p.ov))
+  };
+  issued(p, done);
+}
+
+/**
+ * After `ReadFile` / `WriteFile` on `p` returned `done`: pending, whether it finished already
+ * (the event is set then too) or runs on; any other failure (the child closed its end) ends it.
+ */
+function issued(p: Pipe, done: i32): void {
+  if (done !== 0 || sp.lastError() === ERROR_IO_PENDING) {
+    p.pending = true;
+  } else {
+    endPipe(p);
+  }
+}
+
+/**
+ * The bytes `p`'s operation moved, once it is over (`wait`: block until it is); -1 when it failed
+ * (the end of the pipe, or cancelled).
+ */
+function finished(p: Pipe, wait: bool): i64 {
+  const n = new Out<u32>(0);
+  // SAFETY: the operation on this handle and `OVERLAPPED`, over (its event is set) unless `wait`.
+  const ok = unsafe {
+    GetOverlappedResult(m.ptrTo<void>(p.h), m.ptrTo<_OVERLAPPED>(p.ov), n, wait ? 1 : 0)
+  };
+  p.pending = false;
+  return ok !== 0 ? n.value as i64 : -1;
+}
+
+/** Waits for the child of process handle `h` to end: its exit code, or -1 when that failed. */
+function exitCode(h: usize): i64 {
+  const code = new Out<u32>(0);
+  // SAFETY: a process handle this function's caller owns.
+  unsafe {
+    if (WaitForSingleObject$sync(m.ptrTo<void>(h), INFINITE) !== WAIT_OBJECT_0) {
+      return -1;
+    }
+    if (GetExitCodeProcess$sync(m.ptrTo<void>(h), code) === 0) {
+      return -1;
+    }
+  }
+  return code.value as i64;
+}
 
 /** Runs `spec` to completion with `input`, blocking the calling thread. */
 export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
-  const got = new sw.Started();
-  const program = sw.resolve(spec, cl.environment(spec), got);
-  if (program == null) {
+  const none: RawOutput = { code: 0, stdout: "", stderr: "" };
+  // The input's UTF-8 bytes, in the string itself (a lone surrogate as U+FFFD), alive below.
+  const text = strBytesOf(input);
+  const size = strByteLen(text);
+  const from = size === 0 ? 0 : strDataAddress(text);
+  // Stdin is a pipe only when there is input; the child reads end of stream otherwise.
+  const got = sw.start(spec, (size === 0 ? 2 : 3) | (3 << 2) | (3 << 4));
+  if (got.process === 0) {
     const st = sw.failure(spec.program, got);
-    return { code: st.code, message: st.message, value: { code: 0, stdout: "", stderr: "" } };
+    return { code: st.code, message: st.message, value: none };
   }
-  const found: CommandSpec = {
-    program: program,
-    args: spec.args.clone(),
-    cwd: spec.cwd.clone(),
-    env: spec.env.clone(),
-    stdio: spec.stdio,
-    clearEnv: spec.clearEnv,
-  };
-  const ran = velt_rt_child_output_sync(found, input);
-  const prefix = `spawn ${program}: `;
-  if (ran.code !== 0 && ran.message.startsWith(prefix)) {
-    // Worded as the program given (`spawn fake: …`), not the file found, as `spawn` and `exec`
-    // word it: `SpawnError` reads that (spawn_error.velt).
-    const text = ran.message.slice(prefix.length as i64);
-    return { code: ran.code, message: `spawn ${spec.program}: ${text}`, value: ran.value };
+  const pipes = [pipeOf(got.stdin), pipeOf(got.stdout), pipeOf(got.stderr)];
+  // The events of the pending operations, and which pipe each is.
+  const events = m.zeroed(24);
+  const which: usize[] = [0, 0, 0];
+  let broken = false;
+  while (true) {
+    let n: usize = 0;
+    for (let i: usize = 0; i < 3; i++) {
+      const p = pipes[i as i64];
+      if (p.h !== 0 && !p.pending) {
+        if (i === 0) {
+          startWrite(p, from, size);
+        } else {
+          startRead(p);
+        }
+      }
+      if (p.h !== 0) {
+        m.st(events + 8 * n, m.ld(p.ov + OV_EVENT));
+        which[n as i64] = i;
+        n++;
+      }
+    }
+    if (n === 0) {
+      break;
+    }
+    // SAFETY: `n` event handles at `events`, each of an operation pending.
+    const w = unsafe { WaitForMultipleObjects(n as u32, m.ptrTo<Ptr<void>>(events), 0, INFINITE) };
+    if (w >= WAIT_OBJECT_0 + (n as u32)) {
+      broken = true;
+      break;
+    }
+    const p = pipes[which[w as i64] as i64];
+    const moved = finished(p, false);
+    if (which[w as i64] === 0) {
+      // The child closed its stdin when the write failed: the rest is dropped, and the run goes
+      // on, as the runtime's `execSync` did.
+      p.off += moved > 0 ? moved as usize : 0;
+      if (moved < 0 || p.off >= size) {
+        endPipe(p);
+      }
+    } else if (moved < 0) {
+      // `ERROR_BROKEN_PIPE`: every handle to the child's end is closed.
+      arraySetLen(p.data, p.kept);
+      endPipe(p);
+    } else {
+      arraySetLen(p.data, p.kept + (moved as usize));
+    }
   }
-  return ran;
+  m.release(events, 24);
+  for (const p of pipes) {
+    if (p.pending) {
+      // Waiting failed with operations pending: they are cancelled, and over before their
+      // buffers go.
+      // SAFETY: the pending operation of this handle and `OVERLAPPED`.
+      unsafe {
+        CancelIoEx(m.ptrTo<void>(p.h), m.ptrTo<_OVERLAPPED>(p.ov));
+      }
+      finished(p, true);
+    }
+    endPipe(p);
+  }
+  const code = broken ? -1 : exitCode(got.process);
+  sp.closeHandle(got.process);
+  if (code < 0) {
+    return { code: 99, message: "waiting for the child failed", value: none };
+  }
+  const stdout = pipes[1].data.utf8Slice();
+  const stderr = pipes[2].data.utf8Slice();
+  const ran: RawOutput = { code: code as i32, stdout: stdout, stderr: stderr };
+  return { code: 0, message: "", value: ran };
 }

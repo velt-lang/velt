@@ -15,7 +15,6 @@ pub mod array;
 pub mod build_profile;
 pub mod bytes;
 pub mod cell_owner;
-pub mod child;
 pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
