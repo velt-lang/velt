@@ -1,0 +1,25 @@
+// A regex's `lastIndex` is its own data property, as in JavaScript (#3792): a subclass's
+// `lastIndex` accessors are never called, through the subclass's type or `RegExp`'s, and
+// `exec`, `test`, `replace` and `matchAll` read and set the regex's own.
+
+const log: string[] = [];
+
+class R extends RegExp {
+  override get lastIndex(): number {
+    log.push("get");
+    return 5;
+  }
+  override set lastIndex(v: number) {
+    log.push(`set ${v}`);
+  }
+}
+
+const r = new R("a", "g");
+console.log(r.exec("aa")!.index, r.lastIndex);
+r.lastIndex = 0;
+console.log(r.lastIndex, r.test("ba"), r.lastIndex);
+const base: RegExp = r;
+base.lastIndex = 1;
+console.log(base.lastIndex, r.exec("aba")!.index, r.lastIndex);
+console.log("ab".replace(r, "x"), r.lastIndex, [..."aab".matchAll(r)].length);
+console.log(log.length);
