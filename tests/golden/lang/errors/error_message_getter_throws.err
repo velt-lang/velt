@@ -1,0 +1,4 @@
+error_message_getter_throws.velt:6:7: error: `get message()` of an error class cannot throw (it throws `RangeError`)
+  = note: `String(e)`, `console.log` and the report of an uncaught error read `message`, and the error would have nowhere to go
+  = note: the getters of `message` are called through one entry, so they share one error type: one that throws makes each of them throw
+  = note: catch the error inside the getter and return a message instead

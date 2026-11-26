@@ -90,11 +90,15 @@ pub enum Construct {
     /// swapped in there can reach module state from the callback. Sema sets it for such a build
     /// only, so other builds demand nothing and count nothing.
     MutexHeld,
+    /// A class extending `Error` declares `get message()` (`velt_sema` `error_message.rs`): the
+    /// glue of an error held as `any` reads its `message` through std's `errorMessage`. Sema
+    /// sets it in such a program only.
+    ErrorMessage,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 14] = [
+    pub const ALL: [Construct; 15] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -109,6 +113,7 @@ impl Construct {
         Construct::WriteFloat,
         Construct::PowInt,
         Construct::MutexHeld,
+        Construct::ErrorMessage,
     ];
 
     /// The construct as the ICE names it.
@@ -128,6 +133,7 @@ impl Construct {
             Construct::WriteFloat => "WriteFloat (console.log of a float)",
             Construct::PowInt => "PowInt (`**` on integers)",
             Construct::MutexHeld => "MutexHeld (a Mutex's with in a velt dev build)",
+            Construct::ErrorMessage => "ErrorMessage (a get message() on a class extending Error)",
         }
     }
 

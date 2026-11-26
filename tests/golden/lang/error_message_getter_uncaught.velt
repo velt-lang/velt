@@ -1,0 +1,11 @@
+// The report of an uncaught error made without a message, whose class declares `get message()`
+// (#3792): its first line has the getter's text, as Node's has.
+
+class E extends Error {
+  get message(): string {
+    return "from the getter";
+  }
+}
+
+console.log("before");
+throw new E();
