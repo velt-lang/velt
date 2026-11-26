@@ -1,0 +1,56 @@
+// A `Headers` subclass's overrides are not what the built-in methods run on (#3792): the
+// constructor adds its entries without calling `append`, and `forEach`, `entries`, `keys`,
+// `values`, iteration and `console.log` read the list without calling `get` or `getSetCookie` (an
+// overridden `getSetCookie` returning fewer values stopped the program), as in Node, which also
+// prints a subclass under the name `Headers`. The Node twin is headers_subclass.mjs.
+class Loud extends Headers {
+  append(name: string, value: string) {
+    console.log("append", name, value);
+    super.append(name, value);
+  }
+  get(name: string): string | null {
+    console.log("get", name);
+    return "overridden";
+  }
+  getSetCookie(): string[] {
+    console.log("getSetCookie");
+    return [];
+  }
+}
+
+class Quiet extends Headers {}
+
+function main() {
+  const h = new Loud([
+    ["b", "2"],
+    ["Set-Cookie", "x=1"],
+    ["a", "1"],
+    ["b", "3"],
+    ["set-cookie", "y=2"],
+  ]);
+  console.log("made from pairs");
+  const r = new Loud({ x: "1", y: "2" });
+  console.log("made from a record");
+  h.forEach((value, name) => console.log("each", name, value));
+  for (const [name, value] of h) {
+    console.log("of", name, value);
+  }
+  console.log([...h.entries()].join("|"));
+  console.log([...h.keys()].join("|"));
+  console.log([...h.values()].join("|"));
+  console.log([...r].join("|"));
+  // `console.log` reads the list too, under the name `Headers`, as Node writes it.
+  console.log(r);
+  console.log({ r });
+  console.log(
+    new Loud([
+      ["b", "2"],
+      ["a", "1"],
+      ["b", "3"],
+    ]),
+    new Quiet({ q: "1" }),
+  );
+  console.log(h.get("b"), h.getSetCookie().length);
+  h.append("c", "4");
+  console.log([...h.keys()].join("|"));
+}

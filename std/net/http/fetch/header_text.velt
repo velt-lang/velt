@@ -35,7 +35,26 @@ export function sameName(a: string, b: string): bool {
   return a.length == b.length && (a == b || a.toLowerCase() == b.toLowerCase());
 }
 
-/** `[name, value]` pairs of `h` as iteration yields them: sorted by name, repeats joined. */
+/**
+ * The values of `name` (lowercase) in the flat list `[name, value, …]`, joined with ", "; ""
+ * when there is none.
+ */
+export function joinedValues(list: string[], name: string): string {
+  let out: string | null = null;
+  for (let i: usize = 0; i < list.length; i += 2) {
+    if (list[i] == name) {
+      const v = list[i + 1].clone();
+      out = out == null ? v : `${out}, ${v}`;
+    }
+  }
+  return out ?? "";
+}
+
+/**
+ * `[name, value]` pairs of `h` as iteration yields them: sorted by name, repeats joined,
+ * `set-cookie` values one by one. Read from the list, as in JS: a subclass's `get` and
+ * `getSetCookie` are not called.
+ */
 export function sortedHeaders(h: Headers): [string, string][] {
   const list = h.items();
   const names: string[] = [];
@@ -47,14 +66,17 @@ export function sortedHeaders(h: Headers): [string, string][] {
   }
   names.sort();
   const out: [string, string][] = [];
+  // Where in the list the next `set-cookie` is looked for.
   let cookie: usize = 0;
-  const cookies = h.getSetCookie();
   for (const n of names) {
     if (n == "set-cookie") {
-      out.push([n, cookies[cookie].clone()]);
-      cookie++;
+      while (list[cookie] != "set-cookie") {
+        cookie += 2;
+      }
+      out.push([n, list[cookie + 1].clone()]);
+      cookie += 2;
     } else {
-      out.push([n.clone(), h.get(n) ?? ""]);
+      out.push([n.clone(), joinedValues(list, n)]);
     }
   }
   return out;
