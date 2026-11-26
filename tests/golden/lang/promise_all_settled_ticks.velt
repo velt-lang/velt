@@ -1,0 +1,24 @@
+// When `Promise.allSettled` resolves, counted in microtask ticks against another task's chain:
+// inputs that are `.then` chains, still pending at the call, settle allSettled on the same tick
+// as in Node (awaiting every input from the call on must not add a turn, #3195). The Node twin
+// is promise_all_settled_ticks.mjs.
+
+async function tick(name: string, n: i64): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    console.log(name, i);
+    await Promise.resolve();
+  }
+}
+
+async function main() {
+  const t = tick("u", 10);
+  const x = Promise.resolve(1)
+    .then((v) => v + 1)
+    .then((v) => v + 1);
+  const y = Promise.resolve(5).then((v) => v * 2);
+  const r = await Promise.allSettled([x, y]);
+  console.log("got", r.length);
+  await t;
+}
+
+main();
