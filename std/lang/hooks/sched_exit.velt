@@ -65,8 +65,32 @@ import * as wk from "./sched_wake";
  * throws the error again.
  */
 export function uncaughtNow(e: usize): void {
+  KEPT.store(1, "relaxed");
   const at = loc.current();
   m.st(e + t.E_UNCAUGHT, at === 0 ? 1 : at);
+}
+
+/**
+ * 1 once the exit is known to leave blocks of the executor's counted that it cannot give back: an
+ * error a callback threw (`uncaughtNow`; its timer, the timer's turn and the task that runs it are
+ * live), the root of `main` not this thread's to give back (`root`), or worker 0 not taking a
+ * handed exit (`waitForMain`). With the counters on, the exit then says that its report is no
+ * leak verdict (`exitNoted`), as `process.exit` does (std/prelude/process.velt `processExit`).
+ */
+const KEPT = new Atomic<u32>(0);
+
+/** The line `exitNoted` writes just before the report (the leak checks read it: `KEPT`). */
+const KEPT_NOTE =
+  "rc stats: an uncaught error ended the program with tasks live: no leak verdict\n";
+
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/** Ends the process with `code`, after the note that the counts are no leak verdict (`KEPT`). */
+function exitNoted(code: i32): never {
+  if (KEPT.load("relaxed") !== 0 && counting()) {
+    velt_rt_write_str(2, KEPT_NOTE);
+  }
+  process.exit(code);
 }
 
 /** 1 once an exit gave back the executor's blocks (an error in that is not given back twice). */
@@ -99,7 +123,7 @@ export function exitUncaught(code: i32): never {
   if (self !== 0 && self !== g) {
     handToMain(g, code);
   }
-  process.exit(code);
+  exitNoted(code);
 }
 
 /**
@@ -155,7 +179,9 @@ function waitForMain(code: i32): void {
     left = end - performance.now();
   }
   if (HANDED.compareExchange(code + 1, TAKEN, "seqcst", "seqcst") === code + 1) {
-    process.exit(code);
+    // Worker 0's poll holds the root of `main`.
+    KEPT.store(1, "relaxed");
+    exitNoted(code);
   }
 }
 
@@ -198,7 +224,7 @@ function takeExitNow(e: usize): void {
   if (counting()) {
     root(e);
   }
-  process.exit(c - 1);
+  exitNoted(c - 1);
 }
 
 /** Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? */
@@ -235,7 +261,11 @@ function giveBack(self: usize): void {
 /** Worker 0 (`g`, this thread) gives back the root of `main` when it is this thread's to give. */
 function root(g: usize): void {
   const k = m.ld(g + t.E_ROOT);
-  if (k === 0 || m.ld(k + t.T_HOME) !== g) {
+  if (k === 0) {
+    return;
+  }
+  if (m.ld(k + t.T_HOME) !== g) {
+    KEPT.store(1, "relaxed");
     return;
   }
   if (t.has(k, t.ROOT_DONE)) {
@@ -251,6 +281,7 @@ function root(g: usize): void {
   }
   if (m.ld(g + t.E_CURRENT) !== k && m.cas32(k + t.T_STATE, t.IDLE, t.DONE) !== t.IDLE) {
     // Queued, or polled on another worker: its references are not this thread's.
+    KEPT.store(1, "relaxed");
     return;
   }
   const tb = m.ld(g + t.E_TIMERS);

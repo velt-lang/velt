@@ -36,7 +36,8 @@ fn reports_after_mains_lines(name: &str, src: &str) {
                 && out.starts_with("main line\nmain after busy\n")
                 && !out.contains("unreachable")
                 && out.contains("Uncaught Failed")
-                && (run == 0 || blocks.is_some_and(|(a, f)| a == f)),
+                && (run == 0 || blocks.is_some_and(|(a, f)| a == f))
+                && !out.contains("no leak verdict"),
             "{name} run {run}: exit {code}\n{out}"
         );
     }
@@ -146,7 +147,7 @@ fn an_uncaught_error_ends_the_program_while_worker_0_never_yields() {
         ("never_yields_micro", NEVER_YIELDS_MICRO),
     ] {
         for run in 0..2 {
-            let (code, out) = build_and_run_bounded(dir.path(), name, src);
+            let (code, out) = build_and_run_bounded(dir.path(), name, src, &[]);
             assert!(
                 code == Some(1)
                     && out.contains("Uncaught Error: boom")
@@ -157,9 +158,64 @@ fn an_uncaught_error_ends_the_program_while_worker_0_never_yields() {
     }
 }
 
-/// `src` built with `VELT_SCHEDULER=std` and run at 4 workers, killed if it still runs after a
-/// minute: its exit code (`None`: killed) and output.
-fn build_and_run_bounded(dir: &Path, name: &str, src: &str) -> (Option<i32>, String) {
+/// An uncaught error whose exit leaves tasks live that it cannot give back says, with the block
+/// counters on, that the counts it reports are no leak verdict, on the line just before the
+/// report, as `process.exit` does (#3888): a timer's callback throws (its timer, the turn and the
+/// task that runs it are live), and worker 0 never takes the exit handed to it (its poll holds
+/// the root of `main`). The leak checks (crates/veltc/tests/golden.rs `exit_note`,
+/// std/test/plan.velt `leakedBlocks`) read that line. An exit that gives everything back says
+/// nothing of the kind (`reports_after_mains_lines`).
+#[test]
+fn an_uncaught_exit_with_tasks_live_is_no_leak_verdict() {
+    if !has_threads() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let counted = [("VELT_RC_STATS", "1")];
+    for (name, src) in [
+        ("timer_throws", TIMER_THROWS),
+        ("never_yields_counted", NEVER_YIELDS_SYNC),
+    ] {
+        let (code, out) = build_and_run_bounded(dir.path(), name, src, &counted);
+        let report = out.lines().any(|l| l.starts_with("rc stats: retain="));
+        let before = out
+            .lines()
+            .take_while(|l| !l.starts_with("rc stats: retain="))
+            .last();
+        assert!(
+            code == Some(1)
+                && out.contains("Uncaught Error: boom")
+                && report
+                && before == Some(KEPT_NOTE),
+            "{name}: exit {code:?}\n{out}"
+        );
+    }
+}
+
+/// The line std/lang/hooks/sched_exit.velt `exitNoted` writes before the report.
+const KEPT_NOTE: &str =
+    "rc stats: an uncaught error ended the program with tasks live: no leak verdict";
+
+/// A program of [`an_uncaught_exit_with_tasks_live_is_no_leak_verdict`]: a timer's callback
+/// throws while `main` sleeps.
+const TIMER_THROWS: &str = r#"async function main() {
+  setTimeout(() => {
+    throw new Error("boom");
+  }, 1);
+  await sleep(60000);
+  console.log("unreachable");
+}
+"#;
+
+/// `src` built with `VELT_SCHEDULER=std` and run at 4 workers with `env`, killed if it still runs
+/// after a minute: its exit code (`None`: killed) and output (stdout, then stderr).
+fn build_and_run_bounded(
+    dir: &Path,
+    name: &str,
+    src: &str,
+    env: &[(&str, &str)],
+) -> (Option<i32>, String) {
     let file = dir.join(format!("{name}.velt"));
     std::fs::write(&file, src).unwrap();
     let exe = dir.join(format!("{name}_std{}", std::env::consts::EXE_SUFFIX));
@@ -179,6 +235,7 @@ fn build_and_run_bounded(dir: &Path, name: &str, src: &str) -> (Option<i32>, Str
     );
     let mut child = no_window::command(&exe)
         .env("VELT_THREADS", "4")
+        .envs(env.iter().copied())
         .env_remove("VELT_SCHEDULER")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
