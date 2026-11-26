@@ -302,3 +302,12 @@ records carved from per-thread chunks); they were the runtime's `velt_rt_symbol_
 compiler and runtime with only std swapped, cachegrind, 2026-11-20: 278M instructions before,
 254M after (−8.7%); wall clock, best of 7 interleaved, 28.1 → 24.6 ms. The Rust port (a leaked
 record sharing an `Rc<str>`, `format!` for the text) executes 984M.
+
+## The transfer map
+
+`transfer_graph` (a chain of 1,000 objects, each reached twice and kept by the sender, sent to
+2,000 tasks: per object a lookup of its copy, the copy recorded and the original's release
+deferred to the end of the transfer) on std/lang/hooks/transfer.velt against velt_rt's
+`transfer_map.rs` it replaced (#3584): 1,140.5M instructions against 1,233.2M, 0.92 (release,
+Linux x86_64, cachegrind, `VELT_THREADS=1`, 2026-11-23). The Rust port copies the same graph
+with a `HashMap` from object to copy for each of 2,000 threads.

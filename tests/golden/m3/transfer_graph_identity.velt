@@ -1,0 +1,70 @@
+// A value sent to another task is copied the way structured clone copies it (the transfer map,
+// std/lang/hooks/transfer.velt): an object reached twice is copied once, a cycle stays a cycle,
+// and a resource's own `clone()` runs outside the transfer, so the copies it makes are its own.
+class Node {
+  v: i64 = 0;
+  next: Node | null = null;
+}
+
+class Pair {
+  a: Node = new Node();
+  b: Node = new Node();
+}
+
+class Handle {
+  id: i64 = 1;
+  parts: Node[] = [];
+  clone(): Handle {
+    const h = new Handle();
+    h.id = this.id + 100;
+    // Copies of its own: the same node twice stays two copies, as `.clone()` makes anywhere.
+    for (const p of this.parts) {
+      const c = new Node();
+      c.v = p.v;
+      h.parts.push(c);
+    }
+    return h;
+  }
+  [Symbol.dispose]() {}
+}
+
+class Bag {
+  pair: Pair = new Pair();
+  ring: Node = new Node();
+  handle: Handle = new Handle();
+  again: Node = new Node();
+}
+
+async function look(b: Bag): Promise<string> {
+  const shared = b.pair.a === b.pair.b && b.pair.a === b.again;
+  let n = 0;
+  let p: Node | null = b.ring;
+  do {
+    n++;
+    p = p!.next;
+  } while (p !== b.ring && n < 10);
+  const own = b.handle.parts[0] !== b.handle.parts[1];
+  b.pair.a.v = 99;
+  return `shared ${shared} ring ${n} handle ${b.handle.id} own ${own} b ${b.pair.b.v}`;
+}
+
+async function main() {
+  const bag = new Bag();
+  const one = new Node();
+  one.v = 7;
+  bag.pair.a = one;
+  bag.pair.b = one;
+  bag.again = one;
+  const r2 = new Node();
+  const r3 = new Node();
+  bag.ring.next = r2;
+  r2.next = r3;
+  r3.next = bag.ring;
+  bag.handle.parts.push(one);
+  bag.handle.parts.push(one);
+  const keep = bag;
+  for (let i = 0; i < 3; i++) {
+    console.log(await spawn(look(keep)));
+  }
+  console.log(`sender ${one.v} ${keep.pair.a === keep.again}`);
+}

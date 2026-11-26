@@ -135,12 +135,14 @@ pub unsafe extern "C" fn velt_rt_lk_write(p: *mut u64) {
 /// callbacks around it still run and may change it through their own variables, as in
 /// JavaScript, and only this thread reaches it meanwhile. It waits with one more reference,
 /// which `drop` (its drop glue) releases once the bit is gone. Transferred again before then
-/// it keeps the bit ([`leaving`]).
+/// it keeps the bit ([`leaving`]). `keeps` is what std's transfer map answers for the transfer
+/// under way (`xferKeeps`, std/lang/hooks/transfer.velt; 0 outside one), which the caller asks:
+/// 1, a transfer keeping what the caller holds, leaves the bit to the end of the reads too.
 ///
 /// # Safety
 /// `p` is the count word of the counted object `obj`, and `drop` its drop glue.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue, keeps: u8) {
     let depth = READER.with(|r| r.depth()) as u64;
     if depth > LEAVE_TO.with(Cell::get) || leaving(p) {
         return;
@@ -148,14 +150,14 @@ pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropG
     // Referenced only by where it goes, and not a part of an object the readers still
     // reference: nothing they hold can change it any more.
     let unique = *p & (STORED - 1) == 1 && KEPT_UNDER.with(Cell::get) == 0;
-    if unique || (depth <= 1 && crate::transfer_map::velt_rt_xfer_keeps() != 1) {
+    if unique || (depth <= 1 && keeps != 1) {
         *p &= !LOCAL;
         return;
     }
     leave_after_reads(p, obj, drop);
 }
 
-/// A transfer keeping what the caller holds (`velt_rt_xfer_keep_begin`) moves the reader's own
+/// A transfer keeping what the caller holds (std's `xferKeepBegin`) moves the reader's own
 /// object whose count word is at `p`, which the reader may still reference: the caller's
 /// reference becomes its only one and the bit goes, since the reader no longer counts it. In a
 /// nested read storing into code outside every read ([`velt_rt_lk_leave`] keeps the bit until
@@ -172,7 +174,7 @@ pub unsafe extern "C" fn velt_rt_lk_keep_made(p: *mut u64) {
     }
 }
 
-/// A value sema transferred out of a `read` callback (`velt_rt_xfer_share_begin`) holds the
+/// A value sema transferred out of a `read` callback (std's `xferShareBegin`) holds the
 /// reader's own object `obj`, whose count word is at `p`, which the reader still references: it
 /// stays itself. Going to a frame still in read mode (an outer reader's variable) it stays that
 /// reader's own, counted. Going to code outside every read, at any depth, it is the caller's
@@ -259,7 +261,7 @@ pub extern "C" fn velt_rt_lk_kept_again(obj: *mut u8) -> u8 {
     })
 }
 
-/// A transfer started by `velt_rt_xfer_keep_begin` goes into (`enter` 1) or comes out of
+/// A transfer started by std's `xferKeepBegin` goes into (`enter` 1) or comes out of
 /// (`enter` 0) the parts of an object the readers still reference, kept as itself: those
 /// parts stay the readers' own until the reads end ([`velt_rt_lk_leave`]), since the readers
 /// may still change them through it.
@@ -311,27 +313,27 @@ mod tests {
         // Nested: still the reader's own after the inner callback; outermost: no longer.
         READER.with(|r| r.push());
         let obj = std::ptr::null_mut();
-        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop) };
+        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop, 0) };
         assert_eq!(mine, 2 | LOCAL);
         // Referenced only where it goes, it is no longer the reader's own.
         let was = velt_rt_lk_leave_to(2);
         let mut alone = 1 | LOCAL;
-        unsafe { velt_rt_lk_leave(&mut alone, obj, count_drop) };
+        unsafe { velt_rt_lk_leave(&mut alone, obj, count_drop, 0) };
         assert_eq!(alone, 1);
         // Still referenced by the readers, stored two callbacks out into a container of code
         // outside every read: the reader's own until the outermost read ends, with one more
         // reference meanwhile.
-        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop) };
+        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop, 0) };
         assert_eq!(mine, 3 | LOCAL);
         assert_eq!(velt_rt_lk_leave_to(was), 2);
         // Moved on again at the outermost read (into another of the caller's containers): still
         // the reader's own, its count kept.
         READER.with(|r| r.pop());
         unsafe { velt_rt_lk_keep_made(&mut mine) };
-        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop) };
+        unsafe { velt_rt_lk_leave(&mut mine, obj, count_drop, 0) };
         assert_eq!(mine, 3 | LOCAL);
         let mut other = 1 | LOCAL;
-        unsafe { velt_rt_lk_leave(&mut other, obj, count_drop) };
+        unsafe { velt_rt_lk_leave(&mut other, obj, count_drop, 0) };
         assert_eq!(other, 1);
         READER.with(|r| r.pop());
         // As `velt_rt_rwlock_read_unlock` ends the outermost read.

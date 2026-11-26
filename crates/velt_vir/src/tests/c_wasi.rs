@@ -19,7 +19,7 @@ pub(super) fn check_for(src: &str, target: &str) -> (hir::Program, SourceMap) {
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let opts = velt_loader::LoadOptions {
-        std_root: Some(manifest.join("../../std")),
+        std_root: Some(std_root()),
         root_source: Some(src.to_string()),
         target: Some(target.to_string()),
         ..Default::default()
@@ -30,6 +30,13 @@ pub(super) fn check_for(src: &str, target: &str) -> (hir::Program, SourceMap) {
     assert!(diags.iter().all(|d| !d.is_error()), "load:\n{diags:#?}");
     let (program, diags) = velt_sema::check(&loaded.modules, loaded.root);
     (program.unwrap_or_else(|| panic!("check:\n{diags:#?}")), sm)
+}
+
+/// The std root, as the loader spells the paths of the files it reaches through `#name`
+/// imports (resolved, with no `..`): lowering tells std's files by this prefix.
+fn std_root() -> std::path::PathBuf {
+    let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    std.canonicalize().unwrap_or(std)
 }
 
 fn lower_for(src: &str, target: &str) -> Result<vir::Program, String> {
@@ -43,7 +50,7 @@ pub(super) fn lower_checked_for(
     sm: &SourceMap,
     target: &str,
 ) -> Result<vir::Program, String> {
-    let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let std = std_root();
     let opts = LowerOptions {
         source_map: Some(sm),
         std_root: Some(&std),
