@@ -18,6 +18,8 @@ import { dynamicOf, identity, isProxy } from "velt/reflect";
 import { recordViewIs } from "velt/lang/intrinsics";
 import { jsonEnter, jsonLeave } from "velt/encoding/json/generated";
 import {
+  jsonReplaced,
+  jsonReplacedField,
   jsonReplacedMembers,
   jsonReplacedNull,
   jsonReplacedText,

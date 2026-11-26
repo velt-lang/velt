@@ -63,6 +63,17 @@ function logged(k, v) {
   return v;
 }
 
+function edited(k, v) {
+  console.log(`  replacer ${JSON.stringify(k)} ${view(v)}`);
+  if (k == "y" || k == "1") {
+    return undefined;
+  }
+  if (k == "s") {
+    return "S";
+  }
+  return v;
+}
+
 function generic(x) {
   return JSON.stringify(x, logged);
 }
@@ -73,3 +84,18 @@ console.log("generic:");
 console.log(generic([new Hook("g")]));
 console.log("space:");
 console.log(JSON.stringify({ k: new Hook("sp") }, logged, "-"));
+console.log("plain:");
+const mixed = {
+  n: 1.5,
+  s: "t",
+  b: true,
+  list: [1, 2, 3],
+  pt: { x: 1, y: 2 },
+  pair: [3, "p"],
+  h: new Hook("h"),
+};
+console.log(JSON.stringify(mixed, edited));
+const points = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+console.log(JSON.stringify(points, edited));
+console.log(JSON.stringify("top", logged));
+console.log(JSON.stringify(true, logged));

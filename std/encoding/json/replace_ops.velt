@@ -6,6 +6,7 @@
 // velt/encoding/json/generate/replace generates, any_replace.velt for dynamic values), so each
 // member's `toJSON` runs at its own key; a value the replacer made is walked as JSON.
 
+import { noInline } from "velt/lang/intrinsics";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import {
@@ -56,6 +57,21 @@ export function jsonReplaced(
     return undefined;
   }
   return jsonReplacedMembers(r, replacer, depth);
+}
+
+/**
+ * Member `key` of the object `view`, plain data, replaced and set in `out` (left out when the
+ * replacer returns `undefined`): one call per plain member of the generated walk.
+ */
+@noInline
+export function jsonReplacedField(
+  out: JsonValue,
+  view: JsonValue,
+  key: string,
+  replacer: JsonReplacer,
+  depth: i64,
+): void {
+  setRevived(out, key, jsonReplaced(key, view.get(key)!, replacer, depth));
 }
 
 /** A `null` under `key` replaced (`raw`: its view in its parent's, if that holds it). */

@@ -49,6 +49,34 @@ function logged(k: string, v: JsonValue): JsonValue | undefined {
   return v;
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
+// Plain data (no `toJSON` in it) beside a hook: its members are walked through the replacer's
+// view of it, and an editing replacer changes, drops and nulls them as in Node.
+interface Mixed {
+  n: number;
+  s: string;
+  b: boolean;
+  list: number[];
+  pt: Point;
+  pair: [number, string];
+  h: Hook;
+}
+
+function edited(k: string, v: JsonValue): JsonValue | undefined {
+  console.log(`  replacer ${JSON.stringify(k)} ${v.stringify()}`);
+  if (k == "y" || k == "1") {
+    return undefined;
+  }
+  if (k == "s") {
+    return JsonValue.of("S");
+  }
+  return v;
+}
+
 function generic<T>(x: T): string {
   return JSON.stringify(x, logged);
 }
@@ -60,6 +88,21 @@ function main(): void {
   console.log(generic<Hook[]>([new Hook("g")]));
   console.log("space:");
   console.log(JSON.stringify({ k: new Hook("sp") }, logged, "-"));
+  console.log("plain:");
+  const mixed: Mixed = {
+    n: 1.5,
+    s: "t",
+    b: true,
+    list: [1, 2, 3],
+    pt: { x: 1, y: 2 },
+    pair: [3, "p"],
+    h: new Hook("h"),
+  };
+  console.log(JSON.stringify(mixed, edited));
+  const points: Point[] = [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+  console.log(JSON.stringify(points, edited));
+  console.log(JSON.stringify("top", logged));
+  console.log(JSON.stringify(true, logged));
 }
 
 main();

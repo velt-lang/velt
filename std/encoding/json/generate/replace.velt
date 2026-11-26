@@ -17,6 +17,7 @@ import {
   writesEmpty,
 } from "velt/encoding/json/generate/facts";
 import { stringifyProblem } from "velt/encoding/json/generate/check";
+import { plainJson } from "velt/encoding/json/generate/plain";
 import { entryRead, fieldRead, writtenFields } from "velt/encoding/json/generate/values";
 import { writeRawBody } from "velt/encoding/json/generate/write";
 
@@ -35,6 +36,12 @@ class Walk {
     this.f = f;
     this.depth = depth;
   }
+}
+
+/** Is a value of model type `id` that its parent's view holds walked as that view: plain data? */
+function viewWalked(model: Model, id: i64): bool {
+  const t = model.type(id);
+  return !isDynamic(t) && t.kind != "interface" && plainJson(model, id);
 }
 
 /**
@@ -58,6 +65,10 @@ function walkCall(
   }
   if (t.kind == "interface") {
     return `replaceJsonAny(dynamicOf(${v}), ${key}, ${raw}, ${w.f}, ${depth}, ${hook})`;
+  }
+  if (raw.startsWith("view.") && viewWalked(model, id)) {
+    // Plain data its parent's view holds: the view is its JSON form, walked as it is.
+    return `jsonReplaced(${key}, ${raw}!, ${w.f}, ${depth})`;
   }
   const name = out.instance(hook ? "replaceJson" : "replaceJsonPlain", [id]);
   return `${name}(${v}, ${key}, ${raw}, ${w.f}, ${depth})`;
@@ -159,8 +170,12 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     return;
   }
   const k = t.kind;
-  const container = k == "array" || k == "tuple" || k == "record" || hasFields(model, t);
+  // Plain data has no member to call a `toJSON` of: its view is walked as a leaf's is.
+  const plain = plainJson(model, id);
+  const container =
+    !plain && (k == "array" || k == "tuple" || k == "record" || hasFields(model, t));
   const leaf =
+    plain ||
     k == "number" ||
     k == "string" ||
     k == "boolean" ||
@@ -181,15 +196,20 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     out.line(`panic(${msg});`);
     return;
   }
-  // The replacer's view: its parent's holds it, or it is written now.
-  const write = out.instance("writeJsonRaw", [id]);
-  out.line(`let text = "";`);
-  out.line(`if (${w.raw} == null) {`);
-  out.line(`const sb = new StringBuilder();`);
-  out.line(`${write}(sb, ${v}, ${w.key});`);
-  out.line(`text = sb.take();`);
-  out.line(`}`);
-  out.line(`const view = jsonReplacerView(${w.raw}, text);`);
+  // The replacer's view: its parent's holds it, or it is written now (a string or a boolean
+  // is its own JSON form: no text to write and read back).
+  if (k == "string" || k == "boolean") {
+    out.line(`const view = ${w.raw} ?? JsonValue.of(${v});`);
+  } else {
+    const write = out.instance("writeJsonRaw", [id]);
+    out.line(`let text = "";`);
+    out.line(`if (${w.raw} == null) {`);
+    out.line(`const sb = new StringBuilder();`);
+    out.line(`${write}(sb, ${v}, ${w.key});`);
+    out.line(`text = sb.take();`);
+    out.line(`}`);
+    out.line(`const view = jsonReplacerView(${w.raw}, text);`);
+  }
   out.line(`const r = ${w.f}(${w.key}, view);`);
   out.line(`if (r == undefined) { return undefined; }`);
   if (!container) {
@@ -242,6 +262,12 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     const name = out.literal(f.name);
     const [x, test, wid] = fieldRead(out, model, f, v);
     const view = `view.get(${name})`;
+    if (wid >= 0 && viewWalked(model, wid)) {
+      // Plain data the view holds: one call replaces it and sets it.
+      const set = `jsonReplacedField(out, view, ${name}, ${w.f}, ${d});`;
+      out.line(test.length > 0 ? `if (${test}) { ${set} }` : set);
+      continue;
+    }
     const call =
       wid < 0
         ? `replaceJsonAny(${x}, ${name}, ${view}, ${w.f}, ${d}, true)`

@@ -32,3 +32,31 @@ space:
 {
 -"k": "sp"
 }
+plain:
+  replacer "" {"n":1.5,"s":"t","b":true,"list":[1,2,3],"pt":{"x":1,"y":2},"pair":[3,"p"],"h":{"name":"h"}}
+  replacer "n" 1.5
+  replacer "s" "t"
+  replacer "b" true
+  replacer "list" [1,2,3]
+  replacer "0" 1
+  replacer "1" 2
+  replacer "2" 3
+  replacer "pt" {"x":1,"y":2}
+  replacer "x" 1
+  replacer "y" 2
+  replacer "pair" [3,"p"]
+  replacer "0" 3
+  replacer "1" "p"
+  toJSON h key="h"
+  replacer "h" "h"
+{"n":1.5,"s":"S","b":true,"list":[1,null,3],"pt":{"x":1},"pair":[3,null],"h":"h"}
+  replacer "" [{"x":1,"y":2},{"x":3,"y":4}]
+  replacer "0" {"x":1,"y":2}
+  replacer "x" 1
+  replacer "y" 2
+  replacer "1" {"x":3,"y":4}
+[{"x":1},null]
+  replacer "" "top"
+"top"
+  replacer "" true
+true
