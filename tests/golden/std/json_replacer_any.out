@@ -1,0 +1,9 @@
+{"a":{"z":[9],"m":"m:5"},"b":{"c":2}}
+[1,{"b":2},"s"]
+{"n":42,"s":"str","b":false,"x":null,"k":1}
+[1,2,3]
+  replacer ""
+  replacer "a"
+  replacer "0"
+  replacer "m"
+{"a":[true],"m":"m:7"}

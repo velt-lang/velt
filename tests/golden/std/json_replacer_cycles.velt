@@ -1,0 +1,94 @@
+// `JSON.stringify(value, replacer)` of a value that contains itself: as in Node, the replacer is
+// called for each key until the walk would enter a value it is inside of, which is a catchable
+// `TypeError`; a replacer that leaves the back reference out writes the rest (#3871). Shapes: a
+// tree with parent links, a subclass in a base-class field, two objects, an array, the same
+// value twice (no cycle), an `any` array, and the same tree again after the errors. A `Date`
+// member is its text to its parent's replacer, as Node's `JSON.stringify` of the parent writes
+// it. The Node twin is json_replacer_cycles.mjs.
+
+class Node1 {
+  name: string;
+  kids: Node1[] = [];
+  parent: Node1 | null = null;
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+class Base {
+  tag = "b";
+  other: Base | null = null;
+}
+
+class Derived extends Base {
+  extra = 1;
+}
+
+interface Link {
+  id: number;
+  next: Link[];
+}
+
+function logged(k: string, v: JsonValue): JsonValue | undefined {
+  console.log(`  replacer ${JSON.stringify(k)}`);
+  return v;
+}
+
+function noParent(k: string, v: JsonValue): JsonValue | undefined {
+  return k === "parent" ? undefined : v;
+}
+
+function keep(k: string, v: JsonValue): JsonValue | undefined {
+  return v;
+}
+
+function viewed(k: string, v: JsonValue): JsonValue | undefined {
+  console.log(`  replacer ${JSON.stringify(k)} ${JSON.stringify(v)}`);
+  return v;
+}
+
+function attempt(what: string, f: () => string): void {
+  try {
+    console.log(what, f());
+  } catch (e) {
+    console.log(what, e instanceof TypeError ? "TypeError" : "other");
+  }
+}
+
+function main(): void {
+  const root = new Node1("root");
+  const kid = new Node1("kid");
+  root.kids.push(kid);
+  kid.parent = root;
+  attempt("tree, logged:", () => JSON.stringify(root, logged));
+  attempt("tree, no parent:", () => JSON.stringify(root, noParent));
+  const d = new Derived();
+  d.other = d;
+  attempt("derived in a base field:", () => JSON.stringify(d, keep));
+  attempt("derived, dropped:", () =>
+    JSON.stringify(d, (k: string, v: JsonValue) => (k === "other" ? undefined : v)),
+  );
+  const a = new Base();
+  const b = new Base();
+  a.other = b;
+  b.other = a;
+  attempt("two objects:", () => JSON.stringify(a, keep));
+  const l: Link = { id: 1, next: [] };
+  l.next.push(l);
+  attempt("through an array:", () => JSON.stringify(l, keep));
+  attempt("element left out:", () =>
+    JSON.stringify(l, (k: string, v: JsonValue) => (k === "0" ? undefined : v)),
+  );
+  const shared = new Base();
+  attempt("same value twice:", () => JSON.stringify([shared, shared], keep));
+  const arr: any[] = [1];
+  arr.push(arr);
+  attempt("any array:", () => JSON.stringify(arr, keep));
+  attempt("any array, left out:", () =>
+    JSON.stringify(arr, (k: string, v: JsonValue) => (k === "1" ? undefined : v)),
+  );
+  attempt("tree again:", () => JSON.stringify(root, noParent));
+  console.log(JSON.stringify({ at: new Date(0), n: 1 }, viewed));
+}
+
+main();

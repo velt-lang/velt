@@ -11,6 +11,7 @@ import {
   className,
   dynamicArms,
   isDynamic,
+  isRecursive,
   rawEmpty,
   toJsonMethod,
   writable,
@@ -248,6 +249,12 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     out.line(`return out;`);
     return;
   }
+  // A value that can contain itself is on the visit stack while its members are walked: met
+  // again in them (the replacer kept it), it is Node's circular-structure `TypeError`.
+  const recursive = k != "record" && isRecursive(model, t);
+  if (recursive) {
+    out.line(`jsonWalkEnter(identity(${v}));`);
+  }
   out.line(`const out = JsonValue.object();`);
   if (k == "record") {
     out.line(`for (const [k, x] of Object.entries(${v})) {`);
@@ -277,6 +284,9 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     } else {
       out.line(`setRevived(out, ${name}, ${call});`);
     }
+  }
+  if (recursive) {
+    out.line(`jsonWalkLeave();`);
   }
   out.line(`return out;`);
 }

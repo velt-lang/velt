@@ -1,8 +1,11 @@
 // The Node twin of tests/golden/std/json_replacer_tojson_order.velt. `view` prints what the
 // replacer got as Velt's `JsonValue.stringify()` prints its view: the value as JSON with no
-// `toJSON` called (a `Date` has no enumerable own properties: `{}`).
+// `toJSON` of the program's called (a `Date` as its text, as `JSON.stringify` writes it).
 
 function view(v) {
+  if (v instanceof Date) {
+    return JSON.stringify(v);
+  }
   if (Array.isArray(v)) {
     return `[${v.map((e) => (e === undefined || typeof e === "function" ? "null" : view(e))).join(",")}]`;
   }

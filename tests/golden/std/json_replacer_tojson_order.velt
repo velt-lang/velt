@@ -1,10 +1,10 @@
 // `JSON.stringify(value, replacer)` calls each value's `toJSON(key)` just before the replacer for
 // that key, as Node does (#3774): toJSON, replacer, then the members of what the replacer
 // returned, key by key. So a replacer sees a value before the `toJSON` of anything in it has run
-// (a `Date` member is `{}` until its own key). Typed values, nested objects, arrays, the root
-// key `""`, a `toJSON` on the root, one that returns `this`, a replacer that leaves a member
-// out or returns a new value (whose members are not converted again), and the same through
-// `any`. The Node twin is json_replacer_tojson_order.mjs.
+// (a `Date` member is its text, as Node's `JSON.stringify` of the parent writes it). Typed
+// values, nested objects, arrays, the root key `""`, a `toJSON` on the root, one that returns
+// `this`, a replacer that leaves a member out or returns a new value (whose members are not
+// converted again), and the same through `any`. The Node twin is json_replacer_tojson_order.mjs.
 
 class Hook {
   name: string;

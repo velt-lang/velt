@@ -1,0 +1,1 @@
+panic: JSON.stringify: converting circular structure to JSON (an object contains itself)

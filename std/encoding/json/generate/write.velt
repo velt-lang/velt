@@ -156,14 +156,15 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
     }
     writeSubclasses(out, model, t, v, key, raw);
     const m = toJsonMethod(t);
-    if (raw && (m >= 0 || t.kind == "date" || t.kind == "opaque")) {
-      // What a replacer sees before the value's own key calls its `toJSON`: its fields (a
-      // `Date` and std's opaque types have none a program can see).
+    if (raw && t.kind != "date" && (m >= 0 || t.kind == "opaque")) {
+      // What a replacer sees before the value's own key calls its `toJSON`: its fields (std's
+      // opaque types have none a program can see). A `Date` is its text: its `toJSON` is
+      // std's, with nothing the program sees run early.
       if (rawEmpty(model, t)) {
         out.line(`w.append("{}");`);
         return;
       }
-      writeFields(out, model, t, v, true);
+      writeGuarded(out, model, t, v, true);
       return;
     }
     if (m >= 0) {
@@ -173,18 +174,29 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
       writeHookResult(out, model, ret, key);
       return;
     }
-    const recursive = isRecursive(model, t);
-    if (recursive) {
-      out.line(`jsonEnter(identity(${v}));`);
-    }
-    writeFields(out, model, t, v, raw);
-    if (recursive) {
-      out.line(`jsonLeave();`);
-    }
+    writeGuarded(out, model, t, v, raw);
   } else {
     // No JSON form: sema reports the call that needs it (the code is never run).
     const msg = out.literal(`JSON.stringify of \`${t.display}\``);
     out.line(`panic(${msg});`);
+  }
+}
+
+/**
+ * `writeFields` of `v`, guarded when `t` can contain itself: writing it again inside itself is
+ * Node's circular-structure error, and in the replacer's view (`raw`) it is cut there as `null`
+ * (the walk throws that error when it reaches it, unless the replacer leaves it out).
+ */
+function writeGuarded(out: Output, model: Model, t: Type, v: string, raw: bool): void {
+  const recursive = isRecursive(model, t);
+  if (recursive && raw) {
+    out.line(`if (!beginVisit(identity(${v}))) { w.append("null"); return; }`);
+  } else if (recursive) {
+    out.line(`jsonEnter(identity(${v}));`);
+  }
+  writeFields(out, model, t, v, raw);
+  if (recursive) {
+    out.line(raw ? `endVisit();` : `jsonLeave();`);
   }
 }
 
@@ -233,23 +245,11 @@ function writeResult(out: Output, model: Model, id: i64, v: string, key: string)
         continue;
       }
       out.line(`if (${v} instanceof ${className(s)}) {`);
-      writeGuardedFields(out, model, s, v);
+      writeGuarded(out, model, s, v, false);
       out.line(`return;`);
       out.line(`}`);
     }
-    writeGuardedFields(out, model, r, v);
-  }
-}
-
-/** `writeFields` of `v`, as a cycle when `t` can contain itself and `v` is being written. */
-function writeGuardedFields(out: Output, model: Model, t: Type, v: string): void {
-  const recursive = isRecursive(model, t);
-  if (recursive) {
-    out.line(`jsonEnter(identity(${v}));`);
-  }
-  writeFields(out, model, t, v);
-  if (recursive) {
-    out.line(`jsonLeave();`);
+    writeGuarded(out, model, r, v, false);
   }
 }
 

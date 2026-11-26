@@ -7,6 +7,7 @@
 // member's `toJSON` runs at its own key; a value the replacer made is walked as JSON.
 
 import { noInline } from "velt/lang/intrinsics";
+import { beginVisit, endVisit } from "velt/reflect";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import {
@@ -21,6 +22,23 @@ export function jsonReplacerDepth(depth: i64): void {
   if (depth > JSON_CALLBACK_DEPTH) {
     throw jsonCallbackTooDeep();
   }
+}
+
+/**
+ * Starts the walk through the members of the value with identity `id`, which the replacer kept:
+ * Node's `TypeError` when that value is being walked or written already (it contains itself).
+ * Each start needs a `jsonWalkLeave`; after a throw the hook's caller ends what is left
+ * (`endVisitsTo`).
+ */
+export function jsonWalkEnter(id: u64): void throws TypeError {
+  if (!beginVisit(id)) {
+    throw new TypeError("Converting circular structure to JSON");
+  }
+}
+
+/** Ends what `jsonWalkEnter` started. */
+export function jsonWalkLeave(): void {
+  endVisit();
 }
 
 /** The replacer's view of a value: `raw` when its parent's view holds it, else `text` read. */
