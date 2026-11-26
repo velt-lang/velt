@@ -51,15 +51,9 @@ fn build_and_run_on(
 
 /// Runs `exe` with `VELT_THREADS=threads`, which must exit with `code` within a minute: its stdout.
 fn run_exe(exe: &Path, threads: &str, code: i32, what: &str) -> String {
-    run_exe_with(exe, threads, code, what, &[])
-}
-
-/// [`run_exe`] with `env` set too.
-fn run_exe_with(exe: &Path, threads: &str, code: i32, what: &str, env: &[(&str, &str)]) -> String {
     let mut child = command(exe)
         .env("VELT_THREADS", threads)
         .env_remove("VELT_SCHEDULER")
-        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -590,47 +584,76 @@ async function main() {
     }
 }
 
-/// A `sleep` due after Node timers waits for them, also at a park while their turns come one at a
-/// time (#3872): 64 tasks each make an `AbortSignal.timeout(20)` and end, then `main` sleeps 100 ms
-/// and counts the signals that aborted. In Node every one has: the sleep is a timer due after
-/// them. Each turn is made slow (the block counters on and `VELT_SCHED_WAKE_PAUSE=2000`: the core
-/// given away after every wake, and every turn begins with one), as a loaded machine makes them;
-/// a parking worker then fired the sleep while most timeouts still waited for their turn (28 to 54
-/// of 64 had aborted). Three runs with `VELT_THREADS=4` and with 8.
+/// Nine tasks on workers 1 to 3 sleep 60 ms while worker 0's timer of 30 ms blocks in its callback
+/// for 150 ms (and, with `t40`, a timer of 40 ms waits behind it): `src` for
+/// [`a_sleep_due_after_a_held_turn_waits_for_it`]. Each sleeper counts itself early when it
+/// resumes before the callbacks it is due after ran.
+fn held_turn_src(t40: bool) -> String {
+    let (timer, last) = if t40 {
+        (
+            "  setTimeout(() => {\n    LAST.store(1);\n    console.log(\"t40\");\n  }, 40);\n",
+            "LAST.load() === 0",
+        )
+    } else {
+        ("", "DONE.load() === 0")
+    };
+    format!(
+        "{BUSY}
+const DONE = new Atomic<i64>(0);
+const LAST = new Atomic<i64>(0);
+const EARLY = new Atomic<i64>(0);
+
+async function nap(): Promise<i64> {{
+  await sleep(60);
+  if ({last}) {{
+    EARLY.add(1);
+  }}
+  return 0;
+}}
+
+async function main(): Promise<void> {{
+  setTimeout(() => {{
+    busy(150);
+    DONE.store(1);
+    console.log(\"blocked done\");
+  }}, 30);
+{timer}  const ps: Promise<i64>[] = [];
+  for (let i = 0; i < 9; i++) {{
+    ps.push(spawn(nap(), {{ worker: 1 + (i % 3) }}));
+  }}
+  await Promise.all(ps);
+  console.log(`${{EARLY.load()}} of 9 early`);
+}}
+"
+    )
+}
+
+/// A sleep due after a Node timer whose callback holds the loop waits for that callback, and for
+/// the timers queued before it, also when its worker parks meanwhile (#3872): Node prints the
+/// callbacks, then resumes the sleeps (`sleep = ms => new Promise(r => setTimeout(r, ms))` is a
+/// timer due after them). The parking workers fired every sleep during the blocked callback,
+/// with a timer of 40 ms queued behind it and without one (the turn handed out is no longer
+/// queued). Four and eight workers, five runs each.
 #[test]
-fn a_sleep_due_after_timers_waits_for_their_turns() {
+fn a_sleep_due_after_a_held_turn_waits_for_it() {
     if !std_builds_here() {
         return;
     }
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
-    let src = "async function child(): Promise<AbortSignal> {
-  return AbortSignal.timeout(20);
-}
-
-async function main(): Promise<void> {
-  const ps: Promise<AbortSignal>[] = [];
-  for (let i = 0; i < 64; i++) {
-    ps.push(spawn(child()));
-  }
-  const got = await Promise.all(ps);
-  // timing: a sleep due 80 ms after the timeouts it waits past; their order is the subject.
-  await sleep(100);
-  console.log(`${got.filter((s) => s.aborted).length} of 64 aborted`);
-}
-";
-    let want = "64 of 64 aborted\n";
-    let (out, _) = build_and_run_on(dir.path(), "sleep_after_timers", src, 0, "4");
-    assert_eq!(out, want);
-    let exe = dir.path().join(format!(
-        "sleep_after_timers_std{}",
-        if cfg!(windows) { ".exe" } else { "" }
-    ));
-    let slow = [("VELT_RC_STATS", "1"), ("VELT_SCHED_WAKE_PAUSE", "2000")];
-    for threads in ["4", "8"] {
-        for run in 0..3 {
-            let what = format!("slow turns, {threads} workers, run {run}");
-            assert_eq!(run_exe_with(&exe, threads, 0, &what, &slow), want, "{what}");
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    for (name, t40, want) in [
+        ("held_queued", true, "blocked done\nt40\n0 of 9 early\n"),
+        ("held_alone", false, "blocked done\n0 of 9 early\n"),
+    ] {
+        let (out, _) = build_and_run_on(dir.path(), name, &held_turn_src(t40), 0, "4");
+        assert_eq!(out, want, "{name}");
+        let exe = dir.path().join(format!("{name}_std{suffix}"));
+        for threads in ["4", "8"] {
+            for run in 0..5 {
+                let what = format!("{name}, {threads} workers, run {run}");
+                assert_eq!(run_exe(&exe, threads, 0, &what), want, "{what}");
+            }
         }
     }
 }

@@ -31,7 +31,7 @@
 // - A step fires only the sleeps of the worker that steps: a sleep of another worker due before
 //   the timer granted may resume after its callback (a sleep and a Node timer due together on
 //   different workers; on one worker, as every program with `VELT_THREADS=1`, the order is
-//   Node's).
+//   Node's; #3892).
 // - A poll that begins just as a look reads its task's state may be taken for not busy (the
 //   state is read without the task's lock, as by the runtime's): the turn is granted then, and
 //   the callback runs in the task's next poll, after the one under way. The order of the
@@ -145,10 +145,13 @@ export function timerAgain(e: usize, h: usize, ms: i64): void {
   // `H_RAN` is this task's (`turnPoll`): read before the lock.
   const from = m.ld(h + l.H_RAN_SET) !== 0 ? m.ld(h + l.H_RAN) as u64 : sl.clock();
   const k = l.lock(b);
-  withdraw(b, h);
+  const back = withdraw(b, h);
   insert(b, h, ms, from);
   // It names its task again (the one polled now).
   inserted(b, e, h, k);
+  if (back !== 0) {
+    mv.wakeBack(e, back);
+  }
 }
 
 /**
@@ -203,26 +206,31 @@ function leave(h: usize): usize {
 function leaveLocked(h: usize): usize {
   const b = l.order();
   const k = l.lock(b);
-  const w = leaveHeld(b, h);
+  const back = withdraw(b, h);
+  const w = mv.takeWaker(h);
   l.unlock(b, k);
-  return w;
-}
-
-/**
- * `leave` by a caller that holds the order's lock (order `b`): the waker of timer `h`'s turn
- * (taken), or 0. For a walk that takes many timers out under one lock (sched_order_give.velt).
- */
-export function leaveHeld(b: usize, h: usize): usize {
-  withdraw(b, h);
-  const w = m.ld(h + l.H_WAKER);
-  if (w !== 0) {
-    m.st(h + l.H_WAKER, 0);
+  if (back !== 0) {
+    mv.wakeBack(0, back);
   }
   return w;
 }
 
-/** Timer `h` is no longer queued, nor its turn handed out (the lock held). */
-function withdraw(b: usize, h: usize): void {
+/**
+ * `leave` by a caller that holds the order's lock (order `b`) for a queued timer `h`: the waker
+ * of its turn (taken), or 0. For a walk that takes the queued timers out under one lock
+ * (sched_order_give.velt): no turn handed out ends there.
+ */
+export function leaveHeld(b: usize, h: usize): usize {
+  withdraw(b, h);
+  return mv.takeWaker(h);
+}
+
+/**
+ * Timer `h` is no longer queued, nor its turn handed out (the lock held). A turn handed out and
+ * withdrawn ends the hold of the loop: the workers that held a due sleep back for it
+ * (sched_order_move.velt `takeBack`), for the caller to wake once the lock is given back.
+ */
+function withdraw(b: usize, h: usize): usize {
   const s = m.ld(h + l.H_STATE);
   if (s === l.QUEUED) {
     l.take(b, h);
@@ -230,7 +238,9 @@ function withdraw(b: usize, h: usize): void {
   } else if (s === l.GRANTED) {
     m.st(b + l.O_GRANTED, 0);
     m.st(h + l.H_STATE, l.IDLE);
+    return mv.takeBack(b);
   }
+  return 0;
 }
 
 /** `velt_rt_timer_turn`: a heap future that completes once timer `h`'s turn has come (at once when it is not queued). */
@@ -263,13 +273,21 @@ function turnPoll(f: usize, cx: usize): u32 {
     m.st(b + l.O_GRANTED, 0);
     m.st(h + l.H_STATE, l.IDLE);
     // The next turn waits until this poll of the task has ended.
-    const cur = m.ld(t.exec() + t.E_CURRENT);
+    const e = t.exec();
+    const cur = m.ld(e + t.E_CURRENT);
+    let back: usize = 0;
     if (cur !== 0) {
       m.st(b + l.O_HOLDER, cur);
       t.flags(cur, t.HOLDS, 0);
+    } else {
+      // Nothing holds the loop now.
+      back = mv.takeBack(b);
     }
     // The grant took the waker.
     l.unlock(b, k);
+    if (back !== 0) {
+      mv.wakeBack(e, back);
+    }
     // Node reads the clock just before an interval's callback: its next run counts from here
     // (read by this task alone, `timerAgain`: not under the lock).
     m.st(h + l.H_RAN, sl.clock() as usize);
@@ -277,10 +295,7 @@ function turnPoll(f: usize, cx: usize): u32 {
     return 1;
   }
   // Not queued (cleared: `leave` took the waker).
-  const w = m.ld(h + l.H_WAKER);
-  if (w !== 0) {
-    m.st(h + l.H_WAKER, 0);
-  }
+  const w = mv.takeWaker(h);
   l.unlock(b, k);
   if (w !== 0) {
     m.wakerDrop(w);
@@ -302,18 +317,21 @@ function turnDrop(f: usize): void {
  * too, as Node's `new Promise(r => setTimeout(r, ms))`): the timer that comes next gets its turn
  * if its time has come and no sleep of this worker due before it is left to fire; those sleeps
  * go first. Nothing moves while something holds the loop (a turn handed out, or the poll that took
- * the last one under way), except at a park (`all`): the sleeps due by the first timer still
- * queued fire then, and one due later waits for the timers before it (#3872: their turns come one
- * at a time, so on a busy machine a park could otherwise end a sleep many timers early); the
- * worker looks again in a moment (`mv.soon`). `O_WAKE_AT` says when a worker must look again (0:
- * no timer waits for a time); the deadline of the first sleep of this worker left pending (0:
- * none), or that moment.
+ * the last one under way), except at a park (`all`): the sleeps due by the time of the timer whose
+ * turn holds the loop and of the first timer still queued fire then, and one due later waits for
+ * those timers (#3872: their turns come one at a time, so on a busy machine, or behind a callback
+ * that blocks, a park could otherwise end a sleep many timers early). Such a park is marked
+ * (`mv.holdBack`) and waits until the step that finds the loop free again wakes it
+ * (`mv.takeBack`; a turn withdrawn, or taken outside a task, ends the hold too). `O_WAKE_AT` says
+ * when a worker must look again (0: no timer waits for a time); the deadline of the first sleep
+ * of this worker left pending (0: none; `mv.BACK`: a due one waits for the hold to end).
  *
  * `how`: a look (`S_LOOK`) tries the lock (a worker that finds it taken leaves the move to its
- * holder) and runs in the poll `e` runs, if any; the end of task `k`'s poll (`S_RELEASED`: it took
- * the last turn, and only its end moves the loop on from there; `S_BUSY`) takes the lock and runs
- * in it (its timers are not busy). The granted turn's waker is woken and the sleeps fire after
- * the lock is given back. With one worker for good (`LK_NONE`) it is `stepAlone`.
+ * holder; a park takes it) and runs in the poll `e` runs, if any; the end of task `k`'s poll
+ * (`S_RELEASED`: it took the last turn, and only its end moves the loop on from there; `S_BUSY`)
+ * takes the lock and runs in it (its timers are not busy). The granted turn's waker is woken and
+ * the sleeps fire after the lock is given back. With one worker for good (`LK_NONE`) it is
+ * `stepAlone`.
  */
 function step(e: usize, k: usize, how: u32, all: bool, now: u64): u64 {
   const wb = m.ld(e + t.E_TIMERS);
@@ -321,23 +339,26 @@ function step(e: usize, k: usize, how: u32, all: bool, now: u64): u64 {
   if (b === 0) {
     return mv.sleeps(wb, now);
   }
-  const kind = how === mv.S_LOOK ? l.tryLock(b) : l.lock(b);
+  // A park takes the lock (only the order's holder knows which timers its due sleeps wait for).
+  const kind = how === mv.S_LOOK && !all ? l.tryLock(b) : l.lock(b);
   if (kind === lk.LK_NONE) {
     return stepAlone(wb, b, k, how, all, now);
   }
   if (kind === l.NO_LOCK) {
-    // Another worker steps: only it knows which timers wait. A parking worker fires no sleep now
-    // and looks again in a moment.
-    return all ? mv.soon(now) : 0;
+    return 0;
   }
-  // How far this worker's sleeps fire (0: none); at a park, while the loop is held, those due by
-  // the first timer still queued.
-  let upto = all ? mv.heldUpto(b, now) : 0;
-  let held = true;
+  // How far this worker's sleeps fire (0: none).
+  let upto: u64 = 0;
   let w: usize = 0;
   let sooner = false;
-  if (mv.free(b, k, how)) {
-    held = false;
+  let back: usize = 0;
+  if (!mv.free(b, k, how)) {
+    if (all) {
+      upto = mv.heldUpto(b, now);
+    }
+  } else {
+    // Nothing holds the loop (any longer): the workers that held a due sleep back look again.
+    back = mv.takeBack(b);
     m.st(b + p.P_CUR, k !== 0 ? k : m.ld(e + t.E_CURRENT));
     const before = m.ld(b + l.O_WAKE_AT);
     upto = now;
@@ -351,6 +372,9 @@ function step(e: usize, k: usize, how: u32, all: bool, now: u64): u64 {
       sooner = after !== 0 && (before === 0 || after < before);
     }
   }
+  // At a park, a due sleep that waits for the hold to end is marked for its end to wake it (with
+  // several workers: with one, the hold ends before its park).
+  const waits = all && (kind & lk.LK_ON) !== 0 && mv.holdBack(b, e, wb, upto, now);
   l.unlock(b, kind);
   const d = upto !== 0 ? mv.sleeps(wb, upto) : 0;
   if (w !== 0) {
@@ -359,9 +383,11 @@ function step(e: usize, k: usize, how: u32, all: bool, now: u64): u64 {
   if (sooner) {
     ow.nudge(kind, e, all || ow.parksNext(e, k));
   }
-  if (held && all && d !== 0 && d <= now) {
-    // A due sleep waits for the timers before it: the park looks again in a moment.
-    return mv.soon(now);
+  if (back !== 0) {
+    mv.wakeBack(e, back);
+  }
+  if (waits && d !== 0 && d <= now) {
+    return mv.BACK;
   }
   return d;
 }
@@ -445,14 +471,19 @@ function look(e: usize, all: bool, now: u64): u64 {
 
 /**
  * The worker is about to wait: due sleeps fire and the loop moves on; the milliseconds the wait
- * may last for its sleeps (rounded up; -1: no limit). Every worker that waits looks at the order
- * (one stuck in a long poll does not); with several, one of them waits for its time
+ * may last for its sleeps (rounded up; -1: no limit; `ow.HELD`: until the hold of the loop that
+ * a due sleep waits for ends, sched_order_wait.velt `wait`). Every worker that waits looks at the
+ * order (one stuck in a long poll does not); with several, one of them waits for its time
  * (sched_order_wait.velt); the only worker waits for it itself, as with an order of its own.
  */
 @noInline
 export function next(e: usize): i64 {
   const now = sl.clock();
   let d = look(e, true, now);
+  if (d === mv.BACK) {
+    // A due sleep waits for the hold of the loop to end, which wakes this worker.
+    return ow.HELD;
+  }
   const b = l.order();
   if (b !== 0 && (lk.mode() & lk.LK_ON) === 0) {
     const w = m.ld(b + l.O_WAKE_AT) as u64;
