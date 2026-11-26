@@ -14,7 +14,7 @@
 //! records (`Symbol.for`) are listed in a table std's registry starts with
 //! (`Intrinsic::SymbolRegistry`), so `Symbol.for(k)` at run time finds the same record.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -53,6 +53,9 @@ pub(crate) struct KeyNames {
     /// The ids given out ([`KeyNames::own_id`], [`KeyNames::registered_id`]): a constant's or a
     /// key's, so two never share one.
     given: FxHashMap<u128, SymbolOwner>,
+    /// The name spans of the `get message()` declarations that override `Error`'s
+    /// `ERROR_MESSAGE` accessor and have its key ([`Ctx::method_key`], `crate::error_message`).
+    error_message_getters: FxHashSet<Span>,
 }
 
 /// Whose a `SymbolStatic` id is.
@@ -70,6 +73,21 @@ fn stable_hash(text: &str) -> u64 {
 }
 
 impl KeyNames {
+    /// Gives the getter named at `span` `Error`'s `ERROR_MESSAGE` key (`crate::error_message`).
+    pub(crate) fn mark_error_message_getter(&mut self, span: Span) {
+        self.error_message_getters.insert(span);
+    }
+
+    /// Does the program declare a getter [`Self::mark_error_message_getter`] marked?
+    pub(crate) fn has_error_message_getters(&self) -> bool {
+        !self.error_message_getters.is_empty()
+    }
+
+    /// Is `k` the name of such a getter?
+    pub(crate) fn is_error_message_getter(&self, k: &ast::Ident) -> bool {
+        !self.error_message_getters.is_empty() && self.error_message_getters.contains(&k.span)
+    }
+
     /// The `SymbolStatic` id of the symbol module constant `d` (qualified `name`) holds: from the
     /// name, so it is the same in every program (#2943; it used to follow `d`'s number, which
     /// depends on load order). Ids are only told apart, never ordered (velt_vir `record_key`).
@@ -254,6 +272,10 @@ impl Ctx<'_> {
     /// `o[KEY]`, `o[KEY]()` and `KEY in o` find it. A key that names nothing keeps its name
     /// (reported where the member is declared, [`Self::check_method_key`]).
     pub(crate) fn method_key(&self, module: usize, k: &ast::Ident, is_setter: bool) -> String {
+        // `get message()` of a class extending `Error`: the override of its std-only accessor.
+        if !is_setter && self.symbol_keys.is_error_message_getter(k) {
+            return crate::error_message::KEY.to_string();
+        }
         let name = self
             .resolve_key(module, k)
             .unwrap_or_else(|_| k.name.clone());
@@ -556,7 +578,7 @@ pub(crate) fn has_instance_member(
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     KeyNames {
-        names, taken, spelled, registered, given,
+        names, taken, spelled, registered, given, error_message_getters,
     }
 }
 crate::units::codec::enums! {

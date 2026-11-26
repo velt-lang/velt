@@ -138,6 +138,8 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
     c_struct::check_all(cx, items);
     cx.shapes_done = true;
     cx.check_deferred_ts_returns();
+    // Before any method key is computed: `get message()` of a class extending `Error`.
+    crate::error_message::mark_getters(cx, from.defs);
     sigs::resolve_sigs(cx, items, from);
     // After signatures: std's generated functions take their final modes from `@modifies`.
     crate::decorators::apply_modifies(cx, from.defs);
