@@ -30,10 +30,10 @@ const PROGRAM: &str = r#"function main() {
 /// arguments in (`VELT_SCRIPT`, `VELT_ARGV`), which the program's reads of its environment and
 /// its child processes' environment leave out.
 const STD_PROGRAM: &str = r#"import { argv, args, envAll } from "velt/process";
-import { execSync } from "velt/process/child";
+import { exec, execSync } from "velt/process/child";
 import { platform } from "velt/os";
 
-function main() {
+async function main() {
   const rest = args();
   console.log(argv().length == rest.length + 1);
   for (const a of rest) {
@@ -43,9 +43,12 @@ function main() {
   console.log(process.env["VELT_ARGV"] == null);
   const keys = Object.keys(envAll());
   console.log(keys.includes("VELT_SCRIPT") || keys.includes("VELT_ARGV"));
-  const env = platform() == "win32" ? execSync("cmd", ["/C", "set"]) : execSync("env");
+  const win = platform() == "win32";
+  const env = win ? execSync("cmd", ["/C", "set"]) : execSync("env");
   console.log(env.code);
   console.log(env.stdout.includes("VELT_SCRIPT=") || env.stdout.includes("VELT_ARGV="));
+  const later = win ? await exec("cmd", ["/C", "set"]) : await exec("env");
+  console.log(later.stdout.includes("VELT_SCRIPT=") || later.stdout.includes("VELT_ARGV="));
 }
 "#;
 
@@ -207,7 +210,7 @@ fn std_arguments_and_hidden_variables() {
     for a in ARGS {
         want.push_str(&format!("[{a}]\n"));
     }
-    want.push_str("true\ntrue\nfalse\n0\nfalse\n");
+    want.push_str("true\ntrue\nfalse\n0\nfalse\nfalse\n");
     for mode in [&["run"][..], &["dev", "--host"]] {
         let out = velt()
             .args(mode)
@@ -261,7 +264,15 @@ fn removed_executable_keeps_its_path() {
     )
     .unwrap();
     let exe = dir.path().join("gone");
-    stdout(&velt().arg("build").arg(&src).arg("-o").arg(&exe).output().unwrap());
+    stdout(
+        &velt()
+            .arg("build")
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .unwrap(),
+    );
     let resolved = std::fs::canonicalize(&exe).unwrap();
     let mut child = command(&exe)
         .stdin(std::process::Stdio::piped())
