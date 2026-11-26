@@ -24,6 +24,7 @@ pub(super) fn build_impls(cx: &mut Ctx, from: super::Added) {
         .filter(|d| cx.adt(*d).is_some_and(|a| !a.implements.is_empty()))
         .collect();
     let mut getters = Getters::default();
+    let mut pending = vec![];
     for d in adts {
         let implements = cx.adt(d).expect("ICE: adt").implements.clone();
         for b in implements {
@@ -31,7 +32,7 @@ pub(super) fn build_impls(cx: &mut Ctx, from: super::Added) {
             if cx.refuse_known_iface(b.iface, span) {
                 continue;
             }
-            if let Some((imp, setters)) = check_impl(cx, d, &b, &mut getters) {
+            if let Some((imp, setters)) = check_impl(cx, d, &b, (&mut getters, &mut pending)) {
                 cx.impls.push(imp);
                 // A field with a getter and no setter leaves the implementation without setters.
                 if let Some(setters) = setters {
@@ -40,7 +41,8 @@ pub(super) fn build_impls(cx: &mut Ctx, from: super::Added) {
             }
         }
     }
-    override_impls(cx, &mut getters, from.overrides);
+    override_impls(cx, (&mut getters, &mut pending), from.overrides);
+    super::covariant::finish(cx, pending);
 }
 
 /// A class overriding a generic method of an interface that a base class implements gets an
@@ -48,7 +50,7 @@ pub(super) fn build_impls(cx: &mut Ctx, from: super::Added) {
 /// `S extends Sh`) runs the method of the receiver's nearest implementation, statically, so
 /// that must be the override (issue #1132). Generic methods have no vtable slot to dispatch
 /// through instead.
-fn override_impls(cx: &mut Ctx, getters: &mut Getters, from: usize) {
+fn override_impls(cx: &mut Ctx, (getters, pending): State, from: usize) {
     let built = cx.impls.len() as u32;
     let mut done: FxHashSet<(DefId, DefId)> = FxHashSet::default();
     let overrides: Vec<(DefId, String)> = cx.generic_overrides[from..].into();
@@ -83,7 +85,7 @@ fn override_impls(cx: &mut Ctx, getters: &mut Getters, from: usize) {
             cur = cx.base_of(t);
         }
         for b in bounds {
-            if let Some((imp, setters)) = check_impl(cx, d, &b, getters) {
+            if let Some((imp, setters)) = check_impl(cx, d, &b, (&mut *getters, &mut *pending)) {
                 cx.impls.push(imp);
                 if let Some(setters) = setters {
                     cx.note_setters(cx.impls.len() as u32 - 1, setters);
@@ -96,6 +98,10 @@ fn override_impls(cx: &mut Ctx, getters: &mut Getters, from: usize) {
 /// (type, field index) → its getter, shared by every interface that declares the field (an
 /// interface and the ones it extends).
 type Getters = FxHashMap<(DefId, usize), DefId>;
+
+/// What building a batch's implementations collects as it goes: the getters, and the
+/// converting entries waiting for an implementation index (`super::covariant`).
+type State<'s> = (&'s mut Getters, &'s mut Vec<super::covariant::Pending>);
 
 /// One `C implements I<args>` being checked.
 struct Pair<'b> {
@@ -111,7 +117,7 @@ fn check_impl(
     cx: &mut Ctx,
     d: DefId,
     b: &Bound,
-    cache: &mut Getters,
+    (cache, pending): State,
 ) -> Option<(ImplDef, Option<Vec<SetterSrc>>)> {
     let a = cx.adt(d).expect("ICE: adt");
     let (n, span, cname) = (a.generics.len(), a.span, a.name.clone());
@@ -129,7 +135,7 @@ fn check_impl(
     let (getters, setters) = field_getters(cx, &pair, cache);
     let mut methods = vec![];
     for m in &imethods {
-        methods.push(impl_method(cx, &pair, m)?);
+        methods.push(impl_method(cx, &pair, m, pending)?);
     }
     methods.extend(getters);
     let imp = ImplDef {
@@ -288,7 +294,12 @@ fn accessor_slot(cx: &mut Ctx, d: DefId, self_ty: TyId, f: &Found, key: &str, wa
 
 /// The implementation of interface method `m`: the class's own / inherited method (virtual
 /// through a trampoline when it has a vtable slot), else the interface default.
-fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
+fn impl_method(
+    cx: &mut Ctx,
+    p: &Pair,
+    m: &IfaceMethod,
+    pending: &mut Vec<super::covariant::Pending>,
+) -> Option<DefId> {
     let n = cx.adt(p.d).map_or(0, |a| a.generics.len());
     let self_args: Vec<TyId> = (0..n as u32).map(|i| cx.ty.param(i)).collect();
     let found = lookup_method(cx, p.d, &self_args, &m.name).filter(|f| !f.is_static());
@@ -301,7 +312,14 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             let mut first = None;
             let shorter = Some(&mut first);
             let owner_args = f.owner_args();
-            let want = check_method_sig(cx, def, &owner_args, m, &full_args, &p.iname, shorter);
+            let imp = super::covariant::Imp {
+                def,
+                owner_args: &owner_args,
+                self_ty: p.self_ty,
+            };
+            let names = (m, p.iname.as_str());
+            let want =
+                check_method_sig(cx, def, &owner_args, names, &full_args, Some(imp), shorter);
             cx.fn_info_mut(def).fixed_modes = true;
             // A method taking only the first parameters of the interface's: an entry with all
             // of them that calls it (`short_overrides`).
@@ -315,9 +333,22 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
                 return Some(entry);
             }
             let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
-            Some(match slot {
+            let entry = match slot {
                 Some(slot) => trampoline(cx, p.d, p.self_ty, &f, (slot, want)),
                 None => crate::hand_back::value_entry(cx, def),
+            };
+            // A result that converts to the interface's (`super::covariant`).
+            let conv = want.and_then(|w| super::covariant::conversion(cx, imp, w));
+            Some(match conv {
+                Some(conv) => super::covariant::entry(
+                    cx,
+                    (p.d, imp),
+                    (&p.iname, &m.name),
+                    entry,
+                    conv,
+                    pending,
+                ),
+                None => entry,
             })
         }
         _ => {
@@ -437,9 +468,9 @@ pub(super) fn check_method_sig(
     cx: &mut Ctx,
     def: DefId,
     owner_args: &[TyId],
-    m: &IfaceMethod,
+    (m, iname): (&IfaceMethod, &str),
     iface_args: &[TyId],
-    iname: &str,
+    covariant: Option<super::covariant::Imp>,
     shorter: Option<&mut Option<usize>>,
 ) -> Option<TyId> {
     let (ps, span, is_getter, is_generator, rest) = {
@@ -464,6 +495,7 @@ pub(super) fn check_method_sig(
     let want_ret = cx.subst(m.ret, iface_args);
     let name = &m.name;
     let message = format!("method `{name}` has a different signature than required by `{iname}`");
+    let mut converts = false;
     let ret_ok = if is_generator {
         // A generator's signature keeps its result with `E = never` and a written `E` as its
         // `throws` (collect/generator_sig.rs): compare the result as written. A generator's
@@ -482,12 +514,19 @@ pub(super) fn check_method_sig(
         }
     } else if promise_results_unify(cx, (def, owner_args), m, iface_args, want_ret) {
         true
+    } else if covariant.is_some_and(|imp| super::covariant::conversion(cx, imp, want_ret).is_some())
+    {
+        // The table entry converts the result (`super::covariant`).
+        converts = true;
+        true
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
     // A rest parameter takes the arguments one by one, an array parameter as one array.
     let rest_ok = rest == m.rest;
-    let first = match shorter.is_some() {
+    // An entry that drops parameters does not convert the result too: such a method has to
+    // take all of the interface's parameters.
+    let first = match shorter.is_some() && !converts {
         true => super::short_overrides::implements_first(cx, (def, &ps), (m, &want_ps)),
         false => None,
     };
