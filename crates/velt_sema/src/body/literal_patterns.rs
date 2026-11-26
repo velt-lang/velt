@@ -138,6 +138,8 @@ impl FnCx<'_, '_> {
         let mut binds = vec![];
         self.literal_temps(elems, &items, &mut binds, out);
         for (p, t) in binds {
+            // Left out below or not, a default types the bindings under it as TypeScript does.
+            self.note_defaulted_bindings(&p);
             // An element that cannot be `undefined` never takes its default (`[a, b = "d"] =
             // [1, "s"]`), which is then not evaluated.
             let p = match &p.kind {

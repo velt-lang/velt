@@ -109,7 +109,6 @@ pub(crate) fn now_ns() -> u64 {
 /// Initialize the words of an `RwLock<T>` at `p` (unlocked, biased).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_rwlock_init(p: *mut u64) {
-    crate::read_mode::rwlock_made();
     (p as *mut Words).write(Words {
         lock: RawRwLock::INIT,
         _line: [0; 15],

@@ -9,11 +9,11 @@ import { parseUrl, removeTabNewline } from "velt/net/url/parse";
 import { UrlRecord, serialize } from "velt/net/url/record";
 import { defaultPort, isSpecial, validScheme } from "velt/net/url/scheme";
 import { URLSearchParams } from "velt/net/url/search_params";
-import { hostInput, portColon, userinfoOrPort } from "velt/net/url/setters";
+import { hostInput, portColon, setPort, userinfoOrPort } from "velt/net/url/setters";
 import { setFileHost } from "velt/net/url/authority";
 import { urlText } from "velt/net/url/inspect";
 import { INSPECT } from "velt/lang/hooks/keys";
-import { NativeInspect } from "velt/lang/typed_array/native_inspect";
+import { NamedInspect } from "velt/lang/typed_array/named_inspect";
 
 /** A parsed absolute URL (JS `URL`). */
 export class URL {
@@ -120,7 +120,8 @@ export class URL {
     }
     const port = text.slice(colon + 1);
     if (port.length > 0) {
-      this.port = port;
+      // The record's port, as in JS: a subclass's `port` setter is not called.
+      setPort(this.rec, port);
     }
   }
 
@@ -152,27 +153,7 @@ export class URL {
    * the URL cannot have a port (no host, or `file:`).
    */
   set port(value: string) {
-    if (!this.canHaveCredentials()) {
-      return;
-    }
-    const v = removeTabNewline(value);
-    let n: i64 = 0;
-    let digits: i64 = 0;
-    while (digits < (v.length as i64) && v.charCodeAt(digits) >= 48 && v.charCodeAt(digits) <= 57) {
-      n = n * 10 + v.charCodeAt(digits) - 48;
-      digits++;
-      if (n > 65535) {
-        return;
-      }
-    }
-    if (digits == 0) {
-      if (v.length == 0) {
-        this.rec.port = "";
-      }
-      return;
-    }
-    const port = `${n}`;
-    this.rec.port = port == defaultPort(this.rec.scheme) ? "" : port;
+    setPort(this.rec, value);
   }
 
   /** The path, e.g. `/a/b` (percent-encoded; for `mailto:x` it is `x`). */
@@ -211,7 +192,10 @@ export class URL {
     );
   }
 
-  /** `scheme://host[:port]` for http(s), ws(s) and ftp; "null" for other schemes (JS). */
+  /**
+   * `scheme://host[:port]` for http(s), ws(s) and ftp; "null" for other schemes (JS). The host
+   * is read through `host`, as Node reads it: a subclass's `host` getter shows here.
+   */
   get origin(): string {
     if (!isSpecial(this.rec.scheme) || this.rec.scheme == "file") {
       return "null";
@@ -230,24 +214,25 @@ export class URL {
     this.rec.hasQuery = this.rec.query.length > 0;
   }
 
-  /** Same as `href`. */
+  /** The whole URL, as `href` gives it (a subclass's `href` getter is not read, as in JS). */
   toString(): string {
-    return this.href;
+    return serialize(this.rec);
   }
 
-  /** Same as `href` (JS `toJSON`). */
+  /** The whole URL (JS `toJSON`), from the record like `toString`. */
   toJSON(): string {
-    return this.href;
+    return serialize(this.rec);
   }
 
   /**
    * How `console.log` shows the URL, like Node: `URL { href: '…', origin: '…', … }`, and
-   * `URL {}` past its depth limit.
+   * `URL {}` past its depth limit (a subclass under its own name). The getters are read through `this`, so a subclass's getters
+   * show, as in Node.
    */
-  [INSPECT](): NativeInspect {
+  [INSPECT](): NamedInspect {
     const values = [this.href, this.origin, this.protocol, this.username, this.password];
     values.push(this.host, this.hostname, this.port, this.pathname, this.search, this.hash);
-    return { text: urlText(values, this.searchParams[INSPECT]().text), cut: "URL {}" };
+    return { text: urlText(values, this.searchParams.pairsText()), cut: " {}" };
   }
 
   // Sets the (non-file) host from `text`, which has no port; false (URL unchanged) if it is

@@ -1,0 +1,58 @@
+// `for await` over a stream made before the loop's other microtasks, with an async pull whose
+// `await` runs zero to two times: the waits 0 and 1 lines are a turn off Node's order through
+// #3775 (the iterator's chained read is adopted early). `.out` is Node 22's.
+function chain(log: string[], n: number): Promise<void> {
+  let p = Promise.resolve();
+  for (let i = 0; i < n; i++) {
+    const k = i;
+    p = p.then(() => {
+      log.push("t" + k);
+    });
+  }
+  return p;
+}
+
+function mk(waits: number): ReadableStream<number> {
+  let d = 0;
+  return new ReadableStream<number>({
+    pull: async (c) => {
+      for (let i = 0; i < waits; i++) {
+        await null;
+      }
+      d++;
+      if (d > 3) {
+        c.close();
+      } else {
+        c.enqueue(d);
+      }
+    },
+  });
+}
+
+async function slow(name: string, waits: number, streamFirst: boolean): Promise<void> {
+  const log: string[] = [];
+  let s: ReadableStream<number>;
+  let t: Promise<void>;
+  if (streamFirst) {
+    s = mk(waits);
+    t = chain(log, 30);
+  } else {
+    t = chain(log, 30);
+    s = mk(waits);
+  }
+  for await (const v of s) {
+    log.push("v" + v);
+  }
+  log.push("end");
+  await t;
+  console.log(name + ": " + log.join(" "));
+}
+
+async function main(): Promise<void> {
+  for (let k = 0; k < 3; k++) {
+    await slow("chain first, waits " + k, k, false);
+    await slow("stream first, waits " + k, k, true);
+  }
+}
+
+main();

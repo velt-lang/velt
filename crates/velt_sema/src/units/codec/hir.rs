@@ -597,6 +597,7 @@ enums! {
         225 => CArrived,
         227 => AnyZeroSign,
         228 => IsExactClass,
+        229 => KeyOf,
     }
 }
 

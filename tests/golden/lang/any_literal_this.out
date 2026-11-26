@@ -1,0 +1,16 @@
+4
+7
+6
+7
+local 4
+4 4
+6
+2 2 20
+7 4
+param 11
+2
+3
+4
+function [ 'n', 'get' ] {"n":5}
+{ n: 5, get: [Function: get] }
+6 7

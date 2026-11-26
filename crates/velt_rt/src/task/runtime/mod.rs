@@ -140,24 +140,11 @@ pub fn worker_count() -> usize {
 /// executor in Velt (std/lang/hooks/sched_workers.velt) polls tasks on this thread from now on,
 /// each of its workers calls it first, spares too: the thread enters the host's tokio context for
 /// the rest of the process, so the leaves it polls find the host's timers and I/O.
-///
-/// `2` also marks the process as one whose tasks are the Velt executor's ([`velt_executor`]):
-/// they have no runtime task (`task::local::task_key` is 0 in all of them), so what the runtime
-/// keeps per task must not take them for code outside a task.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_set_scheduler(kind: u32) {
     if kind == 2 {
-        VELT_EXECUTOR.store(true, Ordering::Relaxed);
         std::mem::forget(enter());
     }
-}
-
-/// Set once by `velt_rt_set_scheduler(2)`, before the executor in Velt polls its first task.
-static VELT_EXECUTOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Do the program's tasks run on the executor in Velt (every program compiled since the switch)?
-pub(crate) fn velt_executor() -> bool {
-    VELT_EXECUTOR.load(Ordering::Relaxed)
 }
 
 /// `workerCount()` of a program compiled before the switch: the configured workers.

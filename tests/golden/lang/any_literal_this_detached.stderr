@@ -1,0 +1,1 @@
+TypeError: the value is not an object { n: number; get(): number; add(k: number, s: string): number; later(): Promise<number> } (it is undefined)

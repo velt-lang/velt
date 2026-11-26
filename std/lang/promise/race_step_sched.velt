@@ -6,3 +6,10 @@
 export function raceTakesStep(): bool {
   return true;
 }
+
+/** Do `Promise.allSettled`'s waits on its promises settle in their reactions, as Node's do, so
+ * that it can attach to all of them at the call (std/prelude/promise.velt)? The executor in
+ * Velt settles an awaiter in the turn its promise settles (std/lang/hooks/sched_latch.velt). */
+export function settledAtCall(): bool {
+  return true;
+}

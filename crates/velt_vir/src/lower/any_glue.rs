@@ -490,10 +490,16 @@ impl FnLower<'_, '_> {
         self.any_class_call((data, key, argv, argc), (ty, d), &outp);
         let vp = self.any_value_place(data, ty);
         let fields = self.member_fields(d);
+        // An object literal's method using `this` is a function in its field that takes the
+        // object first: called through the slot method below, which passes it (#3773).
+        let this_methods: Vec<String> = (self.dyn_members_of(d).into_iter())
+            .filter(|m| m.kind == DynMemberKind::Method && fields.contains(&m.name))
+            .map(|m| m.name)
+            .collect();
         // A name the program never calls through `any` can't be the key here, and a member that
         // has no such call brings no code in (`Cx::any_called`).
         for (i, name) in fields.iter().enumerate() {
-            if name.starts_with('#') || !self.cx.any_called(name) {
+            if name.starts_with('#') || !self.cx.any_called(name) || this_methods.contains(name) {
                 continue;
             }
             let next = self.on_key(key, name);
@@ -529,7 +535,8 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         for m in self.dyn_members_of(d) {
-            if m.kind.is_setter() || fields.contains(&m.name) || !self.cx.any_called(&m.name) {
+            let field = fields.contains(&m.name) && !this_methods.contains(&m.name);
+            if m.kind.is_setter() || field || !self.cx.any_called(&m.name) {
                 continue;
             }
             let next = self.on_key(key, &m.name);
