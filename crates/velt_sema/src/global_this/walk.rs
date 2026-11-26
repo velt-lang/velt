@@ -205,7 +205,8 @@ impl<'a> Walk<'a> {
     /// (in the same function, or at module level) it is not initialized yet: TypeScript's
     /// TS2448, a `ReferenceError` in Node. From a closure or a nested function of the function
     /// declaring it, Velt gives the error it gives for any constant read there. A closure at
-    /// module level may run after the declaration: it reads the constant (`types.md`).
+    /// module level may run after the declaration: it reads the constant
+    /// (https://veltlang.com/docs/reference/modules/ "Scripts: top-level statements").
     fn read_before(&self, id: &ast::Ident, depth: usize) {
         let d = if depth == self.fn_depth {
             Diagnostic::error(

@@ -1,0 +1,40 @@
+// A method that takes only the first of the interface method's parameters and whose result
+// converts to the interface's is not supported yet: the entry that drops parameters does not
+// convert the result too. TypeScript accepts it. With all of the parameters it implements.
+interface Fluent {
+  step(n: number): Fluent;
+  total(): number;
+}
+
+class D implements Fluent {
+  t: number = 0;
+  step(n: number): D {
+    this.t += n;
+    return this;
+  }
+  total(): number {
+    return this.t;
+  }
+}
+
+interface Maker {
+  make(a: number, b: number): Fluent;
+}
+
+class Short implements Maker {
+  make(a: number): D {
+    return new D().step(a);
+  }
+}
+
+class Whole implements Maker {
+  make(a: number, b: number): D {
+    return new D().step(a + b);
+  }
+}
+
+function main() {
+  const s: Maker = new Short();
+  const w: Maker = new Whole();
+  console.log(s.make(1, 2).total(), w.make(1, 2).total());
+}

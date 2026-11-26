@@ -1,4 +1,4 @@
-//! Lists in precompiled templates (docs/contracts/jsx.md "Lists"): with the provider's
+//! Lists in precompiled templates (docs/internals/contracts/jsx.md "Lists"): with the provider's
 //! `jsxList`, a child `{xs.map((x) => <tr>…</tr>)}` whose rows are templates without slots is
 //! written as `${jsxList(xs.map((x) => `<tr>…</tr>`))}` in the surrounding string. The rows are
 //! strings rather than elements, so a list costs what a hand-written one does.

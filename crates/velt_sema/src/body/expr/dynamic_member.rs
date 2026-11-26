@@ -7,13 +7,13 @@
 use super::setters::synth;
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
+use velt_syntax::js_number;
 
 use crate::any::Dynamic;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, UseMode};
 use crate::hook_calls::{self as hooks, ty, HookTy};
-use crate::literals::js_number;
 
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
@@ -361,10 +361,16 @@ impl FnCx<'_, '_> {
             self.note_dyn_members();
             let recv = self.share_if_place(recv);
             return Ok(self.with_temp("<list>", recv, span, span, |lw, v| {
-                let undefined = || synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
-                let sep = args.first().cloned().unwrap_or_else(undefined);
                 let site = super::any_text::text_site_arg(span);
-                let call = hooks::any_join_method(ty::Any::of(v.clone()), ty::Any::of(sep), site);
+                let call = match args.first() {
+                    Some(sep) => {
+                        let sep = ty::Any::of(sep.clone());
+                        hooks::any_join_method(ty::Any::of(v.clone()), sep, site)
+                    }
+                    // No argument written is not `undefined` written: another value's own
+                    // `join` gets none (#3812).
+                    None => hooks::any_join_none(ty::Any::of(v.clone()), site),
+                };
                 lw.text_helper_call(call, span)
             }));
         }

@@ -1,6 +1,7 @@
-# A/B gate for language changes (docs/internals/design/semantics.md "Gates"): builds every bench/*.velt
-# with two Velt compilers (LLVM release), runs the executables interleaved (A B A B ...) so both
-# see the same machine state, and prints the median wall-clock time of each and the change.
+# A/B gate for language changes (docs/internals/design/semantics.md "Runtime cost"): builds every
+# bench/*.velt with two Velt compilers (LLVM release), runs the executables interleaved
+# (A B A B ...) so both see the same machine state, and prints the median wall-clock time of each
+# and the change.
 #
 #   pwsh bench/compare.ps1 -Baseline D:/base/target/release/velt.exe [-Candidate <velt.exe>]
 #                          [-Runs 11] [-Only strings] [-Gate 3] [-Dir bench/async]

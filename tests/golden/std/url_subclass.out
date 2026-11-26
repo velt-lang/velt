@@ -1,0 +1,52 @@
+https://c.d:9090/p?q=1#f
+https://e.f:9090/p?q=1#f
+https://g.h/p?q=1#f
+port set 1
+port get
+https://g.h/p?q=1#f 0 g.h
+https://a.b:8080/p?q=1#f
+https://a.b:8080/p?q=1#f
+{"h":"https://a.b:8080/p?q=1#f"}
+https://a.b:8080/p?q=1#f
+https://a.b:8080/p?q=1#f
+host get
+https://evil.example
+href get
+host get
+evil:href evil.example a.b
+href get
+host get
+host get
+Hosted {
+  href: 'evil:href',
+  origin: 'https://evil.example',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'evil.example',
+  hostname: 'a.b',
+  port: '8080',
+  pathname: '/p',
+  search: '?q=1',
+  searchParams: URLSearchParams { 'q' => '1' },
+  hash: '#f'
+}
+{
+  t: Text {
+    href: 'https://a.b/?q=1',
+    origin: 'https://a.b',
+    protocol: 'https:',
+    username: '',
+    password: '',
+    host: 'a.b',
+    hostname: 'a.b',
+    port: '',
+    pathname: '/',
+    search: '?q=1',
+    searchParams: URLSearchParams { 'q' => '1' },
+    hash: ''
+  }
+}
+{ a: { b: { c: Text [URL] {} } } }
+https://a.b/ https://a.b/ Text.toString "https://a.b/"
+https://a.b/ https://a.b/ https://a.b/ "Json.toJSON"

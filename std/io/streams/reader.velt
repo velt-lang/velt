@@ -1,6 +1,7 @@
 // velt/io (internal): `ReadableStreamDefaultReader`, which reads a stream it holds.
 
-import { invalidState, ReadableStreamDefaultController } from "velt/io/streams/controller";
+import { ReadableStreamDefaultController } from "velt/io/streams/controller";
+import { invalidState } from "velt/io/streams/settle";
 import { ReadableStream } from "velt/io/streams/streams";
 import { CancelReason, ReadableStreamReadResult } from "velt/io/streams/types";
 import { INSPECT } from "velt/lang/hooks/keys";

@@ -11,6 +11,7 @@ mod export;
 mod known;
 mod layout;
 mod modifies;
+pub(crate) mod own;
 mod scope;
 mod suffixes;
 
@@ -134,6 +135,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>, from: u32) {
                     let is_abstract = properties.is_abstract(cx, d, sig);
                     known::function_hints(cx, roles, d, sig, is_abstract);
                     known::variant(cx, roles, d, sig);
+                    own::check(cx, d);
                     export::check(cx, export_role, d, sig);
                 }
             }

@@ -1,7 +1,7 @@
 //! `Partial<T>`, `Required<T>`, `Readonly<T>`, `Pick<T, K>` and `Omit<T, K>`: built-in type
-//! operators on a concrete object type (docs/internals/design/shared-models.md, step 3). Each
-//! result is an ordinary anonymous object type, so `Pick<User, "name">` and `{ name: string }`
-//! are the same type.
+//! operators on a concrete object type (docs/internals/design/shared-models.md "Utility
+//! types"). Each result is an ordinary anonymous object type, so `Pick<User, "name">` and
+//! `{ name: string }` are the same type.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;

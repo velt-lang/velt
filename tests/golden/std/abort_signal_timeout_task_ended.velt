@@ -1,0 +1,55 @@
+// check: no leaks
+// timing: each wait is a Node timer due after the timeouts it waits past, which fire first in
+// Node's order however late the machine is: a `sleep` is not in that order everywhere (#3872)
+// Tasks that make an `AbortSignal.timeout` and end before it fires (#3822). Each timeout's timer
+// stays queued after its task ends, its signal dropped with the task or handed to the caller,
+// and fires as before; with more than one worker it named the task that queued it, and a look at
+// the timers read that task after it was freed (with the block counters on, as this golden runs:
+// `ICE: a queued timer names a freed task`). Timers that fire while their task waits leave its
+// list of named timers before they are freed. The program's own output is the same either way.
+/** Resolves once a `setTimeout` of `ms` has run: after every timer due before it. */
+function after(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function child(keep: boolean): Promise<AbortSignal | null> {
+  const s = AbortSignal.timeout(20);
+  return keep ? s : null;
+}
+
+async function round(keep: boolean, n: number): Promise<string> {
+  const ps: Promise<AbortSignal | null>[] = [];
+  for (let i = 0; i < n; i++) {
+    ps.push(spawn(child(keep)));
+  }
+  const got = await Promise.all(ps);
+  // Past every timeout: the timers have fired, looked at while their tasks were gone.
+  await after(100);
+  return got.map((s) => (s == null ? "-" : s.aborted ? "aborted" : "pending")).join(" ");
+}
+
+// A task whose timeout fires while it waits, and a `setTimeout` it awaits: their timers leave the
+// lists and are freed while the task is alive, and the task ends after.
+async function waits(i: number): Promise<string> {
+  const s = AbortSignal.timeout(5);
+  await after(40);
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 5);
+  });
+  return `${i}:${s.aborted}`;
+}
+
+async function main(): Promise<void> {
+  console.log("dropped: " + (await round(false, 4)));
+  console.log("kept: " + (await round(true, 4)));
+  // Many at once, and their timers due together.
+  const many = await round(true, 64);
+  console.log("many: " + many.split(" ").filter((s) => s == "aborted").length + " aborted");
+  const ws: Promise<string>[] = [];
+  for (let i = 0; i < 4; i++) {
+    ws.push(spawn(waits(i)));
+  }
+  console.log("waited: " + (await Promise.all(ws)).join(" "));
+}

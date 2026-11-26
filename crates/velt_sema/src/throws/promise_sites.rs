@@ -250,6 +250,11 @@ impl crate::body::FnCx<'_, '_> {
             ("set", [_, v]) | (_, [v]) => v,
             _ => return None,
         };
+        // `xs.push((p))`: the checked argument is what the parentheses hold.
+        let mut arg = arg;
+        while let ast::ExprKind::Paren(inner) = &arg.kind {
+            arg = inner;
+        }
         // The receiver's site, or where its type is written (`new Box<Promise<T>>()`: a
         // parameter typed by a type argument of the receiver's class).
         let site = self.site_of_value(recv).or_else(|| match &recv.kind {

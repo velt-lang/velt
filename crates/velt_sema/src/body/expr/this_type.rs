@@ -8,6 +8,7 @@
 //! on `this` (checked by `check_this_return`; anything else is TypeScript's TS2322).
 
 use velt_common::{Diagnostic, Span};
+use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, TyId, TyKind};
@@ -40,7 +41,7 @@ impl FnCx<'_, '_> {
             self.this_calls.insert(call.span);
         }
         if crate::hand_back::hands_back(self.cx, def) {
-            return self.hand_back_call(call, def, to);
+            return self.hand_back_call(call, Some(def), to);
         }
         // A receiver of a type parameter bounded by the class (`x: T` with `T extends Base`)
         // gives `T`, as in TypeScript: each instance downcasts to its own class.
@@ -56,8 +57,14 @@ impl FnCx<'_, '_> {
 
     /// Is `h` the method's `this` (or a `this`-returning method's result on it)?
     fn is_this_value(&self, h: &hir::Expr) -> bool {
+        if self.this_casts.contains(&h.span) {
+            return false;
+        }
         match &h.kind {
-            H::Local(l, _) => self.outer.is_empty() && self.local_kind(*l) == LocalKind::This,
+            H::Local(l, _) => {
+                self.outer.is_empty()
+                    && (self.local_kind(*l) == LocalKind::This || self.this_aliases.contains(l))
+            }
             H::Upcast(x) | H::Downcast(x) => self.is_this_value(x),
             H::Call { .. } => self.this_calls.contains(&h.span),
             // A call that hands back its receiver (`hand_back`), the receiver being `this`.
@@ -65,6 +72,41 @@ impl FnCx<'_, '_> {
                 b.value.as_deref().is_some_and(|v| self.is_this_value(v))
             }
             _ => false,
+        }
+    }
+
+    /// `const local: ty = init` (`kind`, `init` checked as `h`): a `const` holding `this` is
+    /// `this` (TypeScript types it `this`), so a method returning `this` may return it, and so
+    /// is a `const` holding such a `const`. Not with a written type other than `this` (`const
+    /// r: A = this`), which TypeScript types as the class (as it does `this as A`, `cast`).
+    pub(crate) fn note_this_alias(
+        &mut self,
+        (local, name): (hir::LocalId, Span),
+        kind: LocalKind,
+        ty: Option<&ast::TypeExpr>,
+        h: Option<&hir::Expr>,
+    ) {
+        let typed_this = ty.is_none_or(is_this_written) && !self.this_defaulted.contains(&name);
+        if kind == LocalKind::Const && typed_this && h.is_some_and(|h| self.is_this_value(h)) {
+            self.this_aliases.insert(local);
+        }
+    }
+
+    /// The bindings of pattern `p` declared under a default (`[r = o]`, `{ a: [r] = d }`): TypeScript
+    /// types each with the default's type too (`this | A` for `const [r = o] = [this]`), so none
+    /// is `this`, even where the default never applies and is left out (`literal_patterns`).
+    pub(crate) fn note_defaulted_bindings(&mut self, p: &ast::Pattern) {
+        defaulted(p, false, &mut self.this_defaulted);
+    }
+
+    /// `h`, checked from `… as ty`: when it is `this` and `ty` is not `this`, it is typed as
+    /// the class from now on, as in TypeScript (`return this as A;` is TS2322). Cast back to
+    /// `this` (`this as A as this`), it is `this` again.
+    pub(super) fn note_this_cast(&mut self, ty: &ast::TypeExpr, h: &hir::Expr) {
+        if is_this_written(ty) {
+            self.this_casts.remove(&h.span);
+        } else if self.is_this_value(h) {
+            self.this_casts.insert(h.span);
         }
     }
 
@@ -98,4 +140,32 @@ impl FnCx<'_, '_> {
             .with_note(note),
         );
     }
+}
+
+/// Into `out`, the spans of the bindings of `p` under a default (`under`: `p` is).
+fn defaulted(p: &ast::Pattern, under: bool, out: &mut rustc_hash::FxHashSet<Span>) {
+    use ast::PatternKind as P;
+    match &p.kind {
+        P::Ident(n) if under => _ = out.insert(n.span),
+        P::Ident(_) | P::Wildcard => {}
+        P::Object { fields, rest } => {
+            fields.iter().for_each(|(_, p)| defaulted(p, under, out));
+            rest.iter()
+                .filter(|_| under)
+                .for_each(|r| _ = out.insert(r.span));
+        }
+        P::Array { elems, rest } => {
+            elems.iter().for_each(|p| defaulted(p, under, out));
+            rest.iter()
+                .filter(|_| under)
+                .for_each(|r| _ = out.insert(r.span));
+        }
+        P::Default { pattern, .. } => defaulted(pattern, true, out),
+    }
+}
+
+/// Is `t` the written type `this`?
+fn is_this_written(t: &ast::TypeExpr) -> bool {
+    matches!(&t.kind, ast::TypeExprKind::Named { path, args }
+        if path.len() == 1 && path[0].name == "this" && args.is_empty())
 }

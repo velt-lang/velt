@@ -393,8 +393,8 @@ fn report(cx: &mut Ctx, span: Span, ty: TyId, why: Copied, site: Site) {
 /// The values the program still uses that `shared(x)` would take into the `shared`: `x`, and
 /// what it is built from in place (a `Mutex`, an object, array or union literal, a `new`
 /// whose constructor keeps the argument, a closure's captures), as shares of a variable used
-/// again. `shared` takes the value itself (semantics stage 2, §6): a copy made for it would
-/// silently stop aliasing the variable.
+/// again. `shared` takes the value itself (docs/internals/design/semantics.md "Threads"): a copy
+/// made for it would silently stop aliasing the variable.
 fn shared_kept(cx: &Ctx, x: &Expr, locals: &[LocalDef], out: &mut Vec<(Span, String, bool, TyId)>) {
     let parts: Vec<&Expr> = match &x.kind {
         E::Call {

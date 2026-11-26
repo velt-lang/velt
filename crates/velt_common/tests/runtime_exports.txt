@@ -48,12 +48,9 @@ velt_rt velt_rt_fs_writer_flush
 velt_rt velt_rt_fs_writer_free
 velt_rt velt_rt_fs_writer_write
 velt_rt velt_rt_fs_writer_write_bytes
-velt_rt velt_rt_fut_box
 velt_rt velt_rt_fut_id
 velt_rt velt_rt_fut_peek
 velt_rt velt_rt_fut_share
-velt_rt velt_rt_fut_start
-velt_rt velt_rt_fut_transfer
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
 velt_rt velt_rt_keep_alive_acquire
@@ -180,13 +177,10 @@ velt_rt velt_rt_strbuf_push_u8s
 velt_rt velt_rt_strbuf_push_words
 velt_rt velt_rt_strbuf_spare
 velt_rt velt_rt_tcp_abort
-velt_rt velt_rt_tcp_accept
 velt_rt velt_rt_tcp_close
 velt_rt velt_rt_tcp_connect
 velt_rt velt_rt_tcp_drained
 velt_rt velt_rt_tcp_listen
-velt_rt velt_rt_tcp_listener_close
-velt_rt velt_rt_tcp_listener_port
 velt_rt velt_rt_tcp_park
 velt_rt velt_rt_tcp_peer_addr
 velt_rt velt_rt_tcp_read

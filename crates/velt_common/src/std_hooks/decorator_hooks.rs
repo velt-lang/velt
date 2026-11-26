@@ -38,6 +38,10 @@ macro_rules! with_decorator_hooks {
             /// instance modifies, given their final mode where the function is declared
             /// (`velt_sema` `decorators/modifies.rs`; #3543).
             decorator_modifies => lang_intrinsics_decorators, "modifies", decorator;
+            /// `@own()` on an instance member of a std class: JS makes it an own property of every
+            /// instance, so a subclass member of the name is never reached (`velt_sema`
+            /// `decorators/own.rs`; #3792).
+            decorator_own => lang_intrinsics_decorators, "own", decorator;
             // ffi/export.velt: `@export("c_name")`, a function C calls (#2203 step 5; `velt_sema`
             // `decorators/export.rs`, `velt_vir` lowering's `c_export.rs`).
             /// `@export("c_name")` on a top-level function: an unmangled symbol of that name with the C

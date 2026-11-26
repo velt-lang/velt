@@ -1,7 +1,7 @@
 //! Which counted types can be part of a reference cycle (docs/internals/design/cycles.md
-//! section 1): those on a cycle of the "may own a strong reference to" graph, including the
-//! edges through closures, interface values, class hierarchies, uniquely owned objects and
-//! weak maps' entries. Counted types that cannot reach themselves stay out.
+//! "Cycle-capable types"): those on a cycle of the "may own a strong reference to" graph,
+//! including the edges through closures, interface values, class hierarchies, uniquely owned
+//! objects and weak maps' entries. Counted types that cannot reach themselves stay out.
 
 mod no_window;
 mod test_dir;
@@ -805,6 +805,37 @@ fn an_abort_error_keeps_errors_out_of_the_set() {
         .trim();
     assert!(!has(line, "class std/prelude/errors::Error"), "{out}");
     assert!(!has(line, "dynamic values"), "{out}");
+}
+
+#[test]
+fn request_and_response_bodies_keep_the_request_and_response_out_of_the_set() {
+    // A body's chunks hold the request's state and its server side (std/net/http/fetch
+    // request_body.velt `requestChunks`), or the response's body cell (response_cell.velt), not
+    // the request or the response: a body may be a stream of such chunks, which made every
+    // `Request` and `Response` cycle-capable (#3119).
+    let out = debug_out(
+        "async function main() {
+           const req = new Request(\"http://example.com/\", { method: \"POST\", body: \"hi\" });
+           const copy = req.clone();
+           const res = new Response(req.body);
+           const again = new Response(res.body);
+           const twin = again.clone();
+           console.log(await again.text(), await copy.text(), await twin.text());
+         }
+         await main();",
+    );
+    let line = (out.lines())
+        .find_map(|l| l.strip_prefix("velt: cycle-capable types:"))
+        .unwrap_or_else(|| panic!("no cycle-capable types line:\n{out}"))
+        .trim();
+    assert!(
+        !has(line, "class std/net/http/fetch/request::Request"),
+        "{out}"
+    );
+    assert!(
+        !has(line, "class std/net/http/fetch/response::Response"),
+        "{out}"
+    );
 }
 
 #[test]

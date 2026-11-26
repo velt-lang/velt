@@ -1,0 +1,9 @@
+// check: heap blocks at most 50
+// A golden with a heap budget runs on four workers whatever the machine's cores: the golden
+// runner sets `VELT_THREADS=4` for it, as a worker may allocate blocks of its own and the budget
+// must not depend on the machine (#3869). (Run by hand, it prints the machine's worker count.)
+import { workerCount } from "velt/task";
+
+async function main() {
+  console.log(workerCount());
+}

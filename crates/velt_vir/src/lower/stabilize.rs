@@ -1,7 +1,8 @@
-//! Stabilized borrows (semantics stage 2, docs/design/semantics-stage2.md §3.3). In unique
-//! code the exclusivity rule guarantees that a value borrowed by a call stays put while the
-//! call runs. A place reached through a *counted* object has other owners, and the callee may
-//! reach the same object through one of them and replace or free what the borrow points to.
+//! Stabilized borrows (docs/internals/design/semantics.md "Borrows through counted objects").
+//! In unique code the exclusivity rule guarantees that a value borrowed by a call stays put
+//! while the call runs. A place reached through a *counted* object has other owners, and the
+//! callee may reach the same object through one of them and replace or free what the borrow
+//! points to.
 //! Such borrows are kept alive for the statement: where the callee, or code it can reach, can assign
 //! the place (replaceable.rs), the value is shared into a temporary the callee gets instead of a
 //! pointer into the place; a counted value always is. Anything else is read through containers that

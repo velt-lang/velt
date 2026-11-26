@@ -175,3 +175,27 @@ fn iterator_result_takes_no_return_type() {
         "{r}"
     );
 }
+
+#[test]
+fn a_plain_next_returning_a_promise_implements_async_iterator() {
+    // `next()` without `async`, returning its promise as Node's stream iterator does: the
+    // interface's promise error is its `E` in the implementing type (`Error` here).
+    const IT: &str = "class It implements AsyncIterator<i64, Error> {
+           n: i64 = 0;
+           next(): Promise<IteratorResult<i64>, ERR> {
+             this.n += 1;
+             if (this.n > 2) { return Promise.resolve<IteratorResult<i64>>({ done: true }); }
+             return Promise.resolve<IteratorResult<i64>>({ done: false, value: this.n });
+           } }
+         class Src implements AsyncIterable<i64, Error> {
+           [Symbol.asyncIterator](): AsyncIterator<i64, Error> { return new It(); } }
+         async function main(): Promise<void> {
+           for await (const x of new Src()) { console.log(x); } }";
+    ok_src(&IT.replace("ERR", "Error"));
+    // Another error type than the interface's is still a different signature.
+    let r = err_src(&IT.replace("ERR", "string"));
+    assert!(
+        r.contains("method `next` has a different signature than required by `AsyncIterator`"),
+        "{r}"
+    );
+}

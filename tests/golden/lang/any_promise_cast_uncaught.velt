@@ -1,0 +1,15 @@
+// A promise held as `any` whose value is not the `T` of `v as Promise<T>` rejects with a
+// `TypeError` when it settles (#924 step 4, any_promise_cast_payload.velt); awaited where nothing
+// catches it, the program ends as with any other uncaught rejection: the report on stderr and exit
+// code 1. Node hands the string on and prints `after string s`.
+async function str(s: string): Promise<string> {
+  return s;
+}
+
+async function main(): Promise<void> {
+  const s: any = str("s");
+  console.log("before");
+  const v = await (s as Promise<number>);
+  console.log("after", typeof v, v);
+}
+main();

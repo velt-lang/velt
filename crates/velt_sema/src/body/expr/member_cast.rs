@@ -15,6 +15,18 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        let h = self.cast_value(expr, ty, want, span);
+        self.note_this_cast(ty, &h);
+        h
+    }
+
+    fn cast_value(
+        &mut self,
+        expr: &ast::Expr,
+        ty: &ast::TypeExpr,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
         let target = self.resolve(ty);
         let symbol_cast = self.symbol_record_cast(expr, ty, target, span);
         if symbol_cast == Some(super::symbol_record::SymbolCast::Refused) {
@@ -44,6 +56,8 @@ impl FnCx<'_, '_> {
             if let Some(h) = self.asserted_arms(expr, ty, target, want) {
                 return h;
             }
+            // Read (and cleared) by `type_assertion` before it checks `expr`.
+            self.open_promise_cast = super::any_promise_cast::rejects_anything(ty);
             return self.type_assertion(expr, target, want, span);
         }
         // An integer literal cast to an integer type is an exact integer first, so the cast
@@ -131,6 +145,8 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        // Taken before the operand is checked: a cast within it is its own.
+        let open = std::mem::take(&mut self.open_promise_cast);
         if let Some(h) = self.fn_through_top(expr, target, want) {
             return h;
         }
@@ -176,10 +192,22 @@ impl FnCx<'_, '_> {
         (self.dynamic_raw, self.asserted_fn) = (saved, outer);
         // A cast gets past `readonly` (#3061).
         let inner = self.readonly_cast_operand(inner, target);
-        match self.assert_value(inner, target, span) {
+        // `v as Promise<T>` of a dynamic `v` may reject with anything (any_promise_cast.rs).
+        let open = open && self.cx.dynamic(inner.ty).is_some();
+        let target = match open {
+            true => self.open_promise_error(target),
+            false => target,
+        };
+        let h = match self.assert_value(inner, target, span) {
             Ok(h) => h,
             Err(h) => (self.related_iface_cast(h, target, span))
                 .unwrap_or_else(|h| self.cast_error(h, target, span)),
+        };
+        // The cast's own span, which names the site a `push` argument is stored into
+        // (`throws::promise_sites`): its rejections go there.
+        match open {
+            true => hir::Expr { span, ..h },
+            false => h,
         }
     }
 

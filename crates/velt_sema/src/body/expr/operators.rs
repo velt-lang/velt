@@ -143,6 +143,8 @@ impl FnCx<'_, '_> {
                 .then_some(StaticOp::Adt(d));
         }
         let key = crate::defs::static_key(name);
+        self.note_vector_lookup(t, &key);
+        self.note_vector_lookup(t, name);
         let ext = self.cx.extensions.iter().find_map(|x| {
             let m: &MethodRef = x.methods.get(&key).or_else(|| x.methods.get(name))?;
             (x.target == t && m.is_static).then_some(m.def)

@@ -172,7 +172,8 @@ pub(crate) fn resolve_bounds(cx: &mut Ctx, gs: &[ast::GenericParam], env: &TyEnv
                 Some(Err(ty)) => {
                     // An object type bound (`T extends { name: string }`) also reads and writes
                     // its fields in the body, through an interface of them that each type
-                    // argument implements with its own fields (deferred-types.md, P3).
+                    // argument implements with its own fields (deferred-types.md "Structural
+                    // bounds").
                     if let Some(b) = cx.object_bound(ty, env, b.span) {
                         bounds.push(b);
                     }
@@ -548,7 +549,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
             if f.has_default && !f.optional {
                 let i = all
                     .iter()
-                    .position(|g| cx.plain_private(g.private_to, &g.name))
+                    .position(|g| g.name == "#name" && cx.plain_private(g.private_to, &g.name))
                     .expect("ICE: error class without `#name`");
                 redefined.push(crate::defs::Redefined {
                     field: i,

@@ -172,11 +172,20 @@ record layer makes its views without `u8[]`'s `subarray` (`std/lang/typed_array/
 whose `extend` of `Array` would break the rule. A call of a function value is checked against its
 type alone, so a program that never loads the TLS code checks none of it. Likewise the engine
 drives the server's handshake through an interface (`std/net/tls/server_steps.velt`), so a
-program that only connects never loads the server's handshake. So a `fetch` that can
-reach `https:`, which is every `fetch` that follows redirects, is checked once, with the client added in the middle of
-the check. velt/simd's `extend`s of the vector types, which the record layer and the crypto use,
-are the one part left: a `fetch` program loads velt/simd up front anyway, but a program that
-reaches TLS only through `connectTls` or `listenTls` doesn't, and is checked again with it.
+program that only connects never loads the server's handshake. velt/simd's `extend`s of the
+built-in vector types, which the record layer and the crypto use, may be added in the middle of a
+check too: the rule allows an `extend` of a built-in vector or mask type without type parameters
+or `implements`, which only adds methods to a type no module declares. It can still change code
+checked before it, which may hold a vector without velt/simd (`velt/arch/x86`'s `Vector256` loads
+only part of it): a method or operator looked up on the vector type that an earlier block answered
+(a program's blanket `extend<T> T`, say) and the new block takes over, or that nothing answered
+and the new block would. The checker records every name looked up through `extend` blocks on a
+vector type, found or not, and where the new block declares one it refuses the module, so the
+program is checked again with it up front, as for a module the rule refuses
+(`crates/velt_sema/src/collect/vector_extends.rs`, `StdLoads::refuse_served`; the recovered check of
+a file with syntax errors and the editor's check do the same). So every program that reaches TLS, through a
+`fetch` that can reach `https:` (every `fetch` that follows redirects), `connectTls` or
+`listenTls`, is checked once, with the TLS code added in the middle of the check.
 
 std code may also call a function hook by its role, `hookCall("role", args…)`
 (`std/lang/intrinsics/hook_call.velt`), instead of importing the hook's module. Checking the call
@@ -301,13 +310,6 @@ and requires no diagnostics, and the nightly benchmark `compile/check_all_std` m
 
 ## Not yet implemented
 
-- **No second check for `connectTls` and `listenTls`.** A program that reaches TLS without
-  `fetch` loads velt/simd in the middle of its check, whose `extend`s of the vector types the rule
-  refuses, so it is checked again (the first check stops at the refusal, but what it did is lost:
-  about 20% of such a program's build). Loading velt/simd (about 5,700 lines) up front with
-  `tcp_sched` would cost every TCP program; serving it in place needs the rule lifted for
-  `extend`s of the built-in vector types, or the TLS and crypto code declaring the intrinsics it
-  needs directly, as `std/crypto/poly1305.velt` does.
 - **Checking std's TLS once.** A program that reaches TLS still checks, lowers and builds the
   client (about 50,000 lines) itself; std's units (#2943) would check and compile it once per
   key and reuse it.

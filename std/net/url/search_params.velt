@@ -3,7 +3,7 @@
 import { FORM, decodeLenient, encodeSet } from "velt/net/url/encode";
 import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
 import { INSPECT } from "velt/lang/hooks/keys";
-import { NativeInspect } from "velt/lang/typed_array/native_inspect";
+import { NamedInspect } from "velt/lang/typed_array/named_inspect";
 import { paramsText } from "velt/net/url/inspect";
 
 /**
@@ -24,13 +24,13 @@ export class URLSearchParams {
         continue;
       }
       const eq = part.indexOf("=");
+      // Onto the list itself, as in JS: a subclass's `append` is not called.
       if (eq < 0) {
-        this.append(decodeLenient(part, true), "");
+        this.names.push(decodeLenient(part, true));
+        this.vals.push("");
       } else {
-        this.append(
-          decodeLenient(part.slice(0, eq), true),
-          decodeLenient(part.slice(eq + 1), true),
-        );
+        this.names.push(decodeLenient(part.slice(0, eq), true));
+        this.vals.push(decodeLenient(part.slice(eq + 1), true));
       }
     }
   }
@@ -97,7 +97,8 @@ export class URLSearchParams {
     arrayTruncate(this.names, w);
     arrayTruncate(this.vals, w);
     if (!found) {
-      this.append(name, value);
+      this.names.push(name);
+      this.vals.push(value);
     }
   }
 
@@ -118,7 +119,7 @@ export class URLSearchParams {
 
   /** Stable sort by name, in UTF-16 code-unit order as in JS. */
   sort() {
-    const pairs = this.entries();
+    const pairs = pairsOf(this.names, this.vals);
     pairs.sort((a, b) => a[0].compareTo(b[0]) as number);
     this.names = pairs.map((p) => p[0].clone());
     this.vals = pairs.map((p) => p[1].clone());
@@ -136,11 +137,7 @@ export class URLSearchParams {
 
   /** `[name, value]` pairs, in order. */
   entries(): [string, string][] {
-    const out: [string, string][] = [];
-    for (let i: usize = 0; i < this.names.length; i++) {
-      out.push([this.names[i].clone(), this.vals[i].clone()]);
-    }
-    return out;
+    return pairsOf(this.names, this.vals);
   }
 
   /** `a=1&b=x+y` (form encoding: space as `+`, everything but `*-._` and alphanumerics escaped). */
@@ -152,8 +149,26 @@ export class URLSearchParams {
     return parts.join("&");
   }
 
-  /** How `console.log` shows the pairs, like Node: `URLSearchParams { 'a' => '1' }`; `[Object]` past its depth limit. */
-  [INSPECT](): NativeInspect {
-    return { text: paramsText(this.names, this.vals), cut: "[Object]" };
+  /**
+   * How `console.log` shows the pairs, like Node: `URLSearchParams { 'a' => '1' }` (a subclass
+   * under its own name); `[Object]` past its depth limit.
+   */
+  [INSPECT](): NamedInspect {
+    return { text: paramsText(this.names, this.vals), cut: "" };
   }
+
+  // The pairs as `console.log` shows them after the name (std only: `URL`'s `searchParams` line).
+  private pairsText(): string {
+    return paramsText(this.names, this.vals);
+  }
+}
+
+// The list's `[name, value]` pairs, in order: what `entries` returns, and what `sort` orders (the
+// list, not a subclass's `entries`).
+function pairsOf(names: string[], vals: string[]): [string, string][] {
+  const out: [string, string][] = [];
+  for (let i: usize = 0; i < names.length; i++) {
+    out.push([names[i].clone(), vals[i].clone()]);
+  }
+  return out;
 }

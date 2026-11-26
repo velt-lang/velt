@@ -1,8 +1,8 @@
-//! `__member<E>(i)` in generated code (docs/internals/design/source-generators.md §7): member
-//! `i` of the enum `E` (the index into the model's `Type.members`). Velt has no conversion from
-//! a number or a string to an enum, and generated code cannot name the enum's members (its
-//! type is a handle), so a generator that makes enum values, such as a JSON decoder that has
-//! matched the member's value, names the member by its position.
+//! `__member<E>(i)` in generated code (docs/internals/design/source-generators.md "Access and
+//! scope"): member `i` of the enum `E` (the index into the model's `Type.members`). Velt has no
+//! conversion from a number or a string to an enum, and generated code cannot name the enum's
+//! members (its type is a handle), so a generator that makes enum values, such as a JSON decoder
+//! that has matched the member's value, names the member by its position.
 
 use velt_common::Span;
 use velt_syntax::ast;

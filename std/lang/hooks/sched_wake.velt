@@ -168,6 +168,10 @@ export function releaseHere(t: usize): void {
  */
 @inline("always")
 export function freed(t: usize): void {
+  if (counting() && m.load(t + tk.T_NAMED) !== 0) {
+    // Its end unnames its queued timers (sched_run.velt `finish`, #3822).
+    panic("ICE: a task is freed while queued timers name it");
+  }
   if ((m.ld32(t + tk.T_FLAGS) & nc.T_PANICKED) !== 0) {
     freePanicked(t);
   }

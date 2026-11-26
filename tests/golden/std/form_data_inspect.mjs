@@ -1,0 +1,45 @@
+// The Node twin of tests/golden/std/form_data_inspect.velt, without the types.
+class Fd extends FormData {}
+
+class Loud extends FormData {
+  entries() {
+    console.log("entries");
+    return super.entries();
+  }
+}
+
+class B extends Blob {}
+
+class F extends File {}
+
+const f = new FormData();
+console.log(f);
+f.append("a", "1");
+f.append("b", "x y");
+f.append("a", "2");
+console.log(f);
+const g = new Fd();
+g.append("a", "1");
+console.log(g);
+console.log([f], { f: f });
+
+const h = new FormData();
+h.append("file", new File(["hi"], "h.txt", { type: "text/plain", lastModified: 5 }));
+console.log(h);
+const long = new FormData();
+for (let i = 0; i < 8; i++) {
+  long.append("key" + i, "value number " + i);
+}
+console.log(long);
+
+console.log(new B(["ab"]), new F(["hi"], "h.txt", { type: "text/plain", lastModified: 5 }));
+
+const l = new Loud();
+l.append("a", "1");
+l.append("b", "2");
+for (const [k, v] of l) {
+  console.log(k, v);
+}
+l.forEach((v, k) => console.log(k, v));
+console.log(l);
+console.log([...l.entries()].length);

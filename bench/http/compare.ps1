@@ -1,8 +1,8 @@
-# HTTP A/B gate (docs/internals/design/semantics.md "Gates"): builds examples/http_hello.velt with two Velt
-# compilers (LLVM release), serves it on 127.0.0.1:8080 and loads it with oha, alternating A and B
-# for -Rounds rounds. Prints req/s and peak working set per round and the medians. With -SoakSeconds
-# it then runs the candidate alone under load for that long, sampling its working set every
-# -SampleSeconds (leak check: the working set must not grow).
+# HTTP A/B gate (docs/internals/design/semantics.md "Runtime cost"): builds
+# examples/http_hello.velt with two Velt compilers (LLVM release), serves it on 127.0.0.1:8080 and
+# loads it with oha, alternating A and B for -Rounds rounds. Prints req/s and peak working set per
+# round and the medians. With -SoakSeconds it then runs the candidate alone under load for that
+# long, sampling its working set every -SampleSeconds (leak check: the working set must not grow).
 #
 #   pwsh bench/http/compare.ps1 -Baseline D:/base/target/release/velt.exe [-Candidate <velt.exe>]
 #        [-Rounds 3] [-Seconds 10] [-Conns 256] [-SoakSeconds 600] [-SampleSeconds 30]
