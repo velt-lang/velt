@@ -111,8 +111,10 @@ export function exitUncaught(code: i32): never {
  * at the end of the poll it runs (its output published then, sched_wake.velt `publishPolled`),
  * or once awake, giving back the root of `main` with the counters on (`root`, #3017). The other
  * workers stop between two polls, so nothing else prints after the report. This thread stops
- * here: the module lock it may hold goes first, so worker 0's poll can finish. A `main` that
- * never yields never ends, as in Node. A second error meanwhile stops its thread too.
+ * here: the module lock it may hold goes first, so worker 0's poll can finish. A second error
+ * meanwhile stops its thread too. A poll of worker 0 that never ends (an endless loop, a loop of
+ * microtasks) would keep the program from ending after its report for good (#3888): when worker 0
+ * has not taken the exit within `HAND_WAIT_MS`, this thread ends the program (`waitForMain`).
  */
 function handToMain(g: usize, code: i32): void {
   // What this thread printed reaches the OS before worker 0 ends the program.
@@ -125,8 +127,36 @@ function handToMain(g: usize, code: i32): void {
       m.or32(t.worker(i) + t.E_RELAX, EXIT_DUE);
     }
     wk.unpark(g);
+    waitForMain(code);
   }
   halt();
+}
+
+/**
+ * How long the worker that handed an exit to worker 0 waits for worker 0 to take it, in
+ * milliseconds. Longer than a poll of `main` that only computes for a while after the report, so
+ * that what it prints still comes first (#3027); a poll that never ends no longer keeps the
+ * program from ending.
+ */
+const HAND_WAIT_MS: f64 = 5000.0;
+
+/**
+ * The exit is handed to worker 0 (`handToMain`), with `code`: when worker 0 has not taken it within
+ * `HAND_WAIT_MS` (its poll never ends), this thread takes it and ends the program, with what worker
+ * 0 printed in that poll not written out. Worker 0 taking it meanwhile ends the program from there.
+ */
+function waitForMain(code: i32): void {
+  const a = atomicAddress(HALT);
+  const end = performance.now() + HAND_WAIT_MS;
+  let left = HAND_WAIT_MS;
+  while (left > 0.0) {
+    // `HALT` never changes: the wait ends by its time (or early, which the loop covers).
+    r.wordWaitFor(a, 0, (left * 1000.0) as u32);
+    left = end - performance.now();
+  }
+  if (HANDED.compareExchange(code + 1, TAKEN, "seqcst", "seqcst") === code + 1) {
+    process.exit(code);
+  }
 }
 
 /** Is an exit due (`handToMain`)? */
