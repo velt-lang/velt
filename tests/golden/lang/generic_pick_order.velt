@@ -1,7 +1,7 @@
 // `{} as Pick<T, K>` filled by `r[k] = o[k]` builds an object with `Pick<T, K>`'s fields in
 // their order. Keys set in that order work; keys set in another order (which Node would print
-// in that order) are a `TypeError`, as is a key the type lacks (decision 5 in
-// docs/internals/design/deferred-types.md).
+// in that order) are a `TypeError`, as is a key the type lacks (docs/internals/design/
+// deferred-types.md "Values of deferred types in a generic body").
 function pick<T, K extends keyof T>(o: T, ks: K[]): Pick<T, K> {
   const r = {} as Pick<T, K>;
   for (const k of ks) {

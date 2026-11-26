@@ -1,6 +1,7 @@
-//! Source generators in packages (docs/internals/design/source-generators.md §5): a package
-//! declares a generated function whose generator is one of its own modules, and a program names
-//! a generator module of a dependency by the package's specifier, as it would import it.
+//! Source generators in packages (docs/internals/design/source-generators.md "Running
+//! generators"): a package declares a generated function whose generator is one of its own
+//! modules, and a program names a generator module of a dependency by the package's specifier, as
+//! it would import it.
 
 use std::path::{Path, PathBuf};
 

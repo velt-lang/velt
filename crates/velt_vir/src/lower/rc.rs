@@ -1,10 +1,11 @@
-//! Reference counts of counted objects (semantics stage 2, docs/design/semantics-stage2.md §3):
-//! a counted object is a heap block `[count: u64][payload]` whose value is the address of the
+//! Reference counts of counted objects (docs/internals/design/semantics.md "Operations"): a
+//! counted object is a heap block `[count: u64][payload]` whose value is the address of the
 //! payload, so a pointer to it is exactly what the borrow ABI passes for an inline value. The
-//! count is plain (non-atomic): counted objects never cross threads (§6). Inline code only — no
-//! runtime calls on the hot paths — except for the lock set (boxing/locks.rs), whose objects
-//! readers of an `RwLock` share: their count operations go through `velt_rt_lk_*`, which leave
-//! the shared ones alone in a `read` callback (the `_of` variants, given the object's type).
+//! count is plain (non-atomic): counted objects never cross threads (semantics.md "Threads").
+//! Inline code only — no runtime calls on the hot paths — except for the lock set
+//! (boxing/locks.rs), whose objects readers of an `RwLock` share: their count operations go
+//! through `velt_rt_lk_*`, which leave the shared ones alone in a `read` callback (the `_of`
+//! variants, given the object's type).
 
 use super::boxing::ShareKind;
 use super::hook_calls::{self as hooks, ty, Construct, HookTy};

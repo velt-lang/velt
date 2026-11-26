@@ -638,6 +638,6 @@ export class Float64Array extends TypedArray implements Iterable<number> {
 
   /** How `console.log` shows the array, like Node: `Float64Array(2) [ 1, 2 ]`. */
   [INSPECT](): number[] {
-    return this.values();
+    return this.numbers();
   }
 }

@@ -11,8 +11,9 @@
 //! callee the same array (`encode(h.f(v), handlers)` inside `for (const h of handlers)`). The
 //! share makes the array type counted, and a loop over a counted array holds its own reference,
 //! re-reads the length every iteration and shares each element into the binding
-//! (docs/internals/design/semantics-stage2.md §3.3), so whatever the new owner does with it
-//! (push, clear, drop) cannot free the buffer or element the loop is looking at.
+//! (docs/internals/design/semantics.md "Borrows through counted objects"), so whatever the new
+//! owner does with it (push, clear, drop) cannot free the buffer or element the loop is looking
+//! at.
 
 use rustc_hash::FxHashSet;
 

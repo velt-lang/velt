@@ -1,8 +1,9 @@
-//! `__arm(v, i)` in generated code (docs/internals/design/source-generators.md §7): whether the
-//! union `v` holds its member `i` (the index into the model's `Type.arms`), a test Velt's
-//! narrowing understands: where it holds, `v` is that member. Generated code writes a union
-//! as its active member with one such test per member, also for members no JavaScript test
-//! tells apart (`i32 | f64`, `number[] | string[]`, two object types without a discriminant).
+//! `__arm(v, i)` in generated code (docs/internals/design/source-generators.md "Access and
+//! scope"): whether the union `v` holds its member `i` (the index into the model's `Type.arms`),
+//! a test Velt's narrowing understands: where it holds, `v` is that member. Generated code writes
+//! a union as its active member with one such test per member, also for members no JavaScript
+//! test tells apart (`i32 | f64`, `number[] | string[]`, two object types without a
+//! discriminant).
 
 use velt_common::Span;
 use velt_syntax::ast;

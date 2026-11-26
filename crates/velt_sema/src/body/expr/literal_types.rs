@@ -148,6 +148,12 @@ impl FnCx<'_, '_> {
     ) -> (hir::Expr, hir::Expr) {
         use ast::BinaryOp as B;
         let eq = matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq);
+        // A union of integer and float literals (`0 | 1 | 2.5`) is a `number` to an operator,
+        // as it is in TypeScript; `===` compares it as it is (#3815).
+        let (l, r) = match eq {
+            true => (l, r),
+            false => (self.mixed_as_number(l), self.mixed_as_number(r)),
+        };
         let lits = self.cx.lit_value(l.ty).is_some() || !eq && self.cx.widened(l.ty) != l.ty;
         if l.ty == r.ty && !lits {
             return (l, r);
@@ -182,11 +188,13 @@ impl FnCx<'_, '_> {
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
         let f64 = self.cx.ty.f64;
-        if exp == h.ty || !self.number_literal(h.ty) || !self.holds_number(exp, 4) {
+        let mixed = self.mixed_number_literal(h.ty);
+        if exp == h.ty || !(mixed || self.number_literal(h.ty)) || !self.holds_number(exp, 4) {
             return Err(h);
         }
         let original = h.clone();
         let number = match self.cx.lit_value(h.ty) {
+            _ if mixed => self.mixed_as_number(h),
             Some(hir::LitValue::Int(..)) => self.int_literal_as_number(h),
             _ => {
                 let int = self.widen_value(h);
@@ -239,6 +247,9 @@ impl FnCx<'_, '_> {
     /// underneath) is the `number` it is in TypeScript, so `-n` of 0 is `-0` and `~n` is
     /// JavaScript's 32-bit not (#3784). Any other value as it is.
     pub(super) fn unary_literal_operand(&mut self, h: hir::Expr) -> hir::Expr {
+        if self.mixed_number_literal(h.ty) {
+            return self.mixed_as_number(h);
+        }
         let w = self.cx.widened(h.ty);
         if w == h.ty || !self.cx.ty.is_numeric(w) {
             return h;
@@ -248,6 +259,35 @@ impl FnCx<'_, '_> {
             true => self.int_to_float(base, self.cx.ty.f64),
             false => base,
         }
+    }
+
+    /// Is `t` a union of unsuffixed integer and float literals, both (`0 | 1 | 2.5`)? Its
+    /// members have two base types, `i64` and `f64`, so [`Ctx::widened`] leaves it as it is,
+    /// though in TypeScript each member, and so the union, is a `number` (#3815).
+    pub(super) fn mixed_number_literal(&mut self, t: TyId) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        let (mut int, mut float) = (false, false);
+        for m in members {
+            match self.cx.lit_value(m) {
+                Some(hir::LitValue::Int(hir::IntTy::I64, _)) => int = true,
+                Some(hir::LitValue::Float(hir::FloatTy::F64, _)) => float = true,
+                _ => return false,
+            }
+        }
+        int && float
+    }
+
+    /// `h` as the `number` it is when it is of a union of integer and float literals
+    /// ([`mixed_number_literal`](Self::mixed_number_literal)): each member converted to `number`
+    /// (an integer through [`int_literal_to`](Self::int_literal_to)). Any other value as it is.
+    pub(super) fn mixed_as_number(&mut self, h: hir::Expr) -> hir::Expr {
+        if !self.mixed_number_literal(h.ty) {
+            return h;
+        }
+        let f64 = self.cx.ty.f64;
+        self.union_to_common(h, f64).unwrap_or_else(|h| h)
     }
 
     /// Is `t` a number literal type or a union of them, of `i64`s (`1 | 2`)?

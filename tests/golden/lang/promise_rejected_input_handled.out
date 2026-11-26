@@ -1,0 +1,10 @@
+settled 2 fulfilled rejected
+settled again rejected,rejected
+settled three fulfilled,rejected,rejected
+any s
+any before late s
+all caught all
+all .catch late
+race caught race
+race won s
+done

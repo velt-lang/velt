@@ -1,6 +1,6 @@
-# Refcount counters per benchmark (docs/internals/design/semantics.md "Gates"): builds every bench/*.velt
-# (and bench/async/*.velt) with the release compiler in LLVM release mode, links the *debug*
-# runtime (the only one with counters) and runs it with VELT_RC_STATS=1.
+# Refcount counters per benchmark (docs/internals/design/semantics.md "Runtime cost"): builds
+# every bench/*.velt (and bench/async/*.velt) with the release compiler in LLVM release mode,
+# links the *debug* runtime (the only one with counters) and runs it with VELT_RC_STATS=1.
 #
 #   pwsh bench/rc_stats.ps1        # needs `cargo build -p velt_rt` and `cargo build --release -p veltc`
 param([string]$Only = "")

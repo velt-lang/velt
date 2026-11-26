@@ -1,4 +1,5 @@
-//! Shared cells for captured variables (semantics stage 2, docs/design/semantics-stage2.md §5).
+//! Shared cells for captured variables (docs/internals/design/semantics.md "Closures and captured
+//! variables").
 //! An escaping closure captures its variables by value; when it or the enclosing function
 //! assigns such a variable while the other still sees it (found by `crate::moves`), the variable
 //! instead lives in a counted cell that the function and every closure capturing it share, so

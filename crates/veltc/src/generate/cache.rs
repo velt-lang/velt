@@ -1,4 +1,5 @@
-//! Caching generators' work (docs/internals/design/source-generators.md §9), in the build cache:
+//! Caching generators' work (docs/internals/design/source-generators.md "Caching"), in the
+//! build cache:
 //!
 //! - **output**: what the host wrote for a round's input, by a key over the compiler, the host
 //!   program and the input (the requests and their model). A generator is a pure function of its

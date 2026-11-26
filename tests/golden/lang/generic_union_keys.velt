@@ -1,5 +1,5 @@
-// Reads and writes `x[k]` through a key type of several keys whose fields have different
-// types (`T[K]` is their union; #350, decision 4 of docs/internals/design/deferred-types.md).
+// Reads and writes `x[k]` through a key type of several keys whose fields have different types
+// (`T[K]` is their union; #350, deferred-types.md "Values of deferred types in a generic body").
 function pluck<T, K extends keyof T>(xs: T[], k: K): T[K][] {
   return xs.map((x) => x[k]);
 }

@@ -1,5 +1,5 @@
 // `null` written through a key union into an optional field that cannot hold it stops the
-// program (decision 4 of deferred-types.md); Node stores it.
+// program (deferred-types.md "Values of deferred types in a generic body"); Node stores it.
 function setF<T, K extends keyof T>(o: T, k: K, v: T[K]): void {
   o[k] = v;
 }

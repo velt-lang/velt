@@ -1,0 +1,52 @@
+res at=-2 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 cancel rejected thrown t3 t4 t5 t6 t7 t8 t9
+res at=-1 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=-1 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected now t5 t6 t7 t8 t9
+res at=0 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=0 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=1 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=1 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=2 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=2 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=3 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 cancel resolved t6 t7 t8 t9
+rej at=3 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 cancel rejected late t6 t7 t8 t9
+res at=5 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 t6 t7 cancel resolved t8 t9
+rej at=5 pending=true stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 t6 t7 cancel rejected late t8 t9
+res at=-2 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 cancel rejected thrown t3 t4 t5 t6 t7 t8 t9
+res at=-1 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=-1 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected now t5 t6 t7 t8 t9
+res at=0 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=0 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=1 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=1 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=2 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=2 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=3 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 cancel resolved t6 t7 t8 t9
+rej at=3 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 cancel rejected late t6 t7 t8 t9
+res at=5 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 t6 t7 cancel resolved t8 t9
+rej at=5 pending=false stream=false: t0 pull cancel cancel callback t1 closed read done=true t2 t3 t4 t5 t6 t7 cancel rejected late t8 t9
+res at=-2 pending=true stream=true: t0 pull cancel cancel callback t1 t2 cancel rejected thrown t3 t4 t5 t6 t7 t8 t9
+res at=-1 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=-1 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected now t5 t6 t7 t8 t9
+res at=0 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=0 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=1 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=1 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=2 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=2 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=3 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 cancel resolved t6 t7 t8 t9
+rej at=3 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 cancel rejected late t6 t7 t8 t9
+res at=5 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 t6 t7 cancel resolved t8 t9
+rej at=5 pending=true stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 t6 t7 cancel rejected late t8 t9
+res at=-2 pending=false stream=true: t0 pull cancel cancel callback t1 t2 cancel rejected thrown t3 t4 t5 t6 t7 t8 t9
+res at=-1 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=-1 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected now t5 t6 t7 t8 t9
+res at=0 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=0 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=1 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=1 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=2 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel resolved t5 t6 t7 t8 t9
+rej at=2 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 cancel rejected late t5 t6 t7 t8 t9
+res at=3 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 cancel resolved t6 t7 t8 t9
+rej at=3 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 cancel rejected late t6 t7 t8 t9
+res at=5 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 t6 t7 cancel resolved t8 t9
+rej at=5 pending=false stream=true: t0 pull cancel cancel callback t1 t2 t3 t4 t5 t6 t7 cancel rejected late t8 t9
