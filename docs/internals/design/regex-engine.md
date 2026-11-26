@@ -306,6 +306,39 @@ the memory's `found` and `floor`, not the memory. The replacement is read once p
 receiver they may not change, like every other method. A regex copied to another task has its
 own.
 
+### A class that extends `RegExp`
+
+JavaScript's `test`, `s.match`, `s.matchAll`, `s.replace`, `s.replaceAll`, `s.search` and
+`s.split` find every match by calling the regex's `exec` (the specification's RegExpExec), which
+a class that extends `RegExp` may declare. The searches above call no `exec`: they are for a
+`RegExp` itself. Each of those methods (`regexp.velt`) and each hook of a string method
+(`string_methods.velt`) asks `isExactClass`, a constant `true` in a program where no class
+extends `RegExp`, which then compiles only the searches above. An object of a subclass takes the
+specification's steps (`exec_calls.velt`): `exec` is called once per match and once more for the
+end, with the `lastIndex` the steps leave, read and set in the regex's cursor, and what it
+answers is what the method uses.
+
+`s.split` and `s.matchAll` run on a copy of the regex in JavaScript (`new C(re, flags)`, with `C`
+the regex's class and `y` added for `split`). Velt cannot construct the class of an object it
+is given, so the regex plays the copy and gets its `lastIndex` back: `exec` sees the subject
+and the `lastIndex` it would see on the copy, and during a `split` the built-in `exec` of that
+regex matches exactly at `lastIndex` (a thread-local names the regex being split). The class's
+constructor does not run again, and `exec` sees the regex's own fields.
+
+A class's `exec` may throw, and what it throws reaches the caller of the string method as in
+JavaScript: the functions on that path declare no `throws` clause of their own (`replaceWith`
+and the replace hooks included, which also pass on what a replacer throws), so each throws what
+the program's `exec` and replacer do. The regex that played a copy gets its `lastIndex` back on
+that path too (`finally`), and stops being the regex a `split` runs on.
+
+The methods JavaScript's string methods call on a regex (`[Symbol.match]`, `[Symbol.matchAll]`,
+`[Symbol.replace]`, `[Symbol.search]`, `[Symbol.split]`) are not `RegExp`'s here: the string
+methods go to std's hooks. A class that extends `RegExp` and declares one is refused where it
+declares it (`collect/regexp_symbols.rs`), since no string method would call it.
+
+Velt's own methods of a regex (`matches`, `matchAll`, `split`, `replaceAll` called by name)
+search by themselves, for every class.
+
 ## Runtime cost
 
 Instructions retired (cachegrind, x86-64) of the programs that guard the engine, against the

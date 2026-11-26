@@ -1,0 +1,62 @@
+// A class that extends `RegExp` (#3792), and Velt's own methods of a regex, which JavaScript
+// does not have (no Node twin):
+// - `s.match`, `s.matchAll`, `s.split` and `s.replace` do not go through the class's `matches`,
+//   `matchAll`, `split` or `replaceAll`: they call `exec`, as in JavaScript;
+// - `test(s, from)`, `replace(s, r)` and `replaceWith(s, f)` call the class's `exec`, like the
+//   JavaScript methods they stand for;
+// - `matches`, `matchAll`, `split` and `replaceAll` called by name search by themselves.
+import { RegExpMatch } from "velt/text";
+
+let calls = 0;
+
+class Over extends RegExp {
+  matches(s: string): string[] {
+    return ["Over.matches"];
+  }
+  matchAll(s: string): RegExpMatch[] {
+    return [];
+  }
+  split(s: string, limit: usize = 1): string[] {
+    return ["Over.split"];
+  }
+  replaceAll(s: string, replacement: string): string {
+    return "Over.replaceAll";
+  }
+}
+
+class Counted extends RegExp {
+  exec(s: string, from?: usize): RegExpMatch | null {
+    calls++;
+    return super.exec(s, from);
+  }
+}
+
+function took(): number {
+  const n = calls;
+  calls = 0;
+  return n;
+}
+
+const over = new Over("a", "g");
+console.log("a,ba".match(over), "a,ba".split(over), "a,ba".split(over, 2));
+console.log("a,ba".matchAll(over).map((m) => m.index), "a,ba".replace(over, "-"));
+console.log("a,ba".replaceAll(over, "-"), "a,ba".search(over));
+console.log(
+  over.matches("aa"),
+  over.matchAll("aa").length,
+  over.split("bab"),
+  over.replaceAll("a", "b"),
+);
+
+const re = new Counted("a(b)?", "g");
+console.log(re.test("xab ab", 3), re.lastIndex, took());
+console.log(re.test("xab ab", 5), re.lastIndex, took());
+console.log(re.exec("xab ab", 2)?.index, re.lastIndex, took());
+console.log(re.replace("ab a", "<$1>"), re.lastIndex, took());
+console.log(re.replaceWith("ab a", (m) => m.value.toUpperCase()), re.lastIndex, took());
+console.log(re.matches("ab a"), re.matchAll("ab a").length, re.split("xab a"), took());
+console.log(re.replaceAll("ab a", "-"), took());
+
+const once = new Counted("a(b)?");
+console.log(once.test("xab", 2), once.test("xab", 1), took());
+console.log(once.replace("ab a", "<$1>"), once.replaceWith("ab a", (m) => "!"), took());
