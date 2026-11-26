@@ -100,8 +100,10 @@ by units, with three differences from a whole-program build:
 - A source generator's host (`sess.generator_build`) is still built as one program, as a check
   by units builds it.
 
-The nightly's `golden-units` runs every end-to-end test this way; the goldens that fail only by
-units are listed `units` in `crates/veltc/tests/golden_known_failing.txt` (#2943's U6 list).
+The nightly's `golden-units` runs every end-to-end test this way, and those of overrides and
+classes with std and the program in one context (`VELT_UNITS=1`); the goldens that fail only by
+units are listed `units` in `crates/veltc/tests/golden_known_failing.txt` (#2943's U6 list), or
+`units=<mode>` when they fail in one mode only.
 
 The definition table (`crates/velt_sema/src/ctx/def_table.rs`) is indexed by `DefId` with a
 frozen prefix: a finished unit's definitions. Every way to write checks the mark. A write below

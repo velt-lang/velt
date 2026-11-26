@@ -7,7 +7,8 @@
 # (tests/tscompat-oracle), the benchmarks' instruction counts against the last accepted ones
 # (bench/nightly.sh), the build-speed yardstick (bench/compile/scale/yardstick.py), the
 # WebAssembly goldens on Windows and macOS, every golden by units (`golden-units`, `VELT_UNITS=2`,
-# #2943, in shards), and the deletion of superseded build caches
+# #2943, in shards, and the goldens of overrides and classes with `VELT_UNITS=1`), and the
+# deletion of superseded build caches
 # (`cache-prune`). At 05:07 UTC, when the macOS runners are less busy, a second run
 # has only the timing-sensitive tests, run many times on Windows and macOS (`flake`). A manual run
 # can pick one job: `gh workflow run nightly -f only=stress` (`all` includes `flake`). `c-headers`
@@ -241,17 +242,21 @@ jobs:
   # checks all of std again (12-15G instructions a build, 9-50 times a whole build's), about 2.5
   # hours of one runner over the suite, so it is nightly, not on pull requests, and split into
   # shards (`VELT_GOLDEN_SHARD`). Each shard builds the workspace on its own runner first, so a
-  # night costs those eight builds besides the goldens (a shard's goldens took about 27 minutes). The goldens listed `units` in
-  # golden_known_failing.txt (#2943's U6 list) only report how they failed; any other failure
-  # fails the shard, and so does a listed one that passes, to be taken off the list. The reports
-  # go to the job summary (`VELT_GOLDEN_REPORT`).
+  # night costs those eight builds besides the goldens (a shard's goldens took about 27 minutes).
+  # A ninth leg checks std and the program in one context (`VELT_UNITS=1`, std's bodies first),
+  # whose state no other run has: what std's stage builds and the program's stage reads (#3887,
+  # where std's dispatch groups outlived std's stage). It runs the goldens of overrides, async
+  # dispatch and classes, about 150 files (`VELT_GOLDEN`). The goldens listed `units` in
+  # golden_known_failing.txt (#2943's U6 list), or `units=<mode>` for the leg's mode, only report
+  # how they failed; any other failure fails the leg, and so does a listed one that passes, to be
+  # taken off the list. The reports go to the job summary (`VELT_GOLDEN_REPORT`).
   golden-units:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'units')
-    name: golden-units (${{ matrix.shard }}/8)
+    name: golden-units (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: ["1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8", "8/8", "one context"]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -262,9 +267,16 @@ jobs:
       - name: the runtime
         run: cargo build -p velt_rt
       - name: every golden of the shard by units
+        if: matrix.shard != 'one context'
         env:
           VELT_UNITS: "2"
-          VELT_GOLDEN_SHARD: ${{ matrix.shard }}/8
+          VELT_GOLDEN_SHARD: ${{ matrix.shard }}
+        run: VELT_GOLDEN_REPORT="$GITHUB_STEP_SUMMARY" cargo test --workspace --test golden
+      - name: the goldens of overrides and classes by units in one context
+        if: matrix.shard == 'one context'
+        env:
+          VELT_UNITS: "1"
+          VELT_GOLDEN: override,virtual,abstract,super,getter,extends,async_dispatch,subclass,inherit
         run: VELT_GOLDEN_REPORT="$GITHUB_STEP_SUMMARY" cargo test --workspace --test golden
 
   # The differential test of C structs by value natively on each convention CI can run but the

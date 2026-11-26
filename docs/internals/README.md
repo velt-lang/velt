@@ -296,8 +296,9 @@ whether it is implemented, partly implemented, accepted or proposed.
   Directories marked `.pending` (such as `tests/golden/bugs/`, known bugs) and the goldens listed
   in `crates/veltc/tests/golden_known_failing.txt` (each with its issue) are run, but their
   failures fail the run only with `VELT_GOLDEN_STRICT=1`. An entry marked `units` fails only in a
-  run by units (`VELT_UNITS=2`, the nightly's `golden-units`, #2943): there it is reported with how
-  it failed, and it fails the run once it passes, to be taken off the list. The WebAssembly goldens
+  run by units (`VELT_UNITS=2` or `1`, the nightly's `golden-units`, #2943), `units=2` or `units=1`
+  only in that mode: there it is reported with how it failed, and it fails the run once it passes,
+  to be taken off the list. The WebAssembly goldens
   (`crates/veltc/tests/wasm_goldens.rs`) run most of the M1-M4 and `lang` goldens on WebAssembly.
 - **Documentation tests**: every `ts` code block in the repository's own user-facing Markdown (the
   README, the docs of `packages/http-server` and `packages/web`) is compiled

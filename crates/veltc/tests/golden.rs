@@ -16,15 +16,16 @@
 //!   failures only fail the test with `VELT_GOLDEN_STRICT=1`.
 //! - Goldens listed in `golden_known_failing.txt` (next to this file: the path, the issue that
 //!   tracks the failure, and optionally the OSes it fails on, or `units` for one that fails only
-//!   in a run by units) are run too, but their failures only fail the test with
-//!   `VELT_GOLDEN_STRICT=1`: the executor in Velt's fix list since #2649's switch. One that
-//!   passes is reported, to be taken off the list; one marked `units` that passes fails the run
-//!   by units. A known failure is reported with how it failed (its first error line and stderr
-//!   line), and `VELT_GOLDEN_REPORT=<file>` appends these reports to a file as well (libtest
-//!   shows a passing test's output only with `--nocapture`).
+//!   in a run by units, `units=1` or `units=2` only in that mode) are run too, but their failures
+//!   only fail the test with `VELT_GOLDEN_STRICT=1`: the executor in Velt's fix list since
+//!   #2649's switch. One that passes is reported, to be taken off the list; one marked `units`
+//!   that passes fails the run by units. A known failure is reported with how it failed (its
+//!   first error line and stderr line), and `VELT_GOLDEN_REPORT=<file>` appends these reports to
+//!   a file as well (libtest shows a passing test's output only with `--nocapture`).
 //! - `VELT_UNITS=2` runs every golden by units (velt_sema `units`, #2943): `velt check`, `build`
 //!   and `run` check std as a unit of its own and the program against it, and the program built
-//!   is the one checked that way.
+//!   is the one checked that way. `VELT_UNITS=1` checks std and the program in one context
+//!   instead, std's bodies first (the nightly runs the goldens of overrides and classes so).
 //!
 //! - A golden whose first lines contain `// requires-env: NAME ...` is skipped unless those
 //!   environment variables are set (for tests needing a database or other external service).
