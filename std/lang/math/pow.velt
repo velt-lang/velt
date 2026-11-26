@@ -11,6 +11,11 @@
 // x86-64 with FMA (Node 26's results): equal on 30 million random pairs and on every integer pair
 // from -1000..1000 to -120..120.
 //
+// Node 22 differs: its V8 has no `--use-std-math-pow` and computes `pow` with its own port of
+// fdlibm's, which is off by one unit in the last place for many fractional exponents (`2 ** 2.5`
+// is 5.65685424949238 there, 5.656854249492381 here and in Node 24) and for some negative ones
+// (`10 ** -5`). Velt follows Node 24 and later (#3861; tests/golden/lang/math_pow_table).
+//
 // `fma` is one instruction on arm64 and with `--cpu x86-64-v3`. The default x86-64 build has no
 // FMA, so there a copy compiled for it runs where the CPU has it (`hasFmaX86()`,
 // velt/lang/math/fma_check). Without it (CPUs before 2013, WebAssembly, debug builds), where each
