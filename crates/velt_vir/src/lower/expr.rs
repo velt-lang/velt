@@ -402,6 +402,13 @@ impl FnLower<'_, '_> {
                 ))
             }
             hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(hir::Intrinsic::IsExactClass),
+                args,
+            } => {
+                let t = self.sub(args.first()?.ty);
+                (!self.cx.may_be_subclass(t)).then_some(true)
+            }
+            hir::ExprKind::Call {
                 callee: hir::Callee::Intrinsic(hir::Intrinsic::MayHoldPrimitive),
                 args,
             } => {

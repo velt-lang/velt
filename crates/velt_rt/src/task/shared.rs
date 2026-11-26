@@ -1,49 +1,42 @@
 //! Shared promises (https://veltlang.com/docs/reference/async/ "Promises", #212): a promise that several places
 //! hold, each of which may await it and gets the result, as in JS.
 //!
+//! The executor in Velt shares its own promises (std/lang/hooks/sched_share.velt) and refuses a
+//! share outside any task (#3782). What is left here is the runtime's hub, for a program that runs
+//! nothing on the executor (lowering's `sched_share_live`): every promise such a program holds is a
+//! runtime future, which nothing drives until it is awaited.
+//!
 //! The first share (`velt_rt_fut_share`) turns the future into a shared one in place: its
 //! header's `poll` / `drop` become [`holder_poll`] / [`holder_drop`], and the original entries move
 //! to a side record (the hub, found by the future's address). The original pointer stays its
 //! first holder's; every other holder gets a handle of its own (a small heap future with a
 //! result slot, the hub in front of its header), so each holder awaits, and is dropped, as one
 //! future. The hub counts the holders, keeps the settled result once the original future
-//! finished, and lists the waiting holders in the order they started waiting. Awaiting, the
-//! combinators and `then` keep their code: a holder that sees `READY` moves the result out of
-//! its slot at +16, where the hub wrote a fresh share of the settled result (the same object
-//! for an object result, a copy of a string or a value).
+//! finished, and lists the waiting holders in the order they started waiting. A holder that sees
+//! `READY` moves the result out of its slot at +16, where the hub wrote a fresh share of the
+//! settled result (the same object for an object result, a copy of a string or a value).
 //!
-//! A started original future (the usual case, `const p = f()` in a task) is driven by its task's
-//! set; the hub awaits it with a waker of its own, which fires as it finishes. Then every
-//! waiting holder is queued in the task's microtask queue, in the order they started waiting
-//! (`local::settled`, as a `resolve` queues the waiters of a latch), one entry each: Node queues
-//! a promise's reactions in that order when it settles, so a combinator over a holder (a
-//! `Promise.race`) sees it settle before a promise that settles later. Any other original (a
-//! lazy one, a runtime leaf) is driven by the first waiter with its own context; when it settles
-//! there, that waiter goes on as an unshared promise's awaiter would, and the others are queued.
+//! The first waiter drives the original future with its own context; when it settles there, that
+//! waiter goes on as an unshared promise's awaiter would, and the others are woken in the order
+//! they started waiting.
 //!
 //! Dropping a holder never cancels the promise (JS never does). A waiting holder that is dropped
 //! wakes the others, so none waits for a driver that went away. The last holder releases the
 //! settled result, or, when the promise has not settled, gives the original future back its
-//! entries and drops it: it then runs to completion and its own result drop disposes of the
-//! result (an unhandled rejection is reported) as for any dropped promise.
-//!
-//! A shared promise stays on the task it is shared on: a holder that goes to another task is
-//! handed over ([`hand_over`]), and a holder handed over is shared again there as a promise of
-//! that task (`velt_rt_fut_share` of its proxy).
+//! entries and drops it.
 
 use std::alloc::Layout;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Wake, Waker};
+use std::task::Waker;
 
 use parking_lot::Mutex;
 
 use crate::panic::ThrowLoc;
 
 use super::ResultDropFn;
-use super::{raw_cx, with_context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
+use super::{with_context, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Compiled share glue of a result slot: writes another reference to `*src` into `dst`.
 pub type ShareFn = unsafe extern "C-unwind" fn(src: *const u8, dst: *mut u8);
@@ -60,15 +53,11 @@ pub(super) struct Hub {
     size: usize,
     share: Option<ShareFn>,
     result_drop: Option<ResultDropFn>,
-    /// `orig` is a started promise, which its task's set drives (module docs).
-    node: bool,
-    /// The task the promise is shared on (`local::task_key`; 0: not known yet).
-    task: AtomicU64,
     st: Mutex<HubState>,
 }
 
-// SAFETY: a hub is reached from the task that awaits its promise (module docs); `orig` is the
-// future it belongs to, and the state is behind a lock.
+// SAFETY: a hub is reached from whoever awaits its promise (module docs); `orig` is the future it
+// belongs to, and the state is behind a lock.
 unsafe impl Send for Hub {}
 // SAFETY: as above.
 unsafe impl Sync for Hub {}
@@ -76,18 +65,12 @@ unsafe impl Sync for Hub {}
 struct HubState {
     holders: usize,
     done: bool,
-    /// The hub's waker is registered with a started original (`node`).
-    armed: bool,
     /// The settled result (16-byte aligned words), once `done`.
     result: Vec<u128>,
     /// Where its error was thrown, for every holder that takes it (panic.rs).
     loc: ThrowLoc,
-    /// The waiting holders (by address) in the order they started waiting, with their wakers
-    /// and the microtask ticket each was queued as when the promise settled (0: not queued).
-    waiters: Vec<(usize, Waker, u64)>,
-    /// The original panicked (`catchPanic`, panic.rs): it settled with this message and no
-    /// result, and every holder's await raises it.
-    panic: Option<Box<[u8]>>,
+    /// The waiting holders (by address) in the order they started waiting, with their wakers.
+    waiters: Vec<(usize, Waker)>,
 }
 
 /// The hubs of the shared original futures, by address.
@@ -108,13 +91,8 @@ fn handle_layout(size: usize) -> Layout {
 unsafe fn hub(f: *mut VeltFut) -> Arc<Hub> {
     match orig_hub(f) {
         Some(h) => h,
-        None => handle_hub(f),
+        None => (*((f as *mut u8).sub(FRONT) as *const Arc<Hub>)).clone(),
     }
-}
-
-/// The hub of handle `f`, kept in front of its header.
-unsafe fn handle_hub(f: *mut VeltFut) -> Arc<Hub> {
-    (*((f as *mut u8).sub(FRONT) as *const Arc<Hub>)).clone()
 }
 
 /// The hub of `f` if it is an original future (by its address).
@@ -150,11 +128,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_share(
     if f.is_null() {
         return f;
     }
-    if let Some((p, _)) = forwarded(f) {
-        // Handed to this task and shared again here: its proxy, which delivers this task's own
-        // copy, becomes the promise shared on this task (`f` goes on forwarding to it).
-        return velt_rt_fut_share(p, result_size, share, result_drop);
-    }
     let h = if is_shared(f) {
         hub(f)
     } else {
@@ -165,16 +138,12 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_share(
             size: result_size as usize,
             share,
             result_drop,
-            node: super::local::is_started_node(f),
-            task: AtomicU64::new(super::local::task_key()),
             st: Mutex::new(HubState {
                 holders: 1,
                 done: false,
-                armed: false,
                 result: Vec::new(),
                 loc: ThrowLoc::NONE,
                 waiters: Vec::new(),
-                panic: None,
             }),
         });
         HUBS.lock()
@@ -184,24 +153,36 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_share(
         (*f).drop = holder_drop;
         h
     };
-    on_its_task(&h);
     new_handle(h)
 }
 
-/// What promise holder `f` stands for (task/identity.rs): `Ok(orig)`, the original future of
-/// its shared promise; `Err(proxy)`, the proxy of a holder handed to this task; `None` when `f`
-/// is not a holder.
+/// What `console.log` shows of promise `f`, which its owner holds: 1 when its result is in the
+/// result slot (+16), 0 while it is pending. Nothing is polled, claimed or moved. Only a holder
+/// of a shared promise that settled reads as settled: any other runtime future runs only when it
+/// is awaited.
 ///
 /// # Safety
 /// `f` must be a live heap future.
-pub(super) unsafe fn origin(f: *mut VeltFut) -> Option<Result<*mut VeltFut, *mut VeltFut>> {
+#[no_mangle]
+pub unsafe extern "C-unwind" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
     if !is_shared(f) {
-        return None;
+        return 0;
     }
-    if let Some((p, _)) = forwarded(f) {
-        return Some(Err(p));
+    let h = hub(f);
+    let st = h.st.lock();
+    if st.done {
+        std::ptr::copy_nonoverlapping(st.result.as_ptr() as *const u8, slot(f), h.size);
     }
-    Some(Ok(hub(f).orig))
+    st.done as u8
+}
+
+/// The original future of holder `f`'s shared promise (task/identity.rs); `None` when `f` is not
+/// a holder.
+///
+/// # Safety
+/// `f` must be a live heap future.
+pub(super) unsafe fn origin(f: *mut VeltFut) -> Option<*mut VeltFut> {
+    is_shared(f).then(|| hub(f).orig)
 }
 
 /// A new holder of the promise of `h`: a handle of its own.
@@ -228,38 +209,11 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
 
 /// `poll` of every holder, the original future and the handles alike.
 unsafe extern "C-unwind" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    if let Some((p, size)) = forwarded(f) {
-        if super::poll_fut(p, cx) != READY {
-            return PENDING;
-        }
-        std::ptr::copy_nonoverlapping(slot(p), slot(f), size);
-        return READY;
-    }
     poll_holder(&hub(f), f, cx)
 }
 
 /// `drop` of every holder: a handle also frees its own block.
 unsafe extern "C-unwind" fn holder_drop(f: *mut VeltFut) {
-    let fwd = FORWARDS
-        .lock()
-        .as_mut()
-        .and_then(|m| m.remove(&(f as usize)));
-    if let Some(fwd) = fwd {
-        // Handed to this task: its holder role went to the proxy on the promise's own task.
-        super::drop_fut(fwd.proxy);
-        match fwd.orig.into_inner() {
-            Some((poll, orig_drop)) => {
-                // The original future outlived its hub for this pointer (`release`).
-                (*f).poll = poll;
-                (*f).drop = orig_drop;
-                orig_drop(f);
-            }
-            // The hub still has the original future: its last holder drops it.
-            None if fwd.is_orig => {}
-            None => free_handle(f),
-        }
-        return;
-    }
     if let Some(h) = orig_hub(f) {
         return release(h, f);
     }
@@ -270,281 +224,52 @@ unsafe extern "C-unwind" fn holder_drop(f: *mut VeltFut) {
     std::alloc::dealloc(base, l);
 }
 
-/// Free handle `f`'s block (its holder role was released already).
-unsafe fn free_handle(f: *mut VeltFut) {
-    let base = (f as *mut u8).sub(FRONT);
-    let h = (base as *mut Arc<Hub>).read();
-    let l = handle_layout(h.size);
-    drop(h);
-    std::alloc::dealloc(base, l);
-}
-
-/// A holder handed to another task ([`hand_over`]).
-struct Forward {
-    /// The started promise on the promise's own task that awaits it there and delivers a
-    /// transferred result.
-    proxy: *mut VeltFut,
-    size: usize,
-    /// `f` is the original future (not a handle).
-    is_orig: bool,
-    /// For an original future: its own entries, once its hub released everything else
-    /// (`release`); the holder that went away then drops it.
-    orig: std::cell::Cell<Option<(FutPoll, FutDrop)>>,
-}
-
-// SAFETY: a forward is used by the task holding the holder, and by `release` on the promise's
-// own task, under the lock of `FORWARDS`.
-unsafe impl Send for Forward {}
-
-/// The holders handed to another task, by address.
-static FORWARDS: Mutex<Option<HashMap<usize, Forward>>> = Mutex::new(None);
-
-/// The proxy and result size of holder `f` if it was handed to another task.
-fn forwarded(f: *mut VeltFut) -> Option<(*mut VeltFut, usize)> {
-    FORWARDS
-        .lock()
-        .as_ref()
-        .and_then(|m| m.get(&(f as usize)))
-        .map(|w| (w.proxy, w.size))
-}
-
-/// The owner hands holder `f` to another task (`velt_rt_fut_transfer`: `spawn`, a channel, a
-/// closure capturing it). Its holder role goes to a started promise of this task, the proxy,
-/// which awaits the promise here and finishes with a share of the result; `transfer` (compiled
-/// transfer glue) then moves or copies that for the other task, as for any promise handed over
-/// (#160). `f` forwards to the proxy from then on: the other task awaits a copy made here and
-/// never uses the result object this task's holders see.
-///
-/// # Safety
-/// `f` must be a live holder of a shared promise, owned by the caller; `transfer` must match
-/// its result.
-pub(crate) unsafe fn hand_over(f: *mut VeltFut, transfer: Option<ResultDropFn>) {
-    if super::runtime::velt_executor() {
-        // The executor in Velt (one worker, #2649): its tasks have no runtime task, so every
-        // one of them would look like code outside a task and hand the holder to the outside
-        // home's proxy, which only code outside a task drives (its waker does nothing): the
-        // other task would wait forever, and the proxy's poll would run that task's code with
-        // the outside home's task context current (the runtime's microtask queue it never
-        // drains). Its tasks share the worker's thread, so the holder stays as it is and the
-        // other task awaits it directly, as one task's holders do.
-        return;
-    }
-    if let Some((p, _)) = forwarded(f) {
-        if !is_shared(p) {
-            // Handed on again: the proxy's result is this holder's own copy already.
-            return;
-        }
-        // Shared again on this task (`velt_rt_fut_share`): `f` is a holder of its proxy's
-        // promise here, so a proxy of this task takes that role over in turn.
-        let next = new_proxy(hub(p), transfer);
-        if let Some(w) = FORWARDS
-            .lock()
-            .as_mut()
-            .and_then(|m| m.get_mut(&(f as usize)))
-        {
-            w.proxy = next;
-        }
-        super::drop_fut(p);
-        return;
-    }
-    let h = hub(f);
-    on_its_task(&h);
-    let size = h.size;
-    let proxy = match super::local::task_key() {
-        // Outside a task (a synchronous `main`): the proxy is a promise of the task that runs
-        // what code there hands over, so every holder handed over is one of the same task.
-        0 => {
-            let mut proxy = std::ptr::null_mut();
-            let hh = h.clone();
-            super::local::in_outside_home(|| proxy = new_proxy(hh, transfer));
-            proxy
-        }
-        _ => new_proxy(h.clone(), transfer),
-    };
-    FORWARDS.lock().get_or_insert_with(HashMap::new).insert(
-        f as usize,
-        Forward {
-            proxy,
-            size,
-            is_orig: orig_hub(f).is_some(),
-            orig: std::cell::Cell::new(None),
-        },
-    );
-    // `f`'s own role ends here (the proxy's keeps the promise alive); an original future stays
-    // allocated for `f` until it is dropped.
-    release(h, f);
-}
-
-/// A started promise of this task holding a role of its own in the promise of `h`: it awaits
-/// the promise here and finishes with a share of the result, transferred with `transfer` (null:
-/// a plain result, copied as it is) for the task it goes to.
-unsafe fn new_proxy(h: Arc<Hub>, transfer: Option<ResultDropFn>) -> *mut VeltFut {
-    on_its_task(&h);
-    let size = h.size;
-    let result_drop = h.result_drop;
-    let role = new_handle(h);
-    // The proxy's state: the role while it waits, the result (at offset 0) once it settled.
-    let state_size = size.max(8).next_multiple_of(16);
-    let mut state = vec![0u128; state_size / 16];
-    (state.as_mut_ptr() as *mut *mut VeltFut).write(role);
-    let proxy = super::local::velt_rt_fut_box(
-        proxy_poll,
-        proxy_drop,
-        state.as_ptr() as *const u8,
-        state_size as u64,
-        16,
-    );
-    super::local::velt_rt_fut_start(proxy, result_drop);
-    super::local::velt_rt_fut_transfer(proxy, transfer);
-    proxy
-}
-
-/// Poll of a proxy ([`hand_over`]): awaits its role, then moves the result into its state.
-unsafe extern "C-unwind" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
-    let role = *(state as *mut *mut VeltFut);
-    if super::poll_fut(role, cx) != READY {
-        return PENDING;
-    }
-    let size = handle_hub(role).size;
-    std::ptr::copy_nonoverlapping(slot(role), state, size);
-    super::drop_fut(role);
-    READY
-}
-
-/// Drop of a proxy that has not settled: its role goes away.
-unsafe extern "C-unwind" fn proxy_drop(state: *mut u8) {
-    super::drop_fut(*(state as *mut *mut VeltFut));
-}
-
-/// Stop the program when the promise of `h` is used on another task than the one it is shared
-/// on without being handed over (`hand_over`): its original future runs on that task, and its
-/// result would be used from two threads. Outside a task (a synchronous `main`, or the runtime
-/// dropping what is left at exit) anything goes. Under the executor in Velt, whose tasks hold
-/// its module lock, std keeps its own check; the runtime's own tasks (code off the executor's
-/// workers) have no module lock.
-fn on_its_task(h: &Hub) {
-    let now = super::local::task_key();
-    if now == 0 {
-        return;
-    }
-    match h
-        .task
-        .compare_exchange(0, now, Ordering::Relaxed, Ordering::Relaxed)
-    {
-        Ok(_) => {}
-        Err(t) if t == now => {}
-        Err(_) => crate::panic::fatal(
-            "a promise shared on one task was used on another without being handed over (#212)",
-        ),
-    }
-}
-
 /// Poll holder `f` of the promise of `h`.
 unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
-    on_its_task(h);
     let me = f as usize;
-    let w = with_context(cx, |c| c.waker().clone());
     let mut st = h.st.lock();
     if !st.done {
-        let first = match st.waiters.iter().position(|(x, ..)| *x == me) {
+        let w = with_context(cx, |c| c.waker().clone());
+        let first = match st.waiters.iter().position(|(x, _)| *x == me) {
             Some(i) => {
                 if !st.waiters[i].1.will_wake(&w) {
-                    st.waiters[i].1 = w.clone();
+                    st.waiters[i].1 = w;
                 }
                 i == 0
             }
             None => {
-                st.waiters.push((me, w.clone(), 0));
+                st.waiters.push((me, w));
                 st.waiters.len() == 1
             }
         };
-        if h.node {
-            // Its set drives it; the hub hears when it finishes ([`settle`]).
-            if st.armed {
-                return PENDING;
-            }
-            st.armed = true;
-            drop(st);
-            let hw = Waker::from(h.clone());
-            let mut c = Context::from_waker(&hw);
-            if !super::local::await_unadopted(h.orig, raw_cx(&mut c).ptr()) {
-                return PENDING;
-            }
-            // It had finished already: this waiter settles it now, unless the hub's waker did
-            // meanwhile, on the promise's task ([`settle`]).
-            st = h.st.lock();
-        } else {
-            if !first {
-                return PENDING;
-            }
-            drop(st);
-            // The first waiter drives the original future (no lock held: it runs compiled
-            // code). A panic in it settles the promise for every holder (each one's await
-            // raises it), not only for the driver, whose poll it unwinds.
-            if crate::panic::catching() {
-                match crate::panic::catch(|| (h.poll)(h.orig, cx)) {
-                    Ok(r) if r != READY => return PENDING,
-                    Ok(_) => {}
-                    Err(msg) => {
-                        let mut st = h.st.lock();
-                        st.panic = Some(msg.clone());
-                        st.done = true;
-                        let wake: Vec<Waker> = std::mem::take(&mut st.waiters)
-                            .into_iter()
-                            .filter(|(x, ..)| *x != me)
-                            .map(|(_, w, _)| w)
-                            .collect();
-                        drop(st);
-                        wake.into_iter().for_each(Waker::wake);
-                        crate::panic::raise(&msg)
-                    }
-                }
-            } else {
-                // Velt's own raise (the executor in Velt's catch, #2667) may unwind through
-                // here: the next waiter then drives, not waiting for a driver that is gone.
-                let guard = DriverGone { h: h.as_ref(), me };
-                let r = (h.poll)(h.orig, cx);
-                std::mem::forget(guard);
-                if r != READY {
-                    return PENDING;
-                }
-            }
-            st = h.st.lock();
-        }
-    }
-    if !st.done {
-        keep_result(h, &mut st);
-        // The waiters resume in the order they started waiting. This one, when it is the
-        // first, goes on now when its `await` would have (as an unshared promise's awaiter
-        // does), ahead of the others it queues; otherwise it is queued in its place.
-        let mut waiters = std::mem::take(&mut st.waiters);
-        drop(st);
-        let now = waiters.first().is_some_and(|(x, ..)| *x == me) && super::local::step_free();
-        if now {
-            waiters.remove(0);
-        }
-        let queued: Vec<(usize, Waker, u64)> = waiters
-            .into_iter()
-            .map(|(x, k, _)| (x, k.clone(), super::local::settled(k)))
-            .filter(|(.., t)| *t != 0)
-            .collect();
-        if now && !queued.is_empty() {
-            super::local::grant_step();
-        }
-        st = h.st.lock();
-        st.waiters = queued;
-    }
-    if let Some(i) = st.waiters.iter().position(|(x, ..)| *x == me) {
-        if super::local::ticket_pending(st.waiters[i].2, &w) {
+        if !first {
             return PENDING;
         }
-        st.waiters.remove(i);
-    }
-    if let Some(msg) = st.panic.clone() {
-        // The lock goes before the unwind (it would be poisoned otherwise).
         drop(st);
-        crate::panic::raise(&msg)
+        // The first waiter drives the original future (no lock held: it runs compiled code).
+        // Velt's own raise may unwind through here: the next waiter then drives, not waiting for
+        // a driver that is gone.
+        let guard = DriverGone { h: h.as_ref(), me };
+        let r = (h.poll)(h.orig, cx);
+        std::mem::forget(guard);
+        if r != READY {
+            return PENDING;
+        }
+        st = h.st.lock();
+        if !st.done {
+            keep_result(h, &mut st);
+            // This waiter goes on now; the others resume in the order they started waiting.
+            let waiters = std::mem::take(&mut st.waiters);
+            drop(st);
+            for (x, w) in waiters {
+                if x != me {
+                    w.wake();
+                }
+            }
+            st = h.st.lock();
+        }
     }
+    st.waiters.retain(|(x, _)| *x != me);
     let result = st.result.as_ptr() as *const u8;
     let loc = st.loc;
     drop(st);
@@ -566,93 +291,38 @@ struct DriverGone<'a> {
 impl Drop for DriverGone<'_> {
     fn drop(&mut self) {
         let mut st = self.h.st.lock();
-        st.waiters.retain(|(x, ..)| *x != self.me);
-        if let Some(w) = st.waiters.first().map(|(_, w, _)| w.clone()) {
+        st.waiters.retain(|(x, _)| *x != self.me);
+        if let Some(w) = st.waiters.first().map(|(_, w)| w.clone()) {
             drop(st);
             w.wake();
         }
     }
 }
 
-/// The original future of `h` finished: keep its result in the hub (`st` is its locked state, not
-/// settled yet). The result of a started original is claimed here, under the lock, so the hub's
-/// waker on the promise's task and a holder polled on another (module state) never claim it
-/// both.
+/// The original future of `h` finished, driven on this thread: keep its result in the hub (`st`
+/// is its locked state, not settled yet).
 unsafe fn keep_result(h: &Hub, st: &mut HubState) {
-    // A started original keeps where it threw; one its first waiter drove threw on this thread.
-    if h.node {
-        if let Some(msg) = super::local::node_panic(h.orig) {
-            // It panicked: no result to keep; each holder's await raises the panic.
-            super::local::deliver_unadopted(h.orig);
-            st.panic = Some(msg);
-            st.done = true;
-            return;
-        }
-    }
-    st.loc = if h.node {
-        super::local::deliver_unadopted(h.orig);
-        super::local::node_loc(h.orig)
-    } else {
-        ThrowLoc::current()
-    };
+    st.loc = ThrowLoc::current();
     let mut result = vec![0u128; h.size.div_ceil(16)];
     std::ptr::copy_nonoverlapping(slot(h.orig), result.as_mut_ptr() as *mut u8, h.size);
     st.result = result;
     st.done = true;
 }
 
-/// The hub's waker, registered with a started original future ([`poll_holder`]): it fires as
-/// the original finishes, on its task.
-impl Wake for Hub {
-    fn wake(self: Arc<Self>) {
-        // SAFETY: `orig` stays allocated while the hub has holders (checked under the lock).
-        unsafe { settle(&self) }
-    }
-}
-
-/// The started original of `h` finished (or its task went away): keep the result and queue
-/// every waiting holder in the order they started waiting, as Node queues a promise's
-/// reactions when it settles (module docs).
-unsafe fn settle(h: &Arc<Hub>) {
-    let mut st = h.st.lock();
-    if st.done || st.holders == 0 {
-        return;
-    }
-    st.armed = false;
-    if !super::local::node_done(h.orig) {
-        // Cancelled with its task: the waiters poll again and find out.
-        let wake: Vec<Waker> = st.waiters.iter().map(|(_, w, _)| w.clone()).collect();
-        drop(st);
-        wake.into_iter().for_each(Waker::wake);
-        return;
-    }
-    keep_result(h, &mut st);
-    let waiters = std::mem::take(&mut st.waiters);
-    drop(st);
-    let queued: Vec<(usize, Waker, u64)> = waiters
-        .into_iter()
-        .map(|(x, k, _)| (x, k.clone(), super::local::settled(k)))
-        .filter(|(.., t)| *t != 0)
-        .collect();
-    h.st.lock().waiters = queued;
-}
-
 /// Holder `f` of the promise of `h` is dropped.
 unsafe fn release(h: Arc<Hub>, f: *mut VeltFut) {
-    on_its_task(&h);
     let me = f as usize;
     let mut st = h.st.lock();
     st.holders -= 1;
     if st.holders > 0 {
-        let Some(i) = st.waiters.iter().position(|(x, ..)| *x == me) else {
+        let Some(i) = st.waiters.iter().position(|(x, _)| *x == me) else {
             return;
         };
         st.waiters.remove(i);
-        // It may have been driving the promise: the others wait again, the first drives (a
-        // started original needs no driver).
-        let wake: Vec<Waker> = match st.done || h.node {
+        // It may have been driving the promise: the others wait again, the first drives.
+        let wake: Vec<Waker> = match st.done {
             true => vec![],
-            false => st.waiters.iter().map(|(_, w, _)| w.clone()).collect(),
+            false => st.waiters.iter().map(|(_, w)| w.clone()).collect(),
         };
         drop(st);
         for w in wake {
@@ -660,8 +330,7 @@ unsafe fn release(h: Arc<Hub>, f: *mut VeltFut) {
         }
         return;
     }
-    // A panicked original left no result to drop.
-    let done = st.done && st.panic.is_none();
+    let done = st.done;
     let mut result = std::mem::take(&mut st.result);
     let loc = st.loc;
     drop(st);
@@ -680,44 +349,7 @@ unsafe fn release(h: Arc<Hub>, f: *mut VeltFut) {
             own.restore();
         }
     }
-    // An original future handed to another task stays allocated for the holder there, which
-    // drops it ([`holder_drop`]).
-    if let Some(w) = FORWARDS
-        .lock()
-        .as_ref()
-        .and_then(|m| m.get(&(h.orig as usize)))
-    {
-        w.orig.set(Some((h.poll, h.drop)));
-        return;
-    }
     (*h.orig).poll = h.poll;
     (*h.orig).drop = h.drop;
     (h.drop)(h.orig);
-}
-
-/// `velt_rt_fut_peek` of a holder of a shared promise: its settled result, copied into the
-/// holder's slot for the formatter to read (it claims nothing).
-///
-/// # Safety
-/// `f` must be a live holder of a shared promise.
-pub(crate) unsafe fn peek(f: *mut VeltFut) -> bool {
-    if let Some((p, size)) = forwarded(f) {
-        if super::local::velt_rt_fut_peek(p) == 0 {
-            return false;
-        }
-        std::ptr::copy_nonoverlapping(slot(p), slot(f), size);
-        return true;
-    }
-    let h = hub(f);
-    on_its_task(&h);
-    if h.node && !h.st.lock().done && super::local::node_done(h.orig) {
-        // Finished with nobody waiting yet: it settles now.
-        settle(&h);
-    }
-    let st = h.st.lock();
-    // A panicked original has no result to show: it reads as pending.
-    if st.done && st.panic.is_none() {
-        std::ptr::copy_nonoverlapping(st.result.as_ptr() as *const u8, slot(f), h.size);
-    }
-    st.done && st.panic.is_none()
 }

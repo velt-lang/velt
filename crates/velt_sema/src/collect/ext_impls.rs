@@ -210,7 +210,7 @@ fn check(cx: &mut Ctx, e: usize, b: &Bound, span: velt_common::Span) -> Option<I
             .filter(|r| !r.is_static);
         match (own, m.default) {
             (Some(r), _) => {
-                check_method_sig(cx, r.def, &owner_args, m, &full_args, &iname);
+                check_method_sig(cx, r.def, &owner_args, (m, &iname), &full_args, None, None);
                 // Called through `Callee::ParamMethod`: the interface's borrow ABI.
                 cx.fn_info_mut(r.def).fixed_modes = true;
                 methods.push(r.def);

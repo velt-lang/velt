@@ -129,7 +129,6 @@ const CHECKED: &[&str] = &[
     "lang/hooks/sched_end.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_node_loc.velt",
-    "lang/hooks/sched_off.velt",
     "lang/hooks/sched_peek.velt",
     "lang/hooks/sched_read.velt",
     "lang/hooks/sched_wake.velt",
@@ -293,7 +292,7 @@ mod tests {
     #[test]
     fn only_the_runtime_s_exports_are_skipped() {
         let exports = runtime_exports();
-        assert!(exports.contains("velt_rt_timer_new"));
+        assert!(exports.contains("velt_rt_timer_unref_due"));
         assert!(exports.contains("velt_rt_keep_alive_acquire"));
         assert!(!exports.contains("velt_rt_not_exported"));
         assert!(!exports.contains("strlen"));

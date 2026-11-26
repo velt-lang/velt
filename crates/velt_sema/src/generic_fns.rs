@@ -428,6 +428,7 @@ impl Ctx<'_> {
             is_getter: false,
             generics: own,
             throws,
+            rest: s.rest,
         };
         let shown = self.show_generic_fn(&s, &own_names);
         let d = self.alloc_def(

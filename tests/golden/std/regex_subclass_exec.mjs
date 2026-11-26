@@ -1,0 +1,146 @@
+// The Node twin of tests/golden/std/regex_subclass_exec.velt. A split part of a group that took
+// no part is `undefined` in JavaScript and `""` in Velt's `string[]`: `part` prints both alike.
+let calls = 0;
+
+class Loud extends RegExp {
+  exec(s) {
+    calls++;
+    const before = this.lastIndex;
+    const m = super.exec(s);
+    console.log(`  exec ${JSON.stringify(s)} at ${before}: ${m ? m[0] + "@" + m.index : null}, lastIndex ${this.lastIndex}`);
+    return m;
+  }
+}
+
+// Answers by itself: the same match of another subject twice, then none.
+class Fixed extends RegExp {
+  n = 0;
+  exec(s) {
+    calls++;
+    if (this.n++ >= 2) {
+      return null;
+    }
+    this.lastIndex = 0;
+    return super.exec("__ab");
+  }
+}
+
+// Never matches, whatever the pattern.
+class Never extends RegExp {
+  exec(s) {
+    calls++;
+    return null;
+  }
+}
+
+// No `exec` of its own.
+class Plain extends RegExp {}
+
+function part(p) {
+  return p === undefined ? "" : p;
+}
+
+function run(label, re, f) {
+  const value = f(re);
+  console.log(label, JSON.stringify(value), "calls", calls, "lastIndex", re.lastIndex);
+  calls = 0;
+}
+
+for (const flags of ["", "g", "y", "gy"]) {
+  console.log("flags", JSON.stringify(flags));
+  let re = new Loud("a(b)?", flags);
+  run("test", re, (re) => re.test("xab a"));
+  re = new Loud("a(b)?", flags);
+  run("test at 0", re, (re) => re.test("ab a"));
+  re = new Loud("a(b)?", flags);
+  run("match", re, (re) => "xab a".match(re));
+  re = new Loud("a(b)?", flags);
+  run("match at 0", re, (re) => "ab a".match(re));
+  re = new Loud("a(b)?", flags);
+  re.lastIndex = 3;
+  run("search", re, (re) => "xab a".search(re));
+  re = new Loud("a(b)?", flags);
+  run("replace", re, (re) => "ab a".replace(re, "[$&|$1|$`|$']"));
+  re = new Loud("a(b)?", flags);
+  run("replace calling", re, (re) => "ab a".replace(re, (m) => m.toUpperCase()));
+  re = new Loud("a(b)?", flags);
+  re.lastIndex = 1;
+  run("split", re, (re) => "xab a".split(re).map(part));
+  re = new Loud("a(b)?", flags);
+  run("split 2", re, (re) => "xab a".split(re, 2).map(part));
+  if (flags.includes("g")) {
+    re = new Loud("a(b)?", flags);
+    run("matchAll", re, (re) => [..."ab a".matchAll(re)].map((m) => m[0] + "@" + m.index));
+    re = new Loud("a(b)?", flags);
+    re.lastIndex = 2;
+    run("matchAll from 2", re, (re) => [..."ab a".matchAll(re)].map((m) => m[0] + "@" + m.index));
+    re = new Loud("a(b)?", flags);
+    run("replaceAll", re, (re) => "ab a".replaceAll(re, "-"));
+    re = new Loud("a(b)?", flags);
+    run("replaceAll calling", re, (re) => "ab a".replaceAll(re, (m) => `<${m}>`));
+  }
+}
+
+console.log("an exec of its own");
+let fixed = new Fixed("ab");
+run("test", fixed, (re) => re.test("zzz"));
+fixed = new Fixed("ab");
+run("search", fixed, (re) => "zzz".search(re));
+fixed = new Fixed("ab");
+run("match", fixed, (re) => "zzz".match(re));
+fixed = new Fixed("ab", "g");
+run("match g", fixed, (re) => "zzz".match(re));
+fixed = new Fixed("ab");
+run("replace", fixed, (re) => "zzzzzz".replace(re, "[$&|$`|$']"));
+// The second match starts where the first did: it is left out, after its replacer ran.
+fixed = new Fixed("ab", "g");
+run("replace g", fixed, (re) => "zzzzzz".replace(re, (m) => { console.log("  replacer", m); return "!"; }));
+// A match past the subject's end counts as at its end.
+fixed = new Fixed("ab");
+run("replace short", fixed, (re) => "z".replace(re, "!"));
+fixed = new Fixed("ab", "g");
+run("matchAll", fixed, (re) => [..."zzz".matchAll(re)].map((m) => m[0] + "@" + m.index));
+fixed = new Fixed("ab");
+run("split", fixed, (re) => "zzzzzz".split(re));
+
+console.log("an exec that never matches");
+const never = new Never("a", "g");
+run("test", never, (re) => re.test("aaa"));
+run("match", never, (re) => "aaa".match(re));
+run("search", never, (re) => "aaa".search(re));
+run("replace", never, (re) => "aaa".replace(re, "-"));
+run("split", never, (re) => "aaa".split(re));
+run("split empty", never, (re) => "".split(re));
+run("matchAll", never, (re) => [..."aaa".matchAll(re)].length);
+
+console.log("empty matches");
+for (const flags of ["g", "gu"]) {
+  let re = new Loud("", flags);
+  run("match " + flags, re, (re) => "a\u{1F600}".match(re));
+  re = new Loud("", flags);
+  run("replace " + flags, re, (re) => "a\u{1F600}".replace(re, "-"));
+  re = new Loud("", flags);
+  run("split " + flags, re, (re) => "a\u{1F600}b".split(re).map((p) => p.length));
+  re = new Loud("", flags);
+  run("matchAll " + flags, re, (re) => [..."\u{1F600}".matchAll(re)].map((m) => m.index));
+}
+let empty = new Loud("x*");
+run("split empty subject", empty, (re) => "".split(re));
+empty = new Loud("x");
+run("split empty subject, no match", empty, (re) => "".split(re));
+
+console.log("a subclass without an exec, and a RegExp");
+for (const re of [new Plain("a(b)?", "g"), new RegExp("a(b)?", "g")]) {
+  console.log(re.test("xab a"), re.lastIndex, "xab a".match(re), "xab a".search(re), re.lastIndex);
+  console.log("xab a".replace(re, "[$&]"), "xab a".split(re).map(part), "xab a".split(re, 2));
+  console.log([..."xab a".matchAll(re)].map((m) => m[0]), "xab a".replaceAll(re, "-"), re.lastIndex);
+}
+
+console.log("through a RegExp variable");
+const asBase = new Loud("b+", "g");
+function count(re, s) {
+  const found = s.match(re);
+  return (found ? found.length : 0) + (re.test(s) ? 100 : 0);
+}
+run("count", asBase, (re) => count(re, "abb b"));
+run("count", asBase, (re) => count(/b+/g, "abb b"));

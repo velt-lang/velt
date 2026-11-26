@@ -28,6 +28,7 @@ mod c_struct;
 mod classes;
 mod comparable;
 mod constants;
+mod covariant;
 mod declare;
 mod default_snapshots;
 mod export_walk;
@@ -50,11 +51,14 @@ mod iterable;
 mod lookup;
 mod nested;
 mod operators;
+mod regexp_symbols;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
+mod short_overrides;
 pub(crate) mod sigs;
 pub(crate) mod static_this;
 mod unsafe_methods;
+mod vector_extends;
 
 use crate::ctx::Ctx;
 use crate::hir::DefId;
@@ -152,8 +156,9 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
 
 /// Collect std modules `ms`, added to the check once its bodies are being reached
 /// (`crate::std_load`): as [`collect`] does, for what they declare alone. They follow the (a1) rule
-/// (velt_loader `std_index`), so nothing collected before changes. Returns where the additions
-/// start.
+/// (velt_loader `std_index`), so nothing collected before changes; the methods it lets them add
+/// to the built-in vector types are checked here not to shadow any (`vector_extends`). Returns
+/// where the additions start.
 pub(crate) fn collect_added(cx: &mut Ctx, ms: &[usize]) -> Added {
     collect_added_in(cx, ms, None)
 }
@@ -185,6 +190,9 @@ fn collect_added_in(cx: &mut Ctx, ms: &[usize], unit: Option<bool>) -> Added {
     // A utility type in a field type asks for fields while shapes are being resolved.
     cx.shapes_done = false;
     collect_items(cx, &items, from);
+    if unit.is_none() {
+        vector_extends::check(cx, from);
+    }
     if app {
         cx.bodies_ok = true;
     }

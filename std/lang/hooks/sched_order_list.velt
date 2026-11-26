@@ -1,6 +1,6 @@
 // velt/lang/hooks (internal): the lists of Node's timer order under the executor in Velt
-// (sched_order.velt, #2649), in the order's block, as the runtime's (velt_rt
-// task/local/order.rs) and Node's (lib/internal/timers.js): one list of timers per delay in whole
+// (sched_order.velt, #2649), in the order's block, as the runtime's Rust
+// order it replaced and Node's (lib/internal/timers.js): one list of timers per delay in whole
 // milliseconds, in the order they were inserted, each with an expiry (its first timer's start
 // plus the delay) and an id (the next number when it was made or moved); the lists in
 // (expiry, id) order in one chain. The immediates (`setImmediate`, delay 0) have a list of their
@@ -10,10 +10,11 @@
 // a worker's timer block (sched_sleep.velt; only the order's fields are used). Every worker
 // changes it, under its lock word (`lock`, sched_lock.velt's protocol: no lock with one worker).
 
-import { inline, noInline } from "velt/lang/intrinsics";
+import { inline, noInline, stdUsed } from "velt/lang/intrinsics";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
 
 /**
  * The block's fields for the order: the chain (first, last list), the immediates' list, the last
@@ -55,8 +56,8 @@ export const L_SIZE: usize = 64;
  * list (0: not queued), links in it, state, the waker of its turn, when its turn may come at the
  * earliest (nanoseconds: the whole delay after it was inserted), when its last turn was taken
  * (nanoseconds, and whether it was), the task that runs its callback (0: none; its lists are
- * passed over while it is in a poll on another worker: sched_order_pass.velt `busy`), and whether
- * a counted exit gives it back (sched_order_give.velt).
+ * passed over while it is in a poll on another worker: sched_order_pass.velt `busy`) and its
+ * links among that task's named timers (`name`).
  */
 export const H_MS: usize = 0;
 export const H_START: usize = 8;
@@ -70,7 +71,9 @@ export const H_AT: usize = 64;
 export const H_RAN: usize = 72;
 export const H_RAN_SET: usize = 80;
 export const H_TASK: usize = 88;
-export const H_SIZE: usize = 96;
+export const H_TASK_NEXT: usize = 96;
+export const H_TASK_PREV: usize = 104;
+export const H_SIZE: usize = 112;
 
 /** A timer's states: not queued (new, cleared, or its turn taken); queued; its turn has come. */
 export const IDLE: usize = 0;
@@ -274,6 +277,7 @@ export function take(b: usize, h: usize): bool {
     m.st(next + H_PREV, prev);
   }
   m.st(h + H_LIST, 0);
+  unname(h);
   m.st(b + O_QUEUED, m.ld(b + O_QUEUED) - 1);
   const live = m.ld(l + L_LIVE) - 1;
   m.st(l + L_LIVE, live);
@@ -282,4 +286,89 @@ export function take(b: usize, h: usize): bool {
     m.release(l, L_SIZE);
   }
   return true;
+}
+
+/**
+ * Queued timer `h` names task `k` (the lock held): its callback runs on `k`, and a look passes it
+ * over while `k` is in a poll on another worker (sched_order_pass.velt `busy`). Linked among
+ * `k`'s named timers until it leaves the lists (`take`) or `k` ends (`forget`): a look reads
+ * the task of a queued timer, which must not be freed meanwhile (#3822: a task that made an
+ * `AbortSignal.timeout` and ended left it queued, naming a freed task).
+ */
+export function name(h: usize, k: usize): void {
+  unname(h);
+  const first = m.ld(k + t.T_NAMED);
+  m.st(h + H_TASK_PREV, 0);
+  m.st(h + H_TASK_NEXT, first);
+  if (first !== 0) {
+    m.st(first + H_TASK_PREV, h);
+  }
+  m.st(k + t.T_NAMED, h);
+  m.st(h + H_TASK, k);
+}
+
+/** Timer `h` names no task any more (the lock held): out of its task's named timers. */
+@inline("always")
+export function unname(h: usize): void {
+  const k = m.ld(h + H_TASK);
+  if (k !== 0) {
+    unlinkNamed(h, k);
+  }
+}
+
+/** `unname` of timer `h`, which names task `k`. */
+@noInline
+function unlinkNamed(h: usize, k: usize): void {
+  const prev = m.ld(h + H_TASK_PREV);
+  const next = m.ld(h + H_TASK_NEXT);
+  if (prev === 0) {
+    m.st(k + t.T_NAMED, next);
+  } else {
+    m.st(prev + H_TASK_NEXT, next);
+  }
+  if (next !== 0) {
+    m.st(next + H_TASK_PREV, prev);
+  }
+  m.st(h + H_TASK, 0);
+  m.st(h + H_TASK_PREV, 0);
+  m.st(h + H_TASK_NEXT, 0);
+}
+
+/**
+ * Task `k` ends (sched_run.velt `finish`, before anything there can free it): the queued Node
+ * timers that name it name no task from now on (`forget`). A task that made an
+ * `AbortSignal.timeout` and ended leaves its timer queued, as the timer's turn is another task's,
+ * and a look reads the task of a queued timer (sched_order_pass.velt `busy`, #3822). Only a poll
+ * of `k` names a timer, so none is named after this; `finish` holds no order's lock.
+ */
+@inline("always")
+export function ended(k: usize): void {
+  if (stdUsed("nodeTimers") && m.load(k + t.T_NAMED) !== 0) {
+    forget(k);
+  }
+}
+
+/**
+ * Task `k`, which has ended (`ended`), is named by queued timers (its `T_NAMED`
+ * read nonzero): under the order's lock they name no task from now on. Each stays queued and
+ * fires as before: a look takes it for not busy, which it is, the task having no poll left. No
+ * timer can name `k` again, as only a poll of `k` names it.
+ */
+@noInline
+export function forget(k: usize): void {
+  const b = order();
+  if (b === 0) {
+    return;
+  }
+  const lk = lock(b);
+  let h = m.ld(k + t.T_NAMED);
+  while (h !== 0) {
+    const next = m.ld(h + H_TASK_NEXT);
+    m.st(h + H_TASK, 0);
+    m.st(h + H_TASK_PREV, 0);
+    m.st(h + H_TASK_NEXT, 0);
+    h = next;
+  }
+  m.st(k + t.T_NAMED, 0);
+  unlock(b, lk);
 }

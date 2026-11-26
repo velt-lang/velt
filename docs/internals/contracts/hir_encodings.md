@@ -210,6 +210,13 @@ assignment) are listed in the module comment of `crates/velt_sema/src/hir/mod.rs
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
   the operand that decides, so the code of an instantiation for which the test is false is the
   code without it (std/prelude/map.velt: a `Map` whose `V` excludes null keeps its VIR).
+- `Intrinsic::IsExactClass` (`isExactClass(value)`, std only, `value` of a class type `T`): is
+  the object of `T` itself, not of a class that extends it? When no class of the program extends
+  `T` it is a constant `true`, taken like `HoldsNull` (`const_cond`; the value is not evaluated),
+  so the branch for a subclass's objects is not lowered and such a program keeps its VIR.
+  Otherwise it is one compare of the object's class id with `T`'s own (class_test.rs). std's
+  built-ins use it where JavaScript's specification calls a method a subclass may override
+  (`RegExp`'s `exec`, std/text/regex/regexp.velt): their own objects keep their own code.
 - Array methods on a proxy (issue #2424): `Call { Intrinsic(AnyMethodCalled), [Lit(Str(name))] }`,
   std only, is a constant of the program, taken like the tests above: can the array method `name`
   be called through `any`? True when a call through `any` names it or a computed key, or when the
@@ -795,9 +802,9 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   or logical assignment, `++`/`--`, and the writes `Object.assign`, `Object.defineProperty` and
   destructuring make): `if (IsFrozen(o)) frozenWriteError("f")` (`frozenDefineError` for a
   definition), std/lang/hooks/frozen.velt, an ordinary throw of Node's `TypeError`.
-  `Intrinsic::Freeze(value)` (additive, units codec tag 228; `(T) -> T`, the value moved):
+  `Intrinsic::Freeze(value)` (additive, units codec tag 230; `(T) -> T`, the value moved):
   `Object.freeze(value)` of a freezable type's value, the value with its mark set.
-  `Intrinsic::IsFrozen(value)` (additive, tag 229; `(borrow T) -> bool`, `T` an object type):
+  `Intrinsic::IsFrozen(value)` (additive, tag 231; `(borrow T) -> bool`, `T` an object type):
   the mark of a freezable type's value; `false` for another object type, none of whose values
   can be frozen. Sema answers `Object.isFrozen` of other values itself (a primitive is frozen, a
   value of a frozen literal's readonly type is frozen, other values are not).
@@ -889,7 +896,10 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   (`keyEq`, JS SameValueZero: `Same` with `NaN` equal to itself and `0` to `-0`) and hash with
   `Intrinsic::Hash`, which agrees with it (objects hash their identity; a type declared with
   `struct`, `AdtDef::declared_struct`, compares and hashes by content, field by field: a struct has
-  no identity, #641). A declared `struct` compares its numbers by their bits under every one of
+  no identity, #641). The key a `Map` stores (a `Set` its element) is `Intrinsic::KeyOf` of it
+  (`keyOf`, additive): an owned copy whose float `-0` is `+0`, as JS stores it: in a float, an
+  option of one, a float member of a union, or a `number` held by `any` / `unknown`; any other
+  value is itself. A declared `struct` compares its numbers by their bits under every one of
   these; a C struct (`AdtDef::c_struct`) compares them as the operation compares numbers (IEEE under
   `Same`, SameValueZero for keys and `includes`). A C struct held in a declared `struct` compares by
   the outer struct's rule, its bits. `Array.includes` compares with `Intrinsic::IncludesEq` (JS

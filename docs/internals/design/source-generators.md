@@ -234,6 +234,17 @@ functions, at types the model holds.
 code to be built, in a cycle"). Std's generators build strings with `StringBuilder` and read the
 model directly, so they use no generated functions.
 
+**Ending.** A check asks its generators at most once for the same answer: one that failed, or
+whose code needs a check of its own, is not asked again by the check's later rounds, and one
+that made no module for a demand ends the asking, so the instances come back as the check's
+demand and the driver's rounds (eight at most) report them.
+
+**Modules loaded on demand.** A generated function may be declared in a std module the check
+loads on demand (lazy-std.md "Loading on demand"). The driver finds that module among those it
+served, and a later round of the check, which starts without the module, adds the code
+generated for it once the round has loaded it again. Such a program's cached offer is not used:
+the first check has not loaded the module yet, so the program is checked from scratch.
+
 ### Caching
 
 Generator work is cached in the build cache (`crates/veltc/src/generate/cache.rs`):

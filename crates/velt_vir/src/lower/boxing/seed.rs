@@ -94,9 +94,12 @@ const DEF_SETS: [&str; 4] = [
 /// Likewise for [`CountedSeed::unseeded_types`] and [`CountedSeed::unseeded_defs`].
 const UNSEEDED_SETS: [&str; 2] = ["weak-capable", "a possible proxy"];
 
+/// How many [`CountedSeed::flags`] there are: [`FLAGS`] names each, and `with_seed` sets each.
+const FLAG_COUNT: usize = 16;
+
 /// What each of [`CountedSeed::flags`] decides, program-wide, about live values or the tables
 /// they point at.
-const FLAGS: [&str; 13] = [
+const FLAGS: [&str; FLAG_COUNT] = [
     "how `any` values hold objects",
     "the identity of function values",
     "the `any` tables of generic closures",
@@ -110,6 +113,9 @@ const FLAGS: [&str; 13] = [
     "the `any` tables' number slot",
     "what a shared read counts",
     "the `any` tables' member slots",
+    "the wrappers of function values",
+    "whether a function's apply slot calls one that returns a promise",
+    "how `any` values compare promises of two types",
 ];
 
 impl CountedSeed {
@@ -224,6 +230,8 @@ impl Cx<'_> {
             any_keys,
             any_reflect,
             any_number,
+            any_applies,
+            any_promise_types,
             any_call_keys,
             recursive,
             transferred,
@@ -259,6 +267,24 @@ impl Cx<'_> {
         let defs = |s: &mut dyn Iterator<Item = &DefId>| {
             s.filter_map(|d| self.seed_def_name(*d)).collect()
         };
+        let flags: [bool; FLAG_COUNT] = [
+            *any_identity,
+            *fn_identity,
+            *generic_any,
+            *any_writes,
+            *fn_props,
+            *any_has,
+            *shared_fns,
+            *any_delete,
+            *any_keys,
+            *any_reflect,
+            *any_number,
+            *read_indirect,
+            *any_members,
+            *fn_wrappers,
+            *any_applies,
+            *any_promise_types,
+        ];
         CountedSeed {
             types: vec![
                 types(&mut boxes.iter()),
@@ -276,22 +302,7 @@ impl Cx<'_> {
                 defs(&mut dyn_to_any.iter()),
                 defs(&mut lock_roots.iter()),
             ],
-            flags: vec![
-                *any_identity,
-                *fn_identity,
-                *generic_any,
-                *any_writes,
-                *fn_props,
-                *any_has,
-                *shared_fns,
-                *any_delete,
-                *any_keys,
-                *any_reflect,
-                *any_number,
-                *read_indirect,
-                *any_members,
-                *fn_wrappers,
-            ],
+            flags: flags.to_vec(),
             any_call_keys: any_call_keys.clone(),
             unseeded_types: vec![types(&mut weak.iter()), types(&mut proxy_types.iter())],
             unseeded_defs: vec![defs(&mut weak_roots.iter()), defs(&mut proxy_roots.iter())],
@@ -348,7 +359,7 @@ impl Cx<'_> {
         b.recursive.extend(d(1));
         b.dyn_to_any.extend(d(2));
         b.lock_roots.extend(d(3));
-        let flags: [&mut bool; 14] = [
+        let flags: [&mut bool; FLAG_COUNT] = [
             &mut b.any_identity,
             &mut b.fn_identity,
             &mut b.generic_any,
@@ -363,6 +374,8 @@ impl Cx<'_> {
             &mut b.read_indirect,
             &mut b.any_members,
             &mut b.fn_wrappers,
+            &mut b.any_applies,
+            &mut b.any_promise_types,
         ];
         for (flag, &seeded) in flags.into_iter().zip(&seed.flags) {
             *flag |= seeded;

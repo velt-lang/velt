@@ -1,0 +1,21 @@
+// A DataView's signed setters don't call the unsigned ones, as in Node: a subclass's
+// `setUint16` and `setUint32` run only when called themselves.
+class Loud extends DataView {
+  override setUint16(byteOffset: number, value: number, littleEndian: boolean = false) {
+    console.log("setUint16");
+    super.setUint16(byteOffset, value, littleEndian);
+  }
+
+  override setUint32(byteOffset: number, value: number, littleEndian: boolean = false) {
+    console.log("setUint32");
+    super.setUint32(byteOffset, value, littleEndian);
+  }
+}
+
+const d = new Loud(new ArrayBuffer(8));
+d.setInt16(0, -2);
+d.setInt32(4, -3, true);
+console.log(d.getInt16(0), d.getUint16(0), d.getInt32(4, true));
+d.setUint16(0, 7);
+d.setUint32(4, 9, true);
+console.log(d.getUint16(0), d.getUint32(4, true));

@@ -29,7 +29,15 @@ impl FnCx<'_, '_> {
     }
 
     /// Like [`coerce`](Self::coerce) without reporting; `Err` gives the expression back.
-    pub fn try_coerce(&mut self, mut h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+    pub fn try_coerce(&mut self, h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        match self.try_coerce_as_is(h, exp) {
+            Ok(h) => Ok(h),
+            // An integer literal type, or a union of them, is a `number` too (#3747).
+            Err(h) => self.int_literal_to(h, exp),
+        }
+    }
+
+    fn try_coerce_as_is(&mut self, mut h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
         // `K` (a constant holding a fresh symbol) where its `typeof K` is expected.
         h = self.unique_symbol_value(h, exp);
         // Read-only arrays first: a twin has its array's kind, which the rules below would take
@@ -388,11 +396,13 @@ impl FnCx<'_, '_> {
             return Err(h);
         }
         if let Some(v) = self.cx.lit_value(h.ty) {
+            let original = h.clone();
             let b = self.lit_to_base(h, &v);
             return if b.ty == exp {
                 Ok(b)
             } else {
-                self.try_coerce(b, exp)
+                // The literal-typed value back, so `try_coerce` can try it as a `number` (#3747).
+                self.try_coerce(b, exp).map_err(|_| original)
             };
         }
         if self.cx.union_def(h.ty).is_some() {

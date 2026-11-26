@@ -1,0 +1,19 @@
+// velt/lang/hooks (internal): signals for the executor in Velt (sched_signal.velt, #2649 step 4)
+// on an OS without POSIX signals (Windows) or without the reactor: none can be watched, and
+// nothing here names `sigaction` or the self-pipe's `read` and `write`, which such an OS's C
+// library doesn't have.
+
+/** Can this OS watch signals here? */
+export function supported(): bool {
+  return false;
+}
+
+/** Installs a handler for signal `sig`: none can be here. */
+export function watch(sig: i32): bool {
+  return false;
+}
+
+/** The next signal a `watch` delivers: none can be (-1). */
+export async function next(): Promise<i32> {
+  return -1;
+}

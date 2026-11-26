@@ -120,6 +120,9 @@ pub(crate) enum RetWant {
     Ty(TyId),
     /// The result of another function, substituted (the base method an override overrides).
     Of(DefId, Vec<TyId>),
+    /// Nothing to compare: `def` is a synthesized method made before the result of this
+    /// function was inferred, and takes it, substituted (`collect::short_overrides`).
+    Given(DefId, Vec<TyId>),
 }
 
 /// Where a function's body comes from.
@@ -497,6 +500,9 @@ pub(crate) struct IfaceMethod {
     pub generics: Generics,
     /// `throws` clause: bounds what implementations may throw (else inferred from them).
     pub throws: Option<DeclaredThrows>,
+    /// The last parameter is a rest parameter (`...xs: T[]`): a call packs the remaining
+    /// arguments into its array.
+    pub rest: bool,
 }
 
 #[derive(Clone, Debug)]

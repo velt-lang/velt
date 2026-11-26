@@ -28,6 +28,7 @@ import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
+import * as wp from "./sched_wake_pause";
 
 /** The waker of whoever awaits a node (sched_node.velt's head). */
 export const N_AWAITER: usize = 32;
@@ -36,7 +37,9 @@ export const N_AWAITER: usize = 32;
  * The owner waits for node `n`: its waker is woken when `n` finishes. The finish may run on
  * another worker meanwhile (module docs): a finish that came first is seen in the flags after the
  * waker is stored, and the waker is woken then (the owner polls again and finds it finished).
+ * Inlined: a pending poll of a node ends here (sched_node.velt `pollNode`).
  */
+@inline("always")
 export function awaitNode(n: usize, cx: usize): u32 {
   return awaitWith(n, m.ld(cx + 8));
 }
@@ -47,18 +50,32 @@ export function awaitNode(n: usize, cx: usize): u32 {
  */
 @inline("always")
 export function awaitWith(n: usize, cw: usize): u32 {
+  if (lk.mode() === lk.LK_NONE) {
+    return awaitOwn(n, m.wakerClone(cw));
+  }
+  if (wk.counting()) {
+    // Out of line, so the pause costs the common path no saved registers.
+    return awaitPaused(n, cw);
+  }
+  return awaitAway(n, cw);
+}
+
+/** `awaitWith` with the counters on: a test may hold the window before the task's load open. */
+@noInline
+function awaitPaused(n: usize, cw: usize): u32 {
+  wp.taskRead();
+  return awaitAway(n, cw);
+}
+
+/** `awaitWith` with the locks on: the owner may run on another worker than the node's task. */
+@inline("always")
+function awaitAway(n: usize, cw: usize): u32 {
   const w = m.wakerClone(cw);
   // A nonzero task: `taskOf` is 0 for wakers of no task, and so is a node that let go of its own
   // (sched_node_done.velt).
   const nt = m.ld(n + nd.N_TASK);
-  if (lk.mode() === lk.LK_NONE || (nt !== 0 && wk.taskOf(cw) === nt)) {
-    // The owner runs on the node's task (module docs).
-    const old = m.ld(n + N_AWAITER);
-    m.st(n + N_AWAITER, w);
-    if (old !== 0) {
-      m.wakerDrop(old);
-    }
-    return 0;
+  if (nt !== 0 && wk.taskOf(cw) === nt) {
+    return awaitOwn(n, w);
   }
   const old = m.swap(n + N_AWAITER, w);
   if (old !== 0) {
@@ -66,6 +83,17 @@ export function awaitWith(n: usize, cw: usize): u32 {
   }
   if ((m.load32(n + nd.N_FLAGS) & nd.FINISHED) !== 0) {
     finishedMeanwhile(n);
+  }
+  return 0;
+}
+
+/** `awaitWith` for an owner on the node's task (module docs): waker `w` (its own) stored plainly. */
+@inline("always")
+function awaitOwn(n: usize, w: usize): u32 {
+  const old = m.ld(n + N_AWAITER);
+  m.st(n + N_AWAITER, w);
+  if (old !== 0) {
+    m.wakerDrop(old);
   }
   return 0;
 }
@@ -107,16 +135,13 @@ export function takePlain(n: usize): usize {
 }
 
 /**
- * Does the owner of started node `n` run on its task's thread, so that the finish never runs
- * meanwhile (module docs)?
+ * With the locks on, does the owner of started node `n` run on its task's thread, so that the
+ * finish never runs meanwhile (module docs)? `fl`: the flags the caller read before (with one
+ * worker, sched_node.velt `nodeDrop` asks only whether the owner runs on a worker).
  */
 @inline("always")
 export function ownSide(n: usize, fl: u32): bool {
   const e = t.here();
-  if (lk.mode() === lk.LK_NONE) {
-    // One worker, but the owner may be a thread that isn't one (sched_foreign.velt `start`).
-    return e !== 0;
-  }
   const nt = m.ld(n + nd.N_TASK);
   if (nt === 0) {
     // It let go of its task as it finished (sched_node_done.velt): no finish left to race, when

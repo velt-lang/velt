@@ -584,6 +584,7 @@ impl FnCx<'_, '_> {
         // `depth += xs.length` on an integer that holds it: the integer (`numbers::std_int_fits`).
         let v = self.std_int_coerce(v, lty).unwrap_or_else(|v| v);
         self.literal_operands(op, &place, &v);
+        let v = self.compound_literal_operand(lty, v);
         // `x |= v` and the other bitwise assignments on numbers: `x = x | v` (`int32.rs`).
         let v = match self.js_bitwise_operands(op, &place, v) {
             Ok(v) => {

@@ -1,0 +1,58 @@
+// velt/lang/hooks (internal): the drop of a started promise of the executor in Velt by its owner
+// (sched_node.velt `nodeDrop`): on its task's thread, the result dropped and the node released;
+// from another, the finish may run meanwhile (sched_node_await.velt), and whichever of the two
+// comes second drops the result.
+
+import { inline, noInline } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+import * as nd from "./sched_node";
+import * as aw from "./sched_node_await";
+import * as lost from "./sched_node_lost";
+import * as rp from "./sched_node_report";
+import * as wp from "./sched_wake_pause";
+
+/** `nodeDrop` with the locks and the counters on: a test may hold the window before `ownSide`. */
+@noInline
+export function dropPaused(n: usize, fl: u32): void {
+  wp.taskRead();
+  dropStarted(n, fl, aw.ownSide(n, fl));
+}
+
+/**
+ * `nodeDrop` of started node `n` (flags `fl`, read before): on its task's thread (`own`), or not.
+ */
+@inline("always")
+export function dropStarted(n: usize, fl: u32, own: bool): void {
+  if (!own) {
+    // The finish may run on another worker meanwhile (sched_node_await.velt): the one that comes
+    // second drops the result. DELIVERED is the owner's own (this thread's).
+    const prev = m.or32(n + nd.N_FLAGS, nd.DETACHED);
+    if ((prev & (nd.FINISHED | nd.DELIVERED)) === nd.FINISHED) {
+      rp.dropResult(n);
+    }
+    const w = m.swap(n + aw.N_AWAITER, 0);
+    if (w !== 0) {
+      m.wakerDrop(w);
+    }
+    lost.droppedAway(n);
+    return;
+  } else if ((fl & nd.FINISHED) === 0) {
+    nd.setFlags(n, nd.DETACHED);
+    if (m.load(n + nd.N_REFS) === 2 || lost.isProxy(n)) {
+      return lost.dropPending(n);
+    }
+  } else if ((fl & nd.DELIVERED) === 0) {
+    rp.dropResult(n);
+  }
+  dropDone(n);
+}
+
+/** The end of a drop on the node's side: its awaiter's waker and the owner's reference go. */
+@inline("always")
+export function dropDone(n: usize): void {
+  const w = aw.takePlain(n);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  nd.release(n);
+}

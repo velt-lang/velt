@@ -63,7 +63,7 @@ export {
   atomicSpinHint,
   atomicStore,
 } from "velt/lang/intrinsics/atomic";
-export { hash, includesEq, keyEq } from "velt/lang/intrinsics/compare";
+export { hash, includesEq, keyEq, keyOf } from "velt/lang/intrinsics/compare";
 export {
   addressCall,
   addressCall3,
@@ -141,6 +141,7 @@ export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_loca
 export {
   fnCapturesNothing,
   holdsNull,
+  isExactClass,
   mayAlias,
   needsDrop,
   needsTransfer,

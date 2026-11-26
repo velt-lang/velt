@@ -596,8 +596,10 @@ enums! {
         224 => StrBorrowedWords,
         225 => CArrived,
         227 => AnyZeroSign,
-        228 => Freeze,
-        229 => IsFrozen,
+        228 => IsExactClass,
+        229 => KeyOf,
+        230 => Freeze,
+        231 => IsFrozen,
     }
 }
 

@@ -143,11 +143,17 @@ fn report_too_deep(cx: &mut Ctx, d: DefId, at: Span) {
 /// Signature comparisons that waited for inferred results (`collect::ret_infer`).
 pub(crate) fn check_deferred(cx: &mut Ctx) {
     for c in std::mem::take(&mut cx.ret_checks) {
+        if let RetWant::Given(from, args) = &c.want {
+            let r = ret_of(cx, *from, c.span);
+            let r = cx.subst(r, args);
+            crate::collect::forwarders::set_result(cx, c.def, r);
+            continue;
+        }
         let have = ret_of(cx, c.def, c.span);
         let have = cx.subst(have, &c.args);
         let want = match c.want {
             RetWant::Ty(t) => t,
-            RetWant::Of(base, args) => {
+            RetWant::Of(base, args) | RetWant::Given(base, args) => {
                 let r = ret_of(cx, base, c.span);
                 cx.subst(r, &args)
             }

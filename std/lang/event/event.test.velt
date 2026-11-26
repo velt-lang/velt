@@ -1,0 +1,30 @@
+// velt/lang/event (tests): what `console.log` shows of an event (`[INSPECT]`) comes from its own
+// state, as in Node, whose view reads its private fields: a subclass's `defaultPrevented` is not
+// read (#3792). A golden can't show it, since `timeStamp` differs from run to run.
+import { describe, expect, it } from "velt/test";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { Event } from "./event";
+
+class Loud extends Event {
+  override get defaultPrevented(): boolean {
+    return true;
+  }
+}
+
+describe("an event's console.log view", () => {
+  it("shows its own canceled flag, not a subclass's defaultPrevented", () => {
+    const e = new Loud("x", { cancelable: true });
+    const before = e[INSPECT]();
+    expect(before.type).toBe("x");
+    expect(before.defaultPrevented).toBe(false);
+    expect(before.cancelable).toBe(true);
+    e.returnValue = false;
+    expect(e[INSPECT]().defaultPrevented).toBe(true);
+  });
+
+  it("shows an event that can't be cancelled as not cancelled", () => {
+    const e = new Loud("y");
+    e.returnValue = false;
+    expect(e[INSPECT]().defaultPrevented).toBe(false);
+  });
+});

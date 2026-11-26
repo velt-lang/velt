@@ -1,0 +1,24 @@
+// A child of an inline `Promise.all` awaited in `main` (a task's root) leaves a rejection
+// unhandled at its turn: as in Node, the rejection ends the program at that turn, before the next
+// child's turn runs (#3687). Each child's turn would otherwise go on in the same poll of the root
+// as the one before it. The output is Node 22's (run with `yieldNow` as `setImmediate`).
+
+async function loses(name: string): Promise<number> {
+  console.log(`${name} yield 0`);
+  await yieldNow();
+  console.log(`${name} done`);
+  const lost = Promise.reject(new Error(`${name}'s rejection`));
+  return 1;
+}
+
+async function yields(name: string): Promise<number> {
+  console.log(`${name} yield 0`);
+  await yieldNow();
+  console.log(`${name} done`);
+  return 1;
+}
+
+async function main() {
+  const r = await Promise.all([yields("a"), loses("b"), yields("c")]);
+  console.log(`end ${r.length}`);
+}

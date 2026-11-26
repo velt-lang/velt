@@ -3,21 +3,15 @@
 //! runtime ABI (docs/internals/contracts/rt_abi_async.md). The string/JSON tests likewise play generated
 //! code: template-literal glue, string methods, and a hand-written `JSON.parse<User>` decoder.
 
-#[cfg(debug_assertions)]
-mod cells;
 #[path = "../../../../tests/common/command.rs"]
 pub(crate) mod command;
 mod fake;
 mod fs;
-mod handover;
 mod js_table;
-mod local;
-mod losers;
 mod net;
 mod shared;
 mod strings;
 mod text_perf;
-mod transfer;
 mod utf16_model;
 mod utf16_producers;
 mod utf16_props;

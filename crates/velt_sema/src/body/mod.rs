@@ -415,6 +415,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The object literal being checked as the operand of a type assertion (`member_cast`):
     /// its values convert to the fields' types as assertions do (`asserted_field`).
     pub asserted_lit: Option<Span>,
+    /// The type assertion about to be checked is to a written `Promise<T>` without an error
+    /// type, which a dynamic operand makes reject with `unknown` (`any_promise_cast`).
+    pub open_promise_cast: bool,
     /// The conditional initializing a declaration (`const m = c ? ("a" as const) : …`), whose
     /// `as const` arms keep their literals (`ternary`).
     pub kept_arms: Option<Span>,
@@ -454,6 +457,15 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Calls of methods that hand back their receiver (`expr/hand_back.rs`), by span: whether
     /// the block's value reads the receiver's place again (else a temporary holding it).
     pub handed_back: rustc_hash::FxHashMap<Span, bool>,
+    /// `const r = this` (or a `this`-returning call on `this`): `r` is `this` itself, which a
+    /// method returning `this` may return (`expr/this_type.rs`).
+    pub this_aliases: rustc_hash::FxHashSet<hir::LocalId>,
+    /// `this` cast to another type (`this as A`, `r as A` of such a `const`), by span: typed as
+    /// the class, so not `this` (`expr/this_type.rs`).
+    pub this_casts: rustc_hash::FxHashSet<Span>,
+    /// The bindings a pattern declares under a default (`const [r = o] = [this]`), by span:
+    /// typed with the default's type too, so not `this` (`expr/this_type.rs`).
+    pub this_defaulted: rustc_hash::FxHashSet<Span>,
     /// The expression statement being checked, whose value is discarded (`expr_stmt`).
     pub discard_at: Option<Span>,
     /// The member of a recursive closure group whose arrow is about to be checked: group,
@@ -485,6 +497,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_fn_forwarding: vec![],
             asserted_fn: None,
             asserted_lit: None,
+            open_promise_cast: false,
             kept_arms: None,
             kept_plain_arms: false,
             in_as_const: false,
@@ -549,6 +562,9 @@ impl<'a, 'm> FnCx<'a, 'm> {
             jsx_list_trial: false,
             this_calls: Default::default(),
             handed_back: Default::default(),
+            this_aliases: Default::default(),
+            this_casts: Default::default(),
+            this_defaulted: Default::default(),
             discard_at: None,
             pending_member: None,
             adapting: false,

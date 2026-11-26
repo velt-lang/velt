@@ -103,9 +103,12 @@ impl FnCx<'_, '_> {
             // A view reads the fields through getters.
             return None;
         }
-        if !param && props.iter().any(is_this_method) {
-            // A method using `this` called through `any` or a view would not get the object:
-            // the error where the method is checked stays.
+        // A method using `this` called through a view would not get the object: the error where
+        // the method is checked stays. Through `any` the slot method passes it (#3773). Where
+        // `unknown` or `object` is expected, TypeScript types `this` as `{}` (TS2339 on its
+        // members): refused too.
+        let any = matches!(self.cx.dynamic(t), Some(crate::any::Dynamic::Any));
+        if !param && !any && props.iter().any(is_this_method) {
             return None;
         }
         let h = self.own_iface_object(props, span);
@@ -300,6 +303,7 @@ impl FnCx<'_, '_> {
                 is_getter: m.is_getter,
                 generics: Generics::default(),
                 throws: None,
+                rest: written_rest(e),
             });
         }
         // Named with what is known for the diagnostics of the trials, again once it is all known.
@@ -381,6 +385,7 @@ impl FnCx<'_, '_> {
             &'p ast::Ident,
             Option<&'p ast::TypeExpr>,
             Option<(&'p ast::Expr, bool)>,
+            bool,
         );
         let (ps, ret, is_async): (Vec<Written>, _, _) = match &e.kind {
             ast::ExprKind::Arrow {
@@ -396,6 +401,7 @@ impl FnCx<'_, '_> {
                             &p.name,
                             p.ty.as_ref(),
                             p.default.as_ref().map(|d| (d, p.optional)),
+                            p.rest,
                         )
                     })
                     .collect(),
@@ -411,6 +417,7 @@ impl FnCx<'_, '_> {
                             &p.name,
                             Some(&p.ty),
                             p.default.as_ref().map(|d| (d, p.optional)),
+                            p.rest,
                         )
                     })
                     .collect(),
@@ -419,7 +426,7 @@ impl FnCx<'_, '_> {
             ),
             _ => (vec![], None, false),
         };
-        for (name, ty, default) in ps {
+        for (name, ty, default, rest) in ps {
             if ast::is_method_this(name) {
                 continue;
             }
@@ -439,6 +446,21 @@ impl FnCx<'_, '_> {
                 }
             };
             let mode = self.param_mode(t);
+            // An arrow's rest parameter (a function's has it from the parser): no arguments
+            // left over are an empty array.
+            let empty;
+            let default = match default {
+                None if rest => {
+                    let at = Span::new(name.span.file, name.span.hi, name.span.hi);
+                    empty = ast::Expr {
+                        id: ast::NodeId(u32::MAX),
+                        kind: ast::ExprKind::Array(vec![]),
+                        span: at,
+                    };
+                    Some((&empty, false))
+                }
+                d => d,
+            };
             // Calls through the interface pass every argument, so they take the defaults.
             let default = default.map(|d| {
                 let fname = format!("{{}}.{}", m.name);
@@ -487,7 +509,7 @@ impl FnCx<'_, '_> {
             params,
             ret: m.ret,
             throws,
-            rest: false,
+            rest: m.rest,
         })
     }
 
@@ -572,6 +594,15 @@ impl FnCx<'_, '_> {
 fn added_setter(e: &ast::Expr) -> bool {
     matches!(&e.kind, ast::ExprKind::Arrow { params, .. }
         if params.first().is_some_and(|p| p.name.name == crate::defined_accessors::ADDED_SETTER_PARAM))
+}
+
+/// Does method `e` end in a rest parameter (`...xs: T[]`)?
+fn written_rest(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Arrow { params, .. } => params.last().is_some_and(|p| p.rest),
+        ast::ExprKind::Function(f) => f.sig.params.last().is_some_and(|p| p.rest),
+        _ => false,
+    }
 }
 
 /// Field `key` of type `ty`, as a literal's value gives it.
