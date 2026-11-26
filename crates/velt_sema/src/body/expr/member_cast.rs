@@ -15,6 +15,18 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        let h = self.cast_value(expr, ty, want, span);
+        self.note_this_cast(ty, &h);
+        h
+    }
+
+    fn cast_value(
+        &mut self,
+        expr: &ast::Expr,
+        ty: &ast::TypeExpr,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
         let target = self.resolve(ty);
         let symbol_cast = self.symbol_record_cast(expr, ty, target, span);
         if symbol_cast == Some(super::symbol_record::SymbolCast::Refused) {
