@@ -190,9 +190,6 @@ velt_rt velt_rt_strbuf_push_str
 velt_rt velt_rt_strbuf_push_u8s
 velt_rt velt_rt_strbuf_push_words
 velt_rt velt_rt_strbuf_spare
-velt_rt velt_rt_task_gate
-velt_rt velt_rt_task_gate_free
-velt_rt velt_rt_task_gate_wait
 velt_rt velt_rt_tcp_abort
 velt_rt velt_rt_tcp_accept
 velt_rt velt_rt_tcp_close
@@ -219,11 +216,6 @@ velt_rt velt_rt_tcp_write_later_range
 velt_rt velt_rt_tcp_write_range
 velt_rt velt_rt_thread_yield
 velt_rt velt_rt_throw_loc
-velt_rt velt_rt_timer_again
-velt_rt velt_rt_timer_clear
-velt_rt velt_rt_timer_free
-velt_rt velt_rt_timer_new
-velt_rt velt_rt_timer_turn
 velt_rt velt_rt_timer_unref_due
 velt_rt velt_rt_tla_at
 velt_rt velt_rt_uncaught_report
