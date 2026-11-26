@@ -41,7 +41,7 @@ pub const QUALIFIED: &str = "__qualified";
 pub const UNION: &str = "__union";
 
 /// What the driver generated so far: generated modules it added to the program
-/// (docs/internals/design/source-generators.md §7), and the instances in them.
+/// (docs/internals/design/source-generators.md "Access and scope"), and the instances in them.
 #[derive(Clone, Debug, Default)]
 pub struct GenInput {
     pub instances: Vec<GenInstance>,
@@ -87,10 +87,10 @@ pub struct GenInstance {
     /// The key of the demanded instance the code was generated for ([`Request::fingerprint`]:
     /// the [`model::Model::fingerprint`] of its types, with the function's
     /// [`GenFunction::signature`]): its module is checked once that instance is demanded, so
-    /// code offered from an earlier build (docs/internals/design/source-generators.md §9) is
-    /// used only while the types it was generated for are still the same. Empty for an
-    /// instance a generator asked for itself (`Output.instance`), which is checked with the
-    /// module of the instance that asked.
+    /// code offered from an earlier build (docs/internals/design/source-generators.md
+    /// "Caching") is used only while the types it was generated for are still the same. Empty
+    /// for an instance a generator asked for itself (`Output.instance`), which is checked with
+    /// the module of the instance that asked.
     pub fingerprint: String,
 }
 

@@ -1,0 +1,95 @@
+interface Fluent {
+  step(n: number): Fluent;
+  total(): number;
+}
+class D implements Fluent {
+  t: number = 0;
+  step(n: number): D {
+    this.t += n;
+    return this;
+  }
+  total(): number {
+    return this.t;
+  }
+}
+interface Sub extends Fluent {
+  tag(): string;
+}
+class S implements Sub {
+  t: number = 0;
+  step(n: number): S {
+    this.t += n;
+    return this;
+  }
+  total(): number {
+    return this.t;
+  }
+  tag(): string {
+    return "s";
+  }
+}
+class Sq {
+  name(): string {
+    return "sq";
+  }
+}
+class Big extends Sq {
+  override name(): string {
+    return "big";
+  }
+}
+interface Maybe {
+  get(k: number): Fluent | null | undefined;
+  sub(k: number): Fluent | null | undefined;
+  sq(k: number): Sq | null | undefined;
+  rev(k: number): Fluent | undefined | null;
+  opt(k: number): Fluent | undefined;
+}
+class Impl implements Maybe {
+  held: S = new S();
+  get(k: number): D | null | undefined {
+    return k == 0 ? null : k == 1 ? undefined : new D();
+  }
+  sub(k: number): Sub | null | undefined {
+    if (k == 0) {
+      return null;
+    }
+    if (k == 1) {
+      return undefined;
+    }
+    return this.held;
+  }
+  sq(k: number): Big | null | undefined {
+    return k == 0 ? null : k == 1 ? undefined : new Big();
+  }
+  rev(k: number): D | undefined | null {
+    return k == 0 ? null : k == 1 ? undefined : new D();
+  }
+  opt(k: number): D | undefined {
+    return k == 0 ? undefined : new D();
+  }
+}
+interface Source<T> {
+  next(k: number): T | null | undefined;
+}
+class DSource implements Source<Fluent> {
+  next(k: number): D | null | undefined {
+    return k == 0 ? null : k == 1 ? undefined : new D();
+  }
+}
+function show(f: Fluent | null | undefined): string {
+  return f === null ? "null" : f === undefined ? "undefined" : "" + f.step(3).total();
+}
+function main() {
+  const m: Maybe = new Impl();
+  console.log(show(m.get(0)), show(m.get(1)), show(m.get(2)));
+  console.log(show(m.sub(0)), show(m.sub(1)), show(m.sub(2)), show(m.sub(2)));
+  const a = m.sq(0);
+  const b = m.sq(1);
+  const c = m.sq(2);
+  console.log(a === null, b === undefined, c == null ? "none" : c.name());
+  console.log(show(m.rev(0)), show(m.rev(1)), show(m.rev(2)));
+  console.log(show(m.opt(0)), show(m.opt(1)));
+  const s: Source<Fluent> = new DSource();
+  console.log(show(s.next(0)), show(s.next(1)), show(s.next(2)));
+}

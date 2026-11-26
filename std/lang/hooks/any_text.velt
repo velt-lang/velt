@@ -196,6 +196,18 @@ export function anyJoinMethod(v: any, sep: any, at: string): any {
   return v.join(sep);
 }
 
+/**
+ * `xs.join()` of an `any` `xs`, with no argument written: an array held is joined with `","`;
+ * another value's own `join` is called with none, where `xs.join(undefined)` passes one
+ * (a `join(...parts: string[])` joins nothing, #3812).
+ */
+export function anyJoinNone(v: any, at: string): any {
+  if (Array.isArray(v)) {
+    return anyJoin(v, ",", at);
+  }
+  return v.join();
+}
+
 /** `anyJoin` with the arrays being joined around it in `seen`. */
 export function anyJoinSeen(v: any, sep: string, seen: any[], at: string): string {
   seen.push(v);

@@ -1,14 +1,12 @@
-//! TCP echo: a spawned compiled server task and a compiled client, in-process.
+//! TCP: a compiled client of the runtime's streams against an echo server on a thread.
 
-use super::fake::{
-    arg, block_on_fut, block_on_state, fut_result, join, ok, spawn_state, take_string,
-};
-use crate::bytes::{velt_rt_bytes_drop, VeltBytes};
+use super::fake::{arg, block_on_fut, block_on_state, fut_result, ok, take_string};
 use crate::net::tcp::*;
 use crate::result::{code_name, IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::task::{drop_fut, poll_fut, VeltFut, PENDING, READY};
 use std::ffi::c_void;
+use std::io::{Read, Write};
 use std::ptr::null_mut;
 
 /// Await `st.fut`; on READY move its result out and drop it. `None` ⇒ return PENDING.
@@ -20,58 +18,6 @@ unsafe fn await_fut<R>(fut: &mut *mut VeltFut, cx: *mut c_void) -> Option<R> {
     drop_fut(*fut);
     *fut = null_mut();
     Some(r)
-}
-
-// async function echo(l): i64 {
-//   const s = await accept(l); let total = 0;
-//   for (;;) { const b = await s.read(4096); if (b.len == 0) break; total += b.len; await s.write(b); }
-//   s.close(); return total;
-// }
-#[repr(C)]
-struct Echo {
-    result: i64,
-    tag: u32,
-    listener: ListenerHandle,
-    stream: StreamHandle,
-    fut: *mut VeltFut,
-}
-
-unsafe extern "C-unwind" fn echo_poll(s: *mut u8, cx: *mut c_void) -> u32 {
-    let st = &mut *(s as *mut Echo);
-    loop {
-        match st.tag {
-            0 => (st.fut, st.tag) = (velt_rt_tcp_accept(st.listener), 1),
-            1 => {
-                let Some(r) = await_fut::<IoResult<StreamHandle>>(&mut st.fut, cx) else {
-                    return PENDING;
-                };
-                (st.stream, st.tag) = (ok(r), 2);
-            }
-            2 => (st.fut, st.tag) = (velt_rt_tcp_read(st.stream, 4096), 3),
-            3 => {
-                let Some(r) = await_fut::<IoResult<VeltBytes>>(&mut st.fut, cx) else {
-                    return PENDING;
-                };
-                let mut b = ok(r);
-                if b.len == 0 {
-                    velt_rt_tcp_close(st.stream);
-                    return READY;
-                }
-                st.result += b.len as i64;
-                st.fut = velt_rt_tcp_write_bytes(st.stream, &b);
-                velt_rt_bytes_drop(&mut b);
-                st.tag = 4;
-            }
-            4 => {
-                let Some(r) = await_fut::<IoResult<()>>(&mut st.fut, cx) else {
-                    return PENDING;
-                };
-                ok(r);
-                st.tag = 2;
-            }
-            _ => unreachable!(),
-        }
-    }
 }
 
 // async function client(port): string {
@@ -138,20 +84,21 @@ unsafe extern "C-unwind" fn client_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 
 #[test]
 fn tcp_echo_in_process() {
-    let listener = ok(block_on_fut::<IoResult<ListenerHandle>>(unsafe {
-        velt_rt_tcp_listen(&arg("127.0.0.1:0"))
-    }));
-    let port = unsafe { velt_rt_tcp_listener_port(listener) };
-    assert!(port > 0);
-    let mut echo = Box::new(Echo {
-        result: 0,
-        tag: 0,
-        listener,
-        stream: StreamHandle::NULL,
-        fut: null_mut(),
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = u32::from(listener.local_addr().unwrap().port());
+    // Echoes what arrives until the client shuts its writing half down: the bytes it echoed.
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let (mut buf, mut total) = ([0u8; 4096], 0);
+        loop {
+            let n = s.read(&mut buf).unwrap();
+            if n == 0 {
+                return total;
+            }
+            s.write_all(&buf[..n]).unwrap();
+            total += n;
+        }
     });
-    // SAFETY: `echo` outlives the task, which is joined below; it runs to completion.
-    let server = unsafe { spawn_state(echo_poll, &mut *echo as *mut Echo as *mut u8) };
     let mut client = Client {
         result: String::new(),
         tag: 0,
@@ -161,9 +108,7 @@ fn tcp_echo_in_process() {
     };
     unsafe { block_on_state(client_poll, &mut client as *mut Client as *mut u8) };
     assert_eq!(client.result, MSG);
-    join(server);
-    assert_eq!(echo.result, MSG.len() as i64);
-    unsafe { velt_rt_tcp_listener_close(listener) };
+    assert_eq!(server.join().unwrap(), MSG.len());
 
     let addr = format!("127.0.0.1:{port}");
     let refused =

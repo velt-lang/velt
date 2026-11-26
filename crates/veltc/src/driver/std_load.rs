@@ -20,7 +20,8 @@ pub(super) fn load_options<'a>(
         test_harness: opts.test_harness,
         overlay: None,
         // A source generator host for std's generators sits in the std root and imports their
-        // internal files: it is std code (docs/internals/design/source-generators.md §5).
+        // internal files: it is std code (docs/internals/design/source-generators.md "Running
+        // generators").
         std_root_as_std: generator_build,
         target: Some(opts.target()),
         host_condition: opts.host.as_ref().map(|h| h.config.condition.clone()),

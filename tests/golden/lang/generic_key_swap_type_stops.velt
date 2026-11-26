@@ -1,5 +1,5 @@
-// A number swapped into a `string | null` field through a key union stops with a `TypeError`
-// naming the field's type as written (decision 4).
+// A number swapped into a `string | null` field through a key union stops with a `TypeError` naming
+// the field's type as written (deferred-types.md "Values of deferred types in a generic body").
 type Q = { n: number; s: string | null };
 function swap<T, K extends keyof T>(o: T, x: K, y: K): void {
   const v = o[x];

@@ -2,12 +2,12 @@
 //! `await` that nothing can settle any more, Node writes `Warning: Detected unsettled top-level
 //! await at <file>:<line>` and exits with code 13.
 //!
-//! The generated `main` of a program whose top-level statements `await` (modules.md) calls
-//! [`velt_rt_tla_at`] with the `await`'s location each time it suspends there (velt_sema
-//! `top_level_await.rs`, velt_vir `async_fn/suspend.rs`), so the location stored last is the
-//! `await` that waits now. An `await` that goes straight on calls nothing, and the call is two
-//! atomic writes of a literal's static bytes: no lock, no allocation. Shared with velt_rt_wasm
-//! (`#[path]`).
+//! The generated `main` of a program whose top-level statements `await`
+//! (https://veltlang.com/docs/reference/modules/) calls [`velt_rt_tla_at`] with the `await`'s
+//! location each time it suspends there (velt_sema `top_level_await.rs`, velt_vir
+//! `async_fn/suspend.rs`), so the location stored last is the `await` that waits now. An `await`
+//! that goes straight on calls nothing, and the call is two atomic writes of a literal's static
+//! bytes: no lock, no allocation. Shared with velt_rt_wasm (`#[path]`).
 
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
